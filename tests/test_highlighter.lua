@@ -61,6 +61,7 @@ local function setup(savedFile)
         if loaded[name] then return end
         loaded[name] = true
         if name == "PZSurvivorToolkit" then return end
+        if name == "ISUI/ISButton" then assert(ISButton); return end
         if name == "PZAPI/ModOptions" then
             if NativeModOptionsSource then
                 assert(loadstring(NativeModOptionsSource))()
@@ -439,6 +440,82 @@ test("hotkey toggles, wrong key and text/key capture do not", function()
     equal(w.settings.isEnabled(), false)
     Events.OnKeyPressed.fire(12)
     equal(w.settings.isEnabled(), true)
+end)
+
+test("sidebar button shares settings with menu and rebound key, survives sidebar replacement", function()
+    local w = setup()
+    local object = w:add(0.5, 0.5, 0, "Base.Hammer")
+    ISButton = {}
+    function ISButton:derive() return setmetatable({}, { __index = self }) end
+    function ISButton:new(x, y, width, height, title, target, onclick)
+        self.__index = self
+        return setmetatable({ y = y, height = height, target = target, onclick = onclick }, self)
+    end
+    function ISButton:initialise() end
+    function ISButton:setEnable(value) self.enable = value end
+    function ISButton:setTitle(value) self.title = value end
+    function ISButton:setTooltip(value) self.tooltip = value end
+    function ISButton:getBottom() return self.y + self.height end
+    function ISButton:forceClick() if self.enable then self.onclick(self.target, self) end end
+    UIFont = { Small = 1 }
+    getKeyName = function(key) return "KEY_" .. key end
+    getText = function(key, value) return value and key .. ":" .. value or key end
+    getTextManager = function() return {
+        MeasureStringX = function(_, font, text) return #text * 6 end,
+        getFontHeight = function() return 14 end,
+    } end
+    local function sidebar()
+        return { width = 48, height = 500, children = {},
+            getWidth = function(self) return self.width end,
+            getHeight = function(self) return self.height end,
+            setWidth = function(self, value) self.width = value end,
+            setHeight = function(self, value) self.height = value end,
+            addChild = function(self, child) self.children[#self.children + 1] = child end }
+    end
+    local data = { equipped = sidebar() }
+    getPlayerData = function() return data end
+    require("PZSurvivorToolkit/ToggleButton")
+    w:advance(70)
+    local button = data.equipped.toolkitHighlightButton
+    equal(#data.equipped.children, 1)
+    equal(button.title, "UI_PZSurvivorToolkit_button_on")
+    button:forceClick()
+    equal(w.settings.isEnabled(), false)
+    equal(object.flags[0], false)
+    equal(button.title, "UI_PZSurvivorToolkit_button_off")
+    equal(w.saves, 1)
+    Events.OnKeyPressed.fire(Keyboard.KEY_F8)
+    button:update()
+    equal(button.title, "UI_PZSurvivorToolkit_button_on")
+    w:apply("ToggleKey", 12)
+    button:update()
+    equal(button.tooltip, "UI_PZSurvivorToolkit_button_tooltip:KEY_12")
+    Events.OnKeyPressed.fire(Keyboard.KEY_F8)
+    equal(w.settings.isEnabled(), true)
+    Events.OnKeyPressed.fire(12)
+    button:update()
+    equal(button.title, "UI_PZSurvivorToolkit_button_off")
+    w:apply("ToggleKey", 0)
+    button:update()
+    equal(button.tooltip, "UI_PZSurvivorToolkit_button_tooltip:UI_PZSurvivorToolkit_no_shortcut")
+    Events.OnKeyPressed.fire(0)
+    equal(w.settings.isEnabled(), false)
+    button:forceClick()
+    equal(w.settings.isEnabled(), true)
+    w:apply("Enabled", false)
+    button:update()
+    equal(button.title, "UI_PZSurvivorToolkit_button_off")
+    data.equipped = sidebar()
+    w:advance(2)
+    local replacement = data.equipped.toolkitHighlightButton
+    assert(replacement ~= button)
+    equal(#data.equipped.children, 1)
+    equal(replacement.title, "UI_PZSurvivorToolkit_button_off")
+    w.player.dead = true
+    replacement:update()
+    replacement:forceClick()
+    equal(w.settings.isEnabled(), false)
+    equal(replacement.enable, false)
 end)
 
 test("death, player replacement and main menu release the correct player index", function()

@@ -1,0 +1,1 @@
+- Run the in-game sidebar button and native key-rebinding smoke scenario when macOS has an active display. The isolated scenario is in `.codex/investigations/ui-button-42.21/ZZToolkitUISmoke.lua`; the current launch stops in GLFW before Lua loads.

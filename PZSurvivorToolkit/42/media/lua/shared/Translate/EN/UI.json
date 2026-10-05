@@ -12,5 +12,9 @@
     "UI_options_PZSurvivorToolkit_radius_5": "5 tiles",
     "UI_options_PZSurvivorToolkit_radius_10": "10 tiles",
     "UI_options_PZSurvivorToolkit_radius_15": "15 tiles",
-    "UI_options_PZSurvivorToolkit_radius_20": "20 tiles"
+    "UI_options_PZSurvivorToolkit_radius_20": "20 tiles",
+    "UI_PZSurvivorToolkit_button_on": "Items: ON",
+    "UI_PZSurvivorToolkit_button_off": "Items: OFF",
+    "UI_PZSurvivorToolkit_no_shortcut": "None",
+    "UI_PZSurvivorToolkit_button_tooltip": "Click to toggle item highlights. Shortcut: %1. Change it in Options > Mods > PZ Survivor Toolkit."
 }

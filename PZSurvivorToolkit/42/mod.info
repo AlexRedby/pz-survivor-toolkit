@@ -1,4 +1,4 @@
 name=PZ Survivor Toolkit
 id=PZSurvivorToolkit
-description=Highlights loose world items currently visible to your character. Configure colour, radius and the toggle key in Options > Mods > PZ Survivor Toolkit. Default toggle: F8.
+description=Highlights loose world items currently visible to your character. Toggle with the Items button in the left sidebar or F8. Configure colour, radius and the toggle key in Options > Mods > PZ Survivor Toolkit.
 versionMin=42.19

@@ -12,7 +12,8 @@ The usual mod directory is `~/Zomboid/mods` on macOS/Linux or `%UserProfile%\Zom
 
 ## Controls
 
-- **F8** toggles highlighting by default.
+- Click **Items: ON / Items: OFF** at the bottom of the left sidebar to toggle highlighting.
+- **F8** is the default optional shortcut. Change it using **Options > Mods > PZ Survivor Toolkit > Toggle key**.
 - **Options > Mods > PZ Survivor Toolkit** provides the enabled switch, colour picker, toggle key binding and radius (5, 10, 15 or 20 tiles).
 - Defaults: enabled, orange, 15-tile radius. Settings are saved using the game's native Mod Options system.
 
@@ -25,6 +26,8 @@ Highlighting requires the tile to be in the character's **current field of view*
 The effect uses the game's native rendering. Sprite and atlas items receive an outline; some live 3D models receive a colour tint instead. The mod does not replace the renderer to force identical outlines.
 
 Requires B42.19 or newer within Build 42. Tested in-game on **B42.21.0, macOS, single-player**, including toggling, settings, pickup and visibility changes through a window with a curtain. Multiplayer and split-screen have not been verified.
+
+The new sidebar button has behavioural checks and has been checked against the installed native UI code. Its in-game visual check is pending.
 
 ## Development
 

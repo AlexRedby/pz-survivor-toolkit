@@ -12,5 +12,9 @@
     "UI_options_PZSurvivorToolkit_radius_5": "5 клеток",
     "UI_options_PZSurvivorToolkit_radius_10": "10 клеток",
     "UI_options_PZSurvivorToolkit_radius_15": "15 клеток",
-    "UI_options_PZSurvivorToolkit_radius_20": "20 клеток"
+    "UI_options_PZSurvivorToolkit_radius_20": "20 клеток",
+    "UI_PZSurvivorToolkit_button_on": "Лут: ВКЛ",
+    "UI_PZSurvivorToolkit_button_off": "Лут: ВЫКЛ",
+    "UI_PZSurvivorToolkit_no_shortcut": "Нет",
+    "UI_PZSurvivorToolkit_button_tooltip": "Нажмите, чтобы переключить подсветку предметов. Клавиша: %1. Изменить её можно в Настройки > Моды > PZ Survivor Toolkit."
 }
