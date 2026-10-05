@@ -1,0 +1,6 @@
+.codex/
+dist/
+__pycache__/
+.worktrees/
+.venv/
+.DS_Store
