@@ -35,6 +35,12 @@ def validate() -> list[str]:
             errors.append("mod.info must declare name=PZ Survivor Toolkit")
         if metadata.get("id") != "PZSurvivorToolkit":
             errors.append("mod.info must declare id=PZSurvivorToolkit")
+        for key in ("icon", "poster"):
+            name = metadata.get(key, "")
+            candidates = [MOD_ROOT / folder / name for folder in ("42", "common")]
+            if not name or not any(path.is_file() and path.resolve().is_relative_to(MOD_ROOT.resolve())
+                                   for path in candidates):
+                errors.append(f"mod.info {key} must reference a file inside 42/ or common/")
 
     if BOOTSTRAP.is_file():
         source = BOOTSTRAP.read_text(encoding="utf-8")
