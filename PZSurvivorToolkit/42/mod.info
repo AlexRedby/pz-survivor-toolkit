@@ -1,7 +1,7 @@
 name=PZ Survivor Toolkit
 id=PZSurvivorToolkit
 author=AlexRedby
-modversion=0.1.0
+modversion=0.1.1
 category=features
 icon=icon.png
 poster=icon.png
@@ -10,6 +10,7 @@ description=Controls: Click Items: ON/OFF in the left sidebar. F8 is the default
 description=Settings: Change the shortcut, colour, radius and enabled state in Options > Mods > PZ Survivor Toolkit.<LINE><LINE>
 description=Visibility: Only items in your character's current field of view are highlighted. Previously explored tiles alone are not enough.<LINE>
 description=Rendering: Uses native outlines or colour tints, depending on the item renderer.<LINE><LINE>
+description=Clothing comparisons: Zero changes in the Wear menu use neutral grey. Gains and losses retain the game's configured colours.<LINE><LINE>
 description=Compatibility: Build 42.19 or newer within Build 42. No additional mod dependencies. Multiplayer and split-screen have not been verified.<LINE><LINE>
 description=Source: https://github.com/AlexRedby/pz-survivor-toolkit
 versionMin=42.19

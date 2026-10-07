@@ -2,7 +2,7 @@
 
 ![PZ Survivor Toolkit icon](PZSurvivorToolkit/common/icon.png)
 
-A Lua mod for Project Zomboid Build 42. Its first feature highlights loose items on the ground to make them easier to find in grass and clutter.
+A Lua mod for Project Zomboid Build 42. Highlights loose items on the ground to make them easier to find in grass and clutter. Also makes zero protection changes neutral grey in the clothing Wear menu; gains and losses keep the game's configured colours.
 
 ## Installation
 

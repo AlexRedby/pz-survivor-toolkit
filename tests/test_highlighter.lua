@@ -592,4 +592,29 @@ if NativeModOptionsSource then
     end)
 end
 
+test("wear comparisons keep zero neutral and preserve gains, losses and replacement items", function()
+    local previousRequire = require
+    require = function() end
+    local replaced = { "Base.Tshirt_DefaultTEXTURE_TINT" }
+    local description
+    ISInventoryPaneContextMenu = { doWearClothingTooltip = function(player, item, current, option)
+        equal(player, 1); equal(item, 2); equal(current, 3)
+        option.toolTip = description and { description = description } or nil
+        return replaced
+    end }
+    dofile(client .. "PZSurvivorToolkit/WearComparison.lua")
+    require = previousRequire
+    for _, delta in ipairs({ "+0", "-0", "0", "+10", "-5" }) do
+        local color = delta == "-5" and "<RGB:1.00,0.00,0.00>" or "<RGB:0.00,1.00,0.00>"
+        local row = " Bite defense: <SETX:110> 10 (" .. delta .. ") <LINE> "
+        description = "Replace: Shirt <LINE> " .. color .. row
+        local option = {}
+        equal(ISInventoryPaneContextMenu.doWearClothingTooltip(1, 2, 3, option), replaced)
+        local expectedColor = delta:match("^[+-]?0$") and "<RGB:0.8,0.8,0.8>" or color
+        equal(option.toolTip.description, "Replace: Shirt <LINE> " .. expectedColor .. row)
+    end
+    description = nil
+    equal(ISInventoryPaneContextMenu.doWearClothingTooltip(1, 2, 3, {}), replaced)
+end)
+
 print("Passed " .. count .. " behavioural tests (Lua 5.1; game rendering remains untested).")
