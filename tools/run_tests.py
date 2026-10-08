@@ -45,7 +45,7 @@ def main() -> None:
     lua.globals().ProjectRoot = str(ROOT)
     lua.execute((ROOT / "tests/test_vhs_ownership.lua").read_text(encoding="utf-8"))
 
-    for name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua"):
+    for name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua"):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
         if args.cleanui_inventory_pane:
