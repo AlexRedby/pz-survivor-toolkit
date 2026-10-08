@@ -68,6 +68,7 @@ local function class()
         return 'selected'
     end
     function c:selectButtonForContainer(target)
+        if self.failAutomatic then error('native automatic selection failed') end
         if self.inventoryPane.inventory == target then return end
         for _, entry in ipairs(self.backpacks) do
             if entry.inventory == target then return self:selectContainer(entry) end
@@ -167,6 +168,19 @@ for _, spec in ipairs({{name = 'native', class = native}, {name = 'CleanUI', cla
         p:selectButtonForContainer(other)
         assert(p.inventory == globe and proximity.manualContainerOverride[0] == nil, 'transfer installed sticky bag')
         assert(p.toolkitAutomaticSelection == nil, 'automatic-selection guard leaked')
+    end)
+    check(spec.name .. ' failed automatic focus restores guard', function()
+        local p = page(spec.class)
+        p.failAutomatic = true
+        local ok, err = pcall(p.selectButtonForContainer, p, other)
+        assert(not ok and tostring(err):find('native automatic selection failed', 1, true))
+        assert(p.toolkitAutomaticSelection == nil, 'failure leaked automatic-selection guard')
+        p.failAutomatic = false
+        p:selectContainer(p.backpacks[2])
+        assert(proximity.manualContainerOverride[0] == bag, 'failure prevented subsequent manual choice')
+        p.toolkitAutomaticSelection, p.failAutomatic = true, true
+        pcall(p.selectButtonForContainer, p, other)
+        assert(p.toolkitAutomaticSelection == true, 'failure lost outer automatic-selection guard')
     end)
     check(spec.name .. ' disabled/force-off native selection', function()
         local p = page(spec.class)

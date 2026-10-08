@@ -15,6 +15,8 @@ def main() -> None:
     parser.add_argument("--cleanui-inventory-pane", type=Path, help="test against CleanUI ISInventoryPane.lua")
     parser.add_argument("--native-inventory-pane", type=Path, help="test against vanilla ISInventoryPane.lua")
     parser.add_argument("--proximity-source", type=Path, help="test against ProximityInventory.lua and sibling ISInventoryPage.lua")
+    parser.add_argument("--tv-source", type=Path, help="test VHS controls against TVRadio Reinvented RWMMergedTV.lua")
+    parser.add_argument("--native-radio-root", type=Path, help="vanilla media/lua/client directory for RWMMedia and ISItemDropBox checks")
     args = parser.parse_args()
     try:
         from lupa.lua51 import LuaRuntime
@@ -45,6 +47,15 @@ def main() -> None:
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)
     lua.execute((ROOT / "tests/test_vhs_ownership.lua").read_text(encoding="utf-8"))
+
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.globals().ProjectRoot = str(ROOT)
+    if args.tv_source:
+        lua.globals().TVSource = args.tv_source.read_text(encoding="utf-8")
+    if args.native_radio_root:
+        lua.globals().NativeMediaSource = (args.native_radio_root / "RadioCom/RadioWindowModules/RWMMedia.lua").read_text(encoding="utf-8")
+        lua.globals().NativeDropBoxSource = (args.native_radio_root / "RadioCom/ISUIRadio/ISItemDropBox.lua").read_text(encoding="utf-8")
+    lua.execute((ROOT / "tests/test_tv_controls.lua").read_text(encoding="utf-8"))
 
     for name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua"):
         lua = LuaRuntime(unpack_returned_tuples=True)

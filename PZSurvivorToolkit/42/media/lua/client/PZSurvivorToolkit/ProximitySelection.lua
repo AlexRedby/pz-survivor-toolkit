@@ -34,8 +34,9 @@ local function install(class, proximity)
         -- Timed transfers use this path to show their source/destination briefly.
         local previous = self.toolkitAutomaticSelection
         self.toolkitAutomaticSelection = true
-        local result = automatic(self, ...)
+        local ok, result = pcall(automatic, self, ...)
         self.toolkitAutomaticSelection = previous
+        if not ok then error(result, 0) end
         return result
     end
 end

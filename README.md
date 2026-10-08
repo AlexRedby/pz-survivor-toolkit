@@ -43,9 +43,9 @@ Water consumption remains native: this does not enable drinking from backpacks, 
 
 ## CleanUI / Container Capacity Indicator
 
-When using both mods, load them in this order: **NeatUI Framework, CleanUI, PZ Survivor Toolkit, Container Capacity Indicator**. Toolkit aligns CCI bars with CleanUI's visible inventory icons, including equipment headers, hidden equipment, expanded stacks and scaled icons. CCI keeps its own capacity calculations, colours and magazine setting. Without that pair, the adapter does nothing. If CCI loads before Toolkit, the adapter logs the required order and leaves its renderer unchanged.
+When using both mods, load them in this order: **NeatUI Framework, CleanUI, PZ Survivor Toolkit, Container Capacity Indicator**. Toolkit aligns CCI bars with CleanUI's visible inventory icons, including equipment headers, hidden equipment, expanded stacks and scaled icons. CCI keeps its own capacity calculations, colours and magazine setting. Toolkit preserves its item and container-button bars when CleanUI switches between enhanced and vanilla inventories, including icon views; it also supplies the alpha omitted by B42's native icon renderer. Without that pair, the adapter does nothing. If CCI loads before Toolkit, the adapter logs the required order and leaves its renderer unchanged.
 
-Checked in-game on B42.21 with CleanUI 2.9.7 and CCI 1.2.0 in the enhanced details view, including container reordering and 140% icon scale. Switching to vanilla or icon views at runtime has not been verified. The full selected mod set has not been tested together in multiplayer.
+Checked in-game on B42.21 with CleanUI 2.9.7 and CCI 1.2.0, including container reordering and 140% icon scale. Toolkit v0.1.12 passed 15 checks per English/Russian client with all 38 selected Mod IDs loaded: enhanced/vanilla details and icons, container-button bars, repeated mode switches and native item transfers. No gameplay exceptions occurred during this short localhost scenario.
 
 ## TV & Radio ReInvented
 
@@ -53,11 +53,11 @@ The TV/radio settings section and its adapters are registered only when TV & Rad
 
 On native macOS, Toolkit loads the 16 videos shipped with TV & Radio ReInvented v1.3 from the actual active mod directory. A separate `Project Zomboid.app/workshop` symlink is no longer required. Keep the complete TV mod installation, including its `.bik` files; a Lua-only copy cannot supply videos. Other platforms keep the upstream video loader. The translation fix is still needed for TV device recognition on Russian clients.
 
-Checked on native B42.21 macOS with an English and Russian client, CleanUI, CCI and the translation fix: 18 checks per client passed with the old symlink absent. Checks cover all 16 valid video textures, synchronized VHS playback, native close-button callbacks, live option changes and out-of-range cleanup. This was a short localhost multiplayer test; the full selected mod set and other platforms remain unverified.
+Checked on native B42.21 macOS with an English and Russian client, CleanUI, CCI and the translation fix: 18 checks per client passed with the old symlink absent. Checks cover all 16 valid video textures, synchronized VHS playback, native close-button callbacks, live option changes and out-of-range cleanup. This was a short localhost multiplayer test; other platforms remain unverified.
 
 **Improve VHS controls** adds direct click-to-eject, tapes from native reachable loot containers and personal bags, and drag-and-drop onto the TV slot. The slot turns green for a VHS and red for an invalid drop. The selection list marks only fully watched tapes with the same checkmark as the inventory. Unfinished tapes have no marker and appear first; history belongs to the current character. Insertion uses native pickup and device actions, with ownership checked on client and server. Disable the option to restore the original TV slot/menu controls.
 
-The Toolkit v0.1.7 VHS controls passed 18 native B42.21 multiplayer checks on each of two clients (English/Russian), including container/bag/floor pickup, direct ejection, drag parsing, character-specific history, invalid and occupied drops, stale selections, server ownership checks and tape conservation. The rendered menus were also checked separately. Toolkit v0.1.8 passed three focused checks per English/Russian client for the inventory checkmark, unmarked unfinished tapes and independent character history. The full selected mod set, physical mouse/controller input and long sessions remain unverified.
+Toolkit v0.1.12 passed 18 native B42.21 VHS multiplayer checks per English/Russian client with all 38 selected Mod IDs loaded, including container/bag/floor pickup, direct ejection, character-specific history and checkmarks, invalid/occupied drops, stale selections, server ownership and tape conservation. No gameplay exceptions occurred during this short localhost scenario. Combined with the 15 inventory/CCI checks, each client passed 33 checks. Physical mouse/controller input and long sessions remain unverified.
 
 ## Development
 
@@ -71,7 +71,7 @@ python3 tools/package_mod.py --check
 python3 tools/package_mod.py
 ```
 
-The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`.
+The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`. VHS menu, sorting, drop validation and live toggle checks run by default; add `--tv-source /path/to/RWMMergedTV.lua --native-radio-root /path/to/media/lua/client` to also exercise the native media actions and drag parser.
 
 The optional package command writes `dist/PZSurvivorToolkit.zip` for local use. Generated archives are excluded from Git; installation only requires the source `PZSurvivorToolkit` folder.
 
