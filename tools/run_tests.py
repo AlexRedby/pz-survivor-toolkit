@@ -24,6 +24,9 @@ def main() -> None:
         lua.execute("assert(loadstring(...))", path.read_text(encoding="utf-8"))
     print("All mod files compile as Lua 5.1.", flush=True)
     lua.execute((ROOT / "tests/test_highlighter.lua").read_text(encoding="utf-8"))
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.globals().ProjectRoot = str(ROOT)
+    lua.execute((ROOT / "tests/test_auto_drink.lua").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
