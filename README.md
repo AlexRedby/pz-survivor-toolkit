@@ -6,7 +6,7 @@ A Lua mod for Project Zomboid Build 42. Highlights loose items on the ground to 
 
 ## Installation
 
-1. Download the ready-to-install [PZSurvivorToolkit.zip v0.1.6](https://raw.githubusercontent.com/AlexRedby/pz-survivor-toolkit/main/PZSurvivorToolkit.zip).
+1. Clone or download [this repository](https://github.com/AlexRedby/pz-survivor-toolkit).
 2. Copy the `PZSurvivorToolkit` folder into your `Zomboid/mods` directory, keeping its `common` and `42` subfolders intact.
 3. Enable **PZ Survivor Toolkit** in the game's Mods menu and for the save you want to play.
 
@@ -69,7 +69,7 @@ python3 tools/package_mod.py
 
 The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`.
 
-The package command writes `dist/PZSurvivorToolkit.zip`; this directory and local investigations are excluded from Git. The published installation archive is `PZSurvivorToolkit.zip` at the repository root. Update it with `python3 tools/package_mod.py --output PZSurvivorToolkit.zip` when publishing mod changes.
+The optional package command writes `dist/PZSurvivorToolkit.zip` for local use. Generated archives are excluded from Git; installation only requires the source `PZSurvivorToolkit` folder.
 
 To run the same checks against your installed game's native Mod Options implementation:
 

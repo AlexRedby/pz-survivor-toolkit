@@ -7,7 +7,7 @@
 1. Остановите сервер. Для существующего сервера сохраните копию его INI.
 2. Возьмите [SurvivorQoL-selected.ini](SurvivorQoL-selected.ini). Для нового сервера положите его в папку `Zomboid/Server`. Для существующего перенесите из него только строки `Mods=` и `WorkshopItems=` в INI своего профиля.
 3. Сохраните порядок `Mods=`: **ZombieBuddy первым**, библиотеки перед зависимыми модами, основные Neat-моды перед XP-аддонами, Eat Smart перед Drink Smart. Всё это уже выставлено в нашем INI; варианты Neat Building UI Only и Eat Smart Integrated уже выбраны.
-4. Установите локальный Toolkit по инструкции ниже. Одну и ту же версию архива передайте всем игрокам.
+4. Установите локальный Toolkit по инструкции ниже. Одну и ту же версию папки мода передайте всем игрокам.
 5. Запустите нужный профиль: в **Host** выберите `SurvivorQoL-selected`, либо запустите выделенный сервер с `-servername SurvivorQoL-selected`. Если обновляли существующий профиль, используйте его имя. Сервер скачает Workshop-моды и зависимости из `WorkshopItems=`; подписываться на каждый вручную не нужно.
 
 Для нашего Peek a View выделенному серверу Java-загрузчик ZombieBuddy не нужен: оба мода должны быть в INI, а загрузчик устанавливают игроки. **Владелец Host выполняет также все клиентские шаги.** Это соответствует [инструкции автора Peek a View](https://steamcommunity.com/workshop/filedetails/?id=3710281407).
@@ -32,8 +32,8 @@ INI не переносит песочницу и клавиши. Для пер�
 
 ## Наш локальный Toolkit: серверу и каждому игроку
 
-1. Возьмите один актуальный `PZSurvivorToolkit.zip` для всех участников. [Текущий архив v0.1.6](PZSurvivorToolkit.zip).
-2. При закрытой игре распакуйте папку **PZSurvivorToolkit целиком** в `Zomboid/mods`. Сохраните подпапки `common` и `42`; не допускайте двойной вложенности `PZSurvivorToolkit/PZSurvivorToolkit`.
+1. Склонируйте или скачайте [репозиторий](https://github.com/AlexRedby/pz-survivor-toolkit). Используйте одну и ту же версию папки `PZSurvivorToolkit` для всех участников.
+2. При закрытой игре скопируйте папку **PZSurvivorToolkit целиком** в `Zomboid/mods`. Сохраните подпапки `common` и `42`; не допускайте двойной вложенности `PZSurvivorToolkit/PZSurvivorToolkit`.
 3. Проверьте, что существует файл `Zomboid/mods/PZSurvivorToolkit/42/mod.info`. Mod ID `PZSurvivorToolkit` уже включён в серверный INI.
 
 | Где | Папка Zomboid |
