@@ -474,7 +474,12 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
             getHeight = function(self) return self.height end,
             setWidth = function(self, value) self.width = value end,
             setHeight = function(self, value) self.height = value end,
-            addChild = function(self, child) self.children[#self.children + 1] = child end }
+            addChild = function(self, child) self.children[#self.children + 1] = child end,
+            removeChild = function(self, child)
+                for i, current in ipairs(self.children) do
+                    if current == child then table.remove(self.children, i); return end
+                end
+            end }
     end
     local data = { equipped = sidebar() }
     getPlayerData = function() return data end
@@ -509,7 +514,30 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     w:apply("Enabled", false)
     button:update()
     equal(button.title, "UI_PZSurvivorToolkit_button_off")
+    w:apply("ShowHighlightButton", false)
+    w:advance(2)
+    equal(data.equipped.toolkitHighlightButton, nil)
+    equal(#data.equipped.children, 0)
+    equal(data.equipped.width, 48)
+    equal(data.equipped.height, 500)
+    w:apply("ToggleKey", 12)
+    Events.OnKeyPressed.fire(12)
+    equal(w.settings.isEnabled(), true, "hidden button must not disable the shortcut")
+    w:apply("ShowHighlightButton", true)
+    w:advance(2)
+    equal(#data.equipped.children, 1)
+    local expandedWidth, expandedHeight = data.equipped.width + 10, data.equipped.height + 10
+    data.equipped:setWidth(expandedWidth)
+    data.equipped:setHeight(expandedHeight)
+    w:apply("ShowHighlightButton", false)
+    w:advance(2)
+    equal(data.equipped.width, expandedWidth, "do not overwrite another mod's layout")
+    equal(data.equipped.height, expandedHeight)
     data.equipped = sidebar()
+    w:advance(2)
+    equal(data.equipped.toolkitHighlightButton, nil, "replaced sidebar respects hidden setting")
+    w:apply("ShowHighlightButton", true)
+    w:apply("Enabled", false)
     w:advance(2)
     local replacement = data.equipped.toolkitHighlightButton
     assert(replacement ~= button)
@@ -520,6 +548,9 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     replacement:forceClick()
     equal(w.settings.isEnabled(), false)
     equal(replacement.enable, false)
+    w:apply("ShowHighlightButton", false)
+    w:advance(2)
+    equal(data.equipped.toolkitHighlightButton, nil, "hidden setting also removes a disabled death-screen button")
 end)
 
 test("death, player replacement and main menu release the correct player index", function()
@@ -588,6 +619,8 @@ if NativeModOptionsSource then
         w:apply("Radius", 4)
         w:apply("ToggleKey", 12)
         w:apply("KeepMediaWindowOpen", false)
+        w:apply("ShowHighlightButton", false)
+        w:apply("NeutralClothingComparisons", false)
         w.settings.toggle()
         local reloaded = setup(w.file, true)
         equal(reloaded.settings.isEnabled(), false)
@@ -595,6 +628,8 @@ if NativeModOptionsSource then
         equal(reloaded.settings.getToggleKey(), 12)
         equal(reloaded.settings.getColor().g, 0.4)
         equal(reloaded.settings.keepMediaWindowOpen(), false)
+        equal(reloaded.settings.showHighlightButton(), false)
+        equal(reloaded.settings.neutralClothingComparisons(), false)
     end)
 end
 
@@ -678,6 +713,7 @@ test("media windows keep outside clicks, native close and live option rollback",
 end)
 
 test("wear comparisons keep zero neutral and preserve gains, losses and replacement items", function()
+    local w = setup()
     local previousRequire = require
     require = function() end
     local replaced = { "Base.Tshirt_DefaultTEXTURE_TINT" }
@@ -689,14 +725,17 @@ test("wear comparisons keep zero neutral and preserve gains, losses and replacem
     end }
     dofile(client .. "PZSurvivorToolkit/WearComparison.lua")
     require = previousRequire
-    for _, delta in ipairs({ "+0", "-0", "0", "+10", "-5" }) do
+    for _, enabled in ipairs({true, false, true}) do
+      w:apply("NeutralClothingComparisons", enabled)
+      for _, delta in ipairs({ "+0", "-0", "0", "+10", "-5" }) do
         local color = delta == "-5" and "<RGB:1.00,0.00,0.00>" or "<RGB:0.00,1.00,0.00>"
         local row = " Bite defense: <SETX:110> 10 (" .. delta .. ") <LINE> "
         description = "Replace: Shirt <LINE> " .. color .. row
         local option = {}
         equal(ISInventoryPaneContextMenu.doWearClothingTooltip(1, 2, 3, option), replaced)
-        local expectedColor = delta:match("^[+-]?0$") and "<RGB:0.8,0.8,0.8>" or color
+        local expectedColor = enabled and delta:match("^[+-]?0$") and "<RGB:0.8,0.8,0.8>" or color
         equal(option.toolTip.description, "Replace: Shirt <LINE> " .. expectedColor .. row)
+      end
     end
     description = nil
     equal(ISInventoryPaneContextMenu.doWearClothingTooltip(1, 2, 3, {}), replaced)

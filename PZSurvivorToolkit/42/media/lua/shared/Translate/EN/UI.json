@@ -1,7 +1,7 @@
 {
     "UI_options_PZSurvivorToolkit_name": "PZ Survivor Toolkit",
     "UI_options_PZSurvivorToolkit_title": "Highlight settings",
-    "UI_options_PZSurvivorToolkit_enabled": "Enabled",
+    "UI_options_PZSurvivorToolkit_enabled": "Highlight loose items",
     "UI_options_PZSurvivorToolkit_enabled_tooltip": "Highlights only loose items currently visible to your character.",
     "UI_options_PZSurvivorToolkit_color": "Highlight color",
     "UI_options_PZSurvivorToolkit_color_tooltip": "Choose the highlight color. The default is yellow-orange.",
@@ -19,5 +19,10 @@
     "UI_PZSurvivorToolkit_button_tooltip": "Click to toggle item highlights. Shortcut: %1. Change it in Options > Mods > PZ Survivor Toolkit.",
     "UI_options_PZSurvivorToolkit_media_title": "Media players",
     "UI_options_PZSurvivorToolkit_media_window": "Keep TV/radio windows open",
-    "UI_options_PZSurvivorToolkit_media_window_tooltip": "TV & Radio ReInvented: inventory and outside clicks keep the window open; use the close button. Disable to restore the original behavior."
+    "UI_options_PZSurvivorToolkit_media_window_tooltip": "TV & Radio ReInvented: inventory and outside clicks keep the window open; use the close button. Disable to restore the original behavior.",
+    "UI_options_PZSurvivorToolkit_sidebar_button": "Show highlight button in sidebar",
+    "UI_options_PZSurvivorToolkit_sidebar_button_tooltip": "Show the item-highlight toggle in the left sidebar. You can still use the shortcut or Mod Options when hidden.",
+    "UI_options_PZSurvivorToolkit_clothing_title": "Clothing comparisons",
+    "UI_options_PZSurvivorToolkit_clothing_neutral": "Show zero protection changes in grey",
+    "UI_options_PZSurvivorToolkit_clothing_neutral_tooltip": "Use neutral grey for zero changes in the Wear menu. Disable to keep the original game colours."
 }

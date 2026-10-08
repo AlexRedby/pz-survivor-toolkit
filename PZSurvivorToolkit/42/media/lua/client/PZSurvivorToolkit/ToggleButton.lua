@@ -24,15 +24,27 @@ end
 
 local function attach()
     local player = getPlayer()
-    if not player or player:isDead() then return end
+    if not player then return end
     local data = getPlayerData(player:getPlayerNum())
     local sidebar = data and data.equipped
-    if not sidebar or sidebar.toolkitHighlightButton then return end
+    if not sidebar then return end
+    local button = sidebar.toolkitHighlightButton
+    if not Toolkit.Settings.showHighlightButton() then
+        if button then
+            sidebar:removeChild(button)
+            if sidebar:getWidth() == button.expandedWidth then sidebar:setWidth(button.sidebarWidth) end
+            if sidebar:getHeight() == button:getBottom() then sidebar:setHeight(button.sidebarHeight) end
+            sidebar.toolkitHighlightButton = nil
+        end
+        return
+    end
+    if player:isDead() or button then return end
     local width = math.max(sidebar:getWidth(),
         getTextManager():MeasureStringX(UIFont.Small, getText("UI_PZSurvivorToolkit_button_on")) + 10,
         getTextManager():MeasureStringX(UIFont.Small, getText("UI_PZSurvivorToolkit_button_off")) + 10)
     local height = getTextManager():getFontHeight(UIFont.Small) + 10
-    local button = ToggleButton:new(0, sidebar:getHeight() + 15, width, height, "", nil, toggle)
+    button = ToggleButton:new(0, sidebar:getHeight() + 15, width, height, "", nil, toggle)
+    button.sidebarWidth, button.sidebarHeight, button.expandedWidth = sidebar:getWidth(), sidebar:getHeight(), width
     button:initialise()
     sidebar:addChild(button)
     sidebar:setWidth(width)

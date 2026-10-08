@@ -35,6 +35,13 @@ local enabledOption = options:addTickBox(
     getText("UI_options_PZSurvivorToolkit_enabled_tooltip")
 )
 
+local sidebarOption = options:addTickBox(
+    "ShowHighlightButton",
+    getText("UI_options_PZSurvivorToolkit_sidebar_button"),
+    true,
+    getText("UI_options_PZSurvivorToolkit_sidebar_button_tooltip")
+)
+
 local colorOption = options:addColorPicker(
     "Color",
     getText("UI_options_PZSurvivorToolkit_color"),
@@ -62,6 +69,14 @@ radiusOption:addItem(getText("UI_options_PZSurvivorToolkit_radius_10"), false)
 radiusOption:addItem(getText("UI_options_PZSurvivorToolkit_radius_15"), true)
 radiusOption:addItem(getText("UI_options_PZSurvivorToolkit_radius_20"), false)
 
+options:addTitle(getText("UI_options_PZSurvivorToolkit_clothing_title"))
+local clothingOption = options:addTickBox(
+    "NeutralClothingComparisons",
+    getText("UI_options_PZSurvivorToolkit_clothing_neutral"),
+    true,
+    getText("UI_options_PZSurvivorToolkit_clothing_neutral_tooltip")
+)
+
 local mediaWindowOption
 if getActivatedMods():contains("TVRadio_ReInvented") then
     options:addTitle(getText("UI_options_PZSurvivorToolkit_media_title"))
@@ -82,6 +97,14 @@ enabledOption.onChangeApply = notifySettingsChanged
 colorOption.onChangeApply = notifySettingsChanged
 toggleKeyOption.onChangeApply = notifySettingsChanged
 radiusOption.onChangeApply = notifySettingsChanged
+
+function Settings.showHighlightButton()
+    return sidebarOption:getValue() == true
+end
+
+function Settings.neutralClothingComparisons()
+    return clothingOption:getValue() == true
+end
 
 function Settings.keepMediaWindowOpen()
     return mediaWindowOption ~= nil and mediaWindowOption:getValue() == true

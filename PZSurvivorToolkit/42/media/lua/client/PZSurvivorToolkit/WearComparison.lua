@@ -1,8 +1,12 @@
 require "ISUI/ISInventoryPaneContextMenu"
+require "PZSurvivorToolkit/Settings"
+
+local Toolkit = PZSurvivorToolkit
 
 local original = ISInventoryPaneContextMenu.doWearClothingTooltip
 ISInventoryPaneContextMenu.doWearClothingTooltip = function(player, item, currentItem, option)
     local replaced = original(player, item, currentItem, option)
+    if not Toolkit.Settings.neutralClothingComparisons() then return replaced end
     local tooltip = option.toolTip
     if tooltip and tooltip.description then
         -- Colour the displayed delta: native integer formatting can turn small changes into zero.

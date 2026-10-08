@@ -1,7 +1,7 @@
 {
     "UI_options_PZSurvivorToolkit_name": "PZ Survivor Toolkit",
     "UI_options_PZSurvivorToolkit_title": "Настройки подсветки",
-    "UI_options_PZSurvivorToolkit_enabled": "Включено",
+    "UI_options_PZSurvivorToolkit_enabled": "Подсвечивать предметы",
     "UI_options_PZSurvivorToolkit_enabled_tooltip": "Подсвечивать только отдельные предметы, которые персонаж видит сейчас.",
     "UI_options_PZSurvivorToolkit_color": "Цвет подсветки",
     "UI_options_PZSurvivorToolkit_color_tooltip": "Выберите цвет подсветки. По умолчанию используется желто-оранжевый цвет.",
@@ -19,5 +19,10 @@
     "UI_PZSurvivorToolkit_button_tooltip": "Нажмите, чтобы переключить подсветку предметов. Клавиша: %1. Изменить её можно в Настройки > Моды > PZ Survivor Toolkit.",
     "UI_options_PZSurvivorToolkit_media_title": "Медиаплееры",
     "UI_options_PZSurvivorToolkit_media_window": "Не закрывать окна ТВ и радио при кликах снаружи",
-    "UI_options_PZSurvivorToolkit_media_window_tooltip": "TV & Radio ReInvented: клики по инвентарю и вне окна не закрывают его; используйте крестик. Отключите, чтобы вернуть исходное поведение."
+    "UI_options_PZSurvivorToolkit_media_window_tooltip": "TV & Radio ReInvented: клики по инвентарю и вне окна не закрывают его; используйте крестик. Отключите, чтобы вернуть исходное поведение.",
+    "UI_options_PZSurvivorToolkit_sidebar_button": "Показывать кнопку подсветки в боковой панели",
+    "UI_options_PZSurvivorToolkit_sidebar_button_tooltip": "Показывать переключатель подсветки слева. При скрытой кнопке можно использовать горячую клавишу или настройки мода.",
+    "UI_options_PZSurvivorToolkit_clothing_title": "Сравнение одежды",
+    "UI_options_PZSurvivorToolkit_clothing_neutral": "Показывать нулевое изменение защиты серым",
+    "UI_options_PZSurvivorToolkit_clothing_neutral_tooltip": "Нулевые изменения в меню «Надеть» показываются нейтральным серым. Отключите, чтобы сохранить исходные цвета игры."
 }

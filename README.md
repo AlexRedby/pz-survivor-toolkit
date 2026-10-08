@@ -6,7 +6,7 @@ A Lua mod for Project Zomboid Build 42. Highlights loose items on the ground to 
 
 ## Installation
 
-1. Download the ready-to-install [PZSurvivorToolkit.zip v0.1.5](https://raw.githubusercontent.com/AlexRedby/pz-survivor-toolkit/main/PZSurvivorToolkit.zip).
+1. Download the ready-to-install [PZSurvivorToolkit.zip v0.1.6](https://raw.githubusercontent.com/AlexRedby/pz-survivor-toolkit/main/PZSurvivorToolkit.zip).
 2. Copy the `PZSurvivorToolkit` folder into your `Zomboid/mods` directory, keeping its `common` and `42` subfolders intact.
 3. Enable **PZ Survivor Toolkit** in the game's Mods menu and for the save you want to play.
 
@@ -18,8 +18,10 @@ For our selected multiplayer mod set, see the [server/client installation steps]
 
 - Click **Items: ON / Items: OFF** at the bottom of the left sidebar to toggle highlighting.
 - **F8** is the default optional shortcut. Change it using **Options > Mods > PZ Survivor Toolkit > Toggle key**.
-- **Options > Mods > PZ Survivor Toolkit** provides the enabled switch, colour picker, toggle key binding and radius (5, 10, 15 or 20 tiles).
-- Defaults: enabled, orange, 15-tile radius. Settings are saved using the game's native Mod Options system.
+- **Options > Mods > PZ Survivor Toolkit** provides the highlight switch, colour picker, toggle key binding and radius (5, 10, 15 or 20 tiles).
+- **Show highlight button in sidebar** independently hides or restores the sidebar button; the shortcut and highlight setting still work while it is hidden.
+- **Show zero protection changes in grey** toggles clothing comparison colours. Disable it to keep the original game colours.
+- All optional feature switches default to on, are saved per client and apply without restarting. Defaults for highlighting: enabled, orange, 15-tile radius. Settings use the game's native Mod Options system. Compatibility and auto-drink bug fixes remain automatic.
 
 ## Visibility and rendering
 
