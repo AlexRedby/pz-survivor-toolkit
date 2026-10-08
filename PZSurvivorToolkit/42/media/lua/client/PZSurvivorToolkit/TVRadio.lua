@@ -29,19 +29,6 @@ local function availableTapes(player)
     return tapes
 end
 
-local function viewingStatus(player, item)
-    local media = item:getMediaData()
-    local total = media and media:getLineCount() or 0
-    if total == 0 then return 4, getText("UI_PZSurvivorToolkit_vhs_unknown") end
-    local known = 0
-    for i = 0, total - 1 do
-        if player:isKnownMediaLine(media:getLine(i):getTextGuid()) then known = known + 1 end
-    end
-    if known == total then return 3, getText("Tooltip_seen") end
-    if known > 0 then return 2, getText("UI_PZSurvivorToolkit_vhs_partial") .. " " .. known .. "/" .. total end
-    return 1, getText("UI_PZSurvivorToolkit_vhs_new")
-end
-
 local function installVHS()
     local class = RWMMergedTV
     if not class or TVRadio.tvClass == class then return end
@@ -54,17 +41,17 @@ local function installVHS()
         local playerNum = self.player:getPlayerNum()
         local choices = {}
         for _, item in ipairs(availableTapes(self.player)) do
-            local rank, status = viewingStatus(self.player, item)
-            choices[#choices + 1] = {item = item, rank = rank, name = item:getDisplayName(), status = status}
+            choices[#choices + 1] = {item = item, watched = item:hasBeenSeen(self.player), name = item:getDisplayName()}
         end
         if #choices == 0 then return end
         local menu = ISContextMenu.get(playerNum, self.slotVHS:getAbsoluteX(), self.slotVHS:getAbsoluteY())
         table.sort(choices, function(a, b)
-            if a.rank ~= b.rank then return a.rank < b.rank end
+            if a.watched ~= b.watched then return not a.watched end
             return a.name < b.name
         end)
         for _, choice in ipairs(choices) do
-            menu:addOption(choice.name .. " [" .. choice.status .. "]", self, self.addMediaAux, choice.item)
+            local option = menu:addOption(choice.name, self, self.addMediaAux, choice.item)
+            if choice.watched then option.iconTexture = getTexture("media/ui/Tick_Mark-10.png") end
         end
         menu.mouseOver = 1
         if JoypadState.players[playerNum + 1] then

@@ -26,9 +26,6 @@
     "UI_options_PZSurvivorToolkit_clothing_neutral": "Показывать нулевое изменение защиты серым",
     "UI_options_PZSurvivorToolkit_clothing_neutral_tooltip": "Нулевые изменения в меню «Надеть» показываются нейтральным серым. Отключите, чтобы сохранить исходные цвета игры.",
     "UI_options_PZSurvivorToolkit_vhs_controls": "Удобное управление VHS",
-    "UI_options_PZSurvivorToolkit_vhs_controls_tooltip": "Щелчок по вставленной кассете извлекает её. Выбирайте кассеты из доступных контейнеров или перетаскивайте их на слот. В списке показан прогресс просмотра вашего персонажа.",
-    "UI_PZSurvivorToolkit_vhs_slot_tooltip": "Щёлкните, чтобы выбрать VHS из инвентаря или доступных контейнеров. Перетащите VHS сюда, чтобы вставить. Щелчок по вставленной кассете извлекает её.",
-    "UI_PZSurvivorToolkit_vhs_new": "Новая",
-    "UI_PZSurvivorToolkit_vhs_partial": "Частично просмотрено",
-    "UI_PZSurvivorToolkit_vhs_unknown": "Неизвестно"
+    "UI_options_PZSurvivorToolkit_vhs_controls_tooltip": "Щелчок по вставленной кассете извлекает её. Выбирайте кассеты из доступных контейнеров или перетаскивайте их на слот. Полностью просмотренные кассеты отмечены галочкой, как в инвентаре.",
+    "UI_PZSurvivorToolkit_vhs_slot_tooltip": "Щёлкните, чтобы выбрать VHS из инвентаря или доступных контейнеров. Перетащите VHS сюда, чтобы вставить. Щелчок по вставленной кассете извлекает её."
 }
