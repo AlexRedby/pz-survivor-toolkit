@@ -1,0 +1,1 @@
+- User feedback: does the assigned-container transfer button still disappear with CleanUI enabled near a configured container after updating Toolkit? If yes, provide a screenshot showing the inventory toolbar and nearby loot pane, plus the active CleanUI version. CleanUI 2.9.7 shows the control under these conditions; the verified loss when switching CleanUI off has been fixed.

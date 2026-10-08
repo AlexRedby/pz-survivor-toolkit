@@ -12,6 +12,8 @@ def main() -> None:
     parser.add_argument("--native-mod-options", type=Path,
                         help="test against an extracted vanilla PZAPI/ModOptions.lua")
     parser.add_argument("--cci-source", type=Path, help="test against ContainerCapacityIndicator.lua")
+    parser.add_argument("--cleanui-inventory-pane", type=Path, help="test against CleanUI ISInventoryPane.lua")
+    parser.add_argument("--native-inventory-pane", type=Path, help="test against vanilla ISInventoryPane.lua")
     args = parser.parse_args()
     try:
         from lupa.lua51 import LuaRuntime
@@ -42,6 +44,15 @@ def main() -> None:
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)
     lua.execute((ROOT / "tests/test_vhs_ownership.lua").read_text(encoding="utf-8"))
+
+    for name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua"):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        if args.cleanui_inventory_pane:
+            lua.globals().CleanUIInventoryPaneSource = args.cleanui_inventory_pane.read_text(encoding="utf-8")
+        if args.native_inventory_pane:
+            lua.globals().NativeInventoryPaneSource = args.native_inventory_pane.read_text(encoding="utf-8")
+        lua.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

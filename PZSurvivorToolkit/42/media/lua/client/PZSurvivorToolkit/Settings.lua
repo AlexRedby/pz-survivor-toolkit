@@ -19,6 +19,9 @@ local function notifySettingsChanged()
     if Toolkit.TVRadio then
         Toolkit.TVRadio.settingsChanged()
     end
+    if Toolkit.InventoryFilter then
+        Toolkit.InventoryFilter.settingsChanged()
+    end
 end
 
 local options = PZAPI.ModOptions:create(
@@ -78,6 +81,14 @@ local clothingOption = options:addTickBox(
 )
 
 local mediaWindowOption, vhsControlsOption
+options:addTitle(getText("UI_options_PZSurvivorToolkit_inventory_title"))
+local inventoryFilterOption = options:addTickBox(
+    "InventoryFilters",
+    getText("UI_options_PZSurvivorToolkit_inventory_filters"),
+    true,
+    getText("UI_options_PZSurvivorToolkit_inventory_filters_tooltip")
+)
+
 if getActivatedMods():contains("TVRadio_ReInvented") then
     options:addTitle(getText("UI_options_PZSurvivorToolkit_media_title"))
     mediaWindowOption = options:addTickBox(
@@ -106,6 +117,10 @@ radiusOption.onChangeApply = notifySettingsChanged
 
 function Settings.showHighlightButton()
     return sidebarOption:getValue() == true
+end
+
+function Settings.inventoryFilters()
+    return inventoryFilterOption:getValue() == true
 end
 
 function Settings.neutralClothingComparisons()

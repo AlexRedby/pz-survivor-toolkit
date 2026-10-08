@@ -27,5 +27,10 @@
     "UI_options_PZSurvivorToolkit_clothing_neutral_tooltip": "Нулевые изменения в меню «Надеть» показываются нейтральным серым. Отключите, чтобы сохранить исходные цвета игры.",
     "UI_options_PZSurvivorToolkit_vhs_controls": "Удобное управление VHS",
     "UI_options_PZSurvivorToolkit_vhs_controls_tooltip": "Щелчок по вставленной кассете извлекает её. Выбирайте кассеты из доступных контейнеров или перетаскивайте их на слот. Полностью просмотренные кассеты отмечены галочкой, как в инвентаре.",
-    "UI_PZSurvivorToolkit_vhs_slot_tooltip": "Щёлкните, чтобы выбрать VHS из инвентаря или доступных контейнеров. Перетащите VHS сюда, чтобы вставить. Щелчок по вставленной кассете извлекает её."
+    "UI_PZSurvivorToolkit_vhs_slot_tooltip": "Щёлкните, чтобы выбрать VHS из инвентаря или доступных контейнеров. Перетащите VHS сюда, чтобы вставить. Щелчок по вставленной кассете извлекает её.",
+    "UI_options_PZSurvivorToolkit_inventory_title": "Инвентарь",
+    "UI_options_PZSurvivorToolkit_inventory_filters": "Фильтровать списки предметов",
+    "UI_options_PZSurvivorToolkit_inventory_filters_tooltip": "Выбирайте категорию рядом с заголовком столбца. Поиск CleanUI показывает только совпадения; без совпадений список пуст. Массовый перенос учитывает видимые предметы.",
+    "UI_PZSurvivorToolkit_all_categories": "Все категории / Сбросить фильтр",
+    "UI_PZSurvivorToolkit_category_filter": "Фильтр категорий"
 }
