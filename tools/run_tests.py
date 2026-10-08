@@ -11,6 +11,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--native-mod-options", type=Path,
                         help="test against an extracted vanilla PZAPI/ModOptions.lua")
+    parser.add_argument("--cci-source", type=Path, help="test against ContainerCapacityIndicator.lua")
     args = parser.parse_args()
     try:
         from lupa.lua51 import LuaRuntime
@@ -27,6 +28,12 @@ def main() -> None:
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)
     lua.execute((ROOT / "tests/test_auto_drink.lua").read_text(encoding="utf-8"))
+
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.globals().ProjectRoot = str(ROOT)
+    if args.cci_source:
+        lua.globals().CCISource = args.cci_source.read_text(encoding="utf-8")
+    lua.execute((ROOT / "tests/test_cci_compat.lua").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

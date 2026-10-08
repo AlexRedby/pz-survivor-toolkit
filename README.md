@@ -6,11 +6,13 @@ A Lua mod for Project Zomboid Build 42. Highlights loose items on the ground to 
 
 ## Installation
 
-1. Download this repository using **Code > Download ZIP**, or clone it.
+1. Download the ready-to-install [PZSurvivorToolkit.zip v0.1.3](https://raw.githubusercontent.com/AlexRedby/pz-survivor-toolkit/main/PZSurvivorToolkit.zip).
 2. Copy the `PZSurvivorToolkit` folder into your `Zomboid/mods` directory, keeping its `common` and `42` subfolders intact.
 3. Enable **PZ Survivor Toolkit** in the game's Mods menu and for the save you want to play.
 
 The usual mod directory is `~/Zomboid/mods` on macOS/Linux or `%UserProfile%\Zomboid\mods` on Windows. No additional mod dependency is required.
+
+For our selected multiplayer mod set, see the [server/client installation steps](MOD_INSTALL.md), [mod list](USEFUL_MODS.md) and [ordered server INI](SurvivorQoL-selected.ini). Toolkit must be installed manually on the server and every client; it has no Workshop item.
 
 ## Controls
 
@@ -37,6 +39,12 @@ Enable the toolkit on the server and each client. Each player controls auto-drin
 
 Water consumption remains native: this does not enable drinking from backpacks, mixtures or unsafe fluids. Tested on B42.21 with two local clients, both on a dedicated server and through Host. Checks cover opposing preferences, Options changes, empty/refilled bottles, server option reload and ordinary automatic drinking with bottle/thirst updates received by the client.
 
+## CleanUI / Container Capacity Indicator
+
+When using both mods, load them in this order: **NeatUI Framework, CleanUI, PZ Survivor Toolkit, Container Capacity Indicator**. Toolkit aligns CCI bars with CleanUI's visible inventory icons, including equipment headers, hidden equipment, expanded stacks and scaled icons. CCI keeps its own capacity calculations, colours and magazine setting. Without that pair, the adapter does nothing. If CCI loads before Toolkit, the adapter logs the required order and leaves its renderer unchanged.
+
+Checked in-game on B42.21 with CleanUI 2.9.7 and CCI 1.2.0 in the enhanced details view, including container reordering and 140% icon scale. Switching to vanilla or icon views at runtime has not been verified. The full selected mod set has not been tested together in multiplayer.
+
 ## Development
 
 Behavioural checks run with Lua 5.1 through Lupa. They use world/UI doubles; they are not visual in-game tests.
@@ -49,7 +57,9 @@ python3 tools/package_mod.py --check
 python3 tools/package_mod.py
 ```
 
-The package command writes `dist/PZSurvivorToolkit.zip`. Generated packages and local investigations are excluded from Git.
+The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`.
+
+The package command writes `dist/PZSurvivorToolkit.zip`; this directory and local investigations are excluded from Git. The published installation archive is `PZSurvivorToolkit.zip` at the repository root. Update it with `python3 tools/package_mod.py --output PZSurvivorToolkit.zip` when publishing mod changes.
 
 To run the same checks against your installed game's native Mod Options implementation:
 
