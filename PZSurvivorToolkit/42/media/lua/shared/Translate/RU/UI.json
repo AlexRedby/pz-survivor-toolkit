@@ -16,5 +16,8 @@
     "UI_PZSurvivorToolkit_button_on": "Лут: ВКЛ",
     "UI_PZSurvivorToolkit_button_off": "Лут: ВЫКЛ",
     "UI_PZSurvivorToolkit_no_shortcut": "Нет",
-    "UI_PZSurvivorToolkit_button_tooltip": "Нажмите, чтобы переключить подсветку предметов. Клавиша: %1. Изменить её можно в Настройки > Моды > PZ Survivor Toolkit."
+    "UI_PZSurvivorToolkit_button_tooltip": "Нажмите, чтобы переключить подсветку предметов. Клавиша: %1. Изменить её можно в Настройки > Моды > PZ Survivor Toolkit.",
+    "UI_options_PZSurvivorToolkit_media_title": "Медиаплееры",
+    "UI_options_PZSurvivorToolkit_media_window": "Не закрывать окна ТВ и радио при кликах снаружи",
+    "UI_options_PZSurvivorToolkit_media_window_tooltip": "TV & Radio ReInvented: клики по инвентарю и вне окна не закрывают его; используйте крестик. Отключите, чтобы вернуть исходное поведение."
 }

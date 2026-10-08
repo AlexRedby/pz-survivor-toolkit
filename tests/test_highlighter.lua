@@ -578,19 +578,73 @@ test("cleanup makes progress while the game is paused", function()
 end)
 
 if NativeModOptionsSource then
-    test("native ModOptions saves and reloads enabled, colour, radius and hotkey", function()
+    test("native ModOptions saves and reloads highlight and media-window settings", function()
         local w = setup()
         w:apply("Color", { r = 0.2, g = 0.4, b = 0.6, a = 0.8 })
         w:apply("Radius", 4)
         w:apply("ToggleKey", 12)
+        w:apply("KeepMediaWindowOpen", false)
         w.settings.toggle()
         local reloaded = setup(w.file)
         equal(reloaded.settings.isEnabled(), false)
         equal(reloaded.settings.getRadius(), 20)
         equal(reloaded.settings.getToggleKey(), 12)
         equal(reloaded.settings.getColor().g, 0.4)
+        equal(reloaded.settings.keepMediaWindowOpen(), false)
     end)
 end
+
+test("media windows keep outside clicks, native close and live option rollback", function()
+    local w = setup()
+    local active = false
+    getActivatedMods = function() return {contains = function(_, id) return active and id == "TVRadio_ReInvented" end} end
+    local button = {visible = false, width = 18}
+    function button:setVisible(value) self.visible = value end
+    function button:setX(value) self.x = value end
+    function button:setY(value) self.y = value end
+    function button:getWidth() return self.width end
+    function button:bringToTop() self.top = true end
+    local window = {closeButton = button, width = 283, visible = true}
+    function window:getWidth() return self.width end
+    function window:close() self.visible = false end
+    ISRadioWindow = {instances = {}, instancesIso = {[0] = window}, activate = function()
+        window.visible = true
+        button:setVisible(false)
+        return window
+    end, prerender = function(self) self.width = 366 end,
+    onMouseDownOutside = function(self, x, y)
+        if x < 0 or y < 0 or x > self.width or y > 300 then self:close() end
+        return "upstream"
+    end, update = function() end}
+    local original, update = ISRadioWindow.onMouseDownOutside, ISRadioWindow.update
+    require("PZSurvivorToolkit/TVRadio")
+    Events.OnGameStart.fire()
+    equal(ISRadioWindow.onMouseDownOutside, original, "inactive mod must stay untouched")
+    active = true
+    Events.OnGameStart.fire()
+    local hooked = ISRadioWindow.activate
+    Events.OnGameStart.fire()
+    equal(ISRadioWindow.activate, hooked, "repeated start must not stack wrappers")
+    equal(ISRadioWindow.activate(), window)
+    equal(button.visible, true)
+    equal(button.x, 262)
+    equal(button.top, true)
+    ISRadioWindow.prerender(window)
+    equal(button.x, 345, "close button follows the device layout")
+    ISRadioWindow.onMouseDownOutside(window, -20, 20)
+    equal(window.visible, true)
+    window:close()
+    equal(window.visible, false, "native close remains usable")
+    ISRadioWindow.activate()
+    w:apply("KeepMediaWindowOpen", false)
+    equal(button.visible, false, "applying options updates an already open window")
+    equal(ISRadioWindow.onMouseDownOutside(window, -20, 20), "upstream")
+    equal(window.visible, false)
+    w:apply("KeepMediaWindowOpen", true)
+    ISRadioWindow.activate()
+    equal(button.visible, true)
+    equal(ISRadioWindow.update, update, "range and device cleanup must remain native")
+end)
 
 test("wear comparisons keep zero neutral and preserve gains, losses and replacement items", function()
     local previousRequire = require

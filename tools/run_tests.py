@@ -35,6 +35,10 @@ def main() -> None:
         lua.globals().CCISource = args.cci_source.read_text(encoding="utf-8")
     lua.execute((ROOT / "tests/test_cci_compat.lua").read_text(encoding="utf-8"))
 
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.globals().ProjectRoot = str(ROOT)
+    lua.execute((ROOT / "tests/test_tv_videos.lua").read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     main()

@@ -16,5 +16,8 @@
     "UI_PZSurvivorToolkit_button_on": "Items: ON",
     "UI_PZSurvivorToolkit_button_off": "Items: OFF",
     "UI_PZSurvivorToolkit_no_shortcut": "None",
-    "UI_PZSurvivorToolkit_button_tooltip": "Click to toggle item highlights. Shortcut: %1. Change it in Options > Mods > PZ Survivor Toolkit."
+    "UI_PZSurvivorToolkit_button_tooltip": "Click to toggle item highlights. Shortcut: %1. Change it in Options > Mods > PZ Survivor Toolkit.",
+    "UI_options_PZSurvivorToolkit_media_title": "Media players",
+    "UI_options_PZSurvivorToolkit_media_window": "Keep TV/radio windows open",
+    "UI_options_PZSurvivorToolkit_media_window_tooltip": "TV & Radio ReInvented: inventory and outside clicks keep the window open; use the close button. Disable to restore the original behavior."
 }

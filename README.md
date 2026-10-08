@@ -6,7 +6,7 @@ A Lua mod for Project Zomboid Build 42. Highlights loose items on the ground to 
 
 ## Installation
 
-1. Download the ready-to-install [PZSurvivorToolkit.zip v0.1.3](https://raw.githubusercontent.com/AlexRedby/pz-survivor-toolkit/main/PZSurvivorToolkit.zip).
+1. Download the ready-to-install [PZSurvivorToolkit.zip v0.1.4](https://raw.githubusercontent.com/AlexRedby/pz-survivor-toolkit/main/PZSurvivorToolkit.zip).
 2. Copy the `PZSurvivorToolkit` folder into your `Zomboid/mods` directory, keeping its `common` and `42` subfolders intact.
 3. Enable **PZ Survivor Toolkit** in the game's Mods menu and for the save you want to play.
 
@@ -44,6 +44,14 @@ Water consumption remains native: this does not enable drinking from backpacks, 
 When using both mods, load them in this order: **NeatUI Framework, CleanUI, PZ Survivor Toolkit, Container Capacity Indicator**. Toolkit aligns CCI bars with CleanUI's visible inventory icons, including equipment headers, hidden equipment, expanded stacks and scaled icons. CCI keeps its own capacity calculations, colours and magazine setting. Without that pair, the adapter does nothing. If CCI loads before Toolkit, the adapter logs the required order and leaves its renderer unchanged.
 
 Checked in-game on B42.21 with CleanUI 2.9.7 and CCI 1.2.0 in the enhanced details view, including container reordering and 140% icon scale. Switching to vanilla or icon views at runtime has not been verified. The full selected mod set has not been tested together in multiplayer.
+
+## TV & Radio ReInvented
+
+With TV & Radio ReInvented enabled, inventory and outside clicks keep its windows open. Close the window with the restored X button at its top right. **Options > Mods > PZ Survivor Toolkit > Keep TV/radio windows open** is enabled by default; disabling it immediately restores the original outside-click closure and hidden close button. These settings are local to each client. Native device/range cleanup remains unchanged.
+
+On native macOS, Toolkit loads the 16 videos shipped with TV & Radio ReInvented v1.3 from the actual active mod directory. A separate `Project Zomboid.app/workshop` symlink is no longer required. Keep the complete TV mod installation, including its `.bik` files; a Lua-only copy cannot supply videos. Other platforms keep the upstream video loader. The translation fix is still needed for TV device recognition on Russian clients.
+
+Checked on native B42.21 macOS with an English and Russian client, CleanUI, CCI and the translation fix: 18 checks per client passed with the old symlink absent. Checks cover all 16 valid video textures, synchronized VHS playback, native close-button callbacks, live option changes and out-of-range cleanup. This was a short localhost multiplayer test; the full selected mod set and other platforms remain unverified.
 
 ## Development
 

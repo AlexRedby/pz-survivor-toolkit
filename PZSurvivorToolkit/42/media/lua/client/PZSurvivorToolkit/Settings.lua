@@ -16,6 +16,9 @@ local function notifySettingsChanged()
     if Toolkit.Highlighter and Toolkit.Highlighter.settingsChanged then
         Toolkit.Highlighter.settingsChanged()
     end
+    if Toolkit.TVRadio then
+        Toolkit.TVRadio.settingsChanged()
+    end
 end
 
 local options = PZAPI.ModOptions:create(
@@ -59,6 +62,14 @@ radiusOption:addItem(getText("UI_options_PZSurvivorToolkit_radius_10"), false)
 radiusOption:addItem(getText("UI_options_PZSurvivorToolkit_radius_15"), true)
 radiusOption:addItem(getText("UI_options_PZSurvivorToolkit_radius_20"), false)
 
+options:addTitle(getText("UI_options_PZSurvivorToolkit_media_title"))
+local mediaWindowOption = options:addTickBox(
+    "KeepMediaWindowOpen",
+    getText("UI_options_PZSurvivorToolkit_media_window"),
+    true,
+    getText("UI_options_PZSurvivorToolkit_media_window_tooltip")
+)
+
 options.apply = function()
     notifySettingsChanged()
 end
@@ -67,6 +78,11 @@ enabledOption.onChangeApply = notifySettingsChanged
 colorOption.onChangeApply = notifySettingsChanged
 toggleKeyOption.onChangeApply = notifySettingsChanged
 radiusOption.onChangeApply = notifySettingsChanged
+mediaWindowOption.onChangeApply = notifySettingsChanged
+
+function Settings.keepMediaWindowOpen()
+    return mediaWindowOption:getValue() == true
+end
 
 function Settings.isEnabled()
     if enabledOption and enabledOption.getValue then
