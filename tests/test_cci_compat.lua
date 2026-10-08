@@ -67,8 +67,11 @@ require = function(name)
     if name == 'ContainerCapacityIndicator' then assert(loadstring(source))() end
 end
 -- No dependencies: unchanged native rendering; wrong order: unchanged CCI hook.
-dofile(adapter)
-assert(ISInventoryPane.renderdetails == baseDetails)
+for _, selection in ipairs({{}, {CleanUI=true}, {ContainerCapacityIndicator=true}}) do
+    active = selection
+    dofile(adapter)
+    assert(ISInventoryPane.renderdetails == baseDetails)
+end
 active.CleanUI, active.ContainerCapacityIndicator = true, true
 options.ContainerCapacityIndicator = {}
 dofile(adapter)

@@ -6,7 +6,7 @@ local function equal(actual, expected, message)
     assert(actual == expected, (message or "values differ") .. ": " .. tostring(actual) .. " ~= " .. tostring(expected))
 end
 
-local function setup(savedFile)
+local function setup(savedFile, mediaActive)
     local world = { now = 0, squares = {}, objects = {}, saves = 0, file = savedFile or "",
         itemReads = 0, inspections = 0, maxItemReads = 0, maxInspections = 0 }
     local function event()
@@ -18,6 +18,9 @@ local function setup(savedFile)
         OnMainMenuEnter = event(), OnKeyPressed = event() }
     Keyboard = { KEY_F8 = 66 }
     PZSurvivorToolkit = {}
+    getActivatedMods = function()
+        return {contains = function(_, id) return mediaActive == true and id == "TVRadio_ReInvented" end}
+    end
     getText = function(key) return key end
     getTimestampMs = function() return world.now end
     world.player = { x = 0.5, y = 0.5, z = 0, num = 0, dead = false }
@@ -69,7 +72,8 @@ local function setup(savedFile)
                 -- Small option API double. Persistence integration uses extracted vanilla code.
                 PZAPI = { ModOptions = { Dict = {} } }
                 function PZAPI.ModOptions:create(id)
-                    local options = { dict = {}, addTitle = function() end }
+                    local options = { dict = {}, data = {} }
+                    function options:addTitle(text) self.data[#self.data + 1] = {type = "title", name = text} end
                     local function add(optionID, value)
                         local option = { value = value }
                         function option:getValue() return self.value end
@@ -579,13 +583,13 @@ end)
 
 if NativeModOptionsSource then
     test("native ModOptions saves and reloads highlight and media-window settings", function()
-        local w = setup()
+        local w = setup(nil, true)
         w:apply("Color", { r = 0.2, g = 0.4, b = 0.6, a = 0.8 })
         w:apply("Radius", 4)
         w:apply("ToggleKey", 12)
         w:apply("KeepMediaWindowOpen", false)
         w.settings.toggle()
-        local reloaded = setup(w.file)
+        local reloaded = setup(w.file, true)
         equal(reloaded.settings.isEnabled(), false)
         equal(reloaded.settings.getRadius(), 20)
         equal(reloaded.settings.getToggleKey(), 12)
@@ -594,8 +598,35 @@ if NativeModOptionsSource then
     end)
 end
 
+test("inactive TV mod leaves no media settings, even with a saved option", function()
+    local saved = "tickbox|PZSurvivorToolkit|KeepMediaWindowOpen|false\n"
+    local w = setup(saved, false)
+    equal(w.options.dict.KeepMediaWindowOpen, nil)
+    equal(w.settings.keepMediaWindowOpen(), false)
+    for _, entry in ipairs(w.options.data) do
+        assert(entry.name ~= "UI_options_PZSurvivorToolkit_media_title", "inactive mod title is visible")
+    end
+    w.options:apply()
+    if NativeModOptionsSource then
+        PZAPI.ModOptions:save()
+        saved = w.file
+    end
+    local enabled = setup(nil, true)
+    equal(enabled.settings.keepMediaWindowOpen(), true)
+    assert(enabled.options.dict.KeepMediaWindowOpen, "active mod option missing")
+    local found = false
+    for _, entry in ipairs(enabled.options.data) do
+        if entry.name == "UI_options_PZSurvivorToolkit_media_title" then found = true end
+    end
+    assert(found, "active mod section missing")
+    if NativeModOptionsSource then
+        local reenabled = setup(saved, true)
+        equal(reenabled.settings.keepMediaWindowOpen(), false, "disabling the mod must preserve its saved option")
+    end
+end)
+
 test("media windows keep outside clicks, native close and live option rollback", function()
-    local w = setup()
+    local w = setup(nil, true)
     local active = false
     getActivatedMods = function() return {contains = function(_, id) return active and id == "TVRadio_ReInvented" end} end
     local button = {visible = false, width = 18}

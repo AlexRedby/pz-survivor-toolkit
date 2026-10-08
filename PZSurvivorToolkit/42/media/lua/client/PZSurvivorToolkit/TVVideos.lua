@@ -1,5 +1,5 @@
 local function fixMacVideoPaths()
-    if not isSystemMacOS() or not RWMMergedTV then return end
+    if not getActivatedMods():contains("TVRadio_ReInvented") or not isSystemMacOS() or not RWMMergedTV then return end
     local mod = getModInfoByID("TVRadio_ReInvented")
     if not mod then return end
     local directory = mod:getVersionDir()

@@ -1,6 +1,8 @@
 local adapter = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/TVVideos.lua"
 local boot, mac, directory, exists, calls = nil, true, "/Users/test/mods/TVRadio Reinvented/42", true, {}
 local original = function() end
+local active = true
+getActivatedMods = function() return {contains = function(_, id) return active and id == "TVRadio_ReInvented" end} end
 isSystemMacOS = function() return mac end
 getModInfoByID = function(id)
     assert(id == "TVRadio_ReInvented")
@@ -24,6 +26,11 @@ dofile(adapter)
 boot()
 assert(probes == 0)
 RWMMergedTV = {getAllVideos = original}
+-- Installed-but-disabled mod, even if its class or metadata is available.
+active = false
+boot()
+assert(RWMMergedTV.getAllVideos == original and probes == 0)
+active = true
 mac = false
 boot()
 assert(RWMMergedTV.getAllVideos == original and probes == 0)
