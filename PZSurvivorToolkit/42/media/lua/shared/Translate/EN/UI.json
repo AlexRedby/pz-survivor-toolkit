@@ -24,5 +24,11 @@
     "UI_options_PZSurvivorToolkit_sidebar_button_tooltip": "Show the item-highlight toggle in the left sidebar. You can still use the shortcut or Mod Options when hidden.",
     "UI_options_PZSurvivorToolkit_clothing_title": "Clothing comparisons",
     "UI_options_PZSurvivorToolkit_clothing_neutral": "Show zero protection changes in grey",
-    "UI_options_PZSurvivorToolkit_clothing_neutral_tooltip": "Use neutral grey for zero changes in the Wear menu. Disable to keep the original game colours."
+    "UI_options_PZSurvivorToolkit_clothing_neutral_tooltip": "Use neutral grey for zero changes in the Wear menu. Disable to keep the original game colours.",
+    "UI_options_PZSurvivorToolkit_vhs_controls": "Improve VHS controls",
+    "UI_options_PZSurvivorToolkit_vhs_controls_tooltip": "Click a loaded tape to eject it. Select tapes from reachable containers or drag them onto the slot. The list shows your character's viewing progress.",
+    "UI_PZSurvivorToolkit_vhs_slot_tooltip": "Click to select a VHS from your inventory or nearby containers. Drag a VHS here to insert it. Click a loaded tape to eject it.",
+    "UI_PZSurvivorToolkit_vhs_new": "New",
+    "UI_PZSurvivorToolkit_vhs_partial": "In progress",
+    "UI_PZSurvivorToolkit_vhs_unknown": "Unknown"
 }

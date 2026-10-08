@@ -619,6 +619,7 @@ if NativeModOptionsSource then
         w:apply("Radius", 4)
         w:apply("ToggleKey", 12)
         w:apply("KeepMediaWindowOpen", false)
+        w:apply("ImproveVHSControls", false)
         w:apply("ShowHighlightButton", false)
         w:apply("NeutralClothingComparisons", false)
         w.settings.toggle()
@@ -628,6 +629,7 @@ if NativeModOptionsSource then
         equal(reloaded.settings.getToggleKey(), 12)
         equal(reloaded.settings.getColor().g, 0.4)
         equal(reloaded.settings.keepMediaWindowOpen(), false)
+        equal(reloaded.settings.improveVHSControls(), false)
         equal(reloaded.settings.showHighlightButton(), false)
         equal(reloaded.settings.neutralClothingComparisons(), false)
     end)
@@ -637,6 +639,8 @@ test("inactive TV mod leaves no media settings, even with a saved option", funct
     local saved = "tickbox|PZSurvivorToolkit|KeepMediaWindowOpen|false\n"
     local w = setup(saved, false)
     equal(w.options.dict.KeepMediaWindowOpen, nil)
+    equal(w.options.dict.ImproveVHSControls, nil)
+    equal(w.settings.improveVHSControls(), false)
     equal(w.settings.keepMediaWindowOpen(), false)
     for _, entry in ipairs(w.options.data) do
         assert(entry.name ~= "UI_options_PZSurvivorToolkit_media_title", "inactive mod title is visible")
@@ -648,6 +652,7 @@ test("inactive TV mod leaves no media settings, even with a saved option", funct
     end
     local enabled = setup(nil, true)
     equal(enabled.settings.keepMediaWindowOpen(), true)
+    equal(enabled.settings.improveVHSControls(), true)
     assert(enabled.options.dict.KeepMediaWindowOpen, "active mod option missing")
     local found = false
     for _, entry in ipairs(enabled.options.data) do

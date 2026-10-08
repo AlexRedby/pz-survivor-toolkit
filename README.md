@@ -55,6 +55,10 @@ On native macOS, Toolkit loads the 16 videos shipped with TV & Radio ReInvented 
 
 Checked on native B42.21 macOS with an English and Russian client, CleanUI, CCI and the translation fix: 18 checks per client passed with the old symlink absent. Checks cover all 16 valid video textures, synchronized VHS playback, native close-button callbacks, live option changes and out-of-range cleanup. This was a short localhost multiplayer test; the full selected mod set and other platforms remain unverified.
 
+**Improve VHS controls** adds direct click-to-eject, tapes from native reachable loot containers and personal bags, and drag-and-drop onto the TV slot. The slot turns green for a VHS and red for an invalid drop. The selection list sorts new tapes first, then partially watched tapes with known-line progress, then watched tapes; history belongs to the current character. Insertion uses native pickup and device actions, with ownership checked on client and server. Disable the option to restore the original TV slot/menu controls.
+
+The VHS controls passed 18 native B42.21 multiplayer checks on each of two clients (English/Russian), including container/bag/floor pickup, direct ejection, drag parsing, character-specific history, invalid and occupied drops, stale selections, server ownership checks and tape conservation. The rendered menus were also checked separately. The full selected mod set, physical mouse/controller input and long sessions remain unverified.
+
 ## Development
 
 Behavioural checks run with Lua 5.1 through Lupa. They use world/UI doubles; they are not visual in-game tests.

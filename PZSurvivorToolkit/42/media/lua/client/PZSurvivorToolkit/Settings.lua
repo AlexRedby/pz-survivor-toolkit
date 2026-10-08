@@ -77,7 +77,7 @@ local clothingOption = options:addTickBox(
     getText("UI_options_PZSurvivorToolkit_clothing_neutral_tooltip")
 )
 
-local mediaWindowOption
+local mediaWindowOption, vhsControlsOption
 if getActivatedMods():contains("TVRadio_ReInvented") then
     options:addTitle(getText("UI_options_PZSurvivorToolkit_media_title"))
     mediaWindowOption = options:addTickBox(
@@ -87,6 +87,12 @@ if getActivatedMods():contains("TVRadio_ReInvented") then
         getText("UI_options_PZSurvivorToolkit_media_window_tooltip")
     )
     mediaWindowOption.onChangeApply = notifySettingsChanged
+    vhsControlsOption = options:addTickBox(
+        "ImproveVHSControls",
+        getText("UI_options_PZSurvivorToolkit_vhs_controls"),
+        true,
+        getText("UI_options_PZSurvivorToolkit_vhs_controls_tooltip")
+    )
 end
 
 options.apply = function()
@@ -108,6 +114,10 @@ end
 
 function Settings.keepMediaWindowOpen()
     return mediaWindowOption ~= nil and mediaWindowOption:getValue() == true
+end
+
+function Settings.improveVHSControls()
+    return vhsControlsOption ~= nil and vhsControlsOption:getValue() == true
 end
 
 function Settings.isEnabled()
