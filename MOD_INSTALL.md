@@ -1,12 +1,12 @@
 # Установка нашего набора модов
 
-Для Steam-версии Project Zomboid B42.21. На сервере и у игроков должна быть одинаковая версия игры. Все 38 выбранных Mod ID прошли короткий MP-тест на macOS B42.21 с двумя клиентами EN/RU и Toolkit v0.1.12: по 33 проверки, 0 провалов. Долгие сессии не проверены. CleanUI и Container Capacity Indicator включены в переносимый INI; для полосок при переключении режимов CleanUI нужен Toolkit v0.1.12. Порядок `NeatUI_Framework;CleanUI;PZSurvivorToolkit;ContainerCapacityIndicator` уже выставлен, сохраняйте его.
+Для Steam-версии Project Zomboid B42.21. На сервере и у игроков должна быть одинаковая версия игры. Прежние 38 выбранных Mod ID прошли короткий MP-тест на macOS B42.21 с двумя клиентами EN/RU и Toolkit v0.1.12: по 33 проверки, 0 провалов. С organizedCategories набор из 39 Mod ID дополнительно прошёл MP-проверку инвентаря: по 19 проверок на двух клиентах EN/RU, 0 провалов. Долгие сессии не проверены. CleanUI и Container Capacity Indicator включены в переносимый INI; для полосок при переключении режимов CleanUI нужен Toolkit v0.1.12. Порядок `NeatUI_Framework;CleanUI;PZSurvivorToolkit;ContainerCapacityIndicator` уже выставлен, сохраняйте его.
 
 ## Сервер
 
 1. Остановите сервер. Для существующего сервера сохраните копию его INI.
 2. Возьмите [SurvivorQoL-selected.ini](SurvivorQoL-selected.ini). Для нового сервера положите его в папку `Zomboid/Server`. Для существующего перенесите из него только строки `Mods=` и `WorkshopItems=` в INI своего профиля.
-3. Сохраните порядок `Mods=`: **ZombieBuddy первым**, библиотеки перед зависимыми модами, основные Neat-моды перед XP-аддонами, Eat Smart перед Drink Smart. Всё это уже выставлено в нашем INI; варианты Neat Building UI Only и Eat Smart Integrated уже выбраны.
+3. Сохраните порядок `Mods=`: **ZombieBuddy первым**, библиотеки перед зависимыми модами, основные Neat-моды перед XP-аддонами, Eat Smart перед Drink Smart. `organizedCategories_core` загружайте последним; при добавлении к существующему миру переназначьте старые категории Manage Containers. Всё это уже выставлено в нашем INI; варианты Neat Building UI Only и Eat Smart Integrated уже выбраны.
 4. Установите локальный Toolkit по инструкции ниже. Одну и ту же версию папки мода передайте всем игрокам.
 5. Запустите нужный профиль: в **Host** выберите `SurvivorQoL-selected`, либо запустите выделенный сервер с `-servername SurvivorQoL-selected`. Если обновляли существующий профиль, используйте его имя. Сервер скачает Workshop-моды и зависимости из `WorkshopItems=`; подписываться на каждый вручную не нужно.
 
