@@ -1,13 +1,24 @@
 """Build against locally installed PZ and ZombieBuddy; no downloaded dependencies."""
-import argparse, os, shutil, subprocess, tempfile
+import argparse, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser()
-parser.add_argument('--game', type=Path, default=Path.home() / 'Library/Application Support/Steam/steamapps/common/ProjectZomboid/Project Zomboid.app/Contents/Java')
+game_defaults = {
+    'darwin': Path.home() / 'Library/Application Support/Steam/steamapps/common/ProjectZomboid/Project Zomboid.app/Contents/Java',
+    'win32': Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Steam/steamapps/common/ProjectZomboid',
+    'linux': Path.home() / '.steam/steam/steamapps/common/ProjectZomboid/projectzomboid',
+}
+parser.add_argument('--game', type=Path, default=game_defaults.get(sys.platform), help='Folder containing projectzomboid.jar and ZombieBuddy.jar')
 parser.add_argument('--jdk', type=Path)
 parser.add_argument('--check', action='store_true', help='Run original-engine versus woven-patch regression')
 args = parser.parse_args()
+if args.game is None:
+    parser.error('Pass --game with the folder containing projectzomboid.jar and ZombieBuddy.jar')
+if not (args.game / 'projectzomboid.jar').is_file():
+    parser.error(f'projectzomboid.jar not found in "{args.game}". Pass --game with the actual game Java folder.')
+if not (args.game / 'ZombieBuddy.jar').is_file():
+    parser.error(f'ZombieBuddy.jar not found in "{args.game}". Install the ZombieBuddy loader and copy its JAR to this folder.')
 if args.jdk is None:
     if 'JAVA_HOME' in os.environ: args.jdk = Path(os.environ['JAVA_HOME'])
     elif Path('/usr/libexec/java_home').exists(): args.jdk = Path(subprocess.check_output(['/usr/libexec/java_home'], text=True).strip())
