@@ -66,6 +66,9 @@ class BuildPaths(unittest.TestCase):
                 command = next(call.args[0] for call in calls if '-cp' in call.args[0])
                 self.assertEqual(command[command.index('-cp') + 1], os.pathsep.join(str(game / name) for name in ('projectzomboid.jar', 'ZombieBuddy.jar')))
                 self.assertTrue((self.root / 'build/PZNetworkFix/42/mod.info').is_file())
+                metadata = (self.root / 'build/PZNetworkFix/42/mod.info').read_text()
+                self.assertIn('javaJarFile=media/java/PZNetworkFix.jar\n', metadata)
+                self.assertNotIn('media/java/client/', metadata)
 
     def test_missing_zombiebuddy_is_explained_before_compiling(self):
         (self.root / 'projectzomboid.jar').touch()

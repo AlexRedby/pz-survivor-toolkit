@@ -39,11 +39,12 @@ classes.mkdir(parents=True)
 # Output targets Java 17; reading the game's Java 25 classes still requires javac 25+.
 subprocess.run([javac, '--release', '17', '-cp', classpath, '-d', str(classes), *map(str, (ROOT/'src').rglob('*.java'))], check=True)
 mod = ROOT / 'build/PZNetworkFix'
-jar = mod / '42/media/java/client/PZNetworkFix.jar'
+if mod.exists(): shutil.rmtree(mod)
+jar = mod / '42/media/java/PZNetworkFix.jar'
 jar.parent.mkdir(parents=True, exist_ok=True)
 (mod/'common').mkdir(exist_ok=True)
 subprocess.run([str(args.jdk/'bin/jar'), '--create', '--file', str(jar), '-C', str(classes), '.'], check=True)
-(mod/'42/mod.info').write_text('name=PZ Network Fix (Experimental)\nid=PZNetworkFix\nversion=0.1.0\nauthor=AlexRedby\nversionMin=42.21\nversionMax=42.21\nrequire=\\ZombieBuddy\njavaJarFile=media/java/client/PZNetworkFix.jar\njavaPkgName=net.alexredby.pznetworkfix\nZBVersionMin=2.3.4\ndescription=Experimental B42.21 client patch for zombie speed decoding and vehicle interpolation recovery. Requires the ZombieBuddy Java agent. Unsupported target bytecode disables the patches.\n')
+(mod/'42/mod.info').write_text('name=PZ Network Fix (Experimental)\nid=PZNetworkFix\nversion=0.1.1\nauthor=AlexRedby\nversionMin=42.21\nversionMax=42.21\nrequire=\\ZombieBuddy\njavaJarFile=media/java/PZNetworkFix.jar\njavaPkgName=net.alexredby.pznetworkfix\nZBVersionMin=2.3.4\ndescription=B42.21 fixes for client zombie speed decoding, vehicle interpolation recovery and authoritative cassette restart after stopping. Requires the ZombieBuddy Java agent on clients for network fixes and on the server for cassette playback. Unsupported target bytecode disables the patches.\n')
 for base in [mod/'common/media', mod/'42/media']:
     for name in ['AnimSets', 'actiongroups']: (base/name).mkdir(parents=True, exist_ok=True)
 print(jar)
@@ -51,10 +52,14 @@ print(jar)
 if args.check:
     testclasses = ROOT / 'build/test-classes'
     testclasses.mkdir(exist_ok=True)
-    subprocess.run([javac, '--release', '17', '-cp', classpath + os.pathsep + str(jar), '-d', str(testclasses), str(ROOT/'tests/zombie/vehicles/NativeChecks.java')], check=True)
-    with tempfile.TemporaryDirectory(prefix='pz-network-native-') as cache:
-        result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1', '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join([str(testclasses), str(jar), classpath]), 'zombie.vehicles.NativeChecks'], cwd=args.game, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    (ROOT/'build/native-checks.log').write_text(result.stdout)
-    print(result.stdout)
-    result.check_returncode()
-    if 'NATIVE_CHECKS_PASS' not in result.stdout: raise RuntimeError('Native regression did not complete')
+    checks = {'zombie.vehicles.NativeChecks': 'NATIVE_CHECKS_PASS',
+              'zombie.radio.devices.MediaChecks': 'MEDIA_CHECKS_PASS'}
+    sources = [ROOT / 'tests' / (name.replace('.', '/') + '.java') for name in checks]
+    subprocess.run([javac, '--release', '17', '-cp', classpath + os.pathsep + str(jar), '-d', str(testclasses), *map(str, sources)], check=True)
+    for name, marker in checks.items():
+        with tempfile.TemporaryDirectory(prefix='pz-network-native-') as cache:
+            result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1', '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join([str(testclasses), str(jar), classpath]), name], cwd=args.game, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        (ROOT / 'build' / (name.rsplit('.', 1)[-1] + '.log')).write_text(result.stdout)
+        print(result.stdout)
+        result.check_returncode()
+        if marker not in result.stdout: raise RuntimeError(name + ' regression did not complete')

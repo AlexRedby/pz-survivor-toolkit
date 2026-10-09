@@ -63,6 +63,8 @@ Toolkit v0.1.12 passed 18 native B42.21 VHS multiplayer checks per English/Russi
 
 [PZ Network Fix](NetworkFix/README.md) is an independent Java mod for B42.21. Its source, build script and tests live in `NetworkFix/`; installation requires a separate build and ZombieBuddy setup. It is enabled separately from Toolkit and is not included in the default selected mod set. See its guide for installation, supported fixes and multiplayer test limits.
 
+Network Fix 0.1.1 also cancels the old server stop timer when restarting a VHS cassette. The original engine loses playback after rapid Stop/Play; the patched B42.21 server and two English/Russian clients passed eight checks each, including synchronized controls, cassette dialogue, 62.5 XP per character and normal completion. The Java loader must run in the server process. The Windows Host launcher still needs platform verification.
+
 ## Development
 
 Behavioural checks run with Lua 5.1 through Lupa. They use world/UI doubles; they are not visual in-game tests.
