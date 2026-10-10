@@ -32,5 +32,6 @@
     "UI_options_PZSurvivorToolkit_inventory_filters": "Filter inventory lists",
     "UI_options_PZSurvivorToolkit_inventory_filters_tooltip": "Select a category beside the Category heading. CleanUI searches show only matches; no matches show an empty list. Bulk transfers respect the visible items.",
     "UI_PZSurvivorToolkit_all_categories": "All categories / Clear filter",
-    "UI_PZSurvivorToolkit_category_filter": "Category filter"
+    "UI_PZSurvivorToolkit_category_filter": "Category filter",
+    "UI_PZSurvivorToolkit_uninstall_ground": "Uninstall to ground"
 }

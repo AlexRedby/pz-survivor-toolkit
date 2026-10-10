@@ -17,6 +17,7 @@ def main() -> None:
     parser.add_argument("--proximity-source", type=Path, help="test against ProximityInventory.lua and sibling ISInventoryPage.lua")
     parser.add_argument("--tv-source", type=Path, help="test VHS controls against TVRadio Reinvented RWMMergedTV.lua")
     parser.add_argument("--native-radio-root", type=Path, help="vanilla media/lua/client directory for RWMMedia and ISItemDropBox checks")
+    parser.add_argument("--native-uninstall", type=Path, help="vanilla ISUninstallVehiclePart.lua for ground-placement checks")
     args = parser.parse_args()
     try:
         from lupa.lua51 import LuaRuntime
@@ -47,6 +48,12 @@ def main() -> None:
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)
     lua.execute((ROOT / "tests/test_vhs_ownership.lua").read_text(encoding="utf-8"))
+
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.globals().ProjectRoot = str(ROOT)
+    if args.native_uninstall:
+        lua.globals().NativeUninstallSource = args.native_uninstall.read_text(encoding="utf-8")
+    lua.execute((ROOT / "tests/test_vehicle_ground.lua").read_text(encoding="utf-8"))
 
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)

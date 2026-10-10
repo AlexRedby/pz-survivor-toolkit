@@ -32,5 +32,6 @@
     "UI_options_PZSurvivorToolkit_inventory_filters": "Фильтровать списки предметов",
     "UI_options_PZSurvivorToolkit_inventory_filters_tooltip": "Выбирайте категорию рядом с заголовком столбца. Поиск CleanUI показывает только совпадения; без совпадений список пуст. Массовый перенос учитывает видимые предметы.",
     "UI_PZSurvivorToolkit_all_categories": "Все категории / Сбросить фильтр",
-    "UI_PZSurvivorToolkit_category_filter": "Фильтр категорий"
+    "UI_PZSurvivorToolkit_category_filter": "Фильтр категорий",
+    "UI_PZSurvivorToolkit_uninstall_ground": "Снять на землю"
 }

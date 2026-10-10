@@ -1,7 +1,7 @@
 name=PZ Survivor Toolkit
 id=PZSurvivorToolkit
 author=AlexRedby
-modversion=0.1.12
+modversion=0.1.13
 category=features
 icon=icon.png
 poster=icon.png
@@ -12,6 +12,7 @@ description=Visibility: Only items in your character's current field of view are
 description=Rendering: Uses native outlines or colour tints, depending on the item renderer.<LINE><LINE>
 description=Clothing comparisons: Optional neutral grey for zero changes in the Wear menu. Gains and losses retain the game's configured colours.<LINE><LINE>
 description=Multiplayer auto-drink: Respects each player's own setting, including changes in Options. The host's saved preference no longer blocks other players.<LINE><LINE>
+description=Vehicle mechanics: Adds Uninstall to ground beside the native Uninstall action, for any removable part without a weight threshold. Native tools, skills, duration and success checks remain in effect. Requires Toolkit on the server and every client.<LINE><LINE>
 description=CleanUI / Container Capacity Indicator: Aligns bars with visible inventory icons, including hidden equipment and scaled icons. Load order: CleanUI, PZSurvivorToolkit, ContainerCapacityIndicator.<LINE><LINE>
 description=TV & Radio ReInvented: Keeps windows open and adds a close button. Click loaded VHS to eject; select tapes from reachable containers or drag them onto the slot. Fully watched tapes have the inventory checkmark. Configurable in Mod Options. Fixes native macOS video paths.<LINE><LINE>
 description=Inventory: Select categories from the Category header dropdown. CleanUI searches hide nonmatching items. Fixes grouped-item arrow spacing and Manage Containers registration when switching CleanUI off. Inventory filters can be disabled in Mod Options. Preserves marquee and Shift selection across inventory redraws, including the Proximity Inventory combined view. Proximity Inventory respects manually selected loot containers when changing your carried bags or transferring items.<LINE><LINE>

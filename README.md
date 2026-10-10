@@ -59,6 +59,14 @@ Checked on native B42.21 macOS with an English and Russian client, CleanUI, CCI 
 
 Toolkit v0.1.12 passed 18 native B42.21 VHS multiplayer checks per English/Russian client with all 38 selected Mod IDs loaded, including container/bag/floor pickup, direct ejection, character-specific history and checkmarks, invalid/occupied drops, stale selections, server ownership and tape conservation. No gameplay exceptions occurred during this short localhost scenario. Combined with the 15 inventory/CCI checks, each client passed 33 checks. Physical mouse/controller input and long sessions remain unverified.
 
+## Vehicle mechanics
+
+Right-click a removable part in the vehicle mechanics window and select **Uninstall to ground** (**Снять на землю** in Russian). The part is left at your character's feet when removal succeeds, including light bulbs and heavy parts; there is no weight threshold. Tools, skills, work duration and the chance of damaging a part remain native. The original **Uninstall** action keeps its usual inventory destination and its fallback to the ground when the inventory has no room.
+
+In multiplayer, install Toolkit on the server and every client. No additional mod or Java patch is required for this action.
+
+Toolkit v0.1.13 passed 13 native B42.21 checks per English/Russian client and six server checks: light/heavy parts (test weights 0.1 and 1000), radio, hood/tool actions, ordinary inventory removal and cancellation. Every successful ground removal left exactly one item visible to both clients, including on tiles already holding more than 50 weight. The isolated test used instant timed actions and only Toolkit plus its test helper. Windows Host mode, modded vehicles and physical input remain unverified.
+
 ## Separate experimental Network Fix
 
 [PZ Network Fix](NetworkFix/README.md) is an independent Java mod for B42.21. Its source, build script and tests live in `NetworkFix/`; installation requires a separate build and ZombieBuddy setup. It is enabled separately from Toolkit and is not included in the default selected mod set. See its guide for installation, supported fixes and multiplayer test limits.
@@ -78,6 +86,8 @@ python3 tools/package_mod.py
 ```
 
 The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`. VHS menu, sorting, drop validation and live toggle checks run by default; add `--tv-source /path/to/RWMMergedTV.lua --native-radio-root /path/to/media/lua/client` to also exercise the native media actions and drag parser.
+
+Vehicle ground-placement regressions run by default. Add `--native-uninstall /path/to/media/lua/shared/Vehicles/TimedActions/ISUninstallVehiclePart.lua` to exercise the installed game's actual removal completion, including failure, callbacks and its existing ground fallback.
 
 The optional package command writes `dist/PZSurvivorToolkit.zip` for local use. Generated archives are excluded from Git; installation only requires the source `PZSurvivorToolkit` folder.
 
