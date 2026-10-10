@@ -33,5 +33,9 @@
     "UI_options_PZSurvivorToolkit_inventory_filters_tooltip": "Выбирайте категорию рядом с заголовком столбца. Поиск CleanUI показывает только совпадения; без совпадений список пуст. Массовый перенос учитывает видимые предметы.",
     "UI_PZSurvivorToolkit_all_categories": "Все категории / Сбросить фильтр",
     "UI_PZSurvivorToolkit_category_filter": "Фильтр категорий",
-    "UI_PZSurvivorToolkit_uninstall_ground": "Снять на землю"
+    "UI_PZSurvivorToolkit_uninstall_ground": "Снять на землю",
+    "UI_options_PZSurvivorToolkit_bulk_dismantle": "Разбор выделенной электроники",
+    "UI_options_PZSurvivorToolkit_bulk_dismantle_tooltip": "Добавляет массовый разбор выделенных часов и другой электроники. Пропускает избранное, надетое и предметы в руках. Сохраняет обычные рецепты, инструменты, время и опыт.",
+    "UI_PZSurvivorToolkit_dismantle_selected": "Разобрать выделенное (%1)",
+    "UI_PZSurvivorToolkit_dismantle_one": "Один предмет"
 }

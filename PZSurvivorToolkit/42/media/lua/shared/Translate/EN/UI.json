@@ -33,5 +33,9 @@
     "UI_options_PZSurvivorToolkit_inventory_filters_tooltip": "Select a category beside the Category heading. CleanUI searches show only matches; no matches show an empty list. Bulk transfers respect the visible items.",
     "UI_PZSurvivorToolkit_all_categories": "All categories / Clear filter",
     "UI_PZSurvivorToolkit_category_filter": "Category filter",
-    "UI_PZSurvivorToolkit_uninstall_ground": "Uninstall to ground"
+    "UI_PZSurvivorToolkit_uninstall_ground": "Uninstall to ground",
+    "UI_options_PZSurvivorToolkit_bulk_dismantle": "Dismantle selected electronics",
+    "UI_options_PZSurvivorToolkit_bulk_dismantle_tooltip": "Adds a bulk dismantle command for selected watches and other electronics. Skips favourites and worn/held items. Uses normal recipes, tools, time and XP.",
+    "UI_PZSurvivorToolkit_dismantle_selected": "Dismantle selected (%1)",
+    "UI_PZSurvivorToolkit_dismantle_one": "One item"
 }

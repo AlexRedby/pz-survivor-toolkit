@@ -88,6 +88,12 @@ local inventoryFilterOption = options:addTickBox(
     true,
     getText("UI_options_PZSurvivorToolkit_inventory_filters_tooltip")
 )
+local bulkDismantleOption = options:addTickBox(
+    "BulkDismantle",
+    getText("UI_options_PZSurvivorToolkit_bulk_dismantle"),
+    true,
+    getText("UI_options_PZSurvivorToolkit_bulk_dismantle_tooltip")
+)
 
 if getActivatedMods():contains("TVRadio_ReInvented") then
     options:addTitle(getText("UI_options_PZSurvivorToolkit_media_title"))
@@ -121,6 +127,10 @@ end
 
 function Settings.inventoryFilters()
     return inventoryFilterOption:getValue() == true
+end
+
+function Settings.bulkDismantle()
+    return bulkDismantleOption:getValue() == true
 end
 
 function Settings.neutralClothingComparisons()
