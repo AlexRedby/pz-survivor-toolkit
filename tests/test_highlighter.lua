@@ -622,6 +622,7 @@ if NativeModOptionsSource then
         w:apply("ImproveVHSControls", false)
         w:apply("ShowHighlightButton", false)
         w:apply("NeutralClothingComparisons", false)
+        w:apply("BulkDismantle", false)
         w.settings.toggle()
         local reloaded = setup(w.file, true)
         equal(reloaded.settings.isEnabled(), false)
@@ -632,6 +633,7 @@ if NativeModOptionsSource then
         equal(reloaded.settings.improveVHSControls(), false)
         equal(reloaded.settings.showHighlightButton(), false)
         equal(reloaded.settings.neutralClothingComparisons(), false)
+        equal(reloaded.settings.bulkDismantle(), false)
     end)
 end
 

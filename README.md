@@ -21,7 +21,10 @@ For our selected multiplayer mod set, see the [server/client installation steps]
 - **Options > Mods > PZ Survivor Toolkit** provides the highlight switch, colour picker, toggle key binding and radius (5, 10, 15 or 20 tiles).
 - **Show highlight button in sidebar** independently hides or restores the sidebar button; the shortcut and highlight setting still work while it is hidden.
 - **Show zero protection changes in grey** toggles clothing comparison colours. Disable it to keep the original game colours.
+- **Dismantle selected electronics** adds **Dismantle selected (N)** when at least two eligible items are selected, including grouped stacks and mixed electronics. Supports the native simple electronics, electronic devices, miscellaneous electronics, power bars and battery-lighter dismantling recipes. Favourites and worn/held items are skipped. Each action binds its selected item explicitly and keeps native tools, duration, outputs and XP; tools from reachable containers are transferred once and returned after the batch. Normal cancellation stops the remaining queue. Disable this feature in Mod Options to hide the command.
 - All optional feature switches default to on, are saved per client and apply without restarting. Defaults for highlighting: enabled, orange, 15-tile radius. Settings use the game's native Mod Options system. Compatibility and auto-drink bug fixes remain automatic.
+
+Bulk dismantling passed 10 native B42.21 multiplayer checks per English/Russian client with seven relevant Mod IDs loaded, including CleanUI, Better Containers, Neat Crafting and Tidy Up Meister. The checks covered exact mixed selections, personal-bag and nearby-container transfers, tool return, native XP, cancellation and a removed selected item. No gameplay exceptions occurred in this short localhost scenario. The full selected mod set, physical mouse/controller input and long sessions have not been checked for this feature.
 
 ## Visibility and rendering
 
