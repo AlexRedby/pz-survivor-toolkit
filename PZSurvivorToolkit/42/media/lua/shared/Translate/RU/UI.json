@@ -35,5 +35,6 @@
     "UI_PZSurvivorToolkit_category_filter": "Фильтр категорий",
     "UI_options_PZSurvivorToolkit_bulk_dismantle": "Разбор выделенной электроники",
     "UI_options_PZSurvivorToolkit_bulk_dismantle_tooltip": "Добавляет массовый разбор выделенных часов и другой электроники. Пропускает избранное, надетое и предметы в руках. Сохраняет обычные рецепты, инструменты, время и опыт.",
-    "UI_PZSurvivorToolkit_dismantle_selected": "Разобрать выделенное (%1)"
+    "UI_PZSurvivorToolkit_dismantle_selected": "Разобрать выделенное (%1)",
+    "UI_PZSurvivorToolkit_dismantle_one": "Один предмет"
 }

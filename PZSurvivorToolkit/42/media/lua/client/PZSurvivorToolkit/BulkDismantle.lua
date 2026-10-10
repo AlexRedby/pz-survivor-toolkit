@@ -110,7 +110,24 @@ function Bulk.queue(player, entries)
                 local item = inputs:get(i)
                 if item:getContainer() ~= player:getInventory() and not moved[item:getID()] then
                     moved[item:getID()] = true
-                    ISInventoryPaneContextMenu.transferIfNeeded(player, item)
+                    if luautils.haveToBeTransfered(player, item) then
+                        local transfer = ISInventoryTransferUtil.newInventoryTransferAction(player,
+                            item, item:getContainer(), player:getInventory())
+                        -- Keep this guard when an ordinary pickup is already queued.
+                        transfer:setOnComplete(function() end)
+                        local stop = transfer.stop
+                        transfer.stop = function(self)
+                            -- B42 cancellation uses a client-local ID without an owner on the server.
+                            if isClient() and self.transactionId ~= 0
+                                and isItemTransactionRejected(self.transactionId)
+                                and not isItemTransactionDone(self.transactionId) then
+                                removeItemTransaction(self.transactionId, false)
+                                self.transactionId = 0
+                            end
+                            return stop(self)
+                        end
+                        ISTimedActionQueue.add(transfer)
+                    end
                     if kept:contains(item) then returnItems[#returnItems + 1] = item end
                 end
             end
@@ -122,15 +139,58 @@ function Bulk.queue(player, entries)
     return count
 end
 
+local function dismantleOptions(context, found)
+    for _, option in ipairs(context.options) do
+        if option.toolkitBulkDismantle or (option.onSelect == ISInventoryPaneContextMenu.OnNewCraft
+            and option.param1 and recipes[option.param1:getName()]) then
+            found[#found + 1] = {context = context, option = option}
+        else
+            local submenu = context:getSubMenu(option.subOption)
+            if submenu then dismantleOptions(submenu, found) end
+        end
+    end
+end
+
 local function fillMenu(playerIndex, context, rows)
     if not Toolkit.Settings.bulkDismantle() then return end
     local player = getSpecificPlayer(playerIndex)
     if not player or player:isDead() then return end
     local entries = Bulk.entries(player, rows)
     if #entries < 2 then return end
-    local option = context:addOption(getText("UI_PZSurvivorToolkit_dismantle_selected", #entries),
-        player, Bulk.queue, entries)
-    option.iconTexture = getTexture("Item_Screwdriver")
+    local found = {}
+    dismantleOptions(context, found)
+    if #found == 0 then
+        -- Vanilla omits recipe actions for mixed item types; build the native one-item anchor.
+        local available = ArrayList.new()
+        available:add(entries[1].recipe)
+        ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(entries[1].item,
+            context, available, playerIndex, ISInventoryPaneContextMenu.getContainers(player))
+        dismantleOptions(context, found)
+    end
+    for _, entry in ipairs(found) do
+        local menu, option = entry.context, entry.option
+        if not option.toolkitBulkDismantle then
+            local submenu = menu:getSubMenu(option.subOption)
+            if not submenu then
+                submenu = menu:getNew(menu)
+                local single = submenu:addOption(getText("UI_PZSurvivorToolkit_dismantle_one"),
+                    option.target, option.onSelect, option.param1, option.param2, option.param3,
+                    option.param4, option.param5, option.param6, option.param7, option.param8,
+                    option.param9, option.param10)
+                for _, key in ipairs({"iconTexture", "itemForTexture", "color", "toolTip", "notAvailable"}) do
+                    single[key] = option[key]
+                end
+                option.onSelect = nil
+                menu:addSubMenu(option, submenu)
+            end
+            option.toolkitBulkDismantle = true
+            local bulk = submenu:addOption(getText("UI_PZSurvivorToolkit_dismantle_selected", #entries),
+                player, Bulk.queue, entries)
+            bulk.iconTexture = option.iconTexture
+            bulk.itemForTexture = option.itemForTexture
+            bulk.color = option.color
+        end
+    end
 end
 
 Events.OnFillInventoryObjectContextMenu.Add(fillMenu)

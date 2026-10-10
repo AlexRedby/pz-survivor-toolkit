@@ -5,7 +5,7 @@ PZSurvivorToolkit = {Settings = {bulkDismantle = function() return enabled end}}
 Events = {OnFillInventoryObjectContextMenu = {Add = function(fn) fill = fn end}}
 ResourceType = {Item = 1}
 instanceof = function(item) return item and item.id ~= nil end
-getText = function(_, count) return 'Dismantle selected (' .. count .. ')' end
+getText = function(key, count) if key=='UI_PZSurvivorToolkit_dismantle_one' then return 'One item' end;return 'Dismantle selected (' .. count .. ')' end
 getTexture = function(name) return name end
 getSpecificPlayer = function(index) assert(index == 1); return player end
 
@@ -50,6 +50,19 @@ player = {getInventory = function() return root end,
     isDead = function() return dead == true end}
 ISInventoryPaneContextMenu = {getContainers = function(p) assert(p == player); return list({root, bag}) end,
     transferIfNeeded = function(p, value) assert(p == player); queued[#queued + 1] = {transfer = value} end}
+local client, rejected, done, stopped, removed = true, false, false, {}, {}
+luautils = {haveToBeTransfered = function() return true end}
+isClient = function() return client end
+isItemTransactionRejected = function(id) assert(id == 17); return rejected end
+isItemTransactionDone = function(id) assert(id == 17); return done end
+removeItemTransaction = function(id, cancel) removed[#removed + 1] = {id, cancel} end
+ISInventoryTransferUtil = {newInventoryTransferAction = function(p, value, source, destination)
+    assert(p == player and source == value:getContainer() and destination == root)
+    return {transfer = value, transactionId = 17, setOnComplete = function(self, fn) self.onCompleteFunc = fn end, stop = function(self)
+        stopped[#stopped + 1] = self.transactionId
+        removeItemTransaction(self.transactionId, true)
+    end}
+end}
 ISCraftingUI = {ReturnItemsToOriginalContainer = function(_, values) returned = values end}
 CraftRecipeManager = {getUniqueRecipeItems = function(value)
     if value.noRecipes then return nil end
@@ -128,24 +141,105 @@ a.noRecipes = true
 assert(#bulk.entries(player, {a}) == 0, 'nil recipe list must be harmless')
 a.noRecipes = nil
 
-local menu = {options = {}}
-function menu:addOption(label, target, callback, values)
-    local option = {label = label, target = target, callback = callback, values = values}
-    self.options[#self.options + 1] = option
+local function newMenu()
+    local menu = {options = {}}
+    function menu:addOption(name, target, onSelect, ...)
+        local option = {name = name, target = target, onSelect = onSelect}
+        for i = 1, select('#', ...) do option['param' .. i] = select(i, ...) end
+        self.options[#self.options + 1] = option
+        return option
+    end
+    function menu:getNew() return newMenu() end
+    function menu:getSubMenu(subOption) return subOption end
+    function menu:addSubMenu(option, submenu) option.subOption = submenu end
+    return menu
+end
+local nativeCalls, fallbackCalls = {}, 0
+ISInventoryPaneContextMenu.OnNewCraft = function(...) nativeCalls = {...} end
+local scrapIcon, nativeTooltip, nativeColor = {}, {}, {}
+ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu = function(selected, context, recipes, index)
+    fallbackCalls = fallbackCalls + 1
+    local option = context:addOption('Native dismantle', selected, ISInventoryPaneContextMenu.OnNewCraft,
+        recipes:get(0), index, false, 0.25)
+    option.iconTexture, option.toolTip, option.color = scrapIcon, nativeTooltip, nativeColor
     return option
 end
+-- An already rejected transaction must not cancel another client's same-numbered transfer.
+queued, removed, stopped = {}, {}, {}
+bulk.queue(player, bulk.entries(player, {c}))
+local transfer = queued[1];assert(transfer.transfer and transfer.stop and transfer.onCompleteFunc, 'guarded pickup must block native merging with an ordinary preceding transfer')
+rejected = true;transfer:stop()
+assert(#removed == 2 and removed[1][1] == 17 and removed[1][2] == false
+    and removed[2][1] == 0 and stopped[1] == 0, 'rejected pickup needs local cleanup without network cancellation')
+rejected, queued, removed, stopped = false, {}, {}, {}
+bulk.queue(player, bulk.entries(player, {c}));queued[1]:stop()
+assert(#removed == 1 and removed[1][1] == 17 and removed[1][2] == true
+    and stopped[1] == 17, 'manual cancellation must keep the native stop path')
+client, rejected, queued, removed = false, true, {}, {}
+bulk.queue(player, bulk.entries(player, {c}));queued[1]:stop()
+assert(#removed == 1 and removed[1][1] == 17, 'single-player stop must stay native')
+client, rejected, done, queued, removed = true, true, true, {}, {}
+bulk.queue(player, bulk.entries(player, {c}));queued[1]:stop()
+assert(#removed == 1 and removed[1][1] == 17 and removed[1][2] == true,
+    'missing local transaction must not be mistaken for an acknowledged rejection')
+done, rejected = false, false
+
+local menu = newMenu()
+local original = ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(a, menu, list({simple}), 1)
 fill(1, menu, {a})
-assert(#menu.options == 0, 'single-item selection must retain only native menu')
-fill(1, menu, {a, b})
-assert(#menu.options == 1 and menu.options[1].label == 'Dismantle selected (2)')
+assert(#menu.options == 1 and not original.subOption, 'single selection must keep native action unchanged')
+fill(1, menu, {a, c})
+assert(#menu.options == 1 and not original.onSelect and original.subOption, 'reuse native row without top-level duplicate')
+local single, batch = original.subOption.options[1], original.subOption.options[2]
+assert(single.name == 'One item' and batch.name == 'Dismantle selected (2)')
+assert(original.iconTexture == scrapIcon and single.iconTexture == scrapIcon and batch.iconTexture == scrapIcon,
+    'all variants must use native recipe-result icon')
+assert(single.toolTip == nativeTooltip and single.color == nativeColor)
+single.onSelect(single.target, single.param1, single.param2, single.param3, single.param4)
+assert(nativeCalls[1] == a and nativeCalls[2] == simple and nativeCalls[3] == 1
+    and nativeCalls[4] == false and nativeCalls[5] == 0.25, 'native callback and arguments must survive')
+local calls = fallbackCalls
+fill(1, menu, {a, c})
+assert(#menu.options == 1 and #original.subOption.options == 2 and fallbackCalls == calls,
+    'repeated fill must not add another anchor or another submenu')
+
+local mixed = newMenu()
+fill(1, mixed, {a, b})
+assert(#mixed.options == 1 and fallbackCalls == calls + 1, 'mixed types need a native one-item anchor')
+local mixedBatch = mixed.options[1].subOption.options[2]
+assert(mixedBatch.param1[1].item == a and mixedBatch.param1[2].item == b,
+    'mixed native anchor retains full exact selection')
+
+local flash1, flash2 = item(11, root), item(12, root)
+root.items[11], root.items[12] = flash1, flash2
+local flashlight = newMenu()
+local group = flashlight:addOption('Flashlight')
+local deviceMenu = newMenu();flashlight:addSubMenu(group, deviceMenu)
+local battery = deviceMenu:addOption('Remove battery', flash1, ISInventoryPaneContextMenu.OnNewCraft,
+    recipe('RemoveBattery'), 1, false)
+local dismantle = ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(flash1, deviceMenu, list({simple}), 1)
+fill(1, flashlight, {flash1, flash2})
+assert(#flashlight.options == 1 and #deviceMenu.options == 2 and battery.onSelect
+    and not battery.subOption, 'battery action and native device group must stay intact')
+assert(#dismantle.subOption.options == 2 and dismantle.subOption.options[2].onSelect == bulk.queue,
+    'flashlight dismantle variants must work at third menu level')
+
+local existing = newMenu()
+local parent = ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(a, existing, list({simple}), 1)
+local quantity = newMenu();existing:addSubMenu(parent, quantity)
+quantity:addOption('Existing choice', a, function() end)
+fill(1, existing, {a, c})
+assert(parent.subOption == quantity and #quantity.options == 2 and quantity.options[1].name == 'Existing choice',
+    'existing crafting submenu must not be replaced')
+
 a.favorite, queued = true, {}
-assert(menu.options[1].callback(player, menu.options[1].values) == 1,
-    'menu click must recheck changes since opening')
+assert(mixedBatch.onSelect(player, mixedBatch.param1) == 1, 'menu click must recheck selection changes')
 a.favorite, enabled, queued = nil, false, {}
-fill(1, menu, {a, b})
-assert(#menu.options == 1 and bulk.queue(player, entries) == nil and #queued == 0,
-    'disabled feature must add no menu and refuse stale menu callbacks')
+local disabled = newMenu()
+local disabledNative = ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(a, disabled, list({simple}), 1)
+fill(1, disabled, {a, c})
+assert(#disabled.options == 1 and not disabledNative.subOption and disabledNative.onSelect
+    and bulk.queue(player, entries) == nil and #queued == 0, 'off keeps original native action and blocks stale bulk callback')
 enabled, dead = true, true
-fill(1, menu, {a, b})
-assert(#menu.options == 1, 'dead player must have no new actions')
-print('Bulk dismantle checks passed: exact/mixed selection, protected items, transfers, stale inputs and toggle.')
+local deadMenu = newMenu();fill(1, deadMenu, {a, b});assert(#deadMenu.options == 0)
+print('Bulk dismantle checks passed: exact selection, native icons/callbacks, nested flashlight menus, transfers, safety and toggle.')
