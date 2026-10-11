@@ -80,7 +80,7 @@ local clothingOption = options:addTickBox(
     getText("UI_options_PZSurvivorToolkit_clothing_neutral_tooltip")
 )
 
-local mediaWindowOption, vhsControlsOption
+local mediaWindowOption, vhsControlsOption, medicineSyncOption, medicineHerbsOption, navigatorOption
 options:addTitle(getText("UI_options_PZSurvivorToolkit_inventory_title"))
 local inventoryFilterOption = options:addTickBox(
     "InventoryFilters",
@@ -94,6 +94,44 @@ local bulkDismantleOption = options:addTickBox(
     true,
     getText("UI_options_PZSurvivorToolkit_bulk_dismantle_tooltip")
 )
+
+
+local bulkRemoveBatteriesOption = options:addTickBox(
+    "BulkRemoveBatteries",
+    getText("UI_options_PZSurvivorToolkit_bulk_remove_batteries"),
+    true,
+    getText("UI_options_PZSurvivorToolkit_bulk_remove_batteries_tooltip")
+)
+
+local bulkUnloadOption = options:addTickBox(
+    "BulkUnload",
+    getText("UI_options_PZSurvivorToolkit_bulk_unload"),
+    true,
+    getText("UI_options_PZSurvivorToolkit_bulk_unload_tooltip")
+)
+
+local bulkRemoveAttachmentsOption = options:addTickBox(
+    "BulkRemoveAttachments",
+    getText("UI_options_PZSurvivorToolkit_bulk_remove_attachments"),
+    true,
+    getText("UI_options_PZSurvivorToolkit_bulk_remove_attachments_tooltip")
+)
+
+if getActivatedMods():contains("Navigator") then
+    navigatorOption = options:addTickBox("NavigatorDashboard",
+        getText("UI_options_PZSurvivorToolkit_navigator"), true,
+        getText("UI_options_PZSurvivorToolkit_navigator_tooltip"))
+end
+
+if getActivatedMods():contains("MedicineMoodlesB42") then
+    options:addTitle(getText("UI_options_PZSurvivorToolkit_medicine_title"))
+    medicineSyncOption = options:addTickBox("MedicineMoodleSync",
+        getText("UI_options_PZSurvivorToolkit_medicine_sync"), true,
+        getText("UI_options_PZSurvivorToolkit_medicine_sync_tooltip"))
+    medicineHerbsOption = options:addTickBox("MedicineHerbs",
+        getText("UI_options_PZSurvivorToolkit_medicine_herbs"), true,
+        getText("UI_options_PZSurvivorToolkit_medicine_herbs_tooltip"))
+end
 
 if getActivatedMods():contains("TVRadio_ReInvented") then
     options:addTitle(getText("UI_options_PZSurvivorToolkit_media_title"))
@@ -123,6 +161,18 @@ radiusOption.onChangeApply = notifySettingsChanged
 
 function Settings.showHighlightButton()
     return sidebarOption:getValue() == true
+end
+
+function Settings.navigatorDashboard()
+    return navigatorOption ~= nil and navigatorOption:getValue() == true
+end
+
+function Settings.medicineMoodleSync()
+    return medicineSyncOption ~= nil and medicineSyncOption:getValue() == true
+end
+
+function Settings.medicineHerbs()
+    return medicineHerbsOption ~= nil and medicineHerbsOption:getValue() == true
 end
 
 function Settings.inventoryFilters()
@@ -187,4 +237,16 @@ function Settings.toggle()
     enabledOption:setValue(not Settings.isEnabled())
     PZAPI.ModOptions:save()
     notifySettingsChanged()
+end
+
+function Settings.bulkRemoveBatteries()
+    return bulkRemoveBatteriesOption:getValue() == true
+end
+
+function Settings.bulkUnload()
+    return bulkUnloadOption:getValue() == true
+end
+
+function Settings.bulkRemoveAttachments()
+    return bulkRemoveAttachmentsOption:getValue() == true
 end

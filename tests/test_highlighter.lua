@@ -6,7 +6,7 @@ local function equal(actual, expected, message)
     assert(actual == expected, (message or "values differ") .. ": " .. tostring(actual) .. " ~= " .. tostring(expected))
 end
 
-local function setup(savedFile, mediaActive)
+local function setup(savedFile, mediaActive, medicineActive, navigatorActive)
     local world = { now = 0, squares = {}, objects = {}, saves = 0, file = savedFile or "",
         itemReads = 0, inspections = 0, maxItemReads = 0, maxInspections = 0 }
     local function event()
@@ -19,7 +19,9 @@ local function setup(savedFile, mediaActive)
     Keyboard = { KEY_F8 = 66 }
     PZSurvivorToolkit = {}
     getActivatedMods = function()
-        return {contains = function(_, id) return mediaActive == true and id == "TVRadio_ReInvented" end}
+        return {contains = function(_, id) return mediaActive == true and id == "TVRadio_ReInvented"
+            or medicineActive == true and id == "MedicineMoodlesB42"
+            or navigatorActive == true and id == "Navigator" end}
     end
     getText = function(key) return key end
     getTimestampMs = function() return world.now end
@@ -623,6 +625,9 @@ if NativeModOptionsSource then
         w:apply("ShowHighlightButton", false)
         w:apply("NeutralClothingComparisons", false)
         w:apply("BulkDismantle", false)
+        w:apply("BulkRemoveBatteries", false)
+        w:apply("BulkUnload", false)
+        w:apply("BulkRemoveAttachments", false)
         w.settings.toggle()
         local reloaded = setup(w.file, true)
         equal(reloaded.settings.isEnabled(), false)
@@ -634,6 +639,9 @@ if NativeModOptionsSource then
         equal(reloaded.settings.showHighlightButton(), false)
         equal(reloaded.settings.neutralClothingComparisons(), false)
         equal(reloaded.settings.bulkDismantle(), false)
+        equal(reloaded.settings.bulkRemoveBatteries(), false)
+        equal(reloaded.settings.bulkUnload(), false)
+        equal(reloaded.settings.bulkRemoveAttachments(), false)
     end)
 end
 
@@ -664,6 +672,46 @@ test("inactive TV mod leaves no media settings, even with a saved option", funct
     if NativeModOptionsSource then
         local reenabled = setup(saved, true)
         equal(reenabled.settings.keepMediaWindowOpen(), false, "disabling the mod must preserve its saved option")
+    end
+end)
+
+test("navigator option is hidden without the mod, toggleable and persisted", function()
+    local absent = setup(nil, false, false, false)
+    equal(absent.options.dict.NavigatorDashboard, nil)
+    equal(absent.settings.navigatorDashboard(), false)
+    local active = setup(nil, false, false, true)
+    equal(active.settings.navigatorDashboard(), true)
+    active:apply("NavigatorDashboard", false)
+    equal(active.settings.navigatorDashboard(), false)
+    if NativeModOptionsSource then
+        PZAPI.ModOptions:save()
+        local reloaded = setup(active.file, false, false, true)
+        equal(reloaded.settings.navigatorDashboard(), false)
+    end
+end)
+
+test("medicine options are conditional, independently toggleable and persisted", function()
+    local absent = setup("tickbox|PZSurvivorToolkit|MedicineHerbs|true\n", false, false)
+    equal(absent.options.dict.MedicineMoodleSync, nil)
+    equal(absent.options.dict.MedicineHerbs, nil)
+    equal(absent.settings.medicineMoodleSync(), false)
+    equal(absent.settings.medicineHerbs(), false)
+    for _, entry in ipairs(absent.options.data) do
+        assert(entry.name ~= "UI_options_PZSurvivorToolkit_medicine_title", "inactive medicine section visible")
+    end
+    local active = setup(nil, false, true)
+    equal(active.settings.medicineMoodleSync(), true)
+    equal(active.settings.medicineHerbs(), true)
+    active:apply("MedicineMoodleSync", false)
+    equal(active.settings.medicineMoodleSync(), false)
+    equal(active.settings.medicineHerbs(), true)
+    active:apply("MedicineHerbs", false)
+    equal(active.settings.medicineHerbs(), false)
+    if NativeModOptionsSource then
+        PZAPI.ModOptions:save()
+        local reloaded = setup(active.file, false, true)
+        equal(reloaded.settings.medicineMoodleSync(), false)
+        equal(reloaded.settings.medicineHerbs(), false)
     end
 end)
 

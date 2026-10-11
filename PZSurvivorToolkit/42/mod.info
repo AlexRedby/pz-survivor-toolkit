@@ -1,7 +1,7 @@
 name=PZ Survivor Toolkit
 id=PZSurvivorToolkit
 author=AlexRedby
-modversion=0.1.14
+modversion=0.1.19
 category=features
 icon=icon.png
 poster=icon.png
@@ -16,6 +16,8 @@ description=CleanUI / Container Capacity Indicator: Aligns bars with visible inv
 description=TV & Radio ReInvented: Keeps windows open and adds a close button. Click loaded VHS to eject; select tapes from reachable containers or drag them onto the slot. Fully watched tapes have the inventory checkmark. Configurable in Mod Options. Fixes native macOS video paths.<LINE><LINE>
 description=Inventory: Select categories from the Category header dropdown. CleanUI searches hide nonmatching items. Fixes grouped-item arrow spacing and Manage Containers registration when switching CleanUI off. Inventory filters can be disabled in Mod Options. Preserves marquee and Shift selection across inventory redraws, including the Proximity Inventory combined view. Proximity Inventory respects manually selected loot containers when changing your carried bags or transferring items.<LINE><LINE>
 description=Bulk dismantle: Select watches or other supported electronics and choose Dismantle selected from the native dismantling submenu. Processes only selected instances using native recipes, tools, time and XP. Skips favourites and worn/held items. Can be disabled in Mod Options.<LINE><LINE>
+description=Medicine Moodles: Reads six medicine effects from the server in multiplayer, updates sleeping-pill strength and adds optional black sage/common mallow indicators. Lemongrass uses a clearly labeled cooldown upper bound. Separate Mod Options switches appear only with Medicine Moodles installed.<LINE><LINE>
+description=Navigator: Optional original textured monitor housing tinted to the dashboard, flush docking and adaptive map size for vanilla and all Realistic Dashboard driver styles. Keeps native routes, controls and dragging; disable in Mod Options to restore the original UI.<LINE><LINE>
 description=Compatibility: Build 42.19 or newer within Build 42. No additional mod dependencies. Auto-drink tested with two local multiplayer clients on B42.21. Split-screen has not been verified.<LINE><LINE>
 description=Source: https://github.com/AlexRedby/pz-survivor-toolkit
 versionMin=42.19

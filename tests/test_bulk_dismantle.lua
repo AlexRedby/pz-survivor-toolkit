@@ -1,11 +1,15 @@
 -- Selection and queue checks. Native crafting/MP execution is tested separately.
 require = function() end
-local enabled, fill, player = true
-PZSurvivorToolkit = {Settings = {bulkDismantle = function() return enabled end}}
+local enabled, batteriesEnabled, fill, player = true, false
+PZSurvivorToolkit = {Settings = {bulkDismantle = function() return enabled end, bulkRemoveBatteries = function() return batteriesEnabled end}}
 Events = {OnFillInventoryObjectContextMenu = {Add = function(fn) fill = fn end}}
 ResourceType = {Item = 1}
 instanceof = function(item) return item and item.id ~= nil end
-getText = function(key, count) if key=='UI_PZSurvivorToolkit_dismantle_one' then return 'One item' end;return 'Dismantle selected (' .. count .. ')' end
+getText = function(key, count)
+    if key == 'UI_PZSurvivorToolkit_dismantle_one' or key == 'UI_PZSurvivorToolkit_action_one' then return 'One item' end
+    if key == 'UI_PZSurvivorToolkit_remove_batteries_selected' then return 'Remove batteries (' .. count .. ')' end
+    return 'Dismantle selected (' .. count .. ')'
+end
 getTexture = function(name) return name end
 getSpecificPlayer = function(index) assert(index == 1); return player end
 
@@ -30,6 +34,9 @@ local function recipe(name, inputs)
     return {getName = function() return name end, getInputs = function() return list(inputs or {keep, destroy}) end}
 end
 local simple, radio = recipe('DismantleElectronics'), recipe('DismantleElectronicsDevice')
+local batteryInput = {getResourceType = function() return 1 end, isKeep = function() return true end,
+    getIntAmount = function() return 1 end, containsItem = function(_, script) return script.battery end}
+local removeBattery = recipe('RemoveBattery', {batteryInput})
 local function item(id, container, electronic)
     local value = {id = id, container = container, script = {electronic = electronic ~= false}}
     function value:getID() return self.id end
@@ -66,7 +73,7 @@ end}
 ISCraftingUI = {ReturnItemsToOriginalContainer = function(_, values) returned = values end}
 CraftRecipeManager = {getUniqueRecipeItems = function(value)
     if value.noRecipes then return nil end
-    return list({false, value.radio and radio or simple, recipe('CraftMakeshiftRadio')})
+    return list({false, value.radio and radio or simple, recipe('CraftMakeshiftRadio'), removeBattery})
 end}
 
 HandcraftLogic = {new = function()
@@ -75,15 +82,16 @@ HandcraftLogic = {new = function()
     -- Deliberately choose the wrong input: the caller must override automatic selection.
     function logic:setRecipeFromContextClick(rec) self.recipe, self.target = rec, unselected end
     function logic:setManualInputsFor(input, values)
-        assert(input == destroy and values:size() == 1)
+        assert((input == destroy or input == batteryInput) and values:size() == 1)
         self.target = values:get(0)
         return not rejectPin
     end
     function logic:getManualInputsFor() return list({self.target}) end
-    function logic:canPerformCurrentRecipe() return not missingTool and self.target.container ~= nil end
+    function logic:canPerformCurrentRecipe() return not missingTool and self.target.container ~= nil
+        and (self.recipe ~= removeBattery or not self.target.empty) end
     function logic:getRecipeData()
         return {getAllInputItems = function() return list({self.target, tool}) end,
-            getAllPutBackInputItems = function() return list({tool}) end}
+            getAllPutBackInputItems = function() return list(self.recipe == removeBattery and {self.target} or {tool}) end}
     end
     return logic
 end}
@@ -91,6 +99,7 @@ ISHandcraftAction = {FromLogic = function(logic)
     return {character = player, target = logic.target, recipe = logic.recipe, isValid = function() return true end}
 end}
 ISTimedActionQueue = {add = function(action) queued[#queued + 1] = action end}
+dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/BulkActions.lua')
 dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/BulkDismantle.lua')
 local bulk = PZSurvivorToolkit.BulkDismantle
 local a, b, c = item(1, root), item(2, bag), item(3, root)
@@ -243,3 +252,44 @@ assert(#disabled.options == 1 and not disabledNative.subOption and disabledNativ
 enabled, dead = true, true
 local deadMenu = newMenu();fill(1, deadMenu, {a, b});assert(#deadMenu.options == 0)
 print('Bulk dismantle checks passed: exact selection, native icons/callbacks, nested flashlight menus, transfers, safety and toggle.')
+
+-- Retained-input recipes must bind the selected devices rather than nearby substitutes.
+dead, batteriesEnabled, enabled, tool, queued = false, true, false, nil, {}
+local batteries = PZSurvivorToolkit.BulkBatteries
+local charged, inBag, untouched, empty = item(201, root), item(202, bag), item(203, root), item(204, root)
+for _, value in ipairs({charged, inBag, untouched, empty}) do value.script.battery = true end
+empty.empty = true
+root.items[201], root.items[203], root.items[204] = charged, untouched, empty
+local batteryEntries = batteries.entries(player, {{items={charged,charged,inBag}}, empty, a})
+assert(#batteryEntries == 2 and batteryEntries[1].item == charged and batteryEntries[2].item == inBag,
+    'only selected charged devices qualify for retained-input battery recipe')
+assert(batteries.queue(player, batteryEntries) == 2)
+local batteryCrafts={}
+for _, action in ipairs(queued) do if not action.transfer then batteryCrafts[#batteryCrafts+1]=action end end
+assert(#batteryCrafts==2 and batteryCrafts[1].target==charged and batteryCrafts[2].target==inBag,
+    'battery crafts cannot substitute unselected devices')
+assert(#returned==1 and returned[1]==inBag, 'kept device must return to its original bag')
+assert(not batteryCrafts[2]:isValidStart(), 'battery pickup must acquire the exact device first')
+inBag.container, root.items[202] = root, inBag
+assert(batteryCrafts[2]:isValidStart())
+inBag.favorite=true;assert(not batteryCrafts[2]:isValidStart());inBag.favorite=nil
+
+local batteryMenu=newMenu()
+local batteryGroup=batteryMenu:addOption('Flashlight');local deviceMenu=newMenu()
+batteryMenu:addSubMenu(batteryGroup, deviceMenu)
+local nativeBattery=ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(charged,deviceMenu,list({removeBattery}),1)
+local nativeDismantle=ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(charged,deviceMenu,list({simple}),1)
+fill(1,batteryMenu,{charged,inBag})
+assert(#batteryMenu.options==1 and #deviceMenu.options==2 and #nativeBattery.subOption.options==2,
+    'battery variants must reuse third-level native menu')
+assert(nativeDismantle.onSelect and not nativeDismantle.subOption, 'independent dismantle toggle remains off')
+local one,batch=nativeBattery.subOption.options[1],nativeBattery.subOption.options[2]
+assert(one.onSelect==ISInventoryPaneContextMenu.OnNewCraft and one.param1==removeBattery
+    and batch.onSelect==batteries.queue and batch.param1[2].item==inBag)
+assert(one.iconTexture==scrapIcon and batch.iconTexture==scrapIcon)
+fill(1,batteryMenu,{charged,inBag});assert(#nativeBattery.subOption.options==2, 'battery duplicate fill is harmless')
+batteriesEnabled,queued=false,{}
+assert(batteries.queue(player,batteryEntries)==nil and #queued==0, 'disabled battery callback is inert')
+local off=newMenu();local offNative=ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(charged,off,list({removeBattery}),1)
+fill(1,off,{charged,inBag});assert(offNative.onSelect and not offNative.subOption, 'off restores ordinary battery removal')
+print('Bulk battery checks passed: exact retained inputs, empty devices, nested native menu, returns and independent toggle.')
