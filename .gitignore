@@ -5,3 +5,5 @@ __pycache__/
 .worktrees/
 .venv/
 .DS_Store
+
+/NetworkFix/build/
