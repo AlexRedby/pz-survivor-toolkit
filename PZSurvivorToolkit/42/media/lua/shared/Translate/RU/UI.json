@@ -48,9 +48,9 @@
     "UI_PZSurvivorToolkit_remove_batteries_selected": "Извлечь батарейки из выделенного (%1)",
     "UI_PZSurvivorToolkit_unload_selected": "Разрядить выделенное (%1)",
     "UI_PZSurvivorToolkit_remove_attachments_selected": "Снять все обвесы с выделенного оружия (%1)",
-    "UI_options_PZSurvivorToolkit_medicine_title": "Medicine Moodles",
-    "UI_options_PZSurvivorToolkit_medicine_sync": "Исправленные индикаторы лекарств",
-    "UI_options_PZSurvivorToolkit_medicine_sync_tooltip": "В мультиплеере читать действующие эффекты лекарств с сервера. Лемонграсс показывает оценку максимального кулдауна. Отключите для исходного поведения мода.",
+    "UI_options_PZSurvivorToolkit_medicine_title": "Индикаторы лекарств",
+    "UI_options_PZSurvivorToolkit_medicine_sync": "Индикаторы лекарств",
+    "UI_options_PZSurvivorToolkit_medicine_sync_tooltip": "Показывает шесть эффектов лекарств по данным сервера в мультиплеере. Лемонграсс показывает оценку максимальной паузы между приёмами. Выключение скрывает эти индикаторы.",
     "UI_options_PZSurvivorToolkit_medicine_herbs": "Индикаторы лечебных трав",
     "UI_options_PZSurvivorToolkit_medicine_herbs_tooltip": "Показывать травяное обезболивание (чёрный шалфей) и облегчение простуды (обыкновенный просвирник), включая сушёные травы.",
     "UI_PZSurvivorToolkit_medicine_BlackSage": "Травяное обезболивание",
@@ -58,5 +58,13 @@
     "UI_PZSurvivorToolkit_medicine_cooldown": "Оценка остатка максимального кулдауна: %1%%",
     "UI_PZSurvivorToolkit_medicine_pending": "Лекарству нужно время, чтобы подействовать",
     "UI_options_PZSurvivorToolkit_navigator": "Вписать Navigator в приборную панель",
-    "UI_options_PZSurvivorToolkit_navigator_tooltip": "Сохраняет исходный рельефный корпус Navigator, подбирает его оттенок и положение под стандартную панель и Realistic Dashboard. Учитывает размер панели; сохраняет читаемость текста и кнопок. Отключите для исходного оформления Navigator."
+    "UI_options_PZSurvivorToolkit_navigator_tooltip": "Сохраняет исходный рельефный корпус Navigator, подбирает его оттенок и положение под стандартную панель и Realistic Dashboard. Учитывает размер панели; сохраняет читаемость текста и кнопок. Отключите для исходного оформления Navigator.",
+    "UI_options_PZSurvivorToolkit_quantity": "Перенос указанного количества предметов",
+    "UI_options_PZSurvivorToolkit_quantity_tooltip": "Добавляет «Взять количество» и «Положить количество». Целый лимит действует на всё выделение. Использует штатные переносы.",
+    "UI_options_PZSurvivorToolkit_uninstall_ground": "Снимать детали машины на землю",
+    "UI_options_PZSurvivorToolkit_uninstall_ground_tooltip": "Добавляет «Снять на землю» рядом со штатным снятием. Выключение скрывает дополнительное действие; действия в очереди завершатся как обычно.",
+    "UI_PZSurvivorToolkit_grab_amount": "Взять количество…",
+    "UI_PZSurvivorToolkit_put_amount": "Положить количество… (%1)",
+    "UI_PZSurvivorToolkit_quantity_prompt": "Количество для переноса в %1 (максимум %2)",
+    "UI_PZSurvivorToolkit_quantity_invalid": "Введите целое число от 1 до %1."
 }

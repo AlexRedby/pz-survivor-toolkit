@@ -48,9 +48,9 @@
     "UI_PZSurvivorToolkit_remove_batteries_selected": "Remove batteries from selected (%1)",
     "UI_PZSurvivorToolkit_unload_selected": "Unload selected (%1)",
     "UI_PZSurvivorToolkit_remove_attachments_selected": "Remove all parts from selected weapons (%1)",
-    "UI_options_PZSurvivorToolkit_medicine_title": "Medicine Moodles",
-    "UI_options_PZSurvivorToolkit_medicine_sync": "Correct medicine indicators",
-    "UI_options_PZSurvivorToolkit_medicine_sync_tooltip": "Read active medicine effects from the server in multiplayer. Lemongrass shows an estimated maximum cooldown. Disable to restore the original mod behavior.",
+    "UI_options_PZSurvivorToolkit_medicine_title": "Medicine indicators",
+    "UI_options_PZSurvivorToolkit_medicine_sync": "Medicine indicators",
+    "UI_options_PZSurvivorToolkit_medicine_sync_tooltip": "Show six medicine effects from authoritative server readings in multiplayer. Lemongrass shows an estimated maximum cooldown. Disable to hide these indicators.",
     "UI_options_PZSurvivorToolkit_medicine_herbs": "Herbal medicine indicators",
     "UI_options_PZSurvivorToolkit_medicine_herbs_tooltip": "Show active herbal pain relief (black sage) and cold relief (common mallow), including dried herbs.",
     "UI_PZSurvivorToolkit_medicine_BlackSage": "Herbal pain relief",
@@ -58,5 +58,13 @@
     "UI_PZSurvivorToolkit_medicine_cooldown": "Estimated maximum cooldown remaining: %1%%",
     "UI_PZSurvivorToolkit_medicine_pending": "The medicine needs some time to take effect",
     "UI_options_PZSurvivorToolkit_navigator": "Fit Navigator to vehicle dashboard",
-    "UI_options_PZSurvivorToolkit_navigator_tooltip": "Preserves Navigator's original textured housing and fits its tint and position to vanilla and Realistic Dashboard panels. Follows dashboard size; keeps text and buttons readable. Disable to restore Navigator's original appearance."
+    "UI_options_PZSurvivorToolkit_navigator_tooltip": "Preserves Navigator's original textured housing and fits its tint and position to vanilla and Realistic Dashboard panels. Follows dashboard size; keeps text and buttons readable. Disable to restore Navigator's original appearance.",
+    "UI_options_PZSurvivorToolkit_quantity": "Transfer a chosen number of items",
+    "UI_options_PZSurvivorToolkit_quantity_tooltip": "Adds Grab amount / Put amount. The integer limit applies to the entire selection. Uses native transfers.",
+    "UI_options_PZSurvivorToolkit_uninstall_ground": "Uninstall vehicle parts to ground",
+    "UI_options_PZSurvivorToolkit_uninstall_ground_tooltip": "Adds Uninstall to ground beside native Uninstall. Disable to hide the additional action; queued removals finish normally.",
+    "UI_PZSurvivorToolkit_grab_amount": "Grab amount…",
+    "UI_PZSurvivorToolkit_put_amount": "Put amount… (%1)",
+    "UI_PZSurvivorToolkit_quantity_prompt": "Number to move to %1 (maximum %2)",
+    "UI_PZSurvivorToolkit_quantity_invalid": "Enter a whole number between 1 and %1."
 }

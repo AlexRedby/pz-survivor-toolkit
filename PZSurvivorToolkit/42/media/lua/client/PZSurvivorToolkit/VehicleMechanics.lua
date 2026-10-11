@@ -1,8 +1,10 @@
 require "PZSurvivorToolkit/UninstallToGround"
+require "PZSurvivorToolkit/Settings"
 require "Vehicles/ISUI/ISVehicleMechanics"
 require "Vehicles/ISUI/ISVehiclePartMenu"
 
 local function uninstallToGround(selectedCharacter, selectedPart)
+    if not PZSurvivorToolkit.Settings.uninstallToGround() then return end
     local nativeNew = ISUninstallVehiclePart.new
     -- Reuse native tool pickup, pathfinding and hood actions with a different final action.
     ISUninstallVehiclePart.new = function(class, character, part, workTime)
@@ -23,6 +25,7 @@ local function install()
     local doPartContextMenu = ISVehicleMechanics.doPartContextMenu
     function ISVehicleMechanics:doPartContextMenu(part, ...)
         local result = doPartContextMenu(self, part, ...)
+        if not PZSurvivorToolkit.Settings.uninstallToGround() then return result end
         if not self.context then return result end
         local label = getText("UI_PZSurvivorToolkit_uninstall_ground")
         if self.context:getOptionFromName(label) then return result end

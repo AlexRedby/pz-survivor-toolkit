@@ -88,6 +88,15 @@ local inventoryFilterOption = options:addTickBox(
     true,
     getText("UI_options_PZSurvivorToolkit_inventory_filters_tooltip")
 )
+local quantityOption
+if not getActivatedMods():contains("TakeAnyAmount") then
+    quantityOption = options:addTickBox("QuantityTransfers",
+        getText("UI_options_PZSurvivorToolkit_quantity"), true,
+        getText("UI_options_PZSurvivorToolkit_quantity_tooltip"))
+end
+local groundOption = options:addTickBox("UninstallToGround",
+    getText("UI_options_PZSurvivorToolkit_uninstall_ground"), true,
+    getText("UI_options_PZSurvivorToolkit_uninstall_ground_tooltip"))
 local bulkDismantleOption = options:addTickBox(
     "BulkDismantle",
     getText("UI_options_PZSurvivorToolkit_bulk_dismantle"),
@@ -123,7 +132,7 @@ if getActivatedMods():contains("Navigator") then
         getText("UI_options_PZSurvivorToolkit_navigator_tooltip"))
 end
 
-if getActivatedMods():contains("MedicineMoodlesB42") then
+if getActivatedMods():contains("MoodleFramework") and not getActivatedMods():contains("MedicineMoodlesB42") then
     options:addTitle(getText("UI_options_PZSurvivorToolkit_medicine_title"))
     medicineSyncOption = options:addTickBox("MedicineMoodleSync",
         getText("UI_options_PZSurvivorToolkit_medicine_sync"), true,
@@ -177,6 +186,14 @@ end
 
 function Settings.inventoryFilters()
     return inventoryFilterOption:getValue() == true
+end
+
+function Settings.quantityTransfers()
+    return quantityOption ~= nil and quantityOption:getValue() == true
+end
+
+function Settings.uninstallToGround()
+    return groundOption:getValue() == true
 end
 
 function Settings.bulkDismantle()

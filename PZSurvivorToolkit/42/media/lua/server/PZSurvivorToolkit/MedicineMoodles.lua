@@ -1,11 +1,14 @@
-if not isServer() or not getActivatedMods():contains("MedicineMoodlesB42") then return end
+if not isServer() or not getActivatedMods():contains("MoodleFramework")
+    or getActivatedMods():contains("MedicineMoodlesB42") then return end
 local Effects = require "PZSurvivorToolkit/MedicineEffects"
+if Effects.serverInstalled then return end
+Effects.serverInstalled = true
 local lastRequests = setmetatable({}, {__mode = "k"})
 
 Events.OnClientCommand.Add(function(module, command, player, args)
     if module ~= "PZSurvivorToolkitMedicine" or command ~= "Read" or player:isDead() then return end
     local request = type(args) == "table" and args.request
-    if type(request) ~= "number" or request ~= math.floor(request) or request < 1 or request > 2147483647 then return end
+    if type(request) ~= "number" or not (request >= 1 and request <= 2147483647 and request == math.floor(request)) then return end
     local now = getTimestampMs()
     if lastRequests[player] and now - lastRequests[player] < 750 then return end
     lastRequests[player] = now

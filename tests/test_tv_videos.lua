@@ -57,4 +57,12 @@ assert(RWMMergedTV.videos["TV_203_W.bik"] and RWMMergedTV.videos["TV_Static.bik"
 local count = 0
 for _ in pairs(RWMMergedTV.videos) do count = count + 1 end
 assert(count == 16)
+if TVSource then
+    local upstreamCount = 0
+    for filename in TVSource:gmatch('%["([^"]+%.bik)"%]%s*=') do
+        upstreamCount = upstreamCount + 1
+        assert(RWMMergedTV.videos[filename], "macOS loader omitted upstream video " .. filename)
+    end
+    assert(upstreamCount == count, "upstream video inventory changed; update the macOS loader")
+end
 print("TV macOS video path checks passed.")

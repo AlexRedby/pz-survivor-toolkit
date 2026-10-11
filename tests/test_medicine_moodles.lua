@@ -12,18 +12,19 @@ end
 local function event()
     local callbacks = {}
     return {Add = function(fn) callbacks[#callbacks + 1] = fn end,
+        Remove = function(fn) for i = #callbacks, 1, -1 do if callbacks[i] == fn then table.remove(callbacks, i) end end end,
         fire = function(...) for _, fn in ipairs(callbacks) do fn(...) end end,
         count = function() return #callbacks end}
 end
-local client, server, active, now, multiplier = false, true, false, 0, 1
+local client, server, active, legacy, now, multiplier = false, true, false, false, 0, 1
 local sync, herbs = true, true
 local requests, responses, requires, players = {}, {}, {}, {}
 Events = {}
 for _, name in ipairs({"OnTick", "OnPlayerUpdate", "OnGameStart", "OnClientCommand",
-    "OnServerCommand", "OnMainMenuEnter", "OnPlayerDeath"}) do Events[name] = event() end
+    "OnServerCommand", "OnMainMenuEnter", "OnPlayerDeath", "OnCreatePlayer"}) do Events[name] = event() end
 isClient = function() return client end
 isServer = function() return server end
-getActivatedMods = function() return {contains = function(_, id) return active and id == "MedicineMoodlesB42" end} end
+getActivatedMods = function() return {contains = function(_, id) return active and id == "MoodleFramework" or legacy and id == "MedicineMoodlesB42" end} end
 getTimestampMs = function() return now end
 getGameTime = function() return {getMultiplier = function() return multiplier end} end
 getSpecificPlayer = function(num) return players[num] end
@@ -37,7 +38,7 @@ require = function(name)
     requires[#requires + 1] = name
     if name == "PZSurvivorToolkit/MedicineEffects" then return PZSurvivorToolkit.MedicineEffects end
     assert(name == "PZSurvivorToolkit" or name == "PZSurvivorToolkit/Settings"
-        or name == "TimedActions/ISEatFoodAction", "Unexpected optional dependency: " .. name)
+        or name == "TimedActions/ISEatFoodAction" or name == "MF_ISMoodle", "Unexpected optional dependency: " .. name)
 end
 sendClientCommand = function(player, module, command, args)
     requests[#requests + 1] = {player = player, module = module, command = command, args = args}
@@ -60,10 +61,12 @@ end
 ISEatFoodAction = {complete = nativeEating("complete"), eat = nativeEating("eat")}
 local nativeComplete, nativeEat = ISEatFoodAction.complete, ISEatFoodAction.eat
 local function player(num, id, traits)
-    local p = {num = num or 0, id = id or 12, traits = traits or {}, stats = {sickness = 50, poison = 25},
+    local p = {modData = {Moodles = {LegacyMedicine = {Value = 0.75}}}, num = num or 0, id = id or 12, traits = traits or {}, stats = {sickness = 50, poison = 25},
         raw = {Antibiotics = 25, Antidepressants = 3300, BetaBlockers = 3300,
             Painkillers = 2700, SleepingTablets = 3300, SleepingIntensity = 0.2,
             BlackSage = 3.5, CommonMallow = 2.5}}
+    function p:getModData() return self.modData end
+    function p:getMoodles() return {getNumMoodles = function() return 0 end} end
     function p:getPlayerNum() return self.num end
     function p:getOnlineID() return self.id end
     function p:isDead() return self.dead == true end
@@ -95,7 +98,16 @@ check("absent optional mod has no callbacks, hooks or dependencies", function()
     assert(not PZSurvivorToolkit.MedicineEffects and not PZSurvivorToolkit.MedicineMoodles)
     assert(#requires == 1 and requires[1] == "PZSurvivorToolkit/Settings")
 end)
-active = true
+active, legacy = true, true
+check("legacy mod wins without Toolkit hooks, indicators or server traffic", function()
+    dofile(base .. "shared/PZSurvivorToolkit/MedicineEffects.lua")
+    dofile(base .. "server/PZSurvivorToolkit/MedicineMoodles.lua")
+    dofile(base .. "client/PZSurvivorToolkit/MedicineMoodles.lua")
+    for _, value in pairs(Events) do assert(value.count() == 0) end
+    assert(ISEatFoodAction.complete == nativeComplete and ISEatFoodAction.eat == nativeEat)
+    assert(not PZSurvivorToolkit.MedicineEffects and not PZSurvivorToolkit.MedicineMoodles)
+end)
+legacy = false
 dofile(base .. "shared/PZSurvivorToolkit/MedicineEffects.lua")
 local effects = PZSurvivorToolkit.MedicineEffects
 local p = player()
@@ -171,7 +183,7 @@ local function request(args, module, command, who)
     Events.OnClientCommand.fire(module or "PZSurvivorToolkitMedicine", command or "Read", who or p, args)
 end
 check("server accepts authenticated self reads only, with nonce and 750ms rate limit", function()
-    for _, value in ipairs({0, -1, 1.5, 2147483648, math.huge, "1"}) do request({request = value}) end
+    for _, value in ipairs({0, -1, 1.5, 2147483648, math.huge, 0 / 0, "1"}) do request({request = value}) end
     request(nil)
     request(true)
     request("invalid-root")
@@ -198,7 +210,7 @@ check("server accepts authenticated self reads only, with nonce and 750ms rate l
     assert(#responses == 3 and responses[3].player == other and responses[3].args.onlineID == 24)
 end)
 
--- Match upstream's value-change early return: intensity-only tooltip changes must survive it.
+-- Use the real framework when supplied; default fixtures cover only the public UI contract.
 getText = function(key, value) return key .. (value ~= nil and "(" .. tostring(value) .. ")" or "") end
 round = function(value, places)
     local scale = 10 ^ (places or 0)
@@ -206,70 +218,77 @@ round = function(value, places)
     return rounded % 1 == 0 and math.floor(rounded) or rounded
 end
 getScriptManager = function()
-    return {getItem = function(_, name) return {getNormalTexture = function() return "texture:" .. name end} end}
+    return {getItem = function(_, name) return {
+        getNormalTexture = function() return "texture:" .. name end,
+        getDisplayName = function() return "native-title:" .. name end,
+    } end}
 end
-local upstreamCalls = 0
-local mod = {Medicines = {}, PlayerMoodles = {}, MoodleLevels = {Hidden = -0.5, Bad = {-1.05}},
-    MoodleType = {Good = 1, Bad = 2, Special = 3}}
-function mod:checkSkillRequirements(moodle) return moodle.allowed ~= false end
-function mod:setupMoodle(moodle) if moodle then moodle:setValue(-0.5) end end
-function mod:addMedicine(name, item, getValue)
-    self.Medicines[name] = {item = item, getValue = getValue}
+ISUIElement = {}
+function ISUIElement:derive() local o = {}; setmetatable(o, {__index = self}); return o end
+function ISUIElement:new(x, y, w, h)
+    local o = {x = x, y = y, width = w, height = h}
+    setmetatable(o, {__index = self}); return o
 end
-function mod:updateMoodle(moodle)
-    if not self:checkSkillRequirements(moodle) then moodle:setValue(-0.5); return end
-    local value, kind, intensity = self.Medicines[moodle.name].getValue(self, moodle.char)
-    kind = kind or self.MoodleType.Good
-    local shown = kind == self.MoodleType.Special and value
-        or value > 0 and (kind == self.MoodleType.Bad and -value - 1 or value) or -0.5
-    if moodle:getValue() == shown then return end
-    moodle:setValue(shown)
-    if moodle:getLevel() > 0 and kind ~= self.MoodleType.Special then
-        local description = getText("IGUI_RemainingPercent", round(value * 100))
-        if intensity and intensity > 0 then
-            description = getText("IGUI_climate_intensity") .. ": " .. round(intensity, 2) .. " / " .. description
-        end
-        moodle:setDescription(kind, moodle:getLevel(), description)
+function ISUIElement:initialise() end
+function ISUIElement:getWidth() return self.width end
+function ISUIElement:getX() return self.x end
+function ISUIElement:getY() return self.y end
+function ISUIElement:setX(v) self.x = v end
+function ISUIElement:setY(v) self.y = v end
+function ISUIElement:setWidth(v) self.width = v end
+function ISUIElement:setHeight(v) self.height = v end
+function ISUIElement:addToUIManager() self.visible = true end
+function ISUIElement:removeFromUIManager() self.visible = false end
+getCore = function() return {getOptionMoodleSize = function() return 1 end} end
+getTexture = function(name) return "texture:" .. name end
+getPlayerScreenLeft = function() return 0 end
+getPlayerScreenWidth = function() return 1280 end
+getPlayerScreenTop = function() return 0 end
+Registries = {MOODLE_TYPE = {getValues = function() return {size = function() return 0 end} end}}
+if NativeMedicineFrameworkSource then
+    assert(loadstring(NativeMedicineFrameworkSource))()
+else
+    MF = {MoodlesStorage = {}, createdMoodleTypes = {}, ISMoodle = ISUIElement:derive()}
+    function MF.createMoodle(name)
+        if MF.createdMoodleTypes[name] then return end
+        MF.createdMoodleTypes[name] = true
+        Events.OnCreatePlayer.Add(function(num) MF.ISMoodle:new(name, getSpecificPlayer(num)) end)
     end
+    function MF.getMoodle(name, num) return MF.MoodlesStorage[num] and MF.MoodlesStorage[num][name] end
+    function MF.ISMoodle:new(name, who)
+        local old = MF.getMoodle(name, who.num)
+        if old then old:removeFromUIManager(); Events.OnPlayerDeath.Remove(old.death) end
+        local m = ISUIElement.new(self, 0, 0, 32, 32)
+        m.name, m.char, m.value = name, who, 0
+        m.title, m.desc, m.pics = {{}, {}}, {{}, {}}, {{}, {}}
+        m.death = function(dead) if dead == who then m:removeFromUIManager(); m.disable = true end end
+        Events.OnPlayerDeath.Add(m.death)
+        MF.MoodlesStorage[who.num] = MF.MoodlesStorage[who.num] or {}
+        MF.MoodlesStorage[who.num][name] = m
+        return m
+    end
+    function MF.ISMoodle:setThresholds(...) self.thresholds = {...} end
+    function MF.ISMoodle:setValue(v) if not self.disable then self.value = v; self.visible = v ~= 0 end end
+    function MF.ISMoodle:getValue() return self.value end
+    function MF.ISMoodle:getLevel()
+        local v = math.abs(self.value)
+        return v >= 0.7 and 4 or v >= 0.4 and 3 or v >= 0.1 and 2 or v >= 0.000001 and 1 or 0
+    end
+    function MF.ISMoodle:getGoodBadNeutral() return self.value > 0 and 1 or self.value < 0 and 2 or 0 end
+    function MF.ISMoodle:setTitle(kind, level, v) self.title[kind][level] = v end
+    function MF.ISMoodle:setPicture(kind, level, v) self.pics[kind][level] = v end
+    function MF.ISMoodle:setDescription(kind, level, v) self.desc[kind][level] = v end
+    function MF.ISMoodle:getDescription(kind, level) return self.desc[kind][level] end
 end
 local scales = {Antibiotics = 50, Antidepressants = 6600, BetaBlockers = 6600,
     Painkillers = 5400, SleepingTablets = 6600, LemonGrass = 280, BlackSage = 7, CommonMallow = 5}
-for name in pairs(scales) do
-    if name ~= "BlackSage" and name ~= "CommonMallow" then
-        mod:addMedicine(name, "Base." .. name, function(self, who)
-            assert(self == mod and who == players[who:getPlayerNum()])
-            upstreamCalls = upstreamCalls + 1
-            return 0.25, mod.MoodleType.Bad, 7
-        end)
-    end
-end
-local function moodle(name, who)
-    local m = {name = name, char = who or p, value = -0.5, descriptions = {}, descriptionWrites = 0,
-        titles = {}, pictures = {}}
-    function m:getValue() return self.value end
-    function m:setValue(value) self.value = value end
-    function m:getLevel()
-        local value = self.value
-        if value < -1 then value = -value - 1 end
-        if value <= 0 then return 0 end
-        return value >= 0.7 and 4 or value >= 0.4 and 3 or value >= 0.1 and 2 or 1
-    end
-    function m:setDescription(kind, level, text)
-        self.descriptionWrites = self.descriptionWrites + 1
-        self.descriptions[kind .. ":" .. level] = text
-        self.description = text
-    end
-    function m:getDescription(kind, level) return self.descriptions[kind .. ":" .. level] end
-    function m:setTitle(kind, level, text) self.titles[kind .. ":" .. level] = text end
-    function m:setPicture(kind, level, texture) self.pictures[kind .. ":" .. level] = texture end
-    return m
-end
-ModMedicineMoodles = mod
 client, server, now = true, false, 0
 dofile(base .. "client/PZSurvivorToolkit/MedicineMoodles.lua")
 local medicine = PZSurvivorToolkit.MedicineMoodles
-Events.OnGameStart.fire()
+Events.OnCreatePlayer.fire(0)
 local function poll(who) Events.OnPlayerUpdate.fire(who or p) end
+local function moodle(name, who) return MF.getMoodle(medicine.names[name], (who or p).num) end
+local function description(name) local m = moodle(name); return m:getDescription(m:getGoodBadNeutral(), m:getLevel()) end
 local function payload(who)
     who = who or p
     local result = effects.capture(who)
@@ -289,84 +308,58 @@ check("client polling is local-only and retries pending reads after five seconds
     poll()
     assert(#requests == 1 and requests[1].player == p and requests[1].args.request == 1)
     local old = payload()
-    now = 1000
-    poll()
-    now = 4999
-    poll()
+    now = 1000; poll()
+    now = 4999; poll()
     assert(#requests == 1)
-    now = 5000
-    poll()
+    now = 5000; poll()
     assert(#requests == 2 and requests[2].args.request ~= old.request)
     receive(old)
     assert(not medicine.states[0].values)
-    receive(payload())
+    receive(payload()); poll()
     assert(medicine.states[0].values and not medicine.states[0].request)
 end)
-check("eight authoritative effect scales, pending antidepressant and sleeping intensity", function()
+check("eight own authoritative indicators, pending antidepressant and sleeping intensity", function()
     for name in pairs(scales) do
-        local value, kind, intensity = mod.Medicines[name].getValue(mod, p)
-        near(value, 0.5)
-        if name == "LemonGrass" then assert(kind == mod.MoodleType.Bad) end
-        if name == "SleepingTablets" then near(intensity, 2) end
+        local m = moodle(name)
+        near(math.abs(m:getValue()), 0.5)
+        assert(m.name == "PZSurvivorToolkitMedicine" .. name)
+        assert(m:getGoodBadNeutral() == (name == "LemonGrass" and 2 or 1))
     end
-    medicine.states[0].values.Antidepressants = 6600
-    local value, kind = mod.Medicines.Antidepressants.getValue(mod, p)
-    assert(value == mod.MoodleLevels.Bad[1] and kind == mod.MoodleType.Special)
-    local m = moodle("Antidepressants")
-    mod:updateMoodle(m)
-    assert(m.descriptions["2:1"] == "UI_PZSurvivorToolkit_medicine_pending")
-    medicine.states[0].values.Antidepressants = 3300
-    mod:updateMoodle(m)
-    near(m:getValue(), 0.5)
-    assert(m.description == "IGUI_RemainingPercent(50)")
+    medicine.states[0].values.Antidepressants = 6600; poll()
+    assert(moodle("Antidepressants"):getLevel() == 1)
+    assert(moodle("Antidepressants"):getGoodBadNeutral() == 2)
+    assert(description("Antidepressants") == "UI_PZSurvivorToolkit_medicine_pending")
+    medicine.states[0].values.Antidepressants = 3300; poll()
+    near(moodle("Antidepressants"):getValue(), 0.5)
+    assert(description("Antidepressants") == "IGUI_RemainingPercent(50)")
 end)
-check("sleeping intensity tooltip refreshes while duration is unchanged", function()
-    local m = moodle("SleepingTablets")
-    mod:updateMoodle(m)
-    assert(m.description == "IGUI_climate_intensity: 2 / IGUI_RemainingPercent(50)")
-    local writes = m.descriptionWrites
-    medicine.states[0].values.SleepingIntensity = 0.3
-    mod:updateMoodle(m)
-    assert(m.description == "IGUI_climate_intensity: 3 / IGUI_RemainingPercent(50)")
-    assert(m.descriptionWrites == writes + 1)
-    mod:updateMoodle(m)
-    assert(m.descriptionWrites == writes + 1)
-    local lemon = moodle("LemonGrass")
-    mod:updateMoodle(lemon)
-    assert(lemon.description == "UI_PZSurvivorToolkit_medicine_cooldown(50)")
-    lemon:setDescription(mod.MoodleType.Bad, lemon:getLevel(), "IGUI_RemainingPercent(50)")
-    local lemonWrites = lemon.descriptionWrites
-    mod:updateMoodle(lemon)
-    assert(lemon.description == "UI_PZSurvivorToolkit_medicine_cooldown(50)")
-    assert(lemon.descriptionWrites == lemonWrites + 1, "Repair descriptions overwritten by upstream setup")
-    mod:updateMoodle(lemon)
-    assert(lemon.descriptionWrites == lemonWrites + 1)
-end)
-check("skills still hide medicine indicators and herbs have vanilla item icons", function()
-    local m = moodle("SleepingTablets")
-    m.allowed = false
-    mod:updateMoodle(m)
-    assert(m:getLevel() == 0 and m.descriptionWrites == 0)
-    for _, name in ipairs({"BlackSage", "CommonMallow"}) do
-        local herb = moodle(name)
-        mod:setupMoodle(herb)
-        assert(herb.titles["1:1"] == "UI_PZSurvivorToolkit_medicine_" .. name)
-        assert(herb.pictures["2:4"] == "texture:Base." .. name)
+check("duration-unchanged tooltips refresh and all item icons use native assets", function()
+    assert(description("SleepingTablets") == "IGUI_climate_intensity: 2 / IGUI_RemainingPercent(50)")
+    medicine.states[0].values.SleepingIntensity = 0.3; poll()
+    assert(description("SleepingTablets") == "IGUI_climate_intensity: 3 / IGUI_RemainingPercent(50)")
+    assert(description("LemonGrass") == "UI_PZSurvivorToolkit_medicine_cooldown(50)")
+    for name, item in pairs({Antibiotics = "Antibiotics", Antidepressants = "PillsAntiDep",
+        BetaBlockers = "PillsBeta", Painkillers = "Pills", SleepingTablets = "PillsSleepingTablets",
+        LemonGrass = "LemonGrass", BlackSage = "BlackSage", CommonMallow = "CommonMallow"}) do
+        local m = moodle(name)
+        local title = (name == "BlackSage" or name == "CommonMallow")
+            and "UI_PZSurvivorToolkit_medicine_" .. name or "native-title:Base." .. item
+        for kind = 1, 2 do for level = 1, 4 do
+            assert(m.title[kind][level] == title)
+            assert(m.pics[kind][level] == "texture:Base." .. item)
+        end end
     end
+    assert(p.modData.Moodles.LegacyMedicine.Value == 0.75)
 end)
 check("invalid and mismatched snapshots cannot replace accepted state", function()
-    now = 6000
-    poll()
+    now = 6000; poll()
     local state, accepted = medicine.states[0], medicine.states[0].values
     local function rejected(values, module, command)
         receive(values, module, command)
         assert(state.values == accepted and state.request ~= nil)
     end
-    rejected(nil)
-    rejected("not-a-table")
-    rejected(payload(), "OtherModule")
-    rejected(payload(), nil, "OtherCommand")
-    for _, invalid in ipairs({-1, math.huge, "1", 1000000001}) do
+    rejected(nil); rejected("not-a-table"); rejected(payload(), "OtherModule"); rejected(payload(), nil, "OtherCommand")
+    for _, invalid in ipairs({-1, math.huge, 0 / 0, "1", 1000000001}) do
         local values = payload(); values.Painkillers = invalid; rejected(values)
     end
     local values = payload(); values.BlackSage = nil; rejected(values)
@@ -374,20 +367,17 @@ check("invalid and mismatched snapshots cannot replace accepted state", function
     values = payload(); values.SleepingIntensity = -1; rejected(values)
     values = payload(); values.onlineID = 999; rejected(values)
     values = payload(); values.request = state.request + 1; rejected(values)
-    p.dead = true
-    rejected(payload())
-    p.dead = false
+    p.dead = true; rejected(payload()); p.dead = false
+    p.remote = true; rejected(payload()); p.remote = false
     receive(payload())
     assert(state.values ~= accepted and not state.request)
     accepted = state.values
-    values = payload(); values.Painkillers = 999
-    receive(values)
+    values = payload(); values.Painkillers = 999; receive(values)
     assert(state.values == accepted, "Unsolicited state without an outstanding nonce must be ignored")
 end)
 check("stale state hides all effects; death and respawn reject previous identity", function()
-    now = medicine.states[0].receivedAt + 10001
-    for name in pairs(scales) do assert(mod.Medicines[name].getValue(mod, p) == 0) end
-    poll()
+    now = medicine.states[0].receivedAt + 10001; poll()
+    for name in pairs(scales) do assert(moodle(name):getLevel() == 0) end
     local old = payload()
     local replacement = player(0, 99)
     players[0] = replacement
@@ -397,53 +387,63 @@ check("stale state hides all effects; death and respawn reject previous identity
     assert(medicine.states[0].player == replacement)
     receive(old)
     assert(not medicine.states[0].values)
-    receive(payload(replacement))
+    receive(payload(replacement)); poll(replacement)
     assert(medicine.states[0].values)
     replacement.dead = true
-    assert(mod.Medicines.Painkillers.getValue(mod, replacement) == 0)
     Events.OnPlayerDeath.fire(replacement)
     assert(not medicine.states[0])
+    for name in pairs(scales) do assert(not moodle(name, replacement).visible) end
     replacement.dead = false
-    p, players[0] = replacement, replacement
+    -- A fresh character, rather than reviving the framework's suspended dead UI.
+    p = player(0, 100); players[0] = p
+    Events.OnCreatePlayer.fire(0)
+    poll(); receive(payload()); poll()
+    for name in pairs(scales) do assert(moodle(name).char == p and moodle(name):getLevel() > 0) end
 end)
-check("sync disable delegates every upstream result; herb disable hides only herbs", function()
-    sync, herbs = false, false
-    local calls = upstreamCalls
+check("independent switches hide six medicine indicators and two native herb pools", function()
+    sync, herbs = false, true; poll()
     for name in pairs(scales) do
-        if name ~= "BlackSage" and name ~= "CommonMallow" then
-            local value, kind, intensity = mod.Medicines[name].getValue(mod, p)
-            assert(value == 0.25 and kind == mod.MoodleType.Bad and intensity == 7)
-        end
+        assert((moodle(name):getLevel() > 0) == (name == "BlackSage" or name == "CommonMallow"))
     end
-    assert(upstreamCalls == calls + 6)
-    for _, name in ipairs({"BlackSage", "CommonMallow"}) do
-        local m = moodle(name)
-        m.value = 0.5
-        mod:updateMoodle(m)
-        assert(m:getLevel() == 0)
+    sync, herbs = true, false; poll()
+    for name in pairs(scales) do
+        assert((moodle(name):getLevel() > 0) == (name ~= "BlackSage" and name ~= "CommonMallow"))
     end
-    poll()
+    sync, herbs = false, false; poll()
     assert(not medicine.states[0])
-    sync, herbs = true, true
-    poll()
-    receive(payload())
-    herbs = false
-    near(mod.Medicines.Painkillers.getValue(mod, p), 0.5)
-    assert(mod.Medicines.BlackSage.getValue(mod, p) == 0)
+    for name in pairs(scales) do assert(moodle(name):getLevel() == 0) end
+    sync, herbs = true, true; poll(); receive(payload()); poll()
     Events.OnMainMenuEnter.fire()
     assert(next(medicine.states) == nil)
 end)
-
+check("split-screen slots retain their own player, nonce, and framework indicators", function()
+    local other = player(1, 101); players[1] = other
+    Events.OnCreatePlayer.fire(1)
+    poll(); poll(other)
+    local first, second = payload(), payload(other)
+    assert(first.request ~= second.request)
+    receive(second); poll(other)
+    assert(not medicine.states[0].values and medicine.states[1].values)
+    receive(first); poll()
+    assert(moodle("Painkillers").char == p and moodle("Painkillers", other).char == other)
+end)
 check("single-player reads native effects directly without any network requests", function()
     client, server, sync, herbs = false, false, true, true
     local sent = #requests
     p.raw.Antibiotics, p.raw.Painkillers = 25, 2700
     p.raw.BlackSage, p.raw.CommonMallow = 3.5, 2.5
-    for _, name in ipairs({"Antibiotics", "Painkillers", "BlackSage", "CommonMallow"}) do
-        near(mod.Medicines[name].getValue(mod, p), 0.5)
-    end
     poll()
+    for _, name in ipairs({"Antibiotics", "Painkillers", "BlackSage", "CommonMallow"}) do near(moodle(name):getValue(), 0.5) end
     assert(#requests == sent)
 end)
-
+check("module reloads preserve UI registrations and native hooks", function()
+    local count, hook = Events.OnCreatePlayer.count(), ISEatFoodAction.complete
+    dofile(base .. "shared/PZSurvivorToolkit/MedicineEffects.lua")
+    dofile(base .. "client/PZSurvivorToolkit/MedicineMoodles.lua")
+    server = true
+    local commands = Events.OnClientCommand.count()
+    dofile(base .. "server/PZSurvivorToolkit/MedicineMoodles.lua")
+    assert(Events.OnCreatePlayer.count() == count and Events.OnClientCommand.count() == commands)
+    assert(ISEatFoodAction.complete == hook)
+end)
 print("Medicine moodles regressions passed: " .. passed .. ".")

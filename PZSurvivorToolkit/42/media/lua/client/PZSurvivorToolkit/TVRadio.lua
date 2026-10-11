@@ -1,4 +1,5 @@
 require "PZSurvivorToolkit/Settings"
+require "PZSurvivorToolkit/TVDeviceResolver"
 
 local Toolkit = PZSurvivorToolkit
 local TVRadio = {}
@@ -35,6 +36,13 @@ local function installVHS()
     TVRadio.tvClass = class
     local addMedia, addMediaAux, bumper, createChildren = class.addMedia, class.addMediaAux,
         class.onBumperContext, class.createChildren
+    local drawTexture = class.drawTexture
+    class.drawTexture = function(self, texture, x, y, a, r, g, b, ...)
+        if texture == self.noSignal and a == 160 and r == 120 then
+            return self:drawTextureScaled(texture, x, y, a, r, g, b, ...)
+        end
+        return drawTexture(self, texture, x, y, a, r, g, b, ...)
+    end
     class.addMedia = function(self, ...)
         if not Toolkit.Settings.improveVHSControls() then return addMedia(self, ...) end
         if self.deviceData:hasMedia() then return self:removeMedia() end
@@ -130,14 +138,19 @@ local function install()
     local class = ISRadioWindow
     if TVRadio.windowClass == class then return end
     TVRadio.windowClass = class
-    local activate, prerender, outside = class.activate, class.prerender, class.onMouseDownOutside
+    local activate, prerender, outside, read = class.activate, class.prerender,
+        class.onMouseDownOutside, class.readFromObject
+    local resolver = Toolkit.TVDeviceResolver
+    class.readFromObject = function(self, player, device)
+        return resolver.call(device, read, self, player, device)
+    end
     class.activate = function(...)
         local window = activate(...)
         if window then updateCloseButton(window) end
         return window
     end
     class.prerender = function(self, ...)
-        local result = prerender(self, ...)
+        local result = resolver.call(self.device, prerender, self, ...)
         updateCloseButton(self)
         return result
     end
@@ -147,5 +160,5 @@ local function install()
     end
 end
 
--- Both upstream mods replace the window class; wrap the final class after loading.
+-- Wrap the final upstream window class after loading.
 Events.OnGameStart.Add(install)

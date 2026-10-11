@@ -1,0 +1,122 @@
+require "PZSurvivorToolkit/BulkActions"
+require "ISUI/ISTextBox"
+if getActivatedMods():contains("TakeAnyAmount") then return end
+
+local Toolkit = PZSurvivorToolkit
+local Quantity = {}
+Toolkit.QuantityTransfers = Quantity
+
+function Quantity.parse(text, maximum)
+    local value = tonumber(text)
+    if type(value) == "number" and value >= 1 and value <= maximum and value == math.floor(value) then
+        return value
+    end
+end
+
+local function eligible(player, item, destination, containers)
+    local source = item:getContainer()
+    if not source or source == destination or isForceDropHeavyItem(item)
+        or not destination:isItemAllowed(item) or item:isFavorite()
+        or player:isEquipped(item) then return false end
+    if source:isInCharacterInventory(player) or containers:contains(source) then return true end
+    -- Proximity views can expose actual items through a virtual container.
+    for i = 0, containers:size() - 1 do
+        if containers:get(i):getItems():contains(item) then return true end
+    end
+    return false
+end
+
+function Quantity.snapshot(playerNum, rows, destination, grab)
+    local player = getSpecificPlayer(playerNum)
+    if not player or player:isDead() or not destination then return end
+    local containers = ISInventoryPaneContextMenu.getContainers(player)
+    local selection = {player = player, playerNum = playerNum, destination = destination,
+        grab = grab, items = {}, sources = {}}
+    for _, item in ipairs(Toolkit.BulkActions.selectedItems(rows)) do
+        if eligible(player, item, destination, containers)
+            and (grab or item:getContainer():isInCharacterInventory(player)) then
+            selection.items[#selection.items + 1] = item
+            selection.sources[item] = item:getContainer()
+        end
+    end
+    return selection
+end
+
+function Quantity.transfer(selection, text)
+    if not Toolkit.Settings.quantityTransfers() or not selection then return end
+    local player = getSpecificPlayer(selection.playerNum)
+    local limit = Quantity.parse(text, #selection.items)
+    if not limit or player ~= selection.player or player:isDead() then return end
+    local containers = ISInventoryPaneContextMenu.getContainers(player)
+    if not selection.destination:isInCharacterInventory(player)
+        and not containers:contains(selection.destination) then return end
+    local items = {}
+    for _, item in ipairs(selection.items) do
+        if #items >= limit then break end
+        if item:getContainer() == selection.sources[item]
+            and eligible(player, item, selection.destination, containers) then
+            items[#items + 1] = item
+        end
+    end
+    if #items == 0 then return 0 end
+    if selection.grab and not luautils.walkToContainer(items[1]:getContainer(), selection.playerNum) then return 0 end
+    local transfer = ISInventoryTransferUtil.newInventoryTransferAction
+    -- A rejected pickup must not cancel another client's same-numbered transaction.
+    ISInventoryTransferUtil.newInventoryTransferAction = function(...)
+        return Toolkit.BulkActions.guardTransfer(transfer(...))
+    end
+    local ok, err = pcall(ISInventoryPaneContextMenu.onMoveItemsTo, items, selection.destination, selection.playerNum)
+    ISInventoryTransferUtil.newInventoryTransferAction = transfer
+    if not ok then error(err) end
+    return #items
+end
+
+local function accept(_, button, selection)
+    if button.internal ~= "OK" then return end
+    local modal, text = button.parent, button.parent.entry:getText()
+    if not Quantity.parse(text, #selection.items) then
+        modal:showErrorMessage(true, getText("UI_PZSurvivorToolkit_quantity_invalid", #selection.items))
+        return
+    end
+    modal:showErrorMessage(false)
+    Quantity.transfer(selection, text)
+end
+
+local function open(selection, title)
+    if not Toolkit.Settings.quantityTransfers() then return end
+    local modal = ISTextBox:new(0, 0, 360, 160,
+        getText("UI_PZSurvivorToolkit_quantity_prompt", title, #selection.items), "", nil, accept, selection.playerNum, selection)
+    modal:initialise()
+    modal.player = selection.playerNum
+    modal:setValidateFunction(nil, function(_, text) return Quantity.parse(text, #selection.items) ~= nil end)
+    modal:setValidateTooltipText(getText("UI_PZSurvivorToolkit_quantity_invalid", #selection.items))
+    modal.entry.onCommandEntered = function() modal:onClick(modal.yes) end
+    modal:addToUIManager()
+    modal.entry:focus()
+    if JoypadState.players[selection.playerNum + 1] then
+        modal.prevFocus = JoypadState.players[selection.playerNum + 1].focus
+        setJoypadFocus(selection.playerNum, modal)
+    end
+    return modal
+end
+
+local nativeGrabMenu = ISInventoryPaneContextMenu.doGrabMenu
+ISInventoryPaneContextMenu.doGrabMenu = function(context, rows, playerNum)
+    local result = nativeGrabMenu(context, rows, playerNum)
+    if not Toolkit.Settings.quantityTransfers() then return result end
+    local page = getPlayerInventory(playerNum)
+    local selection = Quantity.snapshot(playerNum, rows, page.inventory, true)
+    if selection and #selection.items > 1 then
+        context:addOption(getText("UI_PZSurvivorToolkit_grab_amount"), selection, open, page.title)
+    end
+    return result
+end
+
+Events.OnFillInventoryObjectContextMenu.Add(function(playerNum, context, rows)
+    if not Toolkit.Settings.quantityTransfers() then return end
+    local page = getPlayerLoot(playerNum)
+    local selection = Quantity.snapshot(playerNum, rows, page.inventory, false)
+    if selection and #selection.items > 1 then
+        context:addOption(getText("UI_PZSurvivorToolkit_put_amount", page.title), selection, open, page.title)
+    end
+end)

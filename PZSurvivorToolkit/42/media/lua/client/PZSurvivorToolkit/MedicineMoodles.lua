@@ -1,11 +1,24 @@
 require "PZSurvivorToolkit/Settings"
-if not getActivatedMods():contains("MedicineMoodlesB42") then return end
+if not getActivatedMods():contains("MoodleFramework") then return end
+if getActivatedMods():contains("MedicineMoodlesB42") then
+    if not PZSurvivorToolkit.medicineLegacyWarning then
+        print("[PZSurvivorToolkit] MedicineMoodlesB42 is active; Toolkit medicine indicators are disabled to avoid duplicates.")
+        PZSurvivorToolkit.medicineLegacyWarning = true
+    end
+    return
+end
+if PZSurvivorToolkit.MedicineMoodles then return end
+require "MF_ISMoodle"
 local Effects = require "PZSurvivorToolkit/MedicineEffects"
 local Toolkit = PZSurvivorToolkit
-local Medicine = {states = {}, sequence = 0}
+local Medicine = {states = {}, sequence = 0, names = {}}
 Toolkit.MedicineMoodles = Medicine
-local scales = {Antibiotics = 50, Antidepressants = 6600, BetaBlockers = 6600,
-    Painkillers = 5400, SleepingTablets = 6600, LemonGrass = 280, BlackSage = 7, CommonMallow = 5}
+local medicines = {
+    Antibiotics = {50, "Base.Antibiotics"}, Antidepressants = {6600, "Base.PillsAntiDep"},
+    BetaBlockers = {6600, "Base.PillsBeta"}, Painkillers = {5400, "Base.Pills"},
+    SleepingTablets = {6600, "Base.PillsSleepingTablets"}, LemonGrass = {280, "Base.LemonGrass"},
+    BlackSage = {7, "Base.BlackSage"}, CommonMallow = {5, "Base.CommonMallow"},
+}
 local herbs = {BlackSage = true, CommonMallow = true}
 
 local function reading(player)
@@ -17,79 +30,64 @@ local function reading(player)
     end
 end
 
-local function getValue(name, original)
-    return function(self, player)
-        if herbs[name] then
-            if not Toolkit.Settings.medicineHerbs() then return 0 end
-        elseif not Toolkit.Settings.medicineMoodleSync() then
-            return original(self, player)
-        end
-        local values = reading(player)
-        local value = values and values[name] / scales[name] or 0
-        if name == "Antidepressants" and value >= 1 then
-            return self.MoodleLevels.Bad[1], self.MoodleType.Special
-        elseif name == "LemonGrass" then
-            return value, self.MoodleType.Bad
-        elseif name == "SleepingTablets" then
-            return value, nil, values and values.SleepingIntensity / 0.1
-        end
-        return value
-    end
-end
-
-function Medicine.install()
-    local mod = ModMedicineMoodles
-    if not mod or Medicine.installed == mod then return end
-    Medicine.installed = mod
-    mod:addMedicine("BlackSage", "Base.BlackSage", getValue("BlackSage"))
-    mod:addMedicine("CommonMallow", "Base.CommonMallow", getValue("CommonMallow"))
-    for name in pairs(scales) do
-        if not herbs[name] and mod.Medicines[name] then
-            mod.Medicines[name].getValue = getValue(name, mod.Medicines[name].getValue)
-        end
-    end
-    local setupMoodle, updateMoodle = mod.setupMoodle, mod.updateMoodle
-    mod.setupMoodle = function(self, moodle)
-        setupMoodle(self, moodle)
-        if not moodle or not herbs[moodle.name] then return end
-        local item = getScriptManager():getItem(self.Medicines[moodle.name].item)
-        local texture = item and item:getNormalTexture()
+local function setup(moodle, name, spec)
+    -- Zero is neutral; positive remaining pools are beneficial, negative values mark cooldown/waiting.
+    moodle:setThresholds(-0.7, -0.4, -0.1, -0.000001, 0.000001, 0.1, 0.4, 0.7)
+    moodle:setValue(0)
+    local item = getScriptManager():getItem(spec[2])
+    if item then
         for kind = 1, 2 do for level = 1, 4 do
-            moodle:setTitle(kind, level, getText("UI_PZSurvivorToolkit_medicine_" .. moodle.name))
-            if texture then moodle:setPicture(kind, level, texture) end
+            moodle:setTitle(kind, level, herbs[name]
+                and getText("UI_PZSurvivorToolkit_medicine_" .. name) or item:getDisplayName())
+            moodle:setPicture(kind, level, item:getNormalTexture())
         end end
     end
-    -- addMedicine can create moodles before the picture/title override is installed.
-    for _, moodles in pairs(mod.PlayerMoodles) do
-        for name in pairs(herbs) do mod:setupMoodle(moodles[name]) end
-    end
-    mod.updateMoodle = function(self, moodle)
-        updateMoodle(self, moodle)
-        if not moodle or not scales[moodle.name] or moodle:getLevel() == 0 or not self:checkSkillRequirements(moodle) then return end
-        if not herbs[moodle.name] and not Toolkit.Settings.medicineMoodleSync() then return end
-        local value, kind, intensity = self.Medicines[moodle.name].getValue(self, moodle.char)
-        kind = kind or self.MoodleType.Good
-        local description
-        if moodle.name == "Antidepressants" and kind == self.MoodleType.Special then
-            kind = self.MoodleType.Bad
+    moodle.toolkitMedicineSetup = true
+end
+
+local function update(player)
+    if not player:isLocalPlayer() then return end
+    local values = reading(player)
+    for name, spec in pairs(medicines) do
+        local moodle = MF.getMoodle(Medicine.names[name], player:getPlayerNum())
+        if not moodle or moodle.char ~= player then
+            moodle = MF.ISMoodle:new(Medicine.names[name], player)
+        end
+        if not moodle.toolkitMedicineSetup then setup(moodle, name, spec) end
+        local enabled = herbs[name] and Toolkit.Settings.medicineHerbs()
+            or not herbs[name] and Toolkit.Settings.medicineMoodleSync()
+        local value = enabled and values and values[name] / spec[1] or 0
+        local shown, kind, description = value, 1
+        if name == "Antidepressants" and value >= 1 then
+            shown, kind = -0.05, 2
             description = getText("UI_PZSurvivorToolkit_medicine_pending")
-        elseif moodle.name == "LemonGrass" and Toolkit.Settings.medicineMoodleSync() then
+        elseif name == "LemonGrass" then
+            shown, kind = -value, 2
             description = getText("UI_PZSurvivorToolkit_medicine_cooldown", round(value * 100))
-        elseif kind ~= self.MoodleType.Special then
+        else
             description = getText("IGUI_RemainingPercent", round(value * 100))
-            if intensity and intensity > 0 then
-                description = getText("IGUI_climate_intensity") .. ": " .. round(intensity, 2) .. " / " .. description
+            if name == "SleepingTablets" and value > 0 and values.SleepingIntensity > 0 then
+                description = getText("IGUI_climate_intensity") .. ": " .. round(values.SleepingIntensity / 0.1, 2)
+                    .. " / " .. description
             end
         end
-        if description and moodle:getDescription(kind, moodle:getLevel()) ~= description then
-            moodle:setDescription(kind, moodle:getLevel(), description)
+        if moodle:getValue() ~= shown then moodle:setValue(shown) end
+        local level = moodle:getLevel()
+        if level > 0 and moodle:getDescription(kind, level) ~= description then
+            moodle:setDescription(kind, level, description)
         end
     end
 end
 
-Events.OnGameStart.Add(Medicine.install)
+for name in pairs(medicines) do
+    Medicine.names[name] = "PZSurvivorToolkitMedicine" .. name
+    MF.createMoodle(Medicine.names[name])
+end
+Events.OnCreatePlayer.Add(function(num) update(getSpecificPlayer(num)) end)
 Events.OnPlayerUpdate.Add(function(player)
-    if not isClient() or not player:isLocalPlayer() then return end
+    if not player:isLocalPlayer() then return end
+    update(player)
+    if not isClient() then return end
     local num, now = player:getPlayerNum(), getTimestampMs()
     if player:isDead() or not (Toolkit.Settings.medicineMoodleSync() or Toolkit.Settings.medicineHerbs()) then
         Medicine.states[num] = nil; return
@@ -103,15 +101,14 @@ Events.OnPlayerUpdate.Add(function(player)
 end)
 Events.OnServerCommand.Add(function(module, command, values)
     if module ~= "PZSurvivorToolkitMedicine" or command ~= "State" or type(values) ~= "table" then return end
-    for name in pairs(scales) do
+    for name in pairs(medicines) do
         local value = values[name]
-        if type(value) ~= "number" or value ~= value or value < 0 or value > 1000000000 then return end
+        if type(value) ~= "number" or not (value >= 0 and value <= 1000000000) then return end
     end
-    if type(values.SleepingIntensity) ~= "number" or values.SleepingIntensity ~= values.SleepingIntensity
-        or values.SleepingIntensity < 0 or values.SleepingIntensity > 1000000000 then return end
+    if type(values.SleepingIntensity) ~= "number" or not (values.SleepingIntensity >= 0 and values.SleepingIntensity <= 1000000000) then return end
     for num, state in pairs(Medicine.states) do
         local player = getSpecificPlayer(num)
-        if player == state.player and not player:isDead() and player:getOnlineID() == values.onlineID
+        if player == state.player and player:isLocalPlayer() and not player:isDead() and player:getOnlineID() == values.onlineID
             and state.request ~= nil and state.request == values.request then
             state.values, state.receivedAt, state.request = values, getTimestampMs(), nil
         end

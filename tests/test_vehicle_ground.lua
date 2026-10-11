@@ -135,6 +135,8 @@ assert(character.inventory:contains(item) and #character.square.items == 0, "def
 assert(ISUninstallVehiclePart.new == nativeNew and ISUninstallVehiclePart.complete == nativeComplete)
 
 local start
+local groundEnabled = true
+PZSurvivorToolkit = {Settings = {uninstallToGround = function() return groundEnabled end}}
 Events = {OnGameStart = {Add = function(callback) start = callback end}}
 local queued, throw = {}, false
 ISVehiclePartMenu = {onUninstallPart = function(player, targetPart)
@@ -172,6 +174,14 @@ window.blocked = false
 window:doPartContextMenu(part)
 ground = context.options[2]
 assert(not ground.notAvailable)
+groundEnabled = false
+window:doPartContextMenu(part)
+assert(#context.options == 1, "disabled feature leaves only native uninstall")
+ground.onSelect(ground.target, ground.param1)
+assert(#queued == 0, "stale context callback must respect feature disable")
+groundEnabled = true
+window:doPartContextMenu(part)
+ground = context.options[2]
 ground.onSelect(ground.target, ground.param1)
 assert(queued[1] == "native path/tools/hood" and queued[2].Type == "PZSTUninstallToGround"
     and queued[3] == "native close hood" and ISUninstallVehiclePart.new == nativeNew)

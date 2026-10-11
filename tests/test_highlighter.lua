@@ -6,7 +6,7 @@ local function equal(actual, expected, message)
     assert(actual == expected, (message or "values differ") .. ": " .. tostring(actual) .. " ~= " .. tostring(expected))
 end
 
-local function setup(savedFile, mediaActive, medicineActive, navigatorActive)
+local function setup(savedFile, mediaActive, medicineActive, navigatorActive, extraMods)
     local world = { now = 0, squares = {}, objects = {}, saves = 0, file = savedFile or "",
         itemReads = 0, inspections = 0, maxItemReads = 0, maxInspections = 0 }
     local function event()
@@ -20,8 +20,9 @@ local function setup(savedFile, mediaActive, medicineActive, navigatorActive)
     PZSurvivorToolkit = {}
     getActivatedMods = function()
         return {contains = function(_, id) return mediaActive == true and id == "TVRadio_ReInvented"
-            or medicineActive == true and id == "MedicineMoodlesB42"
-            or navigatorActive == true and id == "Navigator" end}
+            or medicineActive == true and id == "MoodleFramework"
+            or navigatorActive == true and id == "Navigator"
+            or extraMods and extraMods[id] == true end}
     end
     getText = function(key) return key end
     getTimestampMs = function() return world.now end
@@ -628,6 +629,8 @@ if NativeModOptionsSource then
         w:apply("BulkRemoveBatteries", false)
         w:apply("BulkUnload", false)
         w:apply("BulkRemoveAttachments", false)
+        w:apply("QuantityTransfers", false)
+        w:apply("UninstallToGround", false)
         w.settings.toggle()
         local reloaded = setup(w.file, true)
         equal(reloaded.settings.isEnabled(), false)
@@ -642,6 +645,8 @@ if NativeModOptionsSource then
         equal(reloaded.settings.bulkRemoveBatteries(), false)
         equal(reloaded.settings.bulkUnload(), false)
         equal(reloaded.settings.bulkRemoveAttachments(), false)
+        equal(reloaded.settings.quantityTransfers(), false)
+        equal(reloaded.settings.uninstallToGround(), false)
     end)
 end
 
@@ -688,6 +693,16 @@ test("navigator option is hidden without the mod, toggleable and persisted", fun
         local reloaded = setup(active.file, false, false, true)
         equal(reloaded.settings.navigatorDashboard(), false)
     end
+end)
+
+test("legacy quantity and medicine mods suppress duplicate settings", function()
+    local w = setup(nil, false, true, false, {TakeAnyAmount = true, MedicineMoodlesB42 = true})
+    equal(w.options.dict.QuantityTransfers, nil)
+    equal(w.settings.quantityTransfers(), false)
+    equal(w.options.dict.MedicineMoodleSync, nil)
+    equal(w.options.dict.MedicineHerbs, nil)
+    equal(w.settings.medicineMoodleSync(), false)
+    equal(w.settings.medicineHerbs(), false)
 end)
 
 test("medicine options are conditional, independently toggleable and persisted", function()

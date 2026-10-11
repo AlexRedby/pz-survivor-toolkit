@@ -1,4 +1,4 @@
-if not getActivatedMods():contains("MedicineMoodlesB42") then return end
+if not getActivatedMods():contains("MoodleFramework") or getActivatedMods():contains("MedicineMoodlesB42") then return end
 require "PZSurvivorToolkit"
 require "TimedActions/ISEatFoodAction"
 

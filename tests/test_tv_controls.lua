@@ -8,7 +8,11 @@ end
 local function setup(active)
     local w = {enabled = true, active = active ~= false, refreshes = 0, reachable = {}, queue = {},
         transfers = {}, walks = {}, steps = {}, nativeCalls = {}, menus = {}, children = {}}
-    require = function() end
+    require = function(name)
+        if name == "PZSurvivorToolkit/TVDeviceResolver" then
+            return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/TVDeviceResolver.lua")
+        end
+    end
     PZSurvivorToolkit = {Settings = {improveVHSControls = function() return w.enabled end,
         keepMediaWindowOpen = function() return false end}}
     Events = {OnGameStart = {Add = function(fn) w.install = fn end}}
@@ -22,6 +26,8 @@ local function setup(active)
     ISMouseDrag = {}
     instanceof = function(item, class) return class == "InventoryItem" and item.inventoryItem == true end
     ISPanel = {derive = function(self) return setmetatable({}, {__index = self}) end}
+    ISPanel.drawTexture = function(self, ...) w.textureCall = {...}; return "native texture" end
+    ISPanel.prerender = function() w.panelPrerender = true end
     RWMPanel = ISPanel
     ISButton = {new = function(_, x, y, width, height, title, target, callback)
         return {backgroundColor = {}, borderColor = {}, target = target, callback = callback,
@@ -128,7 +134,7 @@ local function setup(active)
     if NativeDropBoxSource then assert(loadstring(NativeDropBoxSource))() end
     RWMMedia = {addMediaAux = function(panel, item) w.nativeMedia = {panel, item}; return "native insert" end}
     if NativeMediaSource then assert(loadstring(NativeMediaSource))() end
-    RWMMergedTV = {}
+    RWMMergedTV = {drawTexture = ISPanel.drawTexture}
     for _, name in ipairs({"addMedia", "addMediaAux", "onBumperContext", "clear"}) do
         RWMMergedTV[name] = function(self, ...) w.nativeCalls[name] = {self, ...}; return "native " .. name end
     end
@@ -325,5 +331,193 @@ test("inactive TV mod stays untouched and repeated installs do not stack wrapper
     local hooked = RWMMergedTV.addMedia
     w.install(); equal(RWMMergedTV.addMedia, hooked)
 end)
+
+test("missing TV video uses scaled fallback; other texture calls remain upstream", function()
+    local w = setup()
+    local panel = w.panel
+    panel.noSignal = {}
+    panel.drawTextureScaled = function(self, ...)
+        w.scaledCall = {...}; return "scaled texture"
+    end
+    equal(panel:drawTexture(panel.noSignal, 7, 6, 160, 120, 1, 1, 1, 1), "scaled texture")
+    equal(#w.scaledCall, 9)
+    for i, value in ipairs({panel.noSignal, 7, 6, 160, 120, 1, 1, 1, 1}) do equal(w.scaledCall[i], value) end
+    local texture = {}
+    equal(panel:drawTexture(texture, 2, 3, 0.5, 1, 1, 1), "native texture")
+    equal(w.textureCall[1], texture); equal(w.textureCall[4], 0.5)
+    equal(panel:drawTexture(panel.noSignal, 7, 6, 1, 1, 1, 1), "native texture")
+    if TVSource then
+        panel.deviceData = {getIsTurnedOn = function() return true end}
+        panel.video = nil
+        panel:prerender()
+        equal(w.scaledCall[4], 160); equal(w.scaledCall[6], 1)
+        equal(w.panelPrerender, true)
+    end
+end)
+
+if NativeTVWindowSource then
+    test("base TV window resolves EN/RU identities and retains controller, range and close lifecycle", function()
+        local active, keepOpen, language = false, true, "EN"
+        require = function(name)
+            if name == "PZSurvivorToolkit/TVDeviceResolver" then
+                return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/TVDeviceResolver.lua")
+            end
+        end
+        PZSurvivorToolkit = {Settings = {improveVHSControls = function() return false end,
+            keepMediaWindowOpen = function() return keepOpen end}}
+        local start, equipPrimary, equipSecondary
+        Events = {OnGameStart = {Add = function(fn) start = fn end},
+            OnEquipPrimary = {Add = function(fn) equipPrimary = fn end},
+            OnEquipSecondary = {Add = function(fn) equipSecondary = fn end}}
+        getActivatedMods = function() return {contains = function() return active end} end
+        instanceof = function(object, class) return object and object.classes and object.classes[class] == true end
+        getTextManager = function() return {getFontHeight = function() return 14 end, MeasureStringX = function() return 50 end} end
+        getText = function(key) return key end
+        UIFont = {Small = 1, Large = 2}
+        getItemNameFromFullType = function(itemType) return language .. ":" .. itemType end
+        local translatedName = getItemNameFromFullType
+        local closed, parentRenders, focus, draw
+        ISCollapsableWindow = {derive = function(self) return setmetatable({}, {__index = self}) end,
+            close = function() closed = true end, update = function() end,
+            prerender = function() parentRenders = (parentRenders or 0) + 1 end}
+        ISUIElement = {stayOnSplitScreen = function() end}
+        assert(loadstring(NativeTVWindowSource))()
+        local nativeRead, nativeRender = ISRadioWindow.readFromObject, ISRadioWindow.prerender
+        local nativeClose, nativeUpdate, nativeInput = ISRadioWindow.close, ISRadioWindow.update, ISRadioWindow.onJoypadDown
+        RWMMergedTV = nil
+        dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/TVRadio.lua")
+        start()
+        equal(ISRadioWindow.readFromObject, nativeRead, "disabled TV mod must not patch resolution")
+        active = true; start()
+        assert(ISRadioWindow.readFromObject ~= nativeRead and ISRadioWindow.prerender ~= nativeRender)
+        equal(ISRadioWindow.close, nativeClose); equal(ISRadioWindow.update, nativeUpdate)
+        equal(ISRadioWindow.onJoypadDown, nativeInput)
+        equal(equipPrimary, ISRadioWindow.onEquip); equal(equipSecondary, ISRadioWindow.onEquip)
+        local window = {playerNum = 0, width = 283, modules = {}, title = "window",
+            valutechTV = "tv", premiumTV = "wide", antiqueTV = "antique", carRadio = "car",
+            premiumRadio = "red", valutechRadio = "black", playerCD = "cd", walkieTalkie = "walkie", RadioHAM = "ham"}
+        setmetatable(window, {__index = ISRadioWindow})
+        local controls = {onJoypadDown = function(self, button) self.lastButton = button end,
+            onJoypadDirUp = function(self) self.up = true end}
+        for i = 1, 6 do
+            window.modules[i] = {enabled = false, element = {subpanel = controls,
+                setVisible = function(self, visible) self.visible = visible end,
+                clear = function(self) self.cleared = true end,
+                readFromObject = function(self, player, device, data, kind) self.read = {player, device, data, kind} end}}
+        end
+        window.closeButton = {setVisible = function(self, visible) self.visible = visible end,
+            setX = function() end, setY = function() end, bringToTop = function() end, getWidth = function() return 18 end}
+        window.collapseButton = {setVisible = function() end}
+        for _, name in ipairs({"addToUIManager", "removeFromUIManager", "initialise", "instantiate"}) do window[name] = function() end end
+        function window:setVisible(value) self.visible = value end
+        function window:getIsVisible() return self.visible end
+        function window:setWidth(value) self.width = value end
+        function window:setHeight(value) self.height = value end
+        function window:getWidth() return self.width end
+        function window:titleBarHeight() return 18 end
+        function window:drawTexture(texture) draw = texture end
+        Joypad = {AButton = 1, BButton = 2, RBumper = 3}
+        JoypadState = {players = {}}
+        local origin = {setVisible = function(self, value) self.visible = value end}
+        getFocusForPlayer = function() return focus end
+        setJoypadFocus = function(_, value) focus = value end
+        getCore = function() return {getOptionFontSizeReal = function() return 1 end} end
+        local player = {getPlayerNum = function() return 0 end, setVariable = function() end,
+            getX = function() return 0 end, getY = function() return 0 end,
+            getPrimaryHandItem = function(self) return self.held end,
+            getSecondaryHandItem = function() end, getClothingItem_Back = function() end}
+        getPlayer = function() return player end
+        local screen = {close = function(self) self.closed = true end}
+        getPlayerInventory, getPlayerLoot = function() return screen end, function() return screen end
+        local function device(itemType, kind, name)
+            local data = {getDeviceName = function() return name or "untranslated device" end,
+                setIsTurnedOn = function(self, value) self.on = value end}
+            local object = {classes = {[kind] = true}, getFullType = function() return itemType end,
+                getDeviceData = function() return data end, getID = function() return 7 end,
+                getModData = function() return {} end, getProperties = function() return {get = function() end} end,
+                getSquare = function() return {} end, getX = function() return 0 end, getY = function() return 0 end}
+            if kind == "InventoryItem" then object.classes.Radio = true end
+            if kind == "IsoRadio" or kind == "IsoTelevision" then object.classes.IsoObject = true; object.classes.IsoWaveSignal = true end
+            return object, data
+        end
+        local function check(object, module, texture)
+            draw = nil
+            window:readFromObject(player, object)
+            for i = 1, 6 do equal(window.modules[i].enabled, i == module) end
+            window:prerender(); equal(draw, texture)
+            equal(window.title, object:getDeviceData():getDeviceName(), "display title must remain native")
+            equal(getItemNameFromFullType, translatedName, "translation getter must be restored")
+        end
+        for _, lang in ipairs({"EN", "RU"}) do
+            language = lang
+            for _, case in ipairs({{"Base.TvBlack", 1, "tv"}, {"Base.TvWideScreen", 1, "wide"},
+                {"Base.TvAntique", 1, "antique"}, {"Base.RadioRed", 3, "red"}, {"Base.RadioBlack", 3, "black"},
+                {"Base.CDplayer", 4, "cd"}, {"Base.ManPackRadio", 5, "walkie"},
+                {"Base.WalkieTalkieMakeShift", 5, "walkie"}, {"Base.HamRadio5", 6, "ham"}}) do
+                check(device(case[1], "InventoryItem"), case[2], case[3])
+            end
+            local furniture = device(nil, "IsoTelevision")
+            furniture.getProperties = function() return {get = function() return "TvWideScreen" end} end
+            check(furniture, 1, "wide")
+            furniture.getProperties = function() return {get = function() return "Base.TvAntique" end} end
+            check(furniture, 1, "antique")
+            local radio = device("Base.RadioRed", "InventoryItem")
+            local floor = device(nil, "IsoRadio")
+            floor.getModData = function() return {RadioItemID = 7} end
+            local world = {classes = {IsoWorldInventoryObject = true}, getItem = function() return radio end}
+            floor.getSquare = function() return {getWorldObjects = function() return list({world}) end,
+                getObjects = function() return list({}) end} end
+            check(floor, 3, "red")
+            floor.getSquare = function() return {getWorldObjects = function() end, getObjects = function() return list({world}) end} end
+            check(floor, 3, "red")
+            check(device(nil, "IsoTelevision"), 1, "tv")
+            check(device(nil, "IsoRadio"), 3, "black")
+            local car = device(nil, "VehiclePart")
+            car.getInventoryItem = function() return radio end
+            check(car, 2, "car")
+            check(device("Unknown.TV", "InventoryItem", translatedName("Base.TvBlack")), nil, nil)
+        end
+        JoypadState.players[1] = {}; focus = origin
+        local held, data = device("Base.RadioRed", "InventoryItem")
+        player.held = held
+        ISRadioWindow.instances[0] = window
+        equal(ISRadioWindow.activate(player, held), window)
+        equal(focus, window); equal(screen.closed, true); equal(window.closeButton.visible, true)
+        equipPrimary(player, held); equal(window.device, held)
+        equipSecondary(player, held); equal(window.device, held)
+        window:setVisible(true)
+        window:onJoypadDirUp(); equal(controls.up, true)
+        window:onJoypadDown(Joypad.RBumper); equal(controls.lastButton, Joypad.RBumper); equal(controls.parent, window)
+        window:onMouseDownOutside(-1, 0); equal(window.visible, true)
+        window:update(); equal(window.visible, true, "held device must remain open")
+        player.held = nil; window:update()
+        equal(closed, true); equal(window.device, nil); equal(focus, nil); equal(data.on, false)
+        assert(parentRenders > 0)
+        local resolver = PZSurvivorToolkit.TVDeviceResolver
+        assert(not pcall(resolver.call, held, function() error("fixture error") end))
+        equal(getItemNameFromFullType, translatedName, "translation getter must restore on failure")
+        if TVSource then
+            RWMPanel.readFromObject = function(panel, p, object, d, kind)
+                panel.player, panel.device, panel.deviceData, panel.deviceType = p, object, d, kind
+                return true
+            end
+            assert(loadstring(TVSource))()
+            for _, itemType in ipairs({"Base.TvAntique", "Base.TvBlack"}) do
+                local object, d = device(itemType, "InventoryItem")
+                d.getDeviceVolume = function() return 0.5 end
+                d.getChannel = function() return 200 end
+                d.getDevicePresets = function() return {getPresets = function() return list({{getFrequency = function() return 200 end}}) end} end
+                local slot = {setVisible = function(self, value) self.visible = value end}
+                local panel = {slotVHS = slot, playMediaButton = slot,
+                    volumeBar = {setVolume = function() end, getVolumeSteps = function() return 10 end}}
+                resolver.call(object, RWMMergedTV.readFromObject, panel, player, object, d, "InventoryItem")
+                equal(panel.canMedia, itemType ~= "Base.TvAntique")
+                equal(slot.visible, panel.canMedia)
+                equal(getItemNameFromFullType, translatedName)
+            end
+        end
+        print("PASS TV identity: EN/RU, held/floor/furniture/fallback/vehicle, unknown type and controller/range lifecycle")
+    end)
+end
 
 print("Passed " .. count .. " VHS controls tests" .. (NativeDropBoxSource and " (native drag parser)" or " (drag dispatch double)") .. ".")

@@ -19,6 +19,10 @@ def main() -> None:
     parser.add_argument("--native-radio-root", type=Path, help="vanilla media/lua/client directory for RWMMedia and ISItemDropBox checks")
     parser.add_argument("--navigator-source", type=Path, help="NavigatorRadio source directory for upstream render/input checks")
     parser.add_argument("--native-uninstall", type=Path, help="vanilla ISUninstallVehiclePart.lua for ground-placement checks")
+    parser.add_argument("--medicine-framework-source", type=Path, help="installed MF_ISMoodle.lua")
+    parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
+    parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
+    parser.add_argument("--native-inventory-context-menu", type=Path, help="vanilla inventory transfer callbacks")
     args = parser.parse_args()
     try:
         from lupa.lua51 import LuaRuntime
@@ -44,6 +48,8 @@ def main() -> None:
 
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)
+    if args.tv_source:
+        lua.globals().TVSource = args.tv_source.read_text(encoding="utf-8")
     lua.execute((ROOT / "tests/test_tv_videos.lua").read_text(encoding="utf-8"))
 
     lua = LuaRuntime(unpack_returned_tuples=True)
@@ -60,14 +66,25 @@ def main() -> None:
     lua.globals().ProjectRoot = str(ROOT)
     if args.tv_source:
         lua.globals().TVSource = args.tv_source.read_text(encoding="utf-8")
+        lua.globals().NativeTVWindowSource = (args.tv_source.parent.parent / "ISRadioWindow.lua").read_text(encoding="utf-8")
     if args.native_radio_root:
         lua.globals().NativeMediaSource = (args.native_radio_root / "RadioCom/RadioWindowModules/RWMMedia.lua").read_text(encoding="utf-8")
         lua.globals().NativeDropBoxSource = (args.native_radio_root / "RadioCom/ISUIRadio/ISItemDropBox.lua").read_text(encoding="utf-8")
     lua.execute((ROOT / "tests/test_tv_controls.lua").read_text(encoding="utf-8"))
 
-    for name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua"):
+    for name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua"):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
+        if args.medicine_framework_source:
+            lua.globals().NativeMedicineFrameworkSource = args.medicine_framework_source.read_text(encoding="utf-8")
+        if args.mpff_source:
+            lua.globals().NativeMPFFConfigSource = (args.mpff_source / "shared/MPFastForward_Config.lua").read_text(encoding="utf-8")
+            lua.globals().NativeMPFFServerSource = (args.mpff_source / "server/MPFastForward_Server.lua").read_text(encoding="utf-8")
+        if args.bc_filter_source:
+            lua.globals().NativeBCFilterSource = args.bc_filter_source.read_text(encoding="utf-8")
+        if args.native_inventory_context_menu:
+            lua.globals().NativeInventoryContextMenuSource = args.native_inventory_context_menu.read_text(encoding="utf-8")
+            lua.globals().NativeTextBoxSource = (args.native_inventory_context_menu.parent / "ISTextBox.lua").read_text(encoding="utf-8")
         if args.navigator_source:
             for suffix in ("Config", "Render", "Drag"):
                 source_name = "NavigatorMonitorDrag" if suffix == "Drag" else "Monitor" + suffix
