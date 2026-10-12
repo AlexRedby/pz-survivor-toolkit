@@ -64,6 +64,31 @@ function Queue.cancel(queue, action)
     return true
 end
 
+function Queue.moveReason(queue, action, target, after)
+    local reason = Queue.cancelReason(queue, action)
+    if reason then return reason end
+    if action.action or action == queue.current or queue.queue[1] == action then return "move_active" end
+    local from, to = queue:indexOf(action), queue:indexOf(target or action)
+    if to == -1 then return "unavailable" end
+    if after then to = to + 1 end
+    if from < to then to = to - 1 end
+    -- Crossing any preparation/callback could change which inputs the later action receives.
+    for i = math.min(from, to), math.max(from, to) do
+        local crossed = queue.queue[i]
+        if crossed == queue.current or i == 1 or crossed.action then return "move_active" end
+        if Queue.cancelReason(queue, crossed) then return "move_dependent" end
+    end
+    return nil, to
+end
+
+function Queue.move(queue, action, target, after)
+    local reason, to = Queue.moveReason(queue, action, target, after)
+    if reason then return false, reason end
+    table.remove(queue.queue, queue:indexOf(action))
+    table.insert(queue.queue, to, action)
+    return true
+end
+
 local stop = ISBaseTimedAction.stop
 ISBaseTimedAction.stop = function(action)
     local queue = ISTimedActionQueue.queues[action.character]

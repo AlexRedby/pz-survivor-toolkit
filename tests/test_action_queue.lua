@@ -66,7 +66,7 @@ local function book(p)
     a.maxTime = 1
     a.item = {delta = .5, getNumberOfPages = function() return 100 end,
         getAlreadyReadPages = function() return 12 end, getType = function() return 'BookCarpentry' end,
-        setJobDelta = function(s,v) s.delta = v end, getDisplayName = function() return 'Book' end,
+        setJobDelta = function(s,v) s.delta = v end, getDisplayName = function() return 'Book' end, getTex = function() return 'book-icon' end,
         class = 'InventoryItem'}
     a.start = function(self) self.character:setReading(true) end
     a.isValid = function(s) return not s.missing end
@@ -138,6 +138,31 @@ equip.Type, equip.toolkitIndependentBulk, equip.toolkitBulkPreparation = 'ISEqui
 ISTimedActionQueue.add(first); ISTimedActionQueue.add(equip); ISTimedActionQueue.add(second)
 assert(api.cancel(q, first) and q.queue[2] == equip and q.queue[3] == second)
 assert(api.cancelReason(q, equip) == 'dependent', 'preparation itself remains protected')
+-- Reorder native pending identities without callbacks, recreation or crossing dependencies.
+p = player(); a,b,c = book(p),book(p),book(p)
+q = ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); ISTimedActionQueue.add(c); frame(p)
+local originalCurrent, nativeQueue = a.action, q.queue
+b.forceCancel = function() error('reorder must not cancel') end
+assert(api.move(q,c,b) and q.queue == nativeQueue and q.queue[2] == c and q.queue[3] == b)
+assert(q.current == a and a.action == originalCurrent and not b.action and not c.action)
+assert(api.move(q,c,b,true) and q.queue[2] == b and q.queue[3] == c)
+assert(not api.move(q,a,c) and not api.move(q,c,a), 'never reorder current/head')
+local barrier = leaf(p,'pickup'); barrier.Type='ISInventoryTransferAction'; barrier.toolkitIndependentBulk=nil
+ISTimedActionQueue.add(barrier); local last=book(p); ISTimedActionQueue.add(last)
+assert(not api.move(q,last,b) and q.queue[5]==last, 'never cross a native preparation')
+assert(not api.move(q,b,last), 'barriers apply in both directions')
+local stale=book(p); assert(not api.move(q,b,stale) and not api.move(q,stale,b))
+assert(api.move(q,b,b) and q.queue[2]==b, 'self drop is harmless')
+local linkedBook=book(p); ISTimedActionQueue.addAfter(b,linkedBook)
+assert(not api.move(q,b,c) and not api.move(q,c,b), 'linked steps are barriers')
+p=player(); a,b,c=book(p),leaf(p,'one'),leaf(p,'two')
+q=ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); ISTimedActionQueue.add(c)
+assert(api.move(q,c,b) and q.queue[2]==c, 'adjacent independent bulk leaves can reorder')
+assert(api.cancel(q,b)); assert(not api.move(q,c,b), 'removed destination is stale')
+frame(p); assert(api.cancel(q,a)); assert(not api.move(q,c,c), 'in-flight stop blocks edits')
+frame(p); assert(not api.move(q,c,c), 'new current cannot move')
+p.dead=true; assert(not api.move(q,c,c)); p=player(); assert(not api.move(q,c,c))
+print('Native reorder: identities, current/head, preparation barriers, linked steps, stale targets and lifecycle passed.')
 -- A finishing read wins the native completion race; never complete it twice.
 p = player(); a,b = book(p),leaf(p,'finish-race'); q = ISTimedActionQueue.add(a); ISTimedActionQueue.add(b)
 assert(api.cancelReason(q,a) == 'starting'); frame(p)
@@ -189,11 +214,25 @@ function widget:setY(v) self.y=v end
 function widget:getYScroll() return self.scroll end
 function widget:setYScroll(v) self.scroll=v end
 function widget:clear() self.items={} end
+function widget:rowAt(x,y) local n=math.floor(y/self.itemheight)+1; return self.items[n] and n or -1 end
+function widget:topOfItem(n) return (n-1)*self.itemheight end
+function widget:isMouseOverScrollBar() return self.overScrollbar==true end
+function widget:getMouseX() return self.mouseX or 0 end
+function widget:getMouseY() return self.mouseY or 0 end
+function widget:drawRect() end
+function widget:drawText() end
+function widget:drawTextureScaledAspect(texture) assert(texture); self.lastTexture=texture end
+function widget:setStencilRect() end
+function widget:clearStencilRect() end
 function widget:addItem(text, item) self.items[#self.items+1]={item=item,index=#self.items+1,height=self.itemheight} end
 ISCollapsableWindow = widget:derive('ISCollapsableWindow')
-function ISCollapsableWindow:createChildren() self.closeButton=widget:new() end
+function ISCollapsableWindow:createChildren() self.closeButton=widget:new(); self.closeButtonTexture="close-icon" end
 ISScrollingListBox = widget:derive('ISScrollingListBox')
-ISButton = widget:derive('ISButton')
+function ISScrollingListBox:onMouseDown(x,y) self.selected=self:rowAt(x,y) end
+function ISScrollingListBox:onMouseUp() end
+function ISScrollingListBox:onMouseUpOutside() end
+function ISScrollingListBox:onMouseMove() self.mouseoverselected=self:rowAt(self:getMouseX(),self:getMouseY()) end
+getTexture=function(path) return path end
 UIFont = {Small=1}
 getTextManager = function() return {getFontHeight=function() return 14 end} end
 getNumActivePlayers = function() return playerCount end
@@ -207,12 +246,39 @@ p = player(); a,b,c = book(p),book(p),book(p)
 q = ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); ISTimedActionQueue.add(c)
 refresh(); local panel=ui[#ui]; panel:update()
 assert(panel.visible and #panel.list.items==3 and not panel.closeButton.visible)
-panel.list.selected=2; panel:update(); assert(panel.cancelButton.enabled)
-panel.list.scroll=-30; panel:cancelSelected(); panel:update()
-assert(#panel.list.items==2 and panel.list.items[2].item==c and panel.list.selected==-1)
-assert(panel.list.scroll==-30 and not panel.cancelButton.enabled)
-panel.list.selected=2; panel:update(); api.cancel(q,a) -- still not started, must refuse
+local list=panel.list
+local function click(n)
+    local x,y=list:cancelX()+12,list:topOfItem(n)+list.itemheight/2
+    list:onMouseDown(x,y);list:onMouseUp(x,y);panel:update()
+end
+local function drag(from,to,after)
+    list:onMouseDown(30,list:topOfItem(from)+list.itemheight/2)
+    list.mouseX,list.mouseY=30,list:topOfItem(to)+(after and list.itemheight-2 or 2)
+    list:onMouseMove(0,1);list:onMouseUp(list.mouseX,list.mouseY);panel:update()
+end
+assert(PZSurvivorToolkit.ActionQueuePanel.icon(a)=='book-icon')
+assert(PZSurvivorToolkit.ActionQueuePanel.icon({craftRecipe={class='CraftRecipe',getIconTexture=function() return 'recipe-icon' end}})=='recipe-icon')
+assert(PZSurvivorToolkit.ActionQueuePanel.icon({Type='ISWalkToTimedAction'}):find('Walking',1,true))
+assert(PZSurvivorToolkit.ActionQueuePanel.icon({}):find('Icon_Tools',1,true))
+list.doDrawItem(list,0,list.items[1],false); assert(list.items[1].tooltip)
+list.selected=3; click(2) -- cancel directly, without selecting the row
+assert(#list.items==2 and list.items[2].item==c and list.selected==2)
 assert(q.current==a and #q.queue==2)
+local d=book(p); ISTimedActionQueue.add(d);panel:update()
+drag(3,2,false); assert(q.queue[2]==d and q.queue[3]==c and list.items[list.selected].item==d)
+drag(2,3,true); assert(q.queue[2]==c and q.queue[3]==d)
+drag(3,1,false); assert(q.queue[1]==a and q.queue[3]==d, 'blocked drop preserves order')
+list:onMouseDown(30,list:topOfItem(3)+16);list:onMouseUpOutside(-10,-10)
+assert(not list.dragAction and q.queue[3]==d)
+list:onMouseDown(list:cancelX()+12,list:topOfItem(2)+16)
+assert(api.cancel(q,c));panel:update();list:onMouseUp(list:cancelX()+12,list:topOfItem(2)+16)
+assert(q.queue[2]==d, 'queue refresh between press/release must not cancel replacement')
+list.overScrollbar=true;click(2);assert(q.queue[2]==d);list.overScrollbar=false
+click(1);assert(q.current==a and #q.queue==2, 'starting read is protected even on direct click')
+frame(p);click(1);assert(q.toolkitCancel==a);frame(p);panel:update()
+assert(q.current==d and #q.queue==1, 'one-click current read cancellation preserves tail')
+list.scroll=-16;list:onMouseDown(30,8);assert(not list.dragAction, 'clipped rows cannot be hit')
+list.scroll=0;list:onMouseDown(30,16)
 enabled=false; refresh(); assert(not panel.visible and #panel.list.items==0, 'hidden view must release action snapshots')
 enabled=true; refresh(); assert(panel.visible and ui[#ui]==panel)
 p.dead=true; refresh(); assert(not panel.visible)
@@ -224,4 +290,4 @@ assert(replaced.removed and ui[#ui].queue == ISTimedActionQueue.queues[p])
 ui[#ui]:update(); ISTimedActionQueue.clear(p); refresh()
 assert(not ui[#ui].visible and #ui[#ui].list.items == 0, 'completed/stopped queue must release rows')
 playerCount=0; refresh(); assert(ui[#ui].removed)
-print('Queue view: identity selection, removed-row safety, scroll, independent visibility and respawn passed.')
+print('Queue view: icons, direct row cancellation, drag/drop, stale press/release, clipping, scroll and lifecycle passed.')
