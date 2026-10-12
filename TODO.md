@@ -12,7 +12,3 @@
 - [ ] Validate the trace/fix with driver, host passenger and observer, including repeated enter/exit, controlled latency, jitter and packet loss. Current recovery regression exercises native interpolation state only.
 - [ ] Check long-running sessions, the user's full mod set and mixed patched/unpatched clients before treating this as a stable release. All participating clients should use the patch during evaluation.
 - [ ] Reproduce the reported two-player combat/grapple jerks and compare the original engine with the patch; current MP verification covers real zombie snapshots and repeated authority handoff. Lower priority than vehicle desync.
-
-## Action queue usability
-
-- [ ] Verify queued door dismantling and selective cancellation in isolated native MP with Tidy Up, vanilla and CleanUI: canceled doors unchanged, tool IDs conserved, fuel consumed only on completion. Use fresh welding fixture snapshots after restoring the primary display; clients currently fail before Lua at `GLFW.glfwGetVideoMode`.
