@@ -833,4 +833,44 @@ test("wear comparisons keep zero neutral and preserve gains, losses and replacem
     equal(ISInventoryPaneContextMenu.doWearClothingTooltip(1, 2, 3, {}), replaced)
 end)
 
+test("wishlist highlights only wanted visible loose items and cooperates with Toolkit", function()
+    local w = setup()
+    local wanted, enabled = true, true
+    PZSurvivorWishlist = {
+        Client = { isWanted = function(_, fullType) return wanted and fullType == "Base.Hammer" end },
+        Settings = { groundEnabled = function() return enabled end,
+            color = function() return {r = 0.25, g = 0.85, b = 0.75, a = 1} end },
+    }
+    local oldRequire = require
+    require = function() end
+    dofile(ProjectRoot .. "/PZSurvivorWishlist/42/media/lua/client/PZSurvivorWishlist/Ground.lua")
+    require = oldRequire
+    local visible = w:add(0.3, 0.4, 0, "Base.Hammer")
+    local hidden = w:add(1.3, 0.4, 0, "Base.Hammer")
+    local other = w:add(0.3, 1.4, 0, "Base.Nails")
+    for _, object in ipairs({visible, hidden, other}) do
+        object.item.getFullType = function() return object.name end
+    end
+    hidden.square.visible[0] = false
+    w:advance(70)
+    equal(PZSurvivorWishlist.Highlighter.getStatus().lastError, nil)
+    equal(visible:getHighlightColor(0):getG(), 0.85, "wishlist colour wins over Toolkit")
+    equal(hidden:isHighlighted(0), false, "walls and FOV still apply")
+    equal(other:getHighlightColor(0):getG(), 0.55, "Toolkit keeps other loose highlights")
+    w:apply("Enabled", false)
+    w:advance(70)
+    equal(other:isHighlighted(0), false)
+    equal(visible:isHighlighted(0), true, "wishlist works with Toolkit scanner disabled")
+    wanted = false
+    w:advance(70)
+    equal(visible:isHighlighted(0), false, "completed or revoked goal releases highlight")
+    wanted = true
+    w:advance(70)
+    equal(visible:isHighlighted(0), true)
+    enabled = false
+    w:advance(70)
+    equal(visible:isHighlighted(0), false, "wishlist toggle releases existing outlines")
+    PZSurvivorWishlist = nil
+end)
+
 print("Passed " .. count .. " behavioural tests (Lua 5.1; game rendering remains untested).")

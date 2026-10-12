@@ -14,6 +14,23 @@ The usual mod directory is `~/Zomboid/mods` on macOS/Linux or `%UserProfile%\Zom
 
 For our selected multiplayer mod set, see the [server/client installation steps](MOD_INSTALL.md), [mod list](USEFUL_MODS.md) and [ordered server INI](SurvivorQoL-selected.ini). Toolkit must be installed manually on the server and every client; it has no Workshop item.
 
+## Survivor Wishlist
+
+The separate `PZSurvivorWishlist` folder contains an independent wishlist mod. Copy it to `Zomboid/mods` on the server and every client, preserving `common` and `42`, then enable **Survivor Wishlist** (server Mod ID `PZSurvivorWishlist`). Load it after the optional crafting/UI mods. It needs neither Shopping List nor WANTED, and is not yet added to the selected server INI.
+
+- Press **K** or the sidebar **List / Цели** button. Search the catalog by item name or full type; a sample or recipe is not required. Set the desired quantity and add the item.
+- Native inventory context menus and the native, Neat Crafting, Neat Building and Project Cook crafting windows can add wanted items. Crafting offers results and missing ingredients; choose one alternative when a recipe accepts different items. Fluids and partial uses are not treated as exact piece counts: these entries ask for one suitable container/item and say to check its contents or remaining uses.
+- **Sharing** grants editing to named server usernames (including offline players), your current faction, or both. Everyone with access edits the same list; only its owner changes access. The list selector chooses where additions go. All unfinished goals in your accessible lists are highlighted. Concurrent changes against an old revision are rejected with a prompt to review the refreshed list.
+- Quantities are shared goals. **Carried by you** counts only your own inventory and carried bags. Mark completed goals manually, so one player's inventory does not silently complete a group objective.
+- Highlights apply to visible inventory rows and loose wanted objects currently in your character's field of view, on the same floor and within 15 tiles. Containers, corpses and contents of bags on the ground are never scanned or outlined. CleanUI's two inventory modes and Better Containers' combined item view are supported. With Toolkit installed, wishlist colours take priority on wanted ground items.
+- **Options > Mods > Survivor Wishlist** separately controls inventory highlights, ground highlights and crafting controls, plus colour and hotkey. Use the native window close button or Escape to close its windows.
+
+Lists persist on the server under `Zomboid/Lua/PZSurvivorWishlist/`, separated by the encoded save path; back up this directory with the world. Keep the same save path when restoring it. Files use two alternating checked copies; global ModData is deliberately avoided because vanilla clients can request named global tables without wishlist access. Single-player uses the same validation and storage. No item, recipe or loot content is modified.
+
+Check its folder with `python3 tools/package_mod.py --mod PZSurvivorWishlist --check`. The normal Lua test command also checks the wishlist. Isolated B42.21 macOS multiplayer tests passed on two EN/RU clients with Lua checksums enabled: 33 checks per client alongside the 39 selected mods, five after a complete server/client restart, and 26 with only Wishlist installed. These covered shared editing, conflicting revisions, invitation/faction revocation, persistence, CleanUI modes, Better Containers and the crafting adapters. A final standalone UI pass checked 11 cases per client, including Russian catalog search, native crafting/building layouts, toggles and repeated window cleanup; screenshots were also inspected.
+
+These were programmatic checks in the real game on localhost. Windows/Linux, ordinary Host mode, controller input and long sessions remain unverified. Ground highlighting and the shortcut currently target the primary local player; secondary split-screen players are not supported by those controls.
+
 ## Controls
 
 - Click **Items: ON / Items: OFF** at the bottom of the left sidebar to toggle highlighting.

@@ -1,6 +1,7 @@
 .codex/
 dist/
 /PZSurvivorToolkit.zip
+/PZSurvivorWishlist.zip
 __pycache__/
 .worktrees/
 .venv/

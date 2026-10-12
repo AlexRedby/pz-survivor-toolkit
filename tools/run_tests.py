@@ -24,6 +24,8 @@ def main() -> None:
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
     parser.add_argument("--native-inventory-context-menu", type=Path, help="vanilla inventory transfer callbacks")
     parser.add_argument("--native-action-root", type=Path, help="vanilla media/lua for queue/base/read contracts")
+    parser.add_argument("--wishlist-game-root", type=Path, help="game Java directory for native wishlist menu callbacks")
+    parser.add_argument("--wishlist-workshop-root", type=Path, help="Workshop content/108600 for wishlist UI source checks")
     args = parser.parse_args()
     try:
         from lupa.lua51 import LuaRuntime
@@ -34,6 +36,8 @@ def main() -> None:
     if args.native_mod_options:
         lua.globals().NativeModOptionsSource = args.native_mod_options.read_text(encoding="utf-8")
     for path in sorted((ROOT / "PZSurvivorToolkit").rglob("*.lua")):
+        lua.execute("assert(loadstring(...))", path.read_text(encoding="utf-8"))
+    for path in sorted((ROOT / "PZSurvivorWishlist").rglob("*.lua")):
         lua.execute("assert(loadstring(...))", path.read_text(encoding="utf-8"))
     print("All mod files compile as Lua 5.1.", flush=True)
     lua.execute((ROOT / "tests/test_highlighter.lua").read_text(encoding="utf-8"))
@@ -100,6 +104,15 @@ def main() -> None:
             lua.globals().ProximityInventorySource = args.proximity_source.read_text(encoding="utf-8")
             lua.globals().ProximityInventoryPageSource = (args.proximity_source.parent / "ISInventoryPage.lua").read_text(encoding="utf-8")
         lua.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
+
+    for path in sorted((ROOT / "tests").glob("test_wishlist_*.lua")):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        if args.wishlist_game_root:
+            lua.globals().NativeWishlistGameRoot = str(args.wishlist_game_root)
+        if args.wishlist_workshop_root:
+            lua.globals().NativeWishlistWorkshopRoot = str(args.wishlist_workshop_root)
+        lua.execute(path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
