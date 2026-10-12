@@ -6,25 +6,25 @@ Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quant
 
 | Component | Version | Installation |
 |---|---|---|
-| PZ Survivor Toolkit | 0.1.21 | Copy `PZSurvivorToolkit`; already selected in the server INI. Requires B42.19 or newer within Build 42. |
-| Survivor Wishlist | 0.1.0 | Copy `PZSurvivorWishlist` and enable separately. Requires B42.21 or newer within Build 42. |
-| Toolkit Java Patches | 0.1.2 | Build and install separately with ZombieBuddy 2.3.4+. Targets B42.21 only. |
+| PZ Survivor Toolkit | 0.1.21 | Required; included in the prepared `mods` folder and server INI. |
+| Survivor Wishlist | 0.1.0 | Required; included in the prepared `mods` folder and server INI. |
+| Toolkit Java Patches | 0.1.2 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
 
-The selected server INI contains **39 Mod IDs / 37 Workshop items**. Wishlist and Java Patches are optional additions, not included in those counts. Current features and setup are described below; dated verification results retain the versions and mod counts actually tested.
+The selected server INI contains **41 Mod IDs / 37 Workshop items**, including all three repository mods. The complete set targets **B42.21 only** because of the Java patches. Individual feature switches remain available; installing the set does not turn on the optional action queue. Dated verification results below retain the versions and mod counts actually tested.
 
 ## Installation
 
-1. Clone or download [this repository](https://github.com/AlexRedby/pz-survivor-toolkit).
-2. Copy the `PZSurvivorToolkit` folder into your `Zomboid/mods` directory, keeping its `common` and `42` subfolders intact.
-3. Enable **PZ Survivor Toolkit** in the game's Mods menu and for the save you want to play.
+1. The server owner clones or downloads [this repository](https://github.com/AlexRedby/pz-survivor-toolkit), installs Python 3.10+, JDK 25+ and the ZombieBuddy loader, then runs `python3 tools/prepare_install.py` (`py -3 tools/prepare_install.py` on Windows). See [setup and custom paths](MOD_INSTALL.md#prepare-once) if the game or JDK is not found.
+2. Give everyone the resulting `dist/SurvivorQoL` folder. Copy all three folders from its `mods` directory into `Zomboid/mods` on the server and each client. Players receiving this prepared copy need neither Python nor a JDK.
+3. Apply its server INI and complete the client/server ZombieBuddy loader setup using the [installation guide](MOD_INSTALL.md). The server downloads the 37 Workshop items; clients download them when joining.
 
-The usual mod directory is `~/Zomboid/mods` on macOS/Linux or `%UserProfile%\Zomboid\mods` on Windows. No additional mod dependency is required.
+The usual mod directory is `~/Zomboid/mods` on macOS/Linux or `%UserProfile%\Zomboid\mods` on Windows. The preparation command creates an uncompressed, ignored distribution folder; it does not change live game profiles or install third-party loaders.
 
-For our selected multiplayer mod set, see the [server/client installation steps](MOD_INSTALL.md), [mod list](USEFUL_MODS.md) and [ordered server INI](SurvivorQoL-selected.ini). Toolkit must be installed manually on the server and every client; it has no Workshop item.
+See the [mod list](USEFUL_MODS.md) and [ordered server INI](SurvivorQoL-selected.ini). All three local mods need manual distribution: they have no Workshop items and cannot download automatically when joining.
 
 ## Survivor Wishlist
 
-The separate `PZSurvivorWishlist` folder contains an independent wishlist mod. Copy it to `Zomboid/mods` on the server and every client, preserving `common` and `42`, then enable **Survivor Wishlist** (server Mod ID `PZSurvivorWishlist`). Load it after the optional crafting/UI mods. It needs neither Shopping List nor WANTED, and is not yet added to the selected server INI.
+The separate `PZSurvivorWishlist` folder contains an independent wishlist mod, required and already enabled in our selected INI after the crafting/UI mods. The preparation command includes it for the server and every client. It needs neither Shopping List nor WANTED.
 
 - Press **K** or the sidebar **List** button. Search the catalog by item name or full type; a sample or recipe is not required. Set the desired quantity and add the item.
 - Native inventory context menus and the native, Neat Crafting, Neat Building and Project Cook crafting windows can add wanted items. Crafting offers results and missing ingredients; choose one alternative when a recipe accepts different items. Fluids and partial uses are not treated as exact piece counts: these entries ask for one suitable container/item and say to check its contents or remaining uses.
@@ -73,7 +73,9 @@ Queue regression checks use the installed game's Lua queue, base action and read
 
 ## Recorded verification
 
-These results describe the builds and selected sets used in each scenario, not a claim that every current feature was exercised together. Current installation uses the 39-mod INI listed above.
+These results describe the builds and selected sets used in each scenario, not a claim that every current feature was exercised together. Current installation uses the 41-mod INI listed above.
+
+On 12 October 2026, the complete 41-Mod-ID set from `tools/prepare_install.py` passed a native B42.21 macOS smoke test on an isolated dedicated server and two EN/RU clients with Lua checksums enabled: 33 wishlist/UI/shared-editing checks per client, no failures. The Java loader transformed the server's media class and both clients' zombie/vehicle classes. The build's native vehicle and media regressions also passed. This checks combined loading and the exercised integrations; ordinary Host launchers, Windows/Linux, physical input, every mod feature and long sessions remain unverified.
 
 Toolkit v0.1.14 passed 16 native B42.21 bulk-dismantling multiplayer checks per English/Russian client with seven relevant Mod IDs loaded, including CleanUI, Better Containers, Neat Crafting and Tidy Up Meister. Checks covered native icons/submenus, the third-level flashlight menu and preserved battery action, actual flashlight dismantling, exact mixed selections, personal-bag and nearby-container transfers, tool return, native XP, cancellation and a removed selected item. Both clients then queued the same four shared-container item IDs with the same transaction number: one queue stopped on rejection, while the other produced exactly four dismantles and four scrap items; unselected/favourite items remained intact. No gameplay Lua exceptions occurred in the final short localhost scenario. The full selected mod set, physical mouse/controller input and long sessions have not been checked for this feature.
 
@@ -131,9 +133,9 @@ In multiplayer, install Toolkit on the server and every client. No additional mo
 
 Toolkit v0.1.13 passed 13 native B42.21 checks per English/Russian client and six server checks: light/heavy parts (test weights 0.1 and 1000), radio, hood/tool actions, ordinary inventory removal and cancellation. Every successful ground removal left exactly one item visible to both clients, including on tiles already holding more than 50 weight. The isolated test used instant timed actions and only Toolkit plus its test helper. Windows Host mode, modded vehicles and physical input remain unverified.
 
-## Separate experimental Toolkit Java Patches
+## Toolkit Java Patches
 
-[Toolkit Java Patches](JavaPatches/README.md) is an independent Java mod for B42.21. Its source, build script and tests live in `JavaPatches/`; installation requires a separate build and ZombieBuddy setup. It is enabled separately from Toolkit and is not included in the default selected mod set. See its guide for installation, supported fixes and multiplayer test limits.
+[Toolkit Java Patches](JavaPatches/README.md) is an independent, experimental Java mod for B42.21, required and already enabled in the selected set. Its source, build script and tests live in `JavaPatches/`; `tools/prepare_install.py` builds and includes it with the two Lua mods. ZombieBuddy must load in each client and the server process. See its guide for Host launchers, dedicated-server setup, supported fixes and test limits.
 
 The Java patches also cancel the old server stop timer when restarting a VHS cassette. The original engine loses playback after rapid Stop/Play; the patched B42.21 server and two English/Russian clients passed eight checks each, including synchronized controls, cassette dialogue, 62.5 XP per character and normal completion. The Java loader must run in the server process. The Windows Host launcher still needs platform verification.
 
@@ -147,6 +149,9 @@ python3 -m venv .venv
 .venv/bin/python tools/run_tests.py
 python3 tools/package_mod.py --check
 python3 tools/package_mod.py --mod PZSurvivorWishlist --check
+python3 -m unittest discover -s tests -p 'test_prepare_install.py'
+python3 -m unittest discover -s JavaPatches/tests
+python3 tools/prepare_install.py --check
 ```
 
 The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`. VHS menu, sorting, drop validation and live toggle checks run by default; add `--tv-source /path/to/RWMMergedTV.lua --native-radio-root /path/to/media/lua/client` to also exercise the native media actions and drag parser.
@@ -157,7 +162,7 @@ Vehicle ground-placement regressions run by default. Add `--native-uninstall /pa
 
 Action queue checks require `--native-action-root /path/to/media/lua`. Wishlist crafting checks can additionally inspect native menu callbacks and installed adapters with `--wishlist-game-root /path/to/game/Java-directory --wishlist-workshop-root /path/to/steamapps/workshop/content/108600`.
 
-For an optional local archive, run `python3 tools/package_mod.py` or add `--mod PZSurvivorWishlist`. Output goes to `dist/<mod>.zip` and is excluded from Git. Installation only requires the corresponding source mod folder; no archive is needed.
+For a developer-only archive of one Lua mod, run `python3 tools/package_mod.py` or add `--mod PZSurvivorWishlist`. Output goes to `dist/<mod>.zip` and is excluded from Git. Use `tools/prepare_install.py` for the complete installable set; it creates no archive.
 
 To run the same checks against your installed game's native Mod Options implementation:
 

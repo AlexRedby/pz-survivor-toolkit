@@ -1,39 +1,75 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` is an optional Java mod for Project Zomboid **B42.21 only**. It requires **ZombieBuddy 2.3.4 or newer** and is separate from PZ Survivor Toolkit. The generated mod is version **0.1.2**. It patches client zombie-speed decoding and vehicle interpolation recovery, plus server-side VHS restart handling. Each patch checks its target class bytecode and disables itself if the build is unsupported. It remains experimental: it is not established as a fix for minute-long vehicle freezes or every network movement jerk.
+`PZToolkitJavaPatches` v0.1.2 is an independent Java mod for **B42.21 only**, required in our selected set. It needs **ZombieBuddy 2.3.4+** in every client and the server process. It patches client zombie-speed decoding and vehicle interpolation recovery, plus server-side VHS restart handling. Each patch checks its target class bytecode and disables itself on an unsupported build. It remains experimental: it is not established as a fix for minute-long vehicle freezes or every movement jerk.
 
-The VHS fix prevents an old stop timer from cancelling playback after a quick Stop/Play sequence. This engine problem is reproducible through TV & Radio ReInvented and the native cassette controls. Verification on a real B42.21 server and two EN/RU clients passed eight checks per client, including cassette dialogue, 62.5 XP each and normal completion. The Windows Host launcher below still needs testing on Windows.
+## Prepare and install
 
-## Build
+The server owner prepares the whole set once; other players need neither Python nor a JDK. Follow the [combined installation guide](../MOD_INSTALL.md). From the repository root:
 
-The build machine needs Python 3 and **JDK 25 or newer**: JDK 21 cannot read this game build's classes. The game's bundled Java runtime is insufficient for compilation. Install ZombieBuddy on every client, including the Host owner, using the [one-time client setup](../MOD_INSTALL.md#zombiebuddy-one-time-client-setup).
-
-For building, `ZombieBuddy.jar` must be in the same game Java directory as `projectzomboid.jar`. Run from the repository root; on Windows:
-
-```powershell
-py -3 JavaPatches/build.py --game "D:\SteamLibrary\steamapps\common\ProjectZomboid"
+```sh
+python3 tools/prepare_install.py --check
 ```
 
-On macOS/Linux, use `python3 JavaPatches/build.py --game "/path/to/game/Java-directory"`. Replace each example path with your own. `--game` must point to the directory containing both JARs. The script finds the JDK through `JAVA_HOME`, the macOS JDK lookup, or `PATH`. If it chooses an older JDK, add `--jdk "C:\path\to\jdk-25"` (or the corresponding path on your platform).
-
-The script reads game dependencies and writes output into `JavaPatches/build/`. Add `--check` to run the original-engine versus patched-engine vehicle interpolation and media restart regression checks; this command does not include a separate zombie-speed regression. Generated files are not committed to the repository.
-
-## Install
-
-1. With the game closed, copy the entire `JavaPatches/build/PZToolkitJavaPatches` folder into `%USERPROFILE%\Zomboid\mods` on Windows or `~/Zomboid/mods` on macOS/Linux. Distribute the same built folder to every player and to the Host/server if its profile enables this mod.
-2. In each client's Mods menu, enable **ZombieBuddy**, then **Toolkit Java Patches (Experimental)**. Enable both in the selected Host/server profile as well. Approve the **PZToolkitJavaPatches** JAR when ZombieBuddy asks.
-3. Keep this local mod out of `WorkshopItems=`: it has no Workshop ID. Its Mod ID is `PZToolkitJavaPatches`; the repository's default selected INI does not enable it.
-
-## Server loader for VHS
-
-Host starts a separate Java process; a client-side ZombieBuddy loader does not automatically load into it. The VHS patch must run on the server.
-
-**Windows Host:** leave Steam running. Start the game from the repository root with the following command, using your game directory:
+On Windows use `py -3` instead of `python3`. The build machine needs **Python 3.10+**, **JDK 25+**, and a B42.21 game Java directory containing both `projectzomboid.jar` and `ZombieBuddy.jar`. The game's bundled runtime cannot compile the patch. For custom locations:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File JavaPatches/start-host.ps1 -Game "D:\Games\SteamLibrary\steamapps\common\ProjectZomboid"
+py -3 tools/prepare_install.py --game "D:\SteamLibrary\steamapps\common\ProjectZomboid" --jdk "C:\path\to\jdk-25" --check
 ```
 
-Then open Host. `zbNative.dll` and `ZombieBuddy.jar` must already exist in that directory after ZombieBuddy setup. The script passes the loader to the launched game and its server without changing system-wide environment variables or the Steam process. It checks existing JSON loader settings to avoid loading the agent twice, and rejects an existing ZombieBuddy entry in `JDK_JAVA_OPTIONS`.
+Use corresponding paths on macOS/Linux; `--game` points to the folder containing both JARs, and `--jdk` to the JDK home. Without these options, the builder uses standard Steam locations and finds the JDK through `JAVA_HOME`, the macOS JDK lookup or `PATH`.
 
-For a **dedicated server**, add `-javaagent:/full/path/ZombieBuddy.jar` to the JVM arguments before `zombie.network.GameServer`; on Windows use `-agentpath:"D:\path\zbNative.dll"`. Enable `ZombieBuddy;PZToolkitJavaPatches` in the server profile and grant the server loader permission for this JAR. Check the **server log** for `[PZToolkitJavaPatches] ... media=true`. Without that line, the server-side VHS fix has not loaded.
+Copy the three folders inside `dist/SurvivorQoL/mods` to `Zomboid/mods` on the server and every client. The prepared INI already includes `ZombieBuddy;PZToolkitJavaPatches` first, followed by the rest of the selected set. This local patch has no Workshop ID. Approve its JAR in ZombieBuddy on each client and server; see Host's saved-approval step below.
+
+For Java-only development, `python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts the same `--game`, `--jdk` and `--check` options. The checks compare original and patched engine vehicle interpolation and media restart behavior; there is no separate zombie-speed regression in this command. Generated output is ignored by Git.
+
+## Server loader
+
+Host starts a separate Java process. Loading ZombieBuddy only in the client does not guarantee the server VHS patch is active.
+
+### Host: save approvals first
+
+1. Complete the [client loader setup](../MOD_INSTALL.md#zombiebuddy-loader) and install all three prepared local mod folders. Subscribe to [Peek a View](https://steamcommunity.com/workshop/filedetails/?id=3710281407) as well as ZombieBuddy so both Java mods are available before the first Host launch.
+2. In the client's **Mods** menu enable **ZombieBuddy**, **Peek a View** and **Toolkit Java Patches (Experimental)**. Restart when asked, then approve **PeekAView** and **PZToolkitJavaPatches**, choosing to **save each decision**. Do this before opening Host, and repeat when a changed JAR prompts again.
+3. Close the game, leave Steam running, and launch using the appropriate command below. Then choose the configured profile in **Host**.
+
+Saved approvals are tied to JAR content. Under normal same-account defaults, the client and Host server share `~/.zombie_buddy/mod_approvals.json` (`%USERPROFILE%\.zombie_buddy\mod_approvals.json` on Windows). Session-only approvals do not carry into the child process, whose console prompt is not exposed reliably by the Host UI. If you configure a separate ZombieBuddy `config_dir`, both processes must use the intended saved approvals.
+
+**Windows:** from the prepared `dist/SurvivorQoL` folder, using your actual game directory:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-host.ps1 -Game "D:\SteamLibrary\steamapps\common\ProjectZomboid"
+```
+
+`zbNative.dll` and `ZombieBuddy.jar` must already exist there after official loader setup. The launcher checks existing game JSON loader arguments to avoid adding a second copy, then passes the loader to Host through the child process environment.
+
+**macOS:** double-click the prepared `start-host.command`. For a non-default Steam library, run it from Terminal with the full game Java directory:
+
+```sh
+./start-host.command "/path/to/Project Zomboid.app/Contents/Java"
+```
+
+The launcher uses the game's bundled Apple Silicon or Intel runtime and passes one Java agent to the game and Host child. It bypasses the normal application launcher's JVM/Steam options. Both launchers leave system-wide environment variables and the Steam process untouched, and reject an existing ZombieBuddy agent in JVM environment options to prevent double loading.
+
+**Linux Host:** a supplied Host launcher has not been validated for Linux. The child must inherit the loader, for example through `JDK_JAVA_OPTIONS` on a direct bundled-Java launch, with no second loader in the client JVM arguments. Use a dedicated server below if you cannot verify both processes. Do not assume client-only Steam options patch Host.
+
+### Dedicated server
+
+1. Put the platform's ZombieBuddy loader files in the server installation following the [official guide](https://github.com/zed-0xff/ZombieBuddy/blob/master/doc/Installation.md). Keep all three local mods and the selected INI in the server account's Zomboid directory.
+2. Add one loader argument to the server's JVM options, before `zombie.network.GameServer`: `-javaagent:"/full/path/ZombieBuddy.jar"` on macOS/Linux, or `-agentpath:"D:\path\zbNative.dll"` on Windows. Keep the existing server arguments. If your launcher uses a JSON `vmArgs` array, add it there using valid JSON escaping. Do not add a second loader if it is already configured.
+3. Run the first start interactively under the **account that will run the server**. ZombieBuddy's dedicated-server default uses console prompts: answer `y` to allow the **PZToolkitJavaPatches** JAR, then `y` to save. Review any other selected Java mod prompts too. Start it as a service only after approvals are saved; repeat interactively when a changed JAR needs approval.
+4. Check the server log before using it for play.
+
+### Verify activation
+
+Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
+
+- Server: `[ZB] Transformed: zombie.radio.devices.DeviceData`.
+- Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI` and `[ZB] Transformed: zombie.vehicles.VehicleInterpolation`.
+
+These appear at the default log verbosity. Missing output, `false` values, or target-class/transformation errors mean setup is incomplete or needs investigation. The client also shows **ZombieBuddy ... loaded** in the upper-left corner. A client message alone does not confirm server activation.
+
+## Verification limits
+
+The VHS patch cancels the old stop timer on a quick Stop/Play sequence. A native B42.21 server and two EN/RU clients passed eight playback checks each, including dialogue, 62.5 XP each and normal completion.
+
+The complete prepared 41-Mod-ID set passed a separate B42.21 macOS dedicated-server smoke on 12 October 2026: 33 wishlist/UI/shared-editing checks per client, with Lua checksums enabled. Server media and client zombie/vehicle class transformations were verified, alongside the native build regressions. The macOS launcher's argument handling, duplicate-loader refusal and environment inheritance have automated tests; an ordinary Host session through either launcher, Windows/Linux execution and long sessions remain unverified.

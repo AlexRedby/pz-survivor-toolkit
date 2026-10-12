@@ -1,10 +1,10 @@
 # Useful Mods and Settings for Project Zomboid
 
-Catalog of the selected mods, optional local components, and related settings. Workshop descriptions and player reports below come from the dated research already recorded here; they are not a fresh review of every Workshop release.
+Catalog of the selected mods, required local components, and related settings. Workshop descriptions and player reports below come from the dated research already recorded here; they are not a fresh review of every Workshop release.
 
-**Installation:** [combined server and client instructions](MOD_INSTALL.md), including the selected INI, dependency order, separate ZombieBuddy setup, and local Toolkit installation.
+**Installation:** [combined server and client instructions](MOD_INSTALL.md), including the selected INI, dependency order, client/server ZombieBuddy setup, and preparation of all three local mods.
 
-**Current selection:** 39 Mod IDs / 37 Workshop IDs, including PZ Survivor Toolkit v0.1.21 and the existing libraries. The selected INI contains neither the standalone Survivor Wishlist nor optional Java Patches. Toolkit now provides its own specified-quantity transfer, medicine indicators, and TV & Radio ReInvented fixes, replacing the removed Take Any Amount (`TakeAnyAmount`), Medicine Moodles (`MedicineMoodlesB42`), and TV translation-fix (`TVRadioReinventedFix4220`) alternatives. Better Containers replaced Proximity Inventory, and Manage Containers was removed. These alternatives are not current requirements. Historical checks below retain their original dates, versions, and counts; see the [README](README.md) for current implementation and checks.
+**Current selection:** 41 Mod IDs / 37 Workshop IDs, including all three required repository mods: PZ Survivor Toolkit v0.1.21, Survivor Wishlist v0.1.0 and Toolkit Java Patches v0.1.2. The complete set targets B42.21; the Java component requires ZombieBuddy 2.3.4+ in clients and the server. `tools/prepare_install.py` builds and stages the three folders for distribution. Toolkit now provides its own specified-quantity transfer, medicine indicators, and TV & Radio ReInvented fixes, replacing the removed Take Any Amount (`TakeAnyAmount`), Medicine Moodles (`MedicineMoodlesB42`), and TV translation-fix (`TVRadioReinventedFix4220`) alternatives. Better Containers replaced Proximity Inventory, and Manage Containers was removed. These alternatives are not current requirements. Historical checks below retain their original dates, versions, and counts; see the [README](README.md) for current implementation and checks.
 
 **Historical check, 9 October 2026:** Toolkit v0.1.12 was installed locally. The earlier selection of 38 Mod IDs / 36 Workshop IDs, before the switch to Better Containers, passed two isolated B42.21 macOS multiplayer scenarios with EN/RU clients: 33 checks per client, no failed checks or runtime errors. CCI/CleanUI, item transfers, and VHS were checked; individual features of the other mods and long sessions were not. After Proximity Inventory was replaced and Manage Containers removed, the working Host profile had 22 Mod IDs and the portable set had 38 Mod IDs / 36 Workshop IDs. The current Better Containers entry is section 3.
 
@@ -219,7 +219,7 @@ Replaces clothing tooltips and compares its stats with equipped items, including
 - **Versions:** the author reports B42, including multiplayer; full operation with our B42.21 set was not tested.
 - **Compatibility:** replaces clothing tooltips; the author warns of possible conflicts with other mods that change `ISToolTipInv`.
 
-Added at the user's request on 8 October 2026. The Workshop description and downloaded code were reviewed on 7 October. Exact equality in protection shows neutral text, but a fractional difference rounded to `+0` or `-0` may still be coloured. It remains catalog-only and is not in the selected game set.
+Added at the user's request on 8 October 2026 and included in the selected INI. The Workshop description and downloaded code were reviewed on 7 October. Toolkit's **Show zero protection changes in grey** option makes displayed zero differences neutral; disable it to restore the original comparison colours.
 
 ## 17 Rain Cleans Blood
 
@@ -511,9 +511,9 @@ PZ Survivor Toolkit v0.1.21 includes a native action-queue panel, bulk item acti
 - Four independent options cover **Dismantle selected electronics**, **Remove batteries from selected items**, **Unload selected magazines and firearms**, and **Remove attachments from selected weapons**. They extend the existing context actions and operate on the selected instances, retaining native tools, timing, results and XP where applicable. Favourites and worn/held items are skipped. Surviving devices and tools use native return steps where supported; dismantled items are consumed. Ordinary cancellation or stale targets stop the remaining batch. See [Toolkit controls](README.md#controls) for each action's limits.
 - **Group context menu actions** groups known actions across inventory, world, vehicle, and health menus. Short menus stay compact and unknown mod commands remain visible. **Context menu rules** can assign a seen action to a group or main menu, hide it, or restore automatic defaults. Rules are local to each client. Disable the option to restore the original menus; the section is hidden while Context Menu Organizer or its World variant is active.
 
-## 39 Survivor Wishlist (Standalone, Optional)
+## 39 Survivor Wishlist
 
-The separate `PZSurvivorWishlist` mod is at version 0.1.0 and is **not in `SurvivorQoL-selected.ini`**. Install its folder on the server and every client, preserving `common` and `42`, then enable Mod ID `PZSurvivorWishlist`. Load it after optional crafting/UI mods. It requires neither Shopping List nor WANTED.
+The independent `PZSurvivorWishlist` mod is at version 0.1.0, **required and already enabled in `SurvivorQoL-selected.ini`** after the crafting/UI mods. Install it on the server and every client from the prepared set, preserving `common` and `42`. It requires neither Shopping List nor WANTED.
 
 - Provides personal and shared lists with a searchable item catalog. Named players and faction members with access can all edit the same list; only its owner changes access. Desired quantities are shared goals, carried counts are local to each player, and completion is marked manually. Native inventory context menus and native, Neat Crafting, Neat Building, and Project Cook crafting windows can add wanted items. Crafting shows results and missing ingredients; for recipes with alternatives, choose one. Fluids and partial uses represent one suitable item/container, not an exact quantity.
 - Highlights wanted inventory rows and visible loose items on the ground within 15 tiles and on the same floor. It does not scan containers, corpses, or contents of bags on the ground. CleanUI inventory modes and Better Containers combined item views are supported. With Toolkit installed, wishlist colours take priority for wanted ground items.
@@ -521,3 +521,11 @@ The separate `PZSurvivorWishlist` mod is at version 0.1.0 and is **not in `Survi
 - Lists persist on the server under `Zomboid/Lua/PZSurvivorWishlist/`, separated by the encoded save path. Back up this directory with the world and retain the same save path when restoring. Two alternating checked files are used; global ModData is avoided because vanilla clients can request named global tables without wishlist access. Single-player uses the same validation and storage. No item, recipe, or loot content is changed.
 
 Wishlist 0.1.0 passed isolated B42.21 macOS multiplayer checks on two EN/RU clients with Lua checksums enabled: 33 checks per client alongside the 39 selected mods, five checks after a full server/client restart, and 26 checks with only Wishlist installed. Coverage included shared editing, conflicting revisions, invitation/faction revocation, persistence, CleanUI modes, Better Containers, and crafting adapters. A standalone UI pass checked 11 cases per client, including Russian catalog search, native crafting/building layouts, toggles, and repeated window cleanup; screenshots were also inspected. See [README](README.md) for test commands.
+
+## 40 Toolkit Java Patches
+
+The independent `PZToolkitJavaPatches` mod v0.1.2 is required and selected immediately after ZombieBuddy. `tools/prepare_install.py` builds it and includes it alongside Toolkit and Wishlist. It has no Workshop item. Install the same prepared folder on the server and every client; ZombieBuddy 2.3.4+ must load in all those processes. See the [build, Host and dedicated-server guide](JavaPatches/README.md).
+
+It patches B42.21 client zombie-speed decoding, vehicle interpolation recovery and the server's stale VHS stop timer. Target bytecode guards disable unsupported patches. It remains experimental and is not established as a fix for long vehicle freezes or all movement jerks.
+
+On 12 October 2026, the prepared 41-Mod-ID set passed 33 native wishlist/UI/shared-editing checks per EN/RU client on a macOS dedicated server with Lua checksums enabled. Required Java transformations loaded on the server and both clients; the native vehicle/media build regressions also passed. Ordinary Host launchers, Windows/Linux, every individual mod feature and long sessions remain unverified.

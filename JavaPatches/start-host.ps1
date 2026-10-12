@@ -14,8 +14,10 @@ $previous = @{}
 foreach ($name in @('JDK_JAVA_OPTIONS', 'SteamAppId', 'SteamGameId')) {
     $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
-if ($previous.JDK_JAVA_OPTIONS -match 'zbNative|ZombieBuddy') {
-    throw 'Remove the existing ZombieBuddy setting from JDK_JAVA_OPTIONS to avoid loading it twice.'
+foreach ($name in @('JDK_JAVA_OPTIONS', 'JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS')) {
+    if ([Environment]::GetEnvironmentVariable($name, 'Process') -match 'zbNative|ZombieBuddy') {
+        throw "Remove the existing ZombieBuddy setting from $name to avoid loading it twice."
+    }
 }
 $agent = '-agentpath:"' + (Join-Path $Game 'zbNative.dll') + '"'
 $vmArgs = (Get-Content -LiteralPath (Join-Path $Game 'ProjectZomboid64.json') -Raw | ConvertFrom-Json).vmArgs

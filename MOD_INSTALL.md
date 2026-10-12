@@ -1,42 +1,21 @@
 # Install the selected mod set
 
-For the Steam edition of Project Zomboid B42.21. The server and all players must use the same game build and identical local mod versions.
+For the Steam edition of Project Zomboid **B42.21**. The server and all players must use the same game build and identical local mod files.
 
-The checked-in [server INI](SurvivorQoL-selected.ini) selects **39 Mod IDs / 37 Workshop items**, including local **Toolkit v0.1.21**. It excludes `MedicineMoodlesB42`, `TakeAnyAmount` and `TVRadioReinventedFix4220`; Toolkit supplies their replacement features. Keep Moodle Framework and the main TV & Radio ReInvented mod. **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.2** are separate optional local mods, not enabled by that INI. See [README](README.md) for features and verification limits.
+The [server INI](SurvivorQoL-selected.ini) selects **41 Mod IDs / 37 Workshop items**. All three repository mods are required: **PZ Survivor Toolkit v0.1.21**, **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.2**. The Java component is experimental and targets B42.21 only. Feature switches remain per-player; the action queue stays off until enabled. See [features and verification limits](README.md).
 
-## Server
+## Prepare once
 
-1. Stop the server. Back up an existing server's INI before changing it.
-2. Download [SurvivorQoL-selected.ini](SurvivorQoL-selected.ini). For a new profile, put it in `Zomboid/Server`. For an existing profile, copy only its `Mods=` and `WorkshopItems=` lines into your profile's INI.
-3. Preserve the `Mods=` order: **ZombieBuddy first**, libraries before dependent mods, base Neat mods before their XP add-ons, Eat Smart before Drink Smart, Moodle Framework and CleanUI before Toolkit, Toolkit before Container Capacity Indicator, MP Fast Forward and Better Containers, and Realistic Dashboard before Navigator. Load `organizedCategories_core` last. The supplied INI already has this order, Neat Building UI Only and Eat Smart Integrated.
-4. Install the local Toolkit folder using the steps below. Give every player the same version.
-5. Start the profile: choose `SurvivorQoL-selected` in **Host**, or start a dedicated server with `-servername SurvivorQoL-selected`. Use your existing profile name if you updated it. The server downloads the Workshop items listed in `WorkshopItems=`; you do not need to subscribe to each one manually.
+The server owner prepares one copy for everyone. Players receiving it do not need Python or a JDK.
 
-For Peek a View, a dedicated server does not need the ZombieBuddy Java loader: keep both mods in the INI and install the loader on clients. **The Host owner must also complete every client step.** See the [Peek a View author's instructions](https://steamcommunity.com/workshop/filedetails/?id=3710281407). The optional Java VHS fix has a separate server-loader requirement, described below.
+1. Clone or download [this repository](https://github.com/AlexRedby/pz-survivor-toolkit). Install **Python 3.10+** and **JDK 25+** on the build machine.
+2. Install the [ZombieBuddy loader](#zombiebuddy-loader) there. The game Java directory must contain both `projectzomboid.jar` and `ZombieBuddy.jar`.
+3. From the repository root run `python3 tools/prepare_install.py` on macOS/Linux, or `py -3 tools/prepare_install.py` on Windows. For a custom installation add `--game "/path/to/folder-containing-both-jars"`; to choose a JDK add `--jdk "/path/to/jdk-25"`. Add `--check` to run the native Java regression checks too.
+4. Give every player the generated **dist/SurvivorQoL** folder. It contains `mods/PZSurvivorToolkit`, `mods/PZSurvivorWishlist`, `mods/PZToolkitJavaPatches`, `Server/SurvivorQoL-selected.ini` and the Windows/macOS Host launchers. It contains our mods only; Workshop supplies the rest. Generated output is ignored by Git, uncompressed, and safely replaced on the next successful preparation. Live game files and profiles are untouched.
 
-The INI does not transfer sandbox settings or keybindings. To move existing sandbox settings, also copy `<profile-name>_SandboxVars.lua` using the same profile name. The supplied INI sets `SleepAllowed=true` and `SleepNeeded=false`: sleep is allowed but not required. When copying only the mod lists, change sleep settings separately if you want them.
+## Local mods: server and every player
 
-## Client
-
-1. Close the game. Subscribe to [ZombieBuddy](https://steamcommunity.com/sharedfiles/filedetails/?id=3619862853) first and wait for Steam to download it; its files are needed for the separate loader setup.
-2. Complete the one-time ZombieBuddy setup below.
-3. Install the same local Toolkit folder used by the server.
-4. Start the game and join the server. Select **Install** at the Workshop prompt: the game downloads the required set and enables the server's mods. You do not need to subscribe to the remaining mods individually or set their load order yourself. When ZombieBuddy asks to load the **PeekAView** JAR, approve it; you can save that decision.
-5. Open **Options > Mods > PZ Survivor Toolkit** to configure individual features. This includes ground highlights, inventory filters, quantity transfers, bulk actions, vehicle-part removal to the ground, context-menu grouping and the action queue. TV and Navigator settings appear only with their respective mods. Medicine indicators require Moodle Framework; two grouped switches control the six medicine indicators and the two herb indicators. The old Medicine Moodles and Take Any Amount mods suppress Toolkit's corresponding replacements to avoid duplicates. Settings are local to each player and apply without restarting.
-6. Set the selected-set shortcuts: Toolkit highlight **F8**, Peek a View **F9**, Better Containers Proximity Lock **F10**, Proximity Toggle **F11**, Corpse Only **F12**. Keep MP Fast Forward on **Numpad 0-4**. Disable Better Containers **Advanced Display Categories** because organizedCategories supplies categories. Enable **Nested Containers Player/Loot**, keeping its multiplayer restrictions. Each player applies these settings locally; the INI does not distribute them.
-
-## ZombieBuddy: one-time client setup
-
-- **Windows:** download the official [ZombieBuddyInstaller.exe](https://github.com/zed-0xff/ZombieBuddy/releases/tag/windows_installer), choose **Install or update ZombieBuddy**, then **Both** for normal and alternate launches. Review and apply the proposed changes.
-- **macOS / Linux:** copy `ZombieBuddy.jar` from `steamapps/workshop/content/108600/3619862853/mods/ZombieBuddy/libs/` into the game's Java directory. On macOS this is `Project Zomboid.app/Contents/Java/` inside the game installation; on Linux it is usually `ProjectZomboid/projectzomboid/`. Open the game's Steam properties and add `-javaagent:ZombieBuddy.jar --` to the launch options. The final two hyphens are required. See the [author's installation guide](https://github.com/zed-0xff/ZombieBuddy/blob/master/doc/Installation.md) for exact paths and launch variants.
-
-After launching, check for **ZombieBuddy ... loaded** in the upper-left corner. A Workshop subscription alone does not install the loader.
-
-## Local Toolkit: server and every player
-
-1. Clone or download the [repository](https://github.com/AlexRedby/pz-survivor-toolkit). Use the same `PZSurvivorToolkit` folder version for everyone.
-2. With the game closed, copy the **entire PZSurvivorToolkit folder** into `Zomboid/mods`. Keep the `common` and `42` subfolders. Avoid double nesting such as `PZSurvivorToolkit/PZSurvivorToolkit`.
-3. Verify that `Zomboid/mods/PZSurvivorToolkit/42/mod.info` exists. Mod ID `PZSurvivorToolkit` is already enabled in the supplied server INI.
+With the game/server stopped, copy the **three entire folders inside the prepared `mods` folder** into `Zomboid/mods`. Keep their `common` and `42` subfolders. Check that each has `42/mod.info`; avoid double nesting such as `PZSurvivorToolkit/PZSurvivorToolkit`.
 
 | Platform | Zomboid directory |
 |---|---|
@@ -44,30 +23,53 @@ After launching, check for **ZombieBuddy ... loaded** in the upper-left corner. 
 | macOS / Linux | `~/Zomboid` |
 | Dedicated server | `Zomboid` in the home directory of the account running the server; use the specified directory when launching with `-cachedir` |
 
-Toolkit has no Workshop item and does not download automatically when joining. Replace its entire local folder with the game closed, using identical files on the server and clients. If switching **Workshop mods** from local copies to Steam downloads, move their old local folders out of `Zomboid/mods` so they do not override the downloaded versions.
+These local mods have no Workshop items and **do not download when joining**. Distribute the same prepared folders to everyone. If switching a Workshop mod from a local copy to Steam downloads, move its old local folder out of `Zomboid/mods` so it does not override the download.
 
-## Optional Survivor Wishlist
+## Server
 
-1. With the game and server stopped, copy the repository's **PZSurvivorWishlist** folder into `Zomboid/mods` on the server and every client, preserving `common` and `42`.
-2. Add `PZSurvivorWishlist` to the server's `Mods=` after the crafting/UI mods and before the final `organizedCategories_core` entry. It has no Workshop ID; do not add it to `WorkshopItems=`. For single-player, enable **Survivor Wishlist** in Mods for the save.
-3. Open it with **K** or the sidebar **List** button. Add items from the searchable catalog, inventory context menu or crafting controls. Under **Sharing**, grant editing to named server usernames, your faction, or both. Every authorized member edits the same list; only its owner changes access.
-4. Set desired quantities and mark goals completed manually. **Carried by you** counts your own inventory and bags, not the whole team's supplies. Configure row highlights, visible ground-item highlights, crafting controls, colour and shortcut under **Options > Mods > Survivor Wishlist**.
-5. Back up `Zomboid/Lua/PZSurvivorWishlist/` together with the world. Lists are stored separately from the world under an encoded save path; preserve that save path when restoring the backup.
+1. Stop the server. Back up the world and an existing profile's INI. Include `Zomboid/Lua/PZSurvivorWishlist/` in backups: shared lists are stored there separately from the world, under its encoded save path. Keep that save path when restoring.
+2. Install all three [local mod folders](#local-mods-server-and-every-player).
+3. For a **new profile**, copy the prepared `Server/SurvivorQoL-selected.ini` into `Zomboid/Server`. For an **existing profile**, copy only the `Mods=` and `WorkshopItems=` lines into its existing INI; keep its other settings.
+4. Keep the supplied order. ZombieBuddy comes first, Java Patches immediately after it, libraries before their dependants, Toolkit before CCI/MP Fast Forward/Better Containers, Realistic Dashboard before Navigator, Wishlist after the crafting/UI mods, and `organizedCategories_core` last. All local IDs are already included; do not add them to `WorkshopItems=`.
+5. Set up the [server Java loader](JavaPatches/README.md#server-loader). **Host owners must complete the client steps too**, then launch through the supplied Host launcher. Dedicated servers also need the loader for the VHS fix.
+6. Choose `SurvivorQoL-selected` in **Host**, or start the dedicated server with `-servername SurvivorQoL-selected`. Use your existing profile name if you updated it. The Steam server downloads `WorkshopItems=` automatically; separate subscriptions or SteamCMD Workshop downloads are unnecessary. Approve the local Java JAR for the server and check its loader log as described in the Java guide.
 
-Wishlist is independent of Toolkit and does not need Shopping List or WANTED. It highlights wanted item rows in opened inventories and visible loose items on the ground; it does not reveal container contents. See [Wishlist features and test limits](README.md#survivor-wishlist).
+The INI does not transfer sandbox settings or keybindings. When moving an existing world, also copy `<profile-name>_SandboxVars.lua` under the same profile name. The supplied INI sets `SleepAllowed=true` and `SleepNeeded=false`. When copying only the mod lists, change sleep settings separately if wanted.
+
+## Client
+
+1. Close the game. Subscribe to [ZombieBuddy](https://steamcommunity.com/sharedfiles/filedetails/?id=3619862853) and wait for Steam to download it, then complete the [one-time loader setup](#zombiebuddy-loader).
+2. Install the same three prepared [local mod folders](#local-mods-server-and-every-player) used by the server.
+3. Start the game and join. Select **Install** at the Workshop prompt: the game downloads the remaining required items and enables the server's mods in its order. Approve **PeekAView** and **PZToolkitJavaPatches** when ZombieBuddy asks; save the decisions. The same JARs may need approval again after an update.
+4. Configure features under **Options > Mods > PZ Survivor Toolkit** and **Survivor Wishlist**. The action queue is optional and off by default; TV and Navigator switches appear with their respective mods. Settings are local to each player and apply without restarting.
+5. Set shortcuts: Toolkit highlight **F8**, Wishlist **K**, Peek a View **F9**, Better Containers Proximity Lock **F10**, Proximity Toggle **F11**, Corpse Only **F12**. Keep MP Fast Forward on **Numpad 0-4**. Disable Better Containers **Advanced Display Categories** because organizedCategories supplies them. Enable **Nested Containers Player/Loot**, keeping its multiplayer restrictions. Each player applies these preferences; the INI does not distribute them.
+
+## ZombieBuddy loader
+
+Install **ZombieBuddy 2.3.4+** on every client and in the server process. A Workshop subscription alone does not install the loader.
+
+- **Windows client/Host:** use the official [ZombieBuddyInstaller.exe](https://github.com/zed-0xff/ZombieBuddy/releases/tag/windows_installer), select **Install or update ZombieBuddy**, then **Both** for normal and alternate launches. Review and apply its changes.
+- **macOS / Linux client:** copy `ZombieBuddy.jar` from `steamapps/workshop/content/108600/3619862853/mods/ZombieBuddy/libs/` into the game Java directory. On macOS this is `Project Zomboid.app/Contents/Java/`; on Linux it is usually `ProjectZomboid/projectzomboid/`. Add `-javaagent:ZombieBuddy.jar --` to the game's Steam launch options. The final two hyphens are required. Follow the [author's installation guide](https://github.com/zed-0xff/ZombieBuddy/blob/master/doc/Installation.md) for launch variants.
+- **Host:** leave Steam running and use the prepared `start-host.ps1` on Windows or `start-host.command` on macOS, following [these commands](JavaPatches/README.md#server-loader). They also pass the loader to Host's separate server process. A regular client-only Steam launch does not guarantee this.
+- **Dedicated server:** follow the [server JVM and approval steps](JavaPatches/README.md#server-loader). Check the server log as well as the client log.
+
+After launching the client, check for **ZombieBuddy ... loaded** in the upper-left corner. Java approval is per machine/account and JAR content; distribute the built mod folders, not another person's approval file.
+
+## Use the shared wishlist
+
+1. Press **K** or the sidebar **List** button. Add items from the searchable catalog, inventory context menu or crafting controls; no owned sample or recipe is required.
+2. Under **Sharing**, grant editing to named server usernames, your faction, or both. Everyone with access edits the same list; only its owner changes access.
+3. Set desired quantities and mark goals completed manually. **Carried by you** counts your own inventory and bags, not the team's supplies. Configure row highlights, visible ground-item highlights, crafting controls, colour and shortcut under **Options > Mods > Survivor Wishlist**.
+
+Wishlist highlights wanted item rows in opened inventories and visible loose items; it does not reveal container contents. It needs neither Shopping List nor WANTED. See [features and limits](README.md#survivor-wishlist).
 
 ## Update the set
 
-1. Stop the server and close all clients. Back up the world and the local mod folders being replaced outside `Zomboid/mods`. Include Wishlist's separate data directory if you use it.
-2. Update `Mods=` and `WorkshopItems=` from the supplied INI, then reapply any deliberately enabled optional local mods. Keep `MedicineMoodlesB42`, `TakeAnyAmount` and `TVRadioReinventedFix4220` disabled; Toolkit has replaced their required features since v0.1.20. Their Workshop files may remain on disk. Replace the whole Toolkit folder on the server and clients with one matching repository version. Its version is in `42/mod.info` under `modversion=`.
-3. Use one installation method per Workshop mod: Steam or a complete local copy. For local installation, distribute identical updated folders to the server and clients; the INI does not update those copies.
-4. Start the server and join with the clients. For version mismatches, compare local mod folders and Workshop updates; keep `DoLuaChecksum=true`.
-
-## Optional experimental Toolkit Java Patches
-
-The [JavaPatches guide](JavaPatches/README.md) covers building, ZombieBuddy setup, Host activation and loader verification. Install and enable this mod separately from Toolkit. It is not in the selected INI. All participants need the same built mod folder. This experimental patch has not been established as a fix for long vehicle desynchronization.
-
-Mod ID: `PZToolkitJavaPatches`. For the VHS restart fix, the loader must also run in the **server process**; client-only ZombieBuddy setup is insufficient.
+1. Stop the server and all clients. Back up the world, Wishlist's data directory and old local mods outside `Zomboid/mods`.
+2. Update the repository and run `tools/prepare_install.py` again. Replace all three local folders on the server and clients with this matching prepared version; do not merge old and new files.
+3. Copy only `Mods=` and `WorkshopItems=` from the prepared INI into an existing profile. Keep `MedicineMoodlesB42`, `TakeAnyAmount` and `TVRadioReinventedFix4220` disabled; Toolkit supplies their replacements. Keep Moodle Framework and the main TV & Radio ReInvented mod.
+4. Use one installation method per Workshop mod: Steam or a complete local copy. The INI does not update local copies. Reapprove changed Java JARs when prompted on clients and the server.
+5. Start and join, checking the server Java loader as above. For version mismatches, compare all three local folders and Workshop updates. Keep `DoLuaChecksum=true`.
 
 ## TV & Radio ReInvented
 
