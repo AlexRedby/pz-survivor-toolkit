@@ -631,6 +631,8 @@ if NativeModOptionsSource then
         w:apply("BulkRemoveAttachments", false)
         w:apply("QuantityTransfers", false)
         w:apply("UninstallToGround", false)
+        equal(w.settings.actionQueue(), false)
+        w:apply("ActionQueue", true)
         w.settings.toggle()
         local reloaded = setup(w.file, true)
         equal(reloaded.settings.isEnabled(), false)
@@ -647,6 +649,7 @@ if NativeModOptionsSource then
         equal(reloaded.settings.bulkRemoveAttachments(), false)
         equal(reloaded.settings.quantityTransfers(), false)
         equal(reloaded.settings.uninstallToGround(), false)
+        equal(reloaded.settings.actionQueue(), true)
     end)
 end
 

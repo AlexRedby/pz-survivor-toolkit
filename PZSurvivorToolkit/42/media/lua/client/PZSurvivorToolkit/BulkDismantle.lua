@@ -76,6 +76,7 @@ local function queue(player, entries, enabled)
         local logic = prepare(player, entry.item, entry.recipe, containers)
         if logic then
             local action = ISHandcraftAction.FromLogic(logic)
+            action.toolkitIndependentBulk = true
             local id = entry.item:getID()
             -- MP removes consumed inputs before client completion; check only before starting.
             action.isValidStart = function(self)

@@ -266,6 +266,7 @@ assert(#batteryEntries == 2 and batteryEntries[1].item == charged and batteryEnt
 assert(batteries.queue(player, batteryEntries) == 2)
 local batteryCrafts={}
 for _, action in ipairs(queued) do if not action.transfer then batteryCrafts[#batteryCrafts+1]=action end end
+assert(batteryCrafts[1].toolkitIndependentBulk and batteryCrafts[2].toolkitIndependentBulk, 'only exact bulk leaves support queue removal')
 assert(#batteryCrafts==2 and batteryCrafts[1].target==charged and batteryCrafts[2].target==inBag,
     'battery crafts cannot substitute unselected devices')
 assert(#returned==1 and returned[1]==inBag, 'kept device must return to its original bag')

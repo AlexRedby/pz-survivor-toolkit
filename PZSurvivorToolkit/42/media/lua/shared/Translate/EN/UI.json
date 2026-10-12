@@ -66,5 +66,16 @@
     "UI_PZSurvivorToolkit_grab_amount": "Grab amount…",
     "UI_PZSurvivorToolkit_put_amount": "Put amount… (%1)",
     "UI_PZSurvivorToolkit_quantity_prompt": "Number to move to %1 (maximum %2)",
-    "UI_PZSurvivorToolkit_quantity_invalid": "Enter a whole number between 1 and %1."
+    "UI_PZSurvivorToolkit_quantity_invalid": "Enter a whole number between 1 and %1.",
+    "UI_options_PZSurvivorToolkit_queue": "Show action queue",
+    "UI_options_PZSurvivorToolkit_queue_tooltip": "Optional live view of the native queue. Plan actions normally; select a row to cancel supported actions. Preparation, restoration and unverified mod actions are protected.",
+    "UI_PZSurvivorToolkit_queue_title": "Actions (%1)",
+    "UI_PZSurvivorToolkit_queue_cancel": "Cancel selected action",
+    "UI_PZSurvivorToolkit_queue_cancel_tip": "Cancel only this action and keep the rest of the native queue.",
+    "UI_PZSurvivorToolkit_queue_select": "Select an action in the list.",
+    "UI_PZSurvivorToolkit_queue_dependent": "Protected: preparation, restoration or an unverified dependency/callback. Cancel the whole operation normally if needed.",
+    "UI_PZSurvivorToolkit_queue_active": "This running action cannot be stopped independently. Native item transactions and craft callbacks must finish normally.",
+    "UI_PZSurvivorToolkit_queue_starting": "Wait until this action has started. A finishing action cannot be cancelled.",
+    "UI_PZSurvivorToolkit_queue_stopping": "Waiting for the game to stop the current action.",
+    "UI_PZSurvivorToolkit_queue_unavailable": "This action is no longer available."
 }

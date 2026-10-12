@@ -23,6 +23,7 @@ def main() -> None:
     parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
     parser.add_argument("--native-inventory-context-menu", type=Path, help="vanilla inventory transfer callbacks")
+    parser.add_argument("--native-action-root", type=Path, help="vanilla media/lua for queue/base/read contracts")
     args = parser.parse_args()
     try:
         from lupa.lua51 import LuaRuntime
@@ -72,9 +73,11 @@ def main() -> None:
         lua.globals().NativeDropBoxSource = (args.native_radio_root / "RadioCom/ISUIRadio/ISItemDropBox.lua").read_text(encoding="utf-8")
     lua.execute((ROOT / "tests/test_tv_controls.lua").read_text(encoding="utf-8"))
 
-    for name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua"):
+    for name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua"):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
+        if args.native_action_root:
+            lua.globals().NativeActionRoot = str(args.native_action_root)
         if args.medicine_framework_source:
             lua.globals().NativeMedicineFrameworkSource = args.medicine_framework_source.read_text(encoding="utf-8")
         if args.mpff_source:

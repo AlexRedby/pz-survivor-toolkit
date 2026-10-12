@@ -48,6 +48,9 @@ end
 local function nativeQueue(player, moved, decorate, callback, ...)
     local add = ISTimedActionQueue.add
     ISTimedActionQueue.add = function(action)
+        if action.Type == "ISEquipWeaponAction" or action.Type == "ISUnequipAction" then
+            action.toolkitBulkPreparation = true
+        end
         if action.Type == "ISInventoryTransferAction" and action.destContainer == player:getInventory() then
             local id = action.item:getID()
             if moved[id] then return end
@@ -89,6 +92,7 @@ function Bulk.queueUnload(player, entries)
                         return start(self)
                     end
                 elseif action.Type == "ISUnloadBulletsFromFirearm" or action.Type == "ISUnloadBulletsFromMagazine" then
+                    action.toolkitIndependentBulk = true
                     -- Check before starting only: MP sends ammo changes before client completion.
                     action.isValidStart = function(self)
                         local current = player:getInventory():getItemById(id)
@@ -120,6 +124,7 @@ function Bulk.queueAttachments(player, entries)
                     local id = weapon:getID()
                     nativeQueue(player, moved, function(action)
                         if action.Type ~= "ISRemoveWeaponUpgrade" then return end
+                        action.toolkitIndependentBulk = true
                         action.isValidStart = function(self)
                             local item = player:getInventory():getItemById(id)
                             if not Actions.safeItem(player, item) then return false end

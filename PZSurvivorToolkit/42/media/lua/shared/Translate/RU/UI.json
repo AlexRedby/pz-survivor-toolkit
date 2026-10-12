@@ -66,5 +66,16 @@
     "UI_PZSurvivorToolkit_grab_amount": "Взять количество…",
     "UI_PZSurvivorToolkit_put_amount": "Положить количество… (%1)",
     "UI_PZSurvivorToolkit_quantity_prompt": "Количество для переноса в %1 (максимум %2)",
-    "UI_PZSurvivorToolkit_quantity_invalid": "Введите целое число от 1 до %1."
+    "UI_PZSurvivorToolkit_quantity_invalid": "Введите целое число от 1 до %1.",
+    "UI_options_PZSurvivorToolkit_queue": "Показывать очередь действий",
+    "UI_options_PZSurvivorToolkit_queue_tooltip": "Необязательное окно штатной очереди. Планируйте действия обычным способом; выберите строку для отмены поддерживаемых действий. Подготовка, возврат предметов и непроверенные действия модов защищены.",
+    "UI_PZSurvivorToolkit_queue_title": "Действия (%1)",
+    "UI_PZSurvivorToolkit_queue_cancel": "Отменить выбранное действие",
+    "UI_PZSurvivorToolkit_queue_cancel_tip": "Отменить только это действие и сохранить остальные в штатной очереди.",
+    "UI_PZSurvivorToolkit_queue_select": "Выберите действие в списке.",
+    "UI_PZSurvivorToolkit_queue_dependent": "Защищено: подготовка, возврат предметов либо непроверенная зависимость/обработчик. При необходимости отмените всю операцию обычным способом.",
+    "UI_PZSurvivorToolkit_queue_active": "Это выполняемое действие нельзя остановить отдельно. Передача предметов и обработчики крафта должны завершиться штатно.",
+    "UI_PZSurvivorToolkit_queue_starting": "Дождитесь начала действия. Завершающееся действие отменить нельзя.",
+    "UI_PZSurvivorToolkit_queue_stopping": "Ожидание остановки текущего действия игрой.",
+    "UI_PZSurvivorToolkit_queue_unavailable": "Это действие больше недоступно."
 }

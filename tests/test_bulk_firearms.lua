@@ -146,6 +146,8 @@ for _, action in ipairs(queued) do
     else unloads[#unloads + 1] = action end
 end
 assert(#equips == 2 and #transfers == 2 and #unloads == 3 and nativeCalls.gun == 2 and nativeCalls.magazine == 1)
+assert(equips[1].toolkitBulkPreparation and equips[2].toolkitBulkPreparation)
+for _, action in ipairs(unloads) do assert(action.toolkitIndependentBulk) end
 assert(equips[1]:isValidStart());equips[1]:start();player.primary = a
 assert(unloads[1]:isValidStart(), 'our queued native equip must not invalidate firearm unloading')
 a.ammo = 0

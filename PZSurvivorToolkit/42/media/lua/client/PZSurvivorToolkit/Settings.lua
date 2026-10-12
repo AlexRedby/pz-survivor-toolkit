@@ -82,6 +82,9 @@ local clothingOption = options:addTickBox(
 
 local mediaWindowOption, vhsControlsOption, medicineSyncOption, medicineHerbsOption, navigatorOption
 options:addTitle(getText("UI_options_PZSurvivorToolkit_inventory_title"))
+local queueOption = options:addTickBox("ActionQueue",
+    getText("UI_options_PZSurvivorToolkit_queue"), false,
+    getText("UI_options_PZSurvivorToolkit_queue_tooltip"))
 local inventoryFilterOption = options:addTickBox(
     "InventoryFilters",
     getText("UI_options_PZSurvivorToolkit_inventory_filters"),
@@ -190,6 +193,10 @@ end
 
 function Settings.quantityTransfers()
     return quantityOption ~= nil and quantityOption:getValue() == true
+end
+
+function Settings.actionQueue()
+    return queueOption:getValue() == true
 end
 
 function Settings.uninstallToGround()
