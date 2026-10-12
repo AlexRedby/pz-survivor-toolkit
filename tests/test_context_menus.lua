@@ -1,7 +1,11 @@
 local client = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/'
 local loaded, files, writes, enabled = {}, {}, 0, true
 PZSurvivorToolkit = { Settings = { contextMenus = function() return enabled end } }
-Events = { OnGameExit = { Add = function() end } }
+local gameStart, worldFill, emptyFill
+Events = { OnGameExit = { Add = function() end },
+    OnGameStart = {Add=function(fn) gameStart=fn end},
+    OnPreFillInventoryContextMenuNoItems = {Add=function(fn) emptyFill=fn end},
+    OnPreFillWorldObjectContextMenu = {Add=function(fn) worldFill=fn end} }
 function getText(key) return key end
 function getFileReader(name)
     if not files[name] then return nil end
@@ -252,3 +256,61 @@ setmetatable(second,{__index={onSelect=function() end}})
 menu:prerender();assert(#menu.options==2 and menu.options[1]==first and menu.options[2]==second,
  'mod-provided metatable options must remain intact even with identical raw fields')
 print('PASS metatable-based mod actions stay untouched')
+
+-- Context-dependent purpose ordering is stable and preserves exact selections/unknown commands.
+ISInventoryPaneContextMenu.onGrabItems=function() end
+ISInventoryPaneContextMenu.onMoveItemsTo=function() end
+ISInventoryPaneContextMenu.onRenameBag=function() end
+ISWorldObjectContextMenu={onOpenCloseDoor=function() end,onWalkTo=function() end,onBurnCorpse=function() end}
+ISVehicleMenu={onEnter=function() end,onWash=function() end,onMechanic=function() end}
+local function ordered(kind, specs)
+ local m=ISContextMenu:new(nil);root=m;m.toolkitContextKind=kind
+ local rows={}
+ for _,spec in ipairs(specs) do rows[#rows+1]=m:addOption(spec[1],spec[3],spec[2],spec[4]) end
+ return m,rows
+end
+local eat,grab,rename=ISInventoryPaneContextMenu.onEatItems,ISInventoryPaneContextMenu.onGrabItems,ISInventoryPaneContextMenu.onRenameBag
+menu,actions=ordered('inventory',{{'Rename',rename},{'Grab',grab},{'Eat',eat}})
+menu.mouseOver=1;menu:prerender()
+assert(menu.options[1]==actions[3] and menu.options[2]==actions[2] and menu.options[3]==actions[1])
+assert(menu.mouseOver==3,'selection must follow the original action after sorting')
+Organizer.restore(menu);same(menu,actions)
+menu,actions=ordered('loot',{{'Eat',eat},{'Rename',rename},{'Grab',grab}})
+menu:prerender();assert(menu.options[1]==actions[3] and menu.options[2]==actions[1] and menu.options[3]==actions[2])
+Organizer.restore(menu);same(menu,actions)
+menu,actions=ordered('world',{{'Burn',ISWorldObjectContextMenu.onBurnCorpse},{'Walk',ISWorldObjectContextMenu.onWalkTo},{'Open',ISWorldObjectContextMenu.onOpenCloseDoor}})
+menu:prerender();assert(menu.options[1]==actions[3] and menu.options[2]==actions[2] and menu.options[3]==actions[1])
+menu,actions=ordered('world',{{'Wash',ISVehicleMenu.onWash},{'Mechanics',ISVehicleMenu.onMechanic},{'Enter',ISVehicleMenu.onEnter}})
+menu:prerender();assert(menu.options[1]==actions[3] and menu.options[2]==actions[2] and menu.options[3]==actions[1])
+
+menu,actions=ordered('inventory',{{'Rename',rename},{'Unknown',function()end},{'Eat',eat,nil,1},{'Header',nil},{'Grab',grab},{'Eat',eat,nil,2}})
+actions[4].isTitle=true
+menu:prerender();assert(menu.options[1]==actions[3] and menu.options[2]==actions[2] and menu.options[3]==actions[1])
+assert(menu.options[4]==actions[4] and menu.options[5]==actions[6] and menu.options[6]==actions[5],
+ 'titles are section barriers and unknown commands retain their exact slot')
+menu,actions=ordered('loot',{{'Same rank A',grab,nil,1},{'Same rank B',grab,nil,2},{'Same rank C',grab,nil,3}})
+menu:prerender();same(menu,actions)
+
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.onRenameBag','root')
+menu,actions=ordered('inventory',{{'Rename',rename},{'Grab',grab},{'Eat',eat}})
+menu:prerender();assert(menu.options[1]==actions[1] and menu.options[2]==actions[3] and menu.options[3]==actions[2],
+ 'manual root placements stay anchored while automatic actions sort')
+Organizer.reset()
+
+menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextKind='inventory'
+local parent=menu:addOption('Eat',nil,nil);parent.pzstCategory,parent.pzstKey='consume','portions'
+local portions=menu:getNew(menu);menu:addSubMenu(parent,portions)
+local all=portions:addOption('All',nil,eat,1);local half=portions:addOption('Half',nil,eat,.5);local quarter=portions:addOption('Quarter',nil,eat,.25)
+menu:prerender();same(portions,{all,half,quarter})
+
+ISInventoryPaneContextMenu.createMenu=function(_,carried)
+ local m=ISContextMenu:new(nil);m.wasCarried=carried;return m
+end
+gameStart();local wrapper=ISInventoryPaneContextMenu.createMenu;gameStart();assert(wrapper==ISInventoryPaneContextMenu.createMenu)
+local owned=wrapper(0,true);local loot=wrapper(0,false)
+assert(owned.toolkitContextKind=='inventory' and loot.toolkitContextKind=='loot')
+owned:clear();assert(owned.toolkitContextKind==nil,'pooled roots must not inherit old menu context')
+emptyFill(0,owned,true);assert(owned.toolkitContextKind=='loot')
+emptyFill(0,owned,false);assert(owned.toolkitContextKind=='inventory')
+worldFill(0,owned);assert(owned.toolkitContextKind=='world')
+print('PASS contextual priorities, stable ties, title barriers, selection identity, native selectors, manual placement and pooled context markers')

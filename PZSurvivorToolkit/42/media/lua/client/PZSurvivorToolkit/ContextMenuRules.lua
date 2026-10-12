@@ -206,4 +206,63 @@ function Rules.classify(option)
     return nil
 end
 
+-- Curated defaults by purpose, not measured player click frequency.
+local orders = {
+    inventory = {"consume", "medical", "equipment", "research", "transfer", "craft", "maintenance", "electronics", "world", "farming", "vehicle"},
+    loot = {"transfer", "equipment", "consume", "medical", "research", "craft", "maintenance", "electronics", "world", "farming", "vehicle"},
+    world = {"world", "transfer", "consume", "medical", "electronics", "farming", "craft", "maintenance", "research", "equipment", "vehicle"},
+    vehicle = {"vehicle", "transfer", "world", "electronics", "maintenance", "consume", "medical", "equipment", "craft", "farming", "research"},
+}
+local categoryRanks, methodRanks = {}, {}
+for context, order in pairs(orders) do
+    categoryRanks[context] = {}
+    for index, category in ipairs(order) do categoryRanks[context][category] = index end
+end
+local function rank(value, names)
+    for name in names:gmatch("%S+") do methodRanks[name] = value end
+end
+rank(10, [[
+    onEatItems onDrinkFluid onDrinkForThirst onPillsItems onApplyBandage onLiteratureItems onMediaText onCheckMap
+    onActivateItem onStopAlarm openRadioPanel openTvPanel
+    OnPrimaryWeapon OnSecondWeapon OnTwoHandsEquip onWearItems onUnEquip
+    onGrabItems onGrabOneItems onGrabHalfItems onGrabWItem onGrabHalfWItems onGrabAllWItems
+    onOpenCloseDoor onOpenCloseWindow onClimbThroughWindow onClimbOverFence onClimbSheetRope
+    onEnter onEnter2 onExit onOpenDoor onCloseDoor onOpenCloseWindow
+]])
+rank(20, [[
+    onMoveItemsTo onPutItems transferAll lootAll onDrink onTakeWater onGetOnBed onSitOnGround
+    onWalkTo onRest onSleep onSwitchSeat onStartEngine onShutOff onMechanic
+    onAddGasoline onTakeGasoline onPumpGasoline onTakeFuelNew onAddFuelNew
+    onLoadBulletsInMagazine onLoadBulletsIntoFirearm onInsertMagazine onEjectMagazine onRackGun
+    onToggleStove toggleStove onToggleThumpableLight onActivateGenerator onAddFuelGenerator doAddFuelGenerator
+    onHarvest onWater onSeed onFertilize onPlow
+]])
+rank(60, [[
+    onDropItems onPlaceItemOnGround onUnloadBulletsFromFirearm onUnloadBulletsFromMagazine
+    onUninstallPart onInstallPart onWash onAttachTrailer onDetachTrailer
+]])
+rank(80, "onInspectClothing onInspectTrack onResearchRecipe onInfo onInfoGenerator onDisplayInfo showInfo")
+rank(90, [[
+    AutoDrinkOn AutoDrinkOff onSetAlarm onSetBombTimer onRenameBag onRenameFood onRenameMap
+    onWriteSomething onFavorite onWanted onUnwanted onNoRecipes onDyeHair onMakeUp
+    OnLinkRemoteController OnResetRemoteControlID onChangefiremode
+]])
+rank(100, "removeAll onDestroy onRemoveBurntVehicle onBurnCorpse onSmashWindow onClaimWar onDumpContents emptyFluidContainer onFluidEmpty")
+
+function Rules.priority(category, key, context)
+    local ranks = categoryRanks[context] or categoryRanks.inventory
+    if not ranks[category] then return nil end
+    local method = key and key:match("^callback:[^:]+%.([^%.:]+)")
+    local weight = methodRanks[method] or 40
+    if key == "text:ContextMenu_Eat" or key == "text:ContextMenu_OpenAndEat"
+        or key == "text:ContextMenu_Drink" or key == "text:ContextMenu_OpenAndDrink"
+        or key == "text:ContextMenu_Wear" or key == "text:ContextMenu_Read" then weight = 10 end
+    if key == "toolkit:uninstallGround" then weight = 60 end
+    if category == "transfer" and context == "loot" and weight < 60 then weight = math.min(weight, 20) end
+    if key == "callback:ISInventoryPaneContextMenu.OnNewCraft:RipClothing"
+        or key == "callback:ISInventoryPaneContextMenu.OnNewCraft:RipDenimClothing"
+        or key == "callback:PZSurvivorToolkit.BulkClothing.queue" then weight = 25 end
+    return weight * 100 + ranks[category]
+end
+
 return Rules

@@ -61,7 +61,7 @@ local function action(option)
         Organizer.entries[key] = { key = key, label = label, category = category }
         Organizer.revision = Organizer.revision + 1
     end
-    return Organizer.overrides[key] or category, Organizer.overrides[key] ~= nil
+    return Organizer.overrides[key] or category, Organizer.overrides[key] ~= nil, key
 end
 
 local function finish(menu, selected)
@@ -145,16 +145,44 @@ local function sameAction(left, right)
     return true
 end
 
-local function organizeNode(menu, state, visited, selectorsOnly)
+local function sortActions(options, priorities)
+    local changed, start = false, 1
+    for boundary = 1, #options + 1 do
+        if boundary > #options or options[boundary].isTitle then
+            local slots, ordered = {}, {}
+            for index = start, boundary - 1 do
+                local option = options[index]
+                if priorities[option] then
+                    slots[#slots + 1] = index
+                    ordered[#ordered + 1] = {option = option, index = index}
+                end
+            end
+            table.sort(ordered, function(left, right)
+                local a, b = priorities[left.option], priorities[right.option]
+                return a < b or (a == b and left.index < right.index)
+            end)
+            for index, row in ipairs(ordered) do
+                local slot = slots[index]
+                changed = changed or options[slot] ~= row.option
+                options[slot] = row.option
+            end
+            start = boundary + 1
+        end
+    end
+    return changed
+end
+
+local function organizeNode(menu, state, visited, selectorsOnly, context)
     if visited[menu] or not menu.options then return end
     visited[menu] = true
-    local original, unique, categories, explicit, counts = {}, {}, {}, {}, {}
-    local changed = false
+    local original, unique, categories, explicit, counts, keys, priorities = {}, {}, {}, {}, {}, {}, {}
+    local changed, hasTitle = false, false
     local selected = menu.options[menu.mouseOver]
     for index, option in ipairs(menu.options) do
         if not option.isDefaultOption then
             original[#original + 1] = option
             state.borrowed[option] = true
+            hasTitle = hasTitle or option.isTitle
         end
     end
     state.nodes[menu] = original
@@ -176,7 +204,8 @@ local function organizeNode(menu, state, visited, selectorsOnly)
         end
     end
     for _, option in ipairs(unique) do
-        local category, manual = action(option)
+        local category, manual, key = action(option)
+        keys[option] = key
         categories[option] = category
         explicit[option] = manual
         if category and category ~= "root" and category ~= "hidden" then
@@ -185,8 +214,17 @@ local function organizeNode(menu, state, visited, selectorsOnly)
         -- Portion/recipe selectors already form coherent native submenus.
         if option.subOption then
             local child = menu:getSubMenu(option.subOption)
-            if child then organizeNode(child, state, visited, selectorsOnly or category ~= nil) end
+            if child then organizeNode(child, state, visited, selectorsOnly or category ~= nil, context) end
         end
+    end
+    if context ~= "inventory" and context ~= "loot" then
+        for _, option in ipairs(unique) do
+            if categories[option] == "vehicle" then context = "vehicle"; break end
+        end
+    end
+    context = context or "inventory"
+    for _, option in ipairs(unique) do
+        if not explicit[option] then priorities[option] = Rules.priority(categories[option], keys[option], context) end
     end
     local groups, result = {}, {}
     for _, option in ipairs(unique) do
@@ -194,7 +232,7 @@ local function organizeNode(menu, state, visited, selectorsOnly)
         if not selectorsOnly and category == "hidden" then
             changed = true
         elseif not selectorsOnly and category and category ~= "root"
-            and (explicit[option] or (#unique >= 5 and counts[category] >= 2)) then
+            and (explicit[option] or (not hasTitle and #unique >= 5 and counts[category] >= 2)) then
             local group = groups[category]
             if not group then
                 group = menu:getNew(menu)
@@ -210,6 +248,12 @@ local function organizeNode(menu, state, visited, selectorsOnly)
                 result[#result + 1] = anchor
             end
             group.options[#group.options + 1] = option
+            if explicit[option] then
+                group.toolkitContextManual = true
+                priorities[group.toolkitContextAnchor] = nil
+            elseif not group.toolkitContextManual and priorities[option] then
+                priorities[group.toolkitContextAnchor] = math.min(priorities[group.toolkitContextAnchor] or math.huge, priorities[option])
+            end
             if option.subOption then
                 local child = menu:getSubMenu(option.subOption)
                 if child then
@@ -222,6 +266,10 @@ local function organizeNode(menu, state, visited, selectorsOnly)
         else
             result[#result + 1] = option
         end
+    end
+    if not selectorsOnly then
+        changed = sortActions(result, priorities) or changed
+        for _, group in pairs(groups) do sortActions(group.options, priorities) end
     end
     if changed then
         removeAncestors(menu)
@@ -239,7 +287,7 @@ function Organizer.organize(root)
     busy = true
     local state = { nodes = {}, parents = {}, groups = {}, borrowed = {}, anchors = {}, anchorOptions = {} }
     root.toolkitContextState = state
-    local ok, error = pcall(organizeNode, root, state, {})
+    local ok, error = pcall(organizeNode, root, state, {}, false, root.toolkitContextKind)
     busy = false
     if not ok then
         restore(root)
@@ -286,7 +334,7 @@ ISContextMenu.clear = function(self, ...)
         while root.parent and root.parent.options do root = root.parent end
         restore(root)
     end
-    self.toolkitContextState, self.toolkitContextGroupMenu, self.toolkitContextSkip = nil, nil, nil
+    self.toolkitContextState, self.toolkitContextGroupMenu, self.toolkitContextSkip, self.toolkitContextKind = nil, nil, nil, nil
     return clear(self, ...)
 end
 local function beforeMutation(menu)
@@ -306,6 +354,26 @@ for _, name in ipairs({"addOption", "addOptionOnTop", "insertOptionBefore", "ins
         end
     end
 end
+
+Events.OnGameStart.Add(function()
+    if ISInventoryPaneContextMenu.toolkitContextOrder then return end
+    ISInventoryPaneContextMenu.toolkitContextOrder = true
+    local createMenu = ISInventoryPaneContextMenu.createMenu
+    ISInventoryPaneContextMenu.createMenu = function(player, inInventory, ...)
+        local menu = createMenu(player, inInventory, ...)
+        if type(menu) == "table" and menu.options then
+            restore(menu)
+            menu.toolkitContextKind = inInventory and "inventory" or "loot"
+        end
+        return menu
+    end
+end)
+Events.OnPreFillInventoryContextMenuNoItems.Add(function(_, menu, isLoot)
+    menu.toolkitContextKind = isLoot and "loot" or "inventory"
+end)
+Events.OnPreFillWorldObjectContextMenu.Add(function(_, menu)
+    menu.toolkitContextKind = "world"
+end)
 
 load()
 return Organizer

@@ -2,7 +2,7 @@
 
 For the Steam edition of Project Zomboid **B42.21**. The server and all players must use the same game build and identical local mod files.
 
-The [server INI](SurvivorQoL-selected.ini) selects **41 Mod IDs / 37 Workshop items**. All three repository mods are required: **PZ Survivor Toolkit v0.1.23**, **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.2**. The Java component is experimental and targets B42.21 only. Feature switches remain per-player; the action queue stays off until enabled. See [features and verification limits](README.md).
+The [server INI](SurvivorQoL-selected.ini) selects **41 Mod IDs / 37 Workshop items**. All three repository mods are required: **PZ Survivor Toolkit v0.1.24**, **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.2**. The Java component is experimental and targets B42.21 only. Feature switches remain per-player; the action queue stays off until enabled. See [features and verification limits](README.md).
 
 ## Prepare once
 

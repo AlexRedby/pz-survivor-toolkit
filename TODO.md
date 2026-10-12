@@ -1,5 +1,10 @@
 # TODO
 
+## Contextual action ordering
+
+- [ ] Curate stable action priorities by menu context; preserve unknown commands, native selectors, manual placement and callback identities.
+- [ ] Add order/selection/rollback regressions and verify native inventory/world/vehicle menus; package and publish the checked result.
+
 ## TV playback follow-up
 
 - [ ] Verify `JavaPatches/start-host.ps1` on Windows Host with a custom Steam-library path: confirm server log `media=true`, rapid Stop/Play, cassette dialogue and XP. Check an existing ZombieBuddy JSON setup and a setup using only Steam launch options for duplicate-loader errors.
