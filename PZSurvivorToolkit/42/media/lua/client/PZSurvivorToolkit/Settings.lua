@@ -94,7 +94,7 @@ if not getActivatedMods():contains("ContextMenuOrganizer") and not getActivatedM
 end
 options:addTitle(getText("UI_options_PZSurvivorToolkit_inventory_title"))
 local queueOption = options:addTickBox("ActionQueue",
-    getText("UI_options_PZSurvivorToolkit_queue"), false,
+    getText("UI_options_PZSurvivorToolkit_queue"), true,
     getText("UI_options_PZSurvivorToolkit_queue_tooltip"))
 local inventoryFilterOption = options:addTickBox(
     "InventoryFilters",

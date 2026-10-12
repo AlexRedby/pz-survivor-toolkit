@@ -1,20 +1,14 @@
 require "PZSurvivorToolkit/Settings"
 require "TimedActions/ISTimedActionQueue"
 require "TimedActions/ISBaseTimedAction"
+require "TimedActions/ISReadABook"
+require "PZSurvivorToolkit/ActionQueueOperations"
 
 local Toolkit = PZSurvivorToolkit
 local Queue = {}
 Toolkit.ActionQueue = Queue
 
-local addAfter = ISTimedActionQueue.addAfter
-ISTimedActionQueue.addAfter = function(previous, action)
-    local queue, added = addAfter(previous, action)
-    if added then
-        -- Kahlua ignores weak-table modes; mark linked steps without retaining completed actions.
-        previous.toolkitQueueLinked, added.toolkitQueueLinked = true, true
-    end
-    return queue, added
-end
+local Operations = Toolkit.ActionQueueOperations
 
 local function live(queue)
     local player = queue.character
@@ -64,29 +58,74 @@ function Queue.cancel(queue, action)
     return true
 end
 
-function Queue.moveReason(queue, action, target, after)
-    local reason = Queue.cancelReason(queue, action)
-    if reason then return reason end
-    if action.action or action == queue.current or queue.queue[1] == action then return "move_active" end
-    local from, to = queue:indexOf(action), queue:indexOf(target or action)
-    if to == -1 then return "unavailable" end
-    if after then to = to + 1 end
-    if from < to then to = to - 1 end
-    -- Crossing any preparation/callback could change which inputs the later action receives.
-    for i = math.min(from, to), math.max(from, to) do
-        local crossed = queue.queue[i]
-        if crossed == queue.current or i == 1 or crossed.action then return "move_active" end
-        if Queue.cancelReason(queue, crossed) then return "move_dependent" end
+local itemFields = {"item", "gun", "magazine", "weapon", "primary", "secondary"}
+local function sharedItem(a, b)
+    for _, key in ipairs(itemFields) do
+        local item = a[key]
+        if item and instanceof(item, "InventoryItem") then
+            for _, other in ipairs(itemFields) do
+                if item == b[other] then return true end
+            end
+        end
     end
-    return nil, to
+end
+
+function Queue.moveReason(queue, action, target, after)
+    if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
+        or queue:indexOf(action) == -1 or queue:indexOf(target or action) == -1 then return "unavailable" end
+    if queue.toolkitCancel then return "stopping" end
+    local first, last = Operations.bounds(queue, action)
+    local targetFirst, targetLast = Operations.bounds(queue, target or action)
+    if not first or not targetFirst then return "move_dependent" end
+    for i = first, last do
+        local member = queue.queue[i]
+        if member.action or member == queue.current or i == 1 then return "move_active" end
+        if member._isAddingActions then return "move_dependent" end
+    end
+    if first == targetFirst then return nil, first, first, last end
+    local to = after and targetLast + 1 or targetFirst
+    local preempt = to == 1
+    if preempt and Queue.cancelReason(queue, queue.current) then return "move_active" end
+    if preempt then
+        for i = first, last do
+            local member = queue.queue[i]
+            -- Native reading progress is shared by book type, including different copies.
+            if member.Type == "ISReadABook" and member.item:getFullType() == queue.current.item:getFullType() then
+                return "move_shared_book"
+            end
+        end
+    end
+    for i = math.min(first, to), math.min(#queue.queue, math.max(last, to - 1)) do
+        if i < first or i > last then
+            local crossed = queue.queue[i]
+            if crossed._isAddingActions then return "move_dependent" end
+            for j = first, last do
+                if sharedItem(queue.queue[j], crossed) then return "move_shared_item" end
+            end
+        end
+    end
+    if first < to then to = to - (last - first + 1) end
+    return nil, to, first, last, preempt
 end
 
 function Queue.move(queue, action, target, after)
-    local reason, to = Queue.moveReason(queue, action, target, after)
+    local reason, to, first, last, preempt = Queue.moveReason(queue, action, target, after)
     if reason then return false, reason end
-    table.remove(queue.queue, queue:indexOf(action))
-    table.insert(queue.queue, to, action)
+    if to == first then return true end
+    local moved = {}
+    for i = first, last do moved[#moved + 1] = table.remove(queue.queue, first) end
+    if preempt then to = 2 end
+    for i, member in ipairs(moved) do table.insert(queue.queue, to + i - 1, member) end
+    if preempt then
+        queue.toolkitResume = moved[#moved]
+        queue.toolkitCancel = queue.current
+        queue.current:forceStop()
+    end
     return true
+end
+
+local function clearStop(queue)
+    queue.toolkitCancel, queue.toolkitCancelStopped, queue.toolkitResume = nil, nil, nil
 end
 
 local stop = ISBaseTimedAction.stop
@@ -98,7 +137,7 @@ ISBaseTimedAction.stop = function(action)
         action.character:setIsFarming(false)
         return
     end
-    if queue then queue.toolkitCancel, queue.toolkitCancelStopped = nil, nil end
+    if queue then clearStop(queue) end
     return stop(action)
 end
 
@@ -107,12 +146,22 @@ ISTimedActionQueue.tick = function(queue)
     local action = queue.toolkitCancel
     if action then
         if not live(queue) or queue.current ~= action or queue.queue[1] ~= action then
-            queue.toolkitCancel, queue.toolkitCancelStopped = nil, nil
+            clearStop(queue)
         elseif not queue.character:getCharacterActions():contains(action.action) then
             -- B42 sends the MP stop packet after Lua stop; resume only after Java removes the action.
-            local stopped = queue.toolkitCancelStopped
-            queue.toolkitCancel, queue.toolkitCancelStopped = nil, nil
-            if stopped then queue:onCompleted(action); return end
+            local stopped, resumeAfter = queue.toolkitCancelStopped, queue.toolkitResume
+            clearStop(queue)
+            if stopped then
+                local index = resumeAfter and queue:indexOf(resumeAfter)
+                if index and index > 1 then
+                    -- A fresh native read obtains saved pages and MP duration through its constructor.
+                    local resumed = ISReadABook:new(queue.character, action.item)
+                    resumed.toolkitQueueOperation = action.toolkitQueueOperation
+                    table.insert(queue.queue, index + 1, resumed)
+                end
+                queue:onCompleted(action)
+                return
+            end
         else
             return
         end

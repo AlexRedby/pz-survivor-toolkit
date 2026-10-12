@@ -27,6 +27,25 @@ local function load(path) assert(loadfile(NativeActionRoot .. '/' .. path))() en
 load('shared/TimedActions/ISBaseTimedAction.lua')
 load('client/TimedActions/ISTimedActionQueue.lua')
 load('shared/TimedActions/ISReadABook.lua')
+ISInventoryPage = {}
+load('client/TimedActions/ISInventoryTransferAction.lua')
+ISContextMenu, ISButton, ISInventoryPaneContextMenu = {}, {}, {}
+Events.OnGameStart = {Add = function(fn) fn() end}
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua'))()
+local operations = PZSurvivorToolkit.ActionQueueOperations
+SkillBook, ItemTag, CharacterTrait, ItemBodyLocation = {}, {}, {}, {}
+MoodleType = {}
+getSandboxOptions = function() return {getOptionByName=function() return {getValue=function() return 2 end} end} end
+getGameTime = function() return {getMinutesPerDay=function() return 60 end} end
+-- Exercise the native constructor/duration; animation and Java validity are fixture doubles.
+local newRead = ISReadABook.new
+ISReadABook.new = function(self, character, item)
+    local a = newRead(self, character, item)
+    a.start = function(v) v.character:setReading(true) end
+    a.isValid = function(v) return not v.missing end
+    a.perform = function(v) v.character:setReading(false); ISBaseTimedAction.perform(v) end
+    return a
+end
 LuaTimedActionNew = {new = function(t)
     return {table = t, started = false, progress = 0,
         isStarted = function(s) return s.started end,
@@ -39,6 +58,13 @@ end}
 local function player()
     local p = {class = 'IsoPlayer', actions = {}, farming = false, reading = false}
     function p:getPlayerNum() return 0 end
+    function p:isTimedActionInstant() return false end
+    function p:getAlreadyReadPages() return self.pages or 12 end
+    function p:hasTrait() return false end
+    function p:getWornItems() return {getItem=function() end} end
+    function p:isSitting() return false end
+    function p:getMoodles() return {getMoodleLevel=function() return 0 end} end
+    function p:getTimedActionTimeModifier() return 1 end
     function p:isDead() return self.dead == true end
     function p:isAsleep() return false end
     function p:isLocalPlayer() return true end
@@ -65,7 +91,9 @@ local function book(p)
     local a = ISBaseTimedAction.new(ISReadABook, p)
     a.maxTime = 1
     a.item = {delta = .5, getNumberOfPages = function() return 100 end,
-        getAlreadyReadPages = function() return 12 end, getType = function() return 'BookCarpentry' end,
+        getAlreadyReadPages = function(s) return s.pages or 12 end,
+        setAlreadyReadPages=function(s,v) s.pages=v end, getFullType=function() return 'Base.BookCarpentry' end,
+        getSkillTrained=function() return '' end, hasTag=function() return false end, getType = function() return 'BookCarpentry' end,
         setJobDelta = function(s,v) s.delta = v end, getDisplayName = function() return 'Book' end, getTex = function() return 'book-icon' end,
         class = 'InventoryItem'}
     a.start = function(self) self.character:setReading(true) end
@@ -138,7 +166,7 @@ equip.Type, equip.toolkitIndependentBulk, equip.toolkitBulkPreparation = 'ISEqui
 ISTimedActionQueue.add(first); ISTimedActionQueue.add(equip); ISTimedActionQueue.add(second)
 assert(api.cancel(q, first) and q.queue[2] == equip and q.queue[3] == second)
 assert(api.cancelReason(q, equip) == 'dependent', 'preparation itself remains protected')
--- Reorder native pending identities without callbacks, recreation or crossing dependencies.
+-- Pending operations retain all native identities, including pickup/read/return and callbacks.
 p = player(); a,b,c = book(p),book(p),book(p)
 q = ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); ISTimedActionQueue.add(c); frame(p)
 local originalCurrent, nativeQueue = a.action, q.queue
@@ -146,23 +174,58 @@ b.forceCancel = function() error('reorder must not cancel') end
 assert(api.move(q,c,b) and q.queue == nativeQueue and q.queue[2] == c and q.queue[3] == b)
 assert(q.current == a and a.action == originalCurrent and not b.action and not c.action)
 assert(api.move(q,c,b,true) and q.queue[2] == b and q.queue[3] == c)
-assert(not api.move(q,a,c) and not api.move(q,c,a), 'never reorder current/head')
-local barrier = leaf(p,'pickup'); barrier.Type='ISInventoryTransferAction'; barrier.toolkitIndependentBulk=nil
-ISTimedActionQueue.add(barrier); local last=book(p); ISTimedActionQueue.add(last)
-assert(not api.move(q,last,b) and q.queue[5]==last, 'never cross a native preparation')
-assert(not api.move(q,b,last), 'barriers apply in both directions')
+assert(not api.move(q,a,c), 'cannot drag an active operation')
+local pickup, read, restore = leaf(p,'pickup'),book(p),leaf(p,'return')
+pickup.Type,restore.Type='ISInventoryTransferAction','ISInventoryTransferAction'
+pickup.item,restore.item=read.item,read.item
+operations.run(function()
+    ISTimedActionQueue.add(pickup);ISTimedActionQueue.add(read);ISTimedActionQueue.add(restore)
+end)
+assert(api.move(q,read,b) and q.queue[2]==pickup and q.queue[3]==read and q.queue[4]==restore)
+assert(api.move(q,b,read) and q.queue[2]==b and q.queue[3]==pickup, 'target inside group resolves to whole operation')
+assert(api.move(q,read,c,true) and q.queue[4]==pickup and q.queue[6]==restore)
 local stale=book(p); assert(not api.move(q,b,stale) and not api.move(q,stale,b))
-assert(api.move(q,b,b) and q.queue[2]==b, 'self drop is harmless')
 local linkedBook=book(p); ISTimedActionQueue.addAfter(b,linkedBook)
-assert(not api.move(q,b,c) and not api.move(q,c,b), 'linked steps are barriers')
-p=player(); a,b,c=book(p),leaf(p,'one'),leaf(p,'two')
-q=ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); ISTimedActionQueue.add(c)
-assert(api.move(q,c,b) and q.queue[2]==c, 'adjacent independent bulk leaves can reorder')
-assert(api.cancel(q,b)); assert(not api.move(q,c,b), 'removed destination is stale')
-frame(p); assert(api.cancel(q,a)); assert(not api.move(q,c,c), 'in-flight stop blocks edits')
-frame(p); assert(not api.move(q,c,c), 'new current cannot move')
-p.dead=true; assert(not api.move(q,c,c)); p=player(); assert(not api.move(q,c,c))
-print('Native reorder: identities, current/head, preparation barriers, linked steps, stale targets and lifecycle passed.')
+assert(api.move(q,linkedBook,restore,true) and q.queue[6]==b and q.queue[7]==linkedBook, 'addAfter steps move together')
+local reused=book(p);reused.item=read.item;ISTimedActionQueue.add(reused)
+assert(api.moveReason(q,reused,read)=='move_shared_item','shared-item operation order remains protected')
+local callbackMove=leaf(p,'callback');callbackMove.onCompleteFunc=function() error('move must not invoke callbacks') end
+ISTimedActionQueue.add(callbackMove);assert(api.move(q,callbackMove,pickup))
+local deferred=leaf(p,'deferred');deferred.Type='ISQueueActionsAction'
+ISTimedActionQueue.add(deferred);assert(api.move(q,deferred,callbackMove))
+assert(api.move(q,callbackMove,deferred), 'pending native generators keep their operation boundary')
+-- Interrupt a read only after native stop/removal; a fresh native read preserves saved pages.
+p=player();a,b=book(p),book(p)
+q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);frame(p)
+assert(api.moveReason(q,b,a)=='move_shared_book', 'different copies share native reading progress')
+p=player();a,b,c=book(p),leaf(p,'walk'),leaf(p,'tv')
+q=ISTimedActionQueue.add(a)
+operations.run(function() ISTimedActionQueue.add(b);ISTimedActionQueue.add(c) end)
+frame(p);p.pages=37
+assert(api.move(q,c,a) and q.current==a and q.queue[2]==b and q.queue[3]==c)
+q:tick();assert(#q.queue==3 and q.current==a, 'no premature read reconstruction')
+assert(not api.move(q,c,c), 'in-flight stop blocks edits')
+frame(p)
+local resumed=q.queue[3]
+assert(q.current==b and resumed~=a and resumed.item==a.item and resumed.Type=='ISReadABook')
+assert(resumed.startPage==37 and resumed.pageTimer==0 and not resumed.action and not q.toolkitResume)
+b.action.done=true;frame(p);c.action.done=true;frame(p)
+assert(q.current==resumed and not p.actions[a.action] and p.actions[resumed.action])
+-- A natural finish or external stop wins over a requested read resumption.
+for _, mode in ipairs({'finish','clear','move','dead','respawn','dropped'}) do
+    p=player();a,b=book(p),leaf(p,mode);q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);frame(p)
+    assert(api.move(q,b,a))
+    if mode=='finish' then a.action.completing=true
+    elseif mode=='clear' then ISTimedActionQueue.clear(p)
+    elseif mode=='move' then p.moving=true
+    elseif mode=='dead' then p.dead=true
+    elseif mode=='respawn' then activePlayer=player()
+    else p.actions={} end
+    frame(p)
+    assert(not q.toolkitResume and not q.toolkitCancel)
+    assert(#q.queue==(mode=='finish' and 1 or 0), mode..' reconstructed a read')
+end
+print('Native reorder: whole operations, linked steps, shared items, preemption, fresh read and stop races passed.')
 -- A finishing read wins the native completion race; never complete it twice.
 p = player(); a,b = book(p),leaf(p,'finish-race'); q = ISTimedActionQueue.add(a); ISTimedActionQueue.add(b)
 assert(api.cancelReason(q,a) == 'starting'); frame(p)

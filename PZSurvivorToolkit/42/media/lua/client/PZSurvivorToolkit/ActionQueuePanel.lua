@@ -99,7 +99,8 @@ function Panel.drawRow(list, y, row, alt)
     end
     local action, queue = row.item, list.parent.queue
     local current = queue.current == action
-    if list.selected == row.index then
+    local dragged = list.dragAction and list.dragAction.toolkitQueueOperation
+    if list.selected == row.index or (list.dragging and dragged and action.toolkitQueueOperation == dragged) then
         list:drawRect(0, y, list.width, row.height, 0.3, 0.6, 0.6, 0.6)
     elseif alt then
         list:drawRect(0, y, list.width, row.height, 0.15, 0.5, 0.5, 0.5)
@@ -123,8 +124,16 @@ function Panel.drawRow(list, y, row, alt)
         reason and 0.2 or 1, 1, 1, 1)
     local hint = hover and (reason or "cancel_tip") or (moveReason or "drag_tip")
     row.tooltip = Toolkit.ActionQueue.label(action) .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. hint)
-    if list.dragging and list.dropTarget == action then
-        local blocked = Toolkit.ActionQueue.moveReason(queue, list.dragAction, action, list.dropAfter)
+    local first, last = Toolkit.ActionQueueOperations.bounds(queue, action)
+    if first and last > first then
+        row.tooltip = row.tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_group", last - first + 1)
+    end
+    local dropFirst, dropLast
+    if list.dragging and list.dropTarget then
+        dropFirst, dropLast = Toolkit.ActionQueueOperations.bounds(queue, list.dropTarget)
+    end
+    if row.index == (list.dropAfter and dropLast or dropFirst) then
+        local blocked = Toolkit.ActionQueue.moveReason(queue, list.dragAction, list.dropTarget, list.dropAfter)
         list:drawRect(0, y + (list.dropAfter and row.height - 2 or 0), cancelX + 24, 2, 1,
             blocked and 1 or 0.3, blocked and 0.3 or 1, 0.3)
     end

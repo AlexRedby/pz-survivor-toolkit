@@ -68,7 +68,7 @@
     "UI_PZSurvivorToolkit_quantity_prompt": "Количество для переноса в %1 (максимум %2)",
     "UI_PZSurvivorToolkit_quantity_invalid": "Введите целое число от 1 до %1.",
     "UI_options_PZSurvivorToolkit_queue": "Показывать очередь действий",
-    "UI_options_PZSurvivorToolkit_queue_tooltip": "Окно штатной очереди с иконками. Крестик отменяет действие; перетаскивание меняет порядок независимых ожидающих действий. Подготовка, возврат предметов и непроверенные действия модов защищены.",
+    "UI_options_PZSurvivorToolkit_queue_tooltip": "Окно штатной очереди с иконками. Крестик отменяет действие; перетаскивание переносит операцию вместе с подготовкой и возвратом предметов. Перенесите её выше текущего чтения, чтобы прервать книгу и продолжить после операции.",
     "UI_PZSurvivorToolkit_queue_title": "Действия (%1)",
     "UI_PZSurvivorToolkit_queue_cancel_tip": "Отменить только это действие и сохранить остальные в штатной очереди.",
     "UI_PZSurvivorToolkit_queue_dependent": "Защищено: подготовка, возврат предметов либо непроверенная зависимость/обработчик. При необходимости отмените всю операцию обычным способом.",
@@ -76,9 +76,9 @@
     "UI_PZSurvivorToolkit_queue_starting": "Дождитесь начала действия. Завершающееся действие отменить нельзя.",
     "UI_PZSurvivorToolkit_queue_stopping": "Ожидание остановки текущего действия игрой.",
     "UI_PZSurvivorToolkit_queue_unavailable": "Это действие больше недоступно.",
-    "UI_PZSurvivorToolkit_queue_drag_tip": "Перетащите строку, чтобы изменить порядок ожидающих действий. Колесо мыши прокручивает очередь.",
-    "UI_PZSurvivorToolkit_queue_move_active": "Выполняемое действие нельзя перемещать или ставить другие действия перед ним.",
-    "UI_PZSurvivorToolkit_queue_move_dependent": "Нельзя перенести действие через подготовку, возврат предметов или зависимый шаг.",
+    "UI_PZSurvivorToolkit_queue_drag_tip": "Перетащите операцию вместе с подготовкой. Перенос выше текущего чтения прервёт книгу и продолжит её после операции. Колесо мыши прокручивает очередь.",
+    "UI_PZSurvivorToolkit_queue_move_active": "Выполняемую операцию нельзя перемещать. Перенос другой операции выше может прервать только уже начавшееся чтение.",
+    "UI_PZSurvivorToolkit_queue_move_dependent": "Эта операция ещё добавляет шаги либо её связанные шаги разделены в очереди.",
     "UI_PZSurvivorToolkit_context_title": "Контекстные меню",
     "UI_PZSurvivorToolkit_context_enabled": "Группировать действия контекстных меню",
     "UI_PZSurvivorToolkit_context_tooltip": "Автоматически группирует известные действия в длинных меню инвентаря, объектов мира и других контекстных меню. Короткие меню и готовые меню рецептов/порций остаются компактными. Неизвестные действия модов остаются видимыми.",
@@ -101,5 +101,8 @@
     "UI_PZSurvivorToolkit_context_group_world": "Взаимодействие с миром",
     "UI_PZSurvivorToolkit_context_group_vehicle": "Транспорт",
     "UI_PZSurvivorToolkit_context_group_farming": "Фермерство",
-    "UI_PZSurvivorToolkit_context_group_research": "Чтение и исследование"
+    "UI_PZSurvivorToolkit_context_group_research": "Чтение и исследование",
+    "UI_PZSurvivorToolkit_queue_move_shared_item": "Операции используют один предмет. Сохраните их порядок, чтобы предмет оставался доступен.",
+    "UI_PZSurvivorToolkit_queue_group": "Переносятся все шаги этой операции: %1.",
+    "UI_PZSurvivorToolkit_queue_move_shared_book": "У разных экземпляров этой книги общий прогресс чтения. Оставьте её после текущей книги."
 }

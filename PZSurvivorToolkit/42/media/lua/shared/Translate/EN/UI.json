@@ -68,7 +68,7 @@
     "UI_PZSurvivorToolkit_quantity_prompt": "Number to move to %1 (maximum %2)",
     "UI_PZSurvivorToolkit_quantity_invalid": "Enter a whole number between 1 and %1.",
     "UI_options_PZSurvivorToolkit_queue": "Show action queue",
-    "UI_options_PZSurvivorToolkit_queue_tooltip": "Native action queue with icons. Click a cross to cancel; drag independent waiting actions to reorder them. Preparation, item returns and unaudited mod actions are protected.",
+    "UI_options_PZSurvivorToolkit_queue_tooltip": "Native action queue with icons. Click a cross to cancel; drag an operation with its preparation and item returns. Drop it above current reading to pause the book and resume it afterwards.",
     "UI_PZSurvivorToolkit_queue_title": "Actions (%1)",
     "UI_PZSurvivorToolkit_queue_cancel_tip": "Cancel only this action and keep the rest of the native queue.",
     "UI_PZSurvivorToolkit_queue_dependent": "Protected: preparation, restoration or an unverified dependency/callback. Cancel the whole operation normally if needed.",
@@ -76,9 +76,9 @@
     "UI_PZSurvivorToolkit_queue_starting": "Wait until this action has started. A finishing action cannot be cancelled.",
     "UI_PZSurvivorToolkit_queue_stopping": "Waiting for the game to stop the current action.",
     "UI_PZSurvivorToolkit_queue_unavailable": "This action is no longer available.",
-    "UI_PZSurvivorToolkit_queue_drag_tip": "Drag this row to reorder waiting actions. Use the mouse wheel to scroll the queue.",
-    "UI_PZSurvivorToolkit_queue_move_active": "The current action cannot be moved or have other actions placed before it.",
-    "UI_PZSurvivorToolkit_queue_move_dependent": "Cannot move an action across preparation, item returns or a dependent step.",
+    "UI_PZSurvivorToolkit_queue_drag_tip": "Drag to reorder an operation together with its preparation. Drop above current reading to interrupt and resume the book. Use the mouse wheel to scroll.",
+    "UI_PZSurvivorToolkit_queue_move_active": "A running operation cannot be moved. Only started reading can be interrupted by dropping another operation above it.",
+    "UI_PZSurvivorToolkit_queue_move_dependent": "This operation is still adding steps or its linked steps are separated in the queue.",
     "UI_PZSurvivorToolkit_context_title": "Context menus",
     "UI_PZSurvivorToolkit_context_enabled": "Group context menu actions",
     "UI_PZSurvivorToolkit_context_tooltip": "Automatically groups known actions in long inventory, world and other context menus. Short menus and existing recipe/portion selectors remain compact. Unknown mod actions stay visible.",
@@ -101,5 +101,8 @@
     "UI_PZSurvivorToolkit_context_group_world": "World interactions",
     "UI_PZSurvivorToolkit_context_group_vehicle": "Vehicles",
     "UI_PZSurvivorToolkit_context_group_farming": "Farming",
-    "UI_PZSurvivorToolkit_context_group_research": "Reading and research"
+    "UI_PZSurvivorToolkit_context_group_research": "Reading and research",
+    "UI_PZSurvivorToolkit_queue_move_shared_item": "These operations use the same item. Keep their order so the item stays available.",
+    "UI_PZSurvivorToolkit_queue_group": "Moves all %1 steps of this operation together.",
+    "UI_PZSurvivorToolkit_queue_move_shared_book": "Another copy of the same book shares reading progress. Keep it after the current read."
 }
