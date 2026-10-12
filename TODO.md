@@ -14,4 +14,4 @@
 
 ## Action queue usability
 
-- [ ] Run the isolated native MP scenarios for moving container-book operations and interrupting reading with TV tuning, with Tidy Up in vanilla and CleanUI. Lua/Kahlua checks pass; native clients currently fail before Lua at `GLFW.glfwGetVideoMode` because no primary monitor is available. Use a fresh fixture snapshot after restoring the display.
+- [ ] Verify queued door dismantling and selective cancellation in isolated native MP with Tidy Up, vanilla and CleanUI: canceled doors unchanged, tool IDs conserved, fuel consumed only on completion. Use fresh welding fixture snapshots after restoring the primary display; clients currently fail before Lua at `GLFW.glfwGetVideoMode`.

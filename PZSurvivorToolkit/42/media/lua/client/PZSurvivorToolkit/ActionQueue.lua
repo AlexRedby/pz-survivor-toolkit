@@ -16,13 +16,17 @@ local function live(queue)
         and not player:isDead() and not player:isAsleep()
 end
 
+local function stoppable(action)
+    return action.Type == "ISReadABook" or (action.Type == "ISMoveablesAction" and action.mode == "scrap")
+end
+
 function Queue.cancelReason(queue, action)
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 then return "unavailable" end
     if queue.toolkitCancel then return "stopping" end
     if action._isAddingActions or action.onCompleteFunc or action.onStartFunc or action.onCancelFunc
         or action.retriggerLastAction or action.toolkitQueueLinked then return "dependent" end
-    if action.Type ~= "ISReadABook" and not action.toolkitIndependentBulk then
+    if not stoppable(action) and not action.toolkitIndependentBulk and not action.toolkitWorldDismantle then
         return "dependent"
     end
     if action.toolkitIndependentBulk then
@@ -35,9 +39,9 @@ function Queue.cancelReason(queue, action)
         end
     end
     if action == queue.current or queue.queue[1] == action then
-        -- Only reading has an audited stop path without item transactions or craft callbacks.
-        if action.Type ~= "ISReadABook" then return "active" end
-        if not action:isStarted() or action.action:finished() or action.action:isForceComplete() then
+        -- These native stop paths clean up visuals/sound; materials and outputs belong to completion.
+        if not stoppable(action) then return "active" end
+        if not action.action or not action.action:isStarted() or action.action:finished() or action.action:isForceComplete() then
             return "starting"
         end
     elseif action.action then
@@ -85,7 +89,8 @@ function Queue.moveReason(queue, action, target, after)
     if first == targetFirst then return nil, first, first, last end
     local to = after and targetLast + 1 or targetFirst
     local preempt = to == 1
-    if preempt and Queue.cancelReason(queue, queue.current) then return "move_active" end
+    if preempt and (not queue.current or queue.current.Type ~= "ISReadABook"
+        or Queue.cancelReason(queue, queue.current)) then return "move_active" end
     if preempt then
         for i = first, last do
             local member = queue.queue[i]
@@ -171,6 +176,11 @@ end
 
 function Queue.label(action)
     local title
+    if action.toolkitWorldDismantle or (action.Type == "ISMoveablesAction" and action.mode == "scrap") then
+        title = getText("ContextMenu_Disassemble")
+        local name = action.toolkitWorldName or (action.moveProps and action.moveProps.name)
+        if name then title = title .. ": " .. Translator.getMoveableDisplayName(name) end
+    end
     if action.Type == "ISReadABook" then title = getText("ContextMenu_Read") end
     if action.craftRecipe and instanceof(action.craftRecipe, "CraftRecipe") then
         title = action.craftRecipe:getTranslationName()
@@ -182,4 +192,5 @@ function Queue.label(action)
     return title
 end
 
+require "PZSurvivorToolkit/ActionQueueWorld"
 return Queue

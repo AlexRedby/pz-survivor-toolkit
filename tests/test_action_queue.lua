@@ -26,7 +26,9 @@ end
 local function load(path) assert(loadfile(NativeActionRoot .. '/' .. path))() end
 load('shared/TimedActions/ISBaseTimedAction.lua')
 load('client/TimedActions/ISTimedActionQueue.lua')
+load('client/TimedActions/ISQueueActionsAction.lua')
 load('shared/TimedActions/ISReadABook.lua')
+load('shared/Moveables/ISMoveablesAction.lua')
 ISInventoryPage = {}
 load('client/TimedActions/ISInventoryTransferAction.lua')
 ISContextMenu, ISButton, ISInventoryPaneContextMenu = {}, {}, {}
@@ -159,6 +161,50 @@ ISTimedActionQueue.add(generator); assert(api.cancelReason(q, bulk) == 'dependen
 -- Started transfers/crafts are blocked; no item transaction API is called.
 p = player(); a = leaf(p, 'active'); q = ISTimedActionQueue.add(a); frame(p)
 assert(api.cancelReason(q, a) == 'active')
+-- A deferred world command can be removed before it prepares tools or touches the target.
+p=player();q=ISTimedActionQueue.add(book(p))
+local deferredWeld=ISQueueActionsAction:new(p,function() error('cancelled command executed') end)
+deferredWeld.toolkitWorldDismantle=true
+ISTimedActionQueue.add(deferredWeld)
+assert(api.cancel(q,deferredWeld) and #q.queue==1 and not deferredWeld.action)
+deferredWeld.toolkitWorldName='Metal Door'
+Translator={getMoveableDisplayName=function(name) return 'Translated '..name end}
+assert(api.label(deferredWeld)=='ContextMenu_Disassemble: Translated Metal Door')
+-- Dismantling stop uses native cleanup without performing scrap/material transactions.
+ISInventoryPage.OnObjectHighlighted = function(_, object, highlighted) object.uiHighlight = highlighted end
+ISMoveableCursor = {clearCacheForAllPlayers=function() end}
+local function weld(character)
+    local action = ISBaseTimedAction.new(ISMoveablesAction, character)
+    local target = {highlighted=true, setHighlighted=function(self, _, value) self.highlighted=value end}
+    action.mode, action.maxTime, action.playerNum, action.sound = 'scrap', 1, 0, 123
+    action.moveProps = {object=target, scrapObjectViaCursor=function() error('cancel must not produce scrap or consume fuel') end}
+    action.start = function() end
+    action.isValid = function() return true end
+    character.stopOrTriggerSound = function(self, sound) self.stoppedSound=sound end
+    return action
+end
+p=player();a,b,c=weld(p),weld(p),weld(p)
+q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c)
+assert(api.cancel(q,b) and q.queue[2]==c and b.moveProps.object.highlighted, 'pending cancel never runs stop/complete')
+assert(api.cancelReason(q,a)=='starting');frame(p)
+assert(not api.move(q,c,a), 'cancellable welding must not enable read-only preemption')
+assert(api.cancel(q,a));q:tick();assert(q.current==a and not c.action)
+frame(p)
+assert(q.current==c and not p.actions[a.action] and not a.moveProps.object.highlighted)
+assert(a.moveProps.object.uiHighlight==false and p.stoppedSound==123)
+for _,mode in ipairs({'finish','normal','clear','move','dead','respawn','dropped'}) do
+    p=player();a,b=weld(p),leaf(p,'weld-'..mode);q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);frame(p)
+    if mode=='normal' then a:forceStop() else assert(api.cancel(q,a)) end
+    if mode=='finish' then a.action.completing=true
+    elseif mode=='clear' then ISTimedActionQueue.clear(p)
+    elseif mode=='move' then p.moving=true
+    elseif mode=='dead' then p.dead=true
+    elseif mode=='respawn' then activePlayer=player()
+    elseif mode=='dropped' then p.actions={} end
+    frame(p)
+    assert(not q.toolkitCancel and #q.queue==(mode=='finish' and 1 or 0), 'weld '..mode..' resurrected a tail')
+end
+print('Native dismantling cancellation: pending/current, sound/highlights, no scrap transaction, completion and stop races passed.')
 -- Skip one bulk operation, retaining the next selected weapon's native preparation.
 p = player(); q = ISTimedActionQueue.add(book(p))
 local first, equip, second = leaf(p,'first-weapon'), leaf(p,'equip'), leaf(p,'second-weapon')
