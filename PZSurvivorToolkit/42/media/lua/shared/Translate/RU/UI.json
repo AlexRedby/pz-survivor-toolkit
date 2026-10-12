@@ -101,5 +101,8 @@
     "UI_PZSurvivorToolkit_context_group_world": "Взаимодействие с миром",
     "UI_PZSurvivorToolkit_context_group_vehicle": "Транспорт",
     "UI_PZSurvivorToolkit_context_group_farming": "Фермерство",
-    "UI_PZSurvivorToolkit_context_group_research": "Чтение и исследование"
+    "UI_PZSurvivorToolkit_context_group_research": "Чтение и исследование",
+    "UI_options_PZSurvivorToolkit_bulk_cut_clothing": "Разрезать выделенную одежду",
+    "UI_options_PZSurvivorToolkit_bulk_cut_clothing_tooltip": "Добавляет разрезание и разрыв выделенной хлопковой, джинсовой и кожаной одежды. Пропускает избранное, надетое и предметы в руках. Использует штатные инструменты, рецепты, время и результат.",
+    "UI_PZSurvivorToolkit_cut_clothing_selected": "Разрезать выделенную одежду (%1)"
 }

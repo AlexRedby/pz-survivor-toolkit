@@ -67,6 +67,13 @@ expect({toolkitBulkAttachments = true}, 'equipment', 'text:ContextMenu_Remove_We
 expect({pzstCategory = 'farming', pzstKey = 'plantSelected'}, 'farming', 'toolkit:plantSelected')
 expect({pzstCategory = 'invented', pzstKey = 'plantSelected'}, nil)
 
+PZSurvivorToolkit = {BulkClothing = {queue = function() end}}
+expect({onSelect = PZSurvivorToolkit.BulkClothing.queue}, 'craft',
+    'callback:PZSurvivorToolkit.BulkClothing.queue')
+expect({toolkitBulkRecipe = 'RipClothing', toolkitOriginalOnSelect = ISInventoryPaneContextMenu.OnNewCraft,
+    param1 = {getName = function() return 'RipClothing' end}}, 'craft',
+    'callback:ISInventoryPaneContextMenu.OnNewCraft:RipClothing')
+
 local handler = {Type = 'HRemoveBandage', panel = setmetatable({}, ISHealthPanel), onMenuOptionSelected = noop}
 expect({target = handler, onSelect = noop}, 'medical', 'medical:HRemoveBandage')
 handler.panel = {}

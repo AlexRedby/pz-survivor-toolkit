@@ -119,6 +119,13 @@ local bulkDismantleOption = options:addTickBox(
 )
 
 
+local bulkCutClothingOption = options:addTickBox(
+    "BulkCutClothing",
+    getText("UI_options_PZSurvivorToolkit_bulk_cut_clothing"),
+    true,
+    getText("UI_options_PZSurvivorToolkit_bulk_cut_clothing_tooltip")
+)
+
 local bulkRemoveBatteriesOption = options:addTickBox(
     "BulkRemoveBatteries",
     getText("UI_options_PZSurvivorToolkit_bulk_remove_batteries"),
@@ -216,6 +223,10 @@ end
 
 function Settings.uninstallToGround()
     return groundOption:getValue() == true
+end
+
+function Settings.bulkCutClothing()
+    return bulkCutClothingOption:getValue() == true
 end
 
 function Settings.bulkDismantle()
