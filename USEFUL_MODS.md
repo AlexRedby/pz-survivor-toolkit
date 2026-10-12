@@ -1,504 +1,523 @@
-# Полезные моды и настройки для Project Zomboid
+# Useful Mods and Settings for Project Zomboid
 
-Личный список модов и настроек, которые стоит использовать или учитывать при разработке PZ Survivor Toolkit.
+Catalog of the selected mods, optional local components, and related settings. Workshop descriptions and player reports below come from the dated research already recorded here; they are not a fresh review of every Workshop release.
 
-**Установка по шагам:** [единая инструкция для сервера и клиентов](MOD_INSTALL.md). В ней готовый INI, порядок зависимостей, отдельная настройка ZombieBuddy и установка локального Toolkit.
+**Installation:** [combined server and client instructions](MOD_INSTALL.md), including the selected INI, dependency order, separate ZombieBuddy setup, and local Toolkit installation.
 
-**Текущий набор:** 39 Mod ID / 37 Workshop ID с Toolkit v0.1.20. Три внешние зависимости заменены собственными реализациями Toolkit: перенос количества, лекарственные индикаторы и распознавание ТВ. Состав остальных модов сохранён; исторические проверки ниже относятся к указанным там версиям. Актуальная проверка и её ограничения приведены в [README](README.md).
+**Current selection:** 39 Mod IDs / 37 Workshop IDs, including PZ Survivor Toolkit v0.1.21 and the existing libraries. The selected INI contains neither the standalone Survivor Wishlist nor optional Java Patches. Toolkit now provides its own specified-quantity transfer, medicine indicators, and TV & Radio ReInvented fixes, replacing the removed Take Any Amount (`TakeAnyAmount`), Medicine Moodles (`MedicineMoodlesB42`), and TV translation-fix (`TVRadioReinventedFix4220`) alternatives. Better Containers replaced Proximity Inventory, and Manage Containers was removed. These alternatives are not current requirements. Historical checks below retain their original dates, versions, and counts; see the [README](README.md) for current implementation and checks.
 
-**Проверка 9 октября 2026:** Toolkit v0.1.12 установлен локально. Прежний набор из 38 Mod ID / 36 Workshop ID, до замены на Better Containers, прошёл два изолированных MP-сценария B42.21 macOS с клиентами EN/RU: по 33 проверки, 0 провалов и ошибок во время сценариев. Проверены CCI/CleanUI, переносы предметов и VHS; отдельные функции остальных модов и долгие сессии не проверялись. После замены Proximity Inventory и удаления Manage Containers рабочий Host на момент проверки содержал 22 Mod ID, переносимый набор — 38 Mod ID / 36 Workshop ID. Актуальная проверка Better Containers описана в пункте 3.
+**Historical check, 9 October 2026:** Toolkit v0.1.12 was installed locally. The earlier selection of 38 Mod IDs / 36 Workshop IDs, before the switch to Better Containers, passed two isolated B42.21 macOS multiplayer scenarios with EN/RU clients: 33 checks per client, no failed checks or runtime errors. CCI/CleanUI, item transfers, and VHS were checked; individual features of the other mods and long sessions were not. After Proximity Inventory was replaced and Manage Containers removed, the working Host profile had 22 Mod IDs and the portable set had 38 Mod IDs / 36 Workshop IDs. The current Better Containers entry is section 3.
 
-**Установлено 5 октября 2026:** все 15 выбранных модов, NeatUI Framework, ZombieBuddy и актуальный PZ Survivor Toolkit. Создан профиль `Host > SurvivorQoL`. Совместный smoke-тест B42.21 с двумя локальными клиентами прошёл: 17 проверок на каждом, 0 ошибок проверок, 60 секунд совместной игры; `DoLuaChecksum=true`.
+**Installed on 5 October 2026:** all 15 selected mods, NeatUI Framework, ZombieBuddy, and the then-current PZ Survivor Toolkit. The `Host > SurvivorQoL` profile was created. The combined B42.21 smoke test with two local clients passed: 17 checks each, no failed checks, and 60 seconds of shared play; `DoLuaChecksum=true`.
 
-При загрузке сервера ZombieBuddy должен быть первым: его агент автоматически меняет порядок на клиенте. Развёл конфликтующие клавиши: F8 — Toolkit, F9 — Peek a View, F10 — Better Containers Proximity Lock, F11 — Better Containers Proximity Toggle, F12 — Corpse Only. MP Fast Forward использует Numpad 0–4. Моды установлены локальными копиями; обновления нужно загружать отдельно.
+Load ZombieBuddy first on the server; its agent automatically changes the client load order. Conflicting keys were assigned as follows: F8 — Toolkit, F9 — Peek a View, F10 — Better Containers Proximity Lock, F11 — Better Containers Proximity Toggle, F12 — Corpse Only. MP Fast Forward uses Numpad 0–4. The recorded local setup used local copies, which require manual updates. New Steam servers and clients can download the Workshop set as described in the installation guide; local Toolkit, Wishlist and Java Patches folders still need manual distribution.
 
-## 1 Show VHS skills in tooltip
+## 1 Show VHS Skills in Tooltip
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3716522633)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3716522633)
 
-Показывает в подсказке VHS названия навыков и рецептов, которым обучает просмотр. Подходит для кассет, дающих и опыт, и рецепты. По описанию автора, содержимое кассет определяется автоматически.
+Shows the skills and recipes taught by a VHS tape in its tooltip. Works with tapes that grant both skill XP and recipes. The author says tape contents are detected automatically.
 
-Выбран за нативный способ отображения: информация в обычной подсказке предмета, по аналогии с журналами рецептов.
+Selected for its native presentation: information appears in the regular item tooltip, like recipe magazines.
 
 - **Workshop ID:** `3716522633`
 - **Mod ID:** `VHSSkillNameInTooltip`
-- **Версии:** B41 и B42; в описании автор указал проверки на B41.78.19 и B42.20, включая мультиплеер.
-- **Кассеты из модов:** заявлена поддержка серии WYD в B42; загружать после модов WYD.
+- **Versions:** B41 and B42; the author reports testing on B41.78.19 and B42.20, including multiplayer.
+- **Modded tapes:** WYD series support is reported for B42; load after the WYD mods.
 
-Описание и комментарий автора проверены 5 октября 2026 года. В MP проверил загрузку данных о навыках и рецептах; отображение уже известных рецептов не подтверждено.
+The description and author comment were checked on 5 October 2026. Multiplayer testing confirmed that skill and recipe data loads; display of recipes already known by the character was not confirmed.
 
 ## 2 MP Fast Forward
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3738738086)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3738738086)
 
-Возвращает перемотку времени в мультиплеер и кооперативную игру. Позволяет быстрее дождаться рассвета, прочитать книгу, завершить крафт, готовку и другие действия.
+Restores time fast-forward in multiplayer and co-op, making it quicker to wait for dawn, read a book, finish crafting or cooking, and complete other actions.
 
-Скорость выбирается по согласию всех игроков онлайн либо управляется администратором для всего сервера. Спать для этого не требуется. По описанию автора, ускорение автоматически отменяется при движении любого игрока или приближении зомби к игроку. Скорости, режим управления и радиус проверки зомби настраиваются в параметрах песочницы.
+The speed can require agreement from all online players or be controlled by the administrator for the whole server. Sleeping is not required. According to the author, fast-forward stops automatically if any player moves or a zombie approaches a player. Speeds, control mode, and zombie-check radius are configurable in Sandbox settings.
 
 - **Workshop ID:** `3738738086`
 - **Mod ID:** `MPFastForward`
-- **Версии:** заявлен B42.19 и новее.
-- **Существующее сохранение:** автор разрешает добавление в текущую игру.
+- **Versions:** B42.19 and later are reported.
+- **Existing saves:** the author allows adding it to an existing game.
 
-Описание и комментарии проверены 5 октября 2026 года. Есть свежие сообщения об исчезающем интерфейсе. На нашем наборе B42.21 проверил согласованное ускорение до 3x и возврат к обычной скорости на двух клиентах.
+The description and comments were checked on 5 October 2026. Recent reports mention a disappearing interface. On our B42.21 set, agreed fast-forward up to 3x and the return to normal speed were checked on two clients.
 
 ## 3 Better Containers
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3586216562)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3586216562)
 
-Объединяет доступный лут рядом, фильтрует несколько категорий, позволяет менять имена, иконки, цвета и порядок контейнеров и открывать поддерживаемые вложенные сумки. Smart Deposit раскладывает по одинаковому типу предмета, затем категории и свободному подходящему хранилищу; без подходящего места оставляет вещь у игрока. Назначения Manage Containers не используются.
+Combines nearby accessible loot, filters multiple categories, lets players rename containers and change their icons, colours, and order, and opens supported nested bags. Smart Deposit sorts first by matching item type, then category, then an available suitable container; if none is available, the item stays with the player. Manage Containers assignments are not used.
 
 - **Workshop ID:** `3586216562`
 - **Mod ID:** `EURY_CONTAINERS`
-- **Статус:** заменил оригинальный Proximity Inventory 9 октября 2026; Manage Containers удалён из выбранного набора. Полная локальная копия BC включена в default, `Host > SurvivorQoL` и переносимый INI. Старые локальные папки сохранены вне `Zomboid/mods`.
-- **Настройки:** собственные Advanced Display Categories выключены; категории задаёт organizedCategories, загружаемый последним. Nested Containers Player/Loot включены, штатные MP-ограничения сохранены. Клавиши: F10 — Proximity Lock, F11 — Proximity Toggle, F12 — Corpse Only; Numpad 0–4 оставлены MP Fast Forward.
-- **CleanUI:** отдельная строка поиска BC при CleanUI не создаётся. Категорийный фильтр Toolkit оставляйте на «Все категории», если используете фильтр нескольких категорий BC; текстовое скрытие результатов Toolkit остаётся доступным.
-- **Мультиплеер:** сумки персонажа и обычные сумки на полу работают. Сумка внутри ящика не адресуется штатным сетевым протоколом: перенос содержимого в обе стороны не проходит. Более глубокая сумка внутри напольной сумки вызывает ошибку `ContainerID.set`; снятие UI-защиты это не исправляет. Безопасный штатный путь: взять сумку целиком, работать с содержимым у персонажа и вернуть её в ящик. Для сумок непосредственно в доступных контейнерах машин кнопки уже добавляет vanilla; глубже протокол ограничен одним item ID.
-- **Проверка:** окончательный набор 38 Mod ID / 36 Workshop ID, B42.21 macOS, два клиента EN/RU — по 10 проверок, 0 провалов. Проверены классификатор organizedCategories, multi-filter, поддерживаемая вложенность, отсутствие старых модов/MC-кнопки, Smart Deposit с серверными подтверждениями и CCI при переключениях CleanUI. Отдельно проверены реальные неподдерживаемые переносы и поддерживаемый обход со взятием всей сумки. Долгие сессии, физическое управление мышью и все параметры BC не проверены.
+- **Status:** replaced the original Proximity Inventory on 9 October 2026; Manage Containers was removed from the selection. A complete local BC copy is included in default, `Host > SurvivorQoL`, and the portable INI. Older local folders are kept outside `Zomboid/mods`.
+- **Settings:** built-in Advanced Display Categories is disabled; organizedCategories supplies categories and loads last. Nested Containers Player/Loot is enabled, preserving the standard multiplayer restrictions. Keys: F10 — Proximity Lock, F11 — Proximity Toggle, F12 — Corpse Only; Numpad 0–4 remains assigned to MP Fast Forward.
+- **CleanUI:** BC does not add a separate search row when CleanUI is active. Current Toolkit owns the category filter and prevents BC from installing a competing category-filter implementation. Use Toolkit's Category header control; CleanUI search still hides nonmatching results. BC's proximity, deposit and container-management features remain available.
+- **Multiplayer:** character bags and ordinary bags on the ground work. A bag inside a crate cannot be addressed by the native network protocol, so transfers to and from its contents fail. A deeper nested bag inside a ground bag triggers `ContainerID.set`; disabling the UI protection does not fix it. Supported workaround: pick up the whole bag, work with its contents while carried, then put it back in the crate. Vanilla already adds buttons for bags directly inside accessible vehicle containers; deeper access is limited by the protocol to one item ID.
+- **Check:** the then-current set of 38 Mod IDs / 36 Workshop IDs was tested on B42.21 macOS with two EN/RU clients: 10 checks each, no failures. Tests covered organizedCategories classification, multi-filter, supported nesting, absence of old mods/MC buttons, Smart Deposit with server confirmations, and CCI during CleanUI switches. Unsupported transfers and the supported whole-bag workaround were also checked. Long sessions, physical mouse operation, and all BC settings were not checked.
 
 ## 4 Clean HotBar
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3461263912)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3461263912)
 
-Улучшает панель быстрого доступа и предметов в руках: показывает прочность и заточку оружия, патроны, заклинивание, заряд батарей и остаток содержимого ёмкостей. Позволяет менять порядок слотов, размер и прозрачность панели.
+Improves the hotbar and held-item display: shows weapon durability and sharpness, ammunition, jams, battery charge, and remaining container contents. Slot order, panel size, and transparency are configurable.
 
 - **Workshop ID:** `3461263912`
 - **Mod ID:** `CleanHotBar`
-- **Версии:** заявлены B42.12.3–B42.21.0, одиночная игра, hosted MP и выделенные серверы.
-- **Зависимости:** отдельный UI-фреймворк не требуется.
-- **Совместимость:** возможны конфликты с другими модами, заменяющими панель быстрого доступа или интерфейс предметов в руках; автор рекомендует загружать ближе к концу списка.
+- **Versions:** B42.12.3–B42.21.0, single-player, hosted multiplayer, and dedicated servers are reported.
+- **Dependencies:** no separate UI framework is required.
+- **Compatibility:** conflicts are possible with other mods that replace the hotbar or held-item UI; the author recommends loading it near the end of the list.
 
-На B42.21 автор пока завершает полное тестирование в игре; предварительная проверка кода не выявила необходимых изменений.
+For B42.21, the author was still completing full in-game testing; a preliminary code review found no changes necessary.
 
 ## 5 Neat Crafting
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3502080466)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3502080466)
 
-Заменяет меню крафта более удобным интерфейсом: поиск по рецепту, ингредиентам и результату, фильтры, выбор альтернативных материалов и просмотр цепочек изготовления. Показывает требования и результаты рецептов, учитывает ближайшие контейнеры.
+Replaces the crafting menu with a more convenient interface: search by recipe, ingredient, and result; filters; alternative material selection; and crafting chains. Shows recipe requirements and results and searches nearby containers.
 
 - **Workshop ID:** `3502080466`
 - **Mod ID:** `Neat_Crafting`
-- **Версии:** заявлены B42.9–B42.21.x, SP и MP.
-- **Зависимость:** [NeatUI Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3508537032), Workshop ID `3508537032`, Mod ID `NeatUI_Framework`; загрузить перед Neat Crafting. На сервере добавить оба мода.
-- **Совместимость:** автор указывает конфликт с `what can i craft` и его дополнением; другие замены меню крафта также могут конфликтовать.
+- **Versions:** B42.9–B42.21.x, single-player and multiplayer are reported.
+- **Dependency:** [NeatUI Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3508537032), Workshop ID `3508537032`, Mod ID `NeatUI_Framework`; load it before Neat Crafting. Add both mods to the server.
+- **Compatibility:** the author reports a conflict with `what can i craft` and its add-on; other crafting-menu replacements may also conflict.
 
-**Удаление из существующего мира:** после использования Neat Crafting нельзя просто убрать его и снова загрузить мир. По инструкции автора, нужно оставить основной мод либо заменить его на Neat Crafting – Safe Uninstall Support, доступный по ссылке в описании Workshop. Основной мод и Safe Uninstall Support одновременно не включать.
+**Removing it from an existing world:** after using Neat Crafting, do not simply remove it and reload the world. The author's instructions say to keep the main mod or replace it with Neat Crafting – Safe Uninstall Support, linked in the Workshop description. Do not enable the main mod and Safe Uninstall Support at the same time.
 
 ## 6 Project Cook
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3490188370)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3490188370)
 
-Добавляет отдельное окно готовки: ингредиенты из инвентаря, сумок и ближайших контейнеров, очередь добавления продуктов, сведения о пищевой ценности и управление ближайшими плитами. Сохраняет правила ванильной готовки максимально близкими к оригиналу.
+Adds a separate cooking window with ingredients from inventory, bags, and nearby containers; a queue for adding ingredients; nutrition information; and controls for nearby stoves. It keeps cooking rules as close to vanilla as possible.
 
 - **Workshop ID:** `3490188370`
 - **Mod ID:** `Project_Cook`
-- **Версии:** заявлены B42.10–B42.21.0, SP и MP.
-- **Зависимость:** [NeatUI Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3508537032), Workshop ID `3508537032`, Mod ID `NeatUI_Framework`; загрузить перед Project Cook. Это та же зависимость, что у Neat Crafting.
-- **Дополнительно:** `Project_Cook_Pixel_Icon_Pack` из той же Workshop-подписки меняет иконки и необязателен; если включать, загружать после основного мода.
+- **Versions:** B42.10–B42.21.0, single-player and multiplayer are reported.
+- **Dependency:** [NeatUI Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3508537032), Workshop ID `3508537032`, Mod ID `NeatUI_Framework`; load before Project Cook. This is also required by Neat Crafting.
+- **Optional:** `Project_Cook_Pixel_Icon_Pack` from the same Workshop subscription changes icons; load it after the main mod if enabled.
 
-Есть свежие сообщения игроков о проблемах с действиями готовки в MP; работу на нашем сервере нужно проверить.
+Recent player reports mention problems with cooking actions in multiplayer; check it on our server.
 
 ## 7 Tidy Up Meister
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=2769706949)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=2769706949)
 
-После завершения действия восстанавливает прежнее снаряжение в руках и возвращает временно вынутые предметы в исходную сумку, контейнер или на прежнее место на земле. Автоматическое переэкипирование можно отключать через контекстное меню.
+After an action, restores the previous held equipment and returns temporarily removed items to their original bag, container, or ground location. Automatic re-equipping can be disabled in the context menu.
 
 - **Workshop ID:** `2769706949`
 - **Mod ID:** `P4TidyUpMeister`
-- **Версии:** автор подтверждает B41/B42 Stable и MP; реализация для B42.20 переработана.
-- **Пересечение с ванилью:** с B42.8 часть автоматического возврата уже встроена в игру; мод дополняет её для оставшихся действий.
-- **Совместимость:** необычные действия других модов могут неправильно определяться и возвращать предметы, которые должны были остаться перемещёнными.
+- **Versions:** the author confirms B41/B42 Stable and multiplayer; the B42.20 implementation was reworked.
+- **Vanilla overlap:** since B42.8, some automatic returns are built into the game; this mod covers the remaining actions.
+- **Compatibility:** unusual actions from other mods may be misidentified, returning items that were meant to stay moved.
 
 ## 8 Moodle Descriptions Expanded
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3389003300)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3389003300)
 
-Расширяет обычные подсказки состояний персонажа: объясняет эффекты голода, усталости и других moodles, добавляет численные штрафы и степень их выраженности. Описания основаны на интерпретации автора и переводчиков, поэтому точность значений после обновлений игры требует проверки.
+Expands the normal character moodle tooltips: explains the effects of hunger, fatigue, and other moodles, and adds numerical penalties and their severity. These descriptions reflect the author's and translators' interpretation, so values may need rechecking after game updates.
 
 - **Workshop ID:** `3389003300`
 - **Mod ID:** `B42MoodleDescriptionsExpanded`
-- **Версии:** B42; есть свежий положительный отзыв о работе в hosted MP, но отдельного подтверждения автором для B42.21 нет.
-- **Совместимость:** конфликтовать могут другие моды, меняющие те же описания состояний; автор рекомендует загружать после модов moodles.
-- **Существующее сохранение:** автор разрешает добавление в текущую игру.
+- **Versions:** B42; a recent positive report mentions hosted multiplayer, but the author has not separately confirmed B42.21.
+- **Compatibility:** other mods that change the same moodle descriptions may conflict; the author recommends loading after moodle mods.
+- **Existing saves:** the author allows adding it to an existing game.
 
 ## 9 Detailed Descriptions for Occupations and Traits
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3387957272)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3387957272)
 
-Дополняет описания профессий и черт численными эффектами, известными рецептами и бонусами собирательства. Работает в создании персонажа и окне его информации, сохраняя оригинальное описание в первых строках.
+Adds numerical effects, known recipes, and foraging bonuses to occupation and trait descriptions. Works during character creation and in the character information window, keeping the original description in the first lines.
 
 - **Workshop ID:** `3387957272`
 - **Mod ID:** `DetailedDescriptionsForOccupationsAndTraits`
-- **Версии:** страница называется `[B42.20]`, но 1 октября автор отдельно подтвердил работу на B42.21.
-- **Язык:** есть русский перевод для B42.20.
-- **Мультиплеер:** отдельное подтверждение автором для MP не найдено; проверить при настройке сервера.
+- **Versions:** the page is titled `[B42.20]`, but on 1 October the author separately confirmed it works on B42.21.
+- **Language:** a Russian translation is available for B42.20.
+- **Multiplayer:** no separate author confirmation for multiplayer was found; check it when configuring the server.
 
 ## 10 Peek a View
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3710281407)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3710281407)
 
-Улучшает обзор: стены скрываются на большем расстоянии, деревья становятся прозрачными вокруг персонажа и в направлении взгляда, верхний этаж и зомби на нём видны во время подъёма по лестнице. Сохраняет ванильные правила линии видимости. Каждую функцию можно отключать отдельно.
+Improves visibility: walls fade from a greater distance, trees become transparent around the character and in the viewing direction, and the upper floor and its zombies are visible while climbing stairs. Vanilla line-of-sight rules are preserved. Each feature can be disabled separately.
 
 - **Workshop ID:** `3710281407`
 - **Mod ID:** `PeekAView`
-- **Версии:** текущая версия требует B42.21 или новее; автор проверил B42.21.0.
-- **Мультиплеер:** работает на стороне клиента; на сервере добавить Peek a View и его зависимость для загрузки и включения у игроков.
-- **Зависимость:** [ZombieBuddy](https://steamcommunity.com/sharedfiles/filedetails/?id=3619862853), Workshop ID `3619862853`, Mod ID `ZombieBuddy`. Каждый игрок должен один раз выполнить отдельную настройку ZombieBuddy по его инструкции; сервер не делает этого автоматически. На первом запуске разрешить загрузку JAR PeekAView в запросе ZombieBuddy.
-- **Совместимость:** моды с нестандартными лестницами и подвалами, например Excavation и Basement Building, могут конфликтовать с обзором лестниц; в этом случае отключить соответствующую функцию.
-- **Существующее сохранение:** автор разрешает добавление и удаление, поскольку мод не сохраняет данные в мире.
+- **Versions:** the current version requires B42.21 or later; the author tested B42.21.0.
+- **Multiplayer:** runs client-side; add Peek a View and its dependency to the server so players can download and enable them.
+- **Dependency:** [ZombieBuddy](https://steamcommunity.com/sharedfiles/filedetails/?id=3619862853), Workshop ID `3619862853`, Mod ID `ZombieBuddy`. Each player must complete the separate ZombieBuddy setup once, following its instructions; the server does not do this automatically. On first launch, approve loading the PeekAView JAR in the ZombieBuddy prompt.
+- **Compatibility:** mods with custom stairs and basements, such as Excavation and Basement Building, may conflict with stair visibility; disable that feature if needed.
+- **Existing saves:** the author allows adding and removing it because the mod stores no world data.
 
-Записи 4–10 добавлены по выбору пользователя 5 октября 2026 года. Ссылки, описания и доступные сведения о совместимости проверены; моды установлены и совместная загрузка проверена в MP smoke-тесте B42.21; проверенные функции и ограничения перечислены в соответствующих записях.
+Entries 4–10 were added at the user's request on 5 October 2026. Links, descriptions, and available compatibility information were checked; the mods were installed and their combined loading was checked in a B42.21 multiplayer smoke test. Tested features and limitations are listed in each entry.
 
 ## 12 Share Map Notes
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3676995511)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3676995511)
 
-Автоматически делится символами и текстовыми заметками на карте через штатную систему игры. Добавляет свободное рисование с синхронизацией: можно отмечать общие маршруты и опасные зоны. Обмен настраивается для всех игроков, только фракции или участников убежища; его можно отключить.
+Automatically shares map symbols and text notes through the game's native system. Adds synced freehand drawing for shared routes and danger zones. Sharing can be enabled for everyone, only the faction, or safehouse members, or disabled.
 
 - **Workshop ID:** `3676995511`
 - **Mod ID:** `PZShareMapNotes`
-- **Версии:** заявлена B42 multiplayer, обновлён для B42.20; отдельное подтверждение B42.21 не найдено.
-- **Существующее сохранение:** автор разрешает добавление в текущую игру.
-- **Настройки:** по умолчанию для рисования нужна ручка, для стирания — ластик. Есть лимиты рисунков на игрока и сервер.
-- **Совместимость:** в комментариях есть сообщение о конфликте с Project Writing.
+- **Versions:** B42 multiplayer is reported; updated for B42.20. No separate B42.21 confirmation was found.
+- **Existing saves:** the author allows adding it to an existing game.
+- **Settings:** a pen is required for drawing and an eraser for erasing by default. Per-player and server drawing limits are available.
+- **Compatibility:** a comment reports a conflict with Project Writing.
 
-Не снимать лимиты рисунков без необходимости: автор предупреждает, что большое их количество может вызывать торможение карты у игроков.
+Do not remove the drawing limits without a reason: the author warns that large numbers of drawings can make the map slow for players.
 
 ## 13 Better Generator Info
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3576056135)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3576056135)
 
-Дополняет обычное окно информации генератора: показывает оставшееся время работы в днях и часах, умеет пересчитывать его в реальное время с учётом длительности игрового дня. Подсвечивает область питания генератора по этажам и, по настройке, общую область всех включённых генераторов.
+Enhances the normal generator information window: shows remaining operating time in days and hours and can convert it to real time based on the length of a game day. Highlights the generator's powered area by floor and, optionally, the combined area of all active generators.
 
 - **Workshop ID:** `3576056135`
 - **Mod ID:** `BetterGeneratorInfo`
-- **Версии:** автор заявляет B42 Stable и корректные расчёты расхода для B42.12+; отдельно сообщает о работе на нескольких серверах. Подтверждение именно B42.21 не найдено.
-- **Существующее сохранение:** автор разрешает добавление и удаление в любой момент.
-- **Совместимость:** возможны конфликты с другими заменами окна информации генератора.
+- **Versions:** the author reports B42 Stable, correct consumption calculations on B42.12+, and use on several servers. No B42.21-specific confirmation was found.
+- **Existing saves:** the author allows adding or removing it at any time.
+- **Compatibility:** other replacements for the generator information window may conflict.
 
-Есть свежие сообщения об ошибках интерфейса и отсутствии новых показателей; работу на нашем сервере нужно проверить. В описании осталась старая рекомендация отключить `DoLuaChecksum` для прежних версий серверов, но автор в комментариях считает её более не нужной после исправления игры; не применять её автоматически.
+Recent reports mention UI errors and missing new values; check it on our server. The description retains an old recommendation to disable `DoLuaChecksum` on earlier server versions, but the author says in the comments that this is no longer needed after a game fix; do not apply it automatically.
 
 ## 14 Map Symbols Plus (Hand-drawn)
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3399645148)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3399645148)
 
-Добавляет в обычную палитру карты рисованные символы: безопасные и опасные места, бензоколонки, подвалы, продукты, боеприпасы, транспорт, генераторы, колодцы, рабочие станции и животных. Подходит для отметок мест, куда нужно вернуться за добычей.
+Adds hand-drawn symbols to the normal map palette: safe and dangerous places, gas pumps, basements, food, ammunition, vehicles, generators, wells, workstations, and animals. Useful for marking places to revisit for supplies.
 
 - **Workshop ID:** `3399645148`
 - **Mod ID:** `MapSymbolsPlusDeonHand`
-- **Версии:** на странице заявлены B41 и B42; есть положительный отзыв о B42.20 Stable. Отдельного подтверждения MP и B42.21 не найдено.
-- **Дополнительно:** автор рекомендует Map Symbol Size Slider для изменения размера символов; для B42 это отдельный необязательный кандидат, который пока не выбран в наш список. В B41 автор требует его для корректного размера иконок.
+- **Versions:** the page reports B41 and B42; a positive report mentions B42.20 Stable. No separate multiplayer or B42.21 confirmation was found.
+- **Optional:** the author recommends Map Symbol Size Slider to resize symbols. For B42, it is a separate optional candidate and is not selected here. On B41, the author says it is required for correct icon sizing.
 
-Записи 12–14 добавлены по выбору пользователя 5 октября 2026 года. Описания и комментарии Workshop проверены в ходе исследования; моды установлены и совместная загрузка проверена в MP smoke-тесте B42.21; проверенные функции и ограничения перечислены в соответствующих записях.
+Entries 12–14 were added at the user's request on 5 October 2026. Workshop descriptions and comments were checked during research; the mods were installed and their combined loading was checked in a B42.21 multiplayer smoke test. Tested features and limitations are listed in each entry.
 
 ## 15 NeatUI Equipment
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3790656296)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3790656296)
 
-Добавляет панель с 3D-моделью персонажа и слотами одежды, предметов в руках и на поясе. Позволяет переэкипировать предметы перетаскиванием, скрывать надетые вещи в списке инвентаря и сохранять комплекты одежды. При смене комплекта находит нужные вещи в инвентаре и ближайших доступных контейнерах, показывает защиту и теплоизоляцию комплекта.
+Adds a panel with a 3D character model and slots for clothing, held items, and belt items. Supports drag-and-drop equipment changes, hiding worn items in the inventory list, and saving outfit sets. When changing sets, it finds items in inventory and nearby accessible containers and shows the outfit's protection and insulation.
 
 - **Workshop ID:** `3790656296`
 - **Mod ID:** `NeatUI_Equipment`
-- **Версии:** текущая страница называется `NeatUI Equipment [42.20]`; открытие панели и гардероба проверил в MP B42.21.
-- **Зависимость:** [NeatUI Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3508537032), Workshop ID `3508537032`, Mod ID `NeatUI_Framework`; уже включён в наш список зависимостей, загрузить перед NeatUI Equipment.
-- **Совместимость:** автор заявляет интеграцию с CleanUI, Inventory Tetris и другими Neat-модами; совместную загрузку, открытие панели и гардероба с нашим набором проверил в MP smoke-тесте; смену сохранённых комплектов не проверял.
-- **Мультиплеер:** код работает на стороне клиента; есть свежий отзыв об использовании на выделенном сервере B42. В том же отзыве сообщается о росте сетевого трафика при большом числе сохранённых комплектов; это сообщение игрока, а не подтверждённый нами результат.
+- **Versions:** the current page is titled `NeatUI Equipment [42.20]`; opening the panel and wardrobe was tested in B42.21 multiplayer.
+- **Dependency:** [NeatUI Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3508537032), Workshop ID `3508537032`, Mod ID `NeatUI_Framework`; already in our dependency list, load it before NeatUI Equipment.
+- **Compatibility:** the author reports integration with CleanUI, Inventory Tetris, and other Neat mods. Combined loading and opening the panel and wardrobe were tested in our multiplayer smoke test; changing saved outfits was not tested.
+- **Multiplayer:** the code runs client-side. A recent report describes use on a B42 dedicated server and increased network traffic with many saved outfits; this is a player report, not a result confirmed by us.
 
-Добавлен по выбору пользователя 5 октября 2026 года. Описание и комментарии проверены; мод установлен; открытие панели и гардероба проверил на двух клиентах B42.21.
+Added at the user's request on 5 October 2026. The description and comments were checked; the mod was installed; panel and wardrobe opening were tested on two B42.21 clients.
 
 ## 16 Better Clothing Info
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3604080281)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3604080281)
 
-Заменяет подсказки одежды и сравнивает её характеристики с экипированными предметами: защиту, состояние, отверстия, теплоизоляцию и другие показатели. Можно настроить отображение чисел и полос, а также показывать сравнение только при удержании выбранной клавиши.
+Replaces clothing tooltips and compares its stats with equipped items, including protection, condition, holes, insulation, and other values. Number and bar displays are configurable; comparisons can be shown only while holding a chosen key.
 
-- **Автор:** Eurymachus.
+- **Author:** Eurymachus.
 - **Workshop ID:** `3604080281`
 - **Mod ID:** `EURY_CLOTHINGINFO`
-- **Версии:** автор заявляет B42, включая мультиплеер; полноценную работу на нашем наборе B42.21 не проверял.
-- **Совместимость:** заменяет подсказки одежды; автор предупреждает о возможных конфликтах с другими модами, изменяющими `ISToolTipInv`.
+- **Versions:** the author reports B42, including multiplayer; full operation with our B42.21 set was not tested.
+- **Compatibility:** replaces clothing tooltips; the author warns of possible conflicts with other mods that change `ISToolTipInv`.
 
-Добавлен по выбору пользователя 8 октября 2026 года. Описание Workshop и загруженный код изучил 7 октября. При точном равенстве защиты показывает нейтральный текст, но дробная разница, округлённая до «+0» или «-0», всё ещё может быть окрашена. Пока только в списке: мод не включён в игровой набор.
+Added at the user's request on 8 October 2026. The Workshop description and downloaded code were reviewed on 7 October. Exact equality in protection shows neutral text, but a fractional difference rounded to `+0` or `-0` may still be coloured. It remains catalog-only and is not in the selected game set.
 
 ## 17 Rain Cleans Blood
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=2956146279)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=2956146279)
 
-Дождь и снег постепенно смывают кровь с земли, стен и полов, одежды и машин; отдельно можно включать очистку пепла от сгоревших тел и помёта животных. Скорость, погодный порог и виды очистки настраиваются в песочнице. По умолчанию внутри зданий не убирает и работает только при достаточно сильных осадках.
+Rain and snow gradually wash blood from the ground, walls, floors, clothing, and vehicles. Ash from burned bodies and animal droppings can be enabled separately. Speed, weather threshold, and cleanup types are configurable in Sandbox settings. By default, it does not clean indoors and works only during sufficiently heavy precipitation.
 
-- **Автор:** Akamir.
+- **Author:** Akamir.
 - **Workshop ID:** `2956146279`
 - **Mod ID:** `RainCleansBlood`
-- **Зависимости:** в скачанном `mod.info` обязательных зависимостей нет.
-- **Версии:** автор заявляет B42.20+ и MP; в скачанном коде очистку выполняет сервер, изменения одежды передаются клиенту.
-- **Существующее сохранение:** автор разрешает добавление и удаление в любой момент.
-- **Ограничения:** есть свежие сообщения о проблемах с очисткой машин в B42.21 и отдельная жалоба на переэкипировку; это сообщения игроков, а не подтверждённые причины.
+- **Dependencies:** the downloaded `mod.info` lists no required dependencies.
+- **Versions:** the author reports B42.20+ and multiplayer; in the downloaded code, cleanup is performed by the server and clothing changes are sent to clients.
+- **Existing saves:** the author allows adding or removing it at any time.
+- **Limitations:** recent reports mention vehicle-cleaning problems on B42.21 and a separate complaint about re-equipping; these are player reports, not confirmed causes.
 
-Выбран 8 октября 2026 года; остальные пять вариантов из этой подборки пользователь отклонил. Скачал и установил локальную копию, включил в общем списке модов и профиле `Host > SurvivorQoL`. Предыдущие настройки сохранил в локальной резервной копии. Изолированный smoke-тест B42.21 с двумя клиентами прошёл: 20 проверок на каждом, 0 ошибок проверок, 60 секунд совместной игры. Проверил серверную очистку кожи и одежды и получение изменений одежды обоими клиентами; для проверки временно включал `AlwaysClean` только на тестовом сервере. Естественный дождь, кровь на машинах и длительную игру не проверял.
+Selected on 8 October 2026; the user declined the other five candidates in that group. A local copy was downloaded and installed, then enabled in the general mod list and `Host > SurvivorQoL`. Previous settings were saved in a local backup. The isolated B42.21 smoke test with two clients passed: 20 checks each, no failed checks, and 60 seconds of shared play. Server-side cleanup of skin and clothing and receipt of clothing changes by both clients were checked; `AlwaysClean` was temporarily enabled on the test server only. Natural rain, vehicle blood, and long sessions were not checked.
 
 ## 18 Has Research
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3567695139)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3567695139)
 
-Показывает, можно ли исследовать предмет для изучения рецепта, без необходимости открывать его контекстное меню.
+Shows whether an item can be researched to learn a recipe, without opening its context menu.
 
 - **Workshop ID:** `3567695139`
 - **Mod ID:** `HasResearch`
-- **Зависимости:** обязательные зависимости на странице Workshop не указаны.
-- **Версии:** B42; есть отзывы о работе на B42.20 Stable и в MP B42.19. Работу на нашем наборе B42.21 ещё не проверял.
+- **Dependencies:** no required dependencies are listed on the Workshop page.
+- **Versions:** B42; reports mention B42.20 Stable and B42.19 multiplayer. It has not been checked with our B42.21 set.
 
 ## 19 Neat Building
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3536052310)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3536052310)
 
-Заменяет меню строительства: поиск по постройкам и материалам, фильтры навыков и доступности, список или сетка, подробные требования и сохранение настроек интерфейса.
+Replaces the building menu with searches by structure and material, skill and availability filters, list or grid views, detailed requirements, and saved UI settings.
 
 - **Workshop ID:** `3536052310`
-- **Вариант для нашего QoL-набора:** Neat Building - UI Only, Mod ID `Neat_Building_UIOnly`; меняет только интерфейс, без дополнительных построек.
-- **Другой вариант из той же подписки:** `Neat_Building` включает дополнительные постройки и перила; не включать вместе с модульными вариантами построек.
-- **Зависимость:** [NeatUI Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3508537032), Workshop ID `3508537032`, Mod ID `NeatUI_Framework`; уже установлен, загружать перед Neat Building.
-- **Версии:** автор заявляет B42.12–B42.21.x, SP, MP Host и Dedicated Server.
-- **Сохранения:** UI Only не добавляет строительные сущности и не требует Safe Uninstall Support. Если мир ранее использовал вариант с дополнительными постройками, переход на UI Only не отменяет необходимость соответствующего Safe Uninstall Support.
+- **Variant for our QoL set:** Neat Building - UI Only, Mod ID `Neat_Building_UIOnly`; changes only the interface and adds no structures.
+- **Other variant in the same subscription:** `Neat_Building` adds structures and railings; do not enable it together with modular building variants.
+- **Dependency:** [NeatUI Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3508537032), Workshop ID `3508537032`, Mod ID `NeatUI_Framework`; already installed, load before Neat Building.
+- **Versions:** the author reports B42.12–B42.21.x, single-player, multiplayer Host, and Dedicated Server.
+- **Saves:** UI Only adds no building entities and does not require Safe Uninstall Support. If the world previously used the variant with additional structures, switching to UI Only does not remove the need for the corresponding Safe Uninstall Support.
 
 ## 20 Eat Smart
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3456212729)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3456212729)
 
-Позволяет съесть ровно столько, сколько нужно до выбранного уровня голода, калорий или белка. Сохраняет обычные действия еды и ванильную пищевую ценность продуктов.
+Lets the player eat only as much as needed to reach a chosen hunger, calorie, or protein level. Preserves normal eating actions and vanilla food values.
 
 - **Workshop ID:** `3456212729`
-- **Вариант для нашего набора:** Eat Smart - Integrated, Mod ID `EatSmartInt`; действия встроены в обычное меню Eat / Open and Eat.
-- **Альтернатива:** Eat Smart - Standard Submenu, Mod ID `EatSmart`; отдельное подменю при конфликтах Integrated.
-- **Включать только один вариант.**
-- **Порядок:** по рекомендации автора Integrated загружать выше Drink Smart.
-- **Зависимости:** обязательные зависимости на странице Workshop не указаны.
-- **Версии:** автор заявляет B41.78 и B42.12.3–B42.21+, SP, MP Host и Dedicated Server; версия 2.2.7 получила проверку совместимости B42.21 2 октября.
+- **Variant for our set:** Eat Smart - Integrated, Mod ID `EatSmartInt`; actions appear in the normal Eat / Open and Eat menu.
+- **Alternative:** Eat Smart - Standard Submenu, Mod ID `EatSmart`; a separate submenu to use if Integrated conflicts.
+- Enable only one variant.
+- **Load order:** the author recommends loading Integrated above Drink Smart.
+- **Dependencies:** no required dependencies are listed on the Workshop page.
+- **Versions:** the author reports B41.78 and B42.12.3–B42.21+, single-player, multiplayer Host, and Dedicated Server. Version 2.2.7 received a B42.21 compatibility check on 2 October.
 
 ## 21 Drink Smart
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3447775367)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3447775367)
 
-Добавляет действие «0% Thirst»: выпить точное количество жидкости для утоления жажды. Опционально показывает расход в литрах и добавляет маленький глоток Sip. Меняет ручные действия в меню питья; автоматическое питьё не исправляет.
+Adds a “0% Thirst” action that drinks the exact amount of liquid needed to quench thirst. Optionally shows consumption in litres and adds a small Sip action. Changes manual drinking actions; it does not fix automatic drinking.
 
 - **Workshop ID:** `3447775367`
 - **Mod ID:** `Drink_Smart`
-- **Зависимости:** автор прямо указывает, что обязательных зависимостей нет.
-- **Порядок:** загружать после `EatSmartInt`, если используется Integrated.
-- **Версии:** B42, SP/MP; версия 1.6.10 от 2 октября включает проверку совместимости B42.21 и исправления Sip и отображения количества.
+- **Dependencies:** the author explicitly states that no dependencies are required.
+- **Load order:** load after `EatSmartInt` when using Integrated.
+- **Versions:** B42, single-player/multiplayer. Version 1.6.10 from 2 October includes a B42.21 compatibility check and fixes for Sip and quantity display.
 
 ## 22 Washing Menus Improved
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3460812542)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3460812542)
 
-Улучшает меню мытья вещей и очистки бинтов у источников воды. Работает с предметами в надетых сумках, автоматически возвращает их обратно и показывает требования воды и мыла. При нехватке воды моет столько вещей, сколько возможно.
+Improves washing clothes and cleaning bandages at water sources. Works with items in worn bags and returns them afterward, and shows water and soap requirements. If water is limited, it washes as many items as possible.
 
 - **Workshop ID:** `3460812542`
 - **Mod ID:** `WashFix`
-- **Зависимости:** обязательные зависимости на странице Workshop не указаны.
-- **Версии:** автор заявляет B42.12.3–B42.21.0, SP и проверки в MP Host.
-- **Сохранения:** автор разрешает добавление и удаление в текущей игре; мод не добавляет предметы, рецепты или постоянные данные мира.
-- **Совместимость:** другие изменения меню источников воды, мытья и перемещения вещей требуют совместной проверки.
+- **Dependencies:** no required dependencies are listed on the Workshop page.
+- **Versions:** the author reports B42.12.3–B42.21.0, single-player, and multiplayer Host testing.
+- **Saves:** the author allows adding or removing it in an existing game; it adds no items, recipes, or persistent world data.
+- **Compatibility:** other changes to water-source menus, washing, and item transfers require combined testing.
 
 ## 23 Neat Crafting & Neat Building - XP & Mod Display
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3540503606)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3540503606)
 
-Показывает опыт за рецепт или постройку, соответствующий навык и мод-источник. Есть режимы базового и расчётного опыта с множителями, фильтры рецептов с опытом и рецептов из модов. Сам размер выдаваемого опыта не меняет.
+Shows XP for a recipe or building, the related skill, and the source mod. Provides base and calculated XP modes with multipliers, plus filters for recipes that grant XP and recipes from mods. It does not change the XP awarded.
 
-- **Workshop ID:** `3540503606` — одна подписка для обоих дополнений.
-- **Модули для нашего набора:** `Neat_Crafting_AddonXP` и `Neat_Building_AddonXP`; включать оба вместе с соответствующими основными модами.
-- **Зависимости:** NeatUI Framework `3508537032` / `NeatUI_Framework`, Neat Crafting `3502080466` / `Neat_Crafting` и Neat Building `3536052310` / `Neat_Building_UIOnly`. Framework и Crafting уже установлены. Building-аддон поддерживает UI Only.
-- **Порядок:** Framework, основные Neat Crafting и Neat Building, затем соответствующие XP-аддоны.
-- **Версии:** в описании указаны B42.12–B42.20.x и настройка MP Host/Dedicated. Совместимость аддонов с нашим B42.21 ещё не проверял.
+- **Workshop ID:** `3540503606` — one subscription for both add-ons.
+- **Modules for our set:** `Neat_Crafting_AddonXP` and `Neat_Building_AddonXP`; enable both with their respective main mods.
+- **Dependencies:** NeatUI Framework `3508537032` / `NeatUI_Framework`, Neat Crafting `3502080466` / `Neat_Crafting`, and Neat Building `3536052310` / `Neat_Building_UIOnly`. Framework and Crafting are already installed. The Building add-on supports UI Only.
+- **Load order:** Framework, the Neat Crafting and Neat Building main mods, then the corresponding XP add-ons.
+- **Versions:** the description lists B42.12–B42.20.x and multiplayer Host/Dedicated settings. The add-ons have not been checked with our B42.21 set.
 
 ## 24 Smart Radial Menu
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3494108029)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3494108029)
 
-Круговое меню быстрых действий с предметами. Поддерживает геймпады, Steam Deck и разделённый экран. Есть интеграции с Eat Smart, Drink Smart и Tidy Up Meister; обычное контекстное меню остаётся доступным.
+Radial menu for quick item actions. Supports gamepads, Steam Deck, and split-screen. Integrates with Eat Smart, Drink Smart, and Tidy Up Meister; the regular context menu remains available.
 
 - **Workshop ID:** `3494108029`
 - **Mod ID:** `SmartRadialMenu`
-- **Вариант:** B42 Stable; старую отдельную ветку для Unstable не выбирать.
-- **Зависимости:** обязательные зависимости на странице Workshop не указаны; Eat/Drink Smart — совместимые дополнения, а не требования.
-- **Мультиплеер:** автор ожидает работу в MP, но в комментарии от 3 августа отметил, что сам его ещё не тестировал. B42.21 и совместную работу нашего набора нужно проверить.
+- **Variant:** B42 Stable; do not choose the older separate Unstable branch.
+- **Dependencies:** no required dependencies are listed on the Workshop page; Eat/Drink Smart are compatible add-ons, not requirements.
+- **Multiplayer:** the author expects it to work in multiplayer but noted in an August 3 comment that they had not tested it. B42.21 and combined use with our set need checking.
 
 ## 25 Wash Or Rot
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3674907249)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3674907249)
 
-Добавляет последствия плохой гигиены: грязь и кровь с одежды переходят на тело, появляется состояние Grimed, зуд, небольшая боль и при высокой загрязнённости риск болезни. Механики и тяжесть последствий настраиваются в песочнице. Это изменение выживания, выбранное дополнительно к QoL-модам.
+Adds consequences for poor hygiene: dirt and blood transfer from clothing to the body, causing the Grimed state, itching, minor pain, and a risk of illness at high levels of dirt. Mechanics and severity are configurable in Sandbox settings. This is a survival change selected alongside QoL mods.
 
 - **Workshop ID:** `3674907249`
 - **Mod ID:** `WashOrRot_MP`
-- **Вариант:** поддерживаемая версия B42 SP/MP; не включать вместе со старым оригиналом Wash Or Rot / Legacy B42.12.3.
-- **Зависимость:** [Moodle Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3396446795), Workshop ID `3396446795`, Mod ID `MoodleFramework`; загрузить перед Wash Or Rot. Это отдельная библиотека, не Moodle Descriptions Expanded.
-- **Версии:** в описании заявлены B42.12–B42.20, SP/MP; для B42.13+ игровая логика выполняется на сервере. B42.21 ещё не подтверждён нашим тестом.
-- **Совместимость:** моды болезни, гигиены и очистки тела могут влиять на общий результат; совместную работу с выбранным Rain Cleans Blood нужно проверить.
+- **Variant:** supported B42 single-player/multiplayer version; do not enable it together with the old Wash Or Rot / Legacy B42.12.3.
+- **Dependency:** [Moodle Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3396446795), Workshop ID `3396446795`, Mod ID `MoodleFramework`; load before Wash Or Rot. This is a separate library, not Moodle Descriptions Expanded.
+- **Versions:** the description reports B42.12–B42.20, single-player/multiplayer; on B42.13+ gameplay logic runs on the server. Our test has not confirmed B42.21.
+- **Compatibility:** illness, hygiene, and body-cleaning mods may affect the overall result; combined use with the selected Rain Cleans Blood needs checking.
 
-Записи 18–25 выбраны пользователем 8 октября 2026 года. Пока добавлены только в список: эти восемь Workshop-модов и новая зависимость Moodle Framework не установлены и не включены в `Host > SurvivorQoL` в рамках этого добавления. Совместный MP smoke-тест расширенного набора ещё не запускал. Для Neat Building записан ранее предложенный QoL-вариант UI Only, для Eat Smart — Integrated; XP-аддон включён в выбор для обоих Neat-интерфейсов.
+Entries 18–25 were selected by the user on 8 October 2026. They were added to the catalog only: these eight Workshop mods and the new Moodle Framework dependency were not installed or enabled in `Host > SurvivorQoL` as part of that update. At that point, the expanded set had not had a combined multiplayer smoke test. Later 39-mod checks covered combined loading; they did not exercise every feature of these mods. Neat Building's previously proposed QoL variant, UI Only, and Eat Smart's Integrated variant are listed; the XP add-on is selected for both Neat interfaces.
 
 ## 26 Gas Pump Indicator
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3755993986)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3755993986)
 
-Показывает состояние бензоколонки цветом индикатора на её корпусе: зелёный — есть питание и бензин, красный — питание есть, бензин закончился, индикатор погас — нет питания.
+Shows the gas pump's state with a light on its body: green means power and fuel are available, red means it has power but no fuel, and no light means no power.
 
 - **Workshop ID:** `3755993986`
 - **Mod ID:** `GasPumpIndicator`
-- **Зависимости:** не требуются.
-- **Версии:** автор заявляет B42 и SP/MP, проверил встроенный кооперативный хост. Отдельную проверку B42.21 на нашем наборе ещё не выполнял.
-- **Мультиплеер:** индикатор рисуется локально по данным сервера, состояние мира мод не меняет. Пока сервер не определил количество топлива, индикатор может не гореть даже при наличии питания; использовать колонку или повторно загрузить область.
-- **Существующее сохранение:** автор разрешает добавление и удаление в текущей игре.
+- **Dependencies:** none.
+- **Versions:** the author reports B42 and single-player/multiplayer and tested the built-in co-op host. It has not been separately checked on B42.21 with our set.
+- **Multiplayer:** the indicator is drawn locally from server data; the mod does not change world state. Until the server has determined the amount of fuel, the light may stay off despite power; use the pump or reload the area.
+- **Existing saves:** the author allows adding or removing it in an existing game.
 
 ## 27 Mini Health Plus
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3710913197)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3710913197)
 
-Компактный силуэт персонажа показывает ранения, состояние повязок и опционально мышечное перенапряжение. Можно настроить размер, положение и появление только при необходимости лечения. Через контекстное меню доступны действия лечения; подсказки о снятии повязок и проверке швов включаются отдельно.
+Compact character silhouette shows injuries, bandage state, and optionally muscle strain. Size, position, and showing only when treatment is needed are configurable. Treatment actions are available in the context menu; prompts for removing bandages and checking stitches can be enabled separately.
 
 - **Workshop ID:** `3710913197`
 - **Mod ID:** `MiniHealthPlus`
-- **Зависимости:** обязательные зависимости на странице Workshop не указаны. Better Character Info нужен только для необязательной интеграции аватара; оригинальный Mini Health Panel не требуется.
-- **Версии:** автор указывает поддержку SP/MP на B42.16–B42.20; работу на нашем B42.21 ещё не проверял.
-- **Язык:** есть русский перевод.
-- **Существующее сохранение:** автор разрешает добавление и удаление в любой момент.
+- **Dependencies:** no required dependencies are listed on the Workshop page. Better Character Info is needed only for optional avatar integration; the original Mini Health Panel is not required.
+- **Versions:** the author reports single-player/multiplayer support on B42.16–B42.20; our B42.21 setup has not been checked.
+- **Language:** a Russian translation is available.
+- **Existing saves:** the author allows adding or removing it at any time.
 
-Записи 26–27 добавлены по выбору пользователя 8 октября 2026 года. Описания и идентификаторы проверены по Workshop. Пока только в списке: в рамках этого добавления установка, включение в `Host > SurvivorQoL` и совместный MP smoke-тест не выполнялись.
+Entries 26–27 were added at the user's request on 8 October 2026. Descriptions and IDs were checked against Workshop. They remain catalog-only: installation, enabling in `Host > SurvivorQoL`, and a combined multiplayer smoke test were not part of that update.
 
 ## 28 CleanUI
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3437629766)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3437629766)
 
-Делает окна инвентаря и лута компактнее и удобнее: поиск по предметам и категориям, быстрый перенос, настройка колонок, масштаба и прозрачности. Порядок контейнеров меняется мышью и сохраняется отдельно для каждого игрока в MP. Есть переключение на обычный интерфейс.
+Makes inventory and loot windows more compact and convenient with item and category search, quick transfers, and configurable columns, scale, and transparency. Container order can be changed with the mouse and is saved separately for each multiplayer player. A toggle returns to the normal interface.
 
 - **Workshop ID:** `3437629766`
 - **Mod ID:** `CleanUI`
-- **Зависимость:** уже имеющийся NeatUI Framework `3508537032` / `NeatUI_Framework`; загрузить перед CleanUI.
-- **Версии:** автор заявляет B42.12.3–B42.21.0, SP/MP. Проверенная текущая версия CleanUI — `2.9.7`.
-- **Совместимость:** автор указывает проверенную совместимость с Proximity Inventory. Другие замены окон инвентаря могут конфликтовать.
+- **Dependency:** the existing NeatUI Framework `3508537032` / `NeatUI_Framework`; load before CleanUI.
+- **Versions:** the author reports B42.12.3–B42.21.0, single-player/multiplayer. The tested CleanUI version was `2.9.7`.
+- **Compatibility:** the author lists tested compatibility with Proximity Inventory. Other inventory-window replacements may conflict.
 
-Выбран 8 октября 2026 года и добавлен в переносимый `SurvivorQoL-selected.ini`. Совместная загрузка с Framework, Container Capacity Indicator и Toolkit v0.1.3 проверена в отдельной тестовой игре B42.21; исправление индикаторов описано ниже. Рабочий профиль `Host > SurvivorQoL` не менял. 9 октября проверил совместную загрузку всех 38 выбранных Mod ID и оба режима CleanUI в отдельном MP-сценарии с Toolkit v0.1.12.
+Selected on 8 October 2026 and added to the portable `SurvivorQoL-selected.ini`. Combined loading with Framework, Container Capacity Indicator, and Toolkit v0.1.3 was checked in a separate B42.21 test game; the indicator fix is described below. The working `Host > SurvivorQoL` profile was not changed. On 9 October, combined loading of all 38 selected Mod IDs and both CleanUI modes was checked in a separate multiplayer scenario with Toolkit v0.1.12.
 
 ## 29 Container Capacity Indicator
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3789660055)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3789660055)
 
-Показывает цветные полоски заполненности контейнеров и сумок, включая сумки внутри других контейнеров. Для отдельных оружейных магазинов показывает четыре сегмента наполненности; их отображение можно отключить в настройках мода. Не меняет вместимость и содержимое.
+Shows coloured fill bars for containers and bags, including bags nested in other containers. Shows four fill segments for some weapon magazines; this can be disabled in the mod settings. It does not change capacity or contents.
 
 - **Workshop ID:** `3789660055`
 - **Mod ID:** `ContainerCapacityIndicator`
-- **Зависимости:** не требуются; клиентский интерфейс.
-- **Версии:** автор указывает B42.20 и MP. Проверенная текущая версия индикатора — `1.2.0`.
-- **Статус:** включён в переносимый INI; для переключения режимов CleanUI используйте Toolkit v0.1.12. Обязательный порядок: `NeatUI_Framework;CleanUI;PZSurvivorToolkit;ContainerCapacityIndicator`.
+- **Dependencies:** none; this is client UI.
+- **Versions:** the author lists B42.20 and multiplayer. The tested indicator version was `1.2.0`.
+- **Status:** included in the portable INI; use Toolkit v0.1.12 to switch CleanUI modes. Required order: `NeatUI_Framework;CleanUI;PZSurvivorToolkit;ContainerCapacityIndicator`.
 
-**Результат проверки 8 октября 2026:** исходный CCI `1.2.0` с CleanUI `2.9.7` смещал полоску экипированного контейнера на одну строку (`31 px`) и оставлял её после скрытия секции Equipped Items. Toolkit v0.1.3 исправляет расчёт по фактическим строкам и иконкам CleanUI, включая масштаб. Проверил в отдельной игре B42.21 открытые/свёрнутые строки, скрытую экипировку, масштаб 140% и перестановку контейнеров. При перестановке заполненность следует за контейнером; отдельного исправления кнопок на этих версиях не потребовалось. Настройка индикаторов магазинов остаётся у CCI. 9 октября Toolkit v0.1.12 прошёл по 15 проверок на EN/RU-клиентах со всеми 38 Mod ID: полоски деталей, иконок и кнопок, повторные переключения enhanced/vanilla и реальные переносы предметов. Ошибок во время этого сценария не было.
+**Check result, 8 October 2026:** CCI `1.2.0` with CleanUI `2.9.7` offset the equipped-container bar by one row (`31 px`) and left it visible after hiding the Equipped Items section. Toolkit v0.1.3 corrects the calculation using CleanUI's actual rows and icons, including scale. In a separate B42.21 game, expanded/collapsed rows, hidden equipment, 140% scale, and container reordering were checked. Fill indicators followed containers when reordered; no separate button fix was needed for these versions. CCI still controls magazine indicators. On 9 October, Toolkit v0.1.12 passed 15 checks on each EN/RU client with all 38 Mod IDs: bars for items, icons, and buttons; repeated enhanced/vanilla switches; and actual item transfers. No runtime errors occurred during this scenario.
 
 ## 30 The Shortcut
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3470659758)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3470659758)
 
-Добавляет настраиваемую панель быстрых действий для предметов, рецептов крафта и строительства. Можно закрепить часто используемые действия и запускать их двойным щелчком, а правой кнопкой открывать соответствующее обычное меню. Панель сохраняет назначение предмета, даже если его временно нет в инвентаре.
+Adds a configurable quick-action panel for items and crafting or building recipes. Frequently used actions can be pinned and launched with a double-click; right-click opens the corresponding regular menu. The panel keeps an item's assignment even when it is temporarily absent from inventory.
 
 - **Workshop ID:** `3470659758`
 - **Mod ID:** `TheShortcut`
-- **Зависимость:** уже выбранный NeatUI Framework `3508537032` / `NeatUI_Framework`; загрузить перед The Shortcut.
-- **Версии:** автор заявляет B42.12.3+ и SP/MP; версия `1.2.18` проверена автором на совместимость с веткой B42.21. На нашем наборе в игре ещё не проверял.
-- **Управление:** по умолчанию Tab показывает и скрывает панель; колёсико переключает страницы. Клавиша, размер, положение и прозрачность настраиваются.
-- **Ограничения:** управление геймпадом не реализовано; большие панели могут влиять на FPS. Совместимость с нашим сочетанием CleanUI, Neat Crafting и Neat Building требует проверки.
+- **Dependency:** the already selected NeatUI Framework `3508537032` / `NeatUI_Framework`; load before The Shortcut.
+- **Versions:** the author reports B42.12.3+ and single-player/multiplayer; the author checked version `1.2.18` for compatibility with the B42.21 branch. It has not been tested in-game with our set.
+- **Controls:** Tab shows or hides the panel by default; the mouse wheel switches pages. Key, size, position, and transparency are configurable.
+- **Limitations:** gamepad controls are not implemented; large panels may affect FPS. Compatibility with our CleanUI, Neat Crafting, and Neat Building combination needs checking.
 
-Выбран 8 октября 2026 года и добавлен в переносимый `SurvivorQoL-selected.ini`. В рамках этого добавления установка и изменение рабочего профиля `Host > SurvivorQoL` не выполнялись.
+Selected on 8 October 2026 and added to the portable `SurvivorQoL-selected.ini`. Installation and changes to the working `Host > SurvivorQoL` profile were not part of that update.
 
 ## 31 TV & Radio ReInvented
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3420581050)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3420581050)
 
-Перерабатывает интерфейс телевизоров, радио, автомобильных магнитол, раций и CD-плееров. VHS выбирается нажатием на слот проигрывателя, после чего запись запускается кнопкой на устройстве. Добавляет видео для телеканалов и учебных VHS.
+Reworks the interfaces for TVs, radios, car stereos, walkie-talkies, and CD players. Click the player slot to select a VHS tape, then start playback with the device button. Adds videos for TV channels and educational VHS tapes.
 
 - **Workshop ID:** `3420581050`
 - **Mod ID:** `TVRadio_ReInvented`
-- **Версии:** заявлены B41/B42; автор сообщил проверку B42.20.3.
-- **Управление с Toolkit v0.1.8:** щелчок по вставленной VHS извлекает её без дополнительного меню. Пустой слот предлагает кассеты из инвентаря, сумок и доступных контейнеров рядом; можно также перетащить кассету на слот. Полностью просмотренные кассеты текущего персонажа отмечены галочкой, как в инвентаре; незавершённые не имеют отметки и идут первыми. Настройка **Удобное управление VHS** в Toolkit включена по умолчанию.
-- **Распознавание устройств:** с Toolkit v0.1.20 встроено в наш мод узким адаптером, без копирования всего окна. Отдельный [TVRadio Reinvented – 42.20 FIX](https://steamcommunity.com/sharedfiles/filedetails/?id=3796050675) (`3796050675`, `TVRadioReinventedFix4220`) удалён из INI и больше не нужен. Основной TV-мод остаётся.
-- **Статус:** выбран и установлен локально 8 октября 2026 года; основной мод и фикс включены в `Host > SurvivorQoL`, локальный default и переносимый INI. На B42.21 проверил два клиента (EN/RU), CleanUI, Toolkit v0.1.4 и CCI: **18 проверок на каждом, 0 провалов**. Проверены крестик, клики снаружи, переключение настройки и все 16 видео без прежней ссылки к Workshop. Подтверждены изображение и синхронизация вставки, воспроизведения, остановки и извлечения VHS. Это был короткий локальный MP-тест; актуальная проверка полного набора приведена в начале списка.
+- **Versions:** B41/B42 are reported; the author mentioned testing B42.20.3.
+- **Toolkit controls, v0.1.8:** clicking an inserted VHS ejects it without an extra menu. An empty slot offers tapes from inventory, bags, and nearby accessible containers; a tape can also be dragged onto the slot. Fully watched tapes for the current character have the same checkmark as in inventory; unfinished tapes have no checkmark and appear first. **Improve VHS controls** is enabled by default in Toolkit settings.
+- **Device recognition:** since Toolkit v0.1.20, a narrow adapter is built into Toolkit without copying the whole window. The separate [TVRadio Reinvented – 42.20 FIX](https://steamcommunity.com/sharedfiles/filedetails/?id=3796050675) (`3796050675`, `TVRadioReinventedFix4220`) was removed from the INI and is no longer needed. The main TV mod remains selected.
+- **Status:** selected and installed locally on 8 October 2026; the main mod was enabled in `Host > SurvivorQoL`, local default, and the portable INI. The separate fix is no longer part of the current setup. On B42.21, two clients (EN/RU), CleanUI, Toolkit v0.1.4, and CCI were checked: **18 checks each, no failures**. Tests covered the close button, outside clicks, setting toggle, and all 16 videos without the former Workshop-path symlink. That historical test still used the external translation fix; Toolkit now supplies device recognition itself. Video and synced VHS insertion, playback, stopping, and ejection were confirmed. This was a short local multiplayer test; current full-set checks are summarized at the beginning of this catalog.
 
-**Подтверждённые проблемы:** исходный мод не выбирает интерфейс поставленного телевизора на русском клиенте английского сервера; фикс исправляет это. Исходный мод закрывает окно при клике снаружи, включая инвентарь CleanUI, и скрывает крестик. Toolkit v0.1.4 возвращает крестик и оставляет окно открытым; эту логику можно отключить в настройках Toolkit. На native macOS исходный путь к видео неверен; Toolkit v0.1.4 исправляет его по фактической папке мода, отдельная ссылка к Workshop больше не нужна. Файлы видео должны быть установлены вместе с TV-модом.
+**Confirmed issues:** the original mod does not select the installed TV's interface when an English server is joined by a Russian client; the former fix corrected this, and current Toolkit handles device recognition internally. The original mod closes its window when clicking outside, including in CleanUI inventory, and hides the close button. Toolkit v0.1.4 restores the close button and keeps the window open; this behavior can be disabled in Toolkit settings. On native macOS, the original video path is incorrect; Toolkit v0.1.4 resolves it using the actual mod folder, so a separate Workshop fix is no longer needed. Video files must be installed with the TV mod.
 
-VHS-управление Toolkit v0.1.7 проверено: новый сценарий B42.21 с двумя клиентами EN/RU, CleanUI, CCI и Proximity Inventory прошёл **18 проверок на каждом, 0 провалов**: подбор VHS из ящика, сумки и с пола, перетаскивание, извлечение одним кликом, история просмотра, защита устаревшего выбора и проверка принадлежности кассеты на сервере. Потерь и дубликатов кассет не обнаружено. Видимость меню проверена отдельным запуском и снимками. В Toolkit v0.1.8 отдельная проверка галочки просмотренных кассет и отсутствия отметок у незавершённых прошла на EN/RU-клиентах (3 проверки на каждом, 0 провалов). 9 октября VHS-сценарий повторён с Toolkit v0.1.12 и всеми 38 Mod ID: по 18 проверок на каждом клиенте, 0 провалов и ошибок во время сценария. Физический ввод мышью/геймпадом и долгие сессии не проверены.
+**Historical Toolkit VHS checks:** v0.1.7 passed a B42.21 scenario with two EN/RU clients, CleanUI, CCI, and Proximity Inventory: **18 checks each, no failures**. Tests covered selecting VHS from a crate, bag, and ground; dragging; one-click ejection; viewing history; stale-selection protection; and server-side tape ownership checks. No lost or duplicated tapes were found. Menu visibility was checked separately with screenshots. In Toolkit v0.1.8, checkmarks for watched tapes and no marks for unfinished tapes passed on EN/RU clients (3 checks each, no failures). On 9 October, the VHS scenario was repeated with Toolkit v0.1.12 and all 38 Mod IDs: 18 checks per client, no failures or runtime errors. Physical mouse/gamepad input and long sessions were not tested.
 
 ## 32 Seed Season Indicator
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3734639991)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3734639991)
 
-Показывает сезон посева значком на семенах: зелёная звезда — лучший месяц, зелёный круг — подходящий, жёлтый — рискованный, красный — вне сезона. В подсказку добавляет месяцы посева, воду и время роста. Использует данные культур игры и модов.
+Shows planting season on seed items: green star means the best month, green circle means suitable, yellow means risky, and red means out of season. Adds planting months, water, and growing time to the tooltip. Uses crop data from the game and mods.
 
 - **Workshop ID:** `3734639991`
 - **Mod ID:** `SeedSeasonIndicator`
-- **Версия:** установленная `1.4.2`, для Build 42; дополнительных зависимостей нет. Есть русский перевод.
-- **Условие:** персонаж должен изучить сведения о сезоне из пакетика семян; при выключенной настройке песочницы `PlantGrowingSeasons` сезонные метки не показываются.
-- **Настройки:** `Options > Mods > Seed Season Indicator` — значки, подсказки и дополнительные параметры.
-- **Статус:** установлен локальными копиями 8 октября 2026 года; включён в локальный default, `Host > SurvivorQoL` и переносимый INI. Проверил совпадение всех установленных файлов со скачанными, компиляцию Lua 5.1 и JSON переводов; остальные Mod ID и их порядок сохранены. 9 октября совместная загрузка с полным выбранным набором проверена в изолированном MP-сценарии B42.21; отдельные сезонные метки в этом сценарии не проверял. Подписку Steam не создавал; обновления локальной копии нужно загружать отдельно.
+- **Version:** installed version `1.4.2` for Build 42; no additional dependencies. A Russian translation is available.
+- **Requirement:** the character must learn the season information from a seed packet. Seasonal labels are hidden when the Sandbox option `PlantGrowingSeasons` is off.
+- **Settings:** `Options > Mods > Seed Season Indicator` controls icons, tooltips, and other options.
+- **Status:** local copies were installed on 8 October 2026 and enabled in local default, `Host > SurvivorQoL`, and the portable INI. Installed files were checked against the downloaded copies, along with Lua 5.1 compilation and translation JSON; other Mod IDs and their order were preserved. Combined loading with the full selected set was checked in an isolated B42.21 multiplayer scenario on 9 October; seasonal labels themselves were not checked in that scenario. No Steam subscription was created; update the local copy separately.
 
 ## 33 organizedCategories
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3370707195)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3370707195)
 
-Дробит общие категории на конкретные: продукты по видам, инструменты по назначению, оружие по типам и калибрам. Позволяет менять категории через интерфейс, поддерживает CleanUI и автоматически классифицирует предметы без ручных определений. Дополнительные закрепление, переименование и привязка вещей к контейнеру настраиваются отдельно.
+Splits broad categories into specific ones, such as food types, tool purposes, and weapon types and calibres. Categories can be changed through the UI; CleanUI is supported, and items are classified automatically without manual definitions. Pinning, renaming, and assigning items to containers can be configured separately.
 
 - **Workshop ID:** `3370707195`
 - **Mod ID:** `organizedCategories_core`
-- **Зависимости:** обязательных внешних библиотек нет; загрузить последним. Не включать второй классификатор одновременно.
-- **Генерация лута:** встроенную Loot Safety оставить включённой. Она сохраняет исходный тип лута у ScriptItem там, где изменение категории меняло бы этот тип; организованные категории применяются к экземплярам предметов.
-- **Установка:** полный мод локально в `~/Zomboid/mods/organizedCategoriesCore`; включить последним в default и `Host > SurvivorQoL`. При локальной установке передать такую же папку игрокам; Workshop ID в переносимом INI позволяет новому Steam-серверу скачать мод, а клиентам получить его при подключении. Локальную копию обновлять отдельно.
-- **Проверка 9 октября 2026:** переносимый набор из 39 Mod ID загружен на сервере и двух клиентах EN/RU B42.21 macOS; по 19 проверок, 0 провалов. Проверены новые категории, фильтр Toolkit, CleanUI/CCI/Proximity и перенос Manage Containers после переназначения категории с подтверждением на сервере. Типы лута Hammer и TinnedBeans совпали с исходными на сервере. Не проверены все настройки, sticky-предметы, долгие сессии или частота генерации лута.
+- **Dependencies:** no required external libraries; load last. Do not enable another classifier at the same time.
+- **Loot generation:** keep built-in Loot Safety enabled. It preserves the original loot type for ScriptItems when a category change would alter that type; organized categories are applied to item instances.
+- **Installation:** install the full mod locally at `~/Zomboid/mods/organizedCategoriesCore`; enable it last in default and `Host > SurvivorQoL`. For local installs, give players the same folder; the Workshop ID in the portable INI allows a new Steam server to download the mod and clients to receive it on connection. Update the local copy separately.
+- **Historical check, 9 October 2026:** the portable set with 39 Mod IDs loaded on a B42.21 macOS server and two EN/RU clients; 19 checks each, no failures. Tests covered the new categories, Toolkit filter, CleanUI/CCI/Proximity, and Manage Containers transfer after category reassignment with server confirmation. Hammer and TinnedBeans retained their original loot types on the server. Not all settings, sticky items, long sessions, or loot generation rates were checked.
 
 
-## 34 Перенос указанного количества: Toolkit
+## 34 Transfer a Specified Quantity: Toolkit
 
-Прежний [Take Any Amount B42MP](https://steamcommunity.com/sharedfiles/filedetails/?id=3389115640) (`TakeAnyAmount`) удалён из выбранного INI. Toolkit v0.1.20 добавляет **Взять указанное количество / Положить указанное количество** со штатным окном ввода и переводами EN/RU.
+The former [Take Any Amount B42MP](https://steamcommunity.com/sharedfiles/filedetails/?id=3389115640) (`TakeAnyAmount`) has been removed from the selected INI. Toolkit v0.1.21 provides **Grab amount / Put amount** using the native number-entry window, with EN/RU translations.
 
-- Одно положительное целое число применяется к всей выделенной пачке, включая разные стопки; дробные значения не принимаются.
-- Выбранные экземпляры, персонаж и контейнер назначения сохраняются до подтверждения. Перенос использует штатную очередь и сетевые транзакции игры; изменение контейнера, смерть и недоступные предметы проверяются повторно.
-- Избранные, экипированные и тяжёлые предметы с принудительным выкладыванием пропускаются. Отклонённый перенос останавливает свою пачку, не отменяя транзакцию другого клиента с тем же номером. Штатные One/Half/All сохранены.
-- Есть отдельный переключатель; при активном Take Any Amount наша функция и её настройка скрыты, чтобы не дублировать команды.
+- One positive integer applies to the whole selection, including different stacks; fractional values are rejected.
+- Selected instances, character, and destination container are kept until confirmation. Transfers use the game's native queue and network transactions; changed containers, death, and inaccessible items are checked again.
+- Favourites, equipped items, and heavy items that the game forces onto the ground are skipped. A rejected transfer stops its own batch without cancelling another client's transaction with the same number. Native One/Half/All actions remain.
+- The feature has its own switch. If Take Any Amount is active, Toolkit hides its command and setting to avoid duplicates.
 
-## 35 Индикаторы лекарств: Toolkit + Moodle Framework
+## 35 Medicine Indicators: Toolkit + Moodle Framework
 
-Прежний [Medicine Moodles B42.20 port](https://steamcommunity.com/sharedfiles/filedetails/?id=3778856579) (`MedicineMoodlesB42`) удалён из INI. Toolkit v0.1.20 самостоятельно создаёт восемь индикаторов через уже выбранный Moodle Framework (`3396446795`, `MoodleFramework`). Код порта не копируется.
+The former [Medicine Moodles B42.20 port](https://steamcommunity.com/sharedfiles/filedetails/?id=3778856579) (`MedicineMoodlesB42`) has been removed from the INI. Toolkit v0.1.21 creates eight indicators through the already selected Moodle Framework (`3396446795`, `MoodleFramework`). It does not copy the port's code.
 
-- Антибиотики, антидепрессанты, бета-блокаторы, обезболивающие и снотворное читают фактические значения сервера. Сила снотворного обновляется после повторной дозы. При потере свежих ответов более десяти секунд значки скрываются; смерть и смена персонажа сбрасывают состояние.
-- Black Sage и Common Mallow, включая сушёные варианты, показывают штатные запасы облегчения боли и простуды. Запас может превышать 100% после повторного приёма; Common Mallow расходуется во время простуды.
-- Лемонграсс/имбирь: общий нативный случайный кулдаун закрыт от Lua. Показывается явно обозначенная оценка верхней границы, только после серверного подтверждения лечения; неэффективная повторная порция её не перезапускает. Оценка не сохраняется через перезагрузку.
-- Шесть лекарственных и два травяных индикатора включаются независимо в настройках Toolkit. Выключение скрывает значки, а эффекты лекарств остаются штатными. Старые значения настроек сохраняются при обновлении.
-- Раздел скрыт без Moodle Framework. При активном MedicineMoodlesB42 Toolkit отключает свои индикаторы и выводит одно предупреждение, предотвращая дубликаты. Требуется одна версия Toolkit на сервере и клиентах.
+- Antibiotics, antidepressants, beta blockers, painkillers, and sleeping pills read authoritative server values. Sleeping-pill strength updates after another dose. Indicators hide if fresh responses are missing for over ten seconds; death and character changes reset their state.
+- Black Sage and Common Mallow, including dried variants, show the game's remaining pain- and cold-relief effects. The amount can exceed 100% after repeated use; Common Mallow is consumed during a cold.
+- Lemongrass/ginger: Lua cannot access the shared native random cooldown. The indicator shows a clearly labelled upper-bound estimate, and only after the server confirms treatment; an ineffective repeat dose does not restart it. The estimate does not survive a reload.
+- **Medicine indicators** and **Herbal medicine indicators** are the two grouped Toolkit switches. Turning a group off hides its icons but leaves native medicine effects unchanged. Existing settings survive upgrades.
+- The section is hidden without Moodle Framework. If MedicineMoodlesB42 is active, Toolkit disables its indicators and shows one warning to prevent duplicates. The same Toolkit version is required on the server and clients.
 
 ## 36 Realistic Dashboard & Gauges
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3635591071)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3635591071)
 
-Перерабатывает автомобильную панель: управление окнами, замками, радио и кондиционером кликами по панели, масштабирование, быстрый выбор места и сна. Поддерживает несколько вариантов приборов для разных машин.
+Reworks the vehicle dashboard with clickable controls for windows, locks, radio, and air conditioning; scaling; and quick seat selection and sleep. Supports several dashboard styles for different vehicles.
 
 - **Workshop ID:** `3635591071`
 - **Mod ID:** `RealisticDash`
-- **Зависимости:** обязательных внешних библиотек не заявлено; загружать перед Navigator.
-- **Проверка B42.21 MP:** версия 2.0.2. На двух клиентах работают панель водителя, включение радио и изменение громкости штатными действиями. С TV & Radio Reinvented работают объединённое окно автомобильного радио и его громкость; Clean HotBar и Smart Radial Menu загружаются и открываются вместе с панелью. Navigator строит маршрут с этой панелью при порядке `RealisticDash;Navigator`.
-- **Ограничения проверки:** пассажирская панель, остальные типы автомобилей и все кнопки не проверены; при загрузке есть предупреждение `require("Vehicles/VehicleUtils")` в пассажирском модуле, проверенный сценарий водителя проходит.
-- **Статус:** выбран и включён в переносимый INI; MP-проверен 11 октября 2026 в изолированных профилях, в рабочий профиль пока не установлен.
+- **Dependencies:** no required external libraries are reported; load before Navigator.
+- **B42.21 multiplayer check:** version 2.0.2. On two clients, the driver's dashboard, radio power, and volume changes using native actions worked. With TV & Radio Reinvented, the combined car-radio window and its volume worked; Clean HotBar and Smart Radial Menu loaded and opened with the dashboard. Navigator plotted a route with this dashboard using load order `RealisticDash;Navigator`.
+- **Check limitations:** the passenger dashboard, other vehicle types, and all buttons were not checked. Startup reports `require("Vehicles/VehicleUtils")` in the passenger module, but the tested driver scenario passes.
+- **Status:** selected and included in the portable INI; multiplayer checked on 11 October 2026 in isolated profiles. It is not yet installed in the working profile.
 
 ## 37 Navigator
 
-[Страница в Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3708816224)
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3708816224)
 
-Строит автомобильные маршруты по дорожной сети, показывает повороты и пересчитывает путь при отклонении. Есть голосовые подсказки на русском и английском. Для работы в машине требуется радио Navigator или Navigator Micro; дорожные данные поставляются для стандартной карты.
+Plans vehicle routes over the road network, shows turns, and recalculates the route after a deviation. Voice prompts are available in Russian and English. A Navigator or Navigator Micro radio is needed to use it in a vehicle; road data is provided for the standard map.
 
 - **Workshop ID:** `3708816224`
 - **Mod ID:** `Navigator`
-- **Зависимости:** обязательных внешних библиотек не заявлено; установочное радио является предметом самого мода.
-- **Порядок:** `RealisticDash;Navigator`; автор Navigator прямо указал эту совместимость и порядок. `organizedCategories_core` остаётся последним в общем списке.
-- **Проверка B42.21 MP:** версия 2.1.0. На обоих клиентах с Realistic Dashboard работают нативная кнопка монитора, карта, пункт построения маршрута, отображение маршрута и сброс при выходе из машины. Рецепты RadioRed/HAM загружаются, RadioRed принимается штатным автомобильным слотом Radio и допускает снятие в механике. Итоговый `ISVehicleDashboard.render` сохраняет обёртку Navigator; конфликт панелей не воспроизвёлся.
-- **UI Toolkit v0.1.19:** исходный фактурный корпус Navigator со скруглениями и рельефным бортиком сделан компактнее; оттенок и положение соответствуют стандартной панели, standard/heavy/sport и чёрной, красной или коричневой отделке Realistic Dashboard. Единое крепление использует нижнюю часть исходной текстуры; его край утоплен за изгиб приборной панели. Карта учитывает размер панели, текст и кнопки сохраняют читаемый штатный размер. «Вписать Navigator в приборную панель» отключает оформление сразу, сохраняя маршрут; настройка скрыта без Navigator.
-- **Проверка фактурного оформления v0.1.19:** 12 нативных видов B42.21, включая обе heavy-панели, HAM/value radio, 0.75x/1x/1.4x/2x и возврат к 1x. Виды Realistic Dashboard проверены с полным набором 42 модов из выбранного INI на отдельном MP-сервере и одном EN-клиенте. Построение и сохранение маршрута, кнопка питания, координаты карты/overlay, перенос, закрытие и возврат исходного UI прошли проверки. Проверены также громкость панели, окно TV & Radio Reinvented и Smart Radial Menu. Для дерева подобран цвет; отдельная текстура древесины не копируется. Другие dashboard-моды и split-screen не проверены.
-- **Положение TheShortcut:** его отдельная перетаскиваемая панель может выступать за приборную панель. Перенесите её мышью в свободное место; оформление Navigator её автоматически не перемещает.
-- **Ограничения проверки:** радио создано тестовым сервером и установлено через штатный обработчик; само изготовление и полное снятие/повторная установка не выполнялись. Голос, длительная поездка, перестроение пути, пользовательские карты и машины не проверены. Сообщения Workshop о крафте и настройках песочницы этим тестом полностью не закрыты.
-- **Статус:** выбран и включён в переносимый INI; MP-проверен 11 октября 2026 в изолированных профилях, в рабочий профиль пока не установлен.
+- **Dependencies:** no required external libraries are reported; the installable radio is an item from the mod itself.
+- **Load order:** `RealisticDash;Navigator`; the Navigator author explicitly lists this compatibility and order. `organizedCategories_core` remains last in the overall list.
+- **B42.21 multiplayer check:** version 2.1.0. On both clients with Realistic Dashboard, the native monitor button, map, route command, route display, and clearing the route on exiting the vehicle worked. RadioRed/HAM recipes loaded; RadioRed was accepted by the native vehicle Radio slot and could be removed in mechanics. The final `ISVehicleDashboard.render` retained the Navigator wrapper; the dashboard conflict was not reproduced.
+- **Toolkit UI, v0.1.19:** the original textured Navigator housing, rounded with a raised rim, was made more compact. Its tint and position match the standard dashboard, standard/heavy/sport styles, and black, red, or brown Realistic Dashboard trim. A shared mount uses the lower part of the original texture, with its edge tucked behind the dashboard curve. The map accounts for dashboard size; text and buttons retain their readable native size. Disabling **Fit Navigator to vehicle dashboard** restores the original appearance while preserving routes; the setting is hidden when Navigator is absent.
+- **Texture styling check, v0.1.19:** 12 native B42.21 views, including both heavy dashboards, HAM/value radio, 0.75x/1x/1.4x/2x, and returning to 1x. Realistic Dashboard views were tested with the full 42-mod selected set on a separate multiplayer server and one EN client. Route creation and persistence, power button, map/overlay coordinates, dragging, closing, and restoring the original UI passed. Dashboard volume, the TV & Radio Reinvented window, and Smart Radial Menu were also checked. A matching wood tint was chosen; a separate wood texture is not copied. Other dashboard mods and split-screen were not checked.
+- **TheShortcut placement:** its separate draggable panel can overlap the dashboard. Move it to a free area with the mouse; Navigator styling does not reposition it automatically.
+- **Check limitations:** the test server created the radio and installed it through the native handler; crafting and full removal/reinstallation were not performed. Voice, long drives, rerouting, custom maps, and vehicles were not checked. Workshop reports about crafting and Sandbox settings were not fully resolved by this test.
+- **Status:** selected and included in the portable INI; multiplayer checked on 11 October 2026 in isolated profiles. It is not yet installed in the working profile.
+
+## 38 Toolkit Action Queues and Context Menus
+
+PZ Survivor Toolkit v0.1.21 includes a native action-queue panel, bulk item actions, and context-menu features. These are part of the local Toolkit copy; they add no Workshop item and are not separate INI requirements.
+
+- The optional **Show action queue** panel is off by default. It shows the native action queue with icons; clicking an enabled cross cancels that eligible action, and dragging reorders independent waiting actions within unprotected segments. Preparation, item returns, and unaudited mod actions are protected.
+- Four independent options cover **Dismantle selected electronics**, **Remove batteries from selected items**, **Unload selected magazines and firearms**, and **Remove attachments from selected weapons**. They extend the existing context actions and operate on the selected instances, retaining native tools, timing, results and XP where applicable. Favourites and worn/held items are skipped. Surviving devices and tools use native return steps where supported; dismantled items are consumed. Ordinary cancellation or stale targets stop the remaining batch. See [Toolkit controls](README.md#controls) for each action's limits.
+- **Group context menu actions** groups known actions across inventory, world, vehicle, and health menus. Short menus stay compact and unknown mod commands remain visible. **Context menu rules** can assign a seen action to a group or main menu, hide it, or restore automatic defaults. Rules are local to each client. Disable the option to restore the original menus; the section is hidden while Context Menu Organizer or its World variant is active.
+
+## 39 Survivor Wishlist (Standalone, Optional)
+
+The separate `PZSurvivorWishlist` mod is at version 0.1.0 and is **not in `SurvivorQoL-selected.ini`**. Install its folder on the server and every client, preserving `common` and `42`, then enable Mod ID `PZSurvivorWishlist`. Load it after optional crafting/UI mods. It requires neither Shopping List nor WANTED.
+
+- Provides personal and shared lists with a searchable item catalog. Named players and faction members with access can all edit the same list; only its owner changes access. Desired quantities are shared goals, carried counts are local to each player, and completion is marked manually. Native inventory context menus and native, Neat Crafting, Neat Building, and Project Cook crafting windows can add wanted items. Crafting shows results and missing ingredients; for recipes with alternatives, choose one. Fluids and partial uses represent one suitable item/container, not an exact quantity.
+- Highlights wanted inventory rows and visible loose items on the ground within 15 tiles and on the same floor. It does not scan containers, corpses, or contents of bags on the ground. CleanUI inventory modes and Better Containers combined item views are supported. With Toolkit installed, wishlist colours take priority for wanted ground items.
+- Open with K or the left sidebar. Options under **Options > Mods > Survivor Wishlist** independently control inventory highlights, ground highlights, crafting controls, colour, and hotkey. Close windows with their native close button or Escape.
+- Lists persist on the server under `Zomboid/Lua/PZSurvivorWishlist/`, separated by the encoded save path. Back up this directory with the world and retain the same save path when restoring. Two alternating checked files are used; global ModData is avoided because vanilla clients can request named global tables without wishlist access. Single-player uses the same validation and storage. No item, recipe, or loot content is changed.
+
+Wishlist 0.1.0 passed isolated B42.21 macOS multiplayer checks on two EN/RU clients with Lua checksums enabled: 33 checks per client alongside the 39 selected mods, five checks after a full server/client restart, and 26 checks with only Wishlist installed. Coverage included shared editing, conflicting revisions, invitation/faction revocation, persistence, CleanUI modes, Better Containers, and crafting adapters. A standalone UI pass checked 11 cases per client, including Russian catalog search, native crafting/building layouts, toggles, and repeated window cleanup; screenshots were also inspected. See [README](README.md) for test commands.

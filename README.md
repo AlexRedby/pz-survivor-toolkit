@@ -2,7 +2,15 @@
 
 ![PZ Survivor Toolkit icon](PZSurvivorToolkit/common/icon.png)
 
-A Lua mod for Project Zomboid Build 42. Highlights loose items on the ground to make them easier to find in grass and clutter. Also makes zero protection changes neutral grey in the clothing Wear menu; gains and losses keep the game's configured colours. Fixes multiplayer auto-drink preferences shared accidentally through the host's saved options.
+Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quantity transfers, bulk actions, context-menu organization, an optional action queue, visible ground-item highlights and compatibility fixes for the selected mod set. Shared wishlists and experimental Java engine patches are separate mods in the same repository.
+
+| Component | Version | Installation |
+|---|---|---|
+| PZ Survivor Toolkit | 0.1.21 | Copy `PZSurvivorToolkit`; already selected in the server INI. Requires B42.19 or newer within Build 42. |
+| Survivor Wishlist | 0.1.0 | Copy `PZSurvivorWishlist` and enable separately. Requires B42.21 or newer within Build 42. |
+| Toolkit Java Patches | 0.1.2 | Build and install separately with ZombieBuddy 2.3.4+. Targets B42.21 only. |
+
+The selected server INI contains **39 Mod IDs / 37 Workshop items**. Wishlist and Java Patches are optional additions, not included in those counts. Current features and setup are described below; dated verification results retain the versions and mod counts actually tested.
 
 ## Installation
 
@@ -18,7 +26,7 @@ For our selected multiplayer mod set, see the [server/client installation steps]
 
 The separate `PZSurvivorWishlist` folder contains an independent wishlist mod. Copy it to `Zomboid/mods` on the server and every client, preserving `common` and `42`, then enable **Survivor Wishlist** (server Mod ID `PZSurvivorWishlist`). Load it after the optional crafting/UI mods. It needs neither Shopping List nor WANTED, and is not yet added to the selected server INI.
 
-- Press **K** or the sidebar **List / Цели** button. Search the catalog by item name or full type; a sample or recipe is not required. Set the desired quantity and add the item.
+- Press **K** or the sidebar **List** button. Search the catalog by item name or full type; a sample or recipe is not required. Set the desired quantity and add the item.
 - Native inventory context menus and the native, Neat Crafting, Neat Building and Project Cook crafting windows can add wanted items. Crafting offers results and missing ingredients; choose one alternative when a recipe accepts different items. Fluids and partial uses are not treated as exact piece counts: these entries ask for one suitable container/item and say to check its contents or remaining uses.
 - **Sharing** grants editing to named server usernames (including offline players), your current faction, or both. Everyone with access edits the same list; only its owner changes access. The list selector chooses where additions go. All unfinished goals in your accessible lists are highlighted. Concurrent changes against an old revision are rejected with a prompt to review the refreshed list.
 - Quantities are shared goals. **Carried by you** counts only your own inventory and carried bags. Mark completed goals manually, so one player's inventory does not silently complete a group objective.
@@ -42,13 +50,30 @@ These were programmatic checks in the real game on localhost. Windows/Linux, ord
 - **Remove batteries from selected items** adds **One item / Remove batteries from selected (N)** to the native Remove Battery recipe. Each selected compatible device keeps its identity, the extracted battery uses the game's native charge conversion, and devices picked up from bags or nearby containers use the native return-to-container action after the batch. This covers the native crafting recipe, not radio power-panel actions.
 - **Unload selected magazines and firearms** extends native unloading with **One item / Unload selected (N)**. Supports loose magazines and firearms with integral magazines, including mixed selections. Chambered rounds and magazines inserted into weapons keep their separate native actions.
 - **Remove attachments from selected weapons** adds **Remove all parts from selected weapons (N)** beside the existing per-part choices. Uses the native detachable-part checks and tool requirements, preserving each part's identity.
-- All three bulk features have independent Mod Options switches. They skip favourites and worn/held items at selection, bind exact selected IDs, and stop the remaining queue on cancellation or stale targets. Native weapon callbacks and queue hooks retain Tidy Up Meister's existing transfer and equipment policies when that mod is active; they do not force an additional return to the previous hand item.
+- Each bulk feature has its own Mod Options switch. They skip favourites and worn/held items at selection, bind exact selected IDs, and stop the remaining queue on cancellation or stale targets. Native weapon callbacks and queue hooks retain Tidy Up Meister's existing transfer and equipment policies when that mod is active; they do not force an additional return to the previous hand item.
 - **Fit Navigator to vehicle dashboard**, shown only with Navigator installed, preserves Navigator's original textured, bevelled monitor housing in a compact shape and tints/positions it for the vanilla dashboard and each Realistic Dashboard driver style. One continuous textured mount sits behind the curved panel edge without covering its controls. Map size follows the dashboard setting within readable bounds; labels and power button retain their native sizes. Routing, animation and dragging stay with Navigator. Disabling the option restores its original UI immediately. Keep `RealisticDash` before `Navigator`.
-- **Medicine indicators** uses the optional MoodleFramework for six medicines and two herbs, independently of Medicine Moodles. Multiplayer readings come from the server and expire after ten seconds without a fresh response. Sleeping-pill strength updates after extra doses; dried herbs use the same native fields. Separate medicine/herb switches apply immediately. This section is hidden without MoodleFramework or with the old MedicineMoodlesB42 active, preventing duplicates. Lemongrass is an estimated maximum cooldown because its randomized native timer is private; the estimate starts after server-confirmed healing and is not saved across reloads.
+- **Medicine indicators** and **Herbal medicine indicators** are two grouped switches for six medicine indicators and two herb indicators, using the optional MoodleFramework independently of Medicine Moodles. Multiplayer readings come from the server and expire after ten seconds without a fresh response. Sleeping-pill strength updates after extra doses; dried herbs use the same native fields. Both switches apply immediately. This section is hidden without MoodleFramework or with the old MedicineMoodlesB42 active, preventing duplicates. Lemongrass is an estimated maximum cooldown because its randomized native timer is private; the estimate starts after server-confirmed healing and is not saved across reloads.
 - **Grab/Put amount** accepts one positive whole-number budget for the entire selected batch. It captures exact items and destination, rechecks reachability and character identity on confirmation, and uses native transfer actions. Favourites, equipped items and heavy forced-drop objects are skipped. Rejected pickups stop their own batch without cancelling another client's same-numbered transaction. The independent switch is hidden with TakeAnyAmount active.
 - With **Better Containers**, Toolkit owns category filters, preserving its proximity and container features. Keep Toolkit before Better Containers and MP Fast Forward; malformed speed commands are rejected before they reach MP Fast Forward. The selected INI already sets this order.
-- **Organize context menus** groups known actions automatically across native inventory, world, vehicle and health context menus. Categories cover food, equipment, health, crafting, maintenance, devices, transfers, world interaction, vehicles, farming and research. Short menus stay compact; unknown mod commands remain visible. Existing callbacks, icons, tooltips and portion/recipe submenus are preserved. **Edit context-menu rules** in the same Mod Options section lets you search actions encountered while playing, place an action in a group or the main menu, hide it, or restore automatic defaults. Rules are saved locally per client. Disable the feature to restore the original menus immediately. This section is hidden while either Context Menu Organizer or Context Menu Organizer World is active. No additional Workshop mod or change to the selected INI is needed.
-- All optional feature switches default to on, are saved per client and apply without restarting. Defaults for highlighting: enabled, orange, 15-tile radius. Settings use the game's native Mod Options system. Other compatibility fixes and the auto-drink fix remain automatic.
+- **Group context menu actions** groups known actions automatically across native inventory, world, vehicle and health context menus. Categories cover food, equipment, health, crafting, maintenance, devices, transfers, world interaction, vehicles, farming and research. Short menus stay compact; unknown mod commands remain visible. Existing callbacks, icons, tooltips and portion/recipe submenus are preserved. **Context menu rules** in the same Mod Options section lets you search actions encountered while playing, place an action in a group or the main menu, hide it, or restore automatic defaults. Rules are saved locally per client. Disable the feature to restore the original menus immediately. This section is hidden while either Context Menu Organizer or Context Menu Organizer World is active. No additional Workshop mod or change to the selected INI is needed.
+- **Show action queue** enables the [action queue window](#action-queue), described below. It is off by default.
+- Other available feature switches default to on. Settings are saved per client and apply without restarting, using the game's native Mod Options system. Defaults for highlighting: enabled, orange, 15-tile radius. Compatibility fixes and the auto-drink fix remain automatic.
+
+## Action queue
+
+Enable **Options > Mods > PZ Survivor Toolkit > Show action queue**. While actions are queued, the movable and resizable **Actions** window shows the existing game queue, with item/action icons, current progress and mouse-wheel scrolling. It has no five-action limit and does not create a separate planning queue.
+
+- Click a row's cross to cancel an eligible action individually. Reading can be stopped while preserving later independent actions; supported waiting book and Toolkit bulk actions can also be removed.
+- Drag an eligible waiting row to change its order. Rows cannot move ahead of the current action or across protected steps.
+- Transfers, preparation/return steps, callbacks, linked operations and unknown actions remain protected because later actions may depend on them. Hover a disabled control for the reason.
+
+The window hides when the queue becomes empty or the option is disabled. It has no dedicated hotkey or close button. Ordinary game cancellation still works. Automatic crafting of prerequisite recipes is not implemented.
+
+Queue regression checks use the installed game's Lua queue, base action and reading action with simulated Java/UI lifecycle. Run them with `--native-action-root /path/to/media/lua`; the default test command skips this suite without that source path. There is no recorded native multiplayer validation for this queue UI in the verification results below.
+
+## Recorded verification
+
+These results describe the builds and selected sets used in each scenario, not a claim that every current feature was exercised together. Current installation uses the 39-mod INI listed above.
 
 Toolkit v0.1.14 passed 16 native B42.21 bulk-dismantling multiplayer checks per English/Russian client with seven relevant Mod IDs loaded, including CleanUI, Better Containers, Neat Crafting and Tidy Up Meister. Checks covered native icons/submenus, the third-level flashlight menu and preserved battery action, actual flashlight dismantling, exact mixed selections, personal-bag and nearby-container transfers, tool return, native XP, cancellation and a removed selected item. Both clients then queued the same four shared-container item IDs with the same transaction number: one queue stopped on rejection, while the other produced exactly four dismantles and four scrap items; unselected/favourite items remained intact. No gameplay Lua exceptions occurred in the final short localhost scenario. The full selected mod set, physical mouse/controller input and long sessions have not been checked for this feature.
 
@@ -72,7 +97,7 @@ The effect uses the game's native rendering. Sprite and atlas items receive an o
 
 Requires B42.19 or newer within Build 42. Tested in-game on **B42.21.0, macOS, single-player**, including toggling, settings, pickup and visibility changes through a window with a curtain. Two local multiplayer clients have also been tested on B42.21. Split-screen has not been verified.
 
-The new sidebar button has behavioural checks and has been checked against the installed native UI code. Its in-game visual check is pending.
+The Toolkit sidebar visibility option has behavioural checks against the installed native UI code; a dedicated in-game visual check of that option is not recorded.
 
 ## Multiplayer auto-drink
 
@@ -90,9 +115,9 @@ Checked in-game on B42.21 with CleanUI 2.9.7 and CCI 1.2.0, including container 
 
 The TV/radio settings section and its adapters are registered only when TV & Radio ReInvented is active. Installed but disabled mods do not expose settings or receive patches. With TV & Radio ReInvented enabled, inventory and outside clicks keep its windows open. Close the window with the restored X button at its top right. **Options > Mods > PZ Survivor Toolkit > Keep TV/radio windows open** is enabled by default; disabling it immediately restores the original outside-click closure and hidden close button. These settings are local to each client. Native device/range cleanup remains unchanged.
 
-On native macOS, Toolkit loads the 16 videos shipped with TV & Radio ReInvented v1.3 from the actual active mod directory. A separate `Project Zomboid.app/workshop` symlink is no longer required. Keep the complete TV mod installation, including its `.bik` files; a Lua-only copy cannot supply videos. Other platforms keep the upstream video loader. The translation fix is still needed for TV device recognition on Russian clients.
+On native macOS, Toolkit loads the 16 videos shipped with TV & Radio ReInvented v1.3 from the actual active mod directory. A separate `Project Zomboid.app/workshop` symlink is no longer required. Keep the complete TV mod installation, including its `.bik` files; a Lua-only copy cannot supply videos. Other platforms keep the upstream video loader. Toolkit now handles device recognition on EN/RU clients itself; keep the old `TVRadioReinventedFix4220` disabled.
 
-Checked on native B42.21 macOS with an English and Russian client, CleanUI, CCI and the translation fix: 18 checks per client passed with the old symlink absent. Checks cover all 16 valid video textures, synchronized VHS playback, native close-button callbacks, live option changes and out-of-range cleanup. This was a short localhost multiplayer test; other platforms remain unverified.
+An earlier native B42.21 macOS test with English/Russian clients, CleanUI, CCI and the then-required external translation fix passed 18 checks per client with the old symlink absent. Checks covered all 16 video textures, synchronized VHS playback, native close-button callbacks, live option changes and out-of-range cleanup. The later v0.1.20 test above checked device recognition without that external fix. Other platforms remain unverified.
 
 **Improve VHS controls** adds direct click-to-eject, tapes from native reachable loot containers and personal bags, and drag-and-drop onto the TV slot. The slot turns green for a VHS and red for an invalid drop. The selection list marks only fully watched tapes with the same checkmark as the inventory. Unfinished tapes have no marker and appear first; history belongs to the current character. Insertion uses native pickup and device actions, with ownership checked on client and server. Disable the option to restore the original TV slot/menu controls.
 
@@ -100,7 +125,7 @@ Toolkit v0.1.12 passed 18 native B42.21 VHS multiplayer checks per English/Russi
 
 ## Vehicle mechanics
 
-Right-click a removable part in the vehicle mechanics window and select **Uninstall to ground** (**Снять на землю** in Russian). The part is left at your character's feet when removal succeeds, including light bulbs and heavy parts; there is no weight threshold. Tools, skills, work duration and the chance of damaging a part remain native. The original **Uninstall** action keeps its usual inventory destination and its fallback to the ground when the inventory has no room. Disable **Uninstall vehicle parts to ground** in Mod Options to hide the extra command; already queued actions keep their chosen destination.
+Right-click a removable part in the vehicle mechanics window and select **Uninstall to ground**. The part is left at your character's feet when removal succeeds, including light bulbs and heavy parts; there is no weight threshold. Tools, skills, work duration and the chance of damaging a part remain native. The original **Uninstall** action keeps its usual inventory destination and its fallback to the ground when the inventory has no room. Disable **Uninstall vehicle parts to ground** in Mod Options to hide the extra command; already queued actions keep their chosen destination.
 
 In multiplayer, install Toolkit on the server and every client. No additional mod or Java patch is required for this action.
 
@@ -121,7 +146,7 @@ python3 -m venv .venv
 .venv/bin/python -m pip install lupa
 .venv/bin/python tools/run_tests.py
 python3 tools/package_mod.py --check
-python3 tools/package_mod.py
+python3 tools/package_mod.py --mod PZSurvivorWishlist --check
 ```
 
 The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`. VHS menu, sorting, drop validation and live toggle checks run by default; add `--tv-source /path/to/RWMMergedTV.lua --native-radio-root /path/to/media/lua/client` to also exercise the native media actions and drag parser.
@@ -130,7 +155,9 @@ Independent medicine checks can use the installed framework with `--medicine-fra
 
 Vehicle ground-placement regressions run by default. Add `--native-uninstall /path/to/media/lua/shared/Vehicles/TimedActions/ISUninstallVehiclePart.lua` to exercise the installed game's actual removal completion, including failure, callbacks and its existing ground fallback.
 
-The optional package command writes `dist/PZSurvivorToolkit.zip` for local use. Generated archives are excluded from Git; installation only requires the source `PZSurvivorToolkit` folder.
+Action queue checks require `--native-action-root /path/to/media/lua`. Wishlist crafting checks can additionally inspect native menu callbacks and installed adapters with `--wishlist-game-root /path/to/game/Java-directory --wishlist-workshop-root /path/to/steamapps/workshop/content/108600`.
+
+For an optional local archive, run `python3 tools/package_mod.py` or add `--mod PZSurvivorWishlist`. Output goes to `dist/<mod>.zip` and is excluded from Git. Installation only requires the corresponding source mod folder; no archive is needed.
 
 To run the same checks against your installed game's native Mod Options implementation:
 

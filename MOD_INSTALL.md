@@ -1,70 +1,82 @@
-# Установка нашего набора модов
+# Install the selected mod set
 
-Для Steam-версии Project Zomboid B42.21; версии сервера и игроков должны совпадать. Текущий набор: **39 Mod ID / 37 Workshop ID**, Toolkit **v0.1.20**. Из выбранного набора удалены `MedicineMoodlesB42`, `TakeAnyAmount` и `TVRadioReinventedFix4220`: их нужные функции теперь выполняет Toolkit. Moodle Framework и основной TV & Radio ReInvented остаются. Новую версию устанавливайте одинаково серверу и всем игрокам; результаты проверок и ограничения приведены в [README](README.md).
+For the Steam edition of Project Zomboid B42.21. The server and all players must use the same game build and identical local mod versions.
 
-## Сервер
+The checked-in [server INI](SurvivorQoL-selected.ini) selects **39 Mod IDs / 37 Workshop items**, including local **Toolkit v0.1.21**. It excludes `MedicineMoodlesB42`, `TakeAnyAmount` and `TVRadioReinventedFix4220`; Toolkit supplies their replacement features. Keep Moodle Framework and the main TV & Radio ReInvented mod. **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.2** are separate optional local mods, not enabled by that INI. See [README](README.md) for features and verification limits.
 
-1. Остановите сервер. Для существующего сервера сохраните копию его INI.
-2. Возьмите [SurvivorQoL-selected.ini](SurvivorQoL-selected.ini). Для нового сервера положите его в папку `Zomboid/Server`. Для существующего перенесите из него только строки `Mods=` и `WorkshopItems=` в INI своего профиля.
-3. Сохраните порядок `Mods=`: **ZombieBuddy первым**, библиотеки перед зависимыми модами, основные Neat-моды перед XP-аддонами, Eat Smart перед Drink Smart, Moodle Framework и CleanUI перед Toolkit, Toolkit перед Container Capacity Indicator, MP Fast Forward и Better Containers, Realistic Dashboard перед Navigator. `organizedCategories_core` загружайте последним. Всё это уже выставлено в нашем INI; варианты Neat Building UI Only и Eat Smart Integrated уже выбраны.
-4. Установите локальный Toolkit по инструкции ниже. Одну и ту же версию папки мода передайте всем игрокам.
-5. Запустите нужный профиль: в **Host** выберите `SurvivorQoL-selected`, либо запустите выделенный сервер с `-servername SurvivorQoL-selected`. Если обновляли существующий профиль, используйте его имя. Сервер скачает Workshop-моды и зависимости из `WorkshopItems=`; подписываться на каждый вручную не нужно.
+## Server
 
-Для нашего Peek a View выделенному серверу Java-загрузчик ZombieBuddy не нужен: оба мода должны быть в INI, а загрузчик устанавливают игроки. **Владелец Host выполняет также все клиентские шаги.** Это соответствует [инструкции автора Peek a View](https://steamcommunity.com/workshop/filedetails/?id=3710281407).
+1. Stop the server. Back up an existing server's INI before changing it.
+2. Download [SurvivorQoL-selected.ini](SurvivorQoL-selected.ini). For a new profile, put it in `Zomboid/Server`. For an existing profile, copy only its `Mods=` and `WorkshopItems=` lines into your profile's INI.
+3. Preserve the `Mods=` order: **ZombieBuddy first**, libraries before dependent mods, base Neat mods before their XP add-ons, Eat Smart before Drink Smart, Moodle Framework and CleanUI before Toolkit, Toolkit before Container Capacity Indicator, MP Fast Forward and Better Containers, and Realistic Dashboard before Navigator. Load `organizedCategories_core` last. The supplied INI already has this order, Neat Building UI Only and Eat Smart Integrated.
+4. Install the local Toolkit folder using the steps below. Give every player the same version.
+5. Start the profile: choose `SurvivorQoL-selected` in **Host**, or start a dedicated server with `-servername SurvivorQoL-selected`. Use your existing profile name if you updated it. The server downloads the Workshop items listed in `WorkshopItems=`; you do not need to subscribe to each one manually.
 
-INI не переносит песочницу и клавиши. Для переноса прежней песочницы скопируйте также `<имя-профиля>_SandboxVars.lua` с тем же именем профиля.
+For Peek a View, a dedicated server does not need the ZombieBuddy Java loader: keep both mods in the INI and install the loader on clients. **The Host owner must also complete every client step.** See the [Peek a View author's instructions](https://steamcommunity.com/workshop/filedetails/?id=3710281407). The optional Java VHS fix has a separate server-loader requirement, described below.
 
-## Клиент
+The INI does not transfer sandbox settings or keybindings. To move existing sandbox settings, also copy `<profile-name>_SandboxVars.lua` using the same profile name. The supplied INI sets `SleepAllowed=true` and `SleepNeeded=false`: sleep is allowed but not required. When copying only the mod lists, change sleep settings separately if you want them.
 
-1. Закройте игру. Подпишитесь заранее только на [ZombieBuddy](https://steamcommunity.com/sharedfiles/filedetails/?id=3619862853) и дождитесь загрузки Steam: его файлы нужны для отдельной настройки.
-2. Один раз установите Java-загрузчик ZombieBuddy по шагам ниже.
-3. Установите полученный от владельца сервера Toolkit по инструкции ниже.
-4. Запустите игру и подключитесь к серверу. В запросе Workshop нажмите **Install / Установить**: игра скачает весь требуемый набор и включит серверные моды. Вручную подписываться на остальные моды и выставлять их порядок не требуется. Когда ZombieBuddy запросит разрешение для JAR **PeekAView**, разрешите его загрузку; решение можно сохранить.
-5. В **Настройки > Моды > PZ Survivor Toolkit** функции включаются отдельно: подсветка, фильтры, перенос количества, массовые действия и снятие деталей на землю. Разделы ТВ и Navigator видны только с соответствующими модами; лекарственные индикаторы требуют Moodle Framework. Шесть лекарственных и два травяных индикатора имеют отдельные переключатели. При включённом старом Medicine Moodles Toolkit скрывает свой раздел и не создаёт дубликаты; при Take Any Amount скрывает свой перенос количества. Настройки сохраняются у каждого игрока и применяются без перезапуска.
-6. В настройках клавиш задайте: Toolkit **F8**, Peek a View **F9**, Better Containers Proximity Lock **F10**, Proximity Toggle **F11**, Corpse Only **F12**. MP Fast Forward оставьте **Numpad 0–4**. В Better Containers выключите **Advanced Display Categories**; категории задаёт organizedCategories. Включите **Nested Containers Player/Loot**, сохранив штатные MP-ограничения. Эти настройки каждый игрок делает у себя, INI их не передаёт.
+## Client
 
-## ZombieBuddy: разовая настройка клиента
+1. Close the game. Subscribe to [ZombieBuddy](https://steamcommunity.com/sharedfiles/filedetails/?id=3619862853) first and wait for Steam to download it; its files are needed for the separate loader setup.
+2. Complete the one-time ZombieBuddy setup below.
+3. Install the same local Toolkit folder used by the server.
+4. Start the game and join the server. Select **Install** at the Workshop prompt: the game downloads the required set and enables the server's mods. You do not need to subscribe to the remaining mods individually or set their load order yourself. When ZombieBuddy asks to load the **PeekAView** JAR, approve it; you can save that decision.
+5. Open **Options > Mods > PZ Survivor Toolkit** to configure individual features. This includes ground highlights, inventory filters, quantity transfers, bulk actions, vehicle-part removal to the ground, context-menu grouping and the action queue. TV and Navigator settings appear only with their respective mods. Medicine indicators require Moodle Framework; two grouped switches control the six medicine indicators and the two herb indicators. The old Medicine Moodles and Take Any Amount mods suppress Toolkit's corresponding replacements to avoid duplicates. Settings are local to each player and apply without restarting.
+6. Set the selected-set shortcuts: Toolkit highlight **F8**, Peek a View **F9**, Better Containers Proximity Lock **F10**, Proximity Toggle **F11**, Corpse Only **F12**. Keep MP Fast Forward on **Numpad 0-4**. Disable Better Containers **Advanced Display Categories** because organizedCategories supplies categories. Enable **Nested Containers Player/Loot**, keeping its multiplayer restrictions. Each player applies these settings locally; the INI does not distribute them.
 
-- **Windows:** скачайте официальный [ZombieBuddyInstaller.exe](https://github.com/zed-0xff/ZombieBuddy/releases/tag/windows_installer), выберите **Install or update ZombieBuddy**, затем **Both** для обычного и альтернативного запуска. Проверьте предложенные изменения и примените их.
-- **macOS / Linux:** скопируйте `ZombieBuddy.jar` из `steamapps/workshop/content/108600/3619862853/mods/ZombieBuddy/libs/` в Java-папку игры. На macOS это `Project Zomboid.app/Contents/Java/` внутри установки игры; на Linux обычно `ProjectZomboid/projectzomboid/`. В Steam откройте свойства игры и добавьте параметры запуска `-javaagent:ZombieBuddy.jar --`. Последние два дефиса обязательны. Точные пути и варианты запуска приведены в [инструкции автора](https://github.com/zed-0xff/ZombieBuddy/blob/master/doc/Installation.md).
+## ZombieBuddy: one-time client setup
 
-После запуска проверьте надпись **ZombieBuddy … loaded** в верхнем левом углу. Одна Workshop-подписка загрузчик не устанавливает.
+- **Windows:** download the official [ZombieBuddyInstaller.exe](https://github.com/zed-0xff/ZombieBuddy/releases/tag/windows_installer), choose **Install or update ZombieBuddy**, then **Both** for normal and alternate launches. Review and apply the proposed changes.
+- **macOS / Linux:** copy `ZombieBuddy.jar` from `steamapps/workshop/content/108600/3619862853/mods/ZombieBuddy/libs/` into the game's Java directory. On macOS this is `Project Zomboid.app/Contents/Java/` inside the game installation; on Linux it is usually `ProjectZomboid/projectzomboid/`. Open the game's Steam properties and add `-javaagent:ZombieBuddy.jar --` to the launch options. The final two hyphens are required. See the [author's installation guide](https://github.com/zed-0xff/ZombieBuddy/blob/master/doc/Installation.md) for exact paths and launch variants.
 
-## Наш локальный Toolkit: серверу и каждому игроку
+After launching, check for **ZombieBuddy ... loaded** in the upper-left corner. A Workshop subscription alone does not install the loader.
 
-1. Склонируйте или скачайте [репозиторий](https://github.com/AlexRedby/pz-survivor-toolkit). Используйте одну и ту же версию папки `PZSurvivorToolkit` для всех участников.
-2. При закрытой игре скопируйте папку **PZSurvivorToolkit целиком** в `Zomboid/mods`. Сохраните подпапки `common` и `42`; не допускайте двойной вложенности `PZSurvivorToolkit/PZSurvivorToolkit`.
-3. Проверьте, что существует файл `Zomboid/mods/PZSurvivorToolkit/42/mod.info`. Mod ID `PZSurvivorToolkit` уже включён в серверный INI.
+## Local Toolkit: server and every player
 
-| Где | Папка Zomboid |
+1. Clone or download the [repository](https://github.com/AlexRedby/pz-survivor-toolkit). Use the same `PZSurvivorToolkit` folder version for everyone.
+2. With the game closed, copy the **entire PZSurvivorToolkit folder** into `Zomboid/mods`. Keep the `common` and `42` subfolders. Avoid double nesting such as `PZSurvivorToolkit/PZSurvivorToolkit`.
+3. Verify that `Zomboid/mods/PZSurvivorToolkit/42/mod.info` exists. Mod ID `PZSurvivorToolkit` is already enabled in the supplied server INI.
+
+| Platform | Zomboid directory |
 |---|---|
 | Windows | `%USERPROFILE%\Zomboid` |
 | macOS / Linux | `~/Zomboid` |
-| Выделенный сервер | `Zomboid` в домашней папке пользователя, запускающего сервер; при `-cachedir` используйте указанную папку |
+| Dedicated server | `Zomboid` in the home directory of the account running the server; use the specified directory when launching with `-cachedir` |
 
-Toolkit пока не опубликован в Workshop и при подключении автоматически не скачивается. Старую локальную копию заменяйте целиком при закрытой игре, одинаково на сервере и клиентах. Старые локальные копии **Workshop-модов** из `Zomboid/mods` уберите из этой папки, если переходите на загрузку через Steam, чтобы они не перекрывали загруженные версии.
+Toolkit has no Workshop item and does not download automatically when joining. Replace its entire local folder with the game closed, using identical files on the server and clients. If switching **Workshop mods** from local copies to Steam downloads, move their old local folders out of `Zomboid/mods` so they do not override the downloaded versions.
 
-## Обновление набора
+## Optional Survivor Wishlist
 
-1. Остановите сервер и закройте игры клиентов. Сохраните резервную копию мира и заменяемых локальных папок вне `Zomboid/mods`.
-2. При переходе на v0.1.20 обновите строки `Mods=` и `WorkshopItems=`: три заменённых мода должны быть выключены. Старые файлы Workshop можно оставить на диске. Для Toolkit возьмите одну версию из репозитория и замените всю папку на сервере и клиентах. Версия указана в строке `modversion=` файла `42/mod.info`.
-3. Для Workshop-модов используйте один способ установки: Steam либо полные локальные копии. При локальной установке передайте одинаковые обновлённые папки серверу и клиентам; INI сам их не обновляет.
-4. Запустите сервер и подключите клиентов. При несовпадении версий сравните локальные папки и обновления Workshop; сохраняйте `DoLuaChecksum=true`.
+1. With the game and server stopped, copy the repository's **PZSurvivorWishlist** folder into `Zomboid/mods` on the server and every client, preserving `common` and `42`.
+2. Add `PZSurvivorWishlist` to the server's `Mods=` after the crafting/UI mods and before the final `organizedCategories_core` entry. It has no Workshop ID; do not add it to `WorkshopItems=`. For single-player, enable **Survivor Wishlist** in Mods for the save.
+3. Open it with **K** or the sidebar **List** button. Add items from the searchable catalog, inventory context menu or crafting controls. Under **Sharing**, grant editing to named server usernames, your faction, or both. Every authorized member edits the same list; only its owner changes access.
+4. Set desired quantities and mark goals completed manually. **Carried by you** counts your own inventory and bags, not the whole team's supplies. Configure row highlights, visible ground-item highlights, crafting controls, colour and shortcut under **Options > Mods > Survivor Wishlist**.
+5. Back up `Zomboid/Lua/PZSurvivorWishlist/` together with the world. Lists are stored separately from the world under an encoded save path; preserve that save path when restoring the backup.
 
-## Отдельный экспериментальный Toolkit Java Patches
+Wishlist is independent of Toolkit and does not need Shopping List or WANTED. It highlights wanted item rows in opened inventories and visible loose items on the ground; it does not reveal container contents. See [Wishlist features and test limits](README.md#survivor-wishlist).
 
-Исходники Java-патча находятся в [JavaPatches](JavaPatches/README.md). Его инструкция описывает сборку, установку ZombieBuddy, включение в Host и проверку загрузки. Toolkit Java Patches устанавливается и включается отдельно от Toolkit; в выбранный INI он автоматически не добавлен. Участникам нужна одна и та же собранная папка мода. Патч пока не подтверждён как исправление длительного рассогласования машин.
+## Update the set
 
-Mod ID — `PZToolkitJavaPatches`.
+1. Stop the server and close all clients. Back up the world and the local mod folders being replaced outside `Zomboid/mods`. Include Wishlist's separate data directory if you use it.
+2. Update `Mods=` and `WorkshopItems=` from the supplied INI, then reapply any deliberately enabled optional local mods. Keep `MedicineMoodlesB42`, `TakeAnyAmount` and `TVRadioReinventedFix4220` disabled; Toolkit has replaced their required features since v0.1.20. Their Workshop files may remain on disk. Replace the whole Toolkit folder on the server and clients with one matching repository version. Its version is in `42/mod.info` under `modversion=`.
+3. Use one installation method per Workshop mod: Steam or a complete local copy. For local installation, distribute identical updated folders to the server and clients; the INI does not update those copies.
+4. Start the server and join with the clients. For version mismatches, compare local mod folders and Workshop updates; keep `DoLuaChecksum=true`.
+
+## Optional experimental Toolkit Java Patches
+
+The [JavaPatches guide](JavaPatches/README.md) covers building, ZombieBuddy setup, Host activation and loader verification. Install and enable this mod separately from Toolkit. It is not in the selected INI. All participants need the same built mod folder. This experimental patch has not been established as a fix for long vehicle desynchronization.
+
+Mod ID: `PZToolkitJavaPatches`. For the VHS restart fix, the loader must also run in the **server process**; client-only ZombieBuddy setup is insufficient.
 
 ## TV & Radio ReInvented
 
-В INI включён основной `TVRadio_ReInvented`. Toolkit v0.1.20 исправляет распознавание устройств на EN/RU и отсутствующее видео; отдельный `TVRadioReinventedFix4220` больше не включайте.
+The INI includes the main `TVRadio_ReInvented` mod. Toolkit fixes device recognition on EN/RU clients and the native macOS video path; do not enable the separate `TVRadioReinventedFix4220`.
 
-1. С Toolkit v0.1.8 нажмите на пустой VHS-слот и выберите кассету из своего инвентаря, сумки или доступного контейнера рядом, либо перетащите её на слот. Для запуска записи нажмите Play. Щелчок по вставленной кассете извлекает её без дополнительного меню. Полностью просмотренные кассеты текущего персонажа отмечены галочкой, как в инвентаре. Незавершённые записи не имеют отметки и идут первыми. В **Настройки > Моды > PZ Survivor Toolkit** можно отключить **Удобное управление VHS** и вернуть исходное меню. Клики по инвентарю и вне окна оставляют его открытым; закрывайте крестиком. Этот режим отдельно переключает настройка **Не закрывать окна ТВ и радио при кликах снаружи**. Настройки отдельные у каждого игрока и доступны только при активном TV & Radio ReInvented.
-2. На native macOS Toolkit v0.1.4 сам исправляет путь к видео, используя фактическую папку активного TV-мода. Отдельная ссылка `Project Zomboid.app/workshop` больше не нужна. Установите TV-мод целиком: файлы `.bik` должны быть в его `42/media/videos/`. Подходит полная локальная копия или установка Workshop; одних Lua-файлов недостаточно.
-3. На native Linux/SteamOS прежний внешний фикс рекомендовал ссылку `steamapps/common/workshop` на `steamapps/workshop`; точные пути приведены [на странице фикса](https://steamcommunity.com/sharedfiles/filedetails/?id=3796050675). Windows/Proton в этой проверке не запускались.
+1. Click the empty VHS slot and choose a tape from your inventory, bag or a reachable nearby container, or drag a tape onto the slot. Press Play to start it. Clicking the inserted tape ejects it directly. Fully watched tapes for the current character have the inventory checkmark; unfinished tapes are unmarked and appear first. Disable **Improve VHS controls** under **Options > Mods > PZ Survivor Toolkit** to restore the original menu. Inventory and outside clicks keep the window open; use its X button to close it. **Keep TV/radio windows open** controls that behavior separately. Both settings are per-player and appear only while TV & Radio ReInvented is active.
+2. On native macOS, Toolkit resolves video files from the active TV mod's actual directory. A separate `Project Zomboid.app/workshop` symlink is unnecessary. Install the complete TV mod, including `.bik` files in `42/media/videos/`; either a full local copy or Workshop installation works. Lua files alone are insufficient.
+3. On native Linux/SteamOS, the previous external fix recommended linking `steamapps/common/workshop` to `steamapps/workshop`; see its [path instructions](https://steamcommunity.com/sharedfiles/filedetails/?id=3796050675). Toolkit's automatic video-path fix targets macOS. Linux/SteamOS and Windows/Proton video playback were not verified in that scenario.
 
-## Вложенные сумки в MP
+## Nested bags in multiplayer
 
-Сумки персонажа и обычные сумки на полу поддерживаются. Чтобы взять содержимое сумки внутри ящика, сначала возьмите всю сумку в свой инвентарь, откройте её и затем верните обратно. Полное снятие ограничения BC не исправляет сетевой адрес таких контейнеров; в рабочей установке защита сохранена.
+Carried bags and ordinary bags on the ground are supported. To access a bag inside a crate, first take the whole bag into your inventory, open it, then put it back. Removing Better Containers' restriction does not fix the network address of such nested containers; the protection remains enabled.
