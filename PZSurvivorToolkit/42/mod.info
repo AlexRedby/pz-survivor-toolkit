@@ -1,7 +1,7 @@
 name=PZ Survivor Toolkit
 id=PZSurvivorToolkit
 author=AlexRedby
-modversion=0.1.20
+modversion=0.1.21
 category=features
 icon=icon.png
 poster=icon.png
@@ -19,6 +19,7 @@ description=Inventory: Optional Grab/Put amount with one whole-number budget acr
 description=Bulk dismantle: Select watches or other supported electronics and choose Dismantle selected from the native dismantling submenu. Processes only selected instances using native recipes, tools, time and XP. Skips favourites and worn/held items. Can be disabled in Mod Options.<LINE><LINE>
 description=Medicine indicators: Eight independent MoodleFramework indicators, with authoritative multiplayer readings and optional black sage/common mallow effects. Lemongrass uses a labeled cooldown upper bound. Separate switches appear only with MoodleFramework and without MedicineMoodlesB42.<LINE><LINE>
 description=Navigator: Optional original textured monitor housing tinted to the dashboard, flush docking and adaptive map size for vanilla and all Realistic Dashboard driver styles. Keeps native routes, controls and dragging; disable in Mod Options to restore the original UI.<LINE><LINE>
+description=Context menus: Automatically groups known actions across native inventory, world, vehicle and health menus. Short menus stay compact and unknown mod commands remain visible. Optional client-local editor supports group overrides, hiding and reset. Disable in Mod Options to restore the original menus. Hidden when Context Menu Organizer or its World variant is active.<LINE><LINE>
 description=Compatibility: Build 42.19 or newer within Build 42. No additional mod dependencies. Auto-drink tested with two local multiplayer clients on B42.21. Split-screen has not been verified.<LINE><LINE>
 description=Source: https://github.com/AlexRedby/pz-survivor-toolkit
 versionMin=42.19

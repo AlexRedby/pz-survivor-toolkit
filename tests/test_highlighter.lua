@@ -77,6 +77,9 @@ local function setup(savedFile, mediaActive, medicineActive, navigatorActive, ex
                 function PZAPI.ModOptions:create(id)
                     local options = { dict = {}, data = {} }
                     function options:addTitle(text) self.data[#self.data + 1] = {type = "title", name = text} end
+                    function options:addButton(optionID, _, _, callback)
+                        self.dict[optionID] = { onclick = callback }
+                    end
                     local function add(optionID, value)
                         local option = { value = value }
                         function option:getValue() return self.value end
@@ -633,6 +636,7 @@ if NativeModOptionsSource then
         w:apply("UninstallToGround", false)
         equal(w.settings.actionQueue(), false)
         w:apply("ActionQueue", true)
+        w:apply("ContextMenus", false)
         w.settings.toggle()
         local reloaded = setup(w.file, true)
         equal(reloaded.settings.isEnabled(), false)
@@ -650,6 +654,7 @@ if NativeModOptionsSource then
         equal(reloaded.settings.quantityTransfers(), false)
         equal(reloaded.settings.uninstallToGround(), false)
         equal(reloaded.settings.actionQueue(), true)
+        equal(reloaded.settings.contextMenus(), false)
     end)
 end
 
@@ -706,6 +711,20 @@ test("legacy quantity and medicine mods suppress duplicate settings", function()
     equal(w.options.dict.MedicineHerbs, nil)
     equal(w.settings.medicineMoodleSync(), false)
     equal(w.settings.medicineHerbs(), false)
+end)
+
+test("context menu defaults and editor are suppressed by external organizers", function()
+    local w = setup()
+    equal(w.settings.contextMenus(), true)
+    assert(w.options.dict.ContextMenuEditor.onclick)
+    w:apply("ContextMenus", false)
+    equal(w.settings.contextMenus(), false)
+    for _, id in ipairs({"ContextMenuOrganizer", "ContextMenuOrganizerWorld"}) do
+        local external = setup(nil, false, false, false, {[id] = true})
+        equal(external.options.dict.ContextMenus, nil)
+        equal(external.options.dict.ContextMenuEditor, nil)
+        equal(external.settings.contextMenus(), false)
+    end
 end)
 
 test("medicine options are conditional, independently toggleable and persisted", function()

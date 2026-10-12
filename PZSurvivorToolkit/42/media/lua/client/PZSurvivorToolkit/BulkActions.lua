@@ -65,6 +65,7 @@ function Actions.submenu(menu, option, oneLabel)
         for _, key in ipairs({"iconTexture", "itemForTexture", "color", "toolTip", "notAvailable"}) do
             single[key] = option[key]
         end
+        option.toolkitOriginalOnSelect = option.onSelect
         option.onSelect = nil
         menu:addSubMenu(option, submenu)
     end
