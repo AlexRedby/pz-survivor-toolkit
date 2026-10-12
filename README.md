@@ -64,6 +64,8 @@ Toolkit v0.1.22 passed five native B42.21 clothing-batch checks per English/Russ
 
 Toolkit v0.1.23 passed 26 native B42.21 context-menu checks per English/Russian client with all 41 selected Mod IDs loaded. Checks covered exact duplicate filtering, distinct targets and mod metadata, one batch command across repeated native recipe anchors, native menu rendering, two sets of 60 reopen cycles, nested ancestry, dynamic rebuilds, editor/settings rollback and metatable-backed mod entries. The server confirmed a native drop moved exactly one selected item and preserved the spare. Physical input, Windows Host and long sessions remain unverified.
 
+Toolkit v0.1.24 passed 32 native B42.21 context-menu checks per English/Russian client with all 41 selected Mod IDs and Lua checksums enabled. Added checks covered real carried-item and floor-loot priorities, ordering with native world/vehicle callbacks, stable ties, selection identity and empty-panel behavior. The earlier cleanup and server item-conservation checks also passed. This was an isolated macOS localhost run with programmatic UI checks; physical input, Windows Host and long sessions remain unverified.
+
 ## Action queue
 
 Enable **Options > Mods > PZ Survivor Toolkit > Show action queue**. While actions are queued, the movable and resizable **Actions** window shows the existing game queue, with item/action icons, current progress and mouse-wheel scrolling. It has no five-action limit and does not create a separate planning queue.

@@ -1,10 +1,9 @@
 local client = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/'
 local loaded, files, writes, enabled = {}, {}, 0, true
 PZSurvivorToolkit = { Settings = { contextMenus = function() return enabled end } }
-local gameStart, worldFill, emptyFill
+local gameStart, worldFill
 Events = { OnGameExit = { Add = function() end },
     OnGameStart = {Add=function(fn) gameStart=fn end},
-    OnPreFillInventoryContextMenuNoItems = {Add=function(fn) emptyFill=fn end},
     OnPreFillWorldObjectContextMenu = {Add=function(fn) worldFill=fn end} }
 function getText(key) return key end
 function getFileReader(name)
@@ -306,11 +305,18 @@ menu:prerender();same(portions,{all,half,quarter})
 ISInventoryPaneContextMenu.createMenu=function(_,carried)
  local m=ISContextMenu:new(nil);m.wasCarried=carried;return m
 end
+local emptyPanel=false
+ISInventoryPaneContextMenu.createMenuNoItems=function(_,isLoot)
+ if emptyPanel then return nil end
+ return ISContextMenu:new(nil)
+end
 gameStart();local wrapper=ISInventoryPaneContextMenu.createMenu;gameStart();assert(wrapper==ISInventoryPaneContextMenu.createMenu)
 local owned=wrapper(0,true);local loot=wrapper(0,false)
 assert(owned.toolkitContextKind=='inventory' and loot.toolkitContextKind=='loot')
 owned:clear();assert(owned.toolkitContextKind==nil,'pooled roots must not inherit old menu context')
-emptyFill(0,owned,true);assert(owned.toolkitContextKind=='loot')
-emptyFill(0,owned,false);assert(owned.toolkitContextKind=='inventory')
+assert(ISInventoryPaneContextMenu.createMenuNoItems(0,true).toolkitContextKind=='loot')
+assert(ISInventoryPaneContextMenu.createMenuNoItems(0,false).toolkitContextKind=='inventory')
+emptyPanel=true
+assert(ISInventoryPaneContextMenu.createMenuNoItems(0,true)==nil,'native empty panel stays absent')
 worldFill(0,owned);assert(owned.toolkitContextKind=='world')
 print('PASS contextual priorities, stable ties, title barriers, selection identity, native selectors, manual placement and pooled context markers')

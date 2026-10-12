@@ -355,21 +355,25 @@ for _, name in ipairs({"addOption", "addOptionOnTop", "insertOptionBefore", "ins
     end
 end
 
+local function markContext(menu, kind)
+    if type(menu) == "table" and menu.options then
+        restore(menu)
+        menu.toolkitContextKind = kind
+    end
+    return menu
+end
+
 Events.OnGameStart.Add(function()
     if ISInventoryPaneContextMenu.toolkitContextOrder then return end
     ISInventoryPaneContextMenu.toolkitContextOrder = true
-    local createMenu = ISInventoryPaneContextMenu.createMenu
+    local createMenu, noItems = ISInventoryPaneContextMenu.createMenu, ISInventoryPaneContextMenu.createMenuNoItems
     ISInventoryPaneContextMenu.createMenu = function(player, inInventory, ...)
-        local menu = createMenu(player, inInventory, ...)
-        if type(menu) == "table" and menu.options then
-            restore(menu)
-            menu.toolkitContextKind = inInventory and "inventory" or "loot"
-        end
-        return menu
+        return markContext(createMenu(player, inInventory, ...), inInventory and "inventory" or "loot")
     end
-end)
-Events.OnPreFillInventoryContextMenuNoItems.Add(function(_, menu, isLoot)
-    menu.toolkitContextKind = isLoot and "loot" or "inventory"
+    -- B42 triggers the no-items event without registering an Events object for subscribers.
+    ISInventoryPaneContextMenu.createMenuNoItems = function(player, isLoot, ...)
+        return markContext(noItems(player, isLoot, ...), isLoot and "loot" or "inventory")
+    end
 end)
 Events.OnPreFillWorldObjectContextMenu.Add(function(_, menu)
     menu.toolkitContextKind = "world"
