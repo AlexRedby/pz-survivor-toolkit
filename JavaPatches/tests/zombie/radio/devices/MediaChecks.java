@@ -178,15 +178,15 @@ public final class MediaChecks {
         ordinaryPlayback(media);
         invalidStarts(media);
         standaloneGuard(media);
-        me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pznetworkfix", MediaChecks.class.getClassLoader());
-        net.alexredby.pznetworkfix.Main.main(new String[0]);
-        require(net.alexredby.pznetworkfix.Main.MEDIA_SUPPORTED, "unsupported native media engine");
+        me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", MediaChecks.class.getClassLoader());
+        net.alexredby.pztoolkitjavapatches.Main.main(new String[0]);
+        require(net.alexredby.pztoolkitjavapatches.Main.MEDIA_SUPPORTED, "unsupported native media engine");
         restart(media, true); // Real woven StartPlayMedia; no test clears the stop flag.
         ordinaryPlayback(media);
         invalidStarts(media);
         clientGuard(media);
         standaloneGuard(media);
-        require(!net.alexredby.pznetworkfix.Main.supports("zombie/radio/devices/DeviceData.class", "unknown"),
+        require(!net.alexredby.pztoolkitjavapatches.Main.supports("zombie/radio/devices/DeviceData.class", "unknown"),
             "unknown engine fingerprint accepted");
         System.out.println("MEDIA_CHECKS_PASS (native restart race, woven restart, line progression, duplicate start, stop, invalid start, client/standalone guards, automatic end)");
     }

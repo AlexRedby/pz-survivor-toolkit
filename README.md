@@ -86,11 +86,11 @@ In multiplayer, install Toolkit on the server and every client. No additional mo
 
 Toolkit v0.1.13 passed 13 native B42.21 checks per English/Russian client and six server checks: light/heavy parts (test weights 0.1 and 1000), radio, hood/tool actions, ordinary inventory removal and cancellation. Every successful ground removal left exactly one item visible to both clients, including on tiles already holding more than 50 weight. The isolated test used instant timed actions and only Toolkit plus its test helper. Windows Host mode, modded vehicles and physical input remain unverified.
 
-## Separate experimental Network Fix
+## Separate experimental Toolkit Java Patches
 
-[PZ Network Fix](NetworkFix/README.md) is an independent Java mod for B42.21. Its source, build script and tests live in `NetworkFix/`; installation requires a separate build and ZombieBuddy setup. It is enabled separately from Toolkit and is not included in the default selected mod set. See its guide for installation, supported fixes and multiplayer test limits.
+[Toolkit Java Patches](JavaPatches/README.md) is an independent Java mod for B42.21. Its source, build script and tests live in `JavaPatches/`; installation requires a separate build and ZombieBuddy setup. It is enabled separately from Toolkit and is not included in the default selected mod set. See its guide for installation, supported fixes and multiplayer test limits.
 
-Network Fix 0.1.1 also cancels the old server stop timer when restarting a VHS cassette. The original engine loses playback after rapid Stop/Play; the patched B42.21 server and two English/Russian clients passed eight checks each, including synchronized controls, cassette dialogue, 62.5 XP per character and normal completion. The Java loader must run in the server process. The Windows Host launcher still needs platform verification.
+The Java patches also cancel the old server stop timer when restarting a VHS cassette. The original engine loses playback after rapid Stop/Play; the patched B42.21 server and two English/Russian clients passed eight checks each, including synchronized controls, cassette dialogue, 62.5 XP per character and normal completion. The Java loader must run in the server process. The Windows Host launcher still needs platform verification.
 
 ## Development
 

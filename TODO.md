@@ -2,9 +2,9 @@
 
 ## TV playback follow-up
 
-- [ ] Verify `NetworkFix/start-host.ps1` on Windows Host with a custom Steam-library path: confirm server log `media=true`, rapid Stop/Play, cassette dialogue and XP. Check an existing ZombieBuddy JSON setup and a setup using only Steam launch options for duplicate-loader errors.
+- [ ] Verify `JavaPatches/start-host.ps1` on Windows Host with a custom Steam-library path: confirm server log `media=true`, rapid Stop/Play, cassette dialogue and XP. Check an existing ZombieBuddy JSON setup and a setup using only Steam launch options for duplicate-loader errors.
 
-## Network Fix follow-up
+## Toolkit Java Patches follow-up
 
 - [ ] Prioritize vehicle desync reproduction in ordinary Host mode: driver moves while host sees the car frozen for about a minute, host/passenger enters and exits at a stale position, and driver sometimes jumps between distant positions. Reported on the then-latest game without Jaysync/these sync or vehicle mods; exact episode build still unconfirmed.
 - [ ] Before adding another fix, distinguish driver physics not sent, server queue drops, consistency/anticheat rejection, authority mismatch, relevance filtering and remote interpolation. Inspect Host server logs for the native physics-drop warning; then add opt-in bounded vehicle tracing only for gaps existing logs cannot explain.

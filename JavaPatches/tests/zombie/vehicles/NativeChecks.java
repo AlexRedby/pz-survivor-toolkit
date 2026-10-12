@@ -62,11 +62,11 @@ public final class NativeChecks {
         WorldSimulation.instance.offsetY = 0;
         float[] baseline = run();
         if (!(baseline[0] > baseline[1])) throw new AssertionError("baseline did not reproduce backward step");
-        me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pznetworkfix", NativeChecks.class.getClassLoader());
-        net.alexredby.pznetworkfix.Main.main(new String[0]);
-        if (!net.alexredby.pznetworkfix.Main.ZOMBIE_SUPPORTED || !net.alexredby.pznetworkfix.Main.VEHICLE_SUPPORTED)
+        me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", NativeChecks.class.getClassLoader());
+        net.alexredby.pztoolkitjavapatches.Main.main(new String[0]);
+        if (!net.alexredby.pztoolkitjavapatches.Main.ZOMBIE_SUPPORTED || !net.alexredby.pztoolkitjavapatches.Main.VEHICLE_SUPPORTED)
             throw new AssertionError("unsupported native engine");
-        if (net.alexredby.pznetworkfix.Main.supports("zombie/vehicles/VehicleInterpolation.class", "unknown"))
+        if (net.alexredby.pztoolkitjavapatches.Main.supports("zombie/vehicles/VehicleInterpolation.class", "unknown"))
             throw new AssertionError("unknown engine fingerprint accepted");
         float[] patched = run(); // Actual woven helper prefix; no manual clearLast here.
         if (!(patched[0] <= patched[1])) throw new AssertionError("patch did not remove backward step");

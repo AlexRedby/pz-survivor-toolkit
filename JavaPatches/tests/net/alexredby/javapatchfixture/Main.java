@@ -1,4 +1,4 @@
-package net.alexredby.networkfixture;
+package net.alexredby.javapatchfixture;
 
 import se.krka.kahlua.integration.annotations.LuaMethod;
 import zombie.characters.IsoZombie;
@@ -8,9 +8,9 @@ import zombie.network.NetworkVariables;
 import zombie.network.packets.character.ZombiePacket;
 
 public final class Main {
-    @LuaMethod(name="networkFixProbe", global=true)
+    @LuaMethod(name="javaPatchesProbe", global=true)
     public static String probe() {
-        boolean patched = Boolean.getBoolean("pz.networkfix.expected");
+        boolean patched = Boolean.getBoolean("pz.javapatches.expected");
         IsoZombie z = new IsoZombie(IsoWorld.instance.currentCell);
         ZombiePacket packet = new ZombiePacket();
         packet.target = -1;
@@ -29,7 +29,7 @@ public final class Main {
         }
         return "packet850=" + (patched ? "0.85" : "850") + ", four values checked, owned unchanged, packet unchanged";
     }
-    @LuaMethod(name="networkFixObserve", global=true)
+    @LuaMethod(name="javaPatchesObserve", global=true)
     public static String observe() {
         var list = IsoWorld.instance.currentCell.getZombieList();
         int remote=0, owned=0;

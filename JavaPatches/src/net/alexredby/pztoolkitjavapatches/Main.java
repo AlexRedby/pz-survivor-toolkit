@@ -1,4 +1,4 @@
-package net.alexredby.pznetworkfix;
+package net.alexredby.pztoolkitjavapatches;
 
 import java.security.MessageDigest;
 import java.util.HexFormat;
@@ -25,13 +25,13 @@ public final class Main {
             return stream != null && expected.equals(HexFormat.of().formatHex(
                 MessageDigest.getInstance("SHA-256").digest(stream.readAllBytes())));
         } catch (Exception error) {
-            System.err.println("[PZNetworkFix] Disabled: cannot check " + resource + ": " + error);
+            System.err.println("[PZToolkitJavaPatches] Disabled: cannot check " + resource + ": " + error);
             return false;
         }
     }
 
     public static void main(String[] args) {
-        System.out.println("[PZNetworkFix] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
+        System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED);
     }
 
@@ -42,7 +42,7 @@ public final class Main {
             // A successful restart must cancel the old stop tail before it silently stops playback again.
             if (GameServer.server && Main.MEDIA_SUPPORTED && data.isPlayingMedia()
                 && !Accessor.trySet(data, "isStoppingMedia", false)) {
-                System.err.println("[PZNetworkFix] Cannot clear media stop state");
+                System.err.println("[PZToolkitJavaPatches] Cannot clear media stop state");
             }
         }
     }
