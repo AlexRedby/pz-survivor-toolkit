@@ -3,6 +3,7 @@ require "TimedActions/ISTimedActionQueue"
 require "TimedActions/ISBaseTimedAction"
 require "TimedActions/ISReadABook"
 require "PZSurvivorToolkit/ActionQueueOperations"
+require "PZSurvivorToolkit/ActionQueueLabels"
 
 local Toolkit = PZSurvivorToolkit
 local Queue = {}
@@ -184,23 +185,7 @@ ISTimedActionQueue.tick = function(queue)
     return tick(queue)
 end
 
-function Queue.label(action)
-    local title
-    if action.toolkitWorldDismantle or (action.Type == "ISMoveablesAction" and action.mode == "scrap") then
-        title = getText("ContextMenu_Disassemble")
-        local name = action.toolkitWorldName or (action.moveProps and action.moveProps.name)
-        if name then title = title .. ": " .. Translator.getMoveableDisplayName(name) end
-    end
-    if action.Type == "ISReadABook" then title = getText("ContextMenu_Read") end
-    if action.craftRecipe and instanceof(action.craftRecipe, "CraftRecipe") then
-        title = action.craftRecipe:getTranslationName()
-    end
-    if action.Type == "ISInventoryTransferAction" then title = getText("IGUI_MovingToContainer") end
-    title = title or tostring(action.Type or "?"):gsub("^IS", ""):gsub("(%l)(%u)", "%1 %2")
-    local item = action.item or action.gun or action.magazine or action.weapon
-    if item and instanceof(item, "InventoryItem") then title = title .. ": " .. item:getDisplayName() end
-    return title
-end
+Queue.label = Toolkit.ActionQueueLabels.label
 
 require "PZSurvivorToolkit/ActionQueueWorld"
 return Queue

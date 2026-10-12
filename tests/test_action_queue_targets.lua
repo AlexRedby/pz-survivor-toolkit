@@ -38,6 +38,7 @@ local player = {class = 'IsoPlayer', getPlayerNum = function() return 0 end,
     getInventory = function() return {containsTypeRecurse = function() return true end} end}
 getSpecificPlayer = function() return player end
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua'))()
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLabels.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local api, operations = PZSurvivorToolkit.ActionQueue, PZSurvivorToolkit.ActionQueueOperations
 local function target()

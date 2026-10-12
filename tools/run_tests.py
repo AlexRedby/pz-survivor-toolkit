@@ -2,6 +2,7 @@
 """Run Lua 5.1 behavioural checks with Lupa (a development dependency only)."""
 
 import argparse
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -77,11 +78,21 @@ def main() -> None:
         lua.globals().NativeDropBoxSource = (args.native_radio_root / "RadioCom/ISUIRadio/ISItemDropBox.lua").read_text(encoding="utf-8")
     lua.execute((ROOT / "tests/test_tv_controls.lua").read_text(encoding="utf-8"))
 
-    for name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_targets.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua"):
+    for name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua"):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
         if args.native_action_root:
             lua.globals().NativeActionRoot = str(args.native_action_root)
+        if name == "test_action_queue_labels.lua":
+            translations = {}
+            for language in ("EN", "RU"):
+                values = {}
+                if args.native_action_root:
+                    for filename in ("ContextMenu.json", "IG_UI.json"):
+                        values.update(json.loads((args.native_action_root / "shared/Translate" / language / filename).read_text(encoding="utf-8")))
+                values.update(json.loads((ROOT / "PZSurvivorToolkit/42/media/lua/shared/Translate" / language / "UI.json").read_text(encoding="utf-8")))
+                translations[language] = values
+            lua.globals().ActionQueueTranslations = lua.table_from(translations, recursive=True)
         if args.medicine_framework_source:
             lua.globals().NativeMedicineFrameworkSource = args.medicine_framework_source.read_text(encoding="utf-8")
         if args.mpff_source:

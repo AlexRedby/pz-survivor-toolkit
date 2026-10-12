@@ -110,5 +110,20 @@
     "UI_PZSurvivorToolkit_queue_move_shared_book": "Another copy of the same book shares reading progress. Keep it after the current read.",
     "UI_options_PZSurvivorToolkit_bulk_cut_clothing": "Cut selected clothing",
     "UI_options_PZSurvivorToolkit_bulk_cut_clothing_tooltip": "Adds batch cutting/ripping for selected cotton, denim and leather clothing. Skips favourites and worn/held items. Uses native tools, recipes, time and outputs.",
-    "UI_PZSurvivorToolkit_cut_clothing_selected": "Cut selected clothing (%1)"
+    "UI_PZSurvivorToolkit_cut_clothing_selected": "Cut selected clothing (%1)",
+    "UI_PZSurvivorToolkit_queue_action_transfer": "Move items",
+    "UI_PZSurvivorToolkit_queue_action_walk": "Walk to target",
+    "UI_PZSurvivorToolkit_queue_action_clothing": "Adjust clothing",
+    "UI_PZSurvivorToolkit_queue_action_craft": "Craft",
+    "UI_PZSurvivorToolkit_queue_action_rack": "Rack firearm",
+    "UI_PZSurvivorToolkit_queue_action_load_magazine": "Load magazine",
+    "UI_PZSurvivorToolkit_queue_action_power": "Toggle device power",
+    "UI_PZSurvivorToolkit_queue_action_channel": "Change channel",
+    "UI_PZSurvivorToolkit_queue_action_volume": "Change volume",
+    "UI_PZSurvivorToolkit_queue_action_playback": "Toggle playback",
+    "UI_PZSurvivorToolkit_queue_action_eject_media": "Eject media",
+    "UI_PZSurvivorToolkit_queue_action_insert_media": "Insert media",
+    "UI_PZSurvivorToolkit_queue_action_unknown": "Action: %1",
+    "UI_PZSurvivorToolkit_queue_mixed": "Multiple actions",
+    "UI_PZSurvivorToolkit_queue_steps": "%1 steps"
 }

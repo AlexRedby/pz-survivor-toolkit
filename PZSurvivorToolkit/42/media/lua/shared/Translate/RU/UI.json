@@ -110,5 +110,20 @@
     "UI_PZSurvivorToolkit_queue_move_shared_book": "У разных экземпляров этой книги общий прогресс чтения. Оставьте её после текущей книги.",
     "UI_options_PZSurvivorToolkit_bulk_cut_clothing": "Разрезать выделенную одежду",
     "UI_options_PZSurvivorToolkit_bulk_cut_clothing_tooltip": "Добавляет разрезание и разрыв выделенной хлопковой, джинсовой и кожаной одежды. Пропускает избранное, надетое и предметы в руках. Использует штатные инструменты, рецепты, время и результат.",
-    "UI_PZSurvivorToolkit_cut_clothing_selected": "Разрезать выделенную одежду (%1)"
+    "UI_PZSurvivorToolkit_cut_clothing_selected": "Разрезать выделенную одежду (%1)",
+    "UI_PZSurvivorToolkit_queue_action_transfer": "Переместить предметы",
+    "UI_PZSurvivorToolkit_queue_action_walk": "Подойти к цели",
+    "UI_PZSurvivorToolkit_queue_action_clothing": "Поправить одежду",
+    "UI_PZSurvivorToolkit_queue_action_craft": "Изготовить",
+    "UI_PZSurvivorToolkit_queue_action_rack": "Передёрнуть затвор",
+    "UI_PZSurvivorToolkit_queue_action_load_magazine": "Зарядить магазин",
+    "UI_PZSurvivorToolkit_queue_action_power": "Переключить питание устройства",
+    "UI_PZSurvivorToolkit_queue_action_channel": "Сменить канал",
+    "UI_PZSurvivorToolkit_queue_action_volume": "Изменить громкость",
+    "UI_PZSurvivorToolkit_queue_action_playback": "Переключить воспроизведение",
+    "UI_PZSurvivorToolkit_queue_action_eject_media": "Извлечь носитель",
+    "UI_PZSurvivorToolkit_queue_action_insert_media": "Вставить носитель",
+    "UI_PZSurvivorToolkit_queue_action_unknown": "Действие: %1",
+    "UI_PZSurvivorToolkit_queue_mixed": "Разные действия",
+    "UI_PZSurvivorToolkit_queue_steps": "Шагов: %1"
 }

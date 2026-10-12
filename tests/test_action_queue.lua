@@ -125,6 +125,7 @@ local function frame(p)
     end
     q:tick()
 end
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLabels.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local api = PZSurvivorToolkit.ActionQueue
 local p = player()
@@ -329,16 +330,20 @@ function widget:getMouseX() return self.mouseX or 0 end
 function widget:getMouseY() return self.mouseY or 0 end
 function widget:drawRect(...) self.drawnRects=self.drawnRects or {};self.drawnRects[#self.drawnRects+1]={...} end
 function widget:drawText(text) self.drawnTexts=self.drawnTexts or {};self.drawnTexts[#self.drawnTexts+1]=text end
+function widget:drawTextRight(text,x) self:drawText(text);self.rightText={text=text,x=x} end
 function widget:drawTextureScaledAspect(texture)
     assert(texture);self.lastTexture=texture;self.drawnTextures=self.drawnTextures or {};self.drawnTextures[#self.drawnTextures+1]=texture
 end
-function widget:setStencilRect() end
+function widget:setStencilRect(x,y,width,height)
+    self.clips=self.clips or {};self.clips[#self.clips+1]={x=x,width=width}
+end
 function widget:clearStencilRect() end
 function widget:addItem(text, item) self.items[#self.items+1]={item=item,index=#self.items+1,height=self.itemheight} end
 ISCollapsableWindow = widget:derive('ISCollapsableWindow')
 function ISCollapsableWindow:createChildren() self.closeButton=widget:new(); self.closeButtonTexture="close-icon" end
 UIFont = {Small=1}
-getTextManager = function() return {getFontHeight=function() return 14 end} end
+getTextManager = function() return {getFontHeight=function() return 14 end,
+    MeasureStringX=function(_,font,text) return #text end} end
 -- Use native variable-height row geometry; Java rendering remains a fixture double.
 ISPanelJoypad = widget
 load('client/ISUI/ISScrollingListBox.lua')
@@ -349,7 +354,7 @@ function ISScrollingListBox:onMouseUp() end
 function ISScrollingListBox:onMouseUpOutside() end
 function ISScrollingListBox:onMouseMove() self.mouseoverselected=self:rowAt(self:getMouseX(),self:getMouseY()) end
 getTexture=function(path) return path end
-getText=function(key,value) return key .. (value and '(' .. tostring(value) .. ')' or '') end
+getText=function(key,...) local args={...};for i,v in ipairs(args) do args[i]=tostring(v) end;return key .. (#args>0 and '('..table.concat(args,',')..')' or '') end
 getNumActivePlayers = function() return playerCount end
 getPlayerScreenLeft = function() return 0 end
 getPlayerScreenTop = function() return 0 end
@@ -400,6 +405,7 @@ ISTimedActionQueue.add(d)
 refresh();panel=ui[#ui];panel:update();list=panel.list
 local token=b.toolkitQueueOperation
 assert(#list.items==3 and list.items[2].header and list.items[2].item==b and list.items[2].last==3)
+assert(list.items[2].task=='ContextMenu_Read', 'heading remains separate from the first native action identity')
 assert(list.scrollHeight==list.itemheight*3+16, 'native scroll extent includes the taller operation header before restoring the scroll offset')
 click(2);assert(#q.queue==4 and #list.items==3, 'header must not cancel its first hidden action')
 list.drawnTextures={};list.doDrawItem(list,list:topOfItem(2),list.items[2],false)
@@ -443,6 +449,26 @@ assert(not list.pressedToggle and not list.items[2].header and panel.expanded[to
 table.wipe(b);panel:update()
 assert(not panel.expanded[token] and not list.items[2].operation and not list.items[2].header)
 q:removeFromQueue(b);panel:update()
+-- A heading describes the remaining work, without keeping removed actions or mistaking preparation for the task.
+local taskTitle=PZSurvivorToolkit.ActionQueuePanel.taskTitle
+local walk={Type='ISWalkToTimedAction'}
+local equip={Type='ISEquipWeaponAction',twoHands=true}
+local unload={Type='ISUnloadBulletsFromFirearm'}
+local transfer={Type='ISInventoryTransferAction'}
+local taskQueue={queue={walk,equip,unload,equip,unload,transfer}}
+assert(taskTitle(taskQueue,1,6)=='IGUI_JobType_UnloadBulletsFromFirearm', 'preparation and returns must not name a task')
+assert(taskTitle(taskQueue,4,6)=='IGUI_JobType_UnloadBulletsFromFirearm', 'a partly completed batch retains its remaining task')
+taskQueue.queue[5]=transfer
+assert(taskTitle(taskQueue,4,6)=='UI_PZSurvivorToolkit_queue_action_transfer', 'removed final operation must not leave a stale task heading')
+taskQueue.queue={equip,{Type='ISReadABook'},unload,transfer}
+assert(taskTitle(taskQueue,1,4)=='UI_PZSurvivorToolkit_queue_mixed', 'different remaining tasks must not impersonate the first task')
+assert(taskTitle({queue={walk,equip}},1,2)=='UI_PZSurvivorToolkit_queue_mixed')
+local unknown={Type='ModWork'}
+assert(taskTitle({queue={walk,unknown,transfer}},1,3)=='UI_PZSurvivorToolkit_queue_action_unknown(ModWork)')
+assert(taskTitle({queue={unknown,{Type='OtherModWork'}}},1,2)=='UI_PZSurvivorToolkit_queue_mixed')
+local function recipe(name) return {class='CraftRecipe',getName=function() return name end,getTranslationName=function() return 'Recipe '..name end} end
+assert(taskTitle({queue={equip,{craftRecipe=recipe('A')},transfer}},1,3)=='Recipe A')
+assert(taskTitle({queue={{craftRecipe=recipe('A')},{craftRecipe=recipe('B')}}},1,2)=='UI_PZSurvivorToolkit_queue_mixed')
 -- Active headers show the actual current native step and its progress; completed/cancelled steps leave only a remaining count.
 p=player();a,b,c=book(p),book(p),book(p)
 operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c) end)
@@ -451,6 +477,14 @@ frame(p);a.action.progress=.42
 list.drawnTexts={};list.doDrawItem(list,0,list.items[1],false)
 assert(list.items[1].header and list.items[1].tooltip:find('[42%]',1,true)
     and list.items[1].tooltip:find('queue_remaining(3)',1,true) and list.lastTexture=='book-icon')
+assert(table.concat(list.drawnTexts,'\n'):find('ContextMenu_Read',1,true))
+assert(list.rightText.text=='UI_PZSurvivorToolkit_queue_steps(3)')
+local title=list.items[1].task
+list.items[1].task=string.rep('Long recipe ',50);list.clips={}
+list.doDrawItem(list,0,list.items[1],false)
+assert(list.clips[1].x+list.clips[1].width <= list.rightText.x-#list.rightText.text-8,
+    'a long title must not overlap the separately visible step count')
+list.items[1].task=title
 click(1);assert(not q.toolkitCancel and #q.queue==3, 'current collapsed header cannot cancel its hidden current step')
 a.action.done=true;frame(p);panel:update()
 assert(list.items[1].header and list.items[1].item==b and list.items[1].last==2)

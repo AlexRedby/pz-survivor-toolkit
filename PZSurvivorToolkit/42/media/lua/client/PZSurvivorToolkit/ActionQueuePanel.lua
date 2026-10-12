@@ -84,6 +84,25 @@ function Panel.icon(action)
     return getTexture("media/ui/Entity/Icon_Tools_48x48.png")
 end
 
+function Panel.taskTitle(queue, first, last)
+    local title, signature, mixed, priority
+    for i = first, last do
+        local action = queue.queue[i]
+        local rank = Toolkit.ActionQueueLabels.preparation(action) and 1
+            or (action.Type == "ISInventoryTransferAction" and 2 or 3)
+        if not priority or rank >= priority then
+            local candidate, kind = Toolkit.ActionQueueLabels.title(action)
+            kind = kind or action.Type or candidate
+            if not priority or rank > priority then
+                title, signature, mixed, priority = candidate, kind, false, rank
+            elseif kind ~= signature then
+                mixed = true
+            end
+        end
+    end
+    return mixed and getText("UI_PZSurvivorToolkit_queue_mixed") or title
+end
+
 function Panel:createChildren()
     ISCollapsableWindow.createChildren(self)
     self.closeButton:setVisible(false)
@@ -129,13 +148,21 @@ function Panel.drawRow(list, y, row, alt)
     local cancelX = list:cancelX()
     local top = math.max(0, y + list:getYScroll())
     local label = prefix .. Toolkit.ActionQueue.label(action)
-    local remaining
+    local remaining, count
+    local right = row.header and list.width - 18 or cancelX - 4
+    local clipHeight = math.min(row.height, list.height - top)
     if row.header then
         remaining = getText("UI_PZSurvivorToolkit_queue_remaining", row.last - row.first + 1)
+        count = getText("UI_PZSurvivorToolkit_queue_steps", row.last - row.first + 1)
+        local countWidth = getTextManager():MeasureStringX(UIFont.Small, count)
+        list:setStencilRect(textX, top, math.max(0, right - textX - countWidth - 8), clipHeight)
+        list:drawText(row.task, textX, y + 5, 0.85, 0.85, 0.85, 1, UIFont.Small)
+        list:clearStencilRect()
     end
-    list:setStencilRect(textX, top, (row.header and list.width - 18 or cancelX - 4) - textX,
-        math.min(row.height, list.height - top))
-    if row.header then list:drawText(remaining, textX, y + 5, 0.85, 0.85, 0.85, 1, UIFont.Small) end
+    list:setStencilRect(textX, top, right - textX, clipHeight)
+    if row.header then
+        list:drawTextRight(count, right, y + 5, 0.65, 0.65, 0.65, 1, UIFont.Small)
+    end
     list:drawText(label, textX, row.header and y + row.height / 2 or y + (row.height - getTextManager():getFontHeight(UIFont.Small)) / 2,
         current and 1 or 0.85, current and 1 or 0.85, current and 1 or 0.85, 1, UIFont.Small)
     list:clearStencilRect()
@@ -149,7 +176,8 @@ function Panel.drawRow(list, y, row, alt)
     local toggleHover = row.header and list:getMouseX() < 22
     local hint = toggleHover and (list.parent.expanded[row.operation] and "collapse_tip" or "expand_tip")
         or (hover and (reason or "cancel_tip") or (moveReason or "drag_tip"))
-    row.tooltip = (remaining and remaining .. " <LINE> " or "") .. label
+    row.tooltip = (row.task and row.task .. " <LINE> " or "")
+        .. (remaining and remaining .. " <LINE> " or "") .. label
         .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. hint)
     local first, last = Toolkit.ActionQueueOperations.bounds(queue, action)
     if first and last > first then
@@ -186,7 +214,8 @@ function Panel:update()
         end
         if token then live[token] = true end
         if last > i then
-            rows[#rows + 1] = {item = action, operation = token, header = true, first = i, last = last}
+            rows[#rows + 1] = {item = action, operation = token, header = true, first = i, last = last,
+                task = Panel.taskTitle(self.queue, i, last)}
         end
         if last == i or self.expanded[token] then
             for index = i, last do
@@ -200,7 +229,8 @@ function Panel:update()
     for index, nextRow in ipairs(rows) do
         local previous = self.list.items[index]
         if not previous or previous.item ~= nextRow.item or previous.header ~= nextRow.header
-            or previous.operation ~= nextRow.operation or previous.first ~= nextRow.first or previous.last ~= nextRow.last then
+            or previous.operation ~= nextRow.operation or previous.first ~= nextRow.first or previous.last ~= nextRow.last
+            or previous.task ~= nextRow.task then
             changed = true; break
         end
     end
@@ -214,7 +244,7 @@ function Panel:update()
             self.list:addItem("", nextRow.item)
             local added = self.list.items[index]
             added.operation, added.header, added.first, added.last = nextRow.operation, nextRow.header, nextRow.first, nextRow.last
-            added.index = index
+            added.index, added.task = index, nextRow.task
             if nextRow.header then added.height = self.list.itemheight + getTextManager():getFontHeight(UIFont.Small) + 2 end
             height = height + added.height
             if nextRow.item == selected and nextRow.header == selectedHeader then self.list.selected = index end
