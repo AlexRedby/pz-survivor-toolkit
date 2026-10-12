@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check and package the PZ Survivor Toolkit mod."""
+"""Check a repository mod; optionally generate a local archive."""
 
 from __future__ import annotations
 
@@ -10,75 +10,80 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 MOD_ROOT = ROOT / "PZSurvivorToolkit"
-MOD_INFO = MOD_ROOT / "42" / "mod.info"
-BOOTSTRAP = MOD_ROOT / "42" / "media" / "lua" / "shared" / "PZSurvivorToolkit.lua"
+MOD_NAMES = {"PZSurvivorToolkit": "PZ Survivor Toolkit", "PZSurvivorWishlist": "Survivor Wishlist"}
 
 
-def validate() -> list[str]:
+def validate(mod_root: Path = MOD_ROOT) -> list[str]:
+    mod_info = mod_root / "42/mod.info"
+    bootstrap = mod_root / "42/media/lua/shared" / (mod_root.name + ".lua")
     errors: list[str] = []
-    if not MOD_ROOT.is_dir():
-        return [f"missing mod directory: {MOD_ROOT}"]
-    for required in (MOD_ROOT / "common", MOD_ROOT / "42"):
+    if not mod_root.is_dir():
+        return [f"missing mod directory: {mod_root}"]
+    for required in (mod_root / "common", mod_root / "42"):
         if not required.is_dir():
             errors.append(f"required directory is missing or not a directory: {required.relative_to(ROOT)}")
-    for required in (MOD_INFO, BOOTSTRAP):
+    for required in (mod_info, bootstrap):
         if not required.is_file():
             errors.append(f"required file is missing or not a file: {required.relative_to(ROOT)}")
 
-    if MOD_INFO.is_file():
+    if mod_info.is_file():
         metadata: dict[str, str] = {}
-        for line in MOD_INFO.read_text(encoding="utf-8").splitlines():
+        for line in mod_info.read_text(encoding="utf-8").splitlines():
             if "=" in line:
                 key, value = line.split("=", 1)
                 metadata[key.strip()] = value.strip()
-        if metadata.get("name") != "PZ Survivor Toolkit":
-            errors.append("mod.info must declare name=PZ Survivor Toolkit")
-        if metadata.get("id") != "PZSurvivorToolkit":
-            errors.append("mod.info must declare id=PZSurvivorToolkit")
+        if metadata.get("name") != MOD_NAMES[mod_root.name]:
+            errors.append(f"mod.info must declare name={MOD_NAMES[mod_root.name]}")
+        if metadata.get("id") != mod_root.name:
+            errors.append(f"mod.info must declare id={mod_root.name}")
         for key in ("icon", "poster"):
             name = metadata.get(key, "")
-            candidates = [MOD_ROOT / folder / name for folder in ("42", "common")]
-            if not name or not any(path.is_file() and path.resolve().is_relative_to(MOD_ROOT.resolve())
+            if not name and mod_root.name == "PZSurvivorWishlist":
+                continue
+            candidates = [mod_root / folder / name for folder in ("42", "common")]
+            if not name or not any(path.is_file() and path.resolve().is_relative_to(mod_root.resolve())
                                    for path in candidates):
                 errors.append(f"mod.info {key} must reference a file inside 42/ or common/")
 
-    if BOOTSTRAP.is_file():
-        source = BOOTSTRAP.read_text(encoding="utf-8")
+    if bootstrap.is_file():
+        source = bootstrap.read_text(encoding="utf-8")
         if not source.strip():
             errors.append("bootstrap file must not be empty")
     return errors
 
 
-def package(output: Path) -> None:
+def package(output: Path, mod_root: Path = MOD_ROOT) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(f"{MOD_ROOT.name}/common/", b"")
-        for path in sorted(MOD_ROOT.rglob("*")):
+        archive.writestr(f"{mod_root.name}/common/", b"")
+        for path in sorted(mod_root.rglob("*")):
             if not path.is_file() or path.name == ".gitkeep":
                 continue
-            archive_name = Path(MOD_ROOT.name) / path.relative_to(MOD_ROOT)
+            archive_name = Path(mod_root.name) / path.relative_to(mod_root)
             archive.write(path, archive_name.as_posix())
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="validate the mod structure")
+    parser.add_argument("--mod", choices=MOD_NAMES, default=MOD_ROOT.name, help="mod folder to check/package")
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT / "dist/PZSurvivorToolkit.zip",
-        help="ZIP output path (default: ROOT/dist/PZSurvivorToolkit.zip)",
+        help="ZIP output path (default: ROOT/dist/<mod>.zip)",
     )
     args = parser.parse_args()
-    errors = validate()
+    mod_root = ROOT / args.mod
+    errors = validate(mod_root)
     if errors:
         for error in errors:
             print(f"ERROR: {error}")
         return 1
     print("OK: mod structure is valid")
     if not args.check:
-        package(args.output)
-        print(f"OK: wrote {args.output}")
+        output = args.output or ROOT / "dist" / (args.mod + ".zip")
+        package(output, mod_root)
+        print(f"OK: wrote {output}")
     return 0
 
 

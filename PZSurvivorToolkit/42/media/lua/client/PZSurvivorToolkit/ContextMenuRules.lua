@@ -108,6 +108,7 @@ register("farming", "ISFarmingMenu", [[
     onPlow onInfo onFertilize onCompost onHarvest onWater onMildewCure onFliesCure
     onSlugsCure onAphidsCure onShovel onSeed
 ]])
+register("craft", "PZSurvivorToolkit.BulkClothing", "queue")
 register("electronics", "PZSurvivorToolkit.BulkDismantle", "queue")
 register("electronics", "PZSurvivorToolkit.BulkBatteries", "queue")
 register("equipment", "PZSurvivorToolkit.BulkFirearms", "queueUnload queueAttachments")

@@ -1,12 +1,13 @@
 -- Selection and queue checks. Native crafting/MP execution is tested separately.
 require = function() end
-local enabled, batteriesEnabled, fill, player = true, false
-PZSurvivorToolkit = {Settings = {bulkDismantle = function() return enabled end, bulkRemoveBatteries = function() return batteriesEnabled end}}
+local enabled, batteriesEnabled, clothingEnabled, fill, player = true, false, false
+PZSurvivorToolkit = {Settings = {bulkDismantle = function() return enabled end, bulkCutClothing = function() return clothingEnabled end, bulkRemoveBatteries = function() return batteriesEnabled end}}
 Events = {OnFillInventoryObjectContextMenu = {Add = function(fn) fill = fn end}}
 ResourceType = {Item = 1}
 instanceof = function(item) return item and item.id ~= nil end
 getText = function(key, count)
     if key == 'UI_PZSurvivorToolkit_dismantle_one' or key == 'UI_PZSurvivorToolkit_action_one' then return 'One item' end
+    if key == 'UI_PZSurvivorToolkit_cut_clothing_selected' then return 'Cut clothing (' .. count .. ')' end
     if key == 'UI_PZSurvivorToolkit_remove_batteries_selected' then return 'Remove batteries (' .. count .. ')' end
     return 'Dismantle selected (' .. count .. ')'
 end
@@ -251,6 +252,15 @@ assert(#disabled.options == 1 and not disabledNative.subOption and disabledNativ
     and bulk.queue(player, entries) == nil and #queued == 0, 'off keeps original native action and blocks stale bulk callback')
 enabled, dead = true, true
 local deadMenu = newMenu();fill(1, deadMenu, {a, b});assert(#deadMenu.options == 0)
+enabled, dead = true, false
+local several = newMenu()
+local firstRecipe = ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(a,several,list({simple}),1)
+local otherRecipe = ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(b,several,list({radio}),1)
+fill(1,several,{a,b})
+assert(firstRecipe.subOption and otherRecipe.onSelect and not otherRecipe.subOption,
+    'one batch command must cover mixed electronics without repeating under every recipe')
+fill(1,several,{a,b})
+assert(#firstRecipe.subOption.options==2 and otherRecipe.onSelect,'repeat fill must not decorate another recipe')
 print('Bulk dismantle checks passed: exact selection, native icons/callbacks, nested flashlight menus, transfers, safety and toggle.')
 
 -- Retained-input recipes must bind the selected devices rather than nearby substitutes.
@@ -294,3 +304,88 @@ assert(batteries.queue(player,batteryEntries)==nil and #queued==0, 'disabled bat
 local off=newMenu();local offNative=ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(charged,off,list({removeBattery}),1)
 fill(1,off,{charged,inBag});assert(offNative.onSelect and not offNative.subOption, 'off restores ordinary battery removal')
 print('Bulk battery checks passed: exact retained inputs, empty devices, nested native menu, returns and independent toggle.')
+
+-- Native clothing uses normal consumption, not the electronics destroy input mode.
+clothingEnabled, batteriesEnabled, enabled, dead, queued = true, false, false, false, {}
+local clothing = PZSurvivorToolkit.BulkClothing
+local function fabricInput(materials)
+    return {getResourceType = function() return ResourceType.Item end,
+        isKeep = function() return false end, isDestroy = function() return false end,
+        getIntAmount = function() return 1 end,
+        containsItem = function(_, script) return materials[script.fabric] == true end}
+end
+local cottonInput, cutInput = fabricInput({cotton=true}), fabricInput({denim=true, leather=true})
+local rip, cut = recipe('RipClothing', {cottonInput}), recipe('RipDenimClothing', {keep, cutInput})
+local cotton, denim, leather, spare = item(31,root,false), item(32,bag,false), item(33,root,false), item(34,root,false)
+cotton.script.fabric, denim.script.fabric, leather.script.fabric, spare.script.fabric = 'cotton','denim','leather','cotton'
+root.items[31],root.items[33],root.items[34] = cotton,leather,spare
+CraftRecipeManager.getUniqueRecipeItems = function(value)
+    return list({recipe('UnrelatedNormalCraft',{cottonInput}), rip, cut})
+end
+local nativeLogic = HandcraftLogic.new
+HandcraftLogic.new = function(...)
+    local logic = nativeLogic(...)
+    function logic:setManualInputsFor(input, values)
+        assert((input==cottonInput or input==cutInput) and values:size()==1)
+        self.target=values:get(0);return not rejectPin
+    end
+    function logic:canPerformCurrentRecipe()
+        return self.target.container~=nil and (self.recipe==rip or not missingTool)
+    end
+    function logic:getRecipeData()
+        return {getAllInputItems=function() return list(self.recipe==cut and {self.target,tool} or {self.target}) end,
+            getAllPutBackInputItems=function() return list(self.recipe==cut and {tool} or {}) end}
+    end
+    return logic
+end
+unselected,tool = spare,item(199,bag)
+local selected = clothing.entries(player,{{items={cotton,cotton,denim}},leather})
+assert(#selected==3 and selected[1].recipe==rip and selected[2].recipe==cut and selected[3].recipe==cut)
+assert(clothing.queue(player,selected)==3)
+local cuts, transfers = {},0
+for _,action in ipairs(queued) do
+    if action.transfer==tool then transfers=transfers+1 end
+    if not action.transfer then cuts[#cuts+1]=action end
+end
+assert(#cuts==3 and cuts[1].target==cotton and cuts[2].target==denim and cuts[3].target==leather)
+assert(transfers==1 and #returned==1 and returned[1]==tool,'shared scissors must transfer/return once')
+assert(not cuts[2]:isValidStart(),'reachable clothing must transfer before cutting')
+denim.container,root.items[32]=root,denim;assert(cuts[2]:isValidStart())
+root.items[32]=nil;assert(not cuts[2]:isValidStart(),'missing garment must not substitute spare clothing')
+root.items[32]=denim
+for _,flag in ipairs({'favorite','worn'}) do
+    leather[flag]=true;assert(#clothing.entries(player,{leather})==0 and not cuts[3]:isValidStart());leather[flag]=nil
+end
+player.primary=leather;assert(#clothing.entries(player,{leather})==0);player.primary=nil
+missingTool=true
+local withoutTool=clothing.entries(player,{cotton,denim,leather})
+assert(#withoutTool==1 and withoutTool[1].item==cotton,'cotton can rip without the denim/leather cutter')
+missingTool=false
+assert(#clothing.entries(player,{item(35,root,false)})==0,'non-rippable clothing must stay untouched')
+local nativeAvailable = CraftRecipeManager.getUniqueRecipeItems
+CraftRecipeManager.getUniqueRecipeItems=function() return list({recipe('RipClothing',{cottonInput,cottonInput})}) end
+assert(#clothing.entries(player,{cotton})==0,'multiple consumed clothing inputs must fail closed')
+local amount=cottonInput.getIntAmount;cottonInput.getIntAmount=function() return 2 end
+CraftRecipeManager.getUniqueRecipeItems=function() return list({rip}) end
+assert(#clothing.entries(player,{cotton})==0,'multi-item recipe cannot consume unselected clothing')
+cottonInput.getIntAmount,CraftRecipeManager.getUniqueRecipeItems=amount,nativeAvailable
+local menu=newMenu();fill(1,menu,{cotton,denim,leather})
+assert(#menu.options==1 and #menu.options[1].subOption.options==2)
+local single,batch=menu.options[1].subOption.options[1],menu.options[1].subOption.options[2]
+assert(single.onSelect==ISInventoryPaneContextMenu.OnNewCraft and single.param1==rip)
+assert(batch.onSelect==clothing.queue and #batch.param1==3 and batch.name=='Cut clothing (3)')
+assert(single.iconTexture==scrapIcon and batch.iconTexture==scrapIcon)
+fill(1,menu,{cotton,denim,leather});assert(#menu.options[1].subOption.options==2)
+local fabrics=newMenu()
+local cottonMenu=ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(cotton,fabrics,list({rip}),1)
+local denimMenu=ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(denim,fabrics,list({cut}),1)
+fill(1,fabrics,{cotton,denim,leather});fill(1,fabrics,{cotton,denim,leather})
+assert(cottonMenu.subOption and #cottonMenu.subOption.options==2 and denimMenu.onSelect and not denimMenu.subOption,
+    'one clothing batch covers both recipes without removing the other native single action')
+cotton.favorite,queued=true,{}
+assert(batch.onSelect(player,batch.param1)==2,'click must recheck protected garments')
+cotton.favorite,clothingEnabled,queued=nil,false,{}
+assert(clothing.queue(player,selected)==nil and #queued==0)
+local disabledClothes=newMenu();local anchor=ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(cotton,disabledClothes,list({rip}),1)
+fill(1,disabledClothes,{cotton,denim});assert(anchor.onSelect and not anchor.subOption)
+print('Batch clothing checks passed: normal consumption, cotton/denim/leather, exact selection, tools, protection, menu and toggle.')

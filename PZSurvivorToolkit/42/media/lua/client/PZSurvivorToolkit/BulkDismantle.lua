@@ -4,9 +4,10 @@ require "Entity/TimedActions/ISHandcraftAction"
 
 local Toolkit = PZSurvivorToolkit
 local Actions = Toolkit.BulkActions
-local Bulk, Batteries = {}, {}
+local Bulk, Batteries, Clothing = {}, {}, {}
 Toolkit.BulkDismantle = Bulk
 Toolkit.BulkBatteries = Batteries
+Toolkit.BulkClothing = Clothing
 
 -- Only native single-item dismantling recipes; arbitrary crafts need their own selection rules.
 local recipes = {
@@ -17,6 +18,8 @@ local recipes = {
     DismantleImprovisedLighter = true,
 }
 
+local clothingRecipes = {RipClothing = true, RipDenimClothing = true}
+
 local function inputFor(recipe, item)
     local found
     local battery = recipe:getName() == "RemoveBattery"
@@ -26,7 +29,8 @@ local function inputFor(recipe, item)
         if input:getResourceType() ~= ResourceType.Item then return end
         if battery or not input:isKeep() then
             if found or (battery and not input:isKeep())
-                or (not battery and not input:isDestroy()) or input:getIntAmount() ~= 1
+                or (not battery and not clothingRecipes[recipe:getName()] and not input:isDestroy())
+                or input:getIntAmount() ~= 1
                 or not input:containsItem(item:getScriptItem()) then return end
             found = input
         end
@@ -119,6 +123,14 @@ function Batteries.queue(player, selected)
     return queue(player, selected, Toolkit.Settings.bulkRemoveBatteries)
 end
 
+function Clothing.entries(player, rows)
+    return entries(player, rows, clothingRecipes)
+end
+
+function Clothing.queue(player, selected)
+    return queue(player, selected, Toolkit.Settings.bulkCutClothing)
+end
+
 local function recipeOptions(context, allowed, found)
     for _, option in ipairs(context.options) do
         if option.toolkitBulkRecipe and allowed[option.toolkitBulkRecipe]
@@ -149,19 +161,24 @@ local function fillRecipeMenu(playerIndex, context, rows, allowed, api, enabled,
         recipeOptions(context, allowed, found)
     end
     for _, entry in ipairs(found) do
+        if entry.option.toolkitBulkRecipe then return end
+    end
+    -- One command processes the full selection, regardless of which native recipe anchors it.
+    local entry = found[1]
+    if entry then
         local menu, option = entry.context, entry.option
-        if not option.toolkitBulkRecipe then
-            option.toolkitBulkRecipe = option.param1:getName()
-            local submenu = Actions.submenu(menu, option, getText(oneKey))
-            local bulk = submenu:addOption(getText(selectedKey, #selected), player, api.queue, selected)
-            bulk.iconTexture = option.iconTexture
-            bulk.itemForTexture = option.itemForTexture
-            bulk.color = option.color
-        end
+        option.toolkitBulkRecipe = option.param1:getName()
+        local submenu = Actions.submenu(menu, option, getText(oneKey))
+        local bulk = submenu:addOption(getText(selectedKey, #selected), player, api.queue, selected)
+        bulk.iconTexture = option.iconTexture
+        bulk.itemForTexture = option.itemForTexture
+        bulk.color = option.color
     end
 end
 
 local function fillMenu(playerIndex, context, rows)
+    fillRecipeMenu(playerIndex, context, rows, clothingRecipes, Clothing, Toolkit.Settings.bulkCutClothing,
+        "UI_PZSurvivorToolkit_action_one", "UI_PZSurvivorToolkit_cut_clothing_selected")
     fillRecipeMenu(playerIndex, context, rows, recipes, Bulk, Toolkit.Settings.bulkDismantle,
         "UI_PZSurvivorToolkit_dismantle_one", "UI_PZSurvivorToolkit_dismantle_selected")
     fillRecipeMenu(playerIndex, context, rows, batteryRecipes, Batteries, Toolkit.Settings.bulkRemoveBatteries,

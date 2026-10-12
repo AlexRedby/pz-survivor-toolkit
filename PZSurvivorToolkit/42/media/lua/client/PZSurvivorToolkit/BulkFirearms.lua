@@ -174,15 +174,16 @@ local function fillMenu(playerIndex, context, rows)
                         or ISInventoryPaneContextMenu.onUnloadBulletsFromMagazine, entry.item)
                 found[1] = {menu = context, option = option}
             end
-            for _, row in ipairs(found) do
-                if not row.option.toolkitBulkUnload then
-                    local child = Actions.submenu(row.menu, row.option, getText("UI_PZSurvivorToolkit_action_one"))
-                    local option = child:addOption(getText("UI_PZSurvivorToolkit_unload_selected", #entries),
-                        player, Bulk.queueUnload, entries)
-                    option.iconTexture = row.option.iconTexture
-                    option.itemForTexture = row.option.itemForTexture
-                    row.option.toolkitBulkUnload = true
-                end
+            local row = found[1]
+            local alreadyAdded = false
+            for _, entry in ipairs(found) do alreadyAdded = alreadyAdded or entry.option.toolkitBulkUnload end
+            if not alreadyAdded then
+                local child = Actions.submenu(row.menu, row.option, getText("UI_PZSurvivorToolkit_action_one"))
+                local option = child:addOption(getText("UI_PZSurvivorToolkit_unload_selected", #entries),
+                    player, Bulk.queueUnload, entries)
+                option.iconTexture = row.option.iconTexture
+                option.itemForTexture = row.option.itemForTexture
+                row.option.toolkitBulkUnload = true
             end
         end
     end
@@ -203,13 +204,14 @@ local function fillMenu(playerIndex, context, rows)
             end
             found[1] = {menu = context, option = option}
         end
-        for _, row in ipairs(found) do
-            if not row.option.toolkitBulkAttachments then
-                local child = Actions.submenu(row.menu, row.option, getText("UI_PZSurvivorToolkit_action_one"))
-                child:addOption(getText("UI_PZSurvivorToolkit_remove_attachments_selected", #entries),
-                    player, Bulk.queueAttachments, entries)
-                row.option.toolkitBulkAttachments = true
-            end
+        local row = found[1]
+        local alreadyAdded = false
+        for _, entry in ipairs(found) do alreadyAdded = alreadyAdded or entry.option.toolkitBulkAttachments end
+        if not alreadyAdded then
+            local child = Actions.submenu(row.menu, row.option, getText("UI_PZSurvivorToolkit_action_one"))
+            child:addOption(getText("UI_PZSurvivorToolkit_remove_attachments_selected", #entries),
+                player, Bulk.queueAttachments, entries)
+            row.option.toolkitBulkAttachments = true
         end
     end
 end

@@ -3,6 +3,7 @@
 ## TV playback follow-up
 
 - [ ] Verify `JavaPatches/start-host.ps1` on Windows Host with a custom Steam-library path: confirm server log `media=true`, rapid Stop/Play, cassette dialogue and XP. Check an existing ZombieBuddy JSON setup and a setup using only Steam launch options for duplicate-loader errors.
+- [ ] Verify `JavaPatches/start-host.command` in an ordinary macOS Steam Host session with saved JAR approvals: confirm server DeviceData transformation, rapid Stop/Play, dialogue and XP. Current launcher tests cover arguments and inherited environment; the full-set native smoke uses a dedicated server.
 
 ## Toolkit Java Patches follow-up
 

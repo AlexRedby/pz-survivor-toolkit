@@ -81,6 +81,9 @@ local function eligible(object, context)
     local square = object:getSquare()
     local item = object:getItem()
     if not square or not item or item:getWorldItem() ~= object then return false end
+    local wishlist = PZSurvivorWishlist
+    if wishlist and wishlist.Client and wishlist.Settings and wishlist.Settings.groundEnabled()
+        and wishlist.Client.isWanted(context.playerNum, item:getFullType()) then return false end
     if square:getZ() ~= context.z then return false end
     if context.cell:getGridSquare(square:getX(), square:getY(), square:getZ()) ~= square then
         return false

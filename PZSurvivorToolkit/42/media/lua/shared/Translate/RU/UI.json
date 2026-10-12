@@ -104,5 +104,8 @@
     "UI_PZSurvivorToolkit_context_group_research": "Чтение и исследование",
     "UI_PZSurvivorToolkit_queue_move_shared_item": "Операции используют один предмет. Сохраните их порядок, чтобы предмет оставался доступен.",
     "UI_PZSurvivorToolkit_queue_group": "Переносятся все шаги этой операции: %1.",
-    "UI_PZSurvivorToolkit_queue_move_shared_book": "У разных экземпляров этой книги общий прогресс чтения. Оставьте её после текущей книги."
+    "UI_PZSurvivorToolkit_queue_move_shared_book": "У разных экземпляров этой книги общий прогресс чтения. Оставьте её после текущей книги.",
+    "UI_options_PZSurvivorToolkit_bulk_cut_clothing": "Разрезать выделенную одежду",
+    "UI_options_PZSurvivorToolkit_bulk_cut_clothing_tooltip": "Добавляет разрезание и разрыв выделенной хлопковой, джинсовой и кожаной одежды. Пропускает избранное, надетое и предметы в руках. Использует штатные инструменты, рецепты, время и результат.",
+    "UI_PZSurvivorToolkit_cut_clothing_selected": "Разрезать выделенную одежду (%1)"
 }
