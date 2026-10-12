@@ -74,6 +74,15 @@ local function sharedItem(a, b)
     end
 end
 
+local function sharedWorldTarget(a, b)
+    local objects = {a.generator, a.charger, a.object, a.moveProps and a.moveProps.object}
+    for i = 1, 4 do
+        local object = objects[i]
+        if object and instanceof(object, "IsoObject") and (object == b.generator or object == b.charger
+            or object == b.object or (b.moveProps and object == b.moveProps.object)) then return true end
+    end
+end
+
 function Queue.moveReason(queue, action, target, after)
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 or queue:indexOf(target or action) == -1 then return "unavailable" end
@@ -106,6 +115,7 @@ function Queue.moveReason(queue, action, target, after)
             if crossed._isAddingActions then return "move_dependent" end
             for j = first, last do
                 if sharedItem(queue.queue[j], crossed) then return "move_shared_item" end
+                if sharedWorldTarget(queue.queue[j], crossed) then return "move_dependent" end
             end
         end
     end

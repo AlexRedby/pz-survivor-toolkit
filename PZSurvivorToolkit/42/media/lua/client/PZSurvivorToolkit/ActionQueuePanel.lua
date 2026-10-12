@@ -20,13 +20,16 @@ end
 
 function List:clearGesture()
     self.pressedCancel, self.dragAction, self.dragging, self.dropTarget = nil, nil, nil, nil
+    self.pressedToggle = nil
 end
 
 function List:onMouseDown(x, y)
     self:clearGesture()
     local row = self:rowUnderMouse(x, y)
     if not row then return end
-    if x >= self:cancelX() then
+    if row.header and x < 22 then
+        self.pressedToggle = row.operation
+    elseif not row.header and x >= self:cancelX() then
         if not Toolkit.ActionQueue.cancelReason(self.parent.queue, row.item) then self.pressedCancel = row.item end
     else
         ISScrollingListBox.onMouseDown(self, x, y)
@@ -50,7 +53,10 @@ end
 function List:onMouseUp(x, y)
     ISScrollingListBox.onMouseUp(self, x, y)
     local row = self:rowUnderMouse(x, y)
-    if row and self.pressedCancel == row.item and x >= self:cancelX() then
+    if row and row.header and self.pressedToggle == row.operation and x < 22 then
+        self.parent.expanded[row.operation] = not self.parent.expanded[row.operation] or nil
+        self.parent:update()
+    elseif row and not row.header and self.pressedCancel == row.item and x >= self:cancelX() then
         Toolkit.ActionQueue.cancel(self.parent.queue, row.item)
     elseif row and self.dragging then
         Toolkit.ActionQueue.move(self.parent.queue, self.dragAction, row.item,
@@ -98,6 +104,10 @@ function Panel.drawRow(list, y, row, alt)
         return y + row.height
     end
     local action, queue = row.item, list.parent.queue
+    if row.header and queue.current and queue:indexOf(queue.current) >= row.first
+        and queue:indexOf(queue.current) <= row.last then
+        action = queue.current
+    end
     local current = queue.current == action
     local dragged = list.dragAction and list.dragAction.toolkitQueueOperation
     if list.selected == row.index or (list.dragging and dragged and action.toolkitQueueOperation == dragged) then
@@ -106,24 +116,41 @@ function Panel.drawRow(list, y, row, alt)
         list:drawRect(0, y, list.width, row.height, 0.15, 0.5, 0.5, 0.5)
     end
     local moveReason = Toolkit.ActionQueue.moveReason(queue, action)
-    list:drawTextureScaledAspect(list.dragTexture, 3, y + (row.height - 16) / 2, 14, 16,
+    local iconX, textX = row.header and 42 or 22, row.header and 72 or 52
+    if row.header then
+        list:drawText(list.parent.expanded[row.operation] and "-" or "+", 7, y + (row.height - 14) / 2,
+            1, 1, 1, 1, UIFont.Small)
+    end
+    list:drawTextureScaledAspect(list.dragTexture, row.header and 23 or 3, y + (row.height - 16) / 2, 14, 16,
         moveReason and 0.2 or 0.8, 1, 1, 1)
-    list:drawTextureScaledAspect(Panel.icon(action), 22, y + (row.height - 24) / 2, 24, 24, 1, 1, 1, 1)
-    local prefix = tostring(row.index) .. ". "
+    list:drawTextureScaledAspect(Panel.icon(action), iconX, y + (row.height - 24) / 2, 24, 24, 1, 1, 1, 1)
+    local prefix = tostring(row.first) .. ". "
     if current and action.action then prefix = "[" .. tostring(math.floor(action:getJobDelta() * 100)) .. "%] " end
     local cancelX = list:cancelX()
     local top = math.max(0, y + list:getYScroll())
-    list:setStencilRect(52, top, cancelX - 56, math.min(row.height, list.height - top))
-    list:drawText(prefix .. Toolkit.ActionQueue.label(action), 52, y + (row.height - getTextManager():getFontHeight(UIFont.Small)) / 2,
+    local label = prefix .. Toolkit.ActionQueue.label(action)
+    local remaining
+    if row.header then
+        remaining = getText("UI_PZSurvivorToolkit_queue_remaining", row.last - row.first + 1)
+    end
+    list:setStencilRect(textX, top, (row.header and list.width - 18 or cancelX - 4) - textX,
+        math.min(row.height, list.height - top))
+    if row.header then list:drawText(remaining, textX, y + 5, 0.85, 0.85, 0.85, 1, UIFont.Small) end
+    list:drawText(label, textX, row.header and y + row.height / 2 or y + (row.height - getTextManager():getFontHeight(UIFont.Small)) / 2,
         current and 1 or 0.85, current and 1 or 0.85, current and 1 or 0.85, 1, UIFont.Small)
     list:clearStencilRect()
     local reason = Toolkit.ActionQueue.cancelReason(queue, action)
-    local hover = list.mouseoverselected == row.index and list:getMouseX() >= cancelX
-    list:drawRect(cancelX, y + 3, 24, row.height - 6, hover and 0.4 or 0.15, 0.7, 0.3, 0.3)
-    list:drawTextureScaledAspect(list.cancelTexture, cancelX + 4, y + (row.height - 16) / 2, 16, 16,
-        reason and 0.2 or 1, 1, 1, 1)
-    local hint = hover and (reason or "cancel_tip") or (moveReason or "drag_tip")
-    row.tooltip = Toolkit.ActionQueue.label(action) .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. hint)
+    local hover = not row.header and list.mouseoverselected == row.index and list:getMouseX() >= cancelX
+    if not row.header then
+        list:drawRect(cancelX, y + 3, 24, row.height - 6, hover and 0.4 or 0.15, 0.7, 0.3, 0.3)
+        list:drawTextureScaledAspect(list.cancelTexture, cancelX + 4, y + (row.height - 16) / 2, 16, 16,
+            reason and 0.2 or 1, 1, 1, 1)
+    end
+    local toggleHover = row.header and list:getMouseX() < 22
+    local hint = toggleHover and (list.parent.expanded[row.operation] and "collapse_tip" or "expand_tip")
+        or (hover and (reason or "cancel_tip") or (moveReason or "drag_tip"))
+    row.tooltip = (remaining and remaining .. " <LINE> " or "") .. label
+        .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. hint)
     local first, last = Toolkit.ActionQueueOperations.bounds(queue, action)
     if first and last > first then
         row.tooltip = row.tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_group", last - first + 1)
@@ -132,7 +159,9 @@ function Panel.drawRow(list, y, row, alt)
     if list.dragging and list.dropTarget then
         dropFirst, dropLast = Toolkit.ActionQueueOperations.bounds(queue, list.dropTarget)
     end
-    if row.index == (list.dropAfter and dropLast or dropFirst) then
+    local neighbor = list.items[row.index + (list.dropAfter and 1 or -1)]
+    local boundary = list.dropAfter and row.last == dropLast or not list.dropAfter and row.first == dropFirst
+    if dropFirst and boundary and (not neighbor or neighbor.first < dropFirst or neighbor.first > dropLast) then
         local blocked = Toolkit.ActionQueue.moveReason(queue, list.dragAction, list.dropTarget, list.dropAfter)
         list:drawRect(0, y + (list.dropAfter and row.height - 2 or 0), cancelX + 24, 2, 1,
             blocked and 1 or 0.3, blocked and 0.3 or 1, 0.3)
@@ -144,22 +173,62 @@ function Panel:update()
     ISCollapsableWindow.update(self)
     local row = self.list.items[self.list.selected]
     local selected = row and row.item
-    local changed = #self.list.items ~= #self.queue.queue
-    for i, action in ipairs(self.queue.queue) do
-        if not self.list.items[i] or self.list.items[i].item ~= action then changed = true; break end
+    local selectedHeader = row and row.header
+    self.expanded = self.expanded or {}
+    local rows, live = {}, {}
+    local i = 1
+    while i <= #self.queue.queue do
+        local action = self.queue.queue[i]
+        local token = action.toolkitQueueOperation
+        local last = i
+        while token and last < #self.queue.queue and self.queue.queue[last + 1].toolkitQueueOperation == token do
+            last = last + 1
+        end
+        if token then live[token] = true end
+        if last > i then
+            rows[#rows + 1] = {item = action, operation = token, header = true, first = i, last = last}
+        end
+        if last == i or self.expanded[token] then
+            for index = i, last do
+                rows[#rows + 1] = {item = self.queue.queue[index], operation = token, first = index, last = index}
+            end
+        end
+        i = last + 1
+    end
+    for token in pairs(self.expanded) do if not live[token] then self.expanded[token] = nil end end
+    local changed = #self.list.items ~= #rows
+    for index, nextRow in ipairs(rows) do
+        local previous = self.list.items[index]
+        if not previous or previous.item ~= nextRow.item or previous.header ~= nextRow.header
+            or previous.operation ~= nextRow.operation or previous.first ~= nextRow.first or previous.last ~= nextRow.last then
+            changed = true; break
+        end
     end
     if changed then
         local scroll = self.list:getYScroll()
         self.list:clearGesture()
         self.list:clear()
         self.list.selected = -1
-        for i, action in ipairs(self.queue.queue) do
-            self.list:addItem("", action)
-            if action == selected then self.list.selected = i end
+        local height = 0
+        for index, nextRow in ipairs(rows) do
+            self.list:addItem("", nextRow.item)
+            local added = self.list.items[index]
+            added.operation, added.header, added.first, added.last = nextRow.operation, nextRow.header, nextRow.first, nextRow.last
+            added.index = index
+            if nextRow.header then added.height = self.list.itemheight + getTextManager():getFontHeight(UIFont.Small) + 2 end
+            height = height + added.height
+            if nextRow.item == selected and nextRow.header == selectedHeader then self.list.selected = index end
         end
+        self.list:setScrollHeight(height)
         self.list:setYScroll(scroll)
     end
     self.title = getText("UI_PZSurvivorToolkit_queue_title", #self.queue.queue)
+end
+
+function Panel:clearSnapshots()
+    self.list:clearGesture()
+    self.list:clear()
+    self.expanded = {}
 end
 
 function Panel:onResize()
@@ -176,6 +245,7 @@ function Panel.refresh()
         local queue = player and ISTimedActionQueue.queues[player]
         local panel = panels[playerNum]
         if panel and panel.queue ~= queue then
+            panel:clearSnapshots()
             panel:removeFromUIManager()
             panels[playerNum], panel = nil, nil
         end
@@ -193,13 +263,13 @@ function Panel.refresh()
         if panel then
             panel:setVisible(visible == true)
             if not visible then
-                panel.list:clearGesture()
-                if #panel.list.items > 0 then panel.list:clear() end
+                panel:clearSnapshots()
             end
         end
     end
     for playerNum, panel in pairs(panels) do
         if playerNum >= getNumActivePlayers() then
+            panel:clearSnapshots()
             panel:removeFromUIManager()
             panels[playerNum] = nil
         end

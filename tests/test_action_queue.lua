@@ -322,28 +322,34 @@ function widget:setHeight(v) self.height=v end
 function widget:setY(v) self.y=v end
 function widget:getYScroll() return self.scroll end
 function widget:setYScroll(v) self.scroll=v end
+function widget:setScrollHeight(v) self.scrollHeight=v end
 function widget:clear() self.items={} end
-function widget:rowAt(x,y) local n=math.floor(y/self.itemheight)+1; return self.items[n] and n or -1 end
-function widget:topOfItem(n) return (n-1)*self.itemheight end
 function widget:isMouseOverScrollBar() return self.overScrollbar==true end
 function widget:getMouseX() return self.mouseX or 0 end
 function widget:getMouseY() return self.mouseY or 0 end
-function widget:drawRect() end
-function widget:drawText() end
-function widget:drawTextureScaledAspect(texture) assert(texture); self.lastTexture=texture end
+function widget:drawRect(...) self.drawnRects=self.drawnRects or {};self.drawnRects[#self.drawnRects+1]={...} end
+function widget:drawText(text) self.drawnTexts=self.drawnTexts or {};self.drawnTexts[#self.drawnTexts+1]=text end
+function widget:drawTextureScaledAspect(texture)
+    assert(texture);self.lastTexture=texture;self.drawnTextures=self.drawnTextures or {};self.drawnTextures[#self.drawnTextures+1]=texture
+end
 function widget:setStencilRect() end
 function widget:clearStencilRect() end
 function widget:addItem(text, item) self.items[#self.items+1]={item=item,index=#self.items+1,height=self.itemheight} end
 ISCollapsableWindow = widget:derive('ISCollapsableWindow')
 function ISCollapsableWindow:createChildren() self.closeButton=widget:new(); self.closeButtonTexture="close-icon" end
+UIFont = {Small=1}
+getTextManager = function() return {getFontHeight=function() return 14 end} end
+-- Use native variable-height row geometry; Java rendering remains a fixture double.
+ISPanelJoypad = widget
+load('client/ISUI/ISScrollingListBox.lua')
+widget.rowAt,widget.topOfItem=ISScrollingListBox.rowAt,ISScrollingListBox.topOfItem
 ISScrollingListBox = widget:derive('ISScrollingListBox')
 function ISScrollingListBox:onMouseDown(x,y) self.selected=self:rowAt(x,y) end
 function ISScrollingListBox:onMouseUp() end
 function ISScrollingListBox:onMouseUpOutside() end
 function ISScrollingListBox:onMouseMove() self.mouseoverselected=self:rowAt(self:getMouseX(),self:getMouseY()) end
 getTexture=function(path) return path end
-UIFont = {Small=1}
-getTextManager = function() return {getFontHeight=function() return 14 end} end
+getText=function(key,value) return key .. (value and '(' .. tostring(value) .. ')' or '') end
 getNumActivePlayers = function() return playerCount end
 getPlayerScreenLeft = function() return 0 end
 getPlayerScreenTop = function() return 0 end
@@ -357,12 +363,12 @@ refresh(); local panel=ui[#ui]; panel:update()
 assert(panel.visible and #panel.list.items==3 and not panel.closeButton.visible)
 local list=panel.list
 local function click(n)
-    local x,y=list:cancelX()+12,list:topOfItem(n)+list.itemheight/2
+    local x,y=list:cancelX()+12,list:topOfItem(n)+list.items[n].height/2
     list:onMouseDown(x,y);list:onMouseUp(x,y);panel:update()
 end
 local function drag(from,to,after)
-    list:onMouseDown(30,list:topOfItem(from)+list.itemheight/2)
-    list.mouseX,list.mouseY=30,list:topOfItem(to)+(after and list.itemheight-2 or 2)
+    list:onMouseDown(30,list:topOfItem(from)+list.items[from].height/2)
+    list.mouseX,list.mouseY=30,list:topOfItem(to)+(after and list.items[to].height-2 or 2)
     list:onMouseMove(0,1);list:onMouseUp(list.mouseX,list.mouseY);panel:update()
 end
 assert(PZSurvivorToolkit.ActionQueuePanel.icon(a)=='book-icon')
@@ -386,17 +392,91 @@ list.overScrollbar=true;click(2);assert(q.queue[2]==d);list.overScrollbar=false
 click(1);assert(q.current==a and #q.queue==2, 'starting read is protected even on direct click')
 frame(p);click(1);assert(q.toolkitCancel==a);frame(p);panel:update()
 assert(q.current==d and #q.queue==1, 'one-click current read cancellation preserves tail')
+-- Headers count the current native queue, preserve identities, and never cancel a hidden first step.
+p = player();a,b,c,d = book(p),book(p),book(p),book(p)
+q = ISTimedActionQueue.add(a)
+operations.run(function() ISTimedActionQueue.add(b);ISTimedActionQueue.add(c) end)
+ISTimedActionQueue.add(d)
+refresh();panel=ui[#ui];panel:update();list=panel.list
+local token=b.toolkitQueueOperation
+assert(#list.items==3 and list.items[2].header and list.items[2].item==b and list.items[2].last==3)
+assert(list.scrollHeight==list.itemheight*3+16, 'native scroll extent includes the taller operation header before restoring the scroll offset')
+click(2);assert(#q.queue==4 and #list.items==3, 'header must not cancel its first hidden action')
+list.drawnTextures={};list.doDrawItem(list,list:topOfItem(2),list.items[2],false)
+for _, texture in ipairs(list.drawnTextures) do assert(texture~='close-icon', 'collapsed header must not display a cancel cross') end
+assert(list.items[2].tooltip:find('queue_remaining(2)',1,true) and list.items[2].tooltip:find('queue_group(2)',1,true))
+local function dropLine(target,after,expected)
+    list.dragAction,list.dragging,list.dropTarget,list.dropAfter=d,true,list.items[target].item,after
+    list.drawnRects={}
+    for index, row in ipairs(list.items) do list.doDrawItem(list,list:topOfItem(index),row,false) end
+    local lines={}
+    for _, rect in ipairs(list.drawnRects) do if rect[4]==2 then lines[#lines+1]=rect end end
+    assert(#lines==1 and lines[1][2]==list:topOfItem(expected)+(after and list.items[expected].height-2 or 0),
+        'drop line must follow the visible whole-operation boundary')
+    list:clearGesture()
+end
+dropLine(2,true,2)
+local function toggle(n)
+    local y=list:topOfItem(n)+16
+    list:onMouseDown(10,y);assert(not list.dragAction);list:onMouseUp(10,y);panel:update()
+end
+toggle(2)
+assert(#list.items==5 and list.items[3].item==b and list.items[4].item==c and panel.expanded[token])
+dropLine(4,false,2);dropLine(3,true,4)
+toggle(2);assert(#list.items==3 and not panel.expanded[token])
+drag(2,3,true)
+assert(q.queue[2]==d and q.queue[3]==b and q.queue[4]==c, 'collapsed header drag moves the whole operation')
+toggle(3);drag(5,2,false)
+assert(q.queue[2]==b and q.queue[3]==c and q.queue[4]==d, 'expanded child drag moves the whole operation')
+assert(panel.expanded[token] and list.items[4].item==c)
+click(4)
+assert(q.queue[2]==b and q.queue[3]==d and #list.items==3, 'expanded cross cancels only its actual step')
+-- A dynamic native addAfter expands the same token, retaining the user's expanded state.
+local generated=book(p)
+ISTimedActionQueue.addAfter(b,generated);panel:update()
+assert(list.items[2].header and #list.items==5 and list.items[3].item==b and list.items[4].item==generated)
+-- Queue mutation between press/release cancels the gesture, including a header toggle.
+list:onMouseDown(10,list:topOfItem(2)+16)
+q:removeFromQueue(generated);panel:update();list:onMouseUp(10,list:topOfItem(2)+16)
+assert(not list.pressedToggle and not list.items[2].header and panel.expanded[token])
+-- Native transfers wipe their action table. Stale tokens cannot preserve a phantom group.
+table.wipe(b);panel:update()
+assert(not panel.expanded[token] and not list.items[2].operation and not list.items[2].header)
+q:removeFromQueue(b);panel:update()
+-- Active headers show the actual current native step and its progress; completed/cancelled steps leave only a remaining count.
+p=player();a,b,c=book(p),book(p),book(p)
+operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c) end)
+refresh();panel=ui[#ui];panel:update();list=panel.list
+frame(p);a.action.progress=.42
+list.drawnTexts={};list.doDrawItem(list,0,list.items[1],false)
+assert(list.items[1].header and list.items[1].tooltip:find('[42%]',1,true)
+    and list.items[1].tooltip:find('queue_remaining(3)',1,true) and list.lastTexture=='book-icon')
+click(1);assert(not q.toolkitCancel and #q.queue==3, 'current collapsed header cannot cancel its hidden current step')
+a.action.done=true;frame(p);panel:update()
+assert(list.items[1].header and list.items[1].item==b and list.items[1].last==2)
+frame(p);b.action.progress=.15
+list.doDrawItem(list,0,list.items[1],false)
+assert(list.items[1].tooltip:find('[15%]',1,true) and list.items[1].tooltip:find('queue_remaining(2)',1,true))
+toggle(1);click(2);assert(q.toolkitCancel==b)
+frame(p);panel:update()
+assert(#list.items==1 and list.items[1].item==c and not list.items[1].header, 'a cancelled/completed batch tail becomes a normal single row')
+local nextBook=book(p);ISTimedActionQueue.add(nextBook);panel:update();d=nextBook
+-- getMouseY/onMouseDown use content-space coordinates, including the scroll offset.
+list.scroll=-32;list:onMouseDown(30,40)
+assert(list.dragAction==d, 'visible scrolled content-space row must be hit')
+list:clearGesture()
 list.scroll=-16;list:onMouseDown(30,8);assert(not list.dragAction, 'clipped rows cannot be hit')
 list.scroll=0;list:onMouseDown(30,16)
 enabled=false; refresh(); assert(not panel.visible and #panel.list.items==0, 'hidden view must release action snapshots')
+assert(not next(panel.expanded) and not list.dragAction and not list.pressedToggle)
 enabled=true; refresh(); assert(panel.visible and ui[#ui]==panel)
 p.dead=true; refresh(); assert(not panel.visible)
 p=player(); ISTimedActionQueue.add(book(p)); refresh()
-assert(panel.removed and ui[#ui]~=panel and ui[#ui].queue.character==p)
+assert(panel.removed and #panel.list.items==0 and not next(panel.expanded) and ui[#ui]~=panel and ui[#ui].queue.character==p)
 local replaced = ui[#ui]
 ISTimedActionQueue:new(p); ISTimedActionQueue.add(book(p)); refresh()
 assert(replaced.removed and ui[#ui].queue == ISTimedActionQueue.queues[p])
 ui[#ui]:update(); ISTimedActionQueue.clear(p); refresh()
 assert(not ui[#ui].visible and #ui[#ui].list.items == 0, 'completed/stopped queue must release rows')
 playerCount=0; refresh(); assert(ui[#ui].removed)
-print('Queue view: icons, direct row cancellation, drag/drop, stale press/release, clipping, scroll and lifecycle passed.')
+print('Queue view: collapsed native batches, remaining counts, per-step cancellation, group/child drag, dynamic expansion/wiping, icons, stale gestures, native scroll geometry and snapshot lifecycle passed.')
