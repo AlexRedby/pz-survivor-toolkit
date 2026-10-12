@@ -1,7 +1,7 @@
 name=PZ Survivor Toolkit
 id=PZSurvivorToolkit
 author=AlexRedby
-modversion=0.1.22
+modversion=0.1.23
 category=features
 icon=icon.png
 poster=icon.png
@@ -15,6 +15,7 @@ description=Multiplayer auto-drink: Respects each player's own setting, includin
 description=Vehicle mechanics: Optional Uninstall to ground beside the native Uninstall action, for any removable part without a weight threshold. Native tools, skills, duration and success checks remain in effect. Requires Toolkit on the server and every client.<LINE><LINE>
 description=CleanUI / Container Capacity Indicator: Aligns bars with visible inventory icons, including hidden equipment and scaled icons. Load order: CleanUI, PZSurvivorToolkit, ContainerCapacityIndicator.<LINE><LINE>
 description=TV & Radio ReInvented: Keeps windows open and adds a close button. Click loaded VHS to eject; select tapes from reachable containers or drag them onto the slot. Fully watched tapes have the inventory checkmark. Configurable in Mod Options. Fixes device recognition and native macOS video paths; the separate TVRadioReinventedFix4220 is no longer needed.<LINE><LINE>
+description=Context menus: Groups known actions and removes exact duplicate commands, including submenus. Batch operations appear once per selection while distinct targets and native single-item actions remain available.<LINE><LINE>
 description=Inventory: Optional Grab/Put amount with one whole-number budget across the selection; favourites and equipped items are skipped. Disabled with TakeAnyAmount active. Toolkit owns category filters when Better Containers is active. Select categories from the Category header dropdown. CleanUI searches hide nonmatching items. Fixes grouped-item arrow spacing and Manage Containers registration when switching CleanUI off. Inventory filters can be disabled in Mod Options. Preserves marquee and Shift selection across inventory redraws, including the Proximity Inventory combined view. Proximity Inventory respects manually selected loot containers when changing your carried bags or transferring items.<LINE><LINE>
 description=Batch clothing: Cut selected clothing from the native cut/rip submenu. Supports cotton, denim and leather with native tools and outputs; skips favourites and worn/held items. Can be disabled independently in Mod Options.<LINE><LINE>
 description=Bulk dismantle: Select watches or other supported electronics and choose Dismantle selected from the native dismantling submenu. Processes only selected instances using native recipes, tools, time and XP. Skips favourites and worn/held items. Can be disabled in Mod Options.<LINE><LINE>

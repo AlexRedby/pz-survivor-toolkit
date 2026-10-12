@@ -252,6 +252,15 @@ assert(#disabled.options == 1 and not disabledNative.subOption and disabledNativ
     and bulk.queue(player, entries) == nil and #queued == 0, 'off keeps original native action and blocks stale bulk callback')
 enabled, dead = true, true
 local deadMenu = newMenu();fill(1, deadMenu, {a, b});assert(#deadMenu.options == 0)
+enabled, dead = true, false
+local several = newMenu()
+local firstRecipe = ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(a,several,list({simple}),1)
+local otherRecipe = ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(b,several,list({radio}),1)
+fill(1,several,{a,b})
+assert(firstRecipe.subOption and otherRecipe.onSelect and not otherRecipe.subOption,
+    'one batch command must cover mixed electronics without repeating under every recipe')
+fill(1,several,{a,b})
+assert(#firstRecipe.subOption.options==2 and otherRecipe.onSelect,'repeat fill must not decorate another recipe')
 print('Bulk dismantle checks passed: exact selection, native icons/callbacks, nested flashlight menus, transfers, safety and toggle.')
 
 -- Retained-input recipes must bind the selected devices rather than nearby substitutes.
@@ -367,6 +376,12 @@ assert(single.onSelect==ISInventoryPaneContextMenu.OnNewCraft and single.param1=
 assert(batch.onSelect==clothing.queue and #batch.param1==3 and batch.name=='Cut clothing (3)')
 assert(single.iconTexture==scrapIcon and batch.iconTexture==scrapIcon)
 fill(1,menu,{cotton,denim,leather});assert(#menu.options[1].subOption.options==2)
+local fabrics=newMenu()
+local cottonMenu=ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(cotton,fabrics,list({rip}),1)
+local denimMenu=ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(denim,fabrics,list({cut}),1)
+fill(1,fabrics,{cotton,denim,leather});fill(1,fabrics,{cotton,denim,leather})
+assert(cottonMenu.subOption and #cottonMenu.subOption.options==2 and denimMenu.onSelect and not denimMenu.subOption,
+    'one clothing batch covers both recipes without removing the other native single action')
 cotton.favorite,queued=true,{}
 assert(batch.onSelect(player,batch.param1)==2,'click must recheck protected garments')
 cotton.favorite,clothingEnabled,queued=nil,false,{}

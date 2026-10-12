@@ -201,3 +201,54 @@ child:clear();assert(parent.toolkitContextState==nil and #child.options==0)
 child:addOption('Replacement',nil,function()end);parent:prerender()
 assert(#child.options==1 and child.options[1].name=='Replacement','late submenu rebuild never resurrects pooled actions')
 print('PASS joypad selection and dynamic native submenu clear/rebuild')
+
+-- Remove only exact duplicate actions, including nested native selectors; retain every distinct target.
+menu,actions=build()
+local duplicate=menu:addOption(actions[1].name,actions[1].target,actions[1].onSelect,actions[1].param1)
+menu.mouseOver=#menu.options
+for i=1,5 do
+ menu:prerender()
+ local food=group(menu,'consume');assert(#food.options==2,'exact repeated button must appear once')
+ Organizer.restore(menu);same(menu,{actions[1],actions[2],actions[3],actions[4],actions[5],actions[6],duplicate})
+end
+menu:clear()
+local seen={};for _,option in ipairs(menu.optionPool) do assert(not seen[option],'option pooled twice');seen[option]=true end
+for _,option in ipairs(actions) do assert(seen[option]) end;assert(seen[duplicate])
+
+menu=ISContextMenu:new(nil);root=menu
+local callback=ISInventoryPaneContextMenu.onDropItems
+local item,target={},{}
+local variants={
+ menu:addOption('Drop',target,callback,item),
+ menu:addOption('Drop',{},callback,item),
+ menu:addOption('Drop',target,function() end,item),
+ menu:addOption('Drop',target,callback,{}),
+ menu:addOption('Drop',target,callback,item),
+ menu:addOption('Drop',target,callback,item),
+}
+variants[5].toolTip={description='different tooltip'};variants[6].notAvailable=true
+menu:prerender();local transfers=group(menu,'transfer')
+assert(transfers and #transfers.options==5 and menu.options[2]==variants[3],
+ 'same labels with different target/callback/arguments/metadata must retain distinct actions')
+Organizer.restore(menu);same(menu,variants)
+
+menu=ISContextMenu:new(nil);root=menu
+local parent=menu:addOption('Rip',target,nil);parent.toolkitOriginalOnSelect=ISInventoryPaneContextMenu.OnNewCraft
+-- Explicitly mark a recognized native selector, whose contents must not receive category groups.
+parent.pzstCategory,parent.pzstKey='craft','ripSelector'
+local child=menu:getNew(menu);menu:addSubMenu(parent,child)
+local one=child:addOption('One item',target,callback,item)
+child:addOption('One item',target,callback,item)
+local different=child:addOption('One item',target,callback,{})
+menu:prerender();assert(#child.options==2 and child.options[1]==one and child.options[2]==different)
+Organizer.restore(menu);assert(#child.options==3 and child.parent==menu)
+print('PASS exact duplicate cleanup, mixed-target safety, nested selectors and repeated pool/restore cycles')
+
+menu=ISContextMenu:new(nil);root=menu
+local first=menu:addOption('Custom action',target,nil,item)
+local second=menu:addOption('Custom action',target,nil,item)
+setmetatable(first,{__index={onSelect=callback}})
+setmetatable(second,{__index={onSelect=function() end}})
+menu:prerender();assert(#menu.options==2 and menu.options[1]==first and menu.options[2]==second,
+ 'mod-provided metatable options must remain intact even with identical raw fields')
+print('PASS metatable-based mod actions stay untouched')

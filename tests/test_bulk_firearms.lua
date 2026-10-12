@@ -252,4 +252,22 @@ a.favorite = nil
 local ground = item(40, 'gun', bag);ground.ground = true;queued = {}
 bulk.queueUnload(player, bulk.unloadEntries(player, {ground}))
 assert(queued[1].maxTime == 20 and queued[2].maxTime == 1, 'native ground pickup/equip durations must survive interception')
+player.primary,unloadEnabled,attachmentsEnabled=nil,true,false
+local repeated=menu()
+local gunOption=repeated:addOption('Unload gun',player,ISInventoryPaneContextMenu.onUnloadBulletsFromFirearm,a)
+local magazineOption=repeated:addOption('Unload magazine',player,ISInventoryPaneContextMenu.onUnloadBulletsFromMagazine,magazine)
+fill(0,repeated,{a,magazine});fill(0,repeated,{a,magazine})
+assert(gunOption.subOption and #gunOption.subOption.options==2 and magazineOption.onSelect and not magazineOption.subOption,
+    'mixed gun/magazine selection gets one batch command while distinct native actions survive')
+unloadEnabled,attachmentsEnabled=false,true
+local repeatedParts=menu()
+local firstParent=repeatedParts:addOption(getText('ContextMenu_Remove_Weapon_Upgrade'))
+local firstChoices=menu();repeatedParts:addSubMenu(firstParent,firstChoices)
+firstChoices:addOption('Scope',a,ISInventoryPaneContextMenu.onRemoveUpgradeWeapon,scope,player)
+local secondParent=repeatedParts:addOption(getText('ContextMenu_Remove_Weapon_Upgrade'))
+local secondChoices=menu();repeatedParts:addSubMenu(secondParent,secondChoices)
+secondChoices:addOption('Scope',b,ISInventoryPaneContextMenu.onRemoveUpgradeWeapon,b.parts.Scope,player)
+fill(0,repeatedParts,{a,b});fill(0,repeatedParts,{a,b})
+assert(#firstChoices.options==2 and #secondChoices.options==1 and secondChoices.options[1].target==b,
+    'one attachment batch must preserve both weapon-specific native part choices')
 print('Bulk firearm checks passed: native queues, exact items/parts, MP pre-start guards, mixed menus and independent toggles.')

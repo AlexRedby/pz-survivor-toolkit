@@ -132,10 +132,24 @@ local function restore(root)
 end
 Organizer.restore = restore
 
-local function organizeNode(menu, state, visited)
+local function sameAction(left, right)
+    if getmetatable(left) or getmetatable(right)
+        or not left.onSelect or left.isTitle or right.isTitle then return false end
+    -- Labels alone cannot distinguish actions on different items or mod-specific metadata.
+    for key, value in pairs(left) do
+        if key ~= "id" and right[key] ~= value then return false end
+    end
+    for key, value in pairs(right) do
+        if key ~= "id" and left[key] ~= value then return false end
+    end
+    return true
+end
+
+local function organizeNode(menu, state, visited, selectorsOnly)
     if visited[menu] or not menu.options then return end
     visited[menu] = true
-    local original, categories, explicit, counts = {}, {}, {}, {}
+    local original, unique, categories, explicit, counts = {}, {}, {}, {}, {}
+    local changed = false
     local selected = menu.options[menu.mouseOver]
     for index, option in ipairs(menu.options) do
         if not option.isDefaultOption then
@@ -144,7 +158,24 @@ local function organizeNode(menu, state, visited)
         end
     end
     state.nodes[menu] = original
+    local named = {}
     for _, option in ipairs(original) do
+        local name = option.name or false
+        local candidates = named[name] or {}
+        named[name] = candidates
+        local duplicate
+        for _, kept in ipairs(candidates) do
+            if sameAction(option, kept) then duplicate = kept; break end
+        end
+        if duplicate then
+            changed = true
+            if selected == option then selected = duplicate end
+        else
+            unique[#unique + 1] = option
+            candidates[#candidates + 1] = option
+        end
+    end
+    for _, option in ipairs(unique) do
         local category, manual = action(option)
         categories[option] = category
         explicit[option] = manual
@@ -152,17 +183,18 @@ local function organizeNode(menu, state, visited)
             counts[category] = (counts[category] or 0) + 1
         end
         -- Portion/recipe selectors already form coherent native submenus.
-        if not category and option.subOption then
+        if option.subOption then
             local child = menu:getSubMenu(option.subOption)
-            if child then organizeNode(child, state, visited) end
+            if child then organizeNode(child, state, visited, selectorsOnly or category ~= nil) end
         end
     end
-    local groups, result, changed = {}, {}, false
-    for _, option in ipairs(original) do
+    local groups, result = {}, {}
+    for _, option in ipairs(unique) do
         local category = categories[option]
-        if category == "hidden" then
+        if not selectorsOnly and category == "hidden" then
             changed = true
-        elseif category and category ~= "root" and (explicit[option] or (#original >= 5 and counts[category] >= 2)) then
+        elseif not selectorsOnly and category and category ~= "root"
+            and (explicit[option] or (#unique >= 5 and counts[category] >= 2)) then
             local group = groups[category]
             if not group then
                 group = menu:getNew(menu)

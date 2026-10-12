@@ -161,15 +161,18 @@ local function fillRecipeMenu(playerIndex, context, rows, allowed, api, enabled,
         recipeOptions(context, allowed, found)
     end
     for _, entry in ipairs(found) do
+        if entry.option.toolkitBulkRecipe then return end
+    end
+    -- One command processes the full selection, regardless of which native recipe anchors it.
+    local entry = found[1]
+    if entry then
         local menu, option = entry.context, entry.option
-        if not option.toolkitBulkRecipe then
-            option.toolkitBulkRecipe = option.param1:getName()
-            local submenu = Actions.submenu(menu, option, getText(oneKey))
-            local bulk = submenu:addOption(getText(selectedKey, #selected), player, api.queue, selected)
-            bulk.iconTexture = option.iconTexture
-            bulk.itemForTexture = option.itemForTexture
-            bulk.color = option.color
-        end
+        option.toolkitBulkRecipe = option.param1:getName()
+        local submenu = Actions.submenu(menu, option, getText(oneKey))
+        local bulk = submenu:addOption(getText(selectedKey, #selected), player, api.queue, selected)
+        bulk.iconTexture = option.iconTexture
+        bulk.itemForTexture = option.itemForTexture
+        bulk.color = option.color
     end
 end
 
