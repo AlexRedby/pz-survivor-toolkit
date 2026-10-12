@@ -1,0 +1,279 @@
+require "ISUI/ISContextMenu"
+require "PZSurvivorToolkit/Settings"
+local Rules = require "PZSurvivorToolkit/ContextMenuRules"
+
+if PZSurvivorToolkit.ContextMenus then return PZSurvivorToolkit.ContextMenus end
+local Organizer = { entries = {}, overrides = {}, revision = 0 }
+PZSurvivorToolkit.ContextMenus = Organizer
+local file = "PZSurvivorToolkit_ContextMenus.ini"
+local allowed = { root = true, hidden = true }
+for _, id in ipairs(Rules.groups) do allowed[id] = true end
+local busy = false
+
+local function encode(value)
+    return tostring(value):gsub("%%", "%%25"):gsub("|", "%%7C"):gsub("\r", "%%0D"):gsub("\n", "%%0A")
+end
+local function decode(value)
+    return value:gsub("%%0A", "\n"):gsub("%%0D", "\r"):gsub("%%7C", "|"):gsub("%%25", "%%")
+end
+
+local function load()
+    local reader = getFileReader(file, false)
+    if not reader then return end
+    while true do
+        local line = reader:readLine()
+        if not line then break end
+        local kind, key, value = line:match("^([ER])|([^|]+)|(.*)$")
+        if key then
+            key, value = decode(key), decode(value)
+            if kind == "E" then Organizer.entries[key] = { key = key, label = value }
+            elseif allowed[value] then Organizer.overrides[key] = value end
+        end
+    end
+    reader:close()
+end
+
+function Organizer.save()
+    local writer = getFileWriter(file, true, false)
+    if not writer then return false end
+    for key, entry in pairs(Organizer.entries) do
+        writer:write("E|" .. encode(key) .. "|" .. encode(entry.label) .. "\n")
+    end
+    for key, id in pairs(Organizer.overrides) do
+        writer:write("R|" .. encode(key) .. "|" .. encode(id) .. "\n")
+    end
+    writer:close()
+    return true
+end
+
+function Organizer.groupName(id)
+    return getText("UI_PZSurvivorToolkit_context_group_" .. id)
+end
+
+local function action(option)
+    if option.isDefaultOption or option.isTitle or option.toolkitContextGroup then return nil end
+    local category, key = Rules.classify(option)
+    local label = tostring(option.name or option.text or "")
+    if label == "" then return nil end
+    key = key or "label:" .. label:gsub("%s*%(%d+%)$", "")
+    local entry = Organizer.entries[key]
+    if not entry or entry.label ~= label or entry.category ~= category then
+        Organizer.entries[key] = { key = key, label = label, category = category }
+        Organizer.revision = Organizer.revision + 1
+    end
+    return Organizer.overrides[key] or category, Organizer.overrides[key] ~= nil
+end
+
+local function finish(menu, selected)
+    local index = tonumber(menu.mouseOver)
+    for index, option in ipairs(menu.options) do option.id = index end
+    menu.numOptions = #menu.options + 1
+    menu.mouseOver = index and index > 0 and math.min(index, #menu.options) or -1
+    if selected then
+        for index, option in ipairs(menu.options) do if option == selected then menu.mouseOver = index; break end end
+    end
+    menu:calcHeight()
+    menu:setWidth(menu:calcWidth())
+end
+
+local function removeAncestors(menu)
+    local options = {}
+    for _, option in ipairs(menu.options) do
+        if option.isDefaultOption then
+            if menu.optionPool then menu.optionPool[#menu.optionPool + 1] = option end
+        else options[#options + 1] = option end
+    end
+    menu.options = options
+    menu.addedDefaultOptions = false
+end
+
+local function refreshAncestors(menu, visited)
+    if visited[menu] then return end
+    visited[menu] = true
+    local selected = menu.options[menu.mouseOver]
+    removeAncestors(menu)
+    finish(menu, selected)
+    for _, option in ipairs(menu.options) do
+        if option.subOption then
+            local child = menu:getSubMenu(option.subOption)
+            if child then refreshAncestors(child, visited) end
+        end
+    end
+end
+
+local function restore(root)
+    local state = root.toolkitContextState
+    if not state then return end
+    for _, group in ipairs(state.groups) do group:hideAndChildren() end
+    for child, parent in pairs(state.parents) do child.parent = parent end
+    local visited = {}
+    for child in pairs(state.parents) do refreshAncestors(child, visited) end
+    for node, original in pairs(state.nodes) do
+        local selected = node.options[node.mouseOver]
+        selected = state.anchorOptions[selected] or selected
+        removeAncestors(node)
+        node.options = original
+        removeAncestors(node)
+        finish(node, selected)
+    end
+    -- Native clear pools every option: borrowed action objects must only return to their original menu.
+    for _, group in ipairs(state.groups) do
+        for _, option in ipairs(group.options) do
+            if not state.borrowed[option] and group.optionPool then group.optionPool[#group.optionPool + 1] = option end
+        end
+        group.options = {}
+        group.numOptions = 1
+        group.addedDefaultOptions = false
+    end
+    for anchor, owner in pairs(state.anchors) do
+        if owner.optionPool then owner.optionPool[#owner.optionPool + 1] = anchor end
+    end
+    root.toolkitContextState = nil
+end
+Organizer.restore = restore
+
+local function organizeNode(menu, state, visited)
+    if visited[menu] or not menu.options then return end
+    visited[menu] = true
+    local original, categories, explicit, counts = {}, {}, {}, {}
+    local selected = menu.options[menu.mouseOver]
+    for index, option in ipairs(menu.options) do
+        if not option.isDefaultOption then
+            original[#original + 1] = option
+            state.borrowed[option] = true
+        end
+    end
+    state.nodes[menu] = original
+    for _, option in ipairs(original) do
+        local category, manual = action(option)
+        categories[option] = category
+        explicit[option] = manual
+        if category and category ~= "root" and category ~= "hidden" then
+            counts[category] = (counts[category] or 0) + 1
+        end
+        -- Portion/recipe selectors already form coherent native submenus.
+        if not category and option.subOption then
+            local child = menu:getSubMenu(option.subOption)
+            if child then organizeNode(child, state, visited) end
+        end
+    end
+    local groups, result, changed = {}, {}, false
+    for _, option in ipairs(original) do
+        local category = categories[option]
+        if category == "hidden" then
+            changed = true
+        elseif category and category ~= "root" and (explicit[option] or (#original >= 5 and counts[category] >= 2)) then
+            local group = groups[category]
+            if not group then
+                group = menu:getNew(menu)
+                group.toolkitContextGroupMenu = true
+                state.groups[#state.groups + 1] = group
+                local anchor = menu:addOption(Organizer.groupName(category), nil, nil)
+                anchor.toolkitContextGroup = true
+                state.anchors[anchor] = menu
+                state.anchorOptions[anchor] = option
+                menu:addSubMenu(anchor, group)
+                group.toolkitContextAnchor = anchor
+                groups[category] = group
+                result[#result + 1] = anchor
+            end
+            group.options[#group.options + 1] = option
+            if option.subOption then
+                local child = menu:getSubMenu(option.subOption)
+                if child then
+                    state.parents[child] = child.parent
+                    child.parent = group
+                    refreshAncestors(child, {})
+                end
+            end
+            changed = true
+        else
+            result[#result + 1] = option
+        end
+    end
+    if changed then
+        removeAncestors(menu)
+        menu.options = result
+        for _, group in pairs(groups) do finish(group) end
+        local category = selected and categories[selected]
+        finish(menu, groups[category] and groups[category].toolkitContextAnchor or selected)
+    end
+end
+
+function Organizer.organize(root)
+    if busy or not root or (root.parent and root.parent.options) or root.toolkitContextSkip then return end
+    if not PZSurvivorToolkit.Settings.contextMenus() then restore(root); return end
+    if root.toolkitContextState then return end
+    busy = true
+    local state = { nodes = {}, parents = {}, groups = {}, borrowed = {}, anchors = {}, anchorOptions = {} }
+    root.toolkitContextState = state
+    local ok, error = pcall(organizeNode, root, state, {})
+    busy = false
+    if not ok then
+        restore(root)
+        print("[PZSurvivorToolkit] Context menu organization failed: " .. tostring(error))
+    end
+end
+
+function Organizer.settingsChanged()
+    for player = 0, getNumActivePlayers() - 1 do
+        local menu = getPlayerContextMenu(player)
+        if menu then restore(menu); menu:hideAndChildren() end
+    end
+end
+
+function Organizer.setOverride(key, category)
+    if category ~= nil and not allowed[category] then return false end
+    Organizer.overrides[key] = category
+    Organizer.revision = Organizer.revision + 1
+    Organizer.save()
+    Organizer.settingsChanged()
+    return true
+end
+
+function Organizer.reset()
+    Organizer.overrides = {}
+    Organizer.revision = Organizer.revision + 1
+    Organizer.save()
+    Organizer.settingsChanged()
+end
+
+function Organizer.openEditor()
+    local Editor = require "PZSurvivorToolkit/ContextMenuEditor"
+    return Editor.show()
+end
+
+local prerender, clear = ISContextMenu.prerender, ISContextMenu.clear
+ISContextMenu.prerender = function(self, ...)
+    Organizer.organize(self)
+    return prerender(self, ...)
+end
+ISContextMenu.clear = function(self, ...)
+    if not busy then
+        local root = self
+        while root.parent and root.parent.options do root = root.parent end
+        restore(root)
+    end
+    self.toolkitContextState, self.toolkitContextGroupMenu, self.toolkitContextSkip = nil, nil, nil
+    return clear(self, ...)
+end
+local function beforeMutation(menu)
+    if busy then return end
+    local root = menu
+    while root.parent and root.parent.options do root = root.parent end
+    restore(root)
+end
+for _, name in ipairs({"addOption", "addOptionOnTop", "insertOptionBefore", "insertOptionAfter", "removeLastOption", "removeOptionByName"}) do
+    local native = ISContextMenu[name]
+    if native then
+        ISContextMenu[name] = function(self, ...)
+            local ancestor = name == "addOptionOnTop" and ISContextMenu.displayAncestor
+                and select(3, ...) == ISContextMenu.displayAncestor
+            if not ancestor then beforeMutation(self) end
+            return native(self, ...)
+        end
+    end
+end
+
+load()
+return Organizer

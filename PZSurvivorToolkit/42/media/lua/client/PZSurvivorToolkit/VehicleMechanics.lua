@@ -35,6 +35,7 @@ local function install()
                     option.target, uninstallToGround, part)
                 ground.notAvailable = option.notAvailable
                 ground.toolTip = option.toolTip
+                ground.pzstCategory, ground.pzstKey = "vehicle", "uninstallGround"
                 break
             end
         end

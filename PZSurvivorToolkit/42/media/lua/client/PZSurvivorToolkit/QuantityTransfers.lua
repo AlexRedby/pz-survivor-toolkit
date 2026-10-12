@@ -107,7 +107,8 @@ ISInventoryPaneContextMenu.doGrabMenu = function(context, rows, playerNum)
     local page = getPlayerInventory(playerNum)
     local selection = Quantity.snapshot(playerNum, rows, page.inventory, true)
     if selection and #selection.items > 1 then
-        context:addOption(getText("UI_PZSurvivorToolkit_grab_amount"), selection, open, page.title)
+        local option = context:addOption(getText("UI_PZSurvivorToolkit_grab_amount"), selection, open, page.title)
+        option.pzstCategory, option.pzstKey = "transfer", "grabAmount"
     end
     return result
 end
@@ -117,6 +118,7 @@ Events.OnFillInventoryObjectContextMenu.Add(function(playerNum, context, rows)
     local page = getPlayerLoot(playerNum)
     local selection = Quantity.snapshot(playerNum, rows, page.inventory, false)
     if selection and #selection.items > 1 then
-        context:addOption(getText("UI_PZSurvivorToolkit_put_amount", page.title), selection, open, page.title)
+        local option = context:addOption(getText("UI_PZSurvivorToolkit_put_amount", page.title), selection, open, page.title)
+        option.pzstCategory, option.pzstKey = "transfer", "putAmount"
     end
 end)

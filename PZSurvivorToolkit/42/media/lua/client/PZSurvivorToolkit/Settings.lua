@@ -22,6 +22,7 @@ local function notifySettingsChanged()
     if Toolkit.InventoryFilter then
         Toolkit.InventoryFilter.settingsChanged()
     end
+    if Toolkit.ContextMenus then Toolkit.ContextMenus.settingsChanged() end
 end
 
 local options = PZAPI.ModOptions:create(
@@ -81,6 +82,16 @@ local clothingOption = options:addTickBox(
 )
 
 local mediaWindowOption, vhsControlsOption, medicineSyncOption, medicineHerbsOption, navigatorOption
+local contextMenusOption
+if not getActivatedMods():contains("ContextMenuOrganizer") and not getActivatedMods():contains("ContextMenuOrganizerWorld") then
+    options:addTitle(getText("UI_PZSurvivorToolkit_context_title"))
+    contextMenusOption = options:addTickBox("ContextMenus", getText("UI_PZSurvivorToolkit_context_enabled"), true,
+        getText("UI_PZSurvivorToolkit_context_tooltip"))
+    options:addButton("ContextMenuEditor", getText("UI_PZSurvivorToolkit_context_editor"),
+        getText("UI_PZSurvivorToolkit_context_editor_tooltip"), function()
+            if Toolkit.ContextMenus then Toolkit.ContextMenus.openEditor() end
+        end)
+end
 options:addTitle(getText("UI_options_PZSurvivorToolkit_inventory_title"))
 local inventoryFilterOption = options:addTickBox(
     "InventoryFilters",
@@ -170,6 +181,10 @@ radiusOption.onChangeApply = notifySettingsChanged
 
 function Settings.showHighlightButton()
     return sidebarOption:getValue() == true
+end
+
+function Settings.contextMenus()
+    return contextMenusOption ~= nil and contextMenusOption:getValue() == true
 end
 
 function Settings.navigatorDashboard()
