@@ -10,8 +10,8 @@ local function derive(self, name)
     return setmetatable(t, {__index = self})
 end
 ISBaseObject = {derive = derive}
-local installWorldQueue
-Events = {OnTick = {Add = function() end}, OnGameStart = {Add = function(callback) installWorldQueue = callback end}}
+local installWorldQueue, buildStateEvent
+Events = {OnServerCommand = {Add = function(callback) buildStateEvent = callback end}, OnTick = {Add = function() end}, OnGameStart = {Add = function(callback) installWorldQueue = callback end}}
 for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
@@ -64,6 +64,7 @@ local player = {class = 'IsoPlayer', isAsleep = function() return false end,
 function player:getCurrentSquare() return self.square end
 function player:getPrimaryHandItem() return self.hand end
 function player:getSecondaryHandItem() return nil end
+player.getOnlineID = function() return 17 end
 getSpecificPlayer = function() return player end
 local function action(kind, object)
     return {Type = kind, character = player, object = object,
@@ -404,8 +405,7 @@ deferred:update()
 assert(deferred.action.stopped, 'native generator fallback must still stop on an actual exception')
 print('World command completion changes only expected empty validation results; native failure handling preserved.')
 
--- Active MP building cannot safely distinguish cancellation from a server completion in flight.
--- Waiting MP builds keep native queue expansion and validation; SP builds remain resumable.
+-- MP replay requires a server-started UUID bound to this exact active native action.
 reset(); seed(); materials, tool = true, true; player.square = {}
 isClient = function() return true end
 local mpBuild = buildCursor('ISBuildIsoEntity', 'MP stacked crate')
@@ -416,6 +416,50 @@ local mpConstructed = q.queue[#q.queue]
 assert(mpConstructed.Type == 'ISBuildAction' and mpConstructed.maxTime == -1 and stopped == 0)
 local allowed, reason = world.canResume(mpConstructed)
 assert(not allowed and reason == 'move_world_transaction' and not world.resume(mpConstructed))
+local token = '12345678-1234-1234-1234-123456789abc'
+local function acknowledge(state, overrides)
+    local args = {player = 17, transaction = -128, token = token, state = state}
+    for key, value in pairs(overrides or {}) do args[key] = value end
+    buildStateEvent('PZSurvivorToolkitBuild', 'State', args)
+end
+-- Waiting, unstarted and copied actions cannot borrow a matching signed byte.
+mpConstructed.transactionId = -128
+acknowledge('started'); assert(not world.canResume(mpConstructed))
+q.queue, q.current = {mpConstructed}, mpConstructed
+mpConstructed.action, mpConstructed.started = {}, true
+for _, args in ipairs({{player = 18}, {transaction = 128}, {transaction = -127}, {transaction = 1.5},
+    {token = 'invalid'}, {state = 'unknown'}}) do
+    acknowledge('started', args); assert(not world.canResume(mpConstructed))
+end
+acknowledge('canceled'); assert(not world.canResume(mpConstructed), 'terminal cannot bind an unknown UUID')
+acknowledge('started'); assert(world.canResume(mpConstructed))
+local ack = world.buildAcknowledgement(mpConstructed)
+assert(ack and ack.token == token and world.buildState(mpConstructed, ack) == 'started')
+local clone = {}; for key, value in pairs(mpConstructed) do clone[key] = value end
+assert(not world.canResume(clone) and not world.buildState(clone, ack))
+acknowledge('started', {token = '22345678-1234-1234-1234-123456789abc'})
+assert(world.buildAcknowledgement(mpConstructed) == ack, 'duplicate starts never replace the bound UUID')
+acknowledge('completed', {token = '22345678-1234-1234-1234-123456789abc'})
+assert(world.buildState(mpConstructed, ack) == 'started', 'foreign terminal ignored')
+acknowledge('canceled')
+assert(world.buildState(mpConstructed, ack) == 'canceled' and not world.canResume(mpConstructed))
+assert(not world.resume(mpConstructed) and world.isDeferredAction(world.resume(mpConstructed, ack)))
+acknowledge('completed'); assert(world.buildState(mpConstructed, ack) == 'canceled', 'terminal is immutable')
+local originalX = mpConstructed.x; mpConstructed.x = originalX + 1
+assert(not world.buildState(mpConstructed, ack) and not world.resume(mpConstructed, ack), 'retargeted snapshots fail closed')
+mpConstructed.x = originalX
+-- Reused native signed bytes cannot bind the previous known token.
+reset(); materials, tool = true, true
+buildCursor('ISBuildIsoEntity', 'Next MP build'):tryBuild(12, 34, 1)
+local nextBuild = q.queue[#q.queue]
+q.queue, q.current = {nextBuild}, nextBuild
+nextBuild.transactionId, nextBuild.started, nextBuild.action = -128, true, {}
+acknowledge('started'); assert(not world.canResume(nextBuild))
+acknowledge('started', {token = '32345678-1234-1234-1234-123456789abc'})
+local nextAck = world.buildAcknowledgement(nextBuild); assert(nextAck)
+acknowledge('canceled'); assert(world.buildState(nextBuild, nextAck) == 'started', 'prior transaction terminal cannot cancel a reused byte')
+acknowledge('completed', {token = nextAck.token})
+assert(world.buildState(nextBuild, nextAck) == 'completed' and not world.resume(nextBuild, nextAck))
 isClient = function() return false end
 assert(world.canResume(mpConstructed), 'single-player native building remains resumable')
 -- Scrap completion removes its target, so replay revalidates existence in MP as in SP.

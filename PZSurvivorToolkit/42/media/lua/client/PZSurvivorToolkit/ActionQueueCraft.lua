@@ -105,6 +105,25 @@ local function addList(list, items)
     end)
 end
 
+function Craft.repairInputs(action)
+    if not Craft.supports(action) or getmetatable(action) ~= ISFixAction then return end
+    local types = {}
+    local ok = pcall(function()
+        -- MP reconstructs these selections from their indices, not the client's cached fields.
+        assert(FixingManager.getFixes(action.item):get(action.fixingNum) == action.fixing)
+        assert(action.fixing:getFixers():get(action.fixerNum) == action.fixer)
+        local function add(fixer)
+            local name = fixer:getFixerName()
+            assert(type(name) == "string" and name ~= "")
+            types[name] = true
+        end
+        add(action.fixer)
+        local global = action.fixing:getGlobalItem()
+        if global then add(global) end
+    end)
+    if ok then return types end
+end
+
 function Craft.collectItems(action, items)
     if not Craft.supports(action) then return false, false end
     local _, owner = callbackOwner(action)

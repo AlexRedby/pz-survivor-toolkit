@@ -133,7 +133,7 @@
   "UI_PZSurvivorToolkit_queue_operation_dependent": "Защищено: непроверенные обработчики, разделённые связанные шаги либо другое действие может зависеть от этой операции.",
   "UI_PZSurvivorToolkit_queue_operation_shared_item": "Защищено: действие вне этой операции использует тот же предмет.",
   "UI_PZSurvivorToolkit_queue_action_build": "Построить",
-  "UI_PZSurvivorToolkit_queue_move_world_transaction": "Начатое строительство в мультиплеере должно завершиться: сервер уже мог потратить материалы. Ожидающие постройки можно переставлять и отменять.",
+  "UI_PZSurvivorToolkit_queue_move_world_transaction": "Сервер не подтвердил безопасное прерывание этой постройки. На сервере нужен обновлённый Toolkit Java Patches. Ожидающие постройки можно переставлять и отменять.",
   "UI_PZST_CraftChainOption": "Планировать промежуточный крафт",
   "UI_PZST_CraftChainOptionTooltip": "Добавляет просмотр плана в штатном крафте и Neat Crafting. Промежуточные рецепты выполняются обычными действиями. Отключите, чтобы скрыть планирование.",
   "UI_PZST_CraftChainTitle": "План крафта",

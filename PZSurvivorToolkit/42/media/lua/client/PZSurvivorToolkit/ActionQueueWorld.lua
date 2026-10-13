@@ -10,6 +10,7 @@ local commandMarker = {}
 local commandCallbacks = {}
 local resumeMarker = {}
 local nativeTryBuild
+local buildTokens = {}
 
 local function startCommand(action)
     action:beginAddingActions()
@@ -124,7 +125,9 @@ end
 
 local function trackBuild(action, snapshot)
     if not action then return end
-    action.toolkitWorldResume = {marker = resumeMarker, snapshot = snapshot, complete = action.onCompleteFunc, target = action.onCompleteTarget,
+    action.toolkitWorldResume = {marker = resumeMarker, owner = action, snapshot = snapshot, item = action.item,
+        x = action.x, y = action.y, z = action.z, north = action.north, spriteName = action.spriteName,
+        complete = action.onCompleteFunc, target = action.onCompleteTarget,
         cancel = action.onCancelFunc, cancelTarget = action.onCancelTarget}
     action.toolkitWorldOperation = "build"
     action.toolkitWorldTarget = snapshot.object
@@ -165,24 +168,53 @@ function World.targetGone(action)
         and action.moveProps == saved.snapshot.moveProps and not action:isValidObject()
 end
 
-function World.canResume(action)
-    local saved = action and action.toolkitWorldResume
-    if not saved or saved.marker ~= resumeMarker then return false end
-    if action.Type == "ISMoveablesAction" then
-        return action.mode == "scrap" and action.object == saved.snapshot.object
-            and action.square == saved.snapshot.square and action:isValidObject()
-    end
-    -- shortcut: MP stacking/incremental builds can double-spend after a late completion; resuming needs authoritative server cancellation acknowledgement.
-    if action.Type == "ISBuildAction" and isClient() then return false, "move_world_transaction" end
-    return action.Type == "ISBuildAction"
+local function ownedBuild(action, saved)
+    return saved and saved.marker == resumeMarker and saved.owner == action and action.Type == "ISBuildAction"
+        and action.item == saved.item and action.x == saved.x and action.y == saved.y and action.z == saved.z
+        and action.north == saved.north and action.spriteName == saved.spriteName
         and action.onCompleteFunc == saved.complete and action.onCompleteTarget == saved.target
         and action.onCancelFunc == saved.cancel and action.onCancelTarget == saved.cancelTarget
         and (not saved.complete or saved.complete == ISBuildingObject.onActionComplete)
         and (not saved.cancel or saved.cancel == ISBuildingObject.onActionComplete)
 end
 
-function World.resume(action)
-    if not World.canResume(action) then return end
+local function currentBuild(action)
+    local queue = action and ISTimedActionQueue.queues[action.character]
+    return queue and queue.current == action and queue.queue[1] == action and action.started == true and action.action ~= nil
+end
+
+function World.canResume(action)
+    local saved = action and action.toolkitWorldResume
+    if not saved or saved.marker ~= resumeMarker or saved.owner ~= action then return false end
+    if action.Type == "ISMoveablesAction" then
+        return action.mode == "scrap" and action.object == saved.snapshot.object
+            and action.square == saved.snapshot.square and action:isValidObject()
+    end
+    if not ownedBuild(action, saved) then return false end
+    if isClient() then
+        local ack = saved.server
+        return currentBuild(action) and ack ~= nil and ack.transaction == action.transactionId
+            and ack.state == "started", "move_world_transaction"
+    end
+    return true
+end
+
+function World.buildAcknowledgement(action)
+    if isClient() and action.Type == "ISBuildAction" and World.canResume(action) then
+        return action.toolkitWorldResume.server
+    end
+end
+
+function World.buildState(action, acknowledgement)
+    local saved = action and action.toolkitWorldResume
+    if type(acknowledgement) == "table" and ownedBuild(action, saved) and acknowledgement == saved.server
+        and acknowledgement.transaction == action.transactionId then return acknowledgement.state end
+end
+
+function World.resume(action, acknowledgement)
+    if acknowledgement then
+        if World.buildState(action, acknowledgement) ~= "canceled" then return end
+    elseif not World.canResume(action) then return end
     local saved = action.toolkitWorldResume.snapshot
     if action.Type == "ISMoveablesAction" then
         return command(action.character, action.toolkitWorldResume.callback, shallowCopy(saved), "dismantle", saved.moveProps.name)
@@ -191,6 +223,39 @@ function World.resume(action)
     snapshot.object = saved.object
     return command(action.character, buildFromSnapshot, snapshot, "build", saved.item.name)
 end
+
+local function serverBuildState(module, commandName, args)
+    if module ~= "PZSurvivorToolkitBuild" or commandName ~= "State" or not isClient() or type(args) ~= "table"
+        or type(args.player) ~= "number" or type(args.transaction) ~= "number"
+        or args.transaction < -128 or args.transaction > 127 or args.transaction % 1 ~= 0
+        or type(args.token) ~= "string" or #args.token ~= 36
+        or not args.token:match("^%x+%-%x+%-%x+%-%x+%-%x+$")
+        or args.token:sub(9, 9) ~= "-" or args.token:sub(14, 14) ~= "-"
+        or args.token:sub(19, 19) ~= "-" or args.token:sub(24, 24) ~= "-"
+        or (args.state ~= "started" and args.state ~= "canceled" and args.state ~= "completed") then return end
+    for character, queue in pairs(ISTimedActionQueue.queues) do
+        if getSpecificPlayer(character:getPlayerNum()) == character and character:getOnlineID() == args.player then
+            local action = queue.current
+            local saved = action and action.toolkitWorldResume
+            if not currentBuild(action) or not ownedBuild(action, saved) or action.transactionId ~= args.transaction then return end
+            local ack = saved.server
+            if args.state == "started" then
+                local playerNum = character:getPlayerNum()
+                local tokens = buildTokens[playerNum] or {}
+                -- Server ACKs share native BuildAction's ordered channel; an old started cannot cross native Done/id reuse.
+                if ack or tokens[args.transaction] == args.token then return end
+                tokens[args.transaction] = args.token
+                buildTokens[playerNum] = tokens
+                saved.server = {transaction = args.transaction, token = args.token, state = "started"}
+            elseif ack and ack.token == args.token and ack.transaction == args.transaction and ack.state == "started" then
+                ack.state = args.state
+            end
+            return
+        end
+    end
+end
+
+Events.OnServerCommand.Add(serverBuildState)
 
 local function containsSquare(build, square)
     if not square then return false end

@@ -133,7 +133,7 @@
   "UI_PZSurvivorToolkit_queue_operation_dependent": "Protected: unknown callbacks, separated linked steps, or another action may depend on this operation.",
   "UI_PZSurvivorToolkit_queue_operation_shared_item": "Protected: an action outside this operation uses the same item.",
   "UI_PZSurvivorToolkit_queue_action_build": "Build",
-  "UI_PZSurvivorToolkit_queue_move_world_transaction": "Started construction in multiplayer must finish: the server may already have spent its materials. Waiting construction can still be reordered or cancelled.",
+  "UI_PZSurvivorToolkit_queue_move_world_transaction": "The server has not confirmed safe interruption for this build. It needs the updated Toolkit Java Patches. Waiting builds can still be reordered or cancelled.",
   "UI_PZST_CraftChainOption": "Plan prerequisite crafting",
   "UI_PZST_CraftChainOptionTooltip": "Adds a reviewable plan in native crafting and Neat Crafting. Intermediate recipes run as normal actions. Disable to hide planning controls.",
   "UI_PZST_CraftChainTitle": "Plan crafting",

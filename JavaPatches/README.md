@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` v0.1.2 is an independent Java mod for **B42.21 only**, required in our selected set. It needs **ZombieBuddy 2.3.4+** in every client and the server process. It patches client zombie-speed decoding and vehicle interpolation recovery, plus server-side VHS restart handling. Each patch checks its target class bytecode and disables itself on an unsupported build. It remains experimental: it is not established as a fix for minute-long vehicle freezes or every movement jerk.
+`PZToolkitJavaPatches` v0.1.3 is an independent Java mod for **B42.21 only**, required in our selected set. It needs **ZombieBuddy 2.3.4+** in every client and the server process. It patches client zombie-speed decoding and vehicle interpolation recovery, plus server-side VHS restart handling and build cancellation acknowledgements. Each patch checks its target class bytecode and disables itself on an unsupported build. It remains experimental: it is not established as a fix for minute-long vehicle freezes or every movement jerk.
 
 ## Prepare and install
 
@@ -20,7 +20,7 @@ Use corresponding paths on macOS/Linux; `--game` points to the folder containing
 
 Copy the three folders inside `dist/SurvivorQoL/mods` to `Zomboid/mods` on the server and every client. The prepared INI already includes `ZombieBuddy;PZToolkitJavaPatches` first, followed by the rest of the selected set. This local patch has no Workshop ID. Approve its JAR in ZombieBuddy on each client and server; see Host's saved-approval step below.
 
-For Java-only development, `python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts the same `--game`, `--jdk` and `--check` options. The checks compare original and patched engine vehicle interpolation and media restart behavior; there is no separate zombie-speed regression in this command. Generated output is ignored by Git.
+For Java-only development, `python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts the same `--game`, `--jdk` and `--check` options. The checks compare original and patched engine vehicle interpolation, media restart and build cancellation/completion behavior; there is no separate zombie-speed regression in this command. Generated output is ignored by Git.
 
 ## Server loader
 
@@ -61,14 +61,18 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 
 ### Verify activation
 
-Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
+Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
 
-- Server: `[ZB] Transformed: zombie.radio.devices.DeviceData`.
+- Server: `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
 - Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI` and `[ZB] Transformed: zombie.vehicles.VehicleInterpolation`.
 
 These appear at the default log verbosity. Missing output, `false` values, or target-class/transformation errors mean setup is incomplete or needs investigation. The client also shows **ZombieBuddy ... loaded** in the upper-left corner. A client message alone does not confirm server activation.
 
+The build acknowledgement patch lets Toolkit 0.1.30 interrupt active multiplayer construction safely. It reports the native server outcome over the same ordered channel as build transactions. Only confirmed cancellations may resume; completed builds never replay. An unsupported or unpatched server retains the queue restriction, and a missing terminal reply clears the waiting queue after 30 seconds.
+
 ## Verification limits
+
+The build patch passed native Java cancellation/completion race checks and an isolated B42.21 server run with two EN/RU clients. Each client passed 22 checks covering interruption and once-only resumption of wooden/metal barricades and a crate; the server verified exact material consumption. Real WAN races, split-screen and other platforms were not exercised.
 
 The VHS patch cancels the old stop timer on a quick Stop/Play sequence. A native B42.21 server and two EN/RU clients passed eight playback checks each, including dialogue, 62.5 XP each and normal completion.
 
