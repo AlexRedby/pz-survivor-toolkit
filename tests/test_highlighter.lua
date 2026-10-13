@@ -68,6 +68,7 @@ local function setup(savedFile, mediaActive, medicineActive, navigatorActive, ex
         loaded[name] = true
         if name == "PZSurvivorToolkit" then return end
         if name == "ISUI/ISButton" then assert(ISButton); return end
+        if name == "ISUI/ISContextMenu" then return end
         if name == "PZAPI/ModOptions" then
             if NativeModOptionsSource then
                 assert(loadstring(NativeModOptionsSource))()
@@ -108,7 +109,7 @@ local function setup(savedFile, mediaActive, medicineActive, navigatorActive, ex
             end
             return
         end
-        dofile(client .. name .. ".lua")
+        return dofile(client .. name .. ".lua")
     end
     require("PZSurvivorToolkit/Highlighter")
     require("PZSurvivorToolkit/Input")
@@ -459,14 +460,34 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     function ISButton:derive() return setmetatable({}, { __index = self }) end
     function ISButton:new(x, y, width, height, title, target, onclick)
         self.__index = self
-        return setmetatable({ y = y, height = height, target = target, onclick = onclick }, self)
+        return setmetatable({x = x, y = y, width = width, height = height, title = title,
+            target = target, onclick = onclick, isButton = true}, self)
     end
     function ISButton:initialise() end
-    function ISButton:setEnable(value) self.enable = value end
+    function ISButton:setEnable(value)
+        self.enable = value
+        local channel = value and 1 or .3
+        self.textureColor = {r=channel,g=channel,b=channel,a=1}
+    end
     function ISButton:setTitle(value) self.title = value end
     function ISButton:setTooltip(value) self.tooltip = value end
     function ISButton:getBottom() return self.y + self.height end
+    function ISButton:getRight() return self.x + self.width end
+    function ISButton:getWidth() return self.width end
+    function ISButton:getHeight() return self.height end
+    function ISButton:getIsVisible() return true end
+    function ISButton:setX(value) self.x = value end
+    function ISButton:setY(value) self.y = value end
+    function ISButton:setWidth(value) self.width = value end
+    function ISButton:setHeight(value) self.height = value end
+    function ISButton:setImage(value) self.image = value end
+    function ISButton:forceImageSize(width, height) self.imageWidth, self.imageHeight = width, height end
+    function ISButton:ignoreWidthChange() self.ignoreWidth = true end
+    function ISButton:ignoreHeightChange() self.ignoreHeight = true end
     function ISButton:forceClick() if self.enable then self.onclick(self.target, self) end end
+    getTexture = function(path) return path end
+    getPlayerScreenTop = function() return 0 end
+    getPlayerScreenHeight = function() return 1080 end
     UIFont = { Small = 1 }
     getKeyName = function(key) return "KEY_" .. key end
     getText = function(key, value) return value and key .. ":" .. value or key end
@@ -480,6 +501,8 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
             getHeight = function(self) return self.height end,
             setWidth = function(self, value) self.width = value end,
             setHeight = function(self, value) self.height = value end,
+            getChildren = function(self) return self.children end,
+            getAbsoluteY = function() return 0 end,
             addChild = function(self, child) self.children[#self.children + 1] = child end,
             removeChild = function(self, child)
                 for i, current in ipairs(self.children) do
@@ -492,46 +515,52 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     require("PZSurvivorToolkit/ToggleButton")
     w:advance(70)
     local button = data.equipped.toolkitHighlightButton
-    equal(#data.equipped.children, 1)
-    equal(button.title, "UI_PZSurvivorToolkit_button_on")
+    equal(#data.equipped.children, 2)
+    equal(button.title, "")
+    equal(button.highlightEnabled, true)
     button:forceClick()
     equal(w.settings.isEnabled(), false)
     equal(object.flags[0], false)
-    equal(button.title, "UI_PZSurvivorToolkit_button_off")
+    equal(button.title, "")
+    equal(button.highlightEnabled, false)
     equal(w.saves, 1)
     Events.OnKeyPressed.fire(Keyboard.KEY_F8)
     button:update()
-    equal(button.title, "UI_PZSurvivorToolkit_button_on")
+    equal(button.title, "")
+    equal(button.highlightEnabled, true)
     w:apply("ToggleKey", 12)
     button:update()
-    equal(button.tooltip, "UI_PZSurvivorToolkit_button_tooltip:KEY_12")
+    equal(button.tooltip, "UI_PZSurvivorToolkit_button_on\nUI_PZSurvivorToolkit_button_tooltip:KEY_12")
     Events.OnKeyPressed.fire(Keyboard.KEY_F8)
     equal(w.settings.isEnabled(), true)
     Events.OnKeyPressed.fire(12)
     button:update()
-    equal(button.title, "UI_PZSurvivorToolkit_button_off")
+    equal(button.title, "")
+    equal(button.highlightEnabled, false)
     w:apply("ToggleKey", 0)
     button:update()
-    equal(button.tooltip, "UI_PZSurvivorToolkit_button_tooltip:UI_PZSurvivorToolkit_no_shortcut")
+    equal(button.tooltip, "UI_PZSurvivorToolkit_button_off\nUI_PZSurvivorToolkit_button_tooltip:UI_PZSurvivorToolkit_no_shortcut")
     Events.OnKeyPressed.fire(0)
     equal(w.settings.isEnabled(), false)
     button:forceClick()
     equal(w.settings.isEnabled(), true)
     w:apply("Enabled", false)
     button:update()
-    equal(button.title, "UI_PZSurvivorToolkit_button_off")
+    equal(button.title, "")
+    equal(button.highlightEnabled, false)
     w:apply("ShowHighlightButton", false)
     w:advance(2)
     equal(data.equipped.toolkitHighlightButton, nil)
-    equal(#data.equipped.children, 0)
-    equal(data.equipped.width, 48)
+    equal(#data.equipped.children, 1)
+    equal(data.equipped.width, 78, "hub remains beside original sidebar")
     equal(data.equipped.height, 500)
+    assert(data.equipped.toolkitToolsButton)
     w:apply("ToggleKey", 12)
     Events.OnKeyPressed.fire(12)
     equal(w.settings.isEnabled(), true, "hidden button must not disable the shortcut")
     w:apply("ShowHighlightButton", true)
     w:advance(2)
-    equal(#data.equipped.children, 1)
+    equal(#data.equipped.children, 2)
     local expandedWidth, expandedHeight = data.equipped.width + 10, data.equipped.height + 10
     data.equipped:setWidth(expandedWidth)
     data.equipped:setHeight(expandedHeight)
@@ -547,8 +576,9 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     w:advance(2)
     local replacement = data.equipped.toolkitHighlightButton
     assert(replacement ~= button)
-    equal(#data.equipped.children, 1)
-    equal(replacement.title, "UI_PZSurvivorToolkit_button_off")
+    equal(#data.equipped.children, 2)
+    equal(replacement.title, "")
+    equal(replacement.highlightEnabled, false)
     w.player.dead = true
     replacement:update()
     replacement:forceClick()

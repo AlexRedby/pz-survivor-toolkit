@@ -13,6 +13,8 @@
     "UI_options_PZSurvivorToolkit_radius_10": "10 tiles",
     "UI_options_PZSurvivorToolkit_radius_15": "15 tiles",
     "UI_options_PZSurvivorToolkit_radius_20": "20 tiles",
+    "UI_PZSurvivorToolkit_tools_tooltip": "Survivor Toolkit: wishlists, menu rules and settings.",
+    "UI_PZSurvivorToolkit_tools_settings": "Toolkit settings",
     "UI_PZSurvivorToolkit_button_on": "Items: ON",
     "UI_PZSurvivorToolkit_button_off": "Items: OFF",
     "UI_PZSurvivorToolkit_no_shortcut": "None",

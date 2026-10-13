@@ -26,7 +26,7 @@ See the [mod list](USEFUL_MODS.md) and [ordered server INI](SurvivorQoL-selected
 
 The separate `PZSurvivorWishlist` folder contains an independent wishlist mod, required and already enabled in our selected INI after the crafting/UI mods. The preparation command includes it for the server and every client. It needs neither Shopping List nor WANTED.
 
-- Press **K** or the sidebar **List** button. Search the catalog by item name or full type; a sample or recipe is not required. Set the desired quantity and add the item.
+- Press **K** or choose **Open wishlist** from the sidebar Toolkit tools icon. With Wishlist alone, its tools icon opens the list directly. Search the catalog by item name or full type; a sample or recipe is not required. Set the desired quantity and add the item.
 - Native inventory context menus and the native, Neat Crafting, Neat Building and Project Cook crafting windows can add wanted items. Crafting offers results and missing ingredients; choose one alternative when a recipe accepts different items. Fluids and partial uses are not treated as exact piece counts: these entries ask for one suitable container/item and say to check its contents or remaining uses.
 - **Sharing** grants editing to named server usernames (including offline players), your current faction, or both. Everyone with access edits the same list; only its owner changes access. The list selector chooses where additions go. All unfinished goals in your accessible lists are highlighted. Concurrent changes against an old revision are rejected with a prompt to review the refreshed list.
 - Quantities are shared goals. **Carried by you** counts only your own inventory and carried bags. Mark completed goals manually, so one player's inventory does not silently complete a group objective.
@@ -41,7 +41,8 @@ These were programmatic checks in the real game on localhost. Windows/Linux, ord
 
 ## Controls
 
-- Click **Items: ON / Items: OFF** at the bottom of the left sidebar to toggle highlighting.
+- Click the **flashlight icon** beside the left sidebar Inventory button to toggle highlighting. A warm tint and checkmark indicate ON; a grey icon indicates OFF. Hover for the state and current shortcut.
+- The adjacent **tools icon** opens Wishlist (when enabled), context menu rules and Toolkit settings. Settings open scrolled to the Toolkit section. Window buttons retain their text with a shared muted warm style.
 - **F8** is the default optional shortcut. Change it using **Options > Mods > PZ Survivor Toolkit > Toggle key**.
 - **Options > Mods > PZ Survivor Toolkit** provides the highlight switch, colour picker, toggle key binding and radius (5, 10, 15 or 20 tiles).
 - **Show highlight button in sidebar** independently hides or restores the sidebar button; the shortcut and highlight setting still work while it is hidden.
@@ -113,7 +114,7 @@ The effect uses the game's native rendering. Sprite and atlas items receive an o
 
 Requires B42.19 or newer within Build 42. Tested in-game on **B42.21.0, macOS, single-player**, including toggling, settings, pickup and visibility changes through a window with a curtain. Two local multiplayer clients have also been tested on B42.21. Split-screen has not been verified.
 
-The Toolkit sidebar visibility option has behavioural checks against the installed native UI code; a dedicated in-game visual check of that option is not recorded.
+The compact sidebar controls passed 64 programmatic checks in native B42.21 macOS multiplayer with two EN/RU clients and all 41 selected Mod IDs: menu callbacks, key rebinding/capture, hidden-button shortcuts, sidebar recreation, 720p placement and saved settings after a second real connection. Screenshots were inspected. Physical mouse/keyboard input, Windows Host mode, controller navigation and long sessions remain unverified.
 
 ## Multiplayer auto-drink
 
