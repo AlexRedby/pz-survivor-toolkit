@@ -60,7 +60,7 @@ local function tools(_, button)
     menu:addOption(getText("UI_PZSurvivorToolkit_tools_settings"), nil, openOptions)
 end
 
-local function icon(class, sidebar, callback, texture)
+local function icon(class, callback, texture)
     local button = class:new(0, 0, 24, 24, "", nil, callback)
     button:initialise()
     UIStyle.button(button)
@@ -70,59 +70,73 @@ local function icon(class, sidebar, callback, texture)
     button:ignoreWidthChange()
     button:ignoreHeightChange()
     button.toolkitSidebarControl = true
-    sidebar:addChild(button)
+    -- Expanding the native sidebar to contain these icons intercepts flyout clicks (Cooking).
+    button:addToUIManager()
     return button
+end
+
+local owner
+local function remove(button)
+    if not button then return end
+    if button.tooltipUI then
+        button.tooltipUI:setVisible(false)
+        button.tooltipUI:removeFromUIManager()
+    end
+    button:removeFromUIManager()
+end
+
+local function detach()
+    if not owner then return end
+    remove(owner.toolkitHighlightButton)
+    remove(owner.toolkitToolsButton)
+    owner.toolkitHighlightButton, owner.toolkitToolsButton = nil, nil
+    owner = nil
 end
 
 local function attach()
     local player = getPlayer()
-    if not player then return end
-    local data = getPlayerData(player:getPlayerNum())
+    local data = player and getPlayerData(player:getPlayerNum())
     local sidebar = data and data.equipped
+    if owner ~= sidebar then detach(); owner = sidebar end
     if not sidebar then return end
     local button = sidebar.toolkitHighlightButton
     if not Toolkit.Settings.showHighlightButton() and button then
-        sidebar:removeChild(button)
+        remove(button)
         sidebar.toolkitHighlightButton, button = nil, nil
     end
     if not sidebar.toolkitToolsButton then
         if player:isDead() then return end
-        sidebar.toolkitSidebarWidth, sidebar.toolkitSidebarHeight = sidebar:getWidth(), sidebar:getHeight()
-        sidebar.toolkitToolsButton = icon(ISButton, sidebar, tools, "media/ui/Entity/Icon_Tools_48x48.png")
+        sidebar.toolkitToolsButton = icon(ISButton, tools, "media/ui/Entity/Icon_Tools_48x48.png")
         sidebar.toolkitToolsButton:setTooltip(getText("UI_PZSurvivorToolkit_tools_tooltip"))
     end
     if Toolkit.Settings.showHighlightButton() and not button and not player:isDead() then
-        button = icon(ToggleButton, sidebar, toggle, "Item_Flashlight2")
+        button = icon(ToggleButton, toggle, "Item_Flashlight2")
         button.tickTexture = getTexture("media/ui/inventoryPanes/Tickbox_Tick.png")
         sidebar.toolkitHighlightButton = button
     end
     local hub = sidebar.toolkitToolsButton
     hub:setEnable(not player:isDead())
     if button then button:update() end
-    local nativeWidth = sidebar.invBtn and sidebar.invBtn:getWidth() or sidebar.toolkitSidebarWidth
+    local nativeWidth = sidebar.invBtn and sidebar.invBtn:getWidth() or sidebar:getWidth()
     local size = math.max(24, math.floor((nativeWidth - 4) / 2))
     -- Beside Inventory stays clear of the default multiplayer chat below the sidebar.
-    local x = sidebar.toolkitSidebarWidth + 6
+    local x = sidebar:getAbsoluteX() + sidebar:getWidth() + 6
     local maxY = getPlayerScreenTop(player:getPlayerNum()) + getPlayerScreenHeight(player:getPlayerNum())
         - sidebar:getAbsoluteY() - size - 6
-    local y = math.max(0, math.min(sidebar.invBtn and sidebar.invBtn:getY() or 0, maxY))
+    local y = sidebar:getAbsoluteY() + math.max(0, math.min(sidebar.invBtn and sidebar.invBtn:getY() or 0, maxY))
     local function place(control, offset)
         control:setX(x+offset);control:setY(y);control:setWidth(size);control:setHeight(size)
         control:forceImageSize(size-4,size-4)
+        control:setVisible(sidebar:getIsVisible())
+        if not sidebar:getIsVisible() and control.tooltipUI then
+            control.tooltipUI:setVisible(false)
+            control.tooltipUI:removeFromUIManager()
+        end
     end
     if button then place(button,0) end
     place(hub,button and size+4 or 0)
-    local width = math.max(sidebar.toolkitSidebarWidth,hub:getRight())
-    local height = math.max(sidebar.toolkitSidebarHeight,hub:getBottom())
-    if not sidebar.toolkitAppliedWidth or sidebar:getWidth()==sidebar.toolkitAppliedWidth then
-        sidebar:setWidth(width)
-        sidebar.toolkitAppliedWidth = width
-    end
-    if not sidebar.toolkitAppliedHeight or sidebar:getHeight()==sidebar.toolkitAppliedHeight then
-        sidebar:setHeight(height)
-        sidebar.toolkitAppliedHeight = height
-    end
 end
 
--- Native sidebar-size changes replace the panel, including all its children.
+-- Native sidebar-size changes replace the panel; detached controls follow its lifetime.
 Events.OnTickEvenPaused.Add(attach)
+Events.OnMainMenuEnter.Add(detach)

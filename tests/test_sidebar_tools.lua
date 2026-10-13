@@ -9,13 +9,14 @@ local function test(name, body)
     body(); count = count + 1; print("PASS " .. name)
 end
 local function setup()
-    local w = {height = 720, top = 0, show = true, enabled = true, context = true, mods = {PZSurvivorToolkit = true}}
+    local w = {height = 720, top = 0, show = true, enabled = true, context = true,
+        mods = {PZSurvivorToolkit = true}, ui = {}, added = {}, removed = {}}
     local function event()
         local handlers = {}
         return {Add = function(fn) handlers[#handlers+1] = fn end,
             fire = function(...) for _, fn in ipairs(handlers) do fn(...) end end}
     end
-    Events = {OnTickEvenPaused = event(), OnGameStart = event(), OnKeyPressed = event()}
+    Events = {OnTickEvenPaused = event(), OnGameStart = event(), OnKeyPressed = event(), OnMainMenuEnter = event()}
     w.player = {getPlayerNum = function() return 2 end, isDead = function() return w.dead == true end}
     getPlayer = function() return w.player end
     getPlayerData = function() return w.data end
@@ -76,8 +77,19 @@ local function setup()
     function ISButton:getRight() return self.x+self.width end
     function ISButton:getBottom() return self.y+self.height end
     function ISButton:getIsVisible() return self.visible end
-    function ISButton:getAbsoluteX() return self.parent.x+self.x end
-    function ISButton:getAbsoluteY() return self.parent.y+self.y end
+    function ISButton:getAbsoluteX() return (self.parent and self.parent.x or 0)+self.x end
+    function ISButton:getAbsoluteY() return (self.parent and self.parent.y or 0)+self.y end
+    function ISButton:setVisible(value) self.visible = value end
+    function ISButton:addToUIManager()
+        if not self.instantiated then self:instantiate() end
+        self.id = self.id or #w.added+1
+        w.added[#w.added+1] = self.id
+        w.ui[self.id] = self
+    end
+    function ISButton:removeFromUIManager()
+        w.removed[#w.removed+1] = self.id
+        w.ui[self.id] = nil
+    end
     function ISButton:setX(value) self.x = value end
     function ISButton:setY(value) self.y = value end
     function ISButton:setWidth(value) self.width = value end
@@ -95,10 +107,12 @@ local function setup()
         return w.menu
     end}
     function w:sidebar(bottom, panelHeight)
-        local side = {x=10, y=70, width=48, height=panelHeight or 980, children={}, chr=self.player}
+        local side = {x=10, y=70, width=48, height=panelHeight or 980, children={}, chr=self.player, visible=true}
         function side:getWidth() return self.width end
         function side:getHeight() return self.height end
         function side:getAbsoluteY() return self.y end
+        function side:getAbsoluteX() return self.x end
+        function side:getIsVisible() return self.visible end
         function side:setWidth(value) self.width = value end
         function side:setHeight(value) self.height = value end
         function side:getChildren() return self.children end
@@ -141,14 +155,17 @@ test("compact icons sit beside inventory and show status, shortcut and tick", fu
     local side=w.data.equipped
     local light, hub=side.toolkitHighlightButton, side.toolkitToolsButton
     equal(light.title, ""); equal(hub.title, "")
-    equal(light.y, 12, "inventory row ignores distant native and hidden admin controls")
-    equal(light.x, 54); equal(light.width, 24); equal(hub.x, 82)
+    equal(light.y, 82, "inventory row ignores distant native and hidden admin controls")
+    equal(light.x, 64); equal(light.width, 24); equal(hub.x, 92)
+    equal(light.parent, nil); equal(hub.parent, nil)
+    equal(w.ui[light.id], light); equal(w.ui[hub.id], hub)
     equal(light.image, "Item_Flashlight2")
     equal(hub.image, "media/ui/Entity/Icon_Tools_48x48.png")
     equal(light.imageWidth, 20); equal(hub.imageHeight, 20)
     equal(light.backgroundColor.a, 0); equal(light.isBaseBackgroundVisible, false); equal(light.isBorderVisible, false)
     assert(light.ignoreWidth and light.ignoreHeight and hub.ignoreWidth and hub.ignoreHeight)
     w:tick(20)
+    equal(#w.added, 2, "ticks must not register duplicate controls")
     equal(light.textureColor.r, 1); equal(light.textureColor.g, .72); equal(light.textureColor.b, .36)
     equal(light.tooltip, "UI_PZSurvivorToolkit_button_on\nUI_PZSurvivorToolkit_button_tooltip:KEY_66")
     equal(hub.tooltip, "UI_PZSurvivorToolkit_tools_tooltip")
@@ -170,13 +187,21 @@ test("compact icons sit beside inventory and show status, shortcut and tick", fu
     equal(light.enable, true); equal(light.textureColor.r, .55)
 end)
 
-test("720p sidebar stays beside inventory and preserves foreign geometry", function()
+test("720p icons preserve sidebar bounds and leave the Cooking flyout reachable", function()
     local w=setup(); w.data.equipped=w:sidebar(700); w:loadToolkit()
     local side=w.data.equipped
-    equal(side.toolkitHighlightButton.x, 54); equal(side.toolkitHighlightButton.y, 12)
-    equal(side.toolkitToolsButton.x, 82); equal(side.width, 106)
+    -- Cooking is the second flyout cell beside the lower Crafting row.
+    local cookX, cookY = side.x+72, side.y+200
+    local function covers(control)
+        return cookX>=control:getAbsoluteX() and cookX<control:getAbsoluteX()+control:getWidth()
+            and cookY>=control:getAbsoluteY() and cookY<control:getAbsoluteY()+control:getHeight()
+    end
+    assert(not covers(side), "native sidebar must not cover Cooking")
+    for _, control in pairs(w.ui) do assert(not covers(control), "Toolkit controls must not cover Cooking") end
+    equal(side.toolkitHighlightButton.x, 64); equal(side.toolkitHighlightButton.y, 82)
+    equal(side.toolkitToolsButton.x, 92); equal(side.width, 48); equal(#side.children, 4)
     assert(side.toolkitToolsButton:getAbsoluteY()+side.toolkitToolsButton:getHeight()<=720)
-    w:tick(20); equal(side.width, 106); equal(side.height, 980)
+    w:tick(20); equal(side.width, 48); equal(side.height, 980)
     side.width, side.height=130, 1100
     w.show=false; w:tick(20)
     equal(side.width, 130, "foreign resize must stay foreign across subsequent ticks")
@@ -185,18 +210,44 @@ test("720p sidebar stays beside inventory and preserves foreign geometry", funct
     w.show=true; w:tick(20); equal(side.width, 130); equal(side.height, 1100)
     w.data.equipped=w:sidebar(580, 620); w:tick()
     assert(w.data.equipped.toolkitToolsButton~=side.toolkitToolsButton)
-    equal(w.data.equipped.toolkitHighlightButton.y, 12)
-    equal(w.data.equipped.toolkitHighlightButton.x, 54)
-    equal(w.data.equipped.width, 106)
+    equal(w.data.equipped.toolkitHighlightButton.y, 82)
+    equal(w.data.equipped.toolkitHighlightButton.x, 64)
+    equal(w.data.equipped.width, 48)
     w.data.equipped.y=680; w:tick()
-    equal(w.data.equipped.toolkitHighlightButton.y, 10, "icon must fit its player viewport")
+    equal(w.data.equipped.toolkitHighlightButton.y, 690, "icon must fit its player viewport")
     assert(w.data.equipped.toolkitToolsButton:getAbsoluteY()+24<=w.top+w.height)
+end)
+
+test("icons follow their owner and release UI controls and tooltips", function()
+    local w=setup(); w:loadToolkit()
+    local side=w.data.equipped
+    local light, hub=side.toolkitHighlightButton, side.toolkitToolsButton
+    side.x, side.y=40, 110; w:tick()
+    equal(light.x, 94); equal(light.y, 122)
+    local removedTooltip=false
+    hub.tooltipUI={visible=true, removeFromUIManager=function() removedTooltip=true end,
+        setVisible=function(self, value) self.visible=value end, getIsVisible=function(self) return self.visible end}
+    side.visible=false; w:tick(); equal(light.visible, false); equal(hub.visible, false)
+    assert(removedTooltip); equal(hub.tooltipUI.visible, false, "hidden owner must also hide its tooltip")
+    side.visible=true; w:tick(); equal(light.visible, true); equal(hub.visible, true)
+    removedTooltip=false
+    w.data.equipped=w:sidebar(); w:tick()
+    equal(w.ui[light.id], nil); equal(w.ui[hub.id], nil)
+    equal(side.toolkitHighlightButton, nil); equal(side.toolkitToolsButton, nil)
+    assert(removedTooltip, "owner replacement must release its tooltip")
+    local replacement=w.data.equipped.toolkitToolsButton
+    w.player=nil; w:tick()
+    equal(w.ui[replacement.id], nil); equal(w.data.equipped.toolkitToolsButton, nil)
+    w.player=w.data.equipped.chr; w:tick()
+    replacement=w.data.equipped.toolkitToolsButton
+    Events.OnMainMenuEnter.fire()
+    equal(w.ui[replacement.id], nil); equal(w.data.equipped.toolkitToolsButton, nil)
 end)
 
 test("tools hub remains with highlight hidden and opens optional tools and settings", function()
     local w=setup(); w.show=false; w:loadToolkit()
     local side=w.data.equipped
-    equal(side.toolkitHighlightButton, nil); equal(side.toolkitToolsButton.x, 54)
+    equal(side.toolkitHighlightButton, nil); equal(side.toolkitToolsButton.x, 64)
     side.toolkitToolsButton:click()
     equal(#w.menu.options, 2); equal(w.menu.num, 2)
     equal(w.menu.x, side.x+54+24); equal(w.menu.y, side.y+12)
@@ -221,25 +272,45 @@ test("tools hub remains with highlight hidden and opens optional tools and setti
     w.player=nil; side.toolkitToolsButton:click(); equal(w.menu, last)
 end)
 
-test("Wishlist stays standalone, avoids duplicate Toolkit entry and rebuilds sidebar", function()
+test("Wishlist stays standalone without widening the sidebar and cleans up its owner", function()
     local w=setup(); w:loadWishlist()
     local side=w.data.equipped
-    Events.OnGameStart.fire(); equal(side.pzswButton, nil, "Toolkit hub owns the Wishlist entry")
+    w:tick(); equal(side.pzswButton, nil, "Toolkit hub owns the Wishlist entry")
     w.mods.PZSurvivorToolkit=false; PZSurvivorToolkit=nil
-    Events.OnGameStart.fire()
+    w:tick()
     local button=side.pzswButton
     assert(button.initialised and button.instantiated)
     equal(button.title, ""); equal(button.image, "media/ui/Entity/Icon_Tools_48x48.png")
-    equal(button.x, 54); equal(button.y, 12); equal(button.width, 24); equal(button.height, 24)
+    equal(button.x, 64); equal(button.y, 82); equal(button.width, 24); equal(button.height, 24)
+    equal(button.parent, nil); equal(w.ui[button.id], button)
+    equal(side.width, 48); equal(side.height, 980); equal(#side.children, 4)
     equal(button.imageWidth, 20); equal(button.imageHeight, 20)
     equal(button.backgroundColor.a, 0); equal(button.isBaseBackgroundVisible, false); equal(button.isBorderVisible, false)
-    equal(button.nativeTooltip, "UI_PZSW_Open")
+    equal(button.tooltip, "UI_PZSW_Open")
     button:click(); equal(w.wishlistPlayer, 2)
-    local children=#side.children; Events.OnGameStart.fire(); equal(#side.children, children)
-    side.y=680
-    equal(ISEquippedItem.initialise(side), "native")
-    assert(side.pzswButton~=button and side.pzswButton.parent==side)
-    equal(side.pzswButton.y, 10, "standalone icon must fit its player viewport")
+    w:tick(20); equal(#w.added, 1)
+    side.x, side.y=40, 680; w:tick()
+    equal(button.x, 94); equal(button.y, 690, "standalone icon must fit its player viewport")
+    local removedTooltip=false
+    button.tooltipUI={visible=true, removeFromUIManager=function() removedTooltip=true end,
+        setVisible=function(self, value) self.visible=value end, getIsVisible=function(self) return self.visible end}
+    side.visible=false; w:tick(); equal(button.visible, false)
+    assert(removedTooltip); equal(button.tooltipUI.visible, false)
+    side.visible=true; w:tick(); equal(button.visible, true)
+    removedTooltip=false
+    w.data.equipped=w:sidebar(); w:tick()
+    equal(w.ui[button.id], nil); equal(side.pzswButton, nil)
+    assert(removedTooltip)
+    local replacement=w.data.equipped.pzswButton
+    assert(replacement and replacement~=button)
+    w.mods.PZSurvivorToolkit=true; w:tick()
+    equal(w.ui[replacement.id], nil); equal(w.data.equipped.pzswButton, nil)
+    w.mods.PZSurvivorToolkit=false; w:tick()
+    replacement=w.data.equipped.pzswButton
+    w.player=nil; w:tick(); equal(w.ui[replacement.id], nil)
+    w.player=w.data.equipped.chr; w:tick()
+    replacement=w.data.equipped.pzswButton
+    Events.OnMainMenuEnter.fire(); equal(w.ui[replacement.id], nil); equal(w.data.equipped.pzswButton, nil)
     w.wishlistPlayer=nil; Events.OnKeyPressed.fire(67); equal(w.wishlistPlayer, 0)
     w.wishlistPlayer=nil; w.typing=true; Events.OnKeyPressed.fire(67); equal(w.wishlistPlayer, nil)
     w.typing=false; w.optionsVisible=true; Events.OnKeyPressed.fire(67); equal(w.wishlistPlayer, nil)

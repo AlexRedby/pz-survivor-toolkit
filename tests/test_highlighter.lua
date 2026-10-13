@@ -456,12 +456,13 @@ end)
 test("sidebar button shares settings with menu and rebound key, survives sidebar replacement", function()
     local w = setup()
     local object = w:add(0.5, 0.5, 0, "Base.Hammer")
+    local ui = {}
     ISButton = {}
     function ISButton:derive() return setmetatable({}, { __index = self }) end
     function ISButton:new(x, y, width, height, title, target, onclick)
         self.__index = self
         return setmetatable({x = x, y = y, width = width, height = height, title = title,
-            target = target, onclick = onclick, isButton = true}, self)
+            target = target, onclick = onclick, isButton = true, visible = true}, self)
     end
     function ISButton:initialise() end
     function ISButton:setEnable(value)
@@ -475,7 +476,10 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     function ISButton:getRight() return self.x + self.width end
     function ISButton:getWidth() return self.width end
     function ISButton:getHeight() return self.height end
-    function ISButton:getIsVisible() return true end
+    function ISButton:getIsVisible() return self.visible end
+    function ISButton:setVisible(value) self.visible = value end
+    function ISButton:addToUIManager() ui[self] = true end
+    function ISButton:removeFromUIManager() ui[self] = nil end
     function ISButton:setX(value) self.x = value end
     function ISButton:setY(value) self.y = value end
     function ISButton:setWidth(value) self.width = value end
@@ -502,7 +506,9 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
             setWidth = function(self, value) self.width = value end,
             setHeight = function(self, value) self.height = value end,
             getChildren = function(self) return self.children end,
+            getAbsoluteX = function() return 0 end,
             getAbsoluteY = function() return 0 end,
+            getIsVisible = function() return true end,
             addChild = function(self, child) self.children[#self.children + 1] = child end,
             removeChild = function(self, child)
                 for i, current in ipairs(self.children) do
@@ -515,7 +521,9 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     require("PZSurvivorToolkit/ToggleButton")
     w:advance(70)
     local button = data.equipped.toolkitHighlightButton
-    equal(#data.equipped.children, 2)
+    equal(#data.equipped.children, 0)
+    assert(ui[button] and ui[data.equipped.toolkitToolsButton])
+    equal(button.parent, nil); equal(data.equipped.width, 48)
     equal(button.title, "")
     equal(button.highlightEnabled, true)
     button:forceClick()
@@ -551,8 +559,9 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     w:apply("ShowHighlightButton", false)
     w:advance(2)
     equal(data.equipped.toolkitHighlightButton, nil)
-    equal(#data.equipped.children, 1)
-    equal(data.equipped.width, 78, "hub remains beside original sidebar")
+    equal(#data.equipped.children, 0)
+    equal(ui[button], nil)
+    equal(data.equipped.width, 48, "controls must not widen the native sidebar")
     equal(data.equipped.height, 500)
     assert(data.equipped.toolkitToolsButton)
     w:apply("ToggleKey", 12)
@@ -560,7 +569,7 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     equal(w.settings.isEnabled(), true, "hidden button must not disable the shortcut")
     w:apply("ShowHighlightButton", true)
     w:advance(2)
-    equal(#data.equipped.children, 2)
+    equal(#data.equipped.children, 0)
     local expandedWidth, expandedHeight = data.equipped.width + 10, data.equipped.height + 10
     data.equipped:setWidth(expandedWidth)
     data.equipped:setHeight(expandedHeight)
@@ -568,15 +577,17 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     w:advance(2)
     equal(data.equipped.width, expandedWidth, "do not overwrite another mod's layout")
     equal(data.equipped.height, expandedHeight)
+    local oldHub = data.equipped.toolkitToolsButton
     data.equipped = sidebar()
     w:advance(2)
+    equal(ui[oldHub], nil)
     equal(data.equipped.toolkitHighlightButton, nil, "replaced sidebar respects hidden setting")
     w:apply("ShowHighlightButton", true)
     w:apply("Enabled", false)
     w:advance(2)
     local replacement = data.equipped.toolkitHighlightButton
     assert(replacement ~= button)
-    equal(#data.equipped.children, 2)
+    equal(#data.equipped.children, 0); assert(ui[replacement])
     equal(replacement.title, "")
     equal(replacement.highlightEnabled, false)
     w.player.dead = true
