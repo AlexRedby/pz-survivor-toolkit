@@ -33,6 +33,7 @@ load('client/TimedActions/ISTimedActionQueue.lua')
 load('client/TimedActions/ISQueueActionsAction.lua')
 load('shared/TimedActions/ISReadABook.lua')
 load('shared/Moveables/ISMoveablesAction.lua')
+load('shared/Vehicles/TimedActions/ISRemoveBurntVehicle.lua')
 ISInventoryPage = {}
 load('client/TimedActions/ISInventoryTransferAction.lua')
 ISContextMenu, ISButton, ISInventoryPaneContextMenu = {}, {}, {getContainers=function() return {contains=function() return true end} end}
@@ -390,9 +391,11 @@ ISTimedActionQueue.add(callbackMove);assert(api.move(q,callbackMove,pickup))
 local deferred=leaf(p,'deferred');deferred.Type='ISQueueActionsAction'
 ISTimedActionQueue.add(deferred);assert(api.move(q,deferred,callbackMove))
 assert(api.move(q,callbackMove,deferred), 'pending native generators keep their operation boundary')
-deferred.toolkitWorldOperation='fuel'
-assert(api.moveReason(q,deferred,callbackMove)=='move_dependent', 'future fuel inputs prevent moving its command')
-assert(api.moveReason(q,callbackMove,deferred,true)=='move_dependent', 'other work cannot cross unresolved fuel inputs')
+for _,kind in ipairs({'fuel','wreck'}) do
+    deferred.toolkitWorldOperation=kind
+    assert(api.moveReason(q,deferred,callbackMove)=='move_dependent', 'future vehicle inputs prevent moving its command')
+    assert(api.moveReason(q,callbackMove,deferred,true)=='move_dependent', 'other work cannot cross unresolved vehicle inputs')
+end
 -- Interrupt a read only after native stop/removal; a fresh native read preserves saved pages.
 p=player();a,b=book(p),book(p)
 q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);frame(p)
@@ -969,6 +972,43 @@ for _,mode in ipairs({'moving','dead','disabled','callback','untracked','clear'}
 end
 PZSurvivorToolkit.ActionQueueWorld=priorWorld
 print('Native missing scrap target: double-stop cleanup, delayed Java removal, retained tail and abort guards passed.')
+-- VehicleRemove may precede Done; preserve only the owned native wreck's remaining work.
+PZSurvivorToolkit.ActionQueueWorld={wreckTargetGone=function(action)
+    return enabled and action.trackedWreck and action.vehicle:isRemovedFromWorld() and not action.onCompleteFunc
+end}
+local function disappearingWreck(character)
+    local action=ISBaseTimedAction.new(ISRemoveBurntVehicle,character)
+    action.trackedWreck,action.toolkitWorldOperation,action.maxTime,action.sound=true,'wreck',1,0
+    action.vehicle={isRemovedFromWorld=function() return action.gone == true end}
+    action.item={hasTag=function() return true end,getCurrentUses=function() return 10 end,setJobDelta=function() end}
+    character.getPrimaryHandItem=function() return action.item end
+    action.start=function() end
+    action.complete=function() error('target removal must never replay wreck completion') end
+    return action
+end
+p=player();a=disappearingWreck(p);q=ISTimedActionQueue.add(a);b,c=book(p),leaf(p,'after-wreck')
+ISTimedActionQueue.add(b);ISTimedActionQueue.add(c);frame(p)
+assert(api.cancelReason(q,a)=='dependent', 'removed-target recovery must not enable user cancellation')
+a.gone=true;assert(not a:isValid());a:stop();a:stop();q:tick()
+assert(q.current==a and q.toolkitCancel==a and q.queue[2]==b, 'duplicate stop waits for Java removal')
+frame(p)
+assert(q.current==b and q.queue[2]==c and not q.toolkitCancel and not p.actions[a.action])
+for _,mode in ipairs({'moving','dead','disabled','callback','untracked','not-removed','clear'}) do
+    p=player();a=disappearingWreck(p);q=ISTimedActionQueue.add(a);b=book(p);ISTimedActionQueue.add(b);frame(p)
+    a.gone=mode~='not-removed'
+    if mode=='moving' then p.moving=true
+    elseif mode=='dead' then p.dead=true
+    elseif mode=='disabled' then enabled=false
+    elseif mode=='callback' then a.onCompleteFunc=function() error('unverified callback') end
+    elseif mode=='untracked' then a.trackedWreck=nil
+    elseif mode=='clear' then ISTimedActionQueue.clear(p) end
+    if mode~='clear' then a:stop() end
+    p.actions[a.action]=nil;q:tick()
+    assert(#q.queue==0 and not q.toolkitCancel, 'wreck '..mode..' must keep native abort behavior')
+    enabled=true
+end
+PZSurvivorToolkit.ActionQueueWorld=priorWorld
+print('Native removed wreck: retained tail, delayed Java removal, duplicate stops and abort guards passed.')
 -- Cancel an already-started group through its header, with native stop/removal before returns.
 local function sourceContainer()
     return {isExistYet=function(self) return not self.gone end}

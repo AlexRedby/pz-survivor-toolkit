@@ -3,6 +3,8 @@ require "TimedActions/ISQueueActionsAction"
 require "ISUI/ISDisassembleMenu"
 require "Moveables/ISMoveablesAction"
 require "Vehicles/ISUI/ISVehiclePartMenu"
+require "Vehicles/ISUI/ISVehicleMenu"
+require "Vehicles/TimedActions/ISRemoveBurntVehicle"
 
 local Toolkit = PZSurvivorToolkit
 local World = {}
@@ -12,6 +14,14 @@ local commandCallbacks = {}
 local resumeMarker = {}
 local nativeTryBuild
 local buildTokens = {}
+local wreckMethods = {}
+local lifecycle = {"new", "start", "stop", "perform", "complete", "isValid", "update", "forceCancel", "forceStop"}
+
+local function waitForCompletion(action)
+    -- SP begins the next action inside perform(), before the preceding complete() consumes inputs.
+    if not action.toolkitCompletionWaited then action.toolkitCompletionWaited = true; return true end
+    return false
+end
 
 local function startCommand(action)
     action:beginAddingActions()
@@ -24,6 +34,7 @@ end
 local function command(character, callback, snapshot, kind, name)
     local action = ISQueueActionsAction:new(character, callback, snapshot)
     action.start = startCommand
+    action.waitToStart = waitForCompletion
     action.toolkitWorldCommand = commandMarker
     action.toolkitWorldOperation = kind
     action.toolkitWorldDismantle = kind == "dismantle"
@@ -41,8 +52,8 @@ end
 
 function World.isDeferredAction(action)
     return action and action.Type == "ISQueueActionsAction" and action.toolkitWorldCommand == commandMarker
-        -- shortcut: fuel inputs are selected later; audit dependencies before enabling reorder/cancellation.
-        and action.toolkitWorldOperation ~= "fuel"
+        -- shortcut: vehicle inputs are selected later; audit dependencies before enabling reorder/cancellation.
+        and action.toolkitWorldOperation ~= "fuel" and action.toolkitWorldOperation ~= "wreck"
         and action.start == startCommand and commandCallbacks[action.addActionsFunction] == true
 end
 World.isCommand = World.isDeferredAction
@@ -173,6 +184,16 @@ function World.targetGone(action)
         and action.Type == "ISMoveablesAction" and action.mode == "scrap"
         and action.object == saved.snapshot.object and action.square == saved.snapshot.square
         and action.moveProps == saved.snapshot.moveProps and not action:isValidObject()
+end
+
+function World.wreckTargetGone(action)
+    local methods = wreckMethods[getmetatable(action)]
+    if not Toolkit.Settings.actionQueue() or not methods or action.Type ~= "ISRemoveBurntVehicle"
+        or action.toolkitWorldCommand ~= commandMarker
+        or action.vehicle ~= action.toolkitWorldTarget or action.onStartFunc or action.onCompleteFunc
+        or action.onCancelFunc then return false end
+    for _, name in ipairs(lifecycle) do if action[name] ~= methods[name] then return false end end
+    return action.vehicle and action.vehicle:isRemovedFromWorld()
 end
 
 local function ownedBuild(action, saved)
@@ -309,12 +330,13 @@ function World.sharesTarget(first, second)
 end
 
 -- The game loads the server-side cursor class after client Lua.
-local installAppliances, installFuel
+local installAppliances, installFuel, installWrecks
 local function install()
     if ISMoveableCursor.toolkitQueueInstalled then return end
     ISMoveableCursor.toolkitQueueInstalled = true
     installAppliances()
     installFuel()
+    installWrecks()
     nativeTryBuild = ISBuildingObject.tryBuild
     ISBuildingObject.tryBuild = function(cursor, x, y, z)
         local character = cursor.character or getSpecificPlayer(cursor.player)
@@ -366,6 +388,42 @@ local function install()
             origSpriteName = cursor.origSpriteName, direction = props:getFaceDirectionFromSpriteName(props.sprite:getName()), cursor = cursor}
         cursor.cursorFacing, cursor.joypadFacing, cursor.objectListCache = nil, nil, nil
         return defer(cursor.character, scrapFromCursor, target)
+    end
+end
+
+local function wreckFromSnapshot(character, target)
+    local vehicle, inventory = target.object, character:getInventory()
+    if vehicle:isRemovedFromWorld() or not vehicle:getSquare()
+        or not inventory:containsEvalRecurse(function(item)
+            return (item:hasTag(ItemTag.BLOW_TORCH) or item:getType() == "BlowTorch") and item:getCurrentUses() >= 10
+        end)
+        or not inventory:containsEvalRecurse(function(item)
+            return item:hasTag(ItemTag.WELDING_MASK) or item:getType() == "WeldingMask"
+        end) then return end
+    target.callback(character, vehicle)
+    local queue = ISTimedActionQueue.getTimedActionQueue(character)
+    for i = 2, queue.current._numAddedActions + 1 do
+        local action = queue.queue[i]
+        if wreckMethods[getmetatable(action)] and action.vehicle == vehicle and not action.action then
+            action.toolkitWorldCommand, action.toolkitWorldTarget = commandMarker, vehicle
+            action.toolkitWorldOperation = "wreck"
+        end
+    end
+end
+
+installWrecks = function()
+    local callback = ISVehicleMenu and ISVehicleMenu.onRemoveBurntVehicle
+    if not callback or not ISRemoveBurntVehicle then return end
+    local methods = {}
+    for _, name in ipairs(lifecycle) do methods[name] = ISRemoveBurntVehicle[name] end
+    wreckMethods[ISRemoveBurntVehicle] = methods
+    ISVehicleMenu.onRemoveBurntVehicle = function(character, vehicle)
+        if not Toolkit.Settings.actionQueue() then return callback(character, vehicle) end
+        if not character or not vehicle then return end
+        return Toolkit.ActionQueueOperations.run(function()
+            return ISTimedActionQueue.add(command(character, wreckFromSnapshot,
+                {object = vehicle, callback = callback}, "wreck"))
+        end)
     end
 end
 
@@ -440,7 +498,6 @@ end
 Events.OnGameStart.Add(install)
 
 local applianceMethods = {}
-local lifecycle = {"new", "start", "stop", "perform", "complete", "isValid", "update", "forceCancel", "forceStop"}
 
 function World.isApplianceAction(action)
     local methods = applianceMethods[getmetatable(action)]

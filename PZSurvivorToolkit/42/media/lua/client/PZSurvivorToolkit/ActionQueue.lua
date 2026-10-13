@@ -128,7 +128,7 @@ local function sharedItem(a, b)
 end
 
 local function knownCraftInputs(action)
-    if action.toolkitWorldOperation == "fuel" then return false end
+    if action.toolkitWorldOperation == "fuel" or action.toolkitWorldOperation == "wreck" then return false end
     if craft(action) then return Toolkit.ActionQueueCraft.collectItems(action, {}) end
     return action.Type ~= "ISHandcraftAction" and action.Type ~= "ISCraftAction" and action.Type ~= "ISFixAction"
 end
@@ -503,6 +503,10 @@ ISBaseTimedAction.stop = function(action)
     if queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action
         and ((queue.toolkitGroupCancel and queue.toolkitGroupCancel.action == action)
             or action.toolkitQueueReturn == returnMarker) then
+        queue.toolkitCancel = action
+    end
+    if queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action
+        and world and world.wreckTargetGone and world.wreckTargetGone(action) then
         queue.toolkitCancel = action
     end
     if queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action

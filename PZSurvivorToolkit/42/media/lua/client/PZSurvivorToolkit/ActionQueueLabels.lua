@@ -35,6 +35,7 @@ local keys = {
     ISOvenUITimedAction = "ContextMenu_StoveSetting",
     ISAddGasolineToVehicle = "ContextMenu_VehicleAddGas",
     ISTakeGasolineFromVehicle = "ContextMenu_VehicleSiphonGas",
+    ISRemoveBurntVehicle = "ContextMenu_RemoveBurntVehicle",
 }
 local radioKeys = {
     ToggleOnOff = prefix .. "power",
@@ -57,6 +58,9 @@ function Labels.preparation(action)
 end
 
 function Labels.title(action)
+    if action.toolkitWorldOperation == "wreck" then
+        return getText("ContextMenu_RemoveBurntVehicle"), "ContextMenu_RemoveBurntVehicle"
+    end
     if action.toolkitWorldOperation == "fuel" then
         local key = action.toolkitFuelTake and "ContextMenu_VehicleSiphonGas" or "ContextMenu_VehicleAddGas"
         return getText(key), key

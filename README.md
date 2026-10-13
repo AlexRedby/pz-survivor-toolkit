@@ -6,7 +6,7 @@ Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quant
 
 | Component | Version | Installation |
 |---|---|---|
-| PZ Survivor Toolkit | 0.1.32 | Required; included in the prepared `mods` folder and server INI. |
+| PZ Survivor Toolkit | 0.1.33 | Required; included in the prepared `mods` folder and server INI. |
 | Survivor Wishlist | 0.1.0 | Required; included in the prepared `mods` folder and server INI. |
 | Toolkit Java Patches | 0.1.3 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
 
@@ -88,6 +88,8 @@ The movable and resizable **Actions** window shows the game's existing queue, wi
 
 Vehicle siphoning and refuelling choose their container and calculate fuel amounts when their turn begins. Repeated radial-menu clicks therefore use the next suitable container after the previous one fills or empties. Repeated **Fill One/Add One** requests prefer the selected container and then another eligible container of the same type; **Fill All/Add All** keep their selected container IDs and skip those no longer eligible. Missing containers or hoses, removed vehicles and empty/full tanks skip that request without dropping later work. Fuel operations retain native transfers, equipment and fluid transactions; their future inputs keep reordering and individual cancellation protected.
 
+Burnt and smashed vehicle dismantling also queues without interrupting current work. Each wreck checks its target, mask and available blowtorch when its turn begins, after the previous action has consumed its inputs. A removed wreck or missing tools skips that request; native multiplayer wreck removal preserves the remaining queue even when it arrives before the completion message. Native equipment, duration, fuel use, scrap and XP remain unchanged. Wreck operations keep reordering and individual cancellation protected while their future tool dependencies are unresolved.
+
 The window hides and releases its displayed rows when the queue empties, the player dies or the option is disabled. Ordinary game cancellation still clears the queue. There is no dedicated hotkey or close button. Asynchronous mod callbacks that enqueue outside a native operation scope can appear as separate rows; arbitrary mod dependencies cannot be inferred.
 
 Queue regression checks use the installed game's Lua queue, base action, reading action and list geometry with simulated Java/UI lifecycle. Run them with `--native-action-root /path/to/media/lua`; the default test command skips those native-source checks without that path.
@@ -99,6 +101,8 @@ Toolkit v0.1.26 passed **46 native queue checks per EN/RU client** on 13 October
 ## Recorded verification
 
 These results describe the builds and selected sets used in each scenario, not a claim that every current feature was exercised together. Current installation uses the 41-mod INI listed above.
+
+Toolkit v0.1.33 passed **six native wreck-queue checks** with one English client on an isolated B42.21 macOS dedicated server. Two wreck requests and a duplicate were queued during native reading. The server confirmed exactly two wreck removals, two original torches consuming 10 uses each, native duration 800 and completed reading before and after dismantling. Lua and stock Kahlua additionally cover clicking a second wreck during active dismantling, single-player completion ordering, exhausted tools, stale targets and multiplayer removal-before-completion stop handling. VOIP was disabled and no recording buffer was created. Physical input, the full mod set, other platforms and WAN jitter were not tested.
 
 Toolkit v0.1.32 passed **25 native fuel-queue checks** on an isolated B42.21 macOS dedicated server with one English client. Radial, context single-container and context all-container refuelling/siphoning produced exactly 12 native transactions across two distinct can IDs. The server confirmed fresh tank baselines, conserved fuel and completed reading before and after each pair of queued requests. Native durations were retained; fixture cans held 2 litres and books had one unread page. VOIP was disabled and microphone recording stayed uninitialized. Lua and stock Kahlua also cover missing inputs, stale IDs, repeated All, clearing/retrying and protected dependencies; EN/RU labels passed Lua checks. Physical input, the full mod set, other platforms and WAN jitter were not exercised.
 
