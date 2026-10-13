@@ -87,6 +87,9 @@ function List:onMouseUpOutside(x, y)
 end
 
 function Panel.icon(action)
+    if action.toolkitWorldOperation == "fuel" then
+        return getTexture(action.toolkitFuelTake and "media/ui/vehicles/gas_siphon.png" or "media/ui/vehicles/gas_refuel.png")
+    end
     if action.craftRecipe and instanceof(action.craftRecipe, "CraftRecipe") then
         local icon = action.craftRecipe:getIconTexture()
         if icon then return icon end

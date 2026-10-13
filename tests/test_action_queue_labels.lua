@@ -96,6 +96,12 @@ for _, language in ipairs({'EN', 'RU'}) do
     local oldRecipe = {class = 'Recipe', getName = function() return 'Legacy recipe name' end}
     check({Type = 'ISCraftAction', recipe = oldRecipe}, 'Legacy recipe name')
     if NativeActionRoot then
+        for _, entry in ipairs({{'ISAddGasolineToVehicle', 'ContextMenu_VehicleAddGas', false},
+            {'ISTakeGasolineFromVehicle', 'ContextMenu_VehicleSiphonGas', true}}) do
+            local title = assert(translations[entry[2]])
+            check({Type = entry[1]}, title)
+            check({Type = 'ISQueueActionsAction', toolkitWorldOperation = 'fuel', toolkitFuelTake = entry[3]}, title)
+        end
         local cases = {
             {'ISReadABook', 'read'}, {'ISReadWorldMap', 'read'}, {'ISUnequipAction', 'unequip'},
             {'ISUnloadBulletsFromFirearm', 'unload'}, {'ISUnloadBulletsFromMagazine', 'unloadMagazine'},

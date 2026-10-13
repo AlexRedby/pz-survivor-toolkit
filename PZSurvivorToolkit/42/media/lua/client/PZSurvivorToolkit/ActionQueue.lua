@@ -128,6 +128,7 @@ local function sharedItem(a, b)
 end
 
 local function knownCraftInputs(action)
+    if action.toolkitWorldOperation == "fuel" then return false end
     if craft(action) then return Toolkit.ActionQueueCraft.collectItems(action, {}) end
     return action.Type ~= "ISHandcraftAction" and action.Type ~= "ISCraftAction" and action.Type ~= "ISFixAction"
 end

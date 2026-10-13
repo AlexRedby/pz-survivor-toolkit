@@ -33,6 +33,8 @@ local keys = {
     ISToggleClothingDryer = prefix .. "power",
     ISToggleComboWasherDryer = prefix .. "power",
     ISOvenUITimedAction = "ContextMenu_StoveSetting",
+    ISAddGasolineToVehicle = "ContextMenu_VehicleAddGas",
+    ISTakeGasolineFromVehicle = "ContextMenu_VehicleSiphonGas",
 }
 local radioKeys = {
     ToggleOnOff = prefix .. "power",
@@ -55,6 +57,10 @@ function Labels.preparation(action)
 end
 
 function Labels.title(action)
+    if action.toolkitWorldOperation == "fuel" then
+        local key = action.toolkitFuelTake and "ContextMenu_VehicleSiphonGas" or "ContextMenu_VehicleAddGas"
+        return getText(key), key
+    end
     if action.toolkitWorldOperation == "appliance" then
         local key = action.toolkitApplianceLabel or prefix .. "power"
         return getText(key), key

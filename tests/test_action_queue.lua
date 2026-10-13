@@ -390,6 +390,9 @@ ISTimedActionQueue.add(callbackMove);assert(api.move(q,callbackMove,pickup))
 local deferred=leaf(p,'deferred');deferred.Type='ISQueueActionsAction'
 ISTimedActionQueue.add(deferred);assert(api.move(q,deferred,callbackMove))
 assert(api.move(q,callbackMove,deferred), 'pending native generators keep their operation boundary')
+deferred.toolkitWorldOperation='fuel'
+assert(api.moveReason(q,deferred,callbackMove)=='move_dependent', 'future fuel inputs prevent moving its command')
+assert(api.moveReason(q,callbackMove,deferred,true)=='move_dependent', 'other work cannot cross unresolved fuel inputs')
 -- Interrupt a read only after native stop/removal; a fresh native read preserves saved pages.
 p=player();a,b=book(p),book(p)
 q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);frame(p)
@@ -539,6 +542,8 @@ assert(PZSurvivorToolkit.ActionQueuePanel.icon(a)=='book-icon')
 assert(PZSurvivorToolkit.ActionQueuePanel.icon({craftRecipe={class='CraftRecipe',getIconTexture=function() return 'recipe-icon' end}})=='recipe-icon')
 assert(PZSurvivorToolkit.ActionQueuePanel.icon({Type='ISWalkToTimedAction'}):find('Walking',1,true))
 assert(PZSurvivorToolkit.ActionQueuePanel.icon({}):find('Icon_Tools',1,true))
+assert(PZSurvivorToolkit.ActionQueuePanel.icon({toolkitWorldOperation='fuel',toolkitFuelTake=true}):find('gas_siphon',1,true))
+assert(PZSurvivorToolkit.ActionQueuePanel.icon({toolkitWorldOperation='fuel',toolkitFuelTake=false}):find('gas_refuel',1,true))
 list.doDrawItem(list,0,list.items[1],false); assert(list.items[1].tooltip)
 list.selected=3; click(2) -- cancel directly, without selecting the row
 assert(#list.items==2 and list.items[2].item==c and list.selected==2)

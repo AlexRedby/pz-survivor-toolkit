@@ -2,6 +2,7 @@ require "PZSurvivorToolkit/ActionQueueOperations"
 require "TimedActions/ISQueueActionsAction"
 require "ISUI/ISDisassembleMenu"
 require "Moveables/ISMoveablesAction"
+require "Vehicles/ISUI/ISVehiclePartMenu"
 
 local Toolkit = PZSurvivorToolkit
 local World = {}
@@ -40,6 +41,8 @@ end
 
 function World.isDeferredAction(action)
     return action and action.Type == "ISQueueActionsAction" and action.toolkitWorldCommand == commandMarker
+        -- shortcut: fuel inputs are selected later; audit dependencies before enabling reorder/cancellation.
+        and action.toolkitWorldOperation ~= "fuel"
         and action.start == startCommand and commandCallbacks[action.addActionsFunction] == true
 end
 World.isCommand = World.isDeferredAction
@@ -306,11 +309,12 @@ function World.sharesTarget(first, second)
 end
 
 -- The game loads the server-side cursor class after client Lua.
-local installAppliances
+local installAppliances, installFuel
 local function install()
     if ISMoveableCursor.toolkitQueueInstalled then return end
     ISMoveableCursor.toolkitQueueInstalled = true
     installAppliances()
+    installFuel()
     nativeTryBuild = ISBuildingObject.tryBuild
     ISBuildingObject.tryBuild = function(cursor, x, y, z)
         local character = cursor.character or getSpecificPlayer(cursor.player)
@@ -362,6 +366,74 @@ local function install()
             origSpriteName = cursor.origSpriteName, direction = props:getFaceDirectionFromSpriteName(props.sprite:getName()), cursor = cursor}
         cursor.cursorFacing, cursor.joypadFacing, cursor.objectListCache = nil, nil, nil
         return defer(cursor.character, scrapFromCursor, target)
+    end
+end
+
+local function fuelContainer(item, take)
+    local fluid = item:getFluidContainer()
+    if not fluid then return false end
+    if take then return fluid:isEmpty() or fluid:contains(Fluid.Petrol) and fluid:getFreeCapacity() > 0 end
+    return fluid:contains(Fluid.Petrol) and fluid:getAmount() > 0
+end
+
+local function fuelFromSnapshot(character, target)
+    local part, vehicle = target.part, target.object
+    if not vehicle:getSquare() or part:getVehicle() ~= vehicle or vehicle:getPartById(part:getId()) ~= part
+        or vehicle:isEngineStarted() then return end
+    if target.take then
+        if part:getContainerContentAmount() <= 0 or character:hasFullInventory()
+            or not character:getInventory():getFirstTagRecurse(ItemTag.SIPHON_GAS) then return end
+    elseif part:getContainerContentAmount() >= part:getContainerCapacity() then return end
+    if not target.ids then return target.callback(character, part) end
+    local available = character:getInventory():getAllEvalRecurse(function(item)
+        return fuelContainer(item, target.take)
+    end)
+    local byId, alternative = {}, nil
+    for i = 0, available:size() - 1 do
+        local item = available:get(i)
+        byId[item:getID()] = item
+        if target.fullType == item:getFullType() and not alternative then alternative = item end
+    end
+    local items = {}
+    for _, id in ipairs(target.ids) do
+        if byId[id] then items[#items + 1] = byId[id]; byId[id] = nil end
+    end
+    if target.fullType and #items == 0 and alternative then items[1] = alternative end
+    local first = table.remove(items, 1)
+    if first then target.callback(target.worldobjects, part, items, first, character:getPlayerNum()) end
+end
+
+installFuel = function()
+    if not ISVehiclePartMenu then return end
+    for _, entry in ipairs({{"onAddGasoline", false}, {"onTakeGasoline", true},
+        {"onAddFuelNew", false, true}, {"onTakeFuelNew", true, true}}) do
+        local callback, take, context = ISVehiclePartMenu[entry[1]], entry[2], entry[3]
+        if callback then
+            ISVehiclePartMenu[entry[1]] = function(a, part, list, item, playerNum)
+                if not Toolkit.Settings.actionQueue() then
+                    if context then return callback(a, part, list, item, playerNum) end
+                    return callback(a, part)
+                end
+                local character = context and getSpecificPlayer(playerNum) or a
+                if not character or not part then return end
+                local target = {object = part:getVehicle(), part = part, take = take, callback = callback}
+                if context then
+                    target.worldobjects = a
+                    target.ids = {}
+                    if item then
+                        target.ids[1], target.fullType = item:getID(), item:getFullType()
+                    else
+                        for _, container in ipairs(list or {}) do target.ids[#target.ids + 1] = container:getID() end
+                    end
+                end
+                if not target.object then return end
+                return Toolkit.ActionQueueOperations.run(function()
+                    local action = command(character, fuelFromSnapshot, target, "fuel")
+                    action.toolkitFuelTake = take
+                    return ISTimedActionQueue.add(action)
+                end)
+            end
+        end
     end
 end
 
