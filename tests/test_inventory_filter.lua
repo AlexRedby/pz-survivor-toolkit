@@ -1,4 +1,8 @@
-require = function() end
+require = function(name)
+    if name == "PZSurvivorToolkit/UIStyle" then
+        return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/UIStyle.lua")
+    end
+end
 table.wipe = function(t) for k in pairs(t) do t[k] = nil end end
 local enabled = true
 PZSurvivorToolkit = {Settings = {inventoryFilters = function() return enabled end}}

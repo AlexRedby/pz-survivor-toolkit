@@ -1,4 +1,5 @@
 require "PZSurvivorToolkit/Settings"
+local UIStyle = require "PZSurvivorToolkit/UIStyle"
 
 local Toolkit = PZSurvivorToolkit
 local Filter = {}
@@ -86,6 +87,7 @@ local function updateButton(pane)
     if not button then
         button = ISButton:new(0, 0, 20, 20, "v", pane, showCategories)
         button:initialise()
+        UIStyle.button(button)
         button:setScrollWithParent(false)
         pane:addChild(button)
         pane.toolkitCategoryButton = button
@@ -108,7 +110,8 @@ local function updateButton(pane)
     button:setHeight(size)
     button.tooltip = getText("UI_PZSurvivorToolkit_category_filter") .. ": "
         .. (pane.toolkitCategory and categoryName(pane.toolkitCategory) or getText("UI_PZSurvivorToolkit_all_categories"))
-    button.textColor = pane.toolkitCategory and {r = 0.3, g = 1, b = 0.3, a = 1} or {r = 1, g = 1, b = 1, a = 1}
+    button.textColor = pane.toolkitCategory and {r = 1, g = 0.65, b = 0.3, a = 1}
+        or {r = 0.94, g = 0.90, b = 0.83, a = 1}
 end
 
 local function install(class)

@@ -5,6 +5,7 @@ require "ISUI/ISTextEntryBox"
 require "ISUI/ISButton"
 local Organizer = require "PZSurvivorToolkit/ContextMenus"
 local Rules = require "PZSurvivorToolkit/ContextMenuRules"
+local UIStyle = require "PZSurvivorToolkit/UIStyle"
 local Editor = ISCollapsableWindow:derive("PZSurvivorToolkitContextMenuEditor")
 local instance
 
@@ -46,6 +47,7 @@ function Editor:createChildren()
         local control = ISButton:new(x, y, width, 28, label, self, callback)
         control:initialise()
         control:instantiate()
+        UIStyle.button(control)
         self:addChild(control)
         return control
     end

@@ -1,18 +1,32 @@
 require "ISUI/ISButton"
+require "ISUI/ISContextMenu"
 require "PZSurvivorToolkit/Settings"
+local UIStyle = require "PZSurvivorToolkit/UIStyle"
 
 local Toolkit = PZSurvivorToolkit
 local ToggleButton = ISButton:derive("PZSurvivorToolkitToggleButton")
 
 function ToggleButton:update()
     local player = getPlayer()
-    self:setEnable(player ~= nil and not player:isDead())
+    local available = player ~= nil and not player:isDead()
+    if self.enable ~= available then
+        self:setEnable(available)
+        self.toggleKey = nil
+    end
     local enabled, key = Toolkit.Settings.isEnabled(), Toolkit.Settings.getToggleKey()
     if self.highlightEnabled == enabled and self.toggleKey == key then return end
     self.highlightEnabled, self.toggleKey = enabled, key
-    self:setTitle(getText(enabled and "UI_PZSurvivorToolkit_button_on" or "UI_PZSurvivorToolkit_button_off"))
+    self.textureColor = enabled and available and {r=1,g=.72,b=.36,a=1} or {r=.55,g=.55,b=.55,a=1}
     local shortcut = key > 0 and getKeyName(key) or getText("UI_PZSurvivorToolkit_no_shortcut")
-    self:setTooltip(getText("UI_PZSurvivorToolkit_button_tooltip", shortcut))
+    self:setTooltip(getText(enabled and "UI_PZSurvivorToolkit_button_on" or "UI_PZSurvivorToolkit_button_off")
+        .. "\n" .. getText("UI_PZSurvivorToolkit_button_tooltip", shortcut))
+end
+
+function ToggleButton:render()
+    ISButton.render(self)
+    if self.highlightEnabled then
+        self:drawTextureScaledAspect(self.tickTexture, self:getWidth()-10, self:getHeight()-10, 9, 9, 1, 1, 1, 1)
+    end
 end
 
 local function toggle(_, button)
@@ -22,6 +36,44 @@ local function toggle(_, button)
     button:update()
 end
 
+local function openOptions()
+    MainScreen.instance:setVisible(true)
+    MainOptions.instance:toUI()
+    MainOptions.instance:setVisible(true)
+    MainOptions.instance.tabs:activateView(getText("UI_mainscreen_mods"))
+    local control = PZAPI.ModOptions.Dict.PZSurvivorToolkit:getOption("Enabled").element
+    control.parent:setYScroll(math.min(0, control:getHeight() * 3 - control:getY()))
+end
+
+local function tools(_, button)
+    local player = getPlayer()
+    if not player or player:isDead() then return end
+    local num = player:getPlayerNum()
+    local menu = ISContextMenu.get(num, button:getAbsoluteX()+button:getWidth(), button:getAbsoluteY())
+    local wishlist = PZSurvivorWishlist
+    if getActivatedMods():contains("PZSurvivorWishlist") and wishlist and wishlist.UI then
+        menu:addOption(getText("UI_PZSW_Open"), num, wishlist.UI.toggle)
+    end
+    if Toolkit.ContextMenus and Toolkit.Settings.contextMenus() then
+        menu:addOption(getText("UI_PZSurvivorToolkit_context_editor"), nil, Toolkit.ContextMenus.openEditor)
+    end
+    menu:addOption(getText("UI_PZSurvivorToolkit_tools_settings"), nil, openOptions)
+end
+
+local function icon(class, sidebar, callback, texture)
+    local button = class:new(0, 0, 24, 24, "", nil, callback)
+    button:initialise()
+    UIStyle.button(button)
+    button.backgroundColor.a = 0
+    button.isBaseBackgroundVisible, button.isBorderVisible = false, false
+    button:setImage(getTexture(texture))
+    button:ignoreWidthChange()
+    button:ignoreHeightChange()
+    button.toolkitSidebarControl = true
+    sidebar:addChild(button)
+    return button
+end
+
 local function attach()
     local player = getPlayer()
     if not player then return end
@@ -29,28 +81,47 @@ local function attach()
     local sidebar = data and data.equipped
     if not sidebar then return end
     local button = sidebar.toolkitHighlightButton
-    if not Toolkit.Settings.showHighlightButton() then
-        if button then
-            sidebar:removeChild(button)
-            if sidebar:getWidth() == button.expandedWidth then sidebar:setWidth(button.sidebarWidth) end
-            if sidebar:getHeight() == button:getBottom() then sidebar:setHeight(button.sidebarHeight) end
-            sidebar.toolkitHighlightButton = nil
-        end
-        return
+    if not Toolkit.Settings.showHighlightButton() and button then
+        sidebar:removeChild(button)
+        sidebar.toolkitHighlightButton, button = nil, nil
     end
-    if player:isDead() or button then return end
-    local width = math.max(sidebar:getWidth(),
-        getTextManager():MeasureStringX(UIFont.Small, getText("UI_PZSurvivorToolkit_button_on")) + 10,
-        getTextManager():MeasureStringX(UIFont.Small, getText("UI_PZSurvivorToolkit_button_off")) + 10)
-    local height = getTextManager():getFontHeight(UIFont.Small) + 10
-    button = ToggleButton:new(0, sidebar:getHeight() + 15, width, height, "", nil, toggle)
-    button.sidebarWidth, button.sidebarHeight, button.expandedWidth = sidebar:getWidth(), sidebar:getHeight(), width
-    button:initialise()
-    sidebar:addChild(button)
-    sidebar:setWidth(width)
-    sidebar:setHeight(button:getBottom())
-    sidebar.toolkitHighlightButton = button
-    button:update()
+    if not sidebar.toolkitToolsButton then
+        if player:isDead() then return end
+        sidebar.toolkitSidebarWidth, sidebar.toolkitSidebarHeight = sidebar:getWidth(), sidebar:getHeight()
+        sidebar.toolkitToolsButton = icon(ISButton, sidebar, tools, "media/ui/Entity/Icon_Tools_48x48.png")
+        sidebar.toolkitToolsButton:setTooltip(getText("UI_PZSurvivorToolkit_tools_tooltip"))
+    end
+    if Toolkit.Settings.showHighlightButton() and not button and not player:isDead() then
+        button = icon(ToggleButton, sidebar, toggle, "Item_Flashlight2")
+        button.tickTexture = getTexture("media/ui/inventoryPanes/Tickbox_Tick.png")
+        sidebar.toolkitHighlightButton = button
+    end
+    local hub = sidebar.toolkitToolsButton
+    hub:setEnable(not player:isDead())
+    if button then button:update() end
+    local nativeWidth = sidebar.invBtn and sidebar.invBtn:getWidth() or sidebar.toolkitSidebarWidth
+    local size = math.max(24, math.floor((nativeWidth - 4) / 2))
+    -- Beside Inventory stays clear of the default multiplayer chat below the sidebar.
+    local x = sidebar.toolkitSidebarWidth + 6
+    local maxY = getPlayerScreenTop(player:getPlayerNum()) + getPlayerScreenHeight(player:getPlayerNum())
+        - sidebar:getAbsoluteY() - size - 6
+    local y = math.max(0, math.min(sidebar.invBtn and sidebar.invBtn:getY() or 0, maxY))
+    local function place(control, offset)
+        control:setX(x+offset);control:setY(y);control:setWidth(size);control:setHeight(size)
+        control:forceImageSize(size-4,size-4)
+    end
+    if button then place(button,0) end
+    place(hub,button and size+4 or 0)
+    local width = math.max(sidebar.toolkitSidebarWidth,hub:getRight())
+    local height = math.max(sidebar.toolkitSidebarHeight,hub:getBottom())
+    if not sidebar.toolkitAppliedWidth or sidebar:getWidth()==sidebar.toolkitAppliedWidth then
+        sidebar:setWidth(width)
+        sidebar.toolkitAppliedWidth = width
+    end
+    if not sidebar.toolkitAppliedHeight or sidebar:getHeight()==sidebar.toolkitAppliedHeight then
+        sidebar:setHeight(height)
+        sidebar.toolkitAppliedHeight = height
+    end
 end
 
 -- Native sidebar-size changes replace the panel, including all its children.

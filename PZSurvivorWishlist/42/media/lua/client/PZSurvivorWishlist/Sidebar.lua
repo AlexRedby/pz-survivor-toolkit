@@ -4,16 +4,23 @@ require "ISUI/ISEquippedItem"
 
 local W = PZSurvivorWishlist
 local function add(equipped)
+    if getActivatedMods():contains("PZSurvivorToolkit") then return end
     if not equipped.invBtn then return end
     if equipped.pzswButton and equipped.pzswButton.parent == equipped then return end
-    local bottom = 0
-    for _, child in pairs(equipped:getChildren()) do
-        if child.Type == "ISButton" then bottom = math.max(bottom, child:getBottom()) end
-    end
-    local button = ISButton:new(0, bottom + 10, equipped.invBtn:getWidth(), equipped.invBtn:getHeight(),
-        getText("UI_PZSW_Sidebar"), equipped, function(target) W.UI.toggle(target.chr:getPlayerNum()) end)
+    local size = math.max(24, math.floor((equipped.invBtn:getWidth() - 4) / 2))
+    local num = equipped.chr:getPlayerNum()
+    local maxY = getPlayerScreenTop(num) + getPlayerScreenHeight(num) - equipped:getAbsoluteY() - size - 6
+    local y = math.max(0, math.min(equipped.invBtn:getY(), maxY))
+    local button = ISButton:new(equipped:getWidth() + 6, y, size, size,
+        "", equipped, function(target) W.UI.toggle(target.chr:getPlayerNum()) end)
     button:initialise()
     button:instantiate()
+    button:setImage(getTexture("media/ui/Entity/Icon_Tools_48x48.png"))
+    button:forceImageSize(size - 4, size - 4)
+    button.backgroundColor.a = 0
+    button.backgroundColorMouseOver = {r = 0.55, g = 0.27, b = 0.09, a = 0.92}
+    button.borderColor = {r = 0.42, g = 0.34, b = 0.25, a = 0.65}
+    button.isBaseBackgroundVisible, button.isBorderVisible = false, false
     button:ignoreWidthChange()
     button:ignoreHeightChange()
     equipped:addChild(button)
