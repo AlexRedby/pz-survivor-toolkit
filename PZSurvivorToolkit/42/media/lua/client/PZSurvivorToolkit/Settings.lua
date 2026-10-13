@@ -96,6 +96,8 @@ options:addTitle(getText("UI_options_PZSurvivorToolkit_inventory_title"))
 local queueOption = options:addTickBox("ActionQueue",
     getText("UI_options_PZSurvivorToolkit_queue"), true,
     getText("UI_options_PZSurvivorToolkit_queue_tooltip"))
+local craftChainsOption = options:addTickBox("CraftChains",
+    getText("UI_PZST_CraftChainOption"), true, getText("UI_PZST_CraftChainOptionTooltip"))
 local inventoryFilterOption = options:addTickBox(
     "InventoryFilters",
     getText("UI_options_PZSurvivorToolkit_inventory_filters"),
@@ -291,6 +293,10 @@ end
 
 function Settings.bulkRemoveBatteries()
     return bulkRemoveBatteriesOption:getValue() == true
+end
+
+function Settings.craftChains()
+    return craftChainsOption:getValue() == true
 end
 
 function Settings.bulkUnload()

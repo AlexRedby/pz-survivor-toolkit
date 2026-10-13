@@ -671,6 +671,8 @@ if NativeModOptionsSource then
         w:apply("UninstallToGround", false)
         equal(w.settings.actionQueue(), true)
         w:apply("ActionQueue", false)
+        equal(w.settings.craftChains(), true)
+        w:apply("CraftChains", false)
         w:apply("ContextMenus", false)
         w.settings.toggle()
         local reloaded = setup(w.file, true)
@@ -690,6 +692,7 @@ if NativeModOptionsSource then
         equal(reloaded.settings.quantityTransfers(), false)
         equal(reloaded.settings.uninstallToGround(), false)
         equal(reloaded.settings.actionQueue(), false)
+        equal(reloaded.settings.craftChains(), false)
         equal(reloaded.settings.contextMenus(), false)
     end)
 end

@@ -33,6 +33,7 @@ end
 function Actions.guardTransfer(transfer)
     -- Keep this guard when an ordinary pickup is already queued.
     transfer:setOnComplete(function() end)
+    transfer.toolkitQueueSafeOnComplete = transfer.onCompleteFunc
     local stop = transfer.stop
     transfer.stop = function(self)
         -- B42 cancellation uses a client-local ID without an owner on the server.

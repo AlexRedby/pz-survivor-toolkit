@@ -2,7 +2,7 @@
 
 For the Steam edition of Project Zomboid **B42.21**. The server and all players must use the same game build and identical local mod files.
 
-The [server INI](SurvivorQoL-selected.ini) selects **41 Mod IDs / 37 Workshop items**. All three repository mods are required: **PZ Survivor Toolkit v0.1.26**, **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.2**. The Java component is experimental and targets B42.21 only. Feature switches remain per-player; the action queue is enabled on fresh profiles and preserves existing preferences. See [features and verification limits](README.md).
+The [server INI](SurvivorQoL-selected.ini) selects **41 Mod IDs / 37 Workshop items**. All three repository mods are required: **PZ Survivor Toolkit v0.1.28**, **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.2**. The Java component is experimental and targets B42.21 only. Feature switches remain per-player; the action queue is enabled on fresh profiles and preserves existing preferences. See [features and verification limits](README.md).
 
 ## Prepare once
 
@@ -41,7 +41,7 @@ The INI does not transfer sandbox settings or keybindings. When moving an existi
 1. Close the game. Subscribe to [ZombieBuddy](https://steamcommunity.com/sharedfiles/filedetails/?id=3619862853) and wait for Steam to download it, then complete the [one-time loader setup](#zombiebuddy-loader).
 2. Install the same three prepared [local mod folders](#local-mods-server-and-every-player) used by the server.
 3. Start the game and join. Select **Install** at the Workshop prompt: the game downloads the remaining required items and enables the server's mods in its order. Approve **PeekAView** and **PZToolkitJavaPatches** when ZombieBuddy asks; save the decisions. The same JARs may need approval again after an update.
-4. Configure features under **Options > Mods > PZ Survivor Toolkit** and **Survivor Wishlist**. The action queue is optional and enabled on fresh profiles; TV and Navigator switches appear with their respective mods. Settings are local to each player and apply without restarting.
+4. Configure features under **Options > Mods > PZ Survivor Toolkit** and **Survivor Wishlist**. The action queue and prerequisite-crafting planner are optional and enabled on fresh profiles; TV and Navigator switches appear with their respective mods. Settings are local to each player and apply without restarting.
 5. Set shortcuts: Toolkit highlight **F8**, Wishlist **K**, Peek a View **F9**, Better Containers Proximity Lock **F10**, Proximity Toggle **F11**, Corpse Only **F12**. Keep MP Fast Forward on **Numpad 0-4**. Disable Better Containers **Advanced Display Categories** because organizedCategories supplies them. Enable **Nested Containers Player/Loot**, keeping its multiplayer restrictions. Each player applies these preferences; the INI does not distribute them.
 
 ## ZombieBuddy loader
