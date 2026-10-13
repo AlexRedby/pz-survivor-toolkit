@@ -1,9 +1,31 @@
 require "PZSurvivorToolkit/Settings"
 require "ISUI/ISInventoryPaneContextMenu"
+require "TimedActions/ISUnloadBulletsFromFirearm"
+require "TimedActions/ISUnloadBulletsFromMagazine"
+require "TimedActions/ISRemoveWeaponUpgrade"
 
 local Actions = {}
 PZSurvivorToolkit.BulkActions = Actions
 local transferGuard = {}
+local bulkMethods = {"new", "start", "update", "stop", "perform", "complete", "isValid", "getDuration",
+    "animEvent", "serverStart", "serverStop", "forceStop", "forceCancel"}
+local nativeBulk = {}
+for _, name in ipairs({"ISUnloadBulletsFromFirearm", "ISUnloadBulletsFromMagazine", "ISRemoveWeaponUpgrade"}) do
+    local class = _G[name]
+    if class then
+        local methods = {}
+        for _, method in ipairs(bulkMethods) do methods[method] = class[method] end
+        nativeBulk[class] = methods
+    end
+end
+
+function Actions.canFinish(action)
+    local class = getmetatable(action)
+    local methods = nativeBulk[class]
+    if not action.toolkitIndependentBulk or not methods or action.Type ~= class.Type then return false end
+    for _, method in ipairs(bulkMethods) do if action[method] ~= methods[method] then return false end end
+    return not action.onStartFunc and not action.onCompleteFunc and not action.onCancelFunc
+end
 
 function Actions.safeItem(player, item)
     return item and item:getContainer() and not item:isFavorite()

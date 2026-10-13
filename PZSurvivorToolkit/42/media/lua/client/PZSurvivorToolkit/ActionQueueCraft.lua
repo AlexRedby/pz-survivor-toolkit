@@ -5,6 +5,33 @@ require "Entity/TimedActions/ISHandcraftAction"
 local Craft = {}
 PZSurvivorToolkit.ActionQueueCraft = Craft
 local contextComplete = ISInventoryPaneContextMenu and ISInventoryPaneContextMenu.OnNewCraftComplete
+local legacyComplete = ISInventoryPaneContextMenu and ISInventoryPaneContextMenu.OnCraftComplete
+if legacyComplete then
+    local nativeLegacyComplete = legacyComplete
+    ISInventoryPaneContextMenu.OnCraftComplete = function(action, ...)
+        local token = action.toolkitQueueOperation
+        if token and token.toolkitCancelled then return end
+        local Operations = PZSurvivorToolkit.ActionQueueOperations
+        local function continue(...)
+            local result = nativeLegacyComplete(action, ...)
+            local Batch = PZSurvivorToolkit.ActionQueueBatch
+            if Batch then Batch.legacyContinued(action) end
+            return result
+        end
+        if Operations then return Operations.runWith(token, continue, ...) end
+        return continue(...)
+    end
+    legacyComplete = ISInventoryPaneContextMenu.OnCraftComplete
+end
+-- Native completion callbacks can append returns after onCompleted removed their action.
+for _, class in ipairs({ISCraftAction, ISHandcraftAction}) do
+    local perform = class.perform
+    class.perform = function(action, ...)
+        local Operations = PZSurvivorToolkit.ActionQueueOperations
+        if Operations then return Operations.perform(action, perform, ...) end
+        return perform(action, ...)
+    end
+end
 local lifecycle = {"new", "isValid", "start", "update", "stop", "perform", "complete", "forceCancel", "forceStop"}
 local classes = {}
 for _, class in ipairs({ISFixAction, ISCraftAction, ISHandcraftAction}) do
@@ -28,6 +55,15 @@ end
 
 local function callbackOwner(action)
     if not action.onStartFunc and not action.onCompleteFunc and not action.onCancelFunc then return true end
+    if getmetatable(action) == ISCraftAction then
+        local args = action.onCompleteArgs
+        return not action.onStartFunc and not action.onCancelFunc and legacyComplete ~= nil
+            and ISInventoryPaneContextMenu.OnCraftComplete == legacyComplete
+            and action.onCompleteFunc == legacyComplete and type(args) == "table"
+            and args[1] == action and args[2] == action.recipe and args[3] == action.character
+            and args[4] == action.container and args[5] == action.containersIn
+            and type(args[6]) == "string" and args[7] ~= nil
+    end
     if getmetatable(action) ~= ISHandcraftAction then return false end
     if not action.onStartFunc and not action.onCancelFunc and contextComplete and ISInventoryPaneContextMenu
         and ISInventoryPaneContextMenu.OnNewCraftComplete == contextComplete
@@ -57,6 +93,11 @@ function Craft.callbacksSafe(action)
     return callbackOwner(action) == true
 end
 
+function Craft.isLegacyAll(action)
+    return getmetatable(action) == ISCraftAction and action.onCompleteFunc == legacyComplete
+        and legacyComplete ~= nil and Craft.callbacksSafe(action)
+end
+
 function Craft.supports(action)
     if type(action) ~= "table" then return false end
     local class = getmetatable(action)
@@ -68,12 +109,14 @@ function Craft.supports(action)
     if action.serverStart ~= methods.serverStart or action.performRecipe ~= methods.performRecipe then return false end
     if class == ISHandcraftAction then
         if not action.craftRecipe or not instanceof(action.craftRecipe, "CraftRecipe") then return false end
-    elseif not action.item or not instanceof(action.item, "InventoryItem") then return false end
+    elseif not action.item or not instanceof(action.item, "InventoryItem") then
+        if class ~= ISCraftAction or not Craft.isLegacyAll(action) or action.item ~= nil then return false end
+    end
     return Craft.callbacksSafe(action)
 end
 
 function Craft.cancelWaiting(action)
-    if not Craft.supports(action) or action.action or action.craftStarted then return false end
+    if not Craft.supports(action) or (action.action and action.action:isStarted()) or action.craftStarted then return false end
     local _, owner, cancel = callbackOwner(action)
     if not owner then return true end
     local token = action.toolkitQueueOperation or action
@@ -93,6 +136,16 @@ function Craft.nativeStopped(action)
     token.toolkitCraftCancelledOwners = token.toolkitCraftCancelledOwners or {}
     token.toolkitCraftCancelledOwners[owner] = true
     return true
+end
+
+function Craft.cancelQueue(queue)
+    local current = queue.current
+    if current and current.action and current.action:isStarted() and Craft.supports(current) then Craft.nativeStopped(current) end
+    for _, action in ipairs(queue.queue) do
+        local Batch = PZSurvivorToolkit.ActionQueueBatch
+        if Batch then Batch.cancel(action) end
+        Craft.cancelWaiting(action)
+    end
 end
 
 local function addList(list, items)

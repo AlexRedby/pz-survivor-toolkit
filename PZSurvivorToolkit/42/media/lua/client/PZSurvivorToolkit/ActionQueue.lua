@@ -5,6 +5,7 @@ require "TimedActions/ISReadABook"
 require "PZSurvivorToolkit/ActionQueueOperations"
 require "PZSurvivorToolkit/ActionQueueLabels"
 require "PZSurvivorToolkit/ActionQueueCraft"
+require "PZSurvivorToolkit/ActionQueueBatch"
 require "TimedActions/ISInventoryTransferUtil"
 require "TimedActions/ISEquipWeaponAction"
 require "TimedActions/ISEquipHeavyItem"
@@ -18,6 +19,7 @@ local Queue = {}
 Toolkit.ActionQueue = Queue
 
 local Operations = Toolkit.ActionQueueOperations
+local Batch = Toolkit.ActionQueueBatch
 local nativeForceCancel = ISBaseTimedAction.forceCancel
 local returnMarker = {}
 
@@ -58,11 +60,17 @@ local function deferredWorld(action)
 end
 Queue.isDeferredWorldAction = deferredWorld
 
+local function appliance(action)
+    local world = Toolkit.ActionQueueWorld
+    return world and world.isApplianceAction and world.isApplianceAction(action)
+end
+
 function Queue.cancelReason(queue, action)
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 then return "unavailable" end
     if queue.toolkitCancel or queue.toolkitGroupCancel then return "stopping" end
     if craft(action) then return Queue.cancelOperationReason(queue, action) end
+    if appliance(action) then return Queue.cancelOperationReason(queue, action) end
     if action.Type == "ISQueueActionsAction" then
         if not deferredWorld(action) then return "dependent" end
         return Queue.cancelOperationReason(queue, action)
@@ -97,10 +105,12 @@ function Queue.cancel(queue, action)
     local reason = Queue.cancelReason(queue, action)
     if reason then return false, reason end
     if craft(action) then return Queue.cancelOperation(queue, action) end
+    if appliance(action) then return Queue.cancelOperation(queue, action) end
     if action == queue.current then
         queue.toolkitCancel = action
         action:forceStop()
     else
+        if Batch then Batch.discard(action) end
         action:forceCancel()
         queue:removeFromQueue(action)
     end
@@ -155,6 +165,8 @@ for _, name in ipairs(preparationMethods) do transferMethods[name] = ISInventory
 nativePreparation[ISInventoryTransferAction] = transferMethods
 
 local function preparationCanFinish(action)
+    if appliance(action) then return true end
+    if Toolkit.BulkActions.canFinish and Toolkit.BulkActions.canFinish(action) then return true end
     local methods = nativePreparation[getmetatable(action)]
     if not methods then return false end
     for _, name in ipairs(preparationMethods) do
@@ -264,7 +276,7 @@ function Queue.cancelOperationReason(queue, action)
         if member.Type == "ISQueueActionsAction" and not plannedCraft and not world then
             return "operation_dependent"
         end
-        local supported = stoppable(member) or member.toolkitIndependentBulk or world or plannedCraft
+        local supported = stoppable(member) or member.toolkitIndependentBulk or world or plannedCraft or appliance(member)
         if not supported and not groupPreparation[member.Type]
             and member.Type ~= "ISInventoryTransferAction" then return "operation_dependent" end
         main = main or supported
@@ -272,7 +284,7 @@ function Queue.cancelOperationReason(queue, action)
             scrapOnly = scrapOnly and ((world and member.toolkitWorldDismantle)
                 or (member.Type == "ISMoveablesAction" and member.mode == "scrap"))
         end
-        output = output or member.toolkitIndependentBulk or auditedCraft or (world and member.toolkitWorldOperation ~= "build") or plannedCraft
+        output = output or member.toolkitIndependentBulk or auditedCraft or (world and member.toolkitWorldDismantle) or plannedCraft
             or (member.Type == "ISMoveablesAction" and member.mode == "scrap")
         for item in pairs(operationItems(member)) do inputs[item] = true end
     end
@@ -320,6 +332,7 @@ function Queue.cancelOperation(queue, action, expected)
             if queue.queue[first + i - 1] ~= member then return false, "unavailable" end
         end
     end
+    if Batch then Batch.cancel(action) end
     if first == 1 and queue.current == queue.queue[1] then
         local current = queue.current
         queue.toolkitGroupCancel = {action = current, token = current.toolkitQueueOperation}
@@ -379,6 +392,10 @@ end
 
 local completed = ISTimedActionQueue.onCompleted
 ISTimedActionQueue.onCompleted = function(queue, action)
+    if Operations.deferCompletion and Operations.deferCompletion(queue, action) then return end
+    if Batch and queue.current == action and queue.queue[1] == action and not queue.toolkitCancelStopped
+        and not (action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled)
+        and not (action.action and action.action.hasStalled and action.action:hasStalled()) then Batch.completed(action) end
     local request = queue.toolkitGroupCancel
     if request and request.action == action then
         queue.toolkitGroupCancel = nil
@@ -495,12 +512,16 @@ ISBaseTimedAction.stop = function(action)
     end
     if queue and queue.toolkitCancel == action and live(queue)
         and not action.character:isPlayerMoving() and not action.character:pressedMovement(false) then
+        if Batch and not queue.toolkitGroupCancel and not queue.toolkitResume then Batch.discard(action) end
         if queue.toolkitGroupCancel and craft(action) then Toolkit.ActionQueueCraft.nativeStopped(action) end
         queue.toolkitCancelStopped = true
         action.character:setIsFarming(false)
         return
     end
-    if queue then clearStop(queue); queue.toolkitGroupCancel = nil end
+    if queue then
+        if craft(action) then Toolkit.ActionQueueCraft.nativeStopped(action) end
+        clearStop(queue); queue.toolkitGroupCancel = nil
+    end
     return stop(action)
 end
 for _, methods in pairs(nativePreparation) do
@@ -512,6 +533,7 @@ end
 
 local reset = ISTimedActionQueue.resetQueue
 ISTimedActionQueue.resetQueue = function(queue)
+    if Toolkit.ActionQueueCraft and Toolkit.ActionQueueCraft.cancelQueue then Toolkit.ActionQueueCraft.cancelQueue(queue) end
     clearStop(queue)
     queue.toolkitGroupCancel = nil
     return reset(queue)
@@ -520,6 +542,7 @@ end
 local clear = ISTimedActionQueue.clearQueue
 ISTimedActionQueue.clearQueue = function(queue)
     if not queue:isCurrentActionAddingOtherActions() then
+        if Toolkit.ActionQueueCraft and Toolkit.ActionQueueCraft.cancelQueue then Toolkit.ActionQueueCraft.cancelQueue(queue) end
         clearStop(queue)
         queue.toolkitGroupCancel = nil
     end

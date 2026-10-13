@@ -28,6 +28,11 @@ local keys = {
     ISEatFoodAction = "ContextMenu_Eat",
     ISDrinkFromBottle = "ContextMenu_Drink",
     ISDrinkFluidAction = "ContextMenu_Drink",
+    ISToggleStoveAction = prefix .. "power",
+    ISToggleClothingWasher = prefix .. "power",
+    ISToggleClothingDryer = prefix .. "power",
+    ISToggleComboWasherDryer = prefix .. "power",
+    ISOvenUITimedAction = "ContextMenu_StoveSetting",
 }
 local radioKeys = {
     ToggleOnOff = prefix .. "power",
@@ -50,6 +55,14 @@ function Labels.preparation(action)
 end
 
 function Labels.title(action)
+    if action.toolkitWorldOperation == "appliance" then
+        local key = action.toolkitApplianceLabel or prefix .. "power"
+        return getText(key), key
+    end
+    if action.Type == "ISSetComboWasherDryerMode" then
+        local key = "ContextMenu_ComboWasherDryer_SetMode" .. (action.mode == "dryer" and "Dryer" or "Washer")
+        return getText(key), key
+    end
     if action.toolkitWorldOperation == "build" or action.Type == "ISBuildAction" then
         return getText(prefix .. "build"), "world:build"
     end
@@ -94,6 +107,13 @@ end
 
 function Labels.label(action)
     local title = Labels.title(action)
+    local appliance = action.toolkitWorldOperation == "appliance" or keys[action.Type] == prefix .. "power"
+        or action.Type == "ISOvenUITimedAction" or action.Type == "ISSetComboWasherDryerMode"
+    local object = appliance and (action.toolkitWorldTarget or action.object or action.stove or action.mcwave)
+    if object and instanceof(object, "IsoObject") then
+        local name = ISWorldObjectContextMenu.getMoveableDisplayName(object)
+        if name then return title .. ": " .. name end
+    end
     if action.toolkitWorldOperation == "build" or action.Type == "ISBuildAction" then
         local recipe = action.craftRecipe or (action.item and action.item.craftRecipe)
         if recipe and instanceof(recipe, "CraftRecipe") then return title .. ": " .. recipe:getTranslationName() end

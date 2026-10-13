@@ -108,7 +108,7 @@ local replaced = handcraft(); replaced.stop = function() end
 assert(not craft.supports(replaced))
 local derived = ISHandcraftAction:derive('ISHandcraftAction')
 assert(not craft.supports(setmetatable(handcraft(), derived)), 'mod subclass spoofing native Type stays protected')
-local active = handcraft(); active.action = {}
+local active = handcraft(); active.action = {isStarted = function() return true end}
 assert(craft.supports(active) and not craft.cancelWaiting(active))
 local activePanel = owner(ISWidgetHandCraftControl)
 active = withOwner(handcraft(), activePanel)

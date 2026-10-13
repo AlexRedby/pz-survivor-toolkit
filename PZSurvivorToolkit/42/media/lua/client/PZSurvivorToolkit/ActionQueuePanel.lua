@@ -127,6 +127,7 @@ function Panel:createChildren()
     self.list:instantiate()
     self.list.itemheight = math.max(32, getTextManager():getFontHeight(UIFont.Small) + 12)
     self.list.font = UIFont.Small
+    self.list.doRepaintStencil = true
     self.list.doDrawItem = Panel.drawRow
     self.list.dragTexture = getTexture("media/ui/dragModIcon.png")
     self.list.cancelTexture = self.closeButtonTexture
@@ -166,13 +167,22 @@ function Panel.drawRow(list, y, row, alt)
     local remaining, count
     local right = cancelX - 4
     local clipHeight = math.min(row.height, list.height - top)
+    local batch = Toolkit.ActionQueueBatch.progress(queue, row.item)
     if row.header then
-        remaining = getText("UI_PZSurvivorToolkit_queue_remaining", row.last - row.first + 1)
-        count = getText("UI_PZSurvivorToolkit_queue_steps", row.last - row.first + 1)
+        if batch then
+            count = getText("UI_PZSurvivorToolkit_queue_" .. batch.unit
+                .. (batch.total and "_progress" or "_completed"), batch.completed, batch.total)
+            remaining = count
+        else
+            remaining = getText("UI_PZSurvivorToolkit_queue_remaining", row.last - row.first + 1)
+            count = getText("UI_PZSurvivorToolkit_queue_steps", row.last - row.first + 1)
+        end
         local countWidth = getTextManager():MeasureStringX(UIFont.Small, count)
-        list:setStencilRect(textX, top, math.max(0, right - textX - countWidth - 8), clipHeight)
+        local titleWidth = math.max(0, right - textX - countWidth - 8)
+        list:setStencilRect(textX, top, titleWidth, clipHeight)
         list:drawText(row.task, textX, y + 5, 0.85, 0.85, 0.85, 1, UIFont.Small)
         list:clearStencilRect()
+        list:repaintStencilRect(textX, top, titleWidth, clipHeight)
     end
     list:setStencilRect(textX, top, right - textX, clipHeight)
     if row.header then
@@ -181,6 +191,7 @@ function Panel.drawRow(list, y, row, alt)
     list:drawText(label, textX, row.header and y + row.height / 2 or y + (row.height - getTextManager():getFontHeight(UIFont.Small)) / 2,
         current and 1 or 0.85, current and 1 or 0.85, current and 1 or 0.85, 1, UIFont.Small)
     list:clearStencilRect()
+    list:repaintStencilRect(textX, top, right - textX, clipHeight)
     local reason
     local operationCancel = row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item))
     if operationCancel then reason = Toolkit.ActionQueue.cancelOperationReason(queue, row.item)
@@ -196,7 +207,7 @@ function Panel.drawRow(list, y, row, alt)
         .. (remaining and remaining .. " <LINE> " or "") .. label
         .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. hint)
     local first, last = Toolkit.ActionQueueOperations.bounds(queue, action)
-    if first and last > first then
+    if not batch and first and last > first then
         row.tooltip = row.tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_group", last - first + 1)
     end
     local dropFirst, dropLast
@@ -221,7 +232,7 @@ function Panel:update()
     local selectedHeader = row and row.header
     self.expanded = self.expanded or {}
     local rows, live = {}, {}
-    local i = 1
+    local i, tasks = 1, 0
     while i <= #self.queue.queue do
         local action = self.queue.queue[i]
         local token = action.toolkitQueueOperation
@@ -230,15 +241,18 @@ function Panel:update()
             last = last + 1
         end
         if token then live[token] = true end
-        if last > i then
+        local batch = Toolkit.ActionQueueBatch.progress(self.queue, action)
+        local grouped = last > i or batch and (batch.lazy or batch.total and batch.total > 1 or batch.completed > 0)
+        if grouped then
             rows[#rows + 1] = {item = action, operation = token, header = true, first = i, last = last,
                 task = Panel.taskTitle(self.queue, i, last)}
         end
-        if last == i or self.expanded[token] then
+        if not grouped or self.expanded[token] then
             for index = i, last do
                 rows[#rows + 1] = {item = self.queue.queue[index], operation = token, first = index, last = index}
             end
         end
+        tasks = tasks + 1
         i = last + 1
     end
     for token in pairs(self.expanded) do if not live[token] then self.expanded[token] = nil end end
@@ -269,7 +283,7 @@ function Panel:update()
         self.list:setScrollHeight(height)
         self.list:setYScroll(scroll)
     end
-    self.title = getText("UI_PZSurvivorToolkit_queue_title", #self.queue.queue)
+    self.title = getText("UI_PZSurvivorToolkit_queue_title", tasks)
 end
 
 function Panel:clearSnapshots()

@@ -161,6 +161,10 @@ local function buildFromSnapshot(character, target)
 end
 
 function World.targetGone(action)
+    if World.isApplianceAction and World.isApplianceAction(action) then
+        local object = action.object or action.stove or action.mcwave
+        return object and object:getObjectIndex() == -1
+    end
     local saved = action and action.toolkitWorldResume
     return saved ~= nil and saved.marker == resumeMarker and saved.owner == action
         and action.Type == "ISMoveablesAction" and action.mode == "scrap"
@@ -302,9 +306,11 @@ function World.sharesTarget(first, second)
 end
 
 -- The game loads the server-side cursor class after client Lua.
+local installAppliances
 local function install()
     if ISMoveableCursor.toolkitQueueInstalled then return end
     ISMoveableCursor.toolkitQueueInstalled = true
+    installAppliances()
     nativeTryBuild = ISBuildingObject.tryBuild
     ISBuildingObject.tryBuild = function(cursor, x, y, z)
         local character = cursor.character or getSpecificPlayer(cursor.player)
@@ -360,3 +366,105 @@ local function install()
 end
 
 Events.OnGameStart.Add(install)
+
+local applianceMethods = {}
+local lifecycle = {"new", "start", "stop", "perform", "complete", "isValid", "update", "forceCancel", "forceStop"}
+
+function World.isApplianceAction(action)
+    local methods = applianceMethods[getmetatable(action)]
+    if not methods or action.onStartFunc or action.onCompleteFunc or action.onCancelFunc then return false end
+    for _, name in ipairs(lifecycle) do if action[name] ~= methods[name] then return false end end
+    return true
+end
+
+local function applianceCommand(character, target)
+    if target.object:getObjectIndex() == -1 or target.object:getSquare() ~= target.square then return end
+    target.callback(unpack(target.args))
+end
+
+local function enqueueAppliance(character, object, callback, args, label)
+    local snapshot = {object = object, square = object:getSquare(), callback = callback, args = args}
+    return Toolkit.ActionQueueOperations.run(function()
+        local action = command(character, applianceCommand, snapshot, "appliance")
+        action.toolkitApplianceLabel = label
+        return ISTimedActionQueue.add(action)
+    end)
+end
+
+local applianceInstalled
+installAppliances = function()
+    if applianceInstalled then return end
+    applianceInstalled = true
+    for _, name in ipairs({"ISToggleStoveAction", "ISToggleClothingWasher", "ISToggleClothingDryer",
+        "ISToggleComboWasherDryer", "ISSetComboWasherDryerMode", "ISOvenUITimedAction"}) do
+        local class = _G[name]
+        if class then
+            local methods = {}
+            for _, method in ipairs(lifecycle) do methods[method] = class[method] end
+            applianceMethods[class] = methods
+        end
+    end
+    for _, entry in ipairs({
+        {"onToggleStove", 3}, {"onToggleClothingWasher", 3}, {"onToggleClothingDryer", 3},
+        {"onToggleComboWasherDryer", 1}, {"onSetComboWasherDryerMode", 1, "ContextMenu_ComboWasherDryer_SetModeWasher"},
+        {"onMicrowaveSetting", 3, "ContextMenu_StoveSetting"}, {"onStoveSetting", 3, "ContextMenu_StoveSetting"},
+    }) do
+        local callback, playerArg, label = ISWorldObjectContextMenu[entry[1]], entry[2], entry[3]
+        if callback then
+            ISWorldObjectContextMenu[entry[1]] = function(a, object, c)
+                local character = playerArg == 1 and a or getSpecificPlayer(c)
+                if pending(character) and object and object:getSquare() then
+                    local title = label
+                    if playerArg == 1 and c == "dryer" then title = "ContextMenu_ComboWasherDryer_SetModeDryer" end
+                    return enqueueAppliance(character, object, callback, {a, object, c}, title)
+                end
+                return callback(a, object, c)
+            end
+        end
+    end
+    local toggles = {Stove = "onToggleStove", ClothingWasher = "onToggleClothingWasher",
+        ClothingDryer = "onToggleClothingDryer", CombinationWasherDryer = "onToggleComboWasherDryer"}
+    for kind in pairs(toggles) do
+        local class = _G["ISLootWindowObjectControlHandler_" .. kind .. "Toggle"]
+        if class and class.perform then
+            local perform = class.perform
+            class.perform = function(handler)
+                if not pending(handler.playerObj) or not handler.object or not handler.object:getSquare() then
+                    return perform(handler)
+                end
+                local target = setmetatable(shallowCopy(handler), getmetatable(handler))
+                return enqueueAppliance(handler.playerObj, handler.object, perform, {target})
+            end
+            local getControl = class.getControl
+            if getControl then
+                class.getControl = function(handler)
+                    local control = getControl(handler)
+                    -- CleanUI can cache the original callback before OnGameStart installs this adapter.
+                    if control and control.target == handler and control.onclick == perform then
+                        control.onclick = class.perform
+                    end
+                    return control
+                end
+            end
+        end
+    end
+    for _, className in ipairs({"ISInventoryPage", "CleanUI_Vanilla_ISInventoryPage"}) do
+        local class = _G[className]
+        if class and class.toggleStove then
+            local toggle = class.toggleStove
+            class.toggleStove = function(page)
+                local character = getSpecificPlayer(page.player)
+                local object = page.inventoryPane.inventory:getParent()
+                local callback = object and toggles[object:getObjectName()]
+                if pending(character) and callback then
+                    if UIManager.getSpeedControls() and UIManager.getSpeedControls():getCurrentGameSpeed() == 0 then return end
+                    if callback == "onToggleComboWasherDryer" then
+                        return ISWorldObjectContextMenu[callback](character, object)
+                    end
+                    return ISWorldObjectContextMenu[callback](nil, object, page.player)
+                end
+                return toggle(page)
+            end
+        end
+    end
+end

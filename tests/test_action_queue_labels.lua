@@ -2,6 +2,7 @@
 PZSurvivorToolkit = {}
 instanceof = function(value, class) return type(value) == 'table' and value.class == class end
 Translator = {getMoveableDisplayName = function(value) return 'Translated ' .. value end}
+ISWorldObjectContextMenu = {getMoveableDisplayName = function(object) return object.name end}
 local labels = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLabels.lua'))()
 local function item(name, custom)
     return {class = 'InventoryItem', getDisplayName = function() return name end,
@@ -35,6 +36,9 @@ for _, language in ipairs({'EN', 'RU'}) do
         return (text:gsub('%%(%d+)', function(index) return tostring(args[tonumber(index)] or '%' .. index) end))
     end
     local e = expected[language]
+    assert(labels.label({Type = 'ISToggleStoveAction', object = {class = 'IsoObject', name = 'Oven'}}) == e.power .. ': Oven')
+    assert(labels.label({Type = 'ISQueueActionsAction', toolkitWorldOperation = 'appliance',
+        toolkitWorldTarget = {class = 'IsoObject'}}) == e.power)
     local function check(action, title)
         local actual, signature = labels.title(action)
         assert(actual == title, language .. ': ' .. tostring(action.Type) .. ': ' .. actual .. ' ~= ' .. title)

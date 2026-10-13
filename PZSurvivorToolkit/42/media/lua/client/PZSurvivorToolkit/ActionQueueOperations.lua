@@ -10,6 +10,20 @@ require "ISUI/ISInventoryPane"
 local Operations = {}
 PZSurvivorToolkit.ActionQueueOperations = Operations
 local scope
+local completionScope
+local returnClass = ISInventoryTransferAction
+local returnMethods = {}
+for _, name in ipairs({"new", "isValid", "isValidStart", "start", "update", "stop", "perform", "complete", "forceStop", "forceCancel"}) do
+    returnMethods[name] = returnClass[name]
+end
+
+local function nativeReturn(action)
+    if getmetatable(action) ~= returnClass or action.Type ~= returnClass.Type or not action.allowMissingItems
+        or action.srcContainer ~= action.character:getInventory() or action.destContainer == action.srcContainer
+        or action.onStartFunc or action.onCancelFunc or action.onCompleteFunc then return false end
+    for name, method in pairs(returnMethods) do if action[name] ~= method then return false end end
+    return true
+end
 
 local function pack(...)
     return {n = select("#", ...), ...}
@@ -28,14 +42,48 @@ function Operations.run(callback, ...)
     return run(scope or {}, callback, ...)
 end
 
+function Operations.runWith(token, callback, ...)
+    return run(token or scope or {}, callback, ...)
+end
+
+function Operations.deferCompletion(queue, action)
+    if completionScope and completionScope.action == action and queue.queue[1] == action then
+        completionScope.queue = queue
+        return true
+    end
+end
+
+function Operations.perform(action, callback, ...)
+    local Craft = PZSurvivorToolkit.ActionQueueCraft
+    local Settings = PZSurvivorToolkit.Settings
+    if (Settings and not Settings.actionQueue()) or not Craft or not Craft.supports(action) then
+        return callback(action, ...)
+    end
+    local previous = completionScope
+    local pending = {action = action}
+    completionScope = pending
+    local results = pack(pcall(Operations.runWith, action.toolkitQueueOperation, callback, action, ...))
+    completionScope = previous
+    if not results[1] then error(results[2], 0) end
+    -- Native MP handcraft callbacks add returns after base.perform; finish that same task before advancing.
+    if pending.queue and pending.queue.current == action and pending.queue.queue[1] == action then
+        pending.queue:onCompleted(action)
+    end
+    return unpack(results, 2, results.n)
+end
+
 local function stamp(action, token)
     if not action.toolkitQueueOperation then
         local queue = ISTimedActionQueue.queues[action.character]
         local current = queue and queue.queue[1]
         if current and current._isAddingActions then
             token = current.toolkitQueueOperation
+            action.toolkitBatchIteration = current.toolkitBatchIteration
         end
         action.toolkitQueueOperation = token or scope or {}
+    end
+    if not action.ignoreAction and PZSurvivorToolkit.ActionQueueBatch then
+        PZSurvivorToolkit.ActionQueueBatch.attach(action)
     end
     -- Keep original pickup locations after native transfers merge or leave the queue.
     local operation = action.toolkitQueueOperation
@@ -54,6 +102,23 @@ end
 local add = ISTimedActionQueue.add
 ISTimedActionQueue.add = function(action)
     stamp(action)
+    local current = completionScope and completionScope.action
+    local queue = current and ISTimedActionQueue.queues[current.character]
+    if queue and queue.queue[1] == current and action.character == current.character
+        and action.toolkitQueueOperation == current.toolkitQueueOperation
+        and not current._isAddingActions and nativeReturn(action) then
+        local last = 1
+        while queue.queue[last + 1] and queue.queue[last + 1].toolkitQueueOperation == current.toolkitQueueOperation do
+            last = last + 1
+        end
+        local result = add(action)
+        local index = queue:indexOf(action)
+        if index > last then
+            table.remove(queue.queue, index)
+            table.insert(queue.queue, last + 1, action)
+        end
+        return result
+    end
     return add(action)
 end
 
@@ -69,7 +134,10 @@ ISTimedActionQueue.addAfter = function(previous, action)
     stamp(previous)
     action.toolkitQueueOperation = previous.toolkitQueueOperation
     local queue, added = addAfter(previous, action)
-    if added then previous.toolkitQueueLinked, added.toolkitQueueLinked = true, true end
+    if added then
+        stamp(added)
+        previous.toolkitQueueLinked, added.toolkitQueueLinked = true, true
+    end
     return queue, added
 end
 

@@ -481,12 +481,20 @@ function widget:drawRect(...) self.drawnRects=self.drawnRects or {};self.drawnRe
 function widget:drawText(text) self.drawnTexts=self.drawnTexts or {};self.drawnTexts[#self.drawnTexts+1]=text end
 function widget:drawTextRight(text,x) self:drawText(text);self.rightText={text=text,x=x} end
 function widget:drawTextureScaledAspect(texture)
+    assert(not self.clearedClip, 'text clipping must restore the parent stencil before drawing controls')
     assert(texture);self.lastTexture=texture;self.drawnTextures=self.drawnTextures or {};self.drawnTextures[#self.drawnTextures+1]=texture
 end
 function widget:setStencilRect(x,y,width,height)
-    self.clips=self.clips or {};self.clips[#self.clips+1]={x=x,width=width}
+    assert(not self.clearedClip, 'nested clipping must restore the previous stencil before clipping again')
+    self.clips=self.clips or {};self.clips[#self.clips+1]={x=x,y=y,width=width,height=height}
 end
-function widget:clearStencilRect() end
+function widget:clearStencilRect() self.clearedClip=self.clips[#self.clips] end
+function widget:repaintStencilRect(x,y,width,height)
+    local clip=assert(self.clearedClip)
+    assert(clip.x==x and clip.y==y and clip.width==width and clip.height==height,
+        'nested text masks must repaint exactly the cleared rectangle')
+    self.clearedClip=nil
+end
 function widget:addItem(text, item) self.items[#self.items+1]={item=item,index=#self.items+1,height=self.itemheight} end
 ISCollapsableWindow = widget:derive('ISCollapsableWindow')
 function ISCollapsableWindow:createChildren() self.closeButton=widget:new(); self.closeButtonTexture="close-icon" end
@@ -510,11 +518,13 @@ getPlayerScreenTop = function() return 0 end
 getPlayerScreenHeight = function() return 720 end
 getPlayerScreenWidth = function() return 1280 end
 Events.OnTickEvenPaused = {Add=function(fn) refresh=fn end}
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueBatch.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePanel.lua'))()
 p = player(); a,b,c = book(p),book(p),book(p)
 q = ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); ISTimedActionQueue.add(c)
 refresh(); local panel=ui[#ui]; panel:update()
 assert(panel.visible and #panel.list.items==3 and not panel.closeButton.visible)
+assert(panel.list.doRepaintStencil, 'native list viewport must restore its enclosing window stencil')
 local list=panel.list
 local function click(n)
     local x,y=list:cancelX()+12,list:topOfItem(n)+list.items[n].height/2
@@ -617,6 +627,53 @@ assert(taskTitle({queue={unknown,{Type='OtherModWork'}}},1,2)=='UI_PZSurvivorToo
 local function recipe(name) return {class='CraftRecipe',getName=function() return name end,getTranslationName=function() return 'Recipe '..name end} end
 assert(taskTitle({queue={equip,{craftRecipe=recipe('A')},transfer}},1,3)=='Recipe A')
 assert(taskTitle({queue={{craftRecipe=recipe('A')},{craftRecipe=recipe('B')}}},1,2)=='UI_PZSurvivorToolkit_queue_mixed')
+-- Batch counts describe completed crafts/actions, never outputs or native preparation steps.
+p=player();a,b,c,d=book(p),book(p),book(p),book(p)
+operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c) end)
+ISTimedActionQueue.add(d)
+local batchToken=a.toolkitQueueOperation
+batchToken.toolkitBatch={total=3,completed=0,unit='craft'}
+refresh();panel=ui[#ui];panel:update();list=panel.list
+assert(#list.items==2 and panel.title=='UI_PZSurvivorToolkit_queue_title(2)')
+list.doDrawItem(list,0,list.items[1],false)
+assert(list.rightText.text=='UI_PZSurvivorToolkit_queue_craft_progress(0,3)')
+assert(not list.items[1].tooltip:find('queue_steps',1,true) and not list.items[1].tooltip:find('queue_group',1,true))
+local batchRow=list.items[1]
+list:onMouseDown(10,16)
+batchToken.toolkitBatch.completed=1;panel:update()
+assert(list.items[1]==batchRow and list.pressedToggle==batchToken, 'progress updates do not rebuild or discard a gesture')
+list.doDrawItem(list,0,list.items[1],false)
+assert(list.rightText.text=='UI_PZSurvivorToolkit_queue_craft_progress(1,3)')
+list:onMouseUp(10,16);panel:update()
+assert(panel.expanded[batchToken] and #list.items==5 and panel.title=='UI_PZSurvivorToolkit_queue_title(2)')
+q:removeFromQueue(a);q:removeFromQueue(b);batchToken.toolkitBatch.completed=2;panel:update()
+assert(list.items[1].header and list.items[1].item==c and list.items[2].item==c,
+    'a final native child keeps its batch heading and expansion')
+list.doDrawItem(list,0,list.items[1],false)
+assert(list.rightText.text=='UI_PZSurvivorToolkit_queue_craft_progress(2,3)')
+batchToken.toolkitBatch.unit='action';panel:update();list.doDrawItem(list,0,list.items[1],false)
+assert(list.rightText.text=='UI_PZSurvivorToolkit_queue_action_progress(2,3)')
+batchToken.toolkitBatch.total=nil;batchToken.toolkitBatch.lazy=true
+panel:update();list.doDrawItem(list,0,list.items[1],false)
+assert(list.rightText.text=='UI_PZSurvivorToolkit_queue_action_completed(2)', 'unbounded work must not invent a total')
+-- Lazy Craft All keeps one header while native continuations replace its only child.
+p=player();a=book(p);q=ISTimedActionQueue.add(a)
+batchToken=a.toolkitQueueOperation
+batchToken.toolkitBatch={completed=0,unit='craft',lazy=true}
+refresh();panel=ui[#ui];panel:update();list=panel.list
+assert(#list.items==1 and list.items[1].header)
+frame(p);toggle(1);b=book(p);ISTimedActionQueue.addAfter(a,b);a.action.done=true;frame(p)
+batchToken.toolkitBatch.completed=1;panel:update()
+assert(#list.items==2 and list.items[1].header and list.items[2].item==b and panel.expanded[batchToken])
+list.doDrawItem(list,0,list.items[1],false)
+assert(list.rightText.text=='UI_PZSurvivorToolkit_queue_craft_completed(1)')
+local unrelated=book(p);ISTimedActionQueue.add(unrelated);panel:update()
+frame(p);click(1);assert(q.toolkitCancel==b);frame(p);panel:update()
+assert(#q.queue==1 and q.queue[1]==unrelated, 'one header cross cancels the lazy task and retains unrelated work')
+-- A plain one-off craft does not need a batch header.
+unrelated.toolkitQueueOperation.toolkitBatch={total=1,completed=0,unit='craft'}
+panel:update();assert(#list.items==1 and not list.items[1].header)
+print('Queue batch view: dynamic logical counters, unknown totals, singleton continuation headers, expansion and cancellation passed.')
 -- Active headers show the actual current native step and its progress; completed/cancelled steps leave only a remaining count.
 p=player();a,b,c=book(p),book(p),book(p)
 operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c) end)

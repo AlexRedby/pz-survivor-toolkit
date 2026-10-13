@@ -88,6 +88,15 @@ end)
 assert(before.toolkitQueueOperation == afterError.toolkitQueueOperation)
 assert(not pcall(function() operations.run(function() error('outer failure') end) end))
 assert(enqueue().toolkitQueueOperation ~= before.toolkitQueueOperation, 'scope must restore after error')
+local continuation = {}
+operations.runWith(continuation, function()
+    assert(enqueue().toolkitQueueOperation == continuation)
+    local inner = {}
+    operations.runWith(inner, function() assert(enqueue().toolkitQueueOperation == inner) end)
+    assert(enqueue().toolkitQueueOperation == continuation)
+    assert(not pcall(function() operations.runWith({}, function() error('continuation failure') end) end))
+    assert(enqueue().toolkitQueueOperation == continuation)
+end)
 reset()
 local linked, ignored = action(), action(); ignored.ignoreAction = true
 local previous = enqueue()
