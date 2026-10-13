@@ -5,6 +5,7 @@ import java.util.HexFormat;
 import me.zed_0xff.zombie_buddy.Accessor;
 import me.zed_0xff.zombie_buddy.Patch;
 import zombie.characters.NetworkZombieAI;
+import zombie.core.BuildAction;
 import zombie.network.GameClient;
 import zombie.network.GameServer;
 import zombie.network.packets.character.ZombiePacket;
@@ -19,6 +20,16 @@ public final class Main {
         "e5096d41b4b94c3eb040c119c1ca35b014bbfe3c742401002b88103a650add56");
     public static final boolean MEDIA_SUPPORTED = supports("zombie/radio/devices/DeviceData.class",
         "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102");
+    public static final boolean BUILD_SUPPORTED = supports("zombie/core/BuildAction.class",
+        "320afae90b4723456f349787a09c179f53de2533a19393434d34fc569eb4f368")
+        && supports("zombie/core/ActionManager.class",
+            "3e85655f0d287837b17164d2ee4cecb7067ab419ffbe8ce1adb36bd7d54b202f")
+        && supports("zombie/core/Action.class",
+            "4a2fe6aaf0cf73235279946e930b40489ec44859aff64cc19d97976bcc75610d")
+        && supports("zombie/network/packets/BuildActionPacket.class",
+            "c09201418a8aa248ea349314fba21de85fb2d768e0df4afb4bc8d32bfbf524db")
+        && supports("zombie/network/packets/GeneralActionPacket.class",
+            "398a8729da87a4c222f17473cc46c9b5cb7fd9b3f74492d283765619c1d57c8a");
 
     public static boolean supports(String resource, String expected) {
         try (var stream = Main.class.getClassLoader().getResourceAsStream(resource)) {
@@ -32,7 +43,31 @@ public final class Main {
 
     public static void main(String[] args) {
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
-            + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED);
+            + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED);
+    }
+
+    @Patch(className="zombie.core.BuildAction", methodName="start", warmUp=true)
+    public static class BuildStarted {
+        @Patch.OnExit(suppress=Throwable.class)
+        public static void exit(@Patch.This BuildAction action) {
+            if (GameServer.server && Main.BUILD_SUPPORTED) BuildAcknowledgements.started(action);
+        }
+    }
+
+    @Patch(className="zombie.core.BuildAction", methodName="stop", warmUp=true)
+    public static class BuildStopped {
+        @Patch.OnExit(suppress=Throwable.class)
+        public static void exit(@Patch.This BuildAction action) {
+            if (GameServer.server && Main.BUILD_SUPPORTED) BuildAcknowledgements.settled(action, "canceled");
+        }
+    }
+
+    @Patch(className="zombie.core.BuildAction", methodName="perform", warmUp=true)
+    public static class BuildCompleted {
+        @Patch.OnExit(suppress=Throwable.class)
+        public static void exit(@Patch.This BuildAction action, @Patch.Return boolean completed) {
+            if (GameServer.server && Main.BUILD_SUPPORTED && completed) BuildAcknowledgements.settled(action, "completed");
+        }
     }
 
     @Patch(className="zombie.radio.devices.DeviceData", methodName="StartPlayMedia", warmUp=true)

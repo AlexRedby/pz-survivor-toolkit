@@ -11,6 +11,7 @@ require "TimedActions/ISEquipHeavyItem"
 require "TimedActions/ISUnequipAction"
 require "Vehicles/TimedActions/ISPathFindAction"
 require "PZSurvivorToolkit/BulkActions"
+require "RadioCom/ISRadioAction"
 
 local Toolkit = PZSurvivorToolkit
 local Queue = {}
@@ -174,6 +175,62 @@ operationItems = function(action)
     local keys = {}
     for item in pairs(items) do keys[itemKey(item)] = true end
     return keys
+end
+
+local repairIndependent = {}
+for _, class in ipairs({ISReadABook, ISRadioAction}) do
+    local methods = {}
+    for _, name in ipairs(preparationMethods) do methods[name] = class[name] end
+    repairIndependent[class] = methods
+end
+local radioModes = {ToggleOnOff = true, SetChannel = true, MuteVolume = true, UnMuteVolume = true,
+    SetVolume = true, MuteMicrophone = true, TogglePlayMedia = true}
+local radioMethods = {}
+if ISRadioAction then
+    for mode in pairs(radioModes) do
+        for _, prefix in ipairs({"isValid", "start", "perform"}) do
+            local name = prefix .. mode
+            radioMethods[name] = ISRadioAction[name] or false
+        end
+    end
+end
+
+local function repairInputs(action)
+    local helper = Toolkit.ActionQueueCraft
+    return helper and helper.repairInputs and helper.repairInputs(action)
+end
+
+local function repairCanCross(repair, other)
+    local types = repairInputs(repair)
+    if not types then return true end
+    if other.onStartFunc or other.onCompleteFunc or other.onCancelFunc or other.retriggerLastAction then return false end
+    local methods = repairIndependent[getmetatable(other)]
+    if methods then
+        for _, name in ipairs(preparationMethods) do
+            if other[name] ~= methods[name] then return false end
+        end
+        if getmetatable(other) == ISRadioAction then
+            if not radioModes[other.mode] then return false end
+            for name, method in pairs(radioMethods) do
+                if (other[name] or false) ~= method then return false end
+            end
+        end
+    elseif (other.Type ~= "ISInventoryTransferAction" and other.Type ~= "ISWalkToTimedAction"
+        and other.Type ~= "ISWalkToTimedActionF" and other.Type ~= "ISPathFindAction") or not preparationCanFinish(other) then
+        -- shortcut: craft/world outputs and other repairs can supply new donors; audit their outputs before allowing a crossing.
+        return false
+    end
+    local function independent(item)
+        if not item or not instanceof(item, "InventoryItem") then return true end
+        return not instanceof(item, "InventoryContainer") and not types[item:getFullType()]
+            and item:getID() ~= repair.item:getID()
+    end
+    for _, name in ipairs(itemFields) do if not independent(other[name]) then return false end end
+    if not independent(other.device) or not independent(other.secondaryItem) then return false end
+    for _, batch in ipairs(other.queueList or {}) do
+        for _, item in ipairs(batch.items) do if not independent(item) then return false end end
+    end
+    return true
 end
 
 local function craftPlan(action)
@@ -344,7 +401,9 @@ function Queue.moveReason(queue, action, target, after)
         local member = queue.queue[i]
         if member.action or member == queue.current or i == 1 then return "move_active" end
         if member._isAddingActions then return "move_dependent" end
-        if not knownCraftInputs(member) then return craft(member) and "move_craft_inputs" or "move_dependent" end
+        if not knownCraftInputs(member) and not repairInputs(member) then
+            return craft(member) and "move_craft_inputs" or "move_dependent"
+        end
     end
     if first == targetFirst then return nil, first, first, last end
     local to = after and targetLast + 1 or targetFirst
@@ -368,9 +427,14 @@ function Queue.moveReason(queue, action, target, after)
         if i < first or i > last then
             local crossed = queue.queue[i]
             if crossed._isAddingActions then return "move_dependent" end
-            if not knownCraftInputs(crossed) then return craft(crossed) and "move_craft_inputs" or "move_dependent" end
+            if not knownCraftInputs(crossed) and not repairInputs(crossed) then
+                return craft(crossed) and "move_craft_inputs" or "move_dependent"
+            end
             for j = first, last do
                 if sharedItem(queue.queue[j], crossed) then return "move_shared_item" end
+                if not repairCanCross(queue.queue[j], crossed) or not repairCanCross(crossed, queue.queue[j]) then
+                    return "move_craft_inputs"
+                end
                 if sharedWorldTarget(queue.queue[j], crossed) then return "move_dependent" end
             end
         end
@@ -383,6 +447,8 @@ function Queue.move(queue, action, target, after)
     local reason, to, first, last, preempt = Queue.moveReason(queue, action, target, after)
     if reason then return false, reason end
     if to == first then return true end
+    local world = Toolkit.ActionQueueWorld
+    local acknowledgement = preempt and world and world.buildAcknowledgement and world.buildAcknowledgement(queue.current)
     local moved = {}
     for i = first, last do moved[#moved + 1] = table.remove(queue.queue, first) end
     if preempt then to = 2 end
@@ -390,13 +456,26 @@ function Queue.move(queue, action, target, after)
     if preempt then
         queue.toolkitResume = moved[#moved]
         queue.toolkitCancel = queue.current
+        if acknowledgement then
+            queue.toolkitBuildWait = {acknowledgement = acknowledgement, deadline = getTimestampMs() + 30000}
+        end
         queue.current:forceStop()
     end
     return true
 end
 
 local function clearStop(queue)
-    queue.toolkitCancel, queue.toolkitCancelStopped, queue.toolkitResume = nil, nil, nil
+    queue.toolkitCancel, queue.toolkitCancelStopped, queue.toolkitResume, queue.toolkitBuildWait = nil, nil, nil, nil
+end
+
+local completeAfterStop = ISTimedActionQueue.onCompleted
+ISTimedActionQueue.onCompleted = function(queue, action)
+    if queue.toolkitBuildWait and queue.toolkitCancel == action and queue.current == action and queue.queue[1] == action then
+        -- Native perform can precede Java removal; the server's matching terminal still owns the outcome.
+        queue.toolkitBuildWait.localCompleted = true
+        return
+    end
+    return completeAfterStop(queue, action)
 end
 
 local stop = ISBaseTimedAction.stop
@@ -427,6 +506,9 @@ end
 for _, methods in pairs(nativePreparation) do
     if methods.stop == stop then methods.stop = ISBaseTimedAction.stop end
 end
+for _, methods in pairs(repairIndependent) do
+    if methods.stop == stop then methods.stop = ISBaseTimedAction.stop end
+end
 
 local reset = ISTimedActionQueue.resetQueue
 ISTimedActionQueue.resetQueue = function(queue)
@@ -450,6 +532,32 @@ ISTimedActionQueue.tick = function(queue)
     if action then
         if not live(queue) or queue.current ~= action or queue.queue[1] ~= action then
             clearStop(queue)
+        elseif queue.toolkitBuildWait then
+            local wait = queue.toolkitBuildWait
+            local state = Toolkit.ActionQueueWorld.buildState(action, wait.acknowledgement)
+            if queue.character:isPlayerMoving() or queue.character:pressedMovement(false)
+                or getTimestampMs() >= wait.deadline or not state then
+                if getTimestampMs() >= wait.deadline then
+                    print("[PZSurvivorToolkit] Build interruption timed out; cleared queue without replay.")
+                end
+                queue:resetQueue()
+                queue.character:setIsFarming(false)
+                return
+            end
+            if queue.character:getCharacterActions():contains(action.action)
+                or state == "started" or not (queue.toolkitCancelStopped or wait.localCompleted) then return end
+            local resumeAfter = queue.toolkitResume
+            clearStop(queue)
+            local index = resumeAfter and queue:indexOf(resumeAfter)
+            if state == "canceled" and index and index > 1 then
+                local resumed = Toolkit.ActionQueueWorld.resume(action, wait.acknowledgement)
+                if resumed then
+                    resumed.toolkitQueueOperation = action.toolkitQueueOperation
+                    table.insert(queue.queue, index + 1, resumed)
+                end
+            end
+            queue:onCompleted(action)
+            return
         elseif not queue.character:getCharacterActions():contains(action.action) then
             -- B42 sends the MP stop packet after Lua stop; resume only after Java removes the action.
             local stopped, resumeAfter = queue.toolkitCancelStopped, queue.toolkitResume

@@ -716,6 +716,8 @@ print('Queue view: operation header/child crosses, callback and member revalidat
 load('client/BuildingObjects/TimedActions/ISBuildAction.lua')
 local oldWorld = PZSurvivorToolkit.ActionQueueWorld
 local removedTransactions, resumedCalls, rebuilt = {}, 0, nil
+local acknowledgementClock = 0
+getTimestampMs = function() return acknowledgementClock end
 removeAction = function(character, transaction, cancelled)
     removedTransactions[#removedTransactions+1] = {transaction, cancelled}
 end
@@ -732,10 +734,13 @@ local function build(character)
 end
 PZSurvivorToolkit.ActionQueueWorld = {
     canResume = function(action)
-        if action.mpBuild then return false, "move_world_transaction" end
+        if action.mpBuild then return action.ack and action.ack.state == "started", "move_world_transaction" end
         return action.trustedBuild and action.onCompleteFunc == completeBuild
     end,
-    resume = function(action)
+    buildAcknowledgement = function(action) return action.mpBuild and action.ack end,
+    buildState = function(action, ack) return action.ack == ack and ack.state end,
+    resume = function(action, ack)
+        if action.mpBuild then assert(ack == action.ack and ack.state == "canceled") end
         assert(not action.character.actions[action.action], 'new command must wait for native Java removal')
         resumedCalls = resumedCalls + 1
         return ISQueueActionsAction:new(action.character, function(character)
@@ -770,6 +775,56 @@ list.dragAction,list.dragging,list.dropTarget,list.dropAfter=b,true,a,false
 list.doDrawItem(list,0,list.items[1],false)
 assert(list.items[1].tooltip:find("queue_move_world_transaction",1,true), "blocked drop must explain the actual target restriction")
 list:clearGesture()
+-- Matching terminal and Java removal may arrive in either order; completion never repeats world work.
+for _, state in ipairs({'canceled', 'completed'}) do
+    for _, first in ipairs({'terminal', 'removal'}) do
+        p=player();a=build(p);a.mpBuild=true;a.ack={state='started'}
+        q=ISTimedActionQueue.add(a);frame(p);b=book(p);c=leaf(p,'mp-tail')
+        ISTimedActionQueue.add(b);ISTimedActionQueue.add(c)
+        local before=resumedCalls
+        assert(api.move(q,b,a) and q.toolkitBuildWait)
+        if first=='terminal' then
+            a.ack.state=state;q:tick()
+            assert(q.current==a and resumedCalls==before, 'terminal must wait Java removal')
+        else
+            frame(p)
+            assert(q.current==a and #q.queue==3 and resumedCalls==before, 'local stop must wait terminal')
+            a.ack.state=state
+        end
+        frame(p)
+        assert(q.current==b and not q.toolkitBuildWait and not q.toolkitCancel)
+        if state=='canceled' then
+            assert(resumedCalls==before+1 and q.queue[2].Type=='ISQueueActionsAction' and q.queue[3]==c)
+        else
+            assert(resumedCalls==before and q.queue[2]==c, 'server completion must never replay')
+        end
+        q:tick();assert(resumedCalls==before+(state=='canceled' and 1 or 0), 'duplicate ticks cannot resume twice')
+    end
+end
+-- Native perform can happen after preemption but before stop/removal; hold its onCompleted callback.
+p=player();a=build(p);a.mpBuild=true;a.ack={state='started'}
+q=ISTimedActionQueue.add(a);frame(p);b=book(p);ISTimedActionQueue.add(b)
+local before=resumedCalls
+assert(api.move(q,b,a));a.ack.state='completed';a.action.completing=true
+q:onCompleted(a)
+assert(q.current==a and q.toolkitBuildWait.localCompleted, 'perform cannot start urgent work before Java removes current')
+frame(p)
+assert(q.current==b and resumedCalls==before and #q.queue==1)
+-- Lost terminal, explicit clear, movement and death fail closed without replay or an indefinite wait.
+for _, mode in ipairs({'timeout','clear','move','dead','respawn'}) do
+    p=player();a=build(p);a.mpBuild=true;a.ack={state='started'}
+    q=ISTimedActionQueue.add(a);frame(p);b=book(p);ISTimedActionQueue.add(b)
+    before=resumedCalls;assert(api.move(q,b,a));frame(p)
+    assert(q.current==a and q.toolkitBuildWait)
+    if mode=='timeout' then acknowledgementClock=acknowledgementClock+30000
+    elseif mode=='clear' then ISTimedActionQueue.clear(p)
+    elseif mode=='move' then p.moving=true
+    elseif mode=='dead' then p.dead=true
+    elseif mode=='respawn' then activePlayer=player() end
+    q:tick()
+    assert(resumedCalls==before and not q.toolkitBuildWait and not q.toolkitCancel)
+    if mode=='timeout' or mode=='clear' or mode=='move' then assert(#q.queue==0) end
+end
 -- Unknown callbacks and untracked build transactions retain native protection.
 p=player();a=build(p);q=ISTimedActionQueue.add(a);frame(p);b=book(p);ISTimedActionQueue.add(b)
 a.onCompleteFunc=function() error('unknown callback') end
