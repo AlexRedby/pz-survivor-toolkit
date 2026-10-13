@@ -4,6 +4,44 @@ require "ISUI/ISDisassembleMenu"
 require "Moveables/ISMoveablesAction"
 
 local Toolkit = PZSurvivorToolkit
+local World = {}
+Toolkit.ActionQueueWorld = World
+local commandMarker = {}
+local commandCallbacks = {}
+local resumeMarker = {}
+local nativeTryBuild
+
+local function startCommand(action)
+    action:beginAddingActions()
+    action.addActionsFunction(action.character, unpack(action.args))
+    action:endAddingActions()
+    -- An invalid future target skips this command without native forceStop clearing the remaining queue.
+    action:forceComplete()
+end
+
+local function command(character, callback, snapshot, kind, name)
+    local action = ISQueueActionsAction:new(character, callback, snapshot)
+    action.start = startCommand
+    action.toolkitWorldCommand = commandMarker
+    action.toolkitWorldOperation = kind
+    action.toolkitWorldDismantle = kind == "dismantle"
+    action.toolkitWorldTarget = snapshot.object
+    action.toolkitWorldName = name
+    if snapshot.item then
+        action.craftRecipe = snapshot.item.craftRecipe
+        action.toolkitWorldX, action.toolkitWorldY, action.toolkitWorldZ = snapshot.x, snapshot.y, snapshot.z
+        action.toolkitWorldMinX, action.toolkitWorldMinY = snapshot.minX, snapshot.minY
+        action.toolkitWorldWidth, action.toolkitWorldHeight, action.toolkitWorldLayers = snapshot.width, snapshot.height, snapshot.layers
+    end
+    commandCallbacks[callback] = true
+    return action
+end
+
+function World.isDeferredAction(action)
+    return action and action.Type == "ISQueueActionsAction" and action.toolkitWorldCommand == commandMarker
+        and action.start == startCommand and commandCallbacks[action.addActionsFunction] == true
+end
+World.isCommand = World.isDeferredAction
 
 local function pending(character)
     local queue = ISTimedActionQueue.queues[character]
@@ -12,11 +50,7 @@ end
 
 local function defer(character, callback, snapshot)
     return Toolkit.ActionQueueOperations.run(function()
-        local action = ISQueueActionsAction:new(character, callback, snapshot)
-        action.toolkitWorldDismantle = true
-        action.toolkitWorldTarget = snapshot.object
-        action.toolkitWorldName = snapshot.moveProps.name
-        return ISTimedActionQueue.add(action)
+        return ISTimedActionQueue.add(command(character, callback, snapshot, "dismantle", snapshot.moveProps.name))
     end)
 end
 
@@ -31,11 +65,210 @@ local function scrapFromCursor(character, target)
         target.object, target.direction, nil, target.cursor))
 end
 
+-- shortcut: mod-specific cursor state needs its own adapter; only audited native placement types are deferred.
+local legacyBuilds = {
+    ISWoodenWall = true, ISWoodenDoor = true, ISWoodenDoorFrame = true, ISWoodenFloor = true,
+    ISWoodenStairs = true, ISWoodenContainer = true, ISSimpleFurniture = true,
+    ISDoubleTileFurniture = true, ISDoubleDoor = true, ISLightSource = true, ISCompost = true,
+}
+
+local function shallowCopy(source)
+    local result = {}
+    for key, value in pairs(source) do result[key] = value end
+    return result
+end
+
+local function barricadeTarget(face, x, y, z)
+    local facing = face:getFaceName()
+    if facing == "s" then y = y + 1 elseif facing == "e" then x = x + 1 end
+    local square = getCell():getGridSquare(x, y, z)
+    if not square then return end
+    local objects = square:getObjects()
+    for i = objects:size() - 1, 0, -1 do
+        local object = objects:get(i)
+        local valid = instanceof(object, "IsoDoor") or instanceof(object, "IsoWindow") or instanceof(object, "IsoWindowFrame")
+            or (instanceof(object, "IsoThumpable") and (object:isDoor() or object:isWindow()))
+        if valid and object:getNorth() == (facing == "n" or facing == "s") then return object end
+    end
+end
+
+local function buildSnapshot(cursor, x, y, z)
+    -- Only Lua placement state is copied; inventory items, scripts and squares retain native identity.
+    local item = shallowCopy(cursor)
+    setmetatable(item, getmetatable(cursor, true))
+    item.modData = shallowCopy(cursor.modData or {})
+    item.spriteCache = shallowCopy(cursor.spriteCache or {})
+    item.dragNilAfterPlace, item.blockAfterPlace, item.blockBuild = false, false, false
+    if cursor.buildPanelLogic then
+        local logic = BuildLogic.new(cursor.character or getSpecificPlayer(cursor.player), nil, nil)
+        logic:setContainers(ISInventoryPaneContextMenu.getContainers(cursor.character or getSpecificPlayer(cursor.player)))
+        logic:setRecipe(cursor.craftRecipe)
+        logic:copyManualInputsFrom(cursor.buildPanelLogic)
+        item.buildPanelLogic = logic
+    end
+    local face = item.Type == "ISBuildIsoEntity" and item:getFace()
+    local width, height, layers = face and face:getWidth() or 1, face and face:getHeight() or 1, face and face:getzLayers() or 1
+    local minX, minY = x, y
+    if item.Type == "ISWoodenStairs" or item.Type == "ISDoubleTileFurniture" then
+        local length = item.Type == "ISWoodenStairs" and 3 or 2
+        if item.north then height, minY = length, y - length + 1 else width, minX = length, x - length + 1 end
+        if item.Type == "ISWoodenStairs" then layers = 2 end
+    elseif item.Type == "ISDoubleDoor" then
+        if item.north then width = 4 else height, minY = 4, y - 3 end
+    end
+    local script = face and item.objectInfo:getScript()
+    local barricade = script and script:getOnCreate() == "BuildRecipeCode.barricade.OnCreate"
+    return {item = item, x = x, y = y, z = z, minX = minX, minY = minY, width = width, height = height, layers = layers,
+        object = barricade and barricadeTarget(face, x, y, z) or nil, barricade = barricade}
+end
+
+local function trackBuild(action, snapshot)
+    if not action then return end
+    action.toolkitWorldResume = {marker = resumeMarker, snapshot = snapshot, complete = action.onCompleteFunc, target = action.onCompleteTarget,
+        cancel = action.onCancelFunc, cancelTarget = action.onCancelTarget}
+    action.toolkitWorldOperation = "build"
+    action.toolkitWorldTarget = snapshot.object
+    action.toolkitWorldName = snapshot.item.name
+    action.toolkitWorldX, action.toolkitWorldY, action.toolkitWorldZ = snapshot.x, snapshot.y, snapshot.z
+    action.toolkitWorldMinX, action.toolkitWorldMinY = snapshot.minX, snapshot.minY
+    action.toolkitWorldWidth, action.toolkitWorldHeight, action.toolkitWorldLayers = snapshot.width, snapshot.height, snapshot.layers
+end
+
+local function buildFromSnapshot(character, target)
+    local snapshot = buildSnapshot(target.item, target.x, target.y, target.z)
+    if target.barricade and snapshot.object ~= target.object then return end
+    local item = snapshot.item
+    local square = getCell():getGridSquare(target.x, target.y, target.z)
+    if not square then return end
+    item.containers = ISInventoryPaneContextMenu.getContainers(character)
+    if item.buildPanelLogic then
+        item.buildPanelLogic:setContainers(item.containers)
+        item.buildPanelLogic:updateFloorContainer()
+        if not character:isBuildCheat() and not ISBuildMenu.cheat
+            and not item.buildPanelLogic:canPerformCurrentRecipe() then return end
+    end
+    item:getSprite()
+    if not item:isValid(square, item.north) then return end
+    local action = nativeTryBuild(item, target.x, target.y, target.z)
+    if action and item.Type == "ISBuildIsoEntity" and item.objectInfo:getScript():getTimedActionOnIsValid() then
+        action.onIsValid = item.objectInfo:getScript():getTimedActionOnIsValid()
+    end
+    trackBuild(action, snapshot)
+    return action
+end
+
+function World.targetGone(action)
+    local saved = action and action.toolkitWorldResume
+    return saved ~= nil and saved.marker == resumeMarker and saved.owner == action
+        and action.Type == "ISMoveablesAction" and action.mode == "scrap"
+        and action.object == saved.snapshot.object and action.square == saved.snapshot.square
+        and action.moveProps == saved.snapshot.moveProps and not action:isValidObject()
+end
+
+function World.canResume(action)
+    local saved = action and action.toolkitWorldResume
+    if not saved or saved.marker ~= resumeMarker then return false end
+    if action.Type == "ISMoveablesAction" then
+        return action.mode == "scrap" and action.object == saved.snapshot.object
+            and action.square == saved.snapshot.square and action:isValidObject()
+    end
+    -- shortcut: MP stacking/incremental builds can double-spend after a late completion; resuming needs authoritative server cancellation acknowledgement.
+    if action.Type == "ISBuildAction" and isClient() then return false, "move_world_transaction" end
+    return action.Type == "ISBuildAction"
+        and action.onCompleteFunc == saved.complete and action.onCompleteTarget == saved.target
+        and action.onCancelFunc == saved.cancel and action.onCancelTarget == saved.cancelTarget
+        and (not saved.complete or saved.complete == ISBuildingObject.onActionComplete)
+        and (not saved.cancel or saved.cancel == ISBuildingObject.onActionComplete)
+end
+
+function World.resume(action)
+    if not World.canResume(action) then return end
+    local saved = action.toolkitWorldResume.snapshot
+    if action.Type == "ISMoveablesAction" then
+        return command(action.character, action.toolkitWorldResume.callback, shallowCopy(saved), "dismantle", saved.moveProps.name)
+    end
+    local snapshot = buildSnapshot(saved.item, saved.x, saved.y, saved.z)
+    snapshot.object = saved.object
+    return command(action.character, buildFromSnapshot, snapshot, "build", saved.item.name)
+end
+
+local function containsSquare(build, square)
+    if not square then return false end
+    local x, y, z = square:getX(), square:getY(), square:getZ()
+    local minX, minY = build.toolkitWorldMinX or build.toolkitWorldX, build.toolkitWorldMinY or build.toolkitWorldY
+    return x >= minX and x < minX + (build.toolkitWorldWidth or 1)
+        and y >= minY and y < minY + (build.toolkitWorldHeight or 1)
+        and z >= build.toolkitWorldZ and z < build.toolkitWorldZ + (build.toolkitWorldLayers or 1)
+end
+
+local function intersectsObject(build, other)
+    local targets = {other.toolkitWorldTarget, other.object, other.moveProps and other.moveProps.object,
+        other.generator, other.charger, other.isoObject}
+    for i = 1, 6 do
+        local object = targets[i]
+        if object and instanceof(object, "IsoObject") then
+            if object == build.toolkitWorldTarget then return true end
+            local square = object:getSquare()
+            if containsSquare(build, square) then return true end
+            local props = other.moveProps
+            if square and props and props.object == object and props.getSpriteGridTopLeft and props.getMultiTileSquares then
+                local x, y = props:getSpriteGridTopLeft(square:getX(), square:getY())
+                local squares = props:getMultiTileSquares(x, y, square:getZ())
+                for _, tile in ipairs(squares or {}) do if containsSquare(build, tile) then return true end end
+            end
+        end
+    end
+    return false
+end
+
+function World.sharesTarget(first, second)
+    if not first or not second then return false end
+    if first.toolkitWorldX == nil then
+        return second.toolkitWorldX ~= nil and intersectsObject(second, first)
+    end
+    if second.toolkitWorldX == nil then return intersectsObject(first, second) end
+    if first.toolkitWorldTarget and first.toolkitWorldTarget == second.toolkitWorldTarget then return true end
+    local ax, ay = first.toolkitWorldMinX or first.toolkitWorldX, first.toolkitWorldMinY or first.toolkitWorldY
+    local bx, by = second.toolkitWorldMinX or second.toolkitWorldX, second.toolkitWorldMinY or second.toolkitWorldY
+    return ax < bx + (second.toolkitWorldWidth or 1) and bx < ax + (first.toolkitWorldWidth or 1)
+        and ay < by + (second.toolkitWorldHeight or 1) and by < ay + (first.toolkitWorldHeight or 1)
+        and first.toolkitWorldZ < second.toolkitWorldZ + (second.toolkitWorldLayers or 1)
+        and second.toolkitWorldZ < first.toolkitWorldZ + (first.toolkitWorldLayers or 1)
+end
+
 -- The game loads the server-side cursor class after client Lua.
 local function install()
     if ISMoveableCursor.toolkitQueueInstalled then return end
     ISMoveableCursor.toolkitQueueInstalled = true
+    nativeTryBuild = ISBuildingObject.tryBuild
+    ISBuildingObject.tryBuild = function(cursor, x, y, z)
+        local character = cursor.character or getSpecificPlayer(cursor.player)
+        if not Toolkit.Settings.actionQueue() or cursor.skipBuildAction
+            or (cursor.Type ~= "ISBuildIsoEntity" and not legacyBuilds[cursor.Type]) then
+            return Toolkit.ActionQueueOperations.run(nativeTryBuild, cursor, x, y, z)
+        end
+        local snapshot = buildSnapshot(cursor, x, y, z)
+        if not pending(character) then
+            local action = Toolkit.ActionQueueOperations.run(nativeTryBuild, cursor, x, y, z)
+            trackBuild(action, snapshot)
+            return action
+        end
+        if cursor.dragNilAfterPlace then getCell():setDrag(nil, cursor.player) end
+        return Toolkit.ActionQueueOperations.run(function()
+            return ISTimedActionQueue.add(command(character, buildFromSnapshot, snapshot, "build", cursor.name))
+        end)
+    end
     local disassemble, create = ISDisassembleMenu.disassemble, ISMoveableCursor.create
+    local newMoveable = ISMoveablesAction.new
+    ISMoveablesAction.new = function(self, character, square, mode, origSpriteName, object, direction, item, moveCursor)
+        local action = newMoveable(self, character, square, mode, origSpriteName, object, direction, item, moveCursor)
+        if Toolkit.Settings.actionQueue() and mode == "scrap" and action.moveProps then
+            action.toolkitWorldResume = {marker = resumeMarker, owner = action, callback = moveCursor and scrapFromCursor or disassemble,
+                snapshot = {moveProps = action.moveProps, square = square, object = object,
+                    origSpriteName = origSpriteName, direction = direction, cursor = moveCursor}}
+        end
+        return action
+    end
     ISDisassembleMenu.disassemble = function(character, target)
         if not pending(character)
             or not target or not target.moveProps or not target.square or not target.object then

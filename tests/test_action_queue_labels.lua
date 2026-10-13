@@ -43,6 +43,11 @@ for _, language in ipairs({'EN', 'RU'}) do
         return signature
     end
     local signature = check({Type = 'ISWalkToTimedAction'}, e.walk)
+    local buildTitle = language == 'EN' and 'Build' or 'Построить'
+    check({Type = 'ISBuildAction'}, buildTitle)
+    check({Type = 'ISQueueActionsAction', toolkitWorldOperation = 'build'}, buildTitle)
+    assert(labels.label({Type = 'ISQueueActionsAction', toolkitWorldOperation = 'build', toolkitWorldName = 'Crate'})
+        == buildTitle .. ': Translated Crate')
     assert(check({Type = 'ISWalkToTimedActionF'}, e.walk) == signature)
     assert(check({Type = 'ISPathFindAction'}, e.walk) == signature)
     check({Type = 'ISInventoryTransferAction'}, e.transfer)
@@ -80,6 +85,10 @@ for _, language in ipairs({'EN', 'RU'}) do
     local recipe = {class = 'CraftRecipe', getTranslationName = function() return 'Native recipe name' end,
         getName = function() return 'NativeRecipe' end}
     assert(check({Type = 'ISHandcraftAction', craftRecipe = recipe}, 'Native recipe name') == 'craft:NativeRecipe')
+    assert(labels.label({Type = 'ISQueueActionsAction', toolkitWorldOperation = 'build', craftRecipe = recipe})
+        == buildTitle .. ': Native recipe name')
+    assert(labels.label({Type = 'ISBuildAction', item = {craftRecipe = recipe, name = 'ScriptEntityId'}})
+        == buildTitle .. ': Native recipe name')
     local oldRecipe = {class = 'Recipe', getName = function() return 'Legacy recipe name' end}
     check({Type = 'ISCraftAction', recipe = oldRecipe}, 'Legacy recipe name')
     if NativeActionRoot then

@@ -21,6 +21,7 @@ end
 function List:clearGesture()
     self.pressedCancel, self.dragAction, self.dragging, self.dropTarget = nil, nil, nil, nil
     self.pressedToggle = nil
+    self.pressedOperation = nil
 end
 
 function List:onMouseDown(x, y)
@@ -29,8 +30,18 @@ function List:onMouseDown(x, y)
     if not row then return end
     if row.header and x < 22 then
         self.pressedToggle = row.operation
-    elseif not row.header and x >= self:cancelX() then
-        if not Toolkit.ActionQueue.cancelReason(self.parent.queue, row.item) then self.pressedCancel = row.item end
+    elseif x >= self:cancelX() then
+        if row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item)) then
+            local reason, first, last = Toolkit.ActionQueue.cancelOperationReason(self.parent.queue, row.item)
+            if not reason then
+                self.pressedOperation = {item = row.item, operation = row.operation, members = {}}
+                for i = first, last do
+                    table.insert(self.pressedOperation.members, self.parent.queue.queue[i])
+                end
+            end
+        elseif not Toolkit.ActionQueue.cancelReason(self.parent.queue, row.item) then
+            self.pressedCancel = row.item
+        end
     else
         ISScrollingListBox.onMouseDown(self, x, y)
         if not Toolkit.ActionQueue.moveReason(self.parent.queue, row.item) then
@@ -56,6 +67,10 @@ function List:onMouseUp(x, y)
     if row and row.header and self.pressedToggle == row.operation and x < 22 then
         self.parent.expanded[row.operation] = not self.parent.expanded[row.operation] or nil
         self.parent:update()
+    elseif row and (row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item)))
+        and self.pressedOperation and self.pressedOperation.item == row.item
+        and self.pressedOperation.operation == row.operation and x >= self:cancelX() then
+        Toolkit.ActionQueue.cancelOperation(self.parent.queue, row.item, self.pressedOperation.members)
     elseif row and not row.header and self.pressedCancel == row.item and x >= self:cancelX() then
         Toolkit.ActionQueue.cancel(self.parent.queue, row.item)
     elseif row and self.dragging then
@@ -149,7 +164,7 @@ function Panel.drawRow(list, y, row, alt)
     local top = math.max(0, y + list:getYScroll())
     local label = prefix .. Toolkit.ActionQueue.label(action)
     local remaining, count
-    local right = row.header and list.width - 18 or cancelX - 4
+    local right = cancelX - 4
     local clipHeight = math.min(row.height, list.height - top)
     if row.header then
         remaining = getText("UI_PZSurvivorToolkit_queue_remaining", row.last - row.first + 1)
@@ -166,16 +181,17 @@ function Panel.drawRow(list, y, row, alt)
     list:drawText(label, textX, row.header and y + row.height / 2 or y + (row.height - getTextManager():getFontHeight(UIFont.Small)) / 2,
         current and 1 or 0.85, current and 1 or 0.85, current and 1 or 0.85, 1, UIFont.Small)
     list:clearStencilRect()
-    local reason = Toolkit.ActionQueue.cancelReason(queue, action)
-    local hover = not row.header and list.mouseoverselected == row.index and list:getMouseX() >= cancelX
-    if not row.header then
-        list:drawRect(cancelX, y + 3, 24, row.height - 6, hover and 0.4 or 0.15, 0.7, 0.3, 0.3)
-        list:drawTextureScaledAspect(list.cancelTexture, cancelX + 4, y + (row.height - 16) / 2, 16, 16,
-            reason and 0.2 or 1, 1, 1, 1)
-    end
+    local reason
+    local operationCancel = row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item))
+    if operationCancel then reason = Toolkit.ActionQueue.cancelOperationReason(queue, row.item)
+    else reason = Toolkit.ActionQueue.cancelReason(queue, action) end
+    local hover = list.mouseoverselected == row.index and list:getMouseX() >= cancelX
+    list:drawRect(cancelX, y + 3, 24, row.height - 6, hover and 0.4 or 0.15, 0.7, 0.3, 0.3)
+    list:drawTextureScaledAspect(list.cancelTexture, cancelX + 4, y + (row.height - 16) / 2, 16, 16,
+        reason and 0.2 or 1, 1, 1, 1)
     local toggleHover = row.header and list:getMouseX() < 22
     local hint = toggleHover and (list.parent.expanded[row.operation] and "collapse_tip" or "expand_tip")
-        or (hover and (reason or "cancel_tip") or (moveReason or "drag_tip"))
+        or (hover and (reason or (operationCancel and "cancel_operation_tip" or "cancel_tip")) or (moveReason or "drag_tip"))
     row.tooltip = (row.task and row.task .. " <LINE> " or "")
         .. (remaining and remaining .. " <LINE> " or "") .. label
         .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. hint)
@@ -191,6 +207,7 @@ function Panel.drawRow(list, y, row, alt)
     local boundary = list.dropAfter and row.last == dropLast or not list.dropAfter and row.first == dropFirst
     if dropFirst and boundary and (not neighbor or neighbor.first < dropFirst or neighbor.first > dropLast) then
         local blocked = Toolkit.ActionQueue.moveReason(queue, list.dragAction, list.dropTarget, list.dropAfter)
+        if blocked then row.tooltip = row.tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. blocked) end
         list:drawRect(0, y + (list.dropAfter and row.height - 2 or 0), cancelX + 24, 2, 1,
             blocked and 1 or 0.3, blocked and 0.3 or 1, 0.3)
     end

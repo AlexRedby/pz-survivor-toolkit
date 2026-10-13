@@ -49,6 +49,9 @@ function Labels.preparation(action)
 end
 
 function Labels.title(action)
+    if action.toolkitWorldOperation == "build" or action.Type == "ISBuildAction" then
+        return getText(prefix .. "build"), "world:build"
+    end
     if action.toolkitWorldDismantle or (action.Type == "ISMoveablesAction" and action.mode == "scrap") then
         return getText("ContextMenu_Disassemble"), "world:disassemble"
     end
@@ -90,6 +93,12 @@ end
 
 function Labels.label(action)
     local title = Labels.title(action)
+    if action.toolkitWorldOperation == "build" or action.Type == "ISBuildAction" then
+        local recipe = action.craftRecipe or (action.item and action.item.craftRecipe)
+        if recipe and instanceof(recipe, "CraftRecipe") then return title .. ": " .. recipe:getTranslationName() end
+        local name = action.toolkitWorldName or (action.item and action.item.name)
+        if name then return title .. ": " .. Translator.getMoveableDisplayName(name) end
+    end
     if action.toolkitWorldDismantle or (action.Type == "ISMoveablesAction" and action.mode == "scrap") then
         local name = action.toolkitWorldName or (action.moveProps and action.moveProps.name)
         if name then return title .. ": " .. Translator.getMoveableDisplayName(name) end
