@@ -14,6 +14,7 @@ local keys = {
     ISClothingExtraAction = prefix .. "clothing",
     ISCraftAction = prefix .. "craft",
     ISHandcraftAction = prefix .. "craft",
+    ISFixAction = "ContextMenu_Repair",
     ISDismantleAction = "ContextMenu_Disassemble",
     ISUnloadBulletsFromFirearm = "IGUI_JobType_UnloadBulletsFromFirearm",
     ISUnloadBulletsFromMagazine = "ContextMenu_UnloadMagazine",

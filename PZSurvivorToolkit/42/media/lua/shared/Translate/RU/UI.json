@@ -128,8 +128,8 @@
   "UI_PZSurvivorToolkit_queue_action_unknown": "Действие: %1",
   "UI_PZSurvivorToolkit_queue_mixed": "Разные действия",
   "UI_PZSurvivorToolkit_queue_steps": "Шагов: %1",
-  "UI_PZSurvivorToolkit_queue_cancel_operation_tip": "Отменить эту ожидающую операцию вместе с подготовкой и возвратом предметов; сохранить остальную очередь.",
-  "UI_PZSurvivorToolkit_queue_operation_active": "Эта операция уже началась. Её подготовка, основные действия и возврат предметов должны завершиться вместе.",
+  "UI_PZSurvivorToolkit_queue_cancel_operation_tip": "Отменить операцию целиком, остановить оставшуюся работу и вернуть взятые предметы; сохранить остальную очередь.",
+  "UI_PZSurvivorToolkit_queue_operation_active": "Этот выполняющийся шаг нельзя безопасно прервать. Дождитесь его завершения.",
   "UI_PZSurvivorToolkit_queue_operation_dependent": "Защищено: непроверенные обработчики, разделённые связанные шаги либо другое действие может зависеть от этой операции.",
   "UI_PZSurvivorToolkit_queue_operation_shared_item": "Защищено: действие вне этой операции использует тот же предмет.",
   "UI_PZSurvivorToolkit_queue_action_build": "Построить",
@@ -168,5 +168,6 @@
   "UI_PZST_CraftChainAllocation": "Нужно %1 / Запас %2 / Создать %3",
   "UI_PZST_CraftChainAvailability": "Нужно %1 / Есть %2",
   "UI_PZST_CraftChainChoiceScope": "Нажмите, чтобы выбрать материал. Выбор действует для этого ингредиента во всех повторах данного рецепта в плане. Недостающие материалы могут требовать предварительного крафта.",
-  "UI_PZST_CraftChainAdjustChoices": "Изменить выбор ингредиентов"
+  "UI_PZST_CraftChainAdjustChoices": "Изменить выбор ингредиентов",
+  "UI_PZSurvivorToolkit_queue_move_craft_inputs": "Эта операция выбирает материалы при выполнении. Перестановка может изменить, какие предметы будут израсходованы."
 }

@@ -4,6 +4,13 @@ require "TimedActions/ISBaseTimedAction"
 require "TimedActions/ISReadABook"
 require "PZSurvivorToolkit/ActionQueueOperations"
 require "PZSurvivorToolkit/ActionQueueLabels"
+require "PZSurvivorToolkit/ActionQueueCraft"
+require "TimedActions/ISInventoryTransferUtil"
+require "TimedActions/ISEquipWeaponAction"
+require "TimedActions/ISEquipHeavyItem"
+require "TimedActions/ISUnequipAction"
+require "Vehicles/TimedActions/ISPathFindAction"
+require "PZSurvivorToolkit/BulkActions"
 
 local Toolkit = PZSurvivorToolkit
 local Queue = {}
@@ -11,6 +18,13 @@ Toolkit.ActionQueue = Queue
 
 local Operations = Toolkit.ActionQueueOperations
 local nativeForceCancel = ISBaseTimedAction.forceCancel
+local returnMarker = {}
+
+local function craft(action)
+    return Toolkit.ActionQueueCraft and Toolkit.ActionQueueCraft.supports(action)
+end
+
+Queue.isCraftAction = craft
 
 local begin = ISBaseTimedAction.begin
 ISBaseTimedAction.begin = function(action)
@@ -33,7 +47,7 @@ end
 
 local function stoppable(action)
     return action.Type == "ISReadABook" or (action.Type == "ISMoveablesAction" and action.mode == "scrap")
-        or resumableWorld(action)
+        or resumableWorld(action) or craft(action)
 end
 
 local function deferredWorld(action)
@@ -46,13 +60,14 @@ Queue.isDeferredWorldAction = deferredWorld
 function Queue.cancelReason(queue, action)
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 then return "unavailable" end
-    if queue.toolkitCancel then return "stopping" end
+    if queue.toolkitCancel or queue.toolkitGroupCancel then return "stopping" end
+    if craft(action) then return Queue.cancelOperationReason(queue, action) end
     if action.Type == "ISQueueActionsAction" then
         if not deferredWorld(action) then return "dependent" end
         return Queue.cancelOperationReason(queue, action)
     end
-    if action._isAddingActions or action.onStartFunc
-        or ((action.onCompleteFunc or action.onCancelFunc) and not resumableWorld(action))
+    if action._isAddingActions or (action.onStartFunc and not craft(action))
+        or ((action.onCompleteFunc or action.onCancelFunc) and not resumableWorld(action) and not craft(action))
         or action.retriggerLastAction or action.toolkitQueueLinked then return "dependent" end
     if not stoppable(action) and not action.toolkitIndependentBulk then
         return "dependent"
@@ -80,6 +95,7 @@ end
 function Queue.cancel(queue, action)
     local reason = Queue.cancelReason(queue, action)
     if reason then return false, reason end
+    if craft(action) then return Queue.cancelOperation(queue, action) end
     if action == queue.current then
         queue.toolkitCancel = action
         action:forceStop()
@@ -91,15 +107,18 @@ function Queue.cancel(queue, action)
 end
 
 local itemFields = {"item", "gun", "magazine", "weapon", "primary", "secondary"}
+local function itemKey(item)
+    return instanceof(item, "InventoryItem") and item:getID() or item
+end
+local operationItems
 local function sharedItem(a, b)
-    for _, key in ipairs(itemFields) do
-        local item = a[key]
-        if item and instanceof(item, "InventoryItem") then
-            for _, other in ipairs(itemFields) do
-                if item == b[other] then return true end
-            end
-        end
-    end
+    local left, right = operationItems(a), operationItems(b)
+    for item in pairs(left) do if right[item] then return true end end
+end
+
+local function knownCraftInputs(action)
+    if craft(action) then return Toolkit.ActionQueueCraft.collectItems(action, {}) end
+    return action.Type ~= "ISHandcraftAction" and action.Type ~= "ISCraftAction" and action.Type ~= "ISFixAction"
 end
 
 local function sharedWorldTarget(a, b)
@@ -120,22 +139,41 @@ local groupPreparation = {
     ISEquipWeaponAction = true, ISEquipHeavyItem = true, ISUnequipAction = true,
 }
 
-local function operationItems(action)
+local preparationMethods = {"start", "stop", "perform", "complete", "isValid", "update", "forceStop", "forceCancel"}
+local nativePreparation = {}
+for kind in pairs(groupPreparation) do
+    local class = _G[kind]
+    if class then
+        local methods = {}
+        for _, name in ipairs(preparationMethods) do methods[name] = class[name] end
+        nativePreparation[class] = methods
+    end
+end
+local transferMethods = {}
+for _, name in ipairs(preparationMethods) do transferMethods[name] = ISInventoryTransferAction[name] end
+nativePreparation[ISInventoryTransferAction] = transferMethods
+
+local function preparationCanFinish(action)
+    local methods = nativePreparation[getmetatable(action)]
+    if not methods then return false end
+    for _, name in ipairs(preparationMethods) do
+        if action[name] ~= methods[name] and not (name == "stop" and action.Type == "ISInventoryTransferAction"
+            and Toolkit.BulkActions.isGuardedTransfer(action, methods.stop)) then return false end
+    end
+    return true
+end
+
+operationItems = function(action)
     local items = {}
     for _, key in ipairs(itemFields) do
         local item = action[key]
         if item and instanceof(item, "InventoryItem") then items[item] = true end
     end
     if action.recipeItem and instanceof(action.recipeItem, "InventoryItem") then items[action.recipeItem] = true end
-    if action.Type == "ISHandcraftAction" and action.items then
-        for i = 0, action.items:size() - 1 do items[action.items:get(i)] = true end
-    end
-    if action.Type == "ISHandcraftAction" and action.manualInputs then
-        for _, list in pairs(action.manualInputs) do
-            for i = 0, list:size() - 1 do items[list:get(i)] = true end
-        end
-    end
-    return items
+    if Toolkit.ActionQueueCraft then Toolkit.ActionQueueCraft.collectItems(action, items) end
+    local keys = {}
+    for item in pairs(items) do keys[itemKey(item)] = true end
+    return keys
 end
 
 local function craftPlan(action)
@@ -148,17 +186,22 @@ Queue.isCraftPlanAction = craftPlan
 function Queue.cancelOperationReason(queue, action)
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 then return "unavailable" end
-    if queue.toolkitCancel then return "stopping" end
+    if queue.toolkitCancel or queue.toolkitGroupCancel then return "stopping" end
     local first, last = Operations.bounds(queue, action)
     if not first then return "operation_dependent" end
     local token = action.toolkitQueueOperation
-    if type(token) == "table" and token.toolkitStarted then return "operation_active" end
+    local active = first == 1 and queue.current == queue.queue[1]
+    if type(token) == "table" and token.toolkitStarted and not active then return "operation_active" end
     local main, output, inputs, scrapOnly = false, false, {}, true
     for i = first, last do
         local member = queue.queue[i]
-        if member.action or member == queue.current or i == 1 then return "operation_active" end
-        if member._isAddingActions or member.onStartFunc or member.onCancelFunc or member.retriggerLastAction
-            or (member.onCompleteFunc and member.onCompleteFunc ~= member.toolkitQueueSafeOnComplete)
+        if (member.action or member == queue.current or i == 1) and not (active and i == first) then
+            return "operation_active"
+        end
+        local auditedCraft = craft(member)
+        if member._isAddingActions or ((member.onStartFunc or member.onCancelFunc) and not auditedCraft and not resumableWorld(member)) or member.retriggerLastAction
+            or (member.onCompleteFunc and member.onCompleteFunc ~= member.toolkitQueueSafeOnComplete
+                and not auditedCraft and not resumableWorld(member))
             or member.forceCancel ~= nativeForceCancel then return "operation_dependent" end
         local plannedCraft, world = craftPlan(member), deferredWorld(member)
         if member.Type == "ISQueueActionsAction" and not plannedCraft and not world then
@@ -172,14 +215,24 @@ function Queue.cancelOperationReason(queue, action)
             scrapOnly = scrapOnly and ((world and member.toolkitWorldDismantle)
                 or (member.Type == "ISMoveablesAction" and member.mode == "scrap"))
         end
-        output = output or member.toolkitIndependentBulk or (world and member.toolkitWorldOperation ~= "build") or plannedCraft
+        output = output or member.toolkitIndependentBulk or auditedCraft or (world and member.toolkitWorldOperation ~= "build") or plannedCraft
             or (member.Type == "ISMoveablesAction" and member.mode == "scrap")
         for item in pairs(operationItems(member)) do inputs[item] = true end
     end
     if not main then return "operation_dependent" end
+    if active then
+        local current = queue.current
+        if current.action and (current.action:finished() or current.action:isForceComplete()) then return "starting" end
+        if stoppable(current) then
+            if not current.action or not current.action:isStarted() then return "starting" end
+        elseif not preparationCanFinish(current) then
+            return "operation_active"
+        end
+    end
+    for item in pairs(type(token) == "table" and token.toolkitPickups or {}) do inputs[itemKey(item)] = true end
     for i, other in ipairs(queue.queue) do
         if i < first or i > last then
-            if other._isAddingActions then return "operation_dependent" end
+            if other._isAddingActions or not knownCraftInputs(other) then return "operation_dependent" end
             for item in pairs(operationItems(other)) do
                 if inputs[item] then return "operation_shared_item" end
             end
@@ -188,9 +241,10 @@ function Queue.cancelOperationReason(queue, action)
             end
             -- shortcut: output requirements of arbitrary later actions are unknown; add verified adapters to allow them.
             if output and i > last then
-                if other.onStartFunc or other.onCancelFunc or other.retriggerLastAction
-                    or (other.onCompleteFunc and other.onCompleteFunc ~= other.toolkitQueueSafeOnComplete)
-                    or (not other.toolkitIndependentBulk and not other.toolkitBulkPreparation
+                local independentCraft = craft(other) and knownCraftInputs(other)
+                if ((other.onStartFunc or other.onCancelFunc) and not independentCraft) or other.retriggerLastAction
+                    or (other.onCompleteFunc and other.onCompleteFunc ~= other.toolkitQueueSafeOnComplete and not independentCraft)
+                    or (not independentCraft and not other.toolkitIndependentBulk and not other.toolkitBulkPreparation
                         and not (scrapOnly and deferredWorld(other) and other.toolkitWorldDismantle)
                         and not groupPreparation[other.Type] and other.Type ~= "ISReadABook"
                         and other.Type ~= "ISInventoryTransferAction") then return "operation_dependent" end
@@ -209,17 +263,80 @@ function Queue.cancelOperation(queue, action, expected)
             if queue.queue[first + i - 1] ~= member then return false, "unavailable" end
         end
     end
+    if first == 1 and queue.current == queue.queue[1] then
+        local current = queue.current
+        queue.toolkitGroupCancel = {action = current, token = current.toolkitQueueOperation}
+        if stoppable(current) then
+            queue.toolkitCancel = current
+            current:forceStop()
+        end
+        -- In-flight pickups/equipment finish natively before dropping the remaining work.
+        return true
+    end
+    local removed = {}
     for i = last, first, -1 do
-        queue.queue[i]:forceCancel()
-        table.remove(queue.queue, i)
+        removed[#removed + 1] = table.remove(queue.queue, i)
+    end
+    for _, member in ipairs(removed) do
+        member:forceCancel()
+        if craft(member) then Toolkit.ActionQueueCraft.cancelWaiting(member) end
     end
     return true
+end
+
+local function finishGroup(queue, request)
+    local current, token = request.action, request.token
+    local last = 1
+    while token and queue.queue[last + 1] and queue.queue[last + 1].toolkitQueueOperation == token do last = last + 1 end
+    local returns = {}
+    local inventory = queue.character:getInventory()
+    for i = last, 2, -1 do
+        local member = table.remove(queue.queue, i)
+        if member.Type == "ISInventoryTransferAction" and member.allowMissingItems
+            and member.srcContainer == inventory and member.destContainer ~= inventory then
+            returns[member.item:getID()] = member.destContainer
+        end
+        member:forceCancel()
+        if craft(member) then Toolkit.ActionQueueCraft.cancelWaiting(member) end
+    end
+    if craft(current) then Toolkit.ActionQueueCraft.cancelWaiting(current) end
+    for item, source in pairs(type(token) == "table" and token.toolkitPickups or {}) do returns[item:getID()] = source end
+    local containers = ISInventoryPaneContextMenu.getContainers(queue.character)
+    local index = 2
+    for id, destination in pairs(returns) do
+        -- Native MP replication can replace the item object while retaining its ID.
+        local item = inventory:getItemById(id)
+        if item and item:getContainer() == inventory and not item:getIsCraftingConsumed()
+            and destination:isExistYet() and containers:contains(destination) then
+            local action = ISInventoryTransferUtil.newInventoryTransferAction(queue.character, item, inventory, destination)
+            if action.Type == "ISInventoryTransferAction" then
+                Toolkit.BulkActions.guardTransfer(action)
+                action:setAllowMissingItems(true)
+                action.toolkitQueueOperation, action.toolkitQueueReturn = {}, returnMarker
+                table.insert(queue.queue, index, action)
+                index = index + 1
+            end
+        end
+    end
+end
+
+local completed = ISTimedActionQueue.onCompleted
+ISTimedActionQueue.onCompleted = function(queue, action)
+    local request = queue.toolkitGroupCancel
+    if request and request.action == action then
+        queue.toolkitGroupCancel = nil
+        if live(queue) and queue.current == action and queue.queue[1] == action
+            and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false) then
+            finishGroup(queue, request)
+        end
+    end
+    return completed(queue, action)
 end
 
 function Queue.moveReason(queue, action, target, after)
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 or queue:indexOf(target or action) == -1 then return "unavailable" end
-    if queue.toolkitCancel then return "stopping" end
+    if queue.toolkitCancel or queue.toolkitGroupCancel then return "stopping" end
     local first, last = Operations.bounds(queue, action)
     local targetFirst, targetLast = Operations.bounds(queue, target or action)
     if not first or not targetFirst then return "move_dependent" end
@@ -227,6 +344,7 @@ function Queue.moveReason(queue, action, target, after)
         local member = queue.queue[i]
         if member.action or member == queue.current or i == 1 then return "move_active" end
         if member._isAddingActions then return "move_dependent" end
+        if not knownCraftInputs(member) then return craft(member) and "move_craft_inputs" or "move_dependent" end
     end
     if first == targetFirst then return nil, first, first, last end
     local to = after and targetLast + 1 or targetFirst
@@ -250,6 +368,7 @@ function Queue.moveReason(queue, action, target, after)
         if i < first or i > last then
             local crossed = queue.queue[i]
             if crossed._isAddingActions then return "move_dependent" end
+            if not knownCraftInputs(crossed) then return craft(crossed) and "move_craft_inputs" or "move_dependent" end
             for j = first, last do
                 if sharedItem(queue.queue[j], crossed) then return "move_shared_item" end
                 if sharedWorldTarget(queue.queue[j], crossed) then return "move_dependent" end
@@ -285,6 +404,11 @@ ISBaseTimedAction.stop = function(action)
     local queue = ISTimedActionQueue.queues[action.character]
     local world = Toolkit.ActionQueueWorld
     if queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action
+        and ((queue.toolkitGroupCancel and queue.toolkitGroupCancel.action == action)
+            or action.toolkitQueueReturn == returnMarker) then
+        queue.toolkitCancel = action
+    end
+    if queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action
         and world and world.targetGone and world.targetGone(action) then
         local reason = Queue.cancelReason(queue, action)
         -- MP object removal can arrive before completion; native stop must not discard unrelated work.
@@ -292,12 +416,32 @@ ISBaseTimedAction.stop = function(action)
     end
     if queue and queue.toolkitCancel == action and live(queue)
         and not action.character:isPlayerMoving() and not action.character:pressedMovement(false) then
+        if queue.toolkitGroupCancel and craft(action) then Toolkit.ActionQueueCraft.nativeStopped(action) end
         queue.toolkitCancelStopped = true
         action.character:setIsFarming(false)
         return
     end
-    if queue then clearStop(queue) end
+    if queue then clearStop(queue); queue.toolkitGroupCancel = nil end
     return stop(action)
+end
+for _, methods in pairs(nativePreparation) do
+    if methods.stop == stop then methods.stop = ISBaseTimedAction.stop end
+end
+
+local reset = ISTimedActionQueue.resetQueue
+ISTimedActionQueue.resetQueue = function(queue)
+    clearStop(queue)
+    queue.toolkitGroupCancel = nil
+    return reset(queue)
+end
+
+local clear = ISTimedActionQueue.clearQueue
+ISTimedActionQueue.clearQueue = function(queue)
+    if not queue:isCurrentActionAddingOtherActions() then
+        clearStop(queue)
+        queue.toolkitGroupCancel = nil
+    end
+    return clear(queue)
 end
 
 local tick = ISTimedActionQueue.tick

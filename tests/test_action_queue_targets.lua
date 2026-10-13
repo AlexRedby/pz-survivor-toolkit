@@ -93,7 +93,7 @@ assert(api.move(q, take, unrelated, true) and q.queue[3] == unrelated and q.queu
 local other = ISActivateGenerator:new(player, target(), true)
 q = queue(repair, other)
 assert(api.move(q, other, repair) and q.queue[2] == other, 'different world objects remain reorderable')
-local item = {class = 'InventoryItem'}
+local item = {class = 'InventoryItem', getID = function() return 1001 end}
 local transfer, use = pending(), pending()
 transfer.item, use.weapon = item, item
 q = queue(transfer, use)

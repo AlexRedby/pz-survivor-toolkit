@@ -8,7 +8,7 @@ local enabled, activePlayer = true, nil
 PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
 getSpecificPlayer = function() return activePlayer end
 getText = function(key) return key end
-instanceof = function(value, name) return value.class == name end
+instanceof = function(value, name) return type(value) == 'table' and value.class == name end
 local function derive(self, name)
     local t = {Type = name, derive = derive}
     t.__index = t
@@ -35,7 +35,7 @@ load('shared/TimedActions/ISReadABook.lua')
 load('shared/Moveables/ISMoveablesAction.lua')
 ISInventoryPage = {}
 load('client/TimedActions/ISInventoryTransferAction.lua')
-ISContextMenu, ISButton, ISInventoryPaneContextMenu = {}, {}, {}
+ISContextMenu, ISButton, ISInventoryPaneContextMenu = {}, {}, {getContainers=function() return {contains=function() return true end} end}
 Events.OnGameStart = {Add = function(fn) fn() end}
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua'))()
 local operations = PZSurvivorToolkit.ActionQueueOperations
@@ -63,7 +63,12 @@ LuaTimedActionNew = {new = function(t)
         getJobDelta = function(s) return s.progress end}
 end}
 local function player()
-    local p = {class = 'IsoPlayer', actions = {}, farming = false, reading = false}
+    local p = {class = 'IsoPlayer', actions = {}, inventory = {items = {}}, farming = false, reading = false}
+    function p.inventory:getItemById(id)
+        local item = self.items[id]
+        if item and item:getContainer() == self then return item end
+    end
+    function p:getInventory() return self.inventory end
     function p:getPlayerNum() return 0 end
     function p:isTimedActionInstant() return false end
     function p:getAlreadyReadPages() return self.pages or 12 end
@@ -94,15 +99,19 @@ local function player()
     activePlayer = p
     return p
 end
+local nextItemID = 0
 local function book(p)
     local a = ISBaseTimedAction.new(ISReadABook, p)
     a.maxTime = 1
-    a.item = {delta = .5, getNumberOfPages = function() return 100 end,
+    nextItemID = nextItemID + 1
+    a.item = {id = nextItemID, container = p.inventory, delta = .5, getNumberOfPages = function() return 100 end,
+        getID = function(self) return self.id end, getContainer = function(self) return self.container end,
         getAlreadyReadPages = function(s) return s.pages or 12 end,
         setAlreadyReadPages=function(s,v) s.pages=v end, getFullType=function() return 'Base.BookCarpentry' end,
         getSkillTrained=function() return '' end, hasTag=function() return false end, getType = function() return 'BookCarpentry' end,
         setJobDelta = function(s,v) s.delta = v end, getDisplayName = function() return 'Book' end, getTex = function() return 'book-icon' end,
         class = 'InventoryItem'}
+    p.inventory.items[a.item:getID()] = a.item
     a.start = function(self) self.character:setReading(true) end
     a.isValid = function(s) return not s.missing end
     a.perform = function(s) s.character:setReading(false); ISBaseTimedAction.perform(s) end
@@ -131,6 +140,15 @@ local function frame(p)
     q:tick()
 end
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLabels.lua'))()
+-- Simulate transfer execution while keeping exact class methods for active-preparation validation.
+ISInventoryTransferAction.start = function() end
+ISInventoryTransferAction.isValid = function() return true end
+ISInventoryTransferAction.stop = function(self) ISBaseTimedAction.stop(self) end
+ISInventoryTransferAction.perform = function(self)
+    self.item.container = self.destContainer
+    ISBaseTimedAction.perform(self)
+end
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/BulkActions.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local api = PZSurvivorToolkit.ActionQueue
 local p = player()
@@ -277,12 +295,13 @@ assert(api.cancelOperation(q,b), 'the exact verified no-op completion marker all
 b=pendingGroup(preparation(p,'ISInventoryTransferAction'),book(p));b.onCompleteFunc=function() end
 b.toolkitQueueSafeOnComplete=b.onCompleteFunc;b.onCompleteFunc=function() error('changed callback') end
 assert(api.cancelOperationReason(q,b)=='operation_dependent', 'changed callbacks invalidate the exact safety marker')
--- Started and partially completed operation tokens never become waiting operations again.
+-- The active group can be cancelled after start; detached started tails stay protected.
 p=player();a,b=book(p),book(p)
 operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b) end)
-assert(api.cancelOperationReason(q,b)=='operation_active')
-frame(p);a.action.done=true;frame(p)
-assert(api.cancelOperationReason(q,b)=='operation_active' and #q.queue==1)
+assert(api.cancelOperationReason(q,b)=='starting')
+frame(p);assert(not api.cancelOperationReason(q,b))
+a.action.done=true;frame(p);frame(p)
+assert(not api.cancelOperationReason(q,b) and #q.queue==1)
 b.action=nil;q.current=nil
 local placeholder=book(p);placeholder.action={};table.insert(q.queue,1,placeholder)
 assert(api.cancelOperationReason(q,b)=='operation_active', 'even an unstarted tail of an already started group remains protected')
@@ -297,7 +316,9 @@ for _, field in ipairs({'items','manualInputs'}) do
     b=pendingGroup(book(p),book(p));use=preparation(p,'ISHandcraftAction')
     use[field]=field=='items' and nativeList(b.item) or {[0]=nativeList(b.item)}
     ISTimedActionQueue.add(use)
-    assert(api.cancelOperationReason(q,b)=='operation_shared_item', 'native craft input lists expose external dependencies')
+    assert(api.cancelOperationReason(q,b)=='operation_dependent', 'unverified craft inputs remain protected')
+    use[field]={malformed=true}
+    assert(api.cancelOperationReason(q,b)=='operation_dependent', 'malformed input lists must fail closed')
 end
 b=pendingGroup(leaf(p,'output'),book(p));ISTimedActionQueue.add(preparation(p,'ISQueueActionsAction'))
 assert(api.cancelOperationReason(q,b)=='operation_dependent', 'unknown output consumers remain protected')
@@ -612,7 +633,7 @@ list.doDrawItem(list,0,list.items[1],false)
 assert(list.clips[1].x+list.clips[1].width <= list.rightText.x-#list.rightText.text-8,
     'a long title must not overlap the separately visible step count')
 list.items[1].task=title
-click(1);assert(not q.toolkitCancel and #q.queue==3, 'current collapsed header cannot cancel its hidden current step')
+assert(not api.cancelOperationReason(q,a), 'current collapsed header offers whole-operation cancellation')
 a.action.done=true;frame(p);panel:update()
 assert(list.items[1].header and list.items[1].item==b and list.items[1].last==2)
 frame(p);b.action.progress=.15
@@ -831,3 +852,174 @@ for _,mode in ipairs({'moving','dead','disabled','callback','untracked','clear'}
 end
 PZSurvivorToolkit.ActionQueueWorld=priorWorld
 print('Native missing scrap target: double-stop cleanup, delayed Java removal, retained tail and abort guards passed.')
+-- Cancel an already-started group through its header, with native stop/removal before returns.
+local function sourceContainer()
+    return {isExistYet=function(self) return not self.gone end}
+end
+local function transfer(character, item, source, destination)
+    local action = ISBaseTimedAction.new(ISInventoryTransferAction, character)
+    action.item = item
+    action.srcContainer, action.destContainer = source, destination
+    action.transactionId = 0
+    return action
+end
+ISInventoryTransferUtil = {newInventoryTransferAction=transfer}
+local function borrowed(item, container)
+    item.container=container
+    item.getContainer=function(self) return self.container end
+    item.getIsCraftingConsumed=function(self) return self.consumed==true end
+    return item
+end
+p=player();a,b,d=book(p),book(p),book(p)
+local bag=sourceContainer();borrowed(a.item,bag)
+pickup=transfer(p,a.item,bag,p.inventory)
+restore=transfer(p,a.item,p.inventory,bag);restore.allowMissingItems=true
+operations.run(function()
+    q=ISTimedActionQueue.add(pickup);ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(restore)
+end)
+ISTimedActionQueue.add(d);frame(p);pickup.action.done=true;frame(p);frame(p)
+assert(q.current==a and a.item.container==p.inventory and a.toolkitQueueOperation.toolkitPickups[a.item]==bag)
+refresh();panel=ui[#ui];panel:update();list=panel.list
+local header=list.items[1];assert(header.header)
+local cancelX,cancelY=list:cancelX()+12,list:topOfItem(1)+16
+list:onMouseDown(cancelX,cancelY);list:onMouseUp(cancelX,cancelY)
+assert(q.toolkitCancel==a and q.toolkitGroupCancel and q.current==a and #q.queue==4)
+q:tick();assert(q.current==a and not restore.action)
+frame(p)
+local returned=q.current
+assert(returned.Type=='ISInventoryTransferAction' and returned~=restore and returned.item==a.item)
+assert(returned.allowMissingItems and #q.queue==2 and q.queue[2]==d and not q.toolkitGroupCancel)
+assert(not b.action and not p.actions[a.action], 'group stop must precede native cleanup; remaining work never starts')
+returned.action.done=true;frame(p)
+assert(a.item.container==bag and q.current==d, 'borrowed item returns once, then the unrelated operation starts')
+-- A running transfer is allowed to finish its native transaction before cancellation cleans the group.
+p=player();a,d=book(p),book(p);bag=sourceContainer();borrowed(a.item,bag)
+pickup=transfer(p,a.item,bag,p.inventory)
+operations.run(function() q=ISTimedActionQueue.add(pickup);ISTimedActionQueue.add(a) end)
+ISTimedActionQueue.add(d);frame(p)
+assert(api.cancelOperation(q,a) and q.toolkitGroupCancel and not q.toolkitCancel and not pickup.action.stopping)
+assert(api.cancelOperationReason(q,a)=='stopping' and not api.move(q,d,pickup))
+pickup.action.done=true;frame(p)
+assert(not a.action and q.current.item==a.item and q.current.destContainer==bag)
+q.current.action.done=true;frame(p);assert(q.current==d and a.item.container==bag)
+-- Completed outputs/consumed inputs are not recreated; removed containers leave surviving items carried.
+for _, mode in ipairs({'consumed','missing-source','completion-race','ordinary-clear','movement','death'}) do
+    p=player();a,b,d=book(p),book(p),book(p);bag=sourceContainer();borrowed(a.item,p.inventory)
+    operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b) end)
+    a.toolkitQueueOperation.toolkitPickups={[a.item]=bag}
+    ISTimedActionQueue.add(d);frame(p)
+    assert(api.cancelOperation(q,a))
+    if mode=='consumed' then a.item.consumed=true
+    elseif mode=='missing-source' then bag.gone=true
+    elseif mode=='completion-race' then a.action.completing=true;a.item.consumed=true
+    elseif mode=='ordinary-clear' then ISTimedActionQueue.clear(p)
+    elseif mode=='movement' then p.moving=true
+    elseif mode=='death' then p.dead=true end
+    frame(p)
+    if mode=='ordinary-clear' or mode=='movement' or mode=='death' then
+        assert(#q.queue==0 and not q.toolkitGroupCancel and not q.toolkitCancel, mode.." count="..#q.queue.." group="..tostring(q.toolkitGroupCancel).." cancel="..tostring(q.toolkitCancel))
+    else
+        assert(q.current==d and #q.queue==1 and not b.action and a.item.container==p.inventory, mode)
+    end
+end
+-- A failed cleanup transfer must not discard the unrelated tail.
+p=player();a,d=book(p),book(p);bag=sourceContainer();borrowed(a.item,p.inventory)
+q=ISTimedActionQueue.add(a);a.toolkitQueueOperation.toolkitPickups={[a.item]=bag}
+ISTimedActionQueue.add(d);frame(p);assert(api.cancelOperation(q,a));frame(p)
+returned=q.current;assert(returned.toolkitQueueReturn)
+frame(p);returned:forceStop();frame(p)
+assert(q.current==d and a.item.container==p.inventory, 'failed native return keeps the item and the unrelated queue')
+print('Started-operation cancellation: header, native stop ordering, pickup transaction completion, returns, consumed inputs, lost containers, completion races and abort guards passed.')
+
+-- A mod cannot opt an active preparation into cancellation by copying a native Type.
+p=player();a=book(p);bag=sourceContainer();borrowed(a.item,bag)
+pickup=transfer(p,a.item,bag,p.inventory)
+operations.run(function() q=ISTimedActionQueue.add(pickup);ISTimedActionQueue.add(a) end)
+frame(p);local nativePerform=pickup.perform
+pickup.perform=function() error('unverified preparation') end
+assert(api.cancelOperationReason(q,a)=='operation_active' and not api.cancelOperation(q,a))
+pickup.perform=nativePerform
+PZSurvivorToolkit.BulkActions.guardTransfer(pickup)
+assert(not api.cancelOperationReason(q,a), 'the exact Toolkit pickup guard remains supported')
+
+-- Native MP object replacement updates action fields, but pickup-token keys retain the old object.
+local function replacementItem(character, original, container)
+    local replacement = book(character).item
+    character.inventory.items[replacement:getID()] = nil
+    replacement.id = original:getID()
+    borrowed(replacement, container)
+    character.inventory.items[replacement:getID()] = replacement
+    return replacement
+end
+p=player();a,b,d=book(p),book(p),book(p);bag=sourceContainer()
+local original=borrowed(a.item,nil)
+local replacement=replacementItem(p,original,p.inventory)
+a.item=replacement
+restore=transfer(p,replacement,p.inventory,bag);restore.allowMissingItems=true
+operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(restore) end)
+a.toolkitQueueOperation.toolkitPickups={[original]=bag}
+ISTimedActionQueue.add(d);frame(p)
+assert(api.cancelOperation(q,a));frame(p)
+returned=q.current
+assert(returned.item==replacement and returned.destContainer==bag and #q.queue==2 and q.queue[2]==d,
+    'old pickup and new native-return references to one ID must produce exactly one live-item return')
+returned.action.done=true;frame(p)
+assert(q.current==d and replacement.container==bag and original.container==nil,
+    'return the resolved native object without recreating the stale object')
+-- A consumed-input pickup has no native return; recovery must resolve its stale token key itself.
+p=player();a,b,d=book(p),book(p),book(p);bag=sourceContainer()
+original=borrowed(a.item,nil)
+replacement=replacementItem(p,original,p.inventory);a.item=replacement
+operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b) end)
+a.toolkitQueueOperation.toolkitPickups={[original]=bag}
+ISTimedActionQueue.add(d);frame(p)
+assert(api.cancelOperation(q,a));frame(p)
+returned=q.current
+assert(returned.Type=='ISInventoryTransferAction' and returned.item==replacement
+    and returned.destContainer==bag and #q.queue==2 and q.queue[2]==d,
+    'pickup-only stale reference must return the live replacement once before the independent tail')
+returned.action.done=true;frame(p)
+assert(q.current==d and replacement.container==bag and original.container==nil)
+for _, mode in ipairs({'absent','consumed','nested'}) do
+    p=player();a,b,d=book(p),book(p),book(p);bag=sourceContainer()
+    original=borrowed(a.item,nil)
+    replacement=replacementItem(p,original,p.inventory);a.item=replacement
+    operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b) end)
+    a.toolkitQueueOperation.toolkitPickups={[original]=bag}
+    ISTimedActionQueue.add(d);frame(p)
+    if mode=='absent' then p.inventory.items[replacement:getID()]=nil
+    elseif mode=='consumed' then replacement.consumed=true
+    elseif mode=='nested' then replacement.container=sourceContainer() end
+    assert(api.cancelOperation(q,a));frame(p)
+    assert(q.current==d and #q.queue==1 and original.container==nil,
+        mode .. ': resolve only surviving direct-root items; preserve unrelated work')
+end
+
+-- Different native objects with the same ID retain cancellation and reorder dependencies.
+p=player();a,b,d=book(p),book(p),book(p)
+original=b.item;replacement=replacementItem(p,original,p.inventory);d.item=replacement
+q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(d)
+assert(api.cancelOperationReason(q,b)=='operation_shared_item')
+assert(api.moveReason(q,b,d,true)=='move_shared_item')
+p=player();a,b,d=book(p),book(p),book(p);bag=sourceContainer()
+original=borrowed(book(p).item,nil);replacement=replacementItem(p,original,p.inventory);d.item=replacement
+q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);b.toolkitQueueOperation.toolkitPickups={[original]=bag}
+ISTimedActionQueue.add(d)
+assert(api.cancelOperationReason(q,b)=='operation_shared_item', 'completed pickup dependencies also use stable IDs')
+
+-- UI callback owners are dependency objects, not InventoryItems with native IDs.
+local previousCraft=PZSurvivorToolkit.ActionQueueCraft
+PZSurvivorToolkit.ActionQueueCraft={supports=function(action) return action.owner~=nil end,
+    collectItems=function(action, items)
+        if action.owner then items[action.owner]=true;return true,true end
+        return false,false
+    end}
+p=player();a,b,d=book(p),book(p),book(p)
+local owner={getID=function() error('UI owners must retain reference identity') end}
+b.owner,d.owner=owner,owner
+q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(d)
+assert(api.cancelOperationReason(q,b)=='operation_shared_item' and api.moveReason(q,b,d,true)=='move_shared_item')
+d.owner={getID=owner.getID}
+assert(not api.cancelOperationReason(q,b) and not api.moveReason(q,b,d,true), 'different UI owners stay independent')
+PZSurvivorToolkit.ActionQueueCraft=previousCraft
+print('Stable item IDs: stale pickup replacement, deduplicated native returns, absent/consumed/nested items, same-ID dependencies and UI-owner identities passed.')

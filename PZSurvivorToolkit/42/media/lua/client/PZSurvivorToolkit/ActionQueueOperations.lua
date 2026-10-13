@@ -37,6 +37,18 @@ local function stamp(action, token)
         end
         action.toolkitQueueOperation = token or scope or {}
     end
+    -- Keep original pickup locations after native transfers merge or leave the queue.
+    local operation = action.toolkitQueueOperation
+    if type(operation) == "table" and action.Type == "ISInventoryTransferAction"
+        and action.item and action.srcContainer and action.destContainer
+        and action.destContainer == action.character:getInventory()
+        and action.srcContainer ~= action.destContainer
+        and action.item:getContainer() == action.srcContainer then
+        operation.toolkitPickups = operation.toolkitPickups or {}
+        if not operation.toolkitPickups[action.item] then
+            operation.toolkitPickups[action.item] = action.srcContainer
+        end
+    end
 end
 
 local add = ISTimedActionQueue.add

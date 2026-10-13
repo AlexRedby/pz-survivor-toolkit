@@ -128,8 +128,8 @@
   "UI_PZSurvivorToolkit_queue_action_unknown": "Action: %1",
   "UI_PZSurvivorToolkit_queue_mixed": "Multiple actions",
   "UI_PZSurvivorToolkit_queue_steps": "%1 steps",
-  "UI_PZSurvivorToolkit_queue_cancel_operation_tip": "Cancel this waiting operation with all preparation and item returns; keep the rest of the queue.",
-  "UI_PZSurvivorToolkit_queue_operation_active": "This operation has already started. Its preparation, main actions and item returns must finish together.",
+  "UI_PZSurvivorToolkit_queue_cancel_operation_tip": "Cancel this operation, stop its remaining work and return borrowed items; keep the rest of the queue.",
+  "UI_PZSurvivorToolkit_queue_operation_active": "This active step cannot be safely interrupted. Wait for it to finish.",
   "UI_PZSurvivorToolkit_queue_operation_dependent": "Protected: unknown callbacks, separated linked steps, or another action may depend on this operation.",
   "UI_PZSurvivorToolkit_queue_operation_shared_item": "Protected: an action outside this operation uses the same item.",
   "UI_PZSurvivorToolkit_queue_action_build": "Build",
@@ -168,5 +168,6 @@
   "UI_PZST_CraftChainAllocation": "Need %1 / Stock %2 / Make %3",
   "UI_PZST_CraftChainAvailability": "Need %1 / Have %2",
   "UI_PZST_CraftChainChoiceScope": "Click to choose a material. Applies to this ingredient in every use of this recipe in the plan. Missing materials may need prerequisite crafting.",
-  "UI_PZST_CraftChainAdjustChoices": "Adjust ingredient choices"
+  "UI_PZST_CraftChainAdjustChoices": "Adjust ingredient choices",
+  "UI_PZSurvivorToolkit_queue_move_craft_inputs": "This operation chooses ingredients when it runs. Reordering could change which items are consumed."
 }

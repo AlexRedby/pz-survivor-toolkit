@@ -16,7 +16,7 @@ local expected = {
         unequip = 'Unequip', unload = 'Unload Rounds', unloadMagazine = 'Unload Magazine',
         reload = 'Load Rounds', insert = 'Insert Magazine', eject = 'Eject Magazine',
         removePart = 'Remove Upgrade', addPart = 'Upgrade', battery = 'Remove Battery',
-        addBattery = 'Add Battery', eat = 'Eat', drink = 'Drink', wear = 'Wear', disassemble = 'Disassemble'},
+        addBattery = 'Add Battery', eat = 'Eat', drink = 'Drink', wear = 'Wear', disassemble = 'Disassemble', repair = 'Repair'},
     RU = {walk = 'Подойти к цели', transfer = 'Переместить предметы', rack = 'Передёрнуть затвор',
         load = 'Зарядить магазин', media = 'Извлечь носитель', insertMedia = 'Вставить носитель', playback = 'Переключить воспроизведение',
         clothing = 'Поправить одежду', craft = 'Изготовить', power = 'Переключить питание устройства',
@@ -25,7 +25,7 @@ local expected = {
         unequip = 'Снять', unload = 'Разрядить патроны', unloadMagazine = 'Разрядить магазин',
         reload = 'Зарядить патроны', insert = 'Вставить магазин', eject = 'Достать магазин',
         removePart = 'Снять насадку', addPart = 'Установить насадку', battery = 'Вытащить батарейку',
-        addBattery = 'Подключить батарейку', eat = 'Есть', drink = 'Пить', wear = 'Надеть', disassemble = 'Разобрать'},
+        addBattery = 'Подключить батарейку', eat = 'Есть', drink = 'Пить', wear = 'Надеть', disassemble = 'Разобрать', repair = 'Починить'},
 }
 for _, language in ipairs({'EN', 'RU'}) do
     local translations = assert(ActionQueueTranslations and ActionQueueTranslations[language], 'runner must load EN/RU UI JSON')
@@ -98,9 +98,11 @@ for _, language in ipairs({'EN', 'RU'}) do
             {'ISReloadWeaponAction', 'reload'}, {'ISInsertMagazine', 'insert'}, {'ISEjectMagazine', 'eject'},
             {'ISRemoveWeaponUpgrade', 'removePart'}, {'ISUpgradeWeapon', 'addPart'},
             {'ISEatFoodAction', 'eat'}, {'ISDrinkFromBottle', 'drink'}, {'ISDrinkFluidAction', 'drink'},
-            {'ISWearClothing', 'wear'}, {'ISDismantleAction', 'disassemble'},
+            {'ISWearClothing', 'wear'}, {'ISDismantleAction', 'disassemble'}, {'ISFixAction', 'repair'},
         }
         for _, entry in ipairs(cases) do check({Type = entry[1], item = gun}, e[entry[2]]) end
+        assert(labels.label({Type = 'ISFixAction', item = gun}) == e.repair .. ': Custom named pistol',
+            language .. ': repair label must retain the repaired item name')
         check({Type = 'ISEquipWeaponAction', primary = true}, e.equip)
         check({Type = 'ISEquipWeaponAction', primary = false}, e.secondary)
         check({Type = 'ISEquipWeaponAction', twoHands = true}, e.both)

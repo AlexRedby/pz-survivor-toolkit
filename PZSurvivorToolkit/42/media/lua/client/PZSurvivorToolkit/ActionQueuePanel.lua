@@ -31,7 +31,7 @@ function List:onMouseDown(x, y)
     if row.header and x < 22 then
         self.pressedToggle = row.operation
     elseif x >= self:cancelX() then
-        if row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item)) then
+        if row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item)) then
             local reason, first, last = Toolkit.ActionQueue.cancelOperationReason(self.parent.queue, row.item)
             if not reason then
                 self.pressedOperation = {item = row.item, operation = row.operation, members = {}}
@@ -67,7 +67,7 @@ function List:onMouseUp(x, y)
     if row and row.header and self.pressedToggle == row.operation and x < 22 then
         self.parent.expanded[row.operation] = not self.parent.expanded[row.operation] or nil
         self.parent:update()
-    elseif row and (row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item)))
+    elseif row and (row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item)))
         and self.pressedOperation and self.pressedOperation.item == row.item
         and self.pressedOperation.operation == row.operation and x >= self:cancelX() then
         Toolkit.ActionQueue.cancelOperation(self.parent.queue, row.item, self.pressedOperation.members)
@@ -182,7 +182,7 @@ function Panel.drawRow(list, y, row, alt)
         current and 1 or 0.85, current and 1 or 0.85, current and 1 or 0.85, 1, UIFont.Small)
     list:clearStencilRect()
     local reason
-    local operationCancel = row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item))
+    local operationCancel = row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item))
     if operationCancel then reason = Toolkit.ActionQueue.cancelOperationReason(queue, row.item)
     else reason = Toolkit.ActionQueue.cancelReason(queue, action) end
     local hover = list.mouseoverselected == row.index and list:getMouseX() >= cancelX

@@ -3,6 +3,7 @@ require "ISUI/ISInventoryPaneContextMenu"
 
 local Actions = {}
 PZSurvivorToolkit.BulkActions = Actions
+local transferGuard = {}
 
 function Actions.safeItem(player, item)
     return item and item:getContainer() and not item:isFavorite()
@@ -35,7 +36,7 @@ function Actions.guardTransfer(transfer)
     transfer:setOnComplete(function() end)
     transfer.toolkitQueueSafeOnComplete = transfer.onCompleteFunc
     local stop = transfer.stop
-    transfer.stop = function(self)
+    local guardedStop = function(self)
         -- B42 cancellation uses a client-local ID without an owner on the server.
         if isClient() and self.transactionId ~= 0
             and isItemTransactionRejected(self.transactionId)
@@ -45,7 +46,14 @@ function Actions.guardTransfer(transfer)
         end
         return stop(self)
     end
+    transfer.stop = guardedStop
+    transfer.toolkitTransferGuard = {marker = transferGuard, stop = guardedStop, original = stop}
     return transfer
+end
+
+function Actions.isGuardedTransfer(action, originalStop)
+    local guard = action.toolkitTransferGuard
+    return guard and guard.marker == transferGuard and action.stop == guard.stop and guard.original == originalStop
 end
 
 function Actions.transfer(player, item)
