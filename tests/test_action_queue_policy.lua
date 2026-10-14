@@ -383,7 +383,12 @@ prefix.queueList=nil
 q=f.queue(head,late('Base.Sheet','Base.SheetRope'),incomingA,incomingB)
 assert(policy.moveReason(q,incomingB,incomingA)=='container_capacity','unbounded weight effects in the prefix remain a barrier')
 bagInventory.acceptItem='Mod.contentsDependentAccept'
-both(incomingA,incomingB,'container_capacity')
+q=f.queue(head,incomingA,incomingB)
+assert(policy.moveReason(q,incomingA,incomingB,true)=='move_dependent'
+    and policy.moveReason(q,incomingB,incomingA)=='move_dependent')
+assert(policy.cancelOperationReason(q,incomingA)=='operation_dependent'
+    and policy.cancelOperationReason(q,incomingB)=='operation_dependent',
+    'unknown acceptance callback effects must protect the entire transfer contract')
 bagInventory.acceptItem=nil
 for _,weight in ipairs({-1,math.huge,0/0}) do itemA.weight=weight;both(incomingA,incomingB,'container_capacity') end
 itemA.weight=2

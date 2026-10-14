@@ -67,6 +67,8 @@ end
 local f = setup()
 assert(f.Compat.isInstalled('SaucedCarts') and ISEatFoodAction.start ~= f.nativeStart,
     'verified cart presentation starts early and adopts only the observed native predecessor')
+assert(not f.Compat.isInstalled('SaucedCartsTransfers'),
+    'unverified transfer sources must remain separate from verified eating compatibility')
 assert(f.Policy.inspect(f.meal).interrupt == 'finish-step')
 f.meal:start()
 assert(f.nativeAnimations() == 1 and #f.overrides == 1 and f.overrides[1][2] == f.meal.item,

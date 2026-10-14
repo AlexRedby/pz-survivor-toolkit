@@ -28,11 +28,29 @@ for _, name in ipairs({"new", "isValid", "isValidStart", "start", "update", "sto
 end
 
 local function nativeReturn(action)
+    local carts = PZSurvivorToolkit.ActionQueueCarts
+    if carts and carts.isReturn(action) then return true end
     if getmetatable(action) ~= returnClass or action.Type ~= returnClass.Type or not action.allowMissingItems
         or action.srcContainer ~= action.character:getInventory() or action.destContainer == action.srcContainer
         or action.onStartFunc or action.onCancelFunc or action.onCompleteFunc then return false end
     for name, method in pairs(returnMethods) do if action[name] ~= method then return false end end
     for _, guard in ipairs(returnHelperGuards) do if not guard() then return false end end
+    return true
+end
+
+function Operations.isTransfer(action)
+    local carts = PZSurvivorToolkit.ActionQueueCarts
+    return action.Type == "ISInventoryTransferAction" or (carts and carts.isTransfer(action))
+end
+
+function Operations.adoptReturnHooks(previous, replacement, guard)
+    if type(guard) ~= "function" or not guard() or ISInventoryTransferAction ~= returnClass then return false end
+    for _, name in ipairs({"new", "perform"}) do
+        if returnMethods[name] ~= previous[name] or returnClass[name] ~= replacement[name]
+            or type(replacement[name]) ~= "function" then return false end
+    end
+    for _, name in ipairs({"new", "perform"}) do returnMethods[name] = replacement[name] end
+    returnHelperGuards[#returnHelperGuards + 1] = guard
     return true
 end
 
@@ -226,7 +244,7 @@ local function stamp(action, token)
     -- Keep original pickup locations after native transfers merge or leave the queue.
     local operation = action.toolkitQueueOperation
     if type(operation) == "table" and action.toolkitQueuePriority == "urgent" then operation.toolkitPriority = "urgent" end
-    if type(operation) == "table" and action.Type == "ISInventoryTransferAction"
+    if type(operation) == "table" and Operations.isTransfer(action)
         and action.item and action.srcContainer and action.destContainer
         and action.destContainer == action.character:getInventory()
         and action.srcContainer ~= action.destContainer

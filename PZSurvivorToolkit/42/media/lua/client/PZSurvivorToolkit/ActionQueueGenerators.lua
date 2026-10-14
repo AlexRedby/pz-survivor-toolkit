@@ -12,8 +12,10 @@ local Toolkit = PZSurvivorToolkit
 local Generators = {}
 Toolkit.ActionQueueGenerators = Generators
 local Operations, Policy = Toolkit.ActionQueueOperations, Toolkit.ActionQueuePolicy
+local Carts = Toolkit.ActionQueueCarts
+local cartCheck = Carts and Carts.isTransferConstructor
 local marker, records, bindings, classes, helpers = {}, setmetatable({}, {__mode = "k"}), {}, {}, {}
-local trustedInstalled
+local trustedInstalled, repairInstalled
 local helperOwners = {}
 local continued = setmetatable({}, {__mode = "k"})
 local pendingPerform = setmetatable({}, {__mode = "k"})
@@ -59,13 +61,27 @@ local function captureClass(name)
     end
     return {class = class, methods = methods}
 end
-local function unchanged(kind)
-    for name, owner in pairs(helperOwners) do if _G[name] ~= owner then return false end end
-    for _, saved in ipairs(helpers) do if saved.owner[saved.name] ~= saved.callback then return false end end
+local function classUnchanged(kind)
     local saved = classes[kind]
     if not saved or _G[kind] ~= saved.class or saved.class.Type ~= kind then return false end
     for method, callback in pairs(saved.methods) do if saved.class[method] ~= callback then return false end end
     return true
+end
+local function cartConstructor(callback)
+    return Carts and Toolkit.ActionQueueCarts == Carts and Carts.isTransferConstructor == cartCheck
+        and type(cartCheck) == "function" and cartCheck(callback) == true
+end
+local function unchanged(kind)
+    for name, owner in pairs(helperOwners) do
+        if _G[name] ~= owner and (kind ~= "ISFixGenerator" or (name ~= "ISEquipWeaponAction" and name ~= "ISUnequipAction")) then return false end
+    end
+    for _, saved in ipairs(helpers) do
+        local current = saved.owner[saved.name]
+        if (kind ~= "ISFixGenerator" or not saved.equipment) and (saved.cart or current ~= saved.callback)
+            and not (saved.owner == ISInventoryTransferAction and saved.name == "new"
+            and cartConstructor(saved.callback) and cartConstructor(current)) then return false end
+    end
+    return classUnchanged(kind)
 end
 local function contract(character, object, kind, selected)
     if not instanceof(object, "IsoGenerator") then return end
@@ -200,7 +216,8 @@ local function powerConflict(first, second)
     end
 end
 function Generators.canSkip(action)
-    if not trustedInstalled or not hashes[action.Type] or not Policy.inspect(action) then return false end
+    if not (trustedInstalled or action.Type == "ISFixGenerator" and repairInstalled)
+        or not hashes[action.Type] or not Policy.inspect(action) then return false end
     local kind = action.Type
     local object = kind == "ISGeneratorInfoAction" and action.object or action.generator
     if object:getObjectIndex() == -1 or not object:getSquare() then return true end
@@ -234,6 +251,8 @@ function Generators.install()
         and (nativeInventory or cleanUIInventory)
         and sourceMatches("shared/luautils.lua", 1091751327)
         and sourceMatches("shared/TimedActions/ISInventoryTransferUtil.lua", 1281392797)
+    -- Native repair only walks and transfers scrap; equipment hooks belong to other producers.
+    local repairTrusted = trusted
     for name, hash in pairs(hashes) do
         local path = (name == "ISGeneratorInfoAction" and "client" or "shared") .. "/TimedActions/" .. name .. ".lua"
         classes[name] = sourceMatches(path, hash) and captureClass(name) or nil
@@ -243,32 +262,40 @@ function Generators.install()
         {ISWorldObjectContextMenu, "transferIfNeeded", "ISWorldObjectContextMenu.lua"},
         {ISInventoryPaneContextMenu, "transferIfNeeded", "ISInventoryPaneContextMenu.lua"}}) do
         local callback = entry[1] and entry[1][entry[2]]
-        trusted = trusted and nativeClosure(callback, entry[3])
-        helpers[#helpers + 1] = {owner = entry[1] or {}, name = entry[2], callback = callback}
+        local equipment = entry[1] == ISWorldObjectContextMenu and (entry[2] == "equip" or entry[2] == "transferIfNeeded")
+        local valid = nativeClosure(callback, entry[3])
+        trusted, repairTrusted = trusted and valid, repairTrusted and (equipment or valid)
+        helpers[#helpers + 1] = {owner = entry[1] or {}, name = entry[2], callback = callback, equipment = equipment}
     end
     if cleanUIInventory then
         for _, name in ipairs({"cleanUIResetStaleTimedActionRetrigger", "cleanUILogTimedActionFix"}) do
             local callback = ISInventoryPaneContextMenu[name]
-            trusted = trusted and nativeClosure(callback, "ISInventoryPaneContextMenu.lua")
+            local valid = nativeClosure(callback, "ISInventoryPaneContextMenu.lua")
+            trusted, repairTrusted = trusted and valid, repairTrusted and valid
             helpers[#helpers + 1] = {owner = ISInventoryPaneContextMenu, name = name, callback = callback}
         end
     end
     for name, callback in pairs(ISInventoryTransferUtil or {}) do
         if type(callback) == "function" then
-            trusted = trusted and nativeClosure(callback, "ISInventoryTransferUtil.lua")
+            local valid = nativeClosure(callback, "ISInventoryTransferUtil.lua")
+            trusted, repairTrusted = trusted and valid, repairTrusted and valid
             helpers[#helpers + 1] = {owner = ISInventoryTransferUtil, name = name, callback = callback}
         end
     end
     for _, name in ipairs({"ISInventoryTransferAction", "ISEquipWeaponAction", "ISUnequipAction", "ISWalkToTimedAction"}) do
         local class = _G[name]
         local callback = class and class.new
-        trusted = trusted and nativeClosure(callback, name == "ISWalkToTimedAction" and "WalkToTimedAction.lua" or name .. ".lua")
-        helpers[#helpers + 1] = {owner = class or {}, name = "new", callback = callback}
+        local cart = name == "ISInventoryTransferAction" and cartConstructor(callback)
+        local equipment = name == "ISEquipWeaponAction" or name == "ISUnequipAction"
+        local valid = cart or nativeClosure(callback, name == "ISWalkToTimedAction" and "WalkToTimedAction.lua" or name .. ".lua")
+        trusted, repairTrusted = trusted and valid, repairTrusted and (equipment or valid)
+        helpers[#helpers + 1] = {owner = class or {}, name = "new", callback = callback, cart = cart, equipment = equipment}
     end
-    trustedInstalled = trusted
-    if trusted and classes.ISFixGenerator then
+    trustedInstalled, repairInstalled = trusted, repairTrusted
+    if classes.ISFixGenerator then
         local native = ISFixGenerator.continueFixing
         ISFixGenerator.continueFixing = function(action)
+            if action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled then return end
             if not Toolkit.Settings.actionQueue() or not action.toolkitQueueOperation then return native(action) end
             local queue = ISTimedActionQueue.queues[action.character]
             if continued[action] or not queue or queue:indexOf(action) == -1 then return end
@@ -281,10 +308,17 @@ function Generators.install()
         ISFixGenerator.perform = function(action, ...)
             local queue = ISTimedActionQueue.queues[action.character]
             if not isClient() and not isServer() and Toolkit.Settings.actionQueue() and action.toolkitQueueOperation
-                and queue and queue.current == action and queue.queue[1] == action and Policy.inspect(action) then
-                -- SP calls perform before complete; keep the repair attached until its native continuation exists.
-                pendingPerform[action] = true
-                return
+                and queue and queue.current == action and queue.queue[1] == action and classUnchanged("ISFixGenerator") then
+                local completed, ownCompleted = queue.onCompleted, rawget(queue, "onCompleted")
+                -- SP performs before complete; defer only advancement so native addAfter still has its parent.
+                queue.onCompleted = function(current, finished)
+                    if finished == action then pendingPerform[action] = queue; return end
+                    return completed(current, finished)
+                end
+                local ok, result = pcall(Operations.runWith, action.toolkitQueueOperation, perform, action, ...)
+                queue.onCompleted = ownCompleted
+                if not ok then pendingPerform[action] = nil; error(result, 0) end
+                return result
             end
             return Operations.perform(action, perform, ...)
         end
@@ -292,9 +326,12 @@ function Generators.install()
         local complete = ISFixGenerator.complete
         ISFixGenerator.complete = function(action, ...)
             local ok, result = pcall(complete, action, ...)
-            if pendingPerform[action] then
+            local queue = pendingPerform[action]
+            if queue then
                 pendingPerform[action] = nil
-                Operations.perform(action, perform)
+                if ISTimedActionQueue.queues[action.character] == queue and queue.current == action and queue.queue[1] == action then
+                    queue:onCompleted(action)
+                end
             end
             if not ok then error(result, 0) end
             return result
@@ -307,8 +344,10 @@ function Generators.install()
                 and child.Type == "ISFixGenerator" and Policy.inspect(child) ~= nil
         end)
     end
-    if trusted then
-        for name in pairs(classes) do Policy.registerNative(name, Generators.inspect) end
+    if trusted or repairTrusted then
+        for name in pairs(classes) do
+            if trusted or name == "ISFixGenerator" then Policy.registerNative(name, Generators.inspect) end
+        end
         Toolkit.ActionQueueDefinitions.registerBehavior("toolkit.generators", {matches = function(action)
             return action.Type == "ISQueueActionsAction" and commandRecord(action) ~= nil
         end, inspect = commandInspect})
@@ -316,7 +355,8 @@ function Generators.install()
     for method in pairs(kinds) do
         local name, callback = method, ISWorldObjectContextMenu[method]
         if callback then
-            local native = trusted and classes[kinds[name]] ~= nil and nativeClosure(callback, "ISWorldObjectContextMenu.lua")
+            local native = (trusted or kinds[name] == "ISFixGenerator" and repairTrusted)
+                and classes[kinds[name]] ~= nil and nativeClosure(callback, "ISWorldObjectContextMenu.lua")
             local binding
             binding = function(...)
                 local args = {n = select("#", ...), ...}

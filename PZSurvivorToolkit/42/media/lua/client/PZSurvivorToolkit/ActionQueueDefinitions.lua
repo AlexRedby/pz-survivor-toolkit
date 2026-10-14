@@ -455,6 +455,7 @@ for kind, presentation in pairs(native) do
 end
 
 for kind, presentation in pairs({
+    ISCartTransferAction = {key = prefix .. "transfer", family = "inventory", targets = {"item"}},
     PZSurvivorToolkitSetStoveState = {key = prefix .. "power", targets = {"object"}, modeField = "desired",
         modes = {[true] = prefix .. "stove_on", [false] = prefix .. "stove_off"}},
     PJCK_SequenceWaitAction = {key = prefix .. "wait", role = "preparation"},
@@ -509,7 +510,7 @@ local function target(action, presentation)
         local device = instance(action.deviceData, "DeviceData") and action.deviceData:getParent()
         return name(device)
     end
-    if action.Type == "ISInventoryTransferAction" then return name(action.item) end
+    if action.Type == "ISInventoryTransferAction" or action.Type == "ISCartTransferAction" then return name(action.item) end
     if action.plant and type(action.plant.typeOfSeed) == "string" then
         return getText("Farming_" .. action.plant.typeOfSeed)
     end
@@ -555,7 +556,7 @@ end
 local function details(action)
     local lines = {}
     local function add(text) if text then lines[#lines + 1] = text end end
-    if action.Type == "ISInventoryTransferAction" then
+    if action.Type == "ISInventoryTransferAction" or action.Type == "ISCartTransferAction" then
         local source, destination = name(action.srcContainer), name(action.destContainer)
         if source and destination then add(source .. " -> " .. destination) end
     elseif action.Type == "ISFluidTransferAction" then
