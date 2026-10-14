@@ -42,6 +42,10 @@ local sourceFiles = {
         {"shared/Project_Cook/PJCK_EvolvedSpiceGuard.lua", 2430144672},
     },
     MPFastForward = {{"server/MPFastForward_ReadFix.lua", 598888215}},
+    SaucedCarts = {
+        {"client/SaucedCarts/ConsumeWithCart.lua", 2924576916},
+        {"shared/SaucedCarts/Core.lua", 2570266575},
+    },
     EURY_CONTAINERS = {
         {"client/BetterContainers/Proximity.lua", 3626949969},
         {"client/BetterContainers/Proximity/Proximity_ISInventoryTransferAction.lua", 909048245},
@@ -496,9 +500,32 @@ local function installContainerTransfers()
     transferSourceSafe, ready.EURY_CONTAINERS = true, true
 end
 
+local function installCartEating()
+    if not getActivatedMods or not getActivatedMods():contains("SaucedCarts") or not verified("SaucedCarts")
+        or not ISEatFoodAction or ISEatFoodAction._saucedCartsConsumeWrapped then return end
+    if SaucedCarts and SaucedCarts.ConsumeWithCart then return end
+    local previous = ISEatFoodAction.start
+    local ok, consume = pcall(require, "SaucedCarts/ConsumeWithCart")
+    local owner = SaucedCarts
+    if not ok or not owner or type(consume) ~= "table" or owner.ConsumeWithCart ~= consume
+        or type(consume.install) ~= "function" or type(consume._wrapStart) ~= "function"
+        or type(owner.safeIsCart) ~= "function" or type(owner.isCart) ~= "function" or type(owner.debug) ~= "function" then return end
+    local install, wrapStart, safeIsCart, isCart, debug = consume.install, consume._wrapStart, owner.safeIsCart, owner.isCart, owner.debug
+    local function helpersUnchanged()
+        return SaucedCarts == owner and owner.ConsumeWithCart == consume
+            and consume.install == install and consume._wrapStart == wrapStart
+            and owner.safeIsCart == safeIsCart and owner.isCart == isCart and owner.debug == debug
+    end
+    if not pcall(install) then return end
+    local policy = Toolkit.ActionQueuePolicy
+    ready.SaucedCarts = policy and policy.adoptEatStart
+        and policy.adoptEatStart(previous, ISEatFoodAction.start, helpersUnchanged) == true
+end
+
 function Compat.install()
     if installAttempted then return end
     installAttempted = true
+    installCartEating()
     installContainerTransfers()
     for _, owner in ipairs({
         {"Neat_Crafting", "NC_CraftActionPanel", "Neat_Crafting/NC_CraftActionPanel"},

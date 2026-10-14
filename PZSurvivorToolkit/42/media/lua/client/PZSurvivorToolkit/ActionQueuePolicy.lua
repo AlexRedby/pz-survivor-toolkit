@@ -6,6 +6,7 @@ require "Fluids/ISFluidEmptyAction"
 require "TimedActions/ISActivateGenerator"
 require "TimedActions/ISFixGenerator"
 require "TimedActions/ISTransferAction"
+require "TimedActions/ISEatFoodAction"
 require "TimedActions/ISRemoveCarBatteryFromChargerAction"
 require "TimedActions/ISTakeCarBatteryChargerAction"
 
@@ -333,6 +334,7 @@ local function callbacksSafe(action)
 end
 local function nativeMatches(action, snapshot)
     if getmetatable(action) ~= snapshot.class or action.Type ~= snapshot.class.Type or not callbacksSafe(action) then return false end
+    if snapshot.startHelperGuard and not snapshot.startHelperGuard() then return false end
     if snapshot.class == ISInventoryTransferAction and not ordinaryTransfer(action) then return false end
     for _, name in ipairs(lifecycle) do
         if action[name] ~= snapshot.methods[name] and not (name == "stop" and action.Type == "ISInventoryTransferAction"
@@ -391,6 +393,15 @@ function Policy.adoptReadAnimEvent(previous, replacement)
     if not snapshot or snapshot.methods.animEvent ~= previous or ISReadABook.animEvent ~= replacement
         or type(previous) ~= "function" or type(replacement) ~= "function" then return false end
     snapshot.methods.animEvent = replacement
+    return true
+end
+
+function Policy.adoptEatStart(previous, replacement, helpersUnchanged)
+    local snapshot = snapshots[ISEatFoodAction]
+    if not snapshot or snapshot.methods.start ~= previous or ISEatFoodAction.start ~= replacement
+        or type(previous) ~= "function" or type(replacement) ~= "function"
+        or type(helpersUnchanged) ~= "function" or not helpersUnchanged() then return false end
+    snapshot.methods.start, snapshot.startHelperGuard = replacement, helpersUnchanged
     return true
 end
 
@@ -500,6 +511,13 @@ local function radioResources(action)
     return result
 end
 function Policy.installContracts()
+    registerNative("ISEatFoodAction", function(action)
+        local Food = Toolkit.BulkFood
+        if not Food or not Food.isEat(action) then return end
+        local result = resources(action)
+        result.preparationFinish, result.unknownOutputs = true, true
+        return result
+    end, {"setOverrideHandModels"})
     registerNative("ISReadABook", function(action)
         local result = itemResources(action)
         if result then result.interrupt = "audited-resume" end
@@ -571,6 +589,14 @@ Definitions.registerBehavior("toolkit.bulk", {types = {"ISUnloadBulletsFromFirea
     return Toolkit.BulkActions and Toolkit.BulkActions.canFinish and Toolkit.BulkActions.canFinish(action)
 end, inspect = function(action)
     local result = resources(action); result.unknownOutputs, result.bulk = true, true; return result
+end})
+
+Definitions.registerBehavior("toolkit.food", {types = {"ISQueueActionsAction"}, matches = function(action)
+    return Toolkit.BulkFood and Toolkit.BulkFood.isCommand(action)
+end, inspect = function(action)
+    local result = resources(action)
+    result.deferred, result.preparationFinish, result.unknownOutputs = true, true, true
+    return result
 end})
 
 inspect = function(action)

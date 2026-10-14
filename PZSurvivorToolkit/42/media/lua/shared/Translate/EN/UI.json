@@ -39,6 +39,8 @@
   "UI_options_PZSurvivorToolkit_bulk_dismantle": "Dismantle selected electronics",
   "UI_options_PZSurvivorToolkit_bulk_dismantle_tooltip": "Adds a bulk dismantle command for selected watches and other electronics. Skips favourites and worn/held items. Uses normal recipes, tools, time and XP.",
   "UI_PZSurvivorToolkit_dismantle_selected": "Dismantle selected (%1)",
+  "UI_PZSurvivorToolkit_eat_selected": "Eat selected (%1)",
+  "UI_PZSurvivorToolkit_eat_selected_tooltip": "Eat each selected food in order, stopping when too full. Favorites and foods already queued are excluded. Canceling the group finishes the current food and skips the rest.",
   "UI_PZSurvivorToolkit_dismantle_one": "One item",
   "UI_options_PZSurvivorToolkit_bulk_remove_batteries": "Remove batteries from selected items",
   "UI_options_PZSurvivorToolkit_bulk_remove_batteries_tooltip": "Adds bulk removal using the native Remove Battery recipe. Skips favourites and worn/held items. Devices remain intact; batteries retain their charge.",
