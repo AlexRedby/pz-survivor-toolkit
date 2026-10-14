@@ -22,6 +22,7 @@ native('shared/TimedActions/ISBaseTimedAction.lua')
 native('client/TimedActions/ISTimedActionQueue.lua')
 native('shared/TimedActions/ISReadABook.lua')
 native('shared/TimedActions/ISFixAction.lua')
+native('shared/TimedActions/ISFixVehiclePartAction.lua')
 native('shared/TimedActions/ISCraftAction.lua')
 native('shared/Entity/TimedActions/ISHandcraftAction.lua')
 native('shared/RadioCom/ISRadioAction.lua')
@@ -36,6 +37,8 @@ local function toolkit(name)
 end
 local operations = toolkit('ActionQueueOperations')
 local craft = toolkit('ActionQueueCraft')
+if not PZSurvivorToolkit.ActionQueueDefinitions then assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))() end
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePolicy.lua'))()
 local queueAPI = toolkit('ActionQueue')
 local player = {getPlayerNum = function() return 0 end, isDead = function() return false end,
     isAsleep = function() return false end, isTimedActionInstant = function() return false end}
@@ -44,7 +47,7 @@ player.getInventory = function() return player.inventory end
 getSpecificPlayer = function() return player end
 local function list(...)
     local values = {...}
-    return {size = function() return #values end, get = function(_, index) return values[index + 1] end}
+    return {class = 'List', size = function() return #values end, get = function(_, index) return values[index + 1] end}
 end
 local nextID = 0
 local function item(fullType, class)
@@ -99,9 +102,9 @@ assert(queueAPI.move(q, fix, tv))
 tv.mode = 'SetChannel'; q = queue(head, fix, tv)
 assert(queueAPI.move(q, tv, fix))
 tv.mode = 'RemoveHeadphones'; q = queue(head, tv, fix)
-assert(queueAPI.moveReason(q, fix, tv) == 'move_craft_inputs', 'inventory-producing radio modes stay protected')
+assert(queueAPI.moveReason(q, fix, tv) == 'move_dependent', 'inventory-producing radio modes stay protected')
 tv.mode = 'ToggleOnOff'; tv.performToggleOnOff = function() end
-assert(queueAPI.moveReason(q, fix, tv) == 'move_craft_inputs', 'custom mode callbacks cannot inherit native permission')
+assert(queueAPI.moveReason(q, fix, tv) == 'move_dependent', 'custom mode callbacks cannot inherit native permission')
 tv.performToggleOnOff = nil
 for _, crossed in ipairs({action(ISInventoryTransferAction, anotherDonor), action(ISInventoryTransferAction, item('Base.Glue')),
     action(ISInventoryTransferAction, item('Base.Bag_Schoolbag', 'InventoryContainer')),
@@ -146,3 +149,16 @@ fix.complete = nil
 enabled = false
 assert(queueAPI.moveReason(q, fix, reading) == 'unavailable')
 print('Repair native reorder: independent book/TV/preparation groups, dynamic/global donor types, merged batches, stable IDs and unknown outputs protected.')
+
+enabled = true
+local vehiclePart={getInventoryItem=function() return target end}
+local vehicleRepair=ISFixVehiclePartAction:new(player,vehiclePart,0,0)
+vehicleRepair.toolkitQueueOperation={}
+assert(craft.supports(vehicleRepair) and craft.repairInputs(vehicleRepair)['Base.Shotgun'])
+q=queue(head,reading,vehicleRepair)
+assert(queueAPI.move(q,vehicleRepair,reading),'native vehicle repair can cross independent reading')
+transfer.item=anotherDonor
+q=queue(head,transfer,vehicleRepair)
+assert(queueAPI.moveReason(q,vehicleRepair,transfer)=='move_craft_inputs')
+assert(queueAPI.moveReason(q,transfer,vehicleRepair,true)=='move_craft_inputs')
+assert(queueAPI.cancelOperationReason(q,vehicleRepair),'dynamic vehicle donor selection stays protected on cancel')

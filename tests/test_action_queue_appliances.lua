@@ -32,6 +32,7 @@ native('client/TimedActions/ISInventoryTransferAction.lua')
 for _, name in ipairs({'ISToggleStoveAction', 'ISToggleClothingWasher', 'ISToggleClothingDryer',
     'ISToggleComboWasherDryer', 'ISSetComboWasherDryerMode'}) do native('shared/TimedActions/' .. name .. '.lua') end
 native('client/TimedActions/ISOvenUITimedAction.lua')
+assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SetStoveStateAction.lua'))()
 local contextPath = NativeActionRoot .. '/client/ISUI/ISWorldObjectContextMenu.lua'
 ISWorldObjectContextMenu = {}
 ISLootWindowObjectControlHandler = ISBaseObject:derive('ISLootWindowObjectControlHandler')
@@ -70,9 +71,11 @@ ISBuildingObject = {tryBuild = function() end}
 ISMoveablesAction = {new = function() return {} end}
 ISContextMenu, ISButton, ISInventoryPane, ISInventoryPaneContextMenu = {}, {}, {}, {}
 ISReadABook = ISBaseTimedAction:derive('ISReadABook')
+ISReadABook.isValidStart = function() return true end
 local paused, stopped = false, 0
 UIManager = {getSpeedControls = function() return {getCurrentGameSpeed = function() return paused and 0 or 1 end} end}
 local square = {getX = function() return 10 end, getY = function() return 10 end,
+    getZ = function() return 0 end,
     canReachTo = function() return true end}
 local walkSquare = {getX = function() return 11 end, getY = function() return 10 end}
 local player = {class = 'IsoPlayer', getPlayerNum = function() return 0 end,
@@ -91,11 +94,12 @@ function ISWalkToTimedAction:new(character, destination)
     local action = ISBaseTimedAction.new(self, character); action.square = destination; return action
 end
 local function project(name) assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
-project('ActionQueueOperations'); project('ActionQueueLabels'); project('ActionQueue'); project('ActionQueueWorld')
+project('ActionQueueOperations'); project('ActionQueueDefinitions'); project('ActionQueueLabels'); project('ActionQueuePolicy'); project('ActionQueue'); project('ActionQueueWorld')
 local api, world = PZSurvivorToolkit.ActionQueue, PZSurvivorToolkit.ActionQueueWorld
-local toggleTypes = {Stove = 'ISToggleStoveAction', ClothingWasher = 'ISToggleClothingWasher',
+local toggleTypes = {Stove = 'PZSurvivorToolkitSetStoveState', ClothingWasher = 'ISToggleClothingWasher',
     ClothingDryer = 'ISToggleClothingDryer', CombinationWasherDryer = 'ISToggleComboWasherDryer'}
 local q = ISTimedActionQueue.getTimedActionQueue(player)
+local bookID = 0
 local function action(kind)
     local a = ISBaseTimedAction.new(kind or ISReadABook, player)
     a.begin = function(self)
@@ -103,7 +107,9 @@ local function action(kind)
         self.action = {isStarted = function() return true end, finished = function() return false end,
             isForceComplete = function() return false end, forceStop = function(self) self.stopped = true end}
     end
-    a.isValidStart = function() return true end
+    bookID = bookID + 1
+    local id = bookID
+    a.item = {class='InventoryItem',getID=function() return id end,getFullType=function() return 'Base.Book'..id end}
     return a
 end
 local function reset()
@@ -113,8 +119,9 @@ local function reset()
     return book
 end
 local function target(kind)
-    return {class = 'IsoObject', getObjectName = function() return kind or 'Stove' end,
+    return {class = (not kind or kind == 'Stove') and 'IsoStove' or 'IsoObject', getObjectName = function() return kind or 'Stove' end,
         Activated = function() return false end, isActivated = function() return false end,
+        container = {isPowered = function(self) return self.powered ~= false end}, getContainer = function(self) return self.container end,
         getSquare = function(self) return self.square end, square = square,
         getObjectIndex = function(self) return self.removed and -1 or 0 end}
 end
@@ -123,6 +130,7 @@ for _, kind in ipairs({'Stove','ClothingWasher','ClothingDryer','CombinationWash
     local class = _G['ISLootWindowObjectControlHandler_' .. kind .. 'Toggle']
     local handler = setmetatable({playerObj = player, playerNum = 0, object = target(kind),
         container = {isPowered = function(self) return self.powered ~= false end}}, class)
+    handler.object.container = handler.container
     -- CleanUI caches Handler.perform when the button is created before OnGameStart.
     handler.control = {target = handler, onclick = class.perform}
     cachedHandlers[kind] = handler
@@ -171,6 +179,7 @@ for _, kind in ipairs({'Stove','ClothingWasher','ClothingDryer','CombinationWash
     local handler = setmetatable({playerObj = player, playerNum = 0, object = object},
         _G['ISLootWindowObjectControlHandler_' .. kind .. 'Toggle'])
     handler.container = {isPowered = function() return true end}
+    object.container = handler.container
     handler:perform()
     local command = q.queue[2]
     assert(q.current == book and stopped == 0 and world.isDeferredAction(command), 'actual B42 loot-button handler appends')
@@ -182,12 +191,14 @@ end
 for kind, handler in pairs(cachedHandlers) do
     local book, object = reset(), target(kind)
     handler.object = object
+    object.container = handler.container
     local control = handler:getControl()
     assert(control == handler.control and control.onclick == handler.perform, 'cached native button must use the installed adapter')
     control.onclick(control.target)
     local command = q.queue[2]
     assert(q.current == book and stopped == 0 and world.isDeferredAction(command), 'cached button must not stop active reading')
     handler.object = target(kind)
+    handler.object.container = handler.container
     expand(command)
     assert(q.queue[2].object == object and world.isApplianceAction(q.queue[2]), 'cached-button snapshot preserves the clicked target')
     local custom = function() error('custom control callback must remain untouched') end

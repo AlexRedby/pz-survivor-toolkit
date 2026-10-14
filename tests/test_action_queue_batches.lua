@@ -44,7 +44,7 @@ end
 local Craft, Batch = project('ActionQueueCraft'), project('ActionQueueBatch')
 local function list(...)
     local values = {...}
-    return {size = function() return #values end, get = function(_, i) return values[i + 1] end,
+    return {class = 'List', size = function() return #values end, get = function(_, i) return values[i + 1] end,
         isEmpty = function() return #values == 0 end}
 end
 local inventory, cupboard = {}, {}
@@ -81,6 +81,17 @@ local function legacy()
 end
 local first = legacy()
 assert(Craft.supports(first) and Craft.isLegacyAll(first))
+recipe.class = 'Recipe'
+recipe.getScriptLines = function() return list('recipe Craft { Base.Material, Result:Product, }') end
+recipe.getSource = function() return list({getItems = function() return list('Base.Material') end}) end
+recipe.getResults = function() return list({getFullType = function() return 'Base.Product' end}) end
+recipe.isRequiresWorkstation, recipe.getNearItem, recipe.getHeat = function() return false end, function() end, function() return 0 end
+ItemType = {CONTAINER = 'Container'}
+local materialScript = {isItemType = function() return false end,
+    getReplaceOnUse = function() end, getReplaceOnDeplete = function() end, getOnBreak = function() end}
+getScriptManager = function() return {FindItem = function() return materialScript end} end
+assert(Craft.futureResources(first).dynamicInputs['Base.Material'] and Craft.futureResources(first).outputTypes['Base.Product'],
+    'Craft All declares every future donor and product type without selecting or reserving donor IDs')
 local progress = Batch.progress(queue, first)
 assert(progress.total == 3 and progress.completed == 0 and progress.remaining == 3 and progress.unit == 'craft')
 local args = first.onCompleteArgs
@@ -88,6 +99,8 @@ first.onCompleteFunc(unpack(args))
 assert(selections == 1 and #queue == 3 and queue[1].Type == 'ISInventoryTransferAction'
     and queue[2].Type == 'ISCraftAction' and queue[3].Type == 'ISInventoryTransferAction')
 for _, action in ipairs(queue) do assert(action.toolkitQueueOperation == token) end
+first.onCompleteFunc(unpack(args))
+assert(selections == 1 and #queue == 3, 'duplicate legacy continuation cannot consume or enqueue twice')
 Batch.completed(first); Batch.completed(first); Batch.completed(queue[1])
 progress = Batch.progress(queue, queue[2])
 assert(progress.completed == 1 and progress.remaining == 2, 'one iteration; pickups and returns do not count')
@@ -159,13 +172,13 @@ if NativeWishlistWorkshopRoot or NativeNeatCraftingSource then
     ISPanel = {derive = derive}
     local neatSource = NativeNeatCraftingSource or read(NativeWishlistWorkshopRoot
         .. '/3502080466/mods/Neat_Crafting/common/media/lua/client/Neat_Crafting/NC_CraftActionPanel.lua')
-    assert(loadstring(neatSource))()
+    assert(loadfile(ProjectRoot .. '/tests/support/action_queue_craft_owner.lua'))()(neatSource)
     local stops, refreshes = 0, 0
     local logic = {class = 'HandcraftLogic', getPlayer = function() return player end,
         stopCraftAction = function() stops = stops + 1 end}
     local neat = setmetatable({player = player, logic = logic, craftTimes = 1,
         returnToContainer = {selected}, queuedCraftActions = {},
-        refreshAfterCraftBatch = function() refreshes = refreshes + 1 end}, NC_CraftActionPanel)
+        HandCraftPanel = {updateContainers = function() refreshes = refreshes + 1 end}}, NC_CraftActionPanel)
     local function owned()
         local a = ISHandcraftAction:new(player, generated.craftRecipe, {})
         a:setOnStart(neat.onHandcraftActionStart, neat)

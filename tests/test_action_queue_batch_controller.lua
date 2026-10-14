@@ -1,5 +1,6 @@
 if not NativeActionRoot then print('Batch controller native-contract checks skipped.'); return end
 require = function() end
+getText = function(key) return key end
 local function derive(self, name)
     local class = {Type = name, derive = derive}; class.__index = class
     return setmetatable(class, {__index = self})
@@ -58,17 +59,18 @@ end
 project('BulkActions')
 local Operations = project('ActionQueueOperations')
 local Craft, Batch = project('ActionQueueCraft'), project('ActionQueueBatch')
-project('ActionQueueLabels')
+project('ActionQueueDefinitions'); project('ActionQueueLabels')
 PZSurvivorToolkit.ActionQueueWorld = {isApplianceAction = function() return false end}
+project('ActionQueuePolicy')
 local Controller = project('ActionQueue')
 local function list(...)
     local values = {...}
-    return {size = function() return #values end, get = function(_, i) return values[i + 1] end,
+    return {class = 'List', size = function() return #values end, get = function(_, i) return values[i + 1] end,
         isEmpty = function() return #values == 0 end, contains = function() return true end}
 end
 local inventory = {getType = function() return 'inventory' end}
 local cupboard = {}
-local player = {getInventory = function() return inventory end, hasTrait = function() return false end,
+local player = {isPlayerMoving = function() return false end, pressedMovement = function() return false end, getInventory = function() return inventory end, hasTrait = function() return false end,
     getPlayerNum = function() return 0 end, isDead = function() return false end, isAsleep = function() return false end,
     isTimedActionInstant = function() return false end, isWearingAwkwardGloves = function() return false end,
     setIsFarming = function() end, isDriving = function() return false end}
@@ -95,7 +97,9 @@ end}
 local q = ISTimedActionQueue.getTimedActionQueue(player)
 local function reset() q.queue, q.current, started = {}, nil, {} end
 local function book()
-    local action = ISBaseTimedAction:new(player); action.Type = 'ISReadABook'; return action
+    local action = ISBaseTimedAction.new(ISReadABook,player)
+    action.item={class='InventoryItem',getID=function() return action end}
+    return action
 end
 local function legacy()
     local action = ISCraftAction:new(player, material, recipe, inventory, containers)
@@ -126,14 +130,14 @@ assert(#q.queue == 2 and cancelled.toolkitQueueOperation.toolkitCancelled,
     'controller cancellation rejects a delayed native Craft All callback')
 
 if NativeWishlistWorkshopRoot or NativeNeatCraftingSource then
-    assert(loadstring(NativeNeatCraftingSource or read(NativeWishlistWorkshopRoot
-        .. '/3502080466/mods/Neat_Crafting/common/media/lua/client/Neat_Crafting/NC_CraftActionPanel.lua')))()
+    assert(loadfile(ProjectRoot .. '/tests/support/action_queue_craft_owner.lua'))()(NativeNeatCraftingSource or read(NativeWishlistWorkshopRoot
+        .. '/3502080466/mods/Neat_Crafting/common/media/lua/client/Neat_Crafting/NC_CraftActionPanel.lua'))
     reset()
     local stops = 0
     local logic = {class = 'HandcraftLogic', getPlayer = function() return player end,
         stopCraftAction = function() stops = stops + 1 end}
     local neat = setmetatable({player = player, logic = logic, craftTimes = 1,
-        returnToContainer = {material}, queuedCraftActions = {}, refreshAfterCraftBatch = function() end}, NC_CraftActionPanel)
+        returnToContainer = {material}, queuedCraftActions = {}}, NC_CraftActionPanel)
     local handcraft = ISHandcraftAction:new(player,
         {class = 'CraftRecipe', getTimedActionScript = function() end, isCanWalk = function() return true end,
             getTime = function() return 10 end}, {})

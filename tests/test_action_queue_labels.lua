@@ -3,6 +3,8 @@ PZSurvivorToolkit = {}
 instanceof = function(value, class) return type(value) == 'table' and value.class == class end
 Translator = {getMoveableDisplayName = function(value) return 'Translated ' .. value end}
 ISWorldObjectContextMenu = {getMoveableDisplayName = function(object) return object.name end}
+require = function() end
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))()
 local labels = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLabels.lua'))()
 local function item(name, custom)
     return {class = 'InventoryItem', getDisplayName = function() return name end,
@@ -105,8 +107,9 @@ for _, language in ipairs({'EN', 'RU'}) do
             check({Type = entry[1]}, title)
             check({Type = 'ISQueueActionsAction', toolkitWorldOperation = 'fuel', toolkitFuelTake = entry[3]}, title)
         end
+        check({Type = 'ISReadWorldMap'}, assert(translations.ContextMenu_CheckMap))
         local cases = {
-            {'ISReadABook', 'read'}, {'ISReadWorldMap', 'read'}, {'ISUnequipAction', 'unequip'},
+            {'ISReadABook', 'read'}, {'ISUnequipAction', 'unequip'},
             {'ISUnloadBulletsFromFirearm', 'unload'}, {'ISUnloadBulletsFromMagazine', 'unloadMagazine'},
             {'ISReloadWeaponAction', 'reload'}, {'ISInsertMagazine', 'insert'}, {'ISEjectMagazine', 'eject'},
             {'ISRemoveWeaponUpgrade', 'removePart'}, {'ISUpgradeWeapon', 'addPart'},
@@ -145,3 +148,4 @@ for _, language in ipairs({'EN', 'RU'}) do
     end
 end
 print('Action queue labels EN/RU checks passed.')
+assert(loadfile(ProjectRoot .. '/tests/action_queue_presentation_checks.lua'))()

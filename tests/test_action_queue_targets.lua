@@ -4,6 +4,7 @@ if not NativeActionRoot then
     return
 end
 require = function() end
+getText = function(key) return key end
 PZSurvivorToolkit = {Settings = {actionQueue = function() return true end}}
 local function derive(self, name)
     local t = {Type = name, derive = derive}
@@ -38,7 +39,10 @@ local player = {class = 'IsoPlayer', getPlayerNum = function() return 0 end,
     getInventory = function() return {containsTypeRecurse = function() return true end} end}
 getSpecificPlayer = function() return player end
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua'))()
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLabels.lua'))()
+if not PZSurvivorToolkit.ActionQueueDefinitions then assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))() end
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePolicy.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local api, operations = PZSurvivorToolkit.ActionQueue, PZSurvivorToolkit.ActionQueueOperations
 local function target()
@@ -88,18 +92,20 @@ take = ISTakeCarBatteryChargerAction:new(player, charger)
 operations.run(function() ISTimedActionQueue.add(prep); ISTimedActionQueue.add(take) end)
 assert(api.moveReason(q, prep, remove) == 'move_dependent')
 ISTimedActionQueue.add(unrelated)
-assert(api.move(q, take, unrelated, true) and q.queue[3] == unrelated and q.queue[4] == prep
-    and q.queue[5] == take, 'whole operations still move across independent actions')
+assert(not api.move(q, take, unrelated, true), 'unrecognized preparation and crossed actions remain barriers')
 local other = ISActivateGenerator:new(player, target(), true)
 q = queue(repair, other)
-assert(api.move(q, other, repair) and q.queue[2] == other, 'different world objects remain reorderable')
+assert(not api.move(q, other, repair), 'generator power regions and recursive repairs remain barriers')
+local otherCharger = ISToggleStoveAction:new(player, target())
+q = queue(toggle, otherCharger)
+assert(api.move(q, otherCharger, toggle), 'independent validated device targets remain reorderable')
 local item = {class = 'InventoryItem', getID = function() return 1001 end}
-local transfer, use = pending(), pending()
-transfer.item, use.weapon = item, item
+local transfer, use = pending(ISInventoryTransferAction), pending(ISInventoryTransferAction)
+transfer.item, use.item = item, item
 q = queue(transfer, use)
 assert(api.moveReason(q, use, transfer) == 'move_shared_item', 'existing inventory protections remain intact')
 local a, b = pending(), pending()
 a.object, b.object = 'label', 'label'
 q = queue(a, b)
-assert(api.move(q, b, a), 'a non-world value in object must not create a false dependency')
+assert(not api.move(q, b, a), 'arbitrary base actions cannot inherit permission from unrecognized fields')
 print('Action queue world-target ordering: native generator/charger, aliases, whole operations and independent targets passed.')

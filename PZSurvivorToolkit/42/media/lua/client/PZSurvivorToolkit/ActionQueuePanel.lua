@@ -8,6 +8,22 @@ local List = ISScrollingListBox:derive("PZSurvivorToolkitActionList")
 local panels = {}
 Toolkit.ActionQueuePanel = Panel
 
+local function moveDecision(queue, action, target, after)
+    local policy = Toolkit.ActionQueuePolicy
+    if policy and policy.evaluateMove then return policy.evaluateMove(queue, action, target, after) end
+    local reason = Toolkit.ActionQueue.moveReason(queue, action, target, after)
+    return {allowed = reason == nil, reason = reason}
+end
+
+local function cancelDecision(queue, action, whole)
+    local policy = Toolkit.ActionQueuePolicy
+    if policy and policy.evaluateCancel then return policy.evaluateCancel(queue, action, whole) end
+    local reason
+    if whole then reason = Toolkit.ActionQueue.cancelOperationReason(queue, action)
+    else reason = Toolkit.ActionQueue.cancelReason(queue, action) end
+    return {allowed = reason == nil, reason = reason}
+end
+
 function List:cancelX()
     return self.width - 40
 end
@@ -87,38 +103,11 @@ function List:onMouseUpOutside(x, y)
 end
 
 function Panel.icon(action)
-    if action.toolkitWorldOperation == "fuel" then
-        return getTexture(action.toolkitFuelTake and "media/ui/vehicles/gas_siphon.png" or "media/ui/vehicles/gas_refuel.png")
-    end
-    if action.craftRecipe and instanceof(action.craftRecipe, "CraftRecipe") then
-        local icon = action.craftRecipe:getIconTexture()
-        if icon then return icon end
-    end
-    local item = action.item or action.gun or action.magazine or action.weapon
-    if item and instanceof(item, "InventoryItem") and item:getTex() then return item:getTex() end
-    if action.Type == "ISWalkToTimedAction" or action.Type == "ISPathFindAction" then
-        return getTexture("media/ui/craftingMenus/BuildProperty_Walking.png")
-    end
-    return getTexture("media/ui/Entity/Icon_Tools_48x48.png")
+    return Toolkit.ActionQueueLabels.icon(action)
 end
 
 function Panel.taskTitle(queue, first, last)
-    local title, signature, mixed, priority
-    for i = first, last do
-        local action = queue.queue[i]
-        local rank = Toolkit.ActionQueueLabels.preparation(action) and 1
-            or (action.Type == "ISInventoryTransferAction" and 2 or 3)
-        if not priority or rank >= priority then
-            local candidate, kind = Toolkit.ActionQueueLabels.title(action)
-            kind = kind or action.Type or candidate
-            if not priority or rank > priority then
-                title, signature, mixed, priority = candidate, kind, false, rank
-            elseif kind ~= signature then
-                mixed = true
-            end
-        end
-    end
-    return mixed and getText("UI_PZSurvivorToolkit_queue_mixed") or title
+    return Toolkit.ActionQueueLabels.taskTitle(queue, first, last)
 end
 
 function Panel:createChildren()
@@ -153,7 +142,8 @@ function Panel.drawRow(list, y, row, alt)
     elseif alt then
         list:drawRect(0, y, list.width, row.height, 0.15, 0.5, 0.5, 0.5)
     end
-    local moveReason = Toolkit.ActionQueue.moveReason(queue, action)
+    local moveResult = moveDecision(queue, action)
+    local moveReason = moveResult.reason
     local iconX, textX = row.header and 42 or 22, row.header and 72 or 52
     if row.header then
         list:drawText(list.parent.expanded[row.operation] and "-" or "+", 7, y + (row.height - 14) / 2,
@@ -197,18 +187,27 @@ function Panel.drawRow(list, y, row, alt)
     list:repaintStencilRect(textX, top, right - textX, clipHeight)
     local reason
     local operationCancel = row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item))
-    if operationCancel then reason = Toolkit.ActionQueue.cancelOperationReason(queue, row.item)
-    else reason = Toolkit.ActionQueue.cancelReason(queue, action) end
+    local cancelResult = cancelDecision(queue, operationCancel and row.item or action, operationCancel)
+    reason = cancelResult.reason
     local hover = list.mouseoverselected == row.index and list:getMouseX() >= cancelX
     list:drawRect(cancelX, y + 3, 24, row.height - 6, hover and 0.4 or 0.15, 0.7, 0.3, 0.3)
     list:drawTextureScaledAspect(list.cancelTexture, cancelX + 4, y + (row.height - 16) / 2, 16, 16,
         reason and 0.2 or 1, 1, 1, 1)
     local toggleHover = row.header and list:getMouseX() < 22
-    local hint = toggleHover and (list.parent.expanded[row.operation] and "collapse_tip" or "expand_tip")
+    local hint = toggleHover and (list.parent.expanded[row.operation] and (batch and "collapse_batch_tip" or "collapse_tip")
+        or (batch and "expand_batch_tip" or "expand_tip"))
         or (hover and (reason or (operationCancel and "cancel_operation_tip" or "cancel_tip")) or (moveReason or "drag_tip"))
     row.tooltip = (row.task and row.task .. " <LINE> " or "")
         .. (remaining and remaining .. " <LINE> " or "") .. label
         .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. hint)
+    local decisionDetails = Toolkit.ActionQueueLabels.decisionDetails(hover and cancelResult or moveResult)
+    if decisionDetails then row.tooltip = row.tooltip .. " <LINE> " .. decisionDetails end
+    local token = row.operation or action.toolkitQueueOperation
+    if token and token.toolkitPriorityReason then
+        row.tooltip = row.tooltip .. " <LINE> " .. Toolkit.ActionQueueLabels.priorityWaiting(token.toolkitPriorityReason)
+    end
+    local details = Toolkit.ActionQueueLabels.describe(action).details
+    if details then row.tooltip = row.tooltip .. " <LINE> " .. details end
     local first, last = Toolkit.ActionQueueOperations.bounds(queue, action)
     if not batch and first and last > first then
         row.tooltip = row.tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_group", last - first + 1)
@@ -220,8 +219,13 @@ function Panel.drawRow(list, y, row, alt)
     local neighbor = list.items[row.index + (list.dropAfter and 1 or -1)]
     local boundary = list.dropAfter and row.last == dropLast or not list.dropAfter and row.first == dropFirst
     if dropFirst and boundary and (not neighbor or neighbor.first < dropFirst or neighbor.first > dropLast) then
-        local blocked = Toolkit.ActionQueue.moveReason(queue, list.dragAction, list.dropTarget, list.dropAfter)
-        if blocked then row.tooltip = row.tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. blocked) end
+        local dropResult = moveDecision(queue, list.dragAction, list.dropTarget, list.dropAfter)
+        local blocked = dropResult.reason
+        if blocked then
+            row.tooltip = row.tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. blocked)
+            local blockedDetails = Toolkit.ActionQueueLabels.decisionDetails(dropResult)
+            if blockedDetails then row.tooltip = row.tooltip .. " <LINE> " .. blockedDetails end
+        end
         list:drawRect(0, y + (list.dropAfter and row.height - 2 or 0), cancelX + 24, 2, 1,
             blocked and 1 or 0.3, blocked and 0.3 or 1, 0.3)
     end

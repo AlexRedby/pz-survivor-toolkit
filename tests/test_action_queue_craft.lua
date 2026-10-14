@@ -39,7 +39,7 @@ PZSurvivorToolkit = {}
 local craft = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCraft.lua'))()
 local function list(...)
     local values = {...}
-    return {size = function() return #values end, get = function(_, index) return values[index + 1] end}
+    return {class = 'List', size = function() return #values end, get = function(_, index) return values[index + 1] end}
 end
 local function item()
     return {class = 'InventoryItem', getName = function() return 'Item' end,
@@ -87,6 +87,9 @@ local panel = owner(ISWidgetHandCraftControl)
 local a, b = withOwner(handcraft(), panel), withOwner(handcraft(), panel)
 a.toolkitQueueOperation = {}; b.toolkitQueueOperation = a.toolkitQueueOperation
 assert(craft.supports(a) and craft.callbacksSafe(a))
+panel.triggerEvent = function() error('unknown native owner event helper') end
+assert(not craft.supports(a), 'native owner helper overrides also close callback permission')
+panel.triggerEvent = nil
 items = {}; assert(craft.collectItems(a, items) and items[panel])
 assert(craft.cancelWaiting(a) and craft.cancelWaiting(b) and #stops == 1 and stops[1] == true)
 assert(panel.craftTimes == nil, 'cancel one waiting batch owner once without running completion')
@@ -138,6 +141,10 @@ badFix.fixing = {getRequiredItems = function() error('stale repair data') end}
 assert(not craft.collectItems(badFix, {}))
 local badInputs = handcraft(); badInputs.items, badInputs.manualInputs = {}, {[0] = {}}
 assert(not craft.collectItems(badInputs, {}))
+local reads = 0
+badInputs.items = {size = function() reads = reads + 1; error('unknown list callback') end,
+    get = function() reads = reads + 1; error('unknown list callback') end}
+assert(not craft.collectItems(badInputs, {}) and reads == 0, 'unknown list methods must never execute during inspection')
 
 -- The helper retains the actual native stop/completion paths; only the root queue owns tail preservation.
 local resets = 0
@@ -155,15 +162,25 @@ assert(craft.supports(active) and craft.supports(fix), 'native methods stay unch
 if NativeNeatCraftingSource or NativeWishlistWorkshopRoot then
     local source = NativeNeatCraftingSource or read(NativeWishlistWorkshopRoot
         .. '/3502080466/mods/Neat_Crafting/common/media/lua/client/Neat_Crafting/NC_CraftActionPanel.lua')
-    assert(loadstring(source))()
+    NC_CraftActionPanel = ISPanel:derive('NC_CraftActionPanel')
+    NC_CraftActionPanel.onHandcraftActionStart = function() error('unverified start') end
+    NC_CraftActionPanel.onHandcraftActionComplete = function() error('unverified complete') end
+    NC_CraftActionPanel.onHandcraftActionCancelled = function() error('unverified cancel') end
+    assert(not craft.supports(withOwner(handcraft(), owner(NC_CraftActionPanel))),
+        'initial unknown mod-owner callbacks must not become a trusted first snapshot')
+    NC_CraftActionPanel = nil
+    assert(loadfile(ProjectRoot .. '/tests/support/action_queue_craft_owner.lua'))()(source)
     local refreshes = 0
     local neat = owner(NC_CraftActionPanel)
-    neat.refreshAfterCraftBatch = function() refreshes = refreshes + 1 end
+    neat.HandCraftPanel = {updateContainers = function() refreshes = refreshes + 1 end}
     neat.queuedCraftActions = {}
     local first, second = withOwner(handcraft(), neat), withOwner(handcraft(), neat)
     first.toolkitQueueOperation = {}; second.toolkitQueueOperation = first.toolkitQueueOperation
     assert(craft.supports(first) and craft.cancelWaiting(first) and craft.cancelWaiting(second))
     assert(refreshes == 1 and neat.craftTimes == nil and neat.queuedCraftActions == nil)
+    neat.refreshAfterCraftBatch = function() error('unknown owner helper') end
+    assert(not craft.supports(withOwner(handcraft(), neat)), 'instance helper replacement also closes permission')
+    neat.refreshAfterCraftBatch = nil
     local old = NC_CraftActionPanel.onHandcraftActionCancelled
     NC_CraftActionPanel.onHandcraftActionCancelled = function() end
     assert(not craft.supports(withOwner(handcraft(), neat)))

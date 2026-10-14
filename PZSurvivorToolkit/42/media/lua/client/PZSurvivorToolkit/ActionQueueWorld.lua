@@ -1,40 +1,26 @@
 require "PZSurvivorToolkit/ActionQueueOperations"
 require "TimedActions/ISQueueActionsAction"
 require "ISUI/ISDisassembleMenu"
+require "ISUI/ISBBQMenu"
+require "TimedActions/ISWaitWhileGettingUp"
 require "Moveables/ISMoveablesAction"
 require "Vehicles/ISUI/ISVehiclePartMenu"
 require "Vehicles/ISUI/ISVehicleMenu"
 require "Vehicles/TimedActions/ISRemoveBurntVehicle"
+require "PZSurvivorToolkit/SetStoveStateAction"
 
 local Toolkit = PZSurvivorToolkit
 local World = {}
 Toolkit.ActionQueueWorld = World
 local commandMarker = {}
-local commandCallbacks = {}
 local resumeMarker = {}
 local nativeTryBuild
 local buildTokens = {}
 local wreckMethods = {}
 local lifecycle = {"new", "start", "stop", "perform", "complete", "isValid", "update", "forceCancel", "forceStop"}
 
-local function waitForCompletion(action)
-    -- SP begins the next action inside perform(), before the preceding complete() consumes inputs.
-    if not action.toolkitCompletionWaited then action.toolkitCompletionWaited = true; return true end
-    return false
-end
-
-local function startCommand(action)
-    action:beginAddingActions()
-    action.addActionsFunction(action.character, unpack(action.args))
-    action:endAddingActions()
-    -- An invalid future target skips this command without native forceStop clearing the remaining queue.
-    action:forceComplete()
-end
-
-local function command(character, callback, snapshot, kind, name)
-    local action = ISQueueActionsAction:new(character, callback, snapshot)
-    action.start = startCommand
-    action.waitToStart = waitForCompletion
+local function commandOptions(snapshot, kind, name, fields)
+    local action = fields or {}
     action.toolkitWorldCommand = commandMarker
     action.toolkitWorldOperation = kind
     action.toolkitWorldDismantle = kind == "dismantle"
@@ -46,15 +32,23 @@ local function command(character, callback, snapshot, kind, name)
         action.toolkitWorldMinX, action.toolkitWorldMinY = snapshot.minX, snapshot.minY
         action.toolkitWorldWidth, action.toolkitWorldHeight, action.toolkitWorldLayers = snapshot.width, snapshot.height, snapshot.layers
     end
-    commandCallbacks[callback] = true
-    return action
+    return {fields = action}
+end
+
+local function command(character, callback, snapshot, kind, name)
+    return Toolkit.ActionQueueOperations.command(character, callback, snapshot, commandOptions(snapshot, kind, name))
+end
+
+local function enqueue(character, callback, snapshot, kind, name, fields)
+    return Toolkit.ActionQueueOperations.enqueue(character, callback, snapshot, commandOptions(snapshot, kind, name, fields))
 end
 
 function World.isDeferredAction(action)
     return action and action.Type == "ISQueueActionsAction" and action.toolkitWorldCommand == commandMarker
         -- shortcut: vehicle inputs are selected later; audit dependencies before enabling reorder/cancellation.
         and action.toolkitWorldOperation ~= "fuel" and action.toolkitWorldOperation ~= "wreck"
-        and action.start == startCommand and commandCallbacks[action.addActionsFunction] == true
+        and action.toolkitWorldOperation ~= "device"
+        and Toolkit.ActionQueueOperations.isCommand(action)
 end
 World.isCommand = World.isDeferredAction
 
@@ -64,9 +58,7 @@ local function pending(character)
 end
 
 local function defer(character, callback, snapshot)
-    return Toolkit.ActionQueueOperations.run(function()
-        return ISTimedActionQueue.add(command(character, callback, snapshot, "dismantle", snapshot.moveProps.name))
-    end)
+    return enqueue(character, callback, snapshot, "dismantle", snapshot.moveProps.name)
 end
 
 local function scrapFromCursor(character, target)
@@ -330,13 +322,14 @@ function World.sharesTarget(first, second)
 end
 
 -- The game loads the server-side cursor class after client Lua.
-local installAppliances, installFuel, installWrecks
+local installAppliances, installFuel, installWrecks, installDevices
 local function install()
     if ISMoveableCursor.toolkitQueueInstalled then return end
     ISMoveableCursor.toolkitQueueInstalled = true
     installAppliances()
     installFuel()
     installWrecks()
+    installDevices()
     nativeTryBuild = ISBuildingObject.tryBuild
     ISBuildingObject.tryBuild = function(cursor, x, y, z)
         local character = cursor.character or getSpecificPlayer(cursor.player)
@@ -351,9 +344,7 @@ local function install()
             return action
         end
         if cursor.dragNilAfterPlace then getCell():setDrag(nil, cursor.player) end
-        return Toolkit.ActionQueueOperations.run(function()
-            return ISTimedActionQueue.add(command(character, buildFromSnapshot, snapshot, "build", cursor.name))
-        end)
+        return enqueue(character, buildFromSnapshot, snapshot, "build", cursor.name)
     end
     local disassemble, create = ISDisassembleMenu.disassemble, ISMoveableCursor.create
     local newMoveable = ISMoveablesAction.new
@@ -420,10 +411,7 @@ installWrecks = function()
     ISVehicleMenu.onRemoveBurntVehicle = function(character, vehicle)
         if not Toolkit.Settings.actionQueue() then return callback(character, vehicle) end
         if not character or not vehicle then return end
-        return Toolkit.ActionQueueOperations.run(function()
-            return ISTimedActionQueue.add(command(character, wreckFromSnapshot,
-                {object = vehicle, callback = callback}, "wreck"))
-        end)
+        return enqueue(character, wreckFromSnapshot, {object = vehicle, callback = callback}, "wreck")
     end
 end
 
@@ -485,11 +473,7 @@ installFuel = function()
                     end
                 end
                 if not target.object then return end
-                return Toolkit.ActionQueueOperations.run(function()
-                    local action = command(character, fuelFromSnapshot, target, "fuel")
-                    action.toolkitFuelTake = take
-                    return ISTimedActionQueue.add(action)
-                end)
+                return enqueue(character, fuelFromSnapshot, target, "fuel", nil, {toolkitFuelTake = take})
             end
         end
     end
@@ -508,16 +492,26 @@ end
 
 local function applianceCommand(character, target)
     if target.object:getObjectIndex() == -1 or target.object:getSquare() ~= target.square then return end
-    target.callback(unpack(target.args))
+    if target.owner and target.owner[target.method] ~= target.binding then return end
+    if target.desired ~= nil then
+        if target.desired and (not target.object:getContainer() or not target.object:getContainer():isPowered()) then return end
+        if luautils.walkAdj(character, target.square) then
+            ISTimedActionQueue.add(PZSurvivorToolkitSetStoveState:new(character, target.object, target.desired))
+        end
+        return
+    end
+    target.callback(unpack(target.args, 1, target.args.n or #target.args))
 end
 
-local function enqueueAppliance(character, object, callback, args, label)
+local function enqueueAppliance(character, object, callback, args, label, stove)
     local snapshot = {object = object, square = object:getSquare(), callback = callback, args = args}
-    return Toolkit.ActionQueueOperations.run(function()
-        local action = command(character, applianceCommand, snapshot, "appliance")
-        action.toolkitApplianceLabel = label
-        return ISTimedActionQueue.add(action)
-    end)
+    if stove and object.Activated then
+        snapshot.desired = not object:Activated()
+        label = snapshot.desired and "UI_PZSurvivorToolkit_queue_action_stove_on" or "UI_PZSurvivorToolkit_queue_action_stove_off"
+    end
+    local options = commandOptions(snapshot, "appliance", nil, {toolkitApplianceLabel = label})
+    if stove then options.priority = "urgent" end
+    return Toolkit.ActionQueueOperations.enqueue(character, applianceCommand, snapshot, options)
 end
 
 local applianceInstalled
@@ -525,7 +519,7 @@ installAppliances = function()
     if applianceInstalled then return end
     applianceInstalled = true
     for _, name in ipairs({"ISToggleStoveAction", "ISToggleClothingWasher", "ISToggleClothingDryer",
-        "ISToggleComboWasherDryer", "ISSetComboWasherDryerMode", "ISOvenUITimedAction"}) do
+        "ISToggleComboWasherDryer", "ISSetComboWasherDryerMode", "ISOvenUITimedAction", "PZSurvivorToolkitSetStoveState"}) do
         local class = _G[name]
         if class then
             local methods = {}
@@ -545,7 +539,7 @@ installAppliances = function()
                 if pending(character) and object and object:getSquare() then
                     local title = label
                     if playerArg == 1 and c == "dryer" then title = "ContextMenu_ComboWasherDryer_SetModeDryer" end
-                    return enqueueAppliance(character, object, callback, {a, object, c}, title)
+                    return enqueueAppliance(character, object, callback, {a, object, c}, title, entry[1] == "onToggleStove")
                 end
                 return callback(a, object, c)
             end
@@ -562,7 +556,7 @@ installAppliances = function()
                     return perform(handler)
                 end
                 local target = setmetatable(shallowCopy(handler), getmetatable(handler))
-                return enqueueAppliance(handler.playerObj, handler.object, perform, {target})
+                return enqueueAppliance(handler.playerObj, handler.object, perform, {target}, nil, kind == "Stove")
             end
             local getControl = class.getControl
             if getControl then
@@ -594,6 +588,154 @@ installAppliances = function()
                 end
                 return toggle(page)
             end
+        end
+    end
+end
+
+local function liveItem(character, original, id)
+    local predicate = function(candidate) return candidate:getID() == id end
+    local items = character:getInventory():getAllEvalRecurse(predicate)
+    if not items:isEmpty() then return items:get(0) end
+    local source = original:getContainer()
+    if source then
+        items = source:getAllEvalRecurse(predicate)
+        if not items:isEmpty() then return items:get(0) end
+    end
+end
+
+local function deviceCommand(character, target)
+    if target.object:getObjectIndex() == -1 or target.object:getSquare() ~= target.square then return end
+    if target.owner and target.owner[target.method] ~= target.binding then return end
+    if target.selectedItem then
+        local item
+        if instanceof(target.selectedItem, "IsoWorldInventoryObject") then
+            if target.selectedItem:getObjectIndex() == -1 or not target.selectedItem:getSquare() then return end
+            item = target.selectedItem
+        else item = liveItem(character, target.selectedItem, target.itemId) end
+        if not item then return end
+        target.args[target.itemArg] = item
+    end
+    target.callback(unpack(target.args, 1, target.args.n))
+    if target.getUp then
+        local queue = ISTimedActionQueue.getTimedActionQueue(character)
+        ISTimedActionQueue.addAfter(queue.current, ISWaitWhileGettingUp:new(character))
+    end
+end
+
+local function enqueueDevice(character, object, callback, args, owner, method, binding, getUp, itemArg)
+    local item = itemArg and args[itemArg]
+    local snapshot = {object = object, square = object:getSquare(), callback = callback, args = args,
+        owner = owner, method = method, binding = binding, getUp = getUp, selectedItem = item, itemArg = itemArg,
+        itemId = item and not instanceof(item, "IsoWorldInventoryObject") and item:getID() or nil}
+    return enqueue(character, deviceCommand, snapshot, "device")
+end
+
+installDevices = function()
+    for _, name in ipairs({"onInfoGenerator", "onPlugGenerator", "onFixGenerator", "onTakeGenerator"}) do
+        local callback = ISWorldObjectContextMenu[name]
+        if callback then
+            local binding
+            binding = function(worldobjects, object, player, mode)
+                local character = getSpecificPlayer(player)
+                if pending(character) and object and object:getSquare() then
+                    return enqueueDevice(character, object, callback, {worldobjects, object, player, mode, n = 4},
+                        ISWorldObjectContextMenu, name, binding)
+                end
+                return callback(worldobjects, object, player, mode)
+            end
+            ISWorldObjectContextMenu[name] = binding
+        end
+    end
+    local addFuel = ISWorldObjectContextMenu.doAddFuelGenerator
+    if addFuel then
+        local binding
+        binding = function(worldobjects, object, containers, container, player)
+            local character = getSpecificPlayer(player)
+            if not pending(character) or not object or not object:getSquare() then
+                return addFuel(worldobjects, object, containers, container, player)
+            end
+            local selected = {}
+            for _, item in ipairs(containers and #containers > 0 and containers or {container}) do
+                selected[#selected + 1] = {item = item, id = item:getID()}
+            end
+            local function callback()
+                local live = {}
+                for _, saved in ipairs(selected) do
+                    local item = liveItem(character, saved.item, saved.id)
+                    local fluid = item and item:getFluidContainer()
+                    if fluid and fluid:contains(Fluid.Petrol) and fluid:getAmount() > 0 then live[#live + 1] = item end
+                end
+                if #live > 0 then return addFuel(worldobjects, object, live, nil, player) end
+            end
+            return enqueueDevice(character, object, callback, {n = 0}, ISWorldObjectContextMenu, "doAddFuelGenerator", binding)
+        end
+        ISWorldObjectContextMenu.doAddFuelGenerator = binding
+    end
+    local activate = ISWorldObjectContextMenu.onActivateGenerator
+    if activate then
+        local binding
+        binding = function(worldobjects, desired, object, player)
+            local character = getSpecificPlayer(player)
+            if pending(character) and object and object:getSquare() then
+                return enqueueDevice(character, object, activate, {worldobjects, desired, object, player, n = 4},
+                    ISWorldObjectContextMenu, "onActivateGenerator", binding)
+            end
+            return activate(worldobjects, desired, object, player)
+        end
+        ISWorldObjectContextMenu.onActivateGenerator = binding
+    end
+    for _, name in ipairs({"onExtinguish", "onRemovePropaneTank", "onToggle", "onInsertPropaneTank"}) do
+        local callback = ISBBQMenu and ISBBQMenu[name]
+        if callback then
+            local binding
+            binding = function(worldobjects, player, object, tank)
+                local character = getSpecificPlayer(player)
+                if pending(character) and object and object:getSquare() then
+                    return enqueueDevice(character, object, callback, {worldobjects, player, object, tank, n = 4},
+                        ISBBQMenu, name, binding, nil, name == "onInsertPropaneTank" and 4 or nil)
+                end
+                return callback(worldobjects, player, object, tank)
+            end
+            ISBBQMenu[name] = binding
+        end
+    end
+    local handleCharger = ISWorldObjectContextMenu.handleCarBatteryCharger
+    if handleCharger then
+        local function bindOptions(context, object, character)
+            for _, option in ipairs(context.options) do
+                if option.subOption then bindOptions(context:getSubMenu(option.subOption), object, character) end
+                if option.onSelect == context.onGetUpAndThen and option.param2 == object and option.param3 == character
+                    and type(option.param1) == "function" then
+                    local onSelect, callback = option.onSelect, option.param1
+                    option.onSelect = function(menu, fn, target, player, battery)
+                        if pending(player) and target and target:getSquare() then
+                            return enqueueDevice(player, target, callback, {target, player, battery, n = 3},
+                                nil, nil, nil, true, battery and 3)
+                        end
+                        return onSelect(menu, fn, target, player, battery)
+                    end
+                end
+            end
+        end
+        ISWorldObjectContextMenu.handleCarBatteryCharger = function(test, context, worldobjects, character, inventory)
+            local result = handleCharger(test, context, worldobjects, character, inventory)
+            local object = ISWorldObjectContextMenu.fetchVars.carBatteryCharger
+            if not test and object then bindOptions(context, object, character) end
+            return result
+        end
+    end
+    local picker = PJCK_CookerPicker
+    if picker and picker.onStoveButtonClick then
+        local callback = picker.onStoveButtonClick
+        picker.onStoveButtonClick = function(panel)
+            local cooker = panel.CookerPanel and panel.CookerPanel.selectedCooker
+            local object = cooker and cooker:getParent()
+            if pending(panel.player) and object and object:getSquare() and ISToggleStoveAction then
+                if not panel.CookerPanel.isPowered or UIManager.getSpeedControls()
+                    and UIManager.getSpeedControls():getCurrentGameSpeed() == 0 then return end
+                return enqueueAppliance(panel.player, object, callback, {panel}, nil, true)
+            end
+            return callback(panel)
         end
     end
 end

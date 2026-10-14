@@ -45,12 +45,12 @@ MoodleType = {}
 getSandboxOptions = function() return {getOptionByName=function() return {getValue=function() return 2 end} end} end
 getGameTime = function() return {getMinutesPerDay=function() return 60 end} end
 -- Exercise the native constructor/duration; animation and Java validity are fixture doubles.
+ISReadABook.start = function(self) self.character:setReading(true) end
+ISReadABook.isValid = function(self) return not self.missing end
+ISReadABook.perform = function(self) self.character:setReading(false); ISBaseTimedAction.perform(self) end
 local newRead = ISReadABook.new
 ISReadABook.new = function(self, character, item)
     local a = newRead(self, character, item)
-    a.start = function(v) v.character:setReading(true) end
-    a.isValid = function(v) return not v.missing end
-    a.perform = function(v) v.character:setReading(false); ISBaseTimedAction.perform(v) end
     return a
 end
 LuaTimedActionNew = {new = function(t)
@@ -113,9 +113,6 @@ local function book(p)
         setJobDelta = function(s,v) s.delta = v end, getDisplayName = function() return 'Book' end, getTex = function() return 'book-icon' end,
         class = 'InventoryItem'}
     p.inventory.items[a.item:getID()] = a.item
-    a.start = function(self) self.character:setReading(true) end
-    a.isValid = function(s) return not s.missing end
-    a.perform = function(s) s.character:setReading(false); ISBaseTimedAction.perform(s) end
     return a
 end
 local completions = {}
@@ -140,6 +137,7 @@ local function frame(p)
     end
     q:tick()
 end
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLabels.lua'))()
 -- Simulate transfer execution while keeping exact class methods for active-preparation validation.
 ISInventoryTransferAction.start = function() end
@@ -150,8 +148,33 @@ ISInventoryTransferAction.perform = function(self)
     ISBaseTimedAction.perform(self)
 end
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/BulkActions.lua'))()
+if not PZSurvivorToolkit.ActionQueueDefinitions then assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))() end
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePolicy.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local api = PZSurvivorToolkit.ActionQueue
+
+-- These lifecycle tests use explicit doubles; only the audited fixture classes get contracts.
+local fixtureClasses = {[leafType] = true}
+local function fixtureResources(action)
+    local result = {items = {}, targets = {}, cancelWaiting = false, bulk = action.toolkitIndependentBulk == true,
+        preparation = action.Type == "ISInventoryTransferAction" or action.Type == "ISWalkToTimedAction" or action.Type == "ISEquipWeaponAction"}
+    for _, key in ipairs({'item','gun','magazine','weapon','primary','secondary'}) do
+        local value = action[key]
+        if value and instanceof(value, 'InventoryItem') then result.items[value:getID()] = true end
+    end
+    if action.fixtureScrap then result.interrupt = 'audited-stop' end
+    return result
+end
+PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('fixture.lifecycle', {
+    matches = function(action)
+        if action.onStartFunc or action.onCompleteFunc or action.onCancelFunc or action.Type == 'ISQueueActionsAction' then return false end
+        if action.fixtureScrap then return true end
+        return fixtureClasses[getmetatable(action)] and (action.Type == getmetatable(action).Type
+            or (getmetatable(action) == leafType and (action.Type == 'ISInventoryTransferAction' or action.Type == 'ISEquipWeaponAction')))
+    end,
+    inspect = fixtureResources,
+})
+
 local p = player()
 local a, b, c = book(p), book(p), leaf(p, 'tail')
 local q = ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); ISTimedActionQueue.add(c)
@@ -209,6 +232,7 @@ ISInventoryPage.OnObjectHighlighted = function(_, object, highlighted) object.ui
 ISMoveableCursor = {clearCacheForAllPlayers=function() end}
 local function weld(character)
     local action = ISBaseTimedAction.new(ISMoveablesAction, character)
+    action.fixtureScrap = true
     local target = {highlighted=true, setHighlighted=function(self, _, value) self.highlighted=value end}
     action.mode, action.maxTime, action.playerNum, action.sound = 'scrap', 1, 0, 123
     action.moveProps = {object=target, scrapObjectViaCursor=function() error('cancel must not produce scrap or consume fuel') end}
@@ -248,7 +272,9 @@ assert(api.cancel(q, first) and q.queue[2] == equip and q.queue[3] == second)
 assert(api.cancelReason(q, equip) == 'dependent', 'preparation itself remains protected')
 -- Whole waiting operations remove preparation/main/returns atomically, preserving unrelated identities.
 local function preparation(character, kind, item)
-    local action = ISBaseTimedAction.new(ISBaseTimedAction:derive(kind), character)
+    local class = ISBaseTimedAction:derive(kind)
+    if kind == 'ISInventoryTransferAction' or kind == 'ISWalkToTimedAction' or kind == 'ISEquipWeaponAction' then fixtureClasses[class] = true end
+    local action = ISBaseTimedAction.new(class, character)
     action.item = item
     return action
 end
@@ -292,7 +318,7 @@ end
 b=pendingGroup(preparation(p,'ISInventoryTransferAction'),book(p))
 b.onCompleteFunc=function() error('completion is never called for pending removal') end
 b.toolkitQueueSafeOnComplete=b.onCompleteFunc
-assert(api.cancelOperation(q,b), 'the exact verified no-op completion marker allows guarded pickups')
+assert(not api.cancelOperation(q,b), 'a copied public completion marker cannot approve an unknown transfer callback')
 b=pendingGroup(preparation(p,'ISInventoryTransferAction'),book(p));b.onCompleteFunc=function() end
 b.toolkitQueueSafeOnComplete=b.onCompleteFunc;b.onCompleteFunc=function() error('changed callback') end
 assert(api.cancelOperationReason(q,b)=='operation_dependent', 'changed callbacks invalidate the exact safety marker')
@@ -327,7 +353,7 @@ b=pendingGroup(leaf(p,'output'),book(p));use=book(p);use.onCompleteFunc=function
 ISTimedActionQueue.add(use)
 assert(api.cancelOperationReason(q,b)=='operation_dependent', 'later callbacks may depend on an otherwise removable operation output')
 b=pendingGroup(book(p),book(p));use=preparation(p,'ModWork');use.items={custom='mod collection'};ISTimedActionQueue.add(use)
-assert(api.cancelOperation(q,b), 'arbitrary mod collection fields are not interpreted as native craft lists')
+assert(not api.cancelOperation(q,b), 'unknown mod actions are barriers even when their item fields look unrelated')
 local world={class='IsoObject'}
 b=pendingGroup(leaf(p,'scrap'),preparation(p,'ISWalkToTimedAction'));b.toolkitWorldTarget=world
 use=preparation(p,'ISActivateGenerator');use.generator=world;ISTimedActionQueue.add(use)
@@ -368,6 +394,8 @@ p = player(); a,b,c = book(p),book(p),book(p)
 q = ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); ISTimedActionQueue.add(c); frame(p)
 local originalCurrent, nativeQueue = a.action, q.queue
 b.forceCancel = function() error('reorder must not cancel') end
+assert(not api.move(q,c,b), 'a replaced lifecycle cannot inherit native reorder permission')
+b.forceCancel = nil
 assert(api.move(q,c,b) and q.queue == nativeQueue and q.queue[2] == c and q.queue[3] == b)
 assert(q.current == a and a.action == originalCurrent and not b.action and not c.action)
 assert(api.move(q,c,b,true) and q.queue[2] == b and q.queue[3] == c)
@@ -387,10 +415,10 @@ assert(api.move(q,linkedBook,restore,true) and q.queue[6]==b and q.queue[7]==lin
 local reused=book(p);reused.item=read.item;ISTimedActionQueue.add(reused)
 assert(api.moveReason(q,reused,read)=='move_shared_item','shared-item operation order remains protected')
 local callbackMove=leaf(p,'callback');callbackMove.onCompleteFunc=function() error('move must not invoke callbacks') end
-ISTimedActionQueue.add(callbackMove);assert(api.move(q,callbackMove,pickup))
+ISTimedActionQueue.add(callbackMove);assert(not api.move(q,callbackMove,pickup), 'unknown callbacks are barriers')
 local deferred=leaf(p,'deferred');deferred.Type='ISQueueActionsAction'
-ISTimedActionQueue.add(deferred);assert(api.move(q,deferred,callbackMove))
-assert(api.move(q,callbackMove,deferred), 'pending native generators keep their operation boundary')
+ISTimedActionQueue.add(deferred);assert(not api.move(q,deferred,callbackMove))
+assert(not api.move(q,callbackMove,deferred), 'unowned generators cannot inherit permission from a Type string')
 for _,kind in ipairs({'fuel','wreck'}) do
     deferred.toolkitWorldOperation=kind
     assert(api.moveReason(q,deferred,callbackMove)=='move_dependent', 'future vehicle inputs prevent moving its command')
@@ -767,6 +795,9 @@ x,y=list:cancelX()+12,list:topOfItem(3)+16;list:onMouseDown(x,y)
 b.addActionsFunction=function() error('changed single generator must never run') end
 list:onMouseUp(x,y);assert(#q.queue==3, 'single placeholder callback replacement prevents operation routing')
 click(3);assert(#q.queue==3, 'an arbitrary native craft generator retains normal protection')
+-- Remove the deliberately corrupted test operation before testing an independent UI gesture.
+table.remove(q.queue,3)
+local placeholderTail=book(p);ISTimedActionQueue.add(placeholderTail)
 -- A verified single world placeholder routes through the same complete operation safety check.
 b=ISQueueActionsAction:new(p,worldCallback);b.toolkitWorldDismantle=true
 ISTimedActionQueue.add(b);panel:update();click(4)
@@ -1094,7 +1125,7 @@ pickup=transfer(p,a.item,bag,p.inventory)
 operations.run(function() q=ISTimedActionQueue.add(pickup);ISTimedActionQueue.add(a) end)
 frame(p);local nativePerform=pickup.perform
 pickup.perform=function() error('unverified preparation') end
-assert(api.cancelOperationReason(q,a)=='operation_active' and not api.cancelOperation(q,a))
+assert(api.cancelOperationReason(q,a)=='operation_dependent' and not api.cancelOperation(q,a))
 pickup.perform=nativePerform
 PZSurvivorToolkit.BulkActions.guardTransfer(pickup)
 assert(not api.cancelOperationReason(q,a), 'the exact Toolkit pickup guard remains supported')
