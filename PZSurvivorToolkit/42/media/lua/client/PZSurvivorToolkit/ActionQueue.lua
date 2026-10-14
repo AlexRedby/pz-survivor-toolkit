@@ -151,6 +151,9 @@ ISTimedActionQueue.onCompleted = function(queue, action)
         end
     end
     if processPriority then processPriority(queue, false) end
+    if Toolkit.Settings.actionQueue() and Toolkit.BulkFood and queue.current == action and queue.queue[1] == action then
+        Toolkit.BulkFood.skipUnavailable(queue)
+    end
     return completed(queue, action)
 end
 
@@ -221,6 +224,7 @@ ISBaseTimedAction.stop = function(action)
         if not reason or reason == "starting" then queue.toolkitCancel = action end
     end
     if Toolkit.Settings.actionQueue() and queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action then
+        if Toolkit.BulkFood and Toolkit.BulkFood.missing(action) then queue.toolkitCancel = action end
         local generators, fire = Toolkit.ActionQueueGenerators, Toolkit.ActionQueueFire
         if (generators and generators.canSkip and generators.canSkip(action))
             or (fire and fire.canSkip and fire.canSkip(action)) then

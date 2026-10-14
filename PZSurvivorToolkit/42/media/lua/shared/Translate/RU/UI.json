@@ -39,6 +39,8 @@
   "UI_options_PZSurvivorToolkit_bulk_dismantle": "Разбор выделенной электроники",
   "UI_options_PZSurvivorToolkit_bulk_dismantle_tooltip": "Добавляет массовый разбор выделенных часов и другой электроники. Пропускает избранное, надетое и предметы в руках. Сохраняет обычные рецепты, инструменты, время и опыт.",
   "UI_PZSurvivorToolkit_dismantle_selected": "Разобрать выделенное (%1)",
+  "UI_PZSurvivorToolkit_eat_selected": "Съесть выбранное (%1)",
+  "UI_PZSurvivorToolkit_eat_selected_tooltip": "Съедает выбранную еду по очереди до насыщения. Избранное и уже добавленная в очередь еда исключаются. Отмена группы завершает текущий предмет и пропускает остальные.",
   "UI_PZSurvivorToolkit_dismantle_one": "Один предмет",
   "UI_options_PZSurvivorToolkit_bulk_remove_batteries": "Извлечение батареек из выделенных предметов",
   "UI_options_PZSurvivorToolkit_bulk_remove_batteries_tooltip": "Массовое извлечение через штатный рецепт «Извлечь батарейку». Пропускает избранное, надетое и предметы в руках. Устройства сохраняются, батарейки сохраняют заряд.",

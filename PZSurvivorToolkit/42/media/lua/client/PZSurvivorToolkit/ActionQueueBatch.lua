@@ -2,6 +2,9 @@ local Batch = {}
 PZSurvivorToolkit.ActionQueueBatch = Batch
 
 local function kind(action)
+    local Food = PZSurvivorToolkit.BulkFood
+    if Food and Food.isCommand(action) then return "food-plan" end
+    if Food and Food.isEat(action) then return "action" end
     local Craft, Recipes = PZSurvivorToolkit.ActionQueueCraft, PZSurvivorToolkit.CraftChainRecipes
     if Craft and (action.Type == "ISCraftAction" or action.Type == "ISHandcraftAction")
         and Craft.supports(action) then return "craft" end
@@ -18,12 +21,12 @@ function Batch.attach(action)
     action.toolkitBatchUnit = unit
     local state = token.toolkitBatch
     if not state then
-        state = {total = 0, completed = 0, unit = unit == "action" and "action" or "craft",
+        state = {total = 0, completed = 0, unit = (unit == "action" or unit == "food-plan") and "action" or "craft",
             iterations = {}, finished = {}, discarded = {}}
         token.toolkitBatch = state
     end
-    if unit == "action" then state.unit = "action" end
-    if unit == "plan" then action.toolkitBatchIteration = action end
+    if unit == "action" or unit == "food-plan" then state.unit = "action" end
+    if unit == "plan" or unit == "food-plan" then action.toolkitBatchIteration = action end
     local iteration = action.toolkitBatchIteration or action
     if not state.iterations[iteration] then
         state.iterations[iteration] = true
@@ -53,7 +56,7 @@ function Batch.completed(action)
     local token = action.toolkitQueueOperation
     local state = token and token.toolkitBatch
     local unit = action.toolkitBatchUnit
-    if not state or not unit or unit == "plan" then return end
+    if not state or not unit or unit == "plan" or unit == "food-plan" then return end
     local iteration = action.toolkitBatchIteration or action
     if state.finished[iteration] or state.discarded[iteration] then return end
     state.finished[iteration] = true

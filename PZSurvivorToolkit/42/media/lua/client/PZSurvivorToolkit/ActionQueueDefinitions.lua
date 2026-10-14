@@ -40,7 +40,10 @@ function Definitions.registerBehavior(id, behavior)
 end
 
 function Definitions.resolve(action)
-    local id = action and Definitions.types[action.Type]
+    local Food = PZSurvivorToolkit.BulkFood
+    local kind = action and action.Type
+    if action and Food and Food.isCommand(action) then kind = "ISEatFoodAction" end
+    local id = kind and Definitions.types[kind]
     local entry = id and Definitions.entries[id]
     return entry and entry.presentation, id
 end
