@@ -5,6 +5,7 @@ require "Fluids/ISFluidTransferAction"
 require "Fluids/ISFluidEmptyAction"
 require "TimedActions/ISActivateGenerator"
 require "TimedActions/ISFixGenerator"
+require "TimedActions/ISTransferAction"
 require "TimedActions/ISRemoveCarBatteryFromChargerAction"
 require "TimedActions/ISTakeCarBatteryChargerAction"
 
@@ -13,6 +14,8 @@ local Policy = {}
 Toolkit.ActionQueuePolicy = Policy
 local Operations = Toolkit.ActionQueueOperations
 local nativeForceCancel = ISBaseTimedAction.forceCancel
+local nativeTransferItem = ISTransferAction and ISTransferAction.transferItem
+local transferItemGuard
 local inspect
 local ordinaryTransfer
 
@@ -270,14 +273,26 @@ local snapshots = {}
 local transferFloorHelper
 local transferMethodsAdopted = false
 local transferHelperGuards = {}
+local function carriedContainers(container, character)
+    if not instanceof(character, "IsoPlayer") then return end
+    local chain, seen = {}, {}
+    while instanceof(container, "ItemContainer") and not seen[container] do
+        local kind = container:getType()
+        if kind == "floor" or kind == "proximityInv" or kind == "twistInv_corpses" then return end
+        chain[#chain + 1], seen[container] = container, true
+        if container == character:getInventory() then return chain end
+        local bag = container:getContainingItem()
+        if not instanceof(bag, "InventoryContainer") then return end
+        container = bag:getContainer()
+    end
+end
 local function ordinaryTransferContainer(container, character)
     if not instanceof(container, "ItemContainer") then return false end
     local kind = container:getType()
     if kind == "floor" or kind == "proximityInv" or kind == "twistInv_corpses" then return false end
     local bag = container:getContainingItem()
     if not bag then return true end
-    return instanceof(bag, "InventoryContainer") and instanceof(character, "IsoPlayer")
-        and bag:getContainer() == character:getInventory()
+    return carriedContainers(container, character) ~= nil
 end
 ordinaryTransfer = function(action)
     if not transferMethodsAdopted then return true end
@@ -286,6 +301,14 @@ ordinaryTransfer = function(action)
         and ordinaryTransferContainer(action.destContainer, action.character)
 end
 Policy.isOrdinaryTransfer = ordinaryTransfer
+function Policy.adoptTransferItemHelper(previous, replacement, helpersUnchanged)
+    if type(previous) ~= "function" or nativeTransferItem ~= previous
+        or type(replacement) ~= "function" or type(helpersUnchanged) ~= "function"
+        or type(ISTransferAction) ~= "table" or ISTransferAction.transferItem ~= replacement
+        or not helpersUnchanged() then return false end
+    nativeTransferItem, transferItemGuard = replacement, helpersUnchanged
+    return true
+end
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform", "complete",
     "getDuration", "serverStart", "serverStop", "animEvent", "forceStop", "forceCancel"}
 local function callbacksSafe(action)
@@ -387,14 +410,19 @@ end
 
 function Policy.addContainerResources(result, container)
     if not instanceof(container, "ItemContainer") then return end
-    local parent = container:getParent()
-    if parent and not instanceof(parent, "IsoGameCharacter") then result.targets[parent] = true end
-    local bag = container.getContainingItem and container:getContainingItem()
-    if instanceof(bag, "InventoryContainer") then
+    local seen = {}
+    while instanceof(container, "ItemContainer") and not seen[container] do
+        seen[container] = true
+        local parent = container:getParent()
+        if parent and not instanceof(parent, "IsoGameCharacter") then result.targets[parent] = true end
+        local bag = container.getContainingItem and container:getContainingItem()
+        if not instanceof(bag, "InventoryContainer") then return end
         result.containerOwners = result.containerOwners or {}
         result.containerOwners[bag:getID()] = true
         result.itemTypes[bag:getFullType()] = true
+        container = bag:getContainer()
     end
+    if container then result.knownInputs = false end
 end
 
 local function transferResources(action)
@@ -532,10 +560,7 @@ Policy.inspect = inspect
 
 local capacityNeutral = {ISReadABook = true, ISWalkToTimedAction = true, ISWalkToTimedActionF = true, ISPathFindAction = true}
 local function carriedContainer(container, character)
-    if not instanceof(container, "ItemContainer") or not instanceof(character, "IsoPlayer") then return false end
-    if container == character:getInventory() then return true end
-    local bag = container:getContainingItem()
-    return instanceof(bag, "InventoryContainer") and bag:getContainer() == character:getInventory()
+    return carriedContainers(container, character) ~= nil
 end
 
 local function finiteWeight(value)
@@ -544,6 +569,7 @@ end
 
 local function transferCapacityConflict(queue, a, b, last, check)
     if a.Type ~= "ISInventoryTransferAction" or b.Type ~= "ISInventoryTransferAction" then return end
+    if check.done then return check.blocker end
     local shared
     for _, left in pairs({a.srcContainer, a.destContainer}) do
         for _, right in pairs({b.srcContainer, b.destContainer}) do
@@ -554,19 +580,38 @@ local function transferCapacityConflict(queue, a, b, last, check)
     local aCarried = carriedContainer(a.srcContainer, character) or carriedContainer(a.destContainer, character)
     local bCarried = carriedContainer(b.srcContainer, character) or carriedContainer(b.destContainer, character)
     if not shared and not (aCarried and bCarried) then return end
-    if check.done then return check.blocker end
     local root = character:getInventory()
     check.done, check.blocker = true, shared or root
-    local incoming = {[root] = 0}
-    -- Ignore outgoing space: neither reordering nor cancellation may depend on a prior transfer freeing it.
-    for i = 1, last do
-        local action = queue.queue[i]
+    local incoming, touched, order, removed, loads = {[root] = 0}, {}, {}, {}, {}
+    if not check.to then
+        -- Keep incoming bounds for cancelled work, including an in-flight pickup's native return.
+        for i = check.first, check.last do removed[queue.queue[i]] = true end
+    end
+    for i = 1, last + 1 do
+        if i == check.to then
+            for j = check.first, check.last do order[#order + 1] = queue.queue[j] end
+        end
+        if i <= last and (not check.to or i < check.first or i > check.last) then order[#order + 1] = queue.queue[i] end
+    end
+    local function fits(container, weight)
+        local load = loads[container]
+        if not load then
+            load = {container:getCapacityWeight(), container:getEffectiveCapacity(character), container:getAcceptItemFunction() == nil}
+            loads[container] = load
+        end
+        local current, capacity = load[1], load[2]
+        -- Native capacity checks round the current load to hundredths at each transfer.
+        return load[3] and finiteWeight(current) and finiteWeight(capacity) and type(weight) == "number"
+            and math.abs(weight) < math.huge and math.max(0, current + weight) + 0.01 <= capacity
+    end
+    for _, action in ipairs(order) do
         local contract = inspect(action)
         if not contract or contract.knownInputs == false then return check.blocker end
         if action.Type == "ISInventoryTransferAction" then
-            if action.character ~= character or not carriedContainer(action.srcContainer, character)
-                or not carriedContainer(action.destContainer, character) then return check.blocker end
-            local destination, seen = action.destContainer, {}
+            local destination, source, seen = action.destContainer, action.srcContainer, {}
+            local destinations = carriedContainers(destination, character)
+            if action.character ~= character or not carriedContainer(source, character)
+                or not destinations then return check.blocker end
             local function add(item)
                 if not instanceof(item, "InventoryItem") or instanceof(item, "InventoryContainer") then return false end
                 local id, kind = item:getID(), item:getType()
@@ -576,7 +621,26 @@ local function transferCapacityConflict(queue, a, b, last, check)
                 local weight = item:getUnequippedWeight()
                 if not finiteWeight(weight) then return false end
                 incoming[root] = incoming[root] + weight
-                if destination ~= root then incoming[destination] = (incoming[destination] or 0) + weight end
+                for _, container in ipairs(destinations) do
+                    if container ~= root then
+                        incoming[container] = (incoming[container] or 0) + weight
+                        check.blocker = container
+                        if not fits(container, incoming[container]) then return false end
+                    end
+                end
+                -- shortcut: MP transactions may be rejected later; count released space only for verified SP pickups.
+                if nativeTransferItem and not isClient() and type(ISTransferAction) == "table"
+                    and ISTransferAction.transferItem == nativeTransferItem
+                    and (not transferItemGuard or transferItemGuard())
+                    and not removed[action] and not touched[id]
+                    and not instanceof(item, "AnimalInventoryItem")
+                    and destination == root and source ~= root and not source:getParent()
+                    and item:getContainer() == source and source:contains(item) and not item:getIsCraftingConsumed()
+                    and not character:getVehicle() and root:getAcceptItemFunction() == nil
+                    and root:getOnlyAcceptCategory() == nil then
+                    incoming[source] = (incoming[source] or 0) - weight
+                end
+                touched[id] = true
                 return true
             end
             if not add(action.item) then return check.blocker end
@@ -588,14 +652,8 @@ local function transferCapacityConflict(queue, a, b, last, check)
             return check.blocker
         end
     end
-    for container, weight in pairs(incoming) do
-        check.blocker = container
-        if container:getAcceptItemFunction() ~= nil then return container end
-        local current, capacity = container:getCapacityWeight(), container:getEffectiveCapacity(character)
-        -- Native capacity checks round the current load to hundredths at each transfer.
-        if not finiteWeight(current) or not finiteWeight(capacity) or not finiteWeight(weight)
-            or current + weight + 0.01 > capacity then return container end
-    end
+    check.blocker = root
+    if not fits(root, incoming[root]) then return root end
     check.blocker = nil
 end
 
@@ -650,7 +708,7 @@ function Policy.cancelOperationReason(queue, action)
         end
     end
     for item in pairs(type(token) == "table" and token.toolkitPickups or {}) do inputs[itemKey(item)] = true end
-    local capacityCheck = {}
+    local capacityCheck = {first = first, last = last}
     for i, other in ipairs(queue.queue) do
         if i < first or i > last then
             if other._isAddingActions or not knownCraftInputs(other) then return "operation_dependent", nil, nil, other end
@@ -714,7 +772,7 @@ function Policy.moveReason(queue, action, target, after)
             end
         end
     end
-    local capacityCheck = {}
+    local capacityCheck = {first = first, last = last, to = to}
     for i = math.min(first, to), math.min(#queue.queue, math.max(last, to - 1)) do
         if i < first or i > last then
             local crossed = queue.queue[i]

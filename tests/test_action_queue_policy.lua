@@ -3,6 +3,8 @@ local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))(
 f.native('shared/Fluids/ISFluidContainer.lua')
 f.native('shared/Fluids/ISFluidTransferAction.lua')
 f.native('shared/Fluids/ISFluidEmptyAction.lua')
+f.native('shared/TimedActions/ISTransferAction.lua')
+isClient=function()return false end
 f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
 local policy=f.project('ActionQueuePolicy')
 local originalItem=f.item
@@ -10,6 +12,7 @@ f.item=function(kind)
     local item=originalItem(kind)
     item.getUnequippedWeight=function(self)return self.weight or 0.1 end
     item.getType=function(self)return self:getFullType():match('%.(.+)$') end
+    item.getIsCraftingConsumed=function(self)return self.consumed or false end
     return item
 end
 local function capacity(container)
@@ -283,7 +286,7 @@ assert(not policy.inspect(nativeTransfer) and not policy.preparationCanFinish(na
     'changed delegated source helpers close native and alternate preparation permission')
 sourceHelpers=true
 carriedBag.getContainer=function()return bagInventory end
-assert(not policy.inspect(nativeTransfer) and not policy.preparationCanFinish(nativeTransfer),'deep nested destination remains protected')
+assert(not policy.inspect(nativeTransfer) and not policy.preparationCanFinish(nativeTransfer),'cyclic bag ancestry remains protected')
 carriedBag.getContainer=function()return f.player.inventory end
 nativeTransfer.destContainer={class='ItemContainer',getType=function()return 'floor' end,getContainingItem=function()end}
 assert(not policy.inspect(nativeTransfer) and not policy.preparationCanFinish(nativeTransfer),'floor destination is outside ordinary BetterContainers adoption')
@@ -408,5 +411,88 @@ assert(not policy.cancelOperationReason(many,sequence[2]) and weightReads==12,
 weightReads=0
 assert(not policy.moveReason(many,sequence[#sequence],sequence[2]) and weightReads==12,
     'one move decision computes capacity once across multiple crossed transfers')
-print('Shared bag references: stable owners, aggregate native capacity, batches, prefix effects and cancellation passed.')
+-- All ancestors are resources, but their contents can still move independently.
+bag2.getContainer=function()return bagInventory end
+local deepOut=f.action(ISInventoryTransferAction,{item=f.item('Base.Nails'),srcContainer=secondBagInventory,destContainer=f.player.inventory})
+local deepIn=f.action(ISInventoryTransferAction,{item=f.item('Base.Thread'),srcContainer=f.player.inventory,destContainer=secondBagInventory})
+local deepContract=assert(policy.inspect(deepOut))
+assert(deepContract.containerOwners[carriedBag.id] and deepContract.containerOwners[bag2.id])
+both(deepOut,deepIn)
+q=f.queue(head,deepOut,bagUse)
+assert(policy.moveReason(q,bagUse,deepOut)=='move_shared_item' and policy.cancelOperationReason(q,deepOut)=='operation_shared_item')
+bagInventory.load,bagInventory.capacity=49.95,50
+both(deepOut,deepIn,'container_capacity')
+bagInventory.load,bagInventory.capacity=nil,nil
+bag2.getContainer=function()return secondBagInventory end
+assert(not policy.inspect(deepOut),'cycle closes native deep transfer permission')
+bag2.getContainer=function()return bagInventory end
+
+-- Proposed order must retain the pickup that makes room. Never credit a skipped, cancelled or rejected pickup.
+f.player.getVehicle=function()end
+f.player.inventory.getOnlyAcceptCategory=function()end
+local free=f.item('Base.Hammer');free.weight=2;free.getContainer=function()return bagInventory end
+bagInventory.contains=function(_,item)return item==free end
+local release=f.action(ISInventoryTransferAction,{item=free,srcContainer=bagInventory,destContainer=f.player.inventory})
+local fill=f.action(ISInventoryTransferAction,{item=f.item('Base.Thread'),srcContainer=f.player.inventory,destContainer=bagInventory})
+local extra=f.action(ISInventoryTransferAction,{item=f.item('Base.Nails'),srcContainer=f.player.inventory,destContainer=bagInventory})
+bagInventory.load,bagInventory.capacity=10,10
+q=f.queue(head,release,fill,extra)
+assert(not policy.moveReason(q,extra,fill) and not policy.moveReason(q,fill,extra,true),'independent fills may swap after guaranteed release')
+local unordered=f.queue(head,fill,release,extra)
+assert(not policy.moveReason(unordered,release,fill),'moving the release first repairs an invalid original order')
+assert(policy.moveReason(q,fill,release)=='container_capacity' and policy.moveReason(q,release,fill,true)=='container_capacity',
+    'moving fill before its release is rejected in either drag direction')
+assert(policy.cancelOperationReason(q,release)=='container_capacity','cancel cannot remove required released space')
+assert(not policy.cancelOperationReason(q,extra),'unrelated cancellation retains the preceding release')
+free.consumed=true
+assert(policy.moveReason(q,extra,fill)=='container_capacity');free.consumed=false
+bagInventory.contains=function()return false end
+assert(policy.moveReason(q,extra,fill)=='container_capacity');bagInventory.contains=function(_,item)return item==free end
+isClient=function()return true end
+assert(policy.moveReason(q,extra,fill)=='container_capacity','MP rejection forbids speculative free space');isClient=function()return false end
+local nativeTransfer=ISTransferAction.transferItem
+ISTransferAction.transferItem=function()end
+assert(policy.moveReason(q,extra,fill)=='container_capacity','changed global native transfer helper forbids free-space proof')
+ISTransferAction.transferItem=nativeTransfer
+local nativeTransferClass=ISTransferAction;ISTransferAction=nil
+assert(policy.moveReason(q,extra,fill)=='container_capacity','missing global helper closes the proof without an exception')
+ISTransferAction=nativeTransferClass
+local nativeInstanceof=instanceof
+instanceof=function(value,name)return (value==free and name=='AnimalInventoryItem') or nativeInstanceof(value,name) end
+assert(policy.moveReason(q,extra,fill)=='container_capacity','animal rejection cannot release bag space')
+instanceof=nativeInstanceof
+f.player.getVehicle=function()return {} end
+assert(policy.moveReason(q,extra,fill)=='container_capacity');f.player.getVehicle=function()end
+f.player.inventory.getOnlyAcceptCategory=function()return 'Food' end
+assert(policy.moveReason(q,extra,fill)=='container_capacity');f.player.inventory.getOnlyAcceptCategory=function()end
+local prior=f.action(ISInventoryTransferAction,{item=free,srcContainer=bagInventory,destContainer=secondBagInventory})
+-- Earlier relocation makes the later bag-to-root pickup a no-op, even though its current source still matches.
+bag2.getContainer=function()return f.player.inventory end
+q=f.queue(head,prior,release,fill,extra)
+assert(policy.moveReason(q,extra,fill)=='container_capacity','earlier relocation must invalidate outgoing credit')
+local repeated=f.action(ISInventoryTransferAction,{item=free,srcContainer=bagInventory,destContainer=f.player.inventory})
+fill.item.weight,extra.item.weight=1.3,1.3
+q=f.queue(head,release,repeated,fill,extra)
+assert(policy.moveReason(q,extra,fill)=='container_capacity','a duplicate pickup cannot release the same space twice')
+fill.item.weight,extra.item.weight=nil,nil
+local reads,capacityWeight=0,bagInventory.getCapacityWeight
+bagInventory.getCapacityWeight=function(self)reads=reads+1;return capacityWeight(self)end
+q=f.queue(head,release,fill,extra)
+assert(not policy.moveReason(q,extra,fill) and reads==1,'scan each container weight once per decision')
+bagInventory.getCapacityWeight=capacityWeight
+local previousTransfer,delegation=ISTransferAction.transferItem,true
+local replacementTransfer=function(...)return previousTransfer(...)end
+local function unchangedDelegate()return delegation end
+assert(not policy.adoptTransferItemHelper(previousTransfer,replacementTransfer,unchangedDelegate),'replacement must already be installed')
+ISTransferAction.transferItem=replacementTransfer
+assert(not policy.adoptTransferItemHelper(nil,replacementTransfer,unchangedDelegate),'missing original cannot be adopted')
+assert(not policy.adoptTransferItemHelper(function()end,replacementTransfer,unchangedDelegate),'unknown original cannot be adopted')
+assert(policy.adoptTransferItemHelper(previousTransfer,replacementTransfer,unchangedDelegate))
+assert(not policy.moveReason(q,extra,fill),'verified Tidy wrapper retains released-space proof')
+delegation=false
+assert(policy.moveReason(q,extra,fill)=='container_capacity','changed Tidy delegation cannot grant outgoing credit')
+delegation=true
+assert(not policy.moveReason(q,extra,fill))
+bagInventory.load,bagInventory.capacity=nil,nil
+print('Container policy: ancestor identities/cycles/capacity, proposed order, released-space cancellation and changed/missing/MP inputs passed.')
 instanceof=baseInstanceof

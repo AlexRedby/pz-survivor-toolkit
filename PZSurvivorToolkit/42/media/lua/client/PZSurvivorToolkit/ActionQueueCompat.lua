@@ -566,10 +566,20 @@ function Compat.install()
                 end
             elseif id == "P4TidyUpMeister" then
                 local previous = ISInventoryTransferAction.getNotFullFloorSquare
+                local transferItem = ISTransferAction and ISTransferAction.transferItem
                 ok = loadSource(id, "P4TidyUpMeister", "OnPlayerUpdate")
                 local policy = Toolkit.ActionQueuePolicy
                 if ok and policy and policy.adoptTransferFloorHelper then
                     policy.adoptTransferFloorHelper(previous, ISInventoryTransferAction.getNotFullFloorSquare)
+                end
+                if ok and policy and policy.adoptTransferItemHelper and type(P4TidyUpMeister) == "table" then
+                    local owner = P4TidyUpMeister
+                    local registerAction, registerWorn = owner.registerActionPolicy, owner.registerWornItemReplacement
+                    -- The pinned source captures its inaccessible private delegate once before installing this wrapper.
+                    policy.adoptTransferItemHelper(transferItem, ISTransferAction.transferItem, function()
+                        return P4TidyUpMeister == owner and type(registerAction) == "function" and type(registerWorn) == "function"
+                            and owner.registerActionPolicy == registerAction and owner.registerWornItemReplacement == registerWorn
+                    end)
                 end
             end
             ready[id] = ok == true

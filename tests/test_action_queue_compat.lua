@@ -111,6 +111,8 @@ ISWashClothing.complete = function() consumed = consumed + 1; return true end
 ISWashClothing.GetRequiredWater = function() return 1 end
 ISWashClothing.GetRequiredSoap = function() return 0 end
 ISTransferAction = {GetDropItemOffset = function() end, transferItem = function() end}
+local nativeTransferItem=ISTransferAction.transferItem
+local transferItemGuard,adoptedTransferItem
 ISInventoryTransferUtil = {newInventoryTransferAction = function(character, item, src, dst) return ISInventoryTransferAction:new(character, item, src, dst) end}
 ISInventoryPaneContextMenu = {getContainers = function() return list({}) end,
     transferIfNeeded = function(character, item)
@@ -148,6 +150,12 @@ PZSurvivorToolkit.ActionQueuePolicy={adoptReadAnimEvent=function(previous,replac
 end, adoptTransferFloorHelper=function(previous,replacement)
     transferHelperAdopted=previous==nativeFloorHelper and ISInventoryTransferAction.getNotFullFloorSquare==replacement
     return transferHelperAdopted
+end, adoptTransferItemHelper=function(previous,replacement,guard)
+    assert(previous==nativeTransferItem and replacement==ISTransferAction.transferItem and replacement~=previous,
+        'verified Tidy load must adopt its exact new native transfer wrapper')
+    assert(type(guard)=='function' and guard(),'verified Tidy source identity must match before adoption')
+    transferItemGuard,adoptedTransferItem=guard,replacement
+    return true
 end, adoptTransferMethods=function(previous,replacement,guard)
     for _,name in ipairs({'isValid','start','perform','stop'}) do
         assert(type(previous[name])=='function' and ISInventoryTransferAction[name]==replacement[name])
@@ -238,6 +246,23 @@ assert(not compat.isInstalled('MPFastForward'),'server wrapper waits for the ser
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/server/000_PZSurvivorToolkitReadCompat.lua'))()
 assert(WS and NEQ_Dresser and TidyFixture and PJCK_EvoPanel and NC_CraftActionPanel and PJCK_CraftActionPanel)
 assert(transferHelperAdopted,'verified Tidy load hands the exact native wrapper pointers to Policy')
+assert(transferItemGuard and transferItemGuard() and adoptedTransferItem==ISTransferAction.transferItem,
+    'actual pinned Tidy source adopts its once-captured native delegate wrapper')
+assert(TidyFixture.ISTransferAction_transferItem==nativeTransferItem,'actual source saves the captured helper as its private delegate')
+local tidyPublic=P4TidyUpMeister
+P4TidyUpMeister={registerActionPolicy=tidyPublic.registerActionPolicy,registerWornItemReplacement=tidyPublic.registerWornItemReplacement}
+assert(not transferItemGuard(),'late public owner replacement invalidates adopted helper identity')
+P4TidyUpMeister=tidyPublic
+for _,name in ipairs({'registerActionPolicy','registerWornItemReplacement'}) do
+    local callback=tidyPublic[name];tidyPublic[name]=function() end
+    assert(not transferItemGuard(),'late public source callback replacement invalidates adopted helper identity')
+    tidyPublic[name]=callback
+end
+local changedTransferItem=ISTransferAction.transferItem
+ISTransferAction.transferItem=function() end
+assert(ISTransferAction.transferItem~=adoptedTransferItem,'late global helper replacement cannot match the adopted wrapper')
+ISTransferAction.transferItem=changedTransferItem
+assert(transferItemGuard(),'restoring exact source identity restores the helper guard')
 for id in pairs(paths) do assert(compat.isInstalled(id), 'source-pinned adapter installed: ' .. id) end
 local readFixture={}; ISReadABook.animEvent(readFixture,'ReadAPage',nil)
 assert(readFixture.fixtureReadEvents==1,'pinned MPFF animEvent delegates native SP reading once')
