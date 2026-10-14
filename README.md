@@ -6,7 +6,7 @@ Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quant
 
 | Component | Version | Installation |
 |---|---|---|
-| PZ Survivor Toolkit | 0.1.42 | Required; included in the prepared `mods` folder and server INI. |
+| PZ Survivor Toolkit | 0.1.43 | Required; included in the prepared `mods` folder and server INI. |
 | Survivor Wishlist | 0.1.0 | Required; included in the prepared `mods` folder and server INI. |
 | Toolkit Java Patches | 0.1.3 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
 
@@ -112,7 +112,9 @@ Toolkit v0.1.26 passed **46 native queue checks per EN/RU client** on 13 October
 
 ## Recorded verification
 
-These results describe the builds and selected sets used in each scenario, not a claim that every current feature was exercised together. Current installation uses the 44-mod INI listed above.
+These results describe the builds and selected sets used in each scenario, not a claim that every current feature was exercised together. Current installation uses the 45-mod INI listed above.
+
+Toolkit v0.1.43 removes assertion-based rejection from queue craft/repair inspection: Kahlua logs failed assertions even when `pcall` catches them. Repeated cancellation/movement evaluations for container inputs, use/depletion/break replacements and stale repair selections now leave resources unknown without throwing. Native-source regressions and stock B42.21 Kahlua checks preserve the same safety restrictions and valid recipe/donor results. This fix was not exercised in a live game session or against the reported Windows log.
 
 Toolkit v0.1.41 passed **17 bulk-food checks per EN/RU client with all 44 selected Mod IDs** on an isolated B42.21 macOS dedicated server. Real -1 hunger clovers from the inventory and a worn backpack formed one queue group; repeated full-portion clicks selected different unreserved items. The server confirmed each eaten item ID exactly once, retained food after waiting/active cancellation, and no consumption of missing or fullness-rejected food. Unrelated reading completed after every case. Native food durations and effects were preserved, including the selected SaucedCarts start wrapper; localized queue screenshots were inspected. Native-source and stock Kahlua regressions also cover food disappearing or fullness changing during preparation, cleanup preservation, partial/EatSmart callbacks and changed lifecycle/helper protection. VOIP stayed disabled and microphone recording remained uninitialized. Physical input, live SP, cart pushing itself, other platforms and WAN latency were not covered by this run.
 

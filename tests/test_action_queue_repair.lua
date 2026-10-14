@@ -83,6 +83,40 @@ local fix = repair()
 local inputs = assert(craft.repairInputs(fix))
 assert(inputs['Base.Shotgun'] and inputs['Base.Glue'])
 assert(not craft.collectItems(fix, {}), 'cancellation must retain the existing unknown-input protection')
+-- A caught assertion still logs in Kahlua on every queue-panel redraw.
+local function withoutAssertions(callback)
+    local originalAssert, calls = assert, 0
+    assert = function(...) calls = calls + 1; return originalAssert(...) end
+    local ok, result = pcall(callback)
+    assert = originalAssert
+    assert(ok, result)
+    assert(calls == 0, 'repair inspection must not invoke assert (Kahlua logs caught assertions): ' .. calls)
+    return result
+end
+local policy = PZSurvivorToolkit.ActionQueuePolicy
+local fixerName, globalName = fixer.getFixerName, globalFixer.getFixerName
+for _, invalid in ipairs({'fixing-index', 'fixer-index', 'fixer-name', 'global-name'}) do
+    local rejected = repair()
+    if invalid == 'fixing-index' then rejected.fixing = {getRequiredItems=function() return list() end}
+    elseif invalid == 'fixer-index' then rejected.fixer = {}
+    elseif invalid == 'fixer-name' then fixer.getFixerName = function() return '' end
+    else globalFixer.getFixerName = function() return 99 end end
+    local redrawQueue = queue(head, reading, rejected)
+    for redraw = 1, 3 do
+        local checked = withoutAssertions(function()
+            return {inputs=craft.repairInputs(rejected), contract=policy.inspect(rejected),
+                cancel=policy.evaluateCancel(redrawQueue, reading, true),
+                move=policy.evaluateMove(redrawQueue, rejected, reading)}
+        end)
+        assert(not checked.inputs and not checked.contract.dynamicInputs and not checked.contract.knownInputs,
+            invalid .. ' keeps stale or malformed native repair selections protected')
+        assert(not checked.cancel.allowed and checked.cancel.reason == 'operation_dependent')
+        assert(not checked.move.allowed and checked.move.reason == 'move_craft_inputs')
+    end
+    fixer.getFixerName, globalFixer.getFixerName = fixerName, globalName
+end
+inputs = withoutAssertions(function() return craft.repairInputs(fix) end)
+assert(inputs['Base.Shotgun'] and inputs['Base.Glue'], 'valid repair donors still pass without assertions')
 local q = queue(head, reading, fix)
 assert(not queueAPI.moveReason(q, fix, reading) and queueAPI.move(q, fix, reading))
 assert(q.queue[2] == fix and q.queue[3] == reading and fix.fixer == fixer and fix.fixing == fixing and fix.item == target,

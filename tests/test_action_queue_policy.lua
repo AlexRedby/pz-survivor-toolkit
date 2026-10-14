@@ -201,6 +201,64 @@ local legacy=f.action(ISCraftAction,{item=f.item('Base.Material'),recipe=legacyR
 assert(Craft.futureResources(legacy).dynamicInputs['Base.Material'])
 q=f.queue(head,legacy,second)
 assert(not policy.moveReason(q,legacy,second,true) and not policy.moveReason(q,second,legacy))
+-- Kahlua logs assert before pcall catches it; redraw rejection must use ordinary returns.
+local function withoutAssertions(callback)
+    local originalAssert, calls = assert, 0
+    assert = function(...) calls = calls + 1; return originalAssert(...) end
+    local ok, result = pcall(callback)
+    assert = originalAssert
+    assert(ok, result)
+    assert(calls == 0, 'craft inspection must not invoke assert (Kahlua logs caught assertions): ' .. calls)
+    return result
+end
+for _, actionType in ipairs({'handcraft', 'legacy'}) do
+    for _, method in ipairs({'isItemType', 'getReplaceOnUse', 'getReplaceOnDeplete', 'getOnBreak'}) do
+        local rejected = actionType == 'handcraft' and late('Base.Other', 'Base.Unrelated')
+            or f.action(ISCraftAction, {item=f.item('Base.Material'), recipe=legacyRecipe})
+        local inputScript = scripts[actionType == 'handcraft' and 'Base.Other' or 'Base.Material']
+        if actionType == 'handcraft' then
+            local inputs = rejected.craftRecipe:getInputs()
+            local input = inputs:get(0)
+            inputScript = input:getPossibleInputItems():get(0)
+            input.getPossibleInputItems = function() return list(inputScript) end
+            rejected.craftRecipe.getInputs = function() return inputs end
+        end
+        local previous = inputScript[method]
+        inputScript[method] = function() return method == 'isItemType' and true or 'Base.Bottle' end
+        local redrawQueue = f.queue(head, rejected, second)
+        for redraw = 1, 3 do
+            local checked = withoutAssertions(function()
+                return {resources=Craft.futureResources(rejected), contract=policy.inspect(rejected),
+                    rejectedCancel=policy.evaluateCancel(redrawQueue, rejected, true),
+                    cancel=policy.evaluateCancel(redrawQueue, second, true),
+                    move=policy.evaluateMove(redrawQueue, second, rejected)}
+            end)
+            assert(not checked.resources and not checked.contract.knownInputs and checked.contract.unknownOutputs,
+                actionType .. ' ' .. method .. ' keeps unknown craft effects protected')
+            assert(not checked.cancel.allowed and checked.cancel.reason == 'operation_dependent')
+            assert(not checked.rejectedCancel.allowed and checked.rejectedCancel.reason == 'operation_dependent')
+            assert(not checked.move.allowed and checked.move.reason == 'move_craft_inputs')
+        end
+        inputScript[method] = previous
+    end
+end
+q = f.queue(head, legacy, second)
+local accepted = withoutAssertions(function()
+    return {resources=Craft.futureResources(legacy), contract=policy.inspect(first),
+        cancel=policy.evaluateCancel(q, second, true), move=policy.evaluateMove(q, second, legacy)}
+end)
+assert(accepted.resources.dynamicInputs['Base.Material'] and accepted.resources.outputTypes['Base.Product'])
+assert(accepted.contract.knownInputs and not accepted.contract.unknownOutputs and accepted.cancel.allowed and accepted.move.allowed,
+    'valid native handcraft and legacy resource contracts still permit independent operations')
+local partial = late('Base.Other', 'Base.Unrelated')
+local partialOutputs = partial.craftRecipe:getOutputs()
+partialOutputs:get(0).getPossibleResultItems = function() return list(script('Base.Unrelated'), script('Malformed')) end
+partial.craftRecipe.getOutputs = function() return partialOutputs end
+local rejectedPartial = withoutAssertions(function()
+    return {resources=Craft.futureResources(partial), contract=policy.inspect(partial)}
+end)
+assert(not rejectedPartial.resources and not rejectedPartial.contract.knownInputs and rejectedPartial.contract.unknownOutputs,
+    'a late invalid output cannot expose a partially populated craft resource contract')
 legacyRecipe.getScriptLines=function()return list('OnGiveXP: Mod.callback,') end
 assert(not Craft.futureResources(legacy),'unknown legacy callbacks stay protected without being invoked')
 local recipeReads=0
