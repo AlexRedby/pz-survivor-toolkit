@@ -357,6 +357,9 @@ local function install()
         end
         return action
     end
+    if Toolkit.ActionQueuePolicy then
+        Toolkit.ActionQueuePolicy.adoptMoveablesConstructor(newMoveable, ISMoveablesAction.new)
+    end
     ISDisassembleMenu.disassemble = function(character, target)
         if not pending(character)
             or not target or not target.moveProps or not target.square or not target.object then

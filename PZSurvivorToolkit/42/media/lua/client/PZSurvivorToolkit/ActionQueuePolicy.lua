@@ -378,6 +378,14 @@ local function registerNative(name, inspector, helpers)
 end
 Policy.registerNative = registerNative
 
+function Policy.adoptMoveablesConstructor(previous, replacement)
+    local snapshot = snapshots[ISMoveablesAction]
+    if not snapshot or type(previous) ~= "function" or type(replacement) ~= "function"
+        or snapshot.methods.new ~= previous or ISMoveablesAction.new ~= replacement then return false end
+    snapshot.methods.new = replacement
+    return true
+end
+
 function Policy.adoptReadAnimEvent(previous, replacement)
     local snapshot = snapshots[ISReadABook]
     if not snapshot or snapshot.methods.animEvent ~= previous or ISReadABook.animEvent ~= replacement

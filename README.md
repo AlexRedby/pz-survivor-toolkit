@@ -6,7 +6,7 @@ Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quant
 
 | Component | Version | Installation |
 |---|---|---|
-| PZ Survivor Toolkit | 0.1.38 | Required; included in the prepared `mods` folder and server INI. |
+| PZ Survivor Toolkit | 0.1.39 | Required; included in the prepared `mods` folder and server INI. |
 | Survivor Wishlist | 0.1.0 | Required; included in the prepared `mods` folder and server INI. |
 | Toolkit Java Patches | 0.1.3 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
 
@@ -112,6 +112,8 @@ Toolkit v0.1.26 passed **46 native queue checks per EN/RU client** on 13 October
 ## Recorded verification
 
 These results describe the builds and selected sets used in each scenario, not a claim that every current feature was exercised together. Current installation uses the 44-mod INI listed above.
+
+Toolkit v0.1.39 passed **8 world-electronics checks per EN/RU client with all 44 selected Mod IDs** on an isolated B42.21 macOS dedicated server. A television, rotary phone and wall clock dismantled consecutively, followed by queued reading; the server confirmed one completion per object and the original screwdriver ID. Explicit queue clearing preserved a fourth object and its unread tail. The fix adopts Toolkit's late moveable constructor into its existing native contract, so replicated target removal no longer drops following work. The integrated native-source regression fails against v0.1.36 and passes in stock Kahlua; unknown lifecycle replacements still retain native abort behavior. VOIP stayed disabled. Physical input, live SP, other platforms and WAN latency were not covered by this run.
 
 Toolkit v0.1.38 queue changes passed **13 true single-player checks and 18 multiplayer checks per EN/RU client** on 14 October 2026 with **41 Mod IDs** on B42.21 macOS: the current selection with SaucedCarts and its two wheelbarrow add-ons disabled. Native generator repair consumed exactly two scrap items; active cancellation preserved the unused scrap and unrelated reading. Independent BBQ fuel operations moved in both directions, waiting cancellation preserved its original item, and newspaper ignition consumed exactly one lighter use. Ten authoritative server receipts verified the effects and conservation of 19 original item IDs per client. Native-source and stock Kahlua tests additionally covered power dependencies, moduleless future inputs, camping/fireplace/Project Cook callbacks, multi-use fuel, retry-before-return ordering, changed handlers and CleanUI/Better Containers integration. SP and MP retained native durations, with books prefilled near completion, and produced no gameplay Lua exceptions. VOIP was disabled and microphone recording stayed uninitialized. Live fire coverage used charcoal BBQs; campfire retries, borrowed lighting tools, physical input, other platforms, WAN jitter and long sessions remain outside that live run. A separate **8-check SP run with all 44 Mod IDs** confirmed ordinary one-step generator repair, BBQ fuel and ignition, preserved reading, and protected controls under SaucedCarts; it grants no cart-transfer or recursive-repair compatibility.
 
