@@ -488,7 +488,10 @@ local function installContainerTransfers()
         local loaded, patch = pcall(require, module)
         if not loaded or type(patch) ~= "table" or patch._installed ~= false or type(patch.install) ~= "function" then return end
         local previous = transferMethods()
-        if not pcall(patch.install) or not policy.adoptTransferMethods(previous, transferMethods(), containerHelpersUnchanged) then return end
+        if not pcall(patch.install) then return end
+        local replacement = transferMethods()
+        if not policy.adoptTransferMethods(previous, replacement, containerHelpersUnchanged) then return end
+        if Operations.adoptReturnMethods then Operations.adoptReturnMethods(previous, replacement, containerHelpersUnchanged) end
     end
     transferSourceSafe, ready.EURY_CONTAINERS = true, true
 end

@@ -87,12 +87,12 @@ def main() -> None:
         lua.globals().NativeDropBoxSource = (args.native_radio_root / "RadioCom/ISUIRadio/ISItemDropBox.lua").read_text(encoding="utf-8")
     lua.execute((ROOT / "tests/test_tv_controls.lua").read_text(encoding="utf-8"))
 
-    for name in ("test_ui_style.lua", "test_sidebar_tools.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_compat.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua"):
+    for name in ("test_ui_style.lua", "test_sidebar_tools.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_compat.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_generators.lua", "test_action_queue_fire.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua"):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
         if args.native_action_root:
             lua.globals().NativeActionRoot = str(args.native_action_root)
-        if name in ("test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_dispatch.lua", "test_action_queue_compat.lua") and args.wishlist_workshop_root:
+        if name in ("test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_dispatch.lua", "test_action_queue_compat.lua", "test_action_queue_fire.lua", "test_action_queue_generators.lua") and args.wishlist_workshop_root:
             lua.globals().NativeWishlistWorkshopRoot = str(args.wishlist_workshop_root)
         if args.project_cook_picker:
             lua.globals().ProjectCookPickerSourcePath = str(args.project_cook_picker)
@@ -128,6 +128,14 @@ def main() -> None:
             lua.globals().ProximityInventorySource = args.proximity_source.read_text(encoding="utf-8")
             lua.globals().ProximityInventoryPageSource = (args.proximity_source.parent / "ISInventoryPage.lua").read_text(encoding="utf-8")
         lua.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
+        if name == "test_action_queue_fire.lua" and args.native_action_root and args.wishlist_workshop_root:
+            for scenario in ("FireTestBCPreinstalled", "FireTestBCForeignPredecessor"):
+                variant = LuaRuntime(unpack_returned_tuples=True)
+                variant.globals().ProjectRoot = str(ROOT)
+                variant.globals().NativeActionRoot = str(args.native_action_root)
+                variant.globals().NativeWishlistWorkshopRoot = str(args.wishlist_workshop_root)
+                variant.globals()[scenario] = True
+                variant.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
 
     for path in sorted((ROOT / "tests").glob("test_wishlist_*.lua")):
         lua = LuaRuntime(unpack_returned_tuples=True)

@@ -276,4 +276,41 @@ producer, child, tail = action('AuditedProducer'), action('ForeignChild'), actio
 ISTimedActionQueue.add(producer); ISTimedActionQueue.add(tail)
 operations.perform(producer, function(a) q:onCompleted(a); ISTimedActionQueue.add(child) end)
 assert(q.current == tail and q.queue[2] == child, 'an unaudited producer child is never moved across unrelated work')
+-- A verified retry keeps borrowed tools until it finishes; unknown return callbacks keep native order.
+operations.registerProducer('retry', function(a) return a.Type == 'RetryProducer' end,
+    function(parent, child) return child.Type == 'RetryChild', 'before-returns' end)
+local function retryBeforeReturn(changed, expectedBefore)
+    reset()
+    local parent, retry, unrelated = action('RetryProducer'), action('RetryChild'), action('Tail')
+    ISTimedActionQueue.add(parent)
+    local restore = setmetatable(action('ISInventoryTransferAction'), ISInventoryTransferAction)
+    restore.isValidStart = nil
+    restore.allowMissingItems, restore.srcContainer, restore.destContainer = true, player.inventory, {}
+    if changed then restore.onCompleteFunc = function() end end
+    operations.runWith(parent.toolkitQueueOperation, ISTimedActionQueue.add, restore)
+    ISTimedActionQueue.add(unrelated)
+    operations.perform(parent, function(a)
+        ISTimedActionQueue.add(retry)
+        assert(q.queue[2] == (expectedBefore and retry or restore))
+        assert(q.queue[3] == (expectedBefore and restore or retry) and q.queue[4] == unrelated)
+        q:onCompleted(a)
+    end)
+    assert(q.current == (expectedBefore and retry or restore))
+end
+retryBeforeReturn(false, true)
+retryBeforeReturn(true, false)
+local original, replacement, helpersSafe = {}, {}, true
+for _, name in ipairs({'isValid', 'start', 'perform', 'stop'}) do
+    original[name] = ISInventoryTransferAction[name]
+    local callback = original[name]
+    replacement[name] = function(...) return callback(...) end
+end
+local function unchangedHelpers() return helpersSafe end
+assert(not operations.adoptReturnMethods(original, replacement, unchangedHelpers))
+for name, method in pairs(replacement) do ISInventoryTransferAction[name] = method end
+assert(not operations.adoptReturnMethods({}, replacement, unchangedHelpers))
+assert(operations.adoptReturnMethods(original, replacement, unchangedHelpers))
+retryBeforeReturn(false, true)
+helpersSafe = false; retryBeforeReturn(false, false)
+helpersSafe = true; retryBeforeReturn(false, true)
 print('Action operation grouping native-contract checks passed.')

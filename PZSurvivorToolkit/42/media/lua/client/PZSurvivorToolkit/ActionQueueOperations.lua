@@ -22,6 +22,7 @@ local commandMethods = {}
 for _, name in ipairs(commandLifecycle) do commandMethods[name] = commandClass and commandClass[name] end
 local returnClass = ISInventoryTransferAction
 local returnMethods = {}
+local returnHelperGuards = {}
 for _, name in ipairs({"new", "isValid", "isValidStart", "start", "update", "stop", "perform", "complete", "forceStop", "forceCancel"}) do
     returnMethods[name] = returnClass[name]
 end
@@ -31,6 +32,19 @@ local function nativeReturn(action)
         or action.srcContainer ~= action.character:getInventory() or action.destContainer == action.srcContainer
         or action.onStartFunc or action.onCancelFunc or action.onCompleteFunc then return false end
     for name, method in pairs(returnMethods) do if action[name] ~= method then return false end end
+    for _, guard in ipairs(returnHelperGuards) do if not guard() then return false end end
+    return true
+end
+
+function Operations.adoptReturnMethods(previous, replacement, helpersUnchanged)
+    if type(previous) ~= "table" or type(replacement) ~= "table" or type(helpersUnchanged) ~= "function"
+        or ISInventoryTransferAction ~= returnClass or not helpersUnchanged() then return false end
+    for _, name in ipairs({"isValid", "start", "perform", "stop"}) do
+        if type(previous[name]) ~= "function" or type(replacement[name]) ~= "function"
+            or returnMethods[name] ~= previous[name] or returnClass[name] ~= replacement[name] then return false end
+    end
+    for _, name in ipairs({"isValid", "start", "perform", "stop"}) do returnMethods[name] = replacement[name] end
+    returnHelperGuards[#returnHelperGuards + 1] = helpersUnchanged
     return true
 end
 
@@ -244,12 +258,16 @@ ISTimedActionQueue.add = function(action)
     stamp(action)
     local current = completionScope and completionScope.action
     local queue = current and ISTimedActionQueue.queues[current.character]
-    if queue and queue.queue[1] == current and action.character == current.character
+    local sameOperation = queue and queue.queue[1] == current and action.character == current.character
         and action.toolkitQueueOperation == current.toolkitQueueOperation
-        and not current._isAddingActions and (nativeReturn(action)
-            or completionScope.acceptsChild and completionScope.acceptsChild(current, action)) then
+        and not current._isAddingActions
+    local accepted, placement
+    if sameOperation and completionScope.acceptsChild then accepted, placement = completionScope.acceptsChild(current, action) end
+    if sameOperation and (nativeReturn(action) or accepted) then
         local last = 1
         while queue.queue[last + 1] and queue.queue[last + 1].toolkitQueueOperation == current.toolkitQueueOperation do
+            -- A native retry still needs the tools that the following return would remove.
+            if accepted and placement == "before-returns" and nativeReturn(queue.queue[last + 1]) then break end
             last = last + 1
         end
         local result = add(action)

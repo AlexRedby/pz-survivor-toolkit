@@ -631,59 +631,7 @@ local function enqueueDevice(character, object, callback, args, owner, method, b
 end
 
 installDevices = function()
-    for _, name in ipairs({"onInfoGenerator", "onPlugGenerator", "onFixGenerator", "onTakeGenerator"}) do
-        local callback = ISWorldObjectContextMenu[name]
-        if callback then
-            local binding
-            binding = function(worldobjects, object, player, mode)
-                local character = getSpecificPlayer(player)
-                if pending(character) and object and object:getSquare() then
-                    return enqueueDevice(character, object, callback, {worldobjects, object, player, mode, n = 4},
-                        ISWorldObjectContextMenu, name, binding)
-                end
-                return callback(worldobjects, object, player, mode)
-            end
-            ISWorldObjectContextMenu[name] = binding
-        end
-    end
-    local addFuel = ISWorldObjectContextMenu.doAddFuelGenerator
-    if addFuel then
-        local binding
-        binding = function(worldobjects, object, containers, container, player)
-            local character = getSpecificPlayer(player)
-            if not pending(character) or not object or not object:getSquare() then
-                return addFuel(worldobjects, object, containers, container, player)
-            end
-            local selected = {}
-            for _, item in ipairs(containers and #containers > 0 and containers or {container}) do
-                selected[#selected + 1] = {item = item, id = item:getID()}
-            end
-            local function callback()
-                local live = {}
-                for _, saved in ipairs(selected) do
-                    local item = liveItem(character, saved.item, saved.id)
-                    local fluid = item and item:getFluidContainer()
-                    if fluid and fluid:contains(Fluid.Petrol) and fluid:getAmount() > 0 then live[#live + 1] = item end
-                end
-                if #live > 0 then return addFuel(worldobjects, object, live, nil, player) end
-            end
-            return enqueueDevice(character, object, callback, {n = 0}, ISWorldObjectContextMenu, "doAddFuelGenerator", binding)
-        end
-        ISWorldObjectContextMenu.doAddFuelGenerator = binding
-    end
-    local activate = ISWorldObjectContextMenu.onActivateGenerator
-    if activate then
-        local binding
-        binding = function(worldobjects, desired, object, player)
-            local character = getSpecificPlayer(player)
-            if pending(character) and object and object:getSquare() then
-                return enqueueDevice(character, object, activate, {worldobjects, desired, object, player, n = 4},
-                    ISWorldObjectContextMenu, "onActivateGenerator", binding)
-            end
-            return activate(worldobjects, desired, object, player)
-        end
-        ISWorldObjectContextMenu.onActivateGenerator = binding
-    end
+    if Toolkit.ActionQueueGenerators then Toolkit.ActionQueueGenerators.install() end
     for _, name in ipairs({"onExtinguish", "onRemovePropaneTank", "onToggle", "onInsertPropaneTank"}) do
         local callback = ISBBQMenu and ISBBQMenu[name]
         if callback then

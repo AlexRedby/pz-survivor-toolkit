@@ -123,6 +123,14 @@ end
 local function dynamicConflict(a, b)
     local left, right = inspect(a), inspect(b)
     if not left or not right then return false end
+    for kind in pairs(left.dynamicInputsByType or {}) do
+        if right.unknownOutputs or (right.dynamicInputsByType and right.dynamicInputsByType[kind]) then return kind end
+        for _, types in pairs({right.itemTypes, right.dynamicInputs, right.outputTypes}) do
+            for fullType in pairs(types) do
+                if fullType:match("[^.]+$") == kind then return kind end
+            end
+        end
+    end
     if left.dynamicInputs then
         for kind in pairs(left.dynamicInputs) do
             if right.unknownOutputs then return true end
@@ -137,6 +145,11 @@ local function dynamicConflict(a, b)
 end
 
 local function sharedWorldTarget(a, b)
+    local generators = Toolkit.ActionQueueGenerators
+    if generators and generators.sharesTarget then
+        local target = generators.sharesTarget(a, b)
+        if target then return target end
+    end
     local left, right = inspect and inspect(a), inspect and inspect(b)
     if left and right then
         for target in pairs(left.targets or {}) do if right.targets and right.targets[target] then return target end end
@@ -857,6 +870,7 @@ function Policy.record(command, action, decision)
     for key in pairs(contract and contract.items or {}) do keys[#keys + 1] = tostring(key) end
     for key in pairs(contract and contract.containerOwners or {}) do keys[#keys + 1] = "container:" .. tostring(key) end
     for key in pairs(contract and contract.dynamicInputs or {}) do keys[#keys + 1] = "type:" .. tostring(key) end
+    for key in pairs(contract and contract.dynamicInputsByType or {}) do keys[#keys + 1] = "short-type:" .. tostring(key) end
     if #diagnostics == 64 then table.remove(diagnostics, 1) end
     diagnostics[#diagnostics + 1] = {command = command, type = action.Type, adapter = adapter,
         mode = action.mode, source = action.toolkitWorldOperation, resources = table.concat(keys, ","),

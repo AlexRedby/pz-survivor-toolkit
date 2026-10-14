@@ -98,6 +98,19 @@ for _, language in ipairs({'EN', 'RU'}) do
     local oldRecipe = {class = 'Recipe', getName = function() return 'Legacy recipe name' end}
     check({Type = 'ISCraftAction', recipe = oldRecipe}, 'Legacy recipe name')
     if NativeActionRoot then
+        for _, key in ipairs({'ContextMenu_DestroyForFuel', 'ContextMenu_Light_fire'}) do
+            check({Type = 'ISQueueActionsAction', toolkitWorldOperation = 'fire', toolkitActionLabel = key}, assert(translations[key]))
+        end
+        for _, entry in ipairs({{'generator', 'ISActivateGenerator', true}, {'generator', 'ISActivateGenerator', false},
+            {'generator', 'ISPlugGenerator', true}, {'generator', 'ISPlugGenerator', false}, {'generator', 'ISFixGenerator'},
+            {'fire', 'ISBBQAddFuel'}, {'fire', 'ISBBQLightFromLiterature'}}) do
+            local nativeAction = {Type = entry[2], activate = entry[3], plug = entry[3]}
+            local title, key = labels.title(nativeAction)
+            local command = {Type = 'ISQueueActionsAction', toolkitWorldOperation = entry[1], toolkitActionLabel = key,
+                toolkitWorldTarget = {class = 'IsoObject', name = 'Target'}}
+            check(command, title)
+            assert(labels.label(command) == title .. ': Target')
+        end
         local wreckTitle = assert(translations.ContextMenu_RemoveBurntVehicle)
         check({Type = 'ISRemoveBurntVehicle'}, wreckTitle)
         check({Type = 'ISQueueActionsAction', toolkitWorldOperation = 'wreck'}, wreckTitle)

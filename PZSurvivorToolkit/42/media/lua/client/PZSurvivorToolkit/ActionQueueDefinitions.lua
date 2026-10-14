@@ -85,6 +85,10 @@ local function preparation(action)
 end
 
 local function title(action)
+    if (action.toolkitWorldOperation == "generator" or action.toolkitWorldOperation == "fire")
+        and type(action.toolkitActionLabel) == "string" then
+        return getText(action.toolkitActionLabel), action.toolkitActionLabel
+    end
     if action.toolkitWorldOperation == "wreck" then
         return getText("ContextMenu_RemoveBurntVehicle"), "ContextMenu_RemoveBurntVehicle"
     end
@@ -496,7 +500,8 @@ local function target(action, presentation)
     if action.toolkitWorldOperation == "wreck" or action.toolkitWorldOperation == "fuel" then
         return name(action.toolkitWorldTarget or action.vehicle)
     end
-    if action.toolkitWorldOperation == "appliance" then return name(action.toolkitWorldTarget) end
+    if action.toolkitWorldOperation == "appliance" or action.toolkitWorldOperation == "generator"
+        or action.toolkitWorldOperation == "fire" then return name(action.toolkitWorldTarget) end
     if action.Type == "ISDeviceBatteryAction" or action.Type == "ISDeviceMediaAction" then
         local device = instance(action.deviceData, "DeviceData") and action.deviceData:getParent()
         return name(device)

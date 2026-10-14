@@ -86,6 +86,7 @@ ISInventoryTransferAction.setOnComplete = function(self, callback, ...)
     self.onCompleteFunc, self.onCompleteArgs = callback, {...}
 end
 ISInventoryTransferAction.canMergeAction = function() return false end
+ISInventoryTransferAction.stop = function(self) return ISBaseTimedAction.stop(self) end
 ISInventoryTransferAction.getNotFullFloorSquare = function() end
 local nativeFloorHelper=ISInventoryTransferAction.getNotFullFloorSquare
 local transferHelperAdopted=false
@@ -134,6 +135,12 @@ PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua'))()
 local operations, definitions = PZSurvivorToolkit.ActionQueueOperations, PZSurvivorToolkit.ActionQueueDefinitions
+local adoptReturns, returnAdoptions = operations.adoptReturnMethods, 0
+operations.adoptReturnMethods = function(...)
+    assert(adoptReturns(...), 'actual Better Containers wrappers must remain recognized native returns')
+    returnAdoptions = returnAdoptions + 1
+    return true
+end
 local paths = {
     WashFix = '3460812542/mods/WashingMenusImproved/42.15',
     NeatUI_Equipment = '3790656296/mods/NeatUI_Equipment/42.20',
@@ -264,6 +271,8 @@ assert(ISTransferAction.transferItem~=adoptedTransferItem,'late global helper re
 ISTransferAction.transferItem=changedTransferItem
 assert(transferItemGuard(),'restoring exact source identity restores the helper guard')
 for id in pairs(paths) do assert(compat.isInstalled(id), 'source-pinned adapter installed: ' .. id) end
+assert(returnAdoptions == 2, 'both verified transfer patches must update native return recognition')
+operations.adoptReturnMethods = adoptReturns
 local readFixture={}; ISReadABook.animEvent(readFixture,'ReadAPage',nil)
 assert(readFixture.fixtureReadEvents==1,'pinned MPFF animEvent delegates native SP reading once')
 local inventory = {class = 'ItemContainer', values = {}}

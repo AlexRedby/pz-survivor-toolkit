@@ -220,6 +220,15 @@ ISBaseTimedAction.stop = function(action)
         -- MP object removal can arrive before completion; native stop must not discard unrelated work.
         if not reason or reason == "starting" then queue.toolkitCancel = action end
     end
+    if Toolkit.Settings.actionQueue() and queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action then
+        local generators, fire = Toolkit.ActionQueueGenerators, Toolkit.ActionQueueFire
+        if (generators and generators.canSkip and generators.canSkip(action))
+            or (fire and fire.canSkip and fire.canSkip(action)) then
+            Operations.invalidate(action.toolkitQueueOperation)
+            queue.toolkitGroupCancel = {action = action, token = action.toolkitQueueOperation}
+            queue.toolkitCancel = action
+        end
+    end
     if queue and queue.toolkitCancel == action and live(queue)
         and (not queue.toolkitResume or (Toolkit.Settings.actionQueue()
             and not (action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled)))
@@ -331,6 +340,8 @@ end
 
 Queue.label = Toolkit.ActionQueueLabels.label
 
+require "PZSurvivorToolkit/ActionQueueGenerators"
+require "PZSurvivorToolkit/ActionQueueFire"
 require "PZSurvivorToolkit/ActionQueueWorld"
 require "PZSurvivorToolkit/ActionQueueHealth"
 require "PZSurvivorToolkit/ActionQueueCompat"

@@ -510,6 +510,25 @@ q = ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); frame(p); assert(api.c
 assert(#q.queue == 0 and q.current == nil, 'vanished successor must not be started')
 assert(api.label(book(p)):find('Book',1,true))
 print('Native queue cancellation: middle/current, 21 rows, callbacks, dependencies, completion race, lifecycle, invalid tail passed.')
+-- Family-owned invalidation drops only the failed operation and lets the native stop finish first.
+for _, module in ipairs({'ActionQueueGenerators', 'ActionQueueFire'}) do
+    local previous = PZSurvivorToolkit[module]
+    for _, scenario in ipairs({{true, true}, {false, true}, {true, false}}) do
+        local allowed = scenario[1]
+        enabled = scenario[2]
+        p = player(); a,b,c = book(p),book(p),book(p)
+        operations.run(function() q=ISTimedActionQueue.add(a); ISTimedActionQueue.add(b) end)
+        ISTimedActionQueue.add(c); frame(p)
+        PZSurvivorToolkit[module] = {canSkip = function(action) return allowed and action == a end}
+        a:forceStop(); frame(p)
+        assert(a.toolkitQueueOperation.toolkitCancelled)
+        assert(not p.actions[a.action] and not q.toolkitGroupCancel)
+        if allowed and enabled then assert(q.current == c and #q.queue == 1 and not c.toolkitQueueOperation.toolkitCancelled)
+        else assert(q.current == nil and #q.queue == 0) end
+    end
+    enabled = true
+    PZSurvivorToolkit[module] = previous
+end
 -- The view keeps real action identities across refreshes, hide/show and player replacement.
 local ui, refresh, playerCount = {}, nil, 1
 local widget = {derive = derive}

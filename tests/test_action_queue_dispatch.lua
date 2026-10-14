@@ -83,7 +83,8 @@ PJCK_CookerPicker = {}
 local cookPath = ProjectCookPickerSourcePath
 if cookPath then nativeFunction(text(cookPath), '(function PJCK_CookerPicker:onStoveButtonClick%(%)%s.-\nend)') end
 local function project(name) assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
-project('ActionQueueOperations'); project('ActionQueueWorld'); install()
+getText = function(key) return key end
+project('ActionQueueOperations'); project('ActionQueueDefinitions'); project('ActionQueueGenerators'); project('ActionQueueWorld'); install()
 local operations, world = PZSurvivorToolkit.ActionQueueOperations, PZSurvivorToolkit.ActionQueueWorld
 local q = ISTimedActionQueue.getTimedActionQueue(player)
 local function reset()
@@ -138,12 +139,15 @@ Fluid = {Petrol = 'petrol'}
 ISWorldObjectContextMenu.equip = function() end
 ISWorldObjectContextMenu.transferIfNeeded = function() end
 local function fuel(id)
-    local item = {getID = function() return id end, getContainer = function() end}
+    local item = {getID = function() return id end, getContainer = function() end, getFullType = function() return 'Base.PetrolCan' end}
     item.getFluidContainer = function() return {contains = function() return true end, getAmount = function() return 2 end} end
     return item
 end
 player.getPrimaryHandItem = function() end
 reset(); local generator = object(); generator.getFuelPercentage = function() return 0 end
+player.inventory.getFirstEvalRecurse = function(self, predicate)
+    for _, item in ipairs(self.items) do if predicate(item) then return item end end
+end
 local original, replacement = fuel(42), fuel(42)
 local selected = {original}
 ISWorldObjectContextMenu.doAddFuelGenerator(nil, generator, selected, nil, 0)
