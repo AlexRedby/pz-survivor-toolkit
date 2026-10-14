@@ -13,6 +13,7 @@ def main() -> None:
     parser.add_argument("--native-mod-options", type=Path,
                         help="test against an extracted vanilla PZAPI/ModOptions.lua")
     parser.add_argument("--cci-source", type=Path, help="test against ContainerCapacityIndicator.lua")
+    parser.add_argument("--item-details-source", type=Path, help="Item Details media/lua/client directory")
     parser.add_argument("--cleanui-inventory-pane", type=Path, help="test against CleanUI ISInventoryPane.lua")
     parser.add_argument("--native-inventory-pane", type=Path, help="test against vanilla ISInventoryPane.lua")
     parser.add_argument("--proximity-source", type=Path, help="test against ProximityInventory.lua and sibling ISInventoryPage.lua")
@@ -61,6 +62,15 @@ def main() -> None:
     if args.cci_source:
         lua.globals().CCISource = args.cci_source.read_text(encoding="utf-8")
     lua.execute((ROOT / "tests/test_cci_compat.lua").read_text(encoding="utf-8"))
+
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.globals().ProjectRoot = str(ROOT)
+    if args.item_details_source:
+        for name, filename in (("ItemDetailsSource", "BravoItemDetails.lua"),
+                               ("ItemDetailsConfigSource", "BravoItemDetailsConfig.lua"),
+                               ("ItemDetailsSorterSource", "BravoItemDetailsSorter.lua")):
+            lua.globals()[name] = (args.item_details_source / filename).read_text(encoding="utf-8")
+    lua.execute((ROOT / "tests/test_item_details.lua").read_text(encoding="utf-8"))
 
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)

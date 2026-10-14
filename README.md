@@ -6,7 +6,7 @@ Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quant
 
 | Component | Version | Installation |
 |---|---|---|
-| PZ Survivor Toolkit | 0.1.39 | Required; included in the prepared `mods` folder and server INI. |
+| PZ Survivor Toolkit | 0.1.40 | Required; included in the prepared `mods` folder and server INI. |
 | Survivor Wishlist | 0.1.0 | Required; included in the prepared `mods` folder and server INI. |
 | Toolkit Java Patches | 0.1.3 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
 
@@ -178,6 +178,14 @@ Water consumption remains native: this does not enable drinking from backpacks, 
 When using both mods, load them in this order: **NeatUI Framework, CleanUI, PZ Survivor Toolkit, Container Capacity Indicator**. Toolkit aligns CCI bars with CleanUI's visible inventory icons, including equipment headers, hidden equipment, expanded stacks and scaled icons. CCI keeps its own capacity calculations, colours and magazine setting. Toolkit preserves its item and container-button bars when CleanUI switches between enhanced and vanilla inventories, including icon views; it also supplies the alpha omitted by B42's native icon renderer. Without that pair, the adapter does nothing. If CCI loads before Toolkit, the adapter logs the required order and leaves its renderer unchanged.
 
 Checked in-game on B42.21 with CleanUI 2.9.7 and CCI 1.2.0, including container reordering and 140% icon scale. Toolkit v0.1.12 passed 15 checks per English/Russian client with all 38 selected Mod IDs loaded: enhanced/vanilla details and icons, container-button bars, repeated mode switches and native item transfers. No gameplay exceptions occurred during this short localhost scenario.
+
+## Item Details
+
+With **Item Details** enabled, Toolkit restores condition display and sorting for vehicle parts categorized by **organizedCategories**. Expanded stacks retain every item when they exceed Item Details' sorting limit: the configured prefix is sorted and the remaining items stay in the list. Sorting and display preferences remain in **Options > Mods > Item Details**.
+
+Load **CleanUI**, then **PZSurvivorToolkit**, then **BravoItemDetails**; keep **organizedCategories_core** last. The selected INI already includes this order. The compatibility fix lives in Toolkit; keep the official Workshop files unchanged on the server and clients.
+
+Checked in B42.21 single-player with Item Details 0.0.12, CleanUI 2.9.8, organizedCategories, Better Containers and CCI: 72 scripted native checks passed for condition rendering, sorting, selection, both inventory modes, settings/tooltips and 50/51/101/151-item stacks. Every physical item ID remained present; the native 50-child display limit is unchanged. Multiplayer and the full selected mod set were not exercised in this check.
 
 ## TV & Radio ReInvented
 

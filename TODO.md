@@ -24,12 +24,3 @@
 - [ ] Уточнять области выбора динамических ресурсов по конкретному инвентарю только там, где это позволяет безопасно снять консервативный запрет. Не расширять права по одному Type или пустому inspect.
 
 Для каждого перенесённого семейства добавлять независимый положительный пример и опасный пример с общим ресурсом в обоих направлениях. При изменении lifecycle проходить соответствующий live-гейт. Смена подписи/иконки должна оставаться правкой presentation и перевода; смена права отмены/переноса — отдельным behavior-контрактом с проверкой.
-
-## Item Details compatibility
-
-Official Workshop `3477237184`, Mod ID `BravoItemDetails`, v0.0.12 (active folder `42.13`). Keep original Workshop files identical on clients and server; implement any shared compatibility changes through Toolkit.
-
-- [ ] Restore vehicle-part condition display and sorting with organizedCategories: Item Details checks `VehicleMaintenance`, while organizedCategories assigns `mechanicsVehiclePart` (including `Base.Windshield1`). Load order does not resolve this; verify real windshields, seats and tires in expanded stacks.
-- [ ] Fix the literal `x%` settings tooltip on B42.21 without changing unrelated translated text; verify the full Mod Options page renders and scrolls.
-- [ ] Preserve the unsorted tail of expanded stacks: Item Details' loop ends at `#items - maxSort` rather than `#items`. Verify every original item remains listed at 50, 51 and more than 100 items.
-- [ ] Preserve Item Details hooks when switching between CleanUI enhanced and vanilla inventory classes. Verify each mode and repeated switching, including vehicle parts and ordinary items.
