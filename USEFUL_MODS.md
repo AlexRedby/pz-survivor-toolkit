@@ -531,3 +531,19 @@ The independent `PZToolkitJavaPatches` mod v0.1.2 is required and selected immed
 It patches B42.21 client zombie-speed decoding, vehicle interpolation recovery and the server's stale VHS stop timer. Target bytecode guards disable unsupported patches. It remains experimental and is not established as a fix for long vehicle freezes or all movement jerks.
 
 On 12 October 2026, the prepared 41-Mod-ID set passed 33 native wishlist/UI/shared-editing checks per EN/RU client on a macOS dedicated server with Lua checksums enabled. Required Java transformations loaded on the server and both clients; the native vehicle/media build regressions also passed. Ordinary Host launchers, Windows/Linux, every individual mod feature and long sessions remain unverified.
+
+## 41 SaucedCarts, SaucedWheelbarrow and Wheelbarrow Craft
+
+Selected together on 14 October 2026. Load in this order:
+
+| Mod | Workshop ID | Mod ID |
+|---|---|---|
+| [SaucedCarts - Pushable Carts](https://steamcommunity.com/sharedfiles/filedetails/?id=3651954650) | `3651954650` | `SaucedCarts` |
+| [SaucedWheelbarrow](https://steamcommunity.com/sharedfiles/filedetails/?id=3689975894) | `3689975894` | `saucedwheelbarrow` |
+| [Sauced Wheelbarrow Craft](https://steamcommunity.com/sharedfiles/filedetails/?id=3695168970) | `3695168970` | `saucedwheelbarrow_Craft` |
+
+SaucedCarts provides pushable shopping carts with storage, wear, repairs and built-in shopping-cart crafting. SaucedWheelbarrow adds wooden and metal wheelbarrows; Craft adds their recipes and requires both preceding mods. Both wheelbarrow recipes require Welding 3, a welding mask, pipes and blowtorch fuel. The wooden version also uses three planks; the metal version uses a metal sheet. The Craft add-on declares its ID and dependencies in `common/mod.info`; preserve the complete mod folder.
+
+Wheelbarrows share outdoor spawns with shopping carts, including parking lots. They do not delete shopping-cart spawns; the default outdoor weights are equal for the three types. Natural cart spawns are limited to unexplored areas. SaucedCarts is incompatible with the original `TMC_Trolley`; do not combine the two frameworks.
+
+Tidy Up Meister can leave the cart on the ground after a tool action. Use Push Cart again; automatic return to pushing is not guaranteed. Installed as unchanged local copies and enabled in the local default and Host SurvivorQoL profiles on 14 October 2026. The portable INI also includes all three. An isolated B42.21 dedicated server with the selected 44-mod set passed 36 checks on each simultaneous EN/RU client: actual wheelbarrow crafting, cart storage/transfers, repeated drop/pickup, exact cargo IDs and server audits. Tidy's normal tool-action restoration left the cart safely on the ground. Long sessions, reconnect/restart and ForceReequip cancellation remain untested. Local Workshop copies require manual refresh and identical copies on all players.
