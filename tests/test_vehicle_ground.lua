@@ -138,6 +138,68 @@ local start
 local groundEnabled = true
 PZSurvivorToolkit = {Settings = {uninstallToGround = function() return groundEnabled end}}
 Events = {OnGameStart = {Add = function(callback) start = callback end}}
+local function vehicleItem(fullType, kind, scriptType)
+    return {kind = kind, getFullType = function() return fullType end,
+        getCondition = function() return 100 end, getID = function() return 0 end,
+        getDisplayName = function() return "Identical vehicle part" end,
+        getTags = function() return {toArray = function() return {"VehiclePart", "Installable"} end} end,
+        getWorldSprite = function() return "vehicle_sprite" end,
+        getScriptItem = function() return {getFullName = function() return scriptType end} end}
+end
+local windshield = vehicleItem("Base.Windshield1")
+local spareWindshield = vehicleItem("Base.Windshield1")
+local moveable = vehicleItem("Base.Moveable", "Moveable", "Base.CarSeat")
+local refreshed, nilMaps = false, false
+local collector
+if NativeVehicleItemsSource then
+    local source = assert(NativeVehicleItemsSource:match(
+        "(function VehicleUtils%.getInventoryContainersRecurse.-)function VehicleUtils%.split"))
+    assert(loadstring(source))()
+    local function list(values)
+        return {size = function() return #values end, get = function(_, i) return values[i + 1] end,
+            isEmpty = function() return #values == 0 end}
+    end
+    local function container(values)
+        return {getItems = function() return list(values()) end,
+            getAllEvalRecurse = function() return list({}) end}
+    end
+    local inventory = container(function() return {} end)
+    local floor = container(function() return refreshed and {spareWindshield} or {windshield, moveable} end)
+    local proximity = container(function()
+        return refreshed and {spareWindshield} or {windshield, spareWindshield, moveable, windshield}
+    end)
+    luautils = {tableContains = function(values, value)
+        for _, existing in ipairs(values) do if existing == value then return true end end
+        return false
+    end}
+    getPlayerInventory = function() return {inventoryPane = {inventoryPage = {backpacks = {{inventory = inventory}}}}} end
+    getPlayerLoot = function() return {inventoryPane = {inventoryPage = {backpacks = {
+        {inventory = floor}, {inventory = proximity}}}}} end
+    collector = VehicleUtils.getItems
+else
+    collector = function()
+        if refreshed then
+            return {["Base.Windshield1"] = {spareWindshield, spareWindshield}},
+                {VehiclePart = {spareWindshield, spareWindshield}, Installable = {spareWindshield, spareWindshield}}
+        end
+        return {["Base.Windshield1"] = {windshield, windshield, spareWindshield, windshield},
+            ["Base.Moveable"] = {moveable, moveable}, ["Base.CarSeat"] = {moveable, moveable}},
+            {VehiclePart = {windshield, moveable, windshield, spareWindshield, moveable, windshield},
+                Installable = {windshield, moveable, windshield, spareWindshield, moveable, windshield}}
+    end
+end
+local collectorCalls, rawByType, rawByTag, rawWindshields = 0
+local forwarded = {}
+VehicleUtils.getItems = function(playerNum, extra)
+    assert(playerNum == 2 and extra == forwarded, "collector arguments must be forwarded")
+    collectorCalls = collectorCalls + 1
+    if nilMaps == true then return nil, nil end
+    rawByType, rawByTag = collector(playerNum)
+    rawWindshields = rawByType["Base.Windshield1"]
+    if nilMaps == "types" then return nil, rawByTag end
+    if nilMaps == "tags" then return rawByType, nil end
+    return rawByType, rawByTag
+end
 local queued, throw = {}, false
 ISVehiclePartMenu = {onUninstallPart = function(player, targetPart)
     queued[#queued + 1] = "native path/tools/hood"
@@ -163,8 +225,40 @@ end}
 dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleMechanics.lua")
 start()
 local installedMenu = ISVehicleMechanics.doPartContextMenu
+local installedCollector = VehicleUtils.getItems
 start()
 assert(ISVehicleMechanics.doPartContextMenu == installedMenu, "repeated game starts must not stack hooks")
+assert(VehicleUtils.getItems == installedCollector, "repeated game starts must not stack collector hooks")
+local byType, byTag = VehicleUtils.getItems(2, forwarded)
+assert(byType == rawByType and byTag == rawByTag, "native result maps must be preserved")
+assert(byType["Base.Windshield1"] == rawWindshields, "native result lists must be compacted in place")
+assert(#byType["Base.Windshield1"] == 2, "floor/proximity overlap must list each physical windshield once")
+assert(byType["Base.Windshield1"][1] == windshield and byType["Base.Windshield1"][2] == spareWindshield,
+    "distinct parts with matching type, name, condition and unset ID must retain first-seen order")
+assert(#byType["Base.Moveable"] == 1 and byType["Base.Moveable"][1] == moveable
+    and #byType["Base.CarSeat"] == 1 and byType["Base.CarSeat"][1] == moveable,
+    "the same item must retain both native type aliases")
+for _, tag in ipairs({"VehiclePart", "Installable"}) do
+    assert(#byTag[tag] == 3 and byTag[tag][1] == windshield and byTag[tag][2] == moveable
+        and byTag[tag][3] == spareWindshield, "each tag needs its own identity deduplication")
+end
+assert(collectorCalls == 1, "one refresh must call the native collector once")
+refreshed, groundEnabled = true, false
+byType, byTag = VehicleUtils.getItems(2, forwarded)
+assert(collectorCalls == 2 and #byType["Base.Windshield1"] == 1
+    and byType["Base.Windshield1"][1] == spareWindshield and byType["Base.Moveable"] == nil,
+    "live refresh must reflect current containers even when uninstall-to-ground is disabled")
+assert(#byTag.VehiclePart == 1 and byTag.VehiclePart[1] == spareWindshield)
+nilMaps = "types"
+byType, byTag = VehicleUtils.getItems(2, forwarded)
+assert(byType == nil and #byTag.VehiclePart == 1, "tag maps must still be deduplicated without a type map")
+nilMaps = "tags"
+byType, byTag = VehicleUtils.getItems(2, forwarded)
+assert(#byType["Base.Windshield1"] == 1 and byTag == nil, "type maps must still be deduplicated without a tag map")
+nilMaps = true
+byType, byTag = VehicleUtils.getItems(2, forwarded)
+assert(byType == nil and byTag == nil, "nil native result maps must stay nil")
+nilMaps, groundEnabled = false, true
 local window = setmetatable({removable = true, blocked = true}, {__index = ISVehicleMechanics})
 window:doPartContextMenu(part)
 assert(#context.options == 2 and context.options[1].onSelect == ISVehiclePartMenu.onUninstallPart)
@@ -191,4 +285,5 @@ assert(not pcall(ground.onSelect, ground.target, ground.param1) and ISUninstallV
 window.removable = false
 window:doPartContextMenu(part)
 assert(#context.options == 0, "non-removable parts must not gain a new action")
-print("Vehicle uninstall-to-ground regression passed" .. (NativeUninstallSource and " against native completion." or "."))
+print("Vehicle mechanics regressions passed" .. (NativeUninstallSource and " against native completion" or "")
+    .. (NativeVehicleItemsSource and " and native item collection." or "."))

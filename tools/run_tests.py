@@ -20,6 +20,7 @@ def main() -> None:
     parser.add_argument("--native-radio-root", type=Path, help="vanilla media/lua/client directory for RWMMedia and ISItemDropBox checks")
     parser.add_argument("--navigator-source", type=Path, help="NavigatorRadio source directory for upstream render/input checks")
     parser.add_argument("--native-uninstall", type=Path, help="vanilla ISUninstallVehiclePart.lua for ground-placement checks")
+    parser.add_argument("--native-vehicles", type=Path, help="vanilla Vehicles.lua for mechanics item-collection checks")
     parser.add_argument("--medicine-framework-source", type=Path, help="installed MF_ISMoodle.lua")
     parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
@@ -75,6 +76,8 @@ def main() -> None:
     lua.globals().ProjectRoot = str(ROOT)
     if args.native_uninstall:
         lua.globals().NativeUninstallSource = args.native_uninstall.read_text(encoding="utf-8")
+    if args.native_vehicles:
+        lua.globals().NativeVehicleItemsSource = args.native_vehicles.read_text(encoding="utf-8")
     lua.execute((ROOT / "tests/test_vehicle_ground.lua").read_text(encoding="utf-8"))
 
     lua = LuaRuntime(unpack_returned_tuples=True)

@@ -19,9 +19,31 @@ local function uninstallToGround(selectedCharacter, selectedPart)
     return result
 end
 
+local function uniqueItems(groups)
+    if not groups then return groups end
+    for _, items in pairs(groups) do
+        local seen, count = {}, 0
+        for _, item in ipairs(items) do
+            if not seen[item] then
+                seen[item] = true
+                count = count + 1
+                items[count] = item
+            end
+        end
+        for i = #items, count + 1, -1 do items[i] = nil end
+    end
+    return groups
+end
+
 local function install()
     if ISVehicleMechanics.PZSTGroundInstalled then return end
     ISVehicleMechanics.PZSTGroundInstalled = true
+    local getItems = VehicleUtils.getItems
+    function VehicleUtils.getItems(...)
+        local byType, byTag = getItems(...)
+        -- Proximity views expose the same physical items as their real containers.
+        return uniqueItems(byType), uniqueItems(byTag)
+    end
     local doPartContextMenu = ISVehicleMechanics.doPartContextMenu
     function ISVehicleMechanics:doPartContextMenu(part, ...)
         local result = doPartContextMenu(self, part, ...)
