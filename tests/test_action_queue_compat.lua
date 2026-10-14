@@ -127,7 +127,7 @@ ISWorldObjectContextMenu = {}
 PZAPI = {ModOptions = {create = function()
     return {addTickBox = function() return {value = false} end, addComboBox = function() return {addItem = function() end} end}
 end}}
-local enabled, dead = true, false
+local enabled, dead, doNotReequip = true, false, true
 PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua'))()
@@ -153,6 +153,15 @@ end, adoptTransferMethods=function(previous,replacement,guard)
         assert(type(previous[name])=='function' and ISInventoryTransferAction[name]==replacement[name])
     end
     assert(guard()); containerGuards[#containerGuards+1]=guard; return true
+end, addContainerResources=function(result,container)
+    if not instanceof(container,'ItemContainer') then return end
+    local parent=container:getParent()
+    if parent and not instanceof(parent,'IsoGameCharacter') then result.targets[parent]=true end
+    local owner=container.getContainingItem and container:getContainingItem()
+    if instanceof(owner,'InventoryContainer') then
+        result.containerOwners=result.containerOwners or {}; result.containerOwners[owner:getID()]=true
+        result.itemTypes[owner:getFullType()]=true
+    end
 end, isOrdinaryTransfer=function(action)
     for _,guard in ipairs(containerGuards) do if not guard() then return false end end
     for _,container in ipairs({action.srcContainer,action.destContainer}) do
@@ -214,6 +223,16 @@ require = function(module)
     local result = assert(loadstring(source, module))()
     loaded[module] = result or true; return result
 end
+-- Load the real controller before source adapters, matching the game's lifecycle/load order.
+local fixturePolicy=PZSurvivorToolkit.ActionQueuePolicy
+fixturePolicy.isCraftAction=function() return false end
+fixturePolicy.live=function(queue) return not queue.character:isDead() end
+fixturePolicy.stoppable=function() return false end
+fixturePolicy.resumableWorld=function() return false end
+fixturePolicy.replaceStop=function() end
+fixturePolicy.inspect=definitions.inspect
+PZSurvivorToolkit.ActionQueueLabels={label=function() end}
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local compat = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'))()
 assert(not compat.isInstalled('MPFastForward'),'server wrapper waits for the server loading boundary')
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/server/000_PZSurvivorToolkitReadCompat.lua'))()
@@ -235,7 +254,8 @@ local square = {getX = function() return 0 end, getY = function() return 0 end, 
 local player = {class = 'IsoPlayer', getInventory = function() return inventory end, getPlayerNum = function() return 0 end,
     isDead = function() return dead end, isAsleep = function() return false end, isLocalPlayer = function() return true end,
     isDraggingCorpse = function() return false end, isFarming = function() return false end, getSquare = function() return square end,
-    hasTimedActions = function() return false end, getModData = function() return {P4TidyUpMeister = {doNotReequip = true}} end,
+    isPlayerMoving=function() return false end, pressedMovement=function() return false end,
+    hasTimedActions = function() return false end, getModData = function() return {P4TidyUpMeister = {doNotReequip = doNotReequip}} end,
     getWornItems = function() return list({}) end, getPrimaryHandItem = function(self) return self.primary end,
     getSecondaryHandItem = function() end, isEquipped = function() return false end, setIsFarming = function() end,
     isTimedActionInstant = function() return false end, hasTrait = function() return false end}
@@ -247,18 +267,23 @@ local sink = {class = 'IsoObject', getSquare = function() return square end, get
 local queue = ISTimedActionQueue.getTimedActionQueue(player)
 local completed = queue.onCompleted
 queue.onCompleted = function(self, action) if not operations.deferCompletion(self, action) then return completed(self, action) end end
-local function tickTidy() for _, callback in ipairs(events.OnPlayerUpdate or {}) do callback(player) end end
+local function tickTidy()
+    -- Native OnTick housekeeping interleaves with delayed OnPlayerUpdate restore events.
+    if #queue.queue==0 then queue:tick() end
+    for _, callback in ipairs(events.OnPlayerUpdate or {}) do callback(player) end
+end
 local function reset()
     queue.queue, queue.current = {}, nil
     tickTidy(); tickTidy()
-    TidyFixture.sessions[player], TidyFixture.restoring[player] = nil, nil
-    inventory.values = {}; enabled, dead = true, false
+    TidyFixture.sessions[player], TidyFixture.restoring[player], TidyFixture.restoreFloor[player] = nil, nil, nil
+    inventory.values = {}; enabled, dead, doNotReequip = true, false, true
 end
 local function item(container, id)
     return {item = true, id = id, container = container, getContainer = function(self) return self.container end,
         getID = function(self) return self.id end, getFullType = function() return 'Base.Test' end,
         getType = function() return 'Test' end, getBloodLevel = function() return 1 end, getDirtiness = function() return 1 end,
-        getItemAfterCleaning = function() end, canBeActivated = function() return false end, isActivated = function() return false end,
+        getItemAfterCleaning = function() end, canBeActivated = function(self) return self.activatable or false end, isActivated = function(self) return self.activated or false end,
+        setActivated=function(self,value) self.activated=value; self.activationChanges=(self.activationChanges or 0)+1 end,
         getName = function() return 'test' end, isHidden = function() return false end}
 end
 local function tail()
@@ -438,10 +463,170 @@ local hooks={table.insert,ISTimedActionQueue.add,ISTimedActionQueue.addAfter,IST
 local old=NEQ_Dresser.resolve; NEQ_Dresser.resolve=function() error('changed producer') end
 assert(not pcall(function() NEQ_Dresser.wear(player,0,{}) end)); NEQ_Dresser.resolve=old
 for i,value in ipairs({table.insert,ISTimedActionQueue.add,ISTimedActionQueue.addAfter,ISTimedActionQueue.queueActions,ISContextMenu.addOption}) do assert(value==hooks[i],'source hooks restore on error') end
-reset(); dirty=item(inventory,14); inventory.values={dirty}; player.primary=dirty
+reset(); dirty=item(inventory,14); inventory.values={dirty}; player.primary=dirty; dirty.activatable,dirty.activated=true,true
 session=TidyFixture.captureSession(player); session.armed,session.restoreHands=true,true; TidyFixture.sessions[player]=session
-local firstTail,secondTail=tail(),tail(); player.primary=nil; firstTail:perform(); secondTail:perform(); tickTidy(); tickTidy()
-assert(#queue.queue>0 and not definitions.inspect(queue.queue[1]),'a Tidy session with several task owners stays opaque')
+local firstTail,secondTail=tail(),tail(); player.primary=nil; dirty.activated=false; firstTail:perform(); secondTail:perform(); tickTidy(); tickTidy()
+local sharedEquip,sharedActivate=queue.queue[1],queue.queue[2]
+assert(sharedEquip.Type=='ISEquipWeaponAction' and definitions.inspect(sharedEquip).cancelOperation==false
+    and sharedEquip.toolkitQueueOperation~=firstTail.toolkitQueueOperation
+    and sharedEquip.toolkitQueueOperation~=secondTail.toolkitQueueOperation,
+    'mixed equipment restore has a protected shared cleanup contract')
+operations.invalidate(firstTail.toolkitQueueOperation)
+sharedEquip:perform(); sharedActivate:perform(); sharedActivate:complete()
+assert(dirty.activated and dirty.activationChanges==1 and TidyFixture.sessions[player]==nil and TidyFixture.restoring[player],
+    'actual native activation completion still runs after a mixed owner cancellation')
+tickTidy(); tickTidy()
+assert(TidyFixture.restoring[player]==nil and TidyFixture.restoreFloor[player]==nil,
+    'partial task cancellation preserves native completion and native Tidy cleanup')
+
+-- Exact fixture native actions supply the same known-input contracts the native Policy installs.
+local nativeTransferPerform=ISInventoryTransferAction.perform
+local pinnedFloorHelper=ISInventoryTransferAction.getNotFullFloorSquare
+local unknownInput,dynamicInput
+local fixtureContractMethods={}
+for _,class in ipairs({ISInventoryTransferAction,ISReadABook}) do
+    fixtureContractMethods[class]={}
+    for _,name in ipairs({'new','isValid','start','perform','stop','complete','getNotFullFloorSquare'}) do
+        fixtureContractMethods[class][name]=class[name]
+    end
+end
+definitions.registerBehavior('fixture.native-tidy-inputs',{matches=function(action)
+    local class=getmetatable(action); local methods=fixtureContractMethods[class]
+    if not methods or action.perform~=methods.perform then return false end
+    for name,callback in pairs(methods) do if class[name]~=callback then return false end end
+    return true
+end,inspect=function(action)
+    local value=action.item
+    local result={items=value and {[value:getID()]=true} or {},itemTypes=value and {[value:getFullType()]=true} or {},targets={},
+        knownInputs=not unknownInput,dynamicInputs=dynamicInput and {['Base.Test']=true} or nil}
+    PZSurvivorToolkit.ActionQueuePolicy.addContainerResources(result,action.srcContainer)
+    PZSurvivorToolkit.ActionQueuePolicy.addContainerResources(result,action.destContainer)
+    return result
+end})
+local tidyBagOwner=item(inventory,40); tidyBagOwner.class='InventoryContainer'
+local tidyBag={class='ItemContainer',getParent=function() end,getType=function() return 'bag' end,
+    getContainingItem=function() return tidyBagOwner end}
+getPlayerLoot=function() return {backpacks={{inventory=tidyBag}}} end
+local function tidyTasks(shared, insertion)
+    reset(); doNotReequip=false; player.primary=nil
+    local first,second=item(tidyBag,41),item(tidyBag,42)
+    local firstPickup,firstRead,secondPickup,secondRead
+    operations.run(function()
+        firstPickup=ISInventoryTransferAction:new(player,first,tidyBag,inventory); ISTimedActionQueue.add(firstPickup)
+        firstRead=ISReadABook:new(player,first); ISTimedActionQueue.add(firstRead)
+    end)
+    operations.run(function()
+        if not shared then secondPickup=ISInventoryTransferAction:new(player,second,tidyBag,inventory); ISTimedActionQueue.add(secondPickup) end
+        secondRead=ISReadABook:new(player,shared and first or second); ISTimedActionQueue.add(secondRead)
+    end)
+    local extra
+    if insertion then
+        extra=ISReadABook:new(player,first)
+        if insertion=='after' then
+            local result,added=ISTimedActionQueue.addAfter(secondRead,extra)
+            assert(result==queue and added==extra and extra.toolkitQueueOperation==secondRead.toolkitQueueOperation,
+                'native addAfter keeps both result values and child ownership')
+        else
+            operations.runWith(secondRead.toolkitQueueOperation,function() queue:addToQueue(extra) end)
+        end
+    end
+    local nativeSession=TidyFixture.sessions[player]
+    assert(nativeSession.armed and nativeSession.transferredItems[first].hasFollowingOperation,
+        'actual installed Tidy observes pickup plus following operation')
+    firstPickup:perform(); firstRead:perform()
+    if secondPickup then secondPickup:perform() end
+    secondRead:perform(); if extra then extra:perform() end
+    inventory.values=shared and {first} or {first,second}
+    return first,second,firstRead.toolkitQueueOperation,secondRead.toolkitQueueOperation,nativeSession
+end
+local function findReturn(value)
+    for _,action in ipairs(queue.queue) do if action.Type=='ISInventoryTransferAction' and action.item==value then return action end end
+end
+local firstItem,secondItem,firstToken,secondToken,nativeSession=tidyTasks()
+tickTidy(); tickTidy()
+local firstReturn,secondReturn=findReturn(firstItem),findReturn(secondItem)
+assert(firstReturn and secondReturn and firstReturn.toolkitQueueOperation==firstToken
+    and secondReturn.toolkitQueueOperation==secondToken and definitions.inspect(firstReturn).cancelOperation~=false
+    and definitions.inspect(secondReturn).cancelOperation~=false,
+    'unique exact returns from a real mixed native session retain their respective task owners')
+local returnContract=definitions.inspect(firstReturn)
+assert(returnContract.containerOwners[tidyBagOwner:getID()] and not returnContract.items[tidyBagOwner:getID()],
+    'compat restore references the carried bag without treating its owner as a consumed item')
+-- Native completion of an already running step is never suppressed by a late token invalidation.
+operations.invalidate(firstToken); firstReturn:perform(); secondReturn:perform()
+assert(firstItem.container==tidyBag and secondItem.container==tidyBag)
+tickTidy(); tickTidy()
+assert(TidyFixture.sessions[player]==nil and TidyFixture.restoring[player]==nil,'late native completion cleans the mixed session')
+firstItem,secondItem,firstToken,secondToken=tidyTasks()
+operations.invalidate(firstToken); tickTidy(); tickTidy()
+assert(not findReturn(firstItem) and findReturn(secondItem).toolkitQueueOperation==secondToken,
+    'partial cancellation suppresses only the cancelled unique late return')
+secondReturn=findReturn(secondItem); secondReturn:perform(); tickTidy(); tickTidy()
+assert(firstItem.container==inventory and secondItem.container==tidyBag and TidyFixture.restoring[player]==nil)
+firstItem,secondItem,firstToken,secondToken=tidyTasks(true)
+operations.invalidate(firstToken); tickTidy(); tickTidy()
+firstReturn=findReturn(firstItem)
+assert(firstReturn and definitions.inspect(firstReturn).cancelOperation==false
+    and firstReturn.toolkitQueueOperation~=firstToken and firstReturn.toolkitQueueOperation~=secondToken,
+    'another task using the same item without pickup makes its return shared protected cleanup')
+firstReturn:perform(); assert(firstItem.container==tidyBag); tickTidy(); tickTidy()
+firstItem,secondItem,firstToken,secondToken=tidyTasks()
+enabled=false; tickTidy(); tickTidy()
+firstReturn,secondReturn=findReturn(firstItem),findReturn(secondItem)
+assert(firstReturn and secondReturn and select(2,definitions.inspect(firstReturn))=='fixture.native-tidy-inputs'
+    and firstReturn.perform==nativeTransferPerform and secondReturn.perform==nativeTransferPerform,
+    'disabling the setting before the native restore event preserves native returns without adapter rights')
+firstReturn:perform(); secondReturn:perform(); tickTidy(); tickTidy()
+assert(firstItem.container==tidyBag and secondItem.container==tidyBag and TidyFixture.restoring[player]==nil)
+firstItem,secondItem=tidyTasks()
+ISInventoryTransferAction.getNotFullFloorSquare=function() end; tickTidy(); tickTidy()
+firstReturn,secondReturn=findReturn(firstItem),findReturn(secondItem)
+assert(firstReturn and secondReturn and not definitions.inspect(firstReturn) and not definitions.inspect(secondReturn),
+    'a changed native floor helper does not gain restore contracts from the pinned Tidy source')
+ISInventoryTransferAction.getNotFullFloorSquare=pinnedFloorHelper
+firstReturn:perform(); secondReturn:perform(); tickTidy(); tickTidy()
+assert(TidyFixture.restoring[player]==nil)
+for _,inputMode in ipairs({'unknown','dynamic'}) do
+    unknownInput,dynamicInput=inputMode=='unknown',inputMode=='dynamic'
+    firstItem,secondItem,firstToken,secondToken=tidyTasks()
+    unknownInput,dynamicInput=nil,nil; tickTidy(); tickTidy()
+    assert(definitions.inspect(findReturn(firstItem)).cancelOperation==false
+        and definitions.inspect(findReturn(secondItem)).cancelOperation==false,
+        inputMode..' inputs in another task prevent claiming an exclusive restore owner')
+    findReturn(firstItem):perform(); findReturn(secondItem):perform(); tickTidy(); tickTidy()
+end
+for _,insertion in ipairs({'after','direct'}) do
+    firstItem,secondItem,firstToken,secondToken=tidyTasks(false,insertion)
+    operations.invalidate(firstToken); tickTidy(); tickTidy()
+    firstReturn=findReturn(firstItem)
+    assert(firstReturn and definitions.inspect(firstReturn).cancelOperation==false
+        and firstReturn.toolkitQueueOperation~=firstToken,
+        'shared input introduced by '..insertion..' queue API retains protected shared cleanup')
+    firstReturn:perform(); findReturn(secondItem):perform(); tickTidy(); tickTidy()
+end
+firstItem,secondItem,firstToken,secondToken,nativeSession=tidyTasks()
+local nativeClient=isClient
+isClient=function() return true end
+TidyFixture.options.DebugOutput.selected=1
+nativeSession.floorItems[firstItem:getFullType()]={square=square,offX=0,offY=0,offZ=0,rotationX=0,rotationY=0,rotationZ=0}
+local tidyFloor={class='ItemContainer',getParent=function() return square end,getType=function() return 'floor' end,
+    getContainingItem=function() end}
+nativeSession.transferredItems[firstItem].container=tidyFloor
+getPlayerLoot=function() return {backpacks={{inventory=tidyBag},{inventory=tidyFloor}}} end
+tickTidy(); tickTidy()
+assert(findReturn(firstItem).destContainer==tidyFloor and not definitions.inspect(findReturn(firstItem)),
+    'mixed native floor return keeps its native transfer without adapter rights')
+local floorRestores=0
+for _,action in ipairs(queue.queue) do
+    if action.Type=='P4RestoreFloorAction' then
+        floorRestores=floorRestores+1
+        assert(not definitions.inspect(action),'mixed native MP floor cleanup remains opaque')
+    end
+end
+assert(floorRestores==2,'actual installed Tidy builds MP floor cleanup without toolkit rights')
+while queue.queue[1] do queue.queue[1]:perform() end
+isClient=nativeClient; tickTidy(); tickTidy()
+assert(TidyFixture.restoring[player]==nil and TidyFixture.restoreFloor[player]==nil)
 -- A changed source and an unknown preloaded owner cannot obtain a private baseline.
 local oldOperations,oldDefinitions,oldCompat=PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat
 local oldAdd,oldMods,oldReader,oldClass=ISTimedActionQueue.add,getActivatedMods,getModFileReader,NC_CraftActionPanel

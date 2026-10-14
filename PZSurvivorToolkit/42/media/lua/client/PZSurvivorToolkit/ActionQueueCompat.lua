@@ -178,7 +178,30 @@ local function matches(action)
     return not action.retriggerLastAction and not action.onFailFunc and not action.additionalTest
 end
 
-local scoped
+local function tidyRestoreContext(context, action)
+    local session = context.tidySession
+    local policy = Toolkit.ActionQueuePolicy
+    if not session or not session.mixed or getmetatable(action) ~= ISInventoryTransferAction
+        or not policy or not policy.isOrdinaryTransfer or not policy.isOrdinaryTransfer(action)
+        or action.srcContainer ~= action.character:getInventory() or not instanceof(action.item, "InventoryItem") then return context end
+    local id, fullType = action.item:getID(), action.item:getFullType()
+    local owner
+    for token, task in pairs(session.tasks) do
+        local pickup = task.pickups[id]
+        if pickup and pickup.fullType == fullType and pickup.container == action.destContainer then
+            if owner then return context end
+            owner = token
+        end
+    end
+    if not owner then return context end
+    for token, task in pairs(session.tasks) do
+        if token ~= owner and (task.unknownInputs or task.items[id]) then return context end
+    end
+    return {id = context.id, token = owner, character = context.character, queue = context.queue,
+        generation = context.generation}
+end
+
+local scoped, rememberTidy
 local function adopt(action)
     local context = sourceScope
     if not context then return end
@@ -186,12 +209,15 @@ local function adopt(action)
     local baseline = classes[context.id] and classes[context.id][class]
     if not baseline or not classUnchanged(class, baseline) or action.onStartFunc or action.onCancelFunc
         or action.retriggerLastAction or action.onFailFunc or action.additionalTest then return end
+    context = tidyRestoreContext(context, action)
+    if context.id == "P4TidyUpMeister" and not live(context) then return false end
     Operations.adopt(action, context.token)
     if records[action] then return end
     local queue = ISTimedActionQueue.getTimedActionQueue(action.character)
     local record = {class = class, baseline = baseline, character = action.character,
         token = action.toolkitQueueOperation, queue = queue, generation = queue.toolkitOperationGeneration or 0,
-        id = context.id, target = context.target, fields = {}, itemIdentities = {}, opaque = context.opaque, owner = context.owner}
+        id = context.id, target = context.target, fields = {}, itemIdentities = {}, owner = context.owner,
+        opaque = context.opaque or (context.sharedCleanup and class == P4RestoreFloorAction), sharedCleanup = context.sharedCleanup}
     records[action] = record
     if context.id == "Project_Cook" and class == ISAddItemInRecipe then context.lastApply = action end
     if class == ISQueueActionsAction then
@@ -270,12 +296,14 @@ scoped = function(context, callback, ...)
     ISTimedActionQueue.add = function(action)
         if context.id == "P4TidyUpMeister" and sessions[action.character] then sessions[action.character].restored = true end
         if not valid() then return end
-        adopt(action); return add(action)
+        if adopt(action) == false then return end
+        return add(action)
     end
     ISTimedActionQueue.addAfter = function(previousAction, action)
         if not valid() then return end
         if previousAction then action.toolkitQueueOperation = previousAction.toolkitQueueOperation end
-        adopt(action); return addAfter(previousAction, action)
+        if adopt(action) == false then return end
+        return addAfter(previousAction, action)
     end
     table.insert = function(target, ...)
         local args = pack(...)
@@ -283,7 +311,10 @@ scoped = function(context, callback, ...)
         local queue = type(action) == "table" and action.character and ISTimedActionQueue.queues[action.character]
         if queue and target == queue.queue then
             if not valid() then return end
-            adopt(action)
+            if adopt(action) == false then return end
+            local results = pack(insert(target, unpack(args, 1, args.n)))
+            if rememberTidy then rememberTidy(action) end
+            return unpack(results, 1, results.n)
         end
         return insert(target, unpack(args, 1, args.n))
     end
@@ -352,23 +383,14 @@ local function inspect(action)
             and not action.item:getItemAfterCleaning()) then result.knownInputs = false end
     end
     for _, container in pairs({action.srcContainer, action.destContainer, action.wmiReturnContainer}) do
-        if instanceof(container, "ItemContainer") then
-            local parent = container:getParent()
-            if parent and not instanceof(parent, "IsoGameCharacter") then result.targets[parent] = true end
-            if container.getContainingItem then
-                local owner = container:getContainingItem()
-                if instanceof(owner, "InventoryContainer") then
-                    result.items[owner:getID()] = true; result.itemTypes[owner:getFullType()] = true
-                end
-            end
-        end
+        Toolkit.ActionQueuePolicy.addContainerResources(result, container)
     end
     if record.target then result.targets[record.target] = true end
     if record.id ~= "WashFix" then result.hands = action.character end
     if record.class == ISQueueActionsAction then result.deferred, result.knownInputs = true, false end
     if record.class == ISWashClothing or record.class == ISAddItemInRecipe then result.unknownOutputs = true end
     -- The following source command repairs invalid consumed spice on the authoritative side.
-    if record.class == ISAddItemInRecipe or record.cleanupFor then result.cancelOperation = false end
+    if record.class == ISAddItemInRecipe or record.cleanupFor or record.sharedCleanup then result.cancelOperation = false end
     if record.class == P4RestoreFloorAction then
         -- Floor placement is a server completion effect, never an interrupted client-side restore.
         result.interrupt, result.preparationFinish = "finish-step", true
@@ -396,10 +418,14 @@ local function loadSource(id, module, eventName)
                     local character = select(1, ...)
                     local record = sessions[character]
                     if record then
-                        -- Mixed native Tidy sessions have no single task owner; their restores stay opaque.
+                        if not Toolkit.Settings.actionQueue() then
+                            sessions[character] = nil
+                            return callback(...)
+                        end
+                        -- Shared native equipment and ambiguous returns outlive cancellation of any one task.
                         if record.mixed and not record.restoreToken then record.restoreToken = {} end
                         local context = {id = id, token = record.restoreToken or record.token, character = character, queue = record.queue,
-                            generation = record.generation, opaque = record.mixed}
+                            generation = record.generation, tidySession = record, sharedCleanup = record.mixed}
                         local results = pack(scoped(context, callback, ...))
                         if #record.queue.queue == 0 and not character:hasTimedActions() then
                             record.idleTicks = (record.idleTicks or 0) + 1
@@ -596,15 +622,13 @@ function Compat.isCraftOwner(name, target, action)
         and target.onHandcraftActionCancelled == owner.methods.onHandcraftActionCancelled
 end
 
-local add = ISTimedActionQueue.add
-ISTimedActionQueue.add = function(action)
-    local result = add(action)
-    if installed.P4TidyUpMeister and action.character and action.toolkitQueueOperation and result then
+rememberTidy = function(action)
+    if installed.P4TidyUpMeister and action.character and action.toolkitQueueOperation then
         local character, token = action.character, action.toolkitQueueOperation
         if not Toolkit.Settings.actionQueue() then
             -- A new native operation while disabled has no single owner with an older tracked Tidy session.
             if sessions[character] and sessions[character].token ~= token then sessions[character] = nil end
-            return result
+            return
         end
         if sourceScope and sourceScope.id == "P4TidyUpMeister" then
             if sessions[character] then sessions[character].restored = true end
@@ -612,11 +636,42 @@ ISTimedActionQueue.add = function(action)
             local record = sessions[character]
             if not record then
                 local queue = ISTimedActionQueue.getTimedActionQueue(character)
-                sessions[character] = {token = token, queue = queue, generation = queue.toolkitOperationGeneration or 0}
+                record = {token = token, queue = queue, generation = queue.toolkitOperationGeneration or 0,
+                    tasks = {}, seen = setmetatable({}, {__mode = "k"})}
+                sessions[character] = record
             elseif record.token ~= token then record.mixed = true end
+            if record.seen[action] then return end
+            record.seen[action] = true
+            local task = record.tasks[token]
+            if not task then task = {items = {}, pickups = {}}; record.tasks[token] = task end
+            local contract = Toolkit.ActionQueueDefinitions.inspect(action)
+            if not contract or contract.knownInputs == false or contract.dynamicInputs then task.unknownInputs = true end
+            for id in pairs(contract and contract.items or {}) do task.items[id] = true end
+            for id in pairs(contract and contract.containerOwners or {}) do task.items[id] = true end
+            for item, container in pairs(token.toolkitPickups or {}) do
+                task.pickups[item:getID()] = {container = container, fullType = item:getFullType()}
+            end
         end
     end
-    return result
+end
+
+local add = ISTimedActionQueue.add
+ISTimedActionQueue.add = function(action)
+    local results = pack(add(action))
+    if results[1] then rememberTidy(action) end
+    return unpack(results, 1, results.n)
+end
+local addAfter = ISTimedActionQueue.addAfter
+ISTimedActionQueue.addAfter = function(previous, action)
+    local results = pack(addAfter(previous, action))
+    if results[2] then rememberTidy(results[2]) end
+    return unpack(results, 1, results.n)
+end
+local addToQueue = ISTimedActionQueue.addToQueue
+ISTimedActionQueue.addToQueue = function(queue, action)
+    local results = pack(addToQueue(queue, action))
+    if queue:indexOf(action) ~= -1 then rememberTidy(action) end
+    return unpack(results, 1, results.n)
 end
 
 Toolkit.ActionQueueDefinitions.registerBehavior("compat.selected-chains", {matches = matches, inspect = inspect})

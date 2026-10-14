@@ -324,6 +324,8 @@ ISTimedActionQueue.tick = function(queue)
             return
         end
     end
+    -- Native idle clear is housekeeping; explicit clear still revokes late continuations.
+    if not queue.queue[1] then return end
     return tick(queue)
 end
 

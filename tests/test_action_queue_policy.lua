@@ -5,6 +5,19 @@ f.native('shared/Fluids/ISFluidTransferAction.lua')
 f.native('shared/Fluids/ISFluidEmptyAction.lua')
 f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
 local policy=f.project('ActionQueuePolicy')
+local originalItem=f.item
+f.item=function(kind)
+    local item=originalItem(kind)
+    item.getUnequippedWeight=function(self)return self.weight or 0.1 end
+    item.getType=function(self)return self:getFullType():match('%.(.+)$') end
+    return item
+end
+local function capacity(container)
+    container.getCapacityWeight=function(self)return self.load or 0 end
+    container.getEffectiveCapacity=function(self)return self.capacity or 50 end
+    container.getAcceptItemFunction=function(self)return self.acceptItem end
+    return container
+end
 local head=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')})
 local function vessel()
     local owner=f.item('Base.Bucket')
@@ -261,7 +274,7 @@ local bagInventory={class='ItemContainer',getType=function()return 'bag' end,
     getContainingItem=function()return carriedBag end,getParent=function()end}
 nativeTransfer.getNotFullFloorSquare=nil
 nativeTransfer.srcContainer,nativeTransfer.destContainer=bagInventory,f.player.inventory
-assert(policy.inspect(nativeTransfer) and policy.inspect(nativeTransfer).items[carriedBag:getID()],
+assert(policy.inspect(nativeTransfer) and policy.inspect(nativeTransfer).containerOwners[carriedBag:getID()],
     'verified carried bag to native root transfer retains its contract and owner ID')
 nativeTransfer.srcContainer,nativeTransfer.destContainer=f.player.inventory,bagInventory
 assert(policy.inspect(nativeTransfer),'native return into the same carried bag remains supported')
@@ -288,12 +301,15 @@ assert(not policy.inspect(nativeTransfer),'verified wrapper adoption cannot trus
 
 local baseInstanceof=instanceof
 instanceof=function(value,name)
-    return baseInstanceof(value,name) or (name=='IsoGameCharacter' and type(value)=='table' and value.class=='IsoPlayer')
+    return baseInstanceof(value,name) or (type(value)=='table' and ((name=='IsoGameCharacter' and value.class=='IsoPlayer')
+        or (name=='InventoryItem' and value.class=='InventoryContainer')))
 end
 f.player.inventory.getParent=function()return f.player end
+capacity(f.player.inventory);capacity(bagInventory)
 local bag2=f.item('Base.Bag_Schoolbag');bag2.class='InventoryContainer'
 local secondBagInventory={class='ItemContainer',getType=function()return 'bag' end,
     getContainingItem=function()return bag2 end,getParent=function()return f.player end}
+capacity(secondBagInventory)
 local separate1=f.action(ISInventoryTransferAction,{item=f.item('Base.Nails'),srcContainer=bagInventory,destContainer=f.player.inventory})
 local separate2=f.action(ISInventoryTransferAction,{item=f.item('Base.Thread'),srcContainer=secondBagInventory,destContainer=f.player.inventory})
 q=f.queue(head,separate1,separate2)
@@ -317,4 +333,80 @@ separate1.destContainer=stoveDestination
 q=f.queue(head,separate1,toggle)
 assert(policy.moveReason(q,toggle,separate1)=='move_dependent' and policy.moveReason(q,separate1,toggle,true)=='move_dependent',
     'character exclusion keeps genuine microwave world-owner dependency')
+
+-- The bag is a shared container reference, while the moved contents remain distinct native IDs.
+local itemA,itemB=f.item('Base.Nails'),f.item('Base.Thread')
+itemA.weight,itemB.weight=2,1
+local outgoingA=f.action(ISInventoryTransferAction,{item=itemA,srcContainer=bagInventory,destContainer=f.player.inventory})
+local outgoingB=f.action(ISInventoryTransferAction,{item=itemB,srcContainer=bagInventory,destContainer=f.player.inventory})
+local incomingA=f.action(ISInventoryTransferAction,{item=itemA,srcContainer=f.player.inventory,destContainer=bagInventory})
+local incomingB=f.action(ISInventoryTransferAction,{item=itemB,srcContainer=f.player.inventory,destContainer=bagInventory})
+local function both(a,b,reason)
+    local queue=f.queue(head,a,b)
+    assert(policy.moveReason(queue,a,b,true)==reason and policy.moveReason(queue,b,a)==reason,'symmetric transfer move: '..tostring(reason))
+    assert(policy.cancelOperationReason(queue,a)==reason and policy.cancelOperationReason(queue,b)==reason,'symmetric transfer cancellation: '..tostring(reason))
+end
+both(outgoingA,outgoingB);both(incomingA,incomingB);both(outgoingA,incomingB)
+local replicated=f.item('Base.Bag_Schoolbag');replicated.class='InventoryContainer';replicated.id=carriedBag.id
+local bagUse=f.action(ISEquipWeaponAction,{item=replicated})
+q=f.queue(head,outgoingA,bagUse)
+assert(policy.moveReason(q,bagUse,outgoingA)=='move_shared_item' and policy.moveReason(q,outgoingA,bagUse,true)=='move_shared_item')
+assert(policy.cancelOperationReason(q,outgoingA)=='operation_shared_item','owner references still protect changes to the bag itself')
+q=f.queue(head,outgoingA,late('Base.Bag_Schoolbag','Base.Rags'))
+assert(policy.moveReason(q,q.queue[3],outgoingA)=='move_craft_inputs','future bag consumption still intersects the owner type')
+f.player.inventory.load=48
+both(outgoingA,outgoingB,'container_capacity')
+local blockedCapacity=policy.evaluateMove(f.queue(head,outgoingA,outgoingB),outgoingB,outgoingA)
+assert(blockedCapacity.blocker==outgoingA and blockedCapacity.resource==f.player.inventory)
+f.player.inventory.load=nil
+bagInventory.load,bagInventory.capacity=8,10
+both(incomingA,incomingB,'container_capacity')
+bagInventory.load=9.5
+both(outgoingA,incomingB,'container_capacity') -- No credit for the first transfer freeing bag space.
+bagInventory.load,bagInventory.capacity=nil,nil
+local prefix=f.action(ISInventoryTransferAction,{item=f.item('Base.Hammer'),srcContainer=f.player.inventory,destContainer=bagInventory})
+prefix.item.weight=48
+q=f.queue(head,prefix,incomingA,incomingB)
+assert(policy.moveReason(q,incomingB,incomingA)=='container_capacity','earlier incoming transfers count too')
+prefix.item.weight=1
+prefix.queueList={{items={prefix.item,f.item('Base.Anvil')}}}
+prefix.queueList[1].items[2].weight=48
+assert(policy.moveReason(q,incomingB,incomingA)=='container_capacity','all native batched items count, not just the visible item')
+prefix.queueList={{items={prefix.item}}}
+f.player.inventory.capacity=4.02;bagInventory.capacity=4.02
+assert(not policy.moveReason(q,incomingB,incomingA),'current item is counted once within its own native batch')
+f.player.inventory.capacity,bagInventory.capacity=nil,nil
+prefix.queueList=nil
+q=f.queue(head,late('Base.Sheet','Base.SheetRope'),incomingA,incomingB)
+assert(policy.moveReason(q,incomingB,incomingA)=='container_capacity','unbounded weight effects in the prefix remain a barrier')
+bagInventory.acceptItem='Mod.contentsDependentAccept'
+both(incomingA,incomingB,'container_capacity')
+bagInventory.acceptItem=nil
+for _,weight in ipairs({-1,math.huge,0/0}) do itemA.weight=weight;both(incomingA,incomingB,'container_capacity') end
+itemA.weight=2
+for _,kind in ipairs({'Base.CandleLit','Base.Lantern_HurricaneLit','Mod.CandleLit','Mod.Lantern_HurricaneLit'}) do
+    local lit=f.action(ISInventoryTransferAction,{item=f.item(kind),srcContainer=f.player.inventory,destContainer=bagInventory})
+    both(lit,incomingB,'container_capacity')
+end
+bagInventory.load,bagInventory.capacity=6.999,10
+both(incomingA,incomingB,'container_capacity') -- Native rounds the existing load at each step.
+bagInventory.load,bagInventory.capacity=nil,nil
+q=f.queue(head,outgoingA,outgoingB)
+outgoingA.isValid=function()error('capacity proof must never call action validity')end
+assert(policy.moveReason(q,outgoingA,outgoingB,true)=='move_dependent')
+outgoingA.isValid=nil
+both(outgoingA,outgoingB)
+local sequence, weightReads = {head}, 0
+for i=1,12 do
+    local item=f.item('Base.Nails')
+    item.getUnequippedWeight=function()weightReads=weightReads+1;return 0.1 end
+    sequence[#sequence+1]=f.action(ISInventoryTransferAction,{item=item,srcContainer=bagInventory,destContainer=f.player.inventory})
+end
+local many=f.queue(unpack(sequence))
+assert(not policy.cancelOperationReason(many,sequence[2]) and weightReads==12,
+    'one cancellation decision computes capacity once for the whole sequence')
+weightReads=0
+assert(not policy.moveReason(many,sequence[#sequence],sequence[2]) and weightReads==12,
+    'one move decision computes capacity once across multiple crossed transfers')
+print('Shared bag references: stable owners, aggregate native capacity, batches, prefix effects and cancellation passed.')
 instanceof=baseInstanceof

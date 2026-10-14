@@ -152,6 +152,32 @@ if not PZSurvivorToolkit.ActionQueueDefinitions then assert(loadfile(ProjectRoot
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePolicy.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local api = PZSurvivorToolkit.ActionQueue
+do
+    local idlePlayer=player()
+    local idleQueue=ISTimedActionQueue.getTimedActionQueue(idlePlayer)
+    local generation=idleQueue.toolkitOperationGeneration or 0
+    local resumed=0
+    local pending=operations.attachContinuation({},idlePlayer)
+    idleQueue:tick();idleQueue:tick()
+    assert((idleQueue.toolkitOperationGeneration or 0)==generation,
+        'native empty ticks are housekeeping, not explicit queue cancellation')
+    operations.runContinuation(pending,function() resumed=resumed+1 end)
+    assert(resumed==1,'late continuation survives normal native idle ticks')
+    for _,mode in ipairs({'clear','reset','disabled','dead'}) do
+        pending=operations.attachContinuation({},idlePlayer)
+        generation=idleQueue.toolkitOperationGeneration or 0
+        if mode=='clear' then idleQueue:clearQueue()
+        elseif mode=='reset' then idleQueue:resetQueue()
+        elseif mode=='disabled' then enabled=false;idleQueue:tick()
+        else idlePlayer.dead=true;idleQueue:tick() end
+        assert((idleQueue.toolkitOperationGeneration or 0)==generation+1,
+            mode..' still invalidates an empty queue with pending callbacks')
+        operations.runContinuation(pending,function() resumed=resumed+1 end)
+        assert(resumed==1,mode..' prevents late continuation from repopulating the empty queue')
+        enabled,idlePlayer.dead=true,false
+        idleQueue:tick()
+    end
+end
 
 -- These lifecycle tests use explicit doubles; only the audited fixture classes get contracts.
 local fixtureClasses = {[leafType] = true}
