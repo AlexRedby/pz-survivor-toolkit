@@ -185,20 +185,23 @@ end
 function Craft.repairInputs(action)
     if not Craft.supports(action) or (getmetatable(action) ~= ISFixAction and getmetatable(action) ~= ISFixVehiclePartAction) then return end
     local types = {}
-    local ok = pcall(function()
+    -- Kahlua logs failed assertions even inside pcall; unsupported inputs are ordinary rejections.
+    local ok, result = pcall(function()
         -- MP reconstructs these selections from their indices, not the client's cached fields.
-        assert(FixingManager.getFixes(action.item):get(action.fixingNum) == action.fixing)
-        assert(action.fixing:getFixers():get(action.fixerNum) == action.fixer)
+        if FixingManager.getFixes(action.item):get(action.fixingNum) ~= action.fixing then return end
+        if action.fixing:getFixers():get(action.fixerNum) ~= action.fixer then return end
         local function add(fixer)
             local name = fixer:getFixerName()
-            assert(type(name) == "string" and name ~= "")
+            if type(name) ~= "string" or name == "" then return false end
             types[name] = true
+            return true
         end
-        add(action.fixer)
+        if not add(action.fixer) then return end
         local global = action.fixing:getGlobalItem()
-        if global then add(global) end
+        if global and not add(global) then return end
+        return types
     end)
-    if ok then return types end
+    if ok then return result end
 end
 
 function Craft.futureResources(action)
@@ -207,84 +210,88 @@ function Craft.futureResources(action)
     if class ~= ISHandcraftAction and class ~= ISCraftAction then return end
     local recipe = class == ISHandcraftAction and action.craftRecipe or action.recipe
     local result = {dynamicInputs = {}, outputTypes = {}, equipment = action.character}
-    local ok = pcall(function()
-        assert(instanceof(recipe, class == ISHandcraftAction and "CraftRecipe" or "Recipe"))
-        if action.items then assert(addList(action.items, {})) end
+    local ok, complete = pcall(function()
+        if not instanceof(recipe, class == ISHandcraftAction and "CraftRecipe" or "Recipe") then return end
+        if action.items and not addList(action.items, {}) then return end
         if action.manualInputs then
-            assert(type(action.manualInputs) == "table")
-            for _, items in pairs(action.manualInputs) do assert(addList(items, {})) end
+            if type(action.manualInputs) ~= "table" then return end
+            for _, items in pairs(action.manualInputs) do if not addList(items, {}) then return end end
         end
         local _, owner = callbackOwner(action)
         if owner and owner.returnToContainer then
-            assert(type(owner.returnToContainer) == "table")
-            for _, item in ipairs(owner.returnToContainer) do assert(instanceof(item, "InventoryItem")) end
+            if type(owner.returnToContainer) ~= "table" then return end
+            for _, item in ipairs(owner.returnToContainer) do if not instanceof(item, "InventoryItem") then return end end
         end
         -- Loaded script lines include overrides; never execute recipe callbacks to discover effects.
         local lines = recipe:getScriptLines()
-        assert(lines:size() > 0)
+        if lines:size() <= 0 then return end
         for i = 0, lines:size() - 1 do
             local line = lines:get(i):lower()
             for key in line:gmatch("([%w_]+)%s*[:=]") do
-                assert(key:sub(1, 2) ~= "on" and key:sub(1, 3) ~= "lua")
+                if key:sub(1, 2) == "on" or key:sub(1, 3) == "lua" then return end
             end
         end
         local function addType(types, name)
-            assert(type(name) == "string" and name:match("^[%w_]+%.[%w_]+$"))
+            if type(name) ~= "string" or not name:match("^[%w_]+%.[%w_]+$") then return false end
             types[name] = true
+            return true
         end
         local function addScriptItems(list, types, input)
-            assert(list:size() > 0)
+            if list:size() <= 0 then return false end
             for i = 0, list:size() - 1 do
                 local script = list:get(i)
-                assert(instanceof(script, "Item"))
-                addType(types, script:getFullName())
+                if not instanceof(script, "Item") or not addType(types, script:getFullName()) then return false end
                 if input then
                     -- Depleted/used items and broken tools can create undeclared items or run callbacks.
-                    assert(not script:isItemType(ItemType.CONTAINER) and not script:getReplaceOnUse()
-                        and not script:getReplaceOnDeplete() and not script:getOnBreak())
+                    if script:isItemType(ItemType.CONTAINER) or script:getReplaceOnUse()
+                        or script:getReplaceOnDeplete() or script:getOnBreak() then return false end
                 end
             end
+            return true
         end
         if class == ISHandcraftAction then
             local function output(script)
-                assert(instanceof(script, "OutputScript") and script:getResourceType() == ResourceType.Item)
-                assert(not script:getCreateToItemScript())
-                addScriptItems(script:getPossibleResultItems(), result.outputTypes)
+                if not instanceof(script, "OutputScript") or script:getResourceType() ~= ResourceType.Item
+                    or script:getCreateToItemScript() then return false end
+                return addScriptItems(script:getPossibleResultItems(), result.outputTypes)
             end
             local inputs = recipe:getInputs()
-            assert(inputs:size() > 0)
+            if inputs:size() <= 0 then return end
             for i = 0, inputs:size() - 1 do
                 local input = inputs:get(i)
-                assert(instanceof(input, "InputScript") and input:getResourceType() == ResourceType.Item
-                    and not input:isAcceptsAnyItem() and not input:getConsumeFromItemScript())
-                addScriptItems(input:getPossibleInputItems(), result.dynamicInputs, true)
-                if input:getCreateToItemScript() then output(input:getCreateToItemScript()) end
-                if input:isReplace() then output(input:getReplaceOutputScript()) end
+                if not instanceof(input, "InputScript") or input:getResourceType() ~= ResourceType.Item
+                    or input:isAcceptsAnyItem() or input:getConsumeFromItemScript() then return end
+                if not addScriptItems(input:getPossibleInputItems(), result.dynamicInputs, true) then return end
+                if input:getCreateToItemScript() and not output(input:getCreateToItemScript()) then return end
+                if input:isReplace() and not output(input:getReplaceOutputScript()) then return end
             end
             local outputs = recipe:getOutputs()
-            for i = 0, outputs:size() - 1 do output(outputs:get(i)) end
+            for i = 0, outputs:size() - 1 do if not output(outputs:get(i)) then return end end
         else
-            assert(instanceof(recipe, "Recipe") and not instanceof(recipe, "MovableRecipe"))
-            assert(not recipe:isRequiresWorkstation() and not recipe:getNearItem() and recipe:getHeat() == 0)
+            if not instanceof(recipe, "Recipe") or instanceof(recipe, "MovableRecipe") then return end
+            if recipe:isRequiresWorkstation() or recipe:getNearItem() or recipe:getHeat() ~= 0 then return end
             local sources = recipe:getSource()
-            assert(sources:size() > 0)
+            if sources:size() <= 0 then return end
             for i = 0, sources:size() - 1 do
                 local types = sources:get(i):getItems()
-                assert(types:size() > 0)
+                if types:size() <= 0 then return end
                 for j = 0, types:size() - 1 do
                     local name = types:get(j)
-                    addType(result.dynamicInputs, name)
+                    if not addType(result.dynamicInputs, name) then return end
                     local script = getScriptManager():FindItem(name)
-                    assert(script and not script:isItemType(ItemType.CONTAINER) and not script:getReplaceOnUse()
-                        and not script:getReplaceOnDeplete() and not script:getOnBreak())
+                    if not script or script:isItemType(ItemType.CONTAINER) or script:getReplaceOnUse()
+                        or script:getReplaceOnDeplete() or script:getOnBreak() then return end
                 end
             end
             local outputs = recipe:getResults()
-            assert(outputs:size() > 0)
-            for i = 0, outputs:size() - 1 do addType(result.outputTypes, outputs:get(i):getFullType()) end
+            if outputs:size() <= 0 then return end
+            for i = 0, outputs:size() - 1 do
+                if not addType(result.outputTypes, outputs:get(i):getFullType()) then return end
+            end
         end
+        return result
     end)
-    if ok then return result end
+    if ok then return complete end
 end
 
 function Craft.collectItems(action, items)
