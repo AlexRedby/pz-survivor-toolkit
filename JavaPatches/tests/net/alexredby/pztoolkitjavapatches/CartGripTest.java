@@ -48,20 +48,40 @@ public final class CartGripTest {
         for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
         var actor=skeleton(names,List.of(-1,0,1,2,3,3,0,6,7,8,8,0,0),offsets);
         for(int model=0;model<models.length;model++) for(boolean female:new boolean[]{false,true})
-            for(float lean:model==1?new float[]{-.18f,-.1f,0,.1f,.18f}:new float[]{-.1f,0,.1f})
+            for(float lean:new float[]{-.1f,0,.1f})
             for(float phase:model==1?new float[]{-1,0,1}:new float[]{0}) {
             var delta=new Matrix4f().translation(.01f,.03f,0).rotateZ(lean);
-            var poses=new Matrix4f[names.length];
-            for(int i=0;i<poses.length;i++) poses[i]=delta.mul(new Matrix4f().set(nativePose[i]),new Matrix4f());
-            var gait=new Matrix4f().translation(0,.006f*phase,0).rotateY(.04f*phase);
-            for(int i=0;i<11;i++) gait.mul(poses[i],poses[i]);
-            var before=java.util.Arrays.stream(poses).map(Matrix4f::new).toArray(Matrix4f[]::new);
             var pitched=new Matrix4f().set(nativeCart[model]);
             CartGrounding.lowerHandles(pitched,models[model]);
             var cart=delta.mul(pitched,new Matrix4f());
+            if(model==1 && !CartGrounding.alignWood(cart.set(pitched),lean,delta))
+                throw new AssertionError("native wooden cart grounding rejected");
+            var poses=new Matrix4f[names.length];
+            for(int i=0;i<poses.length;i++) {
+                poses[i]=new Matrix4f().set(nativePose[i]);
+                if(model!=1) delta.mul(poses[i],poses[i]);
+            }
+            var gait=new Matrix4f().translation(0,.006f*phase,0).rotateY(.04f*phase);
+            for(var pose:poses) gait.mul(pose,pose);
+            var nativeSpine=new Matrix4f(poses[0]);
+            if(model==1) {
+                var palette=FloatBuffer.allocate(names.length*16);
+                for(var pose:poses) PZMath.convertMatrix(new Matrix4f(pose).transpose(),new org.lwjgl.util.vector.Matrix4f()).store(palette);
+                var live=CartGrip.livePoses(actor,actor,palette,delta);
+                if(live==null) throw new AssertionError("native wooden torso rejected");
+                for(int i=0;i<11;i++) poses[i].set(live[i]);
+                if(!poses[0].equals(nativeSpine,.00001f)) throw new AssertionError("wooden pelvis left native hip anchor");
+                for(int upper:new int[]{1,6}) {
+                    float old=new Matrix4f().set(nativePose[0]).getTranslation(new Vector3f())
+                        .distance(new Matrix4f().set(nativePose[upper]).getTranslation(new Vector3f()));
+                    float now=poses[0].getTranslation(new Vector3f()).distance(poses[upper].getTranslation(new Vector3f()));
+                    if(Math.abs(old-now)>.00001f) throw new AssertionError("wooden torso length changed");
+                }
+            }
+            var before=java.util.Arrays.stream(poses).map(Matrix4f::new).toArray(Matrix4f[]::new);
             var handleDelta=new Matrix4f(cart).mul(new Matrix4f().set(nativeCart[model]).invert());
             if(!CartGrip.grip(poses,actor,models[model],female,delta,cart))
-                throw new AssertionError("native handles unreachable: "+models[model]+" female="+female);
+                throw new AssertionError("native handles unreachable: "+models[model]+" female="+female+" bank="+lean+" phase="+phase);
             for(int side=0;side<2;side++) {
                 int upper=side==0?1:6,forearm=upper+1,hand=upper+2;
                 var shape=CartGrip.grasp(female,models[model]);
@@ -82,8 +102,11 @@ public final class CartGripTest {
                     handPalm.fma(-handPalm.dot(forearmAxis),forearmAxis).normalize();
                     float roll=(float)Math.toDegrees(Math.acos(Math.max(-1,Math.min(1,forearmPalm.dot(handPalm)))));
                     float abduction=(float)Math.toDegrees(Math.atan2(Math.abs(elbow.x-shoulder.x),shoulder.y-elbow.y));
-                    if(bend>30 || roll>10 || abduction>25 || elbow.y>shoulder.y-.12f || elbow.z<wrist.z+.09f)
-                        throw new AssertionError("unnatural arm/wrist: bend="+bend+" roll="+roll+" abduction="+abduction);
+                    // A grounded wooden cart rolls its handles around the tire while the native pelvis stays put.
+                    if(bend>(model==1?35:30) || roll>10 || abduction>(model==1?30:25)
+                        || elbow.y>shoulder.y-(model==1?.115f:.12f) || elbow.z<wrist.z+(model==1?.08f:.09f))
+                        throw new AssertionError("unnatural arm/wrist: "+models[model]+" female="+female+" bank="+lean+" phase="+phase
+                            +" bend="+bend+" roll="+roll+" abduction="+abduction);
                     var measuredAxis=model==1?new Vector3f(side==0?.13444453f:-.13444453f,.48467334f,.86430112f)
                         :new Vector3f(0,.4012329f,.9159761f);
                     handleDelta.transformDirection(measuredAxis).normalize();
@@ -96,6 +119,13 @@ public final class CartGripTest {
                     float old=before[link[0]].getTranslation(new Vector3f()).distance(before[link[1]].getTranslation(new Vector3f()));
                     float now=poses[link[0]].getTranslation(new Vector3f()).distance(poses[link[1]].getTranslation(new Vector3f()));
                     if(Math.abs(old-now)>.00001f) throw new AssertionError("native arm length changed");
+                }
+                if(model==1) {
+                    var shoulder=before[upper].getTranslation(new Vector3f());
+                    var elbow=before[forearm].getTranslation(new Vector3f());
+                    float length=shoulder.distance(elbow)+elbow.distance(before[hand].getTranslation(new Vector3f()));
+                    if(length-shoulder.distance(poses[hand].getTranslation(new Vector3f()))<.005f)
+                        throw new AssertionError("wooden grip has less than 5mm reach reserve");
                 }
             }
             for(int i:new int[]{0,11,12}) if(!poses[i].equals(before[i])) throw new AssertionError("native thigh/torso pose changed");
@@ -230,7 +260,7 @@ public final class CartGripTest {
             new org.lwjgl.util.vector.Matrix4f()));
         var body=skeleton(remapped,java.util.Collections.nCopies(names.length,-1),offsets);
         var palette=FloatBuffer.allocate(names.length*16);
-        for(float phase:new float[]{-.5f,0,.5f}) {
+        for(float phase:new float[]{-.5f,0,.5f}) for(float bank:new float[]{-.5f,-.18f,0,.18f,.5f}) {
             var expected=new Matrix4f[names.length];
             for(int i=0;i<names.length;i++) {
                 expected[i]=new Matrix4f().translation(.02f*i,.5f+.01f*phase,-.03f*i).rotateZ(.05f*phase*i);
@@ -240,14 +270,45 @@ public final class CartGripTest {
                 palette.position(index*16);raw.store(palette);
             }
             float[] before=palette.array().clone();palette.position(7);
-            var delta=new Matrix4f().translation(0,.025f,0).rotateZ(.18f);
+            var delta=new Matrix4f().translation(.07f,.025f,-.03f).rotateZ(bank);
             var actual=CartGrip.livePoses(actor,body,palette,delta);
             if(actual==null) throw new AssertionError("live upper body rejected");
-            for(int i=0;i<names.length-1;i++)
-                if(!actual[i].equals(delta.mul(expected[i],new Matrix4f()),.00001f))
+            if(!actual[0].equals(expected[0],.00001f)) throw new AssertionError("native hip anchor changed");
+            for(int i=1;i<names.length-1;i++) {
+                var base=expected[0].getTranslation(new Vector3f());
+                float old=expected[i].getTranslation(new Vector3f()).distance(base);
+                float now=actual[i].getTranslation(new Vector3f()).distance(base);
+                if(Math.abs(old-now)>.00001f) throw new AssertionError("torso detached or stretched: "+names[i]);
+                var parent=actor.getBoneAt(i).parent;
+                if(parent.index!=0 && !new Matrix4f(actual[parent.index]).invert().mul(actual[i])
+                    .equals(new Matrix4f(expected[parent.index]).invert().mul(expected[i]),.00001f))
                     throw new AssertionError("native torso/shoulder motion lost: "+names[i]);
+                var response=new Matrix4f(actual[i]).mul(new Matrix4f(expected[i]).invert());
+                float angle=(float)Math.atan2(response.m01(),response.m00());
+                if(Math.abs(angle)>.17454f || angle*bank<0 || (bank!=0 && Math.abs(angle)<.0001f)
+                    || (bank==0 && !actual[i].equals(expected[i],.00001f)))
+                    throw new AssertionError("torso bank is unbounded or does not return to native gait");
+            }
             if(palette.position()!=7 || !java.util.Arrays.equals(palette.array(),before))
                 throw new AssertionError("live pose capture changed the native palette");
+            var clothing=FloatBuffer.wrap(before.clone());clothing.position(7);
+            var shader=new org.lwjgl.util.vector.Matrix4f[names.length];
+            if(CartGrip.skin(clothing,shader,body,actor,actual)!=names.length-1 || clothing.position()!=7)
+                throw new AssertionError("live clothing mapping/cursor changed");
+            for(int i=0;i<names.length;i++) {
+                int index=body.boneIndices.get(names[i]);
+                if(i==names.length-1) {
+                    for(int value=0;value<16;value++) if(clothing.get(index*16+value)!=before[index*16+value])
+                        throw new AssertionError("live clothing changed native thigh gait");
+                    continue;
+                }
+                var raw=new org.lwjgl.util.vector.Matrix4f();var view=clothing.duplicate();view.position(index*16);raw.load(view);
+                var decoded=PZMath.convertMatrix(raw,new Matrix4f()).transpose()
+                    .mul(PZMath.convertMatrix(body.boneOffset.get(index),new Matrix4f()).transpose().invert());
+                if(!decoded.equals(actual[i],.00001f)
+                    || !PZMath.convertMatrix(shader[index],new Matrix4f()).equals(PZMath.convertMatrix(raw,new Matrix4f())))
+                    throw new AssertionError("live remapped clothing pose disagrees: "+names[i]);
+            }
         }
         palette.limit(16);
         if(CartGrip.livePoses(actor,body,palette,new Matrix4f())!=null || palette.position()!=7)

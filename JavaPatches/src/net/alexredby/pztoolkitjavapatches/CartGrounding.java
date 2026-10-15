@@ -45,8 +45,10 @@ public final class CartGrounding {
         float y=transform.m01()*point.x()+transform.m11()*point.y()+transform.m21()*point.z()+transform.m31();
         float z=transform.m02()*point.x()+transform.m12()*point.y()+transform.m22()*point.z()+transform.m32();
         // Lower the handles around the tire; do not pitch the actor's torso with the cart.
-        matrices.get().attachment.translation(x,y,z).rotateX((float)Math.toRadians(8))
+        matrices.get().attachment.translation(x,y,z).rotateX((float)Math.toRadians("WheelbarrowWood".equals(model)?6:8))
             .translate(-x,-y,-z).mul(transform,transform);
+        // Keep the native hips fixed while leaving the wooden handles within the two arm links' reach.
+        if("WheelbarrowWood".equals(model)) transform.m32(transform.m32()-.01f);
     }
 
     static boolean referencePose(AnimationClip clip, SkinningData skeleton, String boneName, Matrix4f out) {

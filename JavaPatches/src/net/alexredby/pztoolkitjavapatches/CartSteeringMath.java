@@ -17,6 +17,22 @@ public final class CartSteeringMath {
         }
     }
 
+    static final class Bank {
+        double angle, velocity;
+
+        double update(double target, double seconds) {
+            if (!(seconds > 0)) return angle;
+            // Critical damping starts and releases hand pressure without a first-frame angular jerk.
+            double frequency = 1 / .085;
+            double offset = angle - target;
+            double rate = velocity + frequency * offset;
+            double decay = Math.exp(-frequency * seconds);
+            angle = target + (offset + rate * seconds) * decay;
+            velocity = (velocity - frequency * rate * seconds) * decay;
+            return angle;
+        }
+    }
+
     public static double wrap(double angle) {
         return Math.atan2(Math.sin(angle), Math.cos(angle));
     }
@@ -86,8 +102,27 @@ public final class CartSteeringMath {
 
     static double rollingLean(double turn, double forward, double seconds) {
         if (!(seconds > 0) || !Double.isFinite(turn) || !Double.isFinite(forward)) return 0;
-        // Visual load transfer follows accepted wheel motion, including reverse and blocked movement.
-        return Math.max(-.18,Math.min(.18,Math.atan(forward*turn/(5*seconds*seconds))));
+        // Accepted motion drives load transfer; the native anchored torso's handle reach limits the bank.
+        return Math.max(-.10,Math.min(.10,Math.atan(forward*turn/(5*seconds*seconds))));
+    }
+
+    static Step woodenStep(double heading, double target, double distance, double seconds,
+                           double load, double axle, double previousRate, Step result) {
+        step(heading,target,distance,seconds,load,axle,45,result);
+        if (!(distance > 0) || !(seconds > 0)) return result;
+        double dt=Math.min(.1,seconds), desiredRate=result.turn/dt;
+        double rate=previousRate+Math.max(-6*dt,Math.min(6*dt,desiredRate-previousRate));
+        double error=wrap(target-heading);
+        boolean reverse=Math.abs(error)>Math.PI*.75;
+        if(reverse) error=wrap(error+Math.PI);
+        double limit=2*Math.asin(Math.min(1,distance*Math.sin(Math.toRadians(45-2*Math.max(0,Math.min(1,load))))/(2*axle)));
+        double turn=Math.max(-limit,Math.min(limit,rate*dt));
+        if(turn*error>=0 && Math.abs(turn)>Math.abs(error)) turn=error;
+        double sideways=2*axle*Math.sin(turn/2);
+        double travel=Math.sqrt(Math.max(0,distance*distance-sideways*sideways));
+        if(reverse) travel=-travel;
+        return result.set(travel*Math.cos(heading+turn/2)+sideways*Math.sin(heading+turn/2),
+                          travel*Math.sin(heading+turn/2)-sideways*Math.cos(heading+turn/2),turn,travel);
     }
 
     /** Wall slides cannot count sideways displacement as forward steering progress. */

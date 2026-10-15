@@ -22,7 +22,7 @@ public final class CartSteeringMathTest {
 
     private static void wheelbarrowChecks() {
         // Actual calibrated contact positions after native horizontal model-to-world scale 1.5.
-        for (double[] geometry : new double[][]{{1.08587244, .033440793}, {1.1691522, -.0017422512}}) {
+        for (double[] geometry : new double[][]{{1.1025372148, .033440793}, {1.1691522, -.0017422512}}) {
             double axle = geometry[0], side = geometry[1];
             var empty = CartSteeringMath.step(0, Math.PI / 2, .03, 1.0 / 60, 0, axle, new CartSteeringMath.Step());
             var full = CartSteeringMath.step(0, Math.PI / 2, .03, 1.0 / 60, 1, axle, new CartSteeringMath.Step());
@@ -92,7 +92,7 @@ public final class CartSteeringMathTest {
     }
 
     private static void woodenArc() {
-        double axle=1.08587244;
+        double axle=1.1025372148;
         for(int load:new int[]{0,1}) for(int sign:new int[]{-1,1}) {
             double[] reference=null;
             for(int fps:new int[]{30,60,144}) {
@@ -106,7 +106,7 @@ public final class CartSteeringMathTest {
                     close(Math.hypot(step.x(),step.y()),speed/fps,"wooden arc preserves walking speed");
                     rolling(h,step.turn(),axle,.033440793,step.x(),step.y());
                     double bank=CartSteeringMath.rollingLean(step.turn(),step.travel(),1.0/fps);
-                    check(sign*bank>=0 && Math.abs(bank)<=.18,"wooden bank follows its turn");
+                    check(sign*bank>=0 && Math.abs(bank)<=.10,"wooden bank follows its turn within the calibrated grip range");
                     x+=step.x();y+=step.y();h+=step.turn();
                     check(sign*y>=-.47,"wooden arc avoids a large outside lunge");
                     if(settled==0 && h==sign*Math.PI/2) settled=(frame+1.0)/fps;
@@ -126,6 +126,55 @@ public final class CartSteeringMathTest {
             CartSteeringMath.rollingLean(.02,.04,1.0/30),"bank is frame-rate independent");
     }
 
+    private static void woodenTransitions() {
+        double axle=1.1025372148;
+        for(int load:new int[]{0,1}) for(int sign:new int[]{-1,1}) {
+            double[] reference=null;
+            for(int fps:new int[]{30,60,144}) {
+                double dt=1.0/fps,speed=load==0?1.3:.83,h=0,x=0,y=0,rate=0,settled=0;
+                var bank=new CartSteeringMath.Bank();
+                var step=new CartSteeringMath.Step();
+                for(int frame=0;frame<fps*4;frame++) {
+                    CartSteeringMath.woodenStep(h,sign*Math.PI/2,speed*dt,dt,load,axle,rate,step);
+                    double nextRate=step.turn()/dt;
+                    if(frame==0) check(Math.abs(nextRate)<=6*dt+1e-10,"wood turn builds pressure instead of jumping to full yaw rate");
+                    check(Math.abs(nextRate-rate)<=8*dt+.015,"entry and exit have bounded angular acceleration");
+                    rate=nextRate;
+                    close(Math.hypot(step.x(),step.y()),speed*dt,"smooth steering preserves native speed");
+                    rolling(h,step.turn(),axle,.033440793,step.x(),step.y());
+                    double before=bank.angle;
+                    bank.update(CartSteeringMath.rollingLean(step.turn(),step.travel(),dt),dt);
+                    check(sign*bank.angle>=-1e-10 && Math.abs(bank.angle)<=.10,"bank stays inside held turn without overshoot");
+                    check(Math.abs(bank.angle-before)<.7*dt,"hand pressure transition stays continuous");
+                    h+=step.turn();x+=step.x();y+=step.y();
+                    check(sign*h<=Math.PI/2+1e-10,"smooth turn cannot overshoot the held heading");
+                    if(settled==0 && Math.abs(h-sign*Math.PI/2)<1e-9) settled=(frame+1.0)/fps;
+                }
+                check(settled>0 && settled<(load==0?2.5:3.8),"smoothing keeps wooden steering responsive");
+                if(reference==null) reference=new double[]{x,y};
+                else check(Math.hypot(x-reference[0],y-reference[1])<.035,"smooth wood trajectory is stable across FPS");
+                // A quick opposite input must pass through zero turn rate, not flip its sign at full speed.
+                rate=sign*.45;
+                CartSteeringMath.woodenStep(h,h-sign*Math.PI/2,speed*dt,dt,load,axle,rate,step);
+                check(sign*step.turn()>0 && Math.abs(step.turn()/dt-rate)<=6*dt+1e-10,
+                    "quick reversal releases previous steering pressure first");
+            }
+        }
+        double reference=0;
+        for(int fps:new int[]{30,60,144}) {
+            var bank=new CartSteeringMath.Bank();
+            double dt=1.0/fps;
+            close(bank.update(.18,0),0,"pause cannot change bank");
+            for(int i=0;i<fps;i++) bank.update(.18,dt);
+            if(reference==0) reference=bank.angle;else close(bank.angle,reference,"bank dynamics are frame-rate independent");
+            check(bank.angle>.179 && bank.angle<=.18,"bank reaches pressure promptly without oscillating");
+            for(int i=0;i<fps/2;i++) bank.update(0,dt);
+            check(bank.angle>=0 && bank.angle<.004,"stopping smoothly rights the cart within half a second");
+            for(int i=0;i<fps;i++) bank.update(-.18,dt);
+            check(bank.angle<-.179 && bank.angle>=-.18,"opposite bank remains bounded");
+        }
+    }
+
     public static void main(String[] args) {
         var idle = CartSteeringMath.step(0, Math.PI / 2, 0, 1.0 / 60, 0);
         check(idle.turn() == 0 && idle.x() == 0 && idle.y() == 0, "idle cannot spin");
@@ -139,6 +188,7 @@ public final class CartSteeringMathTest {
         check(fast.turn() > full.turn() && full.turn() > 0, "cargo limits yaw");
         wheelbarrowChecks();
         woodenArc();
+        woodenTransitions();
         var reverse = CartSteeringMath.step(0, Math.PI, 0.03, 1.0 / 60, 0);
         close(reverse.x(), -0.03, "reverse escapes head-on wall");
         close(reverse.y(), 0, "reverse stays on axis");

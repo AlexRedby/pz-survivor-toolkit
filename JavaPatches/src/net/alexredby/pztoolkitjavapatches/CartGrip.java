@@ -49,7 +49,9 @@ public final class CartGrip {
 
     static Matrix4f[] livePoses(SkinningData actor, SkinningData body, FloatBuffer palette, Matrix4f delta) {
         var state=matrices.get();
-        if(actor==null || actor.numBones()>state.poses.length || body==null || palette==null) return null;
+        if(actor==null || actor.numBones()>state.poses.length || body==null || palette==null || !delta.isFinite()) return null;
+        var spine=actor.getBone("Bip01_Spine");
+        if(spine==null) return null;
         int position=palette.position();
         try {
             for(int i=0;i<actor.numBones();i++) {
@@ -63,10 +65,16 @@ public final class CartGrip {
                 PZMath.convertMatrix(state.skin,state.poses[i]).transpose();
                 PZMath.convertMatrix(body.boneOffset.get(index),state.adjustment).transpose().invert();
                 state.poses[i].mul(state.adjustment);
-                delta.mul(state.poses[i],state.poses[i]);
                 if(!state.poses[i].isFinite()) return null;
             }
         } finally {palette.position(position);}
+        var base=state.poses[spine.index];
+        // Spine is also the native hip anchor; bend at the waist by at most ten degrees and let IK take the rest.
+        float bank=Math.max(-.17453293f,Math.min(.17453293f,1.7f*(float)Math.atan2(delta.m01(),delta.m00())));
+        state.adjustment.translation(base.m30(),base.m31(),base.m32()).rotateZ(bank)
+            .translate(-base.m30(),-base.m31(),-base.m32());
+        for(int i=0;i<actor.numBones();i++)
+            if(i!=spine.index && upperBody(actor.getBoneAt(i))) state.adjustment.mul(state.poses[i],state.poses[i]);
         return state.poses;
     }
 
