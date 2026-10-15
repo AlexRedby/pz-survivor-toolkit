@@ -142,7 +142,32 @@ public final class CartGrounding {
         return true;
     }
 
+    static float woodenLowest(Matrix4f transform) {
+        float centerY=transform.m01()*CartWheelSpin.CENTER_X+transform.m11()*CartWheelSpin.CENTER_Y
+            +transform.m21()*CartWheelSpin.CENTER_Z+transform.m31();
+        return centerY-CartWheelSpin.RADIUS*(float)Math.hypot(transform.m11(),transform.m21())
+            -.00024333253f*Math.abs(transform.m01());
+    }
+
+    static boolean alignWood(Matrix4f transform, float lean, Matrix4f delta) {
+        if(!Float.isFinite(lean)) return false;
+        float height=transform.m31();
+        if(!ground(transform,woodenLowest(transform))) return false;
+        delta.translation(0,transform.m31()-height,0);
+        float centerX=transform.m00()*CartWheelSpin.CENTER_X+transform.m10()*CartWheelSpin.CENTER_Y
+            +transform.m20()*CartWheelSpin.CENTER_Z+transform.m30();
+        var roll=matrices.get().attachment;
+        roll.translation(centerX,.008f,0).rotateZ(lean).translate(-centerX,-.008f,0);
+        roll.mul(transform,transform);roll.mul(delta,delta);
+        // The rotating tire is a cylinder, not one fixed polygon vertex; its rim must clear the floor at every phase.
+        height=transform.m31();
+        if(!ground(transform,woodenLowest(transform))) return false;
+        delta.m31(delta.m31()+transform.m31()-height);
+        return true;
+    }
+
     public static void render(ModelSlotRenderData slot) {
+        CartWheelSpin.prepare(slot,Double.NaN);
         if(!(slot.character instanceof IsoPlayer player) || !CartSteeringHooks.enabled(player)) return;
         String name=player.getPrimaryHandItem().getStaticModel();
         var clip=ModelManager.instance.getAnimationClip("Bob_Cart_Idle");
@@ -154,11 +179,14 @@ public final class CartGrounding {
             Matrix4f transform=state.transform;
             boolean rigid=rigid(data,clip,transform);
             if(rigid) lowerHandles(transform,name);
+            float lean=(float)CartSteeringHooks.lean(player);
             if(rigid
-                && align(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,
-                    contact(instance.modelScript.getName()),(float)CartSteeringHooks.lean(player),state.delta)
+                && ("WheelbarrowWood".equals(name)?alignWood(transform,lean,state.delta)
+                    :align(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,
+                        contact(instance.modelScript.getName()),lean,state.delta))
                 && CartGrip.render(slot,instance.parent,clip,state.delta,name,transform)) {
                 data.xfrm.set(transform).transpose();
+                CartWheelSpin.prepare(slot,CartSteeringHooks.wheelPhase(player));
             } else {
                 transform.set(data.xfrm).transpose();
                 if(ground(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz)) data.xfrm.set(transform).transpose();

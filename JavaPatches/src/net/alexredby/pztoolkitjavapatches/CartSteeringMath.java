@@ -33,6 +33,11 @@ public final class CartSteeringMath {
 
     public static Step step(double heading, double target, double distance,
                             double seconds, double load, double axleDistance, Step result) {
+        return step(heading,target,distance,seconds,load,axleDistance,52,result);
+    }
+
+    static Step step(double heading, double target, double distance,
+                     double seconds, double load, double axleDistance, double lateralDegrees, Step result) {
         if (!(distance > 0) || !(seconds > 0)) return result.set(0, 0, 0, 0);
         load = Math.max(0, Math.min(1, load));
         double error = wrap(target - heading);
@@ -41,7 +46,7 @@ public final class CartSteeringMath {
         boolean wheelbarrow = axleDistance > 0;
         double axle = wheelbarrow ? axleDistance : AXLE_DISTANCE;
         double limit = wheelbarrow
-                ? 2 * Math.asin(Math.min(1, distance * Math.sin(Math.toRadians(52 - 2 * load)) / (2 * axle)))
+                ? 2 * Math.asin(Math.min(1, distance * Math.sin(Math.toRadians(lateralDegrees - 2 * load)) / (2 * axle)))
                 : distance * Math.abs(Math.sin(error)) / axle;
         limit = Math.min(limit, Math.min(0.1, seconds) * (wheelbarrow ? 1.6 - 0.3 * load : 3.8 - load));
         // Square-root easing settles in finite time instead of crawling through a sine tail.
@@ -77,6 +82,12 @@ public final class CartSteeringMath {
         double forward = actualX * cos + actualY * sin;
         double sideways = -actualX * sin + actualY * cos;
         return 2 * Math.atan2(-sideways, 2 * axleDistance - forward);
+    }
+
+    static double rollingLean(double turn, double forward, double seconds) {
+        if (!(seconds > 0) || !Double.isFinite(turn) || !Double.isFinite(forward)) return 0;
+        // Visual load transfer follows accepted wheel motion, including reverse and blocked movement.
+        return Math.max(-.18,Math.min(.18,Math.atan(forward*turn/(5*seconds*seconds))));
     }
 
     /** Wall slides cannot count sideways displacement as forward steering progress. */

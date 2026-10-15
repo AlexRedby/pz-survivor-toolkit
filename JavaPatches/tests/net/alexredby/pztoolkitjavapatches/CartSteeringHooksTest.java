@@ -120,6 +120,18 @@ public final class CartSteeringHooksTest {
             double axle=kind.endsWith("Wood")?1.08587244:1.1691522;
             check(Math.abs(heading.getDouble(state)-CartSteeringMath.acceptedTurn(0,axle,player.actualX,player.actualY))<1e-10,
                   "native collision displacement must determine wheel yaw: "+kind);
+            if(kind.endsWith("Wood")) {
+                double before=CartSteeringHooks.wheelPhase(player);
+                check(before<0,"accepted forward travel spins the wooden wheel");
+                CartSteeringHooks.heading(player);
+                check(CartSteeringHooks.wheelPhase(player)==before,"render/heading without accepted movement cannot spin the wheel twice");
+                var replacement=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+                type(replacement,kind);replacement.setContainer(player.inventory);
+                player.primary=player.secondary=replacement;
+                CartSteeringHooks.heading(player);
+                check(CartSteeringHooks.wheelPhase(player)==0,"new wooden cart inherited the old cart phase");
+                player.primary=player.secondary=cart;
+            } else check(Double.isNaN(CartSteeringHooks.wheelPhase(player)),"metal wheel opted into wooden prototype");
             CartSteeringHooks.reset(player);player.actualX=player.actualY=0;
         }
         System.out.println("CART_STEERING_HOOKS_PASS (combat, local, path, scope, cart ownership, reset)");

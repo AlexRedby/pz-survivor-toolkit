@@ -48,10 +48,13 @@ public final class CartGripTest {
         for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
         var actor=skeleton(names,List.of(-1,0,1,2,3,3,0,6,7,8,8,0,0),offsets);
         for(int model=0;model<models.length;model++) for(boolean female:new boolean[]{false,true})
-            for(float lean:new float[]{-.1f,0,.1f}) {
+            for(float lean:model==1?new float[]{-.18f,-.1f,0,.1f,.18f}:new float[]{-.1f,0,.1f})
+            for(float phase:model==1?new float[]{-1,0,1}:new float[]{0}) {
             var delta=new Matrix4f().translation(.01f,.03f,0).rotateZ(lean);
             var poses=new Matrix4f[names.length];
             for(int i=0;i<poses.length;i++) poses[i]=delta.mul(new Matrix4f().set(nativePose[i]),new Matrix4f());
+            var gait=new Matrix4f().translation(0,.006f*phase,0).rotateY(.04f*phase);
+            for(int i=0;i<11;i++) gait.mul(poses[i],poses[i]);
             var before=java.util.Arrays.stream(poses).map(Matrix4f::new).toArray(Matrix4f[]::new);
             var pitched=new Matrix4f().set(nativeCart[model]);
             CartGrounding.lowerHandles(pitched,models[model]);
@@ -214,10 +217,51 @@ public final class CartGripTest {
         }
     }
 
+    private static void checkLivePoses() {
+        String[] names={"Bip01_Spine","Bip01_Spine1","Bip01_L_Clavicle","Bip01_L_Hand",
+            "Bip01_R_Hand","Bip01_Head","Bip01_L_Thigh"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,2,1,1,0),offsets);
+        String[] remapped={names[6],names[3],names[5],names[1],names[0],names[4],names[2]};
+        offsets=new ArrayList<>();
+        for(int i=0;i<names.length;i++) offsets.add(PZMath.convertMatrix(
+            new Matrix4f().translation(.1f*i,-.03f*i,.02f*i).rotateY(.07f*i).transpose(),
+            new org.lwjgl.util.vector.Matrix4f()));
+        var body=skeleton(remapped,java.util.Collections.nCopies(names.length,-1),offsets);
+        var palette=FloatBuffer.allocate(names.length*16);
+        for(float phase:new float[]{-.5f,0,.5f}) {
+            var expected=new Matrix4f[names.length];
+            for(int i=0;i<names.length;i++) {
+                expected[i]=new Matrix4f().translation(.02f*i,.5f+.01f*phase,-.03f*i).rotateZ(.05f*phase*i);
+                int index=body.boneIndices.get(names[i]);
+                var raw=PZMath.convertMatrix(new Matrix4f(expected[i]).transpose(),new org.lwjgl.util.vector.Matrix4f());
+                org.lwjgl.util.vector.Matrix4f.mul(body.boneOffset.get(index),raw,raw);
+                palette.position(index*16);raw.store(palette);
+            }
+            float[] before=palette.array().clone();palette.position(7);
+            var delta=new Matrix4f().translation(0,.025f,0).rotateZ(.18f);
+            var actual=CartGrip.livePoses(actor,body,palette,delta);
+            if(actual==null) throw new AssertionError("live upper body rejected");
+            for(int i=0;i<names.length-1;i++)
+                if(!actual[i].equals(delta.mul(expected[i],new Matrix4f()),.00001f))
+                    throw new AssertionError("native torso/shoulder motion lost: "+names[i]);
+            if(palette.position()!=7 || !java.util.Arrays.equals(palette.array(),before))
+                throw new AssertionError("live pose capture changed the native palette");
+        }
+        palette.limit(16);
+        if(CartGrip.livePoses(actor,body,palette,new Matrix4f())!=null || palette.position()!=7)
+            throw new AssertionError("truncated live palette accepted or cursor changed");
+        palette.limit(palette.capacity());palette.put(body.boneIndices.get(names[0])*16,Float.NaN);
+        if(CartGrip.livePoses(actor,body,palette,new Matrix4f())!=null)
+            throw new AssertionError("non-finite live pose accepted");
+    }
+
     public static void main(String[] args) {
         checkReach();
         checkFingers();
         checkNativeHandles();
+        checkLivePoses();
         String[] names={"Dummy01","Bip01","Bip01_Spine","Bip01_R_Hand","Bip01_L_Hand","Bip01_R_Thigh",
             "Bip01_L_Thigh","Bip01_L_Calf","Bip01_L_Foot","Bip01_L_Toe0",
             "Bip01_R_Calf","Bip01_R_Foot","Bip01_R_Toe0"};
@@ -290,6 +334,6 @@ public final class CartGripTest {
             if(!java.util.Arrays.equals(otherActor.array(),untouched)) throw new AssertionError("another actor was changed");
         }
         if(frames.get(0).scale.x!=.01f) throw new AssertionError("shared clip scale changed");
-        System.out.println("CART_GRIP_PASS (natural underhand arms/wrists, measured mesh contact, native thumb, clothing, bank, walking legs, render isolation)");
+        System.out.println("CART_GRIP_PASS (live wooden torso/shoulders, anchored gait grip, natural arms/wrists, measured mesh contact, clothing, bank, walking legs, render isolation)");
     }
 }

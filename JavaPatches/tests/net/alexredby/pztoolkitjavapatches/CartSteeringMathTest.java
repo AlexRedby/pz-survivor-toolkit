@@ -91,6 +91,41 @@ public final class CartSteeringMathTest {
         close(CartSteeringMath.acceptedTurn(0, 0, .02, .01), 0, "invalid axle cannot steer");
     }
 
+    private static void woodenArc() {
+        double axle=1.08587244;
+        for(int load:new int[]{0,1}) for(int sign:new int[]{-1,1}) {
+            double[] reference=null;
+            for(int fps:new int[]{30,60,144}) {
+                double speed=load==0?1.3:.83, h=0,x=0,y=0,settled=0;
+                for(int frame=0;frame<fps*4;frame++) {
+                    var step=CartSteeringMath.step(h,sign*Math.PI/2,speed/fps,1.0/fps,
+                        load,axle,45,new CartSteeringMath.Step());
+                    double chord=2*axle*Math.sin(step.turn()/2);
+                    check(Math.abs(step.travel())>=Math.abs(chord)-1e-10,
+                        "wooden wheel keeps advancing at least as far as the sideways handle movement");
+                    close(Math.hypot(step.x(),step.y()),speed/fps,"wooden arc preserves walking speed");
+                    rolling(h,step.turn(),axle,.033440793,step.x(),step.y());
+                    double bank=CartSteeringMath.rollingLean(step.turn(),step.travel(),1.0/fps);
+                    check(sign*bank>=0 && Math.abs(bank)<=.18,"wooden bank follows its turn");
+                    x+=step.x();y+=step.y();h+=step.turn();
+                    check(sign*y>=-.47,"wooden arc avoids a large outside lunge");
+                    if(settled==0 && h==sign*Math.PI/2) settled=(frame+1.0)/fps;
+                }
+                check(settled>0 && settled<(load==0?2.3:3.6),"rolling arc still responds promptly");
+                if(reference==null) reference=new double[]{x,y,h};
+                else check(Math.hypot(x-reference[0],y-reference[1])<.015
+                    && Math.abs(h-reference[2])<.002,"wooden arc is frame-rate independent");
+            }
+        }
+        close(CartSteeringMath.rollingLean(.01,0,1.0/60),0,"blocked wheel cannot bank");
+        close(CartSteeringMath.rollingLean(0,.03,1.0/60),0,"straight wheel cannot sway");
+        close(CartSteeringMath.rollingLean(.01,.02,0),0,"paused wheel cannot bank");
+        close(CartSteeringMath.rollingLean(.01,-.02,1.0/60),
+            -CartSteeringMath.rollingLean(.01,.02,1.0/60),"reverse bank follows rolling direction");
+        close(CartSteeringMath.rollingLean(.01,.02,1.0/60),
+            CartSteeringMath.rollingLean(.02,.04,1.0/30),"bank is frame-rate independent");
+    }
+
     public static void main(String[] args) {
         var idle = CartSteeringMath.step(0, Math.PI / 2, 0, 1.0 / 60, 0);
         check(idle.turn() == 0 && idle.x() == 0 && idle.y() == 0, "idle cannot spin");
@@ -103,6 +138,7 @@ public final class CartSteeringMathTest {
         var full = CartSteeringMath.step(0, Math.PI / 2, 0.08, 1.0 / 60, 1);
         check(fast.turn() > full.turn() && full.turn() > 0, "cargo limits yaw");
         wheelbarrowChecks();
+        woodenArc();
         var reverse = CartSteeringMath.step(0, Math.PI, 0.03, 1.0 / 60, 0);
         close(reverse.x(), -0.03, "reverse escapes head-on wall");
         close(reverse.y(), 0, "reverse stays on axis");

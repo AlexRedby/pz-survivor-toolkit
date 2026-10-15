@@ -198,6 +198,27 @@ public final class CartGroundingTest {
   nativeExportPose();
   rigidPose();
   capturedContacts();
+  Matrix4f wooden=new Matrix4f().set(76.5f,2.8023098e-5f,-2.4333809e-5f,-.0060535767f,
+   -4.1037783e-5f,30.694286f,-70.07218f,.16715112f,
+   -9.11952e-6f,70.07218f,30.694283f,-.41188842f,0,0,0,1).transpose();
+  CartGrounding.lowerHandles(wooden,"WheelbarrowWood");
+  for(float lean:new float[]{-.18f,0,.18f}) {
+   Matrix4f actual=new Matrix4f(wooden),delta=new Matrix4f();
+   if(!CartGrounding.alignWood(actual,lean,delta)) throw new AssertionError("wooden bank rejected");
+   float minimum=Float.POSITIVE_INFINITY;
+   for(int degree=0;degree<360;degree++) for(int side:new int[]{-1,1}) {
+    double angle=Math.toRadians(degree);
+    var rim=new Vector3f(CartWheelSpin.CENTER_X+side*.00024333253f,
+     CartWheelSpin.CENTER_Y+CartWheelSpin.RADIUS*(float)Math.cos(angle),
+     CartWheelSpin.CENTER_Z+CartWheelSpin.RADIUS*(float)Math.sin(angle));
+    minimum=Math.min(minimum,actual.transformPosition(rim).y);
+   }
+   if(minimum<.008f-1e-6f || minimum>.008f+.00001f)
+    throw new AssertionError("spinning wooden tire must stay grounded through all wheel phases: "+minimum);
+   var handle=new Vector3f(.00172237f,.00541905f,-.00342593f);
+   if(actual.transformPosition(new Vector3f(handle)).distance(delta.transformPosition(wooden.transformPosition(handle)))>1e-5f)
+    throw new AssertionError("wooden bank detached the hands from the handles");
+  }
   Vector3f low=new Vector3f(-.35f,0,-.6f),high=new Vector3f(.35f,1,.6f);
   for(int degree=0;degree<360;degree+=15) {
    Matrix4f before=new Matrix4f().translation(.1f,-.15f,-.8f).rotateY((float)Math.toRadians(degree)).rotateX(.08f);

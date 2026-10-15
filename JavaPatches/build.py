@@ -84,6 +84,7 @@ if args.check or args.check_video:
               'net.alexredby.pztoolkitjavapatches.CartSteeringHooksTest': 'CART_STEERING_HOOKS_PASS',
               'net.alexredby.pztoolkitjavapatches.CartLegPaceTest': 'CART_LEG_PACE_PASS',
               'net.alexredby.pztoolkitjavapatches.CartGripTest': 'CART_GRIP_PASS',
+              'net.alexredby.pztoolkitjavapatches.CartWheelSpinTest': 'CART_WHEEL_SPIN_PASS',
               'net.alexredby.pztoolkitjavapatches.CartGroundingTest': 'CART_GROUNDING_PASS'} if args.check else {}
 
     if args.check_video:

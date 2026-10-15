@@ -14,7 +14,8 @@ public final class CartSteeringHooks {
     private static final ThreadLocal<Vector2> passthrough = ThreadLocal.withInitial(Vector2::new);
 
     private static final class State {
-        double heading, target, load, lean;
+        double heading, target, load, lean, wheelPhase;
+        zombie.inventory.InventoryItem cart;
         float startX, startY;
         boolean moving, pending;
         final CartSteeringMath.Step requested = new CartSteeringMath.Step();
@@ -47,8 +48,17 @@ public final class CartSteeringHooks {
         return state!=null && enabled(player) && wheelbarrow(player) ? state.lean : 0;
     }
 
+    public static double wheelPhase(IsoPlayer player) {
+        State state=states.get(player);
+        return state!=null && enabled(player) && wooden(player)?state.wheelPhase:Double.NaN;
+    }
+
     private static boolean wheelbarrow(IsoPlayer player) {
         return player.getPrimaryHandItem().getFullType().startsWith("SaucedWheelbarrow.");
+    }
+
+    private static boolean wooden(IsoPlayer player) {
+        return "SaucedWheelbarrow.WheelbarrowWood".equals(player.getPrimaryHandItem().getFullType());
     }
 
     private static double axle(IsoPlayer player) {
@@ -68,6 +78,7 @@ public final class CartSteeringHooks {
     public static Vector2 movement(IsoPlayer player, float x, float y) {
         State state = states.get(player);
         if (state == null || !enabled(player)) return passthrough.get().set(x, y);
+        if(state.cart!=player.getPrimaryHandItem()) {reset(player);return passthrough.get().set(x,y);}
         // Only the native locomotion call should be redirected; do not double-plan.
         if (state.pending) return passthrough.get().set(x, y);
         state.startX = player.getX();
@@ -79,7 +90,8 @@ public final class CartSteeringHooks {
         state.load = capacity > 0 ? contents.getCapacityWeight() / capacity : 0;
         CartSteeringMath.step(state.heading,
                 state.moving ? state.target : state.heading, distance,
-                GameTime.getInstance().getRealworldSecondsSinceLastUpdate(), state.load, axle(player), state.requested);
+                GameTime.getInstance().getRealworldSecondsSinceLastUpdate(), state.load, axle(player),
+                wooden(player)?45:52, state.requested);
         state.pending = true;
         return state.result.set((float) state.requested.x(), (float) state.requested.y());
     }
@@ -98,8 +110,9 @@ public final class CartSteeringHooks {
         }
         player.setVariable("ToolkitCartPivot",true);
         double desired = Math.atan2(player.getForwardDirectionY(), player.getForwardDirectionX());
-        if (state == null) {
+        if (state == null || state.cart!=player.getPrimaryHandItem()) {
             state = new State();
+            state.cart=player.getPrimaryHandItem();
             Vector2 facing = player.getAnimForwardDirection(new Vector2());
             state.heading = Math.atan2(facing.y, facing.x);
             states.put(player, state);
@@ -114,13 +127,19 @@ public final class CartSteeringHooks {
             double turn = wheelbarrow(player)
                 ? CartSteeringMath.acceptedTurn(state.heading,axle(player),actualX,actualY)
                 : state.requested.turn() * fraction;
+            if(wooden(player)) {
+                double mid=state.heading+turn/2;
+                double rolling=actualX*Math.cos(mid)+actualY*Math.sin(mid)-2*.00984276836*Math.sin(turn/2);
+                state.wheelPhase=CartWheelSpin.advance(state.wheelPhase,rolling);
+            }
             acceptedTurn=turn;
             state.heading = CartSteeringMath.wrap(state.heading + turn);
             state.pending = false;
         }
         double dt=Math.max(0,Math.min(.1,GameTime.getInstance().getRealworldSecondsSinceLastUpdate()));
         double travel=actualX*Math.cos(state.heading)+actualY*Math.sin(state.heading);
-        double bank=wheelbarrow(player) && dt>0 ? Math.max(-.10,Math.min(.10,Math.signum(travel)*acceptedTurn/dt*.065)) : 0;
+        double bank=wooden(player) ? CartSteeringMath.rollingLean(acceptedTurn,travel,dt)
+            : wheelbarrow(player) && dt>0 ? Math.max(-.10,Math.min(.10,Math.signum(travel)*acceptedTurn/dt*.065)) : 0;
         state.lean+=(bank-state.lean)*(1-Math.exp(-dt/.08));
         state.moving = player.isJustMoved();
         state.target = state.moving ? desired : state.heading;
@@ -128,7 +147,7 @@ public final class CartSteeringHooks {
         if (state.moving && length < 1e-6) {
             // Idle/blocked clips need intent to generate their first root-motion budget.
             CartSteeringMath.step(state.heading, state.target, 0.03, 1.0 / 60,
-                                  state.load, axle(player), state.requested);
+                                  state.load, axle(player), wooden(player)?45:52, state.requested);
             actualX = state.requested.x(); actualY = state.requested.y();
             length = Math.hypot(actualX, actualY);
         }

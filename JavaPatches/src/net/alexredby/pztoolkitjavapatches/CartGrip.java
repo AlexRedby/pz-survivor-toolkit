@@ -47,6 +47,29 @@ public final class CartGrip {
         return poses;
     }
 
+    static Matrix4f[] livePoses(SkinningData actor, SkinningData body, FloatBuffer palette, Matrix4f delta) {
+        var state=matrices.get();
+        if(actor==null || actor.numBones()>state.poses.length || body==null || palette==null) return null;
+        int position=palette.position();
+        try {
+            for(int i=0;i<actor.numBones();i++) {
+                var bone=actor.getBoneAt(i);
+                if(!upperBody(bone)) continue;
+                Integer index=body.boneIndices.get(bone.name);
+                if(index==null || index<0 || (index+1)*16>palette.limit()
+                    || index>=body.boneOffset.size() || body.boneOffset.get(index)==null) return null;
+                if(state.poses[i]==null) state.poses[i]=new Matrix4f();
+                palette.position(index*16);state.skin.load(palette);
+                PZMath.convertMatrix(state.skin,state.poses[i]).transpose();
+                PZMath.convertMatrix(body.boneOffset.get(index),state.adjustment).transpose().invert();
+                state.poses[i].mul(state.adjustment);
+                delta.mul(state.poses[i],state.poses[i]);
+                if(!state.poses[i].isFinite()) return null;
+            }
+        } finally {palette.position(position);}
+        return state.poses;
+    }
+
     private static boolean descendant(SkinningBone bone, SkinningBone ancestor) {
         for(;bone!=null;bone=bone.parent) if(bone==ancestor) return true;
         return false;
@@ -231,7 +254,8 @@ public final class CartGrip {
                 || index>=bodySkin.boneOffset.size() || bodySkin.boneOffset.get(index)==null) return false;
         }
         var actor=owner.animPlayer.getSkinningData();
-        var poses=poses(clip,actor,delta);
+        // Retain the wooden cart gait's spine/clavicle motion; IK absorbs arm swing at the fixed handles.
+        var poses="WheelbarrowWood".equals(model)?livePoses(actor,bodySkin,body.matrixPalette,delta):poses(clip,actor,delta);
         if(poses==null || !grip(poses,actor,model,slot.character.isFemale(),delta,cart)) return false;
         for(var data:slot.modelData) {
             var instance=data.modelInstance;

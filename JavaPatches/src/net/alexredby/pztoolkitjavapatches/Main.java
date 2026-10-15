@@ -187,6 +187,16 @@ public final class Main {
         && supports("zombie/core/skinnedmodel/advancedanimation/AnimatedModel$AnimatedModelInstanceRenderData.class",
             "c96e48b6d138db930abe557459b2ff81e025a47cba6c3b199700473362e2f04d");
 
+    public static final boolean CART_WHEEL_SUPPORTED = CART_SUPPORTED
+        && supports("zombie/core/skinnedmodel/model/Model.class",
+            "3dd5e7b618cecf3c27e216a386e07937b1be694a7fc083b1bc2f7c993cbee3d9")
+        && supports("zombie/core/skinnedmodel/model/VertexBufferObject.class",
+            "9548415619074b6ebba619c2b5ce546b3f0e0812a5e3b6155c5a0892511b53a1")
+        && supports("zombie/core/skinnedmodel/model/ModelMesh.class",
+            "b12e7b5091f84ef60e72dd358e85d6611063ca5885d3237feda51dfb604f1f20")
+        && supports("zombie/core/skinnedmodel/shader/Shader.class",
+            "e9377a60cfe66b4907f57ab6a7a6d6275c991035e7326a1c4663520c09a04014");
+
     public static boolean supports(String resource, String expected) {
         try (var stream = Main.class.getClassLoader().getResourceAsStream(resource)) {
             return stream != null && expected.equals(HexFormat.of().formatHex(
@@ -533,6 +543,16 @@ public final class Main {
         @Patch.OnExit
         public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot) {
             if(Main.CART_SUPPORTED) CartGrounding.render(slot);
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.model.Model", methodName="DrawSolid")
+    public static class WoodenWheel {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.core.skinnedmodel.model.Model model,
+            @Patch.Argument(0) zombie.core.skinnedmodel.model.ModelSlotRenderData slot,
+            @Patch.Argument(1) zombie.core.skinnedmodel.model.ModelInstanceRenderData data) {
+            return Main.CART_WHEEL_SUPPORTED && CartWheelSpin.render(model,slot,data);
         }
     }
 
