@@ -10,13 +10,13 @@ Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quant
 | Survivor Wishlist | 0.1.0 | Required; included in the prepared `mods` folder and server INI. |
 | Toolkit Java Patches | 0.1.5 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
 
-The selected server INI contains **46 Mod IDs / 42 Workshop items**, including all three repository mods. The complete set targets **B42.21 only** because of the Java patches. Individual feature switches remain available; the action queue is enabled on fresh profiles and preserves an existing choice to disable it. Dated verification results below retain the versions and mod counts actually tested.
+The selected server INI contains **47 Mod IDs / 43 Workshop items**, including all three repository mods. The complete set targets **B42.21 only** because of the Java patches. Individual feature switches remain available; the action queue is enabled on fresh profiles and preserves an existing choice to disable it. Dated verification results below retain the versions and mod counts actually tested.
 
 ## Installation
 
 1. The server owner clones or downloads [this repository](https://github.com/AlexRedby/pz-survivor-toolkit), installs Python 3.10+, JDK 25+ and the ZombieBuddy loader, then runs `python3 tools/prepare_install.py` (`py -3 tools/prepare_install.py` on Windows). See [setup and custom paths](MOD_INSTALL.md#prepare-once) if the game or JDK is not found.
 2. Give everyone the resulting `dist/SurvivorQoL` folder. Copy all three folders from its `mods` directory into `Zomboid/mods` on the server and each client. Players receiving this prepared copy need neither Python nor a JDK.
-3. Apply its server INI and complete the client/server ZombieBuddy loader setup using the [installation guide](MOD_INSTALL.md). The server downloads the 42 Workshop items; clients download them when joining.
+3. Apply its server INI and complete the client/server ZombieBuddy loader setup using the [installation guide](MOD_INSTALL.md). The server downloads the 43 Workshop items; clients download them when joining.
 
 The usual mod directory is `~/Zomboid/mods` on macOS/Linux or `%UserProfile%\Zomboid\mods` on Windows. The preparation command creates an uncompressed, ignored distribution folder; it does not change live game profiles or install third-party loaders.
 
@@ -126,7 +126,7 @@ Toolkit v0.1.26 passed **46 native queue checks per EN/RU client** on 13 October
 
 ## Recorded verification
 
-These results describe the builds and selected sets used in each scenario, not a claim that every current feature was exercised together. Current installation uses the 46-mod INI listed above.
+These results describe the builds and selected sets used in each scenario, not a claim that every current feature was exercised together. Current installation uses the 47-mod INI listed above.
 
 Toolkit v0.1.48 adds output-correlated queued eating for the unchanged native `OpenCannedFood` and `OpenCannedFood2` recipes. Opening remains native; only its exact created food can continue into the requested full, half or quarter portion, before tool and mask restoration. Unknown or modified opening recipes retain their native commands. The packaged-food adapter passed **25 true single-player checks and 25 checks per EN/RU multiplayer client** on B42.21 macOS with all 46 selected Mod IDs and Java Patches 0.1.3, covering exact inputs/outputs, portions, missing inputs, waiting/active cancellation, a held late receipt, retained food and unrelated reading. Server checks confirmed 24 unique once-only eating completions. Native durations were preserved, with tail books prefilled near completion; complete DebugLogs had no Kahlua exceptions or microphone recording initialization. Lua and stock Kahlua regressions additionally cover duplicate/stale receipts, missing output replication, changed callbacks and fullness rejection. Queue and crafting UI registries now release completed actions and closed owners explicitly because stock Kahlua ignores weak tables; stress checks cover 500 queue operations and repeated crafting-window close/reopen cycles without accumulating listeners. Live crafting UI cleanup, physical input, Windows/Linux, WAN jitter and long sessions were not checked in this run.
 

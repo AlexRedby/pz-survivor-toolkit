@@ -56,8 +56,8 @@ Host starts a separate Java process. Loading ZombieBuddy only in the client does
 
 ### Host: save approvals first
 
-1. Complete the [client loader setup](../MOD_INSTALL.md#zombiebuddy-loader) and install all three prepared local mod folders. Subscribe to [Peek a View](https://steamcommunity.com/workshop/filedetails/?id=3710281407) as well as ZombieBuddy so both Java mods are available before the first Host launch.
-2. In the client's **Mods** menu enable **ZombieBuddy**, **Peek a View** and **Toolkit Java Patches (Experimental)**. Restart when asked, then approve **PeekAView** and **PZToolkitJavaPatches**, choosing to **save each decision**. Do this before opening Host, and repeat when a changed JAR prompts again.
+1. Complete the [client loader setup](../MOD_INSTALL.md#zombiebuddy-loader) and install all three prepared local mod folders. Subscribe to [Peek a View](https://steamcommunity.com/workshop/filedetails/?id=3710281407) and [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436) as well as ZombieBuddy so all selected Java mods are available before the first Host launch.
+2. In the client's **Mods** menu enable **ZombieBuddy**, **Peek a View**, **MP Vanilla Animal Trailer Sync Fix** and **Toolkit Java Patches (Experimental)**. Restart when asked, then approve **PeekAView**, **PZToolkitJavaPatches** and **AnimalTrailerSyncMPFix** when prompted, choosing to **save each decision**. Do this before opening Host, and repeat when a changed JAR prompts again.
 3. Close the game, leave Steam running, and launch using the appropriate command below. Then choose the configured profile in **Host**.
 
 Saved approvals are tied to JAR content. Under normal same-account defaults, the client and Host server share `~/.zombie_buddy/mod_approvals.json` (`%USERPROFILE%\.zombie_buddy\mod_approvals.json` on Windows). Session-only approvals do not carry into the child process, whose console prompt is not exposed reliably by the Host UI. If you configure a separate ZombieBuddy `config_dir`, both processes must use the intended saved approvals.
@@ -84,7 +84,7 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 
 1. Put the platform's ZombieBuddy loader files in the server installation following the [official guide](https://github.com/zed-0xff/ZombieBuddy/blob/master/doc/Installation.md). Keep all three local mods and the selected INI in the server account's Zomboid directory.
 2. Add one loader argument to the server's JVM options, before `zombie.network.GameServer`: `-javaagent:"/full/path/ZombieBuddy.jar"` on macOS/Linux, or `-agentpath:"D:\path\zbNative.dll"` on Windows. Keep the existing server arguments. If your launcher uses a JSON `vmArgs` array, add it there using valid JSON escaping. Do not add a second loader if it is already configured.
-3. Run the first start interactively under the **account that will run the server**. ZombieBuddy's dedicated-server default uses console prompts: answer `y` to allow the **PZToolkitJavaPatches** JAR, then `y` to save. Review any other selected Java mod prompts too. Start it as a service only after approvals are saved; repeat interactively when a changed JAR needs approval.
+3. Run the first start interactively under the **account that will run the server**. ZombieBuddy's dedicated-server default uses console prompts: answer `y` to allow the **PZToolkitJavaPatches** JAR, then `y` to save. Review the selected **AnimalTrailerSyncMPFix** and other Java mod prompts too. Start it as a service only after approvals are saved; repeat interactively when a changed JAR needs approval.
 4. Check the server log before using it for play.
 
 ### Verify activation
@@ -93,6 +93,8 @@ Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.2
 
 - Server: `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
 - Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI`, `[ZB] Transformed: zombie.vehicles.VehicleInterpolation` `[ZB] Transformed: zombie.characters.NetworkPlayerAI` and `[ZB] Transformed: zombie.network.packets.EquipPacket`.
+
+The selected Workshop `AnimalTrailerSyncMPFix` supplies a separate trailer timer fix; check `[AnimalTrailerSyncMPFix] ACTIVE` in the server log too (verified v1.3). See its [scope and installation](../MOD_INSTALL.md#animal-trailer-fix).
 
 These appear at the default log verbosity. Missing output, `false` values, or target-class/transformation errors mean setup is incomplete or needs investigation. The client also shows **ZombieBuddy ... loaded** in the upper-left corner. A client message alone does not confirm server activation.
 
