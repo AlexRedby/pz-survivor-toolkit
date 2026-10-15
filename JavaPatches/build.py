@@ -12,6 +12,7 @@ game_defaults = {
 parser.add_argument('--game', type=Path, default=game_defaults.get(sys.platform), help='Folder containing projectzomboid.jar and ZombieBuddy.jar')
 parser.add_argument('--jdk', type=Path)
 parser.add_argument('--check', action='store_true', help='Run original-engine versus woven-patch regression')
+parser.add_argument('--check-video', action='store_true', help='Run headless video timeline/FFmpeg regression (PZ_TEST_FFMPEG selects executable)')
 args = parser.parse_args()
 if args.game is None:
     parser.error('Pass --game with the folder containing projectzomboid.jar and ZombieBuddy.jar')
@@ -49,12 +50,14 @@ for base in [mod/'common/media', mod/'42/media']:
     for name in ['AnimSets', 'actiongroups']: (base/name).mkdir(parents=True, exist_ok=True)
 print(jar)
 
-if args.check:
+if args.check or args.check_video:
     testclasses = ROOT / 'build/test-classes'
     testclasses.mkdir(exist_ok=True)
     checks = {'zombie.vehicles.NativeChecks': 'NATIVE_CHECKS_PASS',
               'zombie.radio.devices.MediaChecks': 'MEDIA_CHECKS_PASS',
-              'zombie.core.BuildChecks': 'BUILD_CHECKS_PASS'}
+              'zombie.core.BuildChecks': 'BUILD_CHECKS_PASS'} if args.check else {}
+    if args.check_video:
+        checks['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
     sources = [ROOT / 'tests' / (name.replace('.', '/') + '.java') for name in checks]
     subprocess.run([javac, '--release', '17', '-cp', classpath + os.pathsep + str(jar), '-d', str(testclasses), *map(str, sources)], check=True)
     for name, marker in checks.items():

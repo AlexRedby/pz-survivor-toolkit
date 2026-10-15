@@ -22,6 +22,34 @@ Copy the three folders inside `dist/SurvivorQoL/mods` to `Zomboid/mods` on the s
 
 For Java-only development, `python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts the same `--game`, `--jdk` and `--check` options. The checks compare original and patched engine vehicle interpolation, media restart and build cancellation/completion behavior; there is no separate zombie-speed regression in this command. Generated output is ignored by Git.
 
+## Programmatic test video (B42.21 client)
+
+Install this Java mod in the isolated test profile and pass its own `-cachedir`, with `-novoip` and `voiceEnable=false`. No menu or automatic recording is added. ZombieBuddy exports these globals to client Lua:
+
+```lua
+assert(toolkitVideoStart("/private/tmp/my-pz-test/videos", "/opt/homebrew/bin/ffmpeg"))
+-- Run the animation or test segment.
+assert(toolkitVideoStop())
+-- Poll on subsequent ticks; stop returns immediately while FFmpeg finalizes MP4.
+local video = toolkitVideoStatus()
+if video.state == "completed" then print(video.file, video.frames, video.seconds) end
+if video.state == "failed" then error(video.error .. " | " .. video.log) end
+```
+
+Use an absolute output subdirectory inside the current profile's cache directory; symlink escapes are rejected. Each capture gets a unique filename and a sibling `.ffmpeg.log`; existing files are never overwritten. Pass an absolute executable path to an installed FFmpeg with `libx264`. Java tests may call the same static `VideoRecording.start(directory, ffmpeg)`, `stop()` and `status()` methods in `net.alexredby.pztoolkitjavapatches`.
+
+`start()` returns whether the request was accepted, not encoder readiness. A second start during `starting`, `recording` or `stopping` returns false without replacing the active session. `stop()` accepts only the first stop request. Status states are `idle`, `starting`, `recording`, `stopping`, `completed`, `failed`; fields include `file`, `log`, `error`, `width`, `height`, `fps`, `frames`, `captured`, `dropped`, and `seconds` (encoded duration). Inspect `completed` before reading the finalized file or starting another capture.
+
+The fixed profile is silent H.264 MP4, 30 FPS, CRF 18, `veryfast`, yuv420p. It captures the displayed game framebuffer including UI, without desktop windows. Actual GLFW framebuffer dimensions are used (including Retina), up to 4K / 8,294,400 pixels and 4096 pixels on either axis. Odd dimensions are padded by one pixel for H.264. Resize ends the capture with `failed` and finalizes already captured frames. A minimized window can supply no new images.
+
+Capture uses one direct RGBA buffer plus three bounded heap buffers (at most about 127 MiB at 4K). GL readback and one copy happen on the render thread; encoding and pipe writes happen on a separate daemon thread. Slow rendering or encoding holds the previous image over missing frame slots, preserving wall time to within one 30 FPS frame, rather than speeding up the clip. The final frame is held until the stop timestamp. `dropped` counts capture opportunities skipped because no buffer was free; it does not count every duplicated output frame. This is test instrumentation, and synchronous GL readback can reduce game FPS.
+
+After stop, a 15-second watchdog aborts an encoder that cannot finish. Normal JVM exit attempts a four-second flush; force-kill, encoder failure or a full disk can leave an incomplete MP4. There is no audio input, codec implementation or permanent recorder. The Display hook retains the per-class B42.21 fingerprint guard.
+
+Run `python3 JavaPatches/build.py --check-video` with `PZ_TEST_FFMPEG` set to the FFmpeg executable (otherwise found on `PATH`; sibling `ffprobe` is required). This checks timing boundaries, delayed/gapped captures, last-frame hold, decoded colors, exact duration/dimensions, stop without frames and encoder failure. Ordinary `--check` retains its existing engine regressions.
+
+Verified on macOS B42.21 on 15 October 2026 in a fresh isolated Sandbox profile: two consecutive Lua start/stop cycles each produced 1728x1020 H.264, 106 frames / 3.533333 seconds for measured 3.515-3.516 second intervals, with 106 captured and zero dropped frames. Full FFmpeg decode, three extracted frames and FFplay playback passed. A second active start, repeated stop and output outside the profile were rejected. The native fixture verified VOIP disabled. Resize and buffer-exhaustion guards were checked headlessly; live resize, 4K sustained load, Windows/Linux and force-kill recovery were not exercised.
+
 ## Server loader
 
 Host starts a separate Java process. Loading ZombieBuddy only in the client does not guarantee the server VHS patch is active.
