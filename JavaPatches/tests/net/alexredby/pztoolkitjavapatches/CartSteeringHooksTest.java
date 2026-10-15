@@ -17,6 +17,7 @@ public final class CartSteeringHooksTest {
         int blocked;
         boolean pivot;
         float stepX, stepY, legPace;
+        float actualX, actualY;
         ItemContainer inventory;
         InventoryItem primary, secondary;
         Player() { super(null, null, 0, 0, 0); }
@@ -42,6 +43,8 @@ public final class CartSteeringHooksTest {
         @Override public ItemContainer getInventory() { return inventory; }
         @Override public float getForwardDirectionX() { return 1; }
         @Override public float getForwardDirectionY() { return 0; }
+        @Override public float getX() { return actualX; }
+        @Override public float getY() { return actualY; }
         @Override public Vector2 getAnimForwardDirection(Vector2 out) { return out.set(1, 0); }
         @Override public boolean isJustMoved() { return false; }
         @Override public void setTargetAndCurrentDirection(float x, float y) {}
@@ -106,6 +109,19 @@ public final class CartSteeringHooksTest {
         }
         CartSteeringHooks.reset(player);
         check(!states.containsKey(player), "repeated reset retained state");
+        player.blocked=0;player.secondary=cart;cart.setContainer(player.inventory);cart.setWorldItem(null);
+        for(String kind:new String[]{"SaucedWheelbarrow.WheelbarrowWood","SaucedWheelbarrow.WheelbarrowMetal"}) {
+            type(cart,kind);CartSteeringHooks.heading(player);
+            Object state=states.get(player);
+            Field pending=state.getClass().getDeclaredField("pending");pending.setAccessible(true);pending.setBoolean(state,true);
+            player.actualX=.02f;player.actualY=.01f;
+            CartSteeringHooks.heading(player);
+            Field heading=state.getClass().getDeclaredField("heading");heading.setAccessible(true);
+            double axle=kind.endsWith("Wood")?1.10976729:1.1691522;
+            check(Math.abs(heading.getDouble(state)-CartSteeringMath.acceptedTurn(0,axle,player.actualX,player.actualY))<1e-10,
+                  "native collision displacement must determine wheel yaw: "+kind);
+            CartSteeringHooks.reset(player);player.actualX=player.actualY=0;
+        }
         System.out.println("CART_STEERING_HOOKS_PASS (combat, local, path, scope, cart ownership, reset)");
     }
 }

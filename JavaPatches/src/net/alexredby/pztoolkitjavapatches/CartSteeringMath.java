@@ -28,27 +28,33 @@ public final class CartSteeringMath {
 
     public static Step step(double heading, double target, double distance,
                             double seconds, double load, Step result) {
-        return step(heading,target,distance,seconds,load,false,result);
+        return step(heading,target,distance,seconds,load,0,result);
     }
 
     public static Step step(double heading, double target, double distance,
-                            double seconds, double load, boolean wheelbarrow, Step result) {
+                            double seconds, double load, double axleDistance, Step result) {
         if (!(distance > 0) || !(seconds > 0)) return result.set(0, 0, 0, 0);
         load = Math.max(0, Math.min(1, load));
         double error = wrap(target - heading);
         boolean reverse = Math.abs(error) > Math.PI * 0.75;
         if (reverse) error = wrap(error + Math.PI);
-        double axle = wheelbarrow ? 0.95 : AXLE_DISTANCE;
-        double limit = Math.min(distance * Math.abs(Math.sin(error)) / axle,
-                                Math.min(0.1, seconds) * (wheelbarrow ? 1.6 - 0.3 * load : 3.8 - load));
+        boolean wheelbarrow = axleDistance > 0;
+        double axle = wheelbarrow ? axleDistance : AXLE_DISTANCE;
+        double limit = wheelbarrow
+                ? 2 * Math.asin(Math.min(1, distance * Math.sin(Math.toRadians(15 - 3 * load))
+                                             * Math.abs(Math.sin(error)) / (2 * axle)))
+                : distance * Math.abs(Math.sin(error)) / axle;
+        limit = Math.min(limit, Math.min(0.1, seconds) * (wheelbarrow ? 1.6 - 0.3 * load : 3.8 - load));
         double turn = Math.max(-limit, Math.min(limit, error));
         if (wheelbarrow) {
-            // A single wheel rolls into the turn; the person does not orbit a parked front axle.
-            double travel = reverse ? -distance : distance;
             double half = turn / 2;
-            double chord = half == 0 ? travel : travel * Math.sin(half) / half;
-            return result.set(chord * Math.cos(heading + half),
-                              chord * Math.sin(heading + half), turn, travel);
+            double sideways = 2 * axle * Math.sin(half);
+            double travel = Math.sqrt(Math.max(0, distance * distance - sideways * sideways));
+            if (reverse) travel = -travel;
+            // The handles step slightly outside so the front wheel stays in its rolling plane.
+            return result.set(travel * Math.cos(heading + half) + sideways * Math.sin(heading + half),
+                              travel * Math.sin(heading + half) - sideways * Math.cos(heading + half),
+                              turn, travel);
         }
         // Handle translation and the turn chord are perpendicular, not additive costs.
         double chord = 2 * axle * Math.sin(turn / 2);
@@ -61,6 +67,15 @@ public final class CartSteeringMath {
                           travel * Math.sin(heading + turn / 2)
                                   - axle * (Math.sin(next) - Math.sin(heading)),
                           turn, travel);
+    }
+
+    /** Derive wheelbarrow yaw from the displacement native collisions actually accepted. */
+    public static double acceptedTurn(double heading, double axleDistance, double actualX, double actualY) {
+        if (!(axleDistance > 0)) return 0;
+        double cos = Math.cos(heading), sin = Math.sin(heading);
+        double forward = actualX * cos + actualY * sin;
+        double sideways = -actualX * sin + actualY * cos;
+        return 2 * Math.atan2(-sideways, 2 * axleDistance - forward);
     }
 
     /** Wall slides cannot count sideways displacement as forward steering progress. */

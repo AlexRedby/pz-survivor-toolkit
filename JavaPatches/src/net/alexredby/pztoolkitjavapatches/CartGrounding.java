@@ -93,10 +93,14 @@ public final class CartGrounding {
     }
 
     static boolean ground(Matrix4f transform, Vector3fc low, Vector3fc high, Vector3fc contact) {
-        if(contact==null || !Float.isFinite(contact.x()) || !Float.isFinite(contact.y()) || !Float.isFinite(contact.z())
-            || !(contact.x()>=low.x() && contact.x()<=high.x() && contact.y()>=low.y() && contact.y()<=high.y()
-                && contact.z()>=low.z() && contact.z()<=high.z())) return ground(transform,low,high);
+        if(!validContact(low,high,contact)) return ground(transform,low,high);
         return ground(transform,transform.m01()*contact.x()+transform.m11()*contact.y()+transform.m21()*contact.z()+transform.m31());
+    }
+
+    private static boolean validContact(Vector3fc low, Vector3fc high, Vector3fc contact) {
+        return contact!=null && Float.isFinite(contact.x()) && Float.isFinite(contact.y()) && Float.isFinite(contact.z())
+            && contact.x()>=low.x() && contact.x()<=high.x() && contact.y()>=low.y() && contact.y()<=high.y()
+            && contact.z()>=low.z() && contact.z()<=high.z();
     }
 
     private static boolean ground(Matrix4f transform, float lowest) {
@@ -115,10 +119,12 @@ public final class CartGrounding {
         if(!ground(transform,low,high,contact)) return false;
         delta.translation(0,transform.m31()-height,0);
         if(lean!=0) {
-            float centerX=transform.m00()*(low.x()+high.x())*.5f+transform.m10()*(low.y()+high.y())*.5f
-                +transform.m20()*(low.z()+high.z())*.5f+transform.m30();
+            float centerX=validContact(low,high,contact)
+                ? transform.m00()*contact.x()+transform.m10()*contact.y()+transform.m20()*contact.z()+transform.m30()
+                : transform.m00()*(low.x()+high.x())*.5f+transform.m10()*(low.y()+high.y())*.5f
+                    +transform.m20()*(low.z()+high.z())*.5f+transform.m30();
             var roll=matrices.get().attachment;
-            // A roll about the cart centerline leaves the single wheel's floor contact fixed.
+            // Bank around the measured contact, not a box center that moves the tire sideways.
             roll.translation(centerX,.008f,0).rotateZ(lean).translate(-centerX,-.008f,0);
             roll.mul(transform,transform);roll.mul(delta,delta);
         }
@@ -138,7 +144,7 @@ public final class CartGrounding {
             if(rigid(data,clip,transform)
                 && align(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,
                     contact(instance.modelScript.getName()),(float)CartSteeringHooks.lean(player),state.delta)
-                && CartGrip.render(slot,instance.parent,clip,state.delta)) {
+                && CartGrip.render(slot,instance.parent,clip,state.delta,name,transform)) {
                 data.xfrm.set(transform).transpose();
             } else {
                 transform.set(data.xfrm).transpose();

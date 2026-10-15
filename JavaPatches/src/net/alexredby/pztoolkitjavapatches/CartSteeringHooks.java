@@ -51,6 +51,15 @@ public final class CartSteeringHooks {
         return player.getPrimaryHandItem().getFullType().startsWith("SaucedWheelbarrow.");
     }
 
+    private static double axle(IsoPlayer player) {
+        // Actual grounded wheel vertices; Model.vectorToWorldCoords scales model Z by -1.5.
+        return switch(player.getPrimaryHandItem().getFullType()) {
+            case "SaucedWheelbarrow.WheelbarrowWood" -> 1.10976729;
+            case "SaucedWheelbarrow.WheelbarrowMetal" -> 1.1691522;
+            default -> 0;
+        };
+    }
+
     /**
      * Hook 1: at IsoPlayer.moveUnmodded(FF)V entry, replace its two arguments with
      * this returned vector. Continue the original method, including slowFactor.
@@ -70,7 +79,7 @@ public final class CartSteeringHooks {
         state.load = capacity > 0 ? contents.getCapacityWeight() / capacity : 0;
         CartSteeringMath.step(state.heading,
                 state.moving ? state.target : state.heading, distance,
-                GameTime.getInstance().getRealworldSecondsSinceLastUpdate(), state.load, wheelbarrow(player), state.requested);
+                GameTime.getInstance().getRealworldSecondsSinceLastUpdate(), state.load, axle(player), state.requested);
         state.pending = true;
         return state.result.set((float) state.requested.x(), (float) state.requested.y());
     }
@@ -102,13 +111,16 @@ public final class CartSteeringHooks {
             actualY = player.getY() - state.startY;
             fraction = CartSteeringMath.acceptedFraction(state.requested,
                     actualX, actualY);
-            double turn = state.requested.turn() * fraction;
+            double turn = wheelbarrow(player)
+                ? CartSteeringMath.acceptedTurn(state.heading,axle(player),actualX,actualY)
+                : state.requested.turn() * fraction;
             acceptedTurn=turn;
             state.heading = CartSteeringMath.wrap(state.heading + turn);
             state.pending = false;
         }
         double dt=Math.max(0,Math.min(.1,GameTime.getInstance().getRealworldSecondsSinceLastUpdate()));
-        double bank=wheelbarrow(player) && dt>0 ? Math.max(-.10,Math.min(.10,acceptedTurn/dt*.065)) : 0;
+        double travel=actualX*Math.cos(state.heading)+actualY*Math.sin(state.heading);
+        double bank=wheelbarrow(player) && dt>0 ? Math.max(-.10,Math.min(.10,Math.signum(travel)*acceptedTurn/dt*.065)) : 0;
         state.lean+=(bank-state.lean)*(1-Math.exp(-dt/.08));
         state.moving = player.isJustMoved();
         state.target = state.moving ? desired : state.heading;
@@ -116,7 +128,7 @@ public final class CartSteeringHooks {
         if (state.moving && length < 1e-6) {
             // Idle/blocked clips need intent to generate their first root-motion budget.
             CartSteeringMath.step(state.heading, state.target, 0.03, 1.0 / 60,
-                                  state.load, wheelbarrow(player), state.requested);
+                                  state.load, axle(player), state.requested);
             actualX = state.requested.x(); actualY = state.requested.y();
             length = Math.hypot(actualX, actualY);
         }

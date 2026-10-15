@@ -150,6 +150,9 @@ public final class CartGroundingTest {
    if(!after.equals(expected)) throw new AssertionError("contact correction changed orientation/scale for "+models[i]);
    for(float lean:new float[]{-.1f,.1f}) {
     if(!CartGrounding.align(after.set(captured[i]),low,high,contact,lean,delta)) throw new AssertionError("lean rejected");
+    Vector3f wheel=after.transformPosition(new Vector3f(contact));
+    Vector3f fixed=captured[i].transformPosition(new Vector3f(contact));fixed.y=.008f;
+    if(wheel.distance(fixed)>1e-6f) throw new AssertionError("bank moved the actual tire contact for "+models[i]);
     Vector3f handle=new Vector3f(points[i]).add(.001f,.002f,.003f);
     Vector3f cartHandle=after.transformPosition(new Vector3f(handle));
     delta.transformPosition(captured[i].transformPosition(handle));
