@@ -13,6 +13,17 @@ import zombie.radio.devices.DeviceData;
 import zombie.vehicles.VehicleInterpolation;
 
 public final class Main {
+    public static final boolean VIDEO_SUPPORTED = supports("org/lwjglx/opengl/Display.class",
+        "15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578");
+
+    @Patch(className="org.lwjglx.opengl.Display", methodName="swapBuffers", warmUp=true)
+    public static class VideoPresented {
+        @Patch.OnExit
+        public static void exit() {
+            if (Main.VIDEO_SUPPORTED) VideoRecording.presented();
+        }
+    }
+
     // Fail closed after an engine update. Hash original class resources, not transformed bytecode.
     public static final boolean ZOMBIE_SUPPORTED = supports("zombie/characters/NetworkZombieAI.class",
         "87e4f6e43d16dec23f685b4ebad68eb12eaea15ed87dce3fc3c3394f96cd1e3d");
@@ -43,7 +54,8 @@ public final class Main {
 
     public static void main(String[] args) {
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
-            + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED);
+            + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
+            + ", video=" + VIDEO_SUPPORTED);
     }
 
     @Patch(className="zombie.core.BuildAction", methodName="start", warmUp=true)
