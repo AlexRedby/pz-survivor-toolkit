@@ -45,7 +45,7 @@ jar = mod / '42/media/java/PZToolkitJavaPatches.jar'
 jar.parent.mkdir(parents=True, exist_ok=True)
 (mod/'common').mkdir(exist_ok=True)
 subprocess.run([str(args.jdk/'bin/jar'), '--create', '--file', str(jar), '-C', str(classes), '.'], check=True)
-(mod/'42/mod.info').write_text('name=Toolkit Java Patches (Experimental)\nid=PZToolkitJavaPatches\nversion=0.1.3\nauthor=AlexRedby\nversionMin=42.21\nversionMax=42.21\nrequire=\\ZombieBuddy\njavaJarFile=media/java/PZToolkitJavaPatches.jar\njavaPkgName=net.alexredby.pztoolkitjavapatches\nZBVersionMin=2.3.4\ndescription=B42.21 fixes for client zombie speed decoding, vehicle interpolation recovery, authoritative cassette restart after stopping and multiplayer build cancellation acknowledgements. Requires the ZombieBuddy Java agent on clients for zombie and vehicle patches and on the server for cassette playback and safe queue build interruption. Unsupported target bytecode disables the patches.\n')
+(mod/'42/mod.info').write_text('name=Toolkit Java Patches (Experimental)\nid=PZToolkitJavaPatches\nversion=0.1.4\nauthor=AlexRedby\nversionMin=42.21\nversionMax=42.21\nrequire=\\ZombieBuddy\njavaJarFile=media/java/PZToolkitJavaPatches.jar\njavaPkgName=net.alexredby.pztoolkitjavapatches\nZBVersionMin=2.3.4\ndescription=B42.21 fixes for client zombie speed decoding, vehicle interpolation recovery, authoritative cassette restart after stopping, multiplayer build cancellation acknowledgements and live-animal trailer location reconciliation. Requires the ZombieBuddy Java agent on clients for zombie, vehicle and animal patches and on the server for cassette playback and safe queue build interruption. Unsupported target bytecode disables the patches.\n')
 for base in [mod/'common/media', mod/'42/media']:
     for name in ['AnimSets', 'actiongroups']: (base/name).mkdir(parents=True, exist_ok=True)
 print(jar)
@@ -55,7 +55,8 @@ if args.check or args.check_video:
     testclasses.mkdir(exist_ok=True)
     checks = {'zombie.vehicles.NativeChecks': 'NATIVE_CHECKS_PASS',
               'zombie.radio.devices.MediaChecks': 'MEDIA_CHECKS_PASS',
-              'zombie.core.BuildChecks': 'BUILD_CHECKS_PASS'} if args.check else {}
+              'zombie.core.BuildChecks': 'BUILD_CHECKS_PASS',
+              'zombie.characters.AnimalChecks': 'ANIMAL_CHECKS_PASS'} if args.check else {}
     if args.check_video:
         checks['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
     sources = [ROOT / 'tests' / (name.replace('.', '/') + '.java') for name in checks]

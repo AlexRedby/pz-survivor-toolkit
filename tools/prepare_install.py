@@ -77,6 +77,12 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
         shutil.copy2(root / INI_NAME, staging / "Server" / INI_NAME)
         for launcher in ("start-host.ps1", "start-host.command"):
             shutil.copy2(root / "JavaPatches" / launcher, staging / launcher)
+        guide = (root / "MOD_INSTALL.md").read_text(encoding="utf-8")
+        guide = guide.replace("](" + INI_NAME + ")", "](Server/" + INI_NAME + ")")
+        guide = guide.replace("](README.md", "](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/README.md")
+        (staging / "MOD_INSTALL.md").write_text(guide, encoding="utf-8")
+        (staging / "JavaPatches").mkdir()
+        shutil.copy2(root / "JavaPatches/README.md", staging / "JavaPatches/README.md")
 
         if output.exists():
             output.rename(previous)
@@ -112,7 +118,7 @@ def main() -> int:
     print("For a new server profile, copy Server/SurvivorQoL-selected.ini into Zomboid/Server.")
     print("For an existing profile, copy only Mods= and WorkshopItems= into its INI; keep its other settings.")
     print("Clients use this same prepared copy and do not need Python or a JDK.")
-    print("Complete ZombieBuddy loader setup and JAR approvals on each machine; see MOD_INSTALL.md.")
+    print("Complete ZombieBuddy loader setup and JAR approvals on each machine; see the prepared MOD_INSTALL.md.")
     return 0
 
 

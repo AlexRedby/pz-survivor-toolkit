@@ -2,7 +2,7 @@
 
 For the Steam edition of Project Zomboid **B42.21**. The server and all players must use the same game build and identical local mod files.
 
-The [server INI](SurvivorQoL-selected.ini) selects **46 Mod IDs / 42 Workshop items**. All three repository mods are required: **PZ Survivor Toolkit v0.1.48**, **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.3**. The Java component is experimental and targets B42.21 only. Feature switches remain per-player; the action queue is enabled on fresh profiles and preserves existing preferences. See [features and verification limits](README.md).
+The [server INI](SurvivorQoL-selected.ini) selects **46 Mod IDs / 42 Workshop items**. All three repository mods are required: **PZ Survivor Toolkit v0.1.48**, **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.4**. The Java component is experimental and targets B42.21 only. Feature switches remain per-player; the action queue is enabled on fresh profiles and preserves existing preferences. See [features and verification limits](README.md).
 
 ## Prepare once
 
@@ -11,7 +11,7 @@ The server owner prepares one copy for everyone. Players receiving it do not nee
 1. Clone or download [this repository](https://github.com/AlexRedby/pz-survivor-toolkit). Install **Python 3.10+** and **JDK 25+** on the build machine.
 2. Install the [ZombieBuddy loader](#zombiebuddy-loader) there. The game Java directory must contain both `projectzomboid.jar` and `ZombieBuddy.jar`.
 3. From the repository root run `python3 tools/prepare_install.py` on macOS/Linux, or `py -3 tools/prepare_install.py` on Windows. For a custom installation add `--game "/path/to/folder-containing-both-jars"`; to choose a JDK add `--jdk "/path/to/jdk-25"`. Add `--check` to run the native Java regression checks too.
-4. Give every player the generated **dist/SurvivorQoL** folder. It contains `mods/PZSurvivorToolkit`, `mods/PZSurvivorWishlist`, `mods/PZToolkitJavaPatches`, `Server/SurvivorQoL-selected.ini` and the Windows/macOS Host launchers. It contains our mods only; Workshop supplies the rest. Generated output is ignored by Git, uncompressed, and safely replaced on the next successful preparation. Live game files and profiles are untouched.
+4. Give every player the generated **dist/SurvivorQoL** folder. It contains `mods/PZSurvivorToolkit`, `mods/PZSurvivorWishlist`, `mods/PZToolkitJavaPatches`, `Server/SurvivorQoL-selected.ini`, the Windows/macOS Host launchers, this installation guide and `JavaPatches/README.md`. It contains our mods only; Workshop supplies the rest. Generated output is ignored by Git, uncompressed, and safely replaced on the next successful preparation. Live game files and profiles are untouched.
 
 ## Local mods: server and every player
 
@@ -31,7 +31,7 @@ These local mods have no Workshop items and **do not download when joining**. Di
 2. Install all three [local mod folders](#local-mods-server-and-every-player).
 3. For a **new profile**, copy the prepared `Server/SurvivorQoL-selected.ini` into `Zomboid/Server`. For an **existing profile**, copy only the `Mods=` and `WorkshopItems=` lines into its existing INI; keep its other settings.
 4. Keep the supplied order. ZombieBuddy comes first, Java Patches immediately after it, libraries before their dependants, Toolkit before CCI/MP Fast Forward/Better Containers, Realistic Dashboard before Navigator, Wishlist after the crafting/UI mods, and `organizedCategories_core` last. All local IDs are already included; do not add them to `WorkshopItems=`.
-5. Set up the [server Java loader](JavaPatches/README.md#server-loader). **Host owners must complete the client steps too**, then launch through the supplied Host launcher. Dedicated servers also need the loader for the VHS fix.
+5. Set up the [server Java loader](JavaPatches/README.md#server-loader). **Host owners must complete the client steps too**: subscribe to Peek a View as well as ZombieBuddy, enable both and Toolkit Java Patches in the client Mods menu, restart, and approve PeekAView and PZToolkitJavaPatches with **save decision** before opening Host. Then close the game and launch through the supplied Host launcher. Dedicated servers also need the loader for the VHS fix.
 6. Choose `SurvivorQoL-selected` in **Host**, or start the dedicated server with `-servername SurvivorQoL-selected`. Use your existing profile name if you updated it. The Steam server downloads `WorkshopItems=` automatically; separate subscriptions or SteamCMD Workshop downloads are unnecessary. Approve the local Java JAR for the server and check its loader log as described in the Java guide.
 
 The INI does not transfer sandbox settings or keybindings. When moving an existing world, also copy `<profile-name>_SandboxVars.lua` under the same profile name. The supplied INI sets `SleepAllowed=true` and `SleepNeeded=false`. When copying only the mod lists, change sleep settings separately if wanted.
@@ -70,6 +70,14 @@ Wishlist highlights wanted item rows in opened inventories and visible loose ite
 3. Copy only `Mods=` and `WorkshopItems=` from the prepared INI into an existing profile. Keep `MedicineMoodlesB42`, `TakeAnyAmount` and `TVRadioReinventedFix4220` disabled; Toolkit supplies their replacements. Keep Moodle Framework and the main TV & Radio ReInvented mod.
 4. Use one installation method per Workshop mod: Steam or a complete local copy. The INI does not update local copies. Reapprove changed Java JARs when prompted on clients and the server.
 5. Start and join, checking the server Java loader as above. For version mismatches, compare all three local folders and Workshop updates. Keep `DoLuaChecksum=true`.
+
+## Animal trailer fix
+
+Toolkit Java Patches **0.1.4** includes the B42.21 client fix for stale animal-trailer entries after unloading. `PZToolkitJavaPatches` is already selected in the INI, immediately after ZombieBuddy; no additional Mod ID or Workshop item is needed. The separate AnimalTrailerSyncMPFix addresses another update-timer issue and is not required for this fix.
+
+Update the prepared Java mod on the **server and every client, including the host player**, approve the changed JAR and save the decision. Fully restart the server and clients. In each client's `console.txt`, check both `animal=true` in `[PZToolkitJavaPatches] Experimental B42.21 patch` and `[ZB] Transformed: zombie.characters.NetworkPlayerAI` (it may say `retransformed`). Try Grab and then put the animal on the ground; the trailer entry should disappear for everyone.
+
+The patch preserves the animal and its identifiers; it does not restore animals already lost from a save. If a live chick is still stuck, keep the save and collect the host's `server-console.txt` and the client's `console.txt` around one Grab attempt before deleting or replacing any animal. The fix passed an isolated B42.21 macOS dedicated-server/client run with the 27 locally selected mods: all three grabs and native drops, including the last live chick, preserved identities and left an empty trailer on both sides. A late-packet replay reproduced the vanilla ghost and verified its repair. The affected hosted save, Windows/Linux, WAN and UI clicking/pathfinding were not tested.
 
 ## TV & Radio ReInvented
 

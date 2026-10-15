@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` v0.1.3 is an independent Java mod for **B42.21 only**, required in our selected set. It needs **ZombieBuddy 2.3.4+** in every client and the server process. It patches client zombie-speed decoding and vehicle interpolation recovery, plus server-side VHS restart handling and build cancellation acknowledgements. Each patch checks its target class bytecode and disables itself on an unsupported build. It remains experimental: it is not established as a fix for minute-long vehicle freezes or every movement jerk.
+`PZToolkitJavaPatches` v0.1.4 is an independent Java mod for **B42.21 only**, required in our selected set. It needs **ZombieBuddy 2.3.4+** in every client and the server process. It patches client zombie-speed decoding, vehicle interpolation recovery and animal trailer membership, plus server-side VHS restart handling and build cancellation acknowledgements. Each patch checks its target class bytecode and disables itself on an unsupported build. It remains experimental: it is not established as a fix for minute-long vehicle freezes or every movement jerk.
 
 ## Prepare and install
 
@@ -20,7 +20,7 @@ Use corresponding paths on macOS/Linux; `--game` points to the folder containing
 
 Copy the three folders inside `dist/SurvivorQoL/mods` to `Zomboid/mods` on the server and every client. The prepared INI already includes `ZombieBuddy;PZToolkitJavaPatches` first, followed by the rest of the selected set. This local patch has no Workshop ID. Approve its JAR in ZombieBuddy on each client and server; see Host's saved-approval step below.
 
-For Java-only development, `python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts the same `--game`, `--jdk` and `--check` options. The checks compare original and patched engine vehicle interpolation, media restart and build cancellation/completion behavior; there is no separate zombie-speed regression in this command. Generated output is ignored by Git.
+For Java-only development, `python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts the same `--game`, `--jdk` and `--check` options. The checks compare original and patched engine vehicle interpolation, media restart, build cancellation/completion behavior and animal location/identity/capacity reconciliation; there is no separate zombie-speed regression in this command. Generated output is ignored by Git.
 
 ## Programmatic test video (B42.21 client)
 
@@ -89,14 +89,22 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 
 ### Verify activation
 
-Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
+Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true, video=true, animal=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
 
 - Server: `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
-- Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI` and `[ZB] Transformed: zombie.vehicles.VehicleInterpolation`.
+- Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI`, `[ZB] Transformed: zombie.vehicles.VehicleInterpolation` and `[ZB] Transformed: zombie.characters.NetworkPlayerAI`.
 
 These appear at the default log verbosity. Missing output, `false` values, or target-class/transformation errors mean setup is incomplete or needs investigation. The client also shows **ZombieBuddy ... loaded** in the upper-left corner. A client message alone does not confirm server activation.
 
 The build acknowledgement patch lets Toolkit 0.1.30 interrupt active multiplayer construction safely. It reports the native server outcome over the same ordered channel as build transactions. Only confirmed cancellations may resume; completed builds never replay. An unsupported or unpatched server retains the queue restriction, and a missing terminal reply clears the waiting queue after 30 seconds.
+
+## Animal trailer reconciliation
+
+Version 0.1.4 reconciles an animal's client trailer membership when the server reports its world, hutch or inventory location. A late trailer snapshot could previously re-add an unloaded animal permanently, leaving an entry that cannot be grabbed. Cleanup removes duplicate references to the same animal, preserves its identity and recomputes occupied trailer capacity. No animals or inventory items are created or deleted.
+
+`PZToolkitJavaPatches` is already in the selected INI; no additional Workshop item is needed. Install the updated prepared Java folder on the server and every client, including the host player, save the new JAR approval and restart the server and clients. Check `animal=true` and the actual `zombie.characters.NetworkPlayerAI` transformation in every client log. See [the combined guide](../MOD_INSTALL.md#animal-trailer-fix).
+
+The 0.1.4 native-object regression checks world/hutch/item locations, duplicate membership, identity, capacity, repeat snapshots and client/server guards. An isolated B42.21 macOS dedicated-server/client test with the 27 selected local mods passed two hen grabs and the last live chick grab, followed by all three native drops alive with exact identities and trailer counts 2/1/0 on both sides. A test-only late-packet replay demonstrated the vanilla ghost and its repair through the actual woven decoder; that probe is excluded from the mod. The affected hosted save, Windows/Linux, WAN and UI clicking/pathfinding were not tested, and previously lost animals are not restored.
 
 ## Verification limits
 

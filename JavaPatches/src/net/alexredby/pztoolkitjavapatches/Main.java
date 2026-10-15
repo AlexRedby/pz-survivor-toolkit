@@ -5,10 +5,13 @@ import java.util.HexFormat;
 import me.zed_0xff.zombie_buddy.Accessor;
 import me.zed_0xff.zombie_buddy.Patch;
 import zombie.characters.NetworkZombieAI;
+import zombie.characters.NetworkPlayerAI;
+import zombie.characters.animals.IsoAnimal;
 import zombie.core.BuildAction;
 import zombie.network.GameClient;
 import zombie.network.GameServer;
 import zombie.network.packets.character.ZombiePacket;
+import zombie.network.packets.character.AnimalPacket;
 import zombie.radio.devices.DeviceData;
 import zombie.vehicles.VehicleInterpolation;
 
@@ -29,6 +32,12 @@ public final class Main {
         "87e4f6e43d16dec23f685b4ebad68eb12eaea15ed87dce3fc3c3394f96cd1e3d");
     public static final boolean VEHICLE_SUPPORTED = supports("zombie/vehicles/VehicleInterpolation.class",
         "e5096d41b4b94c3eb040c119c1ca35b014bbfe3c742401002b88103a650add56");
+    public static final boolean ANIMAL_SUPPORTED = supports("zombie/characters/NetworkPlayerAI.class",
+        "46df5ede124384e10a848fe9eb6f6ba06cccbb3cc74f51e5e9b0306cd80a628a")
+        && supports("zombie/vehicles/BaseVehicle.class",
+            "e7ade19e1e6f66450bef2bd37e52b2afccc7377c4e4571d0fa39435ecdb55661")
+        && supports("zombie/network/packets/character/AnimalPacket.class",
+            "db6954555bb7b270589d406050eecb4dd79f789e8d5627df7fc43c1e8150f169");
     public static final boolean MEDIA_SUPPORTED = supports("zombie/radio/devices/DeviceData.class",
         "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102");
     public static final boolean BUILD_SUPPORTED = supports("zombie/core/BuildAction.class",
@@ -55,7 +64,32 @@ public final class Main {
     public static void main(String[] args) {
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
-            + ", video=" + VIDEO_SUPPORTED);
+            + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED);
+    }
+
+    @Patch(className="zombie.characters.NetworkPlayerAI", methodName="parse", warmUp=true, strictMatch=true)
+    public static class AnimalTrailerLocation {
+        public static boolean disabled;
+
+        @Patch.OnEnter
+        public static void enter(@Patch.This NetworkPlayerAI ai, @Patch.Argument(0) AnimalPacket packet) {
+            if (disabled || !GameClient.client || !Main.ANIMAL_SUPPORTED || packet == null
+                || (packet.location != 0 && packet.location != 1 && packet.location != 3)
+                || !(ai.getCharacter() instanceof IsoAnimal animal)) return;
+            try {
+                var vehicle = animal.getVehicle();
+                if (vehicle == null) return;
+                // A late trailer snapshot can re-add a grabbed animal; the next real location must detach it.
+                while (vehicle.getAnimals().remove(animal)) { }
+                animal.setVehicle(null);
+                float size = 0;
+                for (var remaining : vehicle.getAnimals()) size += remaining.getAnimalTrailerSize();
+                vehicle.setCurrentTotalAnimalSize(size);
+            } catch (RuntimeException error) {
+                disabled = true;
+                System.err.println("[PZToolkitJavaPatches] Animal trailer reconciliation disabled: " + error);
+            }
+        }
     }
 
     @Patch(className="zombie.core.BuildAction", methodName="start", warmUp=true)

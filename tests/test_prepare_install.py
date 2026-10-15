@@ -34,6 +34,10 @@ class PrepareInstall(unittest.TestCase):
             "Mods=ZombieBuddy;" + ";".join(prepare_install.MOD_IDS) + "\n"
             "WorkshopItems=3619862853;3508537032\n"
         )
+        (self.root / "MOD_INSTALL.md").write_text(
+            "[INI](SurvivorQoL-selected.ini) [features](README.md#controls) "
+            "[loader](JavaPatches/README.md#server-loader)\n", encoding="utf-8")
+        (self.root / "JavaPatches/README.md").write_text("# Java installation\n", encoding="utf-8")
         (self.root / "JavaPatches/start-host.ps1").write_text("# Windows launcher\n")
         command = self.root / "JavaPatches/start-host.command"
         command.write_text("#!/bin/bash\n# macOS launcher\n")
@@ -68,6 +72,12 @@ class PrepareInstall(unittest.TestCase):
         self.assertEqual((result / "start-host.command").read_bytes(),
                          (self.root / "JavaPatches/start-host.command").read_bytes())
         self.assertEqual((result / "start-host.command").stat().st_mode & 0o777, 0o755)
+        self.assertEqual((result / "MOD_INSTALL.md").read_text(encoding="utf-8"),
+                         "[INI](Server/SurvivorQoL-selected.ini) "
+                         "[features](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/README.md#controls) "
+                         "[loader](JavaPatches/README.md#server-loader)\n")
+        self.assertEqual((result / "JavaPatches/README.md").read_bytes(),
+                         (self.root / "JavaPatches/README.md").read_bytes())
         self.assertFalse(self.sentinel.exists())
 
     def test_default_build_arguments_and_no_build_or_third_party_artifact_spill(self):
