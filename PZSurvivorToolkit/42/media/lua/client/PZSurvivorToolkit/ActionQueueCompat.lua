@@ -14,11 +14,20 @@ local sourceScope
 local installAttempted
 local readFixAttempted
 local transferSourceSafe = true
+local containerTransferPerform
 local containerHelpersUnchanged
 local washWalkHelper
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform",
     "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceStop", "forceCancel"}
 local sourceFiles = {
+    SaucedCartsTransfers = {
+        {"shared/SaucedCarts/TimedActions/ISCartTransferAction.lua", 3962234240},
+        {"shared/SaucedCarts/CartTransferInterceptor.lua", 2772644904},
+        {"shared/SaucedCarts/Core.lua", 2570266575},
+        {"shared/SaucedCarts/Network.lua", 2897409368},
+        {"client/SaucedCarts/Restrictions/TransferRestrictions.lua", 2976371209},
+        {"client/SaucedCarts/CartState/VisualUpdateQueue.lua", 2627823607},
+    },
     WashFix = {
         {"client/ISUI/WMI_WashingSubmenus.lua", 3809430929},
         {"client/ISUI/WMI_CleanBandagesContext.lua", 2564019136},
@@ -83,9 +92,9 @@ local function sourceHash(reader)
     return b * 65536 + a
 end
 
-local function verified(id)
+local function verified(id, files)
     if not getModFileReader then return false end
-    for _, file in ipairs(sourceFiles[id]) do
+    for _, file in ipairs(files or sourceFiles[id]) do
         local ok, reader = pcall(getModFileReader, id, "media/lua/" .. file[1], false)
         if not ok or not reader then return false end
         local hashed, checksum = pcall(sourceHash, reader)
@@ -497,6 +506,7 @@ local function installContainerTransfers()
         if not policy.adoptTransferMethods(previous, replacement, containerHelpersUnchanged) then return end
         if Operations.adoptReturnMethods then Operations.adoptReturnMethods(previous, replacement, containerHelpersUnchanged) end
     end
+    containerTransferPerform = ISInventoryTransferAction.perform
     transferSourceSafe, ready.EURY_CONTAINERS = true, true
 end
 
@@ -527,6 +537,9 @@ function Compat.install()
     installAttempted = true
     installCartEating()
     installContainerTransfers()
+    if getActivatedMods and getActivatedMods():contains("SaucedCarts") and verified("SaucedCarts", sourceFiles.SaucedCartsTransfers) then
+        ready.SaucedCartsTransfers = require("PZSurvivorToolkit/ActionQueueCarts").install()
+    end
     for _, owner in ipairs({
         {"Neat_Crafting", "NC_CraftActionPanel", "Neat_Crafting/NC_CraftActionPanel"},
         {"Project_Cook", "PJCK_CraftActionPanel", "Project_Cook/HandCraftPanel/PJCK_CraftActionPanel"},
@@ -645,6 +658,11 @@ function Compat.installReadFix()
 end
 
 function Compat.isInstalled(id) return ready[id] == true end
+
+function Compat.isTransferPerform(callback)
+    return ready.EURY_CONTAINERS == true and callback == containerTransferPerform
+        and type(callback) == "function" and containerHelpersUnchanged()
+end
 
 function Compat.isCraftOwner(name, target, action)
     local owner = craftOwners[name]

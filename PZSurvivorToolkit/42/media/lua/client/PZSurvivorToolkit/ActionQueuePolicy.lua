@@ -380,6 +380,24 @@ local function registerNative(name, inspector, helpers)
 end
 Policy.registerNative = registerNative
 
+function Policy.adoptTransferHooks(previous, replacement, guard)
+    local snapshot = snapshots[ISInventoryTransferAction]
+    local preparation = nativePreparation[ISInventoryTransferAction]
+    if not snapshot or type(guard) ~= "function" or not guard() then return false end
+    for _, name in ipairs({"new", "perform"}) do
+        if snapshot.methods[name] ~= previous[name] or ISInventoryTransferAction[name] ~= replacement[name]
+            or type(previous[name]) ~= "function" or type(replacement[name]) ~= "function" then return false end
+    end
+    if snapshot.helpers.transferItem ~= (previous.transferItem or false)
+        or ISInventoryTransferAction.transferItem ~= replacement.transferItem then return false end
+    for _, name in ipairs({"new", "perform"}) do snapshot.methods[name] = replacement[name] end
+    snapshot.helpers.transferItem = replacement.transferItem or false
+    if preparation then preparation.perform = replacement.perform end
+    transferMethodsAdopted = true
+    transferHelperGuards[#transferHelperGuards + 1] = guard
+    return true
+end
+
 function Policy.adoptMoveablesConstructor(previous, replacement)
     local snapshot = snapshots[ISMoveablesAction]
     if not snapshot or type(previous) ~= "function" or type(replacement) ~= "function"
@@ -445,6 +463,9 @@ function Policy.addContainerResources(result, container)
     local seen = {}
     while instanceof(container, "ItemContainer") and not seen[container] do
         seen[container] = true
+        if container.getAcceptItemFunction and container:getAcceptItemFunction() ~= nil then
+            result.knownInputs, result.cancelWaiting, result.cancelOperation = false, false, false
+        end
         local parent = container:getParent()
         if parent and not instanceof(parent, "IsoGameCharacter") then result.targets[parent] = true end
         local bag = container.getContainingItem and container:getContainingItem()
@@ -474,6 +495,7 @@ local function transferResources(action)
     end
     return result
 end
+Policy.transferResources = transferResources
 local function targetResources(action)
     if action.Type == "ISSetComboWasherDryerMode" and action.mode ~= "washer" and action.mode ~= "dryer" then return end
     if action.Type == "ISActivateGenerator" and type(action.activate) ~= "boolean" then return end
@@ -615,6 +637,13 @@ local function finiteWeight(value)
 end
 
 local function transferCapacityConflict(queue, a, b, last, check)
+    local carts = Toolkit.ActionQueueCarts
+    if Operations.isTransfer(a) and Operations.isTransfer(b)
+        and (a.Type == "ISCartTransferAction" or b.Type == "ISCartTransferAction"
+            or (carts and type(carts.involvesCart) == "function" and (carts.involvesCart(a) or carts.involvesCart(b)))) then
+        -- shortcut: cart ancestor capacity overrides need an audit before crossing another transfer.
+        return queue.character:getInventory()
+    end
     if a.Type ~= "ISInventoryTransferAction" or b.Type ~= "ISInventoryTransferAction" then return end
     if check.done then return check.blocker end
     local shared

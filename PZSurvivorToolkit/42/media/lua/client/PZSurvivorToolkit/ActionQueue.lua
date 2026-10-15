@@ -104,7 +104,7 @@ local function finishGroup(queue, request)
     local inventory = queue.character:getInventory()
     for i = last, 2, -1 do
         local member = table.remove(queue.queue, i)
-        if member.Type == "ISInventoryTransferAction" and member.allowMissingItems
+        if Operations.isTransfer(member) and member.allowMissingItems
             and member.srcContainer == inventory and member.destContainer ~= inventory then
             returns[member.item:getID()] = member.destContainer
         end
@@ -121,8 +121,8 @@ local function finishGroup(queue, request)
         if item and item:getContainer() == inventory and not item:getIsCraftingConsumed()
             and destination:isExistYet() and containers:contains(destination) then
             local action = ISInventoryTransferUtil.newInventoryTransferAction(queue.character, item, inventory, destination)
-            if action.Type == "ISInventoryTransferAction" then
-                Toolkit.BulkActions.guardTransfer(action)
+            if action.Type == "ISInventoryTransferAction" or (not isClient() and Toolkit.ActionQueueCarts and Toolkit.ActionQueueCarts.isTransfer(action)) then
+                if action.Type == "ISInventoryTransferAction" then Toolkit.BulkActions.guardTransfer(action) end
                 action:setAllowMissingItems(true)
                 action.toolkitQueueOperation, action.toolkitQueueReturn = {}, returnMarker
                 table.insert(queue.queue, index, action)
@@ -344,9 +344,9 @@ end
 
 Queue.label = Toolkit.ActionQueueLabels.label
 
+require "PZSurvivorToolkit/ActionQueueCompat"
 require "PZSurvivorToolkit/ActionQueueGenerators"
 require "PZSurvivorToolkit/ActionQueueFire"
 require "PZSurvivorToolkit/ActionQueueWorld"
 require "PZSurvivorToolkit/ActionQueueHealth"
-require "PZSurvivorToolkit/ActionQueueCompat"
 return Queue

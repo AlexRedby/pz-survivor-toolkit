@@ -31,6 +31,7 @@ def main() -> None:
     parser.add_argument("--wishlist-workshop-root", type=Path, help="Workshop content/108600 for wishlist UI source checks")
     parser.add_argument("--project-cook-picker", type=Path, help="Project Cook ItemPicker.lua for queued stove controls")
     parser.add_argument("--saucedcarts-source", type=Path, help="SaucedCarts shared module directory for server hook checks")
+    parser.add_argument("--wheelbarrow-source", type=Path, help="SaucedWheelbarrow registration init.lua for spawn checks")
     args = parser.parse_args()
     try:
         from lupa.lua51 import LuaRuntime
@@ -55,7 +56,19 @@ def main() -> None:
 
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)
+    if args.saucedcarts_source:
+        lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
+    if args.wheelbarrow_source:
+        lua.globals().WheelbarrowSource = str(args.wheelbarrow_source)
+    lua.execute((ROOT / "tests/test_cart_spawns.lua").read_text(encoding="utf-8"))
+
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.globals().ProjectRoot = str(ROOT)
     lua.execute((ROOT / "tests/test_cart_hands.lua").read_text(encoding="utf-8"))
+
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.globals().ProjectRoot = str(ROOT)
+    lua.execute((ROOT / "tests/test_cart_motion.lua").read_text(encoding="utf-8"))
 
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)
@@ -104,9 +117,11 @@ def main() -> None:
         lua.globals().NativeDropBoxSource = (args.native_radio_root / "RadioCom/ISUIRadio/ISItemDropBox.lua").read_text(encoding="utf-8")
     lua.execute((ROOT / "tests/test_tv_controls.lua").read_text(encoding="utf-8"))
 
-    for name in ("test_ui_style.lua", "test_sidebar_tools.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_food.lua", "test_food_cart_compat.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_dismantle.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_compat.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_generators.lua", "test_action_queue_fire.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua"):
+    for name in ("test_ui_style.lua", "test_sidebar_tools.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_food.lua", "test_food_cart_compat.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_dismantle.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_compat.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_generators.lua", "test_action_queue_carts.lua", "test_action_queue_fire.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua"):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
+        if args.saucedcarts_source:
+            lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
         if args.native_action_root:
             lua.globals().NativeActionRoot = str(args.native_action_root)
         if name == "test_food_cart_compat.lua" and args.saucedcarts_source:

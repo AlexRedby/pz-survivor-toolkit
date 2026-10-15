@@ -57,7 +57,8 @@ p.getPrimaryHandItem = function(self) return self.primary end
 p.getSecondaryHandItem = function(self) return self.secondary end
 p.setPrimaryHandItem = function(self, item) self.primary = item end
 p.setSecondaryHandItem = function(self, item) self.secondary = item end
-p.stopOrTriggerSound = function() end
+local stoppedSounds, removedScraps, repairXp = 0, 0, 0
+p.stopOrTriggerSound = function() stoppedSounds = stoppedSounds + 1 end
 getPlayerHotbar = function() return nil end
 local function square(x, y, z)
     return {getX = function() return x or 0 end, getY = function() return y or 0 end, getZ = function() return z or 0 end,
@@ -74,9 +75,9 @@ instanceof = function(value, name)
     return originalInstanceof(value, name) or name == 'InventoryItem' and type(value) == 'table' and value.class == 'InventoryContainer'
         or name == 'IsoObject' and type(value) == 'table' and value.class == 'IsoGenerator'
 end
-sendRemoveItemFromContainer = function() end
+sendRemoveItemFromContainer = function() removedScraps = removedScraps + 1 end
 sendAddItemToContainer, sendEquip = function() end, function() end
-addXp = function(_, _, xp) assert(xp == 5) end
+addXp = function(_, _, xp) assert(xp == 5); repairXp = repairXp + xp end
 forceDropHeavyItems = function() end
 instanceItem = function(kind)
     local item = f.item(kind); item.setCondition = function(self, value) self.condition = value end
@@ -210,23 +211,38 @@ inv.items = {scrap1, scrap2}; g.condition = 92
 local repair = ISFixGenerator:new(p, g); repair.toolkitQueueOperation = {}
 local ending = head(); q = f.queue(repair, ending); repair:begin()
 assert(policy.inspect(repair) and not policy.cancelOperationReason(q, repair), 'audited active repair can stop before completion')
-repair:perform(); assert(q.current == repair and g.condition == 92, 'native SP performs before completing')
+local soundsBefore, removalsBefore, xpBefore = stoppedSounds, removedScraps, repairXp
+repair:perform(); assert(q.current == repair and g.condition == 92 and #inv.items == 2
+    and stoppedSounds == soundsBefore + 1 and removedScraps == removalsBefore and repairXp == xpBefore,
+    'native SP perform stops sound before complete owns scrap, condition and XP')
+assert(rawget(q, 'onCompleted') == nil, 'temporary advancement interception restores the inherited queue method')
 assert(repair:complete() and g.condition == 96 and #q.queue == 2 and q.queue[1].Type == 'ISFixGenerator')
 local second = q.queue[1]; assert(second.toolkitQueueOperation == repair.toolkitQueueOperation and q.queue[2] == ending)
 second:perform(); assert(q.current == second)
 assert(second:complete() and g.condition == 100 and #inv.items == 0 and q.current == ending)
+assert(stoppedSounds == soundsBefore + 2 and removedScraps == removalsBefore + 2 and repairXp == xpBefore + 10)
 -- A cancellation between native perform and complete suppresses only future repairs, not the completed effect.
 inv.items = {scrap1, scrap2}; g.condition = 92
 repair = ISFixGenerator:new(p, g); repair.toolkitQueueOperation = {}; q = f.queue(repair, ending)
 repair:perform(); PZSurvivorToolkit.ActionQueueOperations.invalidate(repair.toolkitQueueOperation)
 assert(repair:complete() and g.condition == 96 and #inv.items == 1 and q.current == ending and #q.queue == 1)
+repair:continueFixing(); assert(#q.queue == 1, 'cancelled completed repair cannot add a late child')
+-- A queue replacement between perform and complete cannot advance or append to the new queue.
+inv.items = {scrap1, scrap2}; g.condition = 92
+repair = ISFixGenerator:new(p, g); repair.toolkitQueueOperation = {}; q = f.queue(repair, ending)
+repair:perform(); local replacement = f.queue(ending)
+assert(repair:complete() and g.condition == 96 and #inv.items == 1 and replacement.current == ending
+    and #replacement.queue == 1 and q.current == repair, 'native effect survives reset without reviving the old queue')
 -- MP perform predicts the same child using native addAfter; server-side complete never creates a client child.
 client = true; inv.items = {scrap1, scrap2}; g.condition = 92
 repair = ISFixGenerator:new(p, g); repair.toolkitQueueOperation = {}; q = f.queue(repair, ending)
-repair:perform(); assert(q.current.Type == 'ISFixGenerator' and q.queue[2] == ending)
+removalsBefore, xpBefore = removedScraps, repairXp
+repair:perform(); assert(q.current ~= repair and q.current.Type == 'ISFixGenerator' and q.queue[2] == ending
+    and q.current.toolkitQueueOperation == repair.toolkitQueueOperation and g.condition == 92 and #inv.items == 2
+    and removedScraps == removalsBefore and repairXp == xpBefore, 'MP perform enqueues a child without predicting server effects')
 server, client = true, false; inv.items = {scrap1, scrap2}; g.condition = 92
 repair = ISFixGenerator:new(p, g); repair.toolkitQueueOperation = {}; q = f.queue(repair, ending)
-assert(repair:complete() and #q.queue == 2); server = false
+assert(repair:complete() and #q.queue == 2 and q.current == repair and g.condition == 96 and #inv.items == 1); server = false
 -- Canceled operations and queue reset reject a late continuation while allowing native cleanup.
 repair = ISFixGenerator:new(p, g); repair.toolkitQueueOperation = {}; q = f.queue(repair, ending)
 PZSurvivorToolkit.ActionQueueOperations.invalidate(repair.toolkitQueueOperation)
@@ -421,5 +437,137 @@ assert(#q.queue==2 and action.toolkitWorldOperation=='device' and not policy.ins
 local bookTail=head();q.queue,q.current={action,bookTail},action;action:begin();action:start()
 assert(#q.queue==3 and q.queue[2].Type=='ISFixGenerator' and q.queue[3]==bookTail,
     'opaque native callback executes without removing the unrelated book tail')
+inv.items={scrap1,scrap2};g.condition=92
+local opaqueRepair=q.queue[2];q.queue,q.current={opaqueRepair,bookTail},opaqueRepair
+assert(not policy.inspect(opaqueRepair), 'native repair with an unknown transfer helper stays protected')
+opaqueRepair:perform();assert(q.current==opaqueRepair and g.condition==92 and #inv.items==2,
+    'opaque native repair retains its continuation parent until complete')
+assert(opaqueRepair:complete() and g.condition==96 and #inv.items==1 and #q.queue==2
+    and q.queue[1].Type=='ISFixGenerator' and q.queue[2]==bookTail,
+    'protected native repair continues even when a mod owns inventory transfer construction')
+local opaqueChild=q.queue[1]
+assert(opaqueChild.toolkitQueueOperation==opaqueRepair.toolkitQueueOperation and not policy.inspect(opaqueChild))
+opaqueChild:perform();assert(opaqueChild:complete() and g.condition==100 and #inv.items==0 and q.current==bookTail)
 ISInventoryTransferAction.new=transferConstructor
+-- Only the verified cart adapter may authorize exact observed transfer constructor replacements.
+native('client/ISUI/ISWorldObjectContextMenu.lua')
+assert(loadstring(source:sub(first,last-1),'@media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'))()
+for _,name in ipairs({'ISPlugGenerator','ISActivateGenerator','ISFixGenerator','ISAddFuel','ISTakeGenerator'}) do
+    native('shared/TimedActions/'..name..'.lua')
+end
+native('client/TimedActions/ISGeneratorInfoAction.lua')
+local cartInitial=function(self,...) return transferConstructor(self,...) end
+local cartLater=function(self,...) return cartInitial(self,...) end
+local approved,cartActive,latest={[cartInitial]=true,[cartLater]=true},true,cartInitial
+PZSurvivorToolkit.ActionQueueCarts={isTransferConstructor=function(callback)
+    return cartActive and approved[callback]==true and ISInventoryTransferAction.new==latest
+end,isTransfer=function() return false end,isReturn=function() return false end}
+ISInventoryTransferAction.new=cartInitial
+f.project('ActionQueueOperations');f.project('ActionQueueDefinitions');policy=f.project('ActionQueuePolicy')
+adapter=f.project('ActionQueueGenerators');adapter.install()
+q,action=queued('onFixGenerator',g)
+local cartRepair=ISFixGenerator:new(p,g)
+assert(policy.inspect(action) and policy.inspect(cartRepair), 'verified initial cart constructor allows native generator contracts')
+latest=cartLater;ISInventoryTransferAction.new=cartLater
+assert(policy.inspect(action) and policy.inspect(cartRepair), 'verified later cart constructor preserves captured native generator contracts')
+local cartAPI=PZSurvivorToolkit.ActionQueueCarts
+PZSurvivorToolkit.ActionQueueCarts=nil
+assert(not policy.inspect(action), 'removing the verified cart adapter revokes captured generator trust')
+PZSurvivorToolkit.ActionQueueCarts=cartAPI
+local cartCheck=cartAPI.isTransferConstructor
+cartAPI.isTransferConstructor=function() return true end
+assert(not policy.inspect(action), 'replacing the cart verification callback cannot grant generator trust')
+cartAPI.isTransferConstructor=cartCheck
+cartActive=false
+assert(not policy.inspect(action) and not policy.inspect(cartRepair), 'cart guard revocation protects generator controls even with an unchanged current constructor')
+cartActive=true;approved[cartInitial]=nil
+assert(not policy.inspect(action), 'the captured cart constructor must remain approved alongside the current one')
+approved[cartInitial]=true
+ISInventoryTransferAction.new=function(self,...) return cartLater(self,...) end
+assert(not policy.inspect(action), 'unobserved transfer constructor replacement cannot inherit cart trust')
+ISInventoryTransferAction.new=cartLater
+local equipConstructor=ISEquipWeaponAction.new
+local foreignEquip=function(self,...) return equipConstructor(self,...) end
+local cartRefill=ISAddFuel:new(p,g,petrol,70)
+local cartTake=ISTakeGenerator:new(p,g)
+assert(policy.inspect(cartRefill) and policy.inspect(cartTake),'verified cart constructor must preserve other native generator permissions before equipment changes')
+approved[foreignEquip]=true;ISEquipWeaponAction.new=foreignEquip
+assert(policy.inspect(action) and policy.inspect(cartRepair) and not policy.inspect(cartRefill) and not policy.inspect(cartTake),
+    'an unrelated equipment constructor cannot revoke repair or inherit fuel permission from cart approval')
+ISEquipWeaponAction.new=equipConstructor
+assert(policy.inspect(action), 'restoring the exact native helper restores verified cart generator contracts')
+cartActive=false
+native('client/ISUI/ISWorldObjectContextMenu.lua')
+for _,name in ipairs({'ISPlugGenerator','ISActivateGenerator','ISFixGenerator','ISAddFuel','ISTakeGenerator'}) do
+    native('shared/TimedActions/'..name..'.lua')
+end
+native('client/TimedActions/ISGeneratorInfoAction.lua')
+f.project('ActionQueueOperations');f.project('ActionQueueDefinitions');policy=f.project('ActionQueuePolicy')
+adapter=f.project('ActionQueueGenerators');adapter.install()
+q,action=queued('onFixGenerator',g)
+assert(not policy.inspect(action) and action.toolkitWorldOperation=='device', 'unverified cart adapter cannot grant generator controls during installation')
+PZSurvivorToolkit.ActionQueueCarts=nil
+assert(not policy.inspect(action), 'absent cart adapter keeps the unknown constructor protected')
+ISInventoryTransferAction.new=transferConstructor
+-- Native repair does not call equipment helpers, even when SaucedCarts wraps unequip before capture.
+native('client/ISUI/ISWorldObjectContextMenu.lua')
+for _,name in ipairs({'ISPlugGenerator','ISActivateGenerator','ISFixGenerator','ISAddFuel','ISTakeGenerator','ISUnequipAction'}) do
+    native('shared/TimedActions/'..name..'.lua')
+end
+native('client/TimedActions/ISGeneratorInfoAction.lua')
+local unequipConstructor=ISUnequipAction.new
+if SaucedCartsSource then
+    local path=SaucedCartsSource..'/ContainerRestrictions.lua'
+    local wrapper=assert(readText(path):gsub('\r',''):match('(local function wrapUnequipNew%(%).-\nend)'))
+    SaucedCarts={debug=function() end}
+    assert(loadstring('local function flushDistanceOnCreate() error("repair called an unrelated unequip helper") end\n'
+        ..wrapper..'\nwrapUnequipNew()','@'..path))()
+else
+    ISUnequipAction.new=function() error('repair called an unrelated unequip constructor') end
+end
+f.project('ActionQueueOperations');f.project('ActionQueueDefinitions');policy=f.project('ActionQueuePolicy')
+adapter=f.project('ActionQueueGenerators');adapter.install()
+inv.items={scrap1,scrap2};g.activated=false;g.condition=92
+q,action=queued('onFixGenerator',g)
+assert(policy.inspect(action) and action.toolkitWorldOperation=='generator',
+    'preinstalled unrelated unequip hook revoked the native repair producer')
+assert(not policy.inspect(ISTakeGenerator:new(p,g)) and not policy.inspect(ISAddFuel:new(p,g,petrol,70)),
+    'equipment-dependent generator kinds must remain protected under an unaudited unequip hook')
+local equipHelper=ISWorldObjectContextMenu.equip
+ISWorldObjectContextMenu.equip=function() error('repair called an unrelated equip helper') end
+assert(policy.inspect(action),'changed unused equipment helper revoked native repair');ISWorldObjectContextMenu.equip=equipHelper
+local unequipOwner=ISUnequipAction;ISUnequipAction={new=function() error('foreign unequip owner') end}
+assert(policy.inspect(action),'replacing an unused equipment class revoked native repair');ISUnequipAction=unequipOwner
+local scrapTransfer=ISInventoryPaneContextMenu.transferIfNeeded
+ISInventoryPaneContextMenu.transferIfNeeded=function() end
+assert(not policy.inspect(action),'native repair must still guard its scrap transfer helper');ISInventoryPaneContextMenu.transferIfNeeded=scrapTransfer
+local moveConstructor=ISWalkToTimedAction.new;ISWalkToTimedAction.new=function() end
+assert(not policy.inspect(action),'native repair must still guard its walking constructor');ISWalkToTimedAction.new=moveConstructor
+ISInventoryTransferAction.new=function() end
+assert(not policy.inspect(action),'unknown scrap transfer constructor gained permission through equipment scope');ISInventoryTransferAction.new=transferConstructor
+local repairTail=head();q.queue,q.current={action,repairTail},action;action:begin();action:start()
+local scopedRepair=q.queue[2];q.queue,q.current={scopedRepair,repairTail},scopedRepair;scopedRepair:begin()
+assert(policy.inspect(scopedRepair) and not policy.cancelOperationReason(q,scopedRepair),
+    'native active repair must remain cancellable beside unrelated reading under the unequip hook')
+scopedRepair:perform();assert(scopedRepair:complete() and g.condition==96 and #inv.items==1)
+local scopedChild=q.current
+assert(scopedChild.Type=='ISFixGenerator' and policy.inspect(scopedChild) and not policy.cancelOperationReason(q,scopedChild)
+    and scopedChild.toolkitQueueOperation==scopedRepair.toolkitQueueOperation and q.queue[2]==repairTail,
+    'continuation lost the scoped repair permission, token or unrelated reading')
+PZSurvivorToolkit.ActionQueueLabels={label=function() return 'fixture' end}
+local queueAPI=f.project('ActionQueue')
+ISInventoryPaneContextMenu.getContainers=function() return {contains=function(_,value) return value==inv end} end
+p.getCharacterActions=function() return {contains=function(_,value) return value and not value.fixtureStopped end} end
+p.tooDarkToRead=function() return false end
+inv.contains=function(self,value) for _,item in ipairs(self.items) do if item==value then return true end end return false end
+repairTail.item.getNumberOfPages=function() return 100 end;repairTail.item.getAlreadyReadPages=function() return 99 end
+inv.items[#inv.items+1]=repairTail.item
+scopedChild.action.forceStop=function(self) self.fixtureStopped=true end
+local committedXP=repairXp
+assert(queueAPI.cancelOperation(q,scopedChild) and scopedChild.toolkitQueueOperation.toolkitCancelled,
+    'actual queue API rejected the second scoped repair cancellation')
+scopedChild:stop();q:tick()
+assert(g.condition==96 and repairXp==committedXP and inv:contains(scrap2) and not inv:contains(scrap1)
+    and q.current==repairTail and #q.queue==1,'second scoped repair cancellation changed committed effects, unused scrap or reading tail')
+ISUnequipAction.new=unequipConstructor
 print('Generator native contracts passed: native callbacks/completions, resource/power edges, cancellation guards, recursive SP/MP repair and source/helper trust.')
