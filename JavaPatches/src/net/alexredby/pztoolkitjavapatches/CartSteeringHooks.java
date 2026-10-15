@@ -14,7 +14,7 @@ public final class CartSteeringHooks {
     private static final ThreadLocal<Vector2> passthrough = ThreadLocal.withInitial(Vector2::new);
 
     private static final class State {
-        double heading, target, load;
+        double heading, target, load, lean;
         float startX, startY;
         boolean moving, pending;
         final CartSteeringMath.Step requested = new CartSteeringMath.Step();
@@ -31,7 +31,7 @@ public final class CartSteeringHooks {
         };
     }
 
-    private static boolean enabled(IsoPlayer player) {
+    public static boolean enabled(IsoPlayer player) {
         return player.isLocalPlayer() && player.getVariableBoolean("ToolkitCartMotion")
                 && !player.isDead() && !player.hasHitReaction() && !player.isKnockedDown()
                 && !player.isGettingUp() && !player.isGrappling() && !player.isBeingGrappled()
@@ -40,6 +40,15 @@ public final class CartSteeringHooks {
                 // Path following needs its own corner/collision acceptance tests.
                 && !player.hasPath()
                 && player.getPrimaryHandItem() instanceof InventoryContainer;
+    }
+
+    public static double lean(IsoPlayer player) {
+        State state=states.get(player);
+        return state!=null && enabled(player) && wheelbarrow(player) ? state.lean : 0;
+    }
+
+    private static boolean wheelbarrow(IsoPlayer player) {
+        return player.getPrimaryHandItem().getFullType().startsWith("SaucedWheelbarrow.");
     }
 
     /**
@@ -61,7 +70,7 @@ public final class CartSteeringHooks {
         state.load = capacity > 0 ? contents.getCapacityWeight() / capacity : 0;
         CartSteeringMath.step(state.heading,
                 state.moving ? state.target : state.heading, distance,
-                GameTime.getInstance().getRealworldSecondsSinceLastUpdate(), state.load, state.requested);
+                GameTime.getInstance().getRealworldSecondsSinceLastUpdate(), state.load, wheelbarrow(player), state.requested);
         state.pending = true;
         return state.result.set((float) state.requested.x(), (float) state.requested.y());
     }
@@ -87,23 +96,27 @@ public final class CartSteeringHooks {
             states.put(player, state);
         }
         double actualX = 0, actualY = 0;
-        double fraction = 0;
+        double fraction = 0, acceptedTurn=0;
         if (state.pending) {
             actualX = player.getX() - state.startX;
             actualY = player.getY() - state.startY;
             fraction = CartSteeringMath.acceptedFraction(state.requested,
                     actualX, actualY);
             double turn = state.requested.turn() * fraction;
+            acceptedTurn=turn;
             state.heading = CartSteeringMath.wrap(state.heading + turn);
             state.pending = false;
         }
+        double dt=Math.max(0,Math.min(.1,GameTime.getInstance().getRealworldSecondsSinceLastUpdate()));
+        double bank=wheelbarrow(player) && dt>0 ? Math.max(-.10,Math.min(.10,acceptedTurn/dt*.065)) : 0;
+        state.lean+=(bank-state.lean)*(1-Math.exp(-dt/.08));
         state.moving = player.isJustMoved();
         state.target = state.moving ? desired : state.heading;
         double length = Math.hypot(actualX, actualY);
         if (state.moving && length < 1e-6) {
             // Idle/blocked clips need intent to generate their first root-motion budget.
             CartSteeringMath.step(state.heading, state.target, 0.03, 1.0 / 60,
-                                  state.load, state.requested);
+                                  state.load, wheelbarrow(player), state.requested);
             actualX = state.requested.x(); actualY = state.requested.y();
             length = Math.hypot(actualX, actualY);
         }
@@ -116,6 +129,8 @@ public final class CartSteeringHooks {
             player.setVariable("ToolkitCartStepX", (float) (pace * (-actualX * sin + actualY * cos) / length));
             player.setVariable("ToolkitCartStepY", (float) (pace * (actualX * cos + actualY * sin) / length));
         }
+        CartLegPace.apply(player,CartLegPace.scale(player,
+            player.getVariableFloat("ToolkitCartStepX",0),player.getVariableFloat("ToolkitCartStepY",0)));
         // Scoped cart AnimNodes own maxTorsoTwist; native animation rewrites it.
         player.setTargetAndCurrentDirection((float) Math.cos(state.heading),
                                             (float) Math.sin(state.heading));
@@ -124,6 +139,7 @@ public final class CartSteeringHooks {
     /** Death/menu cleanup discards pending state and releases only our own variables. */
     public static void reset(IsoPlayer player) {
         states.remove(player);
+        player.clearVariable("ToolkitCartLegPace");
         player.setVariable("ToolkitCartPivot",false);
         player.setVariable("ToolkitCartStepX", 0.0f);
         player.setVariable("ToolkitCartStepY", 0.0f);

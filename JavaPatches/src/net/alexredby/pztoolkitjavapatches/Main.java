@@ -174,6 +174,16 @@ public final class Main {
             "06fc56e5aa626c808e8c6c0870dc87c10a957d86c7c22782be1d437d52b8bc28")
         && supports("zombie/core/skinnedmodel/model/ModelSlotRenderData.class",
             "83fab9cb79f1c2ba270d8b49e8cf2c166ca36e08986c52517ba73d15cd34f76d")
+        && supports("zombie/core/skinnedmodel/model/SkinningData.class",
+            "1ee3fea347d68d2197f1015201841d5981e8806792168364a837b8b2391dfe7b")
+        && supports("zombie/core/skinnedmodel/animation/AnimationClip.class",
+            "374d961e0aa023873b726e467101c4be74d65caaafbb9f3e7f8cea148b25c859")
+        && supports("zombie/core/skinnedmodel/advancedanimation/AnimNode.class",
+            "1b7cdc17098c2db683ab31b77a937b38b04ce275cb4c9582890afb97c5ce4dbe")
+        && supports("zombie/core/skinnedmodel/advancedanimation/Anim2DBlendPicker.class",
+            "445b3cab515d642eb67ed10b6ff84cc6c5a1ef4cd249d32ce1de6270ffb39446")
+        && supports("zombie/core/skinnedmodel/model/ModelInstanceRenderData.class",
+            "67702b5ea23d20fb9af7bf44534dd4c48d607be5adf7c14ed3a5628b27f75a5f")
         && supports("zombie/core/skinnedmodel/advancedanimation/AnimatedModel$AnimatedModelInstanceRenderData.class",
             "c96e48b6d138db930abe557459b2ff81e025a47cba6c3b199700473362e2f04d");
 

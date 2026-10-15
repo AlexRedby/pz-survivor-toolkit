@@ -82,6 +82,8 @@ if args.check or args.check_video:
               'zombie.core.fonts.FontColdChecks': 'FONT_COLD_CHECKS_PASS',
               'net.alexredby.pztoolkitjavapatches.CartSteeringMathTest': 'CART_STEERING_MATH_PASS',
               'net.alexredby.pztoolkitjavapatches.CartSteeringHooksTest': 'CART_STEERING_HOOKS_PASS',
+              'net.alexredby.pztoolkitjavapatches.CartLegPaceTest': 'CART_LEG_PACE_PASS',
+              'net.alexredby.pztoolkitjavapatches.CartGripTest': 'CART_GRIP_PASS',
               'net.alexredby.pztoolkitjavapatches.CartGroundingTest': 'CART_GROUNDING_PASS'} if args.check else {}
 
     if args.check_video:

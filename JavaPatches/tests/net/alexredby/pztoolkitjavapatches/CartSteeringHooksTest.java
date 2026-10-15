@@ -16,10 +16,17 @@ public final class CartSteeringHooksTest {
     private static final class Player extends IsoPlayer {
         int blocked;
         boolean pivot;
-        float stepX, stepY;
+        float stepX, stepY, legPace;
         ItemContainer inventory;
         InventoryItem primary, secondary;
         Player() { super(null, null, 0, 0, 0); }
+        @Override public zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator getAdvancedAnimator() { return null; }
+        @Override public boolean isRunning() { return false; }
+        @Override public boolean isSprinting() { return false; }
+        @Override public float getVariableFloat(String name,float fallback) {
+            return switch(name) {case "ToolkitCartStepX"->stepX;case "ToolkitCartStepY"->stepY;case "ToolkitCartLegPace"->legPace;default->fallback;};
+        }
+        @Override public void clearVariable(String name) { if(name.equals("ToolkitCartLegPace")) legPace=0; }
         @Override public boolean isLocalPlayer() { return blocked != 8; }
         @Override public boolean isDead() { return blocked == 1; }
         @Override public boolean hasHitReaction() { return blocked == 2; }
@@ -45,6 +52,7 @@ public final class CartSteeringHooksTest {
         @Override public IAnimationVariableSlot setVariable(String name, float value) {
             if (name.equals("ToolkitCartStepX")) stepX = value;
             if (name.equals("ToolkitCartStepY")) stepY = value;
+            if (name.equals("ToolkitCartLegPace")) legPace = value;
             return null;
         }
     }
@@ -93,7 +101,7 @@ public final class CartSteeringHooksTest {
             Vector2 actual = CartSteeringHooks.movement(player, 0.02f, -0.01f);
             check(actual.x == 0.02f && actual.y == -0.01f, gates[gate - 1] + " redirected movement");
             CartSteeringHooks.heading(player);
-            check(!player.pivot && player.stepX == 0 && player.stepY == 0 && !states.containsKey(player),
+            check(!player.pivot && player.stepX == 0 && player.stepY == 0 && player.legPace==0 && !states.containsKey(player),
                   gates[gate - 1] + " retained steering state");
         }
         CartSteeringHooks.reset(player);

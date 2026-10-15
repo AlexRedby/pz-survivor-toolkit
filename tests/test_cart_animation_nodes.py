@@ -78,15 +78,27 @@ class CartAnimationNodes(unittest.TestCase):
             node = self.nodes["ToolkitCartPivot" + mode][1]
             self.assertIn(("ToolkitCartPivot", "BOOL", "true"), conditions(node))
             self.assertIn(("ToolkitCartMotion", "BOOL", "true"), conditions(node))
+            self.assertEqual(node.findtext("m_SpeedScale"), "ToolkitCartLegPace")
             self.assertEqual(node.findtext("m_Scalar"), "ToolkitCartStepX")
             self.assertEqual(node.findtext("m_Scalar2"), "ToolkitCartStepY")
             self.assertEqual(node.findtext("m_deferredBoneAxis"), "Y")
             self.assertEqual(node.findtext("m_maxTorsoTwist"), "0")
             self.assertGreater(int(node.findtext("m_ConditionPriority")), 101)
-            clips = {blend.findtext("m_AnimName") for blend in node.findall("m_2DBlends")}
             forward = {"Walk": "Bob_Walk", "Run": "Bob_Run", "Sprint": "Bob_Sprint"}[mode]
-            self.assertTrue({forward, "Bob_WalkBwdNoAim1Hand", "Bob_StrafeNoAim_Left", "Bob_StrafeNoAim_Right"} <= clips)
-            self.assertFalse(any(clip.startswith("Bob_Cart_") for clip in clips))
+            self.assertEqual(node.findtext("m_AnimName"), "Bob_Idle")
+            # NoAim idle moves diagonally; its diagonal clips can cancel the strafe roots.
+            self.assertEqual({blend.attrib["referenceID"]: (blend.findtext("m_AnimName"),
+                              float(blend.findtext("m_XPos")), float(blend.findtext("m_YPos")))
+                              for blend in node.findall("m_2DBlends")}, {
+                "1": ("Bob_Idle", 0, 0),
+                "2": (forward, 0, 1),
+                "3": ("Bob_WalkBwdNoAim1Hand", 0, -1),
+                "4": ("Bob_StrafeNoAim_Right", 1, 0),
+                "5": ("Bob_StrafeNoAim_Left", -1, 0),
+            })
+            self.assertEqual([tuple(triangle.findtext("node" + str(index)) for index in (1, 2, 3))
+                              for triangle in node.findall("m_2DBlendTri")],
+                             [("1", "4", "2"), ("1", "3", "4"), ("1", "5", "3"), ("1", "2", "5")])
             self.assertFalse(node.findall("m_Transitions"), "root transitions cannot extract the cart FBX axis")
 
     def test_walk_uses_native_speed_and_injury_blending(self):

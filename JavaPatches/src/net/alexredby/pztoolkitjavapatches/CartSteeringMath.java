@@ -28,23 +28,30 @@ public final class CartSteeringMath {
 
     public static Step step(double heading, double target, double distance,
                             double seconds, double load, Step result) {
+        return step(heading,target,distance,seconds,load,false,result);
+    }
+
+    public static Step step(double heading, double target, double distance,
+                            double seconds, double load, boolean wheelbarrow, Step result) {
         if (!(distance > 0) || !(seconds > 0)) return result.set(0, 0, 0, 0);
         load = Math.max(0, Math.min(1, load));
         double error = wrap(target - heading);
         boolean reverse = Math.abs(error) > Math.PI * 0.75;
         if (reverse) error = wrap(error + Math.PI);
-        double limit = Math.min(distance / AXLE_DISTANCE,
-                                Math.min(0.1, seconds) * (1.2 - 0.65 * load));
+        double axle = wheelbarrow ? 0.95 : AXLE_DISTANCE;
+        double limit = Math.min(distance * Math.abs(Math.sin(error)) / axle,
+                                Math.min(0.1, seconds) * (wheelbarrow ? 1.6 - 0.3 * load : 3.8 - load));
         double turn = Math.max(-limit, Math.min(limit, error));
-        double alignment = Math.max(0, Math.cos(error));
-        if (alignment < 1e-10) alignment = 0;
-        double travel = Math.max(0, distance - AXLE_DISTANCE * Math.abs(turn)) * alignment;
+        // Handle translation and the turn chord are perpendicular, not additive costs.
+        double chord = 2 * axle * Math.sin(turn / 2);
+        double travel = Math.sqrt(Math.max(0, distance * distance - chord * chord));
+        if(!wheelbarrow && Math.abs(Math.cos(error)) < 1e-10) travel=0;
         if (reverse) travel = -travel;
         double next = heading + turn;
         return result.set(travel * Math.cos(heading + turn / 2)
-                                  - AXLE_DISTANCE * (Math.cos(next) - Math.cos(heading)),
+                                  - axle * (Math.cos(next) - Math.cos(heading)),
                           travel * Math.sin(heading + turn / 2)
-                                  - AXLE_DISTANCE * (Math.sin(next) - Math.sin(heading)),
+                                  - axle * (Math.sin(next) - Math.sin(heading)),
                           turn, travel);
     }
 
