@@ -96,7 +96,7 @@ public final class CartGrip {
     }
 
     // Solve the two arm links without stretching either link or touching the native leg palette.
-    static boolean reach(Matrix4f[] poses, SkinningData actor, String handName, Matrix4f target, Matrix4f bodyDelta) {
+    static boolean reach(Matrix4f[] poses, SkinningData actor, String handName, Matrix4f target, Matrix4f bodyDelta, boolean wood) {
         var hand=actor.getBone(handName);
         if(hand==null || hand.parent==null || hand.parent.parent==null) return false;
         var forearm=hand.parent;var upper=forearm.parent;
@@ -111,7 +111,7 @@ public final class CartGrip {
         if(bodyDelta!=null) {
             bend.set(goal).sub(shoulder).fma(-b,new Vector3f(target.m00(),target.m01(),target.m02()));
             bend.fma(-bend.dot(axis),axis).normalize();
-            var relaxed=bodyDelta.transformDirection(new Vector3f(0,-1,.25f));
+            var relaxed=bodyDelta.transformDirection(new Vector3f(0,-1,wood?1f:.25f));
             relaxed.fma(-relaxed.dot(axis),axis).normalize();
             // Keep the elbow down/back instead of lifting it just to minimize the wrist angle.
             bend.lerp(relaxed,.6f);
@@ -144,8 +144,8 @@ public final class CartGrip {
     record Grasp(float palmX, float palmDepth, float curl) {}
     private static final Grasp MALE_ROUND=new Grasp(.055f,.027f,-1.68f);
     private static final Grasp FEMALE_ROUND=new Grasp(.063f,.025f,-1.55f);
-    private static final Grasp MALE_WOOD=new Grasp(.055f,.014f,-1.8f);
-    private static final Grasp FEMALE_WOOD=new Grasp(.055f,.025f,-1.6f);
+    private static final Grasp MALE_WOOD=new Grasp(.055f,.020f,-1.4f);
+    private static final Grasp FEMALE_WOOD=new Grasp(.055f,.024f,-1.75f);
     private static final Grasp MALE_METAL=new Grasp(.063f,.015f,-1.8f);
     private static final Grasp FEMALE_METAL=new Grasp(.055f,.025f,-1.8f);
 
@@ -166,7 +166,16 @@ public final class CartGrip {
         var target=new Matrix4f(handPose).translate(local.m30(),local.m31(),local.m32()).rotateY(grasp.curl());
         var change=matrices.get().adjustment;
         poses[fingers.index].invert(change);target.mul(change,change);adjust(poses,actor,fingers,change);
-        // The authored thumb already follows the diagonal shaft; retain its native opposition/twist.
+        if(grasp==MALE_WOOD || grasp==FEMALE_WOOD) {
+            // Follow the steeper wooden grip while keeping the thumb knuckle and native twist.
+            handPose.invert(change).mul(poses[thumb.index]);
+            var thumbLocal=new Matrix4f(change).setTranslation(0,0,0);
+            target.set(handPose).translate(change.m30(),change.m31(),change.m32())
+                .rotateY((float)Math.toRadians(grasp==FEMALE_WOOD?10:20))
+                .rotateZ((float)Math.toRadians("L".equals(side)?-35:35)).mul(thumbLocal);
+            poses[thumb.index].invert(change);target.mul(change,change);adjust(poses,actor,thumb,change);
+        }
+        // The metal shaft retains the authored thumb opposition/twist.
         if(underhand) return;
         var pivot=poses[thumb.index].getTranslation(new Vector3f());
         var from=poses[thumb.index].transformPosition(new Vector3f(.033f,0,0));
@@ -204,7 +213,7 @@ public final class CartGrip {
             // Diagonal underhand grip: shaft across curled fingers, palm inward/up, wrist above the handle.
             var x=down.mul(.9961947f,new Vector3f()).fma(.08715574f,inward);
             var z=inward.mul(.9961947f,new Vector3f()).fma(-.08715574f,down);
-            x.mul(.5735200f).fma(-.8191916f,axis).normalize();
+            x.mul(wood?.9063078f:.5735200f).fma(wood?-.4226183f:-.8191916f,axis).normalize();
             var y=z.cross(x,new Vector3f()).normalize();z=x.cross(y,new Vector3f()).normalize();
             out.m00(x.x).m01(x.y).m02(x.z).m10(y.x).m11(y.y).m12(y.z).m20(z.x).m21(z.y).m22(z.z);
         } else {
@@ -221,7 +230,8 @@ public final class CartGrip {
         for(String side:new String[]{"L","R"}) {
             var target=matrices.get().target;
             if(!target(model,"L".equals(side),female,delta,cart,target)
-                || !reach(poses,actor,"Bip01_"+side+"_Hand",target,model.startsWith("Wheelbarrow")?delta:null)) return false;
+                || !reach(poses,actor,"Bip01_"+side+"_Hand",target,model.startsWith("Wheelbarrow")?delta:null,
+                    "WheelbarrowWood".equals(model))) return false;
             closeFingers(poses,actor,side,grasp(female,model),model.startsWith("Wheelbarrow"));
         }
         return true;

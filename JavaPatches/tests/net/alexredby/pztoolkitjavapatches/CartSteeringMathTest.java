@@ -22,7 +22,7 @@ public final class CartSteeringMathTest {
 
     private static void wheelbarrowChecks() {
         // Actual calibrated contact positions after native horizontal model-to-world scale 1.5.
-        for (double[] geometry : new double[][]{{1.1025372148, .033440793}, {1.1691522, -.0017422512}}) {
+        for (double[] geometry : new double[][]{{1.0224308175, .033440793}, {1.1691522, -.0017422512}}) {
             double axle = geometry[0], side = geometry[1];
             var empty = CartSteeringMath.step(0, Math.PI / 2, .03, 1.0 / 60, 0, axle, new CartSteeringMath.Step());
             var full = CartSteeringMath.step(0, Math.PI / 2, .03, 1.0 / 60, 1, axle, new CartSteeringMath.Step());
@@ -92,7 +92,7 @@ public final class CartSteeringMathTest {
     }
 
     private static void woodenArc() {
-        double axle=1.1025372148;
+        double axle=1.0224308175;
         for(int load:new int[]{0,1}) for(int sign:new int[]{-1,1}) {
             double[] reference=null;
             for(int fps:new int[]{30,60,144}) {
@@ -127,7 +127,7 @@ public final class CartSteeringMathTest {
     }
 
     private static void woodenTransitions() {
-        double axle=1.1025372148;
+        double axle=1.0224308175;
         for(int load:new int[]{0,1}) for(int sign:new int[]{-1,1}) {
             double[] reference=null;
             for(int fps:new int[]{30,60,144}) {

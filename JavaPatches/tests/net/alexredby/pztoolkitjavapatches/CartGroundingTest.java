@@ -151,7 +151,7 @@ public final class CartGroundingTest {
    Matrix4f pitched=new Matrix4f(captured[i]);
    CartGrounding.lowerHandles(pitched,models[i]);
    Vector3f tire=captured[i].transformPosition(new Vector3f(contact));
-   if(i==1) tire.z-=.01f;
+   if(i==1) tire.z+=.04f;
    if(pitched.transformPosition(new Vector3f(contact)).distance(tire)>1e-6f)
     throw new AssertionError("lowering handles moved wheel contact for "+models[i]);
    if(i==0 && !pitched.equals(captured[i])) throw new AssertionError("shopping cart was pitched");
@@ -160,7 +160,7 @@ public final class CartGroundingTest {
       :new Vector3f(-7.409948f,6.614635f,82.79839f);
     Vector3f handle=captured[i].transformPosition(new Vector3f(rawHandle));
     Vector3f lowered=pitched.transformPosition(new Vector3f(rawHandle));
-    if(handle.y-lowered.y<(i==1?.06f:.08f) || handle.y-lowered.y>(i==1?.08f:.10f))
+    if(handle.y-lowered.y<(i==1?.09f:.08f) || handle.y-lowered.y>(i==1?.11f:.10f))
      throw new AssertionError("handles not lowered to a relaxed arm height");
     if(i==1 ? !CartGrounding.alignWood(pitched,0,delta) || Math.abs(CartGrounding.woodenLowest(pitched)-.008f)>1e-6f
      : !CartGrounding.align(pitched,low,high,contact,0,delta)

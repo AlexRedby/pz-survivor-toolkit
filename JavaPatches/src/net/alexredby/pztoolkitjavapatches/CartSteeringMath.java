@@ -111,10 +111,13 @@ public final class CartSteeringMath {
         step(heading,target,distance,seconds,load,axle,45,result);
         if (!(distance > 0) || !(seconds > 0)) return result;
         double dt=Math.min(.1,seconds), desiredRate=result.turn/dt;
-        double rate=previousRate+Math.max(-6*dt,Math.min(6*dt,desiredRate-previousRate));
         double error=wrap(target-heading);
         boolean reverse=Math.abs(error)>Math.PI*.75;
         if(reverse) error=wrap(error+Math.PI);
+        // Leave one step of braking distance so the final heading clamp cannot snap the yaw rate to zero.
+        double stoppingRate=Math.sqrt(12*Math.abs(error)+36*dt*dt)-6*dt;
+        desiredRate=Math.copySign(Math.min(Math.abs(desiredRate),stoppingRate),desiredRate);
+        double rate=previousRate+Math.max(-6*dt,Math.min(6*dt,desiredRate-previousRate));
         double limit=2*Math.asin(Math.min(1,distance*Math.sin(Math.toRadians(45-2*Math.max(0,Math.min(1,load))))/(2*axle)));
         double turn=Math.max(-limit,Math.min(limit,rate*dt));
         if(turn*error>=0 && Math.abs(turn)>Math.abs(error)) turn=error;
