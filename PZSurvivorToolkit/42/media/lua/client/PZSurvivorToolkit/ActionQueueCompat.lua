@@ -698,6 +698,11 @@ function Compat.isCartMaskSource()
         {"shared/SaucedCarts/Core.lua", 2570266575}})
 end
 
+function Compat.isCartCapacitySource()
+    return verified("SaucedCarts", {{"shared/SaucedCarts/CapacityOverride.lua", 1655578365},
+        {"shared/SaucedCarts/CartData.lua", 3388888445}, {"shared/SaucedCarts/Core.lua", 2570266575}})
+end
+
 function Compat.isTransferPerform(callback)
     return ready.EURY_CONTAINERS == true and callback == containerTransferPerform
         and type(callback) == "function" and containerHelpersUnchanged()

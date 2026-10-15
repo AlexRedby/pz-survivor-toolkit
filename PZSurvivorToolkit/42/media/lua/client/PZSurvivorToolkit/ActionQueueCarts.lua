@@ -10,7 +10,7 @@ local constructors, methods, coreMethods = {}, {}, {}
 local latestConstructor, latestPerform, latestTransferItem, installed, trusted
 local compat, approvedPerform, approvePerform = Toolkit.ActionQueueCompat
 local sendToServer
-local involvesCart
+local involvesCart, isTransfer, capacitySafe
 local function transferMethods()
     return {new = ISInventoryTransferAction.new, perform = ISInventoryTransferAction.perform, transferItem = ISInventoryTransferAction.transferItem}
 end
@@ -23,6 +23,7 @@ end
 
 local function unchanged()
     if not trusted or Toolkit.ActionQueueCarts ~= Carts or Carts.involvesCart ~= involvesCart
+        or Carts.isTransfer ~= isTransfer or Carts.capacitySafe ~= capacitySafe
         or ISCartTransferAction ~= class or SaucedCarts ~= core or core.Network ~= network then return false end
     if approvedPerform and (Toolkit.ActionQueueCompat ~= compat or compat.isTransferPerform ~= approvePerform
         or not approvePerform(approvedPerform)) then return false end
@@ -66,7 +67,7 @@ involvesCart = function(action)
 end
 Carts.involvesCart = involvesCart
 
-function Carts.isTransfer(action)
+isTransfer = function(action)
     if not unchanged() or not transferUnchanged() or getmetatable(action) ~= class or action.Type ~= class.Type
         or action.onStartFunc or action.onCompleteFunc or action.onCancelFunc or action.retriggerLastAction
         or not instanceof(action.item, "InventoryItem") or not instanceof(action.cartItem, "InventoryContainer")
@@ -74,12 +75,13 @@ function Carts.isTransfer(action)
         or not carried(action.cartItem:getContainer(), action.character)
         or not carried(action.srcContainer, action.character) or not carried(action.destContainer, action.character) then return false end
     local source, destination = action.srcContainer:getContainingItem(), action.destContainer:getContainingItem()
-    if source ~= destination and core.safeIsCart(source) and core.safeIsCart(destination) then return false end
-    local selected = core.safeIsCart(destination) and destination or source
-    if action.cartItem ~= selected then return false end
+    local intoCart = core.safeIsCart(destination)
+    local selected = intoCart and destination or source
+    if action.cartItem ~= selected or action.direction ~= (intoCart and "in" or "out") then return false end
     for name, value in pairs(methods) do if action[name] ~= value then return false end end
     return true
 end
+Carts.isTransfer = isTransfer
 
 function Carts.isReturn(action)
     return not isClient() and Carts.isTransfer(action) and action.allowMissingItems
@@ -89,12 +91,49 @@ end
 local function inspect(action)
     local result = Policy.transferResources(action)
     if not result then return end
-    result.items[action.cartItem:getID()] = true
-    result.itemTypes[action.cartItem:getFullType()] = true
+    -- Endpoint owners are references; moving the cart itself still conflicts with either endpoint.
     result.preparationFinish = not isClient()
     -- shortcut: MP performs send a command without a receipt; audit acknowledgement before allowing in-flight cancellation/returns.
     if isClient() and action.action then result.cancelOperation = false end
     return result
+end
+
+local capacityGuard
+capacitySafe = function(container)
+    if not capacityGuard or not capacityGuard(container) then return false end
+    local owner = container:getContainingItem()
+    if not core.safeIsCart(owner) then return true end
+    if type(SandboxVars) ~= "table" or getmetatable(SandboxVars) ~= nil then return false end
+    local options = SandboxVars.SaucedCarts
+    if options ~= nil and (type(options) ~= "table" or getmetatable(options) ~= nil) then return false end
+    local data = core.CartTypes[owner:getFullType()]
+    local multiplier = options and options.CapacityMultiplier or 100
+    return type(data) == "table" and getmetatable(data) == nil
+        and type(data.capacity) == "number" and data.capacity >= 0 and data.capacity < math.huge
+        and type(multiplier) == "number" and multiplier >= 0 and multiplier < math.huge
+        and data.capacity * multiplier < math.huge
+end
+Carts.capacitySafe = capacitySafe
+local function installCapacity()
+    local sourceQuery = compat and compat.isCartCapacitySource
+    local nativeMatches = Toolkit.cartCapacityMatches
+    if type(sourceQuery) ~= "function" or not sourceQuery() or type(nativeMatches) ~= "function" then return end
+    local cartTypes, getCartData = core.CartTypes, core.getCartData
+    if type(cartTypes) ~= "table" or getmetatable(cartTypes) ~= nil or filename(getCartData) ~= "CartData.lua" then return end
+    Events.OnGameStart.Add(function()
+        local meta = ItemContainer and __classmetatables and __classmetatables[ItemContainer.class]
+        local methods = meta and meta.__index
+        if not methods then return end
+        local effective, room = methods.getEffectiveCapacity, methods.hasRoomFor
+        if filename(effective) ~= "CapacityOverride.lua" or filename(room) ~= "CapacityOverride.lua" then return end
+        capacityGuard = function(container)
+            return unchanged() and transferUnchanged() and Toolkit.ActionQueueCompat == compat
+                and compat.isCartCapacitySource == sourceQuery and core.CartTypes == cartTypes
+                and getmetatable(cartTypes) == nil and core.getCartData == getCartData
+                and Toolkit.cartCapacityMatches == nativeMatches and nativeMatches(container)
+                and container.getEffectiveCapacity == effective and container.hasRoomFor == room
+        end
+    end)
 end
 
 local function loadHooks(module)
@@ -118,35 +157,65 @@ local function loadHooks(module)
     return ok and captured
 end
 
+local equipmentGuard, equipmentMatch, equipmentPrevious, equipmentReplacement
+local function ordinaryEquipment(item)
+    return item == nil or (instanceof(item, "InventoryItem") and not core.CartTypes[item:getFullType()]
+        and not core.safeIsCart(item))
+end
+local function isUnequipConstructor(callback)
+    return equipmentGuard and equipmentGuard() and equipmentPrevious
+        and (callback == equipmentPrevious.new or equipmentReplacement and callback == equipmentReplacement.new)
+        and ISUnequipAction.new == (equipmentReplacement or equipmentPrevious).new
+        and ISUnequipAction.complete == (equipmentReplacement or equipmentPrevious).complete or false
+end
+Carts.isUnequipConstructor = isUnequipConstructor
+function Carts.isNonCartItem(item)
+    return equipmentGuard and equipmentGuard() and ordinaryEquipment(item) or false
+end
+function Carts.isNonCartUnequip(action)
+    return equipmentMatch and equipmentMatch(action) and ordinaryEquipment(action.item) or false
+end
+function Carts.equipmentSafe(character)
+    return isUnequipConstructor(ISUnequipAction.new) and character
+        and ordinaryEquipment(character:getPrimaryHandItem()) and ordinaryEquipment(character:getSecondaryHandItem()) or false
+end
 local function installFoodMaskRemoval()
     local sourceQuery = compat and compat.isCartMaskSource
     if type(sourceQuery) ~= "function" or not sourceQuery() or not ISUnequipAction
         or filename(ISUnequipAction.new) ~= "ISUnequipAction.lua"
         or filename(ISUnequipAction.complete) ~= "ISUnequipAction.lua" then return end
     local previous = {new = ISUnequipAction.new, complete = ISUnequipAction.complete}
-    local cartTypes = core.CartTypes
-    local debugHelper = core.debug
+    local unequipOwner, lifecycle = ISUnequipAction, {}
+    for name, callback in pairs(unequipOwner) do
+        if type(callback) == "function" and name ~= "new" and name ~= "complete" then
+            if name ~= "derive" and filename(callback) ~= "ISUnequipAction.lua" then return end
+            lifecycle[name] = callback
+        end
+    end
+    local cartTypes, debugHelper = core.CartTypes, core.debug
     if type(cartTypes) ~= "table" or getmetatable(cartTypes) ~= nil or filename(debugHelper) ~= "Core.lua" then return end
+    local function helpersSafe()
+        if ISUnequipAction ~= unequipOwner then return false end
+        for name, callback in pairs(lifecycle) do if unequipOwner[name] ~= callback then return false end end
+        return unchanged() and Toolkit.ActionQueueCompat == compat
+            and compat.isCartMaskSource == sourceQuery and core.CartTypes == cartTypes
+            and core.debug == debugHelper and getmetatable(cartTypes) == nil
+    end
+    equipmentGuard, equipmentPrevious = helpersSafe, previous
     Events.OnGameStart.Add(function()
         local replacement = {new = ISUnequipAction.new, complete = ISUnequipAction.complete}
         if filename(replacement.new) ~= "ContainerRestrictions.lua"
-            or filename(replacement.complete) ~= "ContainerRestrictions.lua" then return end
+            or filename(replacement.complete) ~= "ContainerRestrictions.lua" then equipmentGuard = nil; return end
+        local nativeMatches = Policy.nativeUnequipVariant(previous, replacement, helpersSafe)
+        if not nativeMatches then equipmentGuard = nil; return end
+        equipmentReplacement, equipmentMatch = replacement, nativeMatches
         local food = Toolkit.BulkFood
         local isRemoval = food and food.isMaskRemoval
         if type(isRemoval) ~= "function" then return end
-        local function helpersSafe()
-            return unchanged() and Toolkit.ActionQueueCompat == compat
-                and compat.isCartMaskSource == sourceQuery and core.CartTypes == cartTypes
-                and core.debug == debugHelper and getmetatable(cartTypes) == nil
-                and Toolkit.BulkFood == food and food.isMaskRemoval == isRemoval
-        end
-        local nativeMatches = Policy.nativeUnequipVariant(previous, replacement, helpersSafe)
-        if not nativeMatches then return end
         Toolkit.ActionQueueDefinitions.registerBehavior("compat.food-mask-unequip", {
             types = {"ISUnequipAction"}, matches = function(action)
-                return nativeMatches(action) and isRemoval(action)
-                    and action.item:getCategory() == "Clothing" and not cartTypes[action.item:getFullType()]
-                    and not core.safeIsCart(action.item)
+                return nativeMatches(action) and ordinaryEquipment(action.item) and Toolkit.BulkFood == food and food.isMaskRemoval == isRemoval
+                    and isRemoval(action) and action.item:getCategory() == "Clothing"
             end, inspect = function(action)
                 return {items = {[action.item:getID()] = true}, itemTypes = {[action.item:getFullType()] = true},
                     targets = {}, hands = action.character, preparation = true, preparationFinish = true,
@@ -209,6 +278,7 @@ function Carts.install()
     if not loadHooks("SaucedCarts/Restrictions/TransferRestrictions")
         or not loadHooks("SaucedCarts/CartState/VisualUpdateQueue") then trusted = false end
     installFoodMaskRemoval()
+    installCapacity()
     Toolkit.ActionQueueDefinitions.registerBehavior("compat.cart-transfer", {
         types = {"ISCartTransferAction"}, matches = Carts.isTransfer, inspect = inspect,
     })

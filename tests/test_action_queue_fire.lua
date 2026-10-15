@@ -102,8 +102,9 @@ ZomboidGlobals = {LightFromPetrolAmount = 0.1}
 ISReadABook, ISRadioAction = ISBaseTimedAction:derive('ISReadABook'), ISBaseTimedAction:derive('ISRadioAction')
 ISWalkToTimedAction = ISBaseTimedAction:derive('ISWalkToTimedAction')
 local function synthetic(class, character) local a = ISBaseTimedAction.new(class, character); a.begin = function() end; return a end
-ISUnequipAction = ISBaseTimedAction:derive('ISUnequipAction')
-function ISUnequipAction:new(character, item) local a = synthetic(self, character); a.item = item; return a end
+native('shared/TimedActions/ISUnequipAction.lua')
+ISWearClothing={isStopOnWalk=function() return false end}
+getPlayerHotbar=function() end
 ISInventoryPaneContextMenu.getContainers = function() return containers end
 luautils = {}
 extract(NativeActionRoot .. '/shared/luautils.lua', '(function luautils.walkToContainer.-\nend)')
@@ -236,6 +237,7 @@ if NativeWishlistWorkshopRoot then
     getActivatedMods=function() return {contains=function(_,id) return id=='EURY_CONTAINERS' end} end
     if FireTestBCPreinstalled then bcControls.install() end
 end
+local originalContainerGetter=ISInventoryPaneContextMenu.getContainers
 project('ActionQueueFire')
 ISBBQLightFromPetrol.new = originalBBQPetrol
 project('ActionQueuePolicy')
@@ -762,6 +764,74 @@ assert(custom.Type=='ISBBQAddFuel' and custom.item==customLog and not api.suppor
 reset();a=target('ModBBQ');customLog=item('Log')
 ISCampingMenu.onAddFuel(player,a,'Base.Log',ISBBQAddFuel,20);custom=q.queue[#q.queue]
 assert(custom.Type=='ISBBQAddFuel' and custom.fireplace==a and not api.supports(custom));custom:complete();assert(a.fuel==100)
+-- Changing an unused unequip hook cannot revoke single-fuel or lighting requests.
+reset();item('Log');ISCampingMenu.onAddFuel(player,target(),'Base.Log',ISBBQAddFuel,20)
+local singleEquipment=q.queue[2]
+local ordinaryUnequip=ISUnequipAction.new
+ISUnequipAction.new=function(self,...) return ordinaryUnequip(self,...) end
+assert(api.isDeferredAction(singleEquipment),'single fuel depended on unused equipment')
+reset();local ordinaryPaper,ordinaryLighter=item('Paper'),item('Matches')
+ISCampingMenu.onLightFromLiterature(player,'Base.Paper',ordinaryLighter,target(),ISBBQLightFromLiterature)
+assert(api.isDeferredAction(q.queue[2]),'lighting depended on unused equipment')
+reset();local equippedFuel=item('Log');equippedFuel.equipped=true
+ISCampingMenu.onAddAllFuel(player,target(),ISBBQAddFuel,20)
+assert(not api.isDeferredAction(q.queue[2]),'multiple fuel accepted an unknown used equipment constructor')
+ISUnequipAction.new=ordinaryUnequip
+if SaucedCartsSource then
+    -- Real SaucedCarts wrappers delegate the ordinary selected fuel; operation ownership stays exact.
+    native('shared/Camping/ISCampingMenu.lua')
+    for _,name in ipairs({'ISAddFuelAction','ISLightFromLiterature','ISLightFromPetrol','ISLightFromKindle'}) do native('shared/Camping/TimedActions/'..name..'.lua') end
+    for _,name in ipairs({'ISBBQAddFuel','ISBBQLightFromLiterature','ISBBQLightFromPetrol','ISBBQLightFromKindle','ISUnequipAction'}) do native('shared/TimedActions/'..name..'.lua') end
+    -- This independent capture needs the same observed native BC installation as the first fixture.
+    ISInventoryPaneContextMenu.getContainers=originalContainerGetter
+    if bcControls then
+        local controlsPath=NativeWishlistWorkshopRoot .. '/3586216562/mods/BetterContainers/42.20/media/lua/client/BetterContainers/Proximity/Proximity_ISLootWindowContainerControls.lua'
+        bcControls=assert(loadstring(read(controlsPath),'@'..controlsPath))()
+    end
+    project('ActionQueueDefinitions');policy=project('ActionQueuePolicy')
+    local previous={new=ISUnequipAction.new,complete=ISUnequipAction.complete}
+    local path=SaucedCartsSource..'/ContainerRestrictions.lua';local text=read(path)
+    SaucedCarts={debug=function() end,safeIsCart=function(value) return value and value.cart==true end}
+    local code='local unequipHookInitialized=false\n'
+        ..assert(text:match('(local function flushDistanceOnCreate%(character, item, label%).-\nend)'))..'\n'
+        ..assert(text:match('(local function wrapUnequipNew%(%).-\nend)'))..'\n'
+        ..assert(text:match('(local function initUnequipHook%(%).-\nend)'))..'\ninitUnequipHook()'
+    assert(loadstring(code,'@'..path))()
+    local replacement={new=ISUnequipAction.new,complete=ISUnequipAction.complete}
+    local equipmentActive=true
+    local matcher=assert(policy.nativeUnequipVariant(previous,replacement,function() return equipmentActive end))
+    local firstConstructor=ISInventoryTransferAction.new
+    local laterConstructor=function(self,...) return firstConstructor(self,...) end
+    local verifiedConstructors={[firstConstructor]=true,[laterConstructor]=true}
+    local carts={isTransfer=function() return false end,isReturn=function() return false end,isTransferConstructor=function(callback) return verifiedConstructors[callback]==true end,
+        isUnequipConstructor=function(callback) return equipmentActive and callback==replacement.new and ISUnequipAction.complete==replacement.complete end,
+        isNonCartItem=function(value) return equipmentActive and not value.cart end,
+        isNonCartUnequip=function(value) return equipmentActive and matcher(value) and not value.item.cart end}
+    PZSurvivorToolkit.ActionQueueCarts=carts
+    local producerRegister=operations.registerProducer;operations.registerProducer=function() end
+    api=project('ActionQueueFire');operations.registerProducer=producerRegister
+    if bcControls then bcControls.install() end
+    reset();local selectedFuel=item('Log');selectedFuel.equipped=true
+    ISCampingMenu.onAddAllFuel(player,target(),ISBBQAddFuel,20)
+    command=q.queue[2];assert(api.isDeferredAction(command),'verified cart equipment did not admit selected ordinary fuel')
+    local approvedConstructor=carts.isTransferConstructor;carts.isTransferConstructor=function() return true end
+    assert(not api.isDeferredAction(command),'replaced cart transfer proof retained fire request');carts.isTransferConstructor=approvedConstructor
+    ISInventoryTransferAction.new=laterConstructor
+    assert(api.isDeferredAction(command),'verified later cart constructor revoked fire request')
+    expand(command)
+    local preparation
+    for _,member in ipairs(q.queue) do if member.Type=='ISUnequipAction' then preparation=member end end
+    assert(preparation and policy.inspect(preparation),'owned actual cart-wrapper unequip lacked preparation permission')
+    assert(not policy.inspect(ISUnequipAction:new(player,selectedFuel,50)),'unowned unequip borrowed fire ownership')
+    equipmentActive=false
+    assert(not policy.inspect(preparation),'revoked cart equipment proof retained preparation rights')
+    equipmentActive=true;selectedFuel.cart=true
+    assert(not policy.inspect(preparation),'selected cart borrowed ordinary-fuel equipment rights')
+    selectedFuel.cart=nil
+    local acceptedItem=carts.isNonCartItem;carts.isNonCartItem=function() return true end
+    assert(not policy.inspect(preparation),'replaced cart classification proof retained fire rights');carts.isNonCartItem=acceptedItem
+    ISInventoryTransferAction.new=firstConstructor
+end
 -- A different resolved source must not acquire permissions even if helper closures kept the same names.
 local sourceReader=getGameFilesInput
 getGameFilesInput=function() return {readLine=function() return nil end,close=function() end} end

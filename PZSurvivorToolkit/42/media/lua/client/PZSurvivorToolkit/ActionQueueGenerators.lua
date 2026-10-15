@@ -21,7 +21,8 @@ end
 local function matchesOverlay(owner, name, callback)
     return overlayUnchanged() and overlayMatches(owner, name, callback)
 end
-local Carts, cartCheck
+local Carts, cartCheck, equipmentCheck, unequipCheck, unequipMatches
+local equipmentRecords = {}
 local marker, records, bindings, classes, helpers = {}, {}, {}, {}, {}
 local trustedInstalled, basicInstalled
 local noEquipmentHooks = {ISGeneratorInfoAction = true, ISPlugGenerator = true, ISActivateGenerator = true, ISFixGenerator = true}
@@ -31,7 +32,7 @@ local pendingPerform = {}
 
 function Generators.prune()
     local pending = false
-    for _, registry in ipairs({records, continued, pendingPerform}) do
+    for _, registry in ipairs({records, continued, pendingPerform, equipmentRecords}) do
         for _ in pairs(registry) do pending = true; break end
         if pending then break end
     end
@@ -42,13 +43,13 @@ function Generators.prune()
             for _, action in ipairs(queue.queue or {}) do queued[action] = true end
         end
     end
-    for _, registry in ipairs({records, continued, pendingPerform}) do
+    for _, registry in ipairs({records, continued, pendingPerform, equipmentRecords}) do
         for action in pairs(registry) do if not queued[action] then registry[action] = nil end end
     end
 end
 Events.OnTick.Add(Generators.prune)
 if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
-    for _, registry in ipairs({records, continued, pendingPerform}) do
+    for _, registry in ipairs({records, continued, pendingPerform, equipmentRecords}) do
         for key in pairs(registry) do registry[key] = nil end
     end
 end) end
@@ -108,7 +109,21 @@ local function cartConstructor(callback)
     return Carts and Toolkit.ActionQueueCarts == Carts and Carts.isTransferConstructor == cartCheck
         and type(cartCheck) == "function" and cartCheck(callback) == true
 end
-local function unchanged(kind)
+local function cartUnequip(callback)
+    return Carts and Toolkit.ActionQueueCarts == Carts and Carts.isUnequipConstructor == unequipCheck
+        and type(unequipCheck) == "function" and unequipCheck(callback) == true
+end
+local function equipmentSafe(kind, character)
+    if noEquipmentHooks[kind] then return true end
+    if Carts and equipmentCheck then
+        return Toolkit.ActionQueueCarts == Carts and Carts.equipmentSafe == equipmentCheck
+            and Carts.isNonCartUnequip == unequipMatches and Carts.isUnequipConstructor == unequipCheck
+            and equipmentCheck(character)
+    end
+    return not (getActivatedMods and getActivatedMods():contains("SaucedCarts"))
+end
+local function unchanged(kind, character)
+    if character and not equipmentSafe(kind, character) then return false end
     for name, owner in pairs(helperOwners) do
         if _G[name] ~= owner and (not noEquipmentHooks[kind] or (name ~= "ISEquipWeaponAction" and name ~= "ISUnequipAction")) then return false end
     end
@@ -116,7 +131,9 @@ local function unchanged(kind)
         local current = saved.owner[saved.name]
         if (not noEquipmentHooks[kind] or not saved.equipment) and (saved.cart or current ~= saved.callback)
             and not (saved.owner == ISInventoryTransferAction and saved.name == "new"
-            and cartConstructor(saved.callback) and cartConstructor(current)) then return false end
+            and cartConstructor(saved.callback) and cartConstructor(current))
+            and not (saved.owner == ISUnequipAction and saved.name == "new"
+                and cartUnequip(saved.callback) and cartUnequip(current)) then return false end
     end
     return classUnchanged(kind)
 end
@@ -140,7 +157,7 @@ local function contract(character, object, kind, selected)
 end
 function Generators.inspect(action)
     local kind = action.Type
-    if not unchanged(kind) then return end
+    if not unchanged(kind, action.character) then return end
     local object = kind == "ISGeneratorInfoAction" and action.object or action.generator
     local selected
     if kind == "ISAddFuel" then
@@ -163,7 +180,7 @@ local function commandRecord(action)
         if not current or current.id ~= item.id or current.kind ~= item.kind or current.source ~= item.source then return end
     end
     if saved.target.selected and #saved.target.selected ~= #saved.selected then return end
-    if saved.trusted and unchanged(saved.target.kind) and ISWorldObjectContextMenu[saved.target.method] == bindings[saved.target.method] then return saved end
+    if saved.trusted and unchanged(saved.target.kind, action.character) and ISWorldObjectContextMenu[saved.target.method] == bindings[saved.target.method] then return saved end
 end
 local function commandInspect(action)
     local saved = commandRecord(action)
@@ -195,7 +212,17 @@ local function execute(character, target)
         if #live == 0 then return end
         return target.callback(target.args[1], object, live, nil, target.args[5])
     end
-    return target.callback(unpack(target.args, 1, target.args.n))
+    local queue, before = ISTimedActionQueue.getTimedActionQueue(character), {}
+    for _, member in ipairs(queue.queue) do before[member] = true end
+    local result = target.callback(unpack(target.args, 1, target.args.n))
+    if target.trusted and target.kind == "ISTakeGenerator" then
+        for _, member in ipairs(queue.queue) do
+            if not before[member] and member.Type == "ISUnequipAction" then
+                equipmentRecords[member] = {character = character, item = member.item, token = member.toolkitQueueOperation}
+            end
+        end
+    end
+    return result
 end
 local function pending(character)
     local queue = character and ISTimedActionQueue.queues[character]
@@ -294,6 +321,8 @@ function Generators.install()
     installed = true
     Carts = Toolkit.ActionQueueCarts
     cartCheck = Carts and Carts.isTransferConstructor
+    equipmentCheck, unequipCheck, unequipMatches = Carts and Carts.equipmentSafe,
+        Carts and Carts.isUnequipConstructor, Carts and Carts.isNonCartUnequip
     for _, name in ipairs({"luautils", "ISWorldObjectContextMenu", "ISInventoryPaneContextMenu", "ISInventoryTransferUtil",
         "ISInventoryTransferAction", "ISEquipWeaponAction", "ISUnequipAction", "ISWalkToTimedAction"}) do
         helperOwners[name] = _G[name]
@@ -340,7 +369,7 @@ function Generators.install()
         local callback = class and class.new
         local cart = name == "ISInventoryTransferAction" and cartConstructor(callback)
         local equipment = name == "ISEquipWeaponAction" or name == "ISUnequipAction"
-        local valid = cart or nativeClosure(callback, name == "ISWalkToTimedAction" and "WalkToTimedAction.lua" or name .. ".lua")
+        local valid = cart or (name == "ISUnequipAction" and cartUnequip(callback)) or nativeClosure(callback, name == "ISWalkToTimedAction" and "WalkToTimedAction.lua" or name .. ".lua")
         trusted, basicTrusted = trusted and valid, basicTrusted and (equipment or valid)
         helpers[#helpers + 1] = {owner = class or {}, name = "new", callback = callback, cart = cart, equipment = equipment}
     end
@@ -405,6 +434,18 @@ function Generators.install()
             return action.Type == "ISQueueActionsAction" and commandRecord(action) ~= nil
         end, inspect = commandInspect})
     end
+    if type(unequipMatches) == "function" then Toolkit.ActionQueueDefinitions.registerBehavior("toolkit.generator-unequip", {
+        types = {"ISUnequipAction"}, matches = function(action)
+            local saved = equipmentRecords[action]
+            return saved and action.character == saved.character and action.item == saved.item
+                and action.toolkitQueueOperation == saved.token and saved.token ~= nil
+                and unchanged("ISTakeGenerator", action.character) and type(unequipMatches) == "function"
+                and unequipMatches(action)
+        end, inspect = function(action)
+            return {items = {[action.item:getID()] = true}, itemTypes = {[action.item:getFullType()] = true}, targets = {},
+                hands = action.character, preparation = true, preparationFinish = true, cancelWaiting = false, interrupt = "finish-step"}
+        end,
+    }) end
     for method in pairs(kinds) do
         local name, callback = method, ISWorldObjectContextMenu[method]
         if callback then
@@ -424,7 +465,7 @@ function Generators.install()
                         selected[#selected + 1] = {id = item:getID(), kind = item:getFullType(), source = item:getContainer()}
                     end
                 end
-                return enqueue(character, object, name, callback, args, native, selected)
+                return enqueue(character, object, name, callback, args, native and equipmentSafe(kinds[name], character), selected)
             end
             ISWorldObjectContextMenu[name], bindings[name] = binding, binding
         end

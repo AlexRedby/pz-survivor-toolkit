@@ -737,13 +737,11 @@ end
 
 local function transferCapacityConflict(queue, a, b, last, check)
     local carts = Toolkit.ActionQueueCarts
-    if Operations.isTransfer(a) and Operations.isTransfer(b)
-        and (a.Type == "ISCartTransferAction" or b.Type == "ISCartTransferAction"
-            or (carts and type(carts.involvesCart) == "function" and (carts.involvesCart(a) or carts.involvesCart(b)))) then
-        -- shortcut: cart ancestor capacity overrides need an audit before crossing another transfer.
-        return queue.character:getInventory()
+    local function transfer(action)
+        return action.Type == "ISInventoryTransferAction"
+            or (action.Type == "ISCartTransferAction" and carts and type(carts.isTransfer) == "function" and carts.isTransfer(action))
     end
-    if a.Type ~= "ISInventoryTransferAction" or b.Type ~= "ISInventoryTransferAction" then return end
+    if not transfer(a) or not transfer(b) then return end
     if check.done then return check.blocker end
     local shared
     for _, left in pairs({a.srcContainer, a.destContainer}) do
@@ -768,9 +766,14 @@ local function transferCapacityConflict(queue, a, b, last, check)
         end
         if i <= last and (not check.to or i < check.first or i > check.last) then order[#order + 1] = queue.queue[i] end
     end
+    local cartCapacity = false
+    for _, action in ipairs(order) do
+        if action.Type == "ISCartTransferAction" or (carts and type(carts.involvesCart) == "function" and carts.involvesCart(action)) then cartCapacity = true end
+    end
     local function fits(container, weight)
         local load = loads[container]
         if not load then
+            if cartCapacity and (not carts or not carts.capacitySafe or not carts.capacitySafe(container)) then return false end
             load = {container:getCapacityWeight(), container:getEffectiveCapacity(character), container:getAcceptItemFunction() == nil}
             loads[container] = load
         end
@@ -782,7 +785,7 @@ local function transferCapacityConflict(queue, a, b, last, check)
     for _, action in ipairs(order) do
         local contract = inspect(action)
         if not contract or contract.knownInputs == false then return check.blocker end
-        if action.Type == "ISInventoryTransferAction" then
+        if transfer(action) then
             local destination, source, seen = action.destContainer, action.srcContainer, {}
             local destinations = carriedContainers(destination, character)
             if action.character ~= character or not carriedContainer(source, character)
@@ -804,7 +807,7 @@ local function transferCapacityConflict(queue, a, b, last, check)
                     end
                 end
                 -- shortcut: MP transactions may be rejected later; count released space only for verified SP pickups.
-                if nativeTransferItem and not isClient() and type(ISTransferAction) == "table"
+                if not cartCapacity and nativeTransferItem and not isClient() and type(ISTransferAction) == "table"
                     and ISTransferAction.transferItem == nativeTransferItem
                     and (not transferItemGuard or transferItemGuard())
                     and not removed[action] and not touched[id]

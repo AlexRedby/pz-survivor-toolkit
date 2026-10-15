@@ -181,9 +181,9 @@ assert(not policy.adoptTransferHooks(expected,changed,function() return true end
 assert(not ops.adoptReturnHooks(expected,changed,function() return true end),
     'return adoption must reject an unexpected original reference')
 local inspected=assert(policy.inspect(pickup))
-assert(inspected.items[nail1:getID()] and inspected.items[cart1:getID()]
+assert(inspected.items[nail1:getID()] and not inspected.items[cart1:getID()]
     and inspected.containerOwners[cart1:getID()] and inspected.preparationFinish,
-    'cart item and exact carried container owner are missing from transfer resources')
+    'cart owner must remain a container reference rather than a consumed transfer item')
 assert(carts.involvesCart(pickup) and not carts.involvesCart(ordinary),'cart ancestry predicate misclassified direct cart/native bag transfers')
 local function book()
     return f.action(ISReadABook,{item=item('Base.BookCarpentry1',inv)})
@@ -204,8 +204,8 @@ assert(policy.moveReason(q,other,pickup)=='container_capacity' and policy.cancel
     'distinct carried carts must keep their unmodelled capacity effects ordered')
 q=f.queue(head,pickup,same)
 same.toolkitQueueOperation={}
-assert(policy.moveReason(q,same,pickup)=='move_shared_item' and policy.cancelOperationReason(q,same)=='operation_shared_item',
-    'the exact shared cart must protect transfers of different items')
+assert(policy.moveReason(q,same,pickup)=='container_capacity' and policy.cancelOperationReason(q,same)=='container_capacity',
+    'same-cart references must retain the capacity barrier without the actual override proof')
 local conflicting=book();conflicting.item=nail1;q=f.queue(head,pickup,conflicting)
 assert(policy.moveReason(q,conflicting,pickup)=='move_shared_item'
     and policy.cancelOperationReason(q,pickup)=='operation_shared_item','exact transferred item conflict was ignored')
@@ -228,7 +228,12 @@ local forgedCart,forgedInside=cart();inv:Remove(forgedCart);forgedCart.world={}
 pickup.cartItem=forgedCart
 assert(not policy.inspect(pickup),'world cart ID retained permission through unrelated carried endpoints');pickup.cartItem=routedCart
 local between=transfer(item('Base.Nails',inside1),inside1,inside2)
-assert(between.cartItem==cart2 and not policy.inspect(between),'unreviewed cart-to-cart route gained transfer permission')
+assert(between.cartItem==cart2 and policy.inspect(between),'exact carried cart-to-cart route lost destination-first permission')
+q=f.queue(head,between,waiting)
+assert(not policy.moveReason(q,between,waiting,true) and not policy.moveReason(q,waiting,between)
+    and not policy.cancelOperationReason(q,between),'waiting carried cart-to-cart cannot move/cancel beside independent reading')
+between.direction='out'
+assert(not policy.inspect(between),'wrong cart-to-cart direction retained permission');between.direction='in'
 between.cartItem=cart1
 assert(not policy.inspect(between),'source cart ID displaced native destination-cart routing')
 ISInventoryTransferAction.new=function(...) return latestConstructor(...) end
@@ -483,7 +488,7 @@ local maskHookCode='local unequipHookInitialized=false\n'
     ..assert(restrictionsSource:match('(local function flushDistanceOnCreate%(character, item, label%).-\nend)'))..'\n'
     ..assert(restrictionsSource:match('(local function wrapUnequipNew%(%).-\nend)'))..'\n'
     ..assert(restrictionsSource:match('(local function initUnequipHook%(%).-\nend)'))..'\nreturn initUnequipHook'
-for _,mode in ipairs({'valid','changed-source','foreign-helper'}) do
+for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegate','foreign-lifecycle','preinstalled'}) do
     -- Rebuild the fixture so the helper must observe native predecessors before the real OnGameStart hook.
     local maskFixture=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
     local character=maskFixture.player
@@ -497,6 +502,9 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper'}) do
     local originalNew,originalComplete=ISUnequipAction.new,ISUnequipAction.complete
     fixtureOrigins[originalNew]=NativeActionRoot..'/shared/TimedActions/ISUnequipAction.lua'
     fixtureOrigins[originalComplete]=NativeActionRoot..'/shared/TimedActions/ISUnequipAction.lua'
+    for name,callback in pairs(ISUnequipAction) do
+        if type(callback)=='function' and name~='derive' then fixtureOrigins[callback]=NativeActionRoot..'/shared/TimedActions/ISUnequipAction.lua' end
+    end
     for _,name in ipairs({'new','perform','transferItem'}) do
         fixtureOrigins[ISInventoryTransferAction[name]]=NativeActionRoot..'/client/TimedActions/ISInventoryTransferAction.lua'
     end
@@ -534,6 +542,9 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper'}) do
     maskFixture.project('ActionQueueOperations');maskFixture.project('ActionQueueDefinitions')
     local maskPolicy=maskFixture.project('ActionQueuePolicy')
     Events.OnGameStart.Add(source(maskHookCode,restrictionsPath))
+    if mode=='foreign-lifecycle' then ISUnequipAction.start=function() error('foreign start') end end
+    if mode=='foreign-delegate' then ISUnequipAction.complete=function() error('foreign predecessor') end end
+    if mode=='preinstalled' then source(maskHookCode,restrictionsPath)() end
     local maskCarts=maskFixture.project('ActionQueueCarts');assert(maskCarts.install())
     for _,callback in ipairs(pendingStarts) do callback() end
     local mask=maskFixture.item('Base.Hat_GasMask_nofilter')
@@ -547,15 +558,25 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper'}) do
     else
         assert(adapter=='compat.food-mask-unequip' and contract.preparationFinish and maskPolicy.preparationCanFinish(owned),
             'owned native mask removal did not regain preparation cancellation')
+        character.getPrimaryHandItem=function(self) return self.primary end
+        character.getSecondaryHandItem=function(self) return self.secondary end
+        assert(maskCarts.isUnequipConstructor(originalNew) and maskCarts.isUnequipConstructor(ISUnequipAction.new)
+            and maskCarts.isNonCartUnequip(owned) and maskCarts.isNonCartItem(mask) and maskCarts.equipmentSafe(character),
+            'observed native delegate did not expose the exact non-cart equipment proof')
+        for _,hand in ipairs({'primary','secondary'}) do
+            character[hand]=cart(character:getInventory())
+            assert(not maskCarts.equipmentSafe(character),'held cart acquired equipment proof: '..hand)
+            character[hand]=nil
+        end
         owned:complete();assert(removed==1,'actual non-cart wrapper did not delegate native completion exactly once')
         for _,name in ipairs({'new','complete','start','stop'}) do
             local method=ISUnequipAction[name];ISUnequipAction[name]=function() end
-            assert(not maskPolicy.inspect(owned),'changed unequip lifecycle retained mask permission: '..name)
+            assert(not maskPolicy.inspect(owned) and not maskCarts.isUnequipConstructor(ISUnequipAction.new),'changed unequip lifecycle retained equipment permission: '..name)
             ISUnequipAction[name]=method
         end
         for _,name in ipairs({'safeIsCart','isCart','debug'}) do
             local method=SaucedCarts[name];SaucedCarts[name]=function() return false end
-            assert(not maskPolicy.inspect(owned),'changed classification helper retained mask permission: '..name)
+            assert(not maskPolicy.inspect(owned) and not maskCarts.isNonCartItem(mask),'changed classification helper retained equipment permission: '..name)
             SaucedCarts[name]=method
         end
         local cartTypes=SaucedCarts.CartTypes;SaucedCarts.CartTypes={}
@@ -572,4 +593,214 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper'}) do
     end
     SaucedCarts.debug=debugBefore
 end
-print('Cart queue contracts passed: real SC transfer and non-cart food-mask hooks, exact ownership/helper guards, batching, SP returns and protected MP sends.')
+-- Capacity permissions require the actual early Java -> CapacityOverride transition, not filenames alone.
+do
+ local capacityPath=SaucedCartsSource..'/CapacityOverride.lua'
+ local capacitySource=read(capacityPath)
+ local dataPath=SaucedCartsSource..'/CartData.lua'
+ local dataSource=read(dataPath)
+ local preloader=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/000ToolkitCartCapacity.lua'
+ local capacityPins='local utf8Strings=string.byte("洗")==230;local sourceFiles={}\n'
+  ..assert(compatSource:match('(local function sourceHash%(reader%).-\nend)'))..'\n'
+  ..assert(compatSource:match('(local function verified%(id, files%).-\nend)'))..'\nlocal Compat={}\n'
+  ..assert(compatSource:match('(function Compat.isCartCapacitySource%(%).-\nend)'))..'\nreturn Compat'
+ local function scenario(mode)
+  local previousPlayer,previousInventory=p,inv
+  local fixture=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
+  p,inv=fixture.player,fixture.player.inventory
+  p.class='IsoPlayer';p.hasTrait=function() return false end;p.getVehicle=function() end
+  p.isWearingAwkwardGloves=function() return false end;p.tooDarkToRead=function() return false end
+  p.isLocalPlayer=function() return true end;p.isDraggingCorpse=function() return false end
+  p.getCharacterActions=function() return {contains=function() return false end} end
+  client,server=false,false
+  isClient=function() return client end;isServer=function() return server end
+  instanceof=function(value,kind) return nativeInstanceof(value,kind)
+   or kind=='InventoryItem' and type(value)=='table' and value.class=='InventoryContainer' end
+  getFilenameOfClosure=function(callback)
+   return fixtureOrigins[callback] or nativeFilename(callback)
+  end
+  local nativeMethods={
+   getCapacity=function(c) return c.capacity or 50 end,
+   getEffectiveCapacity=function(c) return c.capacity or 50 end,
+   hasRoomFor=function(c,character,value) local weight=type(value)=='number' and value or value:getUnequippedWeight();return c:getCapacityWeight()+weight<=c:getEffectiveCapacity(character) end,
+   getCapacityWeight=function(c) if c.load~=nil then return c.load end;local weight=0;for _,value in ipairs(c.items) do weight=weight+value:getUnequippedWeight() end;return weight end,
+   getContainingItem=function(c) return c.owner end,getParent=function(c) return c.parent end,
+   getType=function(c) return c==inv and 'inventory' or 'bag' end,
+   getAcceptItemFunction=function(c) return c.acceptFunction end,
+   getVehiclePart=function() end,isItemAllowed=function() return true end,
+  }
+  local java={};for _,callback in pairs(nativeMethods) do java[callback]=true end
+  getClassSimpleName=function(callback) assert(callback~=nil,'Java class query received nil');return java[callback] and 'LuaJavaInvoker' or 'LuaClosure' end
+  ItemContainer,InventoryContainer={class={}},{class={}}
+  __classmetatables={[ItemContainer.class]={__index=nativeMethods},[InventoryContainer.class]={__index={getCapacity=function() return 50 end,getEffectiveCapacity=function() return 50 end}}}
+  local function makeContainer(owner)
+   local value=container(owner)
+   for name in pairs(nativeMethods) do value[name]=nil end
+   return setmetatable(value,{__index=function(_,name) return __classmetatables[ItemContainer.class].__index[name] end})
+  end
+  local rootMethods=container();for name,callback in pairs(rootMethods) do inv[name]=callback end
+  for name in pairs(nativeMethods) do inv[name]=nil end
+  setmetatable(inv,{__index=function(_,name) return __classmetatables[ItemContainer.class].__index[name] end})
+  local function makeCart()
+   local value=item('SaucedCarts.ShoppingCart',inv);value.class='InventoryContainer';value.cart=true
+   value.inventory=makeContainer(value)
+   value.getItemContainer=function(self) return self.inventory end;value.getInventory=value.getItemContainer
+   value.getMaxItemSize=function() return 0 end
+   return value,value.inventory
+  end
+  SaucedCarts={isCart=function(value) return value and value.cart==true end,
+   safeIsCart=function(value) return SaucedCarts.isCart(value) end,debug=function() end,log=function() end,error=error,
+   performCartTransfer=function() end,flushContainerResync=function() end,requestInventoryRefresh=function() end,
+   Network={sendToServer=function() end}}
+  for name,path in pairs({isCart='Core.lua',safeIsCart='Core.lua',debug='Core.lua',performCartTransfer='CartTransferInterceptor.lua',
+   flushContainerResync='CartTransferInterceptor.lua',requestInventoryRefresh='CartTransferInterceptor.lua'}) do fixtureOrigins[SaucedCarts[name]]=SaucedCartsSource..'/'..path end
+  fixtureOrigins[SaucedCarts.Network.sendToServer]=SaucedCartsSource..'/Network.lua'
+  local callbacks={};Events.OnGameStart.Add=function(callback) callbacks[#callbacks+1]=callback end
+  Events.OnServerStarted={Add=function() end}
+  SandboxVars={SaucedCarts={CapacityMultiplier=100}}
+  require=function() end
+  source(dataSource,dataPath)
+  local loaded=false
+  require=function(module)
+   if module=='SaucedCarts/CapacityOverride' and not loaded then
+    loaded=true;source(capacitySource,capacityPath)
+    if mode=='missing-wrapper' then nativeMethods.hasRoomFor=nil end
+   end
+  end
+  if mode=='foreign-predecessor' then nativeMethods.getEffectiveCapacity=function() return 99999 end end
+  if mode=='already-wrapped' then require('SaucedCarts/CapacityOverride') end
+  if mode=='missing-metatable' then __classmetatables[ItemContainer.class]=nil end
+  assert(loadfile(preloader))()
+  if mode=='missing-metatable' then __classmetatables[ItemContainer.class]={__index=nativeMethods} end
+  require('SaucedCarts/CapacityOverride')
+  assert(SaucedCarts.CapacityOverride.isInitialized(),'actual upstream capacity hook failed')
+  assert((type(PZSurvivorToolkit.cartCapacityMatches)=='function')==(mode=='valid' or mode=='changed-source'),'early proof accepted an unknown predecessor/late wrapper '..mode)
+  getModFileReader=function(id,path)
+   assert(id=='SaucedCarts');local text=path:match('CapacityOverride.lua$') and capacitySource or path:match('CartData.lua$') and dataSource or coreSource
+   if mode=='changed-source' and path:match('CapacityOverride.lua$') then text=text..'\n-- changed capacity source\n' end
+   local lines={};for line in text:gmatch('([^\n]*)\n') do lines[#lines+1]=line end
+   local index=0;return {readLine=function() index=index+1;return lines[index] end,close=function() end}
+  end
+  local capacityCompat=source(capacityPins,compatPath);PZSurvivorToolkit.ActionQueueCompat=capacityCompat
+  assert(capacityCompat.isCartCapacitySource()==(mode~='changed-source'),'capacity source pin failed '..mode)
+  source(read(cartPath),cartPath)
+  local base=ISInventoryTransferAction
+  for name,callback in pairs(base) do if type(callback)=='function' and name~='derive' then fixtureOrigins[callback]=NativeActionRoot..'/client/TimedActions/ISInventoryTransferAction.lua' end end
+  source('local interceptionInstalled=false\n'..classify..'\n'..interceptor:sub(hookStart,hookEnd-1)..'end\ninstallInterception()',interceptorPath)
+  require=function(module)
+   if module=='SaucedCarts/Restrictions/TransferRestrictions' then
+    local hook=assert(read(restrictionPath):match('(local function initTransferActionHook%(%).-\nend)'))
+    Events.OnGameStart.Add(source('local transferActionHookInitialized=false\n'..hook..'\nreturn initTransferActionHook',restrictionPath))
+   elseif module=='SaucedCarts/CartState/VisualUpdateQueue' then
+    local hook=assert(read(visualPath):match('(local function hookTransferAction%(%).-\nend)'))
+    Events.OnGameStart.Add(source('local function getCartFromContainer(c) return c and c:getContainingItem() end\n'..hook..'\nreturn hookTransferAction',visualPath))
+   end
+  end
+  fixture.project('ActionQueueOperations');fixture.project('ActionQueueDefinitions')
+  local checkedPolicy=fixture.project('ActionQueuePolicy');checkedPolicy.installContracts()
+  local checkedCarts=fixture.project('ActionQueueCarts');assert(checkedCarts.install())
+  for _,callback in ipairs(callbacks) do callback() end
+  local owner1,sourceContainer=makeCart();local owner2,destination=makeCart()
+  local cargoA,cargoB,cargoC=item('Base.Nails',sourceContainer),item('Base.Nails',sourceContainer),item('Base.Nails',sourceContainer)
+  local function action(value,from,to)
+   local result=ISInventoryTransferAction:new(p,value,from,to,17);result.toolkitQueueOperation={};return result
+  end
+  local function reading() return fixture.action(ISReadABook,{item=item('Base.BookCarpentry1',inv)}) end
+  local a,b=action(cargoA,sourceContainer,inv),action(cargoB,sourceContainer,inv)
+  local head,tail=reading(),reading()
+  local function positive(x,y)
+   local queue=fixture.queue(head,x,y,tail)
+   assert(not checkedPolicy.moveReason(queue,y,x) and not checkedPolicy.moveReason(queue,x,y,true),'verified cart transfers cannot reorder both ways '..mode)
+   assert(not checkedPolicy.cancelOperationReason(queue,x) and not checkedPolicy.cancelOperationReason(queue,y),'verified independent cart cancellation rejected '..mode)
+  end
+  local function blocked(x,y,label)
+   local queue=fixture.queue(head,x,y,tail)
+   assert(checkedPolicy.moveReason(queue,y,x)=='container_capacity' and checkedPolicy.moveReason(queue,x,y,true)=='container_capacity',label..' allowed crossing')
+   assert(checkedPolicy.cancelOperationReason(queue,x)=='container_capacity',label..' credited removed/cancelled work')
+  end
+  if mode~='valid' then
+   assert(not checkedCarts.capacitySafe(inv) and not checkedCarts.capacitySafe(destination),'unproved capacity acquired safe status '..mode)
+   blocked(a,b,mode)
+  else
+   assert(checkedCarts.capacitySafe(inv) and checkedCarts.capacitySafe(destination),'actual early capacity transition did not enable proof')
+   assert(destination:getEffectiveCapacity(p)==50 and destination:hasRoomFor(p,cargoA),'actual cart capacity wrapper did not run')
+   for _,mp in ipairs({false,true}) do
+    client=mp
+    positive(a,b)
+    local other=action(cargoC,sourceContainer,destination);positive(a,other)
+    local between=checkedPolicy.inspect(other)
+    assert(between and other.direction=='in' and other.cartItem==owner2
+     and between.containerOwners[owner1:getID()] and between.containerOwners[owner2:getID()]
+     and not between.items[owner1:getID()] and not between.items[owner2:getID()],'cart-to-cart lost exact endpoint references')
+    local duplicate=action(cargoA,sourceContainer,destination);local queue=fixture.queue(head,a,duplicate,tail)
+    assert(checkedPolicy.moveReason(queue,duplicate,a)=='move_shared_item' and checkedPolicy.cancelOperationReason(queue,a)=='operation_shared_item','shared cargo lost dependency')
+    local moveOwner=action(owner1,inv,inv);queue=fixture.queue(head,a,moveOwner,tail)
+    assert(checkedPolicy.moveReason(queue,moveOwner,a) and checkedPolicy.cancelOperationReason(queue,a),'moving source cart owner lost dependency')
+    moveOwner=action(owner2,inv,inv);queue=fixture.queue(head,other,moveOwner,tail)
+    assert(checkedPolicy.moveReason(queue,moveOwner,other),'moving destination cart owner lost dependency')
+    inv.capacity=0;blocked(a,b,'root capacity');inv.capacity=nil
+    local data=SaucedCarts.CartTypes[owner2:getFullType()];local capacity=data.capacity;data.capacity=0
+    blocked(a,other,'cart destination capacity');data.capacity=capacity
+    local outerOwner=item('Base.Bag',destination);outerOwner.class='InventoryContainer';local outer=makeContainer(outerOwner)
+    local innerOwner=item('Base.Bag',outer);innerOwner.class='InventoryContainer';local inner=makeContainer(innerOwner)
+    local nested=action(cargoC,sourceContainer,inner)
+    outer.capacity=0;blocked(a,nested,'ordinary ancestor capacity');outer.capacity=nil
+    data.capacity=0;blocked(a,nested,'cart ancestor capacity');data.capacity=capacity
+    local batch=action(cargoA,sourceContainer,destination);local follow=action(cargoC,sourceContainer,destination)
+    local oldWeights={cargoA.getUnequippedWeight,cargoB.getUnequippedWeight,cargoC.getUnequippedWeight}
+    for _,value in ipairs({cargoA,cargoB,cargoC}) do value.getUnequippedWeight=function() return 1 end end
+    data.capacity=3;positive(batch,follow);batch.queueList={{items={cargoA,cargoB}}};blocked(batch,follow,'full batch capacity')
+    batch.queueList=nil;data.capacity=capacity
+    for index,value in ipairs({cargoA,cargoB,cargoC}) do value.getUnequippedWeight=oldWeights[index] end
+    local incoming=item('Base.Thread',inv);local out=action(cargoA,sourceContainer,inv);local into=action(incoming,inv,sourceContainer)
+    sourceContainer.load=50;blocked(out,into,'cart outgoing-space credit');sourceContainer.load=nil
+    a.action={finished=function() return false end,isForceComplete=function() return false end,isStarted=function() return true end}
+    queue=fixture.queue(a,tail)
+    if mp then assert(not checkedPolicy.inspect(a).preparationFinish and checkedPolicy.cancelOperationReason(queue,a)=='operation_dependent','active MP cancellation opened without receipt') end
+    a.action=nil
+   end
+   client=false
+   local intoA,intoB=action(cargoA,sourceContainer,destination),action(cargoB,sourceContainer,destination)
+   local function rejects(change,restore,label)
+    change();assert(not checkedCarts.capacitySafe(destination),label..' retained capacity proof')
+    local queue=fixture.queue(head,intoA,intoB,tail)
+    assert(checkedPolicy.moveReason(queue,intoB,intoA) and checkedPolicy.moveReason(queue,intoA,intoB,true)
+     and checkedPolicy.cancelOperationReason(queue,intoA),label..' retained reorder/cancel permission');restore()
+    assert(checkedCarts.capacitySafe(destination),'restored '..label..' did not recover capacity proof')
+   end
+   for _,name in ipairs({'getCapacity','getEffectiveCapacity','hasRoomFor','getCapacityWeight','getContainingItem','getParent','getType','getAcceptItemFunction'}) do
+    local previous=nativeMethods[name]
+    rejects(function() nativeMethods[name]=function() return 0 end end,function() nativeMethods[name]=previous end,'changed native '..name)
+   end
+   local registry=SaucedCarts.CartTypes
+   rejects(function() SaucedCarts.CartTypes={} end,function() SaucedCarts.CartTypes=registry end,'registry owner')
+   rejects(function() setmetatable(registry,{__index=function() return {} end}) end,function() setmetatable(registry,nil) end,'registry metatable')
+   local data=registry[owner2:getFullType()]
+   rejects(function() setmetatable(data,{__index=function() return 50 end}) end,function() setmetatable(data,nil) end,'cart data metatable')
+   for _,value in ipairs({-1,math.huge,'50',0/0}) do
+    local capacity=data.capacity
+    rejects(function() data.capacity=value end,function() data.capacity=capacity end,'invalid cart capacity')
+   end
+   for _,value in ipairs({-1,math.huge,'100',0/0}) do
+    rejects(function() SandboxVars.SaucedCarts.CapacityMultiplier=value end,function() SandboxVars.SaucedCarts.CapacityMultiplier=100 end,'invalid capacity multiplier')
+   end
+   rejects(function() setmetatable(SandboxVars,{__index=function() return {} end}) end,function() setmetatable(SandboxVars,nil) end,'sandbox root metatable')
+   local options=SandboxVars.SaucedCarts
+   rejects(function() setmetatable(options,{__index=function() return 100 end}) end,function() setmetatable(options,nil) end,'sandbox options metatable')
+   rejects(function() SandboxVars.SaucedCarts='unknown options' end,function() SandboxVars.SaucedCarts=options end,'sandbox options type')
+   local getData=SaucedCarts.getCartData
+   rejects(function() SaucedCarts.getCartData=function() return data end end,function() SaucedCarts.getCartData=getData end,'getCartData helper')
+   local sourceQuery=capacityCompat.isCartCapacitySource
+   rejects(function() capacityCompat.isCartCapacitySource=function() return true end end,function() capacityCompat.isCartCapacitySource=sourceQuery end,'capacity source query')
+   local proof=PZSurvivorToolkit.cartCapacityMatches
+   rejects(function() PZSurvivorToolkit.cartCapacityMatches=function() return true end end,function() PZSurvivorToolkit.cartCapacityMatches=proof end,'native transition proof')
+   destination.acceptFunction='foreign.acceptCartItem'
+   local queue=fixture.queue(head,a,action(cargoC,sourceContainer,destination),tail)
+   assert(checkedPolicy.moveReason(queue,queue.queue[3],a)=='move_dependent' and checkedPolicy.cancelOperationReason(queue,queue.queue[3])=='operation_dependent','unknown cart acceptance callback acquired controls')
+   destination.acceptFunction=nil
+  end
+  p,inv=previousPlayer,previousInventory
+ end
+ for _,mode in ipairs({'foreign-predecessor','already-wrapped','missing-metatable','missing-wrapper','changed-source','valid'}) do scenario(mode) end
+end
+print('Cart queue contracts passed: actual early capacity wrappers, carried cart-to-cart, conservative incoming bounds, ownership/helper guards, batching, SP returns and protected MP sends.')
