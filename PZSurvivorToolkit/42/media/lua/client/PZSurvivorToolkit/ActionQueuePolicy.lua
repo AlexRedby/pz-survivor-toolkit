@@ -604,9 +604,15 @@ function Policy.hygieneUnavailable(action)
         elseif not inventory:contains(item) then return true end
         return not item or not dryItem(item) or item:getCurrentUsesFloat() <= 0
     end
+    local sink = action.sink
+    if not sink:getSquare() then return true end
+    local index = instanceof(sink, "IsoWorldInventoryObject") and sink:getWorldObjectIndex() or sink:getObjectIndex()
+    if index < 0 then return true end
     if kind == "ISWashYourself" then return action.sink:getFluidAmount() <= 0 end
+    local inventory = action.character:getInventory()
     return action.sink:getFluidAmount() < action.GetRequiredWater(action.item)
-        or (not isClient() and action.item:getContainer() ~= action.character:getInventory())
+        or (isClient() and not inventory:getItemById(action.item:getID()))
+        or (not isClient() and action.item:getContainer() ~= inventory)
 end
 
 function Policy.skipUnavailableHygiene(queue)

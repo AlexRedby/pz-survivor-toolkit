@@ -164,6 +164,9 @@ ISTimedActionQueue.onCompleted = function(queue, action)
         Toolkit.BulkFood.skipUnavailable(queue)
     end
     if Toolkit.Settings.actionQueue() and queue.current == action and queue.queue[1] == action then
+        if Toolkit.ActionQueueFire and Toolkit.ActionQueueFire.skipUnavailableReturns then
+            Toolkit.ActionQueueFire.skipUnavailableReturns(queue, action)
+        end
         Policy.skipUnavailableHygiene(queue)
     end
     return completed(queue, action)

@@ -510,6 +510,22 @@ q = ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); frame(p); assert(api.c
 assert(#q.queue == 0 and q.current == nil, 'vanished successor must not be started')
 assert(api.label(book(p)):find('Book',1,true))
 print('Native queue cancellation: middle/current, 21 rows, callbacks, dependencies, completion race, lifecycle, invalid tail passed.')
+-- Fire cleanup runs before native completion starts the remaining return/tail.
+do
+    local previous=PZSurvivorToolkit.ActionQueueFire
+    for _, setting in ipairs({true,false}) do
+        enabled=setting;p=player();a,b,c=book(p),book(p),book(p)
+        q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c);frame(p)
+        local calls=0
+        PZSurvivorToolkit.ActionQueueFire={skipUnavailableReturns=function(queue,action)
+            calls=calls+1;assert(queue==q and action==a and q.current==a and q.queue[1]==a and q.queue[2]==b)
+            table.remove(q.queue,2)
+        end}
+        a.action.done=true;frame(p)
+        assert(calls==(setting and 1 or 0) and q.current==(setting and c or b))
+    end
+    enabled=true;PZSurvivorToolkit.ActionQueueFire=previous
+end
 -- Family-owned invalidation drops only the failed operation and lets the native stop finish first.
 for _, module in ipairs({'ActionQueueGenerators', 'ActionQueueFire'}) do
     local previous = PZSurvivorToolkit[module]

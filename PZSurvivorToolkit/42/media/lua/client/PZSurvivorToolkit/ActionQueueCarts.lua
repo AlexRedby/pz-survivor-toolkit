@@ -1,3 +1,4 @@
+if not getActivatedMods or not getActivatedMods():contains("SaucedCarts") then return end
 require "SaucedCarts/TimedActions/ISCartTransferAction"
 
 local Toolkit = PZSurvivorToolkit

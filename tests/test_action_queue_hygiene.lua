@@ -63,6 +63,7 @@ local function item(kind)
 end
 local function sink()
     return {class='IsoObject', water=10, getFluidAmount=function(self) return self.water end,
+        getSquare=function() return {} end, getObjectIndex=function() return 0 end,
         useFluid=function(self, amount) self.water=self.water-amount; self.spent=(self.spent or 0)+amount; return amount end,
         transmitModData=function() end}
 end
@@ -101,6 +102,10 @@ q=f.queue(head, first, second)
 assert(policy.moveReason(q, first, second, true)=='move_shared_item')
 assert(policy.cancelOperationReason(q, first)=='operation_shared_item', 'soap is shared even on a no-soap clothing wash')
 first.soaps=list(); second.soaps=list(); second.sink=first.sink
+local exact,exactSource=policy.inspect(first)
+assert(exactSource=='native.ISWashClothing' and exact.items[clothing:getID()] and exact.targets[first.sink]
+    and exact.knownInputs==nil and exact.knownInputs~=false and first.noSoap,
+    'exact native no-soap washing uses the implicit-known contract consumed by Policy')
 assert(policy.moveReason(q, first, second, true)=='move_dependent', 'one sink remains a shared resource')
 second.sink=sink()
 assert(not policy.moveReason(q, first, second, true), 'separate no-soap washes can move')
@@ -187,7 +192,78 @@ assert(api.cancelOperation(q, cleaning) and soap.uses==2 and cleaning.sink.water
 assert(cleaning:complete() and soap.uses==1 and cleaning.sink.water==2)
 cleaning:perform()
 assert(q.queue[1]==tail and #q.queue==1 and soap.uses==1 and cleaning.sink.water==2)
+-- Accepted MP NetTimedAction calls complete directly; removed captured clothing still spends once natively.
+server=true;garmentBlood=1;inventory.values[garment:getID()]=nil
+local accepted=wash(garment,soap);accepted.noSoap=true
+local usedSoap=soap.uses
+assert(not accepted:isValid() and accepted:complete() and garmentBlood==0 and accepted.sink.water==2 and soap.uses==usedSoap,
+    'native MP completion has no containment recheck and cleans the captured removed item without inventing an inventory output')
+assert(not inventory:contains(garment),'native MP completion never restores the removed clothing')
+inventory.values[garment:getID()]=garment;server=false
 BloodClothingType.getCoveredParts=function() return list() end
+
+-- Native dirty-bandage cleaning replaces the input ID; a queued duplicate must not spend water again.
+local bandage=item('Base.BandageDirty'); bandage.getItemAfterCleaning=function() return 'Base.Bandage' end
+bandage.isFavorite=function() return true end
+bandage.setBloodLevel,bandage.setJobDelta=function() end,function() end
+local cleanOutput,removals,additions=nil,0,0
+inventory.Remove=function(self,value) assert(self.values[value:getID()]==value);self.values[value:getID()]=nil;removals=removals+1 end
+inventory.AddItem=function(_,kind) cleanOutput=item(kind);cleanOutput.setFavorite=function(self,value) self.favorite=value end;additions=additions+1;return cleanOutput end
+sendRemoveItemFromContainer,sendAddItemToContainer=function() end,function() end
+local converting=wash(bandage);local duplicateWash=wash(bandage);duplicateWash.sink=converting.sink
+tail=book();q=f.queue(converting,duplicateWash,tail)
+assert(converting:complete() and removals==1 and additions==1 and cleanOutput:getFullType()=='Base.Bandage'
+    and cleanOutput:getID()~=bandage:getID() and cleanOutput.favorite and converting.sink.water==3,
+    'native replacement creates exactly one clean favorite output and spends seven water')
+assert(policy.hygieneUnavailable(duplicateWash),'removed dirty-bandage duplicate is unavailable')
+converting:perform()
+assert(#q.queue==1 and q.current==tail and tail.begun and converting.sink.water==3 and removals==1 and additions==1,
+    'replacement completion skips stale duplicate without replaying its effect or clearing unrelated reading')
+
+-- Waiting native wash skips only a verified missing target/input, including MP live inventory identity.
+for _,mode in ipairs({'sp','mp'}) do
+    client=mode=='mp'
+    local target=item('Base.Shirt');target.class='Clothing'
+    local unavailable=wash(target);head,tail=book(),book();q=f.queue(head,unavailable,tail)
+    inventory.values[target:getID()]=nil
+    assert(policy.hygieneUnavailable(unavailable),mode..' missing native washing input must skip')
+    q:onCompleted(head)
+    assert(q.current==tail and #q.queue==1 and tail.begun,mode..' missing input preserves unrelated tail')
+    local liveTarget=item('Base.Shirt');liveTarget.class='Clothing';liveTarget.id=target:getID();inventory.values[target:getID()]=liveTarget
+    assert(client and not policy.hygieneUnavailable(unavailable) or not client and policy.hygieneUnavailable(unavailable),
+        'MP accepts the live same-ID item while SP preserves native direct-reference containment')
+end
+client=false
+local floorWash=wash(garment)
+floorWash.sink={class='IsoWorldInventoryObject',getItem=function() return bucket end,getSquare=function() return {} end,
+    getObjectIndex=function() return -1 end,getWorldObjectIndex=function() return 0 end,getFluidAmount=function() return 100 end}
+assert(not policy.hygieneUnavailable(floorWash),'live floor bucket uses its world-object index instead of ordinary-object index')
+floorWash.sink.getWorldObjectIndex=function() return -1 end
+assert(policy.hygieneUnavailable(floorWash),'removed floor bucket is unavailable')
+for _,loss in ipairs({'water','object','square'}) do
+    local unavailable=wash(garment);head,tail=book(),book();q=f.queue(head,unavailable,tail)
+    if loss=='water' then unavailable.sink.water=0
+    elseif loss=='object' then unavailable.sink.getObjectIndex=function() return -1 end
+    else unavailable.sink.getSquare=function() end end
+    assert(policy.hygieneUnavailable(unavailable),'lost native washing '..loss..' must skip')
+    q:onCompleted(head)
+    assert(q.current==tail and #q.queue==1 and tail.begun,'lost washing '..loss..' preserves unrelated tail')
+    unavailable.onCompleteFunc=function() error('unknown callback was called') end
+    assert(not policy.hygieneUnavailable(unavailable),'modified wash callback never borrows unavailable-action skipping')
+end
+for _,mode in ipairs({'sp','mp'}) do
+    client=mode=='mp'
+    for _,loss in ipairs({'water','input'}) do
+        local target=item('Base.Shirt');target.class='Clothing';target.setJobDelta=function() end
+        local unavailable=wash(target);tail=book();q=f.queue(unavailable,tail);unavailable.action={}
+        if loss=='water' then unavailable.sink.water=0 else inventory.values[target:getID()]=nil end
+        unavailable:stop()
+        assert(q.toolkitCancelStopped and #q.queue==2,mode..' active lost '..loss..' keeps the tail until native removal')
+        q:tick()
+        assert(q.current==tail and #q.queue==1 and tail.begun,mode..' active lost '..loss..' advances once')
+    end
+end
+client=false
 
 -- A depleted native action would stop and reset the queue. Skip only audited unavailable steps.
 wetness=50; towel.uses=0; drying=dry(towel); tail=book(); q=f.queue(head, drying, tail)

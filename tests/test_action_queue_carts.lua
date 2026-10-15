@@ -1,7 +1,26 @@
+-- Client Lua files auto-load even when their optional mod is absent.
+do
+    local previousRequire,previousMods,previousToolkit=require,getActivatedMods,PZSurvivorToolkit
+    local previousCore,previousClass,previousTransfer,previousEvents=SaucedCarts,ISCartTransferAction,ISInventoryTransferAction,Events
+    local constructor,perform,transferItem=function() end,function() end,function() end
+    local transfer={new=constructor,perform=perform,transferItem=transferItem}
+    local add=function() error('absent cart mod must not install event hooks') end
+    require=function() error('absent cart mod must return before require') end
+    getActivatedMods=function() return {contains=function(_,id) assert(id=='SaucedCarts');return false end} end
+    PZSurvivorToolkit,SaucedCarts,ISCartTransferAction,ISInventoryTransferAction={},nil,nil,transfer
+    Events={OnGameStart={Add=add}}
+    assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCarts.lua'))()
+    assert(not PZSurvivorToolkit.ActionQueueCarts and not SaucedCarts and not ISCartTransferAction)
+    assert(ISInventoryTransferAction==transfer and transfer.new==constructor and transfer.perform==perform and transfer.transferItem==transferItem)
+    assert(Events.OnGameStart.Add==add,'absent cart mod replaced a native event hook')
+    require,getActivatedMods,PZSurvivorToolkit=previousRequire,previousMods,previousToolkit
+    SaucedCarts,ISCartTransferAction,ISInventoryTransferAction,Events=previousCore,previousClass,previousTransfer,previousEvents
+end
 if not NativeActionRoot or not SaucedCartsSource then
     print('Cart action queue contracts SKIP (pass native action and SaucedCarts source roots).'); return
 end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
+getActivatedMods=function() return {contains=function(_,id) return id=='SaucedCarts' end} end
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','') end
     local file=assert(io.open(path));local value=file:read('*a');file:close();return value:gsub('\r','')

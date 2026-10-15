@@ -146,7 +146,7 @@ local function item(kind, source, drainable, uses)
     id=id+1
     local value = {class='InventoryItem',id=id,kind=kind,source=source or inventory,uses=uses or 1,used=0,drainable=drainable,
         getID=function(self) return self.id end,getFullType=function(self) return 'Base.'..self.kind end,getType=function(self) return self.kind end,
-        getCategory=function() return 'Item' end,getFireFuelRatio=function() return 0 end,getActualWeight=function() return 2 end,getName=function(self) return self.kind end,getDisplayName=function(self) return self.kind end,
+        getCategory=function() return 'Item' end,getFireFuelRatio=function() return 0 end,getActualWeight=function() return 2 end,getWeight=function() return 2 end,getIsCraftingConsumed=function() return false end,getName=function(self) return self.kind end,getDisplayName=function(self) return self.kind end,
         getContainer=function(self) return self.source end,isFavorite=function() return false end,isEquipped=function() return false end,
         isHumanCorpse=function() return false end,IsClothing=function() return false end,IsInventoryContainer=function() return false end,IsLiterature=function() return false end,IsMap=function() return false end,getFluidContainer=function(self) return self.fluid end,
         hasTag=function() return false end,IsDrainable=function(self) return self.drainable end,
@@ -159,12 +159,12 @@ end
 local function project(name)
     local path=ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/'..name..'.lua'
     if name~='ActionQueueFire' then return assert(loadfile(path))() end
-    return assert(loadstring((read(path):gsub('\nreturn Fire','\nFire.fixtureRegistries = {records, snapshots, expanded}\nreturn Fire'))))()
+    return assert(loadstring((read(path):gsub('\nreturn Fire','\nFire.fixtureRegistries = {records, snapshots, expanded, returns}\nreturn Fire'))))()
 end
 project('ActionQueueOperations'); project('ActionQueueDefinitions')
 -- A mod replacement present before capture must not acquire permission.
 local originalBBQPetrol = ISBBQLightFromPetrol.new
-ISBBQLightFromPetrol.new = function(...) return originalBBQPetrol(...) end
+if not FireTestTrustBBQPetrol then ISBBQLightFromPetrol.new = function(...) return originalBBQPetrol(...) end end
 local cleanUIPath
 if NativeWishlistWorkshopRoot then
     cleanUIPath=NativeWishlistWorkshopRoot .. '/3437629766/mods/CleanUI/42.19/media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'
@@ -275,7 +275,7 @@ local function expand(command)
 end
 do
     local function count(registry) local n=0; for _ in pairs(registry) do n=n+1 end; return n end
-    local records,snapshots,expanded=unpack(api.fixtureRegistries)
+    local records,snapshots,expanded,returns=unpack(api.fixtureRegistries)
     for i=1,500 do
         reset(); item('Log'); ISCampingMenu.onAddFuel(player,target(),'Base.Log',ISBBQAddFuel,20)
         local command=q.queue[2]; api.prune()
@@ -291,11 +291,11 @@ do
         elseif state=='dead' then player.isDead=function() return true end
         elseif state=='replacement' then ISTimedActionQueue.queues[player]={queue={}}
         else ISTimedActionQueue.queues={} end
-        api.prune(); assert(count(records)==0 and count(snapshots)==0 and count(expanded)==0,state..' must release all fire registries')
+        api.prune(); assert(count(records)==0 and count(snapshots)==0 and count(expanded)==0 and count(returns)==0,state..' must release all fire registries')
         player.isDead=function() return false end; ISTimedActionQueue.queues[player]=q
     end
     reset(); item('Log'); ISCampingMenu.onAddFuel(player,target(),'Base.Log',ISBBQAddFuel,20)
-    mainMenuCleanup(); assert(count(records)==0 and count(snapshots)==0 and count(expanded)==0, 'main menu must release fire world references immediately')
+    mainMenuCleanup(); assert(count(records)==0 and count(snapshots)==0 and count(expanded)==0 and count(returns)==0, 'main menu must release fire world references immediately')
 end
 local function pickups()
     for _, action in ipairs(q.queue) do
@@ -415,11 +415,89 @@ assert(policy.moveReason(q,left,right,true)=='move_shared_item' and policy.cance
 reset();a=target();item('Log');item('Paper');ISCampingMenu.onAddFuel(player,a,'Base.Log',ISBBQAddFuel,20);left=q.queue[2]
 ISCampingMenu.onLightFromLiterature(player,'Base.Paper',item('Matches'),a,ISBBQLightFromLiterature);right=q.queue[3]
 assert(policy.moveReason(q,left,right,true)=='move_dependent' and policy.cancelOperationReason(q,left)=='operation_dependent')
+-- Kindling retries can consume a pending fuel action's type; cancel only after that dependency is absent.
+reset();local branchDuration=campingFuelType.TreeBranch2;campingFuelType.TreeBranch2=10
+local branch=item('TreeBranch2');local borrowed=container();containers=list({inventory,borrowed})
+local borrowedPlank,borrowedStick=item('PercedWood',borrowed),item('TreeBranch2',borrowed)
+ISCampingMenu.onAddFuel(player,target(),'Base.TreeBranch2',ISBBQAddFuel,20);local pendingFuel=q.queue[2]
+ISCampingMenu.onLightFromKindle(player,borrowedPlank,borrowedStick,fire(),ISLightFromKindle);local pendingKindle=q.queue[3]
+local why,_,_,conflict,kind=policy.cancelOperationReason(q,pendingKindle)
+assert(why=='operation_dependent' and conflict==pendingFuel and kind=='TreeBranch2','pending native retry fuel type must protect cancellation')
+table.remove(q.queue,2)
+assert(not policy.cancelOperationReason(q,pendingKindle),'independent borrowed kindling cancellation must remain available')
+assert(borrowed:contains(borrowedPlank) and borrowed:contains(borrowedStick) and inventory:contains(branch),'waiting validation must not transfer or consume inputs')
+campingFuelType.TreeBranch2=branchDuration
 -- Native literature completion consumes the selected tinder/starter once and sends the actual fuel/light effects.
 reset();a=target('IsoFireplace');paper=item('Paper');local matches=item('Matches')
 ISCampingMenu.onLightFromLiterature(player,'Base.Paper',matches,a,ISBBQLightFromLiterature);command=q.queue[2];expand(command)
 local light=q.queue[#q.queue];assert(light.Type=='ISBBQLightFromLiterature');light:complete()
 assert(matches.used==1 and not inventory:contains(paper) and a.lit and a.changes==1)
+-- MP native start rebinds replicated inputs to their live same-ID inventory proxies.
+client=true;reset();local mpTarget=target();local originalPaper,originalStarter=item('Paper'),item('Matches')
+ISCampingMenu.onLightFromLiterature(player,'Base.Paper',originalStarter,mpTarget,ISBBQLightFromLiterature)
+local mpCommand=q.queue[2];expand(mpCommand);local mpLight=q.queue[#q.queue]
+assert(api.supports(mpLight))
+local livePaper,liveStarter=item('Paper'),item('Matches')
+inventory.items[livePaper.id],inventory.items[liveStarter.id]=nil,nil
+livePaper.id,liveStarter.id=originalPaper.id,originalStarter.id
+inventory.items[livePaper.id],inventory.items[liveStarter.id]=livePaper,liveStarter
+livePaper.setJobType=function() end;mpTarget.getComponent=function() end
+local setVariable,playSound,componentType=player.SetVariable,player.playSound,ComponentType
+player.SetVariable=function() end;player.playSound=function() return 1 end;ComponentType={CraftBenchSounds='sounds'}
+mpLight.action={setActionAnim=function() end,finished=function(self) return self.done==true end,isForceComplete=function() return false end}
+assert(api.supports(mpLight) and not api.canSkip(mpLight),'MP stale original refs must use native ID membership before native start')
+mpLight.item=livePaper;assert(api.supports(mpLight));inventory:Remove(livePaper)
+assert(not api.supports(mpLight),'inspection alone must not adopt an MP proxy before its trusted native start')
+livePaper.source=inventory;inventory.items[livePaper.id]=livePaper;mpLight.item=originalPaper
+mpLight:start()
+player.SetVariable,player.playSound,ComponentType=setVariable,playSound,componentType
+assert(mpLight.item==livePaper and mpLight.lighter==liveStarter,'actual native MP start did not reacquire live IDs')
+assert(api.supports(mpLight),'native MP same-ID input rebinding must retain its sealed fire contract')
+client=false;mpLight.item=originalPaper
+assert(not api.supports(mpLight),'SP changed input references must remain strict');client=true;mpLight.item=livePaper
+local spoof=item('Paper');inventory.items[spoof.id]=nil;spoof.id=originalPaper.id
+mpLight.item=spoof;assert(not api.supports(mpLight),'a same-ID object outside the live inventory must remain opaque')
+mpLight.item=item('Paper');assert(not api.supports(mpLight),'swapped MP input IDs must remain opaque')
+local wrongType=item('Log');inventory.items[wrongType.id]=nil;wrongType.id=originalPaper.id
+inventory.items[wrongType.id],mpLight.item=wrongType,wrongType
+assert(not api.supports(mpLight),'same-ID live MP input with a different full type must remain opaque')
+inventory.items[livePaper.id]=livePaper
+mpLight.item=livePaper;local fuelAmount=mpLight.fuelAmt;mpLight.fuelAmt=fuelAmount+1
+assert(not api.supports(mpLight),'numeric fire inputs must remain sealed');mpLight.fuelAmt=fuelAmount
+inventory:Remove(livePaper);mpTarget.lit=true
+assert(api.supports(mpLight) and api.canSkip(mpLight),'native-start-approved MP proxies must retain the contract after authoritative consumption')
+mpLight.action.done=true
+assert(api.supports(mpLight) and not api.canSkip(mpLight),'native completed MP ignition must retain its audited completion boundary')
+client=false
+-- Native MP transfer can replace petrol inputs before start, including a last-use starter.
+local petrolClasses={ISLightFromPetrol}
+if FireTestTrustBBQPetrol then petrolClasses[#petrolClasses+1]=ISBBQLightFromPetrol end
+for _, petrolClass in ipairs(petrolClasses) do for _, foreignCallback in ipairs({false,true}) do
+    client=true;reset();local petrolTarget=petrolClass==ISLightFromPetrol and fire() or target('IsoFireplace')
+    local originalMatch,originalCan=item('Matches'),item('Petrol')
+    ISCampingMenu.onLightFromPetrol(player,originalMatch,originalCan,petrolTarget,petrolClass)
+    local petrolCommand=q.queue[2];expand(petrolCommand);local petrolAction=q.queue[#q.queue]
+    local liveMatch,liveCan=item('Matches'),item('Petrol')
+    inventory.items[liveMatch.id],inventory.items[liveCan.id]=nil,nil
+    liveMatch.id,liveCan.id=originalMatch.id,originalCan.id
+    inventory.items[liveMatch.id],inventory.items[liveCan.id]=liveMatch,liveCan
+    liveCan.fluid={amount=1,getAmount=function(self) return self.amount end,adjustAmount=function(self,value) self.amount=value end}
+    liveCan.setJobType=function() end;liveCan.getStaticModel=function() return 'PetrolCan' end
+    liveMatch.UseAndSync=function(self) self.used=self.used+1;self.uses=self.uses-1;if self.uses==0 then inventory:Remove(self) end end
+    petrolAction.lighter,petrolAction.petrol=liveMatch,liveCan
+    local starts=0;petrolAction.action={setActionAnim=function() starts=starts+1 end,setOverrideHandModelsObject=function() end,
+        finished=function() return false end,isForceComplete=function() return false end}
+    local animations,sound=CharacterActionAnims,player.playSound
+    CharacterActionAnims={Pour='Pour'};player.playSound=function() return 1 end
+    if foreignCallback then petrolAction.onStartFunc=function() end end
+    petrolAction:start();assert(starts==1,'native petrol start must run exactly once')
+    CharacterActionAnims,player.playSound=animations,sound
+    petrolAction.onStartFunc=nil;petrolAction:complete()
+    assert(liveMatch.used==1 and not inventory:containsID(liveMatch.id) and math.abs(liveCan.fluid.amount-0.9)<0.00001)
+    if foreignCallback then assert(not api.supports(petrolAction),'foreign callback start must not capture replacement proxies')
+    else assert(api.supports(petrolAction) and api.canSkip(petrolAction),'trusted petrol start must seal pre-start live replacements through last-use consumption') end
+end end
+client=false
 -- Native petrol completion owns the exact fuel amount and starter consumption in SP and MP.
 for _, mp in ipairs({false,true}) do
     client=mp;reset();local camp=fire();local starter,petrol=item('Matches'),item('Petrol')
@@ -450,12 +528,25 @@ local parent;for _, queued in ipairs(q.queue) do if queued.Type=='ISLightFromKin
 local tail=synthetic(ISReadABook,player);tail.item=item('Book');ISTimedActionQueue.add(tail)
 while q.queue[1]~=parent do table.remove(q.queue,1) end;q.current=parent
 local nativePerform=ISBaseTimedAction.perform
-ISBaseTimedAction.perform=function(action) table.remove(q.queue,1);q.current=q.queue[1] end
+ISBaseTimedAction.perform=function(action) api.skipUnavailableReturns(q,action);table.remove(q.queue,1);q.current=q.queue[1] end
 parent:perform();ISBaseTimedAction.perform=nativePerform
 api.prune(); assert(not api.fixtureRegistries[1][parent] and api.fixtureRegistries[2][command.args[1]], 'retry retains the sealed request after parent and command release')
 local retry=q.queue[1];assert(retry.Type=='ISLightFromKindle' and retry.toolkitQueueOperation==parent.toolkitQueueOperation and api.supports(retry))
 assert(q.queue[#q.queue]==tail and q.queue[2].Type=='ISInventoryTransferAction')
 local contract=policy.inspect(retry);assert(contract.items[stick.id] and contract.dynamicInputs['Base.WoodenStick'])
+-- A native broken-stick retry may select another ID; it still owns the original return chain.
+local spare=item('WoodenStick2');inventory:Remove(stick)
+ISBaseTimedAction.perform=function(action) api.skipUnavailableReturns(q,action);table.remove(q.queue,1);q.current=q.queue[1] end
+retry:perform();ISBaseTimedAction.perform=nativePerform
+local replacementRetry=q.queue[1]
+assert(replacementRetry.Type=='ISLightFromKindle' and replacementRetry.item==spare and replacementRetry.plank==plank)
+assert(replacementRetry.toolkitQueueOperation==parent.toolkitQueueOperation and api.supports(replacementRetry))
+assert(q.queue[2].Type=='ISInventoryTransferAction' and q.queue[#q.queue]==tail)
+contract=policy.inspect(replacementRetry)
+assert(contract.items[stick.id] and contract.items[spare.id] and contract.items[plank.id] and contract.targets[campfireObject])
+local childItem=replacementRetry.item;replacementRetry.item=item('WoodenStick2')
+assert(not api.supports(replacementRetry),'mutating a native retry input must revoke adapter permissions')
+replacementRetry.item=childItem;retry=replacementRetry
 -- Changing an entry callback after the click revokes both native-child and deferred rights.
 local fuelBinding=ISCampingMenu.onAddFuel
 ISCampingMenu.onAddFuel=function() end
@@ -467,6 +558,139 @@ ISCampingMenu.onAddFuel=fuelBinding
 local originalReturn = ISCraftingUI.ReturnItemToContainer
 ISCraftingUI.ReturnItemToContainer=function() end
 assert(not api.supports(retry));ISCraftingUI.ReturnItemToContainer=originalReturn
+-- Only sealed original leading returns may be skipped after their Fire step completes.
+do
+    local function scenario()
+        reset();local camp=fire();local source=container();containers=list({inventory,source})
+        local plank,stick=item('PercedWood',source),item('WoodenStick',source)
+        ISCampingMenu.onLightFromKindle(player,plank,stick,camp,ISLightFromKindle)
+        expand(q.queue[2]);pickups()
+        local owner;for _, member in ipairs(q.queue) do if member.Type=='ISLightFromKindle' then owner=member end end
+        local tail=synthetic(ISReadABook,player);tail.item=item('Book');ISTimedActionQueue.add(tail)
+        while q.queue[1]~=owner do table.remove(q.queue,1) end;q.current=owner
+        assert(q.queue[2].item==stick and q.queue[3].item==plank)
+        return owner,q.queue[2],q.queue[3],tail,plank,stick,source
+    end
+    for _, mp in ipairs({false,true}) do
+        client=mp
+        local owner,missing,restore,tail,plank,stick=scenario();inventory:Remove(stick)
+        api.skipUnavailableReturns(q,owner)
+        assert(#q.queue==3 and q.queue[2]==restore and q.queue[3]==tail and inventory:contains(plank),
+            'missing original return must not interfere with the live return or unrelated tail')
+        owner,missing,restore,tail,plank,stick=scenario();inventory:Remove(plank)
+        api.skipUnavailableReturns(q,owner)
+        assert(#q.queue==4 and q.queue[2]==missing and q.queue[3]==restore,'a live leading return must stop cleanup')
+        inventory:Remove(stick);api.skipUnavailableReturns(q,owner)
+        assert(#q.queue==2 and q.queue[2]==tail,'consecutive missing original returns must be discarded')
+    end
+    client=true
+    for _, change in ipairs({'callback','source','destination','token','ownerToken','item','perform','helper','transferHelper','pending','started','java','batch','replacement','disabled','cancelled'}) do
+        local owner,missing,restore,tail,plank,stick,source=scenario();inventory:Remove(stick)
+        local helper=ISCraftingUI.ReturnItemToContainer
+        if change=='callback' then missing.onCompleteFunc=function() end
+        elseif change=='source' then missing.srcContainer=source
+        elseif change=='destination' then missing.destContainer=container()
+        elseif change=='token' then missing.toolkitQueueOperation={}
+        elseif change=='ownerToken' then owner.toolkitQueueOperation={}
+        elseif change=='item' then missing.item=item('WoodenStick')
+        elseif change=='perform' then missing.perform=function() end
+        elseif change=='helper' then ISCraftingUI.ReturnItemToContainer=function() end
+        elseif change=='transferHelper' then missing.startActionAnim=function() end
+        elseif change=='pending' then missing.transactionId=3
+        elseif change=='started' then missing.started=true
+        elseif change=='java' then missing.action={}
+        elseif change=='batch' then missing.queueList[1].items[2]=plank
+        elseif change=='replacement' then
+            local replacement=ISInventoryTransferAction:new(player,stick,inventory,source,50)
+            replacement:setAllowMissingItems(true);replacement.toolkitQueueOperation=owner.toolkitQueueOperation
+            q.queue[2]=replacement;missing=replacement
+        elseif change=='disabled' then enabled=false
+        elseif change=='cancelled' then owner.toolkitQueueOperation.toolkitCancelled=true end
+        api.skipUnavailableReturns(q,owner)
+        assert(#q.queue==4 and q.queue[2]==missing and q.queue[3]==restore and q.queue[4]==tail,change..' must revoke missing-return cleanup')
+        ISCraftingUI.ReturnItemToContainer=helper;enabled=true
+    end
+    for i=1,100 do
+        local owner,missing,restore=scenario();api.prune()
+        local count=0;for _ in pairs(api.fixtureRegistries[4]) do count=count+1 end
+        assert(count==2,'private original return records must prune completed/removed operations')
+    end
+    mainMenuCleanup();assert(table.isempty(api.fixtureRegistries[4]),'main menu must release private original returns')
+    scenario();reset();api.prune();assert(table.isempty(api.fixtureRegistries[4]),'removed returns must release their private records')
+    local function nativeRebind(original)
+        local live=item(original.kind);inventory.items[live.id]=nil;live.id=original.id;inventory.items[live.id]=live
+        -- ActionManager.replaceObjectInQueuedActions only replaces direct fields, never nested queueList tables.
+        for _, member in ipairs(q.queue) do
+            for key,value in pairs(member) do if value==original then member[key]=live end end
+        end
+        return live
+    end
+    local function startOwner(owner,plank,stick)
+        stick.setJobType=function() end;plank.setJobType=function() end
+        owner.action={setActionAnim=function() end,setOverrideHandModelsObject=function() end}
+        owner:start()
+    end
+    for _, trusted in ipairs({false,true}) do for _, changedBatch in ipairs({false,true}) do
+        local owner,missing,restore,tail,plank,stick=scenario()
+        local live=nativeRebind(stick);local livePlank=nativeRebind(plank)
+        assert(missing.item==live and missing.queueList[1].items[1]==stick and restore.item==livePlank
+            and restore.queueList[1].items[1]==plank,'Java queued-object replacement must leave nested native batch references unchanged')
+        if changedBatch then missing.queueList[1].items[1]=live end
+        if trusted then startOwner(owner,livePlank,live) end
+        inventory:Remove(live);api.skipUnavailableReturns(q,owner)
+        if trusted and not changedBatch then
+            assert(q.queue[2]==restore and q.queue[3]==tail,'trusted native MP start must seal shallow-rebound return proxies before consumption')
+        else assert(q.queue[2]==missing,'absent same-ID proxies or replaced nested batch refs must not be adopted') end
+    end end
+    -- Exercise the actual native start/isValid/perform reuse that lost the MP tail.
+    -- Java TransactionManager rejects even its own pending transaction before Lua.started is true.
+    local pending=false
+    local priorTrading,priorOptions,priorConsistency,priorCreate,priorRemove,priorLog=ISTradingUI,getServerOptions,isItemTransactionConsistent,createItemTransaction,removeItemTransaction,ISLogSystem
+    local priorMoving,priorEmitter,priorFarming=player.isPlayerMoving,player.getEmitter,player.setIsFarming
+    ISTradingUI={GetUIForPlayer=function() end};getServerOptions=function() return {getInteger=function() return 0 end} end
+    isItemTransactionConsistent=function() return not pending end
+    createItemTransaction=function() pending=true;return 3 end
+    removeItemTransaction=function() pending=false end
+    ISLogSystem={logAction=function() end};player.isPlayerMoving=function() return false end;player.setIsFarming=function() end
+    player.getEmitter=function() return {playSound=function() return 1 end,isPlaying=function() return false end} end
+    local function engine(action)
+        for _,name in ipairs({'playSourceContainerOpenSound','playDestContainerOpenSound','playSourceContainerCloseSound',
+            'playDestContainerCloseSound','playTransferCompleteSound','stopLoopingSound','startActionAnim','resetJobDelta'}) do action[name]=function() end end
+        action.getTransferStartSoundName=function() end
+        action.action={setTime=function(self,value) self.time=value end,reset=function() end,setLoopedAction=function() end,
+            setWaitForFinished=function() end,stopTimedActionAnim=function() end,isStarted=function() return true end}
+        action.item.getWeight=function() return 2 end
+    end
+    for _, cleanup in ipairs({false,true}) do
+        pending=false
+        local owner,missing,restore,tail,plank,stick,source=scenario()
+        if cleanup then
+            local live=nativeRebind(stick);plank=nativeRebind(plank);startOwner(owner,plank,live)
+            inventory:Remove(live);api.skipUnavailableReturns(q,owner)
+        else inventory:Remove(stick) end
+        table.remove(q.queue,1);q.current=q.queue[1]
+        local action=q.current;engine(action)
+        assert(action:isValid());action:start()
+        if not cleanup then
+            assert(action==missing and action.dontAdd and not action.started)
+            plank.getWeight=function() return 2 end;action:perform()
+            assert(action.item==plank and pending and action.transactionId==3 and not action.started)
+            assert(not action:isValid(),'native missing-return reuse must expose its own pending-transaction failure')
+            action:stop();assert(#q.queue==0,'baseline native failure must reproduce unrelated tail loss')
+        else
+            assert(action==restore and action.started and pending and action:isValid(),'live return must start its own native transaction normally')
+            inventory:Remove(plank);plank.source=source;source.items[plank.id]=plank
+            local began=false;tail.begin=function() began=true end
+            action:perform()
+            assert(source:contains(plank) and q.current==tail and #q.queue==1 and began and not pending,
+                'native accepted plank return must complete and start the unrelated book')
+        end
+    end
+    ISTradingUI,getServerOptions,isItemTransactionConsistent,createItemTransaction,removeItemTransaction,ISLogSystem=priorTrading,priorOptions,priorConsistency,priorCreate,priorRemove,priorLog
+    player.isPlayerMoving,player.getEmitter,player.setIsFarming=priorMoving,priorEmitter,priorFarming
+    client=false
+end
+
 -- The actual Project Cook FUEL/LIGHT closures forward native callbacks for each supported cooker.
 if NativeWishlistWorkshopRoot then
     PJCK_CookerAdjustmentPanel, PJCK_CookerPicker = {}, {}
@@ -510,7 +734,9 @@ end
 reset();a=target();item('Log');ISCampingMenu.onAddFuel(player,a,'Base.Log',ISBBQAddFuel,20);command=q.queue[2];a.removed=true;expand(command);assert(#q.queue==1)
 reset();a=target();item('Log');ISCampingMenu.onAddFuel(player,a,'Base.Log',ISBBQAddFuel,20);command=q.queue[2];command.args[1].items[1].uses=99;expand(command);assert(#q.queue==1)
 reset();a=target();item('Log');enabled=false;ISCampingMenu.onAddFuel(player,a,'Base.Log',ISBBQAddFuel,20);assert(q.queue[#q.queue].Type=='ISBBQAddFuel');enabled=true
-assert(not api.supports(ISBBQLightFromPetrol:new(player,target(),item('Matches'),item('Petrol'))),'pre-capture replacement must remain protected')
+if not FireTestTrustBBQPetrol then
+    assert(not api.supports(ISBBQLightFromPetrol:new(player,target(),item('Matches'),item('Petrol'))),'pre-capture replacement must remain protected')
+end
 -- Unsupported action classes still execute the actual native shared callback, without adapter rights.
 local modFuel=ISBBQAddFuel:derive('ModFuel')
 reset();a=target();local customLog=item('Log')
@@ -546,4 +772,4 @@ operations.registerProducer=originalRegister;PZSurvivorToolkit.ActionQueueDefini
 reset();local opaque=target();item('Log');ISCampingMenu.onAddFuel(player,opaque,'Base.Log',ISBBQAddFuel,20)
 assert(q.queue[#q.queue].Type=='ISBBQAddFuel' and not PZSurvivorToolkit.ActionQueueFire.supports(q.queue[#q.queue]))
 getGameFilesInput=sourceReader
-print('Fire native contracts: fixed resource IDs, SP/MP completion, multi-use limits, independent/shared work, active boundary, retry-before-returns and source/helper guards passed.')
+print('Fire native contracts: fixed resource IDs, SP/MP completion, multi-use limits, independent/shared work, active boundary, retry-before-returns, sealed missing returns, native MP transfer reuse and source/helper guards passed.')

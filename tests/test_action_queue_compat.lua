@@ -437,7 +437,10 @@ local wait = queue.queue[1]
 assert(wait.Type == 'WMI_WaitForInvUpdate' and definitions.inspect(wait) and queue.queue[2] == unrelated)
 wait:perform(); assert(queue.queue[1].Type == 'WMI_WaitForInvUpdate', 'MP retry executes its real callback instead of stalling')
 dirty.container = inventory; inventory.values = {dirty}
-queue.queue[1]:perform(); assert(queue.queue[1].Type == 'ISWashClothing' and queue.queue[3] == unrelated)
+local successfulWait=queue.queue[1]
+successfulWait:perform(); assert(queue.queue[1].Type == 'ISWashClothing' and queue.queue[3] == unrelated)
+successfulWait.onCompleteFunc(unpack(successfulWait.onCompleteArgs))
+assert(#queue.queue==3 and queue.queue[3]==unrelated,'a repeated private wait result cannot duplicate washing or return')
 reset(); enabled=false; dirty=item(bag,20); transfer=wash(dirty); transfer.fixtureDelay=true; unrelated=tail()
 assert(not definitions.inspect(transfer),'initially disabled operations retain native callbacks')
 transfer:perform(); assert(queue.queue[1].Type=='WMI_WaitForInvUpdate')
@@ -446,6 +449,19 @@ assert(queue.queue[1].Type=='ISWashClothing' and queue.queue[3]==unrelated,'nati
 reset(); dirty = item(bag, 4); transfer = wash(dirty); transfer.fixtureDelay = true; unrelated = tail(); transfer:perform()
 wait = queue.queue[1]; operations.invalidate(wait.toolkitQueueOperation); wait:perform()
 assert(queue.queue[1] == unrelated, 'cancelled wait cannot schedule another retry')
+wait.onCompleteFunc(unpack(wait.onCompleteArgs))
+assert(queue.queue[1]==unrelated and #queue.queue==1,'late canceled private wait callback preserves native completion and unrelated tail')
+reset();dirty=item(bag,140);transfer=wash(dirty);transfer.fixtureDelay=true;unrelated=tail();transfer:perform()
+wait=queue.queue[1]
+local waitStart=wait.start
+wait.start=function() end
+assert(not definitions.inspect(wait),'modified private wait lifecycle remains protected')
+wait.start=waitStart
+local waitCallback=wait.onCompleteFunc
+wait.onCompleteFunc=function() end
+assert(not definitions.inspect(wait),'modified private wait callback remains protected')
+wait.onCompleteFunc=waitCallback
+assert(definitions.inspect(wait),'exact private wait callback and lifecycle restore the verified contract')
 reset(); dirty = item(bag, 5); transfer = wash(dirty)
 transfer.onCompleteFunc = function() end; assert(not definitions.inspect(transfer), 'replaced callback fails closed')
 reset(); dirty = item(bag, 6); transfer = wash(dirty)

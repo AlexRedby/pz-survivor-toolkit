@@ -19,10 +19,11 @@ local Operations, Definitions = Toolkit.ActionQueueOperations, Toolkit.ActionQue
 local records = {}
 local snapshots = {}
 local expanded = {}
+local returns = {}
 
 function Fire.prune()
     local pending = false
-    for _, registry in ipairs({records, snapshots, expanded}) do
+    for _, registry in ipairs({records, snapshots, expanded, returns}) do
         for _ in pairs(registry) do pending = true; break end
         if pending then break end
     end
@@ -36,6 +37,7 @@ function Fire.prune()
     for action, record in pairs(records) do
         if queued[action] then active[record.saved] = true else records[action] = nil end
     end
+    for action in pairs(returns) do if not queued[action] then returns[action] = nil end end
     -- Retries use their parent's sealed request even after the command and parent have completed.
     for saved in pairs(snapshots) do
         if not active[saved] then snapshots[saved], expanded[saved] = nil, nil end
@@ -43,7 +45,7 @@ function Fire.prune()
 end
 Events.OnTick.Add(Fire.prune)
 if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
-    for _, registry in ipairs({records, snapshots, expanded}) do
+    for _, registry in ipairs({records, snapshots, expanded, returns}) do
         for key in pairs(registry) do registry[key] = nil end
     end
 end) end
@@ -353,6 +355,17 @@ local function add(character, saved, ...)
     ISTimedActionQueue.add(action)
     return action
 end
+local function addReturn(character, saved, item, entry)
+    local queue, before = ISTimedActionQueue.getTimedActionQueue(character), {}
+    for _, action in ipairs(queue.queue) do before[action] = true end
+    returnItem(character, item, entry.source)
+    for _, action in ipairs(queue.queue) do
+        if not before[action] then
+            returns[action] = {item = item, batchItem = item, id = entry.id, kind = entry.kind, source = entry.source,
+                inventory = character:getInventory(), token = saved.token}
+        end
+    end
+end
 local function expand(character, saved)
     if expanded[saved] or not snapshots[saved] or not snapshotUnchanged(saved, snapshots[saved]) or not helpersSafe() or not unchanged(saved.class) or worldObject(saved.target, saved.class) ~= saved.object
         or saved.object:getObjectIndex() == -1 or saved.object:getSquare() ~= saved.square then return end
@@ -381,14 +394,14 @@ local function expand(character, saved)
         end
     elseif saved.mode == "onLightFromLiterature" then
         add(character, saved, first.item, second.item, saved.target, ISCampingMenu.getFuelDurationForItem(first.item))
-        returnItem(character, second.item, second.source)
+        addReturn(character, saved, second.item, saved.items[2])
     elseif saved.mode == "onLightFromPetrol" then
         add(character, saved, saved.target, first.item, second.item, 20)
-        returnItem(character, first.item, first.source)
+        addReturn(character, saved, first.item, saved.items[1])
     else
         add(character, saved, first.item, second.item, saved.target)
-        returnItem(character, second.item, second.source)
-        returnItem(character, first.item, first.source)
+        addReturn(character, saved, second.item, saved.items[2])
+        addReturn(character, saved, first.item, saved.items[1])
     end
 end
 local function enqueue(character, entry, ...)
@@ -445,9 +458,68 @@ function Fire.supports(action)
         for name, callback in pairs(campfireMethods) do if action.campfire[name] ~= callback then return false end end
     end
     for _, name in ipairs({"item", "plank", "lighter", "petrol", "fuelAmt"}) do
-        if action[name] ~= record.fields[name] then return false end
+        local item, original = action[name], record.fields[name]
+        if item ~= original and (name == "fuelAmt" or not isClient() or not instanceof(item, "InventoryItem") or not instanceof(original, "InventoryItem")
+            or item:getID() ~= original:getID() or item:getFullType() ~= original:getFullType()
+            or action.character:getInventory():getItemById(original:getID()) ~= item) then return false end
     end
     return (action.campfire or action.fireplace or action.bbq) == saved.target
+end
+-- Java rebinds direct action fields; native queueList retains the original item reference.
+local function unchangedReturn(member, saved, record, inventory)
+    if not saved or member.action or member.started or (member.transactionId or 0) ~= 0
+        or member.character ~= record.character or member.toolkitQueueOperation ~= record.token or saved.token ~= record.token
+        or member.srcContainer ~= inventory or saved.inventory ~= inventory or member.destContainer ~= saved.source
+        or saved.source == inventory or not member.allowMissingItems or not instanceof(member.item, "InventoryItem")
+        or member.item:getID() ~= saved.id or member.item:getFullType() ~= saved.kind
+        or member.onStartFunc or member.onCompleteFunc or member.onCancelFunc then return false end
+    local contract, id = Definitions.inspect(member)
+    return id == "native.ISInventoryTransferAction" and contract and contract.knownInputs ~= false and contract.cancelWaiting
+        and type(member.queueList) == "table" and #member.queueList == 1
+        and type(member.queueList[1]) == "table" and type(member.queueList[1].items) == "table"
+        and #member.queueList[1].items == 1 and member.queueList[1].items[1] == saved.batchItem
+        and saved.batchItem:getID() == saved.id and saved.batchItem:getFullType() == saved.kind
+end
+-- A missing native return must not merge with the next live return before its MP start.
+function Fire.skipUnavailableReturns(queue, action)
+    local record = records[action]
+    if not Toolkit.Settings.actionQueue() or queue.current ~= action or queue.queue[1] ~= action
+        or ISTimedActionQueue.queues[action.character] ~= queue or not Fire.supports(action)
+        or record.token.toolkitCancelled then return end
+    local inventory = action.character:getInventory()
+    while queue.queue[2] do
+        local member = queue.queue[2]
+        local saved = returns[member]
+        if not unchangedReturn(member, saved, record, inventory) or member.item ~= saved.item
+            or inventory:getItemById(saved.id) then return end
+        table.remove(queue.queue, 2)
+        returns[member] = nil
+        member:forceCancel()
+    end
+end
+-- Seal native transfer/start proxy replacements before authoritative consumption can revoke their contract.
+for _, class in ipairs({ISAddFuelAction, ISLightFromLiterature, ISLightFromPetrol, ISLightFromKindle,
+    ISBBQAddFuel, ISBBQLightFromLiterature, ISBBQLightFromPetrol, ISBBQLightFromKindle}) do
+    local start = class.start
+    class.start = function(action, ...)
+        local record = records[action]
+        if not record or not Fire.supports(action) then return start(action, ...) end
+        local result = start(action, ...)
+        if Fire.supports(action) then
+            for _, name in ipairs({"item", "plank", "lighter", "petrol", "fuelAmt"}) do record.fields[name] = action[name] end
+            local queue, inventory = ISTimedActionQueue.queues[action.character], action.character:getInventory()
+            if isClient() and queue and queue.current == action and queue.queue[1] == action and not record.token.toolkitCancelled then
+                for _, member in ipairs(queue.queue) do
+                    local saved = returns[member]
+                    if unchangedReturn(member, saved, record, inventory) and inventory:getItemById(saved.id) == member.item then
+                        saved.item = member.item
+                    end
+                end
+            end
+        end
+        return result
+    end
+    classes[class].methods.start = class.start
 end
 function Fire.canSkip(action)
     if not Fire.supports(action) then return false end
@@ -456,7 +528,9 @@ function Fire.canSkip(action)
     if saved.object:getObjectIndex() == -1 or saved.object:getSquare() ~= saved.square then return true end
     for _, field in ipairs({"item", "plank", "lighter", "petrol"}) do
         local item = action[field]
-        if item and not action.character:getInventory():contains(item) then return true end
+        local inventory = action.character:getInventory()
+        if item and ((isClient() and not inventory:containsID(item:getID()))
+            or (not isClient() and not inventory:contains(item))) then return true end
     end
     if saved.fuel then
         local fuel = saved.class == ISAddFuelAction and saved.target.fuelAmt or saved.target:getFuelAmount()
