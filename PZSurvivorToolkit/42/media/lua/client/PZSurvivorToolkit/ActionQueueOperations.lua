@@ -146,7 +146,8 @@ end
 local function waitForCompletion(action)
     -- SP starts the next action inside perform(), before complete() consumes the preceding inputs.
     if not action.toolkitCompletionWaited then action.toolkitCompletionWaited = true; return true end
-    return false
+    local record = action.toolkitQueueCommand
+    return record and record.ready and not record.ready(action.character, record.snapshot) or false
 end
 
 local function startCommand(action)
@@ -161,7 +162,8 @@ function Operations.command(character, callback, snapshot, options)
     local action = ISQueueActionsAction:new(character, callback, snapshot)
     action.start, action.waitToStart = startCommand, waitForCompletion
     for key, value in pairs(options and options.fields or {}) do action[key] = value end
-    action.toolkitQueueCommand = {marker = commandMarker, owner = action, callback = callback, args = action.args, snapshot = snapshot}
+    action.toolkitQueueCommand = {marker = commandMarker, owner = action, callback = callback, args = action.args,
+        snapshot = snapshot, ready = options and options.ready}
     return action
 end
 

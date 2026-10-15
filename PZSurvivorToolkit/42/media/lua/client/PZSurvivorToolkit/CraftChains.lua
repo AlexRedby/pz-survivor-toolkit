@@ -408,9 +408,11 @@ function View:close()
     if views[self.player] == self then views[self.player] = nil end
 end
 
-local function closeNeat(panel)
-    local cell = panel and panel.cellBaseCraft
-    if cell and cell.pzstPlanView then cell.pzstPlanView:close() end
+local function closeOwner(panel)
+    if not panel or not panel.logic then return end
+    for _, view in pairs(views) do
+        if view.panel.logic == panel.logic then view:close() end
+    end
 end
 
 function Chains.open(panel)
@@ -472,7 +474,7 @@ local function newButton(panel)
     return button
 end
 
-local hooked = setmetatable({}, {__mode="k"})
+local hooked = {}
 local function pack(...) return {n=select("#", ...), ...} end
 local function after(class, method, callback)
     if not class or not class[method] then return end
@@ -488,6 +490,7 @@ local function after(class, method, callback)
 end
 
 function Chains.install()
+    after(ISHandCraftPanel, "OnCloseWindow", closeOwner)
     after(ISCraftRecipePanel, "createDynamicChildren", function(panel)
         panel.pzstPlanButton = nil
         if not panel.logic or not panel.logic:getRecipe() then return end
@@ -515,7 +518,7 @@ function Chains.install()
         if view and view.target ~= panel.logic:getRecipe() then view:close() end
     end)
     for _, class in pairs({NC_HandcraftWindow, NC_EntityWindow}) do
-      after(class, "close", function(window) closeNeat(window.HandCraftPanel) end)
+      after(class, "close", function(window) closeOwner(window.HandCraftPanel) end)
       if not class.pzstPlanInputGuard then
         class.pzstPlanInputGuard = true
         -- Neat's input/output navigation otherwise still exposes hidden native slots.
@@ -558,5 +561,14 @@ function Chains.install()
     end
 end
 
+local function closeViews(player)
+    for owner, view in pairs(views) do
+        if not player or owner == player then view:close() end
+    end
+end
+
 Events.OnGameStart.Add(Chains.install)
+if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() closeViews() end) end
+if Events.OnGameExit then Events.OnGameExit.Add(function() closeViews() end) end
+if Events.OnPlayerDeath then Events.OnPlayerDeath.Add(closeViews) end
 return Chains

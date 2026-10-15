@@ -15,34 +15,64 @@ local function reason(kind)
     return getText("UI_PZST_CraftChain" .. kind)
 end
 
-local intentions = setmetatable({}, {__mode = "k"})
-local hooked = setmetatable({}, {__mode = "k"})
+local intentions, hooked = {}, {}
 
 local function recipeChanged(state, recipe)
-    if state.recipe ~= recipe then state.recipe, state.inputs = recipe, {} end
+    if state.active and state.recipe ~= recipe then state.recipe, state.inputs = recipe, {} end
 end
 
 local function manualSelectChanged(state, manualSelectInputs)
     if not manualSelectInputs then state.inputs = {} end
 end
 
-local function intention(logic)
-    local state = intentions[logic]
-    if not state then
-        state = {recipe = logic:getRecipe(), inputs = {}}
-        intentions[logic] = state
+local function ownerPanel(panel, logic)
+    panel = panel and panel.HandCraftPanel or panel
+    local owner = panel
+    while panel do
+        if panel.logic == logic then owner = panel end
+        panel = panel.parent
+    end
+    return owner
+end
+
+local function intention(logic, panel)
+    local owner = ownerPanel(panel, logic)
+    local state = intentions[logic] or owner and owner.pzstCraftChainIntention
+    if not state or state.logic ~= logic then
+        state = {logic = logic, inputs = {}}
         if logic.addEventListener then
             logic:addEventListener("onRecipeChanged", recipeChanged, state)
             logic:addEventListener("onManualSelectChanged", manualSelectChanged, state)
         end
     end
+    -- B42 Kahlua ignores weak keys; the crafting owner releases this active entry.
+    intentions[logic], state.active = state, true
+    if owner then owner.pzstCraftChainIntention = state end
     recipeChanged(state, logic:getRecipe())
     return state
 end
 
-local function remember(logic, input)
+local function release(panel)
+    local logic = panel and panel.logic
+    local state = logic and intentions[logic]
+    if state then
+        state.active, state.recipe, state.inputs = false, nil, {}
+        intentions[logic] = nil
+    end
+end
+
+local function reset(player)
+    for logic, state in pairs(intentions) do
+        if not player or logic:getPlayer() == player then
+            state.active, state.recipe, state.inputs = false, nil, {}
+            intentions[logic] = nil
+        end
+    end
+end
+
+local function remember(logic, input, panel)
     if not input then return end
-    local state = intention(logic)
+    local state = intention(logic, panel)
     local items = logic:getManualInputsFor(input, ArrayList.new())
     local selection = {ids = {}}
     for i = 0, items:size() - 1 do
@@ -58,17 +88,30 @@ end
 local function hookPicker(class, name)
     if not class or type(class[name]) ~= "function" then return end
     local original = class[name]
-    if hooked[original] then return end
+    hooked[class] = hooked[class] or {}
+    if hooked[class][name] == original then return end
     local wrapped = function(self, ...)
         local logic = not self.itemSlot and self.logic
         local input = logic and logic:getManualSelectInputScriptFilter()
-        if logic then intention(logic) end
+        if logic then intention(logic, self) end
         local result = original(self, ...)
-        if logic and result ~= false then remember(logic, input) end
+        if logic and result ~= false then remember(logic, input, self) end
         return result
     end
     class[name] = wrapped
-    hooked[wrapped] = true
+    hooked[class][name] = wrapped
+end
+
+local function hookClose(class, method, neat)
+    if not class or not class[method] then return end
+    hooked[class] = hooked[class] or {}
+    if hooked[class][method] == class[method] then return end
+    local original = class[method]
+    local wrapped = function(self, ...)
+        release(neat and self.HandCraftPanel or self)
+        return original(self, ...)
+    end
+    class[method], hooked[class][method] = wrapped, wrapped
 end
 
 function Recipes.install()
@@ -76,6 +119,9 @@ function Recipes.install()
     hookPicker(ISCraftInventoryPanel, "onListItemClicked")
     hookPicker(NC_InputSwitch_Panel, "onItemSelected")
     hookPicker(NC_InputSwitch_Panel, "onItemGroupDoubleClick")
+    hookClose(ISHandCraftPanel, "OnCloseWindow")
+    hookClose(NC_HandcraftWindow, "close", true)
+    hookClose(NC_EntityWindow, "close", true)
 end
 
 local function integer(value)
@@ -189,7 +235,7 @@ local function collect(panel, overrides)
     local selected = panel.logic
     local player, target = selected:getPlayer(), selected:getRecipe()
     if not player or not target then return nil, reason("Unavailable") end
-    local state = intention(selected)
+    local state = intention(selected, panel)
     if not selected:isManualSelectInputs() then state.inputs = {} end
     local nativeIntent = state.inputs
     local context = {player = player, craftBench = selected:getCraftBench(), surface = selected:getIsoObject()}
@@ -365,5 +411,10 @@ end
 
 -- Cancellation trusts only our generator and the native forceCancel implementation.
 Recipes.addStep = addStep
-if Events and Events.OnGameStart then Events.OnGameStart.Add(Recipes.install) end
+if Events then
+    if Events.OnGameStart then Events.OnGameStart.Add(Recipes.install) end
+    if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() reset() end) end
+    if Events.OnGameExit then Events.OnGameExit.Add(function() reset() end) end
+    if Events.OnPlayerDeath then Events.OnPlayerDeath.Add(reset) end
+end
 return Recipes

@@ -16,9 +16,37 @@ local Toolkit = PZSurvivorToolkit
 local Fire = {}
 Toolkit.ActionQueueFire = Fire
 local Operations, Definitions = Toolkit.ActionQueueOperations, Toolkit.ActionQueueDefinitions
-local records = setmetatable({}, {__mode = "k"})
-local snapshots = setmetatable({}, {__mode = "k"})
-local expanded = setmetatable({}, {__mode = "k"})
+local records = {}
+local snapshots = {}
+local expanded = {}
+
+function Fire.prune()
+    local pending = false
+    for _, registry in ipairs({records, snapshots, expanded}) do
+        for _ in pairs(registry) do pending = true; break end
+        if pending then break end
+    end
+    if not pending then return end
+    local queued, active = {}, {}
+    for character, queue in pairs(ISTimedActionQueue.queues) do
+        if not character:isDead() then
+            for _, action in ipairs(queue.queue or {}) do queued[action] = true end
+        end
+    end
+    for action, record in pairs(records) do
+        if queued[action] then active[record.saved] = true else records[action] = nil end
+    end
+    -- Retries use their parent's sealed request even after the command and parent have completed.
+    for saved in pairs(snapshots) do
+        if not active[saved] then snapshots[saved], expanded[saved] = nil, nil end
+    end
+end
+Events.OnTick.Add(Fire.prune)
+if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
+    for _, registry in ipairs({records, snapshots, expanded}) do
+        for key in pairs(registry) do registry[key] = nil end
+    end
+end) end
 local classes, callbacks, helpers, bindings = {}, {}, {}, {}
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform", "complete",
     "getDuration", "serverStart", "serverStop", "animEvent", "forceStop", "forceCancel"}

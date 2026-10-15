@@ -7,7 +7,9 @@ local function derive(self, name)
     return setmetatable(class, {__index = self})
 end
 ISBaseObject = {derive = derive}
-Events = {OnGameStart = {Add = function() end}, OnTick = {Add = function() end}}
+local mainMenuCleanup
+Events = {OnGameStart = {Add = function() end}, OnTick = {Add = function() end},
+    OnMainMenuEnter = {Add = function(callback) mainMenuCleanup=callback end}}
 for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do _G[name] = {instance = function() return {} end} end
 table.wipe = function(t) for key in pairs(t) do t[key] = nil end end
@@ -154,7 +156,11 @@ local function item(kind, source, drainable, uses)
     value.source.items[value.id]=value
     return value
 end
-local function project(name) assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/'..name..'.lua'))() end
+local function project(name)
+    local path=ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/'..name..'.lua'
+    if name~='ActionQueueFire' then return assert(loadfile(path))() end
+    return assert(loadstring((read(path):gsub('\nreturn Fire','\nFire.fixtureRegistries = {records, snapshots, expanded}\nreturn Fire'))))()
+end
 project('ActionQueueOperations'); project('ActionQueueDefinitions')
 -- A mod replacement present before capture must not acquire permission.
 local originalBBQPetrol = ISBBQLightFromPetrol.new
@@ -266,6 +272,30 @@ local function expand(command)
     q:removeFromQueue(q.queue[1]);q.current=command
     command.action={forceComplete=function() end,isStarted=function() return true end}
     command:start()
+end
+do
+    local function count(registry) local n=0; for _ in pairs(registry) do n=n+1 end; return n end
+    local records,snapshots,expanded=unpack(api.fixtureRegistries)
+    for i=1,500 do
+        reset(); item('Log'); ISCampingMenu.onAddFuel(player,target(),'Base.Log',ISBBQAddFuel,20)
+        local command=q.queue[2]; api.prune()
+        assert(count(records)==1 and count(snapshots)==1 and records[command], 'old fire request snapshots must not accumulate during a busy queue')
+        expand(command); q:removeFromQueue(command); q.current=q.queue[1]; api.prune()
+        assert(count(records)==1 and count(snapshots)==1 and count(expanded)==1,
+            'expanded fire command must release its record while the native child retains its request')
+    end
+    for _,state in ipairs({'cancel','dead','replacement','world'}) do
+        reset(); item('Log'); ISCampingMenu.onAddFuel(player,target(),'Base.Log',ISBBQAddFuel,20)
+        local command=q.queue[2]
+        if state=='cancel' then operations.invalidate(command.toolkitQueueOperation); q.queue={}
+        elseif state=='dead' then player.isDead=function() return true end
+        elseif state=='replacement' then ISTimedActionQueue.queues[player]={queue={}}
+        else ISTimedActionQueue.queues={} end
+        api.prune(); assert(count(records)==0 and count(snapshots)==0 and count(expanded)==0,state..' must release all fire registries')
+        player.isDead=function() return false end; ISTimedActionQueue.queues[player]=q
+    end
+    reset(); item('Log'); ISCampingMenu.onAddFuel(player,target(),'Base.Log',ISBBQAddFuel,20)
+    mainMenuCleanup(); assert(count(records)==0 and count(snapshots)==0 and count(expanded)==0, 'main menu must release fire world references immediately')
 end
 local function pickups()
     for _, action in ipairs(q.queue) do
@@ -422,6 +452,7 @@ while q.queue[1]~=parent do table.remove(q.queue,1) end;q.current=parent
 local nativePerform=ISBaseTimedAction.perform
 ISBaseTimedAction.perform=function(action) table.remove(q.queue,1);q.current=q.queue[1] end
 parent:perform();ISBaseTimedAction.perform=nativePerform
+api.prune(); assert(not api.fixtureRegistries[1][parent] and api.fixtureRegistries[2][command.args[1]], 'retry retains the sealed request after parent and command release')
 local retry=q.queue[1];assert(retry.Type=='ISLightFromKindle' and retry.toolkitQueueOperation==parent.toolkitQueueOperation and api.supports(retry))
 assert(q.queue[#q.queue]==tail and q.queue[2].Type=='ISInventoryTransferAction')
 local contract=policy.inspect(retry);assert(contract.items[stick.id] and contract.dynamicInputs['Base.WoodenStick'])

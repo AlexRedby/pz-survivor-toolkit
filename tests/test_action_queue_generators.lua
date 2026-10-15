@@ -19,6 +19,8 @@ getGameFilesInput = function(path)
     end, close = function() end}
 end
 Events.OnPressWalkTo = {Add = function() end}
+local mainMenuCleanup
+Events.OnMainMenuEnter = {Add = function(callback) mainMenuCleanup=callback end}
 native('shared/luautils.lua')
 native('client/ISUI/ISWorldObjectContextMenu.lua')
 local source = readText(NativeActionRoot .. '/client/ISUI/ISInventoryPaneContextMenu.lua')
@@ -93,6 +95,12 @@ ISBaseTimedAction.begin = function(action)
 end
 f.project('ActionQueueOperations'); f.project('ActionQueueDefinitions')
 local policy = f.project('ActionQueuePolicy')
+local originalProject=f.project
+f.project=function(name)
+    if name~='ActionQueueGenerators' then return originalProject(name) end
+    local source=readText(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/'..name..'.lua')
+    return assert(loadstring((source:gsub('\nreturn Generators','\nGenerators.fixtureRegistries = {records, continued, pendingPerform}\nreturn Generators'))))()
+end
 local adapter = f.project('ActionQueueGenerators'); adapter.install(); policy.installContracts()
 local function generator(x, y, z)
     return {class = 'IsoGenerator', square = square(x, y, z), activated = false, connected = false, fuel = 20, condition = 92,
@@ -125,6 +133,25 @@ local function queued(method, object, mode)
     return q, assert(q.queue[2])
 end
 local g, other = generator(), generator(100, 100)
+do
+    local function count(registry) local n=0; for _ in pairs(registry) do n=n+1 end; return n end
+    local records, continued, pendingPerform=unpack(adapter.fixtureRegistries)
+    for i=1,500 do
+        local current, command=queued('onPlugGenerator',g,true)
+        adapter.prune(); assert(count(records)==1 and records[command], 'old generator commands must be released during a busy queue')
+    end
+    for _,state in ipairs({'cancel','dead','replacement','world'}) do
+        local current,command=queued('onPlugGenerator',g,true)
+        if state=='cancel' then PZSurvivorToolkit.ActionQueueOperations.invalidate(command.toolkitQueueOperation); current.queue={}
+        elseif state=='dead' then p.isDead=function() return true end
+        elseif state=='replacement' then f.queue(head())
+        else ISTimedActionQueue.queues={} end
+        adapter.prune(); assert(count(records)==0 and count(continued)==0 and count(pendingPerform)==0,state..' must release generator registries')
+        p.isDead=function() return false end
+    end
+    queued('onPlugGenerator',g,true); mainMenuCleanup()
+    assert(count(records)==0 and count(continued)==0 and count(pendingPerform)==0, 'main menu must release generator world references immediately')
+end
 for _, method in ipairs({'onInfoGenerator', 'onPlugGenerator', 'onActivateGenerator', 'onFixGenerator', 'onTakeGenerator'}) do
     local q, action = queued(method, g, true)
     assert(policy.inspect(action), method .. ' native command must be trusted')
@@ -212,11 +239,13 @@ local repair = ISFixGenerator:new(p, g); repair.toolkitQueueOperation = {}
 local ending = head(); q = f.queue(repair, ending); repair:begin()
 assert(policy.inspect(repair) and not policy.cancelOperationReason(q, repair), 'audited active repair can stop before completion')
 local soundsBefore, removalsBefore, xpBefore = stoppedSounds, removedScraps, repairXp
-repair:perform(); assert(q.current == repair and g.condition == 92 and #inv.items == 2
+repair:perform(); adapter.prune(); assert(adapter.fixtureRegistries[3][repair]==q, 'SP advancement must survive housekeeping until complete')
+assert(q.current == repair and g.condition == 92 and #inv.items == 2
     and stoppedSounds == soundsBefore + 1 and removedScraps == removalsBefore and repairXp == xpBefore,
     'native SP perform stops sound before complete owns scrap, condition and XP')
-assert(rawget(q, 'onCompleted') == nil, 'temporary advancement interception restores the inherited queue method')
+assert(q.onCompleted == ISTimedActionQueue.onCompleted, 'temporary advancement interception restores the inherited queue method')
 assert(repair:complete() and g.condition == 96 and #q.queue == 2 and q.queue[1].Type == 'ISFixGenerator')
+adapter.prune(); assert(not adapter.fixtureRegistries[2][repair] and not adapter.fixtureRegistries[3][repair], 'completed repair must release its continuation guards')
 local second = q.queue[1]; assert(second.toolkitQueueOperation == repair.toolkitQueueOperation and q.queue[2] == ending)
 second:perform(); assert(q.current == second)
 assert(second:complete() and g.condition == 100 and #inv.items == 0 and q.current == ending)

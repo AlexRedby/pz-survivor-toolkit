@@ -5,6 +5,7 @@ local function kind(action)
     local Food = PZSurvivorToolkit.BulkFood
     if Food and Food.isCommand(action) then return "food-plan" end
     if Food and Food.isEat(action) then return "action" end
+    if Food and Food.isOpening and Food.isOpening(action) then return end
     local Craft, Recipes = PZSurvivorToolkit.ActionQueueCraft, PZSurvivorToolkit.CraftChainRecipes
     if Craft and (action.Type == "ISCraftAction" or action.Type == "ISHandcraftAction")
         and Craft.supports(action) then return "craft" end

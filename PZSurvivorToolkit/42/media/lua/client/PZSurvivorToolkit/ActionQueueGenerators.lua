@@ -14,11 +14,35 @@ Toolkit.ActionQueueGenerators = Generators
 local Operations, Policy = Toolkit.ActionQueueOperations, Toolkit.ActionQueuePolicy
 local Carts = Toolkit.ActionQueueCarts
 local cartCheck = Carts and Carts.isTransferConstructor
-local marker, records, bindings, classes, helpers = {}, setmetatable({}, {__mode = "k"}), {}, {}, {}
+local marker, records, bindings, classes, helpers = {}, {}, {}, {}, {}
 local trustedInstalled, repairInstalled
 local helperOwners = {}
-local continued = setmetatable({}, {__mode = "k"})
-local pendingPerform = setmetatable({}, {__mode = "k"})
+local continued = {}
+local pendingPerform = {}
+
+function Generators.prune()
+    local pending = false
+    for _, registry in ipairs({records, continued, pendingPerform}) do
+        for _ in pairs(registry) do pending = true; break end
+        if pending then break end
+    end
+    if not pending then return end
+    local queued = {}
+    for character, queue in pairs(ISTimedActionQueue.queues) do
+        if not character:isDead() then
+            for _, action in ipairs(queue.queue or {}) do queued[action] = true end
+        end
+    end
+    for _, registry in ipairs({records, continued, pendingPerform}) do
+        for action in pairs(registry) do if not queued[action] then registry[action] = nil end end
+    end
+end
+Events.OnTick.Add(Generators.prune)
+if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
+    for _, registry in ipairs({records, continued, pendingPerform}) do
+        for key in pairs(registry) do registry[key] = nil end
+    end
+end) end
 local kinds = {onInfoGenerator = "ISGeneratorInfoAction", onPlugGenerator = "ISPlugGenerator",
     onActivateGenerator = "ISActivateGenerator", onFixGenerator = "ISFixGenerator",
     onTakeGenerator = "ISTakeGenerator", doAddFuelGenerator = "ISAddFuel"}

@@ -249,7 +249,8 @@ fixturePolicy.replaceStop=function() end
 fixturePolicy.inspect=definitions.inspect
 PZSurvivorToolkit.ActionQueueLabels={label=function() end}
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
-local compat = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'))()
+local compatSource = read(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua')
+local compat = assert(loadstring((compatSource:gsub('\nreturn Compat', '\nCompat.fixtureRegistries = {records, sessions}\nreturn Compat'))))()
 assert(not compat.isInstalled('MPFastForward'),'server wrapper waits for the server loading boundary')
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/server/000_PZSurvivorToolkitReadCompat.lua'))()
 assert(WS and NEQ_Dresser and TidyFixture and PJCK_EvoPanel and NC_CraftActionPanel and PJCK_CraftActionPanel)
@@ -303,6 +304,7 @@ local queue = ISTimedActionQueue.getTimedActionQueue(player)
 local completed = queue.onCompleted
 queue.onCompleted = function(self, action) if not operations.deferCompletion(self, action) then return completed(self, action) end end
 local function tickTidy()
+    compat.prune()
     -- Native OnTick housekeeping interleaves with delayed OnPlayerUpdate restore events.
     if #queue.queue==0 then queue:tick() end
     for _, callback in ipairs(events.OnPlayerUpdate or {}) do callback(player) end
@@ -357,6 +359,43 @@ assert(queue.queue[1]~=front and nativeClears==frontClears+1 and luautils.walkAd
 reset()
 local bag = {class = 'ItemContainer', getParent = function() end, getType=function() return 'none' end, getContainingItem=function() end}
 local dirty = item(bag, 1)
+do
+    local function count(registry) local n=0; for _ in pairs(registry) do n=n+1 end; return n end
+    local records, sessions = unpack(compat.fixtureRegistries)
+    for i=1,500 do
+        reset(); wash(item(bag,10000+i)); compat.prune()
+        assert(count(records)==1 and count(sessions[player].seen)==1, 'completed source actions must not accumulate in registries')
+    end
+    reset(); dirty=item(bag,1)
+    -- Native completion may dispatch this callback after the queue has already released its parent.
+    local delayed=wash(dirty); local later=tail()
+    queue.queue,queue.current={later},later; dirty.container=inventory
+    compat.prune(); assert(not records[delayed])
+    delayed.onCompleteFunc(unpack(delayed.onCompleteArgs))
+    assert(queue.queue[1].Type=='ISWashClothing' and queue.queue[3]==later,
+        'registry cleanup must preserve an outstanding audited source callback')
+    delayed.onCompleteFunc(unpack(delayed.onCompleteArgs)); assert(#queue.queue==3, 'late completion remains one-shot')
+    for _, state in ipairs({'cancel','dead','replacement','world'}) do
+        reset(); local stale=wash(item(bag,11000)); later=tail()
+        if state=='cancel' then operations.invalidate(stale.toolkitQueueOperation); queue.queue,queue.current={later},later
+        elseif state=='dead' then dead=true
+        elseif state=='replacement' then ISTimedActionQueue.queues[player]={queue={later},character=player}
+        else ISTimedActionQueue.queues={} end
+        compat.prune(); assert(count(records)==0, state..' must release source records')
+        if state~='cancel' then assert(count(sessions)==0, state..' must release Tidy session ownership') end
+        stale.onCompleteFunc(unpack(stale.onCompleteArgs))
+        assert(queue.queue[#queue.queue]==later, state..' must not append a stale source chain')
+        ISTimedActionQueue.queues[player]=queue; dead=false
+    end
+    reset(); local stale=wash(item(bag,12000)); local later=tail()
+    queue.queue,queue.current={later},later; compat.prune()
+    for _,callback in ipairs(events.OnMainMenuEnter or {}) do callback() end
+    assert(count(records)==0 and count(sessions)==0, 'main menu must release the departed world immediately')
+    -- Even reusing the same player/queue with its original generation must not revive an old callback.
+    stale.onCompleteFunc(unpack(stale.onCompleteArgs))
+    assert(#queue.queue==1 and queue.queue[1]==later, 'a new world cannot revive an already pruned source callback')
+    reset(); dirty=item(bag,1)
+end
 local transfer = wash(dirty); local unrelated = tail()
 assert(definitions.inspect(transfer), 'verified Wash callback owns its transfer')
 transfer:perform()

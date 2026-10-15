@@ -206,6 +206,8 @@ end
 
 function Craft.futureResources(action)
     if not Craft.supports(action) then return end
+    local Food = PZSurvivorToolkit.BulkFood
+    if Food and Food.isOpening and Food.isOpening(action) then return Food.openingResources(action) end
     local class = getmetatable(action)
     if class ~= ISHandcraftAction and class ~= ISCraftAction then return end
     local recipe = class == ISHandcraftAction and action.craftRecipe or action.recipe

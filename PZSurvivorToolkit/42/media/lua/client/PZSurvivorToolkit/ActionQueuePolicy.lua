@@ -706,7 +706,8 @@ end, inspect = function(action)
 end})
 
 Definitions.registerBehavior("toolkit.food", {types = {"ISQueueActionsAction"}, matches = function(action)
-    return Toolkit.BulkFood and Toolkit.BulkFood.isCommand(action)
+    local Food = Toolkit.BulkFood
+    return Food and (Food.isCommand(action) or (Food.isOpeningWait and Food.isOpeningWait(action)))
 end, inspect = function(action)
     local result = resources(action)
     result.deferred, result.preparationFinish, result.unknownOutputs = true, true, true

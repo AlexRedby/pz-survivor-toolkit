@@ -1,14 +1,16 @@
 require "PZSurvivorToolkit/BulkActions"
+require "PZSurvivorToolkit/PackagedFood"
 require "PZSurvivorToolkit/ActionQueue"
 require "TimedActions/ISEatFoodAction"
 require "TimedActions/ISWearClothing"
 
 local Toolkit = PZSurvivorToolkit
 local Actions, Operations = Toolkit.BulkActions, Toolkit.ActionQueueOperations
+local Packaged = Toolkit.PackagedFood
 local Bulk = {}
 Toolkit.BulkFood = Bulk
-local commands, meals, cleanup, removals = {}, {}, {}, {}
-local registries = {commands, meals, cleanup, removals}
+local commands, meals, cleanup, removals, openings, waits = {}, {}, {}, {}, {}, {}
+local registries = {commands, meals, cleanup, removals, openings, waits}
 local function portion(value) return value == 1 or value == 0.5 or value == 0.25 end
 
 function Bulk.prune()
@@ -19,20 +21,25 @@ function Bulk.prune()
     end
     if not pending then return end
     local queued = {}
-    for _, queue in pairs(ISTimedActionQueue.queues) do
-        for _, action in ipairs(queue.queue or {}) do queued[action] = true end
+    for player, queue in pairs(ISTimedActionQueue.queues) do
+        if not player.isDead or not player:isDead() then
+            for _, action in ipairs(queue.queue or {}) do queued[action] = true end
+        end
     end
     for _, registry in ipairs(registries) do
         for action in pairs(registry) do if not queued[action] then registry[action] = nil end end
     end
 end
 Events.OnTick.Add(Bulk.prune)
+if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
+    for _, registry in ipairs(registries) do for action in pairs(registry) do registry[action] = nil end end
+end) end
 
 local function edible(item)
-    if not item or item:getCategory() ~= "Food" or item:getHungChange() >= 0 or item:isFavorite() then return false end
+    if not item or item:getCategory() ~= "Food" or item:isFavorite() then return false end
     local script, custom, required = item:getScriptItem(), item:getCustomMenuOption(), item:getRequireInHandOrInventory()
-    -- Opening, smoking and tool-dependent foods keep their native single-item commands.
-    return not script:isCantEat() and not script:getOpeningRecipe()
+    -- Unverified opening recipes, smoking and tool-dependent foods keep their native commands.
+    return ((Packaged and Packaged.recipe(item)) or (item:getHungChange() < 0 and not script:isCantEat() and not script:getOpeningRecipe()))
         and (not custom or custom == "" or custom == getText("ContextMenu_Eat"))
         and (not required or required:isEmpty())
 end
@@ -53,6 +60,115 @@ function Bulk.isEat(action)
     local entry = meals[action]
     return entry ~= nil and action.Type == "ISEatFoodAction" and action.item
         and action.item:getID() == entry.id and action.percentage == entry.percentage
+end
+
+local function sameInputs(action, expected)
+    if type(action.manualInputs) ~= "table" then return false end
+    local seen = {}
+    for index, items in pairs(action.manualInputs) do
+        local ids = expected[index]
+        if not ids or items:size() ~= #ids then return false end
+        for i = 1, #ids do if items:get(i - 1):getID() ~= ids[i] then return false end end
+        seen[index] = true
+    end
+    for index in pairs(expected) do if not seen[index] then return false end end
+    return true
+end
+
+function Bulk.isOpening(action)
+    local entry = openings[action]
+    return entry ~= nil and Toolkit.ActionQueueCraft.supports(action) and action.character == entry.player
+        and action.craftRecipe == entry.recipe and action.eatPercentage == 0
+        and Packaged.supports(entry.recipe) and sameInputs(action, entry.inputs)
+end
+
+function Bulk.openingResources(action)
+    local entry = openings[action]
+    if not Bulk.isOpening(action) then return end
+    -- Manual inputs bind every tool and can; their native scripts still determine break/use effects.
+    for _, items in pairs(action.manualInputs) do
+        for i = 0, items:size() - 1 do
+            local script = items:get(i):getScriptItem()
+            if script:isItemType(ItemType.CONTAINER) or script:getReplaceOnUse()
+                or script:getReplaceOnDeplete() or script:getOnBreak() then return end
+        end
+    end
+    return {dynamicInputs = {}, outputTypes = {[entry.outputType] = true}, equipment = action.character}
+end
+
+local function openingValid(entry)
+    return Toolkit.Settings.actionQueue() and not entry.player:isDead()
+        and ISTimedActionQueue.queues[entry.player] == entry.queue
+        and (entry.queue.toolkitOperationGeneration or 0) == entry.generation
+        and not entry.command.toolkitQueueOperation.toolkitCancelled
+        and waits[entry.wait] == entry and entry.queue:indexOf(entry.wait) ~= -1
+end
+
+local function openingReady(player, entry)
+    if not openingValid(entry) or entry.failed then return true end
+    entry.deadline = entry.deadline or getTimestampMs() + 30000
+    if entry.outputId and player:getInventory():getItemById(entry.outputId) then return true end
+    return not isClient() or getTimestampMs() >= entry.deadline
+end
+
+function Bulk.isOpeningWait(action)
+    local entry = waits[action]
+    return entry ~= nil and Operations.isCommand(action) and action.character == entry.player
+        and action.toolkitQueueCommand.ready == openingReady
+end
+
+local function eatOpened(player, entry)
+    local item = entry.outputId and player:getInventory():getItemById(entry.outputId)
+    if not openingValid(entry) or not item or item:getFullType() ~= entry.outputType or not edible(item)
+        or player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN) >= 3 then
+        Toolkit.ActionQueueBatch.discard(entry.command)
+        return
+    end
+    local action = ISEatFoodAction:new(player, item, entry.percentage)
+    meals[action] = {id = item:getID(), percentage = entry.percentage}
+    ISTimedActionQueue.add(action)
+end
+
+if Packaged then
+    Packaged.onOpened = function(player, args)
+        for _, entry in pairs(waits) do
+            if entry.player == player and not entry.outputId and openingValid(entry)
+                and args.sourceID == entry.id and args.recipe == entry.recipe:getName()
+                and args.outputType == entry.outputType and type(args.outputID) == "number"
+                and args.outputID ~= entry.id then entry.outputId = args.outputID; return end
+        end
+    end
+    Events.OnServerCommand.Add(function(module, command, args)
+        if module ~= "PZSurvivorToolkitFood" or command ~= "Opened" or type(args) ~= "table" then return end
+        local player = getPlayerByOnlineID(args.onlineID)
+        if player and getSpecificPlayer(player:getPlayerNum()) == player then Packaged.onOpened(player, args) end
+    end)
+end
+
+local function captureOpening(action, entry)
+    if action.Type ~= "ISHandcraftAction" or action.character ~= entry.player
+        or action.craftRecipe ~= entry.recipe or action.eatPercentage ~= 0
+        or not Toolkit.ActionQueueCraft.supports(action) or type(action.manualInputs) ~= "table" then return false end
+    local source, inputs = 0, {}
+    for index, items in pairs(action.manualInputs) do
+        inputs[index] = {}
+        for i = 0, items:size() - 1 do
+            local id = items:get(i):getID()
+            inputs[index][#inputs[index] + 1] = id
+            if id == entry.id then source = source + 1 end
+        end
+    end
+    if source ~= 1 then return false end
+    local logic = action.onCompleteTarget
+    local output = logic and entry.recipe:getOutputs():get(0):getItem(logic:getRecipeData())
+    if not output then return false end
+    entry.inputs, entry.outputType = inputs, output:getFullName()
+    action.item = entry.item
+    entry.queue = ISTimedActionQueue.getTimedActionQueue(entry.player)
+    entry.generation = entry.queue.toolkitOperationGeneration or 0
+    local wait = Operations.command(entry.player, eatOpened, entry, {ready = openingReady, fields = {item = entry.item}})
+    entry.wait, openings[action], waits[wait] = wait, entry, entry
+    return true
 end
 
 function Bulk.isCleanup(action)
@@ -89,6 +205,16 @@ installCleanupContract()
 Events.OnGameStart.Add(installCleanupContract)
 
 function Bulk.missing(action)
+    if Bulk.isOpening(action) then
+        local entry, inventory = openings[action], action.character:getInventory()
+        for _, ids in pairs(entry.inputs) do
+            for _, id in ipairs(ids) do
+                if not inventory:containsID(id) then entry.failed = true; return true end
+            end
+        end
+        if action.logic and not action.logic:canPerformCurrentRecipe() then entry.failed = true; return true end
+        return false
+    end
     if not (Bulk.isEat(action) or Bulk.isCleanup(action)) or not Toolkit.ActionQueuePolicy.inspect(action) then return false end
     local inventory = action.character:getInventory()
     if isClient() then return not inventory:containsID(action.item:getID()) end
@@ -98,12 +224,17 @@ end
 function Bulk.skipUnavailable(queue)
     local action = queue.queue[2]
     -- Preparation may outlive the item or change satiety; preserve its native cleanup actions.
-    while action and not action.action and (Bulk.isEat(action) or Bulk.isCleanup(action)) and Toolkit.ActionQueuePolicy.inspect(action)
-        and ((Bulk.isEat(action) and (Bulk.missing(action) or action.character:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN) >= 3))
+    while action and not action.action and (Bulk.isEat(action) or Bulk.isCleanup(action) or Bulk.isOpening(action)) and Toolkit.ActionQueuePolicy.inspect(action)
+        and ((Bulk.isOpening(action) and Bulk.missing(action))
+            or (Bulk.isEat(action) and (Bulk.missing(action) or action.character:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN) >= 3))
             or (Bulk.isCleanup(action) and (Bulk.missing(action) or action.item:isBroken()))) do
         table.remove(queue.queue, 2)
         action:forceCancel()
         if Bulk.isEat(action) then Toolkit.ActionQueueBatch.discard(action) end
+        if Bulk.isOpening(action) then
+            Toolkit.ActionQueueCraft.cancelWaiting(action)
+            Toolkit.ActionQueueBatch.discard(openings[action].command)
+        end
         action = queue.queue[2]
     end
 end
@@ -112,9 +243,10 @@ local function reserved(player)
     local used = {}
     local queue = ISTimedActionQueue.queues[player]
     for _, action in ipairs(queue and queue.queue or {}) do
-        if action.item and (action.Type == "ISEatFoodAction" or Bulk.isCommand(action)) then
+        if action.item and (action.Type == "ISEatFoodAction" or Bulk.isCommand(action) or Bulk.isOpeningWait(action)) then
             used[action.item:getID()] = true
         end
+        if Bulk.isOpening(action) then used[openings[action].id] = true end
     end
     return used
 end
@@ -134,14 +266,19 @@ local function dispatch(player, entry)
     local item = player:getInventory():getItemById(entry.id) or entry.source:getItemById(entry.id)
     local container = item and item:getContainer()
     if player:isDead() or not edible(item)
+        or (entry.recipe and Packaged.recipe(item) ~= entry.recipe)
         or (container ~= entry.source and container ~= player:getInventory())
         or not available(player, item, ISInventoryPaneContextMenu.getContainers(player))
         or player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN) >= 3 then
         Toolkit.ActionQueueBatch.discard(entry.command)
         return
     end
-    local add = ISTimedActionQueue.add
+    local add, candidates = ISTimedActionQueue.add, {}
     ISTimedActionQueue.add = function(action)
+        if entry.recipe and action.character == player and action.Type == "ISHandcraftAction"
+            and action.craftRecipe == entry.recipe then
+            candidates[#candidates + 1] = action
+        end
         if action.character == player and action.Type == "ISEatFoodAction"
             and action.item == item and action.percentage == entry.percentage then meals[action] = entry end
         if action.character == player and action.Type == "ISUnequipAction" then
@@ -154,9 +291,23 @@ local function dispatch(player, entry)
         return add(action)
     end
     -- Keep the game's mask, utensil, transfer and return handling, including mod integrations.
-    local ok, err = pcall(ISInventoryPaneContextMenu.eatItem, item, entry.percentage, player:getPlayerNum())
+    local ok, err = pcall(ISInventoryPaneContextMenu.eatItem, item, entry.percentage, player:getPlayerNum(), entry.recipe, entry.recipe and 0)
     ISTimedActionQueue.add = add
     if not ok then error(err, 0) end
+    -- OnNewCraft attaches its logic callback only after HandcraftStart has enqueued the action.
+    if entry.recipe then
+        local action = #candidates == 1 and candidates[1]
+        if action and captureOpening(action, entry) then
+            action.toolkitBatchUnit = nil
+            add(entry.wait)
+            local queue = entry.queue
+            table.remove(queue.queue, queue:indexOf(entry.wait))
+            table.insert(queue.queue, queue:indexOf(action) + 1, entry.wait)
+        else
+            for _, candidate in ipairs(candidates) do candidate.eatPercentage = entry.percentage * 100 end
+            Toolkit.ActionQueueBatch.discard(entry.command)
+        end
+    end
 end
 
 function Bulk.queue(player, selected, percentage)
@@ -167,6 +318,7 @@ function Bulk.queue(player, selected, percentage)
     return Operations.run(function()
         for _, item in ipairs(items) do
             local entry = {item = item, id = item:getID(), source = item:getContainer(), player = player, percentage = percentage}
+            entry.recipe = Packaged and Packaged.recipe(item)
             local command = Operations.command(player, dispatch, entry, {fields = {item = item}})
             entry.command, commands[command] = command, entry
             ISTimedActionQueue.add(command)
@@ -176,7 +328,8 @@ function Bulk.queue(player, selected, percentage)
 end
 
 function Bulk.queueOne(rows, percentage, playerIndex, openingRecipe, eatPercentage)
-    if not Toolkit.Settings.actionQueue() or not portion(percentage) or openingRecipe then
+    if not Toolkit.Settings.actionQueue() or not portion(percentage)
+        or (openingRecipe and not (Packaged and Packaged.supports(openingRecipe))) then
         return ISInventoryPaneContextMenu.onEatItems(rows, percentage, playerIndex, openingRecipe, eatPercentage)
     end
     local player = getSpecificPlayer(playerIndex)
@@ -189,7 +342,8 @@ local function eatMenu(context)
     for _, option in ipairs(context.options) do
         if option.toolkitBulkFood then return context, option end
         if option.onSelect == ISInventoryPaneContextMenu.onEatItems
-            and option.param1 == 1 and not option.param3 and not option.ES_EatSmart then return context, option end
+            and option.param1 == 1 and (not option.param3 or (Packaged and Packaged.supports(option.param3)))
+            and not option.ES_EatSmart then return context, option end
         local submenu = context:getSubMenu(option.subOption)
         if submenu then
             local menu, found = eatMenu(submenu)
@@ -213,7 +367,7 @@ local function fillMenu(playerIndex, context, rows)
         local percentage = native.param1
         -- Eat Smart computes its own first-item portion; its public callback remains untouched.
         if native.onSelect == ISInventoryPaneContextMenu.onEatItems and portion(percentage)
-            and not native.param3 and not native.ES_EatSmart then
+            and (not native.param3 or (Packaged and Packaged.supports(native.param3))) and not native.ES_EatSmart then
             native.toolkitBulkFood, native.toolkitOriginalOnSelect = true, native.onSelect
             native.onSelect = Bulk.queueOne
             if #selected == 0 then native.notAvailable = true end

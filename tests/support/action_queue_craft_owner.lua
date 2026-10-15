@@ -10,6 +10,7 @@ return function(source)
     Toolkit.ActionQueueOperations.registerProducer = producer or function() end
     ISTimedActionQueue = queue or {}
     Events = events or {}
+    Events.OnTick = Events.OnTick or {Add = function() end}
     getActivatedMods = function() return {contains = function(_, id) return id == 'Neat_Crafting' end} end
     getModFileReader = function(id, path)
         if id ~= 'Neat_Crafting' or not path:find('NC_CraftActionPanel.lua', 1, true) then return end

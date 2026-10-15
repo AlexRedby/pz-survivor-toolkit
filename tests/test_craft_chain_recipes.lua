@@ -1,4 +1,6 @@
-local testNext = next
+local function testNext(values)
+    for key, value in pairs(values) do return key, value end
+end
 next = nil -- Native Kahlua does not expose this Lua standard-library global.
 require = function() end
 local function list(values)
@@ -203,7 +205,30 @@ ISCraftingUI = {ReturnItemsToOriginalContainer = function(p, items)
         queued[#queued + 1] = {Type = "return", item = value, srcContainer = inventory, destContainer = value:getContainer()}
     end
 end}
-dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/CraftChainRecipes.lua")
+local resetEvents = {}
+Events = {}
+for _, name in ipairs({"OnGameStart", "OnMainMenuEnter", "OnGameExit", "OnPlayerDeath"}) do
+    Events[name] = {Add = function(fn) resetEvents[name] = fn end}
+end
+ISHandCraftPanel = {OnCloseWindow = function(self) self.closed = true; return "closed", nil, 9 end}
+NC_HandcraftWindow = {close = function(self) self.closed = true; return "neat-close" end}
+NC_EntityWindow = {close = NC_HandcraftWindow.close}
+local sourcePath = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/CraftChainRecipes.lua"
+local source
+if NativeReadText then source = NativeReadText(sourcePath)
+else
+    local reader = assert(io.open(sourcePath)); source = reader:read("*a"); reader:close()
+end
+-- Inspect the real active registry under stock Kahlua, without relying on weak-key GC.
+source = source:gsub("local intentions, hooked = {}, {}", "%0; TestCraftIntentions = intentions")
+assert(loadstring(source, "@" .. sourcePath))()
+local activeIntentions = TestCraftIntentions
+TestCraftIntentions = nil
+local function activeCount()
+    local count = 0
+    for _ in pairs(activeIntentions) do count = count + 1 end
+    return count
+end
 local api = PZSurvivorToolkit.CraftChainRecipes
 local panel = {logic = HandcraftLogic.new(player, nil, surface)}
 panel.logic:setRecipe(spoon)
@@ -448,4 +473,67 @@ failed,message=api.collect(panel)
 assert(not failed and message=="UI_PZST_CraftChaincomplex" and lastSelectedRecipe==spoon)
 queued={};execute(plan.steps[2])
 assert(#queued==0, "oversized changed inventory must fail before any native item transaction")
+-- Closed owners keep their listener target for safe reuse, but release active registry entries and payloads.
+nativeItems = {branch, branch2, plank}
+panel.logic:setManualSelectInputs(true)
+panel.logic.inputFilter = spoon.inputs[1]
+local owner = {logic = panel.logic}
+panel.parent = {parent = owner}
+nativePicker.parent = panel.parent
+neatPicker.HandCraftPanel = owner
+panel.logic.selections[spoon.inputs[1]] = list()
+neatPicker:onItemSelected(branch)
+local state = owner.pzstCraftChainIntention
+assert(state and state.active and state.inputs[spoon.inputs[1]].ids[branch:getID()])
+local listenerCount = #panel.logic.listeners
+local closed, empty, tail = ISHandCraftPanel.OnCloseWindow(owner)
+assert(closed == "closed" and empty == nil and tail == 9, "owner cleanup preserves native return values")
+assert(not state.active and not state.recipe and not testNext(state.inputs), "owner close releases selected IDs and recipe")
+assert(activeCount() == 0, "closed logic is removed from the strong active registry")
+for i = 1, 40 do
+    api.collect(panel)
+    assert(owner.pzstCraftChainIntention == state and #panel.logic.listeners == listenerCount,
+        "reopening the same logic reuses its listener identity")
+    panel.logic.selections[spoon.inputs[1]] = list()
+    neatPicker:onItemSelected(branch)
+    panel.logic.selections[spoon.inputs[1]] = list({plank})
+    assert(api.collect(panel).recipes.Spoon.inputs[1].preferredIds[branch:getID()],
+        "active intent must survive automatic same-slot replacement after reopening")
+    NC_HandcraftWindow.close({HandCraftPanel = owner})
+    assert(not state.active and not testNext(state.inputs) and activeCount() == 0)
+end
+for i = 1, 40 do
+    local logic = HandcraftLogic.new(player, nil, surface)
+    logic:setRecipe(spoon)
+    local transient = {logic = logic}
+    api.collect(transient)
+    local transientState = transient.pzstCraftChainIntention
+    NC_EntityWindow.close({HandCraftPanel = transient})
+    assert(not transientState.active and not transientState.recipe and not testNext(transientState.inputs),
+        "fresh closed owners release their active state without relying on weak-key collection")
+    assert(activeCount() == 0, "repeated fresh owners cannot accumulate strong logic keys")
+end
+local otherLogic = HandcraftLogic.new(player, nil, surface)
+otherLogic:setRecipe(spoon)
+local otherOwner = {logic = otherLogic}
+api.collect(panel); api.collect(otherOwner)
+assert(activeCount() == 2, "independent live crafting owners retain independent intent states")
+ISHandCraftPanel.OnCloseWindow(owner)
+assert(activeCount() == 1 and otherOwner.pzstCraftChainIntention.active,
+    "closing one owner must preserve the other live owner")
+ISHandCraftPanel.OnCloseWindow(otherOwner)
+assert(activeCount() == 0)
+api.collect(panel); api.collect(otherOwner)
+resetEvents.OnMainMenuEnter()
+assert(activeCount() == 0 and not state.active and not otherOwner.pzstCraftChainIntention.active,
+    "shutdown clears every concurrently registered owner under stock Kahlua iteration")
+for _, name in ipairs({"OnPlayerDeath", "OnMainMenuEnter", "OnGameExit"}) do
+    api.collect(panel)
+    panel.logic.selections[spoon.inputs[1]] = list()
+    neatPicker:onItemSelected(branch)
+    resetEvents[name](name == "OnPlayerDeath" and player or nil)
+    assert(not state.active and not state.recipe and not testNext(state.inputs), "shutdown releases active input payload")
+    assert(activeCount() == 0, "shutdown empties the strong active registry")
+    assert(api.collect(panel) and #panel.logic.listeners == listenerCount, "post-shutdown collection reuses bound listeners")
+end
 print("Craft chain native adapter checks passed: contracts, protection, deferred inputs, atomic preflight, deterministic recipe filtering and manual choices.")

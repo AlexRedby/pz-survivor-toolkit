@@ -42,7 +42,8 @@ end
 function Definitions.resolve(action)
     local Food = PZSurvivorToolkit.BulkFood
     local kind = action and action.Type
-    if action and Food and Food.isCommand(action) then kind = "ISEatFoodAction" end
+    if action and Food and (Food.isCommand(action) or (Food.isOpening and Food.isOpening(action))
+        or (Food.isOpeningWait and Food.isOpeningWait(action))) then kind = "ISEatFoodAction" end
     local id = kind and Definitions.types[kind]
     local entry = id and Definitions.entries[id]
     return entry and entry.presentation, id
@@ -83,7 +84,9 @@ local radioKeys = {
 }
 local function preparation(action)
     local description = Definitions.resolve(action)
+    local Food = PZSurvivorToolkit.BulkFood
     return action.toolkitBulkPreparation == true
+        or (Food and Food.isOpening and Food.isOpening(action))
         or description and (description.role == "preparation" or description.role == "return") or false
 end
 
@@ -536,7 +539,8 @@ local function icon(action, presentation)
         local take = action.toolkitFuelTake or action.Type == "ISTakeGasolineFromVehicle"
         return getTexture(take and "media/ui/vehicles/gas_siphon.png" or "media/ui/vehicles/gas_refuel.png") or fallback
     end
-    if instance(action.craftRecipe, "CraftRecipe") then
+    local Food = PZSurvivorToolkit.BulkFood
+    if instance(action.craftRecipe, "CraftRecipe") and not (Food and Food.isOpening and Food.isOpening(action)) then
         local texture = action.craftRecipe:getIconTexture()
         if texture then return texture end
     end

@@ -5,12 +5,13 @@ local Toolkit = PZSurvivorToolkit
 local Operations = Toolkit.ActionQueueOperations
 local Compat = {}
 Toolkit.ActionQueueCompat = Compat
-local records = setmetatable({}, {__mode = "k"})
-local classes, installed, sessions = {}, {}, setmetatable({}, {__mode = "k"})
+local records = {}
+local classes, installed, sessions = {}, {}, {}
 local owners = {}
 local craftOwners = {}
 local ready = {}
 local sourceScope
+local worldGeneration = 0
 local installAttempted
 local readFixAttempted
 local transferSourceSafe = true
@@ -63,6 +64,37 @@ local sourceFiles = {
 }
 
 local function pack(...) return {n = select("#", ...), ...} end
+
+function Compat.prune()
+    local pending = false
+    for _, registry in ipairs({records, sessions}) do
+        for _ in pairs(registry) do pending = true; break end
+        if pending then break end
+    end
+    if not pending then return end
+    local queued = {}
+    for character, queue in pairs(ISTimedActionQueue.queues) do
+        if not character:isDead() then
+            for _, action in ipairs(queue.queue or {}) do queued[action] = true end
+        end
+    end
+    for action in pairs(records) do if not queued[action] then records[action] = nil end end
+    for character, session in pairs(sessions) do
+        if character:isDead() or ISTimedActionQueue.queues[character] ~= session.queue
+            or (session.queue.toolkitOperationGeneration or 0) ~= session.generation then
+            sessions[character] = nil
+        else
+            -- Delayed Tidy restores still need task/pickup history after the source action leaves the queue.
+            for action in pairs(session.seen) do if not queued[action] then session.seen[action] = nil end end
+        end
+    end
+end
+Events.OnTick.Add(Compat.prune)
+if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
+    worldGeneration = worldGeneration + 1
+    for action in pairs(records) do records[action] = nil end
+    for character in pairs(sessions) do sessions[character] = nil end
+end) end
 
 -- getModFileReader resolves the selected B42 version, then common; no Workshop path is assumed.
 -- Kahlua strings use UTF16; development Lua uses UTF8. Hash the same normalized source in both.
@@ -120,6 +152,7 @@ end
 local function live(record)
     local character, queue, token = record.character, record.queue, record.token
     if not token or token.toolkitCancelled or not Toolkit.Settings.actionQueue()
+        or (record.worldGeneration and record.worldGeneration ~= worldGeneration)
         or character:isDead() or ISTimedActionQueue.queues[character] ~= queue
         or (queue.toolkitOperationGeneration or 0) ~= record.generation then return false end
     local target = record.target
@@ -155,8 +188,8 @@ local function instanceUnchanged(target, class)
     return true
 end
 
-local function matches(action)
-    local record = records[action]
+local function matches(action, record)
+    record = record or records[action]
     if not record or record.opaque or getmetatable(action) ~= record.class or action.Type ~= record.class.Type
         or action.character ~= record.character or action.toolkitQueueOperation ~= record.token
         or not classUnchanged(record.class, record.baseline) or not ownerUnchanged(record.id)
@@ -228,7 +261,7 @@ local function adopt(action)
     if records[action] then return end
     local queue = ISTimedActionQueue.getTimedActionQueue(action.character)
     local record = {class = class, baseline = baseline, character = action.character,
-        token = action.toolkitQueueOperation, queue = queue, generation = queue.toolkitOperationGeneration or 0,
+        token = action.toolkitQueueOperation, queue = queue, generation = queue.toolkitOperationGeneration or 0, worldGeneration = worldGeneration,
         id = context.id, target = context.target, fields = {}, itemIdentities = {}, owner = context.owner,
         opaque = context.opaque or (context.sharedCleanup and class == P4RestoreFloorAction), sharedCleanup = context.sharedCleanup}
     records[action] = record
@@ -271,7 +304,7 @@ local function adopt(action)
         record.args = {}
         for i = 1, 8 do record.args[i] = args[i] end
         action.onCompleteFunc = function(...)
-            if record.continued or not matches(action) or not live(record) then return end
+            if record.continued or not matches(action, record) or not live(record) then return end
             record.continued = true
             local handle = Operations.attachContinuation(record.token, record.character)
             return Operations.runContinuation(handle, function(...)
@@ -281,7 +314,7 @@ local function adopt(action)
     end
     local perform = action.perform
     action.perform = function(self, ...)
-        if matches(self) then
+        if matches(self, record) then
             return Operations.perform(self, function(...) return scoped(record, perform, ...) end, ...)
         end
         return perform(self, ...)
@@ -700,7 +733,7 @@ rememberTidy = function(action)
             if not record then
                 local queue = ISTimedActionQueue.getTimedActionQueue(character)
                 record = {token = token, queue = queue, generation = queue.toolkitOperationGeneration or 0,
-                    tasks = {}, seen = setmetatable({}, {__mode = "k"})}
+                    tasks = {}, seen = {}}
                 sessions[character] = record
             elseif record.token ~= token then record.mixed = true end
             if record.seen[action] then return end

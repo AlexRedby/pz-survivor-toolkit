@@ -68,6 +68,7 @@ local function layout()
         return row
     end, setElement=function(self,col,row,button) self.elements[row]=button end}
 end
+ISHandCraftPanel = {OnCloseWindow=function() return "owner-close" end}
 ISCraftRecipePanel = {createDynamicChildren=function(panel) panel.rootTable=layout();return 'native',nil,7 end,
     prerender=function() return true end}
 NC_CellBaseCraft = {createChildren=function() return 'created' end, prerender=function() end,
@@ -81,8 +82,11 @@ NC_HandcraftWindow = {close=function() return 'close' end,
     onJoypadDown=function() nativeBack=nativeBack+1 end}
 NC_EntityWindow={}
 for key,value in pairs(NC_HandcraftWindow) do NC_EntityWindow[key]=value end
-local onStart
+local onStart, resets = nil, {}
 Events = {OnGameStart={Add=function(f) onStart=f end}}
+for _, name in ipairs({'OnMainMenuEnter','OnGameExit','OnPlayerDeath'}) do
+    Events[name] = {Add=function(fn) resets[name]=fn end}
+end
 PZSurvivorToolkit = {Settings={craftChains=function() return enabled end}}
 local allChoices={{fullType='Handle',amount=1},{fullType='Plank',amount=1},{fullType='Missing',amount=1}}
 local spec = {id='spoon',name='Wooden <Spoon>',inputs={
@@ -111,7 +115,7 @@ require = function(name)
     if name=='PZSurvivorToolkit/CraftChainRecipes' then return Recipes end
     if name=='PZSurvivorToolkit/CraftPlanner' then return Planner end
 end
-local Chains=dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/CraftChains.lua')
+local Chains=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/CraftChains.lua'))()
 local function panel()
     return setmetatable({logic={getPlayer=function() return player end,getRecipe=function() return recipe end},
         xuiRecalculateLayout=function(self) self.recalculated=true end,
@@ -176,6 +180,10 @@ check(view.closed and not view.window.managed and view.quantity.unfocused,'disab
 enabled=true;view=Chains.open(p);dead=true;view:startPlan()
 check(queued==1 and not view.plan,'dead character cannot confirm an old plan')
 view:close();dead=false
+
+view=Chains.open(p)
+check(ISHandCraftPanel.OnCloseWindow({logic=p.logic})=='owner-close' and view.closed and not view.window.managed,
+    'closing native crafting owner releases its floating plan')
 
 local tooltipCount=0
 local slot={removeTooltip=function() tooltipCount=tooltipCount+1 end}
@@ -292,4 +300,14 @@ view:close()
 check(menu.hidden and not view.model and not view.overrides,'closing releases menus, choices and inventory snapshots')
 menu.options[3].onSelect(view,menu.options[3].selection)
 check(view.closed and not view.plan,'old popup callback cannot change a closed plan')
+for _, name in ipairs({'OnMainMenuEnter','OnGameExit','OnPlayerDeath'}) do
+    view=Chains.open(hand)
+    view:openChoices(rows(view,'input')[1]);menu=view.choiceMenu
+    resets[name](name=='OnPlayerDeath' and player or nil)
+    check(view.closed and menu.hidden and not nc.pzstPlanView and not view.model and not view.context,
+        'shutdown releases registered views, menus and inventory snapshots')
+    local reopened=Chains.open(hand)
+    check(reopened~=view and not reopened.closed and #nc.children==2,'shutdown permits a fresh bound plan view')
+    reopened:close()
+end
 print('Craft-chain UI: '..checks..' checks passed (icons, accounting, embedding, changes, layout and lifecycle).')
