@@ -1,5 +1,10 @@
 if not NativeActionRoot then print('Generator native contracts SKIP.'); return end
 local f = assert(loadfile(ProjectRoot .. '/tests/support/action_queue_native.lua'))()
+require = function(name)
+    if name == 'PZSurvivorToolkit/ActionQueueGeneratorOverlay' then
+        return PZSurvivorToolkit.ActionQueueGeneratorOverlay or f.project('ActionQueueGeneratorOverlay')
+    end
+end
 local function readText(path, raw)
     if raw and NativeReadRawText then return NativeReadRawText(path) end
     if NativeReadText then return NativeReadText(path) end
@@ -64,7 +69,8 @@ p.stopOrTriggerSound = function() stoppedSounds = stoppedSounds + 1 end
 getPlayerHotbar = function() return nil end
 local function square(x, y, z)
     return {getX = function() return x or 0 end, getY = function() return y or 0 end, getZ = function() return z or 0 end,
-        getObjects = function() return list({}) end, has = function() return false end, canReachTo = function() return true end}
+        getObjects = function() return list({}) end, getBuilding = function(self) return self.building end,
+        has = function() return false end, canReachTo = function() return true end}
 end
 p.square = square(); p.getSquare = function(self) return self.square end
 p.getCurrentSquare = p.getSquare
@@ -72,6 +78,9 @@ p.getX, p.getY = function() return 0.5 end, function() return 0.5 end
 AdjacentFreeTileFinder = {Find = function(target) return target end}
 native('client/TimedActions/WalkToTimedAction.lua')
 IsoGenerator = {isPoweringSquare = function(x, y, z, tx, ty, tz) return (x - tx)^2 + (y - ty)^2 <= 400 and math.abs(z - tz) <= 3 end}
+getSandboxOptions = function() return {getOptionByName = function(_, name)
+    return {getValue = function() return name == 'GeneratorTileRange' and 20 or 3 end}
+end} end
 local originalInstanceof = instanceof
 instanceof = function(value, name)
     return originalInstanceof(value, name) or name == 'InventoryItem' and type(value) == 'table' and value.class == 'InventoryContainer'
@@ -181,6 +190,25 @@ local container = {class = 'ItemContainer', getParent = function() return applia
 assert(adapter.sharesTarget(action, {srcContainer = container}))
 assert(adapter.sharesTarget(action, {toolkitWorldX = 20, toolkitWorldY = 0, toolkitWorldZ = 3, toolkitWorldWidth = 3}))
 assert(not adapter.sharesTarget(action, {toolkitWorldX = 21, toolkitWorldY = 0, toolkitWorldZ = 3}))
+for _, spec in ipairs({{40, 0, 6, true}, {41, 0, 6, false}, {40, 1, 0, false}, {0, 0, 7, false}, {0, 0, -6, true}}) do
+    local neighbour = generator(spec[1], spec[2], spec[3])
+    local _, command = queued('onPlugGenerator', neighbour, true)
+    local current = f.queue(head(), action, command)
+    assert((policy.moveReason(current, command, action) == 'move_dependent') == spec[4], 'generator power overlap must preserve consumers')
+    assert((policy.moveReason(current, action, command, true) == 'move_dependent') == spec[4])
+    assert((policy.cancelOperationReason(current, action) == 'operation_dependent') == spec[4])
+end
+local indoor = generator(100, 100)
+g.square.building, indoor.square.building = {}, nil
+indoor.square.building = g.square.building
+assert(adapter.sharesTarget(action, {generator = indoor}), 'indoor generators share building toxicity beyond their power areas')
+indoor.square.building = {}
+assert(not adapter.sharesTarget(action, {generator = indoor}), 'different buildings with disjoint power areas stay independent')
+g.square.building = nil
+assert(adapter.sharesTarget(action, {object = {class = 'IsoObject', getSquare = function() end}}), 'unloaded world targets retain protection')
+local options = getSandboxOptions; getSandboxOptions = nil
+assert(adapter.sharesTarget(action, {generator = other}), 'missing native range options cannot grant independence')
+getSandboxOptions = options
 -- A native appliance inspector supplies the same dependency to the policy.
 local applianceClass = ISBaseTimedAction:derive('ISToggleStoveAction')
 -- Register the class before its constructor instance is inspected.
@@ -383,6 +411,85 @@ assert(not adapter.sharesTarget(action,head()),'native books remain independent 
 local walk=luautils.walkAdj;luautils.walkAdj=function() end
 assert(not policy.inspect(action) and not policy.inspect(repaired),'changed shared executor still revokes per-kind repair permission')
 luautils.walkAdj=walk;BGI_PowerRange=nil
+if bgiSource then
+    native('client/ISUI/ISWorldObjectContextMenu.lua')
+    for _,name in ipairs({'ISPlugGenerator','ISActivateGenerator','ISFixGenerator','ISAddFuel','ISTakeGenerator'}) do
+        native('shared/TimedActions/'..name..'.lua')
+    end
+    native('client/TimedActions/ISGeneratorInfoAction.lua')
+    local beforeRequire, beforeMods, beforeReader = require, getActivatedMods, getModFileReader
+    local beforeGameInput = getGameFilesInput
+    local beforeCell, beforePlayer = getCell, getPlayer
+    getActivatedMods = function() return {contains=function(_, id) return id=='BetterGeneratorInfo' end} end
+    local function reader(source)
+        local text,index=source:gsub('\r',''),1
+        return {readLine=function()
+            if index>#text then return end
+            local ending=text:find('\n',index,true)
+            local line=text:sub(index,ending and ending-1 or #text);index=ending and ending+1 or #text+1;return line
+        end,close=function() end}
+    end
+    getModFileReader = function(id, path)
+        assert(id=='BetterGeneratorInfo' and path=='media/lua/client/BGI/BGI_PowerRange.lua')
+        return reader(bgiSource)
+    end
+    getGameFilesInput = function(path)
+        if path~='media/lua/client/BGI/BGI_PowerRange.lua' then return beforeGameInput(path) end
+        return reader(NativeReadRawText and NativeWishlistWorkshopRoot and readText(NativeWishlistWorkshopRoot
+            .. '/3576056135/mods/Better Generator Info/42.20/media/lua/client/BGI/BGI_PowerRange.lua',true) or bgiSource)
+    end
+    Events.LoadGridsquare, Events.OnObjectAboutToBeRemoved = {Add=function() end}, {Add=function() end}
+    ISGeneratorInfoWindow={}
+    getCell, getPlayer=function() return {} end, function() end
+    require=function(name)
+        if name=='BGI/BGI_PowerRange' then return assert(loadstring(bgiSource,'@BGI/BGI_PowerRange.lua'))() end
+        return beforeRequire(name)
+    end
+    f.project('ActionQueueOperations'); f.project('ActionQueueDefinitions'); policy=f.project('ActionQueuePolicy')
+    f.project('ActionQueueCompat'); local overlay=f.project('ActionQueueGeneratorOverlay')
+    local beforeUnequip=ISUnequipAction.new
+    ISUnequipAction.new=function() error('generator control called an unrelated equipment helper') end
+    adapter=f.project('ActionQueueGenerators');adapter.prepareOverlay();adapter.install();policy.installContracts()
+    assert(overlay.powerScopeKnown(), 'actual BGI must be installed around verified native delegates')
+    for _,method in ipairs({'onPlugGenerator','onActivateGenerator'}) do
+        q,action=queued(method,g,true)
+        local book=head();q.queue[#q.queue+1]=book
+        assert(policy.inspect(action) and not policy.cancelOperationReason(q,action), 'verified BGI command must be cancellable')
+        assert(not policy.moveReason(q,book,action) and not policy.moveReason(q,action,book,true), 'BGI command can cross independent reading')
+        local nativeAction=method=='onPlugGenerator' and ISPlugGenerator:new(p,g,true) or ISActivateGenerator:new(p,g,true)
+        nativeAction.toolkitQueueOperation={}
+        assert(policy.inspect(nativeAction), 'expanded BGI native step must retain its contract')
+        assert(not adapter.sharesTarget(action,{object=distant}) and not adapter.sharesTarget({object=distant},action), 'audited overlay must not expand real power scope')
+        assert(adapter.sharesTarget(action,{object=appliance}), 'audited overlay must retain actual power dependencies')
+        local rebuild=BGI_PowerRange._rebuildUnionEdges
+        BGI_PowerRange._rebuildUnionEdges=function() error('foreign overlay helper') end
+        assert(not policy.inspect(action) and not policy.inspect(nativeAction), 'changed overlay helper must revoke deferred and expanded contracts')
+        assert(adapter.sharesTarget(action,{object=distant}), 'changed overlay helper restores conservative world scope')
+        BGI_PowerRange._rebuildUnionEdges=rebuild
+        assert(policy.inspect(action) and policy.inspect(nativeAction))
+        local match=overlay.matches;overlay.matches=function() return true end
+        assert(not policy.inspect(action) and not policy.inspect(nativeAction), 'replaced overlay verifier must revoke contracts')
+        overlay.matches=match
+        PZSurvivorToolkit.ActionQueueGeneratorOverlay={}
+        assert(not policy.inspect(action), 'replaced overlay adapter must revoke contracts')
+        PZSurvivorToolkit.ActionQueueGeneratorOverlay=overlay
+        g.removed=true;assert(adapter.canSkip(nativeAction));g.removed=nil
+        enabled=false
+        q=f.queue(head())
+        if method=='onPlugGenerator' then ISWorldObjectContextMenu[method](nil,g,0,true)
+        else ISWorldObjectContextMenu[method](nil,true,g,0) end
+        for _,a in ipairs(q.queue) do assert(a.Type~='ISQueueActionsAction', 'disabled queue must preserve native BGI dispatch') end
+        enabled=true
+    end
+    q,action=queued('onPlugGenerator',g,true)
+    q.queue,q.current={action},action;action:begin();action:start()
+    assert(q.queue[#q.queue].Type=='ISPlugGenerator' and policy.inspect(q.queue[#q.queue]), 'deferred BGI executor must expand to a trusted native step')
+    require,getActivatedMods,getModFileReader=beforeRequire,beforeMods,beforeReader
+    getGameFilesInput=beforeGameInput
+    getCell,getPlayer=beforeCell,beforePlayer
+    ISUnequipAction.new=beforeUnequip
+    BGI_PowerRange=nil;f.project('ActionQueueGeneratorOverlay')
+end
 local cleanSource=NativeCleanUIInventoryContextSource or (NativeWishlistWorkshopRoot and readText(NativeWishlistWorkshopRoot
     .. '/3437629766/mods/CleanUI/42.19/media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'))
 if cleanSource then
@@ -493,7 +600,8 @@ PZSurvivorToolkit.ActionQueueCarts={isTransferConstructor=function(callback)
 end,isTransfer=function() return false end,isReturn=function() return false end}
 ISInventoryTransferAction.new=cartInitial
 f.project('ActionQueueOperations');f.project('ActionQueueDefinitions');policy=f.project('ActionQueuePolicy')
-adapter=f.project('ActionQueueGenerators');adapter.install()
+local pendingCarts=PZSurvivorToolkit.ActionQueueCarts;PZSurvivorToolkit.ActionQueueCarts=nil
+adapter=f.project('ActionQueueGenerators');PZSurvivorToolkit.ActionQueueCarts=pendingCarts;adapter.install()
 q,action=queued('onFixGenerator',g)
 local cartRepair=ISFixGenerator:new(p,g)
 assert(policy.inspect(action) and policy.inspect(cartRepair), 'verified initial cart constructor allows native generator contracts')

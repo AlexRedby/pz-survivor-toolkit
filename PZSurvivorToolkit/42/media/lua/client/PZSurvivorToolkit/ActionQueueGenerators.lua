@@ -12,10 +12,19 @@ local Toolkit = PZSurvivorToolkit
 local Generators = {}
 Toolkit.ActionQueueGenerators = Generators
 local Operations, Policy = Toolkit.ActionQueueOperations, Toolkit.ActionQueuePolicy
-local Carts = Toolkit.ActionQueueCarts
-local cartCheck = Carts and Carts.isTransferConstructor
+local Overlay = require "PZSurvivorToolkit/ActionQueueGeneratorOverlay"
+local overlayMatches, overlayScope = Overlay.matches, Overlay.powerScopeKnown
+local function overlayUnchanged()
+    return Toolkit.ActionQueueGeneratorOverlay == Overlay and Overlay.matches == overlayMatches
+        and Overlay.powerScopeKnown == overlayScope
+end
+local function matchesOverlay(owner, name, callback)
+    return overlayUnchanged() and overlayMatches(owner, name, callback)
+end
+local Carts, cartCheck
 local marker, records, bindings, classes, helpers = {}, {}, {}, {}, {}
-local trustedInstalled, repairInstalled
+local trustedInstalled, basicInstalled
+local noEquipmentHooks = {ISGeneratorInfoAction = true, ISPlugGenerator = true, ISActivateGenerator = true, ISFixGenerator = true}
 local helperOwners = {}
 local continued = {}
 local pendingPerform = {}
@@ -73,22 +82,26 @@ local function nativeClosure(callback, filename)
     local ok, source = pcall(getFilenameOfClosure, callback)
     return ok and type(source) == "string" and source:gsub("\\", "/"):match("([^/]+)$") == filename
 end
+function Generators.prepareOverlay()
+    Overlay.prepare(sourceMatches, nativeClosure)
+end
 local function captureClass(name)
     local class = _G[name]
     if not class or class.Type ~= name then return end
     local methods = {}
     for key, value in pairs(class) do
         if type(value) == "function" then
-            if key ~= "derive" and not nativeClosure(value, name .. ".lua") then return end
+            if key ~= "derive" and not nativeClosure(value, name .. ".lua") and not matchesOverlay(class, key, value) then return end
             methods[key] = value
         end
     end
-    return {class = class, methods = methods}
+    return {class = class, methods = methods, overlay = matchesOverlay(class, "complete", class.complete)}
 end
 local function classUnchanged(kind)
     local saved = classes[kind]
     if not saved or _G[kind] ~= saved.class or saved.class.Type ~= kind then return false end
     for method, callback in pairs(saved.methods) do if saved.class[method] ~= callback then return false end end
+    if saved.overlay and not matchesOverlay(saved.class, "complete", saved.methods.complete) then return false end
     return true
 end
 local function cartConstructor(callback)
@@ -97,11 +110,11 @@ local function cartConstructor(callback)
 end
 local function unchanged(kind)
     for name, owner in pairs(helperOwners) do
-        if _G[name] ~= owner and (kind ~= "ISFixGenerator" or (name ~= "ISEquipWeaponAction" and name ~= "ISUnequipAction")) then return false end
+        if _G[name] ~= owner and (not noEquipmentHooks[kind] or (name ~= "ISEquipWeaponAction" and name ~= "ISUnequipAction")) then return false end
     end
     for _, saved in ipairs(helpers) do
         local current = saved.owner[saved.name]
-        if (kind ~= "ISFixGenerator" or not saved.equipment) and (saved.cart or current ~= saved.callback)
+        if (not noEquipmentHooks[kind] or not saved.equipment) and (saved.cart or current ~= saved.callback)
             and not (saved.owner == ISInventoryTransferAction and saved.name == "new"
             and cartConstructor(saved.callback) and cartConstructor(current)) then return false end
     end
@@ -223,10 +236,24 @@ local function powerConflict(first, second)
         if instanceof(container, "ItemContainer") then targets[#targets + 1] = container:getParent() end
     end
     -- Sparse native fields must not truncate later targets.
-    -- shortcut: BGI hooks have an unaudited world scope; keep world work ordered until that scope is pinned.
-    local unknownPowerScope = type(BGI_PowerRange) == "table"
+    local unknownPowerScope = type(BGI_PowerRange) == "table" and not (overlayUnchanged() and overlayScope())
+    local building = origin:getBuilding()
     for _, target in pairs(targets) do
-        if instanceof(target, "IsoObject") and (unknownPowerScope or contains(target:getSquare())) then return target end
+        if instanceof(target, "IsoObject") then
+            local square = target:getSquare()
+            if unknownPowerScope or not square or contains(square) then return target end
+            -- Activation changes toxicity for the whole indoor building, beyond the power radius.
+            if building and building == square:getBuilding() then return target end
+            if instanceof(target, "IsoGenerator") then
+                local options = getSandboxOptions and getSandboxOptions()
+                local radius = options and options:getOptionByName("GeneratorTileRange")
+                local vertical = options and options:getOptionByName("GeneratorVerticalPowerRange")
+                if not radius or not vertical then return target end
+                local dx, dy, dz = origin:getX() - square:getX(), origin:getY() - square:getY(), origin:getZ() - square:getZ()
+                -- Generators can share consumers while neither powers the other's square.
+                if dx * dx + dy * dy <= 4 * radius:getValue() ^ 2 and math.abs(dz) <= 2 * vertical:getValue() then return target end
+            end
+        end
     end
     if second.toolkitWorldX ~= nil then
         if unknownPowerScope then return true end
@@ -240,7 +267,7 @@ local function powerConflict(first, second)
     end
 end
 function Generators.canSkip(action)
-    if not (trustedInstalled or action.Type == "ISFixGenerator" and repairInstalled)
+    if not (trustedInstalled or noEquipmentHooks[action.Type] and basicInstalled)
         or not hashes[action.Type] or not Policy.inspect(action) then return false end
     local kind = action.Type
     local object = kind == "ISGeneratorInfoAction" and action.object or action.generator
@@ -265,6 +292,8 @@ local installed
 function Generators.install()
     if installed then return end
     installed = true
+    Carts = Toolkit.ActionQueueCarts
+    cartCheck = Carts and Carts.isTransferConstructor
     for _, name in ipairs({"luautils", "ISWorldObjectContextMenu", "ISInventoryPaneContextMenu", "ISInventoryTransferUtil",
         "ISInventoryTransferAction", "ISEquipWeaponAction", "ISUnequipAction", "ISWalkToTimedAction"}) do
         helperOwners[name] = _G[name]
@@ -275,8 +304,8 @@ function Generators.install()
         and (nativeInventory or cleanUIInventory)
         and sourceMatches("shared/luautils.lua", 1091751327)
         and sourceMatches("shared/TimedActions/ISInventoryTransferUtil.lua", 1281392797)
-    -- Native repair only walks and transfers scrap; equipment hooks belong to other producers.
-    local repairTrusted = trusted
+    -- Only fuel and pickup use the equipment preparation helpers.
+    local basicTrusted = trusted
     for name, hash in pairs(hashes) do
         local path = (name == "ISGeneratorInfoAction" and "client" or "shared") .. "/TimedActions/" .. name .. ".lua"
         classes[name] = sourceMatches(path, hash) and captureClass(name) or nil
@@ -288,21 +317,21 @@ function Generators.install()
         local callback = entry[1] and entry[1][entry[2]]
         local equipment = entry[1] == ISWorldObjectContextMenu and (entry[2] == "equip" or entry[2] == "transferIfNeeded")
         local valid = nativeClosure(callback, entry[3])
-        trusted, repairTrusted = trusted and valid, repairTrusted and (equipment or valid)
+        trusted, basicTrusted = trusted and valid, basicTrusted and (equipment or valid)
         helpers[#helpers + 1] = {owner = entry[1] or {}, name = entry[2], callback = callback, equipment = equipment}
     end
     if cleanUIInventory then
         for _, name in ipairs({"cleanUIResetStaleTimedActionRetrigger", "cleanUILogTimedActionFix"}) do
             local callback = ISInventoryPaneContextMenu[name]
             local valid = nativeClosure(callback, "ISInventoryPaneContextMenu.lua")
-            trusted, repairTrusted = trusted and valid, repairTrusted and valid
+            trusted, basicTrusted = trusted and valid, basicTrusted and valid
             helpers[#helpers + 1] = {owner = ISInventoryPaneContextMenu, name = name, callback = callback}
         end
     end
     for name, callback in pairs(ISInventoryTransferUtil or {}) do
         if type(callback) == "function" then
             local valid = nativeClosure(callback, "ISInventoryTransferUtil.lua")
-            trusted, repairTrusted = trusted and valid, repairTrusted and valid
+            trusted, basicTrusted = trusted and valid, basicTrusted and valid
             helpers[#helpers + 1] = {owner = ISInventoryTransferUtil, name = name, callback = callback}
         end
     end
@@ -312,10 +341,10 @@ function Generators.install()
         local cart = name == "ISInventoryTransferAction" and cartConstructor(callback)
         local equipment = name == "ISEquipWeaponAction" or name == "ISUnequipAction"
         local valid = cart or nativeClosure(callback, name == "ISWalkToTimedAction" and "WalkToTimedAction.lua" or name .. ".lua")
-        trusted, repairTrusted = trusted and valid, repairTrusted and (equipment or valid)
+        trusted, basicTrusted = trusted and valid, basicTrusted and (equipment or valid)
         helpers[#helpers + 1] = {owner = class or {}, name = "new", callback = callback, cart = cart, equipment = equipment}
     end
-    trustedInstalled, repairInstalled = trusted, repairTrusted
+    trustedInstalled, basicInstalled = trusted, basicTrusted
     if classes.ISFixGenerator then
         local native = ISFixGenerator.continueFixing
         ISFixGenerator.continueFixing = function(action)
@@ -368,9 +397,9 @@ function Generators.install()
                 and child.Type == "ISFixGenerator" and Policy.inspect(child) ~= nil
         end)
     end
-    if trusted or repairTrusted then
+    if trusted or basicTrusted then
         for name in pairs(classes) do
-            if trusted or name == "ISFixGenerator" then Policy.registerNative(name, Generators.inspect) end
+            if trusted or noEquipmentHooks[name] then Policy.registerNative(name, Generators.inspect) end
         end
         Toolkit.ActionQueueDefinitions.registerBehavior("toolkit.generators", {matches = function(action)
             return action.Type == "ISQueueActionsAction" and commandRecord(action) ~= nil
@@ -379,8 +408,9 @@ function Generators.install()
     for method in pairs(kinds) do
         local name, callback = method, ISWorldObjectContextMenu[method]
         if callback then
-            local native = (trusted or kinds[name] == "ISFixGenerator" and repairTrusted)
-                and classes[kinds[name]] ~= nil and nativeClosure(callback, "ISWorldObjectContextMenu.lua")
+            local native = (trusted or noEquipmentHooks[kinds[name]] and basicTrusted)
+                and classes[kinds[name]] ~= nil and (nativeClosure(callback, "ISWorldObjectContextMenu.lua")
+                    or matchesOverlay(ISWorldObjectContextMenu, name, callback))
             local binding
             binding = function(...)
                 local args = {n = select("#", ...), ...}

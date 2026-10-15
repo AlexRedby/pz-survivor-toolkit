@@ -82,7 +82,10 @@ native('client/ISUI/ISBBQMenu.lua')
 PJCK_CookerPicker = {}
 local cookPath = ProjectCookPickerSourcePath
 if cookPath then nativeFunction(text(cookPath), '(function PJCK_CookerPicker:onStoveButtonClick%(%)%s.-\nend)') end
-local function project(name) assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
+local function project(name) return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
+require = function(name)
+    if name == 'PZSurvivorToolkit/ActionQueueGeneratorOverlay' then return project('ActionQueueGeneratorOverlay') end
+end
 getText = function(key) return key end
 project('ActionQueueOperations'); project('ActionQueueDefinitions'); project('ActionQueueGenerators'); project('ActionQueueWorld'); install()
 local operations, world = PZSurvivorToolkit.ActionQueueOperations, PZSurvivorToolkit.ActionQueueWorld

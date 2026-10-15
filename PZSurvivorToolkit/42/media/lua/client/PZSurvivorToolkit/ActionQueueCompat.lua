@@ -135,6 +135,7 @@ local function verified(id, files)
     end
     return true
 end
+Compat.verifySources = verified
 
 local function snapshot(class)
     local methods = {Type = class.Type}
