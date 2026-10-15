@@ -164,6 +164,19 @@ public final class Main {
         && supports("zombie/network/packets/GeneralActionPacket.class",
             "398a8729da87a4c222f17473cc46c9b5cb7fd9b3f74492d283765619c1d57c8a");
 
+    public static final boolean CART_SUPPORTED = supports("zombie/characters/IsoPlayer.class",
+            "3f1c4634d3a8e7e36baf4b33f76cf7ef79d88c3351bd0eb2a6a6bb34c2d9858f")
+        && supports("zombie/characters/IsoGameCharacter.class",
+            "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b")
+        && supports("zombie/iso/IsoMovingObject.class",
+            "7e6e84fe9d3cb264e8d8e682d91e0abe919d481b7349d17b997e8a78f2293a5f")
+        && supports("zombie/core/skinnedmodel/animation/AnimationPlayer.class",
+            "06fc56e5aa626c808e8c6c0870dc87c10a957d86c7c22782be1d437d52b8bc28")
+        && supports("zombie/core/skinnedmodel/model/ModelSlotRenderData.class",
+            "83fab9cb79f1c2ba270d8b49e8cf2c166ca36e08986c52517ba73d15cd34f76d")
+        && supports("zombie/core/skinnedmodel/advancedanimation/AnimatedModel$AnimatedModelInstanceRenderData.class",
+            "c96e48b6d138db930abe557459b2ff81e025a47cba6c3b199700473362e2f04d");
+
     public static boolean supports(String resource, String expected) {
         try (var stream = Main.class.getClassLoader().getResourceAsStream(resource)) {
             return stream != null && expected.equals(HexFormat.of().formatHex(
@@ -192,7 +205,7 @@ public final class Main {
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
-            + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", medicalVisuals=" + MEDICAL_VISUALS_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
+            + ", cart=" + CART_SUPPORTED + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", medicalVisuals=" + MEDICAL_VISUALS_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
             + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED + ", basementRooms=" + BASEMENT_ROOMS_SUPPORTED + ", mannequin=" + MANNEQUIN_SUPPORTED);
     }
 
@@ -482,6 +495,34 @@ public final class Main {
                 disabled = true;
                 System.err.println("[PZToolkitJavaPatches] Animal trailer reconciliation disabled: " + error);
             }
+        }
+    }
+
+    @Patch(className="zombie.characters.IsoPlayer", methodName="moveUnmodded", warmUp=true)
+    public static class CartMovement {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.characters.IsoPlayer player,
+            @Patch.Argument(value=0, readOnly=false) float x, @Patch.Argument(value=1, readOnly=false) float y) {
+            if(Main.CART_SUPPORTED) {
+                var step=CartSteeringHooks.movement(player,x,y);
+                x=step.x; y=step.y;
+            }
+        }
+    }
+
+    @Patch(className="zombie.characters.IsoGameCharacter", methodName="postUpdateAnimating", warmUp=true)
+    public static class CartHeading {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.characters.IsoGameCharacter character) {
+            if(Main.CART_SUPPORTED) CartSteeringHooks.heading(character);
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.model.ModelSlotRenderData", methodName="initRenderData")
+    public static class CartFloor {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot) {
+            if(Main.CART_SUPPORTED) CartGrounding.render(slot);
         }
     }
 

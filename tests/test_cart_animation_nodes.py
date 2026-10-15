@@ -1,4 +1,4 @@
-"""Keep the cart's body and prop tracks synchronized without changing locomotion."""
+"""Keep native walking locomotion and the cart's upper-body pose."""
 
 from pathlib import Path
 import unittest
@@ -10,10 +10,13 @@ ANIMATIONS = ROOT / "PZSurvivorToolkit/42/media/AnimSets/player"
 STATES = {"Idle": "idle", "Walk": "movement", "Run": "run", "Sprint": "sprint"}
 SPEEDS = {"Idle": 0.48, "Walk": 1.04, "Run": 1.0, "Sprint": 1.0}
 FOOTSTEPS = {"Idle": (), "Walk": (0.20, 0.65), "Run": (0.20, 0.65), "Sprint": (0.15, 0.60)}
-
-
-def signature(element):
-    return element.tag, (element.text or "").strip(), tuple(map(signature, element))
+HAND_TRANSITIONS = {
+    "Idle": {"Walk": ("IdleToWalk", 1.6), "Run": ("WalkToRun", 1.3),
+             "Sprint": ("WalkToSprint", 1.0)},
+    "Walk": {"Run": ("WalkToRun", 1.3), "Sprint": ("WalkToSprint", 1.3)},
+    "Run": {"Sprint": ("WalkToSprint", 1.6)},
+    "Sprint": {},
+}
 
 
 def conditions(node):
@@ -30,6 +33,7 @@ class CartAnimationNodes(unittest.TestCase):
 
     def test_all_tracks_are_opt_in_and_keep_existing_clip_timing(self):
         expected = {"ToolkitCart" + state + side for state in STATES for side in ("", "Left", "Right")}
+        expected |= {"ToolkitCartPivot" + mode for mode in ("Walk", "Run", "Sprint")}
         self.assertEqual(set(self.nodes), expected)
         self.assertEqual(len(list(ANIMATIONS.rglob("toolkit_cart_*.xml"))), len(expected))
         for state, folder in STATES.items():
@@ -37,8 +41,10 @@ class CartAnimationNodes(unittest.TestCase):
                 with self.subTest(state=state, side=side):
                     path, node = self.nodes["ToolkitCart" + state + side]
                     self.assertEqual(node.tag, "animNode")
+                    self.assertEqual(node.findtext("m_maxTorsoTwist"), "0")
                     self.assertEqual(path.parent.name, "masking" + side.lower() if side else folder)
-                    self.assertEqual(node.findtext("m_AnimName"), "Bob_Cart_" + state)
+                    clip = "Bob_Walk" if state == "Walk" and not side else "Bob_Cart_" + state
+                    self.assertEqual(node.findtext("m_AnimName"), clip)
                     self.assertEqual(float(node.findtext("m_SpeedScale")), SPEEDS[state])
                     self.assertEqual(node.findtext("m_SyncTrackingEnabled"), "true")
                     self.assertIn(("ToolkitCartMotion", "BOOL", "true"), conditions(node))
@@ -57,14 +63,53 @@ class CartAnimationNodes(unittest.TestCase):
                 self.assertIn(("WalkInjury", "GTR", "-0.15"), conditions(node))
             if state == "Walk":
                 self.assertIn(("isMoving", "BOOL", "true"), conditions(node))
-            self.assertEqual(node.findtext("m_deferredBoneAxis"), "Z")
+            self.assertEqual(node.findtext("m_deferredBoneAxis"), "Y" if state == "Walk" else "Z")
+            for transition in node.findall("m_Transitions"):
+                self.assertIsNone(transition.find("m_AnimName"), "body transitions must not mix extraction axes")
+                self.assertIsNone(transition.find("m_speedScale"))
             events = node.findall("m_Events")
             self.assertEqual(tuple(float(item.findtext("m_TimePc")) for item in events), FOOTSTEPS[state])
             for event in events:
                 self.assertEqual(event.findtext("m_EventName"), "Footstep")
                 self.assertEqual(event.findtext("m_ParameterValue"), state.lower())
 
-    def test_hands_keep_masks_conditions_and_matching_transition_clips(self):
+    def test_pivot_uses_native_side_and_backward_legs_with_a_separate_root_axis(self):
+        for mode in ("Walk", "Run", "Sprint"):
+            node = self.nodes["ToolkitCartPivot" + mode][1]
+            self.assertIn(("ToolkitCartPivot", "BOOL", "true"), conditions(node))
+            self.assertIn(("ToolkitCartMotion", "BOOL", "true"), conditions(node))
+            self.assertEqual(node.findtext("m_Scalar"), "ToolkitCartStepX")
+            self.assertEqual(node.findtext("m_Scalar2"), "ToolkitCartStepY")
+            self.assertEqual(node.findtext("m_deferredBoneAxis"), "Y")
+            self.assertEqual(node.findtext("m_maxTorsoTwist"), "0")
+            self.assertGreater(int(node.findtext("m_ConditionPriority")), 101)
+            clips = {blend.findtext("m_AnimName") for blend in node.findall("m_2DBlends")}
+            forward = {"Walk": "Bob_Walk", "Run": "Bob_Run", "Sprint": "Bob_Sprint"}[mode]
+            self.assertTrue({forward, "Bob_WalkBwdNoAim1Hand", "Bob_StrafeNoAim_Left", "Bob_StrafeNoAim_Right"} <= clips)
+            self.assertFalse(any(clip.startswith("Bob_Cart_") for clip in clips))
+            self.assertFalse(node.findall("m_Transitions"), "root transitions cannot extract the cart FBX axis")
+
+    def test_walk_uses_native_speed_and_injury_blending(self):
+        node = self.nodes["ToolkitCartWalk"][1]
+        self.assertNotIn("x_extends", node.attrib)
+        self.assertEqual(node.findtext("m_Scalar"), "WalkInjury")
+        self.assertEqual(node.findtext("m_Scalar2"), "WalkSpeed")
+        blends = node.findall("m_2DBlends")
+        self.assertEqual([(blend.attrib["referenceID"], blend.findtext("m_AnimName"),
+                           float(blend.findtext("m_XPos")), float(blend.findtext("m_YPos")),
+                           float(blend.findtext("m_SpeedScale"))) for blend in blends], [
+            ("1", "Bob_WalkLightLimpR", 0.5, 1.0, 0.8),
+            ("2", "Bob_WalkLightLimpL", -0.5, 1.0, 0.8),
+            ("3", "Bob_WalkHeavyLimpR", 1.0, 1.0, 0.8),
+            ("4", "Bob_WalkHeavyLimpL", -1.0, 1.0, 0.8),
+            ("5", "Bob_Walk", 0.0, 1.0, 0.8),
+            ("6", "Bob_WalkSlow", 0.0, 0.0, 0.8),
+        ])
+        self.assertEqual([tuple(triangle.findtext("node" + str(index)) for index in (1, 2, 3))
+                          for triangle in node.findall("m_2DBlendTri")],
+                         [("2", "4", "6"), ("5", "2", "6"), ("6", "1", "5"), ("6", "3", "1")])
+
+    def test_hands_keep_masks_conditions_and_cart_transition_timing(self):
         for state in STATES:
             body = self.nodes["ToolkitCart" + state][1]
             for side, prop in (("Left", "Bip01_Prop2"), ("Right", "Bip01_Prop1")):
@@ -95,8 +140,14 @@ class CartAnimationNodes(unittest.TestCase):
                     for original, actual in zip(root_transitions, hand_transitions):
                         self.assertEqual(actual.findtext("m_Target"), original.findtext("m_Target") + side)
                         self.assertIn(actual.findtext("m_Target"), self.nodes)
-                        self.assertEqual([signature(item) for item in actual if item.tag != "m_Target"],
-                                         [signature(item) for item in original if item.tag != "m_Target"])
+                        for timing in ("m_blendInTime", "m_blendOutTime"):
+                            self.assertEqual(actual.findtext(timing), original.findtext(timing))
+                        target = original.findtext("m_Target").removeprefix("ToolkitCart")
+                        clip = HAND_TRANSITIONS[state].get(target)
+                        self.assertEqual(actual.findtext("m_AnimName"), "Bob_Cart_" + clip[0] if clip else None)
+                        speed = actual.findtext("m_speedScale")
+                        self.assertEqual(float(speed) if speed is not None else None,
+                                         clip[1] if clip else None)
 
 
 if __name__ == "__main__":

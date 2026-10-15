@@ -79,4 +79,5 @@
 		<m_blendOutTime>0.2</m_blendOutTime>
 		<m_speedScale>1.3</m_speedScale>
 	</m_Transitions>
+	<m_maxTorsoTwist>0</m_maxTorsoTwist>
 </animNode>
