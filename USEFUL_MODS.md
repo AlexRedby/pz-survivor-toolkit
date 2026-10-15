@@ -4,7 +4,7 @@ Catalog of the selected mods, required local components, and related settings. W
 
 **Installation:** [combined server and client instructions](MOD_INSTALL.md), including the selected INI, dependency order, client/server ZombieBuddy setup, and preparation of all three local mods.
 
-**Current selection:** 47 Mod IDs / 43 Workshop IDs, including all three required repository mods: PZ Survivor Toolkit v0.1.50, Survivor Wishlist v0.1.0 and Toolkit Java Patches v0.1.5. The complete set targets B42.21; the Java component requires ZombieBuddy 2.3.4+ in clients and the server. `tools/prepare_install.py` builds and stages the three folders for distribution. Toolkit now provides its own specified-quantity transfer, medicine indicators, and TV & Radio ReInvented fixes, replacing the removed Take Any Amount (`TakeAnyAmount`), Medicine Moodles (`MedicineMoodlesB42`), and TV translation-fix (`TVRadioReinventedFix4220`) alternatives. Better Containers replaced Proximity Inventory, and Manage Containers was removed. These alternatives are not current requirements. Historical checks below retain their original dates, versions, and counts; see the [README](README.md) for current implementation and checks.
+**Current selection:** 48 Mod IDs / 44 Workshop IDs, including all three required repository mods: PZ Survivor Toolkit v0.1.50, Survivor Wishlist v0.1.0 and Toolkit Java Patches v0.1.5. The complete set targets B42.21; the Java component requires ZombieBuddy 2.3.4+ in clients and the server. `tools/prepare_install.py` builds and stages the three folders for distribution. Toolkit now provides its own specified-quantity transfer, medicine indicators, and TV & Radio ReInvented fixes, replacing the removed Take Any Amount (`TakeAnyAmount`), Medicine Moodles (`MedicineMoodlesB42`), and TV translation-fix (`TVRadioReinventedFix4220`) alternatives. Better Containers replaced Proximity Inventory, and Manage Containers was removed. These alternatives are not current requirements. Historical checks below retain their original dates, versions, and counts; see the [README](README.md) for current implementation and checks.
 
 Toolkit v0.1.43 passed 10 native B42.21 single-player checks and 12 checks per multiplayer client with all 45 selected Mod IDs. Checks covered recursive generator repair, cancellation with exact scrap/XP preservation, returning a borrowed book to its wooden cart, waiting cart reorder/cancel, protected active MP transfers and server audits of exact cargo IDs with no duplicates. Multiplayer used stock action timings, two localhost clients and Lua checksums. These were callback-driven macOS checks; physical input, Windows/Linux, WAN jitter and long sessions remain unverified.
 
@@ -570,3 +570,16 @@ Reveals qualifying zombies hidden by B42's inconsistent viewcone visibility. Sta
 - **Settings:** **Options > Mods > Zombie Visibility Fix**; the toggle key is unbound by default. Enabled, sub-tile precision and stair visibility keep their upstream defaults. Sandbox **ZomVisFix > affect zombie vision** defaults to enabled, allowing revealed zombies to detect the player through native detection rules; Hard Mode defaults to disabled.
 - **Multiplayer:** the server must include the mod even though its logic runs on clients. Use matching mod files; the portable INI supplies the Workshop ID for Steam downloads.
 - **Installation check, 15 October 2026:** official package metadata, Lua 5.1 compilation, translation JSON and copied-file checksums were checked. Gameplay and compatibility with Peek a View's stair rendering were not tested.
+
+## 43 Plumbed Sink Mains Water Fix
+
+[Steam Workshop page](https://steamcommunity.com/sharedfiles/filedetails/?id=3764655475)
+
+Restores mains water to moved and plumbed fixtures while the town supply is running. After shutoff, native reserve water and then the overhead-container supply take over. The upstream mod also supplies plumbed fixtures in player-built rooms through its reserve-water workaround.
+
+- **Workshop ID:** `3764655475`
+- **Mod ID:** `PlumbedSinkMainsFix`
+- **Version:** official package `1.3`; no dependencies or Java loader required.
+- **Selection:** included in the portable INI; installed unchanged locally and enabled in the current default and Host SurvivorQoL profiles. Both server and clients need the mod.
+- **Installation check, 16 October 2026:** both Lua files loaded and passed a focused fixture check for mains, player-built reserve, shutoff, empty reserve, untouched fixtures, client flag updates, menu cleanup and the plumbing hook. The B42.21 native plumbing action and event names were inspected; installed files match the official package. This is not an in-game or multiplayer verification.
+- **Removal:** the author warns that fixtures may need re-plumbing when removing the mod after water shutoff. This mod does not pool multiple rain collectors or add pipes.
