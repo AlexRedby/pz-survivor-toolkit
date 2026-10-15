@@ -8,6 +8,11 @@ import zombie.characters.NetworkZombieAI;
 import zombie.characters.NetworkPlayerAI;
 import zombie.characters.animals.IsoAnimal;
 import zombie.core.BuildAction;
+import zombie.core.network.ByteBufferReader;
+import zombie.core.raknet.UdpConnection;
+import zombie.network.IConnection;
+import zombie.network.fields.character.PlayerID;
+import zombie.network.packets.EquipPacket;
 import zombie.network.GameClient;
 import zombie.network.GameServer;
 import zombie.network.packets.character.ZombiePacket;
@@ -38,6 +43,10 @@ public final class Main {
             "e7ade19e1e6f66450bef2bd37e52b2afccc7377c4e4571d0fa39435ecdb55661")
         && supports("zombie/network/packets/character/AnimalPacket.class",
             "db6954555bb7b270589d406050eecb4dd79f789e8d5627df7fc43c1e8150f169");
+    public static final boolean EQUIPMENT_SUPPORTED = supports("zombie/network/packets/EquipPacket.class",
+        "35e25895c725c3154d0f1e4b3217c7e19795ed1296441dbcea9283026ec5da89")
+        && supports("zombie/network/ZomboidNetData.class",
+            "9b81b4f1e3ce8e338f2b8bb838c797353d0b2841396d01325c968051e168419e");
     public static final boolean MEDIA_SUPPORTED = supports("zombie/radio/devices/DeviceData.class",
         "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102");
     public static final boolean BUILD_SUPPORTED = supports("zombie/core/BuildAction.class",
@@ -64,7 +73,34 @@ public final class Main {
     public static void main(String[] args) {
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
-            + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED);
+            + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED);
+    }
+
+    @Patch(className="zombie.network.packets.EquipPacket", methodName="parse", warmUp=true, strictMatch=true)
+    public static class EquipmentParsed {
+        @Patch.OnExit(suppress=Throwable.class)
+        public static void exit(@Patch.This EquipPacket packet, @Patch.Argument(0) ByteBufferReader reader,
+                                @Patch.Argument(1) IConnection connection) {
+            EquipmentEcho.incomplete = null;
+            if (!GameClient.client || !Main.EQUIPMENT_SUPPORTED || !reader.bb.hasRemaining()) return;
+            var player = Accessor.tryGet(packet, "player", (PlayerID)null);
+            if (player != null && player.getPlayer() != null && player.getPlayer().isLocalPlayer())
+                EquipmentEcho.incomplete = packet;
+        }
+    }
+
+    @Patch(className="zombie.network.packets.EquipPacket", methodName="processClient", warmUp=true, strictMatch=true)
+    public static class EquipmentEcho {
+        public static EquipPacket incomplete;
+
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This EquipPacket packet, @Patch.Argument(0) UdpConnection connection) {
+            if (!GameClient.client || !Main.EQUIPMENT_SUPPORTED) return false;
+            // An early Equip returns before the remaining hand is parsed; acknowledging it would clear the server's new animal.
+            boolean skip = incomplete == packet;
+            incomplete = null;
+            return skip;
+        }
     }
 
     @Patch(className="zombie.characters.NetworkPlayerAI", methodName="parse", warmUp=true, strictMatch=true)

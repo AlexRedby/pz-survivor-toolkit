@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` v0.1.4 is an independent Java mod for **B42.21 only**, required in our selected set. It needs **ZombieBuddy 2.3.4+** in every client and the server process. It patches client zombie-speed decoding, vehicle interpolation recovery and animal trailer membership, plus server-side VHS restart handling and build cancellation acknowledgements. Each patch checks its target class bytecode and disables itself on an unsupported build. It remains experimental: it is not established as a fix for minute-long vehicle freezes or every movement jerk.
+`PZToolkitJavaPatches` v0.1.5 is an independent Java mod for **B42.21 only**, required in our selected set. It needs **ZombieBuddy 2.3.4+** in every client and the server process. It patches client zombie-speed decoding, vehicle interpolation recovery, animal trailer membership and incomplete equipment acknowledgements, plus server-side VHS restart handling and build cancellation acknowledgements. Each patch checks its target class bytecode and disables itself on an unsupported build. It remains experimental: it is not established as a fix for minute-long vehicle freezes or every movement jerk.
 
 ## Prepare and install
 
@@ -89,10 +89,10 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 
 ### Verify activation
 
-Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true, video=true, animal=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
+Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true, video=true, animal=true, equipment=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
 
 - Server: `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
-- Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI`, `[ZB] Transformed: zombie.vehicles.VehicleInterpolation` and `[ZB] Transformed: zombie.characters.NetworkPlayerAI`.
+- Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI`, `[ZB] Transformed: zombie.vehicles.VehicleInterpolation` `[ZB] Transformed: zombie.characters.NetworkPlayerAI` and `[ZB] Transformed: zombie.network.packets.EquipPacket`.
 
 These appear at the default log verbosity. Missing output, `false` values, or target-class/transformation errors mean setup is incomplete or needs investigation. The client also shows **ZombieBuddy ... loaded** in the upper-left corner. A client message alone does not confirm server activation.
 
@@ -105,6 +105,14 @@ Version 0.1.4 reconciles an animal's client trailer membership when the server r
 `PZToolkitJavaPatches` is already in the selected INI; no additional Workshop item is needed. Install the updated prepared Java folder on the server and every client, including the host player, save the new JAR approval and restart the server and clients. Check `animal=true` and the actual `zombie.characters.NetworkPlayerAI` transformation in every client log. See [the combined guide](../MOD_INSTALL.md#animal-trailer-fix).
 
 The 0.1.4 native-object regression checks world/hutch/item locations, duplicate membership, identity, capacity, repeat snapshots and client/server guards. An isolated B42.21 macOS dedicated-server/client test with the 27 selected local mods passed two hen grabs and the last live chick grab, followed by all three native drops alive with exact identities and trailer counts 2/1/0 on both sides. A test-only late-packet replay demonstrated the vanilla ghost and its repair through the actual woven decoder; that probe is excluded from the mod. The affected hosted save, Windows/Linux, WAN and UI clicking/pathfinding were not tested, and previously lost animals are not restored.
+
+## Equipment acknowledgement race
+
+Version 0.1.5 fixes the reproduced empty-hands symptom. Equip uses ordered channel 0 while AnimalCommand uses channel 1. If Equip arrives before RemoveAndGrab, its local inventory lookup fails and parsing returns before consuming the remaining hand status. The client previously acknowledged its empty/old hands, the server accepted that acknowledgement and sent an equipment update that removed the animal from the client's hands again. The exact animal item remained in both inventories.
+
+The client now omits acknowledgements for incomplete local equipment parses. B42.21 gives each handler an exactly bounded packet buffer; both that framing and EquipPacket have bytecode guards. Fully parsed packets, remote players, server handling and intentional equipment changes retain vanilla behavior. The patch does not create items, change IDs or reorder network channels. An unresolved secondary-only item after a fully read packet is outside this fix; the demonstrated animal carry failure occurs on the primary item.
+
+Check `equipment=true` and actual `zombie.network.packets.EquipPacket` transformation in each client log. The native-object regression covers complete/incomplete parsing, marker reuse, repeat/different packets and local/remote/server guards. It also compares the original and actually woven acknowledgement handler. A controlled native delivery-order test reproduced empty hands in all three unloads before the fix (empty hands and a held baseball bat). With 0.1.5, the same action/probe sequence passed all three grabs and native drops, both without other gameplay mods and with 27 production Mod IDs, Toolkit 0.1.48 and Tidy Up Meister 2.0.8. Server/client identities and trailer counts 2/1/0 matched, and deferred commands released automatically before verification. This changes packet delivery order in a test helper; natural incidence and the affected hosted save were not measured.
 
 ## Verification limits
 

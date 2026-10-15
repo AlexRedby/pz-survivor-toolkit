@@ -8,7 +8,7 @@ Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quant
 |---|---|---|
 | PZ Survivor Toolkit | 0.1.48 | Required; included in the prepared `mods` folder and server INI. |
 | Survivor Wishlist | 0.1.0 | Required; included in the prepared `mods` folder and server INI. |
-| Toolkit Java Patches | 0.1.4 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
+| Toolkit Java Patches | 0.1.5 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
 
 The selected server INI contains **46 Mod IDs / 42 Workshop items**, including all three repository mods. The complete set targets **B42.21 only** because of the Java patches. Individual feature switches remain available; the action queue is enabled on fresh profiles and preserves an existing choice to disable it. Dated verification results below retain the versions and mod counts actually tested.
 
@@ -20,7 +20,7 @@ The selected server INI contains **46 Mod IDs / 42 Workshop items**, including a
 
 The usual mod directory is `~/Zomboid/mods` on macOS/Linux or `%UserProfile%\Zomboid\mods` on Windows. The preparation command creates an uncompressed, ignored distribution folder; it does not change live game profiles or install third-party loaders.
 
-Toolkit Java Patches 0.1.4 includes the multiplayer animal-trailer fix. It prevents late network updates from leaving an unloaded animal in the client trailer list. Update the Java mod on the server and every client, including the host player, save the new JAR approval and fully restart the server and clients. See [animal-trailer verification](MOD_INSTALL.md#animal-trailer-fix).
+Toolkit Java Patches 0.1.5 includes both multiplayer animal-trailer fixes: stale trailer entries and a confirmed equipment-message race that removes a grabbed chicken from your hands. Update the Java mod on the server and every client, including the host player, save the new JAR approval and fully restart the server and clients. See [animal-trailer verification](MOD_INSTALL.md#animal-trailer-fix).
 
 See the [mod list](USEFUL_MODS.md) and [ordered server INI](SurvivorQoL-selected.ini). All three local mods need manual distribution: they have no Workshop items and cannot download automatically when joining.
 

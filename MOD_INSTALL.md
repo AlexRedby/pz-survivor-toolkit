@@ -2,7 +2,7 @@
 
 For the Steam edition of Project Zomboid **B42.21**. The server and all players must use the same game build and identical local mod files.
 
-The [server INI](SurvivorQoL-selected.ini) selects **46 Mod IDs / 42 Workshop items**. All three repository mods are required: **PZ Survivor Toolkit v0.1.48**, **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.4**. The Java component is experimental and targets B42.21 only. Feature switches remain per-player; the action queue is enabled on fresh profiles and preserves existing preferences. See [features and verification limits](README.md).
+The [server INI](SurvivorQoL-selected.ini) selects **46 Mod IDs / 42 Workshop items**. All three repository mods are required: **PZ Survivor Toolkit v0.1.48**, **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.5**. The Java component is experimental and targets B42.21 only. Feature switches remain per-player; the action queue is enabled on fresh profiles and preserves existing preferences. See [features and verification limits](README.md).
 
 ## Prepare once
 
@@ -73,11 +73,13 @@ Wishlist highlights wanted item rows in opened inventories and visible loose ite
 
 ## Animal trailer fix
 
-Toolkit Java Patches **0.1.4** includes the B42.21 client fix for stale animal-trailer entries after unloading. `PZToolkitJavaPatches` is already selected in the INI, immediately after ZombieBuddy; no additional Mod ID or Workshop item is needed. The separate AnimalTrailerSyncMPFix addresses another update-timer issue and is not required for this fix.
+Toolkit Java Patches **0.1.5** includes two B42.21 client fixes: stale animal-trailer entries after unloading, and an equipment-message race that leaves a successfully unloaded chicken absent from your hands. `PZToolkitJavaPatches` is already selected in the INI, immediately after ZombieBuddy; no additional Mod ID or Workshop item is needed. The separate AnimalTrailerSyncMPFix addresses another update-timer issue and is not required for this fix.
 
-Update the prepared Java mod on the **server and every client, including the host player**, approve the changed JAR and save the decision. Fully restart the server and clients. In each client's `console.txt`, check both `animal=true` in `[PZToolkitJavaPatches] Experimental B42.21 patch` and `[ZB] Transformed: zombie.characters.NetworkPlayerAI` (it may say `retransformed`). Try Grab and then put the animal on the ground; the trailer entry should disappear for everyone.
+Update the prepared Java mod on the **server and every client, including the host player**, approve the changed JAR and save the decision. Fully restart the server and clients. In each client's `console.txt`, check `animal=true` and `equipment=true` in `[PZToolkitJavaPatches] Experimental B42.21 patch` and the `[ZB] Transformed:` messages for both `zombie.characters.NetworkPlayerAI` and `zombie.network.packets.EquipPacket` (they may say `retransformed`). Try Grab and then put the animal on the ground; the trailer entry should disappear for everyone.
 
-The patch preserves the animal and its identifiers; it does not restore animals already lost from a save. If a live chick is still stuck, keep the save and collect the host's `server-console.txt` and the client's `console.txt` around one Grab attempt before deleting or replacing any animal. The fix passed an isolated B42.21 macOS dedicated-server/client run with the 27 locally selected mods: all three grabs and native drops, including the last live chick, preserved identities and left an empty trailer on both sides. A late-packet replay reproduced the vanilla ghost and verified its repair. The affected hosted save, Windows/Linux, WAN and UI clicking/pathfinding were not tested.
+In the reproduced empty-hands case, the server's equipment message arrived before the animal-grant message. The client could not find the item yet and acknowledged empty/old hands; the server then cleared the newly grabbed animal from the hands. The animal remained in inventory on both sides. Version 0.1.5 prevents this incorrect acknowledgement when parsing stops early. Normal equipment updates and intentional drops remain unchanged.
+
+The patch preserves the animal and its identifiers; it does not restore animals already lost from a save. If a live chick is still stuck, keep the save and collect the host's `server-console.txt` and the client's `console.txt` around one Grab attempt before deleting or replacing any animal. The fix passed an isolated B42.21 macOS dedicated-server/client run with the 27 locally selected mods: all three grabs and native drops, including the last live chick, preserved identities and left an empty trailer on both sides. A late-packet replay reproduced the vanilla ghost and verified its repair. The 0.1.5 controlled equipment-before-grant regression passed all three grabs and drops, with empty hands and a weapon, both without other gameplay mods and with 27 production Mod IDs (Toolkit 0.1.48, Tidy Up Meister 2.0.8). The affected hosted save, Windows/Linux, natural WAN incidence and physical UI clicking were not tested.
 
 ## TV & Radio ReInvented
 
