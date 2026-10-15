@@ -22,7 +22,7 @@ public final class CartSteeringMathTest {
 
     private static void wheelbarrowChecks() {
         // Actual calibrated contact positions after native horizontal model-to-world scale 1.5.
-        for (double[] geometry : new double[][]{{1.10976729, .033440793}, {1.1691522, -.0017422512}}) {
+        for (double[] geometry : new double[][]{{1.08587244, .033440793}, {1.1691522, -.0017422512}}) {
             double axle = geometry[0], side = geometry[1];
             var empty = CartSteeringMath.step(0, Math.PI / 2, .03, 1.0 / 60, 0, axle, new CartSteeringMath.Step());
             var full = CartSteeringMath.step(0, Math.PI / 2, .03, 1.0 / 60, 1, axle, new CartSteeringMath.Step());
@@ -33,7 +33,7 @@ public final class CartSteeringMathTest {
                         var step = CartSteeringMath.step(heading, heading + Math.toRadians(degrees), budget,
                                 1.0 / 60, .7, axle, new CartSteeringMath.Step());
                         close(Math.hypot(step.x(), step.y()), budget, "wheelbarrow preserves native walking budget");
-                        check(Math.abs(step.travel()) >= budget * Math.cos(Math.toRadians(15)) - 1e-12,
+                        check(Math.abs(step.travel()) >= budget * .5 - 1e-12,
                               "wheelbarrow keeps rolling instead of parking its wheel");
                         rolling(heading, step.turn(), axle, side, step.x(), step.y());
                         close(CartSteeringMath.acceptedTurn(heading, axle, step.x(), step.y()), step.turn(),
@@ -43,8 +43,8 @@ public final class CartSteeringMathTest {
                         for (double fraction : new double[]{.1, .5}) {
                             double dx = step.x() * fraction, dy = step.y() * fraction;
                             rolling(heading, CartSteeringMath.acceptedTurn(heading, axle, dx, dy), axle, side, dx, dy);
-                        }
-                    }
+                      }
+                  }
                 }
                 for (double[] slide : new double[][]{{.02, 0}, {0, -.02}, {-.01, .015}}) {
                     rolling(heading, CartSteeringMath.acceptedTurn(heading, axle, slide[0], slide[1]),
@@ -56,23 +56,35 @@ public final class CartSteeringMathTest {
             close(reverse.y(), 0, "straight reverse stays on wheel axis");
             close(reverse.turn(), 0, "straight reverse cannot make a U-turn");
             for (int sign : new int[]{-1, 1}) {
-                double[] reference = null;
-                for (int fps : new int[]{30, 60, 144}) {
-                    double heading = 0, x = 0, y = 0;
-                    for (int frame = 0; frame < fps * 8; frame++) {
-                        var step = CartSteeringMath.step(heading, sign * Math.PI / 2, 1.2 / fps,
-                                1.0 / fps, 0, axle, new CartSteeringMath.Step());
-                        rolling(heading, step.turn(), axle, side, step.x(), step.y());
-                        x += step.x(); y += step.y(); heading += step.turn();
-                        check(sign * y >= -.17, "initial outside handle step stays below .17 tiles");
-                    }
-                    check(sign * y > 0 && sign * heading > 1.3, "wheelbarrow rolls into held turn");
-                    if (reference == null) reference = new double[]{heading, x, y};
-                    else {
-                        check(Math.abs(heading - reference[0]) < .002, "wheelbarrow yaw is stable across FPS");
-                        check(Math.hypot(x - reference[1], y - reference[2]) < .015,
-                              "wheelbarrow rolling trajectory is stable across FPS");
-                    }
+                for (int load : new int[]{0, 1}) {
+                    double speed = load == 0 ? 1.3 : .83;
+                    double[] reference = null;
+                    for (int fps : new int[]{30, 60, 144}) {
+                        double heading = 0, x = 0, y = 0;
+                        int settled = 0;
+                        double previousTravel = 0;
+                        for (int frame = 0; frame < fps * 4; frame++) {
+                            var step = CartSteeringMath.step(heading, sign * Math.PI / 2, speed / fps,
+                                    1.0 / fps, load, axle, new CartSteeringMath.Step());
+                            rolling(heading, step.turn(), axle, side, step.x(), step.y());
+                            x += step.x(); y += step.y(); heading += step.turn();
+                            check(sign * y >= -.58, "initial outside handle step stays below .58 tiles");
+                            check(sign * heading <= Math.PI / 2, "wheelbarrow cannot overshoot the held direction");
+                            if (frame > 0) check(Math.abs(step.travel() - previousTravel) < .3 * speed / fps,
+                                    "settling does not abruptly release sideways motion");
+                            previousTravel = step.travel();
+                            if (settled == 0 && heading == sign * Math.PI / 2) settled = frame + 1;
+                      }
+                        check(settled > 0 && settled <= fps * (load == 0 ? 2 : 3),
+                                "wheelbarrow reaches 90 degrees in two seconds empty or three loaded");
+                        check(sign * y > 0, "wheelbarrow rolls into held turn");
+                        if (reference == null) reference = new double[]{heading, x, y};
+                        else {
+                            check(Math.abs(heading - reference[0]) < .002, "wheelbarrow yaw is stable across FPS");
+                            check(Math.hypot(x - reference[1], y - reference[2]) < .015,
+                                  "wheelbarrow rolling trajectory is stable across FPS");
+                      }
+                  }
                 }
             }
         }

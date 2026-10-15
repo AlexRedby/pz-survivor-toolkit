@@ -54,7 +54,7 @@ public final class CartSteeringHooks {
     private static double axle(IsoPlayer player) {
         // Actual grounded wheel vertices; Model.vectorToWorldCoords scales model Z by -1.5.
         return switch(player.getPrimaryHandItem().getFullType()) {
-            case "SaucedWheelbarrow.WheelbarrowWood" -> 1.10976729;
+            case "SaucedWheelbarrow.WheelbarrowWood" -> 1.08587244;
             case "SaucedWheelbarrow.WheelbarrowMetal" -> 1.1691522;
             default -> 0;
         };

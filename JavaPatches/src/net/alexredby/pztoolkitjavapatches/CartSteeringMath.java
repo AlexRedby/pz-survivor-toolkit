@@ -41,17 +41,18 @@ public final class CartSteeringMath {
         boolean wheelbarrow = axleDistance > 0;
         double axle = wheelbarrow ? axleDistance : AXLE_DISTANCE;
         double limit = wheelbarrow
-                ? 2 * Math.asin(Math.min(1, distance * Math.sin(Math.toRadians(15 - 3 * load))
-                                             * Math.abs(Math.sin(error)) / (2 * axle)))
+                ? 2 * Math.asin(Math.min(1, distance * Math.sin(Math.toRadians(52 - 2 * load)) / (2 * axle)))
                 : distance * Math.abs(Math.sin(error)) / axle;
         limit = Math.min(limit, Math.min(0.1, seconds) * (wheelbarrow ? 1.6 - 0.3 * load : 3.8 - load));
+        // Square-root easing settles in finite time instead of crawling through a sine tail.
+        if (wheelbarrow) limit *= Math.min(1, Math.sqrt(Math.abs(error) * seconds / (limit * 0.1)));
         double turn = Math.max(-limit, Math.min(limit, error));
         if (wheelbarrow) {
             double half = turn / 2;
             double sideways = 2 * axle * Math.sin(half);
             double travel = Math.sqrt(Math.max(0, distance * distance - sideways * sideways));
             if (reverse) travel = -travel;
-            // The handles step slightly outside so the front wheel stays in its rolling plane.
+            // The handles step outside so the front wheel stays in its rolling plane.
             return result.set(travel * Math.cos(heading + half) + sideways * Math.sin(heading + half),
                               travel * Math.sin(heading + half) - sideways * Math.cos(heading + half),
                               turn, travel);

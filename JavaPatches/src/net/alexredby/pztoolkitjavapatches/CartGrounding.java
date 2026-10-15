@@ -16,7 +16,7 @@ import zombie.core.skinnedmodel.model.SkinningData;
 public final class CartGrounding {
     // shortcut: contacts are calibrated to these eight meshes; recalibrate after their geometry changes.
     private static final Vector3fc SHOP_CONTACT=new Vector3f(110.0467f,8.371053f,.98356926f);
-    private static final Vector3fc WOOD_CONTACT=new Vector3f(-2.1228965e-4f,-.004627711f,-1.199774e-4f);
+    private static final Vector3fc WOOD_CONTACT=new Vector3f(-2.1228965e-4f,-.004435286f,-4.0280633e-5f);
     private static final Vector3fc METAL_CONTACT=new Vector3f(-23.5423f,-23.2973f,-2.97487f);
 
     static Vector3fc contact(String model) {
@@ -37,6 +37,17 @@ public final class CartGrounding {
         final org.lwjgl.util.vector.Quaternion rotation=new org.lwjgl.util.vector.Quaternion();
     }
     private static final ThreadLocal<Matrices> matrices=ThreadLocal.withInitial(Matrices::new);
+
+    static void lowerHandles(Matrix4f transform, String model) {
+        if(!"WheelbarrowWood".equals(model) && !"WheelbarrowMetal".equals(model)) return;
+        var point=contact(model);
+        float x=transform.m00()*point.x()+transform.m10()*point.y()+transform.m20()*point.z()+transform.m30();
+        float y=transform.m01()*point.x()+transform.m11()*point.y()+transform.m21()*point.z()+transform.m31();
+        float z=transform.m02()*point.x()+transform.m12()*point.y()+transform.m22()*point.z()+transform.m32();
+        // Lower the handles around the tire; do not pitch the actor's torso with the cart.
+        matrices.get().attachment.translation(x,y,z).rotateX((float)Math.toRadians(8))
+            .translate(-x,-y,-z).mul(transform,transform);
+    }
 
     static boolean referencePose(AnimationClip clip, SkinningData skeleton, String boneName, Matrix4f out) {
         if(clip==null || skeleton==null || boneName==null) return false;
@@ -141,7 +152,9 @@ public final class CartGrounding {
                 || instance.model==null || instance.model.mesh==null) continue;
             var state=matrices.get();
             Matrix4f transform=state.transform;
-            if(rigid(data,clip,transform)
+            boolean rigid=rigid(data,clip,transform);
+            if(rigid) lowerHandles(transform,name);
+            if(rigid
                 && align(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,
                     contact(instance.modelScript.getName()),(float)CartSteeringHooks.lean(player),state.delta)
                 && CartGrip.render(slot,instance.parent,clip,state.delta,name,transform)) {

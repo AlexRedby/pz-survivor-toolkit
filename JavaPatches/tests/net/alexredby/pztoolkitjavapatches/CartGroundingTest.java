@@ -123,8 +123,8 @@ public final class CartGroundingTest {
   // Actual VBO minima and final matrices captured together in B42.21 before the contact fix.
   String[] models={"ShoppingCartModel","WheelbarrowWood","WheelbarrowMetal"};
   Vector3f[] points={new Vector3f(110.0467f,8.371053f,.98356926f),
-   new Vector3f(-2.1228965e-4f,-.004627711f,-1.199774e-4f),new Vector3f(-23.5423f,-23.2973f,-2.97487f)};
-  float[] minima={.045946702f,.03351391f,.054394957f};
+   new Vector3f(-2.1228965e-4f,-.004435286f,-4.0280633e-5f),new Vector3f(-23.5423f,-23.2973f,-2.97487f)};
+  float[] minima={.045946702f,.03383575f,.054394957f};
   Matrix4f[] captured={
    new Matrix4f().set(-5.080325e-10f,7.381783e-10f,.104969054f,-.0016536561f,
     -2.2194229e-4f,.0016076594f,-6.051497e-8f,.05691298f,
@@ -148,6 +148,28 @@ public final class CartGroundingTest {
     throw new AssertionError("actual wheel geometry still floats for "+models[i]);
    Matrix4f expected=new Matrix4f(captured[i]);expected.m31(after.m31());
    if(!after.equals(expected)) throw new AssertionError("contact correction changed orientation/scale for "+models[i]);
+   Matrix4f pitched=new Matrix4f(captured[i]);
+   CartGrounding.lowerHandles(pitched,models[i]);
+   Vector3f tire=captured[i].transformPosition(new Vector3f(contact));
+   if(pitched.transformPosition(new Vector3f(contact)).distance(tire)>1e-6f)
+    throw new AssertionError("lowering handles moved wheel contact for "+models[i]);
+   if(i==0 && !pitched.equals(captured[i])) throw new AssertionError("shopping cart was pitched");
+   if(i>0) {
+    Vector3f rawHandle=i==1?new Vector3f(.00172237f,.00541905f,-.00342593f)
+      :new Vector3f(-7.409948f,6.614635f,82.79839f);
+    Vector3f handle=captured[i].transformPosition(new Vector3f(rawHandle));
+    Vector3f lowered=pitched.transformPosition(new Vector3f(rawHandle));
+    if(handle.y-lowered.y<.08f || handle.y-lowered.y>.10f)
+     throw new AssertionError("handles not lowered to a relaxed arm height");
+    if(!CartGrounding.align(pitched,low,high,contact,0,delta)
+     || Math.abs(pitched.transformPosition(new Vector3f(contact)).y-.008f)>1e-6f)
+     throw new AssertionError("pitched tire not grounded");
+    if(Math.abs(delta.m12())>1e-6f || Math.abs(delta.m21())>1e-6f)
+     throw new AssertionError("cart pitch leaked into the actor's torso");
+    // The old and new observed wooden tire vertices bracket the new lowest polygon edge.
+    if(i==1 && pitched.transformPosition(new Vector3f(-2.1228965e-4f,-.004627711f,-1.199774e-4f)).y<.008f-1e-6f)
+     throw new AssertionError("lowered handles put the old tire contact underground");
+   }
    for(float lean:new float[]{-.1f,.1f}) {
     if(!CartGrounding.align(after.set(captured[i]),low,high,contact,lean,delta)) throw new AssertionError("lean rejected");
     Vector3f wheel=after.transformPosition(new Vector3f(contact));

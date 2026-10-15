@@ -65,7 +65,7 @@ public final class CartGrip {
     }
 
     // Solve the two arm links without stretching either link or touching the native leg palette.
-    static boolean reach(Matrix4f[] poses, SkinningData actor, String handName, Matrix4f target) {
+    static boolean reach(Matrix4f[] poses, SkinningData actor, String handName, Matrix4f target, Matrix4f bodyDelta) {
         var hand=actor.getBone(handName);
         if(hand==null || hand.parent==null || hand.parent.parent==null) return false;
         var forearm=hand.parent;var upper=forearm.parent;
@@ -76,14 +76,34 @@ public final class CartGrip {
         float a=shoulder.distance(elbow),b=elbow.distance(wrist),distance=shoulder.distance(goal);
         if(!Float.isFinite(distance) || distance<.00001f || distance>=a+b || distance<=Math.abs(a-b)) return false;
         var axis=goal.sub(shoulder,new Vector3f()).div(distance);
-        var bend=elbow.sub(shoulder,new Vector3f());bend.fma(-bend.dot(axis),axis);
-        if(bend.lengthSquared()<.00000001f) return false;
+        var bend=elbow.sub(shoulder,new Vector3f());
+        if(bodyDelta!=null) {
+            bend.set(goal).sub(shoulder).fma(-b,new Vector3f(target.m00(),target.m01(),target.m02()));
+            bend.fma(-bend.dot(axis),axis).normalize();
+            var relaxed=bodyDelta.transformDirection(new Vector3f(0,-1,.25f));
+            relaxed.fma(-relaxed.dot(axis),axis).normalize();
+            // Keep the elbow down/back instead of lifting it just to minimize the wrist angle.
+            bend.lerp(relaxed,.6f);
+        }
+        bend.fma(-bend.dot(axis),axis);
+        if(!bend.isFinite() || bend.lengthSquared()<.00000001f) return false;
         float along=(a*a-b*b+distance*distance)/(2*distance);
         var solved=shoulder.fma(along,axis,new Vector3f()).fma((float)Math.sqrt(Math.max(0,a*a-along*along)),bend.normalize());
         aim(poses,actor,upper,shoulder,elbow,solved);
         poses[hand.index].getTranslation(wrist);
         aim(poses,actor,forearm,solved,wrist,goal);
         var adjustment=matrices.get().adjustment;
+        if(bodyDelta!=null) {
+            // Pronation belongs in the forearm, rather than twisting the entire underhand turn at the wrist.
+            var forearmAxis=goal.sub(solved,new Vector3f()).normalize();
+            var from=poses[forearm.index].transformDirection(new Vector3f(0,0,1));
+            var to=target.transformDirection(new Vector3f(0,0,1));
+            from.fma(-from.dot(forearmAxis),forearmAxis).normalize();
+            to.fma(-to.dot(forearmAxis),forearmAxis).normalize();
+            float roll=(float)Math.atan2(forearmAxis.dot(from.cross(to,new Vector3f())),from.dot(to));
+            adjustment.translation(solved).rotate(roll,forearmAxis).translate(-solved.x,-solved.y,-solved.z);
+            adjust(poses,actor,forearm,adjustment);
+        }
         poses[hand.index].invert(adjustment);target.mul(adjustment,adjustment);
         adjust(poses,actor,hand,adjustment);
         return true;
@@ -93,15 +113,19 @@ public final class CartGrip {
     record Grasp(float palmX, float palmDepth, float curl) {}
     private static final Grasp MALE_ROUND=new Grasp(.055f,.027f,-1.68f);
     private static final Grasp FEMALE_ROUND=new Grasp(.063f,.025f,-1.55f);
-    private static final Grasp MALE_WOOD=new Grasp(.048f,.025f,-1.5f);
-    private static final Grasp FEMALE_WOOD=new Grasp(.060f,.025f,-1.68f);
+    private static final Grasp MALE_WOOD=new Grasp(.055f,.014f,-1.8f);
+    private static final Grasp FEMALE_WOOD=new Grasp(.055f,.025f,-1.6f);
+    private static final Grasp MALE_METAL=new Grasp(.063f,.015f,-1.8f);
+    private static final Grasp FEMALE_METAL=new Grasp(.055f,.025f,-1.8f);
 
-    static Grasp grasp(boolean female, boolean wood) {
-        return female?(wood?FEMALE_WOOD:FEMALE_ROUND):(wood?MALE_WOOD:MALE_ROUND);
+    static Grasp grasp(boolean female, String model) {
+        if("WheelbarrowWood".equals(model)) return female?FEMALE_WOOD:MALE_WOOD;
+        if("WheelbarrowMetal".equals(model)) return female?FEMALE_METAL:MALE_METAL;
+        return female?FEMALE_ROUND:MALE_ROUND;
     }
 
-    // shortcut: the one-joint thumb can intersect thick wooden grips by ~4 mm; a detailed hand rig is needed to eliminate it.
-    static void closeFingers(Matrix4f[] poses, SkinningData actor, String side, Grasp grasp) {
+    // shortcut: B42 has one mitten segment and one thumb, so individual phalange wrapping needs a detailed rig.
+    static void closeFingers(Matrix4f[] poses, SkinningData actor, String side, Grasp grasp, boolean underhand) {
         var hand=actor.getBone("Bip01_"+side+"_Hand");
         var fingers=actor.getBone("Bip01_"+side+"_Finger1");
         var thumb=actor.getBone("Bip01_"+side+"_Finger0");
@@ -111,6 +135,8 @@ public final class CartGrip {
         var target=new Matrix4f(handPose).translate(local.m30(),local.m31(),local.m32()).rotateY(grasp.curl());
         var change=matrices.get().adjustment;
         poses[fingers.index].invert(change);target.mul(change,change);adjust(poses,actor,fingers,change);
+        // The authored thumb already follows the diagonal shaft; retain its native opposition/twist.
+        if(underhand) return;
         var pivot=poses[thumb.index].getTranslation(new Vector3f());
         var from=poses[thumb.index].transformPosition(new Vector3f(.033f,0,0));
         var to=handPose.transformPosition(new Vector3f(.045f,"L".equals(side)?-.001f:.001f,.025f));
@@ -136,21 +162,24 @@ public final class CartGrip {
         if(!handle(model,left,point)) return false;
         cart.transformPosition(point);
         boolean wood="WheelbarrowWood".equals(model),metal="WheelbarrowMetal".equals(model);
-        var shape=grasp(female,wood);
+        var shape=grasp(female,model);
         out.identity();
         if(wood || metal) {
-            float sign=left?-1:1;
-            var y=wood?new Vector3f(left?.13444453f:-.13444453f,.48467334f,.86430112f)
-                :new Vector3f(0,.4012329f,.9159761f);
-            y.mul(sign);
-            var z=wood?new Vector3f(0,-.872220f,.489114f):new Vector3f(0,-.9159761f,.4012329f);
-            var x=y.cross(z,new Vector3f()).normalize();
-            y=z.cross(x,new Vector3f()).normalize();z.normalize();
+            var axis=wood?new Vector3f(left?.13444413f:-.13444413f,.98614604f,-.09716362f)
+                :new Vector3f(0,0,1);
+            var down=wood?new Vector3f(0,.098053805f,.9951811f):new Vector3f(0,-1,0);
+            cart.transformDirection(axis).normalize();cart.transformDirection(down).normalize();
+            var inward=down.cross(axis,new Vector3f()).normalize().mul(left?1:-1);
+            // Diagonal underhand grip: shaft across curled fingers, palm inward/up, wrist above the handle.
+            var x=down.mul(.9961947f,new Vector3f()).fma(.08715574f,inward);
+            var z=inward.mul(.9961947f,new Vector3f()).fma(-.08715574f,down);
+            x.mul(.5735200f).fma(-.8191916f,axis).normalize();
+            var y=z.cross(x,new Vector3f()).normalize();z=x.cross(y,new Vector3f()).normalize();
             out.m00(x.x).m01(x.y).m02(x.z).m10(y.x).m11(y.y).m12(y.z).m20(z.x).m21(z.y).m22(z.z);
         } else {
             out.m00(0).m01(0).m02(-1).m10(1).m11(0).m12(0).m20(0).m21(-1).m22(0);
         }
-        delta.mul(out,out);
+        if(!wood && !metal) delta.mul(out,out);
         out.setTranslation(point.x-out.m00()*shape.palmX()-out.m20()*shape.palmDepth(),
             point.y-out.m01()*shape.palmX()-out.m21()*shape.palmDepth(),
             point.z-out.m02()*shape.palmX()-out.m22()*shape.palmDepth());
@@ -161,8 +190,8 @@ public final class CartGrip {
         for(String side:new String[]{"L","R"}) {
             var target=matrices.get().target;
             if(!target(model,"L".equals(side),female,delta,cart,target)
-                || !reach(poses,actor,"Bip01_"+side+"_Hand",target)) return false;
-            closeFingers(poses,actor,side,grasp(female,"WheelbarrowWood".equals(model)));
+                || !reach(poses,actor,"Bip01_"+side+"_Hand",target,model.startsWith("Wheelbarrow")?delta:null)) return false;
+            closeFingers(poses,actor,side,grasp(female,model),model.startsWith("Wheelbarrow"));
         }
         return true;
     }

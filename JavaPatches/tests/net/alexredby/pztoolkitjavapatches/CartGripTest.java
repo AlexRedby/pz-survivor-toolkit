@@ -53,15 +53,42 @@ public final class CartGripTest {
             var poses=new Matrix4f[names.length];
             for(int i=0;i<poses.length;i++) poses[i]=delta.mul(new Matrix4f().set(nativePose[i]),new Matrix4f());
             var before=java.util.Arrays.stream(poses).map(Matrix4f::new).toArray(Matrix4f[]::new);
-            var cart=delta.mul(new Matrix4f().set(nativeCart[model]),new Matrix4f());
+            var pitched=new Matrix4f().set(nativeCart[model]);
+            CartGrounding.lowerHandles(pitched,models[model]);
+            var cart=delta.mul(pitched,new Matrix4f());
+            var handleDelta=new Matrix4f(cart).mul(new Matrix4f().set(nativeCart[model]).invert());
             if(!CartGrip.grip(poses,actor,models[model],female,delta,cart))
                 throw new AssertionError("native handles unreachable: "+models[model]+" female="+female);
             for(int side=0;side<2;side++) {
                 int upper=side==0?1:6,forearm=upper+1,hand=upper+2;
-                var shape=CartGrip.grasp(female,model==1);
+                var shape=CartGrip.grasp(female,models[model]);
                 var actual=poses[hand].transformPosition(new Vector3f(shape.palmX(),0,shape.palmDepth()));
-                var c=centers[model];var expected=delta.transformPosition(new Vector3f(side==0?c[0]:c[3],c[1],c[2]));
+                var c=centers[model];var expected=handleDelta.transformPosition(new Vector3f(side==0?c[0]:c[3],c[1],c[2]));
                 if(actual.distance(expected)>.00002f) throw new AssertionError("grip missed measured mesh handle: "+models[model]);
+                if(model>0) {
+                    var inverseDelta=new Matrix4f(delta).invert();
+                    var elbow=inverseDelta.transformPosition(poses[forearm].getTranslation(new Vector3f()));
+                    var wrist=inverseDelta.transformPosition(poses[hand].getTranslation(new Vector3f()));
+                    var shoulder=inverseDelta.transformPosition(poses[upper].getTranslation(new Vector3f()));
+                    var forearmAxis=poses[hand].getTranslation(new Vector3f()).sub(poses[forearm].getTranslation(new Vector3f())).normalize();
+                    var handAxis=poses[hand].transformDirection(new Vector3f(1,0,0)).normalize();
+                    float bend=(float)Math.toDegrees(Math.acos(Math.max(-1,Math.min(1,forearmAxis.dot(handAxis)))));
+                    var forearmPalm=poses[forearm].transformDirection(new Vector3f(0,0,1));
+                    var handPalm=poses[hand].transformDirection(new Vector3f(0,0,1));
+                    forearmPalm.fma(-forearmPalm.dot(forearmAxis),forearmAxis).normalize();
+                    handPalm.fma(-handPalm.dot(forearmAxis),forearmAxis).normalize();
+                    float roll=(float)Math.toDegrees(Math.acos(Math.max(-1,Math.min(1,forearmPalm.dot(handPalm)))));
+                    float abduction=(float)Math.toDegrees(Math.atan2(Math.abs(elbow.x-shoulder.x),shoulder.y-elbow.y));
+                    if(bend>30 || roll>10 || abduction>25 || elbow.y>shoulder.y-.12f || elbow.z<wrist.z+.09f)
+                        throw new AssertionError("unnatural arm/wrist: bend="+bend+" roll="+roll+" abduction="+abduction);
+                    var measuredAxis=model==1?new Vector3f(side==0?.13444453f:-.13444453f,.48467334f,.86430112f)
+                        :new Vector3f(0,.4012329f,.9159761f);
+                    handleDelta.transformDirection(measuredAxis).normalize();
+                    float shaftAngle=(float)Math.toDegrees(Math.acos(Math.abs(handAxis.dot(measuredAxis))));
+                    var palm=inverseDelta.transformDirection(poses[hand].transformDirection(new Vector3f(0,0,1))).normalize();
+                    if(shaftAngle<34 || shaftAngle>36 || palm.x*(side==0?-1:1)<.9f || palm.y<.02f)
+                        throw new AssertionError("shaft no longer crosses fingers or palm is not inward/up");
+                }
                 for(int[] link:new int[][]{{upper,forearm},{forearm,hand}}) {
                     float old=before[link[0]].getTranslation(new Vector3f()).distance(before[link[1]].getTranslation(new Vector3f()));
                     float now=poses[link[0]].getTranslation(new Vector3f()).distance(poses[link[1]].getTranslation(new Vector3f()));
@@ -73,22 +100,25 @@ public final class CartGripTest {
         if(CartGrip.handle("unknown",true,new Vector3f())) throw new AssertionError("unknown cart accepted");
     }
 
-    private static void checkMeshClearance(Matrix4f hand, Matrix4f finger, boolean female, boolean wood) {
+    private static void checkMeshClearance(Matrix4f hand, Matrix4f finger, boolean female, String model) {
         // Actual weighted MaleBody/FemaleBody.x vertices, expressed in each bone's bind coordinates.
         float[][] palm=female?new float[][]{{0.0020998f,-0.0091214f,0.0071902f},{0.0014231f,-0.0076770f,-0.0063046f},{0.0016326f,0.0178379f,0.0075661f},{0.0020998f,-0.0091214f,0.0071902f},{0.0007937f,0.0184254f,-0.0038792f},{0.0283567f,0.0249755f,0.0133053f},{0.0616472f,-0.0226788f,0.0060821f},{0.0706890f,0.0282415f,0.0130508f},{0.0294907f,-0.0224944f,0.0138331f},{0.0747490f,0.0294749f,0.0043946f},{0.0312226f,0.0277455f,-0.0067923f},{0.0328328f,-0.0213634f,-0.0117772f},{0.0697984f,-0.0171041f,-0.0078210f},{0.0294907f,-0.0224944f,0.0138331f},{0.0697984f,-0.0171041f,-0.0078210f},{0.0730657f,-0.0277366f,0.0092307f},{0.0676227f,-0.0221999f,-0.0045658f},{0.0676227f,-0.0221999f,-0.0045658f}}
             :new float[][]{{-0.0047011f,-0.0166808f,0.0149844f},{-0.0062986f,-0.0140933f,-0.0107094f},{-0.0065602f,0.0228221f,0.0122680f},{-0.0047011f,-0.0166808f,0.0149844f},{-0.0061939f,0.0234710f,-0.0065123f},{0.0248656f,0.0219624f,0.0259086f},{0.0557897f,-0.0245963f,0.0030804f},{0.0605094f,0.0264435f,0.0156451f},{0.0267577f,-0.0275660f,0.0219811f},{0.0685401f,0.0286272f,-0.0024884f},{0.0240095f,0.0266243f,-0.0116279f},{0.0250810f,-0.0250940f,-0.0167333f},{0.0632623f,-0.0203972f,-0.0148921f},{0.0267577f,-0.0275660f,0.0219811f},{0.0632623f,-0.0203972f,-0.0148921f}};
         float[][] tips=female?new float[][]{{0.0403683f,-0.0188581f,-0.0047107f},{0.0255160f,0.0224891f,0.0088530f},{0.0370694f,-0.0205719f,0.0048154f},{0.0288193f,0.0237946f,0.0000331f},{0.0403683f,-0.0188581f,-0.0047107f},{0.0288193f,0.0237946f,0.0000331f}}
             :new float[][]{{0.0433459f,-0.0198121f,-0.0046032f},{0.0184177f,0.0220647f,0.0250893f},{0.0323905f,-0.0227227f,0.0142481f},{0.0292507f,0.0244001f,0.0064256f},{0.0433459f,-0.0198121f,-0.0046032f},{0.0292507f,0.0244001f,0.0064256f}};
-        var shape=CartGrip.grasp(female,wood);
+        boolean wood="WheelbarrowWood".equals(model),wheel=wood || "WheelbarrowMetal".equals(model);
+        var shape=CartGrip.grasp(female,model);
         var relative=new Matrix4f(hand).invert().mul(finger);
         for(int part=0;part<2;part++) {
             float closest=Float.POSITIVE_INFINITY;
             for(float[] vertex:part==0?palm:tips) {
                 var point=new Vector3f(vertex[0],vertex[1],vertex[2]);
                 if(part==1) relative.transformPosition(point);
-                float x=Math.abs(point.x-shape.palmX()),z=Math.abs(point.z-shape.palmDepth());
-                // GPU rod rings span radius .01212-.01343; the wooden beam has these two measured half widths.
-                float clearance=wood?Math.max(x-.0125f,z-.01579f):(float)Math.hypot(x,z)-.0128f;
+                float x=point.x-shape.palmX(),z=point.z-shape.palmDepth();
+                if(wheel) x=.5735200f*x+.8191916f*point.y;
+                // Project the diagonal underhand grip into the measured shaft cross-section.
+                float clearance=wood?Math.max(Math.abs(.9961947f*x-.08715574f*z)-.01579f,
+                    Math.abs(.08715574f*x+.9961947f*z)-.0125f):(float)Math.hypot(x,z)-.0128f;
                 closest=Math.min(closest,clearance);
             }
             if(closest<-.0025f || closest>.0025f)
@@ -97,7 +127,7 @@ public final class CartGripTest {
     }
 
     private static void checkFingers() {
-        for(String side:new String[]{"L","R"}) for(boolean female:new boolean[]{false,true}) for(boolean wood:new boolean[]{false,true}) {
+        for(String side:new String[]{"L","R"}) for(boolean female:new boolean[]{false,true}) for(String model:new String[]{"ShoppingCartModel","WheelbarrowWood","WheelbarrowMetal"}) {
             String[] names={"Bip01_Spine","Bip01_"+side+"_Hand","Bip01_"+side+"_Finger0","Bip01_"+side+"_Finger1"};
             var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
             for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
@@ -115,9 +145,10 @@ public final class CartGripTest {
             hand.mul(thumbLocal,poses[2]);
             var fingerKnuckle=poses[3].getTranslation(new Vector3f());
             var thumbKnuckle=poses[2].getTranslation(new Vector3f());
-            var shape=CartGrip.grasp(female,wood);
-            CartGrip.closeFingers(poses,actor,side,shape);
-            checkMeshClearance(hand,poses[3],female,wood);
+            var shape=CartGrip.grasp(female,model);
+            boolean underhand=model.startsWith("Wheelbarrow");
+            CartGrip.closeFingers(poses,actor,side,shape,underhand);
+            checkMeshClearance(hand,poses[3],female,model);
             if(poses[3].getTranslation(new Vector3f()).distance(fingerKnuckle)>.000001f
                 || poses[2].getTranslation(new Vector3f()).distance(thumbKnuckle)>.000001f)
                 throw new AssertionError("finger closure moved a knuckle");
@@ -131,8 +162,13 @@ public final class CartGripTest {
             var thumb=inverse.transformPosition(poses[2].transformPosition(thumbVertex));
             float depth=shape.palmDepth();
             float radial=(float)Math.hypot(finger.x-shape.palmX(),finger.z-depth);
-            if(radial<.01f || radial>.04f || finger.x<=shape.palmX() || thumb.x>=shape.palmX()+.005f)
+            if(radial<.01f || radial>.04f || finger.x<=shape.palmX() || (!underhand && thumb.x>=shape.palmX()+.005f))
                 throw new AssertionError("native finger meshes do not enclose the grip: female="+female+" side="+side);
+            if(underhand) {
+                var thumbAxis=new Matrix4f(hand).invert().mul(poses[2]).transformDirection(new Vector3f(1,0,0)).normalize();
+                if(thumbAxis.dot(new Vector3f(.8191916f,sign*.5735200f,0))<.95f)
+                    throw new AssertionError("underhand thumb does not follow the shaft");
+            }
             var palette=FloatBuffer.allocate(names.length*16);
             var shader=new org.lwjgl.util.vector.Matrix4f[names.length];
             if(CartGrip.skin(palette,shader,actor,actor,poses)!=names.length) throw new AssertionError("finger palette not updated");
@@ -163,7 +199,7 @@ public final class CartGripTest {
             float lower=poses[2].getTranslation(new Vector3f()).distance(poses[3].getTranslation(new Vector3f()));
             var relative=new Matrix4f(poses[3]).invert().mul(poses[4]);
             var goal=delta.mul(new Matrix4f().translation(.15f,.58f,-.13f).rotateY(.3f),new Matrix4f());
-            if(!CartGrip.reach(poses,actor,"Bip01_L_Hand",goal)) throw new AssertionError("reachable grip rejected");
+            if(!CartGrip.reach(poses,actor,"Bip01_L_Hand",goal,null)) throw new AssertionError("reachable grip rejected");
             if(!poses[3].equals(goal,.00001f)) throw new AssertionError("palm missed independent target");
             if(Math.abs(upper-poses[1].getTranslation(new Vector3f()).distance(poses[2].getTranslation(new Vector3f())))>.00001f
                 || Math.abs(lower-poses[2].getTranslation(new Vector3f()).distance(poses[3].getTranslation(new Vector3f())))>.00001f)
@@ -172,7 +208,7 @@ public final class CartGripTest {
                 throw new AssertionError("reach detached finger from hand");
             for(int i:new int[]{0,5,6}) if(!poses[i].equals(before[i])) throw new AssertionError("reach changed native torso/leg");
             before=java.util.Arrays.stream(poses).map(Matrix4f::new).toArray(Matrix4f[]::new);
-            if(CartGrip.reach(poses,actor,"Bip01_L_Hand",new Matrix4f().translation(5,5,5)))
+            if(CartGrip.reach(poses,actor,"Bip01_L_Hand",new Matrix4f().translation(5,5,5),null))
                 throw new AssertionError("unreachable target accepted");
             for(int i=0;i<poses.length;i++) if(!poses[i].equals(before[i])) throw new AssertionError("failed reach changed poses");
         }
@@ -254,6 +290,6 @@ public final class CartGripTest {
             if(!java.util.Arrays.equals(otherActor.array(),untouched)) throw new AssertionError("another actor was changed");
         }
         if(frames.get(0).scale.x!=.01f) throw new AssertionError("shared clip scale changed");
-        System.out.println("CART_GRIP_PASS (measured mesh handles and palm/finger surface clearance, native arm reach, remapped clothing, bank, native walking legs, render isolation)");
+        System.out.println("CART_GRIP_PASS (natural underhand arms/wrists, measured mesh contact, native thumb, clothing, bank, walking legs, render isolation)");
     }
 }
