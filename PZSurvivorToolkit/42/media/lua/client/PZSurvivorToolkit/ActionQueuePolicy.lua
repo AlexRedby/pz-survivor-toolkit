@@ -7,6 +7,9 @@ require "TimedActions/ISActivateGenerator"
 require "TimedActions/ISFixGenerator"
 require "TimedActions/ISTransferAction"
 require "TimedActions/ISEatFoodAction"
+require "TimedActions/ISWashClothing"
+require "TimedActions/ISWashYourself"
+require "TimedActions/ISDryMyself"
 require "TimedActions/ISRemoveCarBatteryFromChargerAction"
 require "TimedActions/ISTakeCarBatteryChargerAction"
 
@@ -380,6 +383,19 @@ local function registerNative(name, inspector, helpers)
 end
 Policy.registerNative = registerNative
 
+function Policy.nativeUnequipVariant(previous, replacement, guard)
+    local snapshot = snapshots[ISUnequipAction]
+    if not snapshot or type(guard) ~= "function" or not guard() then return end
+    local variant = {class = snapshot.class, methods = {}, helpers = snapshot.helpers}
+    for name, method in pairs(snapshot.methods) do variant.methods[name] = method end
+    for _, name in ipairs({"new", "complete"}) do
+        if snapshot.methods[name] ~= previous[name] or ISUnequipAction[name] ~= replacement[name]
+            or type(replacement[name]) ~= "function" then return end
+        variant.methods[name] = replacement[name]
+    end
+    return function(action) return guard() and nativeMatches(action, variant) end
+end
+
 function Policy.adoptTransferHooks(previous, replacement, guard)
     local snapshot = snapshots[ISInventoryTransferAction]
     local preparation = nativePreparation[ISInventoryTransferAction]
@@ -532,6 +548,76 @@ local function radioResources(action)
     if target and not instanceof(target, "InventoryItem") then result.targets[target] = true end
     return result
 end
+local function dryItem(item)
+    return instanceof(item, "DrainableComboItem") and (item:getType() == "BathTowel" or item:getType() == "DishCloth")
+end
+local function hygieneResources(action)
+    local dry = action.Type == "ISDryMyself"
+    if not instanceof(action.character, "IsoPlayer") then return end
+    if (dry or action.Type == "ISWashClothing") and not instanceof(action.item, "InventoryItem") then return end
+    if not dry and not instanceof(action.sink, "IsoObject") then return end
+    local result = resources(action)
+    result.preparationFinish, result.unknownOutputs = true, true
+    if dry or action.Type == "ISWashYourself" then result.targets[action.character] = true end
+    if dry then
+        if not dryItem(action.item) then
+            local kind = action.item:getFullType()
+            if kind ~= "Base.BathTowelWet" and kind ~= "Base.DishClothWet" then return end
+            -- MP replaces queued towel fields with the wet output; this is skip-only, never editable work.
+            result.cancelWaiting, result.cancelOperation, result.knownInputs, result.preparationFinish = false, false, false, false
+        end
+        return result
+    end
+    result.targets[action.sink] = true
+    if instanceof(action.sink, "IsoWorldInventoryObject") then
+        local item = action.sink:getItem()
+        if not instanceof(item, "InventoryItem") then return end
+        result.items[itemKey(item)], result.itemTypes[item:getFullType()] = true, true
+    end
+    if not instanceof(action.soaps, "List") then return end
+    result.dynamicInputs = {}
+    for i = 0, action.soaps:size() - 1 do
+        local soap = action.soaps:get(i)
+        if not instanceof(soap, "InventoryItem") then return end
+        result.items[itemKey(soap)], result.itemTypes[soap:getFullType()] = true, true
+        result.dynamicInputs[soap:getFullType()] = true
+    end
+    -- Server constructors select soap again; body washing also removes current makeup.
+    if action.Type == "ISWashYourself" or not action.noSoap
+        or (not instanceof(action.item, "Clothing") and not instanceof(action.item, "InventoryContainer")
+            and not action.item:getItemAfterCleaning()) then result.knownInputs = false end
+    return result
+end
+
+function Policy.hygieneUnavailable(action)
+    local kind = action and action.Type
+    if kind ~= "ISDryMyself" and kind ~= "ISWashClothing" and kind ~= "ISWashYourself" then return false end
+    local snapshot = snapshots[getmetatable(action)]
+    if not snapshot or not nativeMatches(action, snapshot) or not hygieneResources(action) then return false end
+    if kind == "ISDryMyself" then
+        if action.character:getStats():get(CharacterStat.WETNESS) <= 0 then return true end
+        -- Running MP drying deliberately leaves item depletion to the authoritative server tick.
+        if isClient() and action.started then return false end
+        local inventory = action.character:getInventory()
+        local item = action.item
+        if isClient() then item = inventory:getItemById(item:getID())
+        elseif not inventory:contains(item) then return true end
+        return not item or not dryItem(item) or item:getCurrentUsesFloat() <= 0
+    end
+    if kind == "ISWashYourself" then return action.sink:getFluidAmount() <= 0 end
+    return action.sink:getFluidAmount() < action.GetRequiredWater(action.item)
+        or (not isClient() and action.item:getContainer() ~= action.character:getInventory())
+end
+
+function Policy.skipUnavailableHygiene(queue)
+    local action = queue.queue[2]
+    while action and not action.action and Policy.hygieneUnavailable(action) do
+        table.remove(queue.queue, 2)
+        action:forceCancel()
+        action = queue.queue[2]
+    end
+end
+
 function Policy.installContracts()
     registerNative("ISEatFoodAction", function(action)
         local Food = Toolkit.BulkFood
@@ -573,6 +659,12 @@ function Policy.installContracts()
     end
     registerNative("ISFluidTransferAction", fluidResources)
     registerNative("ISFluidEmptyAction", fluidResources, {"updateEmpty"})
+    registerNative("ISDryMyself", hygieneResources)
+    registerNative("ISWashYourself", hygieneResources, {"setOverrideHandModels", "setActionAnim"})
+    -- WashFix completion/returns require the separately verified source-owned contract.
+    if ISWashClothing and not ISWashClothing._wmiPatchedReturnContainer then
+        registerNative("ISWashClothing", hygieneResources, {"setOverrideHandModels", "setActionAnim"})
+    end
 end
 Policy.installContracts()
 if Events.OnGameStart then Events.OnGameStart.Add(Policy.installContracts) end

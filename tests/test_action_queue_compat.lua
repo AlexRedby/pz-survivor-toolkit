@@ -152,7 +152,8 @@ local paths = {
 }
 ISInventoryPage={onBackpackRightMouseDown=function() end}
 local containerGuards={}
-PZSurvivorToolkit.ActionQueuePolicy={adoptReadAnimEvent=function(previous,replacement)
+PZSurvivorToolkit.ActionQueuePolicy={skipUnavailableHygiene=function() end,
+    hygieneUnavailable=function() return false end, adoptReadAnimEvent=function(previous,replacement)
     return previous==nativeReadAnimEvent and ISReadABook.animEvent==replacement
 end, adoptTransferFloorHelper=function(previous,replacement)
     transferHelperAdopted=previous==nativeFloorHelper and ISInventoryTransferAction.getNotFullFloorSquare==replacement

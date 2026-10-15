@@ -85,6 +85,7 @@ SaucedCarts={isCart=function(value) return value and value.cart==true end,
         assert(character==p and command=='cartTransfer');packets[#packets+1]=args
     end}}
 fixtureOrigins[SaucedCarts.safeIsCart]=SaucedCartsSource..'/Core.lua';fixtureOrigins[SaucedCarts.isCart]=SaucedCartsSource..'/Core.lua'
+fixtureOrigins[SaucedCarts.debug]=SaucedCartsSource..'/Core.lua'
 for _,name in ipairs({'performCartTransfer','flushContainerResync','requestInventoryRefresh'}) do
     fixtureOrigins[SaucedCarts[name]]=SaucedCartsSource..'/CartTransferInterceptor.lua'
 end
@@ -449,4 +450,107 @@ local unverified=f.project('ActionQueueCarts')
 assert(not unverified.install() and ISCartTransferAction.canMergeAction==mergeBefore
     and not unverified.isTransferConstructor(ISInventoryTransferAction.new),
     'unverified constructor installed permissions or altered upstream batching')
-print('Cart queue contracts passed: real SC constructors/hooks/perform, ownership/resources, move/cancel barriers, token batching, SP returns and protected MP sends.')
+-- ContainerRestrictions changes unequip new/complete globally, but only the marked non-cart food mask is audited.
+local restrictionsPath=SaucedCartsSource..'/ContainerRestrictions.lua'
+local restrictionsSource=read(restrictionsPath)
+local coreSource=read(SaucedCartsSource..'/Core.lua')
+local compatPath=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
+local compatSource=read(compatPath)
+local pinCode='local utf8Strings=string.byte("洗")==230;local sourceFiles={}\n'
+    ..assert(compatSource:match('(local function sourceHash%(reader%).-\nend)'))..'\n'
+    ..assert(compatSource:match('(local function verified%(id, files%).-\nend)'))..'\nlocal Compat={}\n'
+    ..assert(compatSource:match('(function Compat.isCartMaskSource%(%).-\nend)'))..'\nreturn Compat'
+local maskHookCode='local unequipHookInitialized=false\n'
+    ..assert(restrictionsSource:match('(local function flushDistanceOnCreate%(character, item, label%).-\nend)'))..'\n'
+    ..assert(restrictionsSource:match('(local function wrapUnequipNew%(%).-\nend)'))..'\n'
+    ..assert(restrictionsSource:match('(local function initUnequipHook%(%).-\nend)'))..'\nreturn initUnequipHook'
+for _,mode in ipairs({'valid','changed-source','foreign-helper'}) do
+    -- Rebuild the fixture so the helper must observe native predecessors before the real OnGameStart hook.
+    local maskFixture=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
+    local character=maskFixture.player
+    ItemBodyLocation={};ISWearClothing={isStopOnWalk=function() return false end}
+    maskFixture.native('shared/TimedActions/ISUnequipAction.lua')
+    local removed=0
+    character.removeWornItem=function() removed=removed+1 end
+    character.getPrimaryHandItem,character.getSecondaryHandItem=function() end,function() end
+    getPlayerHotbar,sendEquip,triggerEvent=function() end,function() end,function() end
+    isForceDropHeavyItem=function() return false end
+    local originalNew,originalComplete=ISUnequipAction.new,ISUnequipAction.complete
+    fixtureOrigins[originalNew]=NativeActionRoot..'/shared/TimedActions/ISUnequipAction.lua'
+    fixtureOrigins[originalComplete]=NativeActionRoot..'/shared/TimedActions/ISUnequipAction.lua'
+    for _,name in ipairs({'new','perform','transferItem'}) do
+        fixtureOrigins[ISInventoryTransferAction[name]]=NativeActionRoot..'/client/TimedActions/ISInventoryTransferAction.lua'
+    end
+    -- The existing fake core is kept exact and guarded; execute the actual restricted unequip wrappers below.
+    SaucedCarts.CartTypes={}
+    local pendingStarts={};Events.OnGameStart.Add=function(callback) pendingStarts[#pendingStarts+1]=callback end
+    local originalRequire=require
+    require=function(module)
+        if module=='SaucedCarts/Restrictions/TransferRestrictions' then
+            local hook=assert(read(restrictionPath):match('(local function initTransferActionHook%(%).-\nend)'))
+            Events.OnGameStart.Add(source('local transferActionHookInitialized=false\n'..hook..'\nreturn initTransferActionHook',restrictionPath))
+        elseif module=='SaucedCarts/CartState/VisualUpdateQueue' then
+            local hook=assert(read(visualPath):match('(local function hookTransferAction%(%).-\nend)'))
+            Events.OnGameStart.Add(source('local function getCartFromContainer(c) return c and c:getContainingItem() end\n'..hook..'\nreturn hookTransferAction',visualPath))
+        else return originalRequire(module) end
+    end
+    getModFileReader=function(id,path)
+        assert(id=='SaucedCarts')
+        local text=path=='media/lua/shared/SaucedCarts/Core.lua' and coreSource or restrictionsSource
+        if mode=='changed-source' then text=text..'\n-- changed wrapper source\n' end
+        local lines={};for line in text:gmatch('([^\n]*)\n') do lines[#lines+1]=line end
+        local index=0;return {readLine=function() index=index+1;return lines[index] end,close=function() end}
+    end
+    local maskCompat=source(pinCode,compatPath)
+    assert(maskCompat.isCartMaskSource()==(mode~='changed-source'),'mask wrapper source pin did not reject changed input')
+    local debugBefore=SaucedCarts.debug
+    if mode=='foreign-helper' then SaucedCarts.debug=function() end end
+    PZSurvivorToolkit.ActionQueueCompat=maskCompat
+    local owned
+    PZSurvivorToolkit.BulkFood={isMaskRemoval=function(action) return action==owned end,
+        isCommand=function() return false end,isEat=function() return false end}
+    local maskFood=PZSurvivorToolkit.BulkFood
+    source(read(cartPath),cartPath)
+    source('local interceptionInstalled=false\n'..classify..'\n'..interceptor:sub(hookStart,hookEnd-1)..'end\ninstallInterception()',interceptorPath)
+    maskFixture.project('ActionQueueOperations');maskFixture.project('ActionQueueDefinitions')
+    local maskPolicy=maskFixture.project('ActionQueuePolicy')
+    Events.OnGameStart.Add(source(maskHookCode,restrictionsPath))
+    local maskCarts=maskFixture.project('ActionQueueCarts');assert(maskCarts.install())
+    for _,callback in ipairs(pendingStarts) do callback() end
+    local mask=maskFixture.item('Base.Hat_GasMask_nofilter')
+    mask.getCategory=function() return 'Clothing' end;mask.getWorldItem=function() end
+    owned=ISUnequipAction:new(character,mask,50,'food')
+    local foreign=ISUnequipAction:new(character,mask,50,'food')
+    assert(owned.maxTimeInit==50 and owned.reason=='food','actual wrapper changed native constructor arguments')
+    assert(not maskPolicy.inspect(foreign),'unmarked identical mask removal borrowed food ownership')
+    local contract,adapter=maskPolicy.inspect(owned)
+    if mode~='valid' then assert(not contract,'changed source or preinstalled helper acquired mask permission: '..mode)
+    else
+        assert(adapter=='compat.food-mask-unequip' and contract.preparationFinish and maskPolicy.preparationCanFinish(owned),
+            'owned native mask removal did not regain preparation cancellation')
+        owned:complete();assert(removed==1,'actual non-cart wrapper did not delegate native completion exactly once')
+        for _,name in ipairs({'new','complete','start','stop'}) do
+            local method=ISUnequipAction[name];ISUnequipAction[name]=function() end
+            assert(not maskPolicy.inspect(owned),'changed unequip lifecycle retained mask permission: '..name)
+            ISUnequipAction[name]=method
+        end
+        for _,name in ipairs({'safeIsCart','isCart','debug'}) do
+            local method=SaucedCarts[name];SaucedCarts[name]=function() return false end
+            assert(not maskPolicy.inspect(owned),'changed classification helper retained mask permission: '..name)
+            SaucedCarts[name]=method
+        end
+        local cartTypes=SaucedCarts.CartTypes;SaucedCarts.CartTypes={}
+        assert(not maskPolicy.inspect(owned),'replacement cart registry retained mask permission');SaucedCarts.CartTypes=cartTypes
+        setmetatable(cartTypes,{__index=function() end})
+        assert(not maskPolicy.inspect(owned),'changed cart registry lookup retained mask permission');setmetatable(cartTypes,nil)
+        cartTypes[mask:getFullType()]={}
+        assert(not maskPolicy.inspect(owned),'registered cart type retained non-cart mask permission');cartTypes[mask:getFullType()]=nil
+        local marking=maskFood.isMaskRemoval;maskFood.isMaskRemoval=function() return true end
+        assert(not maskPolicy.inspect(owned),'replacement ownership predicate retained mask permission');maskFood.isMaskRemoval=marking
+        owned.item.cart=true
+        assert(not maskPolicy.inspect(owned),'cart classification retained ordinary mask permission');owned.item.cart=nil
+        assert(maskPolicy.inspect(owned),'restored exact helpers did not restore mask permission')
+    end
+    SaucedCarts.debug=debugBefore
+end
+print('Cart queue contracts passed: real SC transfer and non-cart food-mask hooks, exact ownership/helper guards, batching, SP returns and protected MP sends.')

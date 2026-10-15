@@ -1,13 +1,14 @@
 -- Exact food selection and native eating chains; Java animation/network state is represented explicitly.
 require = function() end
 local fill, enabled, fullness, dead = nil, true, 0, false
+local onGameStart, onTick = {}, {}
 local function derive(self, name)
     local class = {Type = name, derive = derive}; class.__index = class
     return setmetatable(class, {__index = self})
 end
 ISBaseObject = {derive = derive}
 PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
-Events = {OnTick = {Add = function() end}, OnGameStart = {Add = function() end},
+Events = {OnTick = {Add = function(fn) onTick[#onTick + 1] = fn end}, OnGameStart = {Add = function(fn) onGameStart[#onGameStart + 1] = fn end},
     OnFillInventoryObjectContextMenu = {Add = function(fn) fill = fn end}}
 instanceof = function(value, name)
     return type(value) == 'table' and (value.class == name or name == 'InventoryItem' and value.class == 'Food')
@@ -16,6 +17,9 @@ getText = function(key, count) return key .. (count and '(' .. tostring(count) .
 getTexture = function(path) return path end
 isClient, isServer = function() return false end, function() return false end
 MoodleType, ItemTag = {FOOD_EATEN = 'full'}, {SMOKABLE = 'smoke', SPOON = 'spoon', FORK = 'fork'}
+ItemBodyLocation = setmetatable({}, {__index = function(_, name) return name end})
+getPlayerHotbar, sendEquip, triggerEvent = function() end, function() end, function() end
+isForceDropHeavyItem = function() return false end
 table.wipe = function(t) for key in pairs(t) do t[key] = nil end end
 DebugType = {Action = {warn = function() end}}
 ISLogSystem = {logAction = function() end}
@@ -34,6 +38,8 @@ if NativeActionRoot then
     native('client/TimedActions/ISTimedActionQueue.lua')
     native('client/TimedActions/ISQueueActionsAction.lua')
     native('shared/TimedActions/ISEatFoodAction.lua')
+    native('shared/TimedActions/ISWearClothing.lua')
+    native('shared/TimedActions/ISUnequipAction.lua')
 else
     ISBaseTimedAction = ISBaseObject:derive('ISBaseTimedAction')
     function ISBaseTimedAction:new(character) return setmetatable({character = character}, self) end
@@ -105,14 +111,23 @@ local function container()
 end
 local inventory, bag, remote = container(), container(), container()
 local available = {inventory, bag}
-local eaten, calls = {}, {}
+local eaten, calls, portions = {}, {}, {}
+local mask
 local player = {getInventory = function() return inventory end, getPlayerNum = function() return 0 end,
     isDead = function() return dead end, isAsleep = function() return false end,
     getMoodles = function() return {getMoodleLevel = function() return fullness end} end,
-    isEquippedClothing = function() return false end, getPrimaryHandItem = function() end, getSecondaryHandItem = function() end,
+    isEquippedClothing = function(_, item) return item == mask end, getPrimaryHandItem = function() end, getSecondaryHandItem = function() end,
+    removeWornItem = function(_, item) if mask == item then mask = nil end end,
+    setWornItem = function(_, _, item) mask = item end,
+    getWornItem = function() return mask end,
+    getHumanVisual = function() return {getHairModel = function() return {contains = function() return false end} end} end,
     isTimedActionInstant = function() return false end, getVehicle = function() end,
     getEmitter = function() return {isPlaying = function() return false end} end, setIsFarming = function() end,
-    Eat = function(_, item, percentage) assert(percentage == 1); eaten[#eaten + 1] = item; item.container.items[item.id] = nil end}
+    Eat = function(_, item, percentage)
+        eaten[#eaten + 1], portions[#portions + 1] = item, percentage
+        item.hunger = math.min(0, item.hunger - item.baseHunger * percentage)
+        if item.hunger == 0 then item.container.items[item.id] = nil end
+    end}
 getSpecificPlayer = function(index) assert(index == 0); return player end
 ISInventoryPaneContextMenu.getContainers = function() return list(available) end
 ISInventoryPaneContextMenu.addToolTip = function() return {} end
@@ -120,12 +135,13 @@ ISInventoryPaneContextMenu.hasOpenFlame = function() return false end
 local nextID = 0
 local function food(options)
     nextID = nextID + 1
-    local item = {class = 'Food', id = nextID, container = inventory, hunger = -.01, options = options or {}}
+    local item = {class = 'Food', id = nextID, container = inventory, hunger = -.01, baseHunger = -.01, options = options or {}}
     function item:getID() return self.id end
     function item:getContainer() return self.container end
     function item:getCategory() return self.options.category or 'Food' end
     function item:getHungChange() return self.hunger end
-    item.getHungerChange, item.getBaseHunger = item.getHungChange, item.getHungChange
+    item.getHungerChange = item.getHungChange
+    function item:getBaseHunger() return self.baseHunger end
     function item:getScriptItem() return {isCantEat = function() return self.options.cantEat end, getOpeningRecipe = function() return self.options.opening end} end
     function item:getOpeningRecipe() return self.options.opening end
     function item:getCustomMenuOption() return self.options.custom end
@@ -139,6 +155,13 @@ local function food(options)
     function item:getEatTime() return 0 end
     function item:getCustomEatSound() return '' end
     function item:setJobDelta() end
+    function item:getClothingItem() return {} end
+    function item:getBodyLocation() return ItemBodyLocation.MASK end
+    function item:canBeEquipped() return '' end
+    function item:isBroken() return self.options.broken or false end
+    function item:IsClothing() return self:getCategory() == 'Clothing' end
+    function item:IsInventoryContainer() return false end
+    function item:getIsCraftingConsumed() return false end
     item.container = item.options.container or inventory; item.container.items[item.id] = item
     return item
 end
@@ -147,7 +170,6 @@ local function action(kind, item)
     function result:setOnComplete(callback) self.onCompleteFunc = callback end
     return result
 end
-local mask
 ISInventoryPaneContextMenu.transferIfNeeded = function(_, item)
     if item.container ~= inventory then
         local transfer = action('ISInventoryTransferAction', item); transfer.srcContainer, transfer.destContainer = item.container, inventory
@@ -155,10 +177,10 @@ ISInventoryPaneContextMenu.transferIfNeeded = function(_, item)
     end
 end
 ISInventoryPaneContextMenu.getEatingMask = function(_, remove)
-    if mask and remove then ISTimedActionQueue.add(action('ISUnequipAction', mask)) end
+    if mask and remove then ISTimedActionQueue.add(NativeActionRoot and ISUnequipAction:new(player, mask, 50) or action('ISUnequipAction', mask)) end
     return mask
 end
-ISWearClothing = {new = function(_, _, item) return action('ISWearClothing', item) end}
+if not NativeActionRoot then ISWearClothing = {new = function(_, _, item) return action('ISWearClothing', item) end} end
 ISCraftingUI = {ReturnItemToOriginalContainer = function(_, item)
     if item.container ~= inventory then
         local transfer = action('ISInventoryTransferAction', item); transfer.srcContainer, transfer.destContainer = inventory, item.container
@@ -190,7 +212,7 @@ project('BulkActions')
 local Operations, Batch = project('ActionQueueOperations'), project('ActionQueueBatch')
 local Bulk = project('BulkFood')
 local q = ISTimedActionQueue.getTimedActionQueue(player)
-local function reset() q.queue, q.current, eaten, calls, fullness, mask = {}, nil, {}, {}, 0, nil end
+local function reset() q.queue, q.current, eaten, calls, portions, fullness, mask = {}, nil, {}, {}, {}, 0, nil end
 local function executeCommand(command)
     assert(Bulk.isCommand(command)); command:start(); q:onCompleted(command)
 end
@@ -200,7 +222,8 @@ local function finish()
     else
         if current.Type == 'ISInventoryTransferAction' and current.destContainer == inventory then
             current.srcContainer.items[current.item.id] = nil; inventory.items[current.item.id] = current.item; current.item.container = inventory
-        elseif current.Type == 'ISEatFoodAction' then current:complete(); Batch.completed(current) end
+        elseif current.Type == 'ISEatFoodAction' then current:complete(); Batch.completed(current)
+        elseif NativeActionRoot and (current.Type == 'ISUnequipAction' or current.Type == 'ISWearClothing') then current:complete() end
         q:onCompleted(current)
     end
 end
@@ -222,7 +245,7 @@ assert(not Bulk.isCommand(first), 'replacing an owned command callback revokes o
 first.addActionsFunction = callback
 assert(Batch.progress(q, first).total == 2, 'one operation counts foods, not preparation steps')
 local tail = action('Unrelated'); ISTimedActionQueue.add(tail)
-mask = {id = -1}
+mask = food({category = 'Clothing'})
 executeCommand(first)
 local eat
 for _, entry in ipairs(q.queue) do if entry.Type == 'ISEatFoodAction' then eat = entry end end
@@ -244,6 +267,33 @@ assert(Bulk.queueOne({{items = {a, a, b}}}, 1, 0, nil, 100) == 1)
 assert(Bulk.queueOne({{items = {a, a, b}}}, 1, 0, nil, 100) == 1)
 assert(#q.queue == 2 and #Bulk.entries(player, {a, b}) == 0, 'repeat All clicks reserve successive foods without cancelling earlier commands')
 assert(Bulk.queueOne({a, b}, 1, 0, nil, 100) == 0 and #q.queue == 2, 'exhausted selection never substitutes an unselected item')
+reset(); a, b = food(), food()
+a.hunger, a.baseHunger, b.hunger, b.baseHunger = -.2, -.2, -.2, -.2
+assert(Bulk.queueOne({a, b}, .5, 0, nil, 50) == 1 and Bulk.queueOne({a, b}, .25, 0, nil, 25) == 1)
+assert(Bulk.queue(player, {a, b}, 0) == 0 and Bulk.queue(player, {a, b}, 2) == 0)
+while q.current do finish() end
+assert(#eaten == 2 and eaten[1] == a and eaten[2] == b and portions[1] == .5 and portions[2] == .25
+    and math.abs(a.hunger + .1) < .0001 and math.abs(b.hunger + .15) < .0001,
+    'native half and quarter use distinct selected IDs, preserve exact portions and retain leftovers')
+assert(Bulk.queueOne({a}, .5, 0, nil, 50) == 1, 'a completed partial portion releases its surviving food for a later request')
+while q.current do finish() end
+assert(not inventory:contains(a) and inventory:contains(b) and #eaten == 3, 'a later portion consumes only the existing remainder')
+reset(); a = food(); assert(Bulk.queue(player, {a}) == 1)
+local ownedCommand = q.current
+assert(onTick[#onTick] == Bulk.prune, 'ownership pruning must run independently of settings and the panel')
+Bulk.prune(); assert(Bulk.isCommand(ownedCommand), 'queued command retains its private entry during pruning')
+executeCommand(ownedCommand)
+local ownedMeal = q.current
+Bulk.prune()
+assert(not Bulk.isCommand(ownedCommand) and Bulk.isEat(ownedMeal), 'finished command is released without revoking its queued native meal')
+finish(); Bulk.prune(); assert(not Bulk.isEat(ownedMeal), 'finished native meal is released on the next tick')
+reset(); a = food(); Bulk.queue(player, {a}); ownedCommand = q.current
+local otherPlayer = {}; ISTimedActionQueue.queues[otherPlayer] = {queue = {ownedCommand}}
+q.queue = {}; Bulk.prune()
+assert(Bulk.isCommand(ownedCommand), 'pruning must preserve actions present in any registered player queue')
+ISTimedActionQueue.queues[otherPlayer] = nil
+enabled = false; Bulk.prune(); enabled = true
+assert(not Bulk.isCommand(ownedCommand), 'disabled queue UI does not retain absent command ownership')
 reset()
 a, b = food(), food(); Bulk.queue(player, {a, b}); tail = action('Unrelated'); ISTimedActionQueue.add(tail)
 local progressAction = q.queue[1]; inventory.items[a.id] = nil; fullness = 3
@@ -266,15 +316,16 @@ reset(); a, b = food(), food()
 local context, sub = menu(), menu(); local parent = context:addOption(getText('ContextMenu_Eat')); context:addSubMenu(parent, sub)
 local all = sub:addOption(getText('ContextMenu_Eat_All'), {a, b}, originalEat, 1, 0, nil, 100)
 local half = sub:addOption(getText('ContextMenu_Eat_Half'), {a, b}, originalEat, .5, 0, nil, 50)
+local quarter = sub:addOption(getText('ContextMenu_Eat_Quarter'), {a, b}, originalEat, .25, 0, nil, 25)
 local smart = function() end
 local smartOption = sub:addOption('Smart target', {a, b}, smart, 1, 0); smartOption.ES_EatSmart = true
 fill(0, context, {a, b}); fill(0, context, {a, b})
-assert(ISInventoryPaneContextMenu.onEatItems == originalEat and half.onSelect == originalEat and smartOption.onSelect == smart,
-    'public callback, partial native option and EatSmart target keep their original contracts')
+assert(ISInventoryPaneContextMenu.onEatItems == originalEat and half.onSelect == Bulk.queueOne and smartOption.onSelect == smart,
+    'native portions select unreserved items while public callback and EatSmart retain their contracts')
 assert(all.onSelect == Bulk.queueOne and all.param1 == 1 and all.param2 == 0, 'only native All option chooses an unreserved exact item')
 local selectedOptions = 0
 for _, option in ipairs(sub.options) do if option.onSelect == Bulk.queue then selectedOptions = selectedOptions + 1 end end
-assert(selectedOptions == 1, 'repeated fill appends exactly one selected-food batch command')
+assert(quarter.onSelect == Bulk.queueOne and selectedOptions == 3, 'repeated fill appends one batch command per visible native portion')
 local special = food({opening = 'OpenCan'})
 local specialMenu, specialSub = menu(), menu()
 local specialParent = specialMenu:addOption(getText('ContextMenu_OpenAndEat')); specialMenu:addSubMenu(specialParent, specialSub)
@@ -307,6 +358,7 @@ if NativeActionRoot then
     local Definitions = project('ActionQueueDefinitions'); Definitions.taskTitle = function() return 'Food' end
     project('ActionQueueLabels')
     local Policy = project('ActionQueuePolicy'); Policy.installContracts()
+    for _, callback in ipairs(onGameStart) do callback() end
     local Controller = project('ActionQueue')
     local function book()
         local value = ISBaseTimedAction.new(ISReadABook, player); value.item = unselected; return value
@@ -332,6 +384,73 @@ if NativeActionRoot then
     current.complete = function() end
     assert(not Policy.inspect(current), 'foreign food completion removes audited cancellation permission')
 
+    for _, phase in ipairs({'removal', 'eating'}) do
+        reset(); a, b = food(), food(); mask = food({category = 'Clothing'})
+        local originalMask = mask
+        Bulk.queue(player, {a, b}); local maskCommand, futureCommand = q.current, q.queue[2]
+        executeCommand(maskCommand); Bulk.prune()
+        local plannedMeal = q.queue[2]
+        assert(not Bulk.isCommand(maskCommand), 'mask preparation does not keep a completed command in its registry')
+        assert(Bulk.isMaskRemoval(q.current) and not Bulk.isMaskRemoval(ISUnequipAction:new(player, mask, 50)),
+            'only the privately recorded food mask removal owns its exact native step')
+        local removal = q.current
+        local originalItem = removal.item
+        removal.item = {getID = function() return originalItem:getID() end}
+        assert(Bulk.isMaskRemoval(removal), 'native replacement proxy with the same mask ID retains ownership')
+        removal.item = {getID = function() return originalItem:getID() + 1 end}
+        assert(not Bulk.isMaskRemoval(removal), 'a different mask ID cannot borrow the private removal record')
+        removal.item = originalItem; removal.character = {}
+        assert(not Bulk.isMaskRemoval(removal), 'a different character cannot borrow the private removal record')
+        removal.character = player
+        if phase == 'eating' then
+            finish(); Bulk.prune()
+            assert(not Bulk.isMaskRemoval(removal) and Bulk.isEat(q.current), 'finished mask removal does not revoke its queued meal')
+        end
+        local active, restore = q.current
+        for _, candidate in ipairs(q.queue) do if Bulk.isCleanup(candidate) then restore = candidate end end
+        tail = book(); tail.item = food(); ISTimedActionQueue.add(tail)
+        assert(restore and Policy.inspect(restore), 'only the native owned mask restoration gets a cleanup contract')
+        local complete = restore.complete; restore.complete = function() end
+        assert(not Controller.cancelOperation(q, active), 'changed mask effects cannot inherit group cancellation permission')
+        restore.complete = complete
+        assert(Controller.cancelOperation(q, active), 'mask removal and eating both permit finish-step group cancellation')
+        finish()
+        Bulk.prune()
+        assert(not Bulk.isCommand(futureCommand) and not Bulk.isMaskRemoval(removal) and not Bulk.isEat(plannedMeal),
+            'group cancellation releases removed commands, mask removal and meal ownership')
+        assert(q.current == restore and #q.queue == 2 and q.queue[2] == tail and not mask and inventory:contains(b),
+            'cancel drops future food and preserves the original native restoration before unrelated work')
+        assert(Bulk.isCleanup(restore), 'retained cleanup survives pruning of its finished command and removal')
+        assert(not Controller.cancelOperation(q, restore), 'retained mandatory mask cleanup cannot itself be dropped')
+        finish()
+        Bulk.prune(); assert(not Bulk.isCleanup(restore), 'completed mandatory restoration leaves no ownership record')
+        assert(mask == originalMask and q.current == tail and #calls == 1
+            and #eaten == (phase == 'eating' and 1 or 0), 'mask is restored once and only a started meal is consumed')
+    end
+
+    for _, reason in ipairs({'clear', 'death', 'missing-queue'}) do
+        reset(); a = food(); mask = food({category = 'Clothing'})
+        Bulk.queue(player, {a}); local command = q.current; executeCommand(command)
+        local removal, meal, restore = q.current, q.queue[2], q.queue[3]
+        assert(Bulk.isCommand(command) and Bulk.isMaskRemoval(removal) and Bulk.isEat(meal) and Bulk.isCleanup(restore))
+        if reason == 'clear' then q:clearQueue()
+        elseif reason == 'death' then dead = true; q.queue, q.current = {}, nil
+        else ISTimedActionQueue.queues[player] = nil end
+        Bulk.prune()
+        assert(not Bulk.isCommand(command) and not Bulk.isMaskRemoval(removal) and not Bulk.isEat(meal) and not Bulk.isCleanup(restore),
+            'absent actions must leave every ownership registry after '..reason)
+        dead = false; ISTimedActionQueue.queues[player] = q
+    end
+
+    reset(); a = food(); mask = food({category = 'Clothing'})
+    local lostMask = mask
+    Bulk.queue(player, {a}); executeCommand(q.current); finish()
+    tail = book(); tail.item = food(); ISTimedActionQueue.add(tail)
+    assert(Controller.cancelOperation(q, q.current))
+    inventory.items[lostMask.id] = nil
+    finish()
+    assert(q.current == tail and #eaten == 1 and not mask, 'missing mask is never recreated or allowed to clear the unrelated tail')
+
     reset(); a, b = food({container = bag}), food()
     Bulk.queue(player, {a, b}); executeCommand(q.current)
     tail = book(); tail.item = food(); ISTimedActionQueue.add(tail)
@@ -350,7 +469,7 @@ if NativeActionRoot then
     assert(#eaten == 1 and eaten[1] == b and #q.queue == 1 and Batch.progress(q, missingMeal).completed == 1,
         'missing-after-dispatch neither eats a missing item nor clears later food and unrelated work')
 
-    reset(); a, b = food(), food(); mask = {id = -2}
+    reset(); a, b = food(), food(); mask = food({category = 'Clothing'})
     Bulk.queue(player, {a, b}); executeCommand(q.current)
     tail = book(); tail.item = food(); ISTimedActionQueue.add(tail)
     local unequip, fullMeal, cleanup = q.current, q.queue[2], q.queue[3]
@@ -363,7 +482,7 @@ if NativeActionRoot then
     assert(#eaten == 0 and #calls == 1 and #q.queue == 1 and Batch.progress(q, fullMeal).total == 0,
         'satiety during preparation preserves unrelated tail and prevents future food dispatch')
 
-    reset(); a = food(); mask = {id = -3}
+    reset(); a = food(); mask = food({category = 'Clothing'})
     Bulk.queue(player, {a}); executeCommand(q.current); q:onCompleted(q.current)
     local activeMeal = q.current; cleanup = q.queue[2]
     tail = book(); tail.item = food(); ISTimedActionQueue.add(tail)
@@ -385,4 +504,7 @@ if NativeActionRoot then
     assert(q.current == tail and #eaten == 0 and #calls == 1 and Batch.progress(q, activeMeal).total == 0,
         'active missing meal consumes nothing, is counted as discarded, and is never replayed')
 end
+reset(); Bulk.prune()
+local registeredQueues = ISTimedActionQueue.queues
+ISTimedActionQueue.queues = nil; Bulk.prune(); ISTimedActionQueue.queues = registeredQueues
 print('Bulk food: exact selection, reservations, deferred native eating, masks/returns, progress, stale targets and menu compatibility passed.')

@@ -100,7 +100,7 @@ local function finishGroup(queue, request)
     local current, token = request.action, request.token
     local last = 1
     while token and queue.queue[last + 1] and queue.queue[last + 1].toolkitQueueOperation == token do last = last + 1 end
-    local returns = {}
+    local returns, cleanup = {}, {}
     local inventory = queue.character:getInventory()
     for i = last, 2, -1 do
         local member = table.remove(queue.queue, i)
@@ -108,13 +108,22 @@ local function finishGroup(queue, request)
             and member.srcContainer == inventory and member.destContainer ~= inventory then
             returns[member.item:getID()] = member.destContainer
         end
-        member:forceCancel()
-        if craft(member) then Toolkit.ActionQueueCraft.cancelWaiting(member) end
+        if Toolkit.BulkFood and Toolkit.BulkFood.retainCleanup(member, current, queue) then
+            table.insert(cleanup, 1, member)
+        else
+            member:forceCancel()
+            if craft(member) then Toolkit.ActionQueueCraft.cancelWaiting(member) end
+        end
     end
     if craft(current) then Toolkit.ActionQueueCraft.cancelWaiting(current) end
     for item, source in pairs(type(token) == "table" and token.toolkitPickups or {}) do returns[item:getID()] = source end
     local containers = ISInventoryPaneContextMenu.getContainers(queue.character)
     local index = 2
+    for _, action in ipairs(cleanup) do
+        action.toolkitQueueOperation, action.toolkitQueueReturn = {}, returnMarker
+        table.insert(queue.queue, index, action)
+        index = index + 1
+    end
     for id, destination in pairs(returns) do
         -- Native MP replication can replace the item object while retaining its ID.
         local item = inventory:getItemById(id)
@@ -153,6 +162,9 @@ ISTimedActionQueue.onCompleted = function(queue, action)
     if processPriority then processPriority(queue, false) end
     if Toolkit.Settings.actionQueue() and Toolkit.BulkFood and queue.current == action and queue.queue[1] == action then
         Toolkit.BulkFood.skipUnavailable(queue)
+    end
+    if Toolkit.Settings.actionQueue() and queue.current == action and queue.queue[1] == action then
+        Policy.skipUnavailableHygiene(queue)
     end
     return completed(queue, action)
 end
@@ -225,6 +237,7 @@ ISBaseTimedAction.stop = function(action)
     end
     if Toolkit.Settings.actionQueue() and queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action then
         if Toolkit.BulkFood and Toolkit.BulkFood.missing(action) then queue.toolkitCancel = action end
+        if Policy.hygieneUnavailable(action) then queue.toolkitCancel = action end
         local generators, fire = Toolkit.ActionQueueGenerators, Toolkit.ActionQueueFire
         if (generators and generators.canSkip and generators.canSkip(action))
             or (fire and fire.canSkip and fire.canSkip(action)) then

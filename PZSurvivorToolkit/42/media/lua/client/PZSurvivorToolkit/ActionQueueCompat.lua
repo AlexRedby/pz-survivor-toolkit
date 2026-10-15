@@ -659,6 +659,11 @@ end
 
 function Compat.isInstalled(id) return ready[id] == true end
 
+function Compat.isCartMaskSource()
+    return verified("SaucedCarts", {{"shared/SaucedCarts/ContainerRestrictions.lua", 2765771727},
+        {"shared/SaucedCarts/Core.lua", 2570266575}})
+end
+
 function Compat.isTransferPerform(callback)
     return ready.EURY_CONTAINERS == true and callback == containerTransferPerform
         and type(callback) == "function" and containerHelpersUnchanged()

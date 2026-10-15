@@ -117,6 +117,44 @@ local function loadHooks(module)
     return ok and captured
 end
 
+local function installFoodMaskRemoval()
+    local sourceQuery = compat and compat.isCartMaskSource
+    if type(sourceQuery) ~= "function" or not sourceQuery() or not ISUnequipAction
+        or filename(ISUnequipAction.new) ~= "ISUnequipAction.lua"
+        or filename(ISUnequipAction.complete) ~= "ISUnequipAction.lua" then return end
+    local previous = {new = ISUnequipAction.new, complete = ISUnequipAction.complete}
+    local cartTypes = core.CartTypes
+    local debugHelper = core.debug
+    if type(cartTypes) ~= "table" or getmetatable(cartTypes) ~= nil or filename(debugHelper) ~= "Core.lua" then return end
+    Events.OnGameStart.Add(function()
+        local replacement = {new = ISUnequipAction.new, complete = ISUnequipAction.complete}
+        if filename(replacement.new) ~= "ContainerRestrictions.lua"
+            or filename(replacement.complete) ~= "ContainerRestrictions.lua" then return end
+        local food = Toolkit.BulkFood
+        local isRemoval = food and food.isMaskRemoval
+        if type(isRemoval) ~= "function" then return end
+        local function helpersSafe()
+            return unchanged() and Toolkit.ActionQueueCompat == compat
+                and compat.isCartMaskSource == sourceQuery and core.CartTypes == cartTypes
+                and core.debug == debugHelper and getmetatable(cartTypes) == nil
+                and Toolkit.BulkFood == food and food.isMaskRemoval == isRemoval
+        end
+        local nativeMatches = Policy.nativeUnequipVariant(previous, replacement, helpersSafe)
+        if not nativeMatches then return end
+        Toolkit.ActionQueueDefinitions.registerBehavior("compat.food-mask-unequip", {
+            types = {"ISUnequipAction"}, matches = function(action)
+                return nativeMatches(action) and isRemoval(action)
+                    and action.item:getCategory() == "Clothing" and not cartTypes[action.item:getFullType()]
+                    and not core.safeIsCart(action.item)
+            end, inspect = function(action)
+                return {items = {[action.item:getID()] = true}, itemTypes = {[action.item:getFullType()] = true},
+                    targets = {}, hands = action.character, preparation = true, preparationFinish = true,
+                    cancelWaiting = false, interrupt = "finish-step"}
+            end,
+        })
+    end)
+end
+
 function Carts.install()
     if installed then return trusted end
     installed = true
@@ -169,6 +207,7 @@ function Carts.install()
     end
     if not loadHooks("SaucedCarts/Restrictions/TransferRestrictions")
         or not loadHooks("SaucedCarts/CartState/VisualUpdateQueue") then trusted = false end
+    installFoodMaskRemoval()
     Toolkit.ActionQueueDefinitions.registerBehavior("compat.cart-transfer", {
         types = {"ISCartTransferAction"}, matches = Carts.isTransfer, inspect = inspect,
     })
