@@ -10,13 +10,13 @@ Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quant
 | Survivor Wishlist | 0.1.0 | Required; included in the prepared `mods` folder and server INI. |
 | Toolkit Java Patches | 0.1.3 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
 
-The selected server INI contains **45 Mod IDs / 41 Workshop items**, including all three repository mods. The complete set targets **B42.21 only** because of the Java patches. Individual feature switches remain available; the action queue is enabled on fresh profiles and preserves an existing choice to disable it. Dated verification results below retain the versions and mod counts actually tested.
+The selected server INI contains **46 Mod IDs / 42 Workshop items**, including all three repository mods. The complete set targets **B42.21 only** because of the Java patches. Individual feature switches remain available; the action queue is enabled on fresh profiles and preserves an existing choice to disable it. Dated verification results below retain the versions and mod counts actually tested.
 
 ## Installation
 
 1. The server owner clones or downloads [this repository](https://github.com/AlexRedby/pz-survivor-toolkit), installs Python 3.10+, JDK 25+ and the ZombieBuddy loader, then runs `python3 tools/prepare_install.py` (`py -3 tools/prepare_install.py` on Windows). See [setup and custom paths](MOD_INSTALL.md#prepare-once) if the game or JDK is not found.
 2. Give everyone the resulting `dist/SurvivorQoL` folder. Copy all three folders from its `mods` directory into `Zomboid/mods` on the server and each client. Players receiving this prepared copy need neither Python nor a JDK.
-3. Apply its server INI and complete the client/server ZombieBuddy loader setup using the [installation guide](MOD_INSTALL.md). The server downloads the 41 Workshop items; clients download them when joining.
+3. Apply its server INI and complete the client/server ZombieBuddy loader setup using the [installation guide](MOD_INSTALL.md). The server downloads the 42 Workshop items; clients download them when joining.
 
 The usual mod directory is `~/Zomboid/mods` on macOS/Linux or `%UserProfile%\Zomboid\mods` on Windows. The preparation command creates an uncompressed, ignored distribution folder; it does not change live game profiles or install third-party loaders.
 
