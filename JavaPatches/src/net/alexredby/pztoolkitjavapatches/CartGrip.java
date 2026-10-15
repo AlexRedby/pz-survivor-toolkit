@@ -21,7 +21,11 @@ public final class CartGrip {
     private static final ThreadLocal<Matrices> matrices=ThreadLocal.withInitial(Matrices::new);
 
     private static boolean upperBody(SkinningBone bone) {
-        for(;bone!=null;bone=bone.parent) if("Bip01_Spine".equals(bone.name)) return true;
+        for(;bone!=null;bone=bone.parent) {
+            // Native thighs branch from Spine too; keep their entire walking chains live.
+            if("Bip01_L_Thigh".equals(bone.name) || "Bip01_R_Thigh".equals(bone.name)) return false;
+            if("Bip01_Spine".equals(bone.name)) return true;
+        }
         return false;
     }
 

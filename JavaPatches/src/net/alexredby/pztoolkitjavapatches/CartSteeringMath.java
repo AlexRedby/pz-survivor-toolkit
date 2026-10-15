@@ -1,6 +1,6 @@
 package net.alexredby.pztoolkitjavapatches;
 
-/** Kinematic handle/axle pivot. Native character collision remains authoritative. */
+/** Shopping-cart axle pivot and rolling wheelbarrow arc; native collision stays authoritative. */
 public final class CartSteeringMath {
     // shortcut: selected models use an approximate axle offset; recalibrate when their geometry changes.
     private static final double AXLE_DISTANCE = 0.8;
@@ -42,10 +42,18 @@ public final class CartSteeringMath {
         double limit = Math.min(distance * Math.abs(Math.sin(error)) / axle,
                                 Math.min(0.1, seconds) * (wheelbarrow ? 1.6 - 0.3 * load : 3.8 - load));
         double turn = Math.max(-limit, Math.min(limit, error));
+        if (wheelbarrow) {
+            // A single wheel rolls into the turn; the person does not orbit a parked front axle.
+            double travel = reverse ? -distance : distance;
+            double half = turn / 2;
+            double chord = half == 0 ? travel : travel * Math.sin(half) / half;
+            return result.set(chord * Math.cos(heading + half),
+                              chord * Math.sin(heading + half), turn, travel);
+        }
         // Handle translation and the turn chord are perpendicular, not additive costs.
         double chord = 2 * axle * Math.sin(turn / 2);
         double travel = Math.sqrt(Math.max(0, distance * distance - chord * chord));
-        if(!wheelbarrow && Math.abs(Math.cos(error)) < 1e-10) travel=0;
+        if(Math.abs(Math.cos(error)) < 1e-10) travel=0;
         if (reverse) travel = -travel;
         double next = heading + turn;
         return result.set(travel * Math.cos(heading + turn / 2)

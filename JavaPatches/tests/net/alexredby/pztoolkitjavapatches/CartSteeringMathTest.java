@@ -22,10 +22,29 @@ public final class CartSteeringMathTest {
         check(fast.turn() > full.turn() && full.turn() > 0, "cargo limits yaw");
         var wheel=CartSteeringMath.step(0,Math.PI/2,.03,1.0/60,0,true,new CartSteeringMath.Step());
         check(wheel.travel()>0 && wheel.turn()<pivot.turn(),"wheelbarrow rolls around its single wheel while shop shifts rear");
-        close(Math.hypot(wheel.x(),wheel.y()),.03,"wheelbarrow turn retains native handle speed");
-        for(int degrees=-180;degrees<=180;degrees++) {
-            var step=CartSteeringMath.step(.3,.3+Math.toRadians(degrees),.03,1.0/60,.7,true,new CartSteeringMath.Step());
-            close(Math.hypot(step.x(),step.y()),.03,"wheelbarrow steering cannot halve movement budget");
+        check(wheel.x()>0 && wheel.y()>0,"left wheelbarrow turn keeps rolling forward and left, never right");
+        for(double heading:new double[]{0,.3,Math.PI/2,Math.PI,-Math.PI/2}) {
+            for(int degrees=-180;degrees<=180;degrees++) {
+                double error=Math.toRadians(degrees);
+                var step=CartSteeringMath.step(heading,heading+error,.03,1.0/60,.7,true,new CartSteeringMath.Step());
+                double moved=Math.hypot(step.x(),step.y());
+                check(moved<=.03+1e-12 && moved>.03*.999,"wheelbarrow arc preserves walking speed");
+                double lateral=-step.x()*Math.sin(heading)+step.y()*Math.cos(heading);
+                check(lateral*Math.sin(error)>=-1e-12,"wheelbarrow must not sidestep away from requested turn");
+                close(Math.abs(step.travel()),.03,"native distance is the rolling arc length");
+                close(CartSteeringMath.acceptedFraction(step,0,0),0,"blocked wheelbarrow cannot yaw");
+                close(CartSteeringMath.acceptedFraction(step,step.x()/2,step.y()/2),.5,"partial wheelbarrow collision scales yaw");
+            }
+        }
+        for(int sign:new int[]{-1,1}) for(int fps:new int[]{30,60,144}) {
+            double heading=0,x=0,y=0;
+            for(int frame=0;frame<fps;frame++) {
+                var step=CartSteeringMath.step(heading,heading+sign*Math.PI/2,1.2/fps,1.0/fps,0,true,new CartSteeringMath.Step());
+                x+=step.x();y+=step.y();heading+=step.turn();
+            }
+            close(heading,sign*1.2/.95,"wheelbarrow yaw is independent of FPS");
+            close(x,.95*Math.sin(1.2/.95),"wheelbarrow forward arc matches radius");
+            close(y,sign*.95*(1-Math.cos(1.2/.95)),"wheelbarrow lateral arc is toward the turn");
         }
         var reverse = CartSteeringMath.step(0, Math.PI, 0.03, 1.0 / 60, 0);
         close(reverse.x(), -0.03, "reverse escapes head-on wall");
