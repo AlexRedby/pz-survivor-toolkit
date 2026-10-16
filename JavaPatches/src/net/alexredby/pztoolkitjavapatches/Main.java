@@ -39,6 +39,8 @@ public final class Main {
     // Fail closed after an engine update. Hash original class resources, not transformed bytecode.
     public static final boolean ZOMBIE_SUPPORTED = supports("zombie/characters/NetworkZombieAI.class",
         "87e4f6e43d16dec23f685b4ebad68eb12eaea15ed87dce3fc3c3394f96cd1e3d");
+    public static final boolean VEHICLE_OWNERSHIP_SUPPORTED = supports("zombie/vehicles/BaseVehicle.class",
+        "e7ade19e1e6f66450bef2bd37e52b2afccc7377c4e4571d0fa39435ecdb55661");
     public static final boolean VEHICLE_SUPPORTED = supports("zombie/vehicles/VehicleInterpolation.class",
         "e5096d41b4b94c3eb040c119c1ca35b014bbfe3c742401002b88103a650add56");
     public static final boolean ANIMAL_SUPPORTED = supports("zombie/characters/NetworkPlayerAI.class",
@@ -84,7 +86,7 @@ public final class Main {
         // Resolve before the loader installs advice; resolving inside another transformer can miss this enum.
         if (PROPERTY_SUPPORTED) IsoPropertyType.values();
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
-            + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
+            + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
             + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED);
     }
@@ -227,6 +229,14 @@ public final class Main {
                 // Sender and initial-spawn decoder use thousandths; update decoder omitted the scale.
                 ai.zombie.setSpeedMod(packet.speedMod / 1000.0f);
             }
+        }
+    }
+
+    @Patch(className="zombie.vehicles.BaseVehicle", methodName="update", warmUp=true)
+    public static class VehicleOwnershipRepair {
+        @Patch.OnExit(suppress=Throwable.class)
+        public static void exit(@Patch.This zombie.vehicles.BaseVehicle car) {
+            VehicleOwnership.reconcile(car, Main.VEHICLE_OWNERSHIP_SUPPORTED);
         }
     }
 

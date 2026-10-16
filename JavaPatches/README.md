@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` **0.1.7** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; this is not an established fix for minute-long vehicle freezes or every movement jerk.
+`PZToolkitJavaPatches` **0.1.8** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
 
 ## Prepare and install
 
@@ -8,7 +8,7 @@ Use the [combined installation guide](../MOD_INSTALL.md#prepare-once) to build a
 
 ## Server loader
 
-Host starts a separate Java process. Loading ZombieBuddy only in the client does not guarantee the server VHS patch is active.
+Host starts a separate Java process. Loading ZombieBuddy only in the client does not guarantee the server VHS and vehicle ownership patches are active.
 
 ### Host: save approvals first
 
@@ -45,9 +45,9 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 
 ### Verify activation
 
-Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true, video=true, animal=true, equipment=true, hutch=true, properties=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
+Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, vehicleOwnership=true, media=true, build=true, video=true, animal=true, equipment=true, hutch=true, properties=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
 
-- Server: `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
+- Server: `[ZB] Transformed: zombie.vehicles.BaseVehicle`, `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
 - Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI`, `[ZB] Transformed: zombie.vehicles.VehicleInterpolation` `[ZB] Transformed: zombie.characters.NetworkPlayerAI` and `[ZB] Transformed: zombie.network.packets.EquipPacket`.
 - Client and server property fallback: `[ZB] Transformed: zombie.core.properties.IsoPropertyType`.
 - Client and server hutch guard: `[ZB] Transformed: zombie.iso.objects.IsoHutch`.
@@ -91,3 +91,19 @@ Native-object checks exercise actual patched methods with fixtures; they do not 
 ## Test instrumentation
 
 Programmatic silent video capture is test-only. Its API, memory limits, encoder handling and checks are in [development: test video](../docs/DEVELOPMENT.md#test-video); the [native fixture](../tests/native_queue/contributions/video-recording/README.md) prepares a disposable profile.
+
+## Vehicle authority recovery and diagnostic logs
+
+Version 0.1.8 repairs an occupied vehicle whose physics owner disagrees with its confirmed server driver. A collision owner can block the normal driver handoff, and a late collision-end packet can leave the car in `Server/-1` authority while the driver remains seated. The server now reconciles authority from the live, reciprocally seated player. Towing root and trailer follow the native root driver's ownership. Empty-car collision handling, packet authorization checks and coordinates are unchanged. A matching owner is not rewritten every frame.
+
+Install the same updated Java mod on the server and clients, save the changed JAR approval and restart them. The repair needs ZombieBuddy **in the Host child/server process**; check `vehicleOwnership=true` and the server's actual `zombie.vehicles.BaseVehicle` transformation.
+
+For a diagnostic run, add `-Dpz.vehicle.trace=true` to the Java options of the server and both clients. With the macOS Host helper, a process-local setting also reaches its child:
+
+```sh
+JDK_JAVA_OPTIONS=-Dpz.vehicle.trace=true ./start-host.command
+```
+
+`[VEHICLE_SYNC]` lines contain the side, vehicle/local-player/driver/owner IDs, authority, position, towing links, sent/received physics samples and server acceptance. `repair` records the previous authority and the new owner. Tracing is off by default; enabled runs stop after ten minutes from the first occupied/owned vehicle or 5,000 lines, sample each event/vehicle at most once per second, and retain at most 256 sampling keys. Preserve the host/server and both client logs together. The trace does not change packets or vehicle state.
+
+The native regression command checks the original handoff failure, reconciliation guards, idempotency, towing ownership and disabled/enabled trace bounds, alongside the existing Java patch regressions. The isolated macOS B42.21 Host test uses two connected clients and a child `GameServer -coop`, with microphone capture disabled. It reproduces the authority loss through a controlled collision/entry/release ordering. With the repair, the guest then drives 25.5 tiles with accepted server physics and matching poses on all three processes. Separate live checks cover towing/untowing and driver/passenger seat handoffs. The affected user save, spontaneous incidence and real WAN loss remain separate verification limits.
