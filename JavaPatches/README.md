@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` v0.1.5 is an independent Java mod for **B42.21 only**, required in our selected set. It needs **ZombieBuddy 2.3.4+** in every client and the server process. It patches client zombie-speed decoding, vehicle interpolation recovery, animal trailer membership and incomplete equipment acknowledgements, plus server-side VHS restart handling and build cancellation acknowledgements. Each patch checks its target class bytecode and disables itself on an unsupported build. It remains experimental: it is not established as a fix for minute-long vehicle freezes or every movement jerk.
+`PZToolkitJavaPatches` v0.1.6 is an independent Java mod for **B42.21 only**, required in our selected set. It needs **ZombieBuddy 2.3.4+** in every client and the server process. It patches client zombie-speed decoding, vehicle interpolation recovery, animal trailer membership and incomplete equipment acknowledgements, plus server-side VHS restart handling and build cancellation acknowledgements. It also guards null-animal hutch unloading in clients, single-player and servers. Each patch checks its target class bytecode and disables itself on an unsupported build. It remains experimental: it is not established as a fix for minute-long vehicle freezes or every movement jerk.
 
 ## Prepare and install
 
@@ -20,7 +20,7 @@ Use corresponding paths on macOS/Linux; `--game` points to the folder containing
 
 Copy the three folders inside `dist/SurvivorQoL/mods` to `Zomboid/mods` on the server and every client. The prepared INI already includes `ZombieBuddy;PZToolkitJavaPatches` first, followed by the rest of the selected set. This local patch has no Workshop ID. Approve its JAR in ZombieBuddy on each client and server; see Host's saved-approval step below.
 
-For Java-only development, `python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts the same `--game`, `--jdk` and `--check` options. The checks compare original and patched engine vehicle interpolation, media restart, build cancellation/completion behavior and animal location/identity/capacity reconciliation; there is no separate zombie-speed regression in this command. Generated output is ignored by Git.
+For Java-only development, `python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts the same `--game`, `--jdk` and `--check` options. The checks compare original and patched engine vehicle interpolation, media restart, build cancellation/completion behavior, animal location/identity/capacity reconciliation, equipment acknowledgements and hutch unloading; there is no separate zombie-speed regression in this command. Generated output is ignored by Git.
 
 ## Programmatic test video (B42.21 client)
 
@@ -89,10 +89,11 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 
 ### Verify activation
 
-Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true, video=true, animal=true, equipment=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
+Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true, video=true, animal=true, equipment=true, hutch=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
 
 - Server: `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
 - Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI`, `[ZB] Transformed: zombie.vehicles.VehicleInterpolation` `[ZB] Transformed: zombie.characters.NetworkPlayerAI` and `[ZB] Transformed: zombie.network.packets.EquipPacket`.
+- Client and server hutch guard: `[ZB] Transformed: zombie.iso.objects.IsoHutch`.
 
 The selected Workshop `AnimalTrailerSyncMPFix` supplies a separate trailer timer fix; check `[AnimalTrailerSyncMPFix] ACTIVE` in the server log too (verified v1.3). See its [scope and installation](../MOD_INSTALL.md#animal-trailer-fix).
 
@@ -115,6 +116,16 @@ Version 0.1.5 fixes the reproduced empty-hands symptom. Equip uses ordered chann
 The client now omits acknowledgements for incomplete local equipment parses. B42.21 gives each handler an exactly bounded packet buffer; both that framing and EquipPacket have bytecode guards. Fully parsed packets, remote players, server handling and intentional equipment changes retain vanilla behavior. The patch does not create items, change IDs or reorder network channels. An unresolved secondary-only item after a fully read packet is outside this fix; the demonstrated animal carry failure occurs on the primary item.
 
 Check `equipment=true` and actual `zombie.network.packets.EquipPacket` transformation in each client log. The native-object regression covers complete/incomplete parsing, marker reuse, repeat/different packets and local/remote/server guards. It also compares the original and actually woven acknowledgement handler. A controlled native delivery-order test reproduced empty hands in all three unloads before the fix (empty hands and a held baseball bat). With 0.1.5, the same action/probe sequence passed all three grabs and native drops, both without other gameplay mods and with 27 production Mod IDs, Toolkit 0.1.48 and Tidy Up Meister 2.0.8. Server/client identities and trailer counts 2/1/0 matched, and deferred commands released automatically before verification. This changes packet delivery order in a test helper; natural incidence and the affected hosted save were not measured.
+
+## Hutch unloading crash
+
+Version 0.1.6 guards the B42.21 `IsoHutch.removeFromWorld` null-animal crash. A Windows Host client log on 16 October 2026 showed `IsoAnimal.removeFromUpdateLists()` invoked on a null value while movement unloaded a map chunk through `removeFromWorldToMeta`. The client disconnected with reason `crash`; the server then saved and shut down normally because its host disconnected. The log establishes the failing cleanup path, not why that animal reference was missing.
+
+The fingerprint-guarded hook temporarily supplies a non-null snapshot of the native `animalInside` map to that unload call, then restores the exact original map in a finally-style exit, including on exceptions. Native superclass cleanup, hutch-manager removal and every present animal's cleanup still run. Empty slots, stored counts, animal references and map identity remain unchanged after the call. It creates/deletes no animals, edits no saves and does not suppress unrelated exceptions. Valid-only maps use the original path without copying; custom map implementations and unsupported game bytecode retain native behavior.
+
+Install the rebuilt folder on the server and **every client, including the host**, save the changed JAR approval and restart. No new Mod ID or Workshop item is needed. Check `hutch=true` and the actual `IsoHutch` transformation. This prevents this specific unload failure; it does not restore missing animals or diagnose their original loss.
+
+The Windows B42.21 native-object regression reproduces the unpatched null-slot crash and exercises the actually woven direct and meta unload methods in client, single-player and server modes. Checks cover mixed/null-only/empty/valid-only maps, exactly-once valid-animal and superclass cleanup, manager removal, repeated unloads, original slots/counts/map identity, restoration after unrelated exceptions and unsupported/custom-map guards. These are headless native-method checks with fixture animals and rendering-free world dependencies, not a live traversal of the affected save; live gameplay, WAN and long sessions remain unverified.
 
 ## Verification limits
 

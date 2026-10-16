@@ -2,7 +2,7 @@
 
 For the Steam edition of Project Zomboid **B42.21**. The server and all players must use the same game build and identical local mod files.
 
-The [server INI](SurvivorQoL-selected.ini) selects **49 Mod IDs / 45 Workshop items**. All three repository mods are required: **PZ Survivor Toolkit v0.1.53**, **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.5**. The Java component is experimental and targets B42.21 only. Feature switches remain per-player; the action queue is enabled on fresh profiles and preserves existing preferences. See [features and verification limits](README.md).
+The [server INI](SurvivorQoL-selected.ini) selects **49 Mod IDs / 45 Workshop items**. All three repository mods are required: **PZ Survivor Toolkit v0.1.53**, **Survivor Wishlist v0.1.0** and **Toolkit Java Patches v0.1.6**. The Java component is experimental and targets B42.21 only. Feature switches remain per-player; the action queue is enabled on fresh profiles and preserves existing preferences. See [features and verification limits](README.md).
 
 ## Prepare once
 
@@ -72,6 +72,8 @@ Wishlist highlights wanted item rows in opened inventories and visible loose ite
 5. Start and join, checking the server Java loader as above. For version mismatches, compare all three local folders and Workshop updates. Keep `DoLuaChecksum=true`.
 
 ## Animal trailer fix
+
+Toolkit Java Patches **0.1.6** additionally guards a separate chicken/hutch crash when leaving an area. Install it on every client, especially the host: a host-client crash shuts down the Host server too. Check `hutch=true` and `[ZB] Transformed: zombie.iso.objects.IsoHutch` in the client log. The guard skips null references only during native hutch unloading; stored slots and animal identities are preserved. It does not recover missing animals. See [scope and regression checks](JavaPatches/README.md#hutch-unloading-crash).
 
 Toolkit Java Patches **0.1.5** includes two B42.21 client fixes: stale animal-trailer entries after unloading, and an equipment-message race that leaves a successfully unloaded chicken absent from your hands. `PZToolkitJavaPatches` is already selected in the INI, immediately after ZombieBuddy; no additional Mod ID or Workshop item is needed.
 

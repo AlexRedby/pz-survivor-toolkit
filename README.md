@@ -10,7 +10,7 @@ Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quant
 |---|---|---|
 | PZ Survivor Toolkit | 0.1.53 | Required; included in the prepared `mods` folder and server INI. |
 | Survivor Wishlist | 0.1.0 | Required; included in the prepared `mods` folder and server INI. |
-| Toolkit Java Patches | 0.1.5 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
+| Toolkit Java Patches | 0.1.6 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
 
 The selected server INI contains **49 Mod IDs / 45 Workshop items**, including all three repository mods. The complete set targets **B42.21 only** because of the Java patches. Individual feature switches remain available; the action queue is enabled on fresh profiles and preserves an existing choice to disable it. Dated verification results below retain the versions and mod counts actually tested.
 
