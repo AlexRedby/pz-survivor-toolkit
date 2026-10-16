@@ -1,0 +1,409 @@
+{
+  "schema": 1,
+  "suites": {
+    "health": {
+      "status": "ready",
+      "cases": [
+        {
+          "id": "bandageApply",
+          "producer": "menu",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "bandageRemove",
+          "producer": "menu",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "disinfect",
+          "producer": "drop",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "stitchApply",
+          "producer": "menu",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "stitchRemove",
+          "producer": "menu",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "sutureApply",
+          "producer": "drop",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "splintApply",
+          "producer": "menu",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "splintRemove",
+          "producer": "menu",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "readySplint",
+          "producer": "menu",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "glassTools",
+          "producer": "menu",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "glassHands",
+          "producer": "menu",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "bullet",
+          "producer": "menu",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "burn",
+          "producer": "drop",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "comfrey",
+          "producer": "menu",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "garlic",
+          "producer": "menu",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "plantain",
+          "producer": "drop",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "waitingCancel",
+          "producer": "menu",
+          "capability": "pending-cancel",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "waitingMove",
+          "producer": "menu",
+          "capability": "move",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "missingSupply",
+          "producer": "menu",
+          "capability": "unavailable",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "changedHelper",
+          "producer": "menu",
+          "capability": "unavailable",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "closedPanel",
+          "producer": "menu",
+          "capability": "unavailable",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "reassignedPanel",
+          "producer": "menu",
+          "capability": "unavailable",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "expandedCancel",
+          "producer": "menu",
+          "capability": "pending-cancel",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "missingChildSupply",
+          "producer": "menu",
+          "capability": "unavailable",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "nativeStop",
+          "producer": "menu",
+          "capability": "active-cancel",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "remoteMove",
+          "producer": "menu",
+          "capability": "remote",
+          "kinds": [
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "remoteRange",
+          "producer": "menu",
+          "capability": "remote",
+          "kinds": [
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "remoteRemoved",
+          "producer": "menu",
+          "capability": "remote",
+          "kinds": [
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        }
+      ]
+    },
+    "inventory": {
+      "status": "not-migrated",
+      "cases": []
+    },
+    "food": {
+      "status": "not-migrated",
+      "cases": []
+    },
+    "fluid": {
+      "status": "not-migrated",
+      "cases": []
+    },
+    "craft": {
+      "status": "not-migrated",
+      "cases": []
+    },
+    "world": {
+      "status": "not-migrated",
+      "cases": []
+    },
+    "energy": {
+      "status": "not-migrated",
+      "cases": []
+    },
+    "fire": {
+      "status": "not-migrated",
+      "cases": []
+    },
+    "farming": {
+      "status": "not-migrated",
+      "cases": []
+    },
+    "animals": {
+      "status": "not-migrated",
+      "cases": []
+    },
+    "vehicles": {
+      "status": "not-migrated",
+      "cases": []
+    },
+    "movement": {
+      "status": "not-migrated",
+      "cases": []
+    },
+    "literature": {
+      "status": "not-migrated",
+      "cases": []
+    }
+  }
+}

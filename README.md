@@ -2,6 +2,8 @@
 
 ![PZ Survivor Toolkit icon](PZSurvivorToolkit/common/icon.png)
 
+Development: [reproducible native stands, queue controls and coverage](tests/native_queue/README.md).
+
 Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quantity transfers, bulk actions, context-menu organization, an optional action queue, visible ground-item highlights and compatibility fixes for the selected mod set. Shared wishlists and experimental Java engine patches are separate mods in the same repository.
 
 | Component | Version | Installation |
