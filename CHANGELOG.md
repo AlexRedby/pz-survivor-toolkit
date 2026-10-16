@@ -301,6 +301,12 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.19
+
+- **Added:** Side input from rest turns the wooden wheelbarrow with native lateral steps around its front wheel, then resumes pushing. Run/Sprint wait until the pivot finishes; opposite input retains backward movement.
+- **Changed:** Stationary turns use full native lateral strides; cargo changes their cadence, preserving turning speed without rapid idle-blended shuffling.
+- **Fixed:** Releasing a stationary turn consumes no residual sideways movement as an unwanted forward step. Native collisions still determine accepted rotation.
+
 Previously named **PZ Network Fix** through 0.1.1.
 
 ### 0.1.18

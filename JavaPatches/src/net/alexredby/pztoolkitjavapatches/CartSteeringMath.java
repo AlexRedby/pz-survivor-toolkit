@@ -190,6 +190,22 @@ public final class CartSteeringMath {
                           travel*Math.sin(heading+turn/2)-sideways*Math.cos(heading+turn/2),turn,travel);
     }
 
+    /** A native sidestep budget moves the handles around the planted front wheel. */
+    static Step stationaryStep(double heading, double target, double distance, double seconds,
+                               double load, double axle, double previousRate, Step result) {
+        if (!(distance > 0) || !(seconds > 0) || !(axle > 0)) return result.set(0,0,0,0);
+        double dt=Math.min(.1,seconds), error=wrap(target-heading);
+        if(Math.abs(error)<1e-12) return result.set(0,0,0,0);
+        double stoppingRate=Math.sqrt(12*Math.abs(error)+36*dt*dt)-6*dt;
+        double desired=Math.copySign(Math.min(1.6-.3*Math.max(0,Math.min(1,load)),stoppingRate),error);
+        double rate=previousRate+Math.max(-6*dt,Math.min(6*dt,desired-previousRate));
+        double limit=2*Math.asin(Math.min(1,distance/(2*axle)));
+        double turn=Math.max(-limit,Math.min(limit,rate*dt));
+        if(turn*error>=0 && Math.abs(turn)>Math.abs(error)) turn=error;
+        return result.set(-axle*(Math.cos(heading+turn)-Math.cos(heading)),
+                          -axle*(Math.sin(heading+turn)-Math.sin(heading)),turn,0);
+    }
+
     /** Wall slides cannot count sideways displacement as forward steering progress. */
     public static double acceptedFraction(Step requested, double actualX, double actualY) {
         double lengthSquared = requested.x * requested.x + requested.y * requested.y;

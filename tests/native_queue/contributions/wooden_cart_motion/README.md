@@ -8,7 +8,7 @@ The Java fixture supplies native keyboard input (`drive`, `gait`) and reads the 
 
 ## Common runner
 
-Choose one case per fresh lifecycle: `sprint` (16 records), `reverse` (20), `reversal` (20) or `stop` (24). All use the same adapter-owned profile, area, launcher and probe setup. Supply candidate resources once in a JSON file:
+Choose one case per fresh lifecycle: `sprint` (16 records), `reverse` (20), `reversal` (20), `stop` (24) or `stationary` (20). All use the same adapter-owned profile, area, launcher and probe setup. Supply candidate resources once in a JSON file:
 
 ```json
 {
@@ -78,7 +78,7 @@ python3 tests/native_queue/contributions/wooden_cart_motion/self_check.py \
 
 Lua syntax requires `luajit` or `lua` on PATH, or `--lua`. Java compilation requires both explicit dependency paths; omitted checks are reported as skipped. Compilation output goes to a temporary directory. There are no runtime binaries, saves, screenshots, videos, copied mods or game assets in this contribution.
 
-Keep `[WOOD_BANK]` markers stable for existing analyzers. A complete record needs one unique `COMPLETE` marker per selected case (16/20/20/24 for sprint/reverse/reversal/stop), valid per-case windows and a matching `ALL_COMPLETE cases=N`. Check `FAIL` and rejected video starts/stops. The manifest criteria additionally require grip, actual mesh, floor and original hip/leg/arm probes. Their source, dependencies, build commands, offline checks and limits are preserved in [evidence/README.md](evidence/README.md). The common adapter runs these probes and analyzers; missing instrumentation means **not verified**, not PASS.
+Keep `[WOOD_BANK]` markers stable for existing analyzers. A complete record needs one unique `COMPLETE` marker per selected case (16/20/20/24/20 for sprint/reverse/reversal/stop/stationary), valid per-case windows and a matching `ALL_COMPLETE cases=N`. Check `FAIL` and rejected video starts/stops. The manifest criteria additionally require grip, actual mesh, floor and original hip/leg/arm probes. Their source, dependencies, build commands, offline checks and limits are preserved in [evidence/README.md](evidence/README.md). The common adapter runs these probes and analyzers; missing instrumentation means **not verified**, not PASS.
 
 ## Known traps and limits
 
@@ -108,3 +108,16 @@ At 25 ms sampling the game rotates `console.txt` during this matrix. Retain full
 `scenario-stop.lua` records 24 wooden-cart braking cases: Run/Sprint release, short acceleration, resumed input, a reverse command during braking and stopping on an arc, for both sexes and cargo states. It requires the >=0.1.61/0.1.18 candidate. `cartLabBrake` reads the stop state separately so older reversal scenarios keep their existing API. Sampling is every 25 ms; completion is `ALL_COMPLETE cases=24`. Its HUD records wall elapsed time and input stage in the video, so dropped render submissions do not masquerade as exact event-relative video timestamps. The stop contract requires complete scene windows, the actual heavy-item stop clip, accepted coasting, stable hand/mesh/floor contact and immediate cancellation on new input. Bootstrap/setup frames are outside the scene windows and require separate review when changing setup or pickup behavior. Captures from earlier candidates do not verify a rebuilt or rebased candidate.
 
 Run `python3 tests/native_queue/contributions/wooden_cart_motion/analyze-stop.py --profile "$PZ_CAPTURE_DIR" --output "$PZ_ANALYSIS_DIR/stop-motion.json"` against the full native stdout. It requires all 24 cases and samples, selected heavy stop tracks, observed coasting, bounded settling and cancellation on new input. It refuses to overwrite a report. Grip, actual body/trousers geometry, wheel contact and visible foot motion still require their separate probes and video inspection. If `wood-wheel-native.csv` is present, straight Run/Sprint stops also report cart return relative to the stopped actor, using the monotonic probe clock: excursion, sample cadence, raw speed changes and maximum 100 ms average return speed. These are descriptive comparisons, without a calibrated quality PASS threshold. Sparse console samples are not used as a substitute for native temporal measurements.
+
+
+`scenario-stationary.lua` requires Toolkit>=0.1.61/JavaPatches>=0.1.19 with the stationary-turn controller. Its 20 scenes cover both sexes and cargo states: left/right from settled Idle, release/cancel/restart, held Run after the pivot and held Sprint followed by another 90-degree command. The last scene reaches 180 degrees through consecutive turns; direct opposite input remains reverse. Each scene retains the shared 12-second geometry/probe window and attempts 25 ms sampling. For a fresh capture use the Common runner commands above with `--cases stationary` and a new profile path, such as `/tmp/cart-stationary-fresh`.
+
+```sh
+python3 tests/native_queue/contributions/wooden_cart_motion/analyze-stationary.py \
+  --profile "$PZ_CAPTURE_DIR" --log "$PZ_FULL_STDOUT" \
+  --output "$PZ_ANALYSIS_DIR/stationary-motion.json"
+```
+
+The analyzer requires exactly 20 selected successful attempts, full finite sample coverage, native root-layer strafe clips whose phases advance, the matching lateral direction, walking-only pivot flags, heading convergence/exit, cancellation/restart and resumed fast movement. `cartLabStationary` reads `heading`, `target`, `stationary`, `stationaryRoot`, accepted displacement and the actual steering axle; it changes no controller state. Header and diagnostic boundaries are parsed separately, so native track suffixes cannot overwrite coordinate fields. Failed video attempts are excluded by the successful start timestamp without rewriting stdout.
+
+`wood-wheel-native.csv` from the existing render probe is mandatory. Each contiguous pivot needs native wheel coverage: actor+axle drift must stay within .025 tiles; rendered wheel-center drift and wheel-phase rolling excursion must each stay within .05 tiles, including the calibrated approximately .01 tile lateral offset from the steering axis. These are functional bounds, not a calibrated visual-quality threshold. Duplicate millisecond timestamps in render samples do not invent extra temporal coverage. Individual update ordering and inter-sample peaks require the Java checks and game review. The existing grip/body/trousers/floor probes still run for every scene, and `captured` retains a failed motion report for review. A completed capture never implies an animation-quality PASS. Keep raw stdout, probes, videos and runner source/mod manifests with the report; no live stationary result has been recorded by the offline checks.

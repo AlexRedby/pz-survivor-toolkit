@@ -16,7 +16,9 @@
     "reversal_scenario": "scenario-reversal.lua",
     "reversal_analyzer": "analyze-reversal.py",
     "stop_scenario": "scenario-stop.lua",
-    "stop_analyzer": "analyze-stop.py"
+    "stop_analyzer": "analyze-stop.py",
+    "stationary_scenario": "scenario-stationary.lua",
+    "stationary_analyzer": "analyze-stationary.py"
   },
   "origin": {
     "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",
@@ -274,5 +276,33 @@
     "additional_api": "State.braking/brakeSeen/nativeSpeed/brakeLimit/brakeWait; CartLegPace.woodenGaitShift(IsoPlayer)",
     "sample_interval_ms": 25,
     "live_verification": "pending; completion markers alone do not establish motion/grip/geometry PASS"
+  },
+  "stationary_scenario": {
+    "case_count": 20,
+    "axes": {
+      "sex": [
+        "male",
+        "female"
+      ],
+      "cargo": [
+        "empty",
+        "full"
+      ],
+      "spec": [
+        "left",
+        "right",
+        "cancel-restart",
+        "run-exit",
+        "sprint-sequence"
+      ]
+    },
+    "additional_api": "State.stationary/stationaryRoot/heading/target/actualDistance; CartSteeringHooks.axle(IsoPlayer); native root-layer track phase/weight/cadence",
+    "record_seconds_per_case": 12,
+    "sample_interval_ms": 25,
+    "live_verification": "pending; motion requires native strafe phase, accepted heading/axle and rendered wheel center; existing grip/mesh/floor gates remain separate",
+    "required_candidate_versions": {
+      "PZSurvivorToolkit": ">=0.1.61",
+      "PZToolkitJavaPatches": ">=0.1.19"
+    }
   }
 }

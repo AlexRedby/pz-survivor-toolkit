@@ -106,8 +106,8 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop'])
-        for case, count in [('stop', 24), ('reversal', 20)]:
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary'])
+        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -261,6 +261,45 @@ class CartAdapterTests(unittest.TestCase):
                 if filename == 'client1-launch.log':
                     self.assertEqual(console.read_text(), '[WOOD_BANK] ALL_COMPLETE cases=24\n')
                 log.unlink()
+
+    def test_stationary_uses_original_log_and_preserves_native_motion_report(self):
+        import csv
+        self.selection['cases'] = ['stationary']
+        fixture = carts._load(ROOT / 'tests/test_cart_stationary_analyzer.py')
+        text, wheel = fixture.evidence()
+        _, _, metrics = self.coverage_fixture(text=text)
+        cache = self.output / 'client1'
+        with (cache / 'wood-wheel-native.csv').open('w') as stream:
+            writer = csv.DictWriter(stream, fieldnames=wheel[0]); writer.writeheader(); writer.writerows(wheel)
+        log = self.output / 'client1-launch.log'
+        log.write_text(text)
+        (cache / 'console.txt').write_text('Wrong console must not replace original stdout')
+        (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
+        original_run, commands = carts._run, {}
+        def run(command, directory, name):
+            commands[name] = command
+            if name == 'stationary':
+                return original_run(command, directory, name)
+            if name == 'native':
+                (directory / 'native-metrics.json').write_text(json.dumps(metrics))
+            return {'exit_code': 0}
+        for bad in (False, True):
+            with self.subTest(failed_motion=bad):
+                captured = text.replace('run=false', 'run=true') if bad else text
+                log.write_text(captured)
+                with patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
+                    result = carts.verify(self.output, self.selection, {})
+                self.assertFalse(result['issues'], result['issues'])
+                self.assertEqual(result['outcomes'][0]['status'], 'captured')
+                self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+                self.assertEqual(result['evidence']['motion']['motionPass'], not bad)
+                self.assertEqual(result['evidence']['analyzers']['stationary']['exit_code'], int(bad))
+                saved = Path(result['evidence']['analysis']) / 'stationary-motion.json'
+                self.assertEqual(json.loads(saved.read_text()), result['evidence']['motion'])
+                self.assertEqual(commands['stationary'][commands['stationary'].index('--log') + 1], str(log))
+                self.assertIn('--partial', commands['native'])
+                self.assertEqual(log.read_text(), captured)
+                self.assertFalse((cache / 'native-launch.log').exists())
 
     def test_reversal_capture_preserves_motion_report_and_failed_diagnostics(self):
         self.selection['cases'] = ['reversal']

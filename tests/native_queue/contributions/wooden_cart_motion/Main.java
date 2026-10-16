@@ -126,6 +126,27 @@ public final class Main {
         return out.toString();
     }
 
+    @LuaMethod(name="cartLabStationary", global=true)
+    public static String stationary() throws Exception {
+        var hooks=Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks");
+        var field=hooks.getDeclaredField("states");field.setAccessible(true);
+        var player=IsoPlayer.getInstance();
+        Object state=((java.util.Map<?,?>)field.get(null)).get(player);
+        if(state==null) return "none";
+        var out=new StringBuilder();
+        for(String key:new String[]{"heading","target","stationary","stationaryRoot","actualDistance"}) {
+            var part=state.getClass().getDeclaredField(key);part.setAccessible(true);
+            out.append(key).append(":").append(part.get(state)).append(",");
+        }
+        var axle=hooks.getDeclaredMethod("axle",IsoPlayer.class);axle.setAccessible(true);
+        out.append("axle:").append(axle.invoke(null,player)).append(",rootTracks:");
+        for(var track:player.getAnimationPlayer().getMultiTrack().getTracks())
+            if(track.getLayerIdx()==0) out.append(track.getName()).append("@")
+                .append(track.getBlendWeight()).append("/").append(track.getCurrentTimeValue())
+                .append("/").append(track.getSpeedDelta()).append(";");
+        return out.toString();
+    }
+
     @LuaMethod(name="cartLabPoseHeading", global=true)
     public static void poseHeading(double angle) throws Exception {
         if (!Double.isFinite(angle)) throw new IllegalArgumentException("finite heading required");

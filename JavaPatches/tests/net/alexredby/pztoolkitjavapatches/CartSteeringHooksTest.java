@@ -1,19 +1,32 @@
 package net.alexredby.pztoolkitjavapatches;
 
 import java.lang.reflect.Field;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import org.lwjgl.util.vector.Vector3f;
 import sun.misc.Unsafe;
 import zombie.GameTime;
 import zombie.characters.IsoPlayer;
+import zombie.core.skinnedmodel.ModelManager;
 import zombie.core.skinnedmodel.advancedanimation.IAnimationVariableSlot;
 import zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator;
 import zombie.core.skinnedmodel.advancedanimation.AnimLayer;
 import zombie.core.skinnedmodel.advancedanimation.AnimNode;
+import zombie.core.skinnedmodel.advancedanimation.Anim2DBlend;
+import zombie.core.skinnedmodel.advancedanimation.Anim2DBlendPicker;
+import zombie.core.skinnedmodel.advancedanimation.Anim2DBlendTriangle;
+import zombie.core.skinnedmodel.advancedanimation.AnimationSet;
+import zombie.core.skinnedmodel.advancedanimation.AnimState;
 import zombie.core.skinnedmodel.advancedanimation.AnimTransition;
 import zombie.core.skinnedmodel.advancedanimation.LiveAnimNode;
 import zombie.core.skinnedmodel.animation.AnimationClip;
 import zombie.core.skinnedmodel.animation.AnimationPlayer;
 import zombie.core.skinnedmodel.animation.AnimationTrack;
+import zombie.core.skinnedmodel.animation.BoneAxis;
+import zombie.core.skinnedmodel.animation.Keyframe;
+import zombie.core.skinnedmodel.model.ModelMesh;
+import zombie.core.skinnedmodel.model.SkinningData;
 import zombie.inventory.InventoryItem;
 import zombie.inventory.ItemContainer;
 import zombie.inventory.types.InventoryContainer;
@@ -259,6 +272,153 @@ public final class CartSteeringHooksTest {
         }
     }
 
+    private static void direction(Player player,double heading) {
+        player.inputX=(float)((Math.cos(heading)-Math.sin(heading))/2);
+        player.inputY=(float)((Math.cos(heading)+Math.sin(heading))/2);
+    }
+
+    private static void stationaryControls(Unsafe unsafe,Map<?,?> states) throws Exception {
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
+        type(cart,"SaucedWheelbarrow.WheelbarrowWood");player.walkSpeed=.8f;
+        var input=new IsoPlayer.InputState();var time=GameTime.getInstance();float old=time.fpsMultiplier;
+        try {
+            for(int fps:new int[]{30,60,144}) for(int sign:new int[]{-1,1}) {
+                time.fpsMultiplier=60f/fps;
+                CartSteeringHooks.reset(player);player.moving=false;player.inputX=player.inputY=0;
+                player.actualX=player.actualY=0;CartSteeringHooks.heading(player);
+                Object state=states.get(player);direction(player,sign*Math.PI/2);
+                input.setRunning(true);input.sprinting=true;CartSteeringHooks.input(player,input);
+                check(field(state,"stationary").getBoolean(state) && !input.isRunning() && !input.sprinting,
+                    "side input from rest must select walking-only stationary turn");
+                player.moving=true;CartSteeringHooks.heading(player);
+                check(sign*player.stepX<0 && player.stepY==0,"stationary bootstrap must select a native pure lateral step");
+                // Native collision refuses a whole step: yaw and wheel phase must remain unchanged.
+                CartSteeringHooks.movement(player,.02f,0);CartSteeringHooks.heading(player);
+                check(field(state,"heading").getDouble(state)==0 && CartSteeringHooks.wheelPhase(player)==0,
+                    "blocked stationary movement cannot rotate or spin the cart");
+                for(int frame=0;frame<fps*4 && field(state,"stationary").getBoolean(state);frame++) {
+                    CartSteeringHooks.input(player,input);
+                    accept(player,CartSteeringHooks.movement(player,(float)(1.1/fps),0));
+                    double h=field(state,"heading").getDouble(state);
+                    check(Math.hypot(player.actualX+1.0084944326*Math.cos(h)-1.0084944326,
+                        player.actualY+1.0084944326*Math.sin(h))<1e-5,"accepted stationary steps must orbit the front axle");
+                }
+                check(!field(state,"stationary").getBoolean(state),"held side input must complete the turn");
+                check(Math.abs(CartSteeringMath.wrap(field(state,"heading").getDouble(state)-sign*Math.PI/2))<Math.toRadians(.5),
+                    "stationary exit must face the requested direction");
+                input.setRunning(true);input.sprinting=true;CartSteeringHooks.input(player,input);
+                check(input.isRunning() && input.sprinting,"aligned exit must release native fast-gait input");
+                var forward=CartSteeringHooks.movement(player,.02f,0);
+                check(Math.hypot(forward.x,forward.y)>.019,"held input must resume rolling after the pivot");
+                accept(player,forward);
+                // A new side input while already moving remains the existing rolling arc.
+                direction(player,0);CartSteeringHooks.input(player,input);
+                check(!field(state,"stationary").getBoolean(state),"moving turns must not park the wheel");
+                CartSteeringHooks.reset(player);player.moving=false;direction(player,sign*Math.PI/2);
+                CartSteeringHooks.input(player,input);player.moving=true;CartSteeringHooks.heading(player);
+                accept(player,CartSteeringHooks.movement(player,.02f,0));
+                player.inputX=player.inputY=0;CartSteeringHooks.input(player,input);player.moving=false;
+                double before=field(states.get(player),"heading").getDouble(states.get(player));
+                var tail=CartSteeringHooks.movement(player,.02f,0);
+                check(tail.getLength()==0,"released strafe root must not become an unwanted forward step");
+                accept(player,tail);
+                check(field(states.get(player),"heading").getDouble(states.get(player))==before && player.stepX==0 && player.stepY==0,
+                    "released stationary turn must return to planted idle");
+                direction(player,before+Math.PI);CartSteeringHooks.input(player,input);
+                var reverse=CartSteeringHooks.movement(player,.02f,0);
+                check(reverse.x*Math.cos(before)+reverse.y*Math.sin(before)<-.019,
+                    "backward input after release must preserve existing reverse travel");
+                accept(player,reverse);
+            }
+        } finally {CartSteeringHooks.reset(player);time.fpsMultiplier=old;}
+    }
+
+    private static void stationaryCadence(Unsafe unsafe,Map<?,?> states) throws Exception {
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
+        type(cart,"SaucedWheelbarrow.WheelbarrowWood");player.walkSpeed=.8f;
+        var node=new AnimNode();node.name="ToolkitCartPivotWalk";
+        node.deferredBoneName="Translation_Data";node.deferredBoneAxis=BoneAxis.Y;
+        var clips=new HashMap<String,AnimationClip>();
+        String[] names={"Bob_Idle","Bob_Walk","Bob_StrafeNoAim_Right","Bob_WalkBwdNoAim1Hand","Bob_StrafeNoAim_Left"};
+        float[][] roots={{0,0},{0,.944882f},{-.417323f,0},{0,-.590551f},{.417323f,0}};
+        float[][] positions={{0,0},{0,1},{1,0},{0,-1},{-1,0}};
+        for(int i=0;i<names.length;i++) {
+            var start=new Keyframe();var end=new Keyframe();start.boneName=end.boneName="Translation_Data";
+            start.position=new Vector3f();end.position=new Vector3f(roots[i][0],0,-roots[i][1]);end.time=2f/3;
+            clips.put(names[i],new AnimationClip(2f/3,List.of(start,end),names[i],true));
+            var blend=new Anim2DBlend();blend.animName=names[i];blend.posX=positions[i][0];blend.posY=positions[i][1];
+            node.blends2d.add(blend);
+        }
+        for(int i=1;i<=4;i++) {
+            var triangle=new Anim2DBlendTriangle();triangle.node1=node.blends2d.get(0);
+            triangle.node2=node.blends2d.get(i);triangle.node3=node.blends2d.get(i%4+1);node.blendTris.add(triangle);
+        }
+        node.blend2dPicker=new Anim2DBlendPicker();node.blend2dPicker.SetPickTriangles(node.blendTris);
+        player.animator=new AdvancedAnimator();player.animator.animSet=new AnimationSet();
+        var movement=new AnimState();movement.nodes.add(node);player.animator.animSet.states.put("movement",movement);
+        var mesh=(ModelMesh)unsafe.allocateInstance(ModelMesh.class);
+        mesh.skinningData=new SkinningData(clips,List.of(),List.of(),List.of(),List.of(),new HashMap<>());
+        var model=ModelManager.class.getDeclaredField("animModel");model.setAccessible(true);
+        Object oldModel=model.get(ModelManager.instance);
+        var input=new IsoPlayer.InputState();var time=GameTime.getInstance();float oldFps=time.fpsMultiplier;
+        try {
+            model.set(ModelManager.instance,mesh);
+            for(float walkSpeed:new float[]{.56f,.3575f}) for(int fps:new int[]{30,60,144}) for(int sign:new int[]{-1,1}) {
+                player.walkSpeed=walkSpeed;
+                time.fpsMultiplier=60f/fps;double dt=time.getRealworldSecondsSinceLastUpdate();
+                CartSteeringHooks.reset(player);player.moving=false;player.inputX=player.inputY=0;
+                player.actualX=10825.5f;player.actualY=10142.5f;CartSteeringHooks.heading(player);
+                Object state=states.get(player);double initial=Math.PI/4,target=initial+sign*Math.PI/2;
+                field(state,"heading").setDouble(state,initial);field(state,"target").setDouble(state,initial);
+                direction(player,target);CartSteeringHooks.input(player,input);player.moving=true;CartSteeringHooks.heading(player);
+                check(Float.isFinite(CartLegPace.targetSpeed(player,player.stepX,player.stepY)),
+                    "stationary feedback regression must use calibrated native animation clips");
+                boolean rounded=false;float maxPace=0;
+                for(int frame=0;frame<fps*6 && field(state,"stationary").getBoolean(state);frame++) {
+                    CartSteeringHooks.input(player,input);
+                    check(Math.abs(player.stepX)==1 && player.stepY==0,
+                        "stationary turns must retain the full native lateral stride");
+                    maxPace=Math.max(maxPace,player.legPace);
+                    check(player.legPace<(walkSpeed>.5?1.35:.86),
+                        "cargo must affect full-stride cadence instead of fast idle-blended shuffling");
+                    var pick=node.blend2dPicker.Pick(player.stepX,player.stepY,new Anim2DBlendPicker.PickResults());
+                    double rootX=0,rootY=0;
+                    for(int i=0;i<pick.numNodes;i++) {
+                        var blend=i==0?pick.node1:i==1?pick.node2:pick.node3;
+                        float weight=i==0?pick.scale1:i==1?pick.scale2:pick.scale3;
+                        if(weight<1e-4f) continue;
+                        var clip=clips.get(blend.animName);
+                        var root=clip.getTotalTranslation("Translation_Data",BoneAxis.Y,new Vector2());
+                        rootX+=Math.min(1,weight)*root.x/clip.getDuration();rootY+=Math.min(1,weight)*root.y/clip.getDuration();
+                    }
+                    double budget=player.legPace*Math.hypot(rootX,rootY)*dt;
+                    double before=field(state,"heading").getDouble(state);float x=player.actualX,y=player.actualY;
+                    Vector2 step=CartSteeringHooks.movement(player,(float)budget,0);
+                    check(step.getLength()<=budget+1e-7,"stationary steering cannot invent native root distance");
+                    accept(player,step);
+                    double after=field(state,"heading").getDouble(state);
+                    if(player.actualX==x && player.actualY==y) {
+                        rounded=true;check(after==before,"rounded native root cannot rotate the cart");
+                    }
+                    check(Double.isFinite(after),"native stationary feedback must retain a finite heading");
+                }
+                check(!field(state,"stationary").getBoolean(state)
+                    && Math.abs(CartSteeringMath.wrap(target-field(state,"heading").getDouble(state)))<Math.toRadians(.5),
+                    "calibrated stationary root must finish at world coordinates: "+fps+"/"+sign);
+                check(maxPace>(walkSpeed>.5?1.2:.78),"full native steps must preserve the responsive turn budget");
+                if(fps==144) check(rounded,"high-FPS regression must exercise sub-ULP native root frames");
+                player.inputX=player.inputY=0;CartSteeringHooks.input(player,input);player.moving=false;
+                CartSteeringHooks.heading(player);
+            }
+        } finally {
+            CartSteeringHooks.reset(player);time.fpsMultiplier=oldFps;model.set(ModelManager.instance,oldModel);
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         var tiny=CartSteeringMath.step(0,0,.0002,1.0/60,0);
         check(!CartSteeringHooks.blockedStep(tiny,10825.5f,10142.5f,0),
@@ -307,9 +467,11 @@ public final class CartSteeringHooksTest {
                     nativeInput.setRunning(true);nativeInput.sprinting=true;
                     CartSteeringHooks.input(player,nativeInput);
                     boolean reverse=kind.endsWith("Wood") && Math.abs(degrees)>135;
-                    check(nativeInput.isRunning()!=reverse && nativeInput.sprinting!=reverse,
-                        "only wooden reverse must reject Run/Sprint: "+kind+"/"+heading+"/"+degrees);
-                    check(intent.getBoolean(state)==!reverse,"Sprint capture must follow the clamped native input");
+                    boolean stationary=kind.endsWith("Wood") && Math.abs(degrees)>20 && !reverse;
+                    boolean clamped=reverse || stationary;
+                    check(nativeInput.isRunning()!=clamped && nativeInput.sprinting!=clamped,
+                        "wooden reverse and stationary turns must reject Run/Sprint: "+kind+"/"+heading+"/"+degrees);
+                    check(intent.getBoolean(state)==!clamped,"Sprint capture must follow the clamped native input");
                 }
             }
         }
@@ -431,6 +593,8 @@ public final class CartSteeringHooksTest {
         player.run=true;CartSteeringHooks.heading(player);CartSteeringHooks.reset(player);
         check(CartSteeringHooks.fastPoseWeight(player)==0,"reset must release delayed pose clearance");
         player.run=false;
+        stationaryControls(unsafe,states);
+        stationaryCadence(unsafe,states);
         brakeControls(unsafe,states);
         System.out.println("CART_STEERING_HOOKS_PASS (combat, local, path, scope, cart ownership, reset)");
     }

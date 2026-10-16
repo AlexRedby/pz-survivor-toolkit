@@ -234,7 +234,31 @@ public final class CartSteeringMathTest {
         check(mode.direction==-1 && !mode.active,"starting backwards from rest needs no artificial brake");
     }
 
+    private static void stationaryChecks() {
+        for(int fps:new int[]{30,60,144}) for(int sign:new int[]{-1,1}) for(double load:new double[]{0,1}) {
+            double heading=.3,initial=heading,x=0,y=0,rate=0,axle=1.01,dt=1.0/fps;
+            var step=new CartSteeringMath.Step();
+            for(int frame=0;frame<fps*4;frame++) {
+                double budget=(load==0?1.3:.83)*dt;
+                CartSteeringMath.stationaryStep(heading,initial+sign*Math.PI/2,budget,dt,load,axle,rate,step);
+                check(Math.hypot(step.x(),step.y())<=budget+1e-12,"stationary turn cannot invent native root movement");
+                close(step.travel(),0,"stationary turn keeps the wheel planted");
+                close(CartSteeringMath.acceptedTurn(heading,axle,step.x(),step.y()),step.turn(),"accepted chord determines stationary yaw");
+                check(sign*step.turn()>=0,"stationary turn cannot move in the opposite direction");
+                x+=step.x();y+=step.y();heading+=step.turn();rate=step.turn()/dt;
+                close(x+axle*Math.cos(heading),axle*Math.cos(initial),"stationary wheel X stays fixed");
+                close(y+axle*Math.sin(heading),axle*Math.sin(initial),"stationary wheel Y stays fixed");
+            }
+            close(heading,initial+sign*Math.PI/2,"stationary turn finishes at every cargo/FPS");
+            CartSteeringMath.stationaryStep(heading,heading+1,0,dt,load,axle,rate,step);
+            check(step.x()==0 && step.y()==0 && step.turn()==0,"without a native step the planted character cannot yaw");
+            CartSteeringMath.stationaryStep(heading,heading,1,dt,load,axle,.4,step);
+            check(step.turn()==0,"release consumes no residual strafe budget");
+        }
+    }
+
     public static void main(String[] args) {
+        stationaryChecks();
         reversalChecks();
         var idle = CartSteeringMath.step(0, Math.PI / 2, 0, 1.0 / 60, 0);
         check(idle.turn() == 0 && idle.x() == 0 && idle.y() == 0, "idle cannot spin");
