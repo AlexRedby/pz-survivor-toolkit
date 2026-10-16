@@ -23,6 +23,7 @@ def definitions():
     result = {suite: {'status': 'ready', 'clients': 1 if suite == SP else 2, 'default_mods': MODS,
                     'cases': [{'id': case, 'producer': 'fixture', 'capability': 'capture',
                                'kinds': ['sp' if suite == SP else 'mp'], 'modes': ['toolkit'],
+                               'control_reason': 'Preserved candidate capture requires toolkit mode; it does not assess animation equivalence',
                                'languages': ['RU'] if suite == SP else ['EN', 'RU']}
                               for case in (['sprint', 'reverse'] if suite == SP else ['owner_observer_motion'])]}
             for suite in (SP, MP)}

@@ -143,7 +143,8 @@ def _client_issues(text, selection, role, case):
     if not re.search(prefix + r"CONNECTED " + role + " language=" + language + r"(?:\s|$)", text):
         issues.append(role + ": missing connected actor/language marker")
     if selection["suite"] == "crafting-plans":
-        if re.findall(prefix + r"EXPECTED checks=(\d+) scenario=(\w+)", text) != [(str(expected), case)]:
+        # Native MP reloads Lua before entering the world, repeating this bootstrap banner.
+        if set(re.findall(prefix + r"EXPECTED checks=(\d+) scenario=(\w+)", text)) != {(str(expected), case)}:
             issues.append(role + ": expected scenario/count differs")
         if case == "ui":
             required = ["PREVIEW_RENDERED", "FALLBACK_RENDERED", "WINDOW_GUARDS", "START_CALLBACK"]

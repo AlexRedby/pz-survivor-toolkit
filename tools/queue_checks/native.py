@@ -207,9 +207,9 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             if hashes(target) != expected:
                 raise RuntimeError("Mod changed while copying snapshot: " + identifier)
             for layer in [target, *[p for p in target.iterdir() if p.is_dir() and (p.name == "common" or VERSION.fullmatch(p.name))]]:
-                if (layer / "media").is_dir():
+                if layer != target or (layer / "media").is_dir():
                     for sub in ("AnimSets", "actiongroups"):
-                        (layer / "media" / sub).mkdir(exist_ok=True)
+                        (layer / "media" / sub).mkdir(parents=True, exist_ok=True)
         helper = cache / "mods/ActionQueueTest"
         for layer in ("common", "42"):
             for sub in ("AnimSets", "actiongroups"):

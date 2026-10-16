@@ -12,10 +12,10 @@ Preserved intakes from the other chats:
 
 | Topic | Preserved source | Integration boundary |
 |---|---|---|
-| `video-recording` | Fresh-profile preparation, Java/Lua capture fixture, verifier and tests | macOS/EN/SP historical evidence; registered; fresh common-runner evidence is recorded in run reports |
-| `animal-trailer` | Equipment race, trailer ghost and animal timer probes; build/verify tools | Historical one-client MP; new common-runner launch pending |
-| `crafting-plans` | Chains, shared inputs, Neat UI and ingredient alternatives | Parameterized historical MP scenarios; event/receipt adapter registered; native results remain separate |
-| `shared-wishlist` | Shared edits/access, persistence and UI fixtures | Server/client preparation preserved; current native revalidation pending |
-| `item-tags` | Five screenshot/assertion scenes and preparation test | Needs Toolkit 0.1.53+ and listed UI mods; registered; fresh common-runner evidence is recorded in run reports |
-| `wooden_cart_motion` | Input bridge, disposable area, 16 Sprint and 20 reverse/turn scenarios, mesh/palette/grip probes and analyzers | Needs candidate cart-motion APIs absent from queue main; reverse motion passed with a known trousers intersection; registered; fresh common-runner evidence is recorded in run reports |
-| `wooden_cart_multiplayer` | Server-seeded cart, actual owner/observer, read-only pose probe and six-phase capture analyzer | Original MP capture shows a replication counterexample; parameterized port not run live, capture adapter registered; no equivalence PASS |
+| `video-recording` | Fresh-profile preparation, Java/Lua capture fixture, verifier and tests | Registered SP adapter with queue-on/off controls, full decode and frame extraction |
+| `animal-trailer` | Equipment race, trailer ghost and animal timer probes; build/verify tools | Registered one-client MP adapter; fixed/missing and shared/starved controls retain exact patch requirements |
+| `crafting-plans` | Chains, shared inputs, Neat UI and ingredient alternatives | Registered two-client MP adapter; preserved toolkit operation APIs have no compatible queue-off control |
+| `shared-wishlist` | Shared edits/access, persistence and UI fixtures | Registered two-client MP adapter; full integration has a control, reload copies verified seed state |
+| `item-tags` | Five screenshot/assertion scenes and preparation test | Registered RU/SP adapter; requires ItemTags/TagVisuals and the declared UI mod order |
+| `wooden_cart_motion` | Input bridge, disposable area, 16 Sprint and 20 reverse/turn scenarios, mesh/palette/grip probes and analyzers | Registered candidate capture adapter with calibrated mesh and pose probes; captured is not equivalence PASS |
+| `wooden_cart_multiplayer` | Server-seeded cart, actual owner/observer, read-only pose probe and six-phase capture analyzer | Registered owner/observer capture adapter; raw replication differences remain visible, no equivalence PASS |

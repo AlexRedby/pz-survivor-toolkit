@@ -79,6 +79,14 @@ class CraftWishlistAdapterTests(unittest.TestCase):
                     self.assertEqual([], result["issues"])
                     self.assertEqual([expected, expected], [row["outcome"]["preserved_stages"] for row in result["outcomes"]])
 
+    def test_identical_reload_headers_are_allowed_but_conflicting_headers_fail(self):
+        value = selection("crafting-plans", "crafting")
+        text = client_log(value, "client1")
+        header = "[CRAFT_TEST] EXPECTED checks=20 scenario=crafting\n"
+        self.assertEqual([], adapter._client_issues(header + text, value, "client1", "crafting"))
+        self.assertTrue(adapter._client_issues(header.replace("checks=20", "checks=19") + text, value, "client1", "crafting"))
+        self.assertTrue(adapter._client_issues(text.replace(header, ""), value, "client1", "crafting"))
+
     def test_failed_or_partial_completion_ends_lifecycle_but_fails_verification(self):
         for suite, case in (("crafting-plans", "crafting"), ("shared-wishlist", "full")):
             value = selection(suite, case)
