@@ -1,3 +1,8 @@
+# Публикация тегов в main
+
+- [ ] Слить актуальный origin/main, сохранить новую структуру документации и все изменения тегов.
+- [ ] Проверить объединённые Lua/Python/Java изменения, структуру пакета и совместимость документации; push обычным fast-forward в main и сверка remote SHA.
+
 # Совместимость Quartermaster
 
 - [ ] Проверить штатные переносы и custom-действия Quartermaster в очереди Toolkit. Аудировать обёртки ISInventoryTransferAction.perform и ISTimedActionQueue.resetQueue перед разрешением отмены/перестановки; не обходить защиту неизвестных callbacks.
