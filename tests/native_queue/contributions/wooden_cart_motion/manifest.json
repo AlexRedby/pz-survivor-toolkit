@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "id": "wooden_cart_motion",
+  "status": "intake_only",
+  "live_after_parameterization": "not_run",
+  "runner_adapter": null,
+  "exclusive_native_process": true,
+  "sources": {
+    "java": "Main.java",
+    "test_area": "test-area.lua",
+    "bootstrap": "bootstrap.lua",
+    "scenario": "scenario-clips.lua"
+  },
+  "origin": {
+    "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",
+    "bootstrap": ".codex/investigations/wood-grip-reference-20261015/bootstrap.lua",
+    "test_area": "tools/cart_test_area.lua"
+  },
+  "dependencies": {
+    "game": "Project Zomboid B42.21 only",
+    "zombie_buddy_minimum": "2.3.4",
+    "compile_jdk_minimum": 25,
+    "compile_release": 17,
+    "compile_jars": ["projectzomboid.jar", "ZombieBuddy.jar"],
+    "runtime_java": "game-bundled platform runtime",
+    "project_mods": ["PZSurvivorToolkit", "PZSurvivorWishlist", "PZToolkitJavaPatches"],
+    "required_project_versions": {"PZSurvivorToolkit": ">=0.1.57", "PZToolkitJavaPatches": ">=0.1.14", "target": "candidate B42.21 with current carts motion changes integrated"},
+    "cart_api_contract": ["CartSteeringHooks.states -> State.pace.speed/velocity", "State.sprintMomentum", "State.load", "CartSteeringHooks.lean(IsoPlayer)", "CartLegPace.targetSpeed(IsoPlayer,float,float)"],
+    "fixture_mod": {"id": "CartLab", "java_package": "net.alexredby.cartlab", "java_main": "net.alexredby.cartlab.Main"},
+    "lua_modules": ["SaucedCarts/Core", "SaucedCarts/CartVisuals", "ISUI/ISPanel"],
+    "cart_items": ["SaucedCarts.ShoppingCart", "SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.WheelbarrowMetal"],
+    "video": "FFmpeg executable plus Toolkit toolkitVideoStart/Status/Stop Lua bridge",
+    "evidence_probes": "Runner-supplied pre-IK grip, post-render body/cart palettes and before/after native hip/leg/arm probes; not bundled here"
+  },
+  "required_environment": ["PZ_CART_RUNTIME_FILE", "PZ_CART_COMMAND_FILE"],
+  "required_lua_global": "CartMotionConfig",
+  "required_lua_fields": ["disposable", "videoRoot", "ffmpeg", "area"],
+  "required_area_fields": ["x", "y", "z", "minX", "minY", "size", "margin", "floorSprite"],
+  "runtime_contract": {
+    "world_name": "CartTestArea",
+    "single_player": true,
+    "multiplayer": "not supported by these fixtures",
+    "legacy_capture_language": "RU (options.ini); other locales not validated",
+    "fresh_owned_profile": true,
+    "options": {"voiceEnable": false, "toggleToSprint": false, "toggleToRun": false, "dblTapJogToSprint": false},
+    "sandbox": {"Zombies": 6, "EnableVehicles": false, "VehicleStoryChance": 1, "ZoneStoryChance": 1, "SurvivorHouseChance": 1},
+    "shared_jvm_args": ["-Djava.awt.headless=true", "--enable-native-access=ALL-UNNAMED", "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED", "-Dzomboid.steam=0", "-Djava.library.path=.", "-Xmx2048m", "-XX:+UseZGC", "-XX:-OmitStackTraceInFastThrow"],
+    "macos_jvm_args": ["-XstartOnFirstThread"],
+    "agent_template": "-javaagent:${GAME_JAVA_DIR}/ZombieBuddy.jar=config_dir=${PROFILE_DIR}/zombie-buddy,policy=deny-new,verbosity=1",
+    "game_args_template": ["-nosteam", "-novoip", "-cachedir=${PROFILE_DIR}"],
+    "working_directory": "${GAME_JAVA_DIR}",
+    "entrypoint": "runner-owned; no launcher or ToolkitSmokeLauncher source is supplied",
+    "load_order": ["CartMotionConfig", "test-area.lua", "bootstrap.lua", "wait BOOTSTRAP_READY", "scenario-clips.lua"],
+    "controls": {"drive": "-1 native input; 0 neutral; 1 Forward; 2 Left; 3 Right; 4 Backward", "gait": "0 Walk; 1 Run; 2 Sprint"}
+  },
+  "scenario": {
+    "case_count": 16,
+    "axes": {"sex": ["male", "female"], "cargo": ["empty", "full"], "spec": ["comparison", "direct", "gait", "runstop"]},
+    "record_seconds_per_case": 12,
+    "settle_ms": 1800,
+    "streaming_retry_ms": 6000,
+    "sample_interval_ms": 100,
+    "sprinting_skill": "10 for Sprint specs; 0 for runstop control",
+    "bank_cap_degrees": 7
+  },
+  "markers": ["[WOOD_PROTOTYPE] BOOTSTRAP_READY", "[WOOD_PROTOTYPE] BOOTSTRAP_FAIL", "[WOOD_BANK] RUN_STARTED", "[WOOD_BANK] CASE", "[WOOD_BANK] COMPLETE", "[WOOD_BANK] ALL_COMPLETE cases=16", "[WOOD_BANK] FAIL", "[WOOD_BANK_SAMPLE]", "[WOOD_RAMP_EVENT]"],
+  "criteria": {
+    "completion": "16 unique COMPLETE markers from the latest RUN_STARTED, matching CASE windows and final ALL_COMPLETE; no FAIL in that run",
+    "grip": "Zero thrown/error/fallback grip results in valid case windows; report runstop separately, never exclude it from an all-cases PASS",
+    "geometry": "Zero actual bare-body and stock trousers triangle/wooden-shaft intersections in valid windows",
+    "native_pose": "Hip matrix/translation delta <1e-6; leg matrices unchanged; arm length delta <1e-5",
+    "floor": "Actual post-render wheel lowest point remains .008 within 1e-5 model units",
+    "gait": "Requested native Run/Sprint active; Sprint eligibility controlled; native feet move; cargo reduces speed; speed ramp starts/stops continuously",
+    "diagnostics": "Require evidence probes/geometry analyzer; video or ALL_COMPLETE alone cannot establish these criteria"
+  }
+}
