@@ -1,0 +1,33 @@
+    @LuaMethod(name="cartMPState", global=true)
+    public static String mpState(IsoPlayer p) {
+        var a=p.getPrimaryHandItem(); var b=p.getSecondaryHandItem();
+        var out=new StringBuilder("{\"wall\":").append(System.currentTimeMillis())
+            .append(",\"id\":").append(p.getOnlineID()).append(",\"user\":\"").append(p.getUsername())
+            .append("\",\"local\":").append(p.isLocalPlayer()).append(",\"enabled\":")
+            .append(net.alexredby.pztoolkitjavapatches.CartSteeringHooks.enabled(p))
+            .append(",\"x\":").append(p.getX()).append(",\"y\":").append(p.getY()).append(",\"z\":").append(p.getZ())
+            .append(",\"heading\":").append(p.getDirectionAngleRadians()).append(",\"run\":").append(p.isRunning())
+            .append(",\"sprint\":").append(p.isSprinting()).append(",\"primary\":").append(a==null?-1:a.getID())
+            .append(",\"secondary\":").append(b==null?-1:b.getID()).append(",\"item\":\"").append(a==null?"none":a.getFullType()).append('"')
+            .append(",\"motion\":").append(p.getVariableBoolean("ToolkitCartMotion"))
+            .append(",\"pivot\":").append(p.getVariableBoolean("ToolkitCartPivot"))
+            .append(",\"stepX\":").append(p.getVariableFloat("ToolkitCartStepX",0))
+            .append(",\"stepY\":").append(p.getVariableFloat("ToolkitCartStepY",0))
+            .append(",\"pace\":").append(p.getVariableFloat("ToolkitCartLegPace",0))
+            .append(",\"bank\":").append(net.alexredby.pztoolkitjavapatches.CartSteeringHooks.lean(p))
+            .append(",\"tracks\":\"");
+        if(p.getAnimationPlayer()!=null && p.getAnimationPlayer().getMultiTrack()!=null)
+            for(var t:p.getAnimationPlayer().getMultiTrack().getTracks())out.append(t.getName()).append('=').append(t.getSpeedDelta()).append('@').append(t.getBlendWeight()).append(';');
+        return out.append("\"}").toString();
+    }
+
+    @LuaMethod(name="cartMPCamera", global=true)
+    public static void camera(IsoPlayer p) {
+        var self=IsoPlayer.getInstance();
+        float x=p.getX()-self.getX(),y=p.getY()-self.getY();
+        float length=(float)Math.hypot(x,y);
+        if(length>1e-5f){self.setTargetAndCurrentDirection(x/length,y/length);self.getAnimationPlayer().setTargetAndCurrentDirection(x/length,y/length);}
+    }
+
+    @LuaMethod(name="cartMPHideUI", global=true)
+    public static void hideUI() { zombie.ui.UIManager.setVisibleAllUI(false); }
