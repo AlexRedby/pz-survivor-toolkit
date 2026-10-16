@@ -1,11 +1,13 @@
 local calls, textures = {}, {}
 getTexture = function(name)
+    assert(type(name) == 'string' and name ~= '', 'texture lookup needs a name')
     calls[name] = (calls[name] or 0) + 1
     if name == 'Item_GlassJar' then return nil end
     textures[name] = textures[name] or {name = name}
     return textures[name]
 end
 local Visuals = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/TagVisuals.lua')
+local schema = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/ItemTagSchema.lua')
 local food, electrical = Visuals.get('food'), Visuals.get('electrical')
 local tool, medical, material = Visuals.get('tool'), Visuals.get('medical'), Visuals.get('material')
 assert(food.g > food.r and food.g > food.b, 'food must stay green')
@@ -28,7 +30,28 @@ assert(Visuals.get('electronic').texture == Visuals.get('power').texture and cal
 assert(Visuals.get('preserved', tags).texture == nil, 'missing texture must retain text/color fallback')
 assert(Visuals.get('nonperishable', tags).texture == nil and calls.Item_GlassJar == 1, 'missing texture retried')
 local unknown = Visuals.get('category:UnknownMod')
-assert(unknown.texture == nil and Visuals.get(nil).texture == nil, 'unknown/overflow got an unrelated icon')
+assert(unknown.texture == textures.Item_Clipboard and Visuals.get(nil).texture == nil, 'category/overflow icon fallback changed')
 assert(Visuals.get('category:UnknownMod', tags).g == food.g, 'unknown tag lost contextual color')
 assert(Visuals.get('perishable').r == unknown.r, 'standalone qualifier must remain neutral')
 assert(#tags == 3 and tags[1] == 'food', 'visual lookup mutated tags')
+
+for tag, name in pairs({vegetable='Item_Carrots',liquid='Item_WaterBottle',fuel='Item_Petrol',fishing='Item_FishingRod'}) do
+ assert(Visuals.get(tag).texture.name==name,'missing useful qualifier icon '..tag)
+end
+
+for id in pairs(schema.labels) do
+    local style = Visuals.get(id)
+    assert(style.texture or id == 'nonperishable' or id == 'preserved' or id == 'beverage', 'schema tag has no icon: '..id)
+end
+assert(Visuals.get('adhesive').texture == nil, 'non-schema adhesive mapping must not be added')
+assert(Visuals.get('caliber:12ga').texture == textures.Item_ShotgunAmmo, 'shotgun caliber icon missing')
+assert(Visuals.get('caliber:9x19mm').texture == textures.Item_PistolAmmo, 'pistol caliber icon missing')
+assert(Visuals.get('caliber:.22').texture == textures.Item_PistolAmmo and Visuals.get('caliber:.45').texture == textures.Item_PistolAmmo,
+    'common pistol calibers must share the pistol ammo icon')
+assert(Visuals.get('caliber:7.62x39mm').texture == textures.Item_RifleAmmo223
+    and Visuals.get('caliber:.50magnum').texture == textures.Item_RifleAmmo223, 'rifle caliber fallback changed')
+for tag, icon in pairs({prepared='Item_GlassWine', equipment='Item_SheepShears', video='Item_Cassette3',
+    vinyl='Item_Disc', tracking='Item_CompassDirectional', arms='Item_Chainmail_Sleeve'}) do
+    assert(Visuals.get(tag).texture == textures[icon], 'wrong semantic icon for '..tag)
+end
+assert(Visuals.get('category:UnknownMod') == unknown and calls.Item_Clipboard == 1, 'category icon cache missed')

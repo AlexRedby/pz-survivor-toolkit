@@ -10,6 +10,17 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### [0.1.55](https://github.com/AlexRedby/pz-survivor-toolkit/commit/7755743)
+
+- **Added:** Native icons for all 209 defined tags, with shared caliber pictograms and a generic icon for custom categories.
+- **Fixed:** Completed known installed category mappings, including the exact `FurnitureDoor` alias; preserved existing exact-category filters after semantic tags are added.
+- **Added:** An explicit-source category coverage checker.
+
+### [0.1.54](https://github.com/AlexRedby/pz-survivor-toolkit/commit/e689236)
+
+- **Added:** Combined all/any tag filters with exclusions, grouped search, match previews and named local saved filters.
+- **Added:** Persistent Quartermaster container/preset tag rules with server validation, stale-write rejection and peer synchronization; manual selections remain additive.
+
 ### [0.1.53](https://github.com/AlexRedby/pz-survivor-toolkit/commit/72b97cdba2399950e24bc76ab9d048519c560eef)
 
 - **Added:** Native pictograms and consistent item-family colours for item tags, including Quartermaster tag choices and inventory chips.

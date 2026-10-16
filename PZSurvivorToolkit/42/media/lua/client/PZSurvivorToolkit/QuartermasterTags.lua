@@ -1,5 +1,7 @@
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Visuals = require "PZSurvivorToolkit/TagVisuals"
+local Rules = require "PZSurvivorToolkit/QuartermasterTagRuleClient"
+local RulePicker = require "PZSurvivorToolkit/TagRulePicker"
 
 local Adapter = {}
 PZSurvivorToolkit.QuartermasterTags = Adapter
@@ -77,6 +79,64 @@ function Adapter.attach(picker)
         original[name] = picker[name]
     end
     picker.toolkitTagView = true
+    picker.toolkitTagRuleRevision = Rules.getBoxRevision(picker.targetObj, picker.targetCI)
+    if picker.targetKind == "preset" and LootSorter.getPresetStore then
+        picker.toolkitTagRule = Rules.getPreset(picker.presetName, LootSorter.getPresetStore()[picker.presetName])
+    else
+        picker.toolkitTagRule = Rules.getBox(picker.targetObj, picker.targetCI)
+    end
+    local ruleButton = ISButton:new(10, 0, 10, 22, "", picker, function(target)
+        RulePicker.open({player = getSpecificPlayer(target.playerNum or 0), owner = target,
+            rule = target.toolkitTagRule, categories = target:activeList(),
+            title = getText("UI_PZST_QMTagRuleTitle"), onApply = function(rule)
+                target.toolkitTagRule = Tags.normalizeRule(rule)
+                target.toolkitTagRuleTouched = true
+            end})
+    end)
+    ruleButton:initialise(); ruleButton:instantiate()
+    ruleButton:setTooltip(getText("UI_PZST_QMTagRuleHint"))
+    picker.toolkitTagRuleButton = ruleButton
+    picker:addChild(ruleButton)
+    local close = picker.closePicker
+    if close then
+        picker.closePicker = function(self, ...)
+            self.toolkitTagClosed = true
+            return close(self, ...)
+        end
+        picker.close = picker.closePicker
+    end
+    local save = picker.onSave
+    picker.onSave = function(self, ...)
+        if self.targetKind == "preset" or (not self.toolkitTagRuleTouched and not Tags.ruleActive(self.toolkitTagRule)) then
+            return save(self, ...)
+        end
+        if self.toolkitTagSaving then return end
+        self.toolkitTagSaving = true
+        local snapshot = {obj = self.targetObj, ci = self.targetCI, priority = self.priority,
+            rule = Tags.normalizeRule(self.toolkitTagRule)}
+        for _, field in ipairs({"selectedCats", "selectedItems", "selectedPresets"}) do
+            snapshot[field] = {}
+            for key, value in pairs(self[field]) do snapshot[field][key] = value end
+        end
+        Rules.saveBox(snapshot.obj, snapshot.ci, snapshot.rule,
+            getSpecificPlayer(self.playerNum or 0), function(verdict, revision)
+                self.toolkitTagSaving = false
+                if self.toolkitTagClosed or LootSorter._picker ~= self or self.targetObj ~= snapshot.obj
+                    or self.targetCI ~= snapshot.ci then return end
+                if verdict == "ok" then
+                    self.selectedCats, self.selectedItems, self.selectedPresets = snapshot.selectedCats,
+                        snapshot.selectedItems, snapshot.selectedPresets
+                    self.selection = self.mode == "items" and self.selectedItems
+                        or self.mode == "presets" and self.selectedPresets or self.selectedCats
+                    self.priority, self.toolkitTagRule, self.toolkitTagRuleRevision = snapshot.priority, snapshot.rule, revision
+                    save(self)
+                elseif LootSorter.notify then
+                    LootSorter.notify(getSpecificPlayer(self.playerNum or 0), getText(verdict == "stale" and "UI_PZST_QMTagRuleStale" or "UI_PZST_QMTagRuleFailed", tostring(verdict)))
+                end
+            end, self.toolkitTagRuleRevision)
+    end
+    -- Native Save caches Picker.onSave when creating the button.
+    if picker.btnSave then picker.btnSave.onclick = picker.onSave end
     local button = ISButton:new(10, 0, 10, 22, "", picker, function(target)
         target.toolkitTagView = not target.toolkitTagView
         target.needRebuild = true
@@ -134,11 +194,14 @@ function Adapter.attach(picker)
         original.layout(self)
         local visible = Tags.enabled() and self.mode == "cats"
         button:setVisible(visible)
+        ruleButton:setVisible(visible)
         if visible then
             button:setX(self.listbox:getX()); button:setY(self.listbox:getY())
             button:setWidth(self.listbox:getWidth()); button:setHeight(22)
-            self.listbox:setY(self.listbox:getY() + 28)
-            self.listbox:setHeight(math.max(12, self.listbox:getHeight() - 28))
+            ruleButton:setX(self.listbox:getX()); ruleButton:setY(self.listbox:getY() + 28)
+            ruleButton:setWidth(self.listbox:getWidth()); ruleButton:setHeight(22)
+            self.listbox:setY(self.listbox:getY() + 56)
+            self.listbox:setHeight(math.max(12, self.listbox:getHeight() - 56))
         end
         -- Native clipping reads scrollbar geometry, which keeps the picker's initial 10x10 size.
         local scroll = self.listbox.vscroll
@@ -159,6 +222,7 @@ function Adapter.attach(picker)
             self:layout()
             if self.joypadConfigured then self:configJoypad() end
         end
+        ruleButton:setTitle(getText("UI_PZST_QMTagRule") .. (Tags.ruleActive(self.toolkitTagRule) and " *" or ""))
         button:setTitle(getText(self.toolkitTagView and "UI_PZST_QMShowCategories" or "UI_PZST_QMShowTags"))
         return original.prerender(self, ...)
     end
@@ -166,6 +230,7 @@ function Adapter.attach(picker)
     picker.insertNewLineOfButtons = function(self, first, ...)
         if first == self.listbox and Tags.enabled() and self.mode == "cats" then
             original.insertNewLineOfButtons(self, button)
+            original.insertNewLineOfButtons(self, ruleButton)
         end
         return original.insertNewLineOfButtons(self, first, ...)
     end
@@ -218,6 +283,21 @@ function Adapter.install()
     if not LootSorter or LootSorter.toolkitTagPicker then return end
     if type(LootSorter.openPicker) ~= "function" or type(LootSorter.openPresetEditor) ~= "function" then return end
     LootSorter.toolkitTagPicker = true
+    Rules.installClient()
+    if LootSorter.putPreset then
+        local put = LootSorter.putPreset
+        LootSorter.putPreset = function(args, ...)
+            for _, picker in ipairs({LootSorter._presetEditor or false, LootSorter._picker or false}) do
+                if picker and args.cats == picker.selectedCats then
+                    if picker.targetKind ~= "preset" or picker.toolkitTagRuleTouched or Rules.presetsSynced() then
+                        args.pzstTagRule = Tags.normalizeRule(picker.toolkitTagRule)
+                    end
+                    break
+                end
+            end
+            return put(args, ...)
+        end
+    end
     local open, edit = LootSorter.openPicker, LootSorter.openPresetEditor
     LootSorter.openPicker = function(...)
         local result = open(...)

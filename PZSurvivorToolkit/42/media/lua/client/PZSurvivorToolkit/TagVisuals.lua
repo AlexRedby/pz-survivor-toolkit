@@ -39,7 +39,38 @@ local icons = {
     doorkey = "Item_Key1", itemkey = "Item_Key1", vehiclekey = "Item_Key1", keyring = "Item_Key1",
     door = "Item_Doorhinge", hygiene = "Item_Toothbrush", plushie = "Item_PlushSpiffo",
     sports = "Item_Baseball", money = "Item_Money", camping = "Item_Lighter",
+    vegetable = "Item_Carrots", liquid = "Item_WaterBottle", fuel = "Item_Petrol",
+    fishing = "Item_FishingRod",
+    accessory = "Item_Glasses", alcoholic = "Item_BeerBottle", animalcare = "Item_DogTreats",
+    animalpart = "Item_Feather", arms = "Item_Chainmail_Sleeve", attachment = "Item_Scope2x",
+    audio = "Item_Radio", axe = "Item_Axe", bait = "Item_Worm", base = "Item_BeerBottle",
+    belt = "Item_Belt", blade = "Item_KnifeHunting", blunt = "Item_BaseballBat", bomb = "Item_PipeBomb",
+    bottom = "Item_Trousers", care = "Item_DogTreats", cartography = "Item_Map", carving = "Item_KnifeHunting",
+    cassette = "Item_Cassette1", cd = "Item_CDplayer", comfort = "Item_Pillow", communication = "Item_Radio",
+    component = "Item_ScrapMetal", condiment = "Item_Salt", corpse = "Item_Bone", crafted = "Item_SpearStone",
+    decorative = "Item_PlushSpiffo", denim = "Item_ShirtDenimBlue", ears = "Item_EarMuffs",
+    equipment = "Item_SheepShears", explosive = "Item_PipeBomb", eyes = "Item_Glasses",
+    feed = "Item_Dogfood", feet = "Item_Shoes", fitness = "Item_Dumbbell", foraging = "Item_BerryBlack",
+    general = "Item_Backpack_Blue", glassmaking = "Item_GlassPane", hair = "Item_HairDye",
+    handlehead = "Item_Hammer", hands = "Item_GlovesFingerlessWhite", head = "Item_BaseballHat_3n",
+    heating = "Item_Candle", hobbies = "Item_CardDeck", improvised = "Item_SpearStone",
+    incendiary = "Item_Molotov", instrument = "Item_GuitarAcoustic", knapping = "Item_Flint",
+    leather = "Item_LeatherStrips", legs = "Item_Trousers", lock = "Item_Padlock",
+    makeup = "Item_MakeupEyeshadow", masonry = "Item_ClayBrick_Fired", memento = "Item_PhotoAlbum",
+    miscellaneous = "Item_Money", mold = "Item_BulletMold", narcotic = "Item_Pills",
+    neck = "Item_NecklaceLong_Gold", nonfirearm = "Item_BaseballBat", outerwear = "Item_JacketBlack",
+    paint = "Item_Paint_Black", part = "Item_ScrapMetal", plumbing = "Item_Wrench",
+    pottery = "Item_Pot", prepared = "Item_GlassWine", protection = "Item_HardHatYellow",
+    recreational = "Item_Cigarette", refrigeration = "Item_Cooler", seating = "Item_TableLeg",
+    snack = "Item_CornChips", spear = "Item_SpearStone", station = "Item_Anvil_Forged",
+    storage = "Item_AmmoCase", surface = "Item_TableLeg", tabletop = "Item_CardDeck",
+    thrown = "Item_Limestone", top = "Item_ShirtGeneric", toy = "Item_ToyBear", tracking = "Item_CompassDirectional",
+    trapping = "Item_Mousetrap", undergarment = "Item_Underwear1", unfinished = "Item_SpearHead_Crude01",
+    vehicleaddition = "Item_CarBattery", video = "Item_Cassette3", vinyl = "Item_Disc",
+    wall = "Item_Wall", wallpaper = "Item_Wallpaper_BeigeStripe", wearable = "Item_Backpack_Blue",
+    window = "Item_WallWindow",
 }
+
 local textures, styles = {}, {}
 
 function Visuals.get(id, contextTags)
@@ -54,6 +85,17 @@ function Visuals.get(id, contextTags)
     local key = id or false
     if not styles[color][key] then
         local icon = icons[id] or (families[id] and families[id][2])
+        if not icon and type(id) == "string" then
+            if id:sub(1, 9) == "category:" then icon = "Item_Clipboard"
+            elseif id:sub(1, 8) == "caliber:" then
+                local caliber = id:sub(9)
+                icon = caliber:sub(-2) == "ga" and "Item_ShotgunAmmo"
+                    or caliber:find("paintball", 1, true) and "Item_PistolAmmo"
+                    or caliber:find("bb", 1, true) and "Item_PistolAmmo"
+                    or (caliber == "9x19mm" or caliber == ".22" or caliber == ".45") and "Item_PistolAmmo"
+                    or "Item_RifleAmmo223"
+            end
+        end
         if icon and textures[icon] == nil then
             textures[icon] = (getTexture and getTexture(icon)) or false
         end
