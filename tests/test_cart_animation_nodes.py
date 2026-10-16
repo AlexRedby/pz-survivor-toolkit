@@ -99,7 +99,23 @@ class CartAnimationNodes(unittest.TestCase):
             self.assertEqual([tuple(triangle.findtext("node" + str(index)) for index in (1, 2, 3))
                               for triangle in node.findall("m_2DBlendTri")],
                              [("1", "4", "2"), ("1", "3", "4"), ("1", "5", "3"), ("1", "2", "5")])
-            self.assertFalse(node.findall("m_Transitions"), "root transitions cannot extract the cart FBX axis")
+            transitions = node.findall("m_Transitions")
+            if mode == "Walk":
+                self.assertFalse(transitions)
+            else:
+                self.assertEqual(len(transitions), 1)
+                stop = transitions[0]
+                self.assertEqual(stop.findtext("m_Target"), "ToolkitCartIdle")
+                self.assertEqual(stop.findtext("m_AnimName"),
+                                 "Bob_RunToStop2H_Heavy" if mode == "Run" else "Bob_SprintToStop2h_Heavy")
+                self.assertEqual(conditions(stop), {("ToolkitCartWoodBrake", "BOOL", "true"),
+                                                    ("isMoving", "BOOL", "false")})
+                # The transition must not inherit Idle's .48 cadence or a cart FBX root axis.
+                self.assertEqual(float(stop.findtext("m_speedScale")), 1)
+                self.assertIsNone(stop.find("m_SpeedScale"))
+                self.assertGreater(float(stop.findtext("m_blendInTime")), 0)
+                # The brief .18 tail snapped the cart back when the heavy stop straightened.
+                self.assertEqual(float(stop.findtext("m_blendOutTime")), .6)
 
     def test_walk_uses_native_speed_and_injury_blending(self):
         node = self.nodes["ToolkitCartWalk"][1]

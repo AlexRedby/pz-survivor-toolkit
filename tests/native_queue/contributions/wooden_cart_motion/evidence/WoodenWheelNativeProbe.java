@@ -192,7 +192,7 @@ public final class WoodenWheelNativeProbe {
         row.append(',').append(player.isJustMoved()?1:0);
         for(double value:bone)row.append(',').append(value);
         for(double value:transition)row.append(',').append(value);
-        row.append('\n');output.write(row.toString());output.flush();
+        row.append(',').append(System.currentTimeMillis()).append('\n');output.write(row.toString());output.flush();
     }
     static void fail(Throwable error) {
         if(!errorLogged){errorLogged=true;System.err.println("[WOOD_WHEEL_NATIVE_PROBE] ERROR "+error);error.printStackTrace();}
@@ -253,7 +253,7 @@ public final class WoodenWheelNativeProbe {
         directory=Path.of(args);
         if(!Files.isDirectory(directory))throw new IllegalArgumentException("Output directory must exist");
         output=Files.newBufferedWriter(directory.resolve("wood-wheel-native.csv"),java.nio.file.StandardOpenOption.CREATE_NEW);
-        output.write("sequence,time,event,drive,type,phase,dt,playerX,playerY,playerZ,slotX,slotY,slotZ,slotAngle,actorHeading,lean,wheelX,wheelY,wheelZ,contactX,contactY,contactZ,contactLocalY,planeX,planeY,planeZ,forwardX,forwardY,wheelYaw,stepX,stepY,justMoved,leftHandX,leftHandY,leftHandZ,rightHandX,rightHandY,rightHandZ,upperDelta,legDelta,spineDelta,clavicleDelta,spineRootDx,spineRootDy,spineRootDz,spineRootOrientationMaxDelta,leftThighMatrixDelta,rightThighMatrixDelta,leftCalfMatrixDelta,rightCalfMatrixDelta,leftArmLengthBefore,leftArmLengthAfter,rightArmLengthBefore,rightArmLengthAfter,torsoLengthBefore,torsoLengthAfter,torsoLengthDelta,maxLegMatrixDelta\n");output.flush();
+        output.write("sequence,time,event,drive,type,phase,dt,playerX,playerY,playerZ,slotX,slotY,slotZ,slotAngle,actorHeading,lean,wheelX,wheelY,wheelZ,contactX,contactY,contactZ,contactLocalY,planeX,planeY,planeZ,forwardX,forwardY,wheelYaw,stepX,stepY,justMoved,leftHandX,leftHandY,leftHandZ,rightHandX,rightHandY,rightHandZ,upperDelta,legDelta,spineDelta,clavicleDelta,spineRootDx,spineRootDy,spineRootDz,spineRootOrientationMaxDelta,leftThighMatrixDelta,rightThighMatrixDelta,leftCalfMatrixDelta,rightCalfMatrixDelta,leftArmLengthBefore,leftArmLengthAfter,rightArmLengthBefore,rightArmLengthAfter,torsoLengthBefore,torsoLengthAfter,torsoLengthDelta,maxLegMatrixDelta,wallTimeMillis\n");output.flush();
         start=System.nanoTime();sequence=lastSnapshot=lastDraw=0;firstDraw=meshProof=movingMeshProof=errorLogged=false;snapshots.clear();previousBones.clear();
         if(!installed){
             new AgentBuilder.Default().disableClassFormatChanges().with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)

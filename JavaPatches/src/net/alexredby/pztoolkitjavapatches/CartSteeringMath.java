@@ -33,8 +33,42 @@ public final class CartSteeringMath {
         }
     }
 
+    static final class Reversal {
+        int direction=1, requested;
+        boolean active, braking;
+        double neutral;
+
+        boolean request(int intent, boolean atRest) {
+            requested=intent;
+            if(intent==0) { active=braking=false;neutral=0;return false; }
+            if(!active && atRest) { direction=intent;return false; }
+            if(intent!=direction && !braking) {
+                active=braking=true;neutral=0;return true;
+            }
+            if(intent==direction && braking) { braking=false;neutral=0; }
+            return false;
+        }
+
+        void stopped(double seconds, boolean rootStopped, boolean actualStopped) {
+            if(!active || !braking) return;
+            if(!rootStopped || !actualStopped) { neutral=0;return; }
+            neutral+=Math.max(0,Math.min(.1,seconds));
+            // The native picker must evaluate its Idle center before the travel sign changes.
+            if(neutral>=.08) { direction=requested;braking=false;neutral=0; }
+        }
+    }
+
     public static double wrap(double angle) {
         return Math.atan2(Math.sin(angle), Math.cos(angle));
+    }
+
+    static boolean reversing(double heading, double target) {
+        return Math.abs(wrap(target-heading))>Math.PI*.75;
+    }
+
+    static int directionIntent(double heading, double target, int previous) {
+        double threshold=Math.toRadians(previous<0?130:previous>0?140:135);
+        return Math.abs(wrap(target-heading))>threshold?-1:1;
     }
 
     public static Step step(double heading, double target, double distance,
@@ -54,10 +88,14 @@ public final class CartSteeringMath {
 
     static Step step(double heading, double target, double distance,
                      double seconds, double load, double axleDistance, double lateralDegrees, Step result) {
+        return step(heading,target,distance,seconds,load,axleDistance,lateralDegrees,reversing(heading,target),result);
+    }
+
+    private static Step step(double heading, double target, double distance,
+                     double seconds, double load, double axleDistance, double lateralDegrees, boolean reverse, Step result) {
         if (!(distance > 0) || !(seconds > 0)) return result.set(0, 0, 0, 0);
         load = Math.max(0, Math.min(1, load));
         double error = wrap(target - heading);
-        boolean reverse = Math.abs(error) > Math.PI * 0.75;
         if (reverse) error = wrap(error + Math.PI);
         boolean wheelbarrow = axleDistance > 0;
         double axle = wheelbarrow ? axleDistance : AXLE_DISTANCE;
@@ -103,16 +141,40 @@ public final class CartSteeringMath {
     static double rollingLean(double turn, double forward, double seconds) {
         if (!(seconds > 0) || !Double.isFinite(turn) || !Double.isFinite(forward)) return 0;
         // Accepted motion drives load transfer; the native anchored torso's handle reach limits the bank.
-        return Math.max(-.10,Math.min(.10,Math.atan(forward*turn/(5*seconds*seconds))));
+        double cap=Math.toRadians(7);
+        return Math.max(-cap,Math.min(cap,Math.atan(1.5*forward*turn/(5*seconds*seconds))));
+    }
+
+    static float woodenTurnAmount(float bank) {
+        float x=(float)Math.min(1,Math.abs(bank)/Math.toRadians(2.5));
+        return (float)Math.sin(x*Math.PI/2);
+    }
+
+    static float woodenBankExtra(float bank) {
+        float x=(float)Math.max(0,Math.min(1,(Math.toDegrees(Math.abs(bank))-3)/4));
+        return x*x*(3-2*x);
+    }
+
+    static float woodenShift(float bank, float gaitShift) {
+        return -.065f*woodenTurnAmount(bank)-.020f*woodenBankExtra(bank)+gaitShift;
+    }
+
+    static double woodenAxle(float bank, float gaitShift) {
+        // The same longitudinal hand-clearance shift must move the steering axle and rolling wheel.
+        return 1.0084944326-1.5*woodenShift(bank,gaitShift);
     }
 
     static Step woodenStep(double heading, double target, double distance, double seconds,
                            double load, double axle, double previousRate, Step result) {
-        step(heading,target,distance,seconds,load,axle,45,result);
+        return woodenStep(heading,target,distance,seconds,load,axle,previousRate,reversing(heading,target),result);
+    }
+
+    static Step woodenStep(double heading, double target, double distance, double seconds,
+                           double load, double axle, double previousRate, boolean reverse, Step result) {
+        step(heading,target,distance,seconds,load,axle,50,reverse,result);
         if (!(distance > 0) || !(seconds > 0)) return result;
         double dt=Math.min(.1,seconds), desiredRate=result.turn/dt;
         double error=wrap(target-heading);
-        boolean reverse=Math.abs(error)>Math.PI*.75;
         if(reverse) error=wrap(error+Math.PI);
         // Leave one step of braking distance so the final heading clamp cannot snap the yaw rate to zero.
         double stoppingRate=Math.sqrt(12*Math.abs(error)+36*dt*dt)-6*dt;

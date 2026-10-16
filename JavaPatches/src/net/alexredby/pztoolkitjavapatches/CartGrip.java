@@ -1,11 +1,14 @@
 package net.alexredby.pztoolkitjavapatches;
 
 import java.nio.FloatBuffer;
+import java.util.WeakHashMap;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import zombie.core.math.PZMath;
+import zombie.core.skinnedmodel.ModelManager;
 import zombie.core.skinnedmodel.animation.AnimationClip;
+import zombie.core.skinnedmodel.animation.Keyframe;
 import zombie.core.skinnedmodel.model.ModelInstance;
 import zombie.core.skinnedmodel.model.ModelInstanceRenderData;
 import zombie.core.skinnedmodel.model.ModelSlotRenderData;
@@ -18,10 +21,12 @@ public final class CartGrip {
         final Matrix4f[] poses=new Matrix4f[60];
         final Matrix4f attachment=new Matrix4f(), adjustment=new Matrix4f(), target=new Matrix4f();
         final Quaternionf rotation=new Quaternionf();
+        final Quaternionf headRotation=new Quaternionf(), headTarget=new Quaternionf();
         final org.lwjgl.util.vector.Matrix4f model=new org.lwjgl.util.vector.Matrix4f();
         final org.lwjgl.util.vector.Matrix4f skin=new org.lwjgl.util.vector.Matrix4f();
     }
     private static final ThreadLocal<Matrices> matrices=ThreadLocal.withInitial(Matrices::new);
+    private static final WeakHashMap<AnimationClip,WeakHashMap<SkinningData,Quaternionf>> headNeutrals=new WeakHashMap<>();
 
     private static boolean upperBody(SkinningBone bone) {
         for(;bone!=null;bone=bone.parent) {
@@ -68,13 +73,23 @@ public final class CartGrip {
                 if(!state.poses[i].isFinite()) return null;
             }
         } finally {palette.position(position);}
+        float lean=(float)Math.atan2(delta.m01(),delta.m00());
         var base=state.poses[spine.index];
-        // Spine is also the native hip anchor; bend at the waist by at most ten degrees and let IK take the rest.
-        float bank=Math.max(-.17453293f,Math.min(.17453293f,1.7f*(float)Math.atan2(delta.m01(),delta.m00())));
-        state.adjustment.translation(base.m30(),base.m31(),base.m32()).rotateZ(bank)
+        float extra=CartSteeringMath.woodenBankExtra(lean);
+        float roll=Math.max(-.27925268f,Math.min(.27925268f,(2.1f+.2f*extra)*lean));
+        state.adjustment.translation(base.m30(),base.m31(),base.m32()).rotateZ(roll)
             .translate(-base.m30(),-base.m31(),-base.m32());
-        for(int i=0;i<actor.numBones();i++)
-            if(i!=spine.index && upperBody(actor.getBoneAt(i))) state.adjustment.mul(state.poses[i],state.poses[i]);
+        for(int i=0;i<actor.numBones();i++) if(i!=spine.index && upperBody(actor.getBoneAt(i)))
+            state.adjustment.mul(state.poses[i],state.poses[i]);
+        var chest=actor.getBone("Bip01_Spine1");
+        if(chest==null) return null;
+        // Bend above the pelvis around the already banked chest; both native leg chains stay untouched.
+        base=state.poses[chest.index];
+        state.adjustment.translation(base.m30(),base.m31(),base.m32())
+            .rotateX(-(float)Math.toRadians(14*CartSteeringMath.woodenTurnAmount(lean)+6*extra))
+            .translate(-base.m30(),-base.m31(),-base.m32());
+        for(int i=0;i<actor.numBones();i++) if(descendant(actor.getBoneAt(i),chest))
+            state.adjustment.mul(state.poses[i],state.poses[i]);
         return state.poses;
     }
 
@@ -85,6 +100,76 @@ public final class CartGrip {
 
     private static void adjust(Matrix4f[] poses, SkinningData actor, SkinningBone root, Matrix4f change) {
         for(int i=0;i<actor.numBones();i++) if(descendant(actor.getBoneAt(i),root)) change.mul(poses[i],poses[i]);
+    }
+
+    private static Quaternionf keyRotation(Keyframe frame) {
+        if(frame==null || frame.rotation==null) return null;
+        var q=frame.rotation;var rotation=new Quaternionf(q.x,q.y,q.z,q.w);
+        return rotation.isFinite() && rotation.lengthSquared()>1e-12f?rotation.normalize():null;
+    }
+
+    private static Quaternionf meanRunningHead(AnimationClip clip, SkinningData actor) {
+        var chest=actor.getBone("Bip01_Spine1");var neck=actor.getBone("Bip01_Neck");var head=actor.getBone("Bip01_Head");
+        float duration=clip.getDuration();
+        if(chest==null || neck==null || head==null || neck.parent!=chest || head.parent!=neck
+            || !Float.isFinite(duration) || duration<=0) return null;
+        var neckFrames=clip.getBoneFramesAt(neck.index);var headFrames=clip.getBoneFramesAt(head.index);
+        if(neckFrames==null || neckFrames.length==0 || headFrames==null || headFrames.length<2) return null;
+        var neckRotation=keyRotation(neckFrames[0]);
+        if(neckRotation==null) return null;
+        // This authored Run clip has a static Neck; do not silently generalize to another rig/clip.
+        for(var frame:neckFrames) {
+            var q=keyRotation(frame);
+            if(q==null || !Float.isFinite(frame.time) || frame.time<0 || frame.time>duration
+                || Math.abs(neckRotation.dot(q))<.999999f) return null;
+        }
+        var rotations=new Quaternionf[headFrames.length];
+        for(int i=0;i<headFrames.length;i++) {
+            var frame=headFrames[i];var q=keyRotation(frame);
+            if(q==null || !Float.isFinite(frame.time) || frame.time<0 || frame.time>duration
+                || (i>0 && frame.time<=headFrames[i-1].time)) return null;
+            rotations[i]=q;
+        }
+        double x=0,y=0,z=0,w=0;
+        for(int i=0;i<headFrames.length;i++) {
+            var q=rotations[i];
+            double previous=i==0?headFrames[headFrames.length-1].time-duration:headFrames[i-1].time;
+            double next=i==headFrames.length-1?headFrames[0].time+duration:headFrames[i+1].time;
+            // Circular trapezoid weights also handle a duplicated key at both loop endpoints.
+            double weight=(next-previous)/2*(rotations[0].dot(q)<0?-1:1);
+            x+=weight*q.x;y+=weight*q.y;z+=weight*q.z;w+=weight*q.w;
+        }
+        var mean=new Quaternionf((float)x,(float)y,(float)z,(float)w);
+        return mean.isFinite() && mean.lengthSquared()>1e-12f?neckRotation.mul(mean.normalize()).normalize():null;
+    }
+
+    private static synchronized Quaternionf runningHeadNeutral(AnimationClip clip, SkinningData actor) {
+        if(clip==null) return null;
+        var actors=headNeutrals.computeIfAbsent(clip,key->new WeakHashMap<>());
+        if(!actors.containsKey(actor)) actors.put(actor,meanRunningHead(clip,actor));
+        return actors.get(actor);
+    }
+
+    static void calmRunningHead(Matrix4f[] poses, SkinningData actor, AnimationClip reference, float runWeight) {
+        if(!Float.isFinite(runWeight) || runWeight<=0 || actor==null || poses==null) return;
+        var head=actor.getBone("Bip01_Head");var chest=actor.getBone("Bip01_Spine1");
+        if(head==null || chest==null) return;
+        var neutral=runningHeadNeutral(reference,actor);
+        if(neutral==null) return;
+        var state=matrices.get();
+        state.target.rotation(neutral);
+        poses[chest.index].mul(state.target,state.target);
+        if(!state.target.isFinite()) return;
+        state.target.getUnnormalizedRotation(state.headTarget).normalize();
+        poses[head.index].getUnnormalizedRotation(state.headRotation).normalize();
+        if(!state.headTarget.isFinite() || !state.headRotation.isFinite()) return;
+        // The cart chest leaves native Run's head counter-rotation unbalanced; retain a quarter of its sway.
+        state.rotation.set(state.headRotation).slerp(state.headTarget,.75f*Math.min(1,runWeight))
+            .mul(state.headRotation.conjugate()).normalize();
+        var pose=poses[head.index];float x=pose.m30(),y=pose.m31(),z=pose.m32();
+        state.adjustment.translation(x,y,z).rotate(state.rotation).translate(-x,-y,-z);
+        adjust(poses,actor,head,state.adjustment);
+        pose.setTranslation(x,y,z);
     }
 
     private static void aim(Matrix4f[] poses, SkinningData actor, SkinningBone root,
@@ -105,7 +190,34 @@ public final class CartGrip {
         var wrist=poses[hand.index].getTranslation(new Vector3f());
         var goal=target.getTranslation(new Vector3f());
         float a=shoulder.distance(elbow),b=elbow.distance(wrist),distance=shoulder.distance(goal);
-        if(!Float.isFinite(distance) || distance<.00001f || distance>=a+b || distance<=Math.abs(a-b)) return false;
+        if(!Float.isFinite(distance) || !Float.isFinite(a+b) || a<.00001f || b<.00001f
+            || distance<.00001f || distance<=Math.abs(a-b)) return false;
+        var clavicle=upper.parent;
+        if(wood && distance>a+b-.01f && clavicle!=null
+            && ("Bip01_L_Clavicle".equals(clavicle.name) || "Bip01_R_Clavicle".equals(clavicle.name))) {
+            var pivot=poses[clavicle.index].getTranslation(new Vector3f());
+            var from=shoulder.sub(pivot,new Vector3f());var to=goal.sub(pivot,new Vector3f());
+            float c=from.length(),d=to.length(),reserve=a+b-distance;
+            if(c<.00001f || d<.00001f || !Float.isFinite(c+d)) return false;
+            // Ease in before full extension; the native clavicle rotates, with 5mm elbow reserve at the limit.
+            float correction=reserve<=0?.005f-reserve:(.01f-reserve)*(.01f-reserve)/.02f;
+            float desired=distance-correction;
+            if(desired<=Math.abs(c-d)) return false;
+            float angle=(float)Math.acos(Math.max(-1,Math.min(1,from.dot(to)/(c*d))));
+            float remaining=(float)Math.acos(Math.max(-1,Math.min(1,(c*c+d*d-desired*desired)/(2*c*d))));
+            float turn=angle-remaining;
+            if(!Float.isFinite(turn) || turn>(float)Math.toRadians(30)) return false;
+            if(turn>.000001f) {
+                var axis=from.cross(to,new Vector3f());
+                if(axis.lengthSquared()<.00000001f) return false;
+                var shifted=new Quaternionf().rotationAxis(turn,axis.normalize()).transform(from).add(pivot);
+                aim(poses,actor,clavicle,pivot,shoulder,shifted);
+                poses[clavicle.index].setTranslation(pivot);
+                poses[upper.index].getTranslation(shoulder);poses[forearm.index].getTranslation(elbow);
+                poses[hand.index].getTranslation(wrist);distance=shoulder.distance(goal);
+            }
+        }
+        if(distance>=a+b) return false;
         var axis=goal.sub(shoulder,new Vector3f()).div(distance);
         var bend=elbow.sub(shoulder,new Vector3f());
         if(bodyDelta!=null) {
@@ -114,7 +226,8 @@ public final class CartGrip {
             var relaxed=bodyDelta.transformDirection(new Vector3f(0,-1,wood?1f:.25f));
             relaxed.fma(-relaxed.dot(axis),axis).normalize();
             // Keep the elbow down/back instead of lifting it just to minimize the wrist angle.
-            bend.lerp(relaxed,.6f);
+            float extra=wood?CartSteeringMath.woodenBankExtra((float)Math.atan2(bodyDelta.m01(),bodyDelta.m00())):0;
+            bend.lerp(relaxed,.6f-.05f*extra);
         }
         bend.fma(-bend.dot(axis),axis);
         if(!bend.isFinite() || bend.lengthSquared()<.00000001f) return false;
@@ -213,7 +326,9 @@ public final class CartGrip {
             // Diagonal underhand grip: shaft across curled fingers, palm inward/up, wrist above the handle.
             var x=down.mul(.9961947f,new Vector3f()).fma(.08715574f,inward);
             var z=inward.mul(.9961947f,new Vector3f()).fma(-.08715574f,down);
-            x.mul(wood?.9063078f:.5735200f).fma(wood?-.4226183f:-.8191916f,axis).normalize();
+            float beta=(float)Math.toRadians(25+10*CartSteeringMath.woodenTurnAmount(
+                (float)Math.atan2(delta.m01(),delta.m00())));
+            x.mul(wood?(float)Math.cos(beta):.5735200f).fma(wood?-(float)Math.sin(beta):-.8191916f,axis).normalize();
             var y=z.cross(x,new Vector3f()).normalize();z=x.cross(y,new Vector3f()).normalize();
             out.m00(x.x).m01(x.y).m02(x.z).m10(y.x).m11(y.y).m12(y.z).m20(z.x).m21(z.y).m22(z.z);
         } else {
@@ -275,6 +390,15 @@ public final class CartGrip {
         // Retain the wooden cart gait's spine/clavicle motion; IK absorbs arm swing at the fixed handles.
         var poses="WheelbarrowWood".equals(model)?livePoses(actor,bodySkin,body.matrixPalette,delta):poses(clip,actor,delta);
         if(poses==null || !grip(poses,actor,model,slot.character.isFemale(),delta,cart)) return false;
+        if("WheelbarrowWood".equals(model)) {
+            float runWeight=CartLegPace.runningWeight(slot.character);
+            if(runWeight>0) {
+                AnimationClip runReference;
+                try {runReference=ModelManager.instance.getAnimationClip("Bob_Cart_Run");}
+                catch(NullPointerException unavailable) {runReference=null;}
+                calmRunningHead(poses,actor,runReference,runWeight);
+            }
+        }
         for(var data:slot.modelData) {
             var instance=data.modelInstance;
             if(instance.animPlayer==owner.animPlayer && instance.model!=null && !instance.model.isStatic

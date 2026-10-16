@@ -22,6 +22,33 @@ public final class Main {
         return path;
     }
 
+    @LuaMethod(name="cartLabClipInfo", global=true)
+    public static String clipInfo(String name) {
+        var clip=zombie.core.skinnedmodel.ModelManager.instance.getAnimationClip(name);
+        return clip==null?"missing":"duration:"+clip.getDuration();
+    }
+
+    @LuaMethod(name="cartLabNative", global=true)
+    public static String nativeState() {
+        var p=IsoPlayer.getInstance();var a=p.getAnimationPlayer();var out=new StringBuilder();
+        out.append("state:").append(p.getCurrentStateName()).append(",action:").append(p.getActionStateName())
+            .append(",momentum:").append(p.getMomentumScalar()).append(",twist:").append(p.getTargetTwist())
+            .append(",around:").append(p.isTurningAround()).append(",tracks:");
+        for(var t:a.getMultiTrack().getTracks()) out.append(t.getName()).append("@").append(t.getBlendWeight())
+            .append("/").append(t.getCurrentTimeValue()).append("/").append(t.getSpeedDelta()).append("/").append(t.isPlaying).append(";");
+        out.append(",bones:");
+        for(String name:new String[]{"Bip01","Bip01_Pelvis","Bip01_Spine","Bip01_Head","Bip01_L_Thigh","Bip01_L_Calf","Bip01_L_Foot","Bip01_L_Toe0","Bip01_R_Thigh","Bip01_R_Calf","Bip01_R_Foot","Bip01_R_Toe0"}) {
+            int i=a.getSkinningBoneIndex(name,-1);if(i<0||i>=a.getModelTransformsCount()) continue;
+            var m=a.getModelTransformAt(i);if(m!=null) {
+                var world=new zombie.iso.Vector3(m.m03,m.m13,m.m23);
+                zombie.core.skinnedmodel.model.Model.vectorToWorldCoords(p,world);
+                out.append(name).append(":").append(m.m03).append("/").append(m.m13).append("/").append(m.m23)
+                    .append("|").append(world.x).append("/").append(world.y).append("/").append(world.z).append(";");
+            }
+        }
+        return out.toString();
+    }
+
     @LuaMethod(name="cartLabBank", global=true)
     public static double bank() throws Exception {
         var hooks = Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks");
@@ -55,6 +82,47 @@ public final class Main {
         out.append("target:").append(target).append(",");
         for (var node : player.getAdvancedAnimator().getRootLayer().getLiveAnimNodes())
             if (node.getName().equals("ToolkitCartPivotSprint")) out.append("fade:").append(node.getBlendOutTime()).append(",");
+        return out.toString();
+    }
+
+    @LuaMethod(name="cartLabReversal", global=true)
+    public static String reversal() throws Exception {
+        var hooks=Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks");
+        var field=hooks.getDeclaredField("states");field.setAccessible(true);
+        Object state=((java.util.Map<?,?>)field.get(null)).get(IsoPlayer.getInstance());
+        if(state==null) return "none";
+        var member=state.getClass().getDeclaredField("reversal");member.setAccessible(true);
+        Object reversal=member.get(state);var out=new StringBuilder();
+        for(String key:new String[]{"direction","requested","active","braking","neutral"}) {
+            var part=reversal.getClass().getDeclaredField(key);part.setAccessible(true);
+            out.append(key).append(":").append(part.get(reversal)).append(",");
+        }
+        for(String key:new String[]{"actualDistance","brakeTarget"}) {
+            var part=state.getClass().getDeclaredField(key);part.setAccessible(true);
+            out.append(key).append(":").append(part.get(state)).append(",");
+        }
+        return out.toString();
+    }
+
+    @LuaMethod(name="cartLabBrake", global=true)
+    public static String brake() throws Exception {
+        var hooks=Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks");
+        var field=hooks.getDeclaredField("states");field.setAccessible(true);
+        Object state=((java.util.Map<?,?>)field.get(null)).get(IsoPlayer.getInstance());
+        if(state==null) return "none";
+        var out=new StringBuilder();
+        for(String key:new String[]{"braking","brakeSeen","nativeSpeed","brakeLimit","brakeWait"}) {
+            var part=state.getClass().getDeclaredField(key);part.setAccessible(true);
+            out.append("stop_").append(key).append(":").append(part.get(state)).append(",");
+        }
+        var player=IsoPlayer.getInstance();
+        var animation=player.getAnimationPlayer();
+        int spine=animation.getSkinningBoneIndex("Bip01_Spine",-1);
+        var raw=animation.getModelTransformAt(spine);
+        Object bodyShift=Class.forName("net.alexredby.pztoolkitjavapatches.CartLegPace")
+            .getMethod("woodenGaitShift",IsoPlayer.class).invoke(null,player);
+        out.append("tickDt:").append(zombie.GameTime.getInstance().getRealworldSecondsSinceLastUpdate()).append(",");
+        out.append("bodyShift:").append(bodyShift).append(",rawX:").append(raw.m03).append(",rawZ:").append(raw.m23).append(",");
         return out.toString();
     }
 

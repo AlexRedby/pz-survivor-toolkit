@@ -45,10 +45,10 @@ public final class CartGrounding {
         float y=transform.m01()*point.x()+transform.m11()*point.y()+transform.m21()*point.z()+transform.m31();
         float z=transform.m02()*point.x()+transform.m12()*point.y()+transform.m22()*point.z()+transform.m32();
         // Lower the handles around the tire; do not pitch the actor's torso with the cart.
-        matrices.get().attachment.translation(x,y,z).rotateX((float)Math.toRadians("WheelbarrowWood".equals(model)?8.4:8))
+        matrices.get().attachment.translation(x,y,z).rotateX((float)Math.toRadians("WheelbarrowWood".equals(model)?7.9:8))
             .translate(-x,-y,-z).mul(transform,transform);
         // Keep the native hips fixed while leaving the wooden handles within the two arm links' reach.
-        if("WheelbarrowWood".equals(model)) transform.m32(transform.m32()+.04f);
+        if("WheelbarrowWood".equals(model)) transform.m32(transform.m32()+.05f);
     }
 
     static boolean referencePose(AnimationClip clip, SkinningData skeleton, String boneName, Matrix4f out) {
@@ -151,8 +151,10 @@ public final class CartGrounding {
             -.00024333253f*Math.abs(transform.m01());
     }
 
-    static boolean alignWood(Matrix4f transform, float lean, Matrix4f delta) {
-        if(!Float.isFinite(lean)) return false;
+    static boolean alignWood(Matrix4f transform, float lean, float gaitShift, Matrix4f delta) {
+        if(!Float.isFinite(lean) || !Float.isFinite(gaitShift) || gaitShift<-.24f || gaitShift>0) return false;
+        // The running torso moves forward; follow its native blend without lifting the handles.
+        transform.m32(transform.m32()+CartSteeringMath.woodenShift(lean,gaitShift));
         float height=transform.m31();
         if(!ground(transform,woodenLowest(transform))) return false;
         delta.translation(0,transform.m31()-height,0);
@@ -183,10 +185,11 @@ public final class CartGrounding {
             if(rigid) lowerHandles(transform,name);
             float lean=(float)CartSteeringHooks.lean(player);
             if(rigid
-                && ("WheelbarrowWood".equals(name)?alignWood(transform,lean,state.delta)
+                && ("WheelbarrowWood".equals(name)?alignWood(transform,lean,CartLegPace.woodenGaitShift(player),state.delta)
                     :align(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,
-                        contact(instance.modelScript.getName()),lean,state.delta))
-                && CartGrip.render(slot,instance.parent,clip,state.delta,name,transform)) {
+                        contact(instance.modelScript.getName()),lean,state.delta))) {
+                // A failed arm solve must not replace the grounded cart with the moving hand attachment.
+                CartGrip.render(slot,instance.parent,clip,state.delta,name,transform);
                 data.xfrm.set(transform).transpose();
                 CartWheelSpin.prepare(slot,CartSteeringHooks.wheelPhase(player));
             } else {

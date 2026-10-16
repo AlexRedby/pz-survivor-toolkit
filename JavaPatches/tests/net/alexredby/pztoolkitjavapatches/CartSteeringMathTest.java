@@ -106,7 +106,7 @@ public final class CartSteeringMathTest {
                     close(Math.hypot(step.x(),step.y()),speed/fps,"wooden arc preserves walking speed");
                     rolling(h,step.turn(),axle,.033440793,step.x(),step.y());
                     double bank=CartSteeringMath.rollingLean(step.turn(),step.travel(),1.0/fps);
-                    check(sign*bank>=0 && Math.abs(bank)<=.10,"wooden bank follows its turn within the calibrated grip range");
+                    check(sign*bank>=0 && Math.abs(bank)<=Math.toRadians(7),"wooden bank follows its turn within the calibrated grip range");
                     x+=step.x();y+=step.y();h+=step.turn();
                     check(sign*y>=-.47,"wooden arc avoids a large outside lunge");
                     if(settled==0 && h==sign*Math.PI/2) settled=(frame+1.0)/fps;
@@ -127,6 +127,18 @@ public final class CartSteeringMathTest {
     }
 
     private static void woodenTransitions() {
+        for(int sign:new int[]{-1,1}) {
+            close(CartSteeringMath.woodenBankExtra((float)Math.toRadians(sign*3)),0,"small bank preserves the accepted arm pose");
+            check(Math.abs(CartSteeringMath.woodenBankExtra((float)Math.toRadians(sign*5))-.5)<1e-6,"extra arm compensation reaches its midpoint smoothly");
+            close(CartSteeringMath.woodenBankExtra((float)Math.toRadians(sign*7)),1,"seven-degree bank has full shoulder/elbow compensation");
+            check(Math.abs(CartSteeringMath.woodenShift((float)Math.toRadians(sign*7),-.12f)+.205f)<1e-7,
+                "strong bank keeps the selected longitudinal hand clearance and native gait shift");
+            for(int edge:new int[]{3,7}) {
+                float before=CartSteeringMath.woodenBankExtra((float)Math.toRadians(sign*(edge-.001)));
+                float after=CartSteeringMath.woodenBankExtra((float)Math.toRadians(sign*(edge+.001)));
+                check(Math.abs(after-before)<1e-6,"shoulder/elbow compensation has no velocity corner at its endpoints");
+            }
+        }
         double axle=1.0224308175;
         for(int load:new int[]{0,1}) for(int sign:new int[]{-1,1}) {
             double[] reference=null;
@@ -144,7 +156,7 @@ public final class CartSteeringMathTest {
                     rolling(h,step.turn(),axle,.033440793,step.x(),step.y());
                     double before=bank.angle;
                     bank.update(CartSteeringMath.rollingLean(step.turn(),step.travel(),dt),dt);
-                    check(sign*bank.angle>=-1e-10 && Math.abs(bank.angle)<=.10,"bank stays inside held turn without overshoot");
+                    check(sign*bank.angle>=-1e-10 && Math.abs(bank.angle)<=Math.toRadians(7),"bank stays inside held turn without overshoot");
                     check(Math.abs(bank.angle-before)<.7*dt,"hand pressure transition stays continuous");
                     h+=step.turn();x+=step.x();y+=step.y();
                     check(sign*h<=Math.PI/2+1e-10,"smooth turn cannot overshoot the held heading");
@@ -175,7 +187,55 @@ public final class CartSteeringMathTest {
         }
     }
 
+    private static void reversalChecks() {
+        check(CartSteeringMath.directionIntent(0,Math.toRadians(136),0)==-1,"initial reverse keeps the native135 boundary");
+        check(CartSteeringMath.directionIntent(0,Math.toRadians(136),1)==1,"forward intent cannot chatter inside the deadband");
+        check(CartSteeringMath.directionIntent(0,Math.toRadians(141),1)==-1,"forward intent enters reverse beyond140 degrees");
+        check(CartSteeringMath.directionIntent(0,Math.toRadians(134),-1)==-1,"reverse intent stays latched inside the deadband");
+        check(CartSteeringMath.directionIntent(0,Math.toRadians(129),-1)==1,"reverse exits below130 degrees");
+        for(boolean reverse:new boolean[]{false,true}) {
+            var step=CartSteeringMath.woodenStep(0,Math.toRadians(134),.02,1.0/60,0,1.1,0,reverse,new CartSteeringMath.Step());
+            check((step.travel()<0)==reverse,"latched travel sign must not be reclassified at135 degrees");
+            close(Math.hypot(step.x(),step.y()),.02,"latched reversal retains the native movement budget");
+            rolling(0,step.turn(),1.1,0,step.x(),step.y());
+        }
+        for(int sign:new int[]{-1,1}) for(int fps:new int[]{10,30,60,144}) for(double load:new double[]{0,1}) {
+            var mode=new CartSteeringMath.Reversal();mode.direction=sign;
+            var pace=new CartLegPace.Ramp();pace.reset(3);
+            check(mode.request(-sign,false),"a moving sign change must brake first");
+            double previous=pace.speed,zeroTime=0;
+            boolean crossed=false;
+            for(int frame=0;frame<fps*4;frame++) {
+                boolean braking=mode.braking;
+                double speed=pace.update(braking?0:.8,1.0/fps,load);
+                if(braking && pace.settled(0)) {pace.reset(0);speed=0;}
+                if(braking) {
+                    check(speed<=previous+1e-10,"braking cannot accelerate the old direction");
+                    if(speed==0 && previous==0)zeroTime+=1.0/fps;
+                    mode.stopped(1.0/fps,speed==0,previous==0);
+                    if(!mode.braking) {
+                        check(zeroTime>=.08-1e-10,"native needs an evaluated neutral pose before changing sign");
+                        check(speed==0 && mode.direction==-sign,"direction changes only at exactly zero root speed");
+                        crossed=true;
+                    }
+                } else check(speed>=previous-1e-10 && speed<=.8,"new direction accelerates without overshoot");
+                previous=speed;
+            }
+            check(crossed && pace.settled(.8),"both loaded directions must complete at every supported FPS");
+        }
+        var mode=new CartSteeringMath.Reversal();
+        mode.request(-1,false);mode.stopped(.1,true,false);
+        check(mode.direction==1 && mode.braking,"collision/root disagreement cannot commit a sign change");
+        mode.request(1,false);
+        check(mode.active && !mode.braking && mode.direction==1,"repeated input can resume the original direction while braking");
+        mode.request(-1,false);mode.request(0,false);
+        check(!mode.active && !mode.braking && mode.direction==1,"released input cannot leave a delayed reverse request");
+        mode.request(-1,true);
+        check(mode.direction==-1 && !mode.active,"starting backwards from rest needs no artificial brake");
+    }
+
     public static void main(String[] args) {
+        reversalChecks();
         var idle = CartSteeringMath.step(0, Math.PI / 2, 0, 1.0 / 60, 0);
         check(idle.turn() == 0 && idle.x() == 0 && idle.y() == 0, "idle cannot spin");
         var pivot = CartSteeringMath.step(0, Math.PI / 2, 0.03, 1.0 / 60, 0);
@@ -186,6 +246,8 @@ public final class CartSteeringMathTest {
         var fast = CartSteeringMath.step(0, Math.PI / 2, 0.08, 1.0 / 60, 0);
         var full = CartSteeringMath.step(0, Math.PI / 2, 0.08, 1.0 / 60, 1);
         check(fast.turn() > full.turn() && full.turn() > 0, "cargo limits yaw");
+        check(!CartSteeringMath.reversing(0,Math.PI*.75),"135 degrees remains a forward arc");
+        check(CartSteeringMath.reversing(0,Math.PI),"opposite input requests reverse, not an instant U-turn");
         wheelbarrowChecks();
         woodenArc();
         woodenTransitions();

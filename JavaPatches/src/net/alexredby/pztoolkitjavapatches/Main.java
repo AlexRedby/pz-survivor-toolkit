@@ -518,6 +518,15 @@ public final class Main {
         }
     }
 
+    @Patch(className="zombie.characters.IsoPlayer", methodName="UpdateInputState", warmUp=true)
+    public static class CartInput {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.characters.IsoPlayer player,
+            @Patch.Argument(0) zombie.characters.IsoPlayer.InputState input) {
+            if(Main.CART_SUPPORTED) CartSteeringHooks.input(player,input);
+        }
+    }
+
     @Patch(className="zombie.characters.IsoPlayer", methodName="moveUnmodded", warmUp=true)
     public static class CartMovement {
         @Patch.OnEnter

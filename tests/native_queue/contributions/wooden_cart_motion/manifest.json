@@ -12,7 +12,10 @@
     "scenario": "scenario-clips.lua",
     "evidence": "evidence/README.md",
     "reverse_scenario": "scenario-reverse.lua",
-    "reverse_analyzer": "analyze-reverse.py"
+    "reverse_analyzer": "analyze-reverse.py",
+    "reversal_scenario": "scenario-reversal.lua",
+    "stop_scenario": "scenario-stop.lua",
+    "stop_analyzer": "analyze-stop.py"
   },
   "origin": {
     "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",
@@ -216,5 +219,59 @@
       "common_runner_adapter": "not integrated",
       "original_16_case_scenario": "not re-run after parameterization"
     }
+  },
+  "reversal_scenario": {
+    "case_count": 20,
+    "axes": {
+      "sex": [
+        "male",
+        "female"
+      ],
+      "cargo": [
+        "empty",
+        "full"
+      ],
+      "spec": [
+        "walk-switch",
+        "run-switch",
+        "sprint-switch",
+        "cancel-switch",
+        "arc-switch"
+      ]
+    },
+    "required_candidate_versions": {
+      "PZSurvivorToolkit": ">=0.1.59",
+      "PZToolkitJavaPatches": ">=0.1.16"
+    },
+    "additional_api": "State.reversal.direction/requested/active/braking/neutral; State.actualDistance/brakeTarget",
+    "sample_interval_ms": 25
+  },
+  "stop_scenario": {
+    "case_count": 24,
+    "axes": {
+      "sex": [
+        "male",
+        "female"
+      ],
+      "cargo": [
+        "empty",
+        "full"
+      ],
+      "spec": [
+        "run-stop",
+        "sprint-stop",
+        "short-release",
+        "run-resume-reverse",
+        "sprint-resume-turn",
+        "arc-stop"
+      ]
+    },
+    "required_candidate_versions": {
+      "PZSurvivorToolkit": ">=0.1.61",
+      "PZToolkitJavaPatches": ">=0.1.18"
+    },
+    "additional_api": "State.braking/brakeSeen/nativeSpeed/brakeLimit/brakeWait; CartLegPace.woodenGaitShift(IsoPlayer)",
+    "sample_interval_ms": 25,
+    "live_verification": "pending; completion markers alone do not establish motion/grip/geometry PASS"
   }
 }

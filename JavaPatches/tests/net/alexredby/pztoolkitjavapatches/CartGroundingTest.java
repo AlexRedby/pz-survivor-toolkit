@@ -6,6 +6,13 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import sun.misc.Unsafe;
 import zombie.core.math.PZMath;
+import zombie.characters.IsoPlayer;
+import zombie.inventory.InventoryItem;
+import zombie.inventory.ItemContainer;
+import zombie.inventory.types.InventoryContainer;
+import zombie.core.skinnedmodel.ModelManager;
+import zombie.core.skinnedmodel.model.ModelSlotRenderData;
+import zombie.scripting.objects.ModelScript;
 import zombie.core.skinnedmodel.advancedanimation.AnimatedModel;
 import zombie.core.skinnedmodel.animation.AnimationClip;
 import zombie.core.skinnedmodel.animation.AnimationPlayer;
@@ -18,6 +25,25 @@ import zombie.core.skinnedmodel.model.ModelMesh;
 import zombie.core.skinnedmodel.model.SkinningData;
 import zombie.scripting.objects.ModelAttachment;
 public final class CartGroundingTest {
+ private static final class Player extends IsoPlayer {
+  InventoryItem cart;
+  ItemContainer inventory;
+  Player() {super(null,null,0,0,0);}
+  @Override public boolean isLocalPlayer() {return true;}
+  @Override public boolean getVariableBoolean(String name) {return "ToolkitCartMotion".equals(name);}
+  @Override public boolean isDead() {return false;}
+  @Override public boolean hasHitReaction() {return false;}
+  @Override public boolean isKnockedDown() {return false;}
+  @Override public boolean isGettingUp() {return false;}
+  @Override public boolean isGrappling() {return false;}
+  @Override public boolean isBeingGrappled() {return false;}
+  @Override public boolean isRagdollSimulationActive() {return false;}
+  @Override public boolean hasPath() {return false;}
+  @Override public InventoryItem getPrimaryHandItem() {return cart;}
+  @Override public InventoryItem getSecondaryHandItem() {return cart;}
+  @Override public ItemContainer getInventory() {return inventory;}
+  @Override public zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator getAdvancedAnimator() {return null;}
+ }
  private static final class Instance extends ModelInstance {
   ModelAttachment attachment;
   @Override public ModelAttachment getAttachmentById(String id) {
@@ -118,6 +144,42 @@ public final class CartGroundingTest {
   if(!authoredParent.equals(ModelInstanceRenderData.makeAttachmentTransform(parent.attachment,new Matrix4f())) ||
    !authoredSelf.equals(ModelInstanceRenderData.makeAttachmentTransform(instance.attachment,new Matrix4f())))
    throw new AssertionError("shared attachment changed");
+  // The rigid cart must survive an unavailable body palette instead of following the animated arm/AABB fallback.
+  var character=(Player)unsafe.allocateInstance(Player.class);
+  var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+  character.inventory=new ItemContainer();character.cart=cart;cart.setContainer(character.inventory);
+  cart.setModule("SaucedWheelbarrow");cart.setType("WheelbarrowWood");cart.setStaticModel("WheelbarrowWood");
+  instance.modelScript=new ModelScript();instance.modelScript.name="WheelbarrowWood";
+  var body=new ModelInstanceRenderData();body.modelInstance=parent;
+  var slot=new ModelSlotRenderData();slot.character=character;slot.modelData.add(body);slot.modelData.add(data);
+  var mesh=instance.model.mesh;
+  Field minimum=ModelMesh.class.getField("minXyz"),maximum=ModelMesh.class.getField("maxXyz");
+  minimum.setAccessible(true);maximum.setAccessible(true);
+  minimum.set(mesh,new Vector3f(-.01f));maximum.set(mesh,new Vector3f(.01f));
+  Field animationModel=ModelManager.class.getDeclaredField("animModel");animationModel.setAccessible(true);
+  Object previousModel=animationModel.get(ModelManager.instance);
+  var animations=(ModelMesh)unsafe.allocateInstance(ModelMesh.class);animations.skinningData=skeleton;
+  skeleton.animationClips.put("Bob_Cart_Idle",idle);
+  try {
+   animationModel.set(ModelManager.instance,animations);
+   data.parent.xfrm.identity();
+   Matrix4f expected=new Matrix4f(),delta=new Matrix4f();
+   if(!CartGrounding.rigid(data,idle,expected)) throw new AssertionError("render fixture has no rigid reference");
+   CartGrounding.lowerHandles(expected,"WheelbarrowWood");
+   if(!CartGrounding.alignWood(expected,0,0,delta)) throw new AssertionError("render fixture cannot ground its wheel");
+   if(CartGrip.render(slot,parent,idle,delta,"WheelbarrowWood",expected))
+    throw new AssertionError("render fixture must reject IK without a body palette");
+   for(float arm:new float[]{-.3f,-.1f,0,.2f,.4f}) {
+    data.xfrm.translation(arm,.3f+arm*.2f,-.2f-arm).rotateXYZ(arm,arm*.5f,-arm).transpose();
+    Matrix4f fallback=new Matrix4f(data.xfrm).transpose();
+    if(!CartGrounding.ground(fallback,mesh.minXyz,mesh.maxXyz) || fallback.equals(expected,.00001f))
+     throw new AssertionError("render fixture does not distinguish native arm fallback from the rigid cart");
+    CartGrounding.render(slot);
+    Matrix4f actual=new Matrix4f(data.xfrm).transpose();
+    if(!actual.equals(expected,.00001f) || Math.abs(CartGrounding.woodenLowest(actual)-.008f)>.000001f)
+     throw new AssertionError("failed IK restored the moving arm cart or lost wheel grounding: "+arm);
+   }
+  } finally {animationModel.set(ModelManager.instance,previousModel);}
  }
  private static void capturedContacts() {
   // Actual VBO minima and final matrices captured together in B42.21 before the contact fix.
@@ -151,7 +213,7 @@ public final class CartGroundingTest {
    Matrix4f pitched=new Matrix4f(captured[i]);
    CartGrounding.lowerHandles(pitched,models[i]);
    Vector3f tire=captured[i].transformPosition(new Vector3f(contact));
-   if(i==1) tire.z+=.04f;
+   if(i==1) tire.z+=.05f;
    if(pitched.transformPosition(new Vector3f(contact)).distance(tire)>1e-6f)
     throw new AssertionError("lowering handles moved wheel contact for "+models[i]);
    if(i==0 && !pitched.equals(captured[i])) throw new AssertionError("shopping cart was pitched");
@@ -160,9 +222,10 @@ public final class CartGroundingTest {
       :new Vector3f(-7.409948f,6.614635f,82.79839f);
     Vector3f handle=captured[i].transformPosition(new Vector3f(rawHandle));
     Vector3f lowered=pitched.transformPosition(new Vector3f(rawHandle));
-    if(handle.y-lowered.y<(i==1?.09f:.08f) || handle.y-lowered.y>(i==1?.11f:.10f))
+    if(i==1 ? Math.abs(handle.y-lowered.y-.0857464f)>.00001f
+     : handle.y-lowered.y<.08f || handle.y-lowered.y>.10f)
      throw new AssertionError("handles not lowered to a relaxed arm height");
-    if(i==1 ? !CartGrounding.alignWood(pitched,0,delta) || Math.abs(CartGrounding.woodenLowest(pitched)-.008f)>1e-6f
+    if(i==1 ? !CartGrounding.alignWood(pitched,0,0,delta) || Math.abs(CartGrounding.woodenLowest(pitched)-.008f)>1e-6f
      : !CartGrounding.align(pitched,low,high,contact,0,delta)
        || Math.abs(pitched.transformPosition(new Vector3f(contact)).y-.008f)>1e-6f)
      throw new AssertionError("pitched tire not grounded");
@@ -204,9 +267,19 @@ public final class CartGroundingTest {
    -4.1037783e-5f,30.694286f,-70.07218f,.16715112f,
    -9.11952e-6f,70.07218f,30.694283f,-.41188842f,0,0,0,1).transpose();
   CartGrounding.lowerHandles(wooden,"WheelbarrowWood");
-  for(float lean:new float[]{-.18f,0,.18f}) {
+  Matrix4f straight=new Matrix4f(wooden);
+  if(!CartGrounding.alignWood(straight,0,0,new Matrix4f())) throw new AssertionError("straight wooden grounding rejected");
+  Matrix4f expectedStraight=new Matrix4f(wooden);expectedStraight.m31(straight.m31());
+  if(!straight.equals(expectedStraight)) throw new AssertionError("zero bank changed the wooden baseline pose");
+  float straightHandleY=0;
+  for(boolean left:new boolean[]{true,false}) {
+   var handle=new Vector3f();CartGrip.handle("WheelbarrowWood",left,handle);
+   straightHandleY+=straight.transformPosition(handle).y/2;
+  }
+  for(float gaitShift:new float[]{0,-.03f,-.05f,-.06f,-.09f,-.12f,-.18f,-.24f}) for(int tick=-84;tick<=84;tick++) {
+   float lean=(float)Math.toRadians(tick/12.0);
    Matrix4f actual=new Matrix4f(wooden),delta=new Matrix4f();
-   if(!CartGrounding.alignWood(actual,lean,delta)) throw new AssertionError("wooden bank rejected");
+   if(!CartGrounding.alignWood(actual,lean,gaitShift,delta)) throw new AssertionError("wooden bank rejected");
    float minimum=Float.POSITIVE_INFINITY;
    for(int degree=0;degree<360;degree++) for(int side:new int[]{-1,1}) {
     double angle=Math.toRadians(degree);
@@ -217,9 +290,23 @@ public final class CartGroundingTest {
    }
    if(minimum<.008f-1e-6f || minimum>.008f+.00001f)
     throw new AssertionError("spinning wooden tire must stay grounded through all wheel phases: "+minimum);
-   var handle=new Vector3f(.00172237f,.00541905f,-.00342593f);
-   if(actual.transformPosition(new Vector3f(handle)).distance(delta.transformPosition(wooden.transformPosition(handle)))>1e-5f)
-    throw new AssertionError("wooden bank detached the hands from the handles");
+   float meanHandleY=0;
+   for(boolean left:new boolean[]{true,false}) {
+    var handle=new Vector3f();CartGrip.handle("WheelbarrowWood",left,handle);
+    var transformed=delta.transformPosition(wooden.transformPosition(new Vector3f(handle)));
+    transformed.z+=CartSteeringMath.woodenShift(lean,gaitShift);
+    var expected=actual.transformPosition(handle);meanHandleY+=expected.y/2;
+    if(transformed.distance(expected)>1e-5f) throw new AssertionError("wooden cart and handle transforms disagree");
+   }
+   if(Math.abs(meanHandleY-straightHandleY)>(Math.abs(lean)<=Math.toRadians(3)?.0005f:.0012f))
+    throw new AssertionError("turning lifted the mean wooden handle height: "+(meanHandleY-straightHandleY));
+   var center=actual.transformPosition(new Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z));
+   if(Math.abs(-1.5*center.z-CartSteeringMath.woodenAxle(lean,gaitShift))>.00001)
+    throw new AssertionError("steering axle disagrees with the actual wooden wheel center");
+   if(tick==0 && gaitShift==0 && !actual.equals(straight)) throw new AssertionError("zero bank is not the exact walking baseline");
+   var expectedRun=new Matrix4f(straight);expectedRun.m32(expectedRun.m32()+gaitShift);
+   if(tick==0 && !actual.equals(expectedRun,.000001f))
+    throw new AssertionError("native Run changed the zero-bank wooden height/pitch");
   }
   Vector3f low=new Vector3f(-.35f,0,-.6f),high=new Vector3f(.35f,1,.6f);
   for(int degree=0;degree<360;degree+=15) {

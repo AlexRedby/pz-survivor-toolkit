@@ -96,4 +96,21 @@
 		<m_Type>BOOL</m_Type>
 		<m_Value>true</m_Value>
 	</m_Conditions>
+	<m_Transitions>
+		<m_Target>ToolkitCartIdle</m_Target>
+		<m_AnimName>Bob_RunToStop2H_Heavy</m_AnimName>
+		<m_blendInTime>.20</m_blendInTime>
+		<m_blendOutTime>0.60</m_blendOutTime>
+		<m_speedScale>1.0</m_speedScale>
+		<m_Conditions>
+			<m_Name>ToolkitCartWoodBrake</m_Name>
+			<m_Type>BOOL</m_Type>
+			<m_Value>true</m_Value>
+		</m_Conditions>
+		<m_Conditions>
+			<m_Name>isMoving</m_Name>
+			<m_Type>BOOL</m_Type>
+			<m_Value>false</m_Value>
+		</m_Conditions>
+	</m_Transitions>
 </animNode>
