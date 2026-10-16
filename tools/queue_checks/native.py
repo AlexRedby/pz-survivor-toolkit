@@ -47,7 +47,10 @@ def _matching_roots(infos, identifier):
 
 
 def _locations(project, workshop, identifiers, overrides=None):
-    overrides = overrides or {}
+    overrides = {} if overrides is None else overrides
+    if not isinstance(overrides, dict) or any(not isinstance(id, str) or not isinstance(path, (str, Path))
+            or not Path(path).is_absolute() for id, path in overrides.items()):
+        raise ValueError('Mod source overrides must map Mod IDs to absolute paths')
     if set(overrides) - set(identifiers):
         raise ValueError('Mod source override is not selected')
     local_infos = list(project.glob("*/mod.info")) + list(project.glob("*/*/mod.info"))
@@ -93,7 +96,8 @@ def _validate(selection):
         raise ValueError("Expected kind=sp|mp and mode=toolkit|native")
     for key in ("cases", "mods"):
         values = selection.get(key)
-        if not isinstance(values, list) or not values or any(not isinstance(value, str) or not MOD_ID.fullmatch(value) or value in ('.', '..') for value in values):
+        empty_control = key == 'mods' and suite == 'startup' and selection['mode'] == 'native'
+        if not isinstance(values, list) or not values and not empty_control or any(not isinstance(value, str) or not MOD_ID.fullmatch(value) or value in ('.', '..') for value in values):
             raise ValueError("Expected nonempty IDs in " + key)
         if len(values) != len(set(values)):
             raise ValueError("Duplicate IDs in " + key)

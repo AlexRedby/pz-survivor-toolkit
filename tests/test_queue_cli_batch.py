@@ -121,6 +121,58 @@ class BatchTests(unittest.TestCase):
         prepare.assert_not_called()
         self.assertFalse(output.exists())
 
+    def test_vanilla_selection_is_explicit_and_only_for_native_startup(self):
+        command = ['prepare', str(self.root / 'vanilla'), '--game', '/game', '--jdk', '/jdk',
+                   '--suite', 'startup', '--mode', 'native', '--mods', 'vanilla']
+        with patch.object(cli.native, 'prepare') as prepare:
+            self.assertEqual(0, cli.main(command))
+        selected = prepare.call_args.args[4]
+        self.assertEqual([], selected['mods'])
+        cli.native._validate(selected)
+        for changes in ({'mode': 'toolkit'}, {'suite': 'health'}, {'mods': None}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                cli.native._validate(dict(selected, **changes))
+        with patch.object(cli.native, 'prepare') as prepare:
+            self.assertEqual(1, cli.main(command + ['--mode', 'toolkit']))
+        prepare.assert_not_called()
+
+    def test_batch_vanilla_and_empty_mods_do_not_fall_back_to_suite_defaults(self):
+        self.write_plan([{'id': 'vanilla', 'suite': 'startup', 'mode': 'native', 'mods': 'vanilla'},
+                         {'id': 'empty', 'suite': 'startup', 'mode': 'native', 'mods': []},
+                         {'id': 'wrong-suite', 'suite': 'video-recording', 'mode': 'native', 'mods': 'vanilla'}])
+        self.assertEqual(1, self.invoke())
+        self.assertEqual(['vanilla'], [name for name, _ in self.calls])
+        self.assertEqual([], self.calls[0][1]['mods'])
+        cli.native._validate(self.calls[0][1])
+
+    def test_invalid_job_inputs_preserve_batch_report_and_later_jobs(self):
+        jobs = [{'id': 'bad-options-' + str(i), 'suite': 'startup', 'options': value}
+                for i, value in enumerate((None, [], 'bad'))]
+        jobs += [{'id': 'bad-case-' + str(i), 'suite': 'startup', 'case': value}
+                 for i, value in enumerate(([], ['loaded'], False, 0, ''))]
+        jobs += [{'id': 'bad-sources-' + str(i), 'suite': 'startup', 'options': {'mod_sources': value}}
+                 for i, value in enumerate((None, [], 'bad'))]
+        self.write_plan(jobs + [{'id': 'valid', 'suite': 'startup'}])
+        self.assertEqual(1, self.invoke())
+        self.assertEqual(['valid'], [name for name, _ in self.calls])
+        result = json.loads((self.args.output / 'batch-report.json').read_text())
+        self.assertEqual(['blocked'] * len(jobs) + ['passed'], [job['status'] for job in result['jobs']])
+        self.assertEqual([], result['remaining'])
+
+    def test_invalid_plan_options_are_reported_for_every_unrun_job(self):
+        for index, value in enumerate((None, [], 'bad')):
+            with self.subTest(value=value):
+                self.write_plan([{'id': 'first', 'suite': 'startup'}, {'id': 'second', 'suite': 'startup'}])
+                plan = json.loads(self.plan.read_text())
+                plan['options'] = value
+                self.plan.write_text(json.dumps(plan))
+                self.args.output = self.root / ('bad-plan-' + str(index))
+                self.assertEqual(1, self.invoke())
+                self.assertEqual([], self.calls)
+                result = json.loads((self.args.output / 'batch-report.json').read_text())
+                self.assertEqual(['blocked', 'blocked'], [job['status'] for job in result['jobs']])
+                self.assertEqual([], result['remaining'])
+
     def test_explicit_empty_jobs_never_broadens_to_the_full_plan(self):
         self.write_plan([{'id': 'wanted', 'suite': 'item-tags'}, {'id': 'unrelated', 'suite': 'video-recording'}])
         self.args.jobs = ''

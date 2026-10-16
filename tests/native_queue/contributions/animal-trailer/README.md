@@ -41,7 +41,7 @@ The runner must provide the following. No native run is needed merely to import 
 | `--scenario` | Helper(s) | Production setup | Pass condition |
 |---|---|---|---|
 | `equipment` | AnimalHandsRace | Fixed: Java Patches >=0.1.5; negative control: omit it | Real Equip processed before the real animal grant, then three exact held animals and live drops; negative control instead proves animals stranded in both inventories with empty hands |
-| `ghost` | AnimalReplayProbe | Java Patches >=0.1.5 | First held animal proves baseline ghost with only reconciliation temporarily disabled, then real woven decoder repairs it on repeated location-3 snapshots without changing item/animal IDs, hands, neighbor count or capacity; all three native drops succeed |
+| `ghost` | AnimalReplayProbe | Java Patches >=0.1.5 | Separate headless JVMs check the original and production-woven decoders. Live replay keeps production patches enabled and repairs membership on repeated location-3 snapshots without changing item/animal IDs, hands, neighbor count or capacity; all three native drops succeed |
 | `timer` | AnimalTimerProbe | Java Patches >=0.1.5 for stable grabs; compare third-party timer mod absent/present | Direct periodic native sends target exactly the three seeded online IDs: baseline `[0,0,N]`, fixed `[N,N,N]`, `N>0`; all three real grabs/drops succeed |
 | `combined` | AnimalHandsRace + AnimalTimerProbe | Same production setup as timer | Both controlled grant ordering and timer criteria, with three successful native grabs/drops |
 
