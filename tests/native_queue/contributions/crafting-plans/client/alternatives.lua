@@ -1,16 +1,20 @@
+local Session=QueueCraftSession
+local Events=Session and Session.events or Events
 require 'PZSurvivorToolkit/CraftChains'
 -- Intake fixture: disposable two-client MP caches only.
 local reader=assert(getFileReader('craft-fixture.txt',false),'Missing craft fixture configuration')
 local config={}
 for _,key in ipairs({'user','scenario','host','port','password'}) do config[key]=assert(reader:readLine(),'Missing '..key) end
 reader:close()
-local user,scenario=config.user,config.scenario
+local user,scenario=config.user,Session and Session.case or config.scenario
 assert(user=='client1' or user=='client2','Expected a fixed fixture client')
 assert(scenario=='crafting' or scenario=='ui' or scenario=='alternatives','Unknown craft scenario')
 local connecting,advanced,started,lastReady=false,false,nil,0
 local ids,fixtureSurface,fixtureCrate,craftPanel,planWindow
 local replies,stages,step,previous,lastDiagnostic={}, {},1,0,0
-local function send(command,args) sendClientCommand('CraftChainTest',command,args or {}) end
+local function send(command,args)
+ if Session then Session.send(command,args) else sendClientCommand('CraftChainTest',command,args or {}) end
+end
 local function queue() return ISTimedActionQueue.getTimedActionQueue(getPlayer()) end
 local function empty() return #queue().queue==0 and not getPlayer():hasTimedActions() end
 local function stage(name,fn,ready,delay) stages[#stages+1]={name,fn,ready,delay} end
@@ -59,6 +63,7 @@ local function openNative(recipe,object)
  panel.logic:setContainers(ISInventoryPaneContextMenu.getContainers(getPlayer()))
  return panel
 end
+if not Session then
 Events.OnConnected.Add(function() connecting=true end)
 Events.OnMainMenuEnter.Add(function()
  if connecting or isClient() then return end;connecting=true
@@ -74,9 +79,10 @@ Events.OnPreUIDraw.Add(function()
  end
 end)
 Events.OnConnectFailed.Add(function(a,b) print('[CRAFT_TEST] FAIL connect '..tostring(a)..' '..tostring(b)) end)
+end
 Events.OnGameStart.Add(function()
  started=getTimestampMs();getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false)
- if user=='client2' then local p=getPlayer();p:teleportTo(math.floor(p:getX())+8,math.floor(p:getY())+8,0) end
+ if user=='client2' and not Session then local p=getPlayer();p:teleportTo(math.floor(p:getX())+8,math.floor(p:getY())+8,0) end
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
  print('[CRAFT_TEST] CONNECTED '..user..' language='..tostring(getCore():getOptionLanguageName()))
 end)
@@ -336,11 +342,39 @@ Events.OnTick.Add(function()
   end
   if not ok or not ready then
    print('[CRAFT_TEST] FAIL deadline '..spec[1]..' '..tostring(ready))
-   print('[CRAFT_TEST] COMPLETE checks='..(step-1)..' failures=1');step=#stages+1;return
+   print('[CRAFT_TEST] COMPLETE checks='..(step-1)..' failures=1');step=#stages+1;if Session then Session.finish(false,true) end;return
   end
  end
  local ok,error=pcall(spec[2]);print('[CRAFT_TEST] '..(ok and 'PASS ' or 'FAIL ')..spec[1]..' '..tostring(error))
- if not ok then print('[CRAFT_TEST] COMPLETE checks='..(step-1)..' failures=1');step=#stages+1;return end
+ if not ok then print('[CRAFT_TEST] COMPLETE checks='..(step-1)..' failures=1');step=#stages+1;if Session then Session.finish(false,false) end;return end
  step=step+1;previous=getTimestampMs()
- if step>#stages then print('[CRAFT_TEST] COMPLETE checks='..#stages..' failures=0') end
+ if step>#stages then print('[CRAFT_TEST] COMPLETE checks='..#stages..' failures=0');if Session then Session.finish(true,false) end end
 end)
+
+if Session then
+ local option=PZAPI.ModOptions.Dict.PZSurvivorToolkit:getOption('CraftChains')
+ local originalOption=option:getValue()
+ Session.cleanup=function()
+  assert(empty(),'native actions still active; effects unknown')
+  if planWindow and not planWindow.closed then planWindow:close() end
+  if craftPanel and craftPanel.MainPanel then craftPanel.MainPanel:close() end
+  option:setValue(originalOption)
+  assert(option:getValue()==originalOption,'craft option did not restore')
+  replies={}
+  Session.restoreClient()
+  return true
+ end
+ Session.clean=function(receipt)
+  local ready,reason=Session.verifyOwned(receipt);if not ready then return false,reason end
+  assert(empty(),'native actions appeared during cleanup')
+  for _,data in ipairs({ids or {}}) do
+   if data.x and findObject(data,data==ids and user or 'shared') then return false,'owned surface remains' end
+   for name,id in pairs(data) do
+    if type(id)=='number' and name~='x' and name~='y' and name~='fixtureEpoch' then
+     if getPlayer():getInventory():getItemById(id) then return false,'owned ingredient/tool remains' end
+    end
+   end
+  end
+  return true
+ end
+end

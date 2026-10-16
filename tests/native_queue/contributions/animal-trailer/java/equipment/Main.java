@@ -48,6 +48,12 @@ public final class Main {
             + " wireAnimal=" + wireAnimalId + " echoedAnimal=" + echoedAnimalId
             + " releases=" + releaseCount + " " + state(target);
     }
+    @LuaMethod(name="animalHandsRaceReset", global=true)
+    public static String reset() {
+        if (pending != null || releasing || insideEquipParse || armed) return "FAIL pending packet-order probe";
+        target = null; pendingConnection = null; wireAnimalId = -1; echoedAnimalId = -1; releaseCount = 0;
+        return "clean";
+    }
     @LuaMethod(name="animalHandsRaceRelease", global=true)
     public static String release() {
         if (pending == null) { armed = false; return "no pending command"; }

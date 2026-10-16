@@ -4,13 +4,14 @@ import json
 from pathlib import Path
 import shutil
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
-from queue_checks import native, admission, report
+from queue_checks import native, worlds, pack, runner, admission, report
 
 
 class NativeSnapshotTests(unittest.TestCase):
@@ -89,6 +90,179 @@ class NativeSnapshotTests(unittest.TestCase):
             for layer in ("common", "42"):
                 for sub in ("AnimSets", "actiongroups"):
                     self.assertTrue((output / role / "mods/PZSurvivorToolkit" / layer / "media" / sub).is_dir())
+
+    def test_missing_common_layer_is_created_only_in_owned_snapshot(self):
+        original = self.project / 'Toolkit/common'
+        self.assertFalse(original.exists())
+        output = self.prepare()
+        self.assertFalse(original.exists())
+        for sub in ('AnimSets', 'actiongroups'):
+            self.assertTrue((output / 'client1/mods/PZSurvivorToolkit/common/media' / sub).is_dir())
+
+    def test_common_only_b42_metadata_and_empty_fallback_leave_b41_files_untouched(self):
+        source = self.project / 'Toolkit'
+        shutil.rmtree(source / '42')
+        self.mod(source, 'PZSurvivorToolkit', layer='common')
+        self.write(source / 'mod.info', 'id=LegacyB41Toolkit\nversion=1.0.5\n')
+        self.write(source / 'media/lua/client/legacy.lua', 'return "B41 only"\n')
+        initial = native.hashes(source)
+        output = self.prepare(kind='mp', languages=['EN', 'RU'])
+        self.assertEqual(initial, native.hashes(source))
+        self.assertFalse((source / '42.0').exists())
+        for role in ('server', 'client1', 'client2'):
+            target = output / role / 'mods/PZSurvivorToolkit'
+            self.assertEqual(initial, native.hashes(target), 'Only empty directories may be added')
+            self.assertEqual('LegacyB41Toolkit', native._metadata(target / 'mod.info')['id'])
+            for sub in ('AnimSets', 'actiongroups'):
+                self.assertTrue((target / '42.0/media' / sub).is_dir())
+            self.assertEqual({}, native.hashes(target / '42.0'), 'No mod.info or B41 Lua may shadow common')
+
+    def test_numeric_42_layer_never_gets_a_competing_42_0_fallback(self):
+        source = self.project / 'Toolkit'
+        self.write(source / 'common/mod.info', 'id=OlderCommonToolkit\n')
+        output = self.prepare(kind='mp', languages=['EN', 'RU'])
+        for role in ('server', 'client1', 'client2'):
+            target = output / role / 'mods/PZSurvivorToolkit'
+            self.assertFalse((target / '42.0').exists())
+            self.assertEqual('PZSurvivorToolkit', native._metadata(target / '42/mod.info')['id'])
+
+    def test_saved_world_is_copied_into_fresh_profile_with_silent_settings_and_pinned_source(self):
+        seed = self.prepare('seed')
+        self.write(seed / 'client1/Saves/Sandbox/QueueHealthSP/map.bin', 'prepared world')
+        self.write(seed / 'execution.json', json.dumps({'status': 'completed', 'processes': {'client1': {'pid': 999999, 'exit_code': 0}}}))
+        template = self.root / 'world'
+        with patch.object(worlds.os, 'kill', side_effect=ProcessLookupError):
+            worlds.export(seed, template)
+        before = native.hashes(template)
+        output = self.prepare('from-world', options={'world_template': str(template)})
+        restored = output / 'client1/Saves/Sandbox/QueueHealthSP/map.bin'
+        self.assertEqual('prepared world', restored.read_text())
+        restored.write_text('new run progress')
+        with self.assertRaisesRegex(ValueError, 'Restored world changed'):
+            runner.run(output)
+        self.assertEqual(before, native.hashes(template))
+        sources = json.loads((output / 'source-manifest.json').read_text())
+        self.assertIn(str(template / 'state/client1/Saves/Sandbox/QueueHealthSP/map.bin'), sources)
+        self.assertIn('world-template.json', json.loads((output / 'snapshot-hashes.json').read_text()))
+        settings = (output / 'client1/options.ini').read_text()
+        for key in ('soundVolume', 'musicVolume', 'jumpScareVolume', 'vehicleEngineVolume'):
+            self.assertIn(key + '=0\n', settings)
+        self.assertIn('voiceEnable=false\n', settings)
+
+    def test_new_file_in_locked_mod_blocks_prepared_resume(self):
+        self.write(self.project / 'SurvivorQoL-selected.ini', 'Mods=PZSurvivorToolkit\nWorkshopItems=\n')
+        lock = self.root / 'selected.lock.json'
+        pack.create(self.project, lock, self.game)
+        output = self.prepare(options={'pack_lock': str(lock)})
+        self.write(self.project / 'Toolkit/42/media/lua/shared/unexpected.lua', 'return true\n')
+        with self.assertRaisesRegex(ValueError, 'changed locked mod'):
+            runner.run(output)
+
+    def locked_pack(self):
+        self.write(self.project / 'SurvivorQoL-selected.ini',
+                   'Mods=PZSurvivorToolkit\nWorkshopItems=\nMap=Riverside, KY\nPVP=true\n'
+                   'DoLuaChecksum=true\nSleepAllowed=true\nSleepNeeded=true\n'
+                   'Public=true\nUPnP=true\nVoiceEnable=true\n')
+        lock = self.root / 'selected.lock.json'
+        pack.create(self.project, lock, self.game)
+        return lock
+
+    def stopped_mp_template(self, lock, ports=None):
+        seed = self.prepare('mp-seed', kind='mp', languages=['EN', 'RU'], options={'pack_lock': str(lock)}, ports=ports or [17343, 17344])
+        self.write(seed / 'server/Saves/Multiplayer/queue-smoke/map.bin', 'saved multiplayer world')
+        for role in ('client1', 'client2'):
+            self.write(seed / role / 'db/players.db', 'saved ' + role)
+        self.write(seed / 'execution.json', json.dumps({'status': 'completed', 'processes': {
+            role: {'pid': 999990 + index, 'exit_code': 0}
+            for index, role in enumerate(('server', 'client1', 'client2'))}}))
+        template = self.root / 'mp-world'
+        with patch.object(worlds.os, 'kill', side_effect=ProcessLookupError):
+            worlds.export(seed, template)
+        return template
+
+    def fixture_adapter(self, stage):
+        return SimpleNamespace(__file__=str(self.project / 'tools/queue_checks/report.py'),
+                               validate=lambda selection: None, sources=lambda project, selection: [],
+                               definitions=lambda: {'health': {}}, stage=stage)
+
+    def test_locked_pack_preserves_critical_mp_settings_and_forces_private_silent_profiles(self):
+        lock = self.locked_pack()
+        output = self.prepare(kind='mp', languages=['EN', 'RU'], options={'pack_lock': str(lock)})
+        server = native._metadata(output / 'server/Server/queue-smoke.ini')
+        expected = {'Map': 'Riverside, KY', 'PVP': 'true', 'DoLuaChecksum': 'true',
+                    'SleepAllowed': 'true', 'SleepNeeded': 'true',
+                    'Public': 'false', 'UPnP': 'false', 'VoiceEnable': 'false'}
+        self.assertEqual(expected, {key: server[key] for key in expected})
+        initial = json.loads((output / 'initial-settings.json').read_text())
+        self.assertEqual(initial['server/Server/queue-smoke.ini'], (output / 'server/Server/queue-smoke.ini').read_text())
+        for role in ('server', 'client1', 'client2'):
+            settings = native._metadata(output / role / 'options.ini')
+            self.assertEqual('false', settings['voiceEnable'])
+            for key in ('soundVolume', 'musicVolume', 'jumpScareVolume', 'vehicleEngineVolume'):
+                self.assertEqual('0', settings[key])
+
+    def test_native_prepared_mp_world_exports_and_reprepares_after_matching_adapter_sandbox(self):
+        lock = self.locked_pack()
+        template = self.stopped_mp_template(lock)
+        initial = native.hashes(template)
+
+        def stage(project, output, game, jdk, selection, locations, runtime):
+            runtime['fixture']['sandbox'] = {'MinutesPerPage': 2.0}
+
+        with patch.object(native.adapters, 'get', return_value=self.fixture_adapter(stage)):
+            output = self.prepare('mp-from-world', kind='mp', languages=['EN', 'RU'],
+                                  options={'pack_lock': str(lock), 'world_template': str(template)})
+        self.assertEqual('saved multiplayer world', (output / 'server/Saves/Multiplayer/queue-smoke/map.bin').read_text())
+        for role in ('client1', 'client2'):
+            self.assertEqual('saved ' + role, (output / role / 'db/players.db').read_text())
+        runtime = json.loads((output / 'runtime.json').read_text())
+        worlds.verify_settings(json.loads((template / 'world.json').read_text()), output, runtime)
+        self.assertEqual(initial, native.hashes(template))
+        self.assertTrue((output / 'snapshot-hashes.json').is_file())
+
+    def test_world_template_keeps_saved_endpoint_when_cli_ports_are_automatic(self):
+        lock = self.locked_pack()
+        template = self.stopped_mp_template(lock, ports=[17521, 17522])
+        with patch.object(admission, 'allocate_ports') as allocate:
+            output = self.prepare('auto-world', kind='mp', languages=['EN', 'RU'], ports_auto=True,
+                                  options={'pack_lock': str(lock), 'world_template': str(template)})
+        allocate.assert_not_called()
+        selection = report.read_json(output / 'selection.json')
+        self.assertEqual([17521, 17522], selection['ports'])
+        self.assertFalse(selection['ports_auto'])
+        self.assertEqual('saved client1', (output / 'client1/db/players.db').read_text())
+
+    def test_mp_world_rejects_effective_adapter_sandbox_mismatch_before_sealing(self):
+        lock = self.locked_pack()
+        template = self.stopped_mp_template(lock)
+        initial = native.hashes(template)
+
+        def stage(project, output, game, jdk, selection, locations, runtime):
+            runtime['fixture']['sandbox'] = {'MinutesPerPage': 0.02}
+
+        with patch.object(native.adapters, 'get', return_value=self.fixture_adapter(stage)):
+            with self.assertRaisesRegex(ValueError, 'sandbox settings differ'):
+                self.prepare('mp-wrong-sandbox', kind='mp', languages=['EN', 'RU'],
+                             options={'pack_lock': str(lock), 'world_template': str(template)})
+        self.assertFalse((self.root / 'mp-wrong-sandbox/snapshot-hashes.json').exists())
+        self.assertEqual(initial, native.hashes(template))
+
+    def test_mp_world_rejects_effective_adapter_server_critical_mismatch_before_sealing(self):
+        lock = self.locked_pack()
+        template = self.stopped_mp_template(lock)
+        initial = native.hashes(template)
+
+        def stage(project, output, game, jdk, selection, locations, runtime):
+            path = output / 'server/Server/queue-smoke.ini'
+            self.assertIn('PVP=true\n', path.read_text())
+            path.write_text(path.read_text().replace('PVP=true\n', 'PVP=false\n'))
+
+        with patch.object(native.adapters, 'get', return_value=self.fixture_adapter(stage)):
+            with self.assertRaisesRegex(ValueError, 'server settings differ'):
+                self.prepare('mp-wrong-server', kind='mp', languages=['EN', 'RU'],
+                             options={'pack_lock': str(lock), 'world_template': str(template)})
+        self.assertFalse((self.root / 'mp-wrong-server/snapshot-hashes.json').exists())
+        self.assertEqual(initial, native.hashes(template))
 
     def test_refuses_existing_output_without_changing_it(self):
         output = self.prepare()
@@ -181,7 +355,7 @@ class NativeSnapshotTests(unittest.TestCase):
         self.assertEqual(approvals[0]["jar_hash"], approvals[1]["jar_hash"])
 
     def test_invalid_inputs_do_not_create_output(self):
-        for changes in ({"cases": []}, {"mods": ["PZSurvivorToolkit"] * 2}, {"expected_checks": 7},
+        for changes in ({"cases": []}, {"mods": ["PZSurvivorToolkit"] * 2}, {"mods": ['..']}, {"cases": ['.']}, {"expected_checks": 7},
                         {"ports": [17343, 17343]}, {"kind": "invalid"}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 self.prepare(**changes)

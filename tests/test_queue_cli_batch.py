@@ -113,6 +113,62 @@ class BatchTests(unittest.TestCase):
                 self.invoke()
             self.assertFalse(self.args.output.exists())
 
+    def test_explicit_empty_cases_never_broadens_to_the_suite_default(self):
+        output = self.root / 'empty-cases'
+        with patch.object(cli.native, 'prepare') as prepare:
+            result = cli.main(['prepare', str(output), '--game', '/game', '--jdk', '/jdk', '--cases', ''])
+        self.assertEqual(1, result)
+        prepare.assert_not_called()
+        self.assertFalse(output.exists())
+
+    def test_explicit_empty_jobs_never_broadens_to_the_full_plan(self):
+        self.write_plan([{'id': 'wanted', 'suite': 'item-tags'}, {'id': 'unrelated', 'suite': 'video-recording'}])
+        self.args.jobs = ''
+        with self.assertRaisesRegex(ValueError, '--jobs requires'):
+            self.invoke()
+        self.assertEqual([], self.calls)
+        self.assertFalse(self.args.output.exists())
+
+    def test_selected_set_includes_only_its_control_and_seed_dependencies(self):
+        jobs = [{'id': 'control', 'suite': 'shared-wishlist'},
+                {'id': 'seed', 'suite': 'shared-wishlist', 'control_job': 'control'},
+                {'id': 'reload', 'suite': 'shared-wishlist', 'seed_job': 'seed'},
+                {'id': 'unrelated', 'suite': 'video-recording'}]
+        self.write_plan(jobs)
+        plan = json.loads(self.plan.read_text())
+        plan['sets'] = {'wishlist': ['reload']}
+        self.plan.write_text(json.dumps(plan))
+        self.args.sets = ['wishlist']
+        self.assertEqual(self.invoke(), 0)
+        self.assertEqual([name for name, _ in self.calls], ['control', 'seed', 'reload'])
+
+    def test_disabled_dependency_unknown_selection_and_cycle_fail_before_preparation(self):
+        plan = {'jobs': [{'id': 'control'}, {'id': 'candidate', 'control_job': 'control'}]}
+        for kwargs in ({'only': 'unknown'}, {'only': 'candidate', 'skip': 'control'}, {'sets': ['unknown']}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                cli.selected_jobs(plan, **kwargs)
+        with self.assertRaisesRegex(ValueError, 'Cyclic'):
+            cli.selected_jobs({'jobs': [{'id': 'a', 'seed_job': 'b'}, {'id': 'b', 'seed_job': 'a'}]}, only='a')
+        with self.assertRaisesRegex(ValueError, 'precede'):
+            cli.selected_jobs({'jobs': [{'id': 'candidate', 'control_job': 'control'}, {'id': 'control'}]})
+
+    def test_plan_world_options_are_kept_while_unselected_jobs_do_not_prepare(self):
+        self.write_plan([{'id': 'tags', 'suite': 'item-tags'}, {'id': 'unrelated', 'suite': 'video-recording'}])
+        plan = json.loads(self.plan.read_text())
+        plan['options'] = {'world_template': '/frozen/world'}
+        self.plan.write_text(json.dumps(plan))
+        self.args.jobs = 'tags'
+        self.assertEqual(self.invoke(), 0)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.calls[0][1]['options']['world_template'], '/frozen/world')
+
+    def test_shipped_pack_plan_targeted_sets_resolve_only_their_dependencies(self):
+        plan = json.loads((ROOT / 'tests/native_queue/plans/pack-regression.example.json').read_text())
+        self.assertEqual(['craft'], [job['id'] for job in cli.selected_jobs(plan, sets=['craft'])])
+        self.assertEqual(['wishlist-control', 'wishlist'], [job['id'] for job in cli.selected_jobs(plan, sets=['wishlist'])])
+        self.assertEqual(['tags-control', 'tags', 'video-control', 'video'],
+                         [job['id'] for job in cli.selected_jobs(plan, sets=['tags', 'video'])])
+
 
 if __name__ == '__main__':
     unittest.main()

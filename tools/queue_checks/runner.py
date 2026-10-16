@@ -8,7 +8,7 @@ import sys
 import time
 
 from .report import events, read_json, verify_manifest, write_json
-from . import adapters, admission
+from . import adapters, admission, pack, worlds
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
@@ -31,10 +31,49 @@ def stop(process):
         process.wait(timeout=10)
 
 
+def _verify_initial_settings(root, selection, runtime):
+    manifest = root / 'initial-settings.json'
+    if manifest.is_symlink() or not manifest.is_file():
+        raise ValueError('Prepared initial settings are missing or symlinked')
+    expected = read_json(manifest)
+    roles = adapters.roles(selection)
+    required = {role + '/options.ini' for role in roles}
+    if selection['kind'] == 'mp':
+        name = runtime.get('server_name')
+        if not isinstance(name, str) or not re.fullmatch('[A-Za-z0-9_.-]+', name) or name in ('.', '..'):
+            raise ValueError('Invalid prepared server name')
+        required.update('server/Server/' + name + suffix for suffix in ('.ini', '_SandboxVars.lua'))
+    if not isinstance(expected, dict) or not required <= expected.keys():
+        raise ValueError('Prepared initial settings are missing or invalid')
+    for name, text in expected.items():
+        if not isinstance(name, str) or not isinstance(text, str):
+            raise ValueError('Invalid prepared initial settings entry')
+        path = Path(name)
+        if path.is_absolute() or '..' in path.parts or path.as_posix() != name or not (
+                name in required or selection['kind'] == 'mp' and len(path.parts) == 3 and path.parts[:2] == ('server', 'Server')):
+            raise ValueError('Prepared initial settings path escapes owned settings: ' + name)
+        if any((root / Path(*path.parts[:index])).is_symlink() for index in range(1, len(path.parts) + 1)):
+            raise ValueError('Prepared initial settings cannot contain symlinks: ' + name)
+        if not (root / path).is_file() or (root / path).read_bytes() != text.encode('utf-8'):
+            raise ValueError('Prepared initial settings changed before launch: ' + name)
+
+
+def _verify_live_inputs(root, selection, runtime):
+    _verify_initial_settings(root, selection, runtime)
+    locked = selection.get('options', {}).get('pack_lock')
+    if locked:
+        pack.validate(locked, runtime['project'], runtime['game'], selection['mods'])
+    template = selection.get('options', {}).get('world_template')
+    if template:
+        _path, state = worlds.validate(template, selection, Path(runtime['game']))
+        if worlds._state(root, adapters.roles(selection)) != state['files']:
+            raise ValueError('Restored world changed before its first launch; prepare a fresh copy')
+    return {'pack_lock': bool(locked), 'world_template': bool(template)}
+
+
 def run(root, resource_wait=300):
     if sys.platform != "darwin":
         raise ValueError("Native GUI launch currently supports macOS; reports/matrix work on any platform")
-    import fcntl
     root = Path(root).resolve()
     selection, runtime = read_json(root / "selection.json"), read_json(root / "runtime.json")
     adapter = adapters.get(selection['suite'])
@@ -43,12 +82,15 @@ def run(root, resource_wait=300):
         raise ValueError("\n".join(changed))
     if list(root.glob("*-launch.log")) or (root / "execution.json").exists():
         raise ValueError("Run directory has already launched; prepare a fresh snapshot")
+    _verify_live_inputs(root, selection, runtime)
     with admission.acquire(root, selection, runtime, resource_wait, legacy_lock=LOCK) as resources:
         changed = verify_manifest(root, 'source-manifest.json', True) + verify_manifest(root, 'snapshot-hashes.json')
         if changed:
             raise ValueError('Inputs changed while waiting for resources:\n' + '\n'.join(changed))
+        input_guards = _verify_live_inputs(root, selection, runtime)
         processes, streams, displayed = {}, [], set()
-        execution = {"status": "running", "processes": {}, "peer_disconnected": False, 'attachments': [], 'resources': resources}
+        execution = {"status": "running", "processes": {}, "peer_disconnected": False, 'attachments': [],
+                     'resources': resources, 'input_guards': input_guards}
         game = Path(runtime["game"])
         base = [runtime["java"], "-Djava.awt.headless=true", "--enable-native-access=ALL-UNNAMED",
                 "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED", "-Dzomboid.steam=0",
@@ -108,9 +150,13 @@ def run(root, resource_wait=300):
                 raise KeyboardInterrupt(message)
             execution['error'] = '; '.join(filter(None, (execution.get('error'), message)))
 
-        previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
+        previous = {}
         guard = None
+        cleaning = False
         try:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                previous[sig] = signal.getsignal(sig)
+                signal.signal(sig, interrupted)
             guard = subprocess.Popen(["/usr/bin/caffeinate", "-diu", "-w", str(os.getpid())])
             if selection["kind"] == "mp":
                 launch("server")
@@ -171,6 +217,7 @@ def run(root, resource_wait=300):
         except (Exception, KeyboardInterrupt) as error:
             execution.update(status="failed", error=str(error), interrupted=isinstance(error, KeyboardInterrupt))
         finally:
+            # Cleanup signals record failure without interrupting bounded waits or losing the report.
             cleaning = True
             try:
                 for role, specs in attached.items():

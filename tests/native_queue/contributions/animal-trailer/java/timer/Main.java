@@ -16,6 +16,11 @@ public final class Main {
  }
  @LuaMethod(name="animalTimerResult",global=true)
  public static String result() { String text="periodicSendCounts="+counts;target=null;return text; }
+ @LuaMethod(name="animalTimerReset",global=true)
+ public static String reset() {
+  if(target!=null || !stack.get().isEmpty()) return "FAIL active timer observation";
+  counts.clear();stack.remove();return "clean";
+ }
  public static void countDirectSend(Short id) {
   if(!GameServer.server || target==null || stack.get().peek()!=target || !counts.containsKey(id)) return;
   var frames=new Throwable().getStackTrace();

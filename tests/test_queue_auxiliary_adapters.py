@@ -81,6 +81,19 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         (screenshots / names[3]).unlink()
         self.assertIn('screenshot', adapter.verify(self.output, self.selection, {})['issues'][0])
 
+    def test_locked_pack_uses_actual_ini_order_but_still_requires_all_tag_dependencies(self):
+        mods = list(adapter.ITEM_MODS)
+        a, b = mods.index('Quartermaster'), mods.index('BravoItemDetails')
+        mods[a], mods[b] = mods[b], mods[a]
+        self.selection.update(suite='item-tags', cases=['scenes'], languages=['RU'], mods=mods)
+        with self.assertRaisesRegex(ValueError, 'load order'):
+            adapter.validate(self.selection)
+        self.selection['options']['pack_lock'] = '/explicit/validated-by-common-prepare.lock.json'
+        adapter.validate(self.selection)
+        self.selection['mods'].remove('Quartermaster')
+        with self.assertRaisesRegex(ValueError, 'Required fixture mods missing'):
+            adapter.validate(self.selection)
+
     def test_animal_stage_uses_exact_builder_and_identical_shared_connect_config(self):
         self.selection.update(suite='animal-trailer', cases=['equipment-fixed'], kind='mp')
         server = self.output / 'server'
@@ -145,6 +158,99 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         result = adapter.verify(self.output, self.selection, {})
         self.assertIn('Exact animal', result['issues'][0])
         self.assertEqual(result['outcomes'][0]['status'], 'failed')
+
+    def test_animal_groups_require_the_same_immutable_environment_and_missing_control_isolated(self):
+        self.selection.update(suite='animal-trailer', kind='mp', clients=1)
+        self.selection['cases'] = ['equipment-fixed', 'ghost', 'timer-starved', 'combined-starved']
+        adapter.validate(self.selection)
+        self.selection['cases'] = ['timer-shared', 'combined-shared']
+        self.selection['mods'].append('AnimalTrailerSyncMPFix')
+        adapter.validate(self.selection)
+        self.assertIn(ROOT / 'tests/native_queue/support/QueueFixtureSession.lua', adapter.sources(ROOT, self.selection))
+        with self.assertRaisesRegex(ValueError, 'one actual client'):
+            adapter.validate(dict(self.selection, clients=2))
+        for cases in (['equipment-fixed', 'timer-shared'], ['equipment-missing', 'equipment-fixed'],
+                      ['timer-starved', 'combined-shared']):
+            self.selection['cases'] = cases
+            with self.subTest(cases=cases), self.assertRaisesRegex(ValueError, 'immutable'):
+                adapter.validate(self.selection)
+
+    def test_animal_group_stage_passes_all_cases_and_uses_real_single_client_identity(self):
+        self.selection.update(suite='animal-trailer', kind='mp', cases=['timer-shared', 'combined-shared'])
+        self.selection['mods'].append('AnimalTrailerSyncMPFix')
+        timer = self.root / 'timer-fix'
+        timer.mkdir()
+        jar = timer / 'tested.jar'
+        jar.write_bytes(b'one immutable timer build')
+        intake = self.root / 'animal-intake'
+        intake.mkdir()
+        (intake / 'manifest.json').write_text(json.dumps({'dependencies': {'timer_fixed': {
+            'jar_sha256': adapter.hashlib.sha256(jar.read_bytes()).hexdigest()}}}))
+        server = self.output / 'server'
+        server.mkdir()
+        self.runtime['roles']['server'] = {'cache': str(server)}
+        calls = []
+        def build(game, jdk, patch_jar, output, scenario, cases=None):
+            calls.append((scenario, cases))
+            helper = output / 'mods/AnimalTrailerBaseline/42/media/lua/shared'
+            helper.mkdir(parents=True)
+            (helper / 'ZAnimalTrailerConfig.lua').write_text('AnimalTrailerFixtureConfig={cases={"timer-shared","combined-shared"}}\n')
+            (output / 'runtime-manifest.json').write_text(json.dumps({'helper_mod_ids': ['AnimalTrailerBaseline']}))
+        with patch.object(adapter, '_intake', return_value=intake), patch.object(adapter, '_load', return_value=SimpleNamespace(build=build)):
+            self.stage({'AnimalTrailerSyncMPFix': timer})
+            jar.write_bytes(b'changed timer jar')
+            with self.assertRaisesRegex(ValueError, 'exact tested 1.3'):
+                self.stage({'AnimalTrailerSyncMPFix': timer})
+        self.assertEqual([('timer', ['timer-shared', 'combined-shared'])], calls)
+        relative = 'mods/AnimalTrailerBaseline/42/media/lua/shared/ZAnimalTrailerConfig.lua'
+        self.assertEqual((server / relative).read_bytes(), (self.cache / relative).read_bytes())
+        self.assertIn('username="client1"', (self.cache / relative).read_text())
+        self.assertIn('[QUEUE_SESSION] QUARANTINE ', self.runtime['fixture']['failure_markers'])
+
+    def test_grouped_animal_verifier_requires_each_strict_case_and_ordered_joint_reset(self):
+        self.selection.update(suite='animal-trailer', kind='mp', cases=['timer-shared', 'combined-shared'])
+        intake = ROOT / 'tests/native_queue/contributions/animal-trailer'
+        verifier = adapter._load(intake / 'verify.py')
+        with patch.dict(sys.modules, {'verify': verifier}):
+            fixture = adapter._load(intake / 'test_verify.py')
+        def marker(event, case, epoch, actor, ok=False):
+            return f'[QUEUE_SESSION] {event} case={case} epoch={epoch} actor={actor}' + (' ok=true' if ok else '') + '\n'
+        def session(role):
+            text = '[AnimalTrailerSyncMPFix] ACTIVE 1.3\n' if role == 'server' else ''
+            for epoch, case in enumerate(self.selection['cases'], 1):
+                text += marker('BEGIN', case, epoch, role)
+                text += marker('PREPARE', case, epoch, 'client1') + marker('START', case, epoch, role)
+                text += fixture.logs()[0 if role == 'server' else 1].replace('[AnimalTrailerSyncMPFix] ACTIVE 1.3\n', '')
+                text += marker('FINISH', case, epoch, 'client1', True)
+                text += f'[ANIMAL_TRAILER] {"SERVER" if role == "server" else "CLIENT"} PROBE_RESET clean=true\n'
+                text += f'[ANIMAL_TRAILER] {"SERVER" if role == "server" else "CLIENT"} OWNED_RESET animals=3 items=4 trailer=1\n'
+                text += marker('CLEANUP' if role == 'server' else 'LOCAL_CLEAN', case, epoch, role, True)
+                text += marker('CLEANUP', case, epoch, 'client1', True)
+                text += marker('JOINT_CLEAN', case, epoch, role, True)
+            return text + marker('COMPLETE', case, epoch, role).rstrip() + ' cases=2\n'
+        originals = {role: session(role) for role in ('server', 'client1')}
+        for role, text in originals.items():
+            (self.output / (role + '-launch.log')).write_text(text)
+        result = adapter.verify(self.output, self.selection, {})
+        self.assertEqual([], result['issues'])
+        self.assertEqual(self.selection['cases'], [row['case'] for row in result['outcomes']])
+        self.assertTrue(all(row['status'] == 'passed' for row in result['outcomes']))
+        self.assertFalse(adapter.complete(self.selection, 'client1', 'CLIENT COMPLETE\n'))
+        self.assertTrue(adapter.complete(self.selection, 'client1', originals['client1']))
+        server_path = self.output / 'server-launch.log'
+        clean = marker('JOINT_CLEAN', 'timer-shared', 1, 'server', True)
+        for broken in (originals['server'].replace(clean, ''), originals['server'] + clean,
+                       originals['server'].replace('OWNED_RESET animals=3 items=4 trailer=1', 'OWNED_RESET animals=2 items=4 trailer=1', 1),
+                       originals['server'].replace('{201=4, 202=4, 203=4}', '{201=0, 202=0, 203=4}', 1)):
+            server_path.write_text(broken)
+            with self.subTest(broken=broken[:80]):
+                result = adapter.verify(self.output, self.selection, {})
+                self.assertEqual('failed', result['outcomes'][0]['status'])
+                self.assertEqual('passed', result['outcomes'][1]['status'])
+        server_path.write_text(originals['server'])
+        client_path = self.output / 'client1-launch.log'
+        client_path.write_text(originals['client1'].replace('releases=1', 'releases=0'))
+        self.assertEqual('failed', adapter.verify(self.output, self.selection, {})['outcomes'][1]['status'])
 
     def test_video_verifier_runs_probe_full_decode_and_extraction_and_rejects_decode_failure(self):
         videos = self.cache / 'videos'

@@ -12,6 +12,10 @@ RECORD = re.compile(r"^\s*(?:LOG|WARN|ERROR|DEBUG|TRACE)\s*:")
 STAMP = re.compile(r"^\s*\[\d{2}-\d{2}-\d{2,4}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\]\s*")
 MIC = ("System create record sound", "initialisedRecDev=true", "fmodRecordSound=", "Microphone was not disabled")
 RECEIPT = re.compile(r"HEALTH_AUTH_RECEIPT (\S*) phase=(\w+) ok=(true|false) patient=(\S*) error=([^\n]+)")
+SESSION = re.compile(r"\[QUEUE_SESSION\] (BEGIN|START|FINISH|CLEANUP|JOINT_CLEAN|COMPLETE|QUARANTINE) case=(\S+) epoch=(\d+) actor=(\S+)(?:\s|$)")
+ANTICHEAT_KICK = re.compile(
+    r'^\s*WARN\s*:\s*Multiplayer\b.*\bat AntiCheat\.log\s*>\s*Anti-cheat="[^"\r\n]+" '
+    r'is triggered for connection="[^"\r\n]*" .*\bcounter=(\d+)/(\d+) action="Kick"(?:\s|$)')
 EXCEPTION = re.compile(r"\b[\w.$]+(?:Exception|Error):"
                        r"|(?:^|\n)\s*(?:Exception in thread \"[^\"]+\"\s+)?(?:[\w$]+\.)+(?:[\w$]+(?:Exception|Error)|Exception|Error)(?:\s|$)"
                        r"|(?:^|\n)\s*KahluaException(?:\s|$)")
@@ -160,8 +164,11 @@ def audit_log(path, cache, background=False):
         starts.insert(0, 0)
     for index, start in enumerate(starts):
         block = lines[start:starts[index + 1] if index + 1 < len(starts) else len(lines)]
+        kick = ANTICHEAT_KICK.match(block[0])
+        # Kick names the configured policy even before the counter reaches its enforcement threshold.
+        terminal_kick = kick is not None and 0 < int(kick[2]) <= int(kick[1])
         text = "\n".join(block)
-        serious = bool(EXCEPTION.search(text) or RUNTIME_FAILURE.search(text))
+        serious = bool(terminal_kick or EXCEPTION.search(text) or RUNTIME_FAILURE.search(text))
         is_error = re.match(r"^\s*ERROR\s*:", block[0]) or serious
         if not is_error:
             continue
@@ -171,7 +178,7 @@ def audit_log(path, cache, background=False):
         cause = cause.replace(str(cache), "<cache>")
         # DebugLog's formatter can append a second full stop to a mirrored console message.
         key = message.rstrip(".") + ("\n" + cause.rstrip(".") if cause else "")
-        rule = background_rule(block, cache.name) if background and ready is not None and start < ready else None
+        rule = background_rule(block, cache.name) if not terminal_kick and background and ready is not None and start < ready else None
         findings.append({"fingerprint": hashlib.sha256(key.encode()).hexdigest(), "message": message,
                          "cause": cause, "file": str(path), "line": start + 1,
                          "severity": "background" if rule else "fatal" if serious else "unclassified",
@@ -184,13 +191,69 @@ def audit_log(path, cache, background=False):
     return findings, microphone
 
 
+def diagnostic_windows(logs):
+    """Place existing findings by local markers; this never changes the full runtime audit."""
+    merged, details, cases = {}, {}, set()
+    marked = False
+    for path, findings in logs:
+        markers = [(number, match) for number, line in enumerate(path.read_text(encoding='utf-8', errors='replace').splitlines(), 1)
+                   if (match := SESSION.search(line))]
+        has_begin = any(match[1] == 'BEGIN' for _, match in markers)
+        marked |= has_begin
+        phase, active = 'startup' if has_begin else 'unassigned', None
+        boundaries = [(0, (phase, None, None))]
+        for number, match in markers if has_begin else []:
+            event, case, epoch, _actor = match.groups()
+            identity = (case, int(epoch))
+            if event == 'BEGIN':
+                active, phase = identity, 'run'
+                cases.add(identity)
+            elif identity != active:
+                continue
+            elif event == 'START':
+                phase = 'run'
+            elif event in ('FINISH', 'CLEANUP'):
+                phase = 'cleanup'
+            elif event in ('JOINT_CLEAN', 'COMPLETE'):
+                phase = 'between_cases'
+            # QUARANTINE leaves the current diagnostic phase; functional validation owns its verdict.
+            key = (phase, *active) if phase in ('run', 'cleanup') else (phase, None, None)
+            boundaries.append((number, key))
+        per_file, per_details = {}, {}
+        index = 0
+        for finding in findings:
+            while index + 1 < len(boundaries) and boundaries[index + 1][0] <= finding['line']:
+                index += 1
+            key = boundaries[index][1]
+            per_file.setdefault(key, Counter())[finding['fingerprint']] += 1
+            per_details[(key, finding['fingerprint'])] = finding
+        for key, counts in per_file.items():
+            current = merged.setdefault(key, Counter())
+            for fingerprint, count in counts.items():
+                if count > current[fingerprint]:
+                    details[(key, fingerprint)] = per_details[(key, fingerprint)]
+            current |= counts
+    if not marked:
+        return None
+    def bucket(key):
+        counts = merged.get(key, Counter())
+        return {'error_count': sum(counts.values()),
+                'issues': [dict(details[(key, fingerprint)], count=count) for fingerprint, count in sorted(counts.items())]}
+    return {'startup': bucket(('startup', None, None)),
+            'cases': [{'case': case, 'epoch': epoch, 'run': bucket(('run', case, epoch)),
+                       'cleanup': bucket(('cleanup', case, epoch))} for case, epoch in sorted(cases, key=lambda item: (item[1], item[0]))],
+            'between_cases': bucket(('between_cases', None, None)), 'unassigned': bucket(('unassigned', None, None)),
+            'interpretation': 'File-local marker placement only, not case verdicts or causes. Buckets are not additive when unmarked mirrors remain unassigned.'}
+
+
 def audit_logs(root, roles, background=False):
     result = {}
     for role in roles:
-        merged, details, microphone = Counter(), {}, []
+        merged, details, microphone, logs = Counter(), {}, [], []
         paths = log_paths(root, role)
         for path in paths:
             findings, mic = audit_log(path, root / role, background)
+            logs.append((path, findings))
             current = Counter(row["fingerprint"] for row in findings)
             merged |= current
             for row in findings:
@@ -202,6 +265,9 @@ def audit_logs(root, roles, background=False):
         result[role] = {"files": list(map(str, paths)), "issues": [dict(details[key], count=count) for key, count in sorted(merged.items())],
                         "error_count": sum(merged.values()), "microphone": microphone,
                         "available": bool(paths) and any(path.stat().st_size for path in paths)}
+        windows = diagnostic_windows(logs)
+        if windows is not None:
+            result[role]['diagnostic_windows'] = windows
         for severity in ("fatal", "unclassified", "background"):
             result[role][severity + "_count"] = sum(count for key, count in merged.items() if details[key]["severity"] == severity)
     return result
@@ -382,6 +448,12 @@ def summary(report):
         lines.append(role + ": " + str(audit["error_count"]) + " errors, " +
                      ", ".join(str(audit.get(severity + "_count", 0)) + " " + severity for severity in ("fatal", "unclassified", "background")) +
                      ", " + str(len(audit["microphone"])) + " microphone markers")
+        if windows := audit.get('diagnostic_windows'):
+            lines.append(role + ' diagnostic errors: startup=' + str(windows['startup']['error_count']) +
+                         ', between-cases=' + str(windows['between_cases']['error_count']) + ', unassigned=' + str(windows['unassigned']['error_count']))
+            for case in windows['cases']:
+                lines.append(role + ' ' + case['case'] + ' epoch=' + str(case['epoch']) + ' diagnostic errors: run=' +
+                             str(case['run']['error_count']) + ', cleanup=' + str(case['cleanup']['error_count']))
     lines.extend(report["functional"]["issues"] + report["provenance"]["issues"])
     if report["execution"].get("error"):
         lines.append(report["execution"]["error"])

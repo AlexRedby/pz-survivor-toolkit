@@ -402,6 +402,152 @@ class QueueReportTests(unittest.TestCase):
         self.assertEqual(result['error_count'], 2)
         self.assertEqual(len(result['issues']), 1)
 
+    @staticmethod
+    def anticheat_warning(counter='4/4', action='Kick'):
+        return ('WARN : Multiplayer  f:848 st:398,067,426 at AntiCheat.log > '
+                'Anti-cheat="Speed" is triggered for connection="client1" server-option="AntiCheatSpeed" '
+                'reason="PlayerPacketReliable: speed=21.973301 > limit=20.000000" counter=' + counter +
+                ' action="' + action + '" ping=0\n')
+
+    def test_anticheat_kick_warn_requires_a_valid_reached_threshold(self):
+        path = self.base / 'warning.log'
+        for counter in ('4/4', '5/4', '1/1', '7/7'):
+            with self.subTest(counter=counter):
+                path.write_text(self.anticheat_warning(counter))
+                findings, microphone = report.audit_log(path, self.base)
+                self.assertEqual(1, len(findings))
+                self.assertEqual('native', findings[0]['category'])
+                self.assertEqual([], microphone)
+        ignored = [self.anticheat_warning(counter) for counter in ('0/4', '1/4', '2/4', '3/4', '4/0', '4/x', '-1/4')]
+        ignored += [self.anticheat_warning(action='Log'), self.anticheat_warning().replace(' counter=4/4', ''),
+                    self.anticheat_warning().replace('Multiplayer', 'General'),
+                    self.anticheat_warning().replace('AntiCheat.log', 'PacketTypes.onServerPacket'),
+                    'WARN : Packet > The packet PlayerUpdateReliable is not valid\n',
+                    'WARN : General > Failed sysctl call, Error code: 12\n']
+        for text in ignored:
+            with self.subTest(text=text):
+                path.write_text(text)
+                self.assertEqual([], report.audit_log(path, self.base)[0])
+
+    def test_anticheat_terminal_warn_mirrors_keep_max_counts_and_native_schema(self):
+        root = self.fixture()
+        warning = self.anticheat_warning()
+        (root / 'client1-launch.log').write_text(warning * 2)
+        (root / 'client1/console.txt').write_text(warning * 2)
+        logs = root / 'client1/Logs'
+        logs.mkdir()
+        (logs / '2026_DebugLog.txt').write_text('[16-10-26 06:21:59.959] ' + warning.rstrip('\n') + '.\n')
+        audit = report.audit_logs(root, ['client1'])['client1']
+        self.assertEqual(2, audit['error_count'])
+        self.assertEqual(1, len(audit['issues']))
+        self.assertEqual('native', audit['issues'][0]['category'])
+        self.assertEqual(2, audit['issues'][0]['count'])
+
+    def test_anticheat_terminal_warn_is_placed_in_its_local_session_epoch(self):
+        root = self.fixture(kind='mp')
+        def marker(event, case, epoch):
+            return 'LOG: Lua > [QUEUE_SESSION] ' + event + ' case=' + case + ' epoch=' + str(epoch) + ' actor=server\n'
+        (root / 'server-launch.log').write_text(
+            'WARN : General > ordinary startup warning\n' + marker('BEGIN', 'timer-shared', 1) +
+            marker('START', 'timer-shared', 1) + self.anticheat_warning('1/4') + marker('FINISH', 'timer-shared', 1) +
+            marker('JOINT_CLEAN', 'timer-shared', 1) + marker('BEGIN', 'combined-shared', 2) +
+            marker('START', 'combined-shared', 2) + self.anticheat_warning('2/4') + self.anticheat_warning('3/4') +
+            self.anticheat_warning('4/4'))
+        audit = report.audit_logs(root, ['server'])['server']
+        self.assertEqual(1, audit['error_count'])
+        windows = audit['diagnostic_windows']
+        self.assertEqual(0, windows['startup']['error_count'])
+        self.assertEqual(0, windows['between_cases']['error_count'])
+        self.assertEqual([('timer-shared', 1, 0, 0), ('combined-shared', 2, 1, 0)],
+                         [(case['case'], case['epoch'], case['run']['error_count'], case['cleanup']['error_count'])
+                          for case in windows['cases']])
+        finding = windows['cases'][1]['run']['issues'][0]
+        self.assertIn('counter=4/4', Path(finding['file']).read_text().splitlines()[finding['line'] - 1])
+
+    def test_grouped_diagnostics_keep_same_fingerprint_in_each_phase_and_max_mirrors(self):
+        root = self.fixture()
+        error = 'ERROR: General > same engine failure\njava.lang.RuntimeException: same cause\n'
+        def marker(event, case, epoch):
+            return 'LOG: General > [QUEUE_SESSION] ' + event + ' case=' + case + ' epoch=' + str(epoch) + ' actor=client1\n'
+        def session(counts):
+            startup, first_run, first_cleanup, between, second_run, second_cleanup, after = counts
+            return (error * startup + marker('BEGIN', 'first', 1) + marker('START', 'first', 1) + error * first_run +
+                    marker('FINISH', 'first', 1) + error * first_cleanup + marker('CLEANUP', 'first', 1) +
+                    marker('JOINT_CLEAN', 'first', 1) + error * between + marker('BEGIN', 'second', 2) +
+                    marker('START', 'second', 2) + error * second_run + marker('FINISH', 'second', 2) +
+                    error * second_cleanup + marker('CLEANUP', 'second', 2) + marker('JOINT_CLEAN', 'second', 2) +
+                    marker('COMPLETE', 'second', 2) + error * after)
+        launch = root / 'client1-launch.log'
+        launch.write_text(session([1, 2, 3, 1, 4, 2, 1]))
+        (root / 'client1/console.txt').write_text(launch.read_text())
+        logs = root / 'client1/Logs'
+        logs.mkdir()
+        mirrored = session([1, 1, 2, 1, 2, 1, 1])
+        stamped = ''.join('[16-10-26 06:21:59.959] ' + line + '\n' for line in mirrored.splitlines())
+        (logs / '2026_DebugLog.txt').write_text(stamped)
+        (root / 'client1-probes.log').write_text(error * 3)
+        audit = report.audit_logs(root, ['client1'])['client1']
+        self.assertEqual(14, audit['error_count'])
+        self.assertEqual(1, len(audit['issues']))
+        windows = audit['diagnostic_windows']
+        self.assertEqual(1, windows['startup']['error_count'])
+        self.assertEqual(2, windows['between_cases']['error_count'])
+        self.assertEqual(3, windows['unassigned']['error_count'])
+        self.assertEqual([('first', 1, 2, 3), ('second', 2, 4, 2)],
+                         [(case['case'], case['epoch'], case['run']['error_count'], case['cleanup']['error_count']) for case in windows['cases']])
+        for bucket in [windows['startup'], windows['between_cases'], windows['unassigned'],
+                       *[case[phase] for case in windows['cases'] for phase in ('run', 'cleanup')]]:
+            self.assertEqual(audit['issues'][0]['fingerprint'], bucket['issues'][0]['fingerprint'])
+            finding = bucket['issues'][0]
+            self.assertIn('same engine failure', Path(finding['file']).read_text().splitlines()[finding['line'] - 1])
+        self.assertEqual('File-local', windows['interpretation'].split()[0])
+
+    def test_grouped_windows_do_not_change_verdict_comparison_or_total_audit(self):
+        toolkit = self.fixture('grouped-toolkit')
+        native = self.fixture('grouped-native', mode='native')
+        error = 'ERROR: General > shared startup failure\njava.lang.RuntimeException: shared cause\n'
+        markers = ('LOG: General > [QUEUE_SESSION] BEGIN case=bandageApply epoch=1 actor=client1\n'
+                   'LOG: General > [QUEUE_SESSION] START case=bandageApply epoch=1 actor=client1\n'
+                   'LOG: General > [QUEUE_SESSION] FINISH case=bandageApply epoch=1 actor=client1\n'
+                   'LOG: General > [QUEUE_SESSION] CLEANUP case=bandageApply epoch=1 actor=client1\n'
+                   'LOG: General > [QUEUE_SESSION] JOINT_CLEAN case=bandageApply epoch=1 actor=client1\n'
+                   'LOG: General > [QUEUE_SESSION] COMPLETE case=bandageApply epoch=1 actor=client1\n')
+        for root in (toolkit, native):
+            path = root / 'client1-launch.log'
+            path.write_text(error + path.read_text())
+        legacy_control = report.build_report(native, self.catalog)
+        legacy = report.build_report(toolkit, self.catalog, legacy_control)
+        self.assertNotIn('diagnostic_windows', legacy['runtime']['roles']['client1'])
+        for root in (toolkit, native):
+            with (root / 'client1-launch.log').open('a') as stream:
+                stream.write(markers)
+        control = report.build_report(native, self.catalog)
+        grouped = report.build_report(toolkit, self.catalog, control)
+        self.assertEqual(legacy['status'], grouped['status'])
+        self.assertEqual(legacy['runtime']['status'], grouped['runtime']['status'])
+        self.assertEqual(legacy['comparison'], grouped['comparison'])
+        self.assertEqual(legacy['runtime']['roles']['client1']['issues'], grouped['runtime']['roles']['client1']['issues'])
+        windows = grouped['runtime']['roles']['client1']['diagnostic_windows']
+        self.assertEqual(1, windows['startup']['error_count'])
+        self.assertEqual(0, windows['cases'][0]['run']['error_count'])
+        self.assertEqual(0, windows['cases'][0]['cleanup']['error_count'])
+        self.assertIn('bandageApply epoch=1 diagnostic errors: run=0, cleanup=0', report.summary(grouped))
+
+    def test_server_finish_receipts_and_quarantine_remain_diagnostic_cleanup(self):
+        root = self.fixture(kind='mp')
+        (root / 'server-launch.log').write_text(
+            'LOG: General > [QUEUE_SESSION] BEGIN case=first epoch=1 actor=server\n'
+            'LOG: General > [QUEUE_SESSION] START case=first epoch=1 actor=server\n'
+            'LOG: General > [QUEUE_SESSION] FINISH case=first epoch=1 actor=client1\n'
+            'ERROR: General > server cleanup failure\n'
+            'LOG: General > [QUEUE_SESSION] QUARANTINE case=first epoch=1 actor=server reason=cleanup\n'
+            'ERROR: General > uncertain cleanup failure\n')
+        audits = report.audit_logs(root, ['server', 'client1'])
+        windows = audits['server']['diagnostic_windows']
+        self.assertEqual(0, windows['cases'][0]['run']['error_count'])
+        self.assertEqual(2, windows['cases'][0]['cleanup']['error_count'])
+        self.assertNotIn('diagnostic_windows', audits['client1'])
+
 
 if __name__ == "__main__":
     unittest.main()

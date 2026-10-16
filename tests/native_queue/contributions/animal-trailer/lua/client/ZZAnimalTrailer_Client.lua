@@ -12,8 +12,7 @@ local function whereabouts(p,ids)
 end
 require 'TimedActions/Animals/ISRemoveAnimalFromTrailer'
 require 'ISUI/ISVehicleAnimalUI'
-local connecting,advanced,ingame,lastReady=false,false,false,0
-local fixture,index,phase,at=nil,1,'waiting',0
+local connecting,advanced,ingame=false,false,false
 local function log(s) print('[ANIMAL_TRAILER] CLIENT '..s) end
 Events.OnMainMenuEnter.Add(function()
  if connecting or isClient() or not cfg.connect then return end;connecting=true
@@ -30,16 +29,44 @@ Events.OnPreUIDraw.Add(function()
  end
 end)
 Events.OnGameStart.Add(function() ingame=true;log('INGAME '..getCore():getVersion());if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end end)
+local function createFixture(Session)
+local Events=Session and Session.events or Events
+local sendClientCommand=Session and function(module,command,args) Session.send(command,args) end or sendClientCommand
+local fixture,index,phase,at,lastReady=nil,1,'waiting',0,0
+local equipment=not Session or Session.case:find('equipment') or Session.case:find('combined')
+local ghost=not Session or Session.case=='ghost'
+local movement=Session and require 'QueueAnimalMovement'
+local reset,drainAt
+if Session then
+ assert(not getPlayer():getPrimaryHandItem() and not getPlayer():getSecondaryHandItem(),'session requires initially empty hands')
+ log('INGAME '..getCore():getVersion())
+end
+local function done()
+ if Session then
+  phase='returning';at=getTimestampMs();reset=movement.restore(Session,getPlayer(),fixture.origin)
+ else log('COMPLETE');phase='done';sendClientCommand('AnimalTrailerBaseline','Done',{}) end
+end
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='AnimalTrailerBaseline' then return end
  if command=='Fixture' and not fixture then fixture=args;at=getTimestampMs();log('FIXTURE '..args.vehicleId)
  elseif command=='Verified' then
   log('SERVER_RESULT index='..args.index..' count='..args.count..' animal='..args.animal)
   if index<=3 then local item=getPlayer():getPrimaryHandItem();if item then ISInventoryPaneContextMenu.onDropItems({item},0) end;phase='dropping';at=getTimestampMs()
-  else log('COMPLETE');sendClientCommand('AnimalTrailerBaseline','Done',{});phase='done' end
- elseif command=='DropVerified' then local v=getVehicleById(fixture.vehicleId);log('DROP_VERIFIED index='..args.index..' found='..tostring(args.found)..' handsEmpty='..tostring(args.handsEmpty)..' clientTrailer='..v:getAnimals():size());if index==3 then log('COMPLETE');sendClientCommand('AnimalTrailerBaseline','Done',{});phase='done' else index=index+1;if index==2 then sendClientCommand('AnimalTrailerBaseline','EquipWeapon',{});phase='weaponrequest' else phase='waiting' end;at=getTimestampMs() end
+  else done() end
+ elseif command=='DropVerified' then local v=getVehicleById(fixture.vehicleId);log('DROP_VERIFIED index='..args.index..' found='..tostring(args.found)..' handsEmpty='..tostring(args.handsEmpty)..' clientTrailer='..v:getAnimals():size());if index==3 then done() else index=index+1;if index==2 then sendClientCommand('AnimalTrailerBaseline','EquipWeapon',{});phase='weaponrequest' else phase='waiting' end;at=getTimestampMs() end
  elseif command=='WeaponReady' then fixture.weapon=args.id;phase='weaponwaiting';at=getTimestampMs()
  elseif command=='Cleared' then index=index+1;phase='waiting';at=getTimestampMs() end
+ if Session and (command=='ReturnIssued' or command=='PositionReset') then
+  if phase~='returning' then Session.quarantine('out-of-phase server position receipt');return end
+  local detail=movement.describe(getPlayer(),reset.origin)..' receipt='..tostring(args.x)..','..tostring(args.y)..','..tostring(args.z)
+  if getTimestampMs()-at>30000 then Session.quarantine('native position reset or server ACK deadline '..detail);return end
+  if command=='ReturnIssued' then
+   if not movement.issued(reset,args) then Session.quarantine('native return issue receipt mismatch '..detail) end
+  else
+   if not movement.at(getPlayer(),reset.origin) or not movement.confirm(reset,args) then Session.quarantine('server position reset receipt mismatch '..detail);return end
+   log('POSITION_RESET nativeTeleport=true serverAck=true '..detail);log('COMPLETE');phase='done';Session.finish(true)
+  end
+ end
 end)
 Events.OnTick.Add(function()
  if not ingame then return end
@@ -60,16 +87,60 @@ Events.OnTick.Add(function()
   local a;local ids={}
   for i=0,v:getAnimals():size()-1 do local x=v:getAnimals():get(i);ids[#ids+1]=x:getAnimalID()..'/'..x:getOnlineID();if x:getAnimalID()==fixture.ids[index] then a=x end end
   if not a then if now-at>15000 then log('MISSING index='..index..' ids='..table.concat(ids,','));phase='done' end;return end
-  local p=getPlayer();local entry=v:getAreaCenter('AnimalEntry')
-  p:setX(entry:getX()+1);p:setY(entry:getY()+1);p:setZ(v:getZ())
   log('QUEUE index='..index..' target='..a:getAnimalID()..' ids='..table.concat(ids,','))
-  if animalHandsRaceArm then log('ORDER_ARM '..animalHandsRaceArm(p)) end;ISVehicleAnimalUI.onGrabAnimal({character=p,vehicle=v},a);phase='acting';at=now
+  if equipment and animalHandsRaceArm then log('ORDER_ARM '..animalHandsRaceArm(p)) end;ISVehicleAnimalUI.onGrabAnimal({character=p,vehicle=v},a);phase='acting';at=now;drainAt=nil
  elseif phase=='dropping' and now-at>cfg.waitAfterDropMs then sendClientCommand('AnimalTrailerBaseline','VerifyDrop',{index=index});phase='dropverifying'
- elseif phase=='acting' and now-at>cfg.waitAfterGrabMs then
-  log('WHERE index='..index..' '..whereabouts(getPlayer(),fixture.ids));if animalHandsRaceStatus then log('ORDER_STATUS '..animalHandsRaceStatus());log('ORDER_RELEASE '..animalHandsRaceRelease()) end;local p=getPlayer();local item=p:getPrimaryHandItem();local a=item and item:getAnimal()
-  if index==1 and animalTrailerReplayProbe then log('REPLAY '..animalTrailerReplayProbe(p,v)) end
+ elseif phase=='acting' then
+  if #q.queue~=0 then drainAt=nil;return end
+  drainAt=drainAt or now
+  local status=equipment and animalHandsRaceStatus and animalHandsRaceStatus()
+  if status and not (status:find('armed=false pending=-1 ',1,true) and status:match(' releases=1 ') and status:match(' echoedAnimal=%d+ ')) then
+   if now-drainAt>15000 then
+    if Session then Session.quarantine('native equip echo/release deadline') else error('native equip echo/release deadline') end
+   end
+   return
+  end
+  -- Walking time cannot consume the post-action observation window.
+  if now-drainAt<=cfg.waitAfterGrabMs then return end
+  log('WHERE index='..index..' '..whereabouts(p,fixture.ids));if status then log('ORDER_STATUS '..status) end;local item=p:getPrimaryHandItem();local a=item and item:getAnimal()
+  if ghost and index==1 and animalTrailerReplayProbe then log('REPLAY '..animalTrailerReplayProbe(p,v)) end
   local remaining={};for i=0,v:getAnimals():size()-1 do local x=v:getAnimals():get(i);remaining[#remaining+1]=x:getAnimalID()..'/'..x:getOnlineID() end;log('REMAINING '..table.concat(remaining,','))
   log('AFTER index='..index..' count='..v:getAnimals():size()..' hand='..tostring(item)..' animal='..tostring(a and a:getAnimalID())..' queue='..#ISTimedActionQueue.getTimedActionQueue(p).queue)
   sendClientCommand('AnimalTrailerBaseline','Verify',{index=index});phase='verifying'
+ elseif phase=='returning' then
+  if now-at>30000 then Session.quarantine('native position reset or server ACK deadline '..movement.describe(p,reset.origin))
+  else movement.observe(reset,Session,p) end
  end
 end)
+
+if Session then
+ local lifecycle=require 'QueueAnimalOwnership'
+ Session.readyToClean=function()
+  if not reset or not reset.confirmed or not movement.at(getPlayer(),reset.origin) then return false end
+  if #ISTimedActionQueue.getTimedActionQueue(getPlayer()).queue~=0 then return false end
+  if equipment and animalHandsRaceStatus then
+   local status=animalHandsRaceStatus()
+   if not status:find('armed=false pending=-1',1,true) then return false end
+  end
+  return true
+ end
+ Session.cleanup=function()
+  if animalHandsRaceReset then assert(animalHandsRaceReset()=='clean','packet-order reset failed') end
+  if animalTimerReset then assert(animalTimerReset()=='clean','timer reset failed') end
+  local p=getPlayer();assert(not p:getPrimaryHandItem() and not p:getSecondaryHandItem(),'fixture hands retained items')
+  assert(reset and reset.arrived and reset.confirmed and movement.at(p,reset.origin),'fixture position reset failed')
+  _G.AnimalTraceLast=nil
+  log('PROBE_RESET clean=true')
+  return true
+ end
+ Session.clean=function(receipt)
+  local clean,reason=lifecycle.verify(receipt,getPlayer())
+  if clean then log('OWNED_RESET animals=3 items=4 trailer=1') end
+  return clean,reason
+ end
+end
+end
+if cfg.cases then
+ local session=require 'QueueAnimalLifecycle'
+ session.start(cfg,createFixture,false)
+else createFixture(nil) end

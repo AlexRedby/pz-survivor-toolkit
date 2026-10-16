@@ -11,7 +11,7 @@ def logs(missing=False, timer='shared'):
         server += f'SERVER VERIFY index={i} count={3 - i} hand={hand} animal={animal}\n'
         client += f'CLIENT AFTER index={i} count={3 - i} hand={hand} animal={animal} queue=0\n'
         client += f'RELEASE_AFTER item={i + 300} inventoryHas=true\nCLIENT ORDER_STATUS releases=1\n'
-        if i == 1: client += 'CLIENT REPLAY PASS baseline ghost reproduced; native repair\n'
+        if i == 1: client += 'CLIENT REPLAY PASS stale trailer snapshot reproduced; woven authoritative item snapshot repaired; hands, identities, neighbors and capacity preserved\n'
         for side in ['SERVER', 'CLIENT']:
             audit = f'{side} WHERE index={i} inventory={i + 300}/{i + 100} groundAlive= groundItems=\n'
             if side == 'SERVER': server += audit
@@ -65,6 +65,12 @@ class VerifyTests(unittest.TestCase):
         self.assertIn('PASS', verify(server, client, scenario='ghost'))
         with self.assertRaisesRegex(ValueError, 'decoder replay'):
             verify(server, client.replace('CLIENT REPLAY PASS', 'CLIENT REPLAY FAIL', 1), scenario='ghost')
+        for broken in (client.replace('stale trailer snapshot reproduced; woven authoritative item snapshot repaired; hands, identities, neighbors and capacity preserved',
+                                      'baseline ghost reproduced; native repair'),
+                       client.replace('capacity preserved', 'capacity changed'),
+                       client + 'CLIENT REPLAY PASS stale trailer snapshot reproduced; woven authoritative item snapshot repaired; hands, identities, neighbors and capacity preserved\n'):
+            with self.assertRaisesRegex(ValueError, 'decoder replay'):
+                verify(server, broken, scenario='ghost')
 
 
 if __name__ == '__main__':

@@ -39,8 +39,11 @@ def validate(selection):
         raise ValueError("Preserved crafting/wishlist fixtures require two-client MP")
     if selection.get("clients", 2) != 2:
         raise ValueError("Preserved crafting/wishlist fixtures require exactly two clients")
-    if len(selection["cases"]) != 1 or selection["cases"][0] not in COUNTS[suite]:
-        raise ValueError("Choose exactly one preserved scenario per isolated lifecycle")
+    cases = selection["cases"]
+    if not cases or len(cases) != len(set(cases)) or any(case not in COUNTS[suite] for case in cases):
+        raise ValueError("Choose a unique nonempty preserved scenario subset")
+    if suite == "shared-wishlist" and len(cases) > 1 and set(cases) != {"visual", "standalone"}:
+        raise ValueError("Wishlist full and reload require separate isolated lifecycles")
     if selection["ports"][1] != selection["ports"][0] + 1:
         raise ValueError("Preserved fixtures require an adjacent UDP port")
     case = selection["cases"][0]
@@ -75,7 +78,15 @@ def sources(project, selection):
         paths += [seed / name for name in ("selection.json", "runtime.json", "execution.json", "report.json", "source-manifest.json", "snapshot-hashes.json")]
         paths += [seed / (role + "-launch.log") for role in ("server", "client1", "client2")]
         paths += [path for path in state if path.is_file()]
+    if len(selection["cases"]) > 1:
+        paths += [Path(project) / "tests/native_queue/support" / name
+                  for name in ("QueueFixtureSession.lua", "QueueCraftSession.lua")]
     return paths
+
+
+def ordered_cases(selection):
+    order = ("ui", "crafting", "alternatives") if selection["suite"] == "crafting-plans" else ("visual", "standalone", "full", "reload")
+    return [case for case in order if case in selection["cases"]]
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
@@ -90,7 +101,9 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             raise ValueError("Wishlist full requires the selected BetterContainers/Proximity implementation")
     for role in runtime["roles"]:
         cache = Path(output) / role
-        args = [cache, role, selection["cases"][0], "127.0.0.1", selection["ports"][0], "smoke-local-only"]
+        cases = ordered_cases(selection)
+        chosen = cases if len(cases) > 1 else cases[0]
+        args = [cache, role, chosen, "127.0.0.1", selection["ports"][0], "smoke-local-only"]
         if selection["suite"] == "shared-wishlist":
             args.append(selection["mods"])
         namespace["prepare"](*args)
@@ -125,6 +138,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 "\nWishlistSeedRestore=function() Restore(input.world,input.slots) end\n", encoding="utf-8")
     runtime["fixture"] = {"mods": [HELPERS[selection["suite"]]], "server_ready": server_ready(selection),
                           "sandbox": server_settings(selection), "client_launch_stagger_seconds": 8,
+                          "session_cases": ordered_cases(selection),
                           "queue_control": "intrinsic toolkit operation API" if selection["suite"] == "crafting-plans" else "queue toggle if Toolkit is selected; standalone product otherwise"}
 
 
@@ -141,6 +155,8 @@ def marker(selection):
 
 
 def complete(selection, role, text):
+    if len(selection["cases"]) > 1:
+        return bool(re.search(r"\[QUEUE_SESSION\] (?:COMPLETE|QUARANTINE) [^\n]*actor=" + role + r"(?:\s|$)", text))
     # Completion ends the lifecycle; the verifier separately rejects partial/failed stages.
     return bool(re.search(r"\[" + marker(selection) + r"\] COMPLETE checks=\d+ failures=\d+(?:\s|$)", text))
 
@@ -180,9 +196,9 @@ def _client_issues(text, selection, role, case):
     return issues
 
 
-def _server_issues(text, selection, case):
+def _server_issues(text, selection, case, session=False):
     issues = []
-    if len(re.findall(re.escape(server_ready(selection)) + r"(?:\s|$)", text)) != 1:
+    if not session and len(re.findall(re.escape(server_ready(selection)) + r"(?:\s|$)", text)) != 1:
         issues.append("server: expected exactly one native readiness marker")
     required = []
     if selection["suite"] == "crafting-plans":
@@ -198,6 +214,13 @@ def _server_issues(text, selection, case):
         for role in ("client1", "client2"):
             if len(re.findall(r"\[WISHLIST_TEST\] SERVER_VERIFY " + role + r" ok=true(?:\s|$)", text)) != 1:
                 issues.append("server: missing, duplicate or failed wishlist authority receipt " + role)
+    if session:
+        observed = re.findall(r"\[(?:CRAFT_TEST|WISHLIST_TEST)\] (SERVER_[A-Z_]*VERIFY [^\r\n]*)", text)
+        expected = list(required)
+        if selection["suite"] == "shared-wishlist" and case in ("full", "standalone"):
+            expected += ["SERVER_VERIFY " + role + " ok=true" for role in ("client1", "client2")]
+        if sorted(observed) != sorted(expected):
+            issues.append("server: unknown, stale, duplicate or failed " + case + " authority receipt")
     if selection["suite"] == "shared-wishlist" and case == "reload":
         slots = re.findall(r"\[WISHLIST_TEST\] RESTORE slot=([ab]) chars=([1-9][0-9]*)(?:\s|$)", text)
         completed = re.findall(r"\[WISHLIST_TEST\] RESTORE_COMPLETE slots=([12])(?:\s|$)", text)
@@ -214,6 +237,8 @@ def _server_issues(text, selection, case):
 
 def verify(root, selection, catalog):
     root = Path(root)
+    if len(selection["cases"]) > 1:
+        return _verify_session(root, selection, catalog)
     case = selection["cases"][0]
     coverage = []
     specs = {row["id"]: row for row in catalog["suites"][selection["suite"]]["cases"]}
@@ -242,6 +267,88 @@ def verify(root, selection, catalog):
     return {"issues": issues, "outcomes": coverage, "evidence": evidence}
 
 
+def _session_case(text, case, epoch, role):
+    begin = r"\[QUEUE_SESSION\] BEGIN case=" + case + " epoch=" + str(epoch) + " actor=" + role + r"(?:\s|$)"
+    found = list(re.finditer(begin, text))
+    if len(found) != 1:
+        return "", [role + ": missing or duplicate session begin " + case]
+    tail = text[found[0].start():]
+    next_case = re.search(r"\[QUEUE_SESSION\] BEGIN ", tail[len(found[0].group()):])
+    if next_case:
+        tail = tail[:len(found[0].group()) + next_case.start()]
+    joint = re.search(r"\[QUEUE_SESSION\] JOINT_CLEAN case=" + case + " epoch=" + str(epoch) + " actor=" + role + r" ok=true(?:\s|$)", tail)
+    if joint:
+        tail = tail[:joint.end()]
+    return tail, []
+
+
+def _verify_session(root, selection, catalog):
+    cases = ordered_cases(selection)
+    logs = {role: (root / (role + "-launch.log")).read_text(errors="replace")
+            if (root / (role + "-launch.log")).is_file() else "" for role in ("server", "client1", "client2")}
+    issues, coverage = [], []
+    if len(re.findall(re.escape(server_ready(selection)) + r"(?:\s|$)", logs["server"])) != 1:
+        issues.append("server: expected exactly one native readiness marker")
+    global_issues = list(issues)
+    specs = {row["id"]: row for row in catalog["suites"][selection["suite"]]["cases"]}
+    for epoch, case in enumerate(cases, 1):
+        local_issues = []
+        for role in ("server", "client1", "client2"):
+            text, missing = _session_case(logs[role], case, epoch, role)
+            local_issues.extend(missing)
+            if missing:
+                continue
+            if role == "server":
+                local_issues.extend(_server_issues(text, selection, case, session=True))
+            else:
+                local_issues.extend(_client_issues(text, selection, role, case))
+            receipt = "case=" + case + " epoch=" + str(epoch) + " actor="
+            events = [("START", role), ("CLEANUP", role), ("JOINT_CLEAN", role)] if role == "server" else [
+                (event, role) for event in ("PREPARE", "START", "FINISH", "LOCAL_CLEAN", "CLEANUP", "JOINT_CLEAN")]
+            if role == "server":
+                events = [("PREPARE", actor) for actor in ("client1", "client2")] + events[:1] + [
+                    ("FINISH", actor) for actor in ("client1", "client2")] + events[1:2] + [
+                    ("CLEANUP", actor) for actor in ("client1", "client2")] + events[2:]
+            positions = {}
+            for event, actor in events:
+                suffix = " ok=true" if event in ("FINISH", "LOCAL_CLEAN", "CLEANUP", "JOINT_CLEAN") else ""
+                pattern = re.escape("[QUEUE_SESSION] " + event + " " + receipt + actor + suffix) + r"(?:\s|$)"
+                found = list(re.finditer(pattern, logs[role]))
+                local = list(re.finditer(pattern, text))
+                if len(found) != 1 or len(local) != 1:
+                    local_issues.append(role + ": missing, duplicate or failed " + case + " session " + event + " " + actor)
+                else:
+                    positions[(event, actor)] = local[0].start()
+            if len(positions) == len(events):
+                groups = [[positions[("START", role)]], [positions[("CLEANUP", role)]], [positions[("JOINT_CLEAN", role)]]]
+                if role == "server":
+                    groups = [[positions[("PREPARE", actor)] for actor in ("client1", "client2")], groups[0],
+                              [positions[("FINISH", actor)] for actor in ("client1", "client2")], groups[1],
+                              [positions[("CLEANUP", actor)] for actor in ("client1", "client2")], groups[2]]
+                else:
+                    groups = [[positions[event]] for event in events]
+                if any(max(before) >= min(after) for before, after in zip(groups, groups[1:])):
+                    local_issues.append(role + ": reordered " + case + " session lifecycle")
+            if "[QUEUE_SESSION] QUARANTINE " in text:
+                local_issues.append(role + ": quarantined " + case + " session")
+        for role in ("client1", "client2"):
+            failed = any(issue.startswith((role + ":", "server:")) for issue in [*global_issues, *local_issues])
+            spec = specs[case]
+            coverage.append({"suite": selection["suite"], "case": case, "producer": spec["producer"], "capability": spec["capability"],
+                             "kind": selection["kind"], "mode": selection["mode"], "actor": role, "status": "failed" if failed else "passed",
+                             "outcome": {"preserved_stages": COUNTS[selection["suite"]][case]}})
+        issues.extend(local_issues)
+    for role, text in logs.items():
+        if len(re.findall(r"\[QUEUE_SESSION\] COMPLETE case=" + cases[-1] + " epoch=" + str(len(cases)) +
+                          " actor=" + role + " cases=" + str(len(cases)) + r"(?:\s|$)", text)) != 1:
+            issues.append(role + ": session did not complete all selected cases")
+    coverage.sort(key=lambda row: (row["actor"], selection["cases"].index(row["case"])))
+    return {"issues": issues, "outcomes": coverage,
+            "evidence": {"preserved_stages_per_client": sum(COUNTS[selection["suite"]][case] for case in cases),
+                         "session_cases": cases, "source": "tests/native_queue/contributions/" + selection["suite"],
+                         "visual_review": "Screenshots must be inspected separately; callback success does not certify pixels."}}
+
+
 def _store_prefix(cache, name):
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name in (".", ".."):
         raise ValueError("Invalid wishlist seed server name")
@@ -268,7 +375,8 @@ def _seed(selection):
     audit_roles = audit.get("roles", {})
     pending = report.get("status") == "needs-review" and audit.get("status") == "unclassified-errors"
     accepted = report.get("status") == "passed" and audit.get("status") in ("clean", "background-only")
-    if (initial.get("suite") != "shared-wishlist" or initial.get("cases") not in (["full"], ["standalone"])
+    grouped = initial.get("cases") in (["visual", "standalone"], ["standalone", "visual"])
+    if (initial.get("suite") != "shared-wishlist" or (initial.get("cases") not in (["full"], ["standalone"]) and not grouped)
             or execution.get("status") != "completed" or not (accepted or pending)
             or audit.get("microphone") is not False or set(audit_roles) != {"server", "client1", "client2"}
             or any(not isinstance(row, dict) or row.get("available") is not True for row in audit_roles.values())
@@ -279,6 +387,10 @@ def _seed(selection):
     from ..report import verify_manifest, audit_logs
     if verify_manifest(root, "source-manifest.json", True) or verify_manifest(root, "snapshot-hashes.json"):
         raise ValueError("Wishlist seed source/snapshot evidence has changed")
+    if grouped:
+        issues = _verify_session(root, initial, {"suites": definitions()})["issues"]
+        if issues:
+            raise ValueError("Wishlist seed native assertions are incomplete: " + "; ".join(issues))
     # Runtime logs remain writable after report.json; a stale green report is not a safe seed.
     fresh = audit_logs(root, ("server", "client1", "client2"))
     if any(not row["available"] or row["microphone"] or row["fatal_count"] or
@@ -292,7 +404,7 @@ def _seed(selection):
         if not log.is_file():
             raise ValueError("Wishlist seed native logs are missing")
         text = log.read_text(errors="replace")
-        issues = _server_issues(text, initial, initial_case) if role == "server" else _client_issues(text, initial, role, initial_case)
+        issues = [] if grouped else (_server_issues(text, initial, initial_case) if role == "server" else _client_issues(text, initial, role, initial_case))
         if issues:
             raise ValueError("Wishlist seed native assertions are incomplete: " + "; ".join(issues))
     state = []

@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import subprocess
 
-from queue_checks import native, report, runner, adapters, admission
+from queue_checks import native, report, runner, adapters, worlds, pack, admission
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
@@ -17,6 +17,8 @@ def selection(args, catalog, options=None):
     if suite["status"] != "ready":
         raise ValueError("Suite has not been migrated: " + args.suite)
     all_cases = {case["id"]: case for case in suite["cases"]}
+    if args.cases == '':
+        raise ValueError('--cases requires at least one case ID')
     kind = args.kind or suite['cases'][0]['kinds'][0]
     cases = args.cases.split(",") if args.cases else ([suite['cases'][0]['id']] if args.suite != 'health' else [case['id'] for case in suite['cases'] if kind in case['kinds']])
     if not cases or len(cases) != len(set(cases)) or any(identifier not in all_cases for identifier in cases):
@@ -31,6 +33,11 @@ def selection(args, catalog, options=None):
     options = (report.read_json(args.config) if args.config else {}) if options is None else options
     if not isinstance(options, dict):
         raise ValueError('--config must contain a JSON object of suite options')
+    if getattr(args, 'pack_lock', None):
+        options['pack_lock'] = str(args.pack_lock.resolve())
+    if options.get('pack_lock') and not args.mods:
+        locked = report.read_json(options['pack_lock'])
+        mods = [row['id'] for row in locked['mods']]
     overrides = dict(options.get('mod_sources', {}))
     for value in args.mod_source:
         identifier, separator, path = value.partition('=')
@@ -39,6 +46,8 @@ def selection(args, catalog, options=None):
         overrides[identifier] = path
     if overrides:
         options['mod_sources'] = overrides
+    if getattr(args, 'world_template', None):
+        options['world_template'] = str(args.world_template.resolve())
     for identifier in cases:
         if kind not in all_cases[identifier]['kinds'] or args.mode not in all_cases[identifier].get('modes', ['toolkit', 'native']):
             raise ValueError('Unsupported kind/mode for ' + identifier)
@@ -61,14 +70,57 @@ def save_report(output, catalog, control=None):
     return value
 
 
-def batch(args, catalog):
-    plan = report.read_json(args.plan)
+def selected_jobs(plan, only=None, sets=(), skip=None):
     jobs = plan.get('jobs') if isinstance(plan, dict) else None
     if not isinstance(jobs, list) or not jobs or any(not isinstance(job, dict) for job in jobs):
         raise ValueError('Batch plan requires a nonempty jobs list')
     identifiers = [job.get('id') for job in jobs]
     if any(not isinstance(id, str) or not native.MOD_ID.fullmatch(id) or id in ('.', '..') for id in identifiers) or len(set(identifiers)) != len(jobs):
         raise ValueError('Batch job IDs must be unique safe directory names')
+    by_id = {job['id']: job for job in jobs}
+    groups = plan.get('sets', {})
+    if not isinstance(groups, dict) or any(not isinstance(v, list) or not v or any(id not in by_id for id in v) for v in groups.values()):
+        raise ValueError('Batch sets must contain nonempty lists of known job IDs')
+    if only == '':
+        raise ValueError('--jobs requires at least one job ID')
+    wanted = set(only.split(',')) if only else set()
+    for name in sets:
+        if name not in groups:
+            raise ValueError('Unknown test set: ' + name)
+        wanted.update(groups[name])
+    if not only and not sets:
+        wanted.update(identifiers)
+    excluded = set(skip.split(',')) if skip else set()
+    if (wanted | excluded) - by_id.keys():
+        raise ValueError('Unknown job IDs: ' + ', '.join(sorted((wanted | excluded) - by_id.keys())))
+    wanted -= excluded
+    def include(id, trail):
+        if id in trail:
+            raise ValueError('Cyclic job dependency: ' + id)
+        if id not in by_id or id in excluded:
+            raise ValueError('Missing or disabled job dependency: ' + id)
+        for key in ('control_job', 'seed_job'):
+            if by_id[id].get(key):
+                include(by_id[id][key], trail | {id})
+        wanted.add(id)
+    for id in list(wanted):
+        include(id, set())
+    selected = [job for job in jobs if job['id'] in wanted]
+    seen = set()
+    for job in selected:
+        for key in ('control_job', 'seed_job'):
+            if job.get(key) and job[key] not in seen:
+                raise ValueError('Dependencies must precede job: ' + job['id'])
+        seen.add(job['id'])
+    if not selected:
+        raise ValueError('No test jobs selected')
+    return selected
+
+
+def batch(args, catalog):
+    plan = report.read_json(args.plan)
+    jobs = selected_jobs(plan, getattr(args, 'jobs', None), getattr(args, 'sets', ()), getattr(args, 'skip_jobs', None))
+    identifiers = [job['id'] for job in jobs]
     if args.output.exists():
         raise FileExistsError('Fresh batch output directory required')
     args.output.mkdir(parents=True)
@@ -82,10 +134,13 @@ def batch(args, catalog):
             options = dict(plan.get('options', {}), **job.get('options', {}))
             if job.get('seed_job'):
                 options['seed_run'] = str(completed[job['seed_job']])
+            mods = job.get('mods', plan.get('mods'))
+            if mods is not None and mods != 'selected' and (not isinstance(mods, list) or any(not isinstance(id, str) for id in mods)):
+                raise ValueError('Batch mods must be a list of Mod IDs or selected')
             if not isinstance(plan.get('resources', {}), dict) or not isinstance(job.get('resources', {}), dict):
                 raise ValueError('Batch resources must be objects')
             namespace = argparse.Namespace(suite=job['suite'], cases=job.get('case'), mode=job.get('mode', 'toolkit'),
-                kind=job.get('kind'), language=job.get('language'), mods=','.join(job['mods']) if job.get('mods') else None,
+                kind=job.get('kind'), language=job.get('language'), mods='selected' if mods == 'selected' else ','.join(mods) if mods else None,
                 config=args.plan, mod_source=[], timeout=job.get('timeout', 900), ports=job.get('ports'),
                 resources=dict(plan.get('resources', {}), **job.get('resources', {})))
             selected = selection(namespace, catalog, options)
@@ -119,10 +174,12 @@ def main(argv=None):
         command.add_argument("--suite", default="health")
         command.add_argument("--kind", choices=("sp", "mp"))
         command.add_argument("--mode", choices=("toolkit", "native"), default="toolkit")
-        command.add_argument("--cases", help="Comma-separated case IDs; omitted means all cases for kind")
+        command.add_argument("--cases", help="Comma-separated case IDs; omitted uses the suite default (all health cases for kind)")
         command.add_argument("--mods", help="Comma-separated Mod IDs, or selected for project INI; omitted uses suite defaults")
         command.add_argument('--config', type=Path, help='JSON suite options with explicit dependency paths')
         command.add_argument('--mod-source', action='append', default=[], help='Explicit candidate MOD_ID=/absolute/mod/root; repeatable')
+        command.add_argument('--world-template', type=Path, help='Copy a sealed prepared world into this fresh run; never launch the template itself')
+        command.add_argument('--pack-lock', type=Path, help='Use the exact selected pack; reject missing or changed inputs before launch')
         command.add_argument("--language", choices=("EN", "RU"))
         command.add_argument("--game", type=Path, required=True, help="Directory containing projectzomboid.jar")
         command.add_argument("--jdk", type=Path, required=True)
@@ -149,10 +206,35 @@ def main(argv=None):
     command = commands.add_parser('batch', help='Run an explicit stand plan sequentially with fresh profiles and a combined report')
     command.add_argument('plan', type=Path)
     command.add_argument('output', type=Path)
+    command.add_argument('--jobs', help='Run only these comma-separated job IDs and their control/seed dependencies')
+    command.add_argument('--set', dest='sets', action='append', default=[], help='Run a named set from the plan; repeatable')
+    command.add_argument('--skip-jobs', help='Disable comma-separated jobs; required dependencies cannot be disabled')
+    command = commands.add_parser('lock-pack', help='Resolve and hash the actual SurvivorQoL-selected.ini pack without launching the game')
+    command.add_argument('output', type=Path)
+    command.add_argument('--game', type=Path, required=True)
+    command.add_argument('--workshop', action='append', type=Path, default=[])
+    command.add_argument('--mod-source', action='append', default=[])
+    command = commands.add_parser('save-world', help='Export Saves/db from a completed, stopped disposable run as a sealed reusable template')
+    command.add_argument('run', type=Path)
+    command.add_argument('output', type=Path)
     args = parser.parse_args(argv)
     try:
         catalog = report.read_json(CATALOG)
         catalog['suites'].update(adapters.definitions())
+        if args.command == 'lock-pack':
+            overrides = {}
+            for argument in args.mod_source:
+                id, separator, path = argument.partition('=')
+                if not separator or not Path(path).is_absolute():
+                    raise ValueError('--mod-source requires MOD_ID=/absolute/mod/root')
+                overrides[id] = path
+            value = pack.create(ROOT, args.output, args.game, args.workshop, overrides)
+            print('Locked ' + str(len(value['mods'])) + ' ordered Mod IDs: ' + str(args.output.resolve()))
+            return 0
+        if args.command == 'save-world':
+            value = worlds.export(args.run, args.output)
+            print('Saved world template: ' + str(args.output.resolve()) + ' (' + str(len(value['files'])) + ' files)')
+            return 0
         if args.command == 'batch':
             return batch(args, catalog)
         if args.command == "matrix":

@@ -45,7 +45,7 @@ def verify(server, client, scenario='combined', timer='shared', hands='held'):
     if scenario in ('equipment', 'combined'):
         require(len(re.findall(r'CLIENT ORDER_STATUS[^\n]*releases=1\b', client)) == 3 and len(re.findall(r'RELEASE_AFTER item=\d+ inventoryHas=true', client)) == 3, 'Delivery-order probe did not release all grants before assertions')
     if scenario == 'ghost':
-        require(len(re.findall('CLIENT REPLAY PASS baseline ghost reproduced;', client)) == 1, 'Missing decoder replay and repair proof')
+        require(len(re.findall('CLIENT REPLAY PASS stale trailer snapshot reproduced; woven authoritative item snapshot repaired; hands, identities, neighbors and capacity preserved', client)) == 1, 'Missing decoder replay and repair proof')
     if scenario in ('timer', 'combined'):
         match = re.search(r'SERVER TIMER periodicSendCounts=\{([^}]+)\}', server)
         require(match is not None, 'Missing direct periodic-send observation')
