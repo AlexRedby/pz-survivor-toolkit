@@ -79,6 +79,8 @@ def selected_jobs(plan, only=None, sets=(), skip=None):
     groups = plan.get('sets', {})
     if not isinstance(groups, dict) or any(not isinstance(v, list) or not v or any(id not in by_id for id in v) for v in groups.values()):
         raise ValueError('Batch sets must contain nonempty lists of known job IDs')
+    if only == '':
+        raise ValueError('--jobs requires at least one job ID')
     wanted = set(only.split(',')) if only else set()
     for name in sets:
         if name not in groups:

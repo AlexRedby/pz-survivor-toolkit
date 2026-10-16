@@ -113,6 +113,14 @@ class BatchTests(unittest.TestCase):
                 self.invoke()
             self.assertFalse(self.args.output.exists())
 
+    def test_explicit_empty_jobs_never_broadens_to_the_full_plan(self):
+        self.write_plan([{'id': 'wanted', 'suite': 'item-tags'}, {'id': 'unrelated', 'suite': 'video-recording'}])
+        self.args.jobs = ''
+        with self.assertRaisesRegex(ValueError, '--jobs requires'):
+            self.invoke()
+        self.assertEqual([], self.calls)
+        self.assertFalse(self.args.output.exists())
+
     def test_selected_set_includes_only_its_control_and_seed_dependencies(self):
         jobs = [{'id': 'control', 'suite': 'shared-wishlist'},
                 {'id': 'seed', 'suite': 'shared-wishlist', 'control_job': 'control'},
