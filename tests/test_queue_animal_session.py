@@ -8,6 +8,90 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AnimalSessionTests(unittest.TestCase):
+    def test_actual_grab_callback_waits_after_native_drain_for_echo_and_never_manually_releases(self):
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if not lua:
+            self.skipTest('Lua interpreter unavailable')
+        code = r'''
+local source=arg[1]
+local function list(values)return {size=function()return #values end,get=function(self,i)return values[i+1]end}end
+local function run(timeout,missingHands)
+ local now,armed,grabbed,verified,quarantined=0,0,0,0,0
+ local logs,globalEvents,callbacks={}, {}, {}
+ local function events(target)return setmetatable({},{__index=function(self,name)
+  local event={Add=function(fn)target[name]=fn end};self[name]=event;return event
+ end})end
+ Events=events(globalEvents);AnimalTraceLast=nil
+ AnimalTrailerFixtureConfig={cases={'equipment-fixed'},waitBeforeGrabMs=5,waitAfterGrabMs=9000}
+ local animals={};for i=1,3 do local id=i;animals[i]={getAnimalID=function()return 100+id end,getOnlineID=function()return 200+id end}end
+ local vehicle={getAnimals=function()return list(animals)end}
+ local inventory,hand={},nil
+ local square={getX=function()return 1 end,getY=function()return 2 end}
+ local player={getPrimaryHandItem=function()return hand end,getSecondaryHandItem=function()return hand end,
+  getInventory=function()return {getItems=function()return list(inventory)end}end,getSquare=function()return square end}
+ local queue={queue={}}
+ function getTimestampMs()return now end
+ function getPlayer()return player end
+ function getCore()return {getVersion=function()return '42.21.0'end}end
+ function getVehicleById(id)assert(id==7);return vehicle end
+ function getSquare()return nil end
+ function instanceof(item,kind)return kind=='AnimalInventoryItem' and item.animal~=nil end
+ function print(text)logs[#logs+1]=text end
+ local status='armed=true pending=301 wireAnimal=-1 echoedAnimal=-1 releases=0 player=0 primary=-1 secondary=-1'
+ function animalHandsRaceArm(owner)assert(owner==player);armed=armed+1;return 'armed'end
+ function animalHandsRaceStatus()return status end
+ function animalHandsRaceRelease()error('terminal observation must never force a grant release')end
+ ISTimedActionQueue={getTimedActionQueue=function(owner)assert(owner==player);return queue end}
+ ISVehicleAnimalUI={onGrabAnimal=function(ui,animal)
+  assert(ui.character==player and ui.vehicle==vehicle and animal==animals[1]);grabbed=grabbed+1
+  queue.queue={{Type='ISWalkToTimedAction'}}
+ end}
+ local context={case='equipment-fixed',events=events(callbacks),send=function(command,args)
+  assert(command=='Verify' and args.index==1);verified=verified+1
+ end,quarantine=function(reason)assert(reason=='native equip echo/release deadline');quarantined=quarantined+1 end}
+ package.preload['TimedActions/Animals/ISRemoveAnimalFromTrailer']=function()return true end
+ package.preload['ISUI/ISVehicleAnimalUI']=function()return true end
+ package.preload.QueueAnimalMovement=function()return {}end
+ package.preload.QueueAnimalOwnership=function()return {}end
+ package.loaded.QueueAnimalLifecycle=nil
+ package.preload.QueueAnimalLifecycle=function()return {start=function(cfg,factory,server)assert(not server);factory(context)end}end
+ dofile(source);globalEvents.OnGameStart()
+ callbacks.OnServerCommand('AnimalTrailerBaseline','Fixture',{vehicleId=7,ids={101,102,103}})
+ now=6;callbacks.OnTick();assert(armed==1 and grabbed==1 and verified==0)
+ now=20000;callbacks.OnTick();assert(verified==0,'native walking must not consume a drain deadline')
+ queue.queue={};now=20001;callbacks.OnTick();assert(verified==0 and quarantined==0)
+ local function auditCount()
+  local count=0;for _,line in ipairs(logs)do if line:find('CLIENT WHERE',1,true) or line:find('CLIENT AFTER',1,true) or line:find('CLIENT ORDER_STATUS',1,true) then count=count+1 end end
+  return count
+ end
+ assert(auditCount()==0,'pending echo must have no terminal audit')
+ if timeout then
+  now=35002;callbacks.OnTick()
+  assert(quarantined==1 and verified==0 and auditCount()==0,'one later callback must enforce elapsed deadline without frame counting')
+  return
+ end
+ status='armed=false pending=-1 wireAnimal=-1 echoedAnimal=-1 releases=1 player=0 primary=-1 secondary=-1'
+ now=20050;callbacks.OnTick();assert(verified==0 and auditCount()==0,'a release without the actual echo identity must not pass')
+ local animal={getAnimalID=function()return 101 end}
+ local item={animal=animal,getAnimal=function()return animal end,getID=function()return 301 end,getFullType=function()return 'Base.Animal'end}
+ inventory={item};if not missingHands then hand=item end;table.remove(animals,1)
+ -- A later unrelated Equip may reset wireAnimal; echoedAnimal remains the proof from the actual release.
+ status='armed=false pending=-1 wireAnimal=-1 echoedAnimal=301 releases=1 player=0 primary='..(missingHands and '-1 secondary=-1' or '301 secondary=301')
+ now=20100;callbacks.OnTick();assert(verified==0 and auditCount()==0)
+ now=29001;callbacks.OnTick();assert(verified==0 and auditCount()==0,'full configured wait must follow actual drain')
+ now=29002;callbacks.OnTick();assert(verified==1 and auditCount()==3 and quarantined==0)
+ assert(table.concat(logs,'\n'):find('WHERE index=1 inventory=301/101 groundAlive= groundItems=',1,true))
+ assert(table.concat(logs,'\n'):find('AFTER index=1 count=2 hand='..(missingHands and 'nil animal=nil' or tostring(item)..' animal=101')..' queue=0',1,true),
+  'negative missing-hands control must retain real empty hands and the exact inventory identity')
+ now=50000;callbacks.OnTick();assert(verified==1,'terminal audit and verification must occur once')
+end
+run(false,false);run(false,true);run(true,false)
+io.write('PASS actual waiting/drain/echo/audit callback, empty-hands control, elapsed timeout and no manual release\n')
+'''
+        result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/client/ZZAnimalTrailer_Client.lua')],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
     def test_reset_uses_native_path_then_requires_actual_server_position_receipt(self):
         lua = shutil.which('luajit') or shutil.which('lua')
         if not lua:

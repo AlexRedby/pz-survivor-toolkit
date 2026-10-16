@@ -36,7 +36,7 @@ local fixture,index,phase,at,lastReady=nil,1,'waiting',0,0
 local equipment=not Session or Session.case:find('equipment') or Session.case:find('combined')
 local ghost=not Session or Session.case=='ghost'
 local movement=Session and require 'QueueAnimalMovement'
-local reset
+local reset,drainAt
 if Session then
  assert(not getPlayer():getPrimaryHandItem() and not getPlayer():getSecondaryHandItem(),'session requires initially empty hands')
  log('INGAME '..getCore():getVersion())
@@ -81,10 +81,21 @@ Events.OnTick.Add(function()
   for i=0,v:getAnimals():size()-1 do local x=v:getAnimals():get(i);ids[#ids+1]=x:getAnimalID()..'/'..x:getOnlineID();if x:getAnimalID()==fixture.ids[index] then a=x end end
   if not a then if now-at>15000 then log('MISSING index='..index..' ids='..table.concat(ids,','));phase='done' end;return end
   log('QUEUE index='..index..' target='..a:getAnimalID()..' ids='..table.concat(ids,','))
-  if equipment and animalHandsRaceArm then log('ORDER_ARM '..animalHandsRaceArm(p)) end;ISVehicleAnimalUI.onGrabAnimal({character=p,vehicle=v},a);phase='acting';at=now
+  if equipment and animalHandsRaceArm then log('ORDER_ARM '..animalHandsRaceArm(p)) end;ISVehicleAnimalUI.onGrabAnimal({character=p,vehicle=v},a);phase='acting';at=now;drainAt=nil
  elseif phase=='dropping' and now-at>cfg.waitAfterDropMs then sendClientCommand('AnimalTrailerBaseline','VerifyDrop',{index=index});phase='dropverifying'
- elseif phase=='acting' and now-at>cfg.waitAfterGrabMs and #q.queue==0 then
-  log('WHERE index='..index..' '..whereabouts(getPlayer(),fixture.ids));if equipment and animalHandsRaceStatus then log('ORDER_STATUS '..animalHandsRaceStatus());log('ORDER_RELEASE '..animalHandsRaceRelease()) end;local p=getPlayer();local item=p:getPrimaryHandItem();local a=item and item:getAnimal()
+ elseif phase=='acting' then
+  if #q.queue~=0 then drainAt=nil;return end
+  drainAt=drainAt or now
+  local status=equipment and animalHandsRaceStatus and animalHandsRaceStatus()
+  if status and not (status:find('armed=false pending=-1 ',1,true) and status:match(' releases=1 ') and status:match(' echoedAnimal=%d+ ')) then
+   if now-drainAt>15000 then
+    if Session then Session.quarantine('native equip echo/release deadline') else error('native equip echo/release deadline') end
+   end
+   return
+  end
+  -- Walking time cannot consume the post-action observation window.
+  if now-drainAt<=cfg.waitAfterGrabMs then return end
+  log('WHERE index='..index..' '..whereabouts(p,fixture.ids));if status then log('ORDER_STATUS '..status) end;local item=p:getPrimaryHandItem();local a=item and item:getAnimal()
   if ghost and index==1 and animalTrailerReplayProbe then log('REPLAY '..animalTrailerReplayProbe(p,v)) end
   local remaining={};for i=0,v:getAnimals():size()-1 do local x=v:getAnimals():get(i);remaining[#remaining+1]=x:getAnimalID()..'/'..x:getOnlineID() end;log('REMAINING '..table.concat(remaining,','))
   log('AFTER index='..index..' count='..v:getAnimals():size()..' hand='..tostring(item)..' animal='..tostring(a and a:getAnimalID())..' queue='..#ISTimedActionQueue.getTimedActionQueue(p).queue)
