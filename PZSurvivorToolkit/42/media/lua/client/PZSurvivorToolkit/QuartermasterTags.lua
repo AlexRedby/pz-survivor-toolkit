@@ -28,15 +28,11 @@ local function state(picker, row)
     for _, category in ipairs(row.categories) do
         if picker.selectedCats[category] then checked = checked + 1 end
     end
-    for _, name in ipairs(row.items or {}) do
-        if picker.selectedItems[name] then checked = checked + 1 end
-    end
-    return checked, #row.categories + #(row.items or {})
+    return checked, #row.categories
 end
 
 local function selectRow(picker, row, selected)
     for _, category in ipairs(row.categories) do picker.selectedCats[category] = selected or nil end
-    for _, name in ipairs(row.items or {}) do picker.selectedItems[name] = selected or nil end
     picker.needRebuild = true
 end
 
@@ -51,19 +47,14 @@ local function openRule(picker, rule, onApply)
 end
 
 local function tagRows(categoryList, catalog)
-    local rows, byTag, groups, names = {}, {}, {}, {}
+    local rows, byTag, groups = {}, {}, {}
     for _, script in ipairs(catalog) do
-        local category, name = script:getDisplayCategory(), script:getDisplayName()
-        if name then name = tostring(name) end
-        local entry = {name = name, tags = {}}
+        local category = script:getDisplayCategory()
+        local entry = {tags = {}}
         for _, id in ipairs(Tags.forScriptItem(script)) do entry.tags[id] = true end
         if category then
             groups[category] = groups[category] or {}
             groups[category][#groups[category] + 1] = entry
-        end
-        if name and name ~= "" then
-            names[name] = names[name] or {}
-            names[name][#names[name] + 1] = entry
         end
     end
     for _, category in ipairs(categoryList) do
@@ -79,7 +70,7 @@ local function tagRows(categoryList, catalog)
             if not row then
                 row = {tag = not exact and id or nil, key = exact and category or nil,
                     label = exact and (getTextOrNull("IGUI_ItemCat_" .. category) or category) or Tags.label(id),
-                    categories = {}, items = {}, sourceCategories = {}, toolkitTagRow = true}
+                    categories = {}, sourceCategories = {}, toolkitTagRow = true}
                 byTag[id], rows[#rows + 1] = row, row
             end
             row.sourceCategories[#row.sourceCategories + 1] = category
@@ -88,20 +79,8 @@ local function tagRows(categoryList, catalog)
             if not members or matches == #members then
                 row.categories[#row.categories + 1] = category
             else
-                for _, entry in ipairs(members) do
-                    if entry.tags[id] then
-                        local safe = entry.name and entry.name ~= ""
-                        for _, other in ipairs(names[entry.name] or {}) do
-                            if not other.tags[id] then safe = false end
-                        end
-                        if safe then
-                            row.itemSet = row.itemSet or {}
-                            if not row.itemSet[entry.name] then
-                                row.items[#row.items + 1], row.itemSet[entry.name] = entry.name, true
-                            end
-                        else row.requiresRule = true end
-                    end
-                end
+                -- Native specific-item keys are localized names; item refinements need a stable tag rule.
+                row.requiresRule = true
             end
         end
     end
@@ -225,7 +204,6 @@ function Adapter.attach(picker)
     picker.rebuild = function(self)
         if not tagView(self) then return original.rebuild(self) end
         local rows = tagRows(self:activeList(), Rules.scriptItems())
-        self.toolkitTagRows = rows
         table.sort(rows, function(a, b) return a.label < b.label end)
         local filter = string.lower(self:currentFilter())
         local contents = self.onlyContents and self:contentsSet() or nil
@@ -344,18 +322,6 @@ function Adapter.attach(picker)
             return
         end
         for _, row in ipairs(target.listbox.items) do selectRow(target, row.item, true) end
-    end
-    local clear = picker.btnClear and picker.btnClear.onclick
-    if clear then
-        picker.btnClear.onclick = function(target, ...)
-            if tagView(target) then
-                for _, row in ipairs(target.toolkitTagRows or {}) do
-                    for _, name in ipairs(row.items) do target.selectedItems[name] = nil end
-                end
-                target.needRebuild = true
-            end
-            return clear(target, ...)
-        end
     end
     picker.needRebuild = true
     picker:layout(); picker:rebuild()

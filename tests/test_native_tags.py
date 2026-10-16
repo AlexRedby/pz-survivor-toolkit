@@ -177,19 +177,27 @@ class PlantingChecks(unittest.TestCase):
                 return {registered=false,getIsVisible=function() return true end,
                     isReallyVisible=function(self) return self.registered end}
             end
-            applied,saved,now,traces=0,0,3000,{}
+            applied,saved,now,traces,rowOpens,buttonOpens=0,0,3000,{},0,0
             user='client1';batteryCategory='BatteryCategory'
             getTimestampMs=function() return now end
             json={encode=function(value) traces[#traces+1]=value;return '{}' end};print=function() end
             LootSorter={openPicker=function()
                 local owner=panel();LootSorter._picker=owner
                 owner.selectedCats={toolElectrical=true,craftingElectrical_material=true,BatteryCategory=true}
-                owner.toolkitTagRuleButton={onclick=function()
+                owner.selectedItems={['Manual item']=true}
+                local function openEditor()
                     local editor=panel();owner.toolkitRulePicker=editor;editor.owner=owner
                     editor.applyButton={onclick=function()
                         assert(owner.registered and editor.registered and not owner.removed and not editor.removed)
                         applied=applied+1;owner.toolkitTagRule=editor.draft
                     end}
+                end
+                local seedRow={tag='seed',requiresRule=true,label='Localized seed label'}
+                owner.listbox={items={{item={tag='food',label='Food'}},{item=seedRow}},onmousedown=function(target,row)
+                    assert(target==owner and row==seedRow);rowOpens=rowOpens+1;openEditor()
+                end}
+                owner.toolkitTagRuleButton={onclick=function(target)
+                    assert(target==owner);buttonOpens=buttonOpens+1;openEditor()
                 end}
                 owner.btnSave={onclick=function() saved=saved+1 end}
             end}
@@ -203,6 +211,8 @@ class PlantingChecks(unittest.TestCase):
         opened, apply = lua.execute(source[start:finish] + '\nreturn openPlantingRule,applyPlantingRule')
         for index, phase in enumerate(('seed', 'exclude', 'restored')):
             opened(phase)
+            self.assertEqual(lua.globals().rowOpens, 1)
+            self.assertEqual(lua.globals().buttonOpens, index)
             self.assertEqual(lua.globals().applied, index)
             self.assertFalse(apply(phase))
             lua.execute('assert(not picker.registered and not rulePicker.registered);picker.registered=true')
@@ -215,7 +225,17 @@ class PlantingChecks(unittest.TestCase):
             self.assertTrue(apply(phase))
             self.assertEqual(lua.globals().applied, index + 1)
             self.assertEqual(lua.globals().saved, index + 1)
-            lua.execute('now=now+3000')
+            lua.execute('''
+                local categories=0
+                for key,value in pairs(picker.selectedCats) do
+                    assert(value and (key=='toolElectrical' or key=='craftingElectrical_material' or key=='BatteryCategory'))
+                    categories=categories+1
+                end
+                local items=0
+                for key,value in pairs(picker.selectedItems) do assert(key=='Manual item' and value);items=items+1 end
+                assert(categories==3 and items==1)
+                now=now+3000
+            ''')
         self.assertEqual(len(lua.globals().traces), 3)
 
 

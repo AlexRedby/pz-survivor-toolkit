@@ -13,7 +13,7 @@ Version labels come from committed component metadata, including changes made wi
 ### 0.1.56
 
 - **Fixed:** Planting inputs such as sunflower seeds, potatoes and herbs gain Farming/Seed tags while preserving their food/medical roles; empty seed packets keep Farming without Seed. Roles come from native crop definitions and seed-packet recipes.
-- **Fixed:** Inventory filters, previews and Quartermaster tag rules match individual items, including mixed-category stacks; unrelated items sharing a category or display name are not included. Manual Quartermaster category/item selections remain additive.
+- **Fixed:** Inventory filters, previews and Quartermaster tag rules match individual items, including mixed-category stacks; unrelated items sharing a category or display name are not included. Partial-category tag selections use stable rules across UI languages; manual Quartermaster category/item selections remain additive.
 
 ### [0.1.55](https://github.com/AlexRedby/pz-survivor-toolkit/commit/7755743)
 

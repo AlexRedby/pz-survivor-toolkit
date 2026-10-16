@@ -228,7 +228,13 @@ local function openPlantingRule(phase)
  LootSorter.openPicker(box,0,0);picker=assert(LootSorter._picker)
  assert(picker.selectedCats.toolElectrical and picker.selectedCats.craftingElectrical_material and picker.selectedCats[batteryCategory],
   'planting editor lost manual electrical selections')
- picker.toolkitTagRuleButton.onclick(picker);rulePicker=assert(picker.toolkitRulePicker)
+ if phase=='seed' then
+  local seedRow
+  for _,entry in ipairs(picker.listbox.items) do if entry.item.tag=='seed' then seedRow=entry.item;break end end
+  assert(seedRow and seedRow.requiresRule,'native seed tag row must use an item-aware rule')
+  picker.listbox.onmousedown(picker,seedRow)
+ else picker.toolkitTagRuleButton.onclick(picker) end
+ rulePicker=assert(picker.toolkitRulePicker)
  selectRule(rule.include,rule.exclude,rule.mode)
 end
 local lastPlantingEditorWait=0

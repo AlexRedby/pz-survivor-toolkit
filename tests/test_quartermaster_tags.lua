@@ -301,67 +301,61 @@ local function script(name, category, tags)
     return {tags=tags,getDisplayCategory=function() return category end,getDisplayName=function() return name end}
 end
 for category, ids in pairs({OC_Snack={'food','snack'},OC_Seeds={'farming','seed'},
-    OC_SeedOnly={'farming','seed'},OC_Homonyms={'miscellaneous'},OC_OtherFood={'food'}}) do
+    OC_SeedOnly={'farming','seed'}}) do
     categoryTags[category]=ids;availableCats[#availableCats+1]=category
 end
-scriptCatalog={script('Candy','OC_Snack',{'food','snack'}),
-    script('Sunflower seeds','OC_Snack',{'food','snack','farming','seed'}),
-    script('Full packet','OC_Seeds',{'farming','seed'}),script('Empty packet','OC_Seeds',{'farming'}),
-    script('Pure seed','OC_SeedOnly',{'farming','seed'})}
-LootSorter.openPicker();local itemPicker=LootSorter._picker
-local seed,seedIndex=assert(find(itemPicker,'seed'))
-assert(#seed.categories==1 and seed.categories[1]=='OC_SeedOnly' and #seed.items==2,
-    'partial categories were not split into exact item names')
-local keptCategory,keptItems=itemPicker.selectedCats.OC_Food,itemPicker.selectedItems.Beans
-click(itemPicker,'seed')
-assert(itemPicker.selectedItems['Sunflower seeds'] and itemPicker.selectedItems['Full packet']
-    and itemPicker.selectedCats.OC_SeedOnly,'item-aware seed picks missing')
-assert(not itemPicker.selectedCats.OC_Snack and not itemPicker.selectedCats.OC_Seeds
-    and not itemPicker.selectedItems.Candy and not itemPicker.selectedItems['Empty packet'],
-    'seed selection leaked candy or empty packets through a shared category')
-assert(itemPicker.selectedCats.OC_Food==keptCategory and itemPicker.selectedItems.Beans==keptItems
-    and itemPicker.selectedPresets.Pantry=='generation','tag picks stripped manual selections')
-seed,seedIndex=find(itemPicker,'seed')
-itemPicker.listbox.doDrawItem(itemPicker.listbox,0,itemPicker.listbox.items[seedIndex])
-assert(itemPicker.listbox.drawnText=='seed (3/3)','explicit item names absent from checked counts')
-itemPicker.contentsSet=function() return {OC_Snack=true} end
-itemPicker.onlyContents,itemPicker.needRebuild=true,true;itemPicker:prerender()
-assert(find(itemPicker,'seed'),'Only Contents hid a partial category planting input')
-itemPicker.onlyContents,itemPicker.needRebuild=false,true;itemPicker:prerender()
-itemPicker.btnSave.onclick(itemPicker)
-assert(storedItems['Sunflower seeds'] and storedItems['Full packet'] and not storedItems['Base.SunflowerSeeds'],
-    'native item designation did not save display-name keys')
-LootSorter.openPicker();local savedItemsPicker=LootSorter._picker
-assert(savedItemsPicker.selectedItems['Sunflower seeds'] and savedItemsPicker.selectedItems.Beans==keptItems,
-    'reopen lost precise or manual item names')
-savedItemsPicker.btnClear.onclick(savedItemsPicker);savedItemsPicker:prerender()
-assert(not savedItemsPicker.selectedItems['Sunflower seeds'] and not savedItemsPicker.selectedItems['Full packet']
-    and savedItemsPicker.selectedItems.Beans==keptItems,'Uncheck all left tag picks or removed unrelated manual items')
-savedItemsPicker.filterText,savedItemsPicker.needRebuild='seed',true;savedItemsPicker:prerender()
-savedItemsPicker.btnAll.onclick(savedItemsPicker);savedItemsPicker:prerender()
-assert(savedItemsPicker.selectedItems['Sunflower seeds'] and savedItemsPicker.selectedItems['Full packet']
-    and savedItemsPicker.selectedCats.OC_SeedOnly,'filtered Select all omitted precise item names')
-scriptCatalog[#scriptCatalog+1]=script('Shared name','OC_Homonyms',{'seed','farming'})
-scriptCatalog[#scriptCatalog+1]=script('Unrelated food','OC_Homonyms',{'food'})
-scriptCatalog[#scriptCatalog+1]=script('Shared name','OC_OtherFood',{'food'})
-LootSorter.openPicker();local ambiguous=LootSorter._picker
-seed=find(ambiguous,'seed');assert(seed.requiresRule,'mixed homonym allowed unsafe native designation')
-local catsBefore,itemsBefore={},{}
-for key,value in pairs(ambiguous.selectedCats) do catsBefore[key]=value end
-for key,value in pairs(ambiguous.selectedItems) do itemsBefore[key]=value end
-click(ambiguous,'seed')
-assert(openedRulePicker.owner==ambiguous and openedRulePicker.rule.include[1]=='seed'
-    and openedRulePicker.scriptItems==scriptCatalog,'ambiguous tag did not open a real-item rule draft')
-assert(not ambiguous.selectedCats.OC_Homonyms and not ambiguous.selectedItems['Shared name'],
-    'ambiguous click wrote an unsafe category or display name')
-for key,value in pairs(catsBefore) do assert(ambiguous.selectedCats[key]==value) end
-for key,value in pairs(itemsBefore) do assert(ambiguous.selectedItems[key]==value) end
-openedRulePicker.onApply({mode='all',include={'seed'},exclude={}})
-assert(ambiguous.toolkitTagRuleTouched and ambiguous.toolkitTagRule.include[1]=='seed')
-ambiguous.toolkitTagRuleButton.onclick(ambiguous)
-assert(openedRulePicker.scriptItems==scriptCatalog,'dynamic editor preview lacks the script catalog')
-ambiguous.filterText,ambiguous.needRebuild='seed',true;ambiguous:prerender()
-ambiguous.btnAll.onclick(ambiguous)
-assert(openedRulePicker.rule.mode=='any' and openedRulePicker.rule.include[1]=='seed',
-    'Select all silently omitted an ambiguous filtered tag')
+local function snapshot(set)
+    local result={};for key,value in pairs(set) do result[key]=value end;return result
+end
+local function unchanged(set,before,message)
+    for key,value in pairs(before) do assert(set[key]==value,message) end
+    for key,value in pairs(set) do assert(before[key]==value,message) end
+end
+for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','Pure seed'},
+    {'Конфеты','Семечки подсолнуха','Пакет семян','Пустой пакет семян','Семена'}}) do
+    scriptCatalog={script(names[1],'OC_Snack',{'food','snack'}),
+        script(names[2],'OC_Snack',{'food','snack','farming','seed'}),
+        script(names[3],'OC_Seeds',{'farming','seed'}),script(names[4],'OC_Seeds',{'farming'}),
+        script(names[5],'OC_SeedOnly',{'farming','seed'})}
+    LootSorter.openPicker();local itemPicker=LootSorter._picker
+    itemPicker.selectedItems['Sunflower seeds']=true
+    local seed,seedIndex=assert(find(itemPicker,'seed'))
+    assert(seed.requiresRule and seed.items==nil and #seed.categories==1 and seed.categories[1]=='OC_SeedOnly',
+        'partial categories did not require a stable tag rule')
+    local catsBefore,itemsBefore=snapshot(itemPicker.selectedCats),snapshot(itemPicker.selectedItems)
+    click(itemPicker,'seed')
+    assert(openedRulePicker.owner==itemPicker and openedRulePicker.rule.mode=='all'
+        and openedRulePicker.rule.include[1]=='seed' and openedRulePicker.scriptItems==scriptCatalog,
+        'partial seed tag did not open a locale-independent real-item rule draft')
+    unchanged(itemPicker.selectedCats,catsBefore,'partial tag click changed exact category picks')
+    unchanged(itemPicker.selectedItems,itemsBefore,'partial tag click persisted localized names')
+    openedRulePicker.onApply({mode='all',include={'seed'},exclude={}})
+    assert(itemPicker.toolkitTagRuleTouched and itemPicker.toolkitTagRule.include[1]=='seed')
+    unchanged(itemPicker.selectedCats,catsBefore,'rule Apply changed manual categories')
+    unchanged(itemPicker.selectedItems,itemsBefore,'rule Apply changed manual items')
+    assert(itemPicker.selectedPresets.Pantry=='generation','rule Apply changed a manual preset')
+    itemPicker.listbox.selected=seedIndex
+    itemPicker.listbox.onJoypadDown(itemPicker.listbox,Joypad.AButton)
+    assert(openedRulePicker.owner==itemPicker and openedRulePicker.rule.include[1]=='seed',
+        'controller bypassed the stable rule draft for a partial tag')
+    itemPicker.contentsSet=function() return {OC_Snack=true} end
+    itemPicker.onlyContents,itemPicker.needRebuild=true,true;itemPicker:prerender()
+    assert(find(itemPicker,'seed'),'Only Contents hid a partial category planting input')
+    itemPicker.onlyContents,itemPicker.needRebuild=false,true;itemPicker:prerender()
+    click(itemPicker,'snack')
+    assert(itemPicker.selectedCats.OC_Snack,'whole-category tag stopped selecting exact category IDs')
+    unchanged(itemPicker.selectedItems,itemsBefore,'whole-category batch changed manual items')
+    itemPicker.btnClear.onclick(itemPicker);itemPicker:prerender()
+    assert(next(itemPicker.selectedCats)==nil,'native Uncheck all failed to clear exact category picks')
+    unchanged(itemPicker.selectedItems,itemsBefore,'Uncheck all removed existing manual items')
+    itemPicker.filterText,itemPicker.needRebuild='seed',true;itemPicker:prerender()
+    itemPicker.btnAll.onclick(itemPicker)
+    assert(openedRulePicker.rule.mode=='any' and openedRulePicker.rule.include[1]=='seed',
+        'Select all omitted a partial filtered tag')
+    openedRulePicker.onApply({mode='any',include={'seed'},exclude={}})
+    unchanged(itemPicker.selectedItems,itemsBefore,'Select all rule Apply persisted localized names')
+    assert(next(itemPicker.selectedCats)==nil,'Select all broadened a partial category')
+    itemPicker.toolkitTagRuleButton.onclick(itemPicker)
+    assert(openedRulePicker.scriptItems==scriptCatalog,'dynamic editor preview lacks the script catalog')
+end
 print('Quartermaster tag checks passed: exact saved keys, partial/refined batches, filters, controller, modes, conflicts, reopens and opt-out.')
