@@ -83,6 +83,32 @@ public final class Main {
             "bc236f8e9e4e0da8a86b0d1fd19ad8d44a040fe4f67d1baac77401b3b148bd77")
         && supports("zombie/audio/parameters/ParameterFenceTypeLow$FenceType.class",
             "8b69bc70ce19066b64ec887a049320046c2659b4727dd51d4038e4e756bcfd09");
+    public static final boolean BASEMENT_ROOMS_SUPPORTED = supports("zombie/basements/Basements.class",
+            "769908ad1fdab2fb667d41943fde29e91b2148d365e5993117601c07c854380c")
+        && supports("zombie/iso/BuildingID.class",
+            "cfb8cb7815a84b5b6b4dc9743df585bb8d14959acd7c23850a9ec62a084c3ed1")
+        && supports("zombie/iso/RoomID.class",
+            "d3d5bb425c94b2b6b5f03cd1d47fc82c079984563d4a9e6857c64b3809a2d52d")
+        && supports("zombie/iso/BuildingDef.class",
+            "b1374ab72a3b7668afb554c22e9a4374841613f028712f3f98bf7a461d10faf1")
+        && supports("zombie/iso/RoomDef.class",
+            "7cf340ad83010a27bb41a7b576d934c795b3a855118fc683ae80dfa02d8be989")
+        && supports("zombie/iso/IsoMetaCell.class",
+            "ccf99cd2b176b079da51f31a74ae9408b45255a328f6d1ab6fe536600226cdee")
+        && supports("zombie/iso/IsoMetaGrid.class",
+            "cdd50bb0a393c766d25c9dcbc5f7e929d7e10a6b9c9b95e22c3bae94b3b5b1f9");
+    public static final boolean MANNEQUIN_SUPPORTED = supports("zombie/Lua/LuaManager.class",
+            "dcaad0082ca27a15550c7d0a6e14b3aeb71f634a14f32123dec620df180c646d")
+        && supports("zombie/Lua/LuaManager$GlobalObject.class",
+            "80ecbd3bd702db2f992db6cba7cb09c32d775fa6f2a3297e0460874ff5ba20c7")
+        && supports("zombie/iso/IsoMetaGrid.class",
+            "cdd50bb0a393c766d25c9dcbc5f7e929d7e10a6b9c9b95e22c3bae94b3b5b1f9")
+        && supports("zombie/iso/zones/Zone.class",
+            "41faa20ceed9764ba0aa32d8fa81f0329d40a1f5da575beb65601e077346e91c")
+        && supports("zombie/iso/objects/IsoMannequin.class",
+            "158b696a5ff5ee99e7c60cbd17d7055b6d7c9afbc5c1595e34f2fbcb4feef5e1")
+        && supports("zombie/iso/objects/IsoMannequin$MannequinZone.class",
+            "34d053c48f0522dbeb73f69daa45683c0feb1ff2181b83ef6d8dcfd53aa3848d");
     public static final boolean PIANO_SUPPORTED = supports("zombie/scripting/entity/GameEntityScript.class",
             "2863b3af3a0dcef1163268da1469aaba2104a90c2def4f625811e8364cecab29")
         && supports("zombie/scripting/entity/components/crafting/CraftRecipeComponentScript.class",
@@ -127,12 +153,63 @@ public final class Main {
             zombie.scripting.entity.components.crafting.CraftRecipeComponentScript.class.getName();
             zombie.scripting.entity.components.crafting.CraftRecipe.class.getName();
         }
+        if (BASEMENT_ROOMS_SUPPORTED) zombie.basements.Basements.class.getName();
+        if (MANNEQUIN_SUPPORTED) {
+            zombie.Lua.LuaManager.class.getName();
+            zombie.iso.IsoMetaGrid.class.getName();
+        }
         boolean fences = FenceValidation.install(FENCE_SUPPORTED);
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
             + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
-            + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED);
+            + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED + ", basementRooms=" + BASEMENT_ROOMS_SUPPORTED + ", mannequin=" + MANNEQUIN_SUPPORTED);
+    }
+
+    @Patch(className="zombie.basements.Basements", methodName="mergeBuildings", strictMatch=true)
+    public static class NativeBasementRoomLookup {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) zombie.iso.BuildingDef incoming,
+                                 @Patch.Argument(1) zombie.iso.BuildingDef receiving,
+                                 @Patch.Local("toolkitPreviousBuildingID") BasementRoomLookup.State previous) {
+            previous = BasementRoomLookup.beforeMerge(receiving, Main.BASEMENT_ROOMS_SUPPORTED);
+        }
+
+        @Patch.OnExit
+        public static void exit(@Patch.Argument(0) zombie.iso.BuildingDef incoming,
+                                @Patch.Argument(1) zombie.iso.BuildingDef receiving,
+                                @Patch.Local("toolkitPreviousBuildingID") BasementRoomLookup.State previous) {
+            BasementRoomLookup.repair(receiving, previous, Main.BASEMENT_ROOMS_SUPPORTED);
+        }
+    }
+
+    @Patch(className="zombie.Lua.LuaManager", methodName="RunLua", strictMatch=true)
+    public static class NativeMannequinZoneData {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) String file, @Patch.Argument(1) boolean rewrite,
+                                 @Patch.Local("toolkitPreviousObjects") Object previous) {
+            if (Main.MANNEQUIN_SUPPORTED && "media/maps/Muldraugh, KY/objects.lua".equals(file)
+                && zombie.Lua.LuaManager.env != null) previous = zombie.Lua.LuaManager.env.rawget("objects");
+        }
+
+        @Patch.OnExit
+        public static void exit(@Patch.Argument(0) String file, @Patch.Argument(1) boolean rewrite,
+                                @Patch.Local("toolkitPreviousObjects") Object previous) {
+            MannequinZoneData.loaded(file, previous, Main.MANNEQUIN_SUPPORTED);
+        }
+    }
+
+    @Patch(className="zombie.iso.IsoMetaGrid", methodName="registerMannequinZone", strictMatch=true)
+    public static class NativeMannequinZonePriority {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.iso.IsoMetaGrid grid,
+                                @Patch.Argument(0) String name, @Patch.Argument(1) String type,
+                                @Patch.Argument(2) int x, @Patch.Argument(3) int y, @Patch.Argument(4) int z,
+                                @Patch.Argument(5) int width, @Patch.Argument(6) int height,
+                                @Patch.Argument(7) se.krka.kahlua.vm.KahluaTable properties,
+                                @Patch.Return zombie.iso.zones.Zone zone) {
+            MannequinZoneData.registered(grid, properties, zone);
+        }
     }
 
     @Patch(className="zombie.scripting.entity.GameEntityScript", methodName="Load", strictMatch=true)

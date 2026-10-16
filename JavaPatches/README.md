@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` **0.1.11** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
+`PZToolkitJavaPatches` **0.1.12** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
 
 ## Prepare and install
 
@@ -118,6 +118,14 @@ Version 0.1.11 supplies the missing icon metadata for the exact shipped `Base.Pi
 The native recipe loader treats icon names as inventory items and would prepend `Item_` to this world tile. A narrowly guarded script-stage hook preserves the corrected icon while leaving native input/prop validation intact, restoring the icon even when that validation throws. Resolution stays on the original script-loading thread. The client log reports `Piano recipe icon corrected: recreational_01_28` when the correction actually runs.
 
 A dedicated server without its GUI already receives `null` from the native texture API. For this same proven Piano recipe, the patch returns that identical `null` before attempting UI resolution, without creating icon metadata, assets or texture jobs. Unrelated missing-configuration diagnostics remain visible. The font bootstrap is independent and keeps its existing explicit startup option.
+
+## Map data and cross-cell basement rooms
+
+Version 0.1.12 repairs the missing destination room lookup after native basement merging moves a building across a meta-cell border. The four previously reported invalid IDs in cell25,33 belong to actual native rooms in the adjacent cell25,34. Before the native merge, the patch records only rooms present by identity in the original cell's room list, runtime index and persistent-ID index. After a real cross-cell move, it restores only missing, unambiguous destination lookup entries for those same rooms. Existing entries, user-defined rooms and colliding IDs remain untouched. Room/building IDs, geometry, ordering, caches, spawn receipts and the native save format are preserved; saved flags are restored by the ordinary loader. It does not delete or rewrite `map_meta.bin`.
+
+The exact shipped Mannequin zone at13583,1299,0 is missing its `properties` table. The patch adds an empty table after a fresh native Lua load, guarded by exact map/handler hashes, active stock map directories, target class hashes and the original row shape. It preserves sprite-derived appearance and random clothing; it does not guess a special outfit. Only the identified no-override zone receives lowest priority so overlapping custom zones registered before or after it keep their existing effect. Changed data and unrelated missing-properties diagnostics remain native.
+
+The separate duplicate hall ID786643 remains unresolved. Its two rooms have independent flags, and chunks persist runtime room IDs in spawn receipts. Deleting a room, guessing a replacement ID or merging states is not a save-safe fix. Startup audits must continue to report this collision.
 
 ## Verification limits
 
