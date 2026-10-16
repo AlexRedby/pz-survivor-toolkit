@@ -15,7 +15,8 @@ class AnimalSessionTests(unittest.TestCase):
         code = r'''
 local source=arg[1]
 local function list(values)return {size=function()return #values end,get=function(self,i)return values[i+1]end}end
-local function run(timeout,missingHands)
+local function run(timeout,missingHands,unreachable)
+ local positionValid=true
  local now,armed,grabbed,verified,quarantined=0,0,0,0,0
  local logs,globalEvents,callbacks={}, {}, {}
  local function events(target)return setmetatable({},{__index=function(self,name)
@@ -28,7 +29,8 @@ local function run(timeout,missingHands)
  local inventory,hand={},nil
  local square={getX=function()return 1 end,getY=function()return 2 end}
  local player={getPrimaryHandItem=function()return hand end,getSecondaryHandItem=function()return hand end,
-  getInventory=function()return {getItems=function()return list(inventory)end}end,getSquare=function()return square end}
+  getInventory=function()return {getItems=function()return list(inventory)end}end,getSquare=function()return square end,
+  getX=function()return 0.5 end,getY=function()return 0.5 end,getZ=function()return 0 end}
  local queue={queue={}}
  function getTimestampMs()return now end
  function getPlayer()return player end
@@ -48,16 +50,27 @@ local function run(timeout,missingHands)
  end}
  local context={case='equipment-fixed',events=events(callbacks),send=function(command,args)
   assert(command=='Verify' and args.index==1);verified=verified+1
- end,quarantine=function(reason)assert(reason=='native equip echo/release deadline');quarantined=quarantined+1 end}
+ end,quarantine=function(reason)assert(reason==(unreachable and 'fixture actor left the reachable trailer entry before grab' or 'native equip echo/release deadline'));quarantined=quarantined+1 end}
  package.preload['TimedActions/Animals/ISRemoveAnimalFromTrailer']=function()return true end
  package.preload['ISUI/ISVehicleAnimalUI']=function()return true end
- package.preload.QueueAnimalMovement=function()return {}end
+ package.loaded.QueueAnimalMovement=nil
+ package.preload.QueueAnimalMovement=function()return {
+  issued=function(state)state.issued=true;return true end,confirm=function(state)state.confirmed=true;return true end,
+  stagedAt=function()return true end,nearEntry=function()return positionValid end,describe=function()return 'isolated action test'end,
+  entry=function()return {getX=function()return 0.5 end,getY=function()return 0.5 end}end}end
  package.preload.QueueAnimalOwnership=function()return {}end
  package.loaded.QueueAnimalLifecycle=nil
  package.preload.QueueAnimalLifecycle=function()return {start=function(cfg,factory,server)assert(not server);factory(context)end}end
  dofile(source);globalEvents.OnGameStart()
+ callbacks.OnServerCommand('AnimalTrailerBaseline','StartPositionIssued',{vehicleId=7,x=0.5,y=0.5,z=0})
+ callbacks.OnServerCommand('AnimalTrailerBaseline','StartPositionReady',{x=0.5,y=0.5,z=0})
  callbacks.OnServerCommand('AnimalTrailerBaseline','Fixture',{vehicleId=7,ids={101,102,103}})
- now=6;callbacks.OnTick();assert(armed==1 and grabbed==1 and verified==0)
+ if unreachable then positionValid=false end
+ now=6;callbacks.OnTick()
+ if unreachable then
+  callbacks.OnTick();assert(armed==0 and grabbed==0 and verified==0 and quarantined==1,'lost entry reach must stop once without starting a long walk');return
+ end
+ assert(armed==1 and grabbed==1 and verified==0)
  now=20000;callbacks.OnTick();assert(verified==0,'native walking must not consume a drain deadline')
  queue.queue={};now=20001;callbacks.OnTick();assert(verified==0 and quarantined==0)
  local function auditCount()
@@ -85,7 +98,7 @@ local function run(timeout,missingHands)
   'negative missing-hands control must retain real empty hands and the exact inventory identity')
  now=50000;callbacks.OnTick();assert(verified==1,'terminal audit and verification must occur once')
 end
-run(false,false);run(false,true);run(true,false)
+run(false,false);run(false,true);run(true,false);run(false,false,true)
 io.write('PASS actual waiting/drain/echo/audit callback, empty-hands control, elapsed timeout and no manual release\n')
 '''
         result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/client/ZZAnimalTrailer_Client.lua')],
@@ -133,6 +146,8 @@ print('PASS scoped native request, issue/arrival/ACK ordering, duplicates, stric
             self.skipTest('Lua interpreter unavailable')
         code = r'''
 local movement=dofile(arg[2])
+movement.nearEntry=function()return true end
+movement.stagedAt=movement.at
 package.preload.QueueAnimalMovement=function()return movement end
 package.preload.QueueAnimalOwnership=function()return {}end
 package.preload['TimedActions/Animals/ISRemoveAnimalFromTrailer']=function()return true end
@@ -154,7 +169,7 @@ local function run(mode)
  function getVehicleById()return {getAnimals=function()return empty end}end
  ISTimedActionQueue={getTimedActionQueue=function()return {queue={}}end}
  local context={case='timer-shared',events=events(callbacks),send=function(command,args)
-  assert(command=='EquipWeapon' or command=='RestorePosition' or command=='VerifyPosition')
+  assert(command=='EquipWeapon' or command=='RestorePosition' or command=='VerifyPosition' or command=='VerifyStartPosition')
   assert(next(args)==nil);sends[#sends+1]=command
  end,quarantine=function(reason)quarantines[#quarantines+1]=reason end,
  finish=function(ok)assert(ok);finished=finished+1 end}
@@ -163,6 +178,8 @@ local function run(mode)
  dofile(arg[1]);globalEvents.OnGameStart()
  local function command(name,args)callbacks.OnServerCommand('AnimalTrailerBaseline',name,args)end
  local function count(name)local n=0;for _,value in ipairs(sends)do if value==name then n=n+1 end end;return n end
+ command('StartPositionIssued',{vehicleId=7,x=20,y=30,z=0});callbacks.OnTick()
+ command('StartPositionReady',{x=20,y=30,z=0})
  command('Fixture',{vehicleId=7,ids={101,102,103},origin=origin})
  for i=1,3 do command('DropVerified',{index=i,found=true,handsEmpty=true})end
  assert(count('RestorePosition')==1 and count('VerifyPosition')==0 and finished==0)
@@ -216,7 +233,7 @@ local function run(mode)
  local position={x=1.25,y=2.75,z=0};local hand
  local ground,seeded={},{}
  local square={isOutside=function()return true end,getFloor=function()return {getSprite=function()return {getName=function()return 'street'end}end}end,
-  getX=function()return 1 end,getY=function()return 2 end,getAnimals=function()return list(ground)end}
+  getX=function()return 1 end,getY=function()return 2 end,getZ=function()return 0 end,getAnimals=function()return list(ground)end}
  local player={getX=function()return position.x end,getY=function()return position.y end,getZ=function()return position.z end,
   getSquare=function()return square end,getPrimaryHandItem=function()return hand end,getSecondaryHandItem=function()return hand end}
  local vehicle={getSquare=function()return square end,getId=function()return 7 end,getAnimals=function()return list(seeded)end,
@@ -232,9 +249,12 @@ local function run(mode)
   return {getAnimalID=function()return id end,getOnlineID=function()return id+100 end,
    getData=function()return {}end,setWild=function()end,addToWorld=function()end}
  end
+ movement.startSquare=function()return square end
+ movement.nearEntry=function()return true end
  local now=0;function getTimestampMs()now=now+1;return now end
- local issued=0
+ local issued,setupDone=0,false
  function animalFixtureRestorePosition(owner,x,y,z)
+  if not setupDone then assert(owner==player and x==1.5 and y==2.5 and z==0);return 'issued' end
   assert(owner==player and x==1.25 and y==2.75 and z==0,'only the server-stored origin may be used')
   issued=issued+1;return mode=='failure' and 'FAIL native unavailable' or 'issued'
  end
@@ -246,7 +266,10 @@ local function run(mode)
  dofile(arg[1])
  local function command(name,args,owner)return callbacks.OnClientCommand('AnimalTrailerBaseline',name,owner or player,args or {})end
  local function count(name)local n=0;for _,reply in ipairs(replies)do if reply.command==name then n=n+1 end end;return n end
- command('Ready');callbacks.OnTick();assert(count('Fixture')==1)
+ command('Ready');callbacks.OnTick();assert(count('Fixture')==0)
+ setupDone=true;position.x=1.5;position.y=2.5
+ command('VerifyStartPosition');callbacks.OnTick();assert(count('Fixture')==1)
+ position.x=1.25;position.y=2.75
  assert(not pcall(command,'RestorePosition') and not pcall(command,'VerifyPosition') and issued==0,'early position RPC must fail')
  assert(not pcall(context.cleanup),'cleanup cannot precede the return ACK')
  ground=seeded

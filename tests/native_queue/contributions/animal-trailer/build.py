@@ -36,9 +36,10 @@ def build(game, jdk, patch_jar, output, scenario, cases=None):
     hashes = {}
     with tempfile.TemporaryDirectory(prefix='animal-trailer-compile-') as temporary:
         temporary = Path(temporary)
-        keys = manifest['scenarios'][scenario]
+        keys = list(manifest['scenarios'][scenario])
         if cases:
-            keys = list(dict.fromkeys(key for case in cases for key in manifest['scenarios'][case.split('-')[0]])) + ['session']
+            keys = list(dict.fromkeys(key for case in cases for key in manifest['scenarios'][case.split('-')[0]]))
+        keys.append('session')
         for key in keys:
             probe = manifest['probes'][key]
             classes = temporary / key

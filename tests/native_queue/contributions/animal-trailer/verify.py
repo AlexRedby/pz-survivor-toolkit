@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check a completed native run; this does not start the game."""
 import argparse
+import math
 from pathlib import Path
 import re
 
@@ -11,6 +12,25 @@ def require(condition, message):
 
 
 def verify(server, client, scenario='combined', timer='shared', hands='held'):
+    starts = []
+    for side, text, ack in [('SERVER', server, 'clientAck'), ('CLIENT', client, 'serverAck')]:
+        pattern = side + r' START_POSITION nativeTeleport=true ' + ack + r'=true actual=(\S+) expected=(\S+)'
+        matches = list(re.finditer(pattern, text))
+        require(len(matches) == 1, 'Missing or duplicate confirmed native start position: ' + side)
+        try:
+            actual, expected = [list(map(float, value.split(','))) for value in matches[0].groups()]
+        except ValueError:
+            raise ValueError('Invalid native start position: ' + side)
+        require(len(actual) == len(expected) == 3 and all(math.isfinite(x) for x in actual + expected)
+                and all(abs(a - b) <= (0 if i == 2 else 0.15) for i, (a, b) in enumerate(zip(actual, expected))),
+                'Native start position did not arrive: ' + side)
+        require(matches[0].start() < text.find(side + ' FIXTURE '), 'Fixture preceded confirmed start position: ' + side)
+        starts.append(expected)
+    require(starts[0] == starts[1], 'Client/server start targets differ')
+    queues = list(re.finditer(r'CLIENT QUEUE index=(\d+)[^\n]* entryDistance=(\S+)', client))
+    require([m[1] for m in queues] == ['1', '2', '3']
+            and all(math.isfinite(float(m[2])) and 0 <= float(m[2]) <= 1.6 for m in queues)
+            and client.find('CLIENT FIXTURE ') < queues[0].start(), 'Native grabs must start beside the reachable trailer entry')
     seeded = re.findall(r'SERVER SEEDED kind=(\w+) animal=(\d+) online=(\d+)', server)
     after = re.findall(r'CLIENT AFTER index=(\d+) count=(\d+) hand=(\S+) animal=(\S+) queue=(\d+)', client)
     server_after = re.findall(r'SERVER VERIFY index=(\d+) count=(\d+) hand=(\S+) animal=(\S+)', server)

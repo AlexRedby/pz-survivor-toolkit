@@ -48,7 +48,7 @@
       "mod_id": "AnimalSessionProbe",
       "package": "net.alexredby.animalsessionprobe",
       "source": "java/session/Main.java",
-      "effect": "Removes only exact fixture-owned dropped animals through native world removal and synchronization deletion; no production state toggles."
+      "effect": "Positions the fixture actor through native server teleport and removes only exact fixture-owned dropped animals through native world removal and synchronization deletion; no production state toggles."
     },
     "equipment": {
       "mod_id": "AnimalHandsRace",

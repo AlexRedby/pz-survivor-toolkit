@@ -35,8 +35,13 @@ local sendClientCommand=Session and function(module,command,args) Session.send(c
 local fixture,index,phase,at,lastReady=nil,1,'waiting',0,0
 local equipment=not Session or Session.case:find('equipment') or Session.case:find('combined')
 local ghost=not Session or Session.case=='ghost'
-local movement=Session and require 'QueueAnimalMovement'
-local reset,drainAt
+local movement=require 'QueueAnimalMovement'
+local reset,drainAt,setup
+local sender=Session or {send=function(command,args) sendClientCommand('AnimalTrailerBaseline',command,args) end}
+local function fail(reason)
+ phase='failed'
+ if Session then Session.quarantine(reason) else error(reason) end
+end
 if Session then
  assert(not getPlayer():getPrimaryHandItem() and not getPlayer():getSecondaryHandItem(),'session requires initially empty hands')
  log('INGAME '..getCore():getVersion())
@@ -48,7 +53,21 @@ local function done()
 end
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='AnimalTrailerBaseline' then return end
- if command=='Fixture' and not fixture then fixture=args;at=getTimestampMs();log('FIXTURE '..args.vehicleId)
+ if command=='StartPositionIssued' then
+  if setup or fixture then fail('duplicate or late fixture start');return end
+  setup={origin={x=args.x,y=args.y,z=args.z},vehicleId=args.vehicleId}
+  if not movement.issued(setup,args) then fail('invalid fixture start target');return end
+  phase='preparing';at=getTimestampMs()
+ elseif command=='StartPositionReady' then
+  local vehicle=setup and getVehicleById(setup.vehicleId)
+  if phase~='preparing' or getTimestampMs()-at>30000 or not vehicle
+   or not movement.stagedAt(getPlayer(),setup.origin) or not movement.nearEntry(getPlayer(),vehicle)
+   or not movement.confirm(setup,args) then fail('fixture start ACK before native arrival or invalid target');return end
+  phase='waiting'
+  log('START_POSITION nativeTeleport=true serverAck=true '..movement.describe(getPlayer(),setup.origin))
+ elseif command=='Fixture' and not fixture then
+  if not setup or not setup.confirmed or args.vehicleId~=setup.vehicleId then fail('fixture before confirmed native start');return end
+  fixture=args;at=getTimestampMs();log('FIXTURE '..args.vehicleId)
  elseif command=='Verified' then
   log('SERVER_RESULT index='..args.index..' count='..args.count..' animal='..args.animal)
   if index<=3 then local item=getPlayer():getPrimaryHandItem();if item then ISInventoryPaneContextMenu.onDropItems({item},0) end;phase='dropping';at=getTimestampMs()
@@ -72,6 +91,15 @@ Events.OnTick.Add(function()
  if not ingame then return end
  local now=getTimestampMs()
  local p=getPlayer()
+ if phase=='failed' then return end
+ if setup and not setup.confirmed then
+  if now-at>30000 then fail('native fixture start or server ACK deadline');return end
+  local vehicle=getVehicleById(setup.vehicleId)
+  if vehicle and movement.stagedAt(p,setup.origin) and movement.nearEntry(p,vehicle) then
+   movement.observe(setup,sender,p,'VerifyStartPosition')
+  end
+  return
+ end
  local function label(item) return item and (item:getFullType()..'#'..item:getID()..'/'..tostring(instanceof(item,'AnimalInventoryItem') and item:getAnimal() and item:getAnimal():getAnimalID())) or 'nil' end
  local inv={};local items=p:getInventory():getItems();for i=0,items:size()-1 do local it=items:get(i);if instanceof(it,'AnimalInventoryItem') then inv[#inv+1]=label(it) end end
  local q=ISTimedActionQueue.getTimedActionQueue(p)
@@ -87,7 +115,10 @@ Events.OnTick.Add(function()
   local a;local ids={}
   for i=0,v:getAnimals():size()-1 do local x=v:getAnimals():get(i);ids[#ids+1]=x:getAnimalID()..'/'..x:getOnlineID();if x:getAnimalID()==fixture.ids[index] then a=x end end
   if not a then if now-at>15000 then log('MISSING index='..index..' ids='..table.concat(ids,','));phase='done' end;return end
-  log('QUEUE index='..index..' target='..a:getAnimalID()..' ids='..table.concat(ids,','))
+  if not movement.nearEntry(p,v) then fail('fixture actor left the reachable trailer entry before grab');return end
+  local entry=movement.entry(v)
+  log('QUEUE index='..index..' target='..a:getAnimalID()..' ids='..table.concat(ids,',')
+   ..' entryDistance='..math.max(math.abs(p:getX()-entry:getX()),math.abs(p:getY()-entry:getY())))
   if equipment and animalHandsRaceArm then log('ORDER_ARM '..animalHandsRaceArm(p)) end;ISVehicleAnimalUI.onGrabAnimal({character=p,vehicle=v},a);phase='acting';at=now;drainAt=nil
  elseif phase=='dropping' and now-at>cfg.waitAfterDropMs then sendClientCommand('AnimalTrailerBaseline','VerifyDrop',{index=index});phase='dropverifying'
  elseif phase=='acting' then

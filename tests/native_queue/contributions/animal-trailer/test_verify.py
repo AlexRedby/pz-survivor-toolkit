@@ -5,11 +5,14 @@ from verify import verify
 def logs(missing=False, timer='shared'):
     server = 'SERVER COMPLETE\n[AnimalTrailerSyncMPFix] ACTIVE 1.3\n'
     client = 'CLIENT COMPLETE\nCLIENT INGAME 42.21.0\nCLIENT WEAPON_NATIVE_EQUIP\n'
+    server += 'SERVER START_POSITION nativeTeleport=true clientAck=true actual=10.5,20.5,0 expected=10.5,20.5,0\nSERVER FIXTURE trailer=7\n'
+    client += 'CLIENT START_POSITION nativeTeleport=true serverAck=true actual=10.5,20.5,0 expected=10.5,20.5,0\nCLIENT FIXTURE 7\n'
     for i, kind in enumerate(['hen', 'hen', 'chick'], 1):
         server += f'SERVER SEEDED kind={kind} animal={i + 100} online={i + 200}\n'
         hand, animal = ('nil', 'nil') if missing else ('Base.Animal:test', str(i + 100))
         server += f'SERVER VERIFY index={i} count={3 - i} hand={hand} animal={animal}\n'
         client += f'CLIENT AFTER index={i} count={3 - i} hand={hand} animal={animal} queue=0\n'
+        client += f'CLIENT QUEUE index={i} target={i + 100} ids=test entryDistance=0.5\n'
         client += f'RELEASE_AFTER item={i + 300} inventoryHas=true\nCLIENT ORDER_STATUS releases=1\n'
         if i == 1: client += 'CLIENT REPLAY PASS stale trailer snapshot reproduced; woven authoritative item snapshot repaired; hands, identities, neighbors and capacity preserved\n'
         for side in ['SERVER', 'CLIENT']:
@@ -24,6 +27,21 @@ def logs(missing=False, timer='shared'):
 
 
 class VerifyTests(unittest.TestCase):
+    def test_start_requires_both_arrivals_before_fixture_and_nearby_native_grabs(self):
+        server, client = logs()
+        for broken_server, broken_client in [
+            (server.replace('clientAck=true', 'clientAck=false'), client),
+            (server, client.replace('serverAck=true', 'serverAck=false')),
+            (server, client.replace('actual=10.5', 'actual=30.5')),
+            (server, client.replace('expected=10.5,20.5,0', 'expected=11.5,20.5,0').replace('actual=10.5', 'actual=11.5')),
+            (server, 'CLIENT FIXTURE 7\n' + client),
+            (server, client.replace('entryDistance=0.5', 'entryDistance=25.0', 1)),
+            (server, client.replace('entryDistance=0.5', 'entryDistance=nan', 1)),
+        ]:
+            with self.subTest(client=broken_client):
+                with self.assertRaises(ValueError):
+                    verify(broken_server, broken_client)
+
     def test_fixed_combined(self):
         self.assertIn('PASS', verify(*logs()))
 
