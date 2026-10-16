@@ -1,5 +1,6 @@
 require "PZSurvivorToolkit/Settings"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
+local Tags = require "PZSurvivorToolkit/ItemTags"
 
 local Toolkit = PZSurvivorToolkit
 local Filter = {}
@@ -34,6 +35,7 @@ local function applyFilter(pane)
             local category = group.cat
             if category then categories[category] = true end
             if (not pane.toolkitCategory or category == pane.toolkitCategory)
+                and (not Tags.enabled() or not pane.toolkitTag or Tags.matches(category, {pane.toolkitTag}))
                 and (not search or group.matchesSearch) then
                 kept[group] = true
                 equipped = equipped or group.equipped
@@ -45,7 +47,7 @@ local function applyFilter(pane)
         pane.toolkitCategories[#pane.toolkitCategories + 1] = {id = category, name = categoryName(category)}
     end
     table.sort(pane.toolkitCategories, function(a, b) return a.name < b.name end)
-    if not pane.toolkitCategory and not search then return end
+    if not pane.toolkitCategory and not (Tags.enabled() and pane.toolkitTag) and not search then return end
     pane.toolkitVisibleItems = visible
     local rows = {}
     for _, group in ipairs(pane.itemslist) do
@@ -58,9 +60,16 @@ end
 
 local function selectCategory(pane, category)
     pane.toolkitCategory = category
+    pane.toolkitTag = nil
     pane.firstSelect = nil
     pane:setYScroll(0)
     pane.smoothScrollTargetY = nil
+    pane:refreshContainer()
+end
+
+local function selectTag(pane, id)
+    selectCategory(pane, nil)
+    pane.toolkitTag = id
     pane:refreshContainer()
 end
 
@@ -69,6 +78,26 @@ local function showCategories(pane, button)
     local menu = ISContextMenu.get(pane.player, button:getAbsoluteX(), button:getAbsoluteY() + button:getHeight())
     local all = menu:addOption(getText("UI_PZSurvivorToolkit_all_categories"), pane, selectCategory)
     menu:setOptionChecked(all, pane.toolkitCategory == nil)
+    if Tags.enabled() then
+        local found, entries = {}, {}
+        for _, category in ipairs(pane.toolkitCategories) do
+            for _, id in ipairs(Tags.forCategory(category.id)) do
+                if not found[id] then
+                    found[id] = true
+                    entries[#entries + 1] = {id = id, label = Tags.label(id)}
+                end
+            end
+        end
+        table.sort(entries, function(a, b) return a.label < b.label end)
+        local root = menu:addOption(getText("UI_PZST_Tags"))
+        local submenu = ISContextMenu:getNew(menu)
+        menu:addSubMenu(root, submenu)
+        for _, entry in ipairs(entries) do
+            local option = submenu:addOption(entry.label, pane, selectTag, entry.id)
+            submenu:setOptionChecked(option, entry.id == pane.toolkitTag)
+        end
+        menu:setOptionChecked(all, pane.toolkitCategory == nil and pane.toolkitTag == nil)
+    end
     for _, category in ipairs(pane.toolkitCategories) do
         local option = menu:addOption(category.name, pane, selectCategory, category.id)
         menu:setOptionChecked(option, pane.toolkitCategory == category.id)
@@ -109,8 +138,9 @@ local function updateButton(pane)
     button:setWidth(size)
     button:setHeight(size)
     button.tooltip = getText("UI_PZSurvivorToolkit_category_filter") .. ": "
-        .. (pane.toolkitCategory and categoryName(pane.toolkitCategory) or getText("UI_PZSurvivorToolkit_all_categories"))
-    button.textColor = pane.toolkitCategory and {r = 1, g = 0.65, b = 0.3, a = 1}
+        .. (Tags.enabled() and pane.toolkitTag and Tags.label(pane.toolkitTag)
+            or pane.toolkitCategory and categoryName(pane.toolkitCategory) or getText("UI_PZSurvivorToolkit_all_categories"))
+    button.textColor = (pane.toolkitCategory or (Tags.enabled() and pane.toolkitTag)) and {r = 1, g = 0.65, b = 0.3, a = 1}
         or {r = 0.94, g = 0.90, b = 0.83, a = 1}
 end
 
@@ -123,12 +153,18 @@ local function install(class)
         return restore(self, selected)
     end
     class.prerender = function(self, ...)
+        local enabled = Tags.enabled()
+        if self.toolkitTagsEnabled ~= enabled then
+            self.toolkitTagsEnabled = enabled
+            if self.toolkitTag then self:refreshContainer() end
+        end
         local result = prerender(self, ...)
         updateButton(self)
         return result
     end
     class.transferItemsByWeight = function(self, items, container, ...)
-        if Toolkit.Settings.inventoryFilters() and (self.toolkitCategory or hasSearch(self)) then
+        if self.toolkitVisibleItems or (Toolkit.Settings.inventoryFilters()
+            and (self.toolkitCategory or (Tags.enabled() and self.toolkitTag) or hasSearch(self))) then
             self:refreshContainer()
         end
         if self.toolkitVisibleItems then

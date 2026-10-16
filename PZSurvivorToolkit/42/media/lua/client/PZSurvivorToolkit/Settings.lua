@@ -104,6 +104,9 @@ local inventoryFilterOption = options:addTickBox(
     true,
     getText("UI_options_PZSurvivorToolkit_inventory_filters_tooltip")
 )
+local itemTagsOption = options:addTickBox("ItemTags", getText("UI_PZST_TagsOption"), true,
+    getText("UI_PZST_TagsTooltip"))
+
 local quantityOption
 if not getActivatedMods():contains("TakeAnyAmount") then
     quantityOption = options:addTickBox("QuantityTransfers",
@@ -209,6 +212,10 @@ end
 
 function Settings.medicineHerbs()
     return medicineHerbsOption ~= nil and medicineHerbsOption:getValue() == true
+end
+
+function Settings.itemTags()
+    return itemTagsOption:getValue()
 end
 
 function Settings.inventoryFilters()

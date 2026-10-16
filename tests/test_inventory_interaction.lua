@@ -1,4 +1,8 @@
-require = function() end
+require = function(name)
+    if name == "PZSurvivorToolkit/ItemTags" or name == "PZSurvivorToolkit/ItemTagSchema" then
+        return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
+    end
+end
 table.wipe = function(t) for k in pairs(t) do t[k] = nil end end
 local starts = {}
 Events = {OnGameStart = {Add = function(fn) starts[#starts + 1] = fn end}}

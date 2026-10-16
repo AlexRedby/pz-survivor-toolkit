@@ -1,11 +1,14 @@
 require = function(name)
+    if name == "PZSurvivorToolkit/ItemTagSchema" or name == "PZSurvivorToolkit/ItemTags" then
+        return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
+    end
     if name == "PZSurvivorToolkit/UIStyle" then
         return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/UIStyle.lua")
     end
 end
 table.wipe = function(t) for k in pairs(t) do t[k] = nil end end
-local enabled = true
-PZSurvivorToolkit = {Settings = {inventoryFilters = function() return enabled end}}
+local enabled, tagsEnabled = true, false
+PZSurvivorToolkit = {Settings = {inventoryFilters = function() return enabled end, itemTags = function() return tagsEnabled end}}
 local starts, toggles = {}, {}
 Events = {OnGameStart = {Add = function(fn) starts[#starts + 1] = fn end}}
 CleanUI_RegisterInventoryUiToggleCallback = function(fn) toggles[#toggles + 1] = fn; fn() end
@@ -131,4 +134,28 @@ pane.inventory = source
 pane.toolkitCategory, enabled = 'Tool', false
 pane:refreshContainer(); assert(#pane.itemslist == 4 and not pane.toolkitVisibleItems)
 assert(#groups[1].items == 2 and groups[1].items[1] == beans, 'real inventory/group contents changed')
+enabled, tagsEnabled = true, true
+pane.toolkitCategory, pane.toolkitTag = nil, 'food'
+pane:refreshContainer()
+assert(#pane.itemslist == 1 and pane.itemslist[1] == groups[1], 'food tag filter failed')
+pane:transferItemsByWeight({beans, hammer}, source)
+assert(#pane.transferred == 1 and pane.transferred[1] == beans, 'tag filter transferred hidden items')
+local originalCategory = groups[4].cat
+groups[4].cat = 'Food'
+pane:transferItemsByWeight({groups[4].items[1]}, source)
+assert(#pane.transferred == 1, 'tag-only transfer ignored a newly matching category')
+groups[1].cat = 'Tool'
+pane:transferItemsByWeight({beans}, source)
+assert(#pane.transferred == 0, 'tag-only transfer used stale visible items')
+groups[1].cat, groups[4].cat = 'Food', originalCategory
+pane.toolkitTag = 'electrical';pane:refreshContainer();assert(#pane.itemslist == 0)
+tagsEnabled = false
+pane:transferItemsByWeight({beans, hammer}, source)
+assert(#pane.transferred == 2, 'disabled tags left a stale bulk transfer filter')
+assert(#pane.itemslist == 4, 'tag toggle failed to restore rows')
+tagsEnabled = true;pane:prerender()
+assert(#pane.itemslist == 0, 'live enable ignored the selected tag')
+tagsEnabled = false;pane:prerender()
+assert(#pane.itemslist == 4, 'live disable kept tag-filtered rows')
+assert(groups[1].cat == 'Food', 'legacy category changed')
 print('Inventory filter checks passed: exact categories, search, empty results, selections, bulk actions and clear.')

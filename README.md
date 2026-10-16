@@ -6,7 +6,7 @@ Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quant
 
 | Component | Version | Installation |
 |---|---|---|
-| PZ Survivor Toolkit | 0.1.51 | Required; included in the prepared `mods` folder and server INI. |
+| PZ Survivor Toolkit | 0.1.52 | Required; included in the prepared `mods` folder and server INI. |
 | Survivor Wishlist | 0.1.0 | Required; included in the prepared `mods` folder and server INI. |
 | Toolkit Java Patches | 0.1.5 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
 
@@ -205,6 +205,16 @@ Water consumption remains native: this does not enable drinking from backpacks, 
 When using both mods, load them in this order: **NeatUI Framework, CleanUI, PZ Survivor Toolkit, Container Capacity Indicator**. Toolkit aligns CCI bars with CleanUI's visible inventory icons, including equipment headers, hidden equipment, expanded stacks and scaled icons. CCI keeps its own capacity calculations, colours and magazine setting. Toolkit preserves its item and container-button bars when CleanUI switches between enhanced and vanilla inventories, including icon views; it also supplies the alpha omitted by B42's native icon renderer. Without that pair, the adapter does nothing. If CCI loads before Toolkit, the adapter logs the required order and leaves its renderer unchanged.
 
 Checked in-game on B42.21 with CleanUI 2.9.7 and CCI 1.2.0, including container reordering and 140% icon scale. Toolkit v0.1.12 passed 15 checks per English/Russian client with all 38 selected Mod IDs loaded: enhanced/vanilla details and icons, container-button bars, repeated mode switches and native item transfers. No gameplay exceptions occurred during this short localhost scenario.
+
+## Item tags
+
+Toolkit imports organizedCategories categories as independent, localized tags: for example `foodPerishable_fruit` becomes Food, Perishable and Fruit; Electrical is shared by electrical tools and crafting supplies. Native inventory and both CleanUI inventory modes display compact chips in the category column, with a `+N` overflow indicator and a tooltip listing every tag. The column dropdown offers tag filters alongside exact categories. **Options > Mods > PZ Survivor Toolkit > Show item tags** restores the original presentation and controls when disabled.
+
+Quartermaster's category picker defaults to tags. Selecting Food or Electrical selects all currently available matching categories; a dash indicates a partially selected tag. The view switch retains exact category refinement, individual items and presets. Saves and multiplayer requests still contain Quartermaster's exact legacy category IDs; selecting a tag is a batch selection, not a saved rule that automatically accepts categories introduced by a future mod update.
+
+The shared `PZSurvivorToolkit/ItemTags` API exposes `forItem`, `forCategory`, `label`, `matches` (all/any) and lossless `category` projection. Original IDs are retained to disambiguate aliases with identical tag sets; arbitrary tag combinations without a legacy equivalent return no category rather than inventing one. Unknown mod categories remain single opaque tags. Item reads follow the current instance category, including organizedCategories fluid changes. This layer does not modify native recipe `ItemTag`s, loot ScriptItems, item identities or existing category settings. Other mods continue receiving the original `getDisplayCategory()` value.
+
+Checked in B42.21 single-player with CleanUI, Better Containers, Item Details, organizedCategories and Quartermaster: native callbacks passed tag selection, exact-category refinement, save/reopen, Food filtering and live option changes; all five screenshots were inspected. Lua tests cover lossless projections, clipping/overflow, unknown categories, fluid classification changes and existing inventory interactions. Multiplayer and the complete selected mod set remain unverified for tags.
 
 ## Item Details
 
