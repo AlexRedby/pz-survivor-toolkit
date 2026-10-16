@@ -1,4 +1,4 @@
-"""Load-only native readiness; the shared runner owns launch, audit and cleanup."""
+"""Native readiness and optional restored-world room persistence verification."""
 from pathlib import Path
 import re
 
@@ -11,14 +11,22 @@ def definitions():
 
 
 def validate(selection):
+    options = selection.get('options', {})
+    if not isinstance(options, dict):
+        raise ValueError('Startup options must be an object')
     if (selection.get('cases') != ['loaded'] or selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('toolkit', 'native')
             or type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
             or selection.get('languages') not in (['EN'], ['RU'])):
         raise ValueError('Startup requires loaded, SP/MP, native/toolkit and one EN/RU client')
-    if selection['kind'] == 'sp' and selection.get('options', {}).get('world_template'):
+    if selection['kind'] == 'sp' and options.get('world_template'):
         raise ValueError('Startup SP creates a fresh world; restored SP worlds are unsupported')
-    options = selection.get('options', {})
+    if 'room_state_roundtrip' in options:
+        template, mods = options.get('world_template'), selection.get('mods')
+        if (options['room_state_roundtrip'] not in ('migrate', 'reload') or selection['kind'] != 'mp'
+                or not isinstance(template, str) or not template.strip() or not Path(template).is_absolute()
+                or not isinstance(mods, list) or 'PZToolkitJavaPatches' not in mods):
+            raise ValueError('room_state_roundtrip requires migrate|reload, MP, an absolute world_template and PZToolkitJavaPatches')
     if 'startup_connection' in options:
         connection = options['startup_connection']
         if (selection['kind'] != 'mp' or not isinstance(connection, dict)
@@ -64,11 +72,32 @@ def verify(root, selection, catalog):
             issues.append('Startup bootstrap/preflight failed')
         if selection['kind'] == 'mp':
             server = (Path(root) / 'server-launch.log').read_text(errors='replace')
-            if len(re.findall(r'\[STARTUP_TEST\] SERVER_READY(?:\s|$)', server)) != 1:
+            readiness = list(re.finditer(r'\[STARTUP_TEST\] SERVER_READY(?:\s|$)', server))
+            if len(readiness) != 1:
                 issues.append('Missing or duplicate native server readiness')
+            if '[ROOM_STATE_TEST] FAIL' in server:
+                issues.append('Room state roundtrip failed')
+            roundtrip = selection.get('options', {}).get('room_state_roundtrip')
+            if roundtrip:
+                completions = list(re.finditer(r'\[ROOM_STATE_TEST\] COMPLETE(?:\s|$)', server))
+                matching = list(re.finditer(r'\[ROOM_STATE_TEST\] COMPLETE mode=' + re.escape(roundtrip) + r'(?:\s|$)', server))
+                if len(completions) != 1 or len(matching) != 1:
+                    issues.append('Missing, duplicate or mismatched room state completion: ' + roundtrip)
+                else:
+                    if len(readiness) == 1 and matching[0].start() >= readiness[0].start():
+                        issues.append('Server readiness preceded room state completion')
+                    markers = ['[PZToolkitJavaPatches] Room state persistence loaded: validated provenance']
+                    if roundtrip == 'migrate':
+                        markers.append('[PZToolkitJavaPatches] Room state persistence serialized: bound owner provenance')
+                    for marker in markers:
+                        if not 0 <= server.find(marker) < matching[0].start():
+                            issues.append('Missing native room provenance before completion: ' + marker)
     except OSError as error:
         issues.append(str(error))
+    roundtrip = selection.get('options', {}).get('room_state_roundtrip')
+    limits = (['Restored MP world room flags and IDs checked without player walking; no broader gameplay coverage.']
+              if roundtrip else ['Load-only player/square readiness; no gameplay behavior is exercised.'])
     return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'loaded',
             'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues),
             'outcome': {'loaded': not issues}}],
-            'evidence': {'limits': ['Load-only player/square readiness; no gameplay behavior is exercised.']}}
+            'evidence': {'limits': limits}}

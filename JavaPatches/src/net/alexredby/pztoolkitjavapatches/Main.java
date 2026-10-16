@@ -1,9 +1,13 @@
 package net.alexredby.pztoolkitjavapatches;
 
 import java.security.MessageDigest;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.function.Consumer;
 import me.zed_0xff.zombie_buddy.Accessor;
 import me.zed_0xff.zombie_buddy.Patch;
 import zombie.characters.NetworkZombieAI;
@@ -109,6 +113,12 @@ public final class Main {
             "158b696a5ff5ee99e7c60cbd17d7055b6d7c9afbc5c1595e34f2fbcb4feef5e1")
         && supports("zombie/iso/objects/IsoMannequin$MannequinZone.class",
             "34d053c48f0522dbeb73f69daa45683c0feb1ff2181b83ef6d8dcfd53aa3848d");
+    public static final boolean ROOM_STATES_SUPPORTED = BASEMENT_ROOMS_SUPPORTED
+        && supports("zombie/iso/SaveBufferMap.class", "b4f6700bf73ad1b16e8ffdb24e0e99329093d7e9787a2c42f78713c772607e44")
+        && supports("zombie/iso/SaveBufferMap$IWriter.class", "3d2c93490dae412f25278b080e103bfeb297d987e44d57c2513a2102f33e8e7e")
+        && supports("zombie/iso/SaveBufferMap$Buffer.class", "32083cb6ab141ac4c0653932e5e127e4a50803d51f9f31419b735823bf19dfa9")
+        && supports("zombie/util/ByteBufferPooledObject.class", "49edd31223823d6ca35e9a36281b4dc69885d3f17db15b3b11735f57125e2ebb")
+        && supports("zombie/iso/SliceY.class", "a04bfd01bdf3fcaa5139645fcfa8f138924297440762af3201fd542b725c98f5");
     public static final boolean PIANO_SUPPORTED = supports("zombie/scripting/entity/GameEntityScript.class",
             "2863b3af3a0dcef1163268da1469aaba2104a90c2def4f625811e8364cecab29")
         && supports("zombie/scripting/entity/components/crafting/CraftRecipeComponentScript.class",
@@ -154,6 +164,10 @@ public final class Main {
             zombie.scripting.entity.components.crafting.CraftRecipe.class.getName();
         }
         if (BASEMENT_ROOMS_SUPPORTED) zombie.basements.Basements.class.getName();
+        if (ROOM_STATES_SUPPORTED) {
+            zombie.iso.IsoMetaGrid.class.getName();
+            zombie.iso.SaveBufferMap.class.getName();
+        }
         if (MANNEQUIN_SUPPORTED) {
             zombie.Lua.LuaManager.class.getName();
             zombie.iso.IsoMetaGrid.class.getName();
@@ -163,7 +177,141 @@ public final class Main {
             + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
             + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
-            + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED + ", basementRooms=" + BASEMENT_ROOMS_SUPPORTED + ", mannequin=" + MANNEQUIN_SUPPORTED);
+            + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED + ", basementRooms=" + BASEMENT_ROOMS_SUPPORTED + ", mannequin=" + MANNEQUIN_SUPPORTED + ", roomStates=" + ROOM_STATES_SUPPORTED);
+    }
+
+    public static boolean roomStateSupported() {
+        if (!ROOM_STATES_SUPPORTED) return false;
+        try {
+            Path header = Path.of(zombie.ZomboidFileSystem.instance.getString("media/maps/Muldraugh, KY/41_37.lotheader"));
+            return "05cd36a09eb5f0e999b1def16d78dfa6510bee557eca0ef1d3fe209f5b41313e".equals(
+                HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(header))));
+        } catch (Exception error) {
+            return false;
+        }
+    }
+
+    public static boolean saveRoomFile(zombie.iso.IsoMetaGrid grid, String name, Consumer<ByteBuffer> serializer) throws Exception {
+        RoomStatePersistence.requireReady(grid);
+        if (!"map_meta.bin".equals(name) || !RoomStatePersistence.affected(grid, roomStateSupported())) return false;
+        try {
+            synchronized (zombie.iso.SliceY.SliceBufferLock) {
+                ByteBuffer bytes = zombie.iso.SliceY.SliceBuffer;
+                bytes.clear(); serializer.accept(bytes);
+                RoomStateFiles.write(zombie.ZomboidFileSystem.instance.getFileInCurrentSave(name).toPath(), bytes.duplicate().flip());
+            }
+            return true;
+        } catch (Exception error) {
+            RoomStatePersistence.fail(grid, error); throw error;
+        }
+    }
+
+    public static boolean queueRoomFile(zombie.iso.IsoMetaGrid grid, zombie.iso.SaveBufferMap buffers,
+                                        String name, Consumer<ByteBuffer> serializer) throws Exception {
+        RoomStatePersistence.requireReady(grid);
+        Path target = zombie.ZomboidFileSystem.instance.getFileInCurrentSave("map_meta.bin").toPath().toAbsolutePath().normalize();
+        if (!target.equals(Path.of(name).toAbsolutePath().normalize())
+            || !RoomStatePersistence.affected(grid, roomStateSupported())) return false;
+        try {
+            synchronized (zombie.iso.SliceY.SliceBufferLock) {
+                ByteBuffer bytes = zombie.iso.SliceY.SliceBuffer;
+                bytes.clear(); serializer.accept(bytes);
+                var pooled = buffers.allocate(bytes.position());
+                pooled.put(bytes.array(), 0, bytes.position());
+                buffers.put(name, pooled, (file, snapshot) -> {
+                    try {
+                        RoomStatePersistence.requireReady(grid);
+                        if (!target.equals(Path.of(file).toAbsolutePath().normalize())) throw new java.io.IOException("Room snapshot path changed");
+                        ByteBuffer payload = snapshot.slice(); payload.limit(snapshot.position());
+                        RoomStateFiles.write(target, payload);
+                    } catch (Exception error) {
+                        RoomStatePersistence.fail(grid, error);
+                        if (error instanceof java.io.IOException io) throw io;
+                        throw new java.io.IOException("Room state snapshot was not committed", error);
+                    }
+                });
+            }
+            return true;
+        } catch (Exception error) {
+            RoomStatePersistence.fail(grid, error); throw error;
+        }
+    }
+
+    @Patch(className="zombie.iso.IsoMetaGrid", methodName="load", strictMatch=true)
+    public static class NativeRoomStateLoad {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.iso.IsoMetaGrid grid, @Patch.Argument(0) ByteBuffer bytes,
+                                 @Patch.Local("toolkitRoomState") RoomStatePersistence.State state) {
+            state = RoomStatePersistence.prepare(grid, bytes, Main.roomStateSupported());
+        }
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.iso.IsoMetaGrid grid, @Patch.Argument(0) ByteBuffer bytes,
+                                @Patch.Local("toolkitRoomState") RoomStatePersistence.State state) {
+            RoomStatePersistence.loaded(grid, state, bytes);
+        }
+    }
+
+    @Patch(className="zombie.iso.IsoMetaGrid", methodName="load", strictMatch=true)
+    public static class NativeRoomStateLoadCompletion {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.iso.IsoMetaGrid grid) { RoomStatePersistence.requireReady(grid); }
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.iso.IsoMetaGrid grid) { RoomStatePersistence.requireReady(grid); }
+    }
+
+    @Patch(className="zombie.iso.IsoMetaGrid", methodName="save", strictMatch=true)
+    public static class NativeRoomStateSave {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.iso.IsoMetaGrid grid, @Patch.Argument(0) ByteBuffer bytes,
+                                 @Patch.Local("toolkitRoomStart") int start) {
+            RoomStatePersistence.requireReady(grid); start = bytes.position();
+        }
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.iso.IsoMetaGrid grid, @Patch.Argument(0) ByteBuffer bytes,
+                                @Patch.Local("toolkitRoomStart") int start) {
+            RoomStatePersistence.append(grid, bytes, start, Main.roomStateSupported());
+        }
+    }
+
+    @Patch(className="zombie.iso.IsoMetaGrid", methodName="savePart", strictMatch=true)
+    public static class NativeRoomStateSavePart {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.iso.IsoMetaGrid grid, @Patch.Argument(0) ByteBuffer bytes,
+                                 @Patch.Argument(1) int part, @Patch.Argument(2) boolean flag) { RoomStatePersistence.requireReady(grid); }
+    }
+
+    @Patch(className="zombie.iso.IsoMetaGrid", methodName="save", strictMatch=true)
+    public static class NativeRoomStateSaveCompletion {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.iso.IsoMetaGrid grid) { RoomStatePersistence.requireReady(grid); }
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.iso.IsoMetaGrid grid) { RoomStatePersistence.requireReady(grid); }
+    }
+
+    @Patch(className="zombie.iso.IsoMetaGrid", methodName="save", strictMatch=true)
+    public static class NativeRoomStateFile {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.iso.IsoMetaGrid grid, @Patch.Argument(0) String name,
+                                    @Patch.Argument(1) Consumer<ByteBuffer> serializer) throws Exception {
+            return Main.saveRoomFile(grid, name, serializer);
+        }
+    }
+
+    @Patch(className="zombie.iso.IsoMetaGrid", methodName="saveToBufferMap", strictMatch=true)
+    public static class NativeRoomStateSnapshotCompletion {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.iso.IsoMetaGrid grid, @Patch.Argument(0) zombie.iso.SaveBufferMap buffers) { RoomStatePersistence.requireReady(grid); }
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.iso.IsoMetaGrid grid, @Patch.Argument(0) zombie.iso.SaveBufferMap buffers) { RoomStatePersistence.requireReady(grid); }
+    }
+
+    @Patch(className="zombie.iso.IsoMetaGrid", methodName="saveToSaveBufferMap", strictMatch=true)
+    public static class NativeRoomStateSnapshot {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.iso.IsoMetaGrid grid, @Patch.Argument(0) zombie.iso.SaveBufferMap buffers,
+                                    @Patch.Argument(1) String name, @Patch.Argument(2) Consumer<ByteBuffer> serializer) throws Exception {
+            return Main.queueRoomFile(grid, buffers, name, serializer);
+        }
     }
 
     @Patch(className="zombie.basements.Basements", methodName="mergeBuildings", strictMatch=true)
