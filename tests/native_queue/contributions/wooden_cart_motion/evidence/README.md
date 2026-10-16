@@ -1,12 +1,14 @@
 # Wooden cart evidence sources
 
+[Development](../../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../../README.md)
+
 Offline analyzers and attachable, read-only render probes for the calibrated B42.21 wooden wheelbarrow. These files do not launch a game, create a profile, synthesize input or take the native queue lock. The existing queue adapter must own those operations and the disposable profile. A compile/self-check PASS is not a live motion PASS.
 
 ## Sources and dependencies
 
 - `WoodenWheelNativeProbe.java`, `WoodenWheelProbeCheck.java`, `AttachWoodenWheelProbe.java`: the wheel/grounding/hip/leg/arm palette sensor from the wooden transition investigation. The sensor samples approximately 30 Hz and records native grounding and split-draw data. Its first GPU read also extracts `WheelbarrowWood.bin` (8 little-endian float32 values per vertex) into the explicit output directory. The second proof, after wheel phase changes, updates the hash proof JSON. The original calibrated VBO hash remains an explicit check, not an asset bundled here.
 - `GripPoseProbe.java`, `GripPoseProbeCheck.java`: the grip reference sensor; copies matrices **before** `CartGrip.grip` changes them and records success, false returns and exceptions. Do not discard false results.
-- `ClearanceProbe.java`: final rendered body palettes and held cart matrix, from the identical clearance source in the old-pose/grip-end investigations used by the running captures. The running JAR itself contained classes only; no decompiled game classes were copied. `ClearanceProbeCheck.java` checks instrumentation generation and output safety.
+- `ClearanceProbe.java`: final rendered body palettes and held cart matrix, from the clearance instrumentation source used by the fixture. The running JAR itself contained classes only; no decompiled game classes were copied. `ClearanceProbeCheck.java` checks instrumentation generation and output safety.
 - `check-clearance.py`, `check-hip-actual.py`, `analyze-native.py`: ported sprint-smoothing analyzers. The first two now share `clearance_geometry.py` instead of executing another script's source. All input/output paths are explicit.
 - `fbx_mesh.py`, `shaft_components.py`, `actual_mesh.py`: original binary FBX reader and wooden shaft topology/intersection/distance calculations, with explicit mesh loading instead of import-time access to an investigation directory. No FBX, native vertex buffer or body mesh is included.
 

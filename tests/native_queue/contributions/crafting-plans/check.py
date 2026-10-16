@@ -52,7 +52,15 @@ def main():
     lua = shutil.which('luajit') or shutil.which('lua5.1')
     if not lua:
         raise SystemExit('LuaJIT or Lua 5.1 required for syntax/registration checks')
-    subprocess.run([lua, str(HERE / 'check.lua'), str(HERE)], check=True)
+    result = subprocess.run([lua, str(HERE / 'check.lua'), str(HERE)], check=True, capture_output=True, text=True)
+    names = {}
+    for line in result.stdout.splitlines():
+        if line.startswith('STAGE\t'):
+            _, scenario, name = line.split('\t', 2)
+            names.setdefault(scenario, []).append(name)
+        else:
+            print(line)
+    assert names == json.loads((HERE / 'stage-names.json').read_text()), 'Preserved stage names changed'
     print('PASS fixture staging, identical checksummed mod bytes, private configuration and collision/parameter guards')
     print('NOT RUN: PZ, SP/MP, rendered UI, native crafting or network')
 

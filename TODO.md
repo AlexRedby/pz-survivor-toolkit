@@ -1,19 +1,18 @@
-# Публикация тегов в main
-
-- [ ] Слить актуальный origin/main, сохранить новую структуру документации и все изменения тегов.
-- [ ] Проверить объединённые Lua/Python/Java изменения, структуру пакета и совместимость документации; push обычным fast-forward в main и сверка remote SHA.
-
 # Совместимость Quartermaster
 
 - [ ] Проверить штатные переносы и custom-действия Quartermaster в очереди Toolkit. Аудировать обёртки ISInventoryTransferAction.perform и ISTimedActionQueue.resetQueue перед разрешением отмены/перестановки; не обходить защиту неизвестных callbacks.
 
 # Дальнейшая миграция очереди действий
 
-Исполнитель остаётся `ISTimedActionQueue`. Новые семейства добавляются через Definitions/Policy и точный адаптер, без общего графа планирования, второго scheduler или резервирования будущего инвентаря. Отображение и разрешение менять очередь проверяются отдельно. Ниже только незавершённая работа; рабочие интерфейсы и команды проверок описаны в README.
+Исполнитель остаётся `ISTimedActionQueue`. Новые семейства добавляются через Definitions/Policy и точный адаптер, без общего графа планирования, второго scheduler или резервирования будущего инвентаря. Отображение и разрешение менять очередь проверяются отдельно. Ниже только незавершённая работа; интерфейсы описаны в [руководстве по возможностям](docs/FEATURES.md), команды проверок — в [руководстве разработчика](docs/DEVELOPMENT.md).
 
-## Подключение сохранённых стендов
+## Общие игровые сессии и регрессия сборки
 
-- [ ] Подключить intake-наборы `animal-trailer`, `crafting-plans`, `shared-wishlist`, `item-tags`, `video-recording`, `wooden_cart_motion` и `wooden_cart_multiplayer` к общему runner: события, точные receipts, ожидаемые роли/пропуски, совместимые контрольные режимы. Переводить набор в ready только после свежего native-прогона; сохранённые исторические результаты не считать покрытием текущего main. Для MP тележек `captured`/`evidenceComplete` означают полноту наблюдения, а не функциональный PASS или одинаковую анимацию. Учитывать указанные в intake зависимости от ещё не слитых API/версий модов.
+- [ ] Сделать `SurvivorQoL-selected.ini` источником основного pack-профиля: фиксировать упорядоченные Mod IDs/Workshop IDs, реальные версии и хеши модов/JAR, настройки и capabilities. Не заменять сборку объединением случайных зависимостей стендов. Missing/changed dependencies должны блокировать профиль до запуска. Для текущей машины сначала восстановить официальные источники RealisticDash (3635591071) и Navigator (3708816224): исторические downloads/snapshots уже не содержат их файлов; остальные47Mod IDs разрешены явно.
+- [ ] Разделить общий отчёт на startup-диагностику, результаты каждого case и cleanup. Добавить lifecycle `prepare -> joint start -> run -> joint finish -> cleanup -> joint clean -> next`, case/epoch/actor correlation только в fixture RPC, owned resource ledger и bounded quarantine при ошибке/разрыве/reset failure. Поздние/повторные receipts не должны проходить в следующий case; product callbacks и OnGameStart не переустанавливать. Обычный assertion failure допускает продолжение только после доказанного joint-clean; timeout/disconnect/неизвестный эффект требуют quarantine. SIGINT/SIGTERM во время server save/quit не должен терять execution/report: нужен отдельный тест прерывания внутри cleanup.
+- [ ] Перевести совместимые cases на свежие contexts в общей сессии: craft `ui -> crafting -> alternatives` (71 stages/client); Wishlist `visual -> standalone` (37/client), затем настоящий отдельный reload5. Сохранить исходные имена/counts/assertions, единственный craft hook, очистку точных inventory/world IDs, UI/options/pending requests и joint reset receipts. Гейт: no-game negative tests и один native grouped прогон каждого набора с исходными authority receipts.
+- [ ] Перевести animal probes на явный per-case режим с проверенным reset, не переключая production weaving reflection-ом; объединить совместимые SP cart matrices с отдельными artifact/probe windows. Подтверждать main только после доступности соответствующих merged runtime API; frozen raw07 candidate остаётся диагностическим источником, а не доказательством main. Сначала сохранить холодные native/toolkit controls: расчётный предел17 startup cycles вместо29, пока не измеренный результат. Warm controls считать отдельным видом сравнения, не выдавать за cold proof.
+- [ ] Собрать основной положительный regression flow на полном pack-профиле (SP и MP отдельно); изолированные/negative/alternate-JAR/restart профили оставить для диагностики. При добавлении мода сравнивать pack baseline/candidate с одним явным изменением manifest и тем же набором cases; при failure повторять только case и минимальный конфликтный набор. Проверить, что загрязнённая сессия блокирует последующие cases, а общий отчёт сохраняет причину и весь аудит логов.
 
 ## Адаптеры ближайшего этапа
 

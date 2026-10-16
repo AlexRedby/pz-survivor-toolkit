@@ -104,7 +104,7 @@ def palm(row, side):
 def analyze(profile):
     profile = Path(profile)
     selection = parse((profile / 'selection.json').read_text())
-    require(isinstance(selection, dict) and selection.get('suite') == 'cart_motion_mp'
+    require(isinstance(selection, dict) and selection.get('suite') in ('cart_motion_mp', 'wooden_cart_multiplayer')
             and selection.get('kind') == 'mp' and selection.get('mode') == 'toolkit'
             and selection.get('cases') == ['owner_observer_motion'], 'Frozen selection does not match the Cart MP capture')
     logs = {role: (profile / (role + '-launch.log')).read_text() for role in ROLES}

@@ -1,54 +1,10 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` v0.1.5 is an independent Java mod for **B42.21 only**, required in our selected set. It needs **ZombieBuddy 2.3.4+** in every client and the server process. It patches client zombie-speed decoding, vehicle interpolation recovery, animal trailer membership and incomplete equipment acknowledgements, plus server-side VHS restart handling and build cancellation acknowledgements. Each patch checks its target class bytecode and disables itself on an unsupported build. It remains experimental: it is not established as a fix for minute-long vehicle freezes or every movement jerk.
+`PZToolkitJavaPatches` **0.1.6** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; this is not an established fix for minute-long vehicle freezes or every movement jerk.
 
 ## Prepare and install
 
-The server owner prepares the whole set once; other players need neither Python nor a JDK. Follow the [combined installation guide](../MOD_INSTALL.md). From the repository root:
-
-```sh
-python3 tools/prepare_install.py --check
-```
-
-On Windows use `py -3` instead of `python3`. The build machine needs **Python 3.10+**, **JDK 25+**, and a B42.21 game Java directory containing both `projectzomboid.jar` and `ZombieBuddy.jar`. The game's bundled runtime cannot compile the patch. For custom locations:
-
-```powershell
-py -3 tools/prepare_install.py --game "D:\SteamLibrary\steamapps\common\ProjectZomboid" --jdk "C:\path\to\jdk-25" --check
-```
-
-Use corresponding paths on macOS/Linux; `--game` points to the folder containing both JARs, and `--jdk` to the JDK home. Without these options, the builder uses standard Steam locations and finds the JDK through `JAVA_HOME`, the macOS JDK lookup or `PATH`.
-
-Copy the three folders inside `dist/SurvivorQoL/mods` to `Zomboid/mods` on the server and every client. The prepared INI already includes `ZombieBuddy;PZToolkitJavaPatches` first, followed by the rest of the selected set. This local patch has no Workshop ID. Approve its JAR in ZombieBuddy on each client and server; see Host's saved-approval step below.
-
-For Java-only development, `python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts the same `--game`, `--jdk` and `--check` options. The checks compare original and patched engine vehicle interpolation, media restart, build cancellation/completion behavior and animal location/identity/capacity reconciliation; there is no separate zombie-speed regression in this command. Generated output is ignored by Git.
-
-## Programmatic test video (B42.21 client)
-
-Install this Java mod in the isolated test profile and pass its own `-cachedir`, with `-novoip` and `voiceEnable=false`. No menu or automatic recording is added. ZombieBuddy exports these globals to client Lua:
-
-```lua
-assert(toolkitVideoStart("/private/tmp/my-pz-test/videos", "/opt/homebrew/bin/ffmpeg"))
--- Run the animation or test segment.
-assert(toolkitVideoStop())
--- Poll on subsequent ticks; stop returns immediately while FFmpeg finalizes MP4.
-local video = toolkitVideoStatus()
-if video.state == "completed" then print(video.file, video.frames, video.seconds) end
-if video.state == "failed" then error(video.error .. " | " .. video.log) end
-```
-
-Use an absolute output subdirectory inside the current profile's cache directory; symlink escapes are rejected. Each capture gets a unique filename and a sibling `.ffmpeg.log`; existing files are never overwritten. Pass an absolute executable path to an installed FFmpeg with `libx264`. Java tests may call the same static `VideoRecording.start(directory, ffmpeg)`, `stop()` and `status()` methods in `net.alexredby.pztoolkitjavapatches`.
-
-`start()` returns whether the request was accepted, not encoder readiness. A second start during `starting`, `recording` or `stopping` returns false without replacing the active session. `stop()` accepts only the first stop request. Status states are `idle`, `starting`, `recording`, `stopping`, `completed`, `failed`; fields include `file`, `log`, `error`, `width`, `height`, `fps`, `frames`, `captured`, `dropped`, and `seconds` (encoded duration). Inspect `completed` before reading the finalized file or starting another capture.
-
-The fixed profile is silent H.264 MP4, 30 FPS, CRF 18, `veryfast`, yuv420p. It captures the displayed game framebuffer including UI, without desktop windows. Actual GLFW framebuffer dimensions are used (including Retina), up to 4K / 8,294,400 pixels and 4096 pixels on either axis. Odd dimensions are padded by one pixel for H.264. Resize ends the capture with `failed` and finalizes already captured frames. A minimized window can supply no new images.
-
-Capture uses one direct RGBA buffer plus three bounded heap buffers (at most about 127 MiB at 4K). GL readback and one copy happen on the render thread; encoding and pipe writes happen on a separate daemon thread. Slow rendering or encoding holds the previous image over missing frame slots, preserving wall time to within one 30 FPS frame, rather than speeding up the clip. The final frame is held until the stop timestamp. `dropped` counts capture opportunities skipped because no buffer was free; it does not count every duplicated output frame. This is test instrumentation, and synchronous GL readback can reduce game FPS.
-
-After stop, a 15-second watchdog aborts an encoder that cannot finish. Normal JVM exit attempts a four-second flush; force-kill, encoder failure or a full disk can leave an incomplete MP4. There is no audio input, codec implementation or permanent recorder. The Display hook retains the per-class B42.21 fingerprint guard.
-
-Run `python3 JavaPatches/build.py --check-video` with `PZ_TEST_FFMPEG` set to the FFmpeg executable (otherwise found on `PATH`; sibling `ffprobe` is required). This checks timing boundaries, delayed/gapped captures, last-frame hold, decoded colors, exact duration/dimensions, stop without frames and encoder failure. Ordinary `--check` retains its existing engine regressions.
-
-Verified on macOS B42.21 on 15 October 2026 in a fresh isolated Sandbox profile: two consecutive Lua start/stop cycles each produced 1728x1020 H.264, 106 frames / 3.533333 seconds for measured 3.515-3.516 second intervals, with 106 captured and zero dropped frames. Full FFmpeg decode, three extracted frames and FFplay playback passed. A second active start, repeated stop and output outside the profile were rejected. The native fixture verified VOIP disabled. Resize and buffer-exhaustion guards were checked headlessly; live resize, 4K sustained load, Windows/Linux and force-kill recovery were not exercised.
+Use the [combined installation guide](../MOD_INSTALL.md#prepare-once) to build and distribute the three repository mods. The selected INI already includes this patch. [Java-only builds and tests](../docs/DEVELOPMENT.md#java-development) are documented separately.
 
 ## Server loader
 
@@ -89,14 +45,17 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 
 ### Verify activation
 
-Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true, video=true, animal=true, equipment=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
+Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true, video=true, animal=true, equipment=true, hutch=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
 
 - Server: `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
 - Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI`, `[ZB] Transformed: zombie.vehicles.VehicleInterpolation` `[ZB] Transformed: zombie.characters.NetworkPlayerAI` and `[ZB] Transformed: zombie.network.packets.EquipPacket`.
+- Client and server hutch guard: `[ZB] Transformed: zombie.iso.objects.IsoHutch`.
 
 The selected Workshop `AnimalTrailerSyncMPFix` supplies a separate trailer timer fix; check `[AnimalTrailerSyncMPFix] ACTIVE` in the server log too (verified v1.3). See its [scope and installation](../MOD_INSTALL.md#animal-trailer-fix).
 
 These appear at the default log verbosity. Missing output, `false` values, or target-class/transformation errors mean setup is incomplete or needs investigation. The client also shows **ZombieBuddy ... loaded** in the upper-left corner. A client message alone does not confirm server activation.
+
+## Build cancellation
 
 The build acknowledgement patch lets Toolkit 0.1.30 interrupt active multiplayer construction safely. It reports the native server outcome over the same ordered channel as build transactions. Only confirmed cancellations may resume; completed builds never replay. An unsupported or unpatched server retains the queue restriction, and a missing terminal reply clears the waiting queue after 30 seconds.
 
@@ -104,22 +63,24 @@ The build acknowledgement patch lets Toolkit 0.1.30 interrupt active multiplayer
 
 Version 0.1.4 reconciles an animal's client trailer membership when the server reports its world, hutch or inventory location. A late trailer snapshot could previously re-add an unloaded animal permanently, leaving an entry that cannot be grabbed. Cleanup removes duplicate references to the same animal, preserves its identity and recomputes occupied trailer capacity. No animals or inventory items are created or deleted.
 
-`PZToolkitJavaPatches` is already in the selected INI; no additional Workshop item is needed. Install the updated prepared Java folder on the server and every client, including the host player, save the new JAR approval and restart the server and clients. Check `animal=true` and the actual `zombie.characters.NetworkPlayerAI` transformation in every client log. See [the combined guide](../MOD_INSTALL.md#animal-trailer-fix).
-
-The 0.1.4 native-object regression checks world/hutch/item locations, duplicate membership, identity, capacity, repeat snapshots and client/server guards. An isolated B42.21 macOS dedicated-server/client test with the 27 selected local mods passed two hen grabs and the last live chick grab, followed by all three native drops alive with exact identities and trailer counts 2/1/0 on both sides. A test-only late-packet replay demonstrated the vanilla ghost and its repair through the actual woven decoder; that probe is excluded from the mod. The affected hosted save, Windows/Linux, WAN and UI clicking/pathfinding were not tested, and previously lost animals are not restored.
+Install the same prepared patch folder on the server and every client, save changed JAR approvals and restart. Verify `animal=true` and the actual `zombie.characters.NetworkPlayerAI` transformation; see [activation checks](#verify-activation).
 
 ## Equipment acknowledgement race
 
-Version 0.1.5 fixes the reproduced empty-hands symptom. Equip uses ordered channel 0 while AnimalCommand uses channel 1. If Equip arrives before RemoveAndGrab, its local inventory lookup fails and parsing returns before consuming the remaining hand status. The client previously acknowledged its empty/old hands, the server accepted that acknowledgement and sent an equipment update that removed the animal from the client's hands again. The exact animal item remained in both inventories.
+Version 0.1.5 prevents an incomplete equipment acknowledgement from clearing a newly grabbed animal out of the player's hands when the equipment message arrives before the animal-grant message. The animal stays in inventory. Only incomplete local equipment parses omit their acknowledgement; normal updates, remote players, server handling and intentional drops retain native behavior. The demonstrated failure concerns the primary hand; unresolved secondary-only items are outside this fix.
 
-The client now omits acknowledgements for incomplete local equipment parses. B42.21 gives each handler an exactly bounded packet buffer; both that framing and EquipPacket have bytecode guards. Fully parsed packets, remote players, server handling and intentional equipment changes retain vanilla behavior. The patch does not create items, change IDs or reorder network channels. An unresolved secondary-only item after a fully read packet is outside this fix; the demonstrated animal carry failure occurs on the primary item.
+Verify `equipment=true` and `zombie.network.packets.EquipPacket` transformation in each client log. See [decoder behavior](../docs/DEVELOPMENT.md#java-patch-boundaries) for the protocol and bytecode constraints.
 
-Check `equipment=true` and actual `zombie.network.packets.EquipPacket` transformation in each client log. The native-object regression covers complete/incomplete parsing, marker reuse, repeat/different packets and local/remote/server guards. It also compares the original and actually woven acknowledgement handler. A controlled native delivery-order test reproduced empty hands in all three unloads before the fix (empty hands and a held baseball bat). With 0.1.5, the same action/probe sequence passed all three grabs and native drops, both without other gameplay mods and with 27 production Mod IDs, Toolkit 0.1.48 and Tidy Up Meister 2.0.8. Server/client identities and trailer counts 2/1/0 matched, and deferred commands released automatically before verification. This changes packet delivery order in a test helper; natural incidence and the affected hosted save were not measured.
+## Hutch unloading crash
+
+Version 0.1.6 guards null animal references during native `IsoHutch.removeFromWorld` cleanup in clients, single-player and servers. It preserves stored slots/counts, animal references and the original map; it creates/deletes no animals, edits no saves and does not suppress unrelated exceptions. Unsupported bytecode and custom map implementations retain native behavior. The guard does not diagnose or restore missing animals.
+
+Install the rebuilt folder on the server and **every client, including the host**, save the changed JAR approval and restart. No new Mod ID or Workshop item is needed. Check `hutch=true` and the actual `IsoHutch` transformation. This prevents this specific unload failure; it does not restore missing animals or diagnose their original loss.
 
 ## Verification limits
 
-The build patch passed native Java cancellation/completion race checks and an isolated B42.21 server run with two EN/RU clients. Each client passed 22 checks covering interruption and once-only resumption of wooden/metal barricades and a crate; the server verified exact material consumption. Real WAN races, split-screen and other platforms were not exercised.
+Native-object checks exercise actual patched methods with fixtures; they do not verify live traversal of an existing save, natural WAN packet ordering or long sessions. Use [Java regression commands](../docs/DEVELOPMENT.md#java-development) and the [animal-trailer fixture](../tests/native_queue/contributions/animal-trailer/README.md) for controlled early-equipment, late-trailer-snapshot and synchronization-timer scenarios.
 
-The VHS patch cancels the old stop timer on a quick Stop/Play sequence. A native B42.21 server and two EN/RU clients passed eight playback checks each, including dialogue, 62.5 XP each and normal completion.
+## Test instrumentation
 
-The complete prepared 41-Mod-ID set passed a separate B42.21 macOS dedicated-server smoke on 12 October 2026: 33 wishlist/UI/shared-editing checks per client, with Lua checksums enabled. Server media and client zombie/vehicle class transformations were verified, alongside the native build regressions. The macOS launcher's argument handling, duplicate-loader refusal and environment inheritance have automated tests. The user confirmed ordinary Host verification on 13 October 2026 and subsequently reported no observed issues in use, closing the longer-session follow-up. They attributed the reported combat/grapple jerks to a poor internet connection and closed that investigation. These reports are separate from the automated dedicated-server coverage above; Linux and mixed patched/unpatched clients have not been independently verified.
+Programmatic silent video capture is test-only. Its API, memory limits, encoder handling and checks are in [development: test video](../docs/DEVELOPMENT.md#test-video); the [native fixture](../tests/native_queue/contributions/video-recording/README.md) prepares a disposable profile.

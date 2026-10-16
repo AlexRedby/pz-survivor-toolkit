@@ -31,7 +31,7 @@ class NativeRunnerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / "client1").mkdir()
         (self.root / "client1/options.ini").write_text("voiceEnable=false\n")
-        self.selection = {"kind": "sp", "mods": [], "cases": ["nativeStop"], "timeout_seconds": 10}
+        self.selection = {"suite": "health", "kind": "sp", "mods": [], "cases": ["nativeStop"], "timeout_seconds": 10}
         self.runtime = {"game": str(self.root), "java": "/fake/java", "roles": {"client1": {"cache": str(self.root / "client1"), "classes": str(self.root / "classes")}}}
         (self.root / "selection.json").write_text(json.dumps(self.selection))
         (self.root / "runtime.json").write_text(json.dumps(self.runtime))

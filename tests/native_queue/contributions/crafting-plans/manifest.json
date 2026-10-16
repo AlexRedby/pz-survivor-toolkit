@@ -154,7 +154,7 @@
       "SCROLLBAR_BOUNDS"
     ]
   },
-  "integration": "Preserved helpers only; not registered in the common queue catalog/runner. Requires scenario dispatch, parameter files, dependencies and old marker contract adaptation.",
+  "integration": "Common crafting-plans suite dispatches preserved cases through tools/queue_checks/adapters/craft_wishlist.py; exact stage names and native authority markers are verified. Catalog readiness is not native pass evidence.",
   "limits": [
     "No native run performed for this intake",
     "MP only: native SP unverified",

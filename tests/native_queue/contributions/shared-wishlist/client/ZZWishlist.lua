@@ -20,19 +20,71 @@ Events.OnPreUIDraw.Add(function()
 end)
 local ids,data,stages,step,lastStage,started,lastReady=nil,{},{},1,0,nil,0
 local function stage(name,fn,delay)stages[#stages+1]={name,fn,delay or 2}end
+local function joint(name,key,observe,after,delay)
+ stage(name,observe,delay);stages[#stages].barrier=key;stages[#stages].after=after
+end
+local pending,aborted
+local barrierTimeout=15000
 local function W()return assert(PZSurvivorWishlist)end
 local function list(id)for _,l in ipairs(W().Client.state(0).lists)do if l.id==(id or user)then return l end end end
 local function item(name)local items=getPlayer():getInventory():getItems();for i=0,items:size()-1 do local it=items:get(i);if it:getID()==ids[name]then return it end end end
 local function flatten(menu,out)out=out or{};for _,o in ipairs(menu.options)do out[#out+1]=o;if o.subOption then local s=menu:getSubMenu(o.subOption);if s then flatten(s,out)end end end;return out end
 local function preparePane(page)page:setVisible(true);page:setPinned();page.inventoryPane:setYScroll(0);page.inventoryPane:refreshContainer();ISInventoryPage.renderDirty=true end
-local function checkHighlight(page)
- local pane=page.inventoryPane;local drawn=0;local original=pane.drawRectBorder
+local function rowHasType(row,fullType)
+ if instanceof(row,'InventoryItem')then return row:getFullType()==fullType end
+ if type(row)=='table'and type(row.items)=='table'then for _,it in ipairs(row.items)do
+  if instanceof(it,'InventoryItem')and it:getFullType()==fullType then return true end
+ end end
+ return false
+end
+local function targetRow(pane,fullType)
+ for index,row in ipairs(pane.items)do if rowHasType(row,fullType)then return index end end
+end
+local function selectCombinedLoot(page)
+ local p=require'BetterContainers/Proximity';local container=assert(p.GetItemContainer(0))
+ page:refreshBackpacks();local selected=false
+ for _,button in ipairs(page.backpacks)do if button.inventory==container then page:selectContainer(button);selected=true;break end end
+ assert(selected,'combined loot button absent')
+ assert(page.inventoryPane.inventory==container,'combined loot container not actually selected')
+end
+local function checkHighlight(page,fullType)
+ local pane=page.inventoryPane;local borders,calls={},0
+ -- Native rendering builds flattened rows and scroll height, including rows outside the viewport.
+ pane.smoothScrollTargetY=nil;pane.smoothScrollY=nil;pane:refreshContainer();pane:renderdetails(false)
+ local index=assert(targetRow(pane,fullType),'wanted item absent from native rows: '..fullType)
+ assert(pane.itemHgt>0 and pane:getScrollAreaHeight()>0,'inventory viewport has no row area')
+ local maxScroll=math.max(0,pane:getScrollHeight()-pane:getScrollAreaHeight())
+ pane.smoothScrollTargetY=nil;pane.smoothScrollY=nil
+ pane:setYScroll(-math.min((index-1)*pane.itemHgt,maxScroll))
+ local original,originalDraw=pane.drawRectBorder,W().Inventory.draw
  pane.drawRectBorder=function(self,x,y,w,h,a,r,g,b)
-  if math.abs((r or 0)-.25)<.001 and math.abs((g or 0)-.85)<.001 and math.abs((b or 0)-.75)<.001 then drawn=drawn+1 end
+  if math.abs((r or 0)-.25)<.001 and math.abs((g or 0)-.85)<.001 and math.abs((b or 0)-.75)<.001 then borders[#borders+1]={y=y,h=h}end
   return original(self,x,y,w,h,a,r,g,b)
  end
- local ok,err=pcall(function()pane:renderdetails(false)end);pane.drawRectBorder=original;assert(ok,err)
- local marks=W().Inventory.marks(pane);assert(#marks>0,'wanted row absent');assert(drawn==#marks,'highlight wrappers missing/duplicated')
+ W().Inventory.draw=function(target,...)
+  if target==pane then calls=calls+1 end
+  return originalDraw(target,...)
+ end
+ local ok,err=pcall(function()pane:renderdetails(false)end)
+ pane.drawRectBorder=original;W().Inventory.draw=originalDraw;assert(ok,err)
+ local marks=W().Inventory.marks(pane);local visible,targetVisible=0,false;local scroll=pane:getYScroll()
+ for _,marked in ipairs(marks)do
+  local top=(marked-1)*pane.itemHgt+pane.headerHgt+scroll
+  if top+pane.itemHgt>pane.headerHgt and top<pane:getHeight()then
+   visible=visible+1;if rowHasType(pane.items[marked],fullType)then targetVisible=true end
+  end
+ end
+ print('[WISHLIST_TEST] HIGHLIGHT '..user..' calls='..calls..' marks='..#marks..' visible='..visible..' borders='..#borders..' height='..pane:getHeight()..' header='..pane.headerHgt..' row='..pane.itemHgt..' scroll='..scroll..' target='..fullType..' index='..index..' rows='..#pane.items)
+ assert(#marks>0 and visible>0 and targetVisible,'wanted row absent from viewport')
+ assert(calls==1,'highlight overlay missing/duplicated')
+ assert(#borders==visible,'visible highlight borders missing/duplicated')
+ for _,border in ipairs(borders)do
+  assert(border.h>0 and border.y+scroll>=pane.headerHgt-.001 and border.y+border.h+scroll<=pane:getHeight()+.001,'highlight border outside viewport')
+ end
+end
+local function separate(a,b)
+ local ax,ay,bx,by=a:getAbsoluteX(),a:getAbsoluteY(),b:getAbsoluteX(),b:getAbsoluteY()
+ return ax+a:getWidth()<=bx or bx+b:getWidth()<=ax or ay+a:getHeight()<=by or by+b:getHeight()<=ay
 end
 local function findButton(node)
  if node.pzswButton then return node.pzswButton,node end
@@ -81,26 +133,35 @@ else
   assert(found,'context action absent');found.onSelect(found.target);m:hideAndChildren();preparePane(getPlayerInventory(0))
  end)
  stage('CleanUI inventory highlights real rows once',function()
-  assert(list().entries['Base.AlarmClock2'].amount==1);checkHighlight(getPlayerInventory(0))
+  assert(list().entries['Base.AlarmClock2'].amount==1);checkHighlight(getPlayerInventory(0),'Base.AlarmClock2')
  end)
  stage('sidebar opens wishlist without overlapping existing buttons',function()
-  local equipped=getPlayerData(0).equipped;local b=assert(equipped.pzswButton)
+  local equipped=getPlayerData(0).equipped
+  local toolkit=getActivatedMods():contains('PZSurvivorToolkit')
+  local b=assert(toolkit and equipped.toolkitToolsButton or equipped.pzswButton,'wishlist sidebar control absent')
+  assert(b:getIsVisible()and b:getWidth()>0 and b:getHeight()>0,'wishlist sidebar control hidden')
+  if toolkit then assert(not equipped.pzswButton,'duplicate standalone wishlist sidebar control')end
   for _,child in pairs(equipped:getChildren())do if child~=b and child.Type=='ISButton'and child:getIsVisible()then
-   assert(b:getY()>=child:getBottom()or b:getBottom()<=child:getY(),'sidebar overlap')
+   assert(separate(b,child),'sidebar overlap')
   end end
-  if W().UI.windows[0] then W().UI.windows[0]:close()end;b.onclick(b.target,b);assert(W().UI.windows[0]:getIsVisible());W().UI.windows[0]:close()
+  local highlight=equipped.toolkitHighlightButton
+  if highlight and highlight:getIsVisible()then assert(separate(b,highlight),'sidebar controls overlap')end
+  if W().UI.windows[0] then W().UI.windows[0]:close()end;b.onclick(b.target,b)
+  if toolkit then
+   local menu=assert(getPlayerContextMenu(0));local found
+   for _,option in ipairs(flatten(menu))do if option.name==getText('UI_PZSW_Open')then assert(not found,'duplicate Wishlist hub action');found=option end end
+   assert(found,'Wishlist hub action absent');found.onSelect(found.target);menu:hideAndChildren()
+  end
+  assert(W().UI.windows[0]:getIsVisible());W().UI.windows[0]:close()
  end)
  stage('switch CleanUI off',function()CleanUI_setCleanInventoryUIEnabled(false)end)
  stage('prepare native inventory mode',function()preparePane(getPlayerInventory(0))end)
- stage('native inventory mode preserves highlights',function()checkHighlight(getPlayerInventory(0))end)
+ stage('native inventory mode preserves highlights',function()checkHighlight(getPlayerInventory(0),'Base.AlarmClock2')end)
  stage('restore CleanUI',function()CleanUI_setCleanInventoryUIEnabled(true)end)
  stage('prepare Better Containers combined loot',function()
-  local page=getPlayerLoot(0);page:refreshBackpacks();local p=require'BetterContainers/Proximity';local c=assert(p.GetItemContainer(0))
-  page.tempForceSelectUnlock=true;local selected=false
-  for _,b in ipairs(page.backpacks)do if b.inventory==c then page:selectContainer(b);selected=true;break end end
-  assert(selected);preparePane(page);W().Client.addItem(0,'Base.Nails',1)
+  local page=getPlayerLoot(0);selectCombinedLoot(page);preparePane(page);W().Client.addItem(0,'Base.Nails',1)
  end)
- stage('combined reachable loot highlights item rows',function()checkHighlight(getPlayerLoot(0))end)
+ stage('combined reachable loot highlights item rows',function()local page=getPlayerLoot(0);selectCombinedLoot(page);checkHighlight(page,'Base.Nails')end)
  stage('Neat Crafting panel integrates wishlist',function()
   ISEntityUI.OpenHandcraftWindow(getPlayer(),nil,'*',false)
   local window=assert(ISEntityUI.GetWindowInstance(0,'HandcraftWindow'));data.nc=window
@@ -141,10 +202,12 @@ else
   print('[WISHLIST_TEST] CONCURRENT amount='..amount..' error='..tostring(err))
   if user=='client2'then W().Client.edit(0,'done',{fullType='Base.Hammer',done=true})end
  end)
- stage('peer completion synchronizes and removes owner highlight',function()
+ joint('peer completion synchronizes and removes owner highlight','completion-observed',function()
   assert(list('client1').entries['Base.Hammer'].done)
-  if user=='client1'then assert(not W().Client.isWanted(0,'Base.Hammer'));W().Client.edit(0,'share',{members={},faction=false})end
+  if user=='client1'then assert(not W().Client.isWanted(0,'Base.Hammer'))end
   data.lastRevision=list('client1').revision
+ end,function()
+  if user=='client1'then W().Client.edit(0,'share',{members={},faction=false})end
  end)
  stage('explicit revocation removes cached shared list',function()
   if user=='client2'then assert(not list('client1'));sendClientCommand(getPlayer(),'PZSurvivorWishlist','request',
@@ -161,12 +224,14 @@ else
   assert(list('client1') and list('client1').faction=='WishlistTest')
   if user=='client2'then W().Client.select(0,'client1');W().Client.edit(0,'set',{fullType='Base.Nails',amount=5})end
  end)
- stage('faction edit reaches owner',function()
+ joint('faction edit reaches owner','faction-edit-observed',function()
   assert(list('client1').entries['Base.Nails'].amount==5)
+ end,function()
   if user=='client1'then sendClientCommand('WishlistTest','Faction',{remove=true})end
  end)
- stage('faction departure revokes access without another list edit',function()
+ joint('faction departure revokes access without another list edit','faction-revocation-observed',function()
   if user=='client2'then assert(not list('client1'),'stale faction access')end
+ end,function()
   if user=='client1'then W().Client.edit(0,'share',{members={'client2'},faction=false});W().Client.edit(0,'set',{fullType='Base.Hammer',amount=7});W().Client.edit(0,'done',{fullType='Base.Hammer',done=false})end
  end,7)
  stage('visible loose wanted item highlights without claiming container',function()
@@ -245,20 +310,42 @@ if standalone then
  local skip={['switch CleanUI off']=true,['prepare native inventory mode']=true,['native inventory mode preserves highlights']=true,['restore CleanUI']=true,['prepare Better Containers combined loot']=true,['combined reachable loot highlights item rows']=true,['Project Cook lazy recipe panel integrates wishlist']=true}
  local filtered={};for _,s in ipairs(stages)do if not skip[s[1]]then filtered[#filtered+1]=s end end;stages=filtered
 end
-WishlistTestFixture={stageCount=#stages,mode=config.mode,standalone=standalone}
+local stageNames={};for _,spec in ipairs(stages)do stageNames[#stageNames+1]=spec[1]end
+WishlistTestFixture={stageCount=#stages,mode=config.mode,standalone=standalone,stageNames=stageNames,stages=stages,checkHighlight=checkHighlight,separate=separate}
 Events.OnGameStart.Add(function()
+ print('[WISHLIST_TEST] CONNECTED '..user..' language='..tostring(getCore():getOptionLanguageName()))
  if user=='client2'and not reload then local p=getPlayer();p:teleportTo(math.floor(p:getX())+8,math.floor(p:getY())+8,0)end
  started=getTimestampMs();if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
 end)
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='WishlistTest'then return end
- if command=='Start'then ids=args;lastStage=getTimestampMs()else data[command]=args end
+ if command=='Start'then ids=args;lastStage=getTimestampMs()
+ elseif command=='Continue'then
+  assert(pending and args.key==pending.spec.barrier,'unexpected joint observation release');pending.released=true
+ else data[command]=args end
 end)
+local function finish(s,ok,err,now)
+ if not ok then failures=failures+1 end
+ print('[WISHLIST_TEST] '..(ok and'PASS 'or'FAIL ')..s[1]..' '..tostring(err))
+ step=step+1;lastStage=now
+ if not ok and s.barrier then aborted=true end
+ if step>#stages or aborted then print('[WISHLIST_TEST] COMPLETE checks='..(step-1)..' failures='..failures)end
+end
 Events.OnTick.Add(function()
  local now=getTimestampMs()
+ if aborted then return end
+ if pending then
+  if pending.released then
+   local s=pending.spec;pending=nil;local ok,err=pcall(s.after);finish(s,ok,err,now)
+  elseif now-pending.since>=barrierTimeout then
+   local s=pending.spec;pending=nil;finish(s,false,'joint observation deadline '..s.barrier,now)
+  end
+  return
+ end
  if not ids then if started and now-started>2000 and now-lastReady>1000 then lastReady=now;sendClientCommand('WishlistTest','Ready',{})end;return end
  local s=stages[step];if not s or now-lastStage<s[3]*1000 then return end
- step=step+1;lastStage=now;local ok,err=pcall(s[2]);if not ok then failures=failures+1 end
- print('[WISHLIST_TEST] '..(ok and'PASS 'or'FAIL ')..s[1]..' '..tostring(err))
- if step>#stages then print('[WISHLIST_TEST] COMPLETE checks='..#stages..' failures='..failures)end
+ local ok,err=pcall(s[2])
+ if ok and s.barrier then
+  pending={spec=s,since=now};sendClientCommand('WishlistTest','Observed',{key=s.barrier})
+ else finish(s,ok,err,now)end
 end)

@@ -37,6 +37,6 @@
   "historical_evidence": ["initial-summary.json", "standalone2-summary.json", "reload-summary.json", "visual-final-summary.json"],
   "historical_evidence_root": ".codex/investigations/wishlist-20261012/evidence",
   "output_contract": "[WISHLIST_TEST] PASS|FAIL and exactly one COMPLETE checks=N failures=0 per client; server emits SERVER_READY",
-  "integration": "Not registered in catalog.json or the common runner; does not implement queue events or queue case selectors.",
+  "integration": "Common shared-wishlist suite dispatches preserved cases through tools/queue_checks/adapters/craft_wishlist.py; exact stage names and native authority markers are verified. Catalog readiness is not native pass evidence.",
   "limits": ["No native run performed for this intake", "No native SP evidence", "Historical summaries are evidence about older product snapshots only", "Programmatic native UI calls, not physical keyboard/mouse automation", "Race accepts either concurrent winner; does not assert which client wins", "Fixed delays and exact B42.21 APIs require future native revalidation", "No game, Workshop/JAR, profile/save, log or generated media is included"]
 }

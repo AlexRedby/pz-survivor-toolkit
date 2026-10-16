@@ -14,6 +14,7 @@ for _,case in ipairs({{'crafting','chains',20},{'ui','chains',28},{'alternatives
  end
  assert(loadfile(root..'/client/'..case[2]..'.lua'))()
  assert(CraftIntakeFixture.stageCount==case[3],case[1]..' unexpected stage count')
+ for _,name in ipairs(CraftIntakeFixture.stageNames)do print('STAGE\t'..case[1]..'\t'..name)end
  assert(loadfile(root..'/server/'..case[2]..'.lua'))()
  print('PASS craft stage registration '..case[1]..' checks='..case[3])
 end

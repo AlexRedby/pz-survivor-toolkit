@@ -1,11 +1,13 @@
 """Prepare isolated, immutable inputs for the native queue test runner."""
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+from . import adapters
 
 
 VERSION = re.compile(r"\d+(?:\.\d+)*")
@@ -44,7 +46,10 @@ def _matching_roots(infos, identifier):
             if _metadata(info).get("id", "").strip() == identifier}
 
 
-def _locations(project, workshop, identifiers):
+def _locations(project, workshop, identifiers, overrides=None):
+    overrides = overrides or {}
+    if set(overrides) - set(identifiers):
+        raise ValueError('Mod source override is not selected')
     local_infos = list(project.glob("*/mod.info")) + list(project.glob("*/*/mod.info"))
     local_infos += list((project / "JavaPatches/build/PZToolkitJavaPatches").glob("*/mod.info"))
     patch_info = project / "JavaPatches/build/PZToolkitJavaPatches/mod.info"
@@ -57,8 +62,12 @@ def _locations(project, workshop, identifiers):
         remote_infos.extend(root.rglob("mod.info"))
     result = {}
     for identifier in identifiers:
-        found = _matching_roots(local_infos, identifier)
-        if not found:
+        if identifier in overrides:
+            explicit = Path(overrides[identifier]).resolve()
+            found = _matching_roots(explicit.rglob('mod.info'), identifier) if explicit.is_dir() else set()
+        else:
+            found = _matching_roots(local_infos, identifier)
+        if not found and identifier not in overrides:
             found = _matching_roots(remote_infos, identifier)
         if len(found) != 1:
             raise ValueError("Mod ID must resolve exactly once: " + identifier + ": " + str(sorted(map(str, found))))
@@ -90,11 +99,14 @@ def _validate(selection):
             raise ValueError("Duplicate IDs in " + key)
     if "ActionQueueTest" in selection["mods"]:
         raise ValueError("ActionQueueTest is reserved for the native fixture")
-    if "PZSurvivorToolkit" not in selection["mods"]:
+    if selection['suite'] == 'health' and "PZSurvivorToolkit" not in selection["mods"]:
         raise ValueError("Native queue modes require PZSurvivorToolkit with its queue option toggled")
     languages = selection.get("languages")
-    if languages not in (["EN"], ["RU"], ["EN", "RU"]) or selection["kind"] == "sp" and len(languages) != 1 or selection["kind"] == "mp" and languages != ["EN", "RU"]:
-        raise ValueError("SP requires EN or RU; MP requires both EN and RU")
+    clients = selection.get('clients', 2 if selection['kind'] == 'mp' else 1)
+    if type(clients) is not int or clients not in (1, 2) or selection['kind'] == 'sp' and clients != 1 or languages not in (["EN"], ["RU"], ["EN", "RU"]) or len(languages) != clients:
+        raise ValueError('Provide one language per actual client; SP has one, MP one or two')
+    if selection['suite'] == 'health' and selection['kind'] == 'mp' and languages != ['EN', 'RU']:
+        raise ValueError('Health MP requires both EN and RU')
     ports = selection.get("ports")
     if not isinstance(ports, list) or len(ports) != 2 or len(set(ports)) != 2 or any(type(port) is not int or not 1024 <= port <= 65535 for port in ports):
         raise ValueError("Expected two distinct unprivileged ports")
@@ -105,6 +117,8 @@ def _validate(selection):
 
 
 def _lua(value):
+    if value is None:
+        return 'nil'
     if isinstance(value, dict):
         return "{" + ",".join("[" + _lua(key) + "]=" + _lua(item) for key, item in value.items()) + "}"
     if isinstance(value, list):
@@ -115,6 +129,8 @@ def _lua(value):
         return "true" if value else "false"
     if type(value) is int:
         return str(value)
+    if type(value) is float and math.isfinite(value):
+        return repr(value)
     raise ValueError("Unsupported Lua selection value: " + repr(value))
 
 
@@ -135,7 +151,10 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         raise ValueError("Missing native game Lua sources: " + str(game / "media/lua"))
     if "ZombieBuddy" in selection["mods"] and not (game / "ZombieBuddy.jar").is_file():
         raise ValueError("Selected ZombieBuddy requires the installed game/ZombieBuddy.jar agent")
-    locations = _locations(project, list(map(Path, workshop)), selection["mods"])
+    adapter = adapters.get(selection['suite'])
+    if adapter:
+        adapter.validate(selection)
+    locations = _locations(project, list(map(Path, workshop)), selection["mods"], selection.get('options', {}).get('mod_sources'))
     if any(output.is_relative_to(source) for source in [game, jdk, *locations.values()]):
         raise ValueError("Output must be outside game, JDK and source mod directories")
     if any(char in str(path) for path in (output, game, jdk) for char in (",", ":", "\n", "\r")):
@@ -144,7 +163,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     suite = project / "tests/native_queue" / selection["suite"]
     required = [support / name for name in ("ToolkitSmokeLauncher.java", "ZZReleasePreflight.lua", "QueueEnergyPlacement.lua")]
     required += [project / "tools/check_action_queue.py", project / "tests/native_queue/catalog.json"]
-    if not (suite / "client").is_dir() or not (suite / "shared").is_dir() or selection["kind"] == "mp" and not (suite / "server").is_dir():
+    if not adapter and (not (suite / "client").is_dir() or not (suite / "shared").is_dir() or selection["kind"] == "mp" and not (suite / "server").is_dir()):
         raise ValueError("Native suite is missing its client/shared/server source directories: " + str(suite))
     for path in required:
         if not path.is_file():
@@ -153,6 +172,16 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         if output.is_relative_to(source):
             raise ValueError("Snapshot output cannot be inside a selected mod")
     sources = required + sorted(suite.rglob("*.lua")) + sorted((project / "tools/queue_checks").glob("*.py")) + [Path(__file__).resolve(), game / "projectzomboid.jar", jdk / "bin/java", jdk / "bin/javac"]
+    sources.append(Path(adapters.__file__))
+    if adapter:
+        sources += [Path(adapter.__file__), *map(Path, adapter.sources(project, selection))]
+        for relative in adapter.definitions()[selection['suite']].get('game_inputs', []):
+            asset = (game / relative).resolve()
+            if not asset.is_relative_to(game):
+                raise ValueError('Game input escapes installed game: ' + relative)
+            sources.append(asset)
+    if selection.get('config_source'):
+        sources.append(Path(selection['config_source']))
     if "ZombieBuddy" in selection["mods"]:
         sources.append(game / "ZombieBuddy.jar")
     # Pin the native Lua inputs too; a game update must invalidate a prepared run.
@@ -163,8 +192,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
                 for identifier, source in locations.items()]
     for row in manifest:
         source_manifest.update({str(Path(row["source"]) / relative): digest for relative, digest in row["files"].items()})
-    roles = ["client1"] if selection["kind"] == "sp" else ["server", "client1", "client2"]
-    runtime = {"game": str(game), "jdk": str(jdk), "kind": selection["kind"],
+    roles = adapters.roles(selection)
+    runtime = {"game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
                "java": str(jdk / "bin/java"), "server_name": "queue-smoke", "roles": {}}
     output.mkdir(parents=True)
     for role in roles:
@@ -178,9 +207,9 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             if hashes(target) != expected:
                 raise RuntimeError("Mod changed while copying snapshot: " + identifier)
             for layer in [target, *[p for p in target.iterdir() if p.is_dir() and (p.name == "common" or VERSION.fullmatch(p.name))]]:
-                if (layer / "media").is_dir():
+                if layer != target or (layer / "media").is_dir():
                     for sub in ("AnimSets", "actiongroups"):
-                        (layer / "media" / sub).mkdir(exist_ok=True)
+                        (layer / "media" / sub).mkdir(parents=True, exist_ok=True)
         helper = cache / "mods/ActionQueueTest"
         for layer in ("common", "42"):
             for sub in ("AnimSets", "actiongroups"):
@@ -188,8 +217,9 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         (helper / "42/mod.info").write_text("name=Isolated native queue test\nid=ActionQueueTest\nversionMin=42.21\n", encoding="utf-8")
         lua = helper / "42/media/lua"
         for side in ("shared", "client", "server"):
+            (lua / side).mkdir(parents=True, exist_ok=True)
             if (suite / side).is_dir():
-                shutil.copytree(suite / side, lua / side)
+                shutil.copytree(suite / side, lua / side, dirs_exist_ok=True)
         shutil.copy2(support / "ZZReleasePreflight.lua", lua / "client")
         shutil.copy2(support / "QueueEnergyPlacement.lua", lua / "shared")
         language = selection["languages"][-1] if role == "client2" else selection["languages"][0]
@@ -220,6 +250,35 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         server.mkdir()
         (server / "queue-smoke.ini").write_text("Mods=" + ";".join([*selection["mods"], "ActionQueueTest"]) + "\nWorkshopItems=\nMap=Muldraugh, KY\nDefaultPort=" + str(selection["ports"][0]) + "\nUDPPort=" + str(selection["ports"][1]) + "\nPublic=false\nUPnP=false\nOpen=true\nAutoCreateUserInWhiteList=true\nMaxPlayers=4\nPVP=false\nSpawnPoint=10835,10144,0\nPauseEmpty=true\nDoLuaChecksum=true\nVoiceEnable=false\n", encoding="utf-8")
         (server / "queue-smoke_SandboxVars.lua").write_text("SandboxVars={VERSION=6,Zombies=6,StartMonth=7,StartDay=9,StartTime=2,MinutesPerPage=2.0}\n", encoding="utf-8")
+    if adapter:
+        adapter.stage(project, output, game, jdk, selection, locations, runtime)
+    if selection['kind'] == 'mp' and runtime['fixture'].get('sandbox'):
+        path = output / 'server/Server/queue-smoke_SandboxVars.lua'
+        values = {'VERSION': 6, 'Zombies': 6, 'StartMonth': 7, 'StartDay': 9, 'StartTime': 2, 'MinutesPerPage': 2}
+        values.update(runtime['fixture']['sandbox'])
+        # Sandbox settings are explicit numeric/boolean suite inputs, sealed below.
+        text = ','.join(key + '=' + ('true' if value else 'false') if type(value) is bool else key + '=' + str(value) for key, value in values.items())
+        path.write_text('SandboxVars={' + text + '}\n')
+    extra = runtime['fixture'].get('mods', [])
+    if not isinstance(extra, list) or len(set(extra)) != len(extra) or any(not isinstance(id, str) or not MOD_ID.fullmatch(id) or id in selection['mods'] or id == 'ActionQueueTest' for id in extra):
+        raise ValueError('Invalid or duplicate generated fixture Mod IDs')
+    active = [*selection['mods'], 'ActionQueueTest', *extra]
+    for role in roles:
+        cache = output / role
+        for id in extra:
+            if not (cache / 'mods' / id).is_dir():
+                raise ValueError('Generated fixture mod missing: ' + role + '/' + id)
+            for layer in ('common', '42'):
+                for directory in ('AnimSets', 'actiongroups'):
+                    (cache / 'mods' / id / layer / 'media' / directory).mkdir(parents=True, exist_ok=True)
+        (cache / 'mods/default.txt').write_text('VERSION = 1,\nmods\n{\n' + ''.join(' mod = ' + id + ',\n' for id in active) + '}\nmaps\n{\n}\n')
+        approvals = [{'id': id, 'jar_hash': sha256(jar), 'decision': True, 'time': '2026-01-01T00:00:00Z'}
+                     for id in active for jar in sorted((cache / 'mods' / id).rglob('*.jar'))]
+        _json(cache / 'zombie-buddy/mod_approvals.json', {'formatVersion': 2, 'mods': approvals})
+    if selection['kind'] == 'mp':
+        path = output / 'server/Server/queue-smoke.ini'
+        text = re.sub(r'^Mods=.*$', 'Mods=' + ';'.join(active), path.read_text(), flags=re.M)
+        path.write_text(text)
     _json(output / "selection.json", selection)
     _json(output / "manifest.json", manifest)
     _json(output / "source-manifest.json", source_manifest)
@@ -231,7 +290,12 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     comparison = {"selection": {key: value for key, value in selection.items() if key != "mode"},
                   "mods": {row["id"]: row["files"] for row in manifest}, "sources": source_manifest,
                   "settings": initial_settings}
-    fingerprint = hashlib.sha256(json.dumps(comparison, sort_keys=True).encode()).hexdigest()
+    if selection.get('config_source'):
+        config_path = selection['config_source']
+        comparison['selection'] = dict(comparison['selection'], config_source='<suite-config>')
+        comparison['sources'] = dict(source_manifest)
+        comparison['sources']['<suite-config>'] = comparison['sources'].pop(config_path)
+    fingerprint = hashlib.sha256(json.dumps(comparison, sort_keys=True).replace(str(output), '<run>').encode()).hexdigest()
     _json(output / "settings-fingerprint.json", {"sha256": fingerprint, "inputs": comparison})
     for path, digest in source_manifest.items():
         if sha256(Path(path)) != digest:

@@ -1,5 +1,5 @@
 """Snapshot preparation checks without Steam, Java compilation, or a game launch."""
-import importlib.util
+import sys
 import json
 from pathlib import Path
 import shutil
@@ -9,9 +9,8 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
-SPEC = importlib.util.spec_from_file_location("queue_native", ROOT / "tools/queue_checks/native.py")
-native = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(native)
+sys.path.insert(0, str(ROOT / 'tools'))
+from queue_checks import native
 
 
 class NativeSnapshotTests(unittest.TestCase):
@@ -80,6 +79,16 @@ class NativeSnapshotTests(unittest.TestCase):
         self.write(original, "changed after preparation")
         self.assertNotEqual(source[str(original)], native.sha256(original))
         self.assertNotEqual(copied.read_bytes(), original.read_bytes())
+
+    def test_empty_common_layer_has_native_animation_directories_only_in_snapshot(self):
+        source = self.project / "Toolkit/common"
+        self.write(source / ".gitkeep", "")
+        output = self.prepare(kind="mp", languages=["EN", "RU"])
+        self.assertFalse((source / "media").exists())
+        for role in ("server", "client1", "client2"):
+            for layer in ("common", "42"):
+                for sub in ("AnimSets", "actiongroups"):
+                    self.assertTrue((output / role / "mods/PZSurvivorToolkit" / layer / "media" / sub).is_dir())
 
     def test_refuses_existing_output_without_changing_it(self):
         output = self.prepare()

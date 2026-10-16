@@ -1,6 +1,7 @@
 package net.alexredby.pztoolkitjavapatches;
 
 import java.security.MessageDigest;
+import java.util.HashMap;
 import java.util.HexFormat;
 import me.zed_0xff.zombie_buddy.Accessor;
 import me.zed_0xff.zombie_buddy.Patch;
@@ -10,6 +11,7 @@ import zombie.characters.animals.IsoAnimal;
 import zombie.core.BuildAction;
 import zombie.core.network.ByteBufferReader;
 import zombie.core.raknet.UdpConnection;
+import zombie.iso.objects.IsoHutch;
 import zombie.network.IConnection;
 import zombie.network.fields.character.PlayerID;
 import zombie.network.packets.EquipPacket;
@@ -47,6 +49,8 @@ public final class Main {
         "35e25895c725c3154d0f1e4b3217c7e19795ed1296441dbcea9283026ec5da89")
         && supports("zombie/network/ZomboidNetData.class",
             "9b81b4f1e3ce8e338f2b8bb838c797353d0b2841396d01325c968051e168419e");
+    public static final boolean HUTCH_SUPPORTED = supports("zombie/iso/objects/IsoHutch.class",
+        "d9c1944025f6902416c83993199a89b2509bb2af3d09a44ced9c61b28c8589ae");
     public static final boolean MEDIA_SUPPORTED = supports("zombie/radio/devices/DeviceData.class",
         "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102");
     public static final boolean BUILD_SUPPORTED = supports("zombie/core/BuildAction.class",
@@ -73,7 +77,24 @@ public final class Main {
     public static void main(String[] args) {
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
-            + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED);
+            + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
+            + ", hutch=" + HUTCH_SUPPORTED);
+    }
+
+    @Patch(className="zombie.iso.objects.IsoHutch", methodName="removeFromWorld", warmUp=true, strictMatch=true)
+    public static class HutchUnloading {
+        @Patch.OnEnter
+        public static void enter(@Patch.This IsoHutch hutch,
+                                 @Patch.Local("toolkitHutchAnimals") HashMap<Integer, IsoAnimal> original) {
+            original = HutchCleanup.begin(hutch, Main.HUTCH_SUPPORTED);
+        }
+
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.This IsoHutch hutch,
+                                @Patch.Local("toolkitHutchAnimals") HashMap<Integer, IsoAnimal> original) {
+            // Restore even when native cleanup throws; never suppress unrelated errors.
+            if (original != null) hutch.animalInside = original;
+        }
     }
 
     @Patch(className="zombie.network.packets.EquipPacket", methodName="parse", warmUp=true, strictMatch=true)
