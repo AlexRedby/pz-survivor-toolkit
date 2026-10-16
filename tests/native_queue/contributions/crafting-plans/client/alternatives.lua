@@ -308,7 +308,8 @@ stage('server verifies two logs six planks and retained shelf saw',function()
  print('[CRAFT_TEST] ALTERNATIVES_COMPLETE '..user)
 end,function() return replies.AlternativesVerified~=nil end)
 
-CraftIntakeFixture={stageCount=#stages}
+local stageNames={};for _,spec in ipairs(stages)do stageNames[#stageNames+1]=spec[1]end
+CraftIntakeFixture={stageCount=#stages,stageNames=stageNames}
 print('[CRAFT_TEST] EXPECTED checks='..#stages..' scenario='..scenario)
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='CraftChainTest' then return end

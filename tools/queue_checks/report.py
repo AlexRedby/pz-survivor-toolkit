@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from . import adapters
 
 
 MARKER = "[QUEUE_CHECK] "
@@ -50,7 +51,7 @@ def verify_manifest(root, filename, absolute=False):
             errors.append("Snapshot metadata missing: " + ", ".join(sorted(missing)))
         try:
             selection = read_json(root / "selection.json")
-            roles = ["client1"] if selection["kind"] == "sp" else ["server", "client1", "client2"]
+            roles = adapters.roles(selection)
             # Lua/ is writable user data: pin prepared inputs, permit native-generated layouts/options.
             actual = {path.relative_to(root).as_posix() for role in roles for sub in ("mods", "classes")
                       for path in (root / role / sub).rglob("*") if path.is_file()}
@@ -83,7 +84,7 @@ def events(text):
 
 
 def log_paths(root, role):
-    paths = [root / (role + "-launch.log"), root / role / "console.txt"]
+    paths = [root / (role + "-launch.log"), root / (role + "-probes.log"), root / role / "console.txt"]
     paths += sorted((root / role / "Logs").glob("*DebugLog*.txt"))
     return [path for path in paths if path.is_file()]
 
@@ -135,6 +136,8 @@ def audit_logs(root, roles):
 
 
 def functional(root, selection, catalog):
+    if adapters.get(selection['suite']):
+        return adapters.functional(root, selection, catalog)
     roles = ["client1"] if selection["kind"] == "sp" else ["client1", "client2"]
     coverage, issues, clients = [], [], {}
     authority_path = root / ("server-launch.log" if selection["kind"] == "mp" else "client1-launch.log")
@@ -213,7 +216,7 @@ def compare(current, control):
     for label, report in (("toolkit", current), ("control", control)):
         if report["functional"]["status"] != "passed" or not report["provenance"]["verified"] or report.get("execution", {}).get("status") != "completed":
             reasons.append(label + " run lacks verified functional completion")
-        expected_roles = {"client1"} if report["selection"]["kind"] == "sp" else {"server", "client1", "client2"}
+        expected_roles = set(adapters.roles(report['selection']))
         if set(report["runtime"]["roles"]) != expected_roles or report["runtime"]["microphone"] or any(not audit.get("available") for audit in report["runtime"]["roles"].values()):
             reasons.append(label + " run lacks safe, available runtime logs")
     def executed(report):
@@ -237,7 +240,7 @@ def build_report(root, catalog, control=None):
     selection = read_json(root / "selection.json")
     provenance_errors = verify_manifest(root, "source-manifest.json", absolute=True) + verify_manifest(root, "snapshot-hashes.json")
     result, coverage = functional(root, selection, catalog)
-    roles = ["client1"] if selection["kind"] == "sp" else ["server", "client1", "client2"]
+    roles = adapters.roles(selection)
     audits = audit_logs(root, roles)
     try:
         execution = read_json(root / "execution.json")
@@ -258,12 +261,12 @@ def build_report(root, catalog, control=None):
         if report["comparison"]["compatible"]:
             new = any(row["only_toolkit"] for row in report["comparison"]["errors"].values())
             report["runtime"]["status"] = "new-errors" if new else "reproduced-without-queue" if total else "clean"
-    failed = result["status"] != "passed" or provenance_errors or microphone or execution.get("status") != "completed" or any(not row["available"] for row in audits.values())
+    failed = result["status"] not in ('passed', 'captured') or provenance_errors or microphone or execution.get("status") != "completed" or any(not row["available"] for row in audits.values())
     if failed:
         report["status"] = "failed"
     elif control is not None and not report["comparison"]["compatible"]:
         report["status"] = "needs-review"
-    elif report["runtime"]["status"] in ("unclassified-errors", "new-errors"):
+    elif result['status'] == 'captured' or (result.get('evidence') or {}).get('requires_review') or report["runtime"]["status"] in ("unclassified-errors", "new-errors"):
         report["status"] = "needs-review"
     else:
         report["status"] = "passed"
@@ -279,17 +282,19 @@ def matrix(catalog, reports=()):
             for kind in case["kinds"]:
                 for mode in ("toolkit", "native"):
                     if mode not in case.get("modes", ("toolkit", "native")):
-                        rows.append({"suite": suite, "case": case["id"], "producer": case["producer"], "capability": case["capability"], "kind": kind, "mode": mode, "status": "unsupported", "reason": "Requires toolkit queue API"})
+                        rows.append({"suite": suite, "case": case["id"], "producer": case["producer"], "capability": case["capability"], "kind": kind, "mode": mode, "status": "unsupported", "reason": case.get('control_reason', "Requires toolkit queue API")})
                         continue
-                    expected_actors = {"client1"} if kind == "sp" else {"client1", "client2"}
+                    expected_actors = {'client' + str(i+1) for i in range(1 if kind == 'sp' else case.get('clients', definition.get('clients', 2)))}
                     relevant = [(report, [row for row in report["coverage"] if row["suite"] == suite and row["case"] == case["id"] and row["kind"] == kind and row["mode"] == mode]) for report in reports]
                     relevant = [(report, matches) for report, matches in relevant if matches]
                     matches = [row for _, values in relevant for row in values]
-                    invalid = any(report.get("status") == "failed" or report["functional"]["status"] != "passed" or not report["provenance"]["verified"] or report.get("execution", {}).get("status") != "completed" for report, _ in relevant)
+                    invalid = any(report.get("status") == "failed" or report["functional"]["status"] not in ('passed', 'captured') or not report["provenance"]["verified"] or report.get("execution", {}).get("status") != "completed" for report, _ in relevant)
                     incomplete = any({row["actor"] for row in values} != expected_actors or len(values) != len(expected_actors) for _, values in relevant)
                     rows.append({"suite": suite, "case": case["id"], "producer": case["producer"], "capability": case["capability"],
                                  "kind": kind, "mode": mode, "status": "not-run" if not matches else "failed" if invalid or any(row["status"] == "failed" for row in matches) else "partial" if incomplete else "skipped" if all(row["status"] == "skipped" for row in matches) else "partial" if any(row["status"] == "skipped" for row in matches) else "passed",
                                  "evidence": matches})
+                    if matches and not invalid and not incomplete and all(row['status'] == 'captured' for row in matches):
+                        rows[-1]['status'] = 'captured'
     return {"schema_version": 1, "rows": rows}
 
 
@@ -297,7 +302,7 @@ def summary(report):
     lines = ["Overall: " + report["status"], "Execution: " + report["execution"]["status"], "Functional: " + report["functional"]["status"], "Runtime: " + report["runtime"]["status"],
              "Sources/snapshot: " + ("verified" if report["provenance"]["verified"] else "CHANGED")]
     for role, counts in report["functional"]["clients"].items():
-        lines.append(role + ": " + ", ".join(str(counts.get(status, 0)) + " " + status for status in ("passed", "skipped", "failed")))
+        lines.append(role + ": " + ", ".join(str(counts.get(status, 0)) + " " + status for status in ("passed", "skipped", "failed", 'captured') if status != 'captured' or counts.get(status)))
     for role, audit in report["runtime"]["roles"].items():
         lines.append(role + ": " + str(audit["error_count"]) + " errors, " + str(len(audit["microphone"])) + " microphone markers")
     lines.extend(report["functional"]["issues"] + report["provenance"]["issues"])

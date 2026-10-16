@@ -80,6 +80,10 @@ def check_analyzer():
         for key, value in (('mode', 'vanilla'), ('cases', ['other']), ('suite', 'health'), ('kind', 'sp')):
             invalid = json.loads(files[selection]); invalid[key] = value
             rejected(selection, json.dumps(invalid))
+        registered = json.loads(files[selection]); registered['suite'] = 'wooden_cart_multiplayer'
+        selection.write_text(json.dumps(registered))
+        assert analyzer['analyze'](root)['evidenceComplete']
+        selection.write_text(files[selection])
         log = root / 'client2-launch.log'
         log.write_text(files[log].replace(', "mode": "toolkit"', ''))
         assert analyzer['analyze'](root)['modeSource'] == 'selection.json'

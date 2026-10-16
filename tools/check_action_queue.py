@@ -6,27 +6,101 @@ from pathlib import Path
 import sys
 import subprocess
 
-from queue_checks import native, report, runner
+from queue_checks import native, report, runner, adapters
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
 
 
-def selection(args, catalog):
+def selection(args, catalog, options=None):
     suite = catalog["suites"][args.suite]
     if suite["status"] != "ready":
         raise ValueError("Suite has not been migrated: " + args.suite)
     all_cases = {case["id"]: case for case in suite["cases"]}
-    cases = args.cases.split(",") if args.cases else [case["id"] for case in suite["cases"] if args.kind in case["kinds"]]
+    kind = args.kind or suite['cases'][0]['kinds'][0]
+    cases = args.cases.split(",") if args.cases else ([suite['cases'][0]['id']] if args.suite != 'health' else [case['id'] for case in suite['cases'] if kind in case['kinds']])
     if not cases or len(cases) != len(set(cases)) or any(identifier not in all_cases for identifier in cases):
         raise ValueError("Select known unique case IDs; see matrix")
+    spec = all_cases[cases[0]]
     if args.mods == "selected":
         mods = native._metadata(ROOT / "SurvivorQoL-selected.ini")["Mods"].split(";")
     else:
-        mods = args.mods.split(",")
-    return {"schema_version": 1, "suite": args.suite, "kind": args.kind, "mode": args.mode,
-            "cases": cases, "mods": mods, "languages": [args.language] if args.kind == "sp" else ["EN", "RU"],
+        mods = args.mods.split(",") if args.mods else spec.get('default_mods', suite.get('default_mods', ['PZSurvivorToolkit']))
+    language = args.language or spec.get('languages', ['EN'])[0]
+    clients = 1 if kind == 'sp' else suite.get('clients', 2)
+    options = (report.read_json(args.config) if args.config else {}) if options is None else options
+    if not isinstance(options, dict):
+        raise ValueError('--config must contain a JSON object of suite options')
+    overrides = dict(options.get('mod_sources', {}))
+    for value in args.mod_source:
+        identifier, separator, path = value.partition('=')
+        if not separator or not identifier or not Path(path).is_absolute():
+            raise ValueError('--mod-source requires MOD_ID=/absolute/mod/root')
+        overrides[identifier] = path
+    if overrides:
+        options['mod_sources'] = overrides
+    for identifier in cases:
+        if kind not in all_cases[identifier]['kinds'] or args.mode not in all_cases[identifier].get('modes', ['toolkit', 'native']):
+            raise ValueError('Unsupported kind/mode for ' + identifier)
+    return {"schema_version": 1, "suite": args.suite, "mode": args.mode,
+            "cases": cases, "mods": mods, 'kind': kind, 'clients': clients, 'options': options,
+            'config_source': str(args.config.resolve()) if args.config else None,
+            "languages": [language] if clients == 1 else ["EN", "RU"],
             "timeout_seconds": args.timeout, "ports": args.ports, "expected_checks": len(cases) + 2}
+
+
+def save_report(output, catalog, control=None):
+    value = report.build_report(output, catalog, report.build_report(control, catalog) if control else None)
+    report.write_json(output / 'report.json', value)
+    (output / 'report.txt').write_text(report.summary(value), encoding='utf-8')
+    report.write_json(output / 'coverage.json', report.matrix(catalog, [value]))
+    return value
+
+
+def batch(args, catalog):
+    plan = report.read_json(args.plan)
+    jobs = plan.get('jobs') if isinstance(plan, dict) else None
+    if not isinstance(jobs, list) or not jobs or any(not isinstance(job, dict) for job in jobs):
+        raise ValueError('Batch plan requires a nonempty jobs list')
+    identifiers = [job.get('id') for job in jobs]
+    if any(not isinstance(id, str) or not native.MOD_ID.fullmatch(id) or id in ('.', '..') for id in identifiers) or len(set(identifiers)) != len(jobs):
+        raise ValueError('Batch job IDs must be unique safe directory names')
+    if args.output.exists():
+        raise FileExistsError('Fresh batch output directory required')
+    args.output.mkdir(parents=True)
+    results, reports, completed = [], [], {}
+    for job in jobs:
+        output = args.output / job['id']
+        item = {'id': job['id'], 'run': str(output.resolve())}
+        interrupted = False
+        print('START ' + job['id'], flush=True)
+        try:
+            options = dict(plan.get('options', {}), **job.get('options', {}))
+            if job.get('seed_job'):
+                options['seed_run'] = str(completed[job['seed_job']])
+            namespace = argparse.Namespace(suite=job['suite'], cases=job.get('case'), mode=job.get('mode', 'toolkit'),
+                kind=job.get('kind'), language=job.get('language'), mods=','.join(job['mods']) if job.get('mods') else None,
+                config=args.plan, mod_source=[], timeout=job.get('timeout', 900), ports=job.get('ports', [17343, 17344]))
+            selected = selection(namespace, catalog, options)
+            native.prepare(ROOT, output, Path(plan['game']), Path(plan['jdk']), selected, [Path(p) for p in plan.get('workshop', [])])
+            execution = runner.run(output)
+            interrupted = execution.get('interrupted', False)
+            control = completed[job['control_job']] if job.get('control_job') else None
+            value = save_report(output, catalog, control)
+            reports.append(value)
+            completed[job['id']] = output.resolve()
+            item.update(status=value['status'], functional=value['functional']['status'], runtime=value['runtime']['status'])
+            print(report.summary(value), flush=True)
+        except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
+            item.update(status='blocked' if not (output / 'execution.json').exists() else 'failed', error=str(error))
+            print(item['status'].upper() + ' ' + job['id'] + ': ' + str(error), flush=True)
+        results.append(item)
+        overall = 'failed' if any(row['status'] in ('failed', 'blocked') for row in results) else 'needs-review' if any(row['status'] == 'needs-review' for row in results) else 'passed'
+        report.write_json(args.output / 'batch-report.json', {'status': overall, 'jobs': results, 'remaining': identifiers[len(results):]})
+        report.write_json(args.output / 'coverage.json', report.matrix(catalog, reports))
+        if interrupted:
+            return 130
+    return {'passed': 0, 'failed': 1, 'needs-review': 2}[overall]
 
 
 def main(argv=None):
@@ -36,11 +110,13 @@ def main(argv=None):
         command = commands.add_parser(name)
         command.add_argument("output", type=Path, help="Fresh isolated output directory")
         command.add_argument("--suite", default="health")
-        command.add_argument("--kind", choices=("sp", "mp"), default="sp")
+        command.add_argument("--kind", choices=("sp", "mp"))
         command.add_argument("--mode", choices=("toolkit", "native"), default="toolkit")
         command.add_argument("--cases", help="Comma-separated case IDs; omitted means all cases for kind")
-        command.add_argument("--mods", default="PZSurvivorToolkit", help="Comma-separated Mod IDs, or selected for project INI")
-        command.add_argument("--language", choices=("EN", "RU"), default="EN")
+        command.add_argument("--mods", help="Comma-separated Mod IDs, or selected for project INI; omitted uses suite defaults")
+        command.add_argument('--config', type=Path, help='JSON suite options with explicit dependency paths')
+        command.add_argument('--mod-source', action='append', default=[], help='Explicit candidate MOD_ID=/absolute/mod/root; repeatable')
+        command.add_argument("--language", choices=("EN", "RU"))
         command.add_argument("--game", type=Path, required=True, help="Directory containing projectzomboid.jar")
         command.add_argument("--jdk", type=Path, required=True)
         command.add_argument("--workshop", action="append", type=Path, default=[], help="Repeatable installed Workshop roots")
@@ -57,9 +133,15 @@ def main(argv=None):
     command = commands.add_parser("matrix", help="List declared cases and actual evidence; never infer passes")
     command.add_argument("reports", type=Path, nargs="*")
     command.add_argument("--output", type=Path)
+    command = commands.add_parser('batch', help='Run an explicit stand plan sequentially with fresh profiles and a combined report')
+    command.add_argument('plan', type=Path)
+    command.add_argument('output', type=Path)
     args = parser.parse_args(argv)
     try:
         catalog = report.read_json(CATALOG)
+        catalog['suites'].update(adapters.definitions())
+        if args.command == 'batch':
+            return batch(args, catalog)
         if args.command == "matrix":
             value = report.matrix(catalog, [report.read_json(path) for path in args.reports])
             if args.output:
@@ -74,16 +156,10 @@ def main(argv=None):
                 return 0
         if args.command in ("run", "resume"):
             runner.run(args.output)
-        control = report.build_report(args.control, catalog) if args.control else None
-        value = report.build_report(args.output, catalog, control)
-        if (args.output / "execution.json").is_file():
-            value["execution"] = report.read_json(args.output / "execution.json")
-            if value["execution"]["status"] != "completed":
-                value["status"] = "failed"
-        report.write_json(args.output / "report.json", value)
-        (args.output / "report.txt").write_text(report.summary(value), encoding="utf-8")
-        report.write_json(args.output / "coverage.json", report.matrix(catalog, [value]))
+        value = save_report(args.output, catalog, args.control)
         print(report.summary(value))
+        if value['execution'].get('interrupted'):
+            return 130
         return {"passed": 0, "failed": 1, "needs-review": 2}[value["status"]]
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
         print("ERROR: " + str(error), file=sys.stderr)

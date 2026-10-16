@@ -1,6 +1,6 @@
 """Structured reports fail closed on incomplete or incomparable native evidence."""
 import copy
-import importlib.util
+import sys
 import json
 from pathlib import Path
 import tempfile
@@ -8,9 +8,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parent.parent
-SPEC = importlib.util.spec_from_file_location("queue_report", ROOT / "tools/queue_checks/report.py")
-report = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(report)
+sys.path.insert(0, str(ROOT / 'tools'))
+from queue_checks import report
 
 
 class QueueReportTests(unittest.TestCase):

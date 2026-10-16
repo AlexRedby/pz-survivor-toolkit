@@ -1,5 +1,5 @@
 """Snapshot preparation checks without Steam, Java compilation, or a game launch."""
-import importlib.util
+import sys
 import json
 from pathlib import Path
 import shutil
@@ -9,9 +9,8 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
-SPEC = importlib.util.spec_from_file_location("queue_native", ROOT / "tools/queue_checks/native.py")
-native = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(native)
+sys.path.insert(0, str(ROOT / 'tools'))
+from queue_checks import native
 
 
 class NativeSnapshotTests(unittest.TestCase):

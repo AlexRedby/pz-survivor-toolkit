@@ -1,8 +1,9 @@
 # Crafting-plan native fixture intake
 
 Preserved B42.21 client/server assertions from the 2026-10-13 crafting
-investigation. This is **intake only**, with no common catalog entry and no new
-native pass claimed. The contribution does not include the planner implementation,
+investigation. The common `crafting-plans` adapter now stages these assertions
+and verifies their exact stage labels and authority receipts. Integration itself
+does not claim a native pass. The contribution does not include the planner implementation,
 game/Workshop files, Java binaries, profiles, worlds or historical output files.
 
 | Scenario | Historical checks per EN/RU client | Purpose |
@@ -73,10 +74,12 @@ preflight once integrated, instead of copying the archived machine-specific
 are required; changing an INI alone does not prove that the renderer adopted the
 requested size. On macOS, a tiling window manager may resize test windows.
 
-The common queue runner uses different case selectors/events. These helpers
-cannot be enabled merely by adding a suite name. Integration must dispatch the
-selected scenario, provide its parameter file and interpret its marker contract.
-Do not mark it ready until the transferred path has a fresh native run.
+The common runner dispatches exactly one selected case (`crafting`, `ui` or
+`alternatives`) in each fresh two-client MP snapshot. The adapter calls this
+preserved preparation helper, writes its private parameters and interprets its
+original markers. Native mode is unsupported because these stages require the
+Toolkit operation API. Run reports and the matrix carry actual native evidence;
+catalog readiness describes the installed adapter.
 
 ## Acceptance and limits
 

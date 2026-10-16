@@ -39,7 +39,16 @@ def main():
     lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
     if not lua:
         raise SystemExit("No Lua interpreter on PATH; native fixture syntax/registration remains unchecked")
-    subprocess.run([lua, str(HERE / "check.lua"), str(HERE)], check=True)
+    result = subprocess.run([lua, str(HERE / "check.lua"), str(HERE)], check=True, capture_output=True, text=True)
+    names = {}
+    for line in result.stdout.splitlines():
+        if line.startswith("STAGE\t"):
+            _, scenario, name = line.split("\t", 2)
+            if scenario != "reload" or name not in names.get(scenario, []):
+                names.setdefault(scenario, []).append(name)
+        else:
+            print(line)
+    assert names == json.loads((HERE / "stage-names.json").read_text()), "Preserved stage names changed"
     print("PASS helper preparation, collision protection and runtime parameter validation")
     print("NOT RUN: PZ, SP/MP, rendered UI, network or restart persistence")
 

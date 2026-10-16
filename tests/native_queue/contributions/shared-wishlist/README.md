@@ -1,8 +1,9 @@
 # Shared wishlist native fixture intake
 
 This contribution preserves the reusable client/server assertions from the local
-2026-10-12 wishlist investigation. It is **intake only**: no catalog entry, common
-runner support or new native pass is claimed. `manifest.json` describes the
+2026-10-12 wishlist investigation. The common `shared-wishlist` adapter now stages
+the preserved scenarios and verifies their exact stage labels and server replies.
+Integration does not claim a new native pass. `manifest.json` describes the
 dependencies, parameters and historical counts. No game files are distributed.
 
 Run the no-game check from the repository root:
@@ -60,17 +61,31 @@ early and lacked the later display/voice protections. The old `setup.py` and
 `run.py` were also omitted because they embedded a workstation layout, fixed
 endpoint/password, platform user ID and Java-agent policy choices.
 
-The existing queue runner expects queue-specific selectors/events. It cannot
-run this fixture just by selecting a suite name. A later integration should
-install these Lua sides and provide the six-line config, retain the common safe
-launcher/preflight, and collect the `[WISHLIST_TEST]` output contract. Do not
-register the contribution as ready until that path has native validation.
+The common runner installs these Lua sides and their six-line config, retains
+its safe launcher/preflight and verifies the `[WISHLIST_TEST]` contract. Select
+exactly one case (`full`, `standalone`, `visual` or `reload`) per run. Full uses
+the declared UI integrations; standalone and visual select only Wishlist.
+Only full has a native queue-off control. Standalone, visual and reload contain
+no Toolkit queue option, so they run only in the catalog's `toolkit` mode and
+explicitly report that the queue control is inapplicable.
 
-For persistence, finish a fresh full/standalone run, stop **both clients and the
-server cleanly**, then change only line 2 of each existing runtime config to
-`reload` and restart the same world/caches. Do not prepare over an existing
-fixture or start reload with a fresh world. For layout checks use fresh
-standalone caches and `visual` mode. Screenshots are runtime outputs only.
+For persistence through the common runner, finish a successful full/standalone
+run and supply its absolute directory as `options.seed_run` in the JSON passed
+to `--config` for the `reload` case. The adapter requires verified seed evidence,
+stopped clients/server and the same ports. It copies only the seed's owned
+`Saves/` and `db/` state into a new snapshot, pins that state as input and writes
+a fresh reload config. It never modifies the completed seed or starts reload
+with an empty world. For layout checks use fresh standalone caches and `visual`
+mode. Screenshots are runtime outputs and still need visual inspection.
+
+A seed with verified functional assertions may still have an unresolved native
+startup audit. Reload accepts `needs-review` only for `unclassified-errors` with
+microphone disabled and every role's logs available; stopped processes, sealed
+provenance, exact native stages and server authority receipts remain mandatory.
+The reload evidence retains `seed_native_audit.pending=true` and
+`requires_review=true`, so passing persistence assertions cannot clear that
+pending audit. Failed, new-error, unknown, microphone-active or unavailable seed
+audits are rejected.
 
 ## Historical evidence and known traps
 

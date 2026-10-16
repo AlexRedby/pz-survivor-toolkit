@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "animal-trailer",
-  "integration": "intake-only; not registered in shared catalog",
+  "integration": "common-adapter-integrated; fresh native run pending",
   "engine": {
     "build": "42.21.0",
     "revision": "4a0e9546ec",

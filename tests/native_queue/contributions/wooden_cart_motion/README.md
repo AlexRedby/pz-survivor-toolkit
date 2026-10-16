@@ -1,6 +1,6 @@
 # Wooden cart motion fixture intake
 
-Source-only contribution for a future native queue adapter. It is **not connected to the common runner**. The parameterized reverse scenario completed 20 live B42.21 macOS cases on 2026-10-16 through the existing isolated launcher; the original 16-case scenario was not re-run after parameterization. `self_check.py` checks the manifest, files, Lua parsing and optional Java compilation. It never starts Project Zomboid.
+Source fixtures are connected through `tools/queue_checks/adapters/carts.py`. The common runner stages fresh profiles, owns probe attachment and records captures separately from functional passes. The manifest retains historical intake metadata. The parameterized reverse scenario completed 20 live B42.21 macOS cases on 2026-10-16 through the existing isolated launcher; the original 16-case scenario was not re-run after parameterization. `self_check.py` checks the manifest, files, Lua parsing and optional Java compilation. It never starts Project Zomboid.
 
 The Java fixture supplies native keyboard input (`drive`, `gait`) and reads the current cart bank, root-speed ramp and animation tracks. `bootstrap.lua` equips carts, creates its HUD and prepares the disposable floor. `scenario-clips.lua` records 16 cases: two sexes, empty/full cargo, and comparison/direct Sprint/gait transitions plus a Run-stop control. The full 12-second records include turns, stops and returns to walking. It samples every 100 ms.
 
@@ -31,7 +31,7 @@ Compile `Main.java` against local B42.21 `projectzomboid.jar` and `ZombieBuddy.j
 
 The live fixture requires Toolkit >=0.1.58 and JavaPatches >=0.1.15 **with the current candidate B42.21 cart-motion changes integrated**. Version numbers alone are insufficient: `cartLabRamp` reflects `State.pace`, `sprintMomentum`, `load`, `heading` and calls `CartLegPace.targetSpeed`. These APIs are absent from the current main queue checkout. This contribution does not include or integrate those production changes. A missing reflected member must remain an exception that stops the record, never an empty diagnostic or PASS.
 
-The adapter must own the exclusive native queue lock, existing-process checks, profile preparation, mod installation/approvals, launcher, probe agents, analyzers and cleanup. None is implemented here. Load the config, test area and bootstrap; wait for `BOOTSTRAP_READY`; then load the scenario. Missing bridges/configuration fail before the scenario changes the player. Bootstrap also checks the disposable world before equipping anything.
+The adapter must own the exclusive native queue lock, existing-process checks, profile preparation, mod installation/approvals, launcher, probe agents, analyzers and cleanup. Those operations are implemented in the common adapter, outside this source contribution. Load the config, test area and bootstrap; wait for `BOOTSTRAP_READY`; then load the scenario. Missing bridges/configuration fail before the scenario changes the player. Bootstrap also checks the disposable world before equipping anything.
 
 The fixture is single-player only. The legacy profile used RU (`options.ini`); other locales and MP have not been validated. Case IDs/log markers are stable ASCII strings and do not establish localization coverage.
 
@@ -45,7 +45,7 @@ python3 tests/native_queue/contributions/wooden_cart_motion/self_check.py \
 
 Lua syntax requires `luajit` or `lua` on PATH, or `--lua`. Java compilation requires both explicit dependency paths; omitted checks are reported as skipped. Compilation output goes to a temporary directory. There are no runtime binaries, saves, screenshots, videos, copied mods or game assets in this contribution.
 
-Keep `[WOOD_BANK]` markers stable for existing analyzers. A complete record needs 16 unique `COMPLETE` markers after the latest `RUN_STARTED`, valid per-case windows and `ALL_COMPLETE cases=16`. Check `FAIL` and rejected video starts/stops. The manifest criteria additionally require grip, actual mesh, floor and original hip/leg/arm probes. Their source, dependencies, build commands, offline checks and limits are preserved in [evidence/README.md](evidence/README.md). The common-runner attachment/analysis adapter is still pending; missing instrumentation means **not verified**, not PASS.
+Keep `[WOOD_BANK]` markers stable for existing analyzers. A complete record needs 16 unique `COMPLETE` markers after the latest `RUN_STARTED`, valid per-case windows and `ALL_COMPLETE cases=16`. Check `FAIL` and rejected video starts/stops. The manifest criteria additionally require grip, actual mesh, floor and original hip/leg/arm probes. Their source, dependencies, build commands, offline checks and limits are preserved in [evidence/README.md](evidence/README.md). The common adapter runs these probes and analyzers; missing instrumentation means **not verified**, not PASS.
 
 ## Known traps and limits
 

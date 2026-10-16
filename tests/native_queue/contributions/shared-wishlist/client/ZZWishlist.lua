@@ -245,8 +245,10 @@ if standalone then
  local skip={['switch CleanUI off']=true,['prepare native inventory mode']=true,['native inventory mode preserves highlights']=true,['restore CleanUI']=true,['prepare Better Containers combined loot']=true,['combined reachable loot highlights item rows']=true,['Project Cook lazy recipe panel integrates wishlist']=true}
  local filtered={};for _,s in ipairs(stages)do if not skip[s[1]]then filtered[#filtered+1]=s end end;stages=filtered
 end
-WishlistTestFixture={stageCount=#stages,mode=config.mode,standalone=standalone}
+local stageNames={};for _,spec in ipairs(stages)do stageNames[#stageNames+1]=spec[1]end
+WishlistTestFixture={stageCount=#stages,mode=config.mode,standalone=standalone,stageNames=stageNames}
 Events.OnGameStart.Add(function()
+ print('[WISHLIST_TEST] CONNECTED '..user..' language='..tostring(getCore():getOptionLanguageName()))
  if user=='client2'and not reload then local p=getPlayer();p:teleportTo(math.floor(p:getX())+8,math.floor(p:getY())+8,0)end
  started=getTimestampMs();if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
 end)

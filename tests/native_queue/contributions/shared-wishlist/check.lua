@@ -11,6 +11,7 @@ for _,case in ipairs({{'full',false,33},{'standalone',true,26},{'reload',false,5
  end
  assert(loadfile(root..'/client/ZZWishlist.lua'))()
  assert(WishlistTestFixture.stageCount==case[3],case[1]..' count '..WishlistTestFixture.stageCount)
+ for _,name in ipairs(WishlistTestFixture.stageNames)do print('STAGE\t'..case[1]..'\t'..name)end
  assert(loadfile(root..'/server/ZZWishlist_Server.lua'))()
  print('PASS wishlist stage registration '..case[1]..' checks='..case[3])
 end

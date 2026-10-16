@@ -449,7 +449,8 @@ if scenario=='ui' then
  for _,spec in ipairs(classicUIStages) do selected[#selected+1]=spec end
  stages=selected
 end
-CraftIntakeFixture={stageCount=#stages}
+local stageNames={};for _,spec in ipairs(stages)do stageNames[#stageNames+1]=spec[1]end
+CraftIntakeFixture={stageCount=#stages,stageNames=stageNames}
 print('[CRAFT_TEST] EXPECTED checks='..#stages..' scenario='..scenario)
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='CraftChainTest' then return end

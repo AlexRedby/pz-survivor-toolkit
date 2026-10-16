@@ -29,6 +29,8 @@ Events.OnClientCommand.Add(function(module,command,player,args)
  elseif command=='Verify' then
   local payload=PZSurvivorWishlist.Service.snapshot(player)
   local l;for _,row in ipairs(payload.lists)do if row.id=='client1'then l=row end end
-  sendServerCommand(player,'WishlistTest','Verified',{ok=l and l.entries['Base.Hammer'] and l.entries['Base.Hammer'].amount==7 or false})
+  local ok=l and l.entries['Base.Hammer'] and l.entries['Base.Hammer'].amount==7 or false
+  print('[WISHLIST_TEST] SERVER_VERIFY '..user..' ok='..tostring(ok))
+  sendServerCommand(player,'WishlistTest','Verified',{ok=ok})
  end
 end)
