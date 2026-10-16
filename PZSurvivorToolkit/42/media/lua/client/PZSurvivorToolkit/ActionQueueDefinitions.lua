@@ -109,6 +109,9 @@ local function title(action)
     if action.toolkitWorldOperation == "wreck" then
         return getText("ContextMenu_RemoveBurntVehicle"), "ContextMenu_RemoveBurntVehicle"
     end
+    if action.toolkitWorldOperation == "butcher" then
+        return getText("UI_PZSurvivorToolkit_queue_native_ISButcherAnimal"), "UI_PZSurvivorToolkit_queue_native_ISButcherAnimal"
+    end
     if action.toolkitWorldOperation == "fuel" then
         local key = action.toolkitFuelTake and "ContextMenu_VehicleSiphonGas" or "ContextMenu_VehicleAddGas"
         return getText(key), key
@@ -526,6 +529,7 @@ local function target(action, presentation)
     end
     if action.toolkitWorldOperation == "appliance" or action.toolkitWorldOperation == "generator"
         or action.toolkitWorldOperation == "fire" then return name(action.toolkitWorldTarget) end
+    if action.toolkitWorldOperation == "butcher" then return name(action.body) end
     if action.Type == "ISDeviceBatteryAction" or action.Type == "ISDeviceMediaAction" then
         local device = instance(action.deviceData, "DeviceData") and action.deviceData:getParent()
         return name(device)
