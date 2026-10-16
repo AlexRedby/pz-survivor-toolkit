@@ -2,6 +2,8 @@ require "PZSurvivorToolkit/Settings"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Visuals = require "PZSurvivorToolkit/TagVisuals"
+local TagRulePicker = require "PZSurvivorToolkit/TagRulePicker"
+local PresetsMenu = require "PZSurvivorToolkit/TagFilterPresetsMenu"
 
 local Toolkit = PZSurvivorToolkit
 local Filter = {}
@@ -18,15 +20,28 @@ local function hasSearch(pane)
         or (mode ~= "name" and pane.searchCategoryText and pane.searchCategoryText ~= "")
 end
 
+local function tagRule(pane)
+    return pane.toolkitTagRule or (pane.toolkitTag and {mode="all", include={pane.toolkitTag}, exclude={}})
+end
+
+local function tagFilterActive(pane)
+    return Tags.enabled() and Tags.ruleActive(tagRule(pane))
+end
+
 local function visibleForTransfer(pane, item)
     if not Toolkit.Settings.inventoryFilters() or not pane.toolkitVisibleItems then return true end
+    if not pane.toolkitCategory and not tagFilterActive(pane) and not hasSearch(pane) then return true end
     -- Drag/drop calls the destination pane; its filter must not reject incoming items.
     local fromPane = item:getContainer() == pane.inventory or pane.inventory:getItems():contains(item)
     return not fromPane or pane.toolkitVisibleItems[item] == true
 end
 
 local function applyFilter(pane)
+    -- Later selection restores may follow stack/category changes from other mods.
+    if pane.itemslist == pane.toolkitFilteredRows then pane.itemslist = pane.toolkitUnfilteredRows end
+    pane.toolkitFilteredRows = nil
     pane.toolkitCategories = {}
+    pane.toolkitUnfilteredRows = pane.itemslist
     pane.toolkitVisibleItems = nil
     if not Toolkit.Settings.inventoryFilters() then return end
     local categories, kept, visible, equipped = {}, {}, {}, false
@@ -36,7 +51,7 @@ local function applyFilter(pane)
             local category = group.cat
             if category then categories[category] = true end
             if (not pane.toolkitCategory or category == pane.toolkitCategory)
-                and (not Tags.enabled() or not pane.toolkitTag or Tags.matches(category, {pane.toolkitTag}))
+                and (not tagFilterActive(pane) or Tags.matchesRule(category, tagRule(pane)))
                 and (not search or group.matchesSearch) then
                 kept[group] = true
                 equipped = equipped or group.equipped
@@ -48,20 +63,20 @@ local function applyFilter(pane)
         pane.toolkitCategories[#pane.toolkitCategories + 1] = {id = category, name = categoryName(category)}
     end
     table.sort(pane.toolkitCategories, function(a, b) return a.name < b.name end)
-    if not pane.toolkitCategory and not (Tags.enabled() and pane.toolkitTag) and not search then return end
+    if not pane.toolkitCategory and not tagFilterActive(pane) and not search then return end
     pane.toolkitVisibleItems = visible
     local rows = {}
     for _, group in ipairs(pane.itemslist) do
         if kept[group] or (group.type == "separator" and equipped) then rows[#rows + 1] = group end
     end
-    pane.itemslist = rows
+    pane.itemslist, pane.toolkitFilteredRows = rows, rows
     -- Filter before native selection restoration, so row indices match the view.
     table.wipe(pane.items)
 end
 
 local function selectCategory(pane, category)
     pane.toolkitCategory = category
-    pane.toolkitTag = nil
+    pane.toolkitTag, pane.toolkitTagRule = nil, nil
     pane.firstSelect = nil
     pane:setYScroll(0)
     pane.smoothScrollTargetY = nil
@@ -74,12 +89,39 @@ local function selectTag(pane, id)
     pane:refreshContainer()
 end
 
+local function selectRule(pane, rule)
+    local copy = Tags.normalizeRule(rule)
+    if not copy then return end
+    selectCategory(pane, nil)
+    pane.toolkitTagRule = Tags.ruleActive(copy) and copy or nil
+    pane:refreshContainer()
+end
+
+local function showTagRule(pane)
+    pane:refreshContainer()
+    local categories, items, seen = {}, {}, {}
+    for _, entry in ipairs(pane.toolkitCategories) do categories[#categories + 1] = entry.id end
+    for _, group in ipairs(pane.toolkitUnfilteredRows or pane.itemslist) do
+        if group.type ~= "separator" then
+            for _, item in ipairs(group.items) do
+                if not seen[item] then items[#items + 1], seen[item] = item, true end
+            end
+        end
+    end
+    TagRulePicker.open({player=pane.player, owner=pane, rule=tagRule(pane), categories=categories, items=items,
+        onApply=function(rule) selectRule(pane, rule) end})
+end
+
 local function showCategories(pane, button)
     pane:refreshContainer()
     local menu = ISContextMenu.get(pane.player, button:getAbsoluteX(), button:getAbsoluteY() + button:getHeight())
     local all = menu:addOption(getText("UI_PZSurvivorToolkit_all_categories"), pane, selectCategory)
     menu:setOptionChecked(all, pane.toolkitCategory == nil)
     if Tags.enabled() then
+        local combined = menu:addOption(getText("UI_PZST_TagRule"), pane, showTagRule)
+        menu:setOptionChecked(combined, Tags.ruleActive(pane.toolkitTagRule))
+        PresetsMenu.add(menu, {owner=pane, player=pane.player, rule=tagRule(pane),
+            onApply=function(rule) selectRule(pane, rule) end})
         local found, entries = {}, {}
         for _, category in ipairs(pane.toolkitCategories) do
             for _, id in ipairs(Tags.forCategory(category.id)) do
@@ -100,7 +142,7 @@ local function showCategories(pane, button)
             if style.texture then option.color = {r = style.r, g = style.g, b = style.b} end
             submenu:setOptionChecked(option, entry.id == pane.toolkitTag)
         end
-        menu:setOptionChecked(all, pane.toolkitCategory == nil and pane.toolkitTag == nil)
+        menu:setOptionChecked(all, pane.toolkitCategory == nil and not tagFilterActive(pane))
     end
     for _, category in ipairs(pane.toolkitCategories) do
         local option = menu:addOption(category.name, pane, selectCategory, category.id)
@@ -142,9 +184,10 @@ local function updateButton(pane)
     button:setWidth(size)
     button:setHeight(size)
     button.tooltip = getText("UI_PZSurvivorToolkit_category_filter") .. ": "
-        .. (Tags.enabled() and pane.toolkitTag and Tags.label(pane.toolkitTag)
+        .. (tagFilterActive(pane) and pane.toolkitTagRule and getText("UI_PZST_TagRule")
+            or Tags.enabled() and pane.toolkitTag and Tags.label(pane.toolkitTag)
             or pane.toolkitCategory and categoryName(pane.toolkitCategory) or getText("UI_PZSurvivorToolkit_all_categories"))
-    button.textColor = (pane.toolkitCategory or (Tags.enabled() and pane.toolkitTag)) and {r = 1, g = 0.65, b = 0.3, a = 1}
+    button.textColor = (pane.toolkitCategory or tagFilterActive(pane)) and {r = 1, g = 0.65, b = 0.3, a = 1}
         or {r = 0.94, g = 0.90, b = 0.83, a = 1}
 end
 
@@ -157,10 +200,11 @@ local function install(class)
         return restore(self, selected)
     end
     class.prerender = function(self, ...)
-        local enabled = Tags.enabled()
-        if self.toolkitTagsEnabled ~= enabled then
-            self.toolkitTagsEnabled = enabled
-            if self.toolkitTag then self:refreshContainer() end
+        local enabled, filtersEnabled = Tags.enabled(), Toolkit.Settings.inventoryFilters()
+        if self.toolkitTagsEnabled ~= enabled or self.toolkitFiltersEnabled ~= filtersEnabled then
+            self.toolkitTagsEnabled, self.toolkitFiltersEnabled = enabled, filtersEnabled
+            if self.toolkitCategory or self.toolkitTag or self.toolkitTagRule or self.toolkitVisibleItems then self:refreshContainer() end
+            if not filtersEnabled and self.toolkitRulePicker then self.toolkitRulePicker:close() end
         end
         local result = prerender(self, ...)
         updateButton(self)
@@ -168,7 +212,7 @@ local function install(class)
     end
     class.transferItemsByWeight = function(self, items, container, ...)
         if self.toolkitVisibleItems or (Toolkit.Settings.inventoryFilters()
-            and (self.toolkitCategory or (Tags.enabled() and self.toolkitTag) or hasSearch(self))) then
+            and (self.toolkitCategory or tagFilterActive(self) or hasSearch(self))) then
             self:refreshContainer()
         end
         if self.toolkitVisibleItems then

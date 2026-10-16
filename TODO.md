@@ -1,6 +1,6 @@
 # Совместимость Quartermaster
 
-- [ ] Проверить в игре Configure sorting и Distribute Loot с CleanUI, Better Containers и organizedCategories; затем проверить штатные переносы и custom-действия Quartermaster в очереди Toolkit. Аудировать обёртки ISInventoryTransferAction.perform и ISTimedActionQueue.resetQueue перед разрешением отмены/перестановки; не обходить защиту неизвестных callbacks.
+- [ ] Проверить штатные переносы и custom-действия Quartermaster в очереди Toolkit. Аудировать обёртки ISInventoryTransferAction.perform и ISTimedActionQueue.resetQueue перед разрешением отмены/перестановки; не обходить защиту неизвестных callbacks.
 
 # Дальнейшая миграция очереди действий
 

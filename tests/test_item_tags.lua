@@ -44,4 +44,26 @@ assert(Tags.enabled());enabled=false;assert(not Tags.enabled())
 assert(#Tags.forItem(nil)==0)
 local nativeItem={getDisplayCategory=function() return nil end,getCategory=function() return 'Food' end}
 assert(Tags.matches(Tags.forItem(nativeItem),{'food'}),'native category fallback missing')
+local rule=assert(Tags.normalizeRule({include={'perishable','food','food'},exclude={'meat'}}))
+assert(rule.mode=='all' and #rule.include==2 and rule.include[1]=='food')
+assert(Tags.matchesRule('foodPerishable_fruit',rule))
+assert(not Tags.matchesRule({'food','perishable','meat'},rule))
+assert(not Tags.matchesRule('foodNonPerishable',rule))
+rule.mode='any'
+assert(Tags.matchesRule('foodNonPerishable',rule))
+assert(Tags.matchesRule('Food',assert(Tags.normalizeRule(nil))))
+assert(not Tags.ruleActive(Tags.normalizeRule(nil)))
+assert(Tags.matchesRule('toolElectrical',assert(Tags.normalizeRule({exclude={'food'},mode='any'}))))
+assert(not Tags.matchesRule('Food',assert(Tags.normalizeRule({exclude={'food'}}))))
+assert(Tags.matchesRule('New.Mod',assert(Tags.normalizeRule({include={'category:New.Mod'}}))))
+for _,bad in ipairs({false,1,'food',{mode='ALL'},{mode=false},{include=false},{include='food'},
+ {include={[2]='food'}},{include={food=true}},{include={'unknown-tag'}},{include={'category:'}},
+ {include={'category:x\n'}},{include={'food'},exclude={'food'}},{include={},extra=true}}) do
+ assert(Tags.normalizeRule(bad)==nil,'accepted malformed rule')
+end
+local huge={};for i=1,65 do huge[i]='food' end
+assert(Tags.normalizeRule({include=huge})==nil)
+local draft={include={'food'}};local normalized=Tags.normalizeRule(draft)
+draft.include[1]='tool';assert(normalized.include[1]=='food','normalization retained caller data')
+assert(not Tags.matchesRule('Food',nil))
 print('ItemTags: '..count..' exact legacy projections, independent tags, aliases, unknown/ambiguous keys and live fluid changes passed.')

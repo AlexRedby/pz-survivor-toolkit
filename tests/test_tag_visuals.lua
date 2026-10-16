@@ -32,3 +32,7 @@ assert(unknown.texture == nil and Visuals.get(nil).texture == nil, 'unknown/over
 assert(Visuals.get('category:UnknownMod', tags).g == food.g, 'unknown tag lost contextual color')
 assert(Visuals.get('perishable').r == unknown.r, 'standalone qualifier must remain neutral')
 assert(#tags == 3 and tags[1] == 'food', 'visual lookup mutated tags')
+
+for tag, name in pairs({vegetable='Item_Carrots',liquid='Item_WaterBottle',fuel='Item_Petrol',fishing='Item_FishingRod',adhesive='Item_DuctTape'}) do
+ assert(Visuals.get(tag).texture.name==name,'missing useful qualifier icon '..tag)
+end

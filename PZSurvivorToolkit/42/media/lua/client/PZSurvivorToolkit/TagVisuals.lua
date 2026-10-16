@@ -39,6 +39,8 @@ local icons = {
     doorkey = "Item_Key1", itemkey = "Item_Key1", vehiclekey = "Item_Key1", keyring = "Item_Key1",
     door = "Item_Doorhinge", hygiene = "Item_Toothbrush", plushie = "Item_PlushSpiffo",
     sports = "Item_Baseball", money = "Item_Money", camping = "Item_Lighter",
+    vegetable = "Item_Carrots", liquid = "Item_WaterBottle", fuel = "Item_Petrol",
+    fishing = "Item_FishingRod", adhesive = "Item_DuctTape",
 }
 local textures, styles = {}, {}
 

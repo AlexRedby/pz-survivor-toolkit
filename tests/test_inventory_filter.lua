@@ -1,4 +1,7 @@
+local pickerOptions, presetMenuOptions
 require = function(name)
+    if name == "PZSurvivorToolkit/TagFilterPresetsMenu" then return {add=function(_,options) presetMenuOptions=options end} end
+    if name == "PZSurvivorToolkit/TagRulePicker" then return {open=function(options) pickerOptions=options end} end
     if name == "PZSurvivorToolkit/TagVisuals" then
         return {get=function() return {r=0.4,g=0.8,b=0.3,texture={}} end}
     end
@@ -176,3 +179,208 @@ assert(foodOption,'food tag missing from picker')
 foodOption.callback(foodOption.target,foodOption.arg)
 assert(pane.toolkitTag=='food' and #pane.itemslist==1,'decorated picker changed tag filtering')
 print('Inventory filter checks passed: exact categories, search, empty results, selections, bulk actions and clear.')
+
+pane.toolkitTag, pane.toolkitTagRule = nil, {mode='all', include={'tool'}, exclude={'weapon'}}
+pane:refreshContainer()
+assert(#pane.itemslist == 2, 'combined all rule did not match tools')
+pane.toolkitTagRule = {mode='any', include={'food', 'tool'}, exclude={'category:ModCategory'}}
+pane:refreshContainer()
+assert(#pane.itemslist == 3, 'combined any rule did not union tags')
+pane.toolkitTagRule = {mode='all', include={}, exclude={'tool'}}
+pane:refreshContainer()
+assert(#pane.itemslist == 2 and pane.itemslist[1] == groups[1], 'exclude-only rule failed')
+pane:transferItemsByWeight({beans, hammer}, source)
+assert(#pane.transferred == 1 and pane.transferred[1] == beans, 'combined rule ignored during transfer')
+local function rootMenu()
+    local root
+    ISContextMenu.get = function()
+        root = {options={}, setOptionChecked=function(_, option, checked) option.checked=checked end}
+        function root:addSubMenu(option, submenu) option.submenu=submenu end
+        function root:addOption(name,target,callback,arg)
+            local option={name=name,target=target,callback=callback,arg=arg};self.options[#self.options+1]=option;return option
+        end
+        return root
+    end
+    pane.toolkitCategoryButton.callback(pane, pane.toolkitCategoryButton)
+    return root
+end
+local root=rootMenu()
+local combined
+for _,option in ipairs(root.options) do if option.name=='UI_PZST_TagRule' then combined=option end end
+assert(combined and combined.checked, 'combined picker entry missing')
+combined.callback(combined.target)
+assert(pickerOptions and #pickerOptions.categories==3 and #pickerOptions.items==4, 'preview lost hidden source items')
+assert(pickerOptions.rule.exclude[1]=='tool', 'existing combined rule not passed to picker')
+pickerOptions.onApply({mode='all',include={'food'},exclude={}})
+assert(pane.toolkitCategory==nil and pane.toolkitTag==nil and #pane.itemslist==1, 'applying combined rule failed')
+enabled=false;pane:prerender()
+assert(#pane.itemslist==4 and not pane.toolkitVisibleItems, 'live filter disable left filtered rows')
+enabled=true;pane:prerender()
+assert(#pane.itemslist==1, 'live filter enable lost combined rule')
+tagsEnabled=false;pane:prerender()
+assert(#pane.itemslist==4, 'live tags disable left combined filter active')
+tagsEnabled=true;pane:prerender()
+assert(#pane.itemslist==1, 'live tags enable did not restore combined rule')
+print('Combined inventory rule checks passed.')
+-- Item Details sorts stacks after native/CleanUI refresh and restores selection again.
+local refreshWithNativeRestore = class.refreshContainer
+class.refreshContainer = function(self, ...)
+    local result = refreshWithNativeRestore(self, ...)
+    self:restoreSelection(self.saved or {})
+    return result
+end
+groups[4].cat = 'Electronics'
+pane.toolkitTagRule = {mode='all',include={'food'},exclude={}}
+pane:refreshContainer()
+assert(#pane.itemslist==1, 'second selection restoration changed the active filter')
+assert(#pane.toolkitCategories==3 and #pane.toolkitUnfilteredRows==4,
+    'Item Details second selection restoration discarded hidden categories/source rows')
+root=rootMenu()
+for _,option in ipairs(root.options) do if option.name=='UI_PZST_TagRule' then combined=option end end
+combined.callback(combined.target)
+local available={}
+for _,category in ipairs(pickerOptions.categories) do available[category]=true end
+assert(available.Electronics and #pickerOptions.items==4,
+    'reopened combined picker lost electrical category or hidden preview items')
+pickerOptions.onApply({mode='any',include={'food','electrical'},exclude={}})
+assert(#pane.itemslist==2 and pane.itemslist[2]==groups[4], 'reopened any rule could not include formerly hidden category')
+pickerOptions.onApply({mode='all',include={'food','electrical'},exclude={}})
+assert(#pane.itemslist==0 and #pane.toolkitCategories==3 and #pane.toolkitUnfilteredRows==4,
+    'empty results discarded the source universe on repeated selection restoration')
+pickerOptions.onApply({mode='all',include={},exclude={}})
+assert(#pane.itemslist==4, 'clear after repeated selection restoration lost inventory rows')
+-- A true refresh creates a new row table, so current container changes must still be imported.
+groups[4].cat='ModCategory';pane:refreshContainer()
+for _,category in ipairs(pane.toolkitCategories) do assert(category.id~='Electronics','fresh refresh kept stale category choices') end
+print('Repeated native/Item Details selection restoration preserves the full picker universe.')
+-- A selection restore may reuse rows while filter state changes, without a rebuild.
+pane.toolkitTagRule={mode='all',include={'food'},exclude={}};pane:refreshContainer()
+pane.toolkitTagRule.include[1]='tool';pane:restoreSelection({})
+assert(#pane.itemslist==2 and pane.itemslist[1].cat=='Tool', 'reused rows ignored changed combined rule')
+pane.toolkitTagRule=nil;pane.toolkitCategory='ModCategory';pane:restoreSelection({})
+assert(#pane.itemslist==1 and pane.itemslist[1]==groups[4], 'reused rows ignored exact category')
+pane.toolkitCategory=nil;pane.toolkitTag='food';pane:restoreSelection({})
+assert(#pane.itemslist==1 and pane.itemslist[1]==groups[1], 'reused rows ignored single tag')
+pane.toolkitTag=nil;pane.searchMode,pane.searchText='name','hammer';pane:restoreSelection({})
+assert(#pane.itemslist==0, 'reused rows ignored name search')
+groups[2].matchesSearch=true;pane:restoreSelection({})
+assert(#pane.itemslist==1 and pane.itemslist[1]==groups[2], 'reused rows ignored changed search matches')
+pane.searchMode,pane.searchCategoryText='category','tools';pane:restoreSelection({})
+assert(#pane.itemslist==1, 'reused rows ignored category search')
+pane.searchMode='both';pane:restoreSelection({})
+assert(#pane.itemslist==1, 'reused rows ignored combined search mode')
+enabled=false;pane:restoreSelection({})
+assert(#pane.itemslist==4 and not pane.toolkitVisibleItems, 'reused rows ignored disabled filters')
+enabled=true;pane.searchText,pane.searchCategoryText=nil,nil
+pane.toolkitTagRule={mode='all',include={'tool'},exclude={}};pane:restoreSelection({})
+assert(#pane.itemslist==2, 'reused unfiltered rows ignored re-enabled rule')
+tagsEnabled=false;pane:restoreSelection({})
+assert(#pane.itemslist==4, 'reused rows ignored disabled tags')
+tagsEnabled=true;pane:restoreSelection({})
+assert(#pane.itemslist==2 and #pane.toolkitUnfilteredRows==4 and #pane.toolkitCategories==3,
+    'reused rows lost source universe after settings/search/rule changes')
+groups[3].cat='Food';pane:restoreSelection({})
+assert(#pane.itemslist==1 and pane.itemslist[1]==groups[2], 'second restoration ignored updated stack category')
+groups[3].cat='Tool';pane:restoreSelection({})
+assert(#pane.itemslist==2, 'second restoration could not recover a newly matching hidden stack')
+print('Reused row tables recompute rule, exact/single category, search, stack categories and option changes.')
+-- Optional source-backed integration: real native/CleanUI refresh plus our real
+-- Item Details wrapper, which performs the second restoreSelection call.
+for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventoryPaneSource or false}) do
+    if sourceCode then
+        sourceCode=sourceCode:gsub('\r','')
+        local real={MAX_ITEMS_IN_STACK_TO_RENDER=50,prerender=function() end,
+            transferItemsByWeight=function() end,drawItemDetails=function() end}
+        local config={enableSort=true,maxSort=50}
+        local env=setmetatable({ISInventoryPane=real,CleanUI_Clean_ISInventoryPane=false,CleanUI_Vanilla_ISInventoryPane=false,
+            CleanUI_RegisterInventoryUiToggleCallback=false,ISInventoryPageTransferHandler=false,
+            ISInventoryCommonHandler_SortMenu=false,ISMouseDrag={},
+            getSpecificPlayer=function() return {} end,getPlayerHotbar=function() return {} end,
+            instanceof=function(value) return value and value.testItem end,
+            getActivatedMods=function() return {contains=function(_,id) return id=='BravoItemDetails' end} end,
+            PZAPI={ModOptions={getOptions=function() end}}}, {__index=_G})
+        env._G=env
+        env.CleanUI_isValidInventoryContainerReference=function(inv) return inv~=nil end
+        env.CleanUI_captureSelectionAnchor=function() end
+        env.CleanUI_restoreSelectionAnchor=function() end
+        env.CleanUI_isWeightDataNeeded=function() return false end
+        env.CleanUI_isLargeStackOptimizationEnabled=function() return false end
+        env.CleanUI_shouldUseLargeStackVirtualHeader=function() return false end
+        env.CleanUI_getStackDisplayItem=function(group) return group.items[1] end
+        env.CleanUI_getStackActualStartIndex=function(group) return group.cleanUIFirstActualIndex or 2 end
+        local starts={}
+        env.Events={OnGameStart={Add=function(fn) starts[#starts+1]=fn end}}
+        env.require=function(name)
+            if name=='BravoItemDetailsConfig' then
+                env.PZAPI.ModOptions.getOptions=function() return {dict={showNumeric={}}} end
+                return config
+            end
+            if name=='BravoItemDetailsSorter' then return {} end
+            if name=='BravoItemDetails' or name=='ISUI/ISInventoryPane' or name=='PZAPI/ModOptions' then return end
+            return require(name)
+        end
+        for _,name in ipairs({'saveSelection','restoreSelection','refreshContainer'}) do
+            local begin=assert(sourceCode:find('function ISInventoryPane:'..name..'(',1,true))
+            local finish=sourceCode:find('\nfunction ISInventoryPane:',begin+1,true) or #sourceCode+1
+            if name=='restoreSelection' then
+                finish=sourceCode:find('\nlocal function CleanUI_captureSelectionAnchor',begin,true) or finish
+            end
+            local chunk=assert(loadstring(sourceCode:sub(begin,finish-1)));setfenv(chunk,env);chunk()
+        end
+        local function loadProduct(path)
+            local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..path))
+            setfenv(chunk,env);return chunk()
+        end
+        loadProduct('000ToolkitItemDetailsCompatibility.lua')
+        loadProduct('PZSurvivorToolkit/InventoryFilter.lua')
+        starts[1]()
+        local objects={}
+        for index,spec in ipairs({{'Apple','foodPerishable_fruit'},{'Steak','foodPerishable_meat'},
+            {'Battery','craftingElectrical_material'},{'Beans','foodNonPerishable_cannedJarred'}}) do
+            local item={testItem=true}
+            item.getName=function() return spec[1] end
+            item.getDisplayCategory=function() return spec[2] end
+            item.getCategory=item.getDisplayCategory
+            item.isHidden=function() return false end
+            item.IsFood=function() return false end
+            item.getUnequippedWeight=function() return 1 end
+            objects[index]=item
+        end
+        local inv={getItems=function() return {size=function() return #objects end,get=function(_,index) return objects[index+1] end} end,
+            setDrawDirty=function() end}
+        local noOp=function() end
+        local p=setmetatable({inventory=inv,player=0,parent={onCharacter=false},items={},selected={},collapsed={},
+            itemSortFunc=function(a,b) return a.name<b.name end,
+            collapseAll={setVisible=noOp},expandAll={setVisible=noOp},updateScrollbars=noOp,
+            updateWorldObjectHighlight=noOp,isMouseOver=function() return false end}, {__index=real})
+        p:refreshContainer()
+        assert(#p.itemslist==4 and #p.toolkitCategories==4,'real refresh did not retain source categories')
+        p.toolkitTagRule={mode='all',include={'food','perishable'},exclude={}};p:refreshContainer()
+        assert(#p.itemslist==2 and #p.toolkitUnfilteredRows==4 and #p.toolkitCategories==4,
+            'real native/Item Details refresh lost all rule or source universe')
+        p.toolkitTagRule={mode='any',include={'perishable','electrical'},exclude={}};p:restoreSelection({})
+        assert(#p.itemslist==3,'real rows ignored changed any rule on second restoration')
+        p.toolkitTagRule={mode='all',include={'food','perishable'},exclude={'meat'}};p:refreshContainer()
+        assert(#p.itemslist==1 and p.itemslist[1].items[1]==objects[1], 'real rows did not apply exclusions')
+        p.toolkitTagRule={mode='all',include={'electrical'},exclude={}}
+        p:restoreSelection({})
+        assert(#p.itemslist==1 and p.itemslist[1].items[1]==objects[3], 'real rows lost hidden electrical item')
+        p.toolkitTagRule=nil;p:refreshContainer()
+        assert(#p.itemslist==4,'real refresh did not clear rule')
+        print('Actual inventory refresh + Item Details integration passed.')
+    end
+end
+
+-- Saved filters share the combined-rule path and keep current text search.
+pane.toolkitCategory='Tool';pane.toolkitTagRule=nil;pane.searchMode,pane.searchText='name','hammer'
+rootMenu()
+assert(presetMenuOptions and presetMenuOptions.owner==pane,'saved filter menu not connected')
+local savedRule={mode='all',include={'tool'},exclude={}}
+presetMenuOptions.onApply(savedRule)
+assert(pane.toolkitCategory==nil and pane.searchText=='hammer' and #pane.itemslist==1
+    and pane.itemslist[1]==groups[2], 'saved rule did not combine with current search')
+savedRule.include[1]='food'
+assert(pane.toolkitTagRule.include[1]=='tool','applied saved rule aliases storage entry')
+pane.searchText=nil;pane:refreshContainer()
+assert(#pane.itemslist==2,'saved rule was frozen to prior search results')
+print('Saved inventory filters share combined-rule application and detached rules.')
