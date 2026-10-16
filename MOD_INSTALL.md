@@ -65,7 +65,7 @@ After launching the client, check for **ZombieBuddy ... loaded** in the upper-le
 
 ## Vehicle ownership recovery and logs
 
-Java Patches **0.1.9** includes server recovery for the reproduced collision/driver-entry handoff race: a seated driver can lose physics authority and stop synchronizing. The server derives authority from its validated driver and preserves the towing root's ownership rules. This targets the confirmed race; it does not establish the cause of every vehicle freeze.
+Java Patches **0.1.10** includes server recovery for the reproduced collision/driver-entry handoff race: a seated driver can lose physics authority and stop synchronizing. The server derives authority from its validated driver and preserves the towing root's ownership rules. This targets the confirmed race; it does not establish the cause of every vehicle freeze.
 
 Replace the prepared Java mod on the server and **every client, including the host**, save the changed JAR approval and restart all processes. The Host child/server must load ZombieBuddy: verify `vehicleOwnership=true` and `[ZB] Transformed: zombie.vehicles.BaseVehicle` in the **server** log, using the [activation checks](JavaPatches/README.md#verify-activation). The repair works without an extra flag on supported bytecode.
 
@@ -73,7 +73,7 @@ To investigate a remaining desync, enable `-Dpz.vehicle.trace=true` in the Java 
 
 ## Animal trailer fix
 
-Install Java Patches **0.1.9** on the server and **every client, including the host**. It includes trailer-membership and equipment-acknowledgement fixes plus the null-animal hutch-unloading guard, five native string-property startup fixes and normalization of two shipped fluid-container names. It preserves animal identities and does not restore previously lost animals. See [patch scope](JavaPatches/README.md#animal-trailer-reconciliation).
+Install Java Patches **0.1.10** on the server and **every client, including the host**. It includes trailer-membership and equipment-acknowledgement fixes plus the null-animal hutch-unloading guard, five native string-property startup fixes and normalization of two shipped fluid-container names. It also corrects premature fence validation; early font loading requires the [explicit startup option](JavaPatches/README.md#native-fence-validation-and-font-pages). It preserves animal identities and does not restore previously lost animals. See [patch scope](JavaPatches/README.md#animal-trailer-reconciliation).
 
 The INI also selects [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436), Mod ID `AnimalTrailerSyncMPFix`, Workshop ID `3801615436`, for a separate server update-timer bug that remains in B42.21. With several animals aboard, the vanilla timer permits periodic synchronization for only one animal; this mod lets every animal share the same due update. It complements the two unloading fixes. Workshop supplies it; do not copy it into the three local mod folders. After restarting, check `[AnimalTrailerSyncMPFix] ACTIVE` in the **server** log (verified version 1.3). If ZombieBuddy asks for its JAR approval, allow it and save the decision under the server account; Host owners do this in the client before starting Host, as described above.
 

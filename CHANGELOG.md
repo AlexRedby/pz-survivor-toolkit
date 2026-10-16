@@ -285,11 +285,15 @@ The older README associates medicine indicators with this label, but no separate
 
 Previously named **PZ Network Fix** through 0.1.1.
 
-### 0.1.9
+### 0.1.10
 
 - **Fixed:** Reconciled occupied-vehicle physics authority with the validated server driver after the reproduced collision/entry/release race, preserving towing ownership and native packet authorization.
 - **Added:** Bounded, opt-in vehicle diagnostics with `-Dpz.vehicle.trace=true`; the ownership repair itself needs no flag. Updated server/client setup and platform-specific collection instructions.
-- **Changed:** Combined vehicle recovery with the native string-property and fluid-container guards from main under a distinct version. The vehicle-recovery candidate in a controlled macOS Host with two connected clients passed post-repair travel, towing/detachment and driver/passenger handoffs; spontaneous user-save and real WAN-loss incidence remain unverified.
+- **Changed:** Combined vehicle recovery with the native string-property, fluid-container, fence-validation and early font-page guards from main under a distinct version. The vehicle-recovery candidate in a controlled macOS Host with two connected clients passed post-repair travel, towing/detachment and driver/passenger handoffs; spontaneous user-save and real WAN-loss incidence remain unverified.
+
+### 0.1.9
+
+- **Fixed:** Deferred native fence validation until script loading completed and corrected early font-page resolution. The font guard uses a separate local bootstrap JAR with explicit early loader activation.
 
 ### 0.1.8
 

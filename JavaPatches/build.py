@@ -44,8 +44,13 @@ if mod.exists(): shutil.rmtree(mod)
 jar = mod / '42/media/java/PZToolkitJavaPatches.jar'
 jar.parent.mkdir(parents=True, exist_ok=True)
 (mod/'common').mkdir(exist_ok=True)
-subprocess.run([str(args.jdk/'bin/jar'), '--create', '--file', str(jar), '-C', str(classes), '.'], check=True)
-(mod/'42/mod.info').write_text('name=Toolkit Java Patches (Experimental)\nid=PZToolkitJavaPatches\nversion=0.1.9\nauthor=AlexRedby\nversionMin=42.21\nversionMax=42.21\nrequire=\\ZombieBuddy\njavaJarFile=media/java/PZToolkitJavaPatches.jar\njavaPkgName=net.alexredby.pztoolkitjavapatches\nZBVersionMin=2.3.4\ndescription=B42.21 fixes for client zombie speed decoding, vehicle interpolation recovery, authoritative cassette restart after stopping, multiplayer build cancellation acknowledgements, live-animal trailer location reconciliation, incomplete equipment acknowledgement handling, null-animal hutch unloading crashes, five native string-property startup exceptions, two malformed native fluid-container names and occupied-vehicle authority loss after collision handoff. Requires the ZombieBuddy Java agent on clients for zombie, vehicle, animal and equipment patches and on the server for cassette playback, safe queue build interruption and vehicle authority recovery. The hutch unloading, native string-property and fluid-name guards apply in clients, single-player and servers. Unsupported target bytecode disables the patches.\n')
+fontjar = mod / '42/media/bootstrap/PZToolkitFonts.jar'
+fontjar.parent.mkdir(parents=True, exist_ok=True)
+manifest = ROOT / 'build/FONT-MANIFEST.MF'
+manifest.write_text('Manifest-Version: 1.0\nZB-Preload: true\n\n')
+subprocess.run([str(args.jdk/'bin/jar'), '--create', '--file', str(jar), '-C', str(classes), 'net/alexredby/pztoolkitjavapatches'], check=True)
+subprocess.run([str(args.jdk/'bin/jar'), '--create', '--file', str(fontjar), '--manifest', str(manifest), '-C', str(classes), 'net/alexredby/pztoolkitbootstrap'], check=True)
+(mod/'42/mod.info').write_text('name=Toolkit Java Patches (Experimental)\nid=PZToolkitJavaPatches\nversion=0.1.10\nauthor=AlexRedby\nversionMin=42.21\nversionMax=42.21\nrequire=\\ZombieBuddy\njavaJarFile=media/java/PZToolkitJavaPatches.jar\njavaPkgName=net.alexredby.pztoolkitjavapatches\nZBVersionMin=2.3.4\ndescription=B42.21 fixes for client zombie speed decoding, vehicle interpolation recovery, authoritative cassette restart after stopping, multiplayer build cancellation acknowledgements, live-animal trailer location reconciliation, incomplete equipment acknowledgement handling, null-animal hutch unloading crashes, five native string-property startup exceptions, two malformed native fluid-container names, premature breakable-fence validation, early native font-page loading and occupied-vehicle authority loss after collision handoff. Requires the ZombieBuddy Java agent on clients for zombie, vehicle, animal and equipment patches and on the server for cassette playback, safe queue build interruption and vehicle authority recovery. The hutch unloading, native string-property and fluid-name guards apply in clients, single-player and servers. The font startup fix requires explicit early patches_jar activation of the separate local font JAR; enabling the mod alone is insufficient. Unsupported target bytecode disables the patches.\n')
 for base in [mod/'common/media', mod/'42/media']:
     for name in ['AnimSets', 'actiongroups']: (base/name).mkdir(parents=True, exist_ok=True)
 print(jar)
@@ -64,15 +69,20 @@ if args.check or args.check_video:
               'zombie.core.PropertyChecks': 'PROPERTY_CHECKS_PASS',
               'zombie.core.PropertyColdChecks': 'PROPERTY_COLD_CHECKS_PASS',
               'zombie.scripting.entity.components.fluids.FluidChecks': 'FLUID_CHECKS_PASS',
-              'zombie.scripting.entity.components.fluids.FluidColdChecks': 'FLUID_COLD_CHECKS_PASS'} if args.check else {}
+              'zombie.scripting.entity.components.fluids.FluidColdChecks': 'FLUID_COLD_CHECKS_PASS',
+              'zombie.iso.FenceChecks': 'FENCE_CHECKS_PASS',
+              'zombie.core.fonts.FontChecks': 'FONT_CHECKS_PASS',
+              'zombie.core.fonts.FontColdChecks': 'FONT_COLD_CHECKS_PASS'} if args.check else {}
     if args.check_video:
         checks['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
     sources = [ROOT / 'tests' / (name.replace('.', '/') + '.java') for name in checks]
-    subprocess.run([javac, '--release', '17', '-cp', classpath + os.pathsep + str(jar), '-d', str(testclasses), *map(str, sources)], check=True)
+    subprocess.run([javac, '--release', '17', '-cp', os.pathsep.join([classpath, str(jar), str(fontjar)]), '-d', str(testclasses), *map(str, sources)], check=True)
     for name, marker in checks.items():
         for trace in ([False, True] if name.endswith("VehicleTraceChecks") else [False]):
             with tempfile.TemporaryDirectory(prefix='pz-java-native-') as cache:
-                result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1', '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join([str(testclasses), str(jar), classpath]), name], cwd=args.game, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                cold_fonts = name == 'zombie.core.fonts.FontColdChecks'
+                testpath = [str(testclasses), classpath] if cold_fonts else [str(testclasses), str(jar), str(fontjar), classpath]
+                result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             (ROOT / 'build' / (name.rsplit('.', 1)[-1] + ('-trace' if trace else '') + '.log')).write_text(result.stdout)
             print(result.stdout)
             result.check_returncode()

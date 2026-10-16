@@ -104,6 +104,18 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
 
+    def test_explicit_font_preload_extends_single_client_agent(self):
+        self.selection['mods'] = ['ZombieBuddy', 'PZToolkitJavaPatches']
+        self.selection['options'] = {'preload_toolkit_fonts': True}
+        (self.root / 'selection.json').write_text(json.dumps(self.selection))
+        suffix = ',patches_jar=/owned/snapshot/mod.jar:net.alexredby.pztoolkitbootstrap'
+        with patch.object(runner, 'font_preload', return_value=suffix) as preload:
+            self.invoke()
+        agents = [arg for arg in self.commands[-1] if arg.startswith('-javaagent:')]
+        self.assertEqual(len(agents), 1)
+        self.assertTrue(agents[0].endswith(suffix))
+        preload.assert_called_once_with(self.root / 'client1', self.selection)
+
     def test_unrelated_game_does_not_block_isolated_profile(self):
         result, kills = self.invoke("77 java ToolkitSmokeLauncher -cachedir=/another-run/client1\n")
         self.assertEqual(result['status'], 'completed')
