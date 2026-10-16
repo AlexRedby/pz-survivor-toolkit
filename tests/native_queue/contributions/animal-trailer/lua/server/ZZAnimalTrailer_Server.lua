@@ -54,14 +54,26 @@ Events.OnClientCommand.Add(function(module,command,player,args)
   local found=false;local sq=player:getSquare()
   for x=sq:getX()-5,sq:getX()+5 do for y=sq:getY()-5,sq:getY()+5 do local square=getSquare(x,y,0);if square then local animals=square:getAnimals();for i=0,animals:size()-1 do if animals:get(i):getAnimalID()==fixtureState.args.ids[args.index] then found=true end end end end end
   local empty=not player:getPrimaryHandItem() and not player:getSecondaryHandItem()
+  fixtureState.drops=fixtureState.drops or {}
+  if found and empty then fixtureState.drops[args.index]=true end
   log('DROP index='..args.index..' found='..tostring(found)..' handsEmpty='..tostring(empty))
   reply('DropVerified',{index=args.index,found=found,handsEmpty=empty})
  elseif command=='ClearHand' then
   local item=player:getPrimaryHandItem()
   if item then player:removeFromHands(item);player:getInventory():Remove(item);sendRemoveItemFromContainer(player:getInventory(),item) end
   reply('Cleared',{})
+ elseif command=='RestorePosition' and Session then
+  assert(fixtureState and fixtureState.sent and fixtureState.player==player and not fixtureState.returnRequested,'unexpected native return request')
+  assert(fixtureState.drops and fixtureState.drops[1] and fixtureState.drops[2] and fixtureState.drops[3]
+   and not player:getPrimaryHandItem() and not player:getSecondaryHandItem(),'native return requires three verified live drops and empty hands')
+  fixtureState.returnRequested=true
+  local origin=fixtureState.args.origin
+  local result=animalFixtureRestorePosition(player,origin.x,origin.y,origin.z)
+  assert(result=='issued','native return failed: '..tostring(result)..' '..(require 'QueueAnimalMovement').describe(player,origin))
+  fixtureState.returnIssued=true
+  reply('ReturnIssued',{x=origin.x,y=origin.y,z=origin.z})
  elseif command=='VerifyPosition' and Session then
-  assert(fixtureState and fixtureState.sent and not fixtureState.positionRequest,'unexpected position reset request')
+  assert(fixtureState and fixtureState.player==player and fixtureState.returnIssued and not fixtureState.positionRequest and not fixtureState.positionAcknowledged,'unexpected position reset request')
   fixtureState.positionRequest=true
  elseif command=='Done' then log('COMPLETE')
  end
@@ -69,8 +81,9 @@ end)
 Events.OnTick.Add(function()
  if fixtureState and fixtureState.positionRequest and (require 'QueueAnimalMovement').at(fixtureState.player,fixtureState.args.origin) then
   fixtureState.positionRequest=false
+  fixtureState.positionAcknowledged=true
   reply('PositionReset',{x=fixtureState.player:getX(),y=fixtureState.player:getY(),z=fixtureState.player:getZ()})
-  log('POSITION_RESET nativeWalk=true serverAck=true')
+  log('POSITION_RESET nativeTeleport=true serverAck=true '..(require 'QueueAnimalMovement').describe(fixtureState.player,fixtureState.args.origin))
  end
  if fixtureState and not fixtureState.sent and fixtureState.vehicle:getId()>=0 and getTimestampMs()-fixtureState.observationStart>(timer and animalTimerObserve and cfg.timerObservationMs or 0) then
   if timer and animalTimerResult then log('TIMER '..animalTimerResult()) end
@@ -83,6 +96,8 @@ if Session then
  local ownership=require 'QueueAnimalOwnership'
  Session.cleanup=function()
   assert(fixtureState and fixtureState.sent,'fixture never owned a seeded world')
+  assert(fixtureState.positionAcknowledged and (require 'QueueAnimalMovement').at(fixtureState.player,fixtureState.args.origin),
+   'native return was not confirmed '..(require 'QueueAnimalMovement').describe(fixtureState.player,fixtureState.args.origin))
   log('COMPLETE')
   if animalHandsRaceReset then assert(animalHandsRaceReset()=='clean','packet-order reset failed') end
   if animalTimerReset then assert(animalTimerReset()=='clean','timer reset failed') end

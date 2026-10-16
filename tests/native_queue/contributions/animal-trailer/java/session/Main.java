@@ -1,6 +1,7 @@
 package net.alexredby.animalsessionprobe;
 
 import se.krka.kahlua.integration.annotations.LuaMethod;
+import zombie.characters.IsoPlayer;
 import zombie.characters.animals.IsoAnimal;
 import zombie.GameWindow;
 import zombie.network.GameClient;
@@ -9,6 +10,15 @@ import zombie.popman.animal.AnimalSynchronizationManager;
 
 /** Reads native connection state and deletes only the exact fixture-owned animal. */
 public final class Main {
+    @LuaMethod(name="animalFixtureRestorePosition", global=true)
+    public static String restorePosition(IsoPlayer owner, float x, float y, float z) {
+        if (!GameServer.server || owner == null || owner.isDead() || owner.getVehicle() != null
+                || GameServer.getConnectionFromPlayer(owner) == null || owner.getNetworkCharacterAI() == null
+                || !Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(z))
+            return "FAIL expected connected server owner and finite origin";
+        GameServer.sendTeleport(owner, x, y, z);
+        return "issued";
+    }
     @LuaMethod(name="animalFixtureDisconnected", global=true)
     public static boolean disconnected() {
         return GameWindow.serverDisconnected || !GameClient.client;

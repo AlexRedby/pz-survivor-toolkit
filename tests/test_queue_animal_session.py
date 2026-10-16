@@ -92,37 +92,195 @@ io.write('PASS actual waiting/drain/echo/audit callback, empty-hands control, el
                                 input=code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
-    def test_reset_uses_native_path_then_requires_actual_server_position_receipt(self):
+    def test_return_requires_issue_then_real_client_arrival_and_matching_server_receipt(self):
         lua = shutil.which('luajit') or shutil.which('lua')
         if not lua:
             self.skipTest('Lua interpreter unavailable')
         code = r'''
 local movement=dofile(arg[1])
-local actions,sends,quarantines={},{},{}
-local position={x=20,y=30,z=0};local origin={x=1.25,y=2.75,z=0}
+local sends={};local position={x=20,y=30,z=0};local origin={x=1.25,y=2.75,z=0}
 local player={getX=function()return position.x end,getY=function()return position.y end,getZ=function()return position.z end}
-local context={send=function(command,args)sends[#sends+1]=command end,quarantine=function(reason)quarantines[#quarantines+1]=reason end}
-package.preload['Vehicles/TimedActions/ISPathFindAction']=function()return true end
-ISPathFindAction={pathToLocationF=function(self,owner,x,y,z)
- assert(owner==player and x==origin.x and y==origin.y and z==origin.z)
- return {setOnComplete=function(self,fn)self.complete=fn end,setOnFail=function(self,fn)self.fail=fn end}
-end}
-ISTimedActionQueue={add=function(action)actions[#actions+1]=action end}
+local context={send=function(command,args)assert(next(args)==nil,'client cannot choose teleport coordinates');sends[#sends+1]=command end}
 local state=movement.restore(context,player,origin)
-assert(#actions==1 and #sends==0 and not state.arrived and not state.confirmed)
-assert(not movement.confirm(state,origin),'a receipt before native arrival must fail')
-actions[1].complete();assert(#quarantines==1 and #sends==0,'wrong native endpoint must quarantine')
-state=movement.restore(context,player,origin)
+assert(#sends==1 and sends[1]=='RestorePosition' and not state.issued and not state.arrived)
+assert(not movement.confirm(state,origin),'an early server ACK must fail')
 position.x=origin.x;position.y=origin.y
-actions[2].complete();assert(state.arrived and #sends==1 and sends[1]=='VerifyPosition' and not state.confirmed)
-assert(not movement.confirm(state,{x=99,y=origin.y,z=0}) and not state.confirmed,'wrong authoritative receipt must fail')
-assert(not movement.confirm(state,{x=0/0,y=origin.y,z=0}) and not state.confirmed,'non-finite authoritative receipt must fail')
-assert(movement.confirm(state,origin) and state.confirmed and movement.at(player,origin))
-actions[2].fail();assert(#quarantines==2,'native path failure must quarantine')
+assert(not movement.observe(state,context,player) and #sends==1,'already-at-origin still waits for native issue receipt')
+assert(not movement.issued(state,{x=99,y=origin.y,z=0}))
+assert(movement.issued(state,origin) and not movement.issued(state,origin),'native issue must be one-shot')
+position.x=20;position.y=30
+assert(not movement.observe(state,context,player) and #sends==1,'issued request is not native arrival')
+assert(not movement.confirm(state,origin),'server ACK before local arrival must fail')
+position.x=origin.x+0.151;position.y=origin.y
+assert(not movement.observe(state,context,player),'the original tolerance must stay strict')
+position.x=origin.x
+assert(movement.observe(state,context,player) and #sends==2 and sends[2]=='VerifyPosition')
+assert(not movement.observe(state,context,player) and #sends==2,'arrival RPC must be one-shot')
+assert(not movement.confirm(state,{x=99,y=origin.y,z=0}) and not state.confirmed)
+assert(not movement.confirm(state,{x=0/0,y=origin.y,z=0}) and not state.confirmed)
+assert(movement.confirm(state,origin) and state.confirmed and not movement.confirm(state,origin),'server ACK must be one-shot')
+assert(movement.describe(player,origin)=='actual=1.25,2.75,0 expected=1.25,2.75,0')
 assert(not pcall(movement.restore,context,player,{}))
-print('PASS native path only, endpoint proof, authoritative ACK and path failure gates')
+print('PASS scoped native request, issue/arrival/ACK ordering, duplicates, strict tolerance and diagnostics')
 '''
         result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/shared/QueueAnimalMovement.lua')],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_actual_client_return_waits_for_arrival_and_ack_and_quarantines_invalid_or_expired_receipts(self):
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if not lua:
+            self.skipTest('Lua interpreter unavailable')
+        code = r'''
+local movement=dofile(arg[2])
+package.preload.QueueAnimalMovement=function()return movement end
+package.preload.QueueAnimalOwnership=function()return {}end
+package.preload['TimedActions/Animals/ISRemoveAnimalFromTrailer']=function()return true end
+package.preload['ISUI/ISVehicleAnimalUI']=function()return true end
+local function run(mode)
+ local now,finished=0,0;local quarantines,sends,callbacks,globalEvents={},{},{},{}
+ local function events(target)return setmetatable({},{__index=function(self,name)
+  local event={Add=function(fn)target[name]=fn end};self[name]=event;return event
+ end})end
+ Events=events(globalEvents);AnimalTrailerFixtureConfig={cases={'timer-shared'}}
+ local position={x=20,y=30,z=0};local origin={x=1.25,y=2.75,z=0}
+ local empty={size=function()return 0 end}
+ local player={getPrimaryHandItem=function()return nil end,getSecondaryHandItem=function()return nil end,
+  getInventory=function()return {getItems=function()return empty end}end,
+  getX=function()return position.x end,getY=function()return position.y end,getZ=function()return position.z end}
+ function getPlayer()return player end
+ function getTimestampMs()return now end
+ function getCore()return {getVersion=function()return '42.21.0'end}end
+ function getVehicleById()return {getAnimals=function()return empty end}end
+ ISTimedActionQueue={getTimedActionQueue=function()return {queue={}}end}
+ local context={case='timer-shared',events=events(callbacks),send=function(command,args)
+  assert(command=='EquipWeapon' or command=='RestorePosition' or command=='VerifyPosition')
+  assert(next(args)==nil);sends[#sends+1]=command
+ end,quarantine=function(reason)quarantines[#quarantines+1]=reason end,
+ finish=function(ok)assert(ok);finished=finished+1 end}
+ package.loaded.QueueAnimalLifecycle=nil
+ package.preload.QueueAnimalLifecycle=function()return {start=function(cfg,factory,server)assert(not server);factory(context)end}end
+ dofile(arg[1]);globalEvents.OnGameStart()
+ local function command(name,args)callbacks.OnServerCommand('AnimalTrailerBaseline',name,args)end
+ local function count(name)local n=0;for _,value in ipairs(sends)do if value==name then n=n+1 end end;return n end
+ command('Fixture',{vehicleId=7,ids={101,102,103},origin=origin})
+ for i=1,3 do command('DropVerified',{index=i,found=true,handsEmpty=true})end
+ assert(count('RestorePosition')==1 and count('VerifyPosition')==0 and finished==0)
+ assert(not context.readyToClean())
+ if mode=='earlyAck' then
+  command('PositionReset',origin);assert(#quarantines==1 and finished==0);return
+ elseif mode=='lateIssue' then
+  now=30001;command('ReturnIssued',origin)
+  assert(#quarantines==1 and quarantines[1]:find('deadline actual=20,30,0 expected=1.25,2.75,0',1,true));return
+ end
+ command('ReturnIssued',origin);callbacks.OnTick()
+ assert(count('VerifyPosition')==0 and finished==0,'native issue cannot substitute actual local arrival')
+ if mode=='duplicateIssue' then
+  command('ReturnIssued',origin);assert(#quarantines==1 and finished==0);return
+ elseif mode=='timeout' then
+  now=30001;callbacks.OnTick()
+  assert(#quarantines==1 and quarantines[1]:find('deadline actual=20,30,0 expected=1.25,2.75,0',1,true))
+  assert(count('VerifyPosition')==0 and finished==0);return
+ end
+ position.x=origin.x;position.y=origin.y;callbacks.OnTick();callbacks.OnTick()
+ assert(count('VerifyPosition')==1 and finished==0 and not context.readyToClean(),'local arrival still requires server ACK')
+ if mode=='mismatchAck' then
+  command('PositionReset',{x=99,y=origin.y,z=0});assert(#quarantines==1 and finished==0 and quarantines[1]:find('receipt=99,2.75,0',1,true));return
+ end
+ command('PositionReset',origin);assert(#quarantines==0 and finished==1 and context.readyToClean())
+ assert(context.cleanup())
+end
+for _,mode in ipairs({'success','earlyAck','lateIssue','duplicateIssue','timeout','mismatchAck'})do run(mode)end
+print('PASS actual client return callbacks: native issue, real local position, one-shot arrival, server ACK, mismatch and elapsed deadlines')
+'''
+        result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/client/ZZAnimalTrailer_Client.lua'),
+                                 str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/shared/QueueAnimalMovement.lua')],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_actual_server_return_requires_owned_drops_client_arrival_and_observed_server_position(self):
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if not lua:
+            self.skipTest('Lua interpreter unavailable')
+        code = r'''
+local function list(values)return {size=function()return #values end,get=function(self,i)return values[i+1]end}end
+local movement=dofile(arg[2])
+package.preload.QueueAnimalMovement=function()return movement end
+package.preload.QueueAnimalOwnership=function()return {}end
+local function run(mode)
+ local callbacks,replies={},{}
+ local function events(target)return setmetatable({},{__index=function(self,name)
+  local event={Add=function(fn)target[name]=fn end};self[name]=event;return event
+ end})end
+ Events=events({});AnimalTrailerFixtureConfig={cases={'timer-shared'},timerObservationMs=0}
+ local position={x=1.25,y=2.75,z=0};local hand
+ local ground,seeded={},{}
+ local square={isOutside=function()return true end,getFloor=function()return {getSprite=function()return {getName=function()return 'street'end}end}end,
+  getX=function()return 1 end,getY=function()return 2 end,getAnimals=function()return list(ground)end}
+ local player={getX=function()return position.x end,getY=function()return position.y end,getZ=function()return position.z end,
+  getSquare=function()return square end,getPrimaryHandItem=function()return hand end,getSecondaryHandItem=function()return hand end}
+ local vehicle={getSquare=function()return square end,getId=function()return 7 end,getAnimals=function()return list(seeded)end,
+  addAnimalInTrailer=function(self,animal)seeded[#seeded+1]=animal end}
+ function getSquare()return square end
+ function getCell()return {}end
+ function addVehicleDebug()return vehicle end
+ IsoDirections={N=1}
+ AnimalDefinitions={getDef=function()return {getBreedByName=function()return {}end}end}
+ local nextId=100
+ function addAnimal()
+  nextId=nextId+1;local id=nextId
+  return {getAnimalID=function()return id end,getOnlineID=function()return id+100 end,
+   getData=function()return {}end,setWild=function()end,addToWorld=function()end}
+ end
+ local now=0;function getTimestampMs()now=now+1;return now end
+ local issued=0
+ function animalFixtureRestorePosition(owner,x,y,z)
+  assert(owner==player and x==1.25 and y==2.75 and z==0,'only the server-stored origin may be used')
+  issued=issued+1;return mode=='failure' and 'FAIL native unavailable' or 'issued'
+ end
+ local context={case='timer-shared',events=events(callbacks),reply=function(owner,command,args)
+  assert(owner==player);replies[#replies+1]={command=command,args=args}
+ end}
+ package.loaded.QueueAnimalLifecycle=nil
+ package.preload.QueueAnimalLifecycle=function()return {start=function(cfg,factory,server)assert(server);factory(context)end}end
+ dofile(arg[1])
+ local function command(name,args,owner)return callbacks.OnClientCommand('AnimalTrailerBaseline',name,owner or player,args or {})end
+ local function count(name)local n=0;for _,reply in ipairs(replies)do if reply.command==name then n=n+1 end end;return n end
+ command('Ready');callbacks.OnTick();assert(count('Fixture')==1)
+ assert(not pcall(command,'RestorePosition') and not pcall(command,'VerifyPosition') and issued==0,'early position RPC must fail')
+ assert(not pcall(context.cleanup),'cleanup cannot precede the return ACK')
+ ground=seeded
+ command('VerifyDrop',{index=3});assert(not pcall(command,'RestorePosition') and issued==0,'all three successful drops are required')
+ command('VerifyDrop',{index=1});command('VerifyDrop',{index=2})
+ hand={};assert(not pcall(command,'RestorePosition') and issued==0,'hands must still be empty');hand=nil
+ assert(not pcall(command,'RestorePosition',{},{}),'foreign player cannot return the owned actor')
+ if mode~='initial' then position.x=20;position.y=30 end
+ local ok,reason=pcall(command,'RestorePosition',{x=999,y=999,z=9})
+ if mode=='failure' then
+  assert(not ok and reason:find('native return failed:',1,true) and reason:find('actual=20,30,0 expected=1.25,2.75,0',1,true))
+  callbacks.OnTick();assert(count('ReturnIssued')==0 and count('PositionReset')==0 and issued==1)
+  assert(not pcall(command,'VerifyPosition') and not pcall(command,'RestorePosition') and issued==1)
+  return
+ end
+ assert(ok and issued==1 and count('ReturnIssued')==1 and count('PositionReset')==0)
+ callbacks.OnTick();assert(count('PositionReset')==0,'sendTeleport or an already-matching server position alone cannot ACK')
+ assert(not pcall(command,'RestorePosition') and issued==1,'native return must be one-shot')
+ assert(not pcall(command,'VerifyPosition',{},{}),'foreign arrival request must fail')
+ command('VerifyPosition');assert(count('PositionReset')==0,'ACK must be deferred to server observation')
+ if mode~='initial' then
+  callbacks.OnTick();assert(count('PositionReset')==0,'stale server position must not ACK client arrival')
+  assert(not pcall(context.cleanup))
+  position.x=1.401;position.y=2.75;callbacks.OnTick();assert(count('PositionReset')==0,'the original server tolerance must remain strict')
+ end
+ position.x=1.25;position.y=2.75;callbacks.OnTick();assert(count('PositionReset')==1)
+ local receipt=replies[#replies].args;assert(receipt.x==position.x and receipt.y==position.y and receipt.z==0)
+ callbacks.OnTick();assert(count('PositionReset')==1 and not pcall(command,'VerifyPosition'),'ACK and arrival request must be one-shot')
+end
+run('moved');run('initial');run('failure')
+print('PASS actual server callbacks: drops/ownership/issue/arrival/observed position, no-op, duplicates and failed native call')
+'''
+        result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/server/ZZAnimalTrailer_Server.lua'),
+                                 str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/shared/QueueAnimalMovement.lua')],
                                 input=code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 

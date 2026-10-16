@@ -56,9 +56,16 @@ Events.OnServerCommand.Add(function(module,command,args)
  elseif command=='DropVerified' then local v=getVehicleById(fixture.vehicleId);log('DROP_VERIFIED index='..args.index..' found='..tostring(args.found)..' handsEmpty='..tostring(args.handsEmpty)..' clientTrailer='..v:getAnimals():size());if index==3 then done() else index=index+1;if index==2 then sendClientCommand('AnimalTrailerBaseline','EquipWeapon',{});phase='weaponrequest' else phase='waiting' end;at=getTimestampMs() end
  elseif command=='WeaponReady' then fixture.weapon=args.id;phase='weaponwaiting';at=getTimestampMs()
  elseif command=='Cleared' then index=index+1;phase='waiting';at=getTimestampMs() end
- if command=='PositionReset' and Session then
-  if phase~='returning' or not movement.confirm(reset,args) then Session.quarantine('server position reset receipt mismatch');return end
-  log('POSITION_RESET nativeWalk=true serverAck=true');log('COMPLETE');phase='done';Session.finish(true)
+ if Session and (command=='ReturnIssued' or command=='PositionReset') then
+  if phase~='returning' then Session.quarantine('out-of-phase server position receipt');return end
+  local detail=movement.describe(getPlayer(),reset.origin)..' receipt='..tostring(args.x)..','..tostring(args.y)..','..tostring(args.z)
+  if getTimestampMs()-at>30000 then Session.quarantine('native position reset or server ACK deadline '..detail);return end
+  if command=='ReturnIssued' then
+   if not movement.issued(reset,args) then Session.quarantine('native return issue receipt mismatch '..detail) end
+  else
+   if not movement.at(getPlayer(),reset.origin) or not movement.confirm(reset,args) then Session.quarantine('server position reset receipt mismatch '..detail);return end
+   log('POSITION_RESET nativeTeleport=true serverAck=true '..detail);log('COMPLETE');phase='done';Session.finish(true)
+  end
  end
 end)
 Events.OnTick.Add(function()
@@ -100,8 +107,9 @@ Events.OnTick.Add(function()
   local remaining={};for i=0,v:getAnimals():size()-1 do local x=v:getAnimals():get(i);remaining[#remaining+1]=x:getAnimalID()..'/'..x:getOnlineID() end;log('REMAINING '..table.concat(remaining,','))
   log('AFTER index='..index..' count='..v:getAnimals():size()..' hand='..tostring(item)..' animal='..tostring(a and a:getAnimalID())..' queue='..#ISTimedActionQueue.getTimedActionQueue(p).queue)
   sendClientCommand('AnimalTrailerBaseline','Verify',{index=index});phase='verifying'
- elseif phase=='returning' and now-at>30000 then
-  Session.quarantine('native position reset or server ACK deadline')
+ elseif phase=='returning' then
+  if now-at>30000 then Session.quarantine('native position reset or server ACK deadline '..movement.describe(p,reset.origin))
+  else movement.observe(reset,Session,p) end
  end
 end)
 
