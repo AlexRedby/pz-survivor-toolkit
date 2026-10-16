@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "topic": "video-recording",
+  "name": "B42.21 native video recording fixture",
+  "purpose": "Validate two short silent in-game captures in a fresh disposable profile; preparation does not launch the game.",
+  "dependencies": {
+    "game": "Project Zomboid B42.21",
+    "zombie_buddy": "2.3.4 or newer",
+    "java": "JDK 25 for compilation; game-bundled Java executable for launch",
+    "ffmpeg": "Absolute executable path; build must include libx264",
+    "ffprobe": "Absolute executable path for verification",
+    "python": "Python 3.10+"
+  },
+  "parameters": {
+    "language": [
+      "EN",
+      "RU"
+    ],
+    "default_language": "EN",
+    "profile": "Must be a new, nonexistent absolute disposable directory",
+    "voiceEnable": false,
+    "approval_policy": "Local SHA approvals; deny-new",
+    "capture": {
+      "mode": "Game framebuffer including UI; no desktop windows",
+      "audio": false,
+      "codec": "H.264, libx264",
+      "fps": 30,
+      "crf": 18,
+      "preset": "veryfast",
+      "pixel_format": "yuv420p",
+      "maximum_dimensions": "4096x4096, maximum 8,294,400 pixels"
+    },
+    "fixture": {
+      "sandbox": "Fresh SP Sandbox named VideoFixture",
+      "captures": 2,
+      "target_recording_seconds": 3.5,
+      "checks": [
+        "reject output outside profile",
+        "reject duplicate start",
+        "reject duplicate stop"
+      ]
+    }
+  },
+  "coverage": {
+    "validated": {
+      "date": "2026-10-15",
+      "platform": "macOS ARM64",
+      "game": "B42.21",
+      "language": "EN",
+      "mode": "Single-player Sandbox",
+      "results": {
+        "captures": 2,
+        "dimensions": "1728x1020",
+        "fps": 30,
+        "frames_per_capture": 106,
+        "encoded_duration_seconds": 3.533333,
+        "measured_stop_interval_seconds": "3.515-3.516",
+        "dropped_frames": 0,
+        "audio_streams": 0,
+        "checks": [
+          "FFprobe metadata",
+          "full FFmpeg decode",
+          "first/middle/last frame extraction",
+          "FFplay playback",
+          "voice disabled",
+          "outside-profile output rejected",
+          "duplicate start/stop rejected"
+        ]
+      },
+      "recorder_commit": "cc93193",
+      "integrated_commit": "a0be7f2"
+    },
+    "unvalidated": [
+      "multiplayer",
+      "Russian language",
+      "Windows",
+      "Linux",
+      "long recordings",
+      "sustained 4K load",
+      "live resize",
+      "forced process termination recovery"
+    ],
+    "known_observations": [
+      "A sandbox launch without a usable macOS GUI session stalled at Cocoa Connection Invalid.",
+      "A requested 1280x720 window yielded a measured 1728x1020 framebuffer; capture uses measured GLFW pixels.",
+      "Synchronous GL readback can reduce game frame rate.",
+      "Resize fails the capture and finalizes frames already captured; FFmpeg has a 15-second timeout."
+    ],
+    "intake_validation": "No new game run during transfer; no-game preparation/metadata tests, Java compilation and retained-clip verification only"
+  },
+  "fingerprints": {
+    "class": "org.lwjglx.opengl.Display",
+    "sha256": "15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578"
+  },
+  "artifacts_policy": "Contribution contains fixture source and metadata only: no binaries, profiles, logs, videos, secrets, or user-specific absolute paths."
+}
