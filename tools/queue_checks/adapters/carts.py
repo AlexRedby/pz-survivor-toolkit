@@ -18,7 +18,8 @@ SP = 'wooden_cart_motion'
 MP = 'wooden_cart_multiplayer'
 SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.lua', 20),
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
-            'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32), 'collision': ('scenario-collision.lua', 16)}
+            'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
+            'collision': ('scenario-collision.lua', 20), 'footprint': ('scenario-collision.lua', 20)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 
 
@@ -160,6 +161,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 'ready': '[CART_MP] CONNECTED' if selection['suite'] == MP else '[CART_ADAPTER] PROBE_ATTACH_READY'})
         if selection['suite'] == SP:
             motion = dict(disposable=True, ffmpeg=config['ffmpeg'], videoRoot=videos[role], area=AREA)
+            if selection['cases'][0] in ('collision','footprint'): motion['footprint']=True
             runtime_source = 'CartMotionConfig=' + _lua(motion) + '\nif not CartAdapterBootstrapped then\nCartAdapterBootstrapped=true\n'
             runtime_source += '(function()\n' + (sp / 'test-area.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'obstacles.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'bootstrap.lua').read_text() + '\nend)()'
             runtime_source += '\nelse\n(function()\n' + (sp / SP_CASES[selection['cases'][0]][0]).read_text() + '\nend)()\nend\n'
@@ -284,8 +286,9 @@ def verify(root, selection, catalog):
                 motion = _load(intake / 'analyze-reverse.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reverse-motion.json', json.dumps(motion, indent=2, allow_nan=False))
-            elif case in ('stop', 'stationary', 'maneuvers', 'collision'):
-                evidence['analyzers'][case] = _run([sys.executable, str(intake / ('analyze-' + case + '.py')),
+            elif case in ('stop', 'stationary', 'maneuvers', 'collision', 'footprint'):
+                analyzer='footprint' if case=='collision' else case
+                evidence['analyzers'][case] = _run([sys.executable, str(intake / ('analyze-' + analyzer + '.py')),
                     '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / (case + '-motion.json'))], analysis, case)
                 evidence['motion'] = _json(analysis / (case + '-motion.json'))
             elif case == 'reversal':

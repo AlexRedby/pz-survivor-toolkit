@@ -28,7 +28,9 @@ public final class ClearanceProbe {
                 if(body.modelInstance!=instance.parent || body.matrixPalette==null
                     || !(body.modelInstance.model.tag instanceof SkinningData skin))continue;
                 var row=new StringBuilder(8192).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
-                    .append(",\"female\":").append(slot.character.isFemale()).append(",\"cart\":");
+                    .append(",\"female\":").append(slot.character.isFemale())
+                    .append(",\"slotX\":").append(slot.x).append(",\"slotY\":").append(slot.y)
+                    .append(",\"slotAngle\":").append(slot.animPlayerAngle).append(",\"cart\":");
                 matrix(row,new Matrix4f(cart.xfrm).transpose());row.append(",\"bones\":{");
                 boolean comma=false;
                 for(var entry:skin.boneIndices.entrySet()) {

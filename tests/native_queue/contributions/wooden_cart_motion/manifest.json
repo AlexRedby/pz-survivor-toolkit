@@ -24,7 +24,8 @@
     "obstacles": "obstacles.lua",
     "collision_scenario": "scenario-collision.lua",
     "collision_analyzer": "analyze-collision.py",
-    "kahlua_checks": "KahluaChecks.java"
+    "kahlua_checks": "KahluaChecks.java",
+    "footprint_analyzer": "analyze-footprint.py"
   },
   "origin": {
     "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",
@@ -340,6 +341,12 @@
     "record_seconds_per_case": 12,
     "sample_interval_ms": 25,
     "live_verification": "pending; motion and complete capture are separate from grip/geometry/visual quality"
+  },
+  "footprint_scenario": {
+    "case_count": 20,
+    "scenario": "scenario-collision.lua with config.footprint=true",
+    "required_candidate_versions": {"PZSurvivorToolkit": ">=0.1.61", "PZToolkitJavaPatches": ">=0.1.20"},
+    "scope": "Native tile-wall/door guard for the original wooden mesh, both body models and loads; includes initial-overlap reverse and stopped gait promotion. Full vehicle clearance and MP authority are separate coverage."
   },
   "collision_scenario": {
     "case_count": 16,

@@ -7,6 +7,7 @@ local function square()
     local sq = {objects = {}, moving = {}, static = {}, world = {}}
     function sq:getFloor() return self.floor end
     function sq:getObjects() return list(self.objects) end
+    function sq:getSpecialObjects() return list({}) end
     function sq:getMovingObjects() return list(self.moving) end
     function sq:getStaticMovingObjects() return list(self.static) end
     function sq:getWorldObjects() return list(self.world) end

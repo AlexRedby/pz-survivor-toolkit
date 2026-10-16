@@ -35,7 +35,7 @@ public final class WoodenWheelNativeProbe {
         Double.NaN,Double.NaN,Double.NaN,Double.NaN,Double.NaN,Double.NaN,Double.NaN,Double.NaN,Double.NaN};
     static { if (Math.abs(distance(0,0,0,3,4,0)-5)>1e-6) throw new AssertionError("distance self-check"); }
     private record NativeSnapshot(ModelInstanceRenderData cart, Map<String,Matrix4f> bones) {}
-    private static BufferedWriter output;
+    private static volatile BufferedWriter output;
     private static Path directory;
     private static long start,sequence,lastSnapshot,lastDraw;
     private static boolean installed,errorLogged,firstDraw,meshProof,movingMeshProof;
@@ -166,7 +166,8 @@ public final class WoodenWheelNativeProbe {
         return result;
     }
     static void row(String event,ModelSlotRenderData slot,ModelInstanceRenderData data,double[] bone) throws Exception { row(event,slot,data,bone,NO_TRANSITION); }
-    static void row(String event,ModelSlotRenderData slot,ModelInstanceRenderData data,double[] bone,double[] transition) throws Exception {
+    static synchronized void row(String event,ModelSlotRenderData slot,ModelInstanceRenderData data,double[] bone,double[] transition) throws Exception {
+        if(output==null)return;
         var player=(IsoPlayer)slot.character;
         Matrix4f transform=new Matrix4f(data.xfrm).transpose();
         double[] center=world(slot,transform.transformPosition(new Vector3f(CX,CY,CZ)),false);
@@ -247,7 +248,8 @@ public final class WoodenWheelNativeProbe {
             @Advice.Return boolean rendered){WoodenWheelNativeProbe.draw(slot,data,rendered);}
     }
     public static synchronized void agentmain(String args,Instrumentation instrumentation) throws Exception {
-        if(output!=null){output.close();output=null;}
+        var previous=output;output=null;
+        if(previous!=null)previous.close();
         if("stop".equals(args)){System.out.println("[WOOD_WHEEL_NATIVE_PROBE] stopped");return;}
         if(args==null || args.isBlank() || !Path.of(args).isAbsolute())throw new IllegalArgumentException("Agent args: absolute output directory, or stop");
         directory=Path.of(args);

@@ -32,6 +32,11 @@ local function fail(reason, x, y, z)
     error('[CART_TEST_AREA] ' .. reason .. ' at ' .. x .. ',' .. y .. ',' .. z, 0)
 end
 
+local function contains(objects, object)
+    for i = 0, objects:size() - 1 do if objects:get(i) == object then return true end end
+    return false
+end
+
 local function checkSquare(square, player, x, y, building)
     if not square then
         if building then return end
@@ -49,6 +54,14 @@ local function checkSquare(square, player, x, y, building)
                 or object:getSquare() ~= square or object:getSpriteName() ~= owned.sprite then
                 fail('unexpected tile object', x, y, area.z)
             end
+        end
+    end
+    local special = square:getSpecialObjects()
+    for i = 0, special:size() - 1 do
+        local object = special:get(i)
+        local owned = area.obstacles and area.obstacles[object]
+        if not owned or owned.kind ~= 'door' or not contains(objects, object) then
+            fail('unexpected special object', x, y, area.z)
         end
     end
     if square:getWorldObjects():size() > 0 or square:getStaticMovingObjects():size() > 0 then
@@ -76,6 +89,23 @@ end
 
 function area.check(player)
     assert(area.ready, '[CART_TEST_AREA] call prepare() before testing')
+    local doors = false
+    for object, owned in pairs(area.obstacles or {}) do
+        if owned.kind == 'door' then
+            doors = true
+            local square = getCell():getGridSquare(owned.x, owned.y, owned.z)
+            if not square or not contains(square:getObjects(), object) or not contains(square:getSpecialObjects(), object) then
+                fail('missing fixture door', owned.x, owned.y, owned.z)
+            end
+            local opposite = getCell():getGridSquare(owned.x + (owned.axis == 'W' and -1 or 0), owned.y + (owned.axis == 'N' and -1 or 0), owned.z)
+            local blocked = not owned.open
+            -- This is the same closed/barricaded-door predicate used by native footprint queries.
+            if object:isOpen() ~= owned.open or object:isBlocked() ~= blocked or not opposite
+                or square:isDoorBlockedTo(opposite) ~= blocked or opposite:isDoorBlockedTo(square) ~= blocked then
+                fail('fixture door state disagrees', owned.x, owned.y, owned.z)
+            end
+        end
+    end
     for x = area.minX, area.minX + area.size - 1 do
         for y = area.minY, area.minY + area.size - 1 do
             local square = getCell():getGridSquare(x, y, area.z)
@@ -87,7 +117,12 @@ function area.check(player)
                         and y + dy >= area.minY and y + dy < area.minY + area.size
                         then
                         local expected = expectedCollision(x, y, dx, dy)
-                        if square:testCollideAdjacent(nil, dx, dy, 0) ~= expected then
+                        local actual = square:testCollideAdjacent(nil, dx, dy, 0)
+                        -- With a nil actor B42 skips special objects; query them without mutating player collision state.
+                        if doors and not actual then
+                            actual = square:testCollideSpecialObjects(getCell():getGridSquare(x + dx, y + dy, area.z)) ~= nil
+                        end
+                        if actual ~= expected then
                             fail(expected and 'missing fixture collision edge' or 'blocked pad edge', x, y, area.z)
                         end
                     end

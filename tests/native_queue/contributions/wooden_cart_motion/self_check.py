@@ -26,6 +26,7 @@ def check_manifest():
         "reversal_analyzer": "analyze-reversal.py", "stationary_scenario": "scenario-stationary.lua", "stationary_analyzer": "analyze-stationary.py",
         "maneuvers_scenario": "scenario-maneuvers.lua", "maneuvers_analyzer": "analyze-maneuvers.py",
         "obstacles": "obstacles.lua", "collision_scenario": "scenario-collision.lua", "collision_analyzer": "analyze-collision.py",
+        "footprint_analyzer": "analyze-footprint.py",
     }
     for name in manifest["sources"].values():
         assert (HERE / name).is_file(), name
@@ -41,7 +42,7 @@ def check_manifest():
     axes = manifest["scenario"]["axes"]
     assert len(axes["sex"]) * len(axes["cargo"]) * len(axes["spec"]) == 16
     assert set(manifest["criteria"]) == {"completion", "grip", "geometry", "native_pose", "floor", "gait", "diagnostics"}
-    allowed = {"Main.java", "KahluaChecks.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py", "obstacles.lua", "scenario-collision.lua", "analyze-collision.py"}
+    allowed = {"Main.java", "KahluaChecks.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py", "obstacles.lua", "scenario-collision.lua", "analyze-collision.py", "analyze-footprint.py"}
     assert {p.name for p in HERE.iterdir() if p.is_file()} == allowed
     for path in HERE.rglob("*"):
         if path.is_file():
@@ -63,6 +64,8 @@ def check_manifest():
     assert manifest['maneuvers_scenario']['axes']['spec'] == ['idle-swap-left','idle-swap-right','moving-swap-left','moving-swap-right','reverse-rest','reverse-moving','uturn-left','uturn-right']
     assert manifest['collision_scenario']['case_count'] == 16
     assert manifest['collision_scenario']['native_bare_controls'] == ['wall','corner','passage']
+    assert manifest['footprint_scenario']['case_count'] == 20
+    assert manifest['footprint_scenario']['required_candidate_versions']['PZToolkitJavaPatches']=='>=0.1.20'
     stationary = runpy.run_path(str(HERE/'analyze-stationary.py'))
     assert len(stationary['STEPS']) == 5
     for empty in ('', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=20'):

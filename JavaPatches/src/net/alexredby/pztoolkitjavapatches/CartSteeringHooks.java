@@ -21,7 +21,8 @@ public final class CartSteeringHooks {
         double brakeTarget, actualDistance, fastPoseTail, nativeSpeed, brakeLimit, brakeWait, brakePace;
         zombie.inventory.InventoryItem cart;
         float startX, startY;
-        boolean stationary, stationaryRoot;
+        boolean stationary, stationaryRoot, cartBlocked, recovering;
+        double footprintFront=CartFootprint.WALK_FRONT;
         boolean moving, pending, sprintMomentum, sprintRequested, hasInput, wantsMove, braking, brakeSeen, fastMoving;
         final CartSteeringMath.Step requested = new CartSteeringMath.Step();
         final Vector2 result = new Vector2();
@@ -102,6 +103,11 @@ public final class CartSteeringHooks {
             if(state.stationaryRoot || intent<0 || state.reversal.direction<0 || state.reversal.active) {
                 input.setRunning(false);
                 input.sprinting=false;
+            }
+            if((input.isRunning() || input.sprinting) && player.getCurrentSquare()!=null
+                && !CartFootprint.clear(CartFootprint.world(player),player.getX(),player.getY(),state.heading,CartFootprint.FAST_FRONT)) {
+                // A stopped cart must not enter a wall just because Run expands its visual clearance.
+                input.setRunning(false);input.sprinting=false;
             }
         }
         state.sprintRequested=input.sprinting;
@@ -194,7 +200,25 @@ public final class CartSteeringHooks {
                 GameTime.getInstance().getRealworldSecondsSinceLastUpdate(), state.load, axle(player),
                 52, state.requested);
         state.pending = true;
-        return state.result.set((float) state.requested.x(), (float) state.requested.y());
+        state.result.set((float)state.requested.x(),(float)state.requested.y());
+        state.cartBlocked=state.recovering=false;
+        if(wooden(player) && player.getCurrentSquare()!=null) {
+            state.footprintFront=player.isRunning() || player.isSprinting() || state.fastPoseTail>0
+                || CartLegPace.woodenGaitShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
+            var query=CartFootprint.world(player);
+            if(!CartFootprint.clear(query,state.startX,state.startY,state.heading,state.footprintFront)) {
+                // An equipped/door-overlapped cart may back out, without sweeping its nose sideways.
+                state.recovering=true;
+                double reverse=Math.min(0,state.result.x*Math.cos(state.heading)+state.result.y*Math.sin(state.heading));
+                state.result.set((float)(reverse*Math.cos(state.heading)),(float)(reverse*Math.sin(state.heading)));
+                state.cartBlocked=reverse==0;
+            } else {
+                double fraction=CartFootprint.limit(query,state.startX,state.startY,state.heading,
+                    state.result.x,state.result.y,axle(player),state.footprintFront);
+                state.result.scale((float)fraction);state.cartBlocked=fraction<1;
+            }
+        }
+        return state.result;
     }
 
     /**
@@ -223,10 +247,21 @@ public final class CartSteeringHooks {
         if (state.pending) {
             actualX = player.getX() - state.startX;
             actualY = player.getY() - state.startY;
+            if(wooden(player) && !state.recovering && player.getCurrentSquare()!=null) {
+                double allowed=CartFootprint.limit(CartFootprint.world(player),state.startX,state.startY,state.heading,
+                    actualX,actualY,axle(player),state.footprintFront);
+                if(allowed<1) {
+                    player.setX((float)(state.startX+actualX*allowed));player.setY((float)(state.startY+actualY*allowed));
+                    player.setNextX(player.getX());player.setNextY(player.getY());
+                    player.setCurrentSquareFromPosition();player.setMovingSquareNow();
+                    actualX=player.getX()-state.startX;actualY=player.getY()-state.startY;
+                    state.cartBlocked=true;
+                }
+            }
             fraction = CartSteeringMath.acceptedFraction(state.requested,
                     actualX, actualY);
-            blocked=blockedStep(state.requested,state.startX,state.startY,fraction);
-            double turn = wheelbarrow(player)
+            blocked=state.cartBlocked || blockedStep(state.requested,state.startX,state.startY,fraction);
+            double turn = state.recovering?0:wheelbarrow(player)
                 ? CartSteeringMath.acceptedTurn(state.heading,axle(player),actualX,actualY)
                 : state.requested.turn() * fraction;
             if(wooden(player)) {

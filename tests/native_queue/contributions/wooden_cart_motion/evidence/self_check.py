@@ -56,7 +56,7 @@ def main():
         classpath = os.pathsep.join(map(str, dependencies))
         subprocess.run([str(compiler), '--release', '17', '-cp', classpath, '-d', str(output), *map(str, HERE.glob('*.java'))], check=True)
         runtime = os.pathsep.join([str(output), classpath])
-        for check in ['WoodenWheelProbeCheck', 'GripPoseProbeCheck', 'ClearanceProbeCheck']:
+        for check in ['WoodenWheelProbeCheck', 'WoodenWheelProbeLifecycleTest', 'GripPoseProbeCheck', 'ClearanceProbeCheck']:
             subprocess.run([str(java), '--enable-native-access=ALL-UNNAMED', '-cp', runtime, check], check=True)
         print('JAVA_EVIDENCE_CHECK_PASS (compile and offline probe checks); live=NOT_RUN')
 

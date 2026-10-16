@@ -77,7 +77,7 @@ def coverage(rows, start, duration, label, minimum):
     return gaps
 
 
-def controls(log):
+def controls(log, wall_offset=1):
     result, active = {}, None
     for line in log.splitlines():
         if '[CART_COLLISION_CONTROL] START ' in line:
@@ -110,7 +110,7 @@ def controls(log):
         assert all(0 <= r['elapsed'] <= end['wall'] - start['wall'] and abs(r['wall'] - start['wall'] - r['elapsed']) <= 5 for r in rows), 'Native control clocks disagree'
         assert all(b['wall'] > a['wall'] for a, b in zip(rows, rows[1:])), 'Non-monotonic native control samples'
         assert all(start[k] == geometry[k] for k in ('x', 'y', 'wallX', 'southY', 'gapY')), 'Native controls disagree on geometry'
-        assert start['wallX'] == math.floor(start['x']) - 1 and start['southY'] == math.floor(start['y']) + 2 and start['gapY'] == math.floor(start['y']), 'Invalid native control geometry'
+        assert start['wallX'] == math.floor(start['x']) - wall_offset and start['southY'] == math.floor(start['y']) + 2 and start['gapY'] == math.floor(start['y']), 'Invalid native control geometry'
         assert math.dist((start['x'], start['y']), (rows[0]['x'], rows[0]['y'])) <= 8 * rows[0]['elapsed'] / 1000 + .02, 'Native control starts after movement'
         assert math.dist((end['x'], end['y']), (rows[-1]['x'], rows[-1]['y'])) <= .025, 'Native control endpoint disagrees with samples'
         def fail(reason):

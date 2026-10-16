@@ -1,0 +1,82 @@
+package net.alexredby.pztoolkitjavapatches;
+
+import zombie.characters.IsoPlayer;
+import zombie.pathfind.PolygonalMap2;
+
+/** Conservative wooden-cart envelope; the native world remains the obstacle oracle. */
+final class CartFootprint {
+    // shortcut: original wooden mesh/rigs and +/-7deg bank; recalibrate if the mesh or authored pose changes.
+    static final double WALK_FRONT=1.26, FAST_FRONT=1.62;
+    private static final double RAIL=.12, NOSE_INSET=.21;
+
+    @FunctionalInterface
+    interface Query { boolean blocked(double x1,double y1,double x2,double y2); }
+
+    static Query world(IsoPlayer player) {
+        return (x1,y1,x2,y2)-> {
+            var map=PolygonalMap2.instance;
+            int z=(int)Math.floor(player.getZ());
+            // The line query checks only its destination. Validate the rear cap as well.
+            if(!map.canStandAt((float)x1,(float)y1,z,player,false,false)) return true;
+            if(x1==x2 && y1==y2) return false;
+            // Short overloads ignore doors; the explicit zero mask includes them.
+            return map.lineClearCollide((float)x1,(float)y1,(float)x2,(float)y2,z,player,PolygonalMap2.LCC_ZERO);
+        };
+    }
+
+    static boolean clear(Query query,double x,double y,double heading,double front) {
+        double cos=Math.cos(heading),sin=Math.sin(heading),length=front-NOSE_INSET;
+        // shortcut: calibrated tile walls/doors; the native vehicle sweep has a narrower side margin.
+        for(int side=-1;side<=1;side+=2) {
+            double rearX=x-sin*side*RAIL,rearY=y+cos*side*RAIL;
+            if(query.blocked(rearX,rearY,rearX+cos*length,rearY+sin*length)) return false;
+        }
+        return true;
+    }
+
+    private static boolean sweep(Query query,double x,double y,double heading,double dx,double dy,
+                                 double axle,double front,double from,double to) {
+        double ax=(float)(x+dx*from),ay=(float)(y+dy*from);
+        double bx=(float)(x+dx*to),by=(float)(y+dy*to);
+        // Native position rounding can change rolling yaw; verify the coordinates we will actually commit.
+        double a=heading+CartSteeringMath.acceptedTurn(heading,axle,ax-x,ay-y);
+        double b=heading+CartSteeringMath.acceptedTurn(heading,axle,bx-x,by-y);
+        if(!clear(query,bx,by,b,front)) return false;
+        for(int side=-1;side<=1;side+=2) for(int end=0;end<=1;end++) {
+            double length=end*(front-NOSE_INSET),offset=side*RAIL;
+            double x1=ax+Math.cos(a)*length-Math.sin(a)*offset;
+            double y1=ay+Math.sin(a)*length+Math.cos(a)*offset;
+            double x2=bx+Math.cos(b)*length-Math.sin(b)*offset;
+            double y2=by+Math.sin(b)*length+Math.cos(b)*offset;
+            if(query.blocked(x1,y1,x2,y2)) return false;
+        }
+        return true;
+    }
+
+    /** Shorten only the supplied displacement, using its actual rolling yaw after native sliding. */
+    static double limit(Query query,double x,double y,double heading,double dx,double dy,double axle,double front) {
+        double distance=Math.hypot(dx,dy),turn=CartSteeringMath.acceptedTurn(heading,axle,dx,dy);
+        if(!Double.isFinite(x+y+distance+turn+heading+front) || !(axle>0)) return 0;
+        if(!clear(query,x,y,heading,front)) return 0;
+        if(distance==0) return 1;
+        int steps=Math.max(1,(int)Math.ceil((distance+Math.abs(turn)*front)/.04));
+        if(steps>128) return 0;
+        double previous=0;
+        for(int step=1;step<=steps;step++) {
+            double next=step/(double)steps;
+            if(!sweep(query,x,y,heading,dx,dy,axle,front,previous,next)) {
+                double low=previous,high=next;
+                for(int i=0;i<12;i++) {
+                    double mid=(low+high)/2;
+                    if(sweep(query,x,y,heading,dx,dy,axle,front,previous,mid)) low=mid;
+                    else high=mid;
+                }
+                return low;
+            }
+            previous=next;
+        }
+        return 1;
+    }
+
+    private CartFootprint() {}
+}

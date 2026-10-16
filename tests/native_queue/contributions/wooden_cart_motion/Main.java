@@ -176,6 +176,27 @@ public final class Main {
             .getMethod("wheelPhase",IsoPlayer.class).invoke(null,IsoPlayer.getInstance())).doubleValue();
     }
 
+    @LuaMethod(name="cartLabFootprint", global=true)
+    public static String footprint() throws Exception {
+        var player=IsoPlayer.getInstance();
+        var hooks=Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks");
+        var states=hooks.getDeclaredField("states");states.setAccessible(true);
+        Object state=((java.util.Map<?,?>)states.get(null)).get(player);
+        if(state==null) throw new IllegalStateException("Cart state required");
+        var front=state.getClass().getDeclaredField("footprintFront");front.setAccessible(true);
+        var heading=state.getClass().getDeclaredField("heading");heading.setAccessible(true);
+        var shape=Class.forName("net.alexredby.pztoolkitjavapatches.CartFootprint");
+        var world=shape.getDeclaredMethod("world",IsoPlayer.class);world.setAccessible(true);
+        var clear=shape.getDeclaredMethod("clear",Class.forName(shape.getName()+"$Query"),double.class,double.class,double.class,double.class);
+        clear.setAccessible(true);
+        var out=new StringBuilder("front=").append(front.getDouble(state));
+        for(String key:new String[]{"cartBlocked","recovering"}) {
+            var part=state.getClass().getDeclaredField(key);part.setAccessible(true);
+            out.append(' ').append(key.equals("cartBlocked")?"blocked":key).append('=').append(part.getBoolean(state));
+        }
+        return out.append(" clear=").append(clear.invoke(null,world.invoke(null,player),player.getX(),player.getY(),heading.getDouble(state),front.getDouble(state))).toString();
+    }
+
     @LuaMethod(name="cartLabDrive", global=true)
     public static void drive(int value) {
         if (value < -1 || value > 8) throw new IllegalArgumentException("drive must be -1..8");
