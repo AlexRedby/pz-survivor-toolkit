@@ -73,6 +73,8 @@ if args.check or args.check_video:
               'zombie.scripting.entity.components.crafting.PianoChecks': 'PIANO_CHECKS_PASS',
               'zombie.iso.FencePropertyChecks': 'FENCE_PROPERTY_CHECKS_PASS',
               'zombie.basements.BasementRoomLookupChecks': 'BASEMENT_ROOM_LOOKUP_CHECKS_PASS',
+              'zombie.iso.RoomCollisionOrderChecks': 'ROOM_COLLISION_ORDER_CHECKS_PASS',
+              'zombie.iso.RoomCollisionChecks': 'ROOM_COLLISION_CHECKS_PASS',
               'zombie.iso.MannequinZoneChecks': 'MANNEQUIN_ZONE_CHECKS_PASS',
               'zombie.iso.FenceChecks': 'FENCE_CHECKS_PASS',
               'zombie.core.fonts.FontChecks': 'FONT_CHECKS_PASS',
