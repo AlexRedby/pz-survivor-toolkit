@@ -77,7 +77,7 @@ def _locations(project, workshop, identifiers, overrides=None):
         compatible = [(version, child) for version, child in versions if (42,) <= version <= (42, 21)]
         if versions and not compatible:
             raise ValueError("No compatible 42.21 mod layer: " + identifier)
-        layers = [max(compatible)[1], root / "common", root] if compatible else [root]
+        layers = [max(compatible)[1], root / "common", root] if compatible else [root / "common", root]
         info = next((layer / "mod.info" for layer in layers if (layer / "mod.info").is_file()), None)
         if info is None or _metadata(info).get("id") != identifier:
             raise ValueError("Selected version has a different Mod ID: " + identifier)
@@ -227,7 +227,12 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             expected = next(row["files"] for row in manifest if row["id"] == identifier)
             if hashes(target) != expected:
                 raise RuntimeError("Mod changed while copying snapshot: " + identifier)
-            for layer in [target, target / 'common', *[p for p in target.iterdir() if p.is_dir() and VERSION.fullmatch(p.name)]]:
+            versions = [p for p in target.iterdir() if p.is_dir() and VERSION.fullmatch(p.name)]
+            layers = [target, target / 'common', *versions]
+            if not versions and (target / 'common/mod.info').is_file():
+                # B42 still scans its default 42.0 layer when all mod content is common.
+                layers.append(target / '42.0')
+            for layer in layers:
                 if layer != target or (layer / "media").is_dir():
                     for sub in ("AnimSets", "actiongroups"):
                         (layer / "media" / sub).mkdir(parents=True, exist_ok=True)

@@ -99,6 +99,33 @@ class NativeSnapshotTests(unittest.TestCase):
         for sub in ('AnimSets', 'actiongroups'):
             self.assertTrue((output / 'client1/mods/PZSurvivorToolkit/common/media' / sub).is_dir())
 
+    def test_common_only_b42_metadata_and_empty_fallback_leave_b41_files_untouched(self):
+        source = self.project / 'Toolkit'
+        shutil.rmtree(source / '42')
+        self.mod(source, 'PZSurvivorToolkit', layer='common')
+        self.write(source / 'mod.info', 'id=LegacyB41Toolkit\nversion=1.0.5\n')
+        self.write(source / 'media/lua/client/legacy.lua', 'return "B41 only"\n')
+        initial = native.hashes(source)
+        output = self.prepare(kind='mp', languages=['EN', 'RU'])
+        self.assertEqual(initial, native.hashes(source))
+        self.assertFalse((source / '42.0').exists())
+        for role in ('server', 'client1', 'client2'):
+            target = output / role / 'mods/PZSurvivorToolkit'
+            self.assertEqual(initial, native.hashes(target), 'Only empty directories may be added')
+            self.assertEqual('LegacyB41Toolkit', native._metadata(target / 'mod.info')['id'])
+            for sub in ('AnimSets', 'actiongroups'):
+                self.assertTrue((target / '42.0/media' / sub).is_dir())
+            self.assertEqual({}, native.hashes(target / '42.0'), 'No mod.info or B41 Lua may shadow common')
+
+    def test_numeric_42_layer_never_gets_a_competing_42_0_fallback(self):
+        source = self.project / 'Toolkit'
+        self.write(source / 'common/mod.info', 'id=OlderCommonToolkit\n')
+        output = self.prepare(kind='mp', languages=['EN', 'RU'])
+        for role in ('server', 'client1', 'client2'):
+            target = output / role / 'mods/PZSurvivorToolkit'
+            self.assertFalse((target / '42.0').exists())
+            self.assertEqual('PZSurvivorToolkit', native._metadata(target / '42/mod.info')['id'])
+
     def test_saved_world_is_copied_into_fresh_profile_with_silent_settings_and_pinned_source(self):
         seed = self.prepare('seed')
         self.write(seed / 'client1/Saves/Sandbox/QueueHealthSP/map.bin', 'prepared world')

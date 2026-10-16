@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -45,6 +46,26 @@ class PackLockTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Missing'):
             self.create()
         self.assertFalse(self.output.exists())
+
+    def test_common_only_b42_metadata_precedes_root_b41_id_and_version(self):
+        root = self.root / 'First'
+        shutil.rmtree(root / '42')
+        (root / 'common').mkdir()
+        (root / 'common/mod.info').write_text('id=First\nmodversion=1.1.5\n')
+        (root / 'mod.info').write_text('id=LegacyFirst\nversion=1.0.5\n')
+        value = self.create()
+        self.assertEqual('First', value['mods'][0]['id'])
+        self.assertEqual('1.1.5', value['mods'][0]['version'])
+        self.assertEqual(str(root), self.validate()['First'])
+        self.assertFalse((root / '42.0').exists())
+
+    def test_numeric_layer_metadata_keeps_precedence_over_common_and_root(self):
+        root = self.root / 'First'
+        (root / 'common').mkdir()
+        (root / 'common/mod.info').write_text('id=OlderCommonFirst\nversion=0.5\n')
+        (root / 'mod.info').write_text('id=LegacyFirst\nversion=0.1\n')
+        value = self.create()
+        self.assertEqual('1.2.3', value['mods'][0]['version'])
 
     def test_added_removed_and_changed_mod_files_invalidate_lock(self):
         self.create()

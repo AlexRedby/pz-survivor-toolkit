@@ -19,9 +19,10 @@ def create(project, output, game, workshop=(), overrides=None):
     for id, root in locations.items():
         layers = [(tuple(map(int, p.name.split('.'))), p) for p in root.iterdir()
                   if p.is_dir() and VERSION.fullmatch(p.name) and (42,) <= tuple(map(int, p.name.split('.'))) <= (42, 21)]
-        chosen = [max(layers)[1], root / 'common', root] if layers else [root]
+        chosen = [max(layers)[1], root / 'common', root] if layers else [root / 'common', root]
         info = next(path / 'mod.info' for path in chosen if (path / 'mod.info').is_file())
-        rows.append({'id': id, 'source': str(root), 'version': _metadata(info).get('version'), 'files': hashes(root)})
+        metadata = _metadata(info)
+        rows.append({'id': id, 'source': str(root), 'version': metadata.get('version') or metadata.get('modversion'), 'files': hashes(root)})
     value = {'schema_version': 1, 'selected_ini_sha256': sha256(ini), 'selected_settings': settings,
              'workshop_ids': [id for id in settings.get('WorkshopItems', '').split(';') if id],
              'game_sha256': sha256(game / 'projectzomboid.jar'), 'mods': rows}
