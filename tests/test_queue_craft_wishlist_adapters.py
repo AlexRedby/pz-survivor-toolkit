@@ -357,7 +357,8 @@ print('PASS actual fixture remote-safe flags, exact fractions, unchanged/unrelat
 
     def test_real_lua_cleanup_polling_and_product_pending_receipts(self):
         lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
-        code = r'''local create=dofile(arg[1]);local configure=dofile(arg[2]);local now=0
+        code = r'''next=nil
+local create=dofile(arg[1]);local configure=dofile(arg[2]);local now=0
 getTimestampMs=function()return now end
 local failedAsserts=0;local nativeAssert=assert
 assert=function(value,...)if not value then failedAsserts=failedAsserts+1 end;return nativeAssert(value,...)end
@@ -398,6 +399,7 @@ nativeAssert(WishlistTestFixture.stageCount==11 and ctx.readyToClean())
 state.pending={requestId='8'};nativeAssert(not ctx.readyToClean());state.pending=nil
 state.queue={{action='set'}};nativeAssert(not ctx.readyToClean());state.queue={}
 ctx.trackRequest('forged');nativeAssert(not ctx.readyToClean())
+nativeAssert(not pcall(ctx.trackRequest,'forged'),'duplicate raw request must remain rejected')
 ctx.observeProduct('Other','snapshot',{requestId='forged'});nativeAssert(not ctx.readyToClean())
 ctx.observeProduct('PZSurvivorWishlist','snapshot',{requestId='late'});nativeAssert(not ctx.readyToClean())
 ctx.observeProduct('PZSurvivorWishlist','snapshot',{requestId='forged'});nativeAssert(ctx.readyToClean())
@@ -412,6 +414,64 @@ print('PASS quiet replication polling, RPC drain, real Wishlist pending/forged r
         result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueFixtureSession.lua"),
                                  str(ROOT / "tests/native_queue/support/QueueCraftSession.lua"),
                                  str(ROOT / "tests/native_queue/contributions/shared-wishlist/client/ZZWishlist.lua")],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_real_lua_wishlist_server_visual_cleanup_guards_without_next(self):
+        lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+        code = r'''next=nil
+local source=arg[1]
+local function fixture(preexisting)
+ local model={cleaned=0,removed=0,items=0,faction=preexisting}
+ local payloads={client1={lists={{owner='client1',entries={},members={}}}},client2={lists={{owner='client2',entries={},members={}}}}}
+ local command
+ local ctx={case='visual',events={OnServerStarted={Add=function()end},OnClientCommand={Add=function(fn)command=fn end}},
+  player=function()end,ownItem=function()model.items=model.items+1 end,ownObject=function()end,
+  reply=function()end,cleanOwned=function()model.cleaned=model.cleaned+1 end}
+ QueueWishlistSession=ctx
+ Faction={getFaction=function()return model.faction end,getFactions=function()return{remove=function(_,value)
+  assert(value==model.faction,'cleanup must target the exact owned faction')
+  if not model.keepFaction then model.faction=nil;model.removed=model.removed+1 end
+ end}end}
+ PZSurvivorWishlist={Service={snapshot=function(player)return payloads[player:getUsername()]end}}
+ getCell=function()return{}end;sendAddItemToContainer=function()end
+ local id=0
+ local function addItem()id=id+1;return{getID=function()return id end}end
+ local crate={setType=function()end,setCapacity=function()end,setExplored=function()end,AddItem=addItem}
+ IsoThumpable={new=function()
+  local data={};return{setCanPassThrough=function()end,setIsContainer=function()end,getContainer=function()return crate end,
+   getModData=function()return data end,transmitCompleteItemToClients=function()end,transmitModData=function()end}
+ end}
+ dofile(source)
+ for _,name in ipairs({'client1','client2'})do
+  local user=name
+  local player={getUsername=function()return user end,getInventory=function()return{AddItem=addItem}end,
+   getCurrentSquare=function()return{AddSpecialObject=function()end}end}
+  command('WishlistTest','Ready',player,{})
+ end
+ assert(model.items==16,'exercise real Ready ownership and peer registration')
+ return ctx,payloads,model
+end
+local ctx,payloads,model=fixture();assert(ctx.cleanup()==true and model.cleaned==1)
+local function reject(change)
+ local ctx,payloads,model=fixture();change(ctx,payloads,model)
+ assert(not pcall(ctx.cleanup),'unsafe visual reset must fail closed')
+ assert(model.cleaned==0 and model.removed==0,'guard failure must not clean world state or delete factions')
+end
+reject(function(_,p)p.client1.lists[1].entries['Base.Hammer']={amount=1}end)
+reject(function(_,p)p.client1.lists[1].entries[2]=true end)
+reject(function(_,p)p.client1.lists[1].members.client2=true end)
+reject(function(_,p)p.client1.lists[1].owner='client2'end)
+reject(function(_,p)p.client1.lists[1].faction='WishlistTest'end)
+reject(function(_,p)p.client2.error='storage_invalid'end)
+reject(function(ctx,_,m)ctx.faction={};m.faction={}end)
+reject(function(ctx,_,m)ctx.faction={};m.faction=ctx.faction;m.keepFaction=true end)
+ctx,payloads,model=fixture();ctx.faction={};model.faction=ctx.faction
+assert(ctx.cleanup()==true and model.faction==nil and model.removed==1 and model.cleaned==1,'remove only the exact owned faction')
+assert(not pcall(fixture,{}),'preexisting unrelated fixture-named faction must be retained')
+print('PASS real server visual empty-list/owner/storage/faction reset guards with next unavailable')
+'''
+        result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/contributions/shared-wishlist/server/ZZWishlist_Server.lua")],
                                 input=code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 

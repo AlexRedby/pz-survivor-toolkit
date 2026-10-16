@@ -61,12 +61,16 @@ end)
 if Session then
  Session.ownerKey='WishlistTestOwner'
  assert(not Faction.getFaction('WishlistTest'),'preexisting fixture faction must not be changed')
+ local function empty(values)
+  for _ in pairs(values) do return false end
+  return true
+ end
  Session.cleanup=function()
   for user,player in pairs(ready) do
    local snapshot=PZSurvivorWishlist.Service.snapshot(player);assert(not snapshot.error,'wishlist storage error during reset')
    if Session.case=='visual' then
     for _,list in ipairs(snapshot.lists) do
-     assert(list.owner==user and not next(list.entries) and not next(list.members) and not list.faction,'visual case mutated wishlist data')
+     assert(list.owner==user and empty(list.entries) and empty(list.members) and not list.faction,'visual case mutated wishlist data')
     end
    end
   end

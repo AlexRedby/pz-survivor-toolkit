@@ -379,7 +379,8 @@ if Session then
  Session.ownWorld=function(world) worlds[#worlds+1]={world=world,square=world:getSquare()} end
  Session.readyToClean=function()
   assert(state.error~='timeout','product request timed out with unknown effects')
-  if state.pending or #state.queue>0 or next(requests) then return false end
+  if state.pending or #state.queue>0 then return false end
+  for _ in pairs(requests) do return false end
   return true
  end
  Session.cleanup=function()
