@@ -82,6 +82,13 @@ local radioKeys = {
     AddHeadphones = "IGUI_RadioAddHeadphones",
     TogglePlayMedia = prefix .. "playback",
 }
+local medicalKeys = {
+    HApplyBandage = "ContextMenu_Apply_Bandage", HRemoveBandage = "ContextMenu_Remove_Bandage",
+    HDisinfect = "ContextMenu_Disinfect", HStitch = "ContextMenu_Stitch", HRemoveStitch = "ContextMenu_Remove_Stitch",
+    HSplint = "ContextMenu_Splint", HRemoveSplint = "ContextMenu_Remove_Splint",
+    HRemoveGlass = "ContextMenu_Remove_Glass", HRemoveBullet = "ContextMenu_Remove_Bullet", HCleanBurn = "ContextMenu_Clean_Burn",
+    HApplyComfrey = "ContextMenu_ComfreyCataplasm", HApplyGarlic = "ContextMenu_GarlicCataplasm", HApplyPlantain = "ContextMenu_PlantainCataplasm",
+}
 local function preparation(action)
     local description = Definitions.resolve(action)
     local Food = PZSurvivorToolkit.BulkFood
@@ -91,6 +98,10 @@ local function preparation(action)
 end
 
 local function title(action)
+    if action.Type == "HealthPanelAction" and type(action.handler) == "table" then
+        local key = medicalKeys[action.handler.Type]
+        if key then return getText(key), key end
+    end
     if (action.toolkitWorldOperation == "generator" or action.toolkitWorldOperation == "fire")
         and type(action.toolkitActionLabel) == "string" then
         return getText(action.toolkitActionLabel), action.toolkitActionLabel
@@ -494,6 +505,12 @@ local function name(value)
 end
 
 local function target(action, presentation)
+    if action.Type == "HealthPanelAction" and type(action.handler) == "table" then
+        local panel = action.handler.panel
+        local patient, body = name(type(panel) == "table" and panel.character), name(action.handler.bodyPart)
+        if patient and body then return patient .. " / " .. body end
+        return patient or body
+    end
     if action.toolkitWorldOperation == "build" or action.Type == "ISBuildAction" then
         local recipe = action.craftRecipe or (action.item and action.item.craftRecipe)
         if instance(recipe, "CraftRecipe") then return recipe:getTranslationName() end
@@ -535,6 +552,13 @@ end
 
 local function icon(action, presentation)
     local fallback = getTexture("media/ui/Entity/Icon_Tools_48x48.png")
+    if presentation and presentation.family == "medical" and getItemTex then
+        local item = action.item or action.alcohol or action.bandage or action.plank
+        local kind = instance(item, "InventoryItem") and item:getFullType()
+        if action.Type == "HealthPanelAction" and type(action.args) == "table" then kind = action.args[1] or action.args[2] end
+        local texture = kind and kind ~= "Hands" and getItemTex(kind)
+        return texture or getItemTex("Base.Bandage") or fallback
+    end
     if action.toolkitWorldOperation == "fuel" or action.Type == "ISAddGasolineToVehicle" or action.Type == "ISTakeGasolineFromVehicle" then
         local take = action.toolkitFuelTake or action.Type == "ISTakeGasolineFromVehicle"
         return getTexture(take and "media/ui/vehicles/gas_siphon.png" or "media/ui/vehicles/gas_refuel.png") or fallback

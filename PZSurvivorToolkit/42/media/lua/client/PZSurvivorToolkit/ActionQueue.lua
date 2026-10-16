@@ -128,7 +128,7 @@ local function finishGroup(queue, request)
         -- Native MP replication can replace the item object while retaining its ID.
         local item = inventory:getItemById(id)
         if item and item:getContainer() == inventory and not item:getIsCraftingConsumed()
-            and destination:isExistYet() and containers:contains(destination) then
+            and destination:isExistYet() and (containers:contains(destination) or Policy.isCarriedContainer(destination, queue.character)) then
             local action = ISInventoryTransferUtil.newInventoryTransferAction(queue.character, item, inventory, destination)
             if action.Type == "ISInventoryTransferAction" or (not isClient() and Toolkit.ActionQueueCarts and Toolkit.ActionQueueCarts.isTransfer(action)) then
                 if action.Type == "ISInventoryTransferAction" then Toolkit.BulkActions.guardTransfer(action) end
@@ -241,9 +241,10 @@ ISBaseTimedAction.stop = function(action)
     if Toolkit.Settings.actionQueue() and queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action then
         if Toolkit.BulkFood and Toolkit.BulkFood.missing(action) then queue.toolkitCancel = action end
         if Policy.hygieneUnavailable(action) then queue.toolkitCancel = action end
-        local generators, fire = Toolkit.ActionQueueGenerators, Toolkit.ActionQueueFire
+        local generators, fire, health = Toolkit.ActionQueueGenerators, Toolkit.ActionQueueFire, Toolkit.ActionQueueHealth
         if (generators and generators.canSkip and generators.canSkip(action))
-            or (fire and fire.canSkip and fire.canSkip(action)) then
+            or (fire and fire.canSkip and fire.canSkip(action))
+            or (health and health.canPreserveStop and health.canPreserveStop(action)) then
             Operations.invalidate(action.toolkitQueueOperation)
             queue.toolkitGroupCancel = {action = action, token = action.toolkitQueueOperation}
             queue.toolkitCancel = action
@@ -355,6 +356,18 @@ ISTimedActionQueue.tick = function(queue)
     end
     -- Native idle clear is housekeeping; explicit clear still revokes late continuations.
     if not queue.queue[1] then return end
+    local current, health = queue.queue[1], Toolkit.ActionQueueHealth
+    -- Java removes invalid, never-started actions without stop(); native tick would clear unrelated work.
+    if Toolkit.Settings.actionQueue() and live(queue) and queue.current == current and current.action
+        and not current:isStarted() and not queue.character:getCharacterActions():contains(current.action)
+        and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false)
+        and health and health.canSkip(current) and health.canPreserveStop(current) then
+        Operations.invalidate(current.toolkitQueueOperation)
+        queue.toolkitGroupCancel = {action = current, token = current.toolkitQueueOperation}
+        current:forceCancel()
+        queue:onCompleted(current)
+        return
+    end
     return tick(queue)
 end
 
