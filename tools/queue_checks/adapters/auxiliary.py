@@ -156,6 +156,7 @@ Events.OnGameStart.Add(function() Events.OnTick.Add(setup) end)
         manifest = json.loads((staged / 'runtime-manifest.json').read_text())
         fixture['mods'] = manifest['helper_mod_ids']
         fixture['server_ready'] = '[ANIMAL_TRAILER] SERVER READY'
+        fixture['failure_markers'] = ['[ANIMAL_TRAILER] CLIENT MISSING ']
         for cache in caches:
             for identifier in fixture['mods']:
                 shutil.copytree(staged / 'mods' / identifier, cache / 'mods' / identifier)

@@ -114,11 +114,14 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 shutil.copy2(source, target)
         from ..native import _lua
         config = {"world": str(Path(output) / "server/Saves/Multiplayer" / name), "slots": slots}
+        # Kahlua truncates raw non-ASCII literals before decoding their saved bytes as UTF-8.
+        input_lua = "".join(char if ord(char) < 128 else "".join(f"\\{byte:03d}" for byte in char.encode("utf-8"))
+                            for char in _lua(config))
         for role in runtime["roles"]:
             helper = Path(output) / role / "mods/WishlistTest/42/media/lua/server"
             shutil.copy2(Path(project) / "tests/native_queue/support/QueueWishlistRestore.lua", helper)
             (helper / "WishlistSeedRestore.lua").write_text(
-                "local Restore=require 'QueueWishlistRestore'\nlocal input=" + _lua(config) +
+                "local Restore=require 'QueueWishlistRestore'\nlocal input=" + input_lua +
                 "\nWishlistSeedRestore=function() Restore(input.world,input.slots) end\n", encoding="utf-8")
     runtime["fixture"] = {"mods": [HELPERS[selection["suite"]]], "server_ready": server_ready(selection),
                           "sandbox": server_settings(selection), "client_launch_stagger_seconds": 8,

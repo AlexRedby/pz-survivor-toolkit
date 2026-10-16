@@ -225,6 +225,37 @@ print('PASS native restore roundtrip and guards')
             with self.assertRaises(ValueError):
                 adapter._store_prefix(cache, name)
 
+    def test_generated_restore_preserves_unicode_world_and_slot_as_utf8_bytes(self):
+        lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+        self.assertIsNotNone(lua, "Lua interpreter required for generated restore string roundtrip")
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            seed, output = base / "seed", base / "мир-😀"
+            prefix = adapter._store_prefix(seed / "server", "queue-smoke")
+            prefix.mkdir(parents=True)
+            slot = prefix / "a.txt"
+            text = 'PZSW\t1\t19\nL\tигрок-😀\t14\t\nE\tBase.Hammer\t7\t0\nEND\t19\t123\n'
+            slot.write_text(text, encoding="utf-8")
+            (seed / "runtime.json").write_text(json.dumps({"server_name": "queue-smoke"}))
+            value = dict(selection("shared-wishlist", "reload"), options={"seed_run": str(seed)})
+            runtime = {"server_name": "queue-smoke", "roles": {role: {"cache": str(output / role)} for role in ("server", "client1", "client2")}}
+            with patch.object(adapter, "_seed", return_value=(seed, [slot])):
+                adapter.stage(ROOT, output, None, None, value, {}, runtime)
+            modules = [output / role / "mods/WishlistTest/42/media/lua/server/WishlistSeedRestore.lua" for role in runtime["roles"]]
+            contents = [path.read_bytes() for path in modules]
+            self.assertEqual(contents, [contents[0]] * 3)
+            self.assertTrue(contents[0].isascii(), "Kahlua's source lexer must only receive ASCII string literals")
+            code = r'''local world, slots
+require=function() return function(a,b) world,slots=a,b end end
+dofile(arg[1]); WishlistSeedRestore()
+io.write(world, '\0', slots.a)
+'''
+            result = subprocess.run([lua, "-", str(modules[0])], input=code.encode("ascii"), capture_output=True)
+            self.assertEqual(0, result.returncode, result.stderr.decode("utf-8", errors="replace"))
+            world = str(output / "server/Saves/Multiplayer/queue-smoke")
+            self.assertEqual(world.encode("utf-8") + b"\0" + text.encode("utf-8"), result.stdout)
+            self.assertEqual(text.encode("utf-8"), slot.read_bytes(), "Seed bytes must remain unchanged")
+
     def test_reload_copies_only_owned_persisted_state_and_checks_seed(self):
         initial = selection("shared-wishlist", "standalone")
         with tempfile.TemporaryDirectory() as directory:

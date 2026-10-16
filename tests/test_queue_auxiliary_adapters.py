@@ -100,6 +100,33 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         self.assertIn('port=17463', (server / relative).read_text())
         self.assertEqual(calls, [(self.root / 'patch_jar', 'equipment')])
         self.assertEqual(self.runtime['fixture']['server_ready'], '[ANIMAL_TRAILER] SERVER READY')
+        missing = '[ANIMAL_TRAILER] CLIENT MISSING index=2 ids=101/201,103/203\n'
+        self.assertTrue(any(marker in missing for marker in self.runtime['fixture']['failure_markers']))
+        self.assertFalse(adapter.complete(self.selection, 'client1', missing))
+        (self.cache / 'console.txt').write_text(missing)
+        self.assertEqual(adapter.verify(self.output, self.selection, {})['outcomes'][0]['status'], 'failed')
+        harness = adapter._load(ROOT / 'tests/test_queue_runner.py').NativeRunnerTests()
+        harness.setUp()
+        self.addCleanup(harness.doCleanups)
+        harness.selection.update(suite='animal-trailer', cases=['equipment-fixed'], kind='mp', clients=1,
+                                 ports=[29343, 29344], timeout_seconds=1200)
+        server_cache = harness.root / 'server'
+        (server_cache / 'Server').mkdir(parents=True)
+        (server_cache / 'options.ini').write_text('voiceEnable=false\n')
+        (server_cache / 'Server/queue-smoke.ini').write_text('VoiceEnable=false\n')
+        harness.runtime.update(server_name='queue-smoke', fixture=self.runtime['fixture'])
+        harness.runtime['roles']['server'] = {'cache': str(server_cache)}
+        (harness.root / 'selection.json').write_text(json.dumps(harness.selection))
+        (harness.root / 'runtime.json').write_text(json.dumps(harness.runtime))
+        harness.content = '[ANIMAL_TRAILER] SERVER READY\n' + missing
+        with patch('queue_checks.runner.socket.socket'):
+            execution, kills = harness.invoke(sleep=lambda _: self.fail('Terminal missing marker waited for timeout'))
+        self.assertEqual(execution['status'], 'failed')
+        self.assertIn('Native fixture failed', execution['error'])
+        self.assertEqual({call.args[0] for call in kills}, {101, 102})
+        self.assertEqual(set(execution['processes']), {'server', 'client1'})
+        self.assertTrue(all(row['exit_code'] == -15 for row in execution['processes'].values()))
+        self.assertEqual(json.loads((harness.root / 'execution.json').read_text())['status'], 'failed')
         self.selection['cases'] = ['equipment-missing']
         with self.assertRaisesRegex(ValueError, 'must omit'):
             adapter.validate(self.selection)
