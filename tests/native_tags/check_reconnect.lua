@@ -1,8 +1,12 @@
 local root=ProjectRoot..'/tests/native_tags/'
 local baseline=BaselineTagReconnect==true
 local restart=RestartTagReconnect==true
+local planting=PlantingTagReconnect==true
 local cases=restart and {'server-restart','restart-sort'} or baseline and {'configure','reopen','sort','baseline-reconnect'} or {'configure','reopen','icons','inventory-all','inventory-any','inventory-exclude','preset-save','inventory-empty',
  'preset-apply','rule-save','rule-reopen','rule-stale','rule-peer','rule-toggle','sort','rule-reconnect'}
+if planting then
+ for index,id in ipairs({'planting-inventory','planting-seed-sort','planting-exclude-sort','planting-restore'}) do table.insert(cases,15+index,id) end
+end
 local files={['smoke-user.txt']='client1',['queue-health-language.txt']='EN',['tag-fixture-reconnect.txt']='pending'}
 if restart then files['tag-fixture-reconnect.txt']=nil end
 getFileReader=function(path)
@@ -21,7 +25,7 @@ local providerPanel={getOption=function(_,id)
 end,apply=function() providerOptions.applied=true end}
 local originalRequire=require
 require=function(name)
- if name=='QueueTestSelection' then return {tagRules=not baseline,tagRestart=restart and {} or nil,cases=cases,port=19101} end
+ if name=='QueueTestSelection' then return {tagRules=not baseline,tagRestart=restart and {} or nil,plantingTags=planting,cases=cases,port=19101} end
  if name=='TagTestEvents' then return {emit=function(event) events[#events+1]=event end,encode=function() return '{}' end} end
  if name=='TagFixture' then return Fixture end
  if name=='PZSurvivorToolkit/QuartermasterTagRules' then
@@ -56,6 +60,15 @@ local function container(ids)
 end
 instanceof=function() return false end
 local sourceContainer,destContainer=container(baseline and {2} or {3,4}),container(baseline and {1} or {1,2})
+local plantingIDs
+if planting then
+ plantingIDs={}
+ for index,entry in ipairs(Fixture.plantingItems) do
+  local id=index+10;plantingIDs[entry[1]]=id
+  local destination=entry[1]=='candy' and destContainer or sourceContainer
+  destination._testItems[#destination._testItems+1]={getID=function() return id end}
+ end
+end
 local bag={getID=function() return 99 end,getModData=function() return {PZSTTagFixtureOwner='client1'} end,
  getInventory=function() return sourceContainer end}
 local inv={getItems=function() return {size=function() return 1 end,get=function() return bag end} end}
@@ -115,7 +128,7 @@ now=3000;fire('OnTick')
 assert(providerOptions.applied and providerOptions.showAdvancedDisplayCategories==false and #commands==0,'provider was not configured before resumed phases')
 now=3001;fire('OnTick')
 assert(#commands==1 and commands[1].command=='Ready' and commands[1].args.reconnect,'resume did not request existing fixture')
-fire('OnServerCommand','TagBaseline','Setup',{x=10,y=20,z=0,index=0,source=99,revision=5,manualCategory='BatteryCategory',battery=1,apple=2,beans=not baseline and 3 or nil,steak=not baseline and 4 or nil})
+fire('OnServerCommand','TagBaseline','Setup',{x=10,y=20,z=0,index=0,source=99,revision=5,manualCategory='BatteryCategory',battery=1,apple=2,beans=not baseline and 3 or nil,steak=not baseline and 4 or nil,planting=plantingIDs})
 now=5000;fire('OnTick')
 if not baseline then
 assert(commands[2].command=='VerifyRule' and commands[2].args.phase==(restart and 'restart-before' or 'reconnect'),'resume did not audit rule authority')
@@ -127,6 +140,13 @@ else
  fire('OnServerCommand','TagBaseline','Verified',{ok=true,phase='baseline',ids={}})
 end
 now=7000;fire('OnTick')
+if planting then
+ assert(files['tag-fixture-reconnect.txt']=='pending' and #events==0,'planting reconnect completed without extra authority IDs')
+ assert(commands[#commands].command=='VerifyPlanting' and commands[#commands].args.phase=='restored','planting reconnect did not audit retained IDs')
+ fire('OnServerCommand','TagBaseline','PlantingVerified',{ok=true,phase='restored',ids={}})
+ now=7001;fire('OnTick')
+ for _,command in ipairs(commands) do assert(command.command~='PlantingSetup','reconnect recreated planting setup') end
+end
 if restart then
  assert(files['tag-fixture-reconnect.txt']=='done' and #events==2 and events[2].id=='server-restart')
  assert(presetReads==2 and presetDeletes==0 and presetStored,'cold restart mutated saved local filter')
@@ -156,4 +176,4 @@ else
 end
 now=9000;fire('OnTick')
 assert(#events==2 and events[2].event=='complete' and events[2].performed==#cases,'resume repeated old cases or missed completion')
-print('Native tag reconnect fixture checks passed: resume-only Ready, no duplicate setup/cases, authority gates, mode='..(baseline and 'baseline4' or 'candidate16'))
+print('Native tag reconnect fixture checks passed: resume-only Ready, no duplicate setup/cases, authority gates, mode='..(baseline and 'baseline4' or planting and 'planting20' or 'candidate16'))

@@ -97,6 +97,7 @@ LootSorter.presetDeserialize = function(text) return assert(loadstring(text))() 
 if NativeQuartermasterLuaRoot then
     dofile(NativeQuartermasterLuaRoot .. '/shared/LootSorter_Presets.lua')
     dofile(NativeQuartermasterLuaRoot .. '/shared/LootSorter_Util.lua')
+    dofile(NativeQuartermasterLuaRoot .. '/shared/LootSorter_Plan.lua')
     loaded['TimedActions/ISTimedActionQueue'], loaded['TimedActions/ISInventoryTransferAction'] = {}, {}
     LootSorter.DBG = function() end
     LootSorter.arePresetsSynced = function() return true end
@@ -144,6 +145,25 @@ if NativeQuartermasterLuaRoot then
     boxes=LootSorter.findDesignatedOnSquare(square)
     assert(#boxes==0 and object.md.LSBox['0']==nil, 'MP manifest bypassed safehouse permission')
     safe=true; mode='sp'
+    local originalProps=farming_vegetableconf
+    farming_vegetableconf={props={Sunflower={seedName='Base.SunflowerSeeds'}}}
+    local seedOnly={mode='all',include={'food','seed'},exclude={}}
+    assert(Rules.applyBox(player,args(seedOnly))=='ok')
+    object.md.LSBox['0']={}
+    boxes=LootSorter.gatherBoxes(player)
+    assert(#boxes==1 and boxes[1].container==container,
+        'native private gather dropped an item-only food+seed rule with no manual designation')
+    local sunflower={getDisplayCategory=function() return 'Food' end,getFullType=function() return 'Base.SunflowerSeeds' end}
+    local itemRecord={ref=sunflower,cat='Food',name='Sunflower seeds',weight=1}
+    local plannedBox={cats=boxes[1].cats,items=boxes[1].items,capacity=10,used=0}
+    local plan=LootSorter.planTrips({itemRecord},{plannedBox},{{ref={},space=10,factor=1}},10)
+    assert(#plan.trips==1 and plan.trips[1].perBox[plannedBox][1].item==itemRecord and #plan.leftover==0,
+        'native planner did not receive/match item-only food+seed target')
+    assert(next(object.md.LSBox['0'])==nil,'rule-only gather persisted its transport marker')
+    enabled=false;boxes=LootSorter.gatherBoxes(player)
+    assert(#boxes==0,'disabled tags retained item-only rule target without native manual designation')
+    enabled=true;farming_vegetableconf=originalProps
+    assert(Rules.applyBox(player,args(rule))=='ok')
 end
 object.md.LSBox['0']={foodPerishable=true, PreciseModCategory=true}
 LootSorter.getRegistry(); cats=privateFind()

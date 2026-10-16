@@ -59,6 +59,10 @@ function Picker:refreshPreview()
         for _, item in ipairs(self.sourceItems) do
             if Tags.matchesRule(Tags.forItem(item), self.rule) then names[#names + 1] = item:getName() end
         end
+    elseif self.sourceScriptItems then
+        for _, script in ipairs(self.sourceScriptItems) do
+            if Tags.matchesRule(Tags.forScriptItem(script), self.rule) then names[#names + 1] = script:getDisplayName() end
+        end
     else
         for _, category in ipairs(self.categories) do
             if Tags.matchesRule(category, self.rule) then names[#names + 1] = categoryName(category) end
@@ -270,20 +274,25 @@ function Picker.open(options)
         if not seen[category] then categories[#categories + 1], seen[category] = category, true end
     end
     local byId, familySet = {}, {}
-    for _, category in ipairs(categories) do
-        local ids = Tags.forCategory(category)
-        local family = ids[1]
-        if family and not familySet[family] then families[#families + 1], familySet[family] = family, true end
+    for _, source in ipairs(options.items or options.scriptItems or categories) do
+        local ids = options.items and Tags.forItem(source)
+            or options.scriptItems and Tags.forScriptItem(source) or Tags.forCategory(source)
+        local sourceFamilies = {}
+        for _, id in ipairs(ids) do if roots[id] then sourceFamilies[#sourceFamilies + 1] = id end end
+        if #sourceFamilies == 0 and ids[1] then sourceFamilies[1] = ids[1] end
+        for _, family in ipairs(sourceFamilies) do
+            if not familySet[family] then families[#families + 1], familySet[family] = family, true end
+        end
         for _, id in ipairs(ids) do
             local row = byId[id]
             if not row then
                 row = {id=id, label=Tags.label(id), families={}, bucket=id:sub(1, 9) == "category:" and 3 or roots[id] and 1 or 2}
                 byId[id], entries[#entries + 1] = row, row
             end
-            row.families[family] = true
+            for _, family in ipairs(sourceFamilies) do row.families[family] = true end
         end
     end
-    -- Keep saved selections editable even if their last matching category disappeared.
+    -- Keep saved selections editable even if their last matching item disappeared.
     for _, values in ipairs({rule.include, rule.exclude}) do
         for _, id in ipairs(values) do
             if not byId[id] then entries[#entries + 1] = {id=id, label=Tags.label(id), families={}, bucket=3}; byId[id]=true end
@@ -294,6 +303,7 @@ function Picker.open(options)
     local width, height = math.min(760, getCore():getScreenWidth() - 24), math.min(650, getCore():getScreenHeight() - 24)
     local picker = Picker:new((getCore():getScreenWidth() - width) / 2, (getCore():getScreenHeight() - height) / 2, width, height)
     picker.rule, picker.categories, picker.sourceItems = rule, categories, options.items
+    picker.sourceScriptItems = options.scriptItems
     picker.entries, picker.families = entries, families
     picker.owner, picker.onApply, picker.player = options.owner, options.onApply, options.player
     picker.title, picker.resizable = options.title or text(""), false

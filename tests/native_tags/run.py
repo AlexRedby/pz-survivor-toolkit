@@ -16,6 +16,12 @@ BASELINE = ['configure', 'reopen', 'sort', 'baseline-reconnect']
 CASES = ['configure', 'reopen', 'icons', 'inventory-all', 'inventory-any', 'inventory-exclude',
          'preset-save', 'inventory-empty', 'preset-apply', 'rule-save', 'rule-reopen', 'rule-stale',
          'rule-peer', 'rule-toggle', 'sort', 'rule-reconnect']
+PLANTING_CASES = [*CASES[:-1], 'planting-inventory', 'planting-seed-sort',
+                  'planting-exclude-sort', 'planting-restore', CASES[-1]]
+PLANTING_TYPES = dict(sunflower='Base.SunflowerSeeds', candy='Base.Candycane', carrot='Base.CarrotSeed',
+                      fullPacket='Base.CarrotBagSeed2', emptyPacket='Base.CarrotBagSeed2_Empty',
+                      potato='Base.Potato', lemongrass='Base.LemonGrass', hemp='Base.HempBundle')
+PLANTING_SEEDS = {'sunflower', 'carrot', 'fullPacket', 'potato', 'lemongrass'}
 INTEGRATION = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS',
                'Quartermaster', 'BravoItemDetails', 'organizedCategories_core']
 
@@ -29,6 +35,7 @@ def main():
                         help='Explicit mod roots, in preference order (first matching root wins)')
     parser.add_argument('--source-ref', help='Use committed product bytes; fixture stays current')
     parser.add_argument('--baseline', action='store_true', help='Check old selection/sort and actual reconnect')
+    parser.add_argument('--planting', action='store_true', help='Add exact-ID planting UI/sort/reconnect checks')
     parser.add_argument('--selected', action='store_true', help='Use all Mods from the selected INI')
     restart = parser.add_mutually_exclusive_group()
     restart.add_argument('--restart-seed', action='store_true', help='Retain and seal the completed 16-case world')
@@ -38,6 +45,8 @@ def main():
     args = parser.parse_args()
     if args.baseline and (args.restart_seed or args.restart_from):
         parser.error('Restart checks require candidate tag rules')
+    if args.planting and (args.baseline or args.restart_seed or args.restart_from):
+        parser.error('--planting cannot be combined with baseline or cold restart modes')
     seed = validate_seed(args.restart_from) if args.restart_from else None
     port = args.port if args.port is not None else (seed['selection']['ports'][0] if seed else 17493)
     output = args.output.resolve()
@@ -98,13 +107,15 @@ def main():
                 (layer / 'media' / name).mkdir(parents=True, exist_ok=True)
     visuals = (source / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/TagVisuals.lua').read_text()
     textures = sorted(set(re.findall(r'"((?:Item_|media/ui/)[^"]+)"', visuals)))
-    cases = ['server-restart', 'restart-sort'] if seed else (BASELINE if args.baseline else CASES)
+    cases = ['server-restart', 'restart-sort'] if seed else (BASELINE if args.baseline else PLANTING_CASES if args.planting else CASES)
     selection = dict(schema_version=1, suite='tags', kind='mp', mode='toolkit', cases=cases,
                      mods=identifiers, languages=['EN', 'RU'], ports=[port, port + 1],
                      timeout_seconds=600, expected_checks=len(cases) + 2,
                      tagRules=not args.baseline, textureNames=textures, placementBarrier=True, reconnectEvidence=True)
     if args.restart_seed:
         selection['tagRestartSeed'] = True
+    if args.planting:
+        selection['plantingTags'] = True
     if seed:
         selection.update(tagRestart=seed['states'], placementBarrier=False, reconnectEvidence=False)
         assert selection['ports'] == seed['selection']['ports'], 'Restart endpoints changed'
@@ -112,7 +123,7 @@ def main():
     if seed:
         restore_seed(seed, prepared)
     (output / 'candidate.json').write_text(json.dumps({'source_ref': args.source_ref or 'working-tree',
-         'fixture': str(HERE), 'baseline': args.baseline, 'mods': len(identifiers)}, indent=2) + '\n')
+         'fixture': str(HERE), 'baseline': args.baseline, 'planting': args.planting, 'mods': len(identifiers)}, indent=2) + '\n')
     print('PREPARED ' + str(prepared), flush=True)
     if args.prepare_only:
         return
@@ -327,6 +338,56 @@ def validate_reconnect_receipts(receipts, actor, phase):
     assert states == {False, True}, 'Missing separate pre/post reconnect authority receipts'
 
 
+def validate_planting_receipts(text, actor, client_text=None):
+    setups = [row for row in rows(text, '[TAG_PLANTING_SETUP] ') if row['actor'] == actor]
+    assert len(setups) == 1, 'Planting setup missing or recreated'
+    items = setups[0]['items']
+    assert set(items) == set(PLANTING_TYPES), 'Planting setup item set changed'
+    assert all(items[key]['fullType'] == value for key, value in PLANTING_TYPES.items())
+    identities = {str(item['id']) for item in items.values()}
+    assert len(identities) == 8, 'Planting setup IDs are not unique'
+    baseline = [row for row in rows(text, '[TAG_RECEIPT] ') if row['actor'] == actor]
+    assert baseline and not identities.intersection(baseline[0]['ids']), 'Planting reused a base item ID'
+    client_text = text if client_text is None else client_text
+    catalog = [row for row in rows(client_text, '[TAG_PLANTING_CATALOG] ') if row['actor'] == actor]
+    assert catalog == [dict(actor=actor, plantingTypes=75, fullPackets=55, emptyPackets=55)], 'Native planting catalog coverage missing or changed'
+    ui = [row for row in rows(client_text, '[TAG_PLANTING_UI] ') if row['actor'] == actor]
+    assert len(ui) == 1 and len(ui[0]['visibleIDs']) == len(ui[0]['previewNames']) == 5, 'Planting native UI evidence missing'
+    assert {str(value) for value in ui[0]['visibleIDs']} == {str(items[key]['id']) for key in PLANTING_SEEDS}
+    assert all(ui[0][key] is True for key in ('sameSnackCategory', 'foodPreserved', 'medicalPreserved', 'legacyPreserved'))
+    receipts = [row for row in rows(text, '[TAG_PLANTING_RECEIPT] ') if row['actor'] == actor]
+    phases = []
+    for row in receipts:
+        phase = row['phase']
+        if not phases or phases[-1] != phase:
+            phases.append(phase)
+        assert row['exact'] and row['originalInventoryUnchanged'] and row['manualUnchanged']
+        assert set(row['ids']) == identities, 'Planting authority IDs changed'
+        assert type(row['revision']) is int and row['revision'] > 0
+        for key, item in items.items():
+            fact = row['ids'][str(item['id'])]
+            destination = key in PLANTING_SEEDS if phase == 'seed' else phase in ('exclude', 'restored') and key == 'candy'
+            assert fact == dict(item=key, fullType=item['fullType'], source=int(not destination),
+                                destination=int(destination), expected='destination' if destination else 'source'), 'Wrong planting authority location'
+    assert phases == ['setup', 'seed', 'reset', 'exclude', 'restored'], 'Missing ordered planting phases'
+    revisions = {}
+    for row in receipts:
+        revisions.setdefault(row['phase'], row['revision'])
+        assert revisions[row['phase']] == row['revision'], 'Planting phase revision changed'
+    assert revisions['seed'] == revisions['reset'] < revisions['exclude'] < revisions['restored'], 'Planting rule revisions did not advance'
+    validate_reconnect_receipts(receipts, actor, 'restored')
+    rules = [row for row in rows(text, '[TAG_PLANTING_RULE] ') if row['actor'] == actor]
+    for phase in ('seed', 'exclude'):
+        found = [row for row in rules if row['phase'] == phase]
+        assert found and all(row == found[0] for row in found), 'Missing or changed planting rule authority'
+        expected = dict(mode='all', include=['seed'] if phase == 'seed' else ['food'],
+                        exclude=[] if phase == 'seed' else ['seed'])
+        assert found[0]['rule'] == expected and found[0]['manualUnchanged']
+        assert all(row['revision'] == found[0]['revision'] for row in receipts if row['phase'] == phase)
+    assert next(row['revision'] for row in rules if row['phase'] == 'seed') < next(row['revision'] for row in rules if row['phase'] == 'exclude')
+    return receipts
+
+
 def verify(output):
     output = Path(output)
     prepared = output / 'run'
@@ -342,6 +403,13 @@ def verify(output):
     for line in server_text.splitlines():
         if '[TAG_RECEIPT] ' in line:
             receipts.append(json.loads(line.split('[TAG_RECEIPT] ', 1)[1]))
+    if selection.get('plantingTags'):
+        setups = rows(server_text, '[TAG_PLANTING_SETUP] ')
+        assert len(setups) == 2 and {row['actor'] for row in setups} == {'client1', 'client2'}
+        identities = [str(item['id']) for row in setups for item in row['items'].values()]
+        assert len(identities) == len(set(identities)) == 16, 'Planting actors reused item IDs'
+        before_setup = rows(server_text.split('[TAG_PLANTING_SETUP] ', 1)[0], '[TAG_RECEIPT] ')
+        assert {row['actor'] for row in before_setup if row['phase'] == 'enabled'} == {'client1', 'client2'}, 'Planting setup preceded base sorts'
     for role in ('client1', 'client2'):
         text = (prepared / (role + '-launch.log')).read_text(errors='replace')
         records = events(text)
@@ -366,6 +434,9 @@ def verify(output):
             for phase in ('disconnect', 'connected', 'verified'):
                 assert '[TAG_RECONNECT] actor=' + role + ' phase=' + phase in text, (role, phase)
             validate_reconnect_receipts(receipts, role, phases[-1])
+        if selection.get('plantingTags'):
+            assert cases == PLANTING_CASES and not baseline and not restart
+            validate_planting_receipts(server_text, role, text)
         screenshots = list((prepared / role / 'Screenshots').glob('tag-*.png'))
         if not restart:
             assert len(screenshots) >= (1 if baseline else 6), (role, screenshots)
@@ -376,6 +447,8 @@ def verify(output):
     result = dict(functional='passed', cases_per_client=len(cases), receipts=receipts,
                   runtime=audits, provenance_verified=True,
                   runtime_needs_review=any(value['error_count'] for value in audits.values()))
+    if selection.get('plantingTags'):
+        result['planting_receipts'] = rows(server_text, '[TAG_PLANTING_RECEIPT] ')
     (output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     if selection.get('tagRestartSeed'):
         seal_seed(output)

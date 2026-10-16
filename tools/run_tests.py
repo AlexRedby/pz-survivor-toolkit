@@ -47,7 +47,7 @@ def main() -> None:
     for path in sorted((ROOT / "PZSurvivorWishlist").rglob("*.lua")):
         lua.execute("assert(loadstring(...))", path.read_text(encoding="utf-8"))
     print("All mod files compile as Lua 5.1.", flush=True)
-    for name in ("test_item_tags.lua", "test_tag_visuals.lua", "test_inventory_tags.lua", "test_quartermaster_tags.lua", "test_tag_rule_picker.lua", "test_quartermaster_tag_rules.lua", "test_tag_filter_presets.lua", "test_tag_filter_presets_menu.lua", "native_tags/check_reconnect.lua", "native_tags/check_sort_receipts.lua", "native_tags/check_barrier.lua"):
+    for name in ("test_item_tags.lua", "test_tag_visuals.lua", "test_inventory_tags.lua", "test_quartermaster_tags.lua", "test_tag_rule_picker.lua", "test_quartermaster_tag_rules.lua", "test_quartermaster_item_routing.lua", "test_tag_filter_presets.lua", "test_tag_filter_presets_menu.lua", "native_tags/check_reconnect.lua", "native_tags/check_sort_receipts.lua", "native_tags/check_barrier.lua"):
         check = LuaRuntime(unpack_returned_tuples=True)
         check.globals().ProjectRoot = str(ROOT)
         if args.native_inventory_pane:
@@ -67,6 +67,10 @@ def main() -> None:
     check = LuaRuntime(unpack_returned_tuples=True)
     check.globals().ProjectRoot = str(ROOT)
     check.globals().RestartTagReconnect = True
+    check.execute((ROOT / "tests/native_tags/check_reconnect.lua").read_text(encoding="utf-8"))
+    check = LuaRuntime(unpack_returned_tuples=True)
+    check.globals().ProjectRoot = str(ROOT)
+    check.globals().PlantingTagReconnect = True
     check.execute((ROOT / "tests/native_tags/check_reconnect.lua").read_text(encoding="utf-8"))
     if args.native_action_root:
         for name in ("check_transfer_source.lua", "check_placement.lua"):

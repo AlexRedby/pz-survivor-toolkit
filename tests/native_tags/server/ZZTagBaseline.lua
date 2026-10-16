@@ -72,7 +72,8 @@ local function makeBox(player,square)
 end
 local function packet(state)
  return {x=state.x,y=state.y,z=state.z,index=state.index,owner=state.owner,
-  battery=state.battery,apple=state.apple,beans=state.beans,steak=state.steak,source=state.sourceID,revision=state.ruleRevision,manualCategory=state.manualCategory}
+  battery=state.battery,apple=state.apple,beans=state.beans,steak=state.steak,source=state.sourceID,revision=state.ruleRevision,manualCategory=state.manualCategory,
+  planting=state.planting}
 end
 local function ownedBox(state,square)
  local box=Fixture.object(packet(state),state.owner)
@@ -173,9 +174,9 @@ local function sameSet(actual,expected)
  for key,value in pairs(actual) do if expected[key]~=value then return false end end
  return true
 end
-local function verifyRules(state)
+local function verifyRules(state,expected)
  local Rules=require 'PZSurvivorToolkit/QuartermasterTagRules'
- assert(Fixture.sameRule(Rules.getBox(state.box,0)),'server dynamic rule changed')
+ assert(Fixture.sameRule(Rules.getBox(state.box,0),expected),'server dynamic rule changed')
  local cats=assert(LootSorter.getBoxCats and LootSorter.getBoxCats(state.box,0)
   or state.box:getModData().LSBox and state.box:getModData().LSBox['0'],'server manual categories absent')
  assert(state.manualCategory and cats[state.manualCategory] and not cats.food and not cats.perishable and not cats.meat,'manual categories changed or tag IDs leaked')
@@ -209,6 +210,7 @@ local function verifyItems(state,phase)
   return
  end
  state.receiptWaiting[phase]=nil
+ if phase=='enabled' then state.baseSorted=true end
  print('[TAG_RECEIPT] '..json.encode({actor=state.owner,phase=phase,ids=fixtureIDs,exact=true,originalInventoryUnchanged=true,reconnected=state.reconnected or false}))
  if config.tagRestartSeed and state.reconnected and phase=='enabled' and not state.restartSeedLogged then
   local original={};for id,count in pairs(state.original) do original[#original+1]={id=id,count=count} end
@@ -217,6 +219,47 @@ local function verifyItems(state,phase)
   state.restartSeedLogged=true
  end
  sendServerCommand(state.player,'TagBaseline','Verified',{ok=true,phase=phase,ids=fixtureIDs})
+end
+local function plantingSetup(state)
+ assert(config.plantingTags,'planting mode not enabled')
+ assert(not state.reconnected or state.planting,'refusing planting creation after reconnect')
+ if not state.planting then
+  local count=0
+  for _,other in pairs(states) do if not other.baseSorted then return end;count=count+1 end
+  if count~=2 then return end
+  assert(Fixture.receipt(state.source,state.box:getContainerByIndex(0),state,'enabled')=='ready','base sort incomplete before planting setup')
+  state.planting={}
+  local items={}
+  for _,entry in ipairs(Fixture.plantingItems) do
+   local item=assert(state.source:AddItem(entry[2]),'planting fixture script missing '..entry[2])
+   item:getModData().PZSTTagFixtureOwner=state.owner
+   state.planting[entry[1]]=item:getID();items[entry[1]]={id=item:getID(),fullType=item:getFullType()}
+   sendAddItemToContainer(state.source,item)
+  end
+  print('[TAG_PLANTING_SETUP] '..json.encode({actor=state.owner,items=items}))
+ end
+ sendServerCommand(state.player,'TagBaseline','PlantingSetup',{ids=state.planting})
+end
+local function verifyPlanting(state,phase)
+ assert(config.plantingTags and state.planting,'planting setup missing')
+ local status,reason,ids,source,destination=Fixture.plantingReceipt(state.source,state.box:getContainerByIndex(0),state.planting,phase)
+ assert(status~='invalid',reason)
+ local all=Fixture.counts(state.player:getInventory())
+ assert(all[state.sourceID]==1,'planting source bag left inventory')
+ for id,count in pairs(state.original) do assert(all[id]==count and not destination[id],'original inventory changed during planting') end
+ for _,entry in ipairs(Fixture.plantingItems) do
+  local id=state.planting[entry[1]]
+  assert((all[id] or 0)==(source[id] or 0),'planting ID escaped owned bag '..entry[1])
+  local item=Fixture.find(state.source,id) or Fixture.find(state.box:getContainerByIndex(0),id)
+  if item then assert(item:getFullType()==entry[2],'planting ID type changed') end
+ end
+ if status~='ready' then return end
+ local expected=phase=='seed' and Fixture.plantingRule('seed') or phase=='exclude' and Fixture.plantingRule('exclude')
+  or phase=='reset' and Fixture.plantingRule('seed') or Fixture.rule()
+ local revision=verifyRules(state,expected)
+ print('[TAG_PLANTING_RECEIPT] '..json.encode({actor=state.owner,phase=phase,ids=ids,revision=revision,
+  exact=true,originalInventoryUnchanged=true,manualUnchanged=true,reconnected=state.reconnected or false}))
+ sendServerCommand(state.player,'TagBaseline','PlantingVerified',{ok=true,phase=phase,ids=ids})
 end
 local function peers()
  for name,state in pairs(states) do
@@ -258,6 +301,14 @@ Events.OnClientCommand.Add(function(module,command,player,args)
    for _,field in ipairs({'LSBox','LSBoxItems','LSBoxPresets'}) do state.manual[field]=copySet(setAt(md,field)) end
    sendServerCommand(player,module,'ManualCaptured',{ok=true})
   elseif command=='Verify' then verifyItems(state,config.tagRules and args.phase or 'baseline')
+  elseif command=='PlantingSetup' then plantingSetup(state)
+  elseif command=='VerifyPlanting' then verifyPlanting(state,args.phase)
+  elseif command=='VerifyPlantingRule' then
+   assert(config.plantingTags and (args.phase=='seed' or args.phase=='exclude'),'invalid planting rule phase')
+   local revision=verifyRules(state,Fixture.plantingRule(args.phase))
+   print('[TAG_PLANTING_RULE] '..json.encode({actor=state.owner,phase=args.phase,revision=revision,
+    rule=require('PZSurvivorToolkit/QuartermasterTagRules').getBox(state.box,0),manualUnchanged=true}))
+   sendServerCommand(player,module,'PlantingRuleVerified',{ok=true,phase=args.phase,revision=revision})
   elseif command=='VerifyRule' then
    local revision=verifyRules(state)
    if args.phase=='saved' then state.ruleRevision=revision

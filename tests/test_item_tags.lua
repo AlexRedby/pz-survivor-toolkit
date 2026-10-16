@@ -2,6 +2,8 @@ local shared = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/'
 package.path = shared .. '?.lua;' .. package.path
 local enabled = true
 PZSurvivorToolkit = {Settings = {itemTags = function() return enabled end}}
+local resetPlanting
+Events={OnGameBoot={Add=function(fn) resetPlanting=fn end}}
 getTextOrNull = function(key) if key == 'UI_PZST_Tag_food' then return 'Еда' end end
 local Tags = require 'PZSurvivorToolkit/ItemTags'
 local schema = require 'PZSurvivorToolkit/ItemTagSchema'
@@ -83,4 +85,89 @@ assert(not Tags.matchesRule('furnitureDoor',oldExact),'exact-category filter bec
 assert(not Tags.matchesRule('FurnitureDoor',assert(Tags.normalizeRule({include={'furniture'},exclude={'category:FurnitureDoor'}}))),
  'old exact-category exclusion stopped working')
 assert(Tags.matches('FurnitureDoor',{'category:FurnitureDoor'}),'single exact tag filter stopped working')
+
+local function scriptItem(fullType, category, doubleClick)
+ return {fullType=fullType,category=category,
+  getFullName=function(self) return self.fullType end,
+  getDisplayCategory=function(self) return self.category end,
+  getDoubleClickRecipe=function() return doubleClick end}
+end
+local function inventoryItem(script)
+ return {category=script.category,getFullType=function() return script.fullType end,
+  getDisplayCategory=function(self) return self.category end,getScriptItem=function() return script end}
+end
+local function javaList(values)
+ return {size=function() return #values end,get=function(_,index) return values[index+1] end}
+end
+-- PZ's Kahlua exposes pairs but not Lua 5.1's next global.
+local luaNext = next
+next = nil
+local sunflower=scriptItem('Base.SunflowerSeeds','foodNonPerishable_candySnack')
+assert(not Tags.matches(Tags.forScriptItem(sunflower),{'seed'}),'guessed a role before farming loaded')
+farming_vegetableconf={props={}}
+assert(not Tags.matches(Tags.forScriptItem(sunflower),{'seed'}))
+farming_vegetableconf.props.Sunflower={seedName='Base.SunflowerSeeds'}
+farming_vegetableconf.props.Potatoes={seedName='Base.Potato',seedTypes={'Base.Potato','Base.PotatoSeed'}}
+farming_vegetableconf.props.LemonGrass={seedName='Base.LemonGrass'}
+farming_vegetableconf.props.Barley={seedName='Base.BarleySheaf',seedTypes={'Base.BarleySeed'}}
+local enriched=Tags.forScriptItem(sunflower)
+assert(Tags.matches(Tags.forScriptItem(scriptItem('base.sunflowerseeds',sunflower.category)),{'seed'}),
+ 'lowercase native module lost planting metadata')
+local javaFullType=setmetatable({},{__tostring=function() return 'base.SunflowerSeeds' end})
+assert(Tags.matches(Tags.forScriptItem(scriptItem(javaFullType,sunflower.category)),{'seed'}),
+ 'Java-style full type was not normalized')
+assert(Tags.matches(enriched,{'food','snack','farming','seed'}),'lost food or planting roles')
+assert(Tags.category(enriched)=='foodNonPerishable_candySnack','enrichment lost exact legacy origin')
+enriched.legacyCategory='Invented.Category'
+assert(Tags.category(enriched)==nil,'mutated origin invented a category')
+enriched.legacyCategory=sunflower.category
+enriched[#enriched+1]='weapon'
+assert(Tags.category(enriched)==nil,'mutated enrichment invented a legacy category')
+enriched[1]='medical'
+assert(Tags.matches(Tags.forScriptItem(sunflower),{'food'}),'caller mutated classification cache')
+assert(not Tags.matches(Tags.forCategory(sunflower.category),{'seed'}),'item role contaminated its category')
+for _,case in ipairs({{'Base.Potato','foodPerishable_vegetable','food'},
+ {'Base.LemonGrass','medicalTreatment','medical'},{'Base.BarleySeed','Gardening','farming'}}) do
+ local script=scriptItem(case[1],case[2]);local values=Tags.forScriptItem(script)
+ assert(Tags.matches(values,{case[3],'farming','seed'}),case[1]..' lost native planting role')
+ assert(Tags.category(values)==case[2],'planting tags changed legacy category')
+end
+for _,fullType in ipairs({'Base.BarleySheaf','Base.GingerRoot','Base.HempBundle','Base.MarigoldDried','Base.UnconfiguredSeed'}) do
+ local script=scriptItem(fullType,'Food');script.hasTag=function() return true end
+ assert(not Tags.matches(Tags.forScriptItem(script),{'seed'}),'tag or name alone inferred planting: '..fullType)
+end
+local live=inventoryItem(sunflower)
+live.category='medicalTreatment'
+assert(Tags.matches(Tags.forItem(live),{'medical','treatment','seed'}),'inventory category was not read live')
+assert(not Tags.matches(Tags.forItem(live),{'food'}),'script category overrode inventory category')
+assert(Tags.category(Tags.forItem(live))=='medicalTreatment')
+local full=scriptItem('Base.CarrotBagSeed2','Gardening','OpenPacketOfSeeds')
+local empty=scriptItem('Base.CarrotBagSeed2_Empty','farmingSeed')
+assert(Tags.matches(Tags.forScriptItem(full),{'farming','seed'}),'full packet lacks seed role')
+assert(Tags.matches(Tags.forScriptItem(scriptItem('base.CarrotBagSeed2','Gardening','Base.OpenPacketOfSeeds')),{'seed'}),
+ 'qualified packet recipe lost seed role')
+-- The resolver must retry a recipe unavailable at the first item read.
+ScriptManager={instance={getCraftRecipe=function() return nil end}}
+assert(Tags.matches(Tags.forScriptItem(empty),{'seed'}))
+local input={getPossibleInputItems=function() return javaList({full}) end}
+local output={getPossibleResultItems=function() return javaList({sunflower,empty}) end}
+local recipe={getInputs=function() return javaList({input}) end,getOutputs=function() return javaList({output}) end}
+ScriptManager.instance.getCraftRecipe=function(_,name) assert(name=='Base.OpenPacketOfSeeds');return recipe end
+local emptyTags=Tags.forScriptItem(empty)
+assert(Tags.matches(emptyTags,{'farming'}) and not Tags.matches(emptyTags,{'seed'}),'empty packet still counted as seed')
+assert(Tags.category(emptyTags)=='farmingSeed','seed removal lost exact legacy origin')
+assert(Tags.matches(emptyTags,{'category:farmingSeed'}),'exact saved category lost on empty packet')
+empty.category='RecipeResource'
+assert(Tags.matches(Tags.forScriptItem(empty),{'crafting','farming'}),'vanilla empty packet lost farming role')
+assert(not Tags.matches(Tags.forScriptItem(empty),{'seed'}))
+local book=scriptItem('Base.BookFarming1','Literature')
+local food=scriptItem('Base.UnconfiguredSeed_Empty','Food')
+assert(not Tags.matches(Tags.forScriptItem(book),{'seed'}),'farming book mistaken for seed packet')
+assert(not Tags.matches(Tags.forScriptItem(food),{'farming'}),'empty suffix inferred packet metadata')
+assert(#Tags.forScriptItem(nil)==0)
+farming_vegetableconf.props.LateCrop={seedName='Mod.LateCrop'}
+resetPlanting()
+assert(Tags.matches(Tags.forScriptItem(scriptItem('Mod.LateCrop','Food')),{'food','seed'}),
+ 'preboot planting cache ignored definitions loaded later')
+next = luaNext
 print('ItemTags: '..count..' exact legacy projections, independent tags, aliases, unknown/ambiguous keys and live fluid changes passed.')

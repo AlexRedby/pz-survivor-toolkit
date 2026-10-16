@@ -1,6 +1,8 @@
 local enabled, starts, creates = true, {}, {}
 local openedRulePicker, savedRule
+local scriptCatalog = {}
 local ruleApi = {getBoxRevision = function() return 0 end, getBox = function() end, getPreset = function() end, installClient = function() end, presetsSynced = function() return true end,
+    scriptItems = function() return scriptCatalog end,
     saveBox = function(_, _, rule, _, callback) savedRule = rule; callback('ok') end}
 getSpecificPlayer = function() return {} end
 PZSurvivorToolkit = {}
@@ -17,6 +19,7 @@ require = function(name)
         normalizeRule = function(value) return value or {mode='all',include={},exclude={}} end,
         ruleActive = function(value) return value and (#value.include > 0 or #value.exclude > 0) or false end,
         forCategory = function(category) return categoryTags[category] or {'category:' .. category} end,
+        forScriptItem = function(script) return script.tags end,
         label = function(id) return id end}
 end
 Events = {OnGameStart = {Add = function(fn) starts[#starts + 1] = fn end},
@@ -293,4 +296,72 @@ LootSorter.openPicker(); local newest = LootSorter._picker
 replacedReply('ok', 3)
 assert(LootSorter._picker == newest and not newest.closed and not storedCats.ReplacedMustNotSave,
     'late save from replaced picker overwrote designation or closed current picker')
+
+local function script(name, category, tags)
+    return {tags=tags,getDisplayCategory=function() return category end,getDisplayName=function() return name end}
+end
+for category, ids in pairs({OC_Snack={'food','snack'},OC_Seeds={'farming','seed'},
+    OC_SeedOnly={'farming','seed'},OC_Homonyms={'miscellaneous'},OC_OtherFood={'food'}}) do
+    categoryTags[category]=ids;availableCats[#availableCats+1]=category
+end
+scriptCatalog={script('Candy','OC_Snack',{'food','snack'}),
+    script('Sunflower seeds','OC_Snack',{'food','snack','farming','seed'}),
+    script('Full packet','OC_Seeds',{'farming','seed'}),script('Empty packet','OC_Seeds',{'farming'}),
+    script('Pure seed','OC_SeedOnly',{'farming','seed'})}
+LootSorter.openPicker();local itemPicker=LootSorter._picker
+local seed,seedIndex=assert(find(itemPicker,'seed'))
+assert(#seed.categories==1 and seed.categories[1]=='OC_SeedOnly' and #seed.items==2,
+    'partial categories were not split into exact item names')
+local keptCategory,keptItems=itemPicker.selectedCats.OC_Food,itemPicker.selectedItems.Beans
+click(itemPicker,'seed')
+assert(itemPicker.selectedItems['Sunflower seeds'] and itemPicker.selectedItems['Full packet']
+    and itemPicker.selectedCats.OC_SeedOnly,'item-aware seed picks missing')
+assert(not itemPicker.selectedCats.OC_Snack and not itemPicker.selectedCats.OC_Seeds
+    and not itemPicker.selectedItems.Candy and not itemPicker.selectedItems['Empty packet'],
+    'seed selection leaked candy or empty packets through a shared category')
+assert(itemPicker.selectedCats.OC_Food==keptCategory and itemPicker.selectedItems.Beans==keptItems
+    and itemPicker.selectedPresets.Pantry=='generation','tag picks stripped manual selections')
+seed,seedIndex=find(itemPicker,'seed')
+itemPicker.listbox.doDrawItem(itemPicker.listbox,0,itemPicker.listbox.items[seedIndex])
+assert(itemPicker.listbox.drawnText=='seed (3/3)','explicit item names absent from checked counts')
+itemPicker.contentsSet=function() return {OC_Snack=true} end
+itemPicker.onlyContents,itemPicker.needRebuild=true,true;itemPicker:prerender()
+assert(find(itemPicker,'seed'),'Only Contents hid a partial category planting input')
+itemPicker.onlyContents,itemPicker.needRebuild=false,true;itemPicker:prerender()
+itemPicker.btnSave.onclick(itemPicker)
+assert(storedItems['Sunflower seeds'] and storedItems['Full packet'] and not storedItems['Base.SunflowerSeeds'],
+    'native item designation did not save display-name keys')
+LootSorter.openPicker();local savedItemsPicker=LootSorter._picker
+assert(savedItemsPicker.selectedItems['Sunflower seeds'] and savedItemsPicker.selectedItems.Beans==keptItems,
+    'reopen lost precise or manual item names')
+savedItemsPicker.btnClear.onclick(savedItemsPicker);savedItemsPicker:prerender()
+assert(not savedItemsPicker.selectedItems['Sunflower seeds'] and not savedItemsPicker.selectedItems['Full packet']
+    and savedItemsPicker.selectedItems.Beans==keptItems,'Uncheck all left tag picks or removed unrelated manual items')
+savedItemsPicker.filterText,savedItemsPicker.needRebuild='seed',true;savedItemsPicker:prerender()
+savedItemsPicker.btnAll.onclick(savedItemsPicker);savedItemsPicker:prerender()
+assert(savedItemsPicker.selectedItems['Sunflower seeds'] and savedItemsPicker.selectedItems['Full packet']
+    and savedItemsPicker.selectedCats.OC_SeedOnly,'filtered Select all omitted precise item names')
+scriptCatalog[#scriptCatalog+1]=script('Shared name','OC_Homonyms',{'seed','farming'})
+scriptCatalog[#scriptCatalog+1]=script('Unrelated food','OC_Homonyms',{'food'})
+scriptCatalog[#scriptCatalog+1]=script('Shared name','OC_OtherFood',{'food'})
+LootSorter.openPicker();local ambiguous=LootSorter._picker
+seed=find(ambiguous,'seed');assert(seed.requiresRule,'mixed homonym allowed unsafe native designation')
+local catsBefore,itemsBefore={},{}
+for key,value in pairs(ambiguous.selectedCats) do catsBefore[key]=value end
+for key,value in pairs(ambiguous.selectedItems) do itemsBefore[key]=value end
+click(ambiguous,'seed')
+assert(openedRulePicker.owner==ambiguous and openedRulePicker.rule.include[1]=='seed'
+    and openedRulePicker.scriptItems==scriptCatalog,'ambiguous tag did not open a real-item rule draft')
+assert(not ambiguous.selectedCats.OC_Homonyms and not ambiguous.selectedItems['Shared name'],
+    'ambiguous click wrote an unsafe category or display name')
+for key,value in pairs(catsBefore) do assert(ambiguous.selectedCats[key]==value) end
+for key,value in pairs(itemsBefore) do assert(ambiguous.selectedItems[key]==value) end
+openedRulePicker.onApply({mode='all',include={'seed'},exclude={}})
+assert(ambiguous.toolkitTagRuleTouched and ambiguous.toolkitTagRule.include[1]=='seed')
+ambiguous.toolkitTagRuleButton.onclick(ambiguous)
+assert(openedRulePicker.scriptItems==scriptCatalog,'dynamic editor preview lacks the script catalog')
+ambiguous.filterText,ambiguous.needRebuild='seed',true;ambiguous:prerender()
+ambiguous.btnAll.onclick(ambiguous)
+assert(openedRulePicker.rule.mode=='any' and openedRulePicker.rule.include[1]=='seed',
+    'Select all silently omitted an ambiguous filtered tag')
 print('Quartermaster tag checks passed: exact saved keys, partial/refined batches, filters, controller, modes, conflicts, reopens and opt-out.')

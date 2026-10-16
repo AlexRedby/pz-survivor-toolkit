@@ -7,6 +7,7 @@ PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setVal
 local connected,advanced,started,done=false,false,false,false
 local setup,box,picker,source,pane,rulePicker,peer,serverFailure,manualCaptured,batteryCategory,manualCategoryAck
 local verified,ruleVerified,staleReply={}, {}, nil
+local plantingVerified,plantingRuleVerified={},{}
 local step,since,lastReady,lastPeer=1,0,0,0
 local placement,lastPlacementAck=nil,0
 local steps,passed={},{}
@@ -75,6 +76,7 @@ end
 local function filterTrace(case,phase)
  local owned={}
  for _,key in ipairs({'battery','apple','beans','steak'}) do if setup[key] then owned[setup[key]]=true end end
+ for _,id in pairs(setup.planting or {}) do owned[id]=true end
  local function groups(rows)
   local result={}
   for _,group in pairs(rows or {}) do
@@ -211,6 +213,62 @@ local function awaitReceipt(phase)
  if verified[phase] and status=='ready' then return true end
  if getTimestampMs()-lastReady>1000 then lastReady=getTimestampMs();sendClientCommand('TagBaseline','Verify',{phase=phase}) end
  return false
+end
+local function awaitPlanting(phase)
+ local status,reason=Fixture.plantingReceipt(source,box:getContainerByIndex(0),setup.planting,phase)
+ assert(status~='invalid',reason)
+ if status=='ready' and plantingVerified[phase] then return true end
+ if getTimestampMs()-lastReady>1000 then
+  lastReady=getTimestampMs();sendClientCommand('TagBaseline','VerifyPlanting',{phase=phase})
+ end
+ return false
+end
+local function openPlantingRule(phase)
+ local rule=Fixture.plantingRule(phase)
+ LootSorter.openPicker(box,0,0);picker=assert(LootSorter._picker)
+ assert(picker.selectedCats.toolElectrical and picker.selectedCats.craftingElectrical_material and picker.selectedCats[batteryCategory],
+  'planting editor lost manual electrical selections')
+ picker.toolkitTagRuleButton.onclick(picker);rulePicker=assert(picker.toolkitRulePicker)
+ selectRule(rule.include,rule.exclude,rule.mode)
+end
+local lastPlantingEditorWait=0
+local function applyPlantingRule(phase)
+ local ownerVisible=picker:getIsVisible()
+ local ownerReallyVisible=picker:isReallyVisible()
+ local editorVisible=rulePicker:getIsVisible()
+ local editorReallyVisible=rulePicker:isReallyVisible()
+ if picker.removed or rulePicker.removed or not ownerVisible or not ownerReallyVisible
+  or not editorVisible or not editorReallyVisible or LootSorter._picker~=picker
+  or rulePicker.owner~=picker or picker.toolkitRulePicker~=rulePicker then
+  if getTimestampMs()-lastPlantingEditorWait>1000 then
+   lastPlantingEditorWait=getTimestampMs()
+   print('[TAG_PLANTING_EDITOR_WAIT] '..json.encode({actor=user,phase=phase,
+    ownerVisible=ownerVisible,ownerReallyVisible=ownerReallyVisible,ownerRemoved=picker.removed or false,
+    editorVisible=editorVisible,editorReallyVisible=editorReallyVisible,editorRemoved=rulePicker.removed or false,
+    activeOwner=LootSorter._picker==picker,editorOwnerMatches=rulePicker.owner==picker,
+    editorAttached=picker.toolkitRulePicker==rulePicker}))
+  end
+  return false
+ end
+ rulePicker.applyButton.onclick(rulePicker)
+ assert(Fixture.sameRule(picker.toolkitTagRule,Fixture.plantingRule(phase)),'planting editor failed to apply rule')
+ picker.btnSave.onclick(picker)
+ return true
+end
+local function awaitPlantingRule(phase)
+ if not Fixture.sameRule(Rules.getBox(box,0),Fixture.plantingRule(phase)) then return end
+ if plantingRuleVerified[phase] then return true end
+ if getTimestampMs()-lastReady>1000 then
+  lastReady=getTimestampMs();sendClientCommand('TagBaseline','VerifyPlantingRule',{phase=phase})
+ end
+end
+local function returnPlantingSeeds()
+ for _,entry in ipairs(Fixture.plantingItems) do
+  if Fixture.plantingSeeds[entry[1]] then
+   local item=assert(Fixture.find(box:getContainerByIndex(0),setup.planting[entry[1]]),'planting seed missing before native pickup')
+   ISTimedActionQueue.add(ISInventoryTransferAction:new(getPlayer(),item,box:getContainerByIndex(0),source))
+  end
+ end
 end
 add(function()
  if not setup then
@@ -424,6 +482,117 @@ else
  add(function() if not idle() then return end;return awaitReceipt('baseline') end)
  add(function() pass('sort');shot('baseline');return true end)
 end
+if config.plantingTags then
+ local function checkPlantingCatalog()
+  local manager=assert(ScriptManager.instance,'native ScriptManager missing')
+  local planting,packets,empty={},{},{}
+  local plantingCount,packetCount,emptyCount=0,0,0
+  local function check(script,seed)
+   local tags=Tags.forScriptItem(script)
+   assert(Tags.matches(tags,{'farming'}) and Tags.matches(tags,{'seed'})==seed,
+    'native catalog planting role differs '..script:getFullName())
+   assert(Tags.category(tags)==script:getDisplayCategory(),'native catalog legacy projection changed '..script:getFullName())
+  end
+  for _,props in pairs(assert(farming_vegetableconf.props,'native farming props missing')) do
+   for _,fullType in ipairs(props.seedTypes or {props.seedName}) do
+    local script=assert(manager:getItem(fullType),'native planting script missing '..fullType)
+    local key=string.lower(script:getFullName())
+    if not planting[key] then check(script,true);planting[key]=true;plantingCount=plantingCount+1 end
+   end
+  end
+  local recipe=assert(manager:getCraftRecipe('Base.OpenPacketOfSeeds'),'native seed packet recipe missing')
+  local inputs,outputs=recipe:getInputs(),recipe:getOutputs()
+  for index=0,inputs:size()-1 do
+   local scripts=inputs:get(index):getPossibleInputItems()
+   for itemIndex=0,scripts:size()-1 do
+    local script=scripts:get(itemIndex);local key=string.lower(script:getFullName())
+    if not packets[key] then check(script,true);packets[key]=true;packetCount=packetCount+1 end
+   end
+  end
+  for index=0,outputs:size()-1 do
+   local scripts=outputs:get(index):getPossibleResultItems()
+   for itemIndex=0,scripts:size()-1 do
+    local script=scripts:get(itemIndex);local key=string.lower(script:getFullName())
+    if not planting[key] and not empty[key] then check(script,false);empty[key]=true;emptyCount=emptyCount+1 end
+   end
+  end
+  assert(plantingCount==75 and packetCount==55 and emptyCount==55,'native planting catalog coverage changed')
+  print('[TAG_PLANTING_CATALOG] '..json.encode({actor=user,plantingTypes=plantingCount,fullPackets=packetCount,emptyPackets=emptyCount}))
+ end
+ add(function()
+  if not setup.planting then
+   if getTimestampMs()-lastReady>1000 then lastReady=getTimestampMs();sendClientCommand('TagBaseline','PlantingSetup',{}) end
+   return
+  end
+  local items={}
+  for _,entry in ipairs(Fixture.plantingItems) do
+   local item=Fixture.find(source,setup.planting[entry[1]]);if not item then return end
+   assert(item:getFullType()==entry[2],'planting item type differs');items[entry[1]]=item
+  end
+  if not awaitPlanting('setup') then return end
+  checkPlantingCatalog()
+  assert(items.sunflower:getDisplayCategory()==items.candy:getDisplayCategory(),'same-category candy control differs')
+  for key,item in pairs(items) do
+   local tags=Tags.forItem(item)
+   assert(Tags.matches(tags,{'seed'})==(Fixture.plantingSeeds[key] or false),'native planting tags differ '..key)
+   assert(Tags.category(tags)==(item:getDisplayCategory() or item:getCategory()),'native legacy projection changed '..key)
+  end
+  assert(Tags.matches(Tags.forItem(items.sunflower),{'food'}) and Tags.matches(Tags.forItem(items.potato),{'food'}),'planting food role lost')
+  assert(Tags.matches(Tags.forItem(items.lemongrass),{'medical'}),'planting medicine role lost')
+  openInventoryRule();selectRule({'seed'},{},'all')
+  assert(rulePicker.matchCount==5,'planting inventory preview expected exactly five seeds')
+  local expectedNames,previewNames={},{}
+  for key in pairs(Fixture.plantingSeeds) do
+   local name=items[key]:getName();expectedNames[name]=(expectedNames[name] or 0)+1
+  end
+  for _,row in ipairs(rulePicker.preview.items) do
+   local name=row.item
+   assert(type(name)=='string' and (expectedNames[name] or 0)>0,'planting preview contains unexpected item')
+   expectedNames[name]=expectedNames[name]-1;previewNames[#previewNames+1]=name
+  end
+  for _,count in pairs(expectedNames) do assert(count==0,'planting preview omitted a configured input') end
+  shot('planting-inventory');applyInventoryRule('planting-inventory');pane:refreshContainer()
+  for _,entry in ipairs(Fixture.plantingItems) do
+   assert(rowsContain(setup.planting[entry[1]])==(Fixture.plantingSeeds[entry[1]] or false),'planting inventory filter differs '..entry[1])
+  end
+  for _,key in ipairs({'battery','apple','beans','steak'}) do assert(not rowsContain(setup[key]),'nonseed original item visible '..key) end
+  local visibleIDs={};for key in pairs(Fixture.plantingSeeds) do visibleIDs[#visibleIDs+1]=setup.planting[key] end
+  print('[TAG_PLANTING_UI] '..json.encode({actor=user,visibleIDs=visibleIDs,previewNames=previewNames,
+   sameSnackCategory=true,foodPreserved=true,medicalPreserved=true,legacyPreserved=true}))
+  pane.toolkitTagRule=nil;pane:refreshContainer()
+  pass('planting-inventory');openPlantingRule('seed');return true
+ end)
+ add(function() return applyPlantingRule('seed') end)
+ add(function() if not awaitPlantingRule('seed') then return end;return sortSource() end)
+ add(function()
+  if not idle() or not awaitPlanting('seed') then return end
+  shot('planting-seed-sort');pass('planting-seed-sort');returnPlantingSeeds();return true
+ end)
+ add(function()
+  if not idle() or not awaitPlanting('reset') then return end
+  openPlantingRule('exclude');return true
+ end)
+ add(function() return applyPlantingRule('exclude') end)
+ add(function() if not awaitPlantingRule('exclude') then return end;return sortSource() end)
+ add(function()
+  if not idle() or not awaitPlanting('exclude') then return end
+  shot('planting-exclude-sort');pass('planting-exclude-sort')
+  local beans=assert(Fixture.find(box:getContainerByIndex(0),setup.beans),'food exclusion did not move original nonseed Beans')
+  ISTimedActionQueue.add(ISInventoryTransferAction:new(getPlayer(),beans,box:getContainerByIndex(0),source))
+  openPlantingRule('restored');ruleVerified.saved=nil;verified.enabled=nil;localReceipts.enabled=nil
+  return true
+ end)
+ add(function() return applyPlantingRule('restored') end)
+ add(function()
+  if not idle() or not Fixture.sameRule(Rules.getBox(box,0)) then return end
+  if not ruleVerified.saved then
+   if getTimestampMs()-lastReady>1000 then lastReady=getTimestampMs();sendClientCommand('TagBaseline','VerifyRule',{phase='saved'}) end
+   return
+  end
+  if not awaitReceipt('enabled') or not awaitPlanting('restored') then return end
+  shot('planting-restored');pass('planting-restore');return true
+ end)
+end
 local function complete()
  local count=0;for _ in pairs(passed) do count=count+1 end
  assert(count==#config.cases,'case count differs '..count..'/'..#config.cases)
@@ -474,6 +643,7 @@ resumeSteps[2]=function()
   return true
  end
  if not ruleVerified[RESUME_PHASE] or not awaitReceipt('enabled') then return end
+ if config.plantingTags and not awaitPlanting('restored') then return end
  assert(ruleVerified[RESUME_PHASE].revision==setup.revision,'authoritative revision changed after reconnect')
  shot('quartermaster-rule-reconnect');picker:closePicker()
  local page=getPlayerInventory(0);page:setVisible(true);page.isCollapsed=false;page:setPinned()
@@ -521,6 +691,7 @@ local function beginResume()
  connected,advanced,started,done=false,false,false,false
  setup,box,picker,source,pane,rulePicker,peer,serverFailure,manualCaptured,batteryCategory,manualCategoryAck=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
  verified,ruleVerified,staleReply={}, {}, nil
+ plantingVerified,plantingRuleVerified={},{}
  localReceipts={}
  step,since,lastReady,lastPeer=1,getTimestampMs(),0,0
  placement,lastPlacementAck=nil,0
@@ -563,6 +734,9 @@ Events.OnServerCommand.Add(function(module,command,args)
   elseif command=='ManualCategory' then assert(args.ok,'native manual category audit failed');manualCategoryAck=true
   elseif command=='ManualCaptured' then assert(args.ok,'manual snapshot failed');manualCaptured=true
   elseif command=='RuleVerified' then assert(args.ok,'rule authority failed');ruleVerified[args.phase]=args
+  elseif command=='PlantingSetup' then setup.planting=args.ids
+  elseif command=='PlantingVerified' then assert(args.ok,'planting authority failed');plantingVerified[args.phase]=args
+  elseif command=='PlantingRuleVerified' then assert(args.ok,'planting rule authority failed');plantingRuleVerified[args.phase]=args
   elseif command=='Peer' then peer=args
   elseif command=='Placement' then placement=args
   elseif command=='Position' then Fixture.position(getPlayer(),args.x,args.y,args.z)

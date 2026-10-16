@@ -1,4 +1,5 @@
 local schema = require "PZSurvivorToolkit/ItemTagSchema"
+local planting = require "PZSurvivorToolkit/PlantingTags"
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 local Tags = {}
 PZSurvivorToolkit.ItemTags = Tags
@@ -34,14 +35,36 @@ function Tags.forCategory(category)
     return result
 end
 
+local function itemTags(category, fullType, script)
+    local tags = Tags.forCategory(category)
+    local role = planting.role(fullType, script)
+    if role then
+        for i = #tags, 1, -1 do if tags[i] == "seed" then table.remove(tags, i) end end
+        local farming = false
+        for _, id in ipairs(tags) do if id == "farming" then farming = true end end
+        if not farming then tags[#tags + 1] = "farming" end
+        if role == "seed" then tags[#tags + 1] = "seed" end
+        tags.itemCategory, tags.itemSignature = category, signature(tags)
+    end
+    return tags
+end
+
+function Tags.forScriptItem(script)
+    if not script then return {} end
+    return itemTags(script:getDisplayCategory(), script:getFullName(), script)
+end
+
 function Tags.forItem(item)
+    if not item then return {} end
     -- Import the current instance category every time: fluids and other mods can change it.
-    return Tags.forCategory(item and (item:getDisplayCategory() or item:getCategory()))
+    local category = item:getDisplayCategory() or (item.getCategory and item:getCategory())
+    return itemTags(category, item.getFullType and item:getFullType(), item.getScriptItem and item:getScriptItem())
 end
 
 function Tags.category(tags, originalKey)
     originalKey = originalKey or tags.legacyCategory
     local key = signature(tags)
+    if originalKey == tags.itemCategory and key == tags.itemSignature then return originalKey end
     if originalKey and key == signature(Tags.forCategory(originalKey)) then return originalKey end
     local candidates = reverse[key]
     if candidates and #candidates == 1 then return candidates[1] end

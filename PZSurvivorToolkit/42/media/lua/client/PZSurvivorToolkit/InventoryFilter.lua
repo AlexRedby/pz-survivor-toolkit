@@ -36,26 +36,76 @@ local function visibleForTransfer(pane, item)
     return not fromPane or pane.toolkitVisibleItems[item] == true
 end
 
-local function applyFilter(pane)
+local function filterGroup(group, rule, itemTags)
+    local items = {}
+    local first = group.cleanUILargeStackOptimized and 1 or 2
+    for index = first, #group.items do
+        local item = group.items[index]
+        if Tags.matchesRule(itemTags[item], rule) then
+            items[#items + 1] = item
+        end
+    end
+    if #items == 0 then return end
+    if #items == #group.items - first + 1 then return group end
+    -- Native rows duplicate the header; CleanUI can keep a virtual header instead.
+    local copy = {}
+    for key, value in pairs(group) do copy[key] = value end
+    local weight, equippedWeight = 0, 0
+    for _, item in ipairs(items) do
+        weight = weight + item:getUnequippedWeight()
+        if group.equipped then equippedWeight = equippedWeight + item:getEquippedWeight() end
+    end
+    copy.firstItem, copy.cleanUIDisplayItem = items[1], items[1]
+    copy.realCount, copy.count, copy.weight, copy.equippedWeight = #items, #items + 1, weight, equippedWeight
+    copy.cleanUIStackCountSuffix = " (" .. #items .. ")"
+    copy.cleanUIWeightText, copy.cleanUITooltipWeight = nil, nil
+    copy.cleanUITooltipWeightKnown = false
+    if first == 2 then table.insert(items, 1, items[1]) end
+    copy.items = items
+    return copy
+end
+
+local function applyFilter(pane, selected)
     -- Later selection restores may follow stack/category changes from other mods.
     if pane.itemslist == pane.toolkitFilteredRows then pane.itemslist = pane.toolkitUnfilteredRows end
     pane.toolkitFilteredRows = nil
     pane.toolkitCategories = {}
+    pane.toolkitTags = {}
     pane.toolkitUnfilteredRows = pane.itemslist
     pane.toolkitVisibleItems = nil
     if not Toolkit.Settings.inventoryFilters() then return end
-    local categories, kept, visible, equipped = {}, {}, {}, false
+    local categories, kept, visible, equipped, itemTags = {}, {}, {}, false, {}
     local search = hasSearch(pane)
+    local filterTags = tagFilterActive(pane)
+    local remappedSelection
     for _, group in ipairs(pane.itemslist) do
         if group.type ~= "separator" then
             local category = group.cat
             if category then categories[category] = true end
+            if Tags.enabled() then
+                for _, item in ipairs(group.items) do
+                    if not itemTags[item] then
+                        itemTags[item] = Tags.forItem(item)
+                        for _, id in ipairs(itemTags[item]) do pane.toolkitTags[id] = true end
+                    end
+                end
+            end
             if (not pane.toolkitCategory or category == pane.toolkitCategory)
-                and (not tagFilterActive(pane) or Tags.matchesRule(category, tagRule(pane)))
                 and (not search or group.matchesSearch) then
-                kept[group] = true
-                equipped = equipped or group.equipped
-                for _, item in ipairs(group.items) do visible[item] = true end
+                local shown = group
+                if filterTags then shown = filterGroup(group, tagRule(pane), itemTags) end
+                if shown then
+                    kept[group] = shown
+                    if shown ~= group and selected and selected[group.items[1]] == "group" then
+                        if not remappedSelection then
+                            remappedSelection = {}
+                            for item, state in pairs(selected) do remappedSelection[item] = state end
+                        end
+                        remappedSelection[shown.items[1]] = "group"
+                    end
+                    equipped = equipped or group.equipped
+                    for _, item in ipairs(shown.items) do visible[item] = true end
+                end
             end
         end
     end
@@ -67,11 +117,13 @@ local function applyFilter(pane)
     pane.toolkitVisibleItems = visible
     local rows = {}
     for _, group in ipairs(pane.itemslist) do
-        if kept[group] or (group.type == "separator" and equipped) then rows[#rows + 1] = group end
+        if kept[group] then rows[#rows + 1] = kept[group]
+        elseif group.type == "separator" and equipped then rows[#rows + 1] = group end
     end
     pane.itemslist, pane.toolkitFilteredRows = rows, rows
     -- Filter before native selection restoration, so row indices match the view.
     table.wipe(pane.items)
+    return remappedSelection
 end
 
 local function selectCategory(pane, category)
@@ -122,15 +174,8 @@ local function showCategories(pane, button)
         menu:setOptionChecked(combined, Tags.ruleActive(pane.toolkitTagRule))
         PresetsMenu.add(menu, {owner=pane, player=pane.player, rule=tagRule(pane),
             onApply=function(rule) selectRule(pane, rule) end})
-        local found, entries = {}, {}
-        for _, category in ipairs(pane.toolkitCategories) do
-            for _, id in ipairs(Tags.forCategory(category.id)) do
-                if not found[id] then
-                    found[id] = true
-                    entries[#entries + 1] = {id = id, label = Tags.label(id)}
-                end
-            end
-        end
+        local entries = {}
+        for id in pairs(pane.toolkitTags) do entries[#entries + 1] = {id = id, label = Tags.label(id)} end
         table.sort(entries, function(a, b) return a.label < b.label end)
         local root = menu:addOption(getText("UI_PZST_Tags"))
         local submenu = ISContextMenu:getNew(menu)
@@ -196,8 +241,7 @@ local function install(class)
     patched[class] = true
     local restore, prerender, transfer = class.restoreSelection, class.prerender, class.transferItemsByWeight
     class.restoreSelection = function(self, selected)
-        applyFilter(self)
-        return restore(self, selected)
+        return restore(self, applyFilter(self, selected) or selected)
     end
     class.prerender = function(self, ...)
         local enabled, filtersEnabled = Tags.enabled(), Toolkit.Settings.inventoryFilters()
