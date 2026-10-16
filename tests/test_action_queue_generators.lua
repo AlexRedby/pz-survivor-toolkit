@@ -633,6 +633,66 @@ assert(policy.inspect(action) and policy.inspect(cartRepair) and not policy.insp
     'an unrelated equipment constructor cannot revoke repair or inherit fuel permission from cart approval')
 ISEquipWeaponAction.new=equipConstructor
 assert(policy.inspect(action), 'restoring the exact native helper restores verified cart generator contracts')
+-- The equipment proof boundary admits actual non-cart wrappers only for this producer's preparations.
+if SaucedCartsSource then
+    native('client/ISUI/ISWorldObjectContextMenu.lua')
+    for _,name in ipairs({'ISPlugGenerator','ISActivateGenerator','ISFixGenerator','ISAddFuel','ISTakeGenerator','ISUnequipAction'}) do
+        native('shared/TimedActions/'..name..'.lua')
+    end
+    native('client/TimedActions/ISGeneratorInfoAction.lua')
+    f.project('ActionQueueOperations');f.project('ActionQueueDefinitions');policy=f.project('ActionQueuePolicy')
+    local previous={new=ISUnequipAction.new,complete=ISUnequipAction.complete}
+    local path=SaucedCartsSource..'/ContainerRestrictions.lua'
+    local text=readText(path):gsub('\r','')
+    SaucedCarts={debug=function() end,safeIsCart=function(value) return value and value.cart==true end}
+    local code='local unequipHookInitialized=false\n'
+        ..assert(text:match('(local function flushDistanceOnCreate%(character, item, label%).-\nend)'))..'\n'
+        ..assert(text:match('(local function wrapUnequipNew%(%).-\nend)'))..'\n'
+        ..assert(text:match('(local function initUnequipHook%(%).-\nend)'))..'\ninitUnequipHook()'
+    assert(loadstring(code,'@'..path))()
+    local replacement={new=ISUnequipAction.new,complete=ISUnequipAction.complete}
+    local equipmentActive=true
+    local matcher=assert(policy.nativeUnequipVariant(previous,replacement,function() return equipmentActive end))
+    cartAPI.isUnequipConstructor=function(callback)
+        return equipmentActive and (callback==previous.new or callback==replacement.new)
+            and ISUnequipAction.new==replacement.new and ISUnequipAction.complete==replacement.complete
+    end
+    cartAPI.isNonCartUnequip=function(value) return matcher(value) and not value.item.cart end
+    cartAPI.equipmentSafe=function(character)
+        return equipmentActive and not (character.primary and character.primary.cart) and not (character.secondary and character.secondary.cart)
+    end
+    adapter=f.project('ActionQueueGenerators');adapter.install()
+    p.primary,p.secondary=nil,nil
+    local refill=ISAddFuel:new(p,g,petrol,70)
+    assert(policy.inspect(refill) and policy.inspect(ISTakeGenerator:new(p,g)),'audited non-cart equipment did not restore native generator kinds')
+    for _,hand in ipairs({'primary','secondary'}) do
+        p[hand]={cart=true}
+        assert(not policy.inspect(refill) and not policy.inspect(ISTakeGenerator:new(p,g)),'held cart acquired generator equipment permission: '..hand)
+        q,action=queued('onTakeGenerator',g)
+        assert(not policy.inspect(action) and action.toolkitWorldOperation=='device','held cart acquired deferred pickup permission')
+        p[hand]=nil
+    end
+    q,action=queued('onTakeGenerator',g)
+    assert(policy.inspect(action),'ordinary pickup request stayed opaque')
+    p.primary={cart=true}
+    assert(not policy.inspect(action),'cart acquired after enqueue retained deferred generator trust')
+    q.queue,q.current={action},action;action:begin();action:start()
+    assert(#q.queue==1,'deferred pickup expanded after a cart entered the hands')
+    p.primary=nil
+    ISWearClothing={isStopOnWalk=function() return false end}
+    p.primary=f.item('Base.Hammer');p.primary.isTwoHandWeapon=function() return false end
+    p.primary.isRequiresEquippedBothHands=function() return false end
+    q,action=queued('onTakeGenerator',g)
+    q.queue,q.current={action},action;action:begin();action:start()
+    local preparation
+    for _,member in ipairs(q.queue) do if member.Type=='ISUnequipAction' then preparation=member end end
+    assert(preparation and policy.inspect(preparation),'producer-owned actual non-cart unequip stayed opaque')
+    assert(not policy.inspect(ISUnequipAction:new(p,p.primary,50)),'unowned unequip borrowed generator preparation trust')
+    equipmentActive=false
+    assert(not policy.inspect(preparation) and not policy.inspect(refill),'equipment proof revocation retained generator rights')
+    equipmentActive=true;p.primary=nil
+    cartAPI.equipmentSafe,cartAPI.isUnequipConstructor,cartAPI.isNonCartUnequip=nil,nil,nil
+end
 cartActive=false
 native('client/ISUI/ISWorldObjectContextMenu.lua')
 for _,name in ipairs({'ISPlugGenerator','ISActivateGenerator','ISFixGenerator','ISAddFuel','ISTakeGenerator'}) do

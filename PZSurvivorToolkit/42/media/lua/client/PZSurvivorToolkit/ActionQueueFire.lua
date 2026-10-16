@@ -17,13 +17,21 @@ local Fire = {}
 Toolkit.ActionQueueFire = Fire
 local Operations, Definitions = Toolkit.ActionQueueOperations, Toolkit.ActionQueueDefinitions
 local records = {}
+local equipmentRecords = {}
+local Carts = Toolkit.ActionQueueCarts
+local cartConstructor = Carts and Carts.isTransferConstructor
+local cartUnequip, cartItem, cartMatches = Carts and Carts.isUnequipConstructor, Carts and Carts.isNonCartItem, Carts and Carts.isNonCartUnequip
+local function verifiedCartConstructor(callback)
+    return Carts and Toolkit.ActionQueueCarts == Carts and Carts.isTransferConstructor == cartConstructor
+        and type(cartConstructor) == "function" and cartConstructor(callback) == true
+end
 local snapshots = {}
 local expanded = {}
 local returns = {}
 
 function Fire.prune()
     local pending = false
-    for _, registry in ipairs({records, snapshots, expanded, returns}) do
+    for _, registry in ipairs({records, snapshots, expanded, returns, equipmentRecords}) do
         for _ in pairs(registry) do pending = true; break end
         if pending then break end
     end
@@ -37,7 +45,9 @@ function Fire.prune()
     for action, record in pairs(records) do
         if queued[action] then active[record.saved] = true else records[action] = nil end
     end
-    for action in pairs(returns) do if not queued[action] then returns[action] = nil end end
+    for _, registry in ipairs({returns, equipmentRecords}) do
+        for action in pairs(registry) do if not queued[action] then registry[action] = nil end end
+    end
     -- Retries use their parent's sealed request even after the command and parent have completed.
     for saved in pairs(snapshots) do
         if not active[saved] then snapshots[saved], expanded[saved] = nil, nil end
@@ -45,7 +55,7 @@ function Fire.prune()
 end
 Events.OnTick.Add(Fire.prune)
 if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
-    for _, registry in ipairs({records, snapshots, expanded, returns}) do
+    for _, registry in ipairs({records, snapshots, expanded, returns, equipmentRecords}) do
         for key in pairs(registry) do registry[key] = nil end
     end
 end) end
@@ -150,7 +160,11 @@ if cleanUI then
     end
 end
 local transferConstructor = ISInventoryTransferAction.new
-trusted = trusted and nativeClosure(transferConstructor, "ISInventoryTransferAction.lua")
+local transferCart = verifiedCartConstructor(transferConstructor)
+trusted = trusted and (transferCart or nativeClosure(transferConstructor, "ISInventoryTransferAction.lua"))
+local unequipClass = ISUnequipAction
+local unequipMethods = {}
+for name, callback in pairs(unequipClass or {}) do if type(callback) == "function" then unequipMethods[name] = callback end end
 local transferWalk = luautils.walkToContainer
 local transferPredicate = luautils.haveToBeTransfered
 trusted = trusted and nativeClosure(transferPredicate, "luautils.lua") and nativeClosure(transferWalk, "luautils.lua")
@@ -213,7 +227,8 @@ end
 local function helpersSafe()
     if not trusted or luautils.haveToBeTransfered ~= transferPredicate or luautils.walkToContainer ~= transferWalk then return false end
     if containerFilterUnchanged and not containerFilterUnchanged() then return false end
-    if ISInventoryTransferAction.new ~= transferConstructor then return false end
+    if (transferCart or ISInventoryTransferAction.new ~= transferConstructor)
+        and not (verifiedCartConstructor(transferConstructor) and verifiedCartConstructor(ISInventoryTransferAction.new)) then return false end
     for name, callback in pairs(cleanUIHelpers) do if ISInventoryPaneContextMenu[name] ~= callback then return false end end
     for name, callback in pairs(bindings) do if ISCampingMenu[name] ~= callback then return false end end
     if proximity and proximity.GetItemContainer ~= proximityGetter then return false end
@@ -223,6 +238,21 @@ local function helpersSafe()
     for name, callback in pairs(helpers) do if ISCampingMenu[name] ~= callback then return false end end
     return ISInventoryPaneContextMenu.getContainers == getContainers
         and ISInventoryPaneContextMenu.transferIfNeeded == transferIfNeeded and ISCraftingUI.ReturnItemToContainer == returnItem
+end
+local function equipmentSafe(saved)
+    if not saved.multiple then return true end
+    if ISUnequipAction ~= unequipClass then return false end
+    if Carts and cartUnequip then
+        if Toolkit.ActionQueueCarts ~= Carts or Carts.isUnequipConstructor ~= cartUnequip
+            or Carts.isNonCartItem ~= cartItem or Carts.isNonCartUnequip ~= cartMatches
+            or not cartUnequip(ISUnequipAction.new) then return false end
+        for _, entry in ipairs(saved.items) do if not cartItem(entry.item) then return false end end
+        return true
+    end
+    for name, callback in pairs(unequipMethods) do
+        if ISUnequipAction[name] ~= callback or name ~= "derive" and not nativeClosure(callback, "ISUnequipAction.lua") then return false end
+    end
+    return nativeClosure(unequipMethods.new, "ISUnequipAction.lua") and nativeClosure(unequipMethods.complete, "ISUnequipAction.lua")
 end
 local function worldObject(target, class)
     if not target then return end
@@ -318,8 +348,10 @@ local function snapshot(character, mode, ...)
     if object:getObjectIndex() == -1 or not object:getSquare() then return end
     local fuel = mode == "onAddFuel" or mode == "onAddAllFuel" or mode == "onAddMultipleFuel"
     if not items[1] or (not fuel and not items[2]) then return end
-    return {target = target, object = object, square = object:getSquare(), class = class, mode = mode, items = items, fuel = fuel,
+    local saved = {target = target, object = object, square = object:getSquare(), class = class, mode = mode, items = items, fuel = fuel,
         multiple = mode == "onAddAllFuel" or mode == "onAddMultipleFuel"}
+    if not equipmentSafe(saved) then return nil, "unsupported" end
+    return saved
 end
 local function seal(saved)
     local result = {}
@@ -367,7 +399,7 @@ local function addReturn(character, saved, item, entry)
     end
 end
 local function expand(character, saved)
-    if expanded[saved] or not snapshots[saved] or not snapshotUnchanged(saved, snapshots[saved]) or not helpersSafe() or not unchanged(saved.class) or worldObject(saved.target, saved.class) ~= saved.object
+    if expanded[saved] or not snapshots[saved] or not snapshotUnchanged(saved, snapshots[saved]) or not helpersSafe() or not equipmentSafe(saved) or not unchanged(saved.class) or worldObject(saved.target, saved.class) ~= saved.object
         or saved.object:getObjectIndex() == -1 or saved.object:getSquare() ~= saved.square then return end
     local items = {}
     for i, entry in ipairs(saved.items) do
@@ -384,7 +416,11 @@ local function expand(character, saved)
     if saved.fuel then
         local currentFuel = saved.class == ISAddFuelAction and saved.target.fuelAmt or saved.target:getFuelAmount()
         for _, entry in ipairs(items) do
-            if saved.multiple and character:isEquipped(entry.item) then ISTimedActionQueue.add(ISUnequipAction:new(character, entry.item, 50)) end
+            if saved.multiple and character:isEquipped(entry.item) then
+                local preparation = ISUnequipAction:new(character, entry.item, 50)
+                ISTimedActionQueue.add(preparation)
+                equipmentRecords[preparation] = {saved = saved, expected = snapshots[saved], character = character, item = entry.item, token = saved.token}
+            end
             local amount = ISCampingMenu.getFuelDurationForItem(entry.item)
             for use = 1, math.min(entry.uses, ISCampingMenu.getFuelItemUses(entry.item)) do
                 if currentFuel + amount > getCampingFuelMax() then return end
@@ -441,13 +477,13 @@ end
 
 function Fire.isDeferredAction(action)
     local record = records[action]
-    return record and record.command and action.character == record.character and action.toolkitQueueOperation == record.token and snapshotUnchanged(record.saved, record.expected) and helpersSafe() and unchanged(record.saved.class) and Operations.isCommand(action)
+    return record and record.command and action.character == record.character and action.toolkitQueueOperation == record.token and snapshotUnchanged(record.saved, record.expected) and helpersSafe() and equipmentSafe(record.saved) and unchanged(record.saved.class) and Operations.isCommand(action)
 end
 function Fire.supports(action)
     local record = records[action]
     if not record or record.command or action.character ~= record.character or action.toolkitQueueOperation ~= record.token
         or getmetatable(action) ~= record.class
-        or action.Type ~= record.class.Type or not helpersSafe() or not unchanged(record.class)
+        or action.Type ~= record.class.Type or not helpersSafe() or not equipmentSafe(record.saved) or not unchanged(record.class)
         or action.onStartFunc or action.onCompleteFunc or action.onCancelFunc or action.retriggerLastAction then return false end
     for _, name in ipairs(lifecycle) do if action[name] ~= classes[record.class].methods[name] then return false end end
     for name, callback in pairs(classes[record.class].methods) do if action[name] ~= callback then return false end end
@@ -562,6 +598,17 @@ function Fire.inspect(action)
     end
     return result
 end
+Definitions.registerBehavior("toolkit.fire-unequip", {
+    types = {"ISUnequipAction"}, matches = function(action)
+        local record = equipmentRecords[action]
+        return record and action.character == record.character and action.item == record.item
+            and action.toolkitQueueOperation == record.token and snapshotUnchanged(record.saved, record.expected)
+            and helpersSafe() and equipmentSafe(record.saved) and type(cartMatches) == "function" and cartMatches(action)
+    end, inspect = function(action)
+        return {items = {[action.item:getID()] = true}, itemTypes = {[action.item:getFullType()] = true}, targets = {},
+            hands = action.character, preparation = true, preparationFinish = true, cancelWaiting = false, interrupt = "finish-step"}
+    end,
+})
 Definitions.registerBehavior("toolkit.fire", {types = names, matches = function(action) return Fire.isDeferredAction(action) or Fire.supports(action) end,
     inspect = Fire.inspect})
 
