@@ -14,9 +14,10 @@
 
 ## Общие игровые сессии и регрессия сборки
 
-- [ ] Пройти native startup/load-only smoke: свежий SP без production-модов и MP с полной сборкой на копиях подготовленного мира; сравнить Java Patches0.1.7/0.1.8, подтвердить transform fluid parser, отсутствие двух прежних сообщений и неизменность остальных diagnostics. Общий runtime остаётся строгим.
+- [ ] Startup SP: добавить настоящую загрузку подготовленного сохранения с проверкой прежнего персонажа/мира; текущий bootstrap создаёт свежий мир и явно отклоняет SP templates. Не подменять загрузку сохранения созданием нового персонажа.
+- [ ] Повторить отдельный native `equipment-missing` negative control с текущей стартовой постановкой animal fixture и полным аудитом инвентарей/земли. Missing-patch и alternate timer/JAR controls сохранять отдельными неизменяемыми профилями, не смешивая с patched четырёхсценарной сессией.
 - [ ] BrokenFences: сохранить раннюю регистрацию, перенести проверку свойств за загрузку tiledefs и учитывать штатный `FenceTypeLow` fallback. Отдельно проверить sound selection и возможную коррекцию только `carpentry_02_48/49` без перезаписи модовых свойств.
-- [ ] Шрифты: доказать реальные glyph textures и порядок загрузки UI.pack/negative cache; исправлять первый cold load ранним hook. Отдельно проверить точечную коррекцию Dialogue `.bmfc_0` page typo. Не подавлять неизвестные missing-texture ошибки.
+- [ ] Шрифты: доказать реальные glyph textures и порядок загрузки UI.pack/negative cache; исправлять первый cold load ранним hook. Отдельно проверить точечную коррекцию Dialogue `.bmfc_0` page typo и реальную fallback-иконку debug recipe Piano. Не подавлять неизвестные missing-texture ошибки.
 - [ ] Данные мира: установить задуманные properties пропущенной Mannequin-зоны `(13583,1299,0)` по исходным map/editor данным; идентифицировать обе комнаты с colliding metaID около `(10707,9484,0)` и безопасную миграцию. Четыре invalid saved room IDs в cell25,33 проверять отдельно на fresh/reused мирах; не удалять `map_meta.bin` и не придумывать IDs. До устранения сохранять failed/needs-review без расширения background allowlist.
 - [ ] Чат тележек: интегрировать опубликованные объединённые SP cart matrices и collision cases после завершения их native-проверок. Сохранять независимые cold controls; отдельно измерить явный полный регрессионный профиль (расчётные17startup cycles вместо29 пока не подтверждены).
 
