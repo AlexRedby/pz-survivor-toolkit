@@ -1,0 +1,304 @@
+# Changelog
+
+Functional changes to the repository components. For current behavior and limits, see [features](docs/FEATURES.md) and the [Java guide](JavaPatches/README.md).
+
+- [PZ Survivor Toolkit](#pz-survivor-toolkit)
+- [Survivor Wishlist](#survivor-wishlist)
+- [Toolkit Java Patches](#toolkit-java-patches)
+
+Version labels come from committed component metadata, including changes made without a version bump. Parallel branches sometimes reused a label; consolidation entries identify the combined behavior. There are no release tags in this history, so these entries do not assert publication dates. Third-party mod selection is documented in the [catalog](USEFUL_MODS.md).
+
+## PZ Survivor Toolkit
+
+### [0.1.53](https://github.com/AlexRedby/pz-survivor-toolkit/commit/72b97cdba2399950e24bc76ab9d048519c560eef)
+
+- **Added:** Native pictograms and consistent item-family colours for item tags, including Quartermaster tag choices and inventory chips.
+- **Changed:** Combined tag visuals with the medical queue operations from the parallel 0.1.52 snapshot.
+
+### [0.1.52](https://github.com/AlexRedby/pz-survivor-toolkit/commit/7e406a542f4ceff7ea17cba3c7e3eeab8b9836c0)
+
+- **Added:** Localized item tags derived from organizedCategories, inventory tag chips/filters and tag-based Quartermaster selection while preserving exact legacy category IDs.
+- **Added:** Guarded native medical queue operations with doctor/patient and wound identity, independent treatment reordering, supported active cancellation and borrowed-tool returns. [Medical source](https://github.com/AlexRedby/pz-survivor-toolkit/commit/1ea939076d6c96be6c1204c0f213486f435a585b).
+- **Note:** The tag and medical changes used the same version label on parallel branches; their combined snapshot is 0.1.53.
+
+### [0.1.51](https://github.com/AlexRedby/pz-survivor-toolkit/commit/cc2fb6744d857b23406c7bb43c70798c6447d5ae)
+
+- **Added:** Capacity-aware reordering and cancellation of independent carried-cart transfers, including cart-to-cart routes; shared cargo and in-flight multiplayer transfers remain protected.
+- **Changed:** Expanded generator fuel/pickup and fire-operation compatibility with reviewed equipment helpers; holding a cart retains conservative controls.
+
+### [0.1.50](https://github.com/AlexRedby/pz-survivor-toolkit/commit/f2072566509dd919ab5a16adeebcd27d1baa157b)
+
+- **Added:** Queue-aware Better Generator Info connection and power controls, preserving dependencies between shared power areas and buildings.
+
+### [0.1.49](https://github.com/AlexRedby/pz-survivor-toolkit/commit/88590522d1d0dcad9af8bd99bdcfbe13c9eb8634)
+
+- **Fixed:** Kept queued washing/drying attached to the correct live clothing and towel IDs when multiplayer replaces item objects.
+- **Fixed:** Skipped returns of already-consumed fire inputs without losing borrowed tools or unrelated queued work.
+
+### [0.1.48](https://github.com/AlexRedby/pz-survivor-toolkit/commit/a083a49a530d4f9eee6c499804d36e08fe161986)
+
+- **Added:** Queued opening and eating for native OpenCannedFood/OpenCannedFood2 recipes, linking full/half/quarter portions to the exact created food item.
+- **Fixed:** Prevented late or duplicate results from restarting cancelled eating or consuming unrelated food.
+- **Fixed:** Released completed operation records and closed crafting UI owners/listeners instead of retaining them indefinitely.
+
+### [0.1.47](https://github.com/AlexRedby/pz-survivor-toolkit/commit/f26fa4fc610f2842682fdf2ff91d8cd71fd0bee2)
+
+- **Added:** Half and quarter portions for selected-food batches.
+- **Changed:** Allowed independent washing and towel-drying operations to move or cancel safely; active native effects and resource use finish before cancellation of later steps.
+
+### [0.1.46](https://github.com/AlexRedby/pz-survivor-toolkit/commit/70513065c473f762a2f61b0f0c26eb521aedac65)
+
+- **Changed:** Matched cart body/hand animation speeds and transitions, and added load-dependent walking turns. Running/sprinting keep native steering; releasing the cart restores ordinary handling.
+
+### [0.1.45](https://github.com/AlexRedby/pz-survivor-toolkit/commit/3bcc56fcab6c8b916fe18759cf38e511c7f686ce)
+
+- **Changed:** Restricted shopping-cart spawns to appropriate retail/warehouse surroundings while retaining wheelbarrows around farm/shed storage. Existing carts and saved spawn decisions are preserved.
+
+### [0.1.44](https://github.com/AlexRedby/pz-survivor-toolkit/commit/2b5d89843512e34e5e50048918189302fcad2d42)
+
+- **Changed:** Combined the guarded cart queue controls and the unsupported-resource inspection fix from the parallel 0.1.43 snapshots.
+
+### [0.1.43](https://github.com/AlexRedby/pz-survivor-toolkit/commit/8a6a28c437ba2dbe7f7856f9bc9fe48316a2e47b)
+
+- **Added:** Guarded queue controls for carried-cart transfers and native single-player cart returns.
+- **Fixed:** Restored recursive single-player generator repair across native completion/cleanup boundaries.
+- **Fixed:** Stopped unsupported craft/repair inspection from emitting caught-assertion errors; unknown resources remain protected. [Inspection fix](https://github.com/AlexRedby/pz-survivor-toolkit/commit/ae3cb58d62855f5703d6ed353e2a5670f37e8a17).
+
+### [0.1.42](https://github.com/AlexRedby/pz-survivor-toolkit/commit/6bc32bcf69ebe6275f24a831161ab94054547c82)
+
+- **Changed:** Combined queued bulk eating with the Item Details and cart-equipment fixes from the parallel 0.1.41 histories.
+
+### [0.1.41](https://github.com/AlexRedby/pz-survivor-toolkit/commit/8f6c44dcac8535d85278a4977879667ddf5e00de)
+
+- **Added:** Eat selected batches for eligible ready-to-eat food, with exact item ownership, favourite-item exclusion and independent cancellation.
+- **Changed:** A parallel snapshot combined the Item Details and cart-equipment fixes from 0.1.40. Both histories were combined in 0.1.42. [Integration source](https://github.com/AlexRedby/pz-survivor-toolkit/commit/ce52f5537cb897a88a8faebeeb68356dc1b02370).
+
+### [0.1.40](https://github.com/AlexRedby/pz-survivor-toolkit/commit/433ef33fab238496318178b547c7d97a09b2c3fa)
+
+- **Fixed:** Restored Item Details condition display/sorting for organizedCategories vehicle parts and preserved every item beyond the configured sorted prefix of large stacks.
+- **Fixed:** Cleared stale cart hand slots after Tidy Up Meister cancellation and recognized server-completed multiplayer cart pickup/equip. [Cart fix](https://github.com/AlexRedby/pz-survivor-toolkit/commit/8aa02a9cebf16ae6d762ecb02622599b3c65167b).
+
+### [0.1.39](https://github.com/AlexRedby/pz-survivor-toolkit/commit/a28ad9ccf454c9406c6977f2b3b6f083cc0a612a)
+
+- **Fixed:** World-electronics dismantling no longer discards following work when multiplayer removes the target before the action completes.
+- **Fixed:** Deduplicated the same physical vehicle part exposed through both proximity and real containers. [Vehicle fix](https://github.com/AlexRedby/pz-survivor-toolkit/commit/74b924028af5b4380a29d23a7feb7b5817024801).
+
+### [0.1.38](https://github.com/AlexRedby/pz-survivor-toolkit/commit/02593124e27b4e184b334da1b8f914d963ee86be)
+
+- **Added:** Guarded generator and camping/BBQ/fireplace fuel/lighting queue operations, including recursive generator repair, cancellation and borrowed-tool returns.
+
+### [0.1.37](https://github.com/AlexRedby/pz-survivor-toolkit/commit/4a7c270d676ea243394d6172589fdcca7c21f57a)
+
+- **Fixed:** Initialized SaucedCarts drop, unequip and forced-drop safety hooks on dedicated servers, preserving worn-cart cargo and preventing stale hand references from duplicating a ground cart.
+
+### [0.1.36](https://github.com/AlexRedby/pz-survivor-toolkit/commit/ade2c97fc9d04823e694f6a0f1a4ee4e3c9b4581)
+
+- **Added:** Independent transfers through nested carried bags with capacity checks across destination ancestors.
+- **Changed:** Single-player capacity checks can account for space freed by a required earlier pickup; multiplayer and unknown capacity effects remain conservative.
+
+### [0.1.35](https://github.com/AlexRedby/pz-survivor-toolkit/commit/ca7efdeb1165527f4254279f9e32304ef737f627)
+
+- **Added:** Reordering/cancellation of independent carried-bag transfers when the proposed order fits available capacity.
+- **Fixed:** Kept mixed Tidy Up Meister returns attached to the correct operation while preserving shared equipment cleanup.
+
+### [0.1.34](https://github.com/AlexRedby/pz-survivor-toolkit/commit/c5e33f53e6216239a0458ceb3c4bfac5ba5b623a)
+
+- **Changed:** Expanded safe queue controls to known future craft inputs and supported WashFix, Neat Equipment, Tidy Up Meister and Project Cook continuations; unknown callbacks retain protected controls.
+- **Changed:** Stove power requests take priority at safe boundaries, preserve reading and revalidate the desired state instead of toggling twice.
+- **Added:** Localized presentation for native action families, separate from their movement/cancellation permissions.
+
+### [0.1.33](https://github.com/AlexRedby/pz-survivor-toolkit/commit/3a3675767f2b0ebe153a537f93030f1b4b0c0442)
+
+- **Added:** Queued burnt/smashed vehicle dismantling without interrupting prior work, with tools/targets rechecked when execution begins.
+
+### [0.1.32](https://github.com/AlexRedby/pz-survivor-toolkit/commit/ae35a65595b0f55a3793125cbc0645e06d62379a)
+
+- **Fixed:** Vehicle refuelling and siphoning select containers and calculate amounts when their turn begins, allowing repeated requests to use the next eligible container without dropping later work.
+
+### [0.1.31](https://github.com/AlexRedby/pz-survivor-toolkit/commit/6f4a3eb5be4f990c39f739cd1bbfe89c10d9d778)
+
+- **Changed:** Grouped native/Neat multicraft and legacy Craft All batches with meaningful progress and cancellation of future continuations.
+- **Fixed:** Appliance controls no longer discard unrelated queued work; approach and target validation are deferred until execution.
+
+### [0.1.30](https://github.com/AlexRedby/pz-survivor-toolkit/commit/f7de4db558b526e0fe55e4e2457230016af33a2f)
+
+- **Added:** Safe multiplayer construction interruption/resumption with server acknowledgements from Java Patches 0.1.3; completed builds are never replayed.
+- **Changed:** Allowed waiting item repair to cross independent work while protecting matching future donors and shared dependencies.
+
+### [0.1.29](https://github.com/AlexRedby/pz-survivor-toolkit/commit/b3eef8a4b957300e30e7c5f285e02a0bd6694e93)
+
+- **Added:** Supported active operation cancellation and independent native/Neat handcraft reordering, preserving completed results and eligible borrowed-item returns.
+- **Fixed:** Sidebar icons no longer intercept native Cooking flyout clicks. [Sidebar fix](https://github.com/AlexRedby/pz-survivor-toolkit/commit/2bfa133af39afda263fe67c1754cef87da460121).
+
+### [0.1.28](https://github.com/AlexRedby/pz-survivor-toolkit/commit/c7cc5f17a49fa95d2bfe483e1c52006b13d6a47c)
+
+- **Added:** Prerequisite crafting plans for native and Neat Crafting: reachable-stock accounting, reusable tools, intermediate chains, material choices and queueing as one operation.
+- **Changed:** Combined crafting plans with whole-operation queue controls and the compact sidebar. This is the first retained source snapshot of the planner; the older README also calls it 0.1.27.
+
+### 0.1.27 (documented label)
+
+The older README associates prerequisite crafting with this label, but no separate 0.1.27 metadata snapshot is retained. See [0.1.28](#0128) for the committed planner changes.
+
+### [0.1.26](https://github.com/AlexRedby/pz-survivor-toolkit/commit/07bbc747bc18a5fa0acf1a35762ea61048f2d773)
+
+- **Changed:** Improved EN/RU task labels and target headings, preserving operation titles during preparation and returns.
+- **Changed:** Extended whole-operation cancellation and deferred world-action preparation. [Operation source](https://github.com/AlexRedby/pz-survivor-toolkit/commit/2d2175936d7a1f32874552630148a9d4cc923a9d).
+- **Changed:** Replaced sidebar squares with compact flashlight/tools icons, settings shortcuts and matching window controls. [Sidebar source](https://github.com/AlexRedby/pz-survivor-toolkit/commit/9c0dcb22e6444ccf7b289ac712c7b3bc9c413dac).
+
+### [0.1.25](https://github.com/AlexRedby/pz-survivor-toolkit/commit/17aac2f10643ca5c8999df8048df3b36615951f6)
+
+- **Added:** Collapsible operation groups with expandable native steps and whole-operation dragging/cancellation.
+- **Fixed:** Prevented unsafe movement across shared world targets and dependent preparation/return steps.
+
+### [0.1.24](https://github.com/AlexRedby/pz-survivor-toolkit/commit/a88007511440e3ec01857c98ab12eaa525191231)
+
+- **Changed:** Ordered common context-menu actions by purpose and context, while preserving stable ties, unknown commands, manual placements and native selectors.
+
+### [0.1.23](https://github.com/AlexRedby/pz-survivor-toolkit/commit/ec25437cf747e0bde37c877329687f12acc83b8d)
+
+- **Fixed:** Removed exact repeated context-menu commands and duplicate bulk entries while preserving different targets, arguments and mod metadata.
+
+### [0.1.22](https://github.com/AlexRedby/pz-survivor-toolkit/commit/d539d45b8eabc3a5d17654c181c8b0e6caf41de0)
+
+- **Added:** Cut selected clothing for mixed cotton, denim and leather, using native recipes/tools and skipping favourites and worn/held garments.
+
+### [0.1.21](https://github.com/AlexRedby/pz-survivor-toolkit/commit/eee693878b6bfe4ad1a420780ea7bac503c1ac7b)
+
+- **Added:** Automatic context-menu groups and editable per-player rules for placement, hiding and restoring actions.
+- **Changed:** Enabled the action queue on fresh profiles and allowed whole waiting operations to move ahead of reading and resume it afterwards. [Queue source](https://github.com/AlexRedby/pz-survivor-toolkit/commit/665ee8b973e2b3809a59e6cb4cf0824f4c57fca1).
+- **Added:** Deferred door dismantling and selective cancellation without clearing unrelated work. [World-action source](https://github.com/AlexRedby/pz-survivor-toolkit/commit/3a0a88bc1304ebf6fd54fe77e24709bf6afb63f7).
+- **Changed:** Added Wishlist-aware ground-highlight priority and preparation/distribution of the complete three-component set. [Wishlist integration](https://github.com/AlexRedby/pz-survivor-toolkit/commit/668b867e30ca174e7144ab944938923ee4aaa99c) and [distribution source](https://github.com/AlexRedby/pz-survivor-toolkit/commit/5808f1329403409f359abd2d6310f4e32d242933).
+
+### [0.1.20](https://github.com/AlexRedby/pz-survivor-toolkit/commit/0ba9f52ad0ff19d658be3711ffdadc9616dc5f97)
+
+- **Added:** Grab amount / Put amount with a whole-number budget across a selected batch.
+- **Changed:** Provided medicine/herb indicators directly through MoodleFramework, removing the Medicine Moodles dependency and preventing duplicate indicators.
+- **Fixed:** EN/RU TV device recognition, Better Containers category-filter integration and malformed MP Fast Forward speed commands.
+- **Added:** Optional native action-queue window with icons, per-row cancellation and guarded drag reordering. [Initial queue](https://github.com/AlexRedby/pz-survivor-toolkit/commit/9756eccd63e8b4e9912c533522a80f126d7ab981) and [row controls](https://github.com/AlexRedby/pz-survivor-toolkit/commit/6ed594650371ee1b54af058bfe1077fbdd0c46a4).
+
+### [0.1.19](https://github.com/AlexRedby/pz-survivor-toolkit/commit/74cb8b717dde00fa26522de03d75b5a062bd71a0)
+
+- **Added:** Bulk battery removal, magazine/firearm unloading and weapon-attachment removal with native tools, outputs and item identities.
+- **Changed:** Corrected server-derived medicine effects and added independent herbal indicators, including dried herbs. The older README refers to this medicine work as 0.1.16; this is its first retained source snapshot.
+- **Changed:** Fitted Navigator to vanilla/Realistic Dashboard styles with a compact textured housing and live rollback.
+
+### 0.1.16 (documented label)
+
+The older README associates medicine indicators with this label, but no separate 0.1.16 metadata snapshot is retained. See [0.1.19](#0119) for the committed medicine changes. No distinct functional record for 0.1.17 or 0.1.18 is retained.
+
+### [0.1.15](https://github.com/AlexRedby/pz-survivor-toolkit/commit/d9ebdf52419187ce4520cfac67074d7dd4882dc5)
+
+- **Changed:** Combined vehicle-part removal to the ground with bulk electronics dismantling and contested-pickup protection.
+
+### [0.1.14](https://github.com/AlexRedby/pz-survivor-toolkit/commit/449337180d795f94f747d20a0176d0c7c7050fac)
+
+- **Fixed:** Preserved native dismantling recipe icons/submenus and stopped rejected bulk pickups from cancelling another client's same-numbered transaction.
+
+### [0.1.13](https://github.com/AlexRedby/pz-survivor-toolkit/commit/8fbb425f1bd49bdbadd4cde81e5f3fe057fe3881)
+
+- **Added:** Optional bulk dismantling of selected electronics with native recipes, tools, outputs and XP.
+- **Added:** A parallel 0.1.13 snapshot added Uninstall to ground for removable vehicle parts, preserving native tools, duration and success/damage chances. Combined with bulk dismantling in 0.1.15. [Vehicle source](https://github.com/AlexRedby/pz-survivor-toolkit/commit/88ee47cc4a939eb99bd31a6b8ab2c0344d122d1f).
+
+### [0.1.12](https://github.com/AlexRedby/pz-survivor-toolkit/commit/b5bdd893b273a2658e6e369aec5299794059f141)
+
+- **Fixed:** Kept CCI item/container-button bars working across CleanUI enhanced/vanilla modes and icon views, including native icon alpha.
+
+### [0.1.11](https://github.com/AlexRedby/pz-survivor-toolkit/commit/195b5bc82a4786243a1f4ebd34bc52fef1caf0bb)
+
+- **Fixed:** Preserved manually selected Proximity Inventory loot containers across automatic source/destination selections without bypassing native container locks.
+
+### [0.1.10](https://github.com/AlexRedby/pz-survivor-toolkit/commit/9b9f5410a9a7bf5e00443f6b374db7a201c1150d)
+
+- **Fixed:** Preserved inventory marquee selection across refreshes.
+
+### [0.1.9](https://github.com/AlexRedby/pz-survivor-toolkit/commit/a1efc520c0feeffa221faffd670cedcf2e89ec03)
+
+- **Added:** Inventory category filters.
+- **Fixed:** CleanUI inventory layout integration and Manage Containers controls in both enhanced and vanilla inventory modes.
+
+### [0.1.8](https://github.com/AlexRedby/pz-survivor-toolkit/commit/896ff3526ce0ed8a12368aedc6f4f9dbab8a0b00)
+
+- **Fixed:** Marked only fully watched VHS tapes as completed for the current character.
+
+### [0.1.7](https://github.com/AlexRedby/pz-survivor-toolkit/commit/7a0fbcd204663f4bbdd3c00070fec86cd5de288d)
+
+- **Added:** VHS selection from reachable containers/bags, drag insertion and direct click-to-eject using native inventory/device actions.
+
+### [0.1.6](https://github.com/AlexRedby/pz-survivor-toolkit/commit/7b62819b8e758a4e9d15d19cba231a7559eebea6)
+
+- **Added:** Independent switches for the sidebar highlight button and neutral clothing comparisons.
+
+### [0.1.5](https://github.com/AlexRedby/pz-survivor-toolkit/commit/7b8b438399f578208144b11413a38b7eba229cd9)
+
+- **Fixed:** Hid optional-mod settings and skipped their integrations when the corresponding mod was inactive.
+
+### [0.1.4](https://github.com/AlexRedby/pz-survivor-toolkit/commit/c4f86df469bc8a9fb3083a632b4310dfafa81037)
+
+- **Added:** Configurable TV/radio window persistence and native macOS video lookup in the active TV mod directory, without a Workshop-path symlink.
+
+### [0.1.3](https://github.com/AlexRedby/pz-survivor-toolkit/commit/1cad3f4b24e3d8bbecb44f9f5b23d16b9c6749a8)
+
+- **Fixed:** Aligned Container Capacity Indicator bars with CleanUI inventory rows, equipment headers and scaled icons.
+
+### [0.1.2](https://github.com/AlexRedby/pz-survivor-toolkit/commit/e91b9225d7fbc3e2a12c952f268f74f819752377)
+
+- **Fixed:** Used each multiplayer player's auto-drink preference instead of the host's saved global option, including option reloads.
+
+### [0.1.1](https://github.com/AlexRedby/pz-survivor-toolkit/commit/6d23b177b9661102e02fdd2ca5c8c2dc5f562b2e)
+
+- **Changed:** Displayed zero clothing-protection differences in neutral grey while retaining native improvement/degradation colours.
+
+### [0.1.0](https://github.com/AlexRedby/pz-survivor-toolkit/commit/3926508d2d421ddc021aef1032f914e335eec95d)
+
+- **Added:** Visible loose-item highlighting, native Mod Options for colour/radius/shortcut, an F8 shortcut and sidebar toggle.
+- **Added:** Mod icon and localized selection metadata.
+
+## Survivor Wishlist
+
+### [0.1.0](https://github.com/AlexRedby/pz-survivor-toolkit/commit/668b867e30ca174e7144ab944938923ee4aaa99c)
+
+- **Added:** Independent personal and shared wishlists, with a searchable item catalog, desired quantities, carried-item counts and manual completion.
+- **Added:** Shared editing for named players or a faction, owner-controlled access, revision-conflict protection and persistent lists separated by world.
+- **Added:** Inventory-menu and native/Neat Crafting/Neat Building/Project Cook integration for adding wanted items, recipe results and missing ingredient choices.
+- **Added:** Highlight wanted inventory rows and visible loose ground items, with CleanUI and Better Containers support and independent highlight/crafting settings.
+- **Added:** English and Russian UI, a configurable K shortcut and sidebar access.
+- **Changed:** Replaced the standalone sidebar text button with a compact tools icon, integrated Wishlist access into Toolkit's sidebar menu and matched button styling.
+- **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
+
+## Toolkit Java Patches
+
+Previously named **PZ Network Fix** through 0.1.1.
+
+### [0.1.6](https://github.com/AlexRedby/pz-survivor-toolkit/commit/761aea81f0c699c34b3a41709d49cecc662dda94)
+
+- **Fixed:** Prevented the B42.21 hutch-unloading crash caused by empty animal slots, while preserving existing animals and the original hutch data in clients, single-player and servers.
+
+### [0.1.5](https://github.com/AlexRedby/pz-survivor-toolkit/commit/c3ad1e0aabec486e34e41caa76449c8b125a48f6)
+
+- **Fixed:** Prevented incomplete equipment acknowledgements from clearing a just-grabbed animal from the local player's hands when equipment packets arrive before the animal transfer.
+
+### [0.1.4](https://github.com/AlexRedby/pz-survivor-toolkit/commit/bd6d1088d8fb9a81219b6e4c7b15cd1446757fae)
+
+- **Fixed:** Removed stale or duplicate client trailer membership when an animal's server-reported location changes to the world, a hutch or an inventory, correcting ghost animals and occupied trailer capacity.
+
+### [0.1.3](https://github.com/AlexRedby/pz-survivor-toolkit/commit/f7de4db558b526e0fe55e4e2457230016af33a2f)
+
+- **Added:** Server build acknowledgements that let Toolkit safely interrupt and resume multiplayer construction after confirmed cancellation, without replaying completed builds.
+- **Added:** Optional programmatic game-window recording through Lua or Java for isolated test profiles, producing silent H.264 MP4 through FFmpeg without automatic recording or a new game menu.
+
+### [0.1.2](https://github.com/AlexRedby/pz-survivor-toolkit/commit/9edadea9de0f5464b36197bb207ca9827b15aec0)
+
+- **Changed:** Renamed PZ Network Fix to Toolkit Java Patches, including the local Mod ID, JAR and Java package; existing installations must enable `PZToolkitJavaPatches` instead of `PZNetworkFix`.
+- **Added:** A macOS Host launcher that loads ZombieBuddy in the client and separate Host server process, using the bundled Apple Silicon or Intel Java runtime and refusing duplicate loader arguments.
+
+### [0.1.1](https://github.com/AlexRedby/pz-survivor-toolkit/commit/aa101d6090c6612e867775b001caca90e8577c9b) (PZ Network Fix)
+
+- **Fixed:** Prevented server-authoritative cassette/VHS playback from stopping again after a quick Stop/Play sequence.
+- **Changed:** Packaged the Java patch for both clients and servers instead of the client-only Java directory.
+- **Added:** A Windows Host launcher that passes ZombieBuddy to the child server process and avoids adding a duplicate client loader.
+
+### [0.1.0](https://github.com/AlexRedby/pz-survivor-toolkit/commit/b8423c527640019fd246e172e1a9914a003b8691) (PZ Network Fix)
+
+- **Added:** Experimental B42.21 client patches for remote zombie speed decoding and vehicle interpolation recovery, with ZombieBuddy and per-class bytecode guards that disable unsupported patches.
+- **Fixed:** Corrected standard Steam game-path defaults for Windows and Linux and added clear missing-JAR checks.
+- **Fixed:** Required JDK 25 or newer to read B42.21 game dependencies while retaining Java 17 output compatibility.

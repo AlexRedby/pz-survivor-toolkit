@@ -1,20 +1,15 @@
 # Crafting-plan native fixture intake
 
-Preserved B42.21 client/server assertions from the 2026-10-13 crafting
-investigation. The common `crafting-plans` adapter now stages these assertions
-and verifies their exact stage labels and authority receipts. Integration itself
-does not claim a native pass. The contribution does not include the planner implementation,
-game/Workshop files, Java binaries, profiles, worlds or historical output files.
+[Development](../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../README.md)
 
-| Scenario | Historical checks per EN/RU client | Purpose |
+The common `crafting-plans` adapter stages the B42.21 client/server scenarios and verifies exact stage labels and authority receipts. Dependencies are supplied locally; no game/Workshop files, binaries, worlds or generated outputs are distributed. Per-run reports record current verification separately from registration.
+
+| Scenario | Required stages per EN/RU client | Purpose |
 | --- | ---: | --- |
-| `crafting` | 20 | Real log/plank/handle/spoon chain, waiting cancellation, shared-log competition and classic/NC controls |
-| `ui` | 28 | Embedded layout, icons/counts, scroll/resize, quantity review, cleanup, native owner guards and queued-plan cancellation |
-| `alternatives` | 23 | Native picker intent, Auto recovery, repeated recipes, intermediate choices and actual selected-source crafting |
+| `crafting` | 20 | Real chain, waiting cancellation, shared-log competition and classic/NC controls |
+| `ui` | 28 | Layout, icons/counts, scroll/resize, quantity review, cleanup and cancellation |
+| `alternatives` | 23 | Native picker, Auto recovery, quantities, choices and selected-source crafting |
 
-The historical macOS MP summaries `craft-full-03`, `neat-plan-ui-03` and
-`alternatives-choices-02` report zero failures on both clients. Their counts were
-checked during extraction; the game was not launched for this transfer.
 `manifest.json` records source fingerprints, scenario files, dependencies,
 parameters, output markers and evidence limits. The alternatives fixture comes
 from the final fixed implementation, not the earlier fixture that deliberately
@@ -39,7 +34,7 @@ The checkout must contain Toolkit's `CraftPlanner`, `CraftChainRecipes`,
 `CraftChains` and operation-aware `ActionQueue`, plus Wishlist and the UI
 integrations in the manifest. This contribution alone does not supply those
 features. Use the current selected INI and resolve dependencies through the
-common native tooling; the historical 41-ID count is not a current install rule.
+common native tooling; the current selected INI defines the mod set.
 Do not merge this helper with another active fixture: both claim the test actors,
 modify their inventories and install native action hooks.
 
@@ -69,8 +64,8 @@ use the runtime password, languages EN and RU respectively. The setup adds items
 Carving XP and a native surface/container; it must never run in a real save.
 
 Reuse the common `tests/native_queue/support/ToolkitSmokeLauncher.java` and
-preflight once integrated, instead of copying the archived machine-specific
-`setup.py`, `run.py` or launcher. An awake desktop and working native libraries
+preflight; keep installation paths and process ownership in the
+common runner. An awake desktop and working native libraries
 are required; changing an INI alone does not prove that the renderer adopted the
 requested size. On macOS, a tiling window manager may resize test windows.
 
@@ -94,12 +89,9 @@ For `ui`, require preview/fallback render markers, all scrollbar-bound checks,
 owner guards, and actual Start/cancellation markers; inspect screenshots in both
 languages. That scenario cancels its waiting crafts and does **not** demonstrate
 output creation. For full-set Java configurations, retain the common loader and
-transformation checks. Old successful runs are not proof against changed APIs or
-current Workshop updates.
+transformation checks. Verify current game, product and Workshop APIs before accepting a run.
 
-All preserved native runs were two-client MP on macOS. SP, Windows/Linux,
-physical mouse/keyboard/controller navigation, split-screen, respawn and WAN
-behavior are unverified here. Crafting durations are native. Book cancellation
+SP, Windows/Linux, physical mouse/keyboard/controller navigation, split-screen, respawn and WAN behavior are unverified. Crafting durations are native. Book cancellation
 uses shortened reading time; the fixture is not a reading-performance test.
 The entity-window guard uses a fake owner around a real NC cell, not a newly
 placed workbench. No product behavior is patched to force test results.

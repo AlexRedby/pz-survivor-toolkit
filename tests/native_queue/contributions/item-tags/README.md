@@ -1,6 +1,8 @@
 # Item tags native fixture intake
 
-This is an intake copy of the local item-tags fixture for a common native runner. The original fixture was checked in single-player, Russian UI, Project Zomboid B42.21. The portable preparer passed its self-test, and its generated Lua is byte-identical to the fixture executed in the original SP harness. The common runner now stages this helper through `tools/queue_checks/adapters/auxiliary.py`; a fresh native launch of that integration remains unverified. English, multiplayer, physical mouse/keyboard/controller input, and the full user mod set remain unverified. Calls to UI handlers below are programmatic.
+[Development](../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../README.md)
+
+The common runner stages this B42.21 RU/SP fixture through `tools/queue_checks/adapters/auxiliary.py`, with exact scene assertions and screenshots. It requires Toolkit 0.1.53+ and the listed UI mods. Current verification belongs in per-run reports; English, multiplayer, physical input and the complete selected mod set remain unverified. UI handler calls are programmatic.
 
 `manifest.json` lists the seven required mod IDs, their load order, five screenshot names, and log markers. The runner must obtain these mods from the local installation; this contribution contains no game or Workshop assets, Java launcher, profile, logs, or captures.
 

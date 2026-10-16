@@ -1,5 +1,7 @@
 # Native video recording fixture
 
+[Development](../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../README.md)
+
 This fixture validates the B42.21 in-game recorder in a fresh, disposable profile. It does not launch the game itself. Build JavaPatches first, then prepare the profile:
 
 ```sh
@@ -48,7 +50,7 @@ For a human visual check, play either captured file with `ffplay -an -autoexit /
 
 Verification checks recorder success and the voice-disabled marker, dimensions, frame rate, frame count, duration, absent audio, and a full decode. It extracts first, middle, and last PNGs under `profile/verification/`. Keep generated profiles, logs, videos, and extracted images outside this contribution.
 
-The fixture rejects output outside its profile and duplicate starts/stops. Frame readback uses the measured GLFW framebuffer size: on the validated Retina setup, a requested 1280x720 window produced 1728x1020. Synchronous GL readback can reduce game FPS; queued frames preserve elapsed time by holding the previous image. The recorder caps output at 4K, fails and finalizes on resize, and has a 15-second FFmpeg timeout.
+The fixture rejects output outside its profile and duplicate starts/stops. Frame readback uses the actual GLFW framebuffer size, which can differ from the requested window size on scaled or Retina displays. Synchronous GL readback can reduce game FPS; queued frames preserve elapsed time by holding the previous image. The recorder caps output at 4K, fails and finalizes on resize, and has a 15-second FFmpeg timeout.
 
 Run the no-game tests from the repository root:
 
@@ -58,12 +60,10 @@ python3 -m unittest discover -s tests/native_queue/contributions/video-recording
 
 Existing encoder edge-case coverage is reusable via `PZ_TEST_FFMPEG=/absolute/path/to/ffmpeg python3 JavaPatches/build.py --check-video`: missing encoder, stop before the first frame, timeline gaps, resize and bounded-buffer guards. Those tests do not require a game window.
 
-## Evidence and limits
+## Supported scope and limits
 
-On 2026-10-15, macOS ARM64, B42.21, English, SP Sandbox: two 106-frame silent H.264 clips at 1728x1020 and 30 fps, each 3.533333 seconds for measured 3.515-3.516 second intervals; zero dropped frames. FFprobe, full decode, three extracted frames, and FFplay playback passed.
+The fixture does not establish support for multiplayer, Russian, Windows, Linux, long sessions, sustained 4K, live resize, or forced shutdown recovery. The Display hook is guarded by the fingerprint recorded in `manifest.json`. The recorder's API and limits are in [development: test video](../../../../docs/DEVELOPMENT.md#test-video).
 
-This evidence does not cover multiplayer, Russian, Windows, Linux, long sessions, sustained 4K, live resize, or forced shutdown recovery. The Display hook is guarded by the fingerprint recorded in `manifest.json`. Source notes are in `.codex/investigations/video-recording/`; the recorder's design and limits are in `JavaPatches/README.md`.
+Playback/visual inspection remains a manual check; `verify.py` performs decoding and extracts frames.
 
-The parameterized intake was transferred on 2026-10-16 without launching the game. Preparation tests, Java compilation and verification of the retained 2026-10-15 clips are separate from the historical native run. Playback/visual inspection remains a manual check; `verify.py` performs decoding and extracts frames.
-
-The common runner stages the same Lua fixture with its shared `ToolkitSmokeLauncher`, GUI mutex and owned-process cleanup through `tools/queue_checks/adapters/auxiliary.py`. Its adapter requires the terminal `PASSED` marker before invoking this contribution's unchanged FFprobe/decode/frame-extraction verifier. Pass explicit absolute `ffmpeg` and `ffprobe` paths in the common runner configuration. A fresh native run of this integration remains unverified.
+The common runner stages the same Lua fixture with its shared `ToolkitSmokeLauncher`, GUI mutex and owned-process cleanup through `tools/queue_checks/adapters/auxiliary.py`. Its adapter requires the terminal `PASSED` marker before invoking this contribution's unchanged FFprobe/decode/frame-extraction verifier. Pass explicit absolute `ffmpeg` and `ffprobe` paths in the common runner configuration. Current verification is recorded separately in each run report.

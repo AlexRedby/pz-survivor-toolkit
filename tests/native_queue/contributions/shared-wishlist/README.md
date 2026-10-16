@@ -1,10 +1,8 @@
 # Shared wishlist native fixture intake
 
-This contribution preserves the reusable client/server assertions from the local
-2026-10-12 wishlist investigation. The common `shared-wishlist` adapter now stages
-the preserved scenarios and verifies their exact stage labels and server replies.
-Integration does not claim a new native pass. `manifest.json` describes the
-dependencies, parameters and historical counts. No game files are distributed.
+[Development](../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../README.md)
+
+The common `shared-wishlist` adapter stages the B42.21 client/server scenarios and verifies exact stage labels and server replies. `manifest.json` describes dependencies and parameters; per-run reports record current verification separately from registration. No game files are distributed.
 
 Run the no-game check from the repository root:
 
@@ -42,10 +40,7 @@ Repeat for `client2` and `server`, changing the cache/actor. The fresh configura
 has six lines in the order documented in `manifest.json`. For full integrations,
 use `--mode full --mods ...` with the exact selected product IDs, including
 `PZSurvivorWishlist` and `PZSurvivorToolkit`, but excluding `WishlistTest`.
-The historical setup assumed 41 IDs while its first summary reports 39 selected
-plus one candidate. This intake checks the supplied IDs instead of preserving
-that stale count. Use the dependency APIs in the manifest rather than treating
-the old selection as a current install list.
+Use the dependency APIs in the manifest; the current selected INI defines the mod set.
 
 Enable `WishlistTest` after the selected product mods in each cache's
 `mods/default.txt` and server `Mods=` list. Set the server's port to the supplied
@@ -56,14 +51,12 @@ server fixture waits for both fixed actors before it sends their item IDs/start
 signal. Full mode needs the CleanUI, combined-container, Neat and Project Cook
 APIs listed in the manifest; standalone/visual selects only the wishlist product.
 
-Reuse `tests/native_queue/support/ToolkitSmokeLauncher.java` when that common
-support is integrated. Compile it against the installed game with the selected
+Reuse `tests/native_queue/support/ToolkitSmokeLauncher.java` from the common
+support. Compile it against the installed game with the selected
 JDK; launch clients with the game/JDK native options and `-novoip`, matching the
-common native tooling. That launcher handles display and voice checks. The
-archived launcher was deliberately omitted: it resolved loading classes too
-early and lacked the later display/voice protections. The old `setup.py` and
-`run.py` were also omitted because they embedded a workstation layout, fixed
-endpoint/password, platform user ID and Java-agent policy choices.
+common native tooling. That launcher handles display and voice checks. Keep
+paths, connection credentials and Java-agent policy in the runner-owned runtime
+configuration; do not embed them in fixture sources.
 
 The common runner installs these Lua sides and their six-line config, retains
 its safe launcher/preflight and verifies the `[WISHLIST_TEST]` contract. Select
@@ -113,15 +106,9 @@ state that it replaces. A missing peer fails within 15 seconds; unknown actors,
 out-of-order keys and duplicate observations cannot release it. This barrier
 protects the assertions themselves instead of extending fixed sleeps.
 
-## Historical evidence and known traps
+## Known traps and verification limits
 
-The source is `.codex/investigations/wishlist-20261012/native/ZZWishlist.lua` and
-`ZZWishlist_Server.lua`. The four evidence summaries in the adjacent `evidence`
-directory report zero failures per EN/RU client: full 33, standalone 26, restart
-5, visual 11. These are old B42.21 macOS MP results, not checks performed during
-this intake. The current scenario registration retains those counts. Native SP
-was not tested; the old unit log's SP model checks do not establish native SP UI,
-storage or lifecycle behavior. No old logs, profiles, saves or images were copied.
+The fixture sources are `client/ZZWishlist.lua` and `server/ZZWishlist_Server.lua`. Native SP UI, storage and lifecycle are not covered by this fixture.
 
 The preserved regression assertions cover wanted-row wrapper duplication,
 sidebar overlap, native handcraft/build buttons before their final layout,
@@ -130,11 +117,6 @@ explicit/faction revocation, concurrent revision handling, and wishlist ground
 colour competing with Toolkit. Assertions describe the failure each scenario
 guards; the retained successful logs do not prove a failing pre-fix build.
 
-The RU visual search deliberately uses decimal UTF-8 byte escapes for `топор`.
-The archive contained a Kahlua encoding probe comparing literal Cyrillic with
-escaped bytes; the byte form is kept, without claiming the probe alone proves
-current engine behavior. UI work is programmatic and uses fixed delays, so
-physical interaction, rendering on other systems, WAN reliability and current
-Workshop versions still need separate verification. The concurrent scenario
+The RU visual search uses decimal UTF-8 byte escapes for `топор`. UI work is programmatic and uses fixed delays; physical interaction, rendering on other systems, WAN reliability and current Workshop versions need separate verification. The concurrent scenario
 accepts either winning amount plus an optional `stale_revision`; it proves no
 chosen winner, and a later synchronization assertion supplies cross-client checks.
