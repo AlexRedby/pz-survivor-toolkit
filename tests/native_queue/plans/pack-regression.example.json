@@ -1,0 +1,86 @@
+{
+  "game": "/path/to/game/Java",
+  "jdk": "/path/to/jdk25",
+  "mods": "selected",
+  "options": {
+    "pack_lock": "/path/to/selected-pack.lock.json",
+    "patch_jar": "/path/to/PZToolkitJavaPatches.jar",
+    "ffmpeg": "/path/to/ffmpeg",
+    "ffprobe": "/path/to/ffprobe"
+  },
+  "sets": {
+    "craft": [
+      "craft"
+    ],
+    "wishlist": [
+      "wishlist"
+    ],
+    "tags": [
+      "tags"
+    ],
+    "video": [
+      "video"
+    ],
+    "animals": [
+      "animals"
+    ],
+    "full": [
+      "craft",
+      "wishlist",
+      "tags",
+      "video",
+      "animals"
+    ]
+  },
+  "jobs": [
+    {
+      "id": "craft",
+      "suite": "crafting-plans",
+      "case": "ui,crafting,alternatives"
+    },
+    {
+      "id": "wishlist-control",
+      "suite": "shared-wishlist",
+      "case": "full",
+      "mode": "native"
+    },
+    {
+      "id": "wishlist",
+      "suite": "shared-wishlist",
+      "case": "full",
+      "control_job": "wishlist-control"
+    },
+    {
+      "id": "tags-control",
+      "suite": "item-tags",
+      "mode": "native"
+    },
+    {
+      "id": "tags",
+      "suite": "item-tags",
+      "control_job": "tags-control"
+    },
+    {
+      "id": "video-control",
+      "suite": "video-recording",
+      "mode": "native"
+    },
+    {
+      "id": "video",
+      "suite": "video-recording",
+      "control_job": "video-control"
+    },
+    {
+      "id": "animals-control",
+      "suite": "animal-trailer",
+      "case": "timer-shared,combined-shared",
+      "mode": "native"
+    },
+    {
+      "id": "animals",
+      "suite": "animal-trailer",
+      "case": "timer-shared,combined-shared",
+      "control_job": "animals-control"
+    }
+  ]
+}

@@ -44,6 +44,12 @@
   },
   "fixture_mod": "AnimalTrailerBaseline",
   "probes": {
+    "session": {
+      "mod_id": "AnimalSessionProbe",
+      "package": "net.alexredby.animalsessionprobe",
+      "source": "java/session/Main.java",
+      "effect": "Removes only exact fixture-owned dropped animals through native world removal and synchronization deletion; no production state toggles."
+    },
     "equipment": {
       "mod_id": "AnimalHandsRace",
       "package": "net.alexredby.animalhandsrace",
@@ -54,7 +60,7 @@
       "mod_id": "AnimalReplayProbe",
       "package": "net.alexredby.animalreplayprobe",
       "source": "java/ghost/Main.java",
-      "effect": "Temporarily disables only AnimalTrailerLocation during real decoder replay, restores in finally, verifies repair and identities."
+      "effect": "Replays late trailer location=2 then authoritative item location=3 through real decoder without changing production flags; verifies exact membership, capacity, repair and identities."
     },
     "timer": {
       "mod_id": "AnimalTimerProbe",

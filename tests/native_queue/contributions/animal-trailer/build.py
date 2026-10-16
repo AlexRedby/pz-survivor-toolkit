@@ -14,7 +14,7 @@ import zipfile
 HERE = Path(__file__).resolve().parent
 
 
-def build(game, jdk, patch_jar, output, scenario):
+def build(game, jdk, patch_jar, output, scenario, cases=None):
     manifest = json.loads((HERE / 'manifest.json').read_text())
     for jar in [game / 'projectzomboid.jar', game / 'ZombieBuddy.jar', patch_jar]:
         if not jar.is_file():
@@ -36,7 +36,10 @@ def build(game, jdk, patch_jar, output, scenario):
     hashes = {}
     with tempfile.TemporaryDirectory(prefix='animal-trailer-compile-') as temporary:
         temporary = Path(temporary)
-        for key in manifest['scenarios'][scenario]:
+        keys = manifest['scenarios'][scenario]
+        if cases:
+            keys = list(dict.fromkeys(key for case in cases for key in manifest['scenarios'][case.split('-')[0]])) + ['session']
+        for key in keys:
             probe = manifest['probes'][key]
             classes = temporary / key
             classes.mkdir()
@@ -58,6 +61,11 @@ def build(game, jdk, patch_jar, output, scenario):
         config = fixture / '42/media/lua/shared/ZAnimalTrailerConfig.lua'
         config.write_text('AnimalTrailerFixtureConfig = AnimalTrailerFixtureConfig or {\n' + ''.join(
             ' ' + key + '=' + str(value) + ',\n' for key, value in manifest['parameters'].items()) + '}\n')
+        if cases:
+            with config.open('a') as stream:
+                stream.write('AnimalTrailerFixtureConfig.cases={' + ','.join(json.dumps(case) for case in cases) + '}\n')
+            shutil.copy2(HERE.parents[1] / 'support/QueueFixtureSession.lua',
+                         fixture / '42/media/lua/shared/QueueAnimalSession.lua')
         for mod in (output / 'mods').iterdir():
             for media in ['common/media', '42/media']:
                 for directory in ['AnimSets', 'actiongroups']:
@@ -66,7 +74,25 @@ def build(game, jdk, patch_jar, output, scenario):
         check_classes.mkdir()
         subprocess.run([javac, '--release', '17', '-cp', classpath, '-d', str(check_classes), str(HERE / 'checks/ParseLua.java')], check=True)
         subprocess.run([java, '-Djava.awt.headless=true', '-cp', str(check_classes) + os.pathsep + classpath, 'ParseLua', *map(str, sorted(fixture.rglob('*.lua')))], check=True)
-    helpers = [manifest['probes'][key]['mod_id'] for key in manifest['scenarios'][scenario]] + [manifest['fixture_mod']]
+        if cases and 'equipment' in keys and 'timer' in keys:
+            checks_path = os.pathsep.join([classpath, *map(str, sorted((output / 'mods').rglob('*.jar')))])
+            subprocess.run([javac, '--release', '17', '-cp', checks_path, '-d', str(check_classes), str(HERE / 'checks/SessionProbeChecks.java')], check=True)
+            subprocess.run([java, '-Djava.awt.headless=true', '-cp', str(check_classes) + os.pathsep + checks_path, 'SessionProbeChecks'], check=True)
+        if 'ghost' in keys:
+            subprocess.run([javac, '--release', '17', '-cp', classpath, '-d', str(check_classes), str(HERE / 'checks/GhostDecoderChecks.java')], check=True)
+            for mode in ('original', 'patched'):
+                with tempfile.TemporaryDirectory(prefix='animal-ghost-decoder-') as config:
+                    result = subprocess.run([java, '-javaagent:' + str(game / 'ZombieBuddy.jar') + '=config_dir=' + config + ',policy=deny-new,verbosity=0',
+                        '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp',
+                        str(check_classes) + os.pathsep + classpath, 'zombie.characters.GhostDecoderChecks', mode],
+                        cwd=game, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                (output / ('ghost-decoder-' + mode + '.log')).write_text(result.stdout)
+                result.check_returncode()
+                marker = 'GHOST_DECODER_CHECKS_PASS mode=' + ('woven' if mode == 'patched' else 'original')
+                if marker not in result.stdout:
+                    raise ValueError('Headless real decoder proof did not complete: ' + mode)
+                print(next(line for line in result.stdout.splitlines() if marker in line))
+    helpers = [manifest['probes'][key]['mod_id'] for key in keys] + [manifest['fixture_mod']]
     (output / 'runtime-manifest.json').write_text(json.dumps({'scenario': scenario, 'helper_mod_ids': helpers, 'jar_sha256': hashes, 'runtime': manifest['runtime'], 'installed': False, 'native_started': False}, indent=2) + '\n')
     print('Ready (not installed):', output)
 

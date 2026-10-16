@@ -277,6 +277,90 @@ class QueueReportTests(unittest.TestCase):
         self.assertEqual(result['error_count'], 2)
         self.assertEqual(len(result['issues']), 1)
 
+    def test_grouped_diagnostics_keep_same_fingerprint_in_each_phase_and_max_mirrors(self):
+        root = self.fixture()
+        error = 'ERROR: General > same engine failure\njava.lang.RuntimeException: same cause\n'
+        def marker(event, case, epoch):
+            return 'LOG: General > [QUEUE_SESSION] ' + event + ' case=' + case + ' epoch=' + str(epoch) + ' actor=client1\n'
+        def session(counts):
+            startup, first_run, first_cleanup, between, second_run, second_cleanup, after = counts
+            return (error * startup + marker('BEGIN', 'first', 1) + marker('START', 'first', 1) + error * first_run +
+                    marker('FINISH', 'first', 1) + error * first_cleanup + marker('CLEANUP', 'first', 1) +
+                    marker('JOINT_CLEAN', 'first', 1) + error * between + marker('BEGIN', 'second', 2) +
+                    marker('START', 'second', 2) + error * second_run + marker('FINISH', 'second', 2) +
+                    error * second_cleanup + marker('CLEANUP', 'second', 2) + marker('JOINT_CLEAN', 'second', 2) +
+                    marker('COMPLETE', 'second', 2) + error * after)
+        launch = root / 'client1-launch.log'
+        launch.write_text(session([1, 2, 3, 1, 4, 2, 1]))
+        (root / 'client1/console.txt').write_text(launch.read_text())
+        logs = root / 'client1/Logs'
+        logs.mkdir()
+        mirrored = session([1, 1, 2, 1, 2, 1, 1])
+        stamped = ''.join('[16-10-26 06:21:59.959] ' + line + '\n' for line in mirrored.splitlines())
+        (logs / '2026_DebugLog.txt').write_text(stamped)
+        (root / 'client1-probes.log').write_text(error * 3)
+        audit = report.audit_logs(root, ['client1'])['client1']
+        self.assertEqual(14, audit['error_count'])
+        self.assertEqual(1, len(audit['issues']))
+        windows = audit['diagnostic_windows']
+        self.assertEqual(1, windows['startup']['error_count'])
+        self.assertEqual(2, windows['between_cases']['error_count'])
+        self.assertEqual(3, windows['unassigned']['error_count'])
+        self.assertEqual([('first', 1, 2, 3), ('second', 2, 4, 2)],
+                         [(case['case'], case['epoch'], case['run']['error_count'], case['cleanup']['error_count']) for case in windows['cases']])
+        for bucket in [windows['startup'], windows['between_cases'], windows['unassigned'],
+                       *[case[phase] for case in windows['cases'] for phase in ('run', 'cleanup')]]:
+            self.assertEqual(audit['issues'][0]['fingerprint'], bucket['issues'][0]['fingerprint'])
+            finding = bucket['issues'][0]
+            self.assertIn('same engine failure', Path(finding['file']).read_text().splitlines()[finding['line'] - 1])
+        self.assertEqual('File-local', windows['interpretation'].split()[0])
+
+    def test_grouped_windows_do_not_change_verdict_comparison_or_total_audit(self):
+        toolkit = self.fixture('grouped-toolkit')
+        native = self.fixture('grouped-native', mode='native')
+        error = 'ERROR: General > shared startup failure\njava.lang.RuntimeException: shared cause\n'
+        markers = ('LOG: General > [QUEUE_SESSION] BEGIN case=bandageApply epoch=1 actor=client1\n'
+                   'LOG: General > [QUEUE_SESSION] START case=bandageApply epoch=1 actor=client1\n'
+                   'LOG: General > [QUEUE_SESSION] FINISH case=bandageApply epoch=1 actor=client1\n'
+                   'LOG: General > [QUEUE_SESSION] CLEANUP case=bandageApply epoch=1 actor=client1\n'
+                   'LOG: General > [QUEUE_SESSION] JOINT_CLEAN case=bandageApply epoch=1 actor=client1\n'
+                   'LOG: General > [QUEUE_SESSION] COMPLETE case=bandageApply epoch=1 actor=client1\n')
+        for root in (toolkit, native):
+            path = root / 'client1-launch.log'
+            path.write_text(error + path.read_text())
+        legacy_control = report.build_report(native, self.catalog)
+        legacy = report.build_report(toolkit, self.catalog, legacy_control)
+        self.assertNotIn('diagnostic_windows', legacy['runtime']['roles']['client1'])
+        for root in (toolkit, native):
+            with (root / 'client1-launch.log').open('a') as stream:
+                stream.write(markers)
+        control = report.build_report(native, self.catalog)
+        grouped = report.build_report(toolkit, self.catalog, control)
+        self.assertEqual(legacy['status'], grouped['status'])
+        self.assertEqual(legacy['runtime']['status'], grouped['runtime']['status'])
+        self.assertEqual(legacy['comparison'], grouped['comparison'])
+        self.assertEqual(legacy['runtime']['roles']['client1']['issues'], grouped['runtime']['roles']['client1']['issues'])
+        windows = grouped['runtime']['roles']['client1']['diagnostic_windows']
+        self.assertEqual(1, windows['startup']['error_count'])
+        self.assertEqual(0, windows['cases'][0]['run']['error_count'])
+        self.assertEqual(0, windows['cases'][0]['cleanup']['error_count'])
+        self.assertIn('bandageApply epoch=1 diagnostic errors: run=0, cleanup=0', report.summary(grouped))
+
+    def test_server_finish_receipts_and_quarantine_remain_diagnostic_cleanup(self):
+        root = self.fixture(kind='mp')
+        (root / 'server-launch.log').write_text(
+            'LOG: General > [QUEUE_SESSION] BEGIN case=first epoch=1 actor=server\n'
+            'LOG: General > [QUEUE_SESSION] START case=first epoch=1 actor=server\n'
+            'LOG: General > [QUEUE_SESSION] FINISH case=first epoch=1 actor=client1\n'
+            'ERROR: General > server cleanup failure\n'
+            'LOG: General > [QUEUE_SESSION] QUARANTINE case=first epoch=1 actor=server reason=cleanup\n'
+            'ERROR: General > uncertain cleanup failure\n')
+        audits = report.audit_logs(root, ['server', 'client1'])
+        windows = audits['server']['diagnostic_windows']
+        self.assertEqual(0, windows['cases'][0]['run']['error_count'])
+        self.assertEqual(2, windows['cases'][0]['cleanup']['error_count'])
+        self.assertNotIn('diagnostic_windows', audits['client1'])
+
 
 if __name__ == "__main__":
     unittest.main()

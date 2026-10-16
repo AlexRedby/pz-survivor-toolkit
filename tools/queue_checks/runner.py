@@ -1,4 +1,6 @@
 """One guarded native game lifecycle; only processes created here are stopped."""
+from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import re
@@ -9,7 +11,7 @@ import sys
 import time
 
 from .report import events, read_json, verify_manifest, write_json
-from . import adapters
+from . import adapters, pack, worlds
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
@@ -33,6 +35,33 @@ def stop(process):
         process.wait(timeout=10)
 
 
+def _verify_initial_settings(root, selection, runtime):
+    manifest = root / 'initial-settings.json'
+    if manifest.is_symlink() or not manifest.is_file():
+        raise ValueError('Prepared initial settings are missing or symlinked')
+    expected = read_json(manifest)
+    roles = adapters.roles(selection)
+    required = {role + '/options.ini' for role in roles}
+    if selection['kind'] == 'mp':
+        name = runtime.get('server_name')
+        if not isinstance(name, str) or not re.fullmatch('[A-Za-z0-9_.-]+', name) or name in ('.', '..'):
+            raise ValueError('Invalid prepared server name')
+        required.update('server/Server/' + name + suffix for suffix in ('.ini', '_SandboxVars.lua'))
+    if not isinstance(expected, dict) or not required <= expected.keys():
+        raise ValueError('Prepared initial settings are missing or invalid')
+    for name, text in expected.items():
+        if not isinstance(name, str) or not isinstance(text, str):
+            raise ValueError('Invalid prepared initial settings entry')
+        path = Path(name)
+        if path.is_absolute() or '..' in path.parts or path.as_posix() != name or not (
+                name in required or selection['kind'] == 'mp' and len(path.parts) == 3 and path.parts[:2] == ('server', 'Server')):
+            raise ValueError('Prepared initial settings path escapes owned settings: ' + name)
+        if any((root / Path(*path.parts[:index])).is_symlink() for index in range(1, len(path.parts) + 1)):
+            raise ValueError('Prepared initial settings cannot contain symlinks: ' + name)
+        if not (root / path).is_file() or (root / path).read_bytes() != text.encode('utf-8'):
+            raise ValueError('Prepared initial settings changed before launch: ' + name)
+
+
 def run(root):
     if sys.platform != "darwin":
         raise ValueError("Native GUI launch currently supports macOS; reports/matrix work on any platform")
@@ -45,11 +74,27 @@ def run(root):
         raise ValueError("\n".join(changed))
     if list(root.glob("*-launch.log")) or (root / "execution.json").exists():
         raise ValueError("Run directory has already launched; prepare a fresh snapshot")
-    with LOCK.open("a") as lock:
+    _verify_initial_settings(root, selection, runtime)
+    locked = selection.get('options', {}).get('pack_lock')
+    if locked:
+        pack.validate(locked, runtime['project'], runtime['game'], selection['mods'])
+    template = selection.get('options', {}).get('world_template')
+    if template:
+        _path, state = worlds.validate(template, selection, Path(runtime['game']))
+        if worlds._state(root, adapters.roles(selection)) != state['files']:
+            raise ValueError('Restored world changed before its first launch; prepare a fresh copy')
+    with LOCK.open("a+") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
-            raise RuntimeError("Another native run holds " + str(LOCK)) from error
+            lock.seek(0)
+            raise RuntimeError("Another native run holds " + str(LOCK) + ": " + lock.read().strip()) from error
+        lock.seek(0)
+        lock.truncate()
+        json.dump({'pid': os.getpid(), 'run': str(root), 'suite': selection['suite'],
+                   'cases': selection['cases'], 'started_utc': datetime.now(timezone.utc).isoformat()}, lock)
+        lock.write('\n')
+        lock.flush()
         process_list = subprocess.check_output(["/bin/ps", "-axo", "pid=,command="], text=True)
         collisions = [line for line in process_list.splitlines() if GAME_PROCESS.search(line)]
         if collisions:
@@ -60,6 +105,7 @@ def run(root):
                     check.bind(("127.0.0.1", port))
         processes, streams, displayed = {}, [], set()
         execution = {"status": "running", "processes": {}, "peer_disconnected": False, 'attachments': []}
+        execution['input_guards'] = {'pack_lock': bool(locked), 'world_template': bool(template)}
         game = Path(runtime["game"])
         base = [runtime["java"], "-Djava.awt.headless=true", "--enable-native-access=ALL-UNNAMED",
                 "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED", "-Dzomboid.steam=0",
@@ -112,11 +158,19 @@ def run(root):
                                env={key: value for key, value in os.environ.items() if key not in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS')})
 
         def interrupted(signum, frame):
-            raise KeyboardInterrupt("Native run interrupted by signal " + str(signum))
+            message = "Native run interrupted by signal " + str(signum)
+            execution.update(status='failed', interrupted=True)
+            if not cleaning:
+                raise KeyboardInterrupt(message)
+            execution['error'] = '; '.join(filter(None, (execution.get('error'), message)))
 
-        previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
+        previous = {}
         guard = None
+        cleaning = False
         try:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                previous[sig] = signal.getsignal(sig)
+                signal.signal(sig, interrupted)
             guard = subprocess.Popen(["/usr/bin/caffeinate", "-diu", "-w", str(os.getpid())])
             if selection["kind"] == "mp":
                 launch("server")
@@ -177,35 +231,47 @@ def run(root):
         except (Exception, KeyboardInterrupt) as error:
             execution.update(status="failed", error=str(error), interrupted=isinstance(error, KeyboardInterrupt))
         finally:
-            for role, specs in attached.items():
-                for spec in specs:
-                    if processes[role].poll() is None:
+            # Cleanup signals record failure without interrupting bounded waits or losing the report.
+            cleaning = True
+            try:
+                for role, specs in attached.items():
+                    for spec in specs:
+                        if processes[role].poll() is None:
+                            try:
+                                probe(role, spec, 'stop')
+                            except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+                                execution.update(status='failed', error='Probe close failed: ' + str(error))
+                for role, process in reversed(list(processes.items())):
+                    if role == 'server' and process.poll() is None:
                         try:
-                            probe(role, spec, 'stop')
-                        except (OSError, subprocess.SubprocessError, RuntimeError) as error:
-                            execution.update(status='failed', error='Probe close failed: ' + str(error))
-            for role, process in reversed(list(processes.items())):
-                if role == 'server' and process.poll() is None:
+                            process.stdin.write('save\nquit\n'); process.stdin.flush()
+                            process.wait(timeout=30)
+                        except (AttributeError, BrokenPipeError, OSError, subprocess.TimeoutExpired):
+                            pass
                     try:
-                        process.stdin.write('save\nquit\n'); process.stdin.flush()
-                        process.wait(timeout=30)
-                    except (AttributeError, BrokenPipeError, OSError, subprocess.TimeoutExpired):
-                        pass
-                try:
-                    stop(process)
-                except (OSError, subprocess.SubprocessError) as error:
-                    execution.setdefault('cleanup_errors', []).append(role + ': ' + str(error))
-                execution["processes"][role]["exit_code"] = process.returncode
-            for stream in streams:
-                stream.close()
-            if guard is not None:
-                try:
-                    guard.terminate(); guard.wait(timeout=5)
-                except (OSError, subprocess.SubprocessError) as error:
-                    execution.setdefault('cleanup_errors', []).append('display guard: ' + str(error))
-            for sig, handler in previous.items():
-                signal.signal(sig, handler)
-            if execution.get('cleanup_errors'):
-                execution.update(status='failed', error='; '.join([execution.get('error', ''), *execution['cleanup_errors']]))
-            write_json(root / "execution.json", execution)
+                        stop(process)
+                    except (OSError, subprocess.SubprocessError) as error:
+                        execution.setdefault('cleanup_errors', []).append(role + ': ' + str(error))
+                    execution["processes"][role]["exit_code"] = process.returncode
+                for stream in streams:
+                    try:
+                        stream.close()
+                    except OSError as error:
+                        execution.setdefault('cleanup_errors', []).append('launch log: ' + str(error))
+                if guard is not None:
+                    try:
+                        guard.terminate(); guard.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            guard.kill(); guard.wait(timeout=5)
+                        except (OSError, subprocess.SubprocessError) as error:
+                            execution.setdefault('cleanup_errors', []).append('display guard: ' + str(error))
+                    except (OSError, subprocess.SubprocessError) as error:
+                        execution.setdefault('cleanup_errors', []).append('display guard: ' + str(error))
+                if execution.get('cleanup_errors'):
+                    execution.update(status='failed', error='; '.join([execution.get('error', ''), *execution['cleanup_errors']]))
+                write_json(root / "execution.json", execution)
+            finally:
+                for sig, handler in previous.items():
+                    signal.signal(sig, handler)
         return execution

@@ -1,6 +1,10 @@
+local Session=QueueCraftSession
+local Events=Session and Session.events or Events
 require 'Entity/TimedActions/ISHandcraftAction'
 local states, race = {}, nil
-local function reply(player, command, args) sendServerCommand(player, 'CraftChainTest', command, args or {}) end
+local function reply(player,command,args)
+ if Session then Session.reply(player,command,args) else sendServerCommand(player,'CraftChainTest',command,args or {}) end
+end
 local function eachItem(state, visit, seen)
  seen = seen or {}
  local function item(value)
@@ -56,20 +60,25 @@ local function surfaceCrate(player, owner)
  object:getModData().CraftChainTestOwner=owner
  local crate=object:getContainer();crate:setType('crate');crate:setCapacity(100);crate:setExplored(true)
  square:AddSpecialObject(object);square:RecalcProperties();square:RecalcAllWithNeighbours(true)
+ if Session then Session.ownObject(object) end
  return object,crate,{x=square:getX(),y=square:getY(),sprite=object:getSprite():getName()}
 end
-local nativePerform=ISHandcraftAction.performRecipe
-ISHandcraftAction.performRecipe=function(action,...)
- local result=nativePerform(action,...)
+local function performed(action)
  local player=action.character;local state=player and states[player:getUsername()]
  local created=action.logic and action.logic:getRecipeData():getAllCreatedItems()
  if state and created and created:size()>0 then
   local name=action.craftRecipe:getName()
   state.completed[name]=(state.completed[name] or 0)+1
+  if Session then for i=0,created:size()-1 do Session.ownItem(created:get(i)) end end
   if race and race.started and name=='SawLogs' then race.completed=race.completed+1 end
   print('[CRAFT_TEST] SERVER_NATIVE_COMPLETE '..player:getUsername()..' recipe='..name..' outputs='..created:size())
  end
- return result
+end
+if Session then Session.performed=performed else
+ local nativePerform=ISHandcraftAction.performRecipe
+ ISHandcraftAction.performRecipe=function(action,...)
+  local result=nativePerform(action,...);performed(action);return result
+ end
 end
 Events.OnServerStarted.Add(function() print('[QUEUE_TEST] SERVER_READY') end)
 local function onCommand(module,command,player,args)
@@ -77,6 +86,7 @@ local function onCommand(module,command,player,args)
  local user,inv=player:getUsername(),player:getInventory();local state=states[user]
  if command=='Ready' then
   if state then reply(player,'Setup',state.ids);return end
+  if Session then Session.player(player) end
   local object,crate,ids=surfaceCrate(player,user)
   state={player=player,object=object,crate=crate,ids=ids,completed={}};states[user]=state
   -- Native server XP packet synchronizes the client; SyncXp only sends client -> server.
@@ -85,13 +95,13 @@ local function onCommand(module,command,player,args)
   player:setMaxWeightBase(50);player:setMaxWeight(50)
   for _,spec in ipairs({{'saw','Base.Saw'},{'knife','Base.HuntingKnife'}}) do
    local source=spec[1]=='saw' and crate or inv
-   local item=assert(source:AddItem(spec[2]),spec[2]);item:setCondition(item:getConditionMax());item:applyMaxSharpness()
+   local item=assert(source:AddItem(spec[2]),spec[2]);if Session then Session.ownItem(item) end;item:setCondition(item:getConditionMax());item:applyMaxSharpness()
    ids[spec[1]]=item:getID();if source==inv then sendAddItemToContainer(inv,item) end
   end
   for _,spec in ipairs({{'cancelCurrent','Base.BookCarpentry1'},{'cancelTail','Base.BookCooking1'}}) do
-   local book=assert(inv:AddItem(spec[2]),spec[2]);ids[spec[1]]=book:getID();sendAddItemToContainer(inv,book)
+   local book=assert(inv:AddItem(spec[2]),spec[2]);if Session then Session.ownItem(book) end;ids[spec[1]]=book:getID();sendAddItemToContainer(inv,book)
   end
-  local log=assert(crate:AddItem('Base.Log'));ids.log=log:getID()
+  local log=assert(crate:AddItem('Base.Log'));if Session then Session.ownItem(log) end;ids.log=log:getID()
   state.baseline=counts(state)
   assert((state.baseline['Base.Plank'] or 0)==0 and (state.baseline['Base.SmallHandle'] or 0)==0 and (state.baseline['Base.WoodenSpoon'] or 0)==0,'fresh fixture already has chain outputs')
   object:transmitCompleteItemToClients();object:transmitModData()
@@ -126,12 +136,12 @@ local function onCommand(module,command,player,args)
  elseif command=='PrepareRace' and state then
   assert(state.verified,'race requested before authoritative chain completion')
   if not state.ids.raceSaw then
-   local saw=assert(inv:AddItem('Base.Saw'));saw:setCondition(saw:getConditionMax())
+   local saw=assert(inv:AddItem('Base.Saw'));if Session then Session.ownItem(saw) end;saw:setCondition(saw:getConditionMax())
    state.ids.raceSaw=saw:getID();sendAddItemToContainer(inv,saw)
   end
   if not race then
    local object,crate,ids=surfaceCrate(player,'shared')
-   local log=assert(crate:AddItem('Base.Log'));ids.log=log:getID()
+   local log=assert(crate:AddItem('Base.Log'));if Session then Session.ownItem(log) end;ids.log=log:getID()
    race={object=object,crate=crate,ids=ids,ready={},done={},completed=0}
    object:transmitCompleteItemToClients();object:transmitModData()
   end
@@ -164,3 +174,5 @@ Events.OnClientCommand.Add(function(module,command,player,args)
  local ok,error=pcall(onCommand,module,command,player,args)
  if not ok then print('[CRAFT_TEST] FAIL server '..tostring(command)..' '..tostring(error)) end
 end)
+
+if Session then Session.cleanup=function() Session.cleanOwned();states={};race=nil;return true end end

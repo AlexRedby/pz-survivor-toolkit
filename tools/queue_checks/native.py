@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-from . import adapters
+from . import adapters, worlds, pack
 
 
 VERSION = re.compile(r"\d+(?:\.\d+)*")
@@ -93,7 +93,7 @@ def _validate(selection):
         raise ValueError("Expected kind=sp|mp and mode=toolkit|native")
     for key in ("cases", "mods"):
         values = selection.get(key)
-        if not isinstance(values, list) or not values or any(not isinstance(value, str) or not MOD_ID.fullmatch(value) for value in values):
+        if not isinstance(values, list) or not values or any(not isinstance(value, str) or not MOD_ID.fullmatch(value) or value in ('.', '..') for value in values):
             raise ValueError("Expected nonempty IDs in " + key)
         if len(values) != len(set(values)):
             raise ValueError("Duplicate IDs in " + key)
@@ -154,7 +154,24 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     adapter = adapters.get(selection['suite'])
     if adapter:
         adapter.validate(selection)
-    locations = _locations(project, list(map(Path, workshop)), selection["mods"], selection.get('options', {}).get('mod_sources'))
+    overrides = selection.get('options', {}).get('mod_sources', {})
+    locked = selection.get('options', {}).get('pack_lock')
+    if locked:
+        pinned = pack.validate(locked, project, game, selection['mods'])
+        if any(id not in pinned or Path(path).resolve() != Path(pinned[id]).resolve() for id, path in overrides.items()):
+            raise ValueError('Mod override differs from pack lock; regenerate the lock explicitly')
+        overrides = pinned
+    locations = _locations(project, list(map(Path, workshop)), selection["mods"], overrides)
+    template = selection.get('options', {}).get('world_template')
+    world = None
+    if template:
+        if not isinstance(template, str) or not Path(template).is_absolute():
+            raise ValueError('world_template must be an absolute saved template path')
+        if selection.get('options', {}).get('seed_run'):
+            raise ValueError('Choose world_template or scenario seed_run, not both')
+        template, world = worlds.validate(template, selection, game)
+        if output.is_relative_to(template):
+            raise ValueError('Run output must be outside the world template')
     if any(output.is_relative_to(source) for source in [game, jdk, *locations.values()]):
         raise ValueError("Output must be outside game, JDK and source mod directories")
     if any(char in str(path) for path in (output, game, jdk) for char in (",", ":", "\n", "\r")):
@@ -184,6 +201,10 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         sources.append(Path(selection['config_source']))
     if "ZombieBuddy" in selection["mods"]:
         sources.append(game / "ZombieBuddy.jar")
+    if world:
+        sources += [template / 'world.json', *[template / 'state' / name for name in world['files']]]
+    if locked:
+        sources += [Path(locked), project / 'SurvivorQoL-selected.ini']
     # Pin the native Lua inputs too; a game update must invalidate a prepared run.
     if (game / "media/lua").is_dir():
         sources += sorted((game / "media/lua").rglob("*.lua"))
@@ -193,7 +214,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     for row in manifest:
         source_manifest.update({str(Path(row["source"]) / relative): digest for relative, digest in row["files"].items()})
     roles = adapters.roles(selection)
-    runtime = {"game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
+    runtime = {"project": str(project), "game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
                "java": str(jdk / "bin/java"), "server_name": "queue-smoke", "roles": {}}
     output.mkdir(parents=True)
     for role in roles:
@@ -206,7 +227,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             expected = next(row["files"] for row in manifest if row["id"] == identifier)
             if hashes(target) != expected:
                 raise RuntimeError("Mod changed while copying snapshot: " + identifier)
-            for layer in [target, *[p for p in target.iterdir() if p.is_dir() and (p.name == "common" or VERSION.fullmatch(p.name))]]:
+            for layer in [target, target / 'common', *[p for p in target.iterdir() if p.is_dir() and VERSION.fullmatch(p.name)]]:
                 if layer != target or (layer / "media").is_dir():
                     for sub in ("AnimSets", "actiongroups"):
                         (layer / "media" / sub).mkdir(parents=True, exist_ok=True)
@@ -232,7 +253,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             (cache / "Lua" / (name + ".txt")).write_text(value + "\n", encoding="utf-8")
         (cache / "mods/default.txt").write_text("VERSION = 1,\nmods\n{\n" + "".join(" mod = " + mod + ",\n" for mod in [*selection["mods"], "ActionQueueTest"]) + "}\nmaps\n{\n}\n", encoding="utf-8")
         (cache / "mods/reset-mods-42_00.txt").write_text("Keep isolated native queue fixture selection.\n", encoding="utf-8")
-        (cache / "options.ini").write_text("version=10\nwidth=1280\nheight=720\nfullScreen=false\nborderless=false\nmusicVolume=0\nsoundVolume=0\nvoiceEnable=false\nlanguage=" + language + "\n", encoding="utf-8")
+        (cache / "options.ini").write_text("version=10\nwidth=1280\nheight=720\nfullScreen=false\nborderless=false\nmusicVolume=0\nsoundVolume=0\njumpScareVolume=0\nvehicleEngineVolume=0\nvoiceEnable=false\nlanguage=" + language + "\n", encoding="utf-8")
         approvals = [{"id": identifier, "jar_hash": sha256(jar), "decision": True, "time": "2026-01-01T00:00:00Z"}
                      for identifier in locations for jar in sorted((cache / "mods" / identifier).rglob("*.jar"))]
         _json(cache / "zombie-buddy/mod_approvals.json", {"formatVersion": 2, "mods": approvals})
@@ -248,10 +269,34 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     if selection["kind"] == "mp":
         server = output / "server/Server"
         server.mkdir()
-        (server / "queue-smoke.ini").write_text("Mods=" + ";".join([*selection["mods"], "ActionQueueTest"]) + "\nWorkshopItems=\nMap=Muldraugh, KY\nDefaultPort=" + str(selection["ports"][0]) + "\nUDPPort=" + str(selection["ports"][1]) + "\nPublic=false\nUPnP=false\nOpen=true\nAutoCreateUserInWhiteList=true\nMaxPlayers=4\nPVP=false\nSpawnPoint=10835,10144,0\nPauseEmpty=true\nDoLuaChecksum=true\nVoiceEnable=false\n", encoding="utf-8")
+        (server / "queue-smoke.ini").write_text("Mods=" + ";".join([*selection["mods"], "ActionQueueTest"]) + "\nWorkshopItems=\nMap=Muldraugh, KY\nDefaultPort=" + str(selection["ports"][0]) + "\nUDPPort=" + str(selection["ports"][1]) + "\nPublic=false\nUPnP=false\nOpen=true\nAutoCreateUserInWhiteList=true\nMaxPlayers=4\nPVP=false\nSpawnPoint=10835,10144,0\nPauseEmpty=true\nDoLuaChecksum=true\nSleepAllowed=false\nSleepNeeded=false\nVoiceEnable=false\n", encoding="utf-8")
         (server / "queue-smoke_SandboxVars.lua").write_text("SandboxVars={VERSION=6,Zombies=6,StartMonth=7,StartDay=9,StartTime=2,MinutesPerPage=2.0}\n", encoding="utf-8")
+        if locked:
+            settings = _metadata(project / 'SurvivorQoL-selected.ini')
+            path = server / 'queue-smoke.ini'
+            text = path.read_text()
+            for key in ('Map', 'PVP', 'DoLuaChecksum', 'SleepAllowed', 'SleepNeeded'):
+                if key not in settings:
+                    continue
+                value = settings[key]
+                if not value or key != 'Map' and value not in ('true', 'false'):
+                    raise ValueError('Invalid selected-pack setting: ' + key)
+                if key == 'DoLuaChecksum' and value != 'true':
+                    raise ValueError('Native fixtures require DoLuaChecksum=true')
+                text = re.sub(r'^' + key + r'=.*\n?', '', text, flags=re.M).rstrip('\n') + '\n' + key + '=' + value + '\n'
+            path.write_text(text)
+    if world:
+        worlds.restore(template, world, output, runtime)
     if adapter:
         adapter.stage(project, output, game, jdk, selection, locations, runtime)
+    for role in roles:
+        path = output / role / 'options.ini'
+        settings = path.read_text()
+        for key, value in {'soundVolume': '0', 'musicVolume': '0', 'jumpScareVolume': '0',
+                           'vehicleEngineVolume': '0', 'voiceEnable': 'false'}.items():
+            settings = re.sub(r'^' + key + r'=.*\n?', '', settings, flags=re.M)
+            settings = settings.rstrip('\n') + '\n' + key + '=' + value + '\n'
+        path.write_text(settings)
     if selection['kind'] == 'mp' and runtime['fixture'].get('sandbox'):
         path = output / 'server/Server/queue-smoke_SandboxVars.lua'
         values = {'VERSION': 6, 'Zombies': 6, 'StartMonth': 7, 'StartDay': 9, 'StartTime': 2, 'MinutesPerPage': 2}
@@ -259,6 +304,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         # Sandbox settings are explicit numeric/boolean suite inputs, sealed below.
         text = ','.join(key + '=' + ('true' if value else 'false') if type(value) is bool else key + '=' + str(value) for key, value in values.items())
         path.write_text('SandboxVars={' + text + '}\n')
+    if world:
+        worlds.verify_settings(world, output, runtime)
     extra = runtime['fixture'].get('mods', [])
     if not isinstance(extra, list) or len(set(extra)) != len(extra) or any(not isinstance(id, str) or not MOD_ID.fullmatch(id) or id in selection['mods'] or id == 'ActionQueueTest' for id in extra):
         raise ValueError('Invalid or duplicate generated fixture Mod IDs')
@@ -280,6 +327,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         text = re.sub(r'^Mods=.*$', 'Mods=' + ';'.join(active), path.read_text(), flags=re.M)
         path.write_text(text)
     _json(output / "selection.json", selection)
+    if locked:
+        pack.validate(locked, project, game, selection['mods'])
     _json(output / "manifest.json", manifest)
     _json(output / "source-manifest.json", source_manifest)
     _json(output / "runtime.json", runtime)

@@ -1,5 +1,6 @@
 """Parser/staging tests use synthetic logs; they never claim native game coverage."""
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -10,6 +11,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+from queue_checks import adapters
 from queue_checks.adapters import craft_wishlist as adapter
 
 
@@ -51,6 +53,29 @@ def server_log(value):
     return "\n".join(lines) + "\n"
 
 
+def session_log(value, role):
+    cases = adapter.ordered_cases(value)
+    blocks = [adapter.server_ready(value)] if role == "server" else []
+    for epoch, case in enumerate(cases, 1):
+        receipt = "case=" + case + " epoch=" + str(epoch) + " actor="
+        event = lambda name, actor, suffix="": "[QUEUE_SESSION] " + name + " " + receipt + actor + suffix
+        one = dict(value, cases=[case])
+        blocks.append(event("BEGIN", role))
+        if role == "server":
+            blocks.extend(event("PREPARE", actor) for actor in ("client1", "client2"))
+            blocks += [event("START", role), server_log(one).replace(adapter.server_ready(value), "")]
+            blocks.extend(event("FINISH", actor, " ok=true") for actor in ("client1", "client2"))
+            blocks.append(event("CLEANUP", role, " ok=true"))
+            blocks.extend(event("CLEANUP", actor, " ok=true") for actor in ("client1", "client2"))
+        else:
+            blocks += [event("PREPARE", role), event("START", role), client_log(one, role),
+                       event("FINISH", role, " ok=true"), event("LOCAL_CLEAN", role, " ok=true"),
+                       event("CLEANUP", role, " ok=true")]
+        blocks.append(event("JOINT_CLEAN", role, " ok=true"))
+    blocks.append("[QUEUE_SESSION] COMPLETE case=" + cases[-1] + " epoch=" + str(len(cases)) + " actor=" + role + " cases=" + str(len(cases)))
+    return "\n".join(blocks)
+
+
 class CraftWishlistAdapterTests(unittest.TestCase):
     def test_every_preserved_scenario_and_exact_stage_guards(self):
         catalog = {"suites": adapter.definitions()}
@@ -81,6 +106,365 @@ class CraftWishlistAdapterTests(unittest.TestCase):
                         result = adapter.verify(root, value, catalog)
                     self.assertEqual([], result["issues"])
                     self.assertEqual([expected, expected], [row["outcome"]["preserved_stages"] for row in result["outcomes"]])
+
+
+    def test_grouped_crafting_stages_only_selected_factories_and_one_bootstrap(self):
+        value = dict(selection("crafting-plans", "ui"), cases=["alternatives", "ui", "crafting"])
+        adapter.validate(value)
+        self.assertEqual(["ui", "crafting", "alternatives"], adapter.ordered_cases(value))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = {"roles": {role: {} for role in ("server", "client1", "client2")}}
+            adapter.stage(ROOT, root, None, None, value, {}, runtime)
+            helper = "mods/CraftPlanTest/42/media/lua"
+            paths = [root / "client1" / helper / "client/ZZCraftFixture.lua",
+                     root / "server" / helper / "server/ZZCraftFixture.lua"]
+            lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+            code = r'''local paths={arg[1],arg[2]}
+for _,path in ipairs(paths) do
+ assert(loadfile(path))
+ local hooks={};Events=setmetatable({},{__index=function(t,k)
+  local e={Add=function(fn) hooks[k]=hooks[k] or {};table.insert(hooks[k],fn) end};t[k]=e;return e
+ end})
+ require=function()end
+ ISHandcraftAction={performRecipe=function()end}
+ local lines={'client1','ui,crafting,alternatives','host','12345','password'}
+ getFileReader=function() local i=0;return {readLine=function()i=i+1;return lines[i]end,close=function()end}end
+ dofile(path)
+ assert(#hooks.OnTick==1)
+ if path:find('/client/',1,true)then
+  assert(#hooks.OnGameStart==1 and #hooks.OnMainMenuEnter==1 and #hooks.OnServerCommand==1)
+ else assert(#hooks.OnServerStarted==1 and #hooks.OnClientCommand==1)end
+end
+print('PASS staged selected factories and single event dispatchers')
+'''
+            result = subprocess.run([lua, "-", *map(str, paths)], input=code, text=True, capture_output=True)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            text = paths[0].read_text()
+            self.assertEqual(3, text.count("']=function(QueueCraftSession)"))
+            self.assertEqual(["client1", "ui,crafting,alternatives"], (root / "client1/Lua/craft-fixture.txt").read_text().splitlines()[:2])
+            self.assertIn(ROOT / "tests/native_queue/support/QueueFixtureSession.lua", adapter.sources(ROOT, value))
+
+    def test_real_lua_session_joint_cleanup_stale_duplicate_and_reset_failure(self):
+        lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+        code = r'''local create=dofile(arg[1]);local now=0
+getTimestampMs=function()return now end
+local messages={};sendServerCommand=function(player,module,command,args)messages[#messages+1]={player,module,command,args}end
+local players={client1={getUsername=function()return 'client1'end},client2={getUsername=function()return 'client2'end}}
+local cleanupCount,ran,failReset=0,{},false
+local factories={}
+for _,case in ipairs({'ui','crafting','alternatives'})do
+ factories[case]=function(ctx)
+  ran[#ran+1]=ctx.case
+  ctx.cleanup=function()cleanupCount=cleanupCount+1;assert(not failReset,'reset failed');return true end
+  ctx.events.OnClientCommand.Add(function()ran[#ran+1]='command'end)
+ end
+end
+local function session()
+ local s=create({user='server',cases={'ui','crafting','alternatives'}},factories,true);s.prepare();return s
+end
+local function args(s,actor) return {fixtureCase=s.cases[s.index],fixtureEpoch=s.epoch,fixtureActor=actor,ok=true}end
+local function both(s,command)
+ for _,actor in ipairs({'client1','client2'})do s.receive(command,players[actor],args(s,actor))end
+end
+local s=session();both(s,'Prepare');assert(s.phase=='running')
+local stale=args(s,'client1');both(s,'Finish');assert(s.phase=='clean'and cleanupCount==1)
+s.receive('Cleaned',players.client1,args(s,'client1'));assert(s.index==1)
+s.receive('Cleaned',players.client2,args(s,'client2'));assert(s.index==2 and s.phase=='prepare')
+s.receive('Finish',players.client1,stale);assert(s.phase=='prepare'and s.index==2)
+both(s,'Prepare');both(s,'Finish');both(s,'Cleaned');assert(s.index==3)
+both(s,'Prepare');both(s,'Finish');both(s,'Cleaned');assert(s.phase=='done'and cleanupCount==3)
+s=session();s.receive('Prepare',players.client1,args(s,'client1'));s.receive('Prepare',players.client1,args(s,'client1'));assert(s.phase=='quarantined'and s.index==1)
+s=session();both(s,'Prepare');failReset=true;both(s,'Finish');assert(s.phase=='quarantined'and s.index==1);failReset=false
+s=session();both(s,'Prepare');s.current().cleanup=function()return false,'reset refused'end;both(s,'Finish');assert(s.phase=='quarantined'and s.index==1)
+s=session();both(s,'Prepare');s.quarantine('timeout');both(s,'Finish');assert(s.index==1 and s.phase=='quarantined')
+s=session();now=720001;s.tick();assert(s.phase=='quarantined')
+print('PASS lifecycle barriers, stale receipts, duplicates, reset failure and quarantine')
+'''
+        result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueFixtureSession.lua")],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_grouped_verifier_preserves_each_case_stages_and_joint_clean_receipts(self):
+        value = dict(selection("crafting-plans", "ui"), cases=["ui", "crafting", "alternatives"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for role in ("server", "client1", "client2"):
+                (root / (role + "-launch.log")).write_text(session_log(value, role))
+            result = adapter.verify(root, value, {"suites": adapter.definitions()})
+            self.assertEqual([], result["issues"])
+            self.assertEqual(6, len(result["outcomes"]))
+            self.assertEqual(71, result["evidence"]["preserved_stages_per_client"])
+            self.assertTrue(adapter.complete(value, "client1", (root / "client1-launch.log").read_text()))
+            path = root / "server-launch.log"
+            original = path.read_text()
+            receipt = "[QUEUE_SESSION] JOINT_CLEAN case=ui epoch=1 actor=server ok=true"
+            for broken in (original.replace(receipt, ""), original + "\n" + receipt, original.replace("epoch=1", "epoch=2")):
+                path.write_text(broken)
+                self.assertTrue(adapter.verify(root, value, {"suites": adapter.definitions()})["issues"])
+
+            path.write_text(original)
+            client = root / "client1-launch.log"
+            clean = client.read_text()
+            start = "[QUEUE_SESSION] START case=ui epoch=1 actor=client1"
+            end = "[QUEUE_SESSION] JOINT_CLEAN case=ui epoch=1 actor=client1 ok=true"
+            client.write_text(clean.replace(start, "PLACEHOLDER").replace(end, start).replace("PLACEHOLDER", end))
+            self.assertTrue(adapter.verify(root, value, {"suites": adapter.definitions()})["issues"])
+            client.write_text(clean.replace("COMPLETE checks=28 failures=0", "COMPLETE checks=27 failures=1").replace(
+                "FINISH case=ui epoch=1 actor=client1 ok=true", "FINISH case=ui epoch=1 actor=client1 ok=false"))
+            outcomes = adapter.verify(root, value, {"suites": adapter.definitions()})["outcomes"]
+            self.assertEqual("failed", outcomes[0]["status"])
+            self.assertTrue(all(row["status"] == "passed" for row in outcomes if row["case"] != "ui"), "proved cleanup permits independent following cases")
+            client.write_text(clean)
+            partial = clean[:clean.index("[QUEUE_SESSION] BEGIN case=crafting")]
+            client.write_text(partial + "[QUEUE_SESSION] QUARANTINE case=crafting epoch=2 actor=client1 reason=prepare\n")
+            outcomes = adapter.verify(root, value, {"suites": adapter.definitions()})["outcomes"]
+            self.assertEqual("passed", outcomes[0]["status"], "next prepare quarantine must preserve an already joint-clean case")
+            self.assertEqual("failed", outcomes[2]["status"])
+
+
+    def test_real_lua_prepare_waits_for_native_tick_and_online_player_once_per_case(self):
+        lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+        code = r'''local create=dofile(arg[1]);local now,online,inTick=0,-1,false
+local sent,dropped,instantiated={},0,0
+getTimestampMs=function()return now end
+local player={getOnlineID=function()return online end}
+getPlayer=function()return player end
+sendClientCommand=function(module,command,args)
+ if not inTick then dropped=dropped+1;return end
+ sent[#sent+1]={command=command,case=args.fixtureCase,epoch=args.fixtureEpoch}
+end
+local factories={}
+for _,case in ipairs({'ui','crafting'})do factories[case]=function(ctx)
+ instantiated=instantiated+1;ctx.cleanup=function()return true end;ctx.clean=function()return true end
+end end
+local s=create({user='client1',cases={'ui','crafting'}},factories,false)
+s.prepare();assert(instantiated==1 and #sent==0 and dropped==0,'OnGameStart must only instantiate')
+inTick=true;s.tick();assert(#sent==0,'offline player must wait')
+player=nil;s.tick();assert(#sent==0,'missing player must wait')
+player={getOnlineID=function()return online end};online=4;s.tick()
+assert(#sent==1 and sent[1].command=='Prepare' and sent[1].case=='ui'and sent[1].epoch==1)
+for i=1,20 do s.tick()end;assert(#sent==1 and instantiated==1,'actual Prepare must never retry')
+local first={fixtureCase='ui',fixtureEpoch=1,fixtureActor='client1'}
+s.receive('Start',nil,first);s.current().finish(true,false);s.receive('Clean',nil,first);s.tick();s.receive('JointClean',nil,first)
+inTick=false;s.command('QueueFixtureSession','Next',nil,{fixtureCase='crafting',fixtureEpoch=2,fixtureActor='client1'})
+assert(instantiated==2 and #sent==3 and dropped==0,'Next must also defer transport')
+inTick=true;s.tick();assert(#sent==4 and sent[4].command=='Prepare'and sent[4].case=='crafting'and sent[4].epoch==2)
+for i=1,20 do s.tick()end;assert(#sent==4 and dropped==0)
+getPlayer=function()error('server must never use client readiness')end
+sendClientCommand=function()error('server must never use client transport')end
+local server=create({user='server',cases={'ui'}},factories,true);server.prepare();server.tick()
+assert(server.phase=='prepare')
+print('PASS deferred initial/next Prepare, missing/offline player, no resend and server role isolation')
+'''
+        result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueFixtureSession.lua")],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_grouped_outcomes_pass_common_functional_gate_in_actor_then_selection_order(self):
+        for suite, cases in (("crafting-plans", ["alternatives", "ui", "crafting"]),
+                             ("shared-wishlist", ["standalone", "visual"])):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                value = dict(selection(suite, cases[0]), cases=cases)
+                for role in ("server", "client1", "client2"):
+                    readiness = "" if role == "server" else "".join("[QUEUE_TEST] " + marker + "\n" for marker in (
+                        "VOICE_DISABLED", "DISPLAY_READY", "PREFLIGHT_COMPLETE", "NATIVE_CONNECTED"))
+                    (root / (role + "-launch.log")).write_text(readiness + session_log(value, role))
+                functional, coverage = adapters.functional(root, value, {"suites": adapter.definitions()})
+                self.assertEqual("passed", functional["status"], functional["issues"])
+                self.assertEqual([(role, case) for role in ("client1", "client2") for case in cases],
+                                 [(row["actor"], row["case"]) for row in coverage])
+
+    def test_real_lua_owned_surface_removal_targets_single_native_object_and_confirms_absence(self):
+        lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+        code = r'''local configure=dofile(arg[1]);local session={};configure(session,true)
+local ctx={};session.configure(ctx)
+local owned,neighbor={},{};local present={[owned]=true,[neighbor]=true}
+local network,ignoreRemoval={},false
+local square={getX=function()return 1 end,getY=function()return 2 end,getZ=function()return 0 end,
+ getObjects=function()return{contains=function(_,object)return present[object]==true end}end}
+local empty={getItems=function()return{size=function()return 0 end}end}
+owned.getSquare=function()return square end;owned.getContainer=function()return empty end
+square.transmitRemoveItemFromSquare=function(_,object,includeMulti)
+ -- B42's default multi-square path rejects this incomplete stock table before network/server mutation.
+ if includeMulti~=false then return -1 end
+ network[#network+1]=object
+ if not ignoreRemoval then present[object]=nil end
+ return 0
+end
+ctx.ownObject(owned);ctx.cleanOwned()
+assert(#network==1 and network[1]==owned,'single-object network removal must be sent')
+assert(not present[owned]and present[neighbor],'authoritative owned object must disappear without touching its neighbor')
+ctx.cleanOwned();assert(#network==1,'already removed object must not be transmitted again')
+present[owned]=true;ignoreRemoval=true
+assert(not pcall(ctx.cleanOwned),'broadcast without authoritative removal must fail cleanup')
+assert(present[owned]and present[neighbor],'failed cleanup must preserve server ground truth')
+print('PASS exact native single-object removal, authoritative absence and untouched neighbor')
+'''
+        result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueCraftSession.lua")],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_real_lua_skill_restore_uses_remote_safe_api_and_only_owned_changed_perks(self):
+        lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+        code = r'''local configure=dofile(arg[1]);local session={};configure(session,true)
+Perks={Carving='Carving',Woodwork='Woodwork'}
+local amounts={Carving=12.25,Woodwork=7.75,Fitness=0};local levels={Carving=1,Woodwork=2,Fitness=5}
+local writes,total={},123.75
+local xp={getXP=function(_,perk)return amounts[perk]end,getTotalXp=function()return total end,
+ setTotalXP=function(_,value)total=value end,
+ setXPToLevel=function(_,perk,level)assert(perk~='Fitness'and level==0);amounts[perk]=0 end,
+ AddXP=function(_,perk,value,a,b,c,d)
+  assert(a==false and b==false and c==false and d==false,'native admin overload flags differ')
+  writes[perk]=(writes[perk]or 0)+1;amounts[perk]=amounts[perk]+value
+ end,
+ AddXPNoMultiplier=function()error('local-only wrapper must never restore server remote XP')end}
+local player={getUsername=function()return 'client1'end,getXp=function()return xp end,
+ getMaxWeight=function()return 16 end,getMaxWeightBase=function()return 16 end,
+ setMaxWeight=function()end,setMaxWeightBase=function()end,
+ getPrimaryHandItem=function()end,getSecondaryHandItem=function()end,setPrimaryHandItem=function()end,setSecondaryHandItem=function()end,
+ getPerkLevel=function(_,perk)return levels[perk]end,setPerkLevelDebug=function(_,perk,level)levels[perk]=level end}
+local ctx={};session.configure(ctx);ctx.player(player)
+amounts.Carving=99.75;levels.Carving=3;total=999
+ctx.cleanOwned()
+assert(amounts.Carving==12.25 and levels.Carving==1 and writes.Carving==1)
+assert(amounts.Woodwork==7.75 and levels.Woodwork==2 and not writes.Woodwork,'unchanged skill must not be rewritten')
+assert(amounts.Fitness==0 and levels.Fitness==5 and total==123.75,'unrelated passive skill/total XP differs')
+amounts.Carving=99.75;xp.AddXP=function()end
+local ok,err=pcall(ctx.cleanOwned)
+assert(not ok and err:find('actor=client1',1,true)and err:find('perk=Carving',1,true)and err:find('expectedXP=12.25',1,true)and err:find('actualXP=0',1,true))
+print('PASS actual fixture remote-safe flags, exact fractions, unchanged/unrelated skills and failed-reset diagnostics')
+'''
+        result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueCraftSession.lua")],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_installed_engine_skill_reset_harness(self):
+        game, jdk = os.environ.get("PZ_NATIVE_GAME"), os.environ.get("PZ_NATIVE_JDK")
+        if not game or not jdk:
+            self.skipTest("Set PZ_NATIVE_GAME and PZ_NATIVE_JDK to run real engine XP methods headlessly")
+        jar = Path(game) / "projectzomboid.jar"
+        with tempfile.TemporaryDirectory() as directory:
+            source = ROOT / "tests/native_queue/support/CraftSkillResetChecks.java"
+            compile = subprocess.run([str(Path(jdk) / "bin/javac"), "-d", directory, "-cp", str(jar), str(source)],
+                                     text=True, capture_output=True, timeout=60)
+            self.assertEqual(0, compile.returncode, compile.stdout + compile.stderr)
+            result = subprocess.run([str(Path(jdk) / "bin/java"), "-Djava.awt.headless=true", "-cp", directory + os.pathsep + str(jar),
+                                     "zombie.characters.CraftSkillResetChecks"], text=True, capture_output=True, timeout=60)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertIn("CRAFT_SKILL_RESET_CHECKS_PASS realNative=true localAndRemote=true passiveLevel5Xp0Untouched=true", result.stdout)
+
+    def test_real_lua_cleanup_polling_and_product_pending_receipts(self):
+        lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+        code = r'''local create=dofile(arg[1]);local configure=dofile(arg[2]);local now=0
+getTimestampMs=function()return now end
+local failedAsserts=0;local nativeAssert=assert
+assert=function(value,...)if not value then failedAsserts=failedAsserts+1 end;return nativeAssert(value,...)end
+local entries={{getID=function()return 7 end}}
+local inventory={getItems=function()return{size=function()return #entries end,get=function(_,i)return entries[i+1]end}end}
+getPlayer=function()return{getInventory=function()return inventory end,getOnlineID=function()return 1 end}end
+local setup={};configure(setup,true);local ownership={};setup.configure(ownership)
+for i=1,20 do local ready=ownership.verifyOwned({items={7},squares={}});nativeAssert(ready==false)end
+nativeAssert(failedAsserts==0,'replication lag must not trigger Kahlua logged assertions')
+entries={};nativeAssert(ownership.verifyOwned({items={7},squares={}})==true)
+local output={};sendClientCommand=function(module,command,args)output[#output+1]=command end
+local pending,cleanReady=true,false
+local s=create({user='client1',cases={'visual'},module='WishlistTest'},{visual=function(ctx)
+ ctx.readyToClean=function()return not pending end;ctx.cleanup=function()return true end;ctx.clean=function()return cleanReady,'replicating'end
+ ctx.events.OnGameStart.Add(function()end)
+end},false)
+s.prepare();nativeAssert(#output==0,'OnGameStart must not use the MP transport');s.tick();nativeAssert(output[1]=='Prepare')
+local envelope={fixtureCase='visual',fixtureEpoch=1,fixtureActor='client1'}
+s.receive('Start',nil,envelope);s.current().finish(true,false);nativeAssert(s.phase=='drain')
+for i=1,20 do s.tick()end;nativeAssert(#output==1 and failedAsserts==0)
+pending=false;s.tick();nativeAssert(s.phase=='finish' and output[#output]=='Finish')
+s.receive('Clean',nil,envelope)
+for i=1,20 do s.tick()end;nativeAssert(s.phase=='clean'and failedAsserts==0)
+cleanReady=true;s.tick();nativeAssert(s.phase=='cleaned'and output[#output]=='Cleaned')
+-- Execute the actual Wishlist fixture's pending/raw-reply guards, without stage bodies.
+local state={queue={},lists={}}
+local option={getValue=function()return true end}
+local page={pin=false,inventoryPane={getYScroll=function()return 0 end},getIsVisible=function()return false end}
+getPlayerInventory=function()return page end;getPlayerLoot=function()return page end
+getActivatedMods=function()return{contains=function()return false end}end
+PZSurvivorWishlist={Client={state=function()return state end},UI={windows={}}}
+PZAPI={ModOptions={getOptions=function()return{getOption=function()return option end}end}}
+local lines={'client1','visual,standalone','host','12345','password','PZSurvivorWishlist'}
+getFileReader=function()local i=0;return{readLine=function()i=i+1;return lines[i]end,close=function()end}end
+local events=setmetatable({},{__index=function(t,k)local e={Add=function()end};t[k]=e;return e end})
+QueueWishlistSession={case='visual',events=events};dofile(arg[3]);local ctx=QueueWishlistSession
+nativeAssert(WishlistTestFixture.stageCount==11 and ctx.readyToClean())
+state.pending={requestId='8'};nativeAssert(not ctx.readyToClean());state.pending=nil
+state.queue={{action='set'}};nativeAssert(not ctx.readyToClean());state.queue={}
+ctx.trackRequest('forged');nativeAssert(not ctx.readyToClean())
+ctx.observeProduct('Other','snapshot',{requestId='forged'});nativeAssert(not ctx.readyToClean())
+ctx.observeProduct('PZSurvivorWishlist','snapshot',{requestId='late'});nativeAssert(not ctx.readyToClean())
+ctx.observeProduct('PZSurvivorWishlist','snapshot',{requestId='forged'});nativeAssert(ctx.readyToClean())
+state.error='timeout';nativeAssert(not pcall(ctx.readyToClean),'unknown product effects must fail closed')
+local removed=false
+local square={getX=function()return 0 end,getY=function()return 0 end,getZ=function()return 0 end,
+ transmitRemoveItemFromSquare=function()removed=true end}
+local foreign={getSquare=function()return square end,getContainer=function()return{getItems=function()return{size=function()return 1 end}end}end}
+ownership.ownObject(foreign);nativeAssert(not pcall(ownership.cleanOwned)and not removed,'foreign contents must retain their fixture surface')
+print('PASS quiet replication polling, RPC drain, real Wishlist pending/forged receipt guards')
+'''
+        result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueFixtureSession.lua"),
+                                 str(ROOT / "tests/native_queue/support/QueueCraftSession.lua"),
+                                 str(ROOT / "tests/native_queue/contributions/shared-wishlist/client/ZZWishlist.lua")],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_grouped_wishlist_only_visual_then_standalone(self):
+        value = dict(selection("shared-wishlist", "visual"), cases=["standalone", "visual"])
+        adapter.validate(value)
+        self.assertEqual(["visual", "standalone"], adapter.ordered_cases(value))
+        for cases in (["full", "standalone"], ["reload", "visual"], ["full", "visual", "standalone"]):
+            with self.assertRaisesRegex(ValueError, "separate isolated"):
+                adapter.validate(dict(value, cases=cases))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            runtime = {"roles": {role: {} for role in ("server", "client1", "client2")}}
+            adapter.stage(ROOT, root, None, None, value, {}, runtime)
+            lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+            code = r'''local hooks={};Events=setmetatable({},{__index=function(t,k)
+ local e={Add=function(fn)hooks[k]=hooks[k]or{};table.insert(hooks[k],fn)end};t[k]=e;return e end})
+local lines={'client1','visual,standalone','host','12345','password','PZSurvivorWishlist'}
+getFileReader=function()local i=0;return{readLine=function()i=i+1;return lines[i]end,close=function()end}end
+assert(loadfile(arg[1]))();assert(#hooks.OnGameStart==1 and #hooks.OnTick==1 and #hooks.OnServerCommand==1)
+assert(loadfile(arg[2]))
+print('PASS grouped Wishlist generated Lua and single bootstrap')
+'''
+            base = root / "client1/mods/WishlistTest/42/media/lua"
+            result = subprocess.run([lua, "-", str(base / "client/ZZWishlist.lua"), str(base / "server/ZZWishlist_Server.lua")],
+                                    input=code, text=True, capture_output=True)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            for role in ("server", "client1", "client2"):
+                (root / (role + "-launch.log")).write_text(session_log(value, role))
+            result = adapter.verify(root, value, {"suites": adapter.definitions()})
+            self.assertEqual([], result["issues"])
+            self.assertEqual(37, result["evidence"]["preserved_stages_per_client"])
+            self.assertEqual(4, len(result["outcomes"]))
+            self.assertEqual([(role, case) for role in ("client1", "client2") for case in value["cases"]],
+                             [(row["actor"], row["case"]) for row in result["outcomes"]])
+            runtime = {"server_name": "queue-smoke", "roles": {role: {"cache": str((root / role).resolve())} for role in ("server", "client1", "client2")}}
+            evidence = {"selection.json": value, "runtime.json": runtime,
+                        "execution.json": {"status": "completed", "processes": {role: {"exit_code": 0} for role in runtime["roles"]}},
+                        "report.json": {"status": "passed", "functional": {"status": "passed"}, "provenance": {"verified": True},
+                                        "runtime": {"status": "clean", "microphone": False, "roles": {role: {"available": True} for role in runtime["roles"]}}}}
+            for name, data in evidence.items():
+                (root / name).write_text(json.dumps(data))
+            world = root / "server/Saves/Multiplayer/queue-smoke/global_mod_data.bin"
+            world.parent.mkdir(parents=True);world.write_bytes(b"clean-world")
+            slot = adapter._store_prefix(root / "server", "queue-smoke") / "a.txt"
+            slot.parent.mkdir(parents=True);slot.write_text("PZSW\t1\t19\nEND\tfixture\n")
+            reload = dict(selection("shared-wishlist", "reload"), options={"seed_run": str(root)})
+            with patch("queue_checks.report.verify_manifest", return_value=[]):
+                self.assertEqual([world, slot], adapter._seed(reload)[1])
+                log = root / "client1-launch.log"
+                log.write_text(log.read_text().replace("JOINT_CLEAN case=visual", "MISSING case=visual"))
+                with self.assertRaisesRegex(ValueError, "native assertions are incomplete"):
+                    adapter._seed(reload)
 
     def test_identical_reload_headers_are_allowed_but_conflicting_headers_fail(self):
         value = selection("crafting-plans", "crafting")
@@ -136,7 +520,7 @@ class CraftWishlistAdapterTests(unittest.TestCase):
 
     def test_selection_rejects_invalid_controls_and_missing_dependencies(self):
         value = selection("crafting-plans", "crafting")
-        for changes in ({"mode": "native"}, {"kind": "sp"}, {"clients": 1}, {"cases": ["crafting", "ui"]},
+        for changes in ({"mode": "native"}, {"kind": "sp"}, {"clients": 1}, {"cases": ["crafting", "crafting"]},
                         {"ports": [18061, 18063]}, {"mods": ["PZSurvivorToolkit"]}):
             with self.assertRaises(ValueError):
                 adapter.validate(dict(value, **changes))

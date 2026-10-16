@@ -1,11 +1,15 @@
+local Session=QueueWishlistSession
+local Events=Session and Session.events or Events
 -- Intake fixture: install only in disposable two-client native MP caches.
 local failures,connecting,advanced=0,false,false
 local reader=assert(getFileReader('wishlist-fixture.txt',false),'Missing wishlist fixture configuration')
 local config={};for _,key in ipairs({'user','mode','host','port','password','mods'})do config[key]=assert(reader:readLine(),'Missing '..key)end;reader:close()
+if Session then config.mode=Session.case end
 local user=config.user;assert(user=='client1'or user=='client2','Expected two fixed fixture actors')
 assert(config.mode=='full'or config.mode=='standalone'or config.mode=='reload'or config.mode=='visual','Invalid fixture mode')
 local standalone=not getActivatedMods():contains('PZSurvivorToolkit')
 local reload=config.mode=='reload'
+if not Session then
 Events.OnConnected.Add(function()connecting=true end)
 Events.OnMainMenuEnter.Add(function()
  if connecting or isClient()then return end;connecting=true
@@ -18,7 +22,11 @@ Events.OnPreUIDraw.Add(function()
   MainScreen.instance.charCreationProfession:onOptionMouseDown({internal='NEXT'});MainScreen.instance.charCreationMain:onOptionMouseDown({internal='NEXT'})
  end
 end)
+end
 local ids,data,stages,step,lastStage,started,lastReady=nil,{},{},1,0,nil,0
+local function fixtureSend(command,args)
+ if Session then Session.send(command,args) else sendClientCommand('WishlistTest',command,args or {}) end
+end
 local function stage(name,fn,delay)stages[#stages+1]={name,fn,delay or 2}end
 local function joint(name,key,observe,after,delay)
  stage(name,observe,delay);stages[#stages].barrier=key;stages[#stages].after=after
@@ -164,7 +172,7 @@ else
  stage('combined reachable loot highlights item rows',function()local page=getPlayerLoot(0);selectCombinedLoot(page);checkHighlight(page,'Base.Nails')end)
  stage('Neat Crafting panel integrates wishlist',function()
   ISEntityUI.OpenHandcraftWindow(getPlayer(),nil,'*',false)
-  local window=assert(ISEntityUI.GetWindowInstance(0,'HandcraftWindow'));data.nc=window
+  local window=assert(ISEntityUI.GetWindowInstance(0,'HandcraftWindow'));data.nc=window;if Session then Session.ownWindow(window) end
   data.ncPanel=checkCraft(window,'Neat Crafting')
  end)
  stage('Neat Crafting parses real recipe inputs and outputs',function()
@@ -176,7 +184,7 @@ else
  end)
  stage('Neat Building panel integrates wishlist',function()
   ISEntityUI.OpenBuildWindow(getPlayer(),nil,nil,true,ScriptManager.instance:getAllBuildableRecipes():get(0))
-  local window=assert(ISEntityUI.GetWindowInstance(0,'BuildWindow'));if standalone then checkCraft(window,'Native building');return end;if not window.logic:getRecipe() then window.logic:setRecipe(ScriptManager.instance:getAllBuildableRecipes():get(0))end;window:showBuildingInfoPanel();window.BuildingInfoPanel:setVisible(true);checkCraft(window.BuildingInfoPanel,'Neat Building');window:setVisible(false)
+  local window=assert(ISEntityUI.GetWindowInstance(0,'BuildWindow'));if Session then Session.ownWindow(window) end;if standalone then checkCraft(window,'Native building');return end;if not window.logic:getRecipe() then window.logic:setRecipe(ScriptManager.instance:getAllBuildableRecipes():get(0))end;window:showBuildingInfoPanel();window.BuildingInfoPanel:setVisible(true);checkCraft(window.BuildingInfoPanel,'Neat Building');window:setVisible(false)
  end)
  stage('Project Cook lazy recipe panel integrates wishlist',function()
   PJCK_CookingUI.OnOpenPanel(getPlayer(),nil);local window=assert(PJCK_CookingUI.GetWindowInstance(0))
@@ -210,12 +218,12 @@ else
   if user=='client1'then W().Client.edit(0,'share',{members={},faction=false})end
  end)
  stage('explicit revocation removes cached shared list',function()
-  if user=='client2'then assert(not list('client1'));sendClientCommand(getPlayer(),'PZSurvivorWishlist','request',
+  if user=='client2'then assert(not list('client1'));if Session then Session.trackRequest('forged') end;sendClientCommand(getPlayer(),'PZSurvivorWishlist','request',
    {action='set',listId='client1',revision=data.lastRevision,fullType='Base.Hammer',amount=900,requestId='forged'})end
  end)
  stage('revoked editor is rejected authoritatively',function()
   if user=='client2'then assert(W().Client.state(0).error=='forbidden')else assert(list('client1').entries['Base.Hammer'].amount<900)end
-  if user=='client1'then sendClientCommand('WishlistTest','Faction',{})end
+  if user=='client1'then fixtureSend('Faction',{})end
  end)
  stage('owner enables current faction access',function()
   if user=='client1'then W().Client.edit(0,'share',{members={},faction=true})end
@@ -227,7 +235,7 @@ else
  joint('faction edit reaches owner','faction-edit-observed',function()
   assert(list('client1').entries['Base.Nails'].amount==5)
  end,function()
-  if user=='client1'then sendClientCommand('WishlistTest','Faction',{remove=true})end
+  if user=='client1'then fixtureSend('Faction',{remove=true})end
  end)
  joint('faction departure revokes access without another list edit','faction-revocation-observed',function()
   if user=='client2'then assert(not list('client1'),'stale faction access')end
@@ -236,13 +244,13 @@ else
  end,7)
  stage('visible loose wanted item highlights without claiming container',function()
   local it=getPlayer():getCurrentSquare():AddWorldInventoryItem('Base.Hammer',0.4,0.4,0);data.world=it:getWorldItem()
-  assert(data.world);getPlayer():getCurrentSquare():setIsSeen(0,true)
+  assert(data.world);if Session then Session.ownWorld(data.world) end;getPlayer():getCurrentSquare():setIsSeen(0,true)
  end)
  stage('ground highlight uses wishlist colour',function()
   assert(W().Highlighter.getStatus().lastError==nil,tostring(W().Highlighter.getStatus().lastError))
   local object=data.world;assert(object:isHighlighted(0),'visible wanted item not highlighted')
   assert(math.abs(object:getHighlightColor(0):getG()-.85)<.01,'Toolkit colour won')
-  W().Client.select(0,'client1');sendClientCommand('WishlistTest','Verify',{})
+  W().Client.select(0,'client1');fixtureSend('Verify',{})
  end,4)
  stage('authoritative final list is ready for restart check',function()
   assert(data.Verified and data.Verified.ok);assert(list('client1').entries['Base.Hammer'].amount==7)
@@ -256,7 +264,7 @@ if config.mode=='visual' then
  stages={}
  stage('native handcraft window opens',function()
   ISEntityUI.OpenHandcraftWindow(getPlayer(),nil,'*',false)
-  data.visual=assert(ISEntityUI.GetWindowInstance(0,'HandcraftWindow'))
+  data.visual=assert(ISEntityUI.GetWindowInstance(0,'HandcraftWindow'));if Session then Session.ownWindow(data.visual) end
  end)
  stage('native handcraft final rendered layout',function()
   local b,p=findButton(data.visual);assert(b and b:getWidth()>60 and b:getY()>0)
@@ -266,7 +274,7 @@ if config.mode=='visual' then
  stage('native building window opens',function()
   data.visual:setVisible(false)
   ISEntityUI.OpenBuildWindow(getPlayer(),nil,nil,true,ScriptManager.instance:getAllBuildableRecipes():get(0))
-  data.visual=assert(ISEntityUI.GetWindowInstance(0,'BuildWindow'))
+  data.visual=assert(ISEntityUI.GetWindowInstance(0,'BuildWindow'));if Session then Session.ownWindow(data.visual) end
  end)
  stage('native building final rendered layout',function()
   local b,p=findButton(data.visual);assert(b and b:getWidth()>60 and b:getY()>0,'button did not receive final layout')
@@ -314,7 +322,7 @@ local stageNames={};for _,spec in ipairs(stages)do stageNames[#stageNames+1]=spe
 WishlistTestFixture={stageCount=#stages,mode=config.mode,standalone=standalone,stageNames=stageNames,stages=stages,checkHighlight=checkHighlight,separate=separate}
 Events.OnGameStart.Add(function()
  print('[WISHLIST_TEST] CONNECTED '..user..' language='..tostring(getCore():getOptionLanguageName()))
- if user=='client2'and not reload then local p=getPlayer();p:teleportTo(math.floor(p:getX())+8,math.floor(p:getY())+8,0)end
+ if user=='client2'and not reload and not Session then local p=getPlayer();p:teleportTo(math.floor(p:getX())+8,math.floor(p:getY())+8,0)end
  started=getTimestampMs();if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
 end)
 Events.OnServerCommand.Add(function(module,command,args)
@@ -328,8 +336,11 @@ local function finish(s,ok,err,now)
  if not ok then failures=failures+1 end
  print('[WISHLIST_TEST] '..(ok and'PASS 'or'FAIL ')..s[1]..' '..tostring(err))
  step=step+1;lastStage=now
- if not ok and s.barrier then aborted=true end
- if step>#stages or aborted then print('[WISHLIST_TEST] COMPLETE checks='..(step-1)..' failures='..failures)end
+ if not ok and (s.barrier or Session) then aborted=true end
+ if step>#stages or aborted then
+  print('[WISHLIST_TEST] COMPLETE checks='..(step-1)..' failures='..failures)
+  if Session then Session.finish(failures==0,(not ok and s.barrier~=nil) or tostring(err):find('deadline',1,true)~=nil) end
+ end
 end
 Events.OnTick.Add(function()
  local now=getTimestampMs()
@@ -342,10 +353,58 @@ Events.OnTick.Add(function()
   end
   return
  end
- if not ids then if started and now-started>2000 and now-lastReady>1000 then lastReady=now;sendClientCommand('WishlistTest','Ready',{})end;return end
+ if not ids then if started and now-started>2000 and now-lastReady>1000 then lastReady=now;fixtureSend('Ready',{})end;return end
  local s=stages[step];if not s or now-lastStage<s[3]*1000 then return end
  local ok,err=pcall(s[2])
  if ok and s.barrier then
-  pending={spec=s,since=now};sendClientCommand('WishlistTest','Observed',{key=s.barrier})
+  pending={spec=s,since=now};fixtureSend('Observed',{key=s.barrier})
  else finish(s,ok,err,now)end
 end)
+
+if Session then
+ local state=W().Client.state(0)
+ local option=PZAPI.ModOptions:getOptions('PZSurvivorWishlist'):getOption('Crafting')
+ local originalOption,originalWindow=option:getValue(),W().UI.windows[0]
+ local pages={};for _,page in ipairs({getPlayerInventory(0),getPlayerLoot(0)}) do
+  pages[#pages+1]={page=page,visible=page:getIsVisible(),pin=page.pin,scroll=page.inventoryPane:getYScroll(),inventory=page.inventoryPane.inventory,
+   smoothTarget=page.inventoryPane.smoothScrollTargetY,smooth=page.inventoryPane.smoothScrollY}
+ end
+ local worlds,requests,windows={},{},{}
+ Session.ownWindow=function(window) windows[window]=true end
+ Session.ownerKey='WishlistTestOwner'
+ Session.trackRequest=function(id) assert(not requests[id],'duplicate raw fixture product request');requests[id]=true end
+ Session.observeProduct=function(module,command,args)
+  if module=='PZSurvivorWishlist' and command=='snapshot' and args and args.requestId then requests[args.requestId]=nil end
+ end
+ Session.ownWorld=function(world) worlds[#worlds+1]={world=world,square=world:getSquare()} end
+ Session.readyToClean=function()
+  assert(state.error~='timeout','product request timed out with unknown effects')
+  if state.pending or #state.queue>0 or next(requests) then return false end
+  return true
+ end
+ Session.cleanup=function()
+  assert(Session.readyToClean(),'product requests still pending')
+  assert(not getPlayer():hasTimedActions(),'native actions still active')
+  local queue=ISTimedActionQueue.getTimedActionQueue(getPlayer());assert(#queue.queue==0,'native queue still active')
+  local window=W().UI.windows[0];if window and window~=originalWindow then window:close() end
+  for window in pairs(windows) do window:close() end
+  for _,entry in ipairs(worlds) do if entry.square:getWorldObjects():contains(entry.world) then entry.square:transmitRemoveItemFromSquare(entry.world) end end
+  W().UI.windows[0]=originalWindow;option:setValue(originalOption)
+  assert(option:getValue()==originalOption and not getCore():isDoingTextEntry(),'Wishlist option/focus did not restore')
+  pending=nil;data={};Session.restoreClient()
+  return true
+ end
+ Session.clean=function(receipt)
+  local ready,reason=Session.verifyOwned(receipt);if not ready then return false,reason end
+  for _,entry in ipairs(worlds) do if entry.square:getWorldObjects():contains(entry.world) then return false,'owned loose item remains' end end
+  for _,entry in ipairs(pages) do
+   local page=entry.page
+   if entry.pin then page:setPinned() else page:collapse() end
+   page.inventoryPane.inventory=entry.inventory;page.inventoryPane:refreshContainer();page.inventoryPane:setYScroll(entry.scroll)
+   page.inventoryPane.smoothScrollTargetY=entry.smoothTarget;page.inventoryPane.smoothScrollY=entry.smooth;page:setVisible(entry.visible)
+  end
+  assert(Session.readyToClean(),'late product request appeared during reset')
+  assert(not state.error or state.error=='stale_revision','unresolved product error after reset')
+  return true
+ end
+end
