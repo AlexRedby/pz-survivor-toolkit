@@ -85,7 +85,8 @@ def check_reverse_analyzer(analyzer):
             distance = max(0, min(elapsed, stop)-1000)/1000*(.3 if cargo == 'full' else .5)
             x, y = -distance*math.cos(math.pi*.75), -distance*math.sin(math.pi*.75)
             speed = .36 if cargo == 'full' else .56
-            lines.append(f'[WOOD_BANK_SAMPLE] case={name} wall={start+elapsed} elapsed={elapsed} run=false sprint=false speed={speed} pace=1.04 stepY=-0.56 x={x} y={y} ramp=heading:{heading}')
+            gait = (1 if 3500 <= elapsed < 5500 else 2 if 5500 <= elapsed < 7500 else 0) if spec == 'back-modifiers' else (2 if 'back-arc' in spec and 3500 <= elapsed < 6500 else 0)
+            lines.append(f'[WOOD_BANK_SAMPLE] case={name} wall={start+elapsed} elapsed={elapsed} run=false sprint=false requestedGait={gait} speed={speed} pace=1.04 stepY=-0.56 x={x} y={y} ramp=heading:{heading}')
     lines.append('[WOOD_BANK] ALL_COMPLETE cases=20')
     valid = '\n'.join(lines)
     assert analyzer['analyze'](valid)['motionPass']
@@ -98,6 +99,24 @@ def check_reverse_analyzer(analyzer):
             pass
         else:
             raise AssertionError('Malformed motion evidence must fail')
+    missing_modifiers = '\n'.join(line for line in lines if not (
+        '[WOOD_BANK_SAMPLE]' in line and 'back-modifiers' in line
+        and 3500 <= int(re.search(r'elapsed=(\d+)', line)[1]) < 7500))
+    stationary_arcs = '\n'.join(re.sub(r'x=([^ ]+) y=([^ ]+)', 'x=0 y=0', line)
+                                if '[WOOD_BANK_SAMPLE]' in line and 'back-arc' in line else line for line in lines)
+    forward_arcs = '\n'.join(re.sub(r'x=([^ ]+) y=([^ ]+)', lambda m: f'x={-float(m[1])} y={-float(m[2])}', line)
+                             if '[WOOD_BANK_SAMPLE]' in line and 'back-arc' in line else line for line in lines)
+    false_passes = []
+    for label, invalid in [('missing modifier stages', missing_modifiers), ('stationary arcs', stationary_arcs),
+                           ('forward arcs', forward_arcs), ('wrong requested gait', re.sub(r'requestedGait=[12]', 'requestedGait=0', valid)),
+                           ('invalid native boolean', valid.replace('run=false', 'run=unknown'))]:
+        try:
+            passed = analyzer['analyze'](invalid)['motionPass']
+        except AssertionError:
+            passed = False
+        if passed:
+            false_passes.append(label)
+    assert not false_passes, 'Invalid motion evidence passed: '+', '.join(false_passes)
 
 
 def check_lua(executable):

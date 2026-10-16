@@ -17,13 +17,16 @@ def read_samples(log, starts):
     for line in log.splitlines():
         if '[WOOD_BANK_SAMPLE]' not in line:
             continue
-        data = dict(re.findall(r'(case|wall|elapsed|run|sprint|speed|pace|stepY|x|y|ramp)=([^ ]+)', line))
+        data = dict(re.findall(r'(case|wall|elapsed|run|sprint|requestedGait|speed|pace|stepY|x|y|ramp)=([^ ]+)', line))
         name = data['case']
         if name not in starts or not starts[name] <= int(data['wall']) <= starts[name] + 12000:
             continue
         row = {key: float(data[key]) for key in ('elapsed', 'speed', 'pace', 'stepY', 'x', 'y')}
         row['heading'] = float(dict(re.findall(r'(heading):([^,]+)', data['ramp']))['heading'])
         assert all(math.isfinite(value) for value in row.values()), 'Non-finite motion sample'
+        assert data['run'] in ('true', 'false') and data['sprint'] in ('true', 'false'), 'Invalid native gait boolean'
+        assert data['requestedGait'] in ('0', '1', '2'), 'Invalid requested gait'
+        row['requestedGait'] = int(data['requestedGait'])
         row['run'], row['sprint'] = data['run'] == 'true', data['sprint'] == 'true'
         rows[name].append(row)
     return rows
@@ -47,6 +50,11 @@ def analyze(text):
         checks = {'nativeWalk': bool(moving) and all(not row['run'] and not row['sprint'] for row in moving)}
         row = {'case': name, 'checks': checks, 'samples': len(samples), 'yawDegrees': math.degrees(wrap(last-first))}
         if 'back-' in name:
+            stages = [(1800, 3300, 0), (3800, 5300, 1), (5800, 7300, 2), (7800, 9300, 0)] if 'back-modifiers' in name else [(1800, 3300, 0), (3800, 6300, 2), (6800, 9300, 0)]
+            checks['requestedGaitStages'] = all(
+                len(observed := [sample for sample in samples if begin < sample['elapsed'] < end]) >= 5
+                and all(sample['requestedGait'] == gait for sample in observed)
+                for begin, end, gait in stages)
             checks['backwardStep'] = all(sample['stepY'] < 0 for sample in moving)
             settled = [sample for sample in moving if sample['elapsed'] > 4500]
             checks['authoredPace'] = bool(settled) and all(abs(sample['pace']-1.04) < .002 for sample in settled)
@@ -59,6 +67,9 @@ def analyze(text):
                 row['reverseDistance'], row['lateralDrift'] = -forward, side
             else:
                 checks['reverseArcSettles'] = abs(wrap(last-math.pi*.75)) < math.radians(2)
+                travel = [(b['x']-a['x'])*math.cos(a['heading'])+(b['y']-a['y'])*math.sin(a['heading'])
+                          for a, b in zip(moving, moving[1:])]
+                checks['reverseArcTravel'] = sum(travel) < -.1 and sum(max(0, value) for value in travel) < .01
             row['meanWalkSpeed'] = sum(sample['speed'] for sample in settled)/len(settled)
         else:
             wanted = 180 if 'u-turn' in name else 90

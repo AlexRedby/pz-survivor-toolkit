@@ -17,4 +17,4 @@ Preserved intakes from the other chats:
 | `crafting-plans` | Chains, shared inputs, Neat UI and ingredient alternatives | Parameterized historical MP scenarios; event/receipt adapter pending |
 | `shared-wishlist` | Shared edits/access, persistence and UI fixtures | Server/client preparation preserved; current native revalidation pending |
 | `item-tags` | Five screenshot/assertion scenes and preparation test | Needs Toolkit 0.1.53+ and listed UI mods; common-runner adapter pending |
-| `wooden_cart_motion` | Input bridge, disposable area, 16 clip scenarios and mesh/palette/grip probes with analyzers | Needs candidate cart-motion APIs absent from queue main; common-runner launch/attachment/analysis adapter pending |
+| `wooden_cart_motion` | Input bridge, disposable area, 16 Sprint and 20 reverse/turn scenarios, mesh/palette/grip probes and analyzers | Needs candidate cart-motion APIs absent from queue main; reverse motion passed with a known trousers intersection; common-runner adapter pending |

@@ -42,6 +42,7 @@
       "CartSteeringHooks.states -> State.pace.speed/velocity",
       "State.sprintMomentum",
       "State.load",
+      "State.heading",
       "CartSteeringHooks.lean(IsoPlayer)",
       "CartLegPace.targetSpeed(IsoPlayer,float,float)"
     ],
