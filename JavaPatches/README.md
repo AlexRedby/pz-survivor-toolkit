@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` **0.1.9** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; this is not an established fix for minute-long vehicle freezes or every movement jerk.
+`PZToolkitJavaPatches` **0.1.11** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
 
 ## Prepare and install
 
@@ -8,7 +8,7 @@ Use the [combined installation guide](../MOD_INSTALL.md#prepare-once) to build a
 
 ## Server loader
 
-Host starts a separate Java process. Loading ZombieBuddy only in the client does not guarantee the server VHS patch is active.
+Host starts a separate Java process. Loading ZombieBuddy only in the client does not guarantee the server VHS and vehicle ownership patches are active.
 
 ### Host: save approvals first
 
@@ -45,9 +45,9 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 
 ### Verify activation
 
-Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true, video=true, animal=true, equipment=true, hutch=true, properties=true, fluids=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
+Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, vehicleOwnership=true, media=true, build=true, video=true, animal=true, equipment=true, hutch=true, properties=true, fluids=true, fences=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
 
-- Server: `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
+- Server: `[ZB] Transformed: zombie.vehicles.BaseVehicle`, `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
 - Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI`, `[ZB] Transformed: zombie.vehicles.VehicleInterpolation` `[ZB] Transformed: zombie.characters.NetworkPlayerAI` and `[ZB] Transformed: zombie.network.packets.EquipPacket`.
 - Client and server fluid parser: `[ZB] Transformed: zombie.scripting.entity.components.fluids.FluidContainerScript`.
 - Client and server property fallback: `[ZB] Transformed: zombie.core.properties.IsoPropertyType`.
@@ -91,7 +91,7 @@ Version 0.1.8 normalizes the two shipped `ContainerName` tokens `Large Bucket` a
 
 ## Native fence validation and font pages
 
-Version 0.1.9 leaves native fence registration, debris and gameplay methods intact. It validates sound properties after `OnLoadedTileDefinitions` callbacks finish and accepts native `FenceTypeLow` values as well as `ThumpSound`. Reset clears deferred validation. Both empty events and completed callbacks drain the validation once; queued callbacks finish on actual dispatch. The completion marker reports `Fence validation ready: checked=42, missing=2` for the shipped definitions. Unsupported or modified target bytecode retains native behavior. The shipped `carpentry_02_48/49` entries still lack both properties and remain reported in the server log; no sound values or map/save data are invented.
+Version 0.1.9 leaves native fence registration, debris and gameplay methods intact. It validates sound properties after `OnLoadedTileDefinitions` callbacks finish and accepts native `FenceTypeLow` values as well as `ThumpSound`. Reset clears deferred validation. Both empty events and completed callbacks drain the validation once; queued callbacks finish on actual dispatch. The completion marker reports `Fence validation ready: checked=42, missing=2` for the shipped definitions. Unsupported or modified target bytecode retains native behavior. In 0.1.9 the shipped `carpentry_02_48/49` entries lack both properties and remain reported in the server log (the data correction in 0.1.11 is described below); no sound values or map/save data are invented.
 
 The font patch makes the two native main-font atlas entries available before initial font construction and corrects the native Dialogue page typo. Exact font-definition, UI-pack and engine-class hashes guard the correction; existing PNG overrides and custom font definitions retain their native handling. Glyph checks compare UV coordinates and decoded alpha/RGB pixels against the shipped atlas. They do not prove GPU rendering.
 
@@ -105,6 +105,20 @@ Retain any existing loader options, separating this option with a comma. Keep th
 
 Check `[PZToolkitJavaPatches] Early font phase enabled=true` before native font initialization, the Texture transformation and the ordinary patch activation line (`fences=true`). The normal mod phase still installs the earlier patches; the font phase loads only its Texture advice. Use the separate font JAR here: preloading the ordinary mod JAR would cause ZombieBuddy to skip its later mod entry point. The common test runner opts into the same documented loader path with `options.preload_toolkit_fonts=true`, using only its sealed selected JAR copy. Default launches remain unchanged.
 
+## Level-three wooden fence metadata
+
+Version 0.1.11 fills the missing `FenceTypeLow=Wood` on `carpentry_02_48/49`, the two faces of the shipped `WoodFenceLvl3` entity. Both lower wooden fence levels already carry that value. The correction requires the exact native property names, values, flags and the native `WoodFenceLvl3` entity binding; changed sprites and any existing type/sound properties remain untouched. It uses the existing alias, preserves sprite/property identities and flags, and never sets `ThumpSound`. The completion marker should report `checked=42, missing=0, corrected=2` on the stock data.
+
+Native player/animal climb and trip selectors and furniture-break sound selection remain the same. The missing material previously prevented animals from emitting their thump sound on these two tiles; the correction enables the native `AnimalThumpGeneric` event, consistently with the lower wooden fence levels. No audio device is opened by the patch itself.
+
+## Piano recipe icon
+
+Version 0.1.11 supplies the missing icon metadata for the exact shipped `Base.Piano` recipe, using its existing native fallback tile `recreational_01_28`. The corrected getter returns the same texture object, atlas coordinates and pixels. It preserves the original entity component set, name, UI eligibility, recipe gameplay fields and save/network format; it does not add `UiConfig`. Explicit mod icons, custom UI configurations, changed entity data, other recipes, missing/failing client textures and unsupported bytecode retain native handling.
+
+The native recipe loader treats icon names as inventory items and would prepend `Item_` to this world tile. A narrowly guarded script-stage hook preserves the corrected icon while leaving native input/prop validation intact, restoring the icon even when that validation throws. Resolution stays on the original script-loading thread. The client log reports `Piano recipe icon corrected: recreational_01_28` when the correction actually runs.
+
+A dedicated server without its GUI already receives `null` from the native texture API. For this same proven Piano recipe, the patch returns that identical `null` before attempting UI resolution, without creating icon metadata, assets or texture jobs. Unrelated missing-configuration diagnostics remain visible. The font bootstrap is independent and keeps its existing explicit startup option.
+
 ## Verification limits
 
 Native-object checks exercise actual patched methods with fixtures; they do not verify live traversal of an existing save, natural WAN packet ordering or long sessions. Use [Java regression commands](../docs/DEVELOPMENT.md#java-development) and the [animal-trailer fixture](../tests/native_queue/contributions/animal-trailer/README.md) for controlled early-equipment, late-trailer-snapshot and synchronization-timer scenarios.
@@ -112,3 +126,37 @@ Native-object checks exercise actual patched methods with fixtures; they do not 
 ## Test instrumentation
 
 Programmatic silent video capture is test-only. Its API, memory limits, encoder handling and checks are in [development: test video](../docs/DEVELOPMENT.md#test-video); the [native fixture](../tests/native_queue/contributions/video-recording/README.md) prepares a disposable profile.
+
+## Vehicle authority recovery and diagnostic logs
+
+Version 0.1.10 repairs an occupied vehicle whose physics owner disagrees with its confirmed server driver. A collision owner can block the normal driver handoff, and a late collision-end packet can leave the car in `Server/-1` authority while the driver remains seated. The server now reconciles authority from the live, reciprocally seated player. Towing root and trailer follow the native root driver's ownership. Empty-car collision handling, packet authorization checks and coordinates are unchanged. A matching owner is not rewritten every frame.
+
+Install the same updated Java mod on the server and clients, save the changed JAR approval and restart them. The repair needs ZombieBuddy **in the Host child/server process**; check `vehicleOwnership=true` and the server's actual `zombie.vehicles.BaseVehicle` transformation.
+
+**The ownership repair is active without a diagnostic flag** on supported B42.21 bytecode. `-Dpz.vehicle.trace=true` only enables logs; it is not a server INI, sandbox or Mod Options setting. Add it to the Java options of the server and every client for one diagnostic run.
+
+**macOS Host:** from the prepared folder, a process-local setting reaches the host player and child server:
+
+```sh
+JDK_JAVA_OPTIONS=-Dpz.vehicle.trace=true ./start-host.command
+```
+
+**Windows Host:** append `"-Dpz.vehicle.trace=true"` to the existing `vmArgs` array in the game's `ProjectZomboid64.json` for the host player, keeping the loader and other arguments. Enable the child server flag only for this launch in PowerShell:
+
+```powershell
+$previousVehicleOptions = $env:JDK_JAVA_OPTIONS
+try {
+    $env:JDK_JAVA_OPTIONS = ($previousVehicleOptions + ' -Dpz.vehicle.trace=true').Trim()
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\start-host.ps1 -Game "D:\SteamLibrary\steamapps\common\ProjectZomboid"
+} finally {
+    $env:JDK_JAVA_OPTIONS = $previousVehicleOptions
+}
+```
+
+`JDK_JAVA_OPTIONS` reaches the child Java launcher; the Windows native client uses its own JSON `vmArgs`, so configure both. **Other clients and dedicated servers:** append the same `-D` property to their JVM arguments (or JSON `vmArgs`) alongside the existing loader, before the Java main class. Restart every affected process. On macOS/Linux Steam clients, include it before the final `--` in the existing Java launch options; the supplied macOS Host helper uses the environment command above instead.
+
+After collecting one run, remove the flag from persistent JVM/JSON/Steam options and restart. The process-local Host environment settings above do not persist between terminal sessions.
+
+`[VEHICLE_SYNC]` lines contain the side, vehicle/local-player/driver/owner IDs, authority, position, towing links, sent/received physics samples and server acceptance. `repair` records the previous authority and the new owner. Tracing is off by default; enabled runs stop after ten minutes from the first occupied/owned vehicle or 5,000 lines, sample each event/vehicle at most once per second, and retain at most 256 sampling keys. Preserve the host/server and both client logs together. The trace does not change packets or vehicle state.
+
+The native regression command checks the original handoff failure, reconciliation guards, idempotency, towing ownership and disabled/enabled trace bounds, alongside the existing Java patch regressions. The vehicle-recovery candidate was validated before integration with the fluid-name guard, using an isolated macOS B42.21 Host test with two connected clients and a child `GameServer -coop`, with microphone capture disabled. It reproduces the authority loss through a controlled collision/entry/release ordering. With the repair, the guest then drives 25.5 tiles with accepted server physics and matching poses on all three processes. Separate live checks cover towing/untowing and driver/passenger seat handoffs. The affected user save, spontaneous incidence and real WAN loss remain separate verification limits.

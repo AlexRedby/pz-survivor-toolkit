@@ -41,6 +41,8 @@ public final class Main {
     // Fail closed after an engine update. Hash original class resources, not transformed bytecode.
     public static final boolean ZOMBIE_SUPPORTED = supports("zombie/characters/NetworkZombieAI.class",
         "87e4f6e43d16dec23f685b4ebad68eb12eaea15ed87dce3fc3c3394f96cd1e3d");
+    public static final boolean VEHICLE_OWNERSHIP_SUPPORTED = supports("zombie/vehicles/BaseVehicle.class",
+        "e7ade19e1e6f66450bef2bd37e52b2afccc7377c4e4571d0fa39435ecdb55661");
     public static final boolean VEHICLE_SUPPORTED = supports("zombie/vehicles/VehicleInterpolation.class",
         "e5096d41b4b94c3eb040c119c1ca35b014bbfe3c742401002b88103a650add56");
     public static final boolean ANIMAL_SUPPORTED = supports("zombie/characters/NetworkPlayerAI.class",
@@ -75,10 +77,24 @@ public final class Main {
             "5b7406a70f33578a47ff417b0b6aa7a2b7a5bebfa00487a60935303f5747fb71")
         && supports("zombie/iso/sprite/IsoSpriteManager.class",
             "2b2a7b9de0ebd5fb4e346a998a1618503422ddffb8098caa365e8b626054e14a")
+        && supports("zombie/entity/components/spriteconfig/SpriteConfigManager.class",
+            "ef52c9f6406c594784183ac8598db2bf3d4a8db7933981956e1d79d7b40ba10e")
         && supports("zombie/core/properties/PropertyContainer.class",
             "bc236f8e9e4e0da8a86b0d1fd19ad8d44a040fe4f67d1baac77401b3b148bd77")
         && supports("zombie/audio/parameters/ParameterFenceTypeLow$FenceType.class",
             "8b69bc70ce19066b64ec887a049320046c2659b4727dd51d4038e4e756bcfd09");
+    public static final boolean PIANO_SUPPORTED = supports("zombie/scripting/entity/GameEntityScript.class",
+            "2863b3af3a0dcef1163268da1469aaba2104a90c2def4f625811e8364cecab29")
+        && supports("zombie/scripting/entity/components/crafting/CraftRecipeComponentScript.class",
+            "aa63d944d55d20277de6d28b032367c4badf39161efc04bbae4a003306675258")
+        && supports("zombie/scripting/entity/components/crafting/CraftRecipe.class",
+            "a5c076d53e68f5cdfcc5bc17239aee1fb2072766471c29070ca84b30bd63c5de")
+        && supports("zombie/scripting/entity/components/spriteconfig/SpriteConfigScript.class",
+            "f80f3e287cf1945ca220b4c8daf5c67daa35f26906c9f72bbde8f99b88b8eb02")
+        && supports("zombie/scripting/ScriptParser.class",
+            "5f33328e2551fd40797697c15a9381b770fb547ac027f199e7dfc9172ac78f87")
+        && supports("zombie/core/textures/Texture.class",
+            "2f4fba9ad6c33a9ba0763a68d16164833a682f7645e61a061f70bfdca33c1f8f");
     public static final boolean MEDIA_SUPPORTED = supports("zombie/radio/devices/DeviceData.class",
         "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102");
     public static final boolean BUILD_SUPPORTED = supports("zombie/core/BuildAction.class",
@@ -106,12 +122,62 @@ public final class Main {
         // Resolve before advice installation; resolving inside another transformer can miss these targets.
         if (PROPERTY_SUPPORTED) IsoPropertyType.values();
         if (FLUID_SUPPORTED) FluidContainerScript.class.getName();
+        if (PIANO_SUPPORTED) {
+            zombie.scripting.entity.GameEntityScript.class.getName();
+            zombie.scripting.entity.components.crafting.CraftRecipeComponentScript.class.getName();
+            zombie.scripting.entity.components.crafting.CraftRecipe.class.getName();
+        }
         boolean fences = FenceValidation.install(FENCE_SUPPORTED);
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
-            + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
+            + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
             + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
-            + ", fences=" + fences);
+            + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED);
+    }
+
+    @Patch(className="zombie.scripting.entity.GameEntityScript", methodName="Load", strictMatch=true)
+    public static class NativePianoDefinition {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.scripting.entity.GameEntityScript entity,
+                                @Patch.Argument(0) String name, @Patch.Argument(1) String body) throws Exception {
+            PianoIcon.loaded(entity, body, Main.PIANO_SUPPORTED);
+        }
+    }
+
+    @Patch(className="zombie.scripting.entity.components.crafting.CraftRecipeComponentScript", methodName="getIconTexture", strictMatch=true)
+    public static class NativePianoIcon {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.scripting.entity.components.crafting.CraftRecipeComponentScript component,
+                                    @Patch.Local("toolkitPianoIcon") zombie.core.textures.Texture texture,
+                                    @Patch.Local("toolkitPianoHandled") boolean handled) throws Exception {
+            handled = PianoIcon.headless(component, Main.PIANO_SUPPORTED);
+            if (!handled) texture = PianoIcon.resolve(component, Main.PIANO_SUPPORTED);
+            handled = handled || texture != null;
+            return handled;
+        }
+
+        @Patch.OnExit
+        public static void exit(@Patch.Local("toolkitPianoIcon") zombie.core.textures.Texture texture,
+                                @Patch.Local("toolkitPianoHandled") boolean handled,
+                                @Patch.Return(readOnly=false) zombie.core.textures.Texture result) {
+            if (handled) result = texture;
+        }
+    }
+
+    @Patch(className="zombie.scripting.entity.components.crafting.CraftRecipe", methodName="OnScriptsLoaded", strictMatch=true)
+    public static class NativePianoIconLifecycle {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.scripting.entity.components.crafting.CraftRecipe recipe,
+                                 @Patch.Argument(0) zombie.scripting.ScriptLoadMode mode,
+                                 @Patch.Local("toolkitPianoTexture") zombie.core.textures.Texture texture) throws Exception {
+            texture = PianoIcon.beginScripts(recipe, Main.PIANO_SUPPORTED);
+        }
+
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.This zombie.scripting.entity.components.crafting.CraftRecipe recipe,
+                                @Patch.Local("toolkitPianoTexture") zombie.core.textures.Texture texture) throws Exception {
+            PianoIcon.endScripts(recipe, texture);
+        }
     }
 
     @Patch(className="zombie.Lua.LuaEventManager", methodName="triggerEvent", strictMatch=true)
@@ -296,6 +362,14 @@ public final class Main {
                 // Sender and initial-spawn decoder use thousandths; update decoder omitted the scale.
                 ai.zombie.setSpeedMod(packet.speedMod / 1000.0f);
             }
+        }
+    }
+
+    @Patch(className="zombie.vehicles.BaseVehicle", methodName="update", warmUp=true)
+    public static class VehicleOwnershipRepair {
+        @Patch.OnExit(suppress=Throwable.class)
+        public static void exit(@Patch.This zombie.vehicles.BaseVehicle car) {
+            VehicleOwnership.reconcile(car, Main.VEHICLE_OWNERSHIP_SUPPORTED);
         }
     }
 

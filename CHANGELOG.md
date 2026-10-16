@@ -285,6 +285,24 @@ The older README associates medicine indicators with this label, but no separate
 
 Previously named **PZ Network Fix** through 0.1.1.
 
+### 0.1.10
+
+- **Fixed:** Reconciled occupied-vehicle physics authority with the validated server driver after the reproduced collision/entry/release race, preserving towing ownership and native packet authorization.
+- **Added:** Bounded, opt-in vehicle diagnostics with `-Dpz.vehicle.trace=true`; the ownership repair itself needs no flag. Updated server/client setup and platform-specific collection instructions.
+- **Changed:** Combined vehicle recovery with the native string-property, fluid-container, fence-validation and early font-page guards from main under a distinct version. The vehicle-recovery candidate in a controlled macOS Host with two connected clients passed post-repair travel, towing/detachment and driver/passenger handoffs; spontaneous user-save and real WAN-loss incidence remain unverified.
+
+### 0.1.9
+
+- **Fixed:** Deferred native fence validation until script loading completed and corrected early font-page resolution. The font guard uses a separate local bootstrap JAR with explicit early loader activation.
+
+### 0.1.8
+
+- **Fixed:** Normalized the two shipped fluid-container name tokens `Large Bucket` and `Fuel Pump` before native parsing, preserving validation for other names.
+
+### 0.1.7
+
+- **Fixed:** Preserved five shipped native string properties without startup enum lookup exceptions, keeping alias IDs, values and string storage.
+
 ### [0.1.6](https://github.com/AlexRedby/pz-survivor-toolkit/commit/761aea81f0c699c34b3a41709d49cecc662dda94)
 
 - **Fixed:** Prevented the B42.21 hutch-unloading crash caused by empty animal slots, while preserving existing animals and the original hutch data in clients, single-player and servers.

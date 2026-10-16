@@ -59,10 +59,12 @@ public final class FenceValidation {
     public static synchronized void tilesLoaded() {
         if (ready) return;
         ready = true;
+        int corrected = FenceProperties.tilesLoaded(IsoSpriteManager.instance, Main.FENCE_SUPPORTED && Main.PROPERTY_SUPPORTED);
         int checked = pending.size(), missing = 0;
         for (String name : pending) if (validate(name)) missing++;
         pending.clear();
-        System.out.println("[PZToolkitJavaPatches] Fence validation ready: checked=" + checked + ", missing=" + missing);
+        System.out.println("[PZToolkitJavaPatches] Fence validation ready: checked=" + checked + ", missing=" + missing
+            + ", corrected=" + corrected);
     }
 
     public static synchronized void reset() {

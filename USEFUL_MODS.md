@@ -228,7 +228,7 @@ Survivor Wishlist usage, settings, persistence and multiplayer behavior are docu
 
 ## 40 Toolkit Java Patches
 
-Toolkit Java Patches v0.1.6 patches B42.21 client vehicle/zombie behavior and server media/build acknowledgements. It is experimental; it is not established as a fix for long vehicle freezes or all movement jerks. Follow the canonical [Java Patches build and installation guide](JavaPatches/README.md); ZombieBuddy 2.3.4+ is required on server and clients. The separately published [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436) (`3801615436`, `AnimalTrailerSyncMPFix`) addresses the server's one-animal-per-update timer issue and requires JAR approval when prompted.
+Toolkit Java Patches v0.1.11 patches B42.21 client vehicle/zombie behavior, server media/build acknowledgements and the reproduced vehicle ownership handoff race. It also includes animal/equipment, hutch, native string-property and fluid-name guards. It is experimental; unrelated causes of persistent vehicle desync remain outside the confirmed fix. Follow the canonical [Java Patches build and installation guide](JavaPatches/README.md), including the [optional vehicle diagnostic flag](JavaPatches/README.md#vehicle-authority-recovery-and-diagnostic-logs); ZombieBuddy 2.3.4+ is required on server and clients. The separately published [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436) (`3801615436`, `AnimalTrailerSyncMPFix`) addresses the server's one-animal-per-update timer issue and requires JAR approval when prompted.
 
 ## 41 SaucedCarts, SaucedWheelbarrow and Wheelbarrow Craft
 
