@@ -38,6 +38,12 @@ def main() -> None:
         from lupa.lua51 import LuaRuntime
     except ImportError as error:
         raise SystemExit("Install the test dependency with: python3 -m pip install lupa") from error
+    if args.quartermaster_source and args.native_action_root:
+        check = LuaRuntime(unpack_returned_tuples=True)
+        check.globals().ProjectRoot = str(ROOT)
+        check.globals().NativePZLuaRoot = str(args.native_action_root)
+        check.globals().NativeQuartermasterLuaRoot = str(args.quartermaster_source)
+        check.execute((ROOT / 'tests/test_quartermaster_craft_ui.lua').read_text(encoding='utf-8'))
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)
     if args.native_mod_options:
