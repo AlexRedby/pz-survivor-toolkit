@@ -18,6 +18,16 @@ def validate(selection):
         raise ValueError('Startup requires loaded, SP/MP, native/toolkit and one EN/RU client')
     if selection['kind'] == 'sp' and selection.get('options', {}).get('world_template'):
         raise ValueError('Startup SP creates a fresh world; restored SP worlds are unsupported')
+    options = selection.get('options', {})
+    if 'startup_connection' in options:
+        connection = options['startup_connection']
+        if (selection['kind'] != 'mp' or not isinstance(connection, dict)
+                or set(connection) != {'username', 'password'}
+                or not isinstance(connection['username'], str)
+                or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}', connection['username'])
+                or not isinstance(connection['password'], str) or not 1 <= len(connection['password']) <= 256
+                or not connection['password'].isprintable()):
+            raise ValueError('startup_connection requires MP, a safe username and a printable password of 1..256 characters')
 
 
 def sources(project, selection):

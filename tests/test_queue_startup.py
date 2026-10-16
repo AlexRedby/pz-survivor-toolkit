@@ -50,6 +50,21 @@ class StartupTests(unittest.TestCase):
         self.assertEqual({p.name for p in sources}, {'ZZStartup.lua', 'ZZStartupServer.lua'})
         self.assertTrue(all('startup' in p.parts for p in sources))
 
+    def test_explicit_connection_is_mp_only_and_validates_both_fields(self):
+        valid = {'username': 'animal-fixture', 'password': 'isolated-native-only'}
+        startup.validate(dict(self.selection, kind='mp', options={'startup_connection': valid}))
+        for connection in (None, [], {}, {'username': 'client1'}, dict(valid, extra=True),
+                           dict(valid, username=''), dict(valid, username='../client1'),
+                           dict(valid, username='x' * 65), dict(valid, username=1),
+                           dict(valid, password=''), dict(valid, password='x' * 257),
+                           dict(valid, password='a\nb'), dict(valid, password='a\rb'),
+                           dict(valid, password='a\0b'), dict(valid, password='a\x01b'),
+                           dict(valid, password='a\x7fb'), dict(valid, password=True)):
+            with self.subTest(connection=connection), self.assertRaises(ValueError):
+                startup.validate(dict(self.selection, kind='mp', options={'startup_connection': connection}))
+        with self.assertRaises(ValueError):
+            startup.validate(dict(self.selection, options={'startup_connection': valid}))
+
     def test_verifier_requires_exact_ordered_native_readiness(self):
         text = self.logs()
         self.assertEqual([], self.verify(text)['issues'])
@@ -85,12 +100,13 @@ class StartupTests(unittest.TestCase):
             self.skipTest('Lua interpreter unavailable')
         code = r'''
 local source=arg[1]
-for _,kind in ipairs({'sp','mp'})do
+for index,kind in ipairs({'sp','mp','mp'})do
  local handlers,logs={},{}
  Events=setmetatable({},{__index=function(self,key)
   local event={Add=function(fn)handlers[key]=fn end};rawset(self,key,event);return event
  end})
- package.loaded.QueueTestSelection={kind=kind,mode='native',port=17463}
+ local connection=index==3 and {username='animal-fixture',password='isolated-native-only'} or nil
+ package.loaded.QueueTestSelection={kind=kind,mode='native',port=17463,options={startup_connection=connection}}
  local ingame,connected,player=false,false,nil
  function isClient()return connected end
  function isIngameState()return ingame end
@@ -101,7 +117,9 @@ for _,kind in ipairs({'sp','mp'})do
   charCreationMain={onOptionMouseDown=function()nexts=nexts+1 end},setDefaultSandboxVars=function()end}}
  MapSpawnSelect={instance={getIsVisible=function()return false end,useDefaultSpawnRegion=function()end,setVisible=function()end}}
  ConnectToServer={instance={connect=function(self,screen,name,user,password,host,unused,port)
-  assert(user=='client1'and port=='17463');connects=connects+1
+  assert(user==(connection and connection.username or 'client1')and port=='17463')
+  assert(password==(connection and connection.password or 'smoke-local-only'),'explicit credentials must reach native connect')
+  connects=connects+1
  end}}
  function getCore()return {setOptionPauseOnFocusloss=function()end}end
  local world={setGameMode=function()end,setWorld=function(self,name)assert(name=='QueueStartup');worlds=worlds+1 end,setMap=function()end}

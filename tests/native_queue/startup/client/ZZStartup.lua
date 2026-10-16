@@ -4,7 +4,8 @@ Events.OnMainMenuEnter.Add(function()
  entered=true
  if config.kind~='mp' or connecting or isClient() then return end
  connecting=true
- ConnectToServer.instance:connect(MainScreen.instance,'Native startup test','client1','smoke-local-only','127.0.0.1','',tostring(config.port),'',false,true,1)
+ local connection=config.options and config.options.startup_connection or {username='client1',password='smoke-local-only'}
+ ConnectToServer.instance:connect(MainScreen.instance,'Native startup test',connection.username,connection.password,'127.0.0.1','',tostring(config.port),'',false,true,1)
 end)
 Events.OnPreUIDraw.Add(function()
  if config.kind=='sp' then
