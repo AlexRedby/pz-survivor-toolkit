@@ -276,6 +276,16 @@ local function returnPlantingSeeds()
   end
  end
 end
+local function returnOriginalFood()
+ local destination=box:getContainerByIndex(0)
+ local items={}
+ for _,key in ipairs({'beans','steak'}) do
+  items[#items+1]=assert(Fixture.find(destination,setup[key]),'food exclusion did not move original '..key)
+ end
+ for _,item in ipairs(items) do
+  ISTimedActionQueue.add(ISInventoryTransferAction:new(getPlayer(),item,destination,source))
+ end
+end
 add(function()
  if not setup then
   if getTimestampMs()-lastReady>1000 then lastReady=getTimestampMs();sendClientCommand('TagBaseline','Ready',{}) end
@@ -583,8 +593,7 @@ if config.plantingTags then
  add(function()
   if not idle() or not awaitPlanting('exclude') then return end
   shot('planting-exclude-sort');pass('planting-exclude-sort')
-  local beans=assert(Fixture.find(box:getContainerByIndex(0),setup.beans),'food exclusion did not move original nonseed Beans')
-  ISTimedActionQueue.add(ISInventoryTransferAction:new(getPlayer(),beans,box:getContainerByIndex(0),source))
+  returnOriginalFood()
   openPlantingRule('restored');ruleVerified.saved=nil;verified.enabled=nil;localReceipts.enabled=nil
   return true
  end)

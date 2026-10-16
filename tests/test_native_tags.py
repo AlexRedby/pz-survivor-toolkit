@@ -239,5 +239,63 @@ class PlantingChecks(unittest.TestCase):
         self.assertEqual(len(lua.globals().traces), 3)
 
 
+class PlantingResetChecks(unittest.TestCase):
+    def test_native_food_returns_restore_both_base_and_planting_receipts(self):
+        try:
+            from lupa.lua51 import LuaRuntime, LuaError
+        except ImportError:
+            self.skipTest('Lua fixture checks require the existing Lupa test dependency')
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        root = Path(__file__).parent / 'native_tags'
+        lua.globals().Fixture = lua.execute((root / 'shared/TagFixture.lua').read_text())
+        client = (root / 'client/ZZTagBaseline.lua').read_text()
+        start = client.index('local function returnOriginalFood()')
+        finish = client.index('\nadd(function()', start)
+        lua.execute('''
+            next=nil
+            instanceof=function() return false end
+            local function container()
+                local c={items={}}
+                function c:getItems() return {size=function() return #c.items end,get=function(_,i) return c.items[i+1] end} end
+                function c:add(id) self.items[#self.items+1]={getID=function() return id end} end
+                return c
+            end
+            source,destination=container(),container()
+            setup={battery=1,apple=2,beans=3,steak=4,planting={}}
+            for _,id in ipairs({1,2,3,4}) do destination:add(id) end
+            for index,entry in ipairs(Fixture.plantingItems) do
+                local id=index+10;setup.planting[entry[1]]=id
+                if entry[1]=='candy' then destination:add(id) else source:add(id) end
+            end
+            box={getContainerByIndex=function() return destination end}
+            getPlayer=function() return 'native-player' end
+            actions={}
+            ISInventoryTransferAction={new=function(_,player,item,from,to)
+                assert(player=='native-player' and from==destination and to==source)
+                return {item=item,from=from,to=to}
+            end}
+            ISTimedActionQueue={add=function(action) actions[#actions+1]=action end}
+            assert(Fixture.plantingReceipt(source,destination,setup.planting,'exclude')=='ready')
+            assert(Fixture.receipt(source,destination,setup,'enabled')=='invalid')
+        ''')
+        restore = lua.execute(client[start:finish] + '\nreturn returnOriginalFood')
+        restore()
+        lua.execute('''
+            assert(#actions==2 and actions[1].item:getID()==setup.beans and actions[2].item:getID()==setup.steak)
+            for _,action in ipairs(actions) do
+                for index,item in ipairs(action.from.items) do
+                    if item==action.item then table.remove(action.from.items,index);break end
+                end
+                action.to.items[#action.to.items+1]=action.item
+            end
+            assert(Fixture.receipt(source,destination,setup,'enabled')=='ready')
+            assert(Fixture.plantingReceipt(source,destination,setup.planting,'restored')=='ready')
+            actions={}
+        ''')
+        with self.assertRaisesRegex(LuaError, 'food exclusion did not move original beans'):
+            restore()
+        self.assertEqual(len(lua.globals().actions), 0)
+
+
 if __name__ == '__main__':
     unittest.main()
