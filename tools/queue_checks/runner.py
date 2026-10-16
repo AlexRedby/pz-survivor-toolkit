@@ -3,17 +3,15 @@ import os
 from pathlib import Path
 import re
 import signal
-import socket
 import subprocess
 import sys
 import time
 
 from .report import events, read_json, verify_manifest, write_json
-from . import adapters
+from . import adapters, admission
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
-GAME_PROCESS = re.compile(r"\b(?:ToolkitSmokeLauncher|ToolkitVideoLauncher|zombie\.network\.GameServer|zombie\.gameStates\.MainScreenState)\b|Project Zomboid\.app/Contents/MacOS/JavaAppLauncher(?:\s|$)")
 
 
 def stop(process):
@@ -33,7 +31,7 @@ def stop(process):
         process.wait(timeout=10)
 
 
-def run(root):
+def run(root, resource_wait=300):
     if sys.platform != "darwin":
         raise ValueError("Native GUI launch currently supports macOS; reports/matrix work on any platform")
     import fcntl
@@ -45,25 +43,16 @@ def run(root):
         raise ValueError("\n".join(changed))
     if list(root.glob("*-launch.log")) or (root / "execution.json").exists():
         raise ValueError("Run directory has already launched; prepare a fresh snapshot")
-    with LOCK.open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
-            raise RuntimeError("Another native run holds " + str(LOCK)) from error
-        process_list = subprocess.check_output(["/bin/ps", "-axo", "pid=,command="], text=True)
-        collisions = [line for line in process_list.splitlines() if GAME_PROCESS.search(line)]
-        if collisions:
-            raise RuntimeError("Existing game process; no launch performed:\n" + "\n".join(collisions))
-        if selection["kind"] == "mp":
-            for port in selection["ports"]:
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as check:
-                    check.bind(("127.0.0.1", port))
+    with admission.acquire(root, selection, runtime, resource_wait, legacy_lock=LOCK) as resources:
+        changed = verify_manifest(root, 'source-manifest.json', True) + verify_manifest(root, 'snapshot-hashes.json')
+        if changed:
+            raise ValueError('Inputs changed while waiting for resources:\n' + '\n'.join(changed))
         processes, streams, displayed = {}, [], set()
-        execution = {"status": "running", "processes": {}, "peer_disconnected": False, 'attachments': []}
+        execution = {"status": "running", "processes": {}, "peer_disconnected": False, 'attachments': [], 'resources': resources}
         game = Path(runtime["game"])
         base = [runtime["java"], "-Djava.awt.headless=true", "--enable-native-access=ALL-UNNAMED",
                 "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED", "-Dzomboid.steam=0",
-                "-Djava.library.path=.", "-Xmx2048m", "-XX:+UseZGC", "-XX:-OmitStackTraceInFastThrow"]
+                "-Djava.library.path=.", "-Xmx" + str(resources["budget"]["heap_mib"]) + "m", "-XX:+UseZGC", "-XX:-OmitStackTraceInFastThrow"]
 
         def text(role):
             path = root / (role + "-launch.log")
@@ -111,8 +100,13 @@ def run(root):
                                check=True, stdout=log, stderr=subprocess.STDOUT, timeout=20,
                                env={key: value for key, value in os.environ.items() if key not in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS')})
 
+        cleaning = False
         def interrupted(signum, frame):
-            raise KeyboardInterrupt("Native run interrupted by signal " + str(signum))
+            message = "Native run interrupted by signal " + str(signum)
+            execution.update(status='failed', interrupted=True)
+            if not cleaning:
+                raise KeyboardInterrupt(message)
+            execution['error'] = '; '.join(filter(None, (execution.get('error'), message)))
 
         previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
         guard = None
@@ -177,35 +171,46 @@ def run(root):
         except (Exception, KeyboardInterrupt) as error:
             execution.update(status="failed", error=str(error), interrupted=isinstance(error, KeyboardInterrupt))
         finally:
-            for role, specs in attached.items():
-                for spec in specs:
-                    if processes[role].poll() is None:
+            cleaning = True
+            try:
+                for role, specs in attached.items():
+                    for spec in specs:
+                        if processes[role].poll() is None:
+                            try:
+                                probe(role, spec, 'stop')
+                            except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+                                execution.update(status='failed', error='Probe close failed: ' + str(error))
+                for role, process in reversed(list(processes.items())):
+                    if role == 'server' and process.poll() is None:
                         try:
-                            probe(role, spec, 'stop')
-                        except (OSError, subprocess.SubprocessError, RuntimeError) as error:
-                            execution.update(status='failed', error='Probe close failed: ' + str(error))
-            for role, process in reversed(list(processes.items())):
-                if role == 'server' and process.poll() is None:
+                            process.stdin.write('save\nquit\n'); process.stdin.flush()
+                            process.wait(timeout=30)
+                        except (AttributeError, BrokenPipeError, OSError, subprocess.TimeoutExpired):
+                            pass
                     try:
-                        process.stdin.write('save\nquit\n'); process.stdin.flush()
-                        process.wait(timeout=30)
-                    except (AttributeError, BrokenPipeError, OSError, subprocess.TimeoutExpired):
-                        pass
-                try:
-                    stop(process)
-                except (OSError, subprocess.SubprocessError) as error:
-                    execution.setdefault('cleanup_errors', []).append(role + ': ' + str(error))
-                execution["processes"][role]["exit_code"] = process.returncode
-            for stream in streams:
-                stream.close()
-            if guard is not None:
-                try:
-                    guard.terminate(); guard.wait(timeout=5)
-                except (OSError, subprocess.SubprocessError) as error:
-                    execution.setdefault('cleanup_errors', []).append('display guard: ' + str(error))
-            for sig, handler in previous.items():
-                signal.signal(sig, handler)
-            if execution.get('cleanup_errors'):
-                execution.update(status='failed', error='; '.join([execution.get('error', ''), *execution['cleanup_errors']]))
-            write_json(root / "execution.json", execution)
+                        stop(process)
+                    except (OSError, subprocess.SubprocessError) as error:
+                        execution.setdefault('cleanup_errors', []).append(role + ': ' + str(error))
+                    execution["processes"][role]["exit_code"] = process.returncode
+                for stream in streams:
+                    try:
+                        stream.close()
+                    except OSError as error:
+                        execution.setdefault('cleanup_errors', []).append('launch log: ' + str(error))
+                if guard is not None:
+                    try:
+                        guard.terminate(); guard.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            guard.kill(); guard.wait(timeout=5)
+                        except (OSError, subprocess.SubprocessError) as error:
+                            execution.setdefault('cleanup_errors', []).append('display guard: ' + str(error))
+                    except (OSError, subprocess.SubprocessError) as error:
+                        execution.setdefault('cleanup_errors', []).append('display guard: ' + str(error))
+                if execution.get('cleanup_errors'):
+                    execution.update(status='failed', error='; '.join([execution.get('error', ''), *execution['cleanup_errors']]))
+                write_json(root / "execution.json", execution)
+            finally:
+                for sig, handler in previous.items():
+                    signal.signal(sig, handler)
         return execution

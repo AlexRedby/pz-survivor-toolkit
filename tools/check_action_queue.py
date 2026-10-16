@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import subprocess
 
-from queue_checks import native, report, runner, adapters
+from queue_checks import native, report, runner, adapters, admission
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
@@ -42,11 +42,15 @@ def selection(args, catalog, options=None):
     for identifier in cases:
         if kind not in all_cases[identifier]['kinds'] or args.mode not in all_cases[identifier].get('modes', ['toolkit', 'native']):
             raise ValueError('Unsupported kind/mode for ' + identifier)
+    resources = getattr(args, 'resources', {})
+    if not isinstance(resources, dict):
+        raise ValueError('resources must be an object')
     return {"schema_version": 1, "suite": args.suite, "mode": args.mode,
             "cases": cases, "mods": mods, 'kind': kind, 'clients': clients, 'options': options,
             'config_source': str(args.config.resolve()) if args.config else None,
             "languages": [language] if clients == 1 else ["EN", "RU"],
-            "timeout_seconds": args.timeout, "ports": args.ports, "expected_checks": len(cases) + 2}
+            "timeout_seconds": args.timeout, "ports": args.ports or [17343, 17344], 'ports_auto': args.ports is None,
+            'resources': dict(admission.DEFAULTS, **resources), "expected_checks": len(cases) + 2}
 
 
 def save_report(output, catalog, control=None):
@@ -78,12 +82,15 @@ def batch(args, catalog):
             options = dict(plan.get('options', {}), **job.get('options', {}))
             if job.get('seed_job'):
                 options['seed_run'] = str(completed[job['seed_job']])
+            if not isinstance(plan.get('resources', {}), dict) or not isinstance(job.get('resources', {}), dict):
+                raise ValueError('Batch resources must be objects')
             namespace = argparse.Namespace(suite=job['suite'], cases=job.get('case'), mode=job.get('mode', 'toolkit'),
                 kind=job.get('kind'), language=job.get('language'), mods=','.join(job['mods']) if job.get('mods') else None,
-                config=args.plan, mod_source=[], timeout=job.get('timeout', 900), ports=job.get('ports', [17343, 17344]))
+                config=args.plan, mod_source=[], timeout=job.get('timeout', 900), ports=job.get('ports'),
+                resources=dict(plan.get('resources', {}), **job.get('resources', {})))
             selected = selection(namespace, catalog, options)
             native.prepare(ROOT, output, Path(plan['game']), Path(plan['jdk']), selected, [Path(p) for p in plan.get('workshop', [])])
-            execution = runner.run(output)
+            execution = runner.run(output, resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
             interrupted = execution.get('interrupted', False)
             control = completed[job['control_job']] if job.get('control_job') else None
             value = save_report(output, catalog, control)
@@ -121,12 +128,18 @@ def main(argv=None):
         command.add_argument("--jdk", type=Path, required=True)
         command.add_argument("--workshop", action="append", type=Path, default=[], help="Repeatable installed Workshop roots")
         command.add_argument("--timeout", type=int, default=3600, help="Total gameplay deadline seconds")
-        command.add_argument("--ports", nargs=2, type=int, default=[17343, 17344])
+        command.add_argument("--ports", nargs=2, type=int, help='Explicit UDP ports; omitted allocates an isolated adjacent pair')
+        command.add_argument('--heap-mib', type=int, default=2048, help='Maximum Java heap per game process')
+        command.add_argument('--native-mib', type=int, default=1024, help='Estimated native/graphics/encoder memory per process, beyond heap')
+        command.add_argument('--cpu-per-instance', type=float, default=1.0, help='Estimated logical CPU budget per game process')
+        command.add_argument('--exclusive', action='store_true', help='Reserve the desktop exclusively for physical input or timing measurements')
         if name == "run":
+            command.add_argument("--resource-wait", type=float, default=300, help="Seconds to wait for admission; 0 refuses immediately")
             command.add_argument("--control", type=Path, help="Completed matching native control run directory")
     command = commands.add_parser("resume", help="Launch a fresh already prepared snapshot")
     command.add_argument("output", type=Path)
     command.add_argument("--control", type=Path)
+    command.add_argument("--resource-wait", type=float, default=300)
     command = commands.add_parser("report", help="Audit a run without launching anything")
     command.add_argument("output", type=Path)
     command.add_argument("--control", type=Path)
@@ -150,17 +163,20 @@ def main(argv=None):
                 print(" | ".join(str(row.get(key, "-")) for key in ("suite", "case", "producer", "capability", "kind", "mode", "status")))
             return 0
         if args.command in ("prepare", "run"):
+            args.resources = {key: getattr(args, key) for key in admission.DEFAULTS}
             native.prepare(ROOT, args.output, args.game, args.jdk, selection(args, catalog), args.workshop)
             print("Prepared: " + str(args.output.resolve()), flush=True)
             if args.command == "prepare":
                 return 0
         if args.command in ("run", "resume"):
-            runner.run(args.output)
+            runner.run(args.output, resource_wait=args.resource_wait)
         value = save_report(args.output, catalog, args.control)
         print(report.summary(value))
         if value['execution'].get('interrupted'):
             return 130
         return {"passed": 0, "failed": 1, "needs-review": 2}[value["status"]]
+    except KeyboardInterrupt:
+        return 130
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
         print("ERROR: " + str(error), file=sys.stderr)
         return 1

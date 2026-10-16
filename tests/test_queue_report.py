@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -218,23 +219,147 @@ class QueueReportTests(unittest.TestCase):
         altered["coverage"][0]["status"] = "skipped"
         self.assertFalse(report.compare(current, altered)["compatible"])
 
-    def test_shared_errors_reproduce_but_new_errors_need_review(self):
+    def test_shared_unknown_errors_stay_in_review_and_new_errors_are_identified(self):
         toolkit = self.fixture("toolkit")
         native = self.fixture("native", mode="native")
-        error = "ERROR: General > fixture error\njava.lang.RuntimeException: same failure\n"
+        error = "ERROR: General > unknown fixture error\n"
         for root in (toolkit, native):
             with (root / "client1-launch.log").open("a") as stream:
                 stream.write(error)
         control = report.build_report(native, self.catalog)
         self.assertEqual(control["status"], "needs-review")
         current = report.build_report(toolkit, self.catalog, control)
-        self.assertEqual(current["runtime"]["status"], "reproduced-without-queue")
-        self.assertEqual(current["status"], "passed")
+        self.assertEqual(current["runtime"]["status"], "unclassified-errors")
+        self.assertEqual(current["status"], "needs-review")
+        self.assertTrue(current["comparison"]["errors"]["client1"]["shared"])
         with (toolkit / "client1-launch.log").open("a") as stream:
-            stream.write("ERROR: General > different failure\njava.lang.NullPointerException: additional\n")
+            stream.write("ERROR: General > different unknown failure\n")
         current = report.build_report(toolkit, self.catalog, control)
         self.assertEqual(current["runtime"]["status"], "new-errors")
         self.assertEqual(current["status"], "needs-review")
+
+    def test_fatal_errors_fail_with_or_without_a_matching_control(self):
+        errors = ["java.lang.RuntimeException: same failure", "se.krka.kahlua.vm.KahluaException: same failure",
+                  "java.lang.OutOfMemoryError: Java heap space", "java.sql.SQLException: database disk image is malformed",
+                  "Failed to bind server port", "Unable to save world", "Cannot write players.db", "checksum mismatch", "# SIGSEGV"]
+        for index, message in enumerate(errors):
+            with self.subTest(message=message):
+                toolkit = self.fixture("toolkit" + str(index))
+                native = self.fixture("native" + str(index), mode="native")
+                for root in (toolkit, native):
+                    with (root / "client1-launch.log").open("a") as stream:
+                        stream.write("ERROR: General > " + message + "\n")
+                control = report.build_report(native, self.catalog)
+                self.assertEqual(control["status"], "failed")
+                current = report.build_report(toolkit, self.catalog, control)
+                self.assertEqual(current["status"], "failed")
+                self.assertEqual(current["runtime"]["status"], "failed")
+                self.assertEqual(current["runtime"]["fatal_count"], 1)
+                self.assertTrue(current["comparison"]["errors"]["client1"]["shared"])
+        path = self.base / 'crash.log'
+        path.write_text('# SIGSEGV (0xb) at pc=0x123\n')
+        self.assertEqual(report.audit_log(path, self.base)[0][0]['severity'], 'fatal')
+
+    def test_background_requires_exact_verified_profile_and_pinned_engine(self):
+        root = self.fixture()
+        game = self.base / "game"
+        game.mkdir()
+        jar = game / "projectzomboid.jar"
+        jar.write_bytes(b"known engine")
+        report.write_json(root / "runtime.json", {"game": str(game)})
+        report.write_json(root / "source-manifest.json", {str(jar): self.digest(jar)})
+        selection = {"suite": "animal-trailer", "kind": "mp", "clients": 1, "languages": ["EN"],
+                     "cases": ["equipment-missing"], "mods": ["ZombieBuddy", "PZSurvivorToolkit"]}
+        with patch.object(report, "BACKGROUND_GAME_SHA256", self.digest(jar)):
+            self.assertTrue(report.background_profile(root, selection, True))
+            self.assertFalse(report.background_profile(root, selection, False))
+            for change in ({"suite": "health"}, {"cases": ["ghost"]}, {"kind": "sp"}, {"clients": 2},
+                           {"languages": ["RU"]}, {"mods": [*selection["mods"], "UnknownMod"]}):
+                self.assertFalse(report.background_profile(root, dict(selection, **change), True), change)
+            report.write_json(root / "source-manifest.json", {str(jar): "0" * 64})
+            self.assertFalse(report.background_profile(root, selection, True))
+        (root / "runtime.json").unlink()
+        self.assertFalse(report.background_profile(root, selection, True))
+
+    def test_background_stays_visible_and_must_be_before_readiness_with_bounded_counts(self):
+        root = self.fixture()
+        message = "ERROR: General at FluidContainerScript.load > Sanitizing container name 'Large Bucket', name may not contain whitespaces.\n"
+        ready = "LOG: Lua > [ANIMAL_TRAILER] CLIENT INGAME\n"
+        path = root / "client1-launch.log"
+        functional = path.read_text()
+        path.write_text(message + ready + functional)
+        with patch.object(report, "background_profile", return_value=True):
+            value = report.build_report(root, self.catalog)
+            self.assertEqual(value["status"], "passed")
+            self.assertEqual(value["runtime"]["status"], "background-only")
+            self.assertEqual(value["runtime"]["background_count"], 1)
+            self.assertEqual(value["runtime"]["roles"]["client1"]["error_count"], 1)
+            self.assertIn("1 background", report.summary(value))
+            for text in (message * 3 + ready + functional, ready + message + functional, message + functional,
+                         message.replace("Large Bucket", "Modded Bucket") + ready + functional,
+                         message.replace("FluidContainerScript.load", "UnknownMod.load") + ready + functional):
+                path.write_text(text)
+                self.assertEqual(report.build_report(root, self.catalog)["status"], "needs-review")
+            path.write_text(message + "java.lang.NullPointerException: hidden\n" + ready + functional)
+            self.assertEqual(report.build_report(root, self.catalog)["status"], "failed")
+
+    def test_known_property_fallback_requires_complete_original_stack_and_cannot_mask_fatal_mirror(self):
+        root = self.fixture(kind="mp")
+        path = root / "server-launch.log"
+        error = ("ERROR: WorldGen > IsoPropertyType.lookupOrDefaultStr> Exception thrown\n"
+                 "zombie.core.properties.IsoPropertyType$IsoPropertyTypeNotFoundException: Property Name not found: ladderW at IsoPropertyType.lookup(IsoPropertyType.java:273). Message: Property Name not found: ladderW\n"
+                 "Stack trace:\n"
+                 "zombie.core.properties.IsoPropertyType.lookup(IsoPropertyType.java:273)\n"
+                 "zombie.core.properties.IsoPropertyType.lookupOrDefaultStr(IsoPropertyType.java:281)\n"
+                 "zombie.core.TilePropertyAliasMap.register(TilePropertyAliasMap.java:54)\n"
+                 "zombie.core.TilePropertyAliasMap.Generate(TilePropertyAliasMap.java:27)\n"
+                 "zombie.iso.IsoWorld.GenerateTilePropertyLookupTables(IsoWorld.java:1337)\n"
+                 "zombie.iso.IsoWorld.init(IsoWorld.java:2257)\n"
+                 "zombie.network.GameServer.main(GameServer.java:817)\n")
+        ready = "LOG: Lua > [ANIMAL_TRAILER] SERVER READY\n"
+        original = path.read_text()
+        path.write_text(error + ready + original)
+        self.assertEqual(report.audit_logs(root, ["server"], True)["server"]["background_count"], 1)
+        for changed in (error.replace("ladderW", "newProperty"), error.replace("GameServer.java:817", "GameServer.java:999"),
+                        error + "java.lang.OutOfMemoryError: hidden\n"):
+            path.write_text(changed + ready + original)
+            self.assertEqual(report.audit_logs(root, ["server"], True)["server"]["fatal_count"], 1)
+        logs = root / "server/Logs"
+        logs.mkdir()
+        (logs / "DebugLog.txt").write_text(error + ready)
+        path.write_text(ready + error)
+        merged = report.audit_logs(root, ["server"], True)["server"]
+        self.assertEqual(merged["error_count"], 1)
+        self.assertEqual(merged["fatal_count"], 1)
+
+    def test_map_defects_and_fonts_remain_unclassified_even_with_background_enabled(self):
+        root = self.fixture()
+        path = root / "client1-launch.log"
+        original = path.read_text()
+        for message in ("duplicate RoomDef.metaID for room at 10707,9484,0",
+                        "ERROR: Mannequin zone missing properties in media/maps/Muldraugh, KY/objects.lua coords: 13583, 1299, 0",
+                        "AngelCodeFont failed to load page 0 texture media/mainfont_0.png"):
+            path.write_text("ERROR: General > " + message + "\nLOG: Lua > [ANIMAL_TRAILER] CLIENT INGAME\n" + original)
+            with patch.object(report, "background_profile", return_value=True):
+                value = report.build_report(root, self.catalog)
+            self.assertEqual(value["status"], "needs-review")
+            self.assertEqual(value["runtime"]["unclassified_count"], 1)
+
+    def test_error_like_setting_names_are_not_exceptions_and_indented_errors_are_audited(self):
+        root = self.fixture()
+        path = root / "client1-launch.log"
+        path.write_text("LOG: General > WARN:MISSING in SettingsTable: AntiCheatPacketException\n"
+                        "WARN: General > Failed sysctl call: Error code: 12.\n")
+        self.assertEqual(report.audit_log(path, root / "client1")[0], [])
+        for head in ("LOG: General > normal\n",
+                     "ERROR: General at FluidContainerScript.load > Sanitizing container name 'Large Bucket', name may not contain whitespaces.\n"):
+            for prefix in ("\t", "\t[16-10-26 06:21:54.733] "):
+                path.write_text(head + prefix + "ERROR: Native > unexpected world metadata failure\nLOG: Lua > [ANIMAL_TRAILER] CLIENT INGAME\n")
+                rows = report.audit_log(path, root / "client1", background=True)[0]
+                self.assertTrue(any(row['message'] == 'unexpected world metadata failure' and row['severity'] == 'unclassified' for row in rows))
+        path.write_text("ERROR: General at FluidContainerScript.load > Sanitizing container name 'Large Bucket', name may not contain whitespaces.\n"
+                        "unrecognized continuation\nLOG: Lua > [ANIMAL_TRAILER] CLIENT INGAME\n")
+        self.assertEqual(report.audit_log(path, root / "client1", background=True)[0][0]['severity'], 'unclassified')
 
     def test_matrix_requires_verified_complete_actor_coverage_and_preserves_skips(self):
         complete = report.build_report(self.fixture(kind="mp"), self.catalog)
