@@ -1,4 +1,6 @@
-# Reproducible native stands
+# Native test scenarios
+
+[Development](../../docs/DEVELOPMENT.md#native-scenarios)
 
 One preparation/launch/report tool, independent suites, and a fresh profile for every run. No shared mutable save. The product still uses the native `ISTimedActionQueue` executor.
 
@@ -8,7 +10,7 @@ One preparation/launch/report tool, independent suites, and a fresh profile for 
 - `support/`: Java launcher, preflight and native fixture placement.
 - `<suite>/{client,server,shared}/`: each suite's test-only Lua mod.
 - `catalog.json`: case IDs, producers, capabilities, SP/MP and modes. Declarations are not passing tests.
-- `contributions/<topic>/`: preserved stands from other chats, pending integration. Intake does not count as runner coverage.
+- [`contributions/<topic>/`](contributions/README.md): independent fixtures pending integration. Intake does not count as runner coverage.
 
 Commit fixtures, parameters, assertions and reproduced limitations. Do not commit game/Workshop copies, compiled JARs/classes, profiles, saves, credentials, logs or videos. Outputs go outside the checkout or in ignored `dist/`. Delivered stands must not import `.codex/investigations` or hardcode a developer's directories.
 
