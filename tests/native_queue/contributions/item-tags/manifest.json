@@ -1,0 +1,38 @@
+{
+  "id": "item-tags",
+  "status": "intake-copy-not-integrated",
+  "build": "42.21",
+  "mode": "SP",
+  "language": "RU",
+  "prepare": "prepare.py",
+  "fixture": "ZZQuartermasterScreens.lua",
+  "helper_mod_id": "QuartermasterScreens",
+  "required_mods_in_order": [
+    "NeatUI_Framework",
+    "CleanUI",
+    "PZSurvivorToolkit",
+    "EURY_CONTAINERS",
+    "Quartermaster",
+    "BravoItemDetails",
+    "organizedCategories_core"
+  ],
+  "expected_screenshots": [
+    "tags-01-quartermaster-tags.png",
+    "tags-02-exact-refinement.png",
+    "tags-03-partial-tags.png",
+    "tags-04-cleanui-inventory.png",
+    "tags-05-vanilla-inventory.png"
+  ],
+  "completion_marker": "[QM_SCREEN] COMPLETE",
+  "failure_marker": "[QM_SCREEN] FAIL",
+  "timeout_seconds": 420,
+  "evidence": {
+    "original_local_fixture": "SP/RU checked on B42.21",
+    "portable_layout": "preparation self-test passed; generated Lua byte-identical to the native SP fixture; common-runner launch unverified",
+    "EN": "unverified",
+    "MP": "unverified",
+    "physical_input": "unverified",
+    "full_user_mod_set": "unverified"
+  },
+  "toolkit_min_version": "0.1.53"
+}
