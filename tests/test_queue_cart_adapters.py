@@ -106,8 +106,8 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary'])
-        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20)]:
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers'])
+        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -300,6 +300,36 @@ class CartAdapterTests(unittest.TestCase):
                 self.assertIn('--partial', commands['native'])
                 self.assertEqual(log.read_text(), captured)
                 self.assertFalse((cache / 'native-launch.log').exists())
+
+    def test_maneuvers_keep_failed_motion_separate_from_complete_capture(self):
+        self.selection['cases'] = ['maneuvers']
+        fixture = carts._load(ROOT / 'tests/test_cart_maneuvers_analyzer.py')
+        text = fixture.evidence()
+        _, _, metrics = self.coverage_fixture(text=text)
+        log = self.output / 'client1-launch.log'
+        log.write_text(text)
+        (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
+        original_run = carts._run
+        def run(command, directory, name):
+            if name == 'maneuvers':
+                self.assertEqual(command[command.index('--log') + 1], str(log))
+                return original_run(command, directory, name)
+            if name == 'native':
+                self.assertIn('--partial', command)
+                (directory / 'native-metrics.json').write_text(json.dumps(metrics))
+            return {'exit_code': 0}
+        for bad in (False, True):
+            with self.subTest(bad=bad):
+                log.write_text(text.replace('run=false', 'run=true') if bad else text)
+                with patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
+                    result = carts.verify(self.output, self.selection, {})
+                self.assertFalse(result['issues'], result['issues'])
+                self.assertEqual(result['outcomes'][0]['status'], 'captured')
+                self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+                self.assertEqual(result['evidence']['motion']['motionPass'], not bad)
+                self.assertEqual(result['evidence']['analyzers']['maneuvers']['exit_code'], int(bad))
+                saved = Path(result['evidence']['analysis']) / 'maneuvers-motion.json'
+                self.assertEqual(json.loads(saved.read_text()), result['evidence']['motion'])
 
     def test_reversal_capture_preserves_motion_report_and_failed_diagnostics(self):
         self.selection['cases'] = ['reversal']

@@ -18,7 +18,9 @@
     "stop_scenario": "scenario-stop.lua",
     "stop_analyzer": "analyze-stop.py",
     "stationary_scenario": "scenario-stationary.lua",
-    "stationary_analyzer": "analyze-stationary.py"
+    "stationary_analyzer": "analyze-stationary.py",
+    "maneuvers_scenario": "scenario-maneuvers.lua",
+    "maneuvers_analyzer": "analyze-maneuvers.py"
   },
   "origin": {
     "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",
@@ -304,5 +306,35 @@
       "PZSurvivorToolkit": ">=0.1.61",
       "PZToolkitJavaPatches": ">=0.1.19"
     }
+  },
+  "maneuvers_scenario": {
+    "case_count": 32,
+    "axes": {
+      "sex": [
+        "male",
+        "female"
+      ],
+      "cargo": [
+        "empty",
+        "full"
+      ],
+      "spec": [
+        "idle-swap-left",
+        "idle-swap-right",
+        "moving-swap-left",
+        "moving-swap-right",
+        "reverse-rest",
+        "reverse-moving",
+        "uturn-left",
+        "uturn-right"
+      ]
+    },
+    "required_candidate_versions": {
+      "PZSurvivorToolkit": ">=0.1.61",
+      "PZToolkitJavaPatches": ">=0.1.19"
+    },
+    "record_seconds_per_case": 12,
+    "sample_interval_ms": 25,
+    "live_verification": "pending; motion and complete capture are separate from grip/geometry/visual quality"
   }
 }
