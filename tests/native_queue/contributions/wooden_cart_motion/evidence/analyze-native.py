@@ -78,6 +78,7 @@ def wheel_lowest(row):
 
 selected=HERE/'selected';selected.mkdir(exist_ok=True)
 body=[row for row in read_rows('body-clearance.jsonl')if window(row['wallTimeMillis'])]
+assert all(len(row['cart'])==16 and all(math.isfinite(value) for value in row['cart']) for row in body), 'Nonfinite or invalid cart matrix'
 (HERE/'native-body-cases.jsonl').write_text(''.join(json.dumps(row)+'\n'for row in body))
 grip=[];failures=[]
 for row in read_rows('wood-grip-poses.jsonl'):
@@ -89,7 +90,9 @@ for row in read_rows('wood-grip-poses.jsonl'):
 (selected/'failed-grip-poses.jsonl').write_text(''.join(json.dumps(row)+'\n'for row in failures))
 mesh={}
 for kind,file in [('body','hip-triangle-frames.json'),('pants','pants-triangle-frames.json')]:
- if (HERE/file).exists():mesh[kind]=json.loads((HERE/file).read_text())
+ if (HERE/file).exists():
+  mesh[kind]=json.loads((HERE/file).read_text())
+  assert all(all(math.isfinite(row[key]) for key in ['time','L','R']) and row['L']>=0 and row['R']>=0 for row in mesh[kind]), 'Invalid mesh intersection measurement'
 summary={'complete':complete,'completedScenes':len(re.findall(r'\[WOOD_BANK\] COMPLETE ',log)),'validatedCartCases':len(cases),'cases':[],'gripSamples':len(grip),'gripFailures':len(failures),'meshSamples':len(body)}
 for name,start in cases.items():
  g=[r for r in grip if r['case']==name];f=[r for r in g if not r['result']]
@@ -109,10 +112,13 @@ for name,start in cases.items():
 if complete:
  assert len(summary['cases'])==16
  assert all(r['gripSamples']>0 for r in summary['cases'])
- assert body
+ assert all(r['wheelFloorMaxError'] is not None for r in summary['cases']), 'Missing body/cart frames in a completed case'
 nativeText=(ROOT/'wood-wheel-native.csv').read_text()
 if not nativeText.endswith('\n'):nativeText=nativeText.rsplit('\n',1)[0]+'\n'
 native=[r for r in csv.DictReader(io.StringIO(nativeText))if r['event']=='grounding']
+required=['spineRootOrientationMaxDelta','spineRootDx','spineRootDy','spineRootDz','maxLegMatrixDelta',
+          'leftArmLengthBefore','leftArmLengthAfter','rightArmLengthBefore','rightArmLengthAfter','contactLocalY']
+assert native and all(math.isfinite(float(row[key])) for row in native for key in required), 'Missing or nonfinite native grounding measurement'
 summary.update(nativeFrames=len(native),hipMatrixMaxDelta=max(abs(float(r['spineRootOrientationMaxDelta']))for r in native),
  hipTranslationMaxDelta=max(abs(float(r[k]))for r in native for k in ['spineRootDx','spineRootDy','spineRootDz']),
  legMatrixMaxDelta=max(abs(float(r['maxLegMatrixDelta']))for r in native),
@@ -128,7 +134,7 @@ summary['steadyFastFootMinimumZRange']=min((value for row in summary['cases']for
 if complete:
  summary['nativeFootMotionNote']='Per-case short-window ranges are descriptive; native leg matrices are checked unchanged and full moving cycles inspected.'
 for kind in mesh:
- summary['checks'][kind]=all(not any(r[kind]['shaftIntersections'].values())for r in summary['cases'])
+ summary['checks'][kind]=all(r[kind]['samples']>0 and not any(r[kind]['shaftIntersections'].values())for r in summary['cases'])
 (HERE/'native-metrics.json').write_text(json.dumps(summary,indent=2)+'\n')
 print(json.dumps(summary,indent=2))
 

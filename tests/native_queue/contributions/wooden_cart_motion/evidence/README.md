@@ -24,6 +24,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 tests/native_queue/contributions/wooden_cart_m
 
 Without those three Java parameters, the check explicitly skips Java. Python syntax is compiled in a temporary directory. Geometry self-checks cover crossing, coplanar overlap/disjoint triangles, containment, distances, AABB separation and column-major native skinning. Java checks compile every probe, generate advice and check copied grip inputs, coordinate conversion, matrix deltas and refusal to overwrite a capture. No attach operation runs.
 
+Synthetic analyzer regressions also require actual body/cart and body/trousers intersection samples in every completed case. Empty or incomplete geometry evidence and nonfinite native measurements fail instead of passing through empty `all()` or ignored `NaN` values.
+
 ## Agent packaging and attachment boundary
 
 Compile with explicit dependencies into an adapter-owned build directory, outside this source tree:

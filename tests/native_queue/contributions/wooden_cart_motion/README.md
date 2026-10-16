@@ -45,7 +45,7 @@ python3 tests/native_queue/contributions/wooden_cart_motion/self_check.py \
 
 Lua syntax requires `luajit` or `lua` on PATH, or `--lua`. Java compilation requires both explicit dependency paths; omitted checks are reported as skipped. Compilation output goes to a temporary directory. There are no runtime binaries, saves, screenshots, videos, copied mods or game assets in this contribution.
 
-Keep `[WOOD_BANK]` markers stable for existing analyzers. A complete record needs 16 unique `COMPLETE` markers after the latest `RUN_STARTED`, valid per-case windows and `ALL_COMPLETE cases=16`. Check `FAIL` and rejected video starts/stops. The manifest criteria additionally require grip, actual mesh, floor and original hip/leg/arm probes. Those probe/analyzer sources are not ported here; missing instrumentation means **not verified**, not PASS.
+Keep `[WOOD_BANK]` markers stable for existing analyzers. A complete record needs 16 unique `COMPLETE` markers after the latest `RUN_STARTED`, valid per-case windows and `ALL_COMPLETE cases=16`. Check `FAIL` and rejected video starts/stops. The manifest criteria additionally require grip, actual mesh, floor and original hip/leg/arm probes. Their source, dependencies, build commands, offline checks and limits are preserved in [evidence/README.md](evidence/README.md). The common-runner attachment/analysis adapter is still pending; missing instrumentation means **not verified**, not PASS.
 
 ## Known traps and limits
 

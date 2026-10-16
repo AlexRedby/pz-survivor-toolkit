@@ -9,7 +9,8 @@
     "java": "Main.java",
     "test_area": "test-area.lua",
     "bootstrap": "bootstrap.lua",
-    "scenario": "scenario-clips.lua"
+    "scenario": "scenario-clips.lua",
+    "evidence": "evidence/README.md"
   },
   "origin": {
     "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",
@@ -30,7 +31,7 @@
     "lua_modules": ["SaucedCarts/Core", "SaucedCarts/CartVisuals", "ISUI/ISPanel"],
     "cart_items": ["SaucedCarts.ShoppingCart", "SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.WheelbarrowMetal"],
     "video": "FFmpeg executable plus Toolkit toolkitVideoStart/Status/Stop Lua bridge",
-    "evidence_probes": "Runner-supplied pre-IK grip, post-render body/cart palettes and before/after native hip/leg/arm probes; not bundled here"
+    "evidence_probes": "Source in evidence/: pre-IK grip, post-render body/cart palettes, native hip/leg/arm probes and mesh analyzers. Requires candidate JavaPatches classes and Python NumPy; runner attachment/analysis adapter pending"
   },
   "required_environment": ["PZ_CART_RUNTIME_FILE", "PZ_CART_COMMAND_FILE"],
   "required_lua_global": "CartMotionConfig",

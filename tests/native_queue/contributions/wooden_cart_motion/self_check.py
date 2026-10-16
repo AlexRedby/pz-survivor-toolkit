@@ -20,7 +20,7 @@ def check_manifest():
     assert manifest["exclusive_native_process"] is True
     assert manifest["sources"] == {
         "java": "Main.java", "test_area": "test-area.lua",
-        "bootstrap": "bootstrap.lua", "scenario": "scenario-clips.lua",
+        "bootstrap": "bootstrap.lua", "scenario": "scenario-clips.lua", "evidence": "evidence/README.md",
     }
     for name in manifest["sources"].values():
         assert (HERE / name).is_file(), name

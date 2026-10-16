@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import py_compile
 import subprocess
+import sys
 import tempfile
 import numpy as np
 import actual_mesh
@@ -38,6 +39,7 @@ def main():
     parser.add_argument('--toolkit-classes', type=Path, help='Compiled candidate JavaPatches classes; no binaries are supplied here')
     args = parser.parse_args()
     geometry()
+    subprocess.run([sys.executable, str(HERE / 'test_analyzer.py')], check=True)
     with tempfile.TemporaryDirectory(prefix='wood-evidence-check-') as temp:
         output = Path(temp)
         for path in HERE.glob('*.py'):
