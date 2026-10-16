@@ -18,3 +18,4 @@ Preserved intakes from the other chats:
 | `shared-wishlist` | Shared edits/access, persistence and UI fixtures | Server/client preparation preserved; current native revalidation pending |
 | `item-tags` | Five screenshot/assertion scenes and preparation test | Needs Toolkit 0.1.53+ and listed UI mods; common-runner adapter pending |
 | `wooden_cart_motion` | Input bridge, disposable area, 16 Sprint and 20 reverse/turn scenarios, mesh/palette/grip probes and analyzers | Needs candidate cart-motion APIs absent from queue main; reverse motion passed with a known trousers intersection; common-runner adapter pending |
+| `wooden_cart_multiplayer` | Server-seeded cart, actual owner/observer, read-only pose probe and six-phase capture analyzer | Original MP capture shows a replication counterexample; parameterized port not run live, no equivalence PASS or common-runner adapter |
