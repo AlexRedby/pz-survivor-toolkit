@@ -5,7 +5,8 @@ require = function(name)
     if name == "PZSurvivorToolkit/TagVisuals" then
         return {get=function() return {r=0.4,g=0.8,b=0.3,texture={}} end}
     end
-    if name == "PZSurvivorToolkit/ItemTagSchema" or name == "PZSurvivorToolkit/ItemTags" then
+    if name == "PZSurvivorToolkit/ItemTagSchema" or name == "PZSurvivorToolkit/ItemTags"
+        or name == "PZSurvivorToolkit/PlantingTags" then
         return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
     end
     if name == "PZSurvivorToolkit/UIStyle" then
@@ -54,6 +55,13 @@ local groups = {
     {cat = 'Tool', name = 'screwdriver', items = {screwdriver, screwdriver}, matchesSearch = false},
     {cat = 'ModCategory', name = 'mod item', items = {modItem, modItem}, matchesSearch = false}
 }
+for _, group in ipairs(groups) do
+    for _, item in ipairs(group.items) do
+        item.getDisplayCategory = function() return group.cat end
+        item.getCategory = item.getDisplayCategory
+        item.getUnequippedWeight = function() return 1 end
+    end
+end
 local class = {}
 ISInventoryPageTransferHandler = {
     canTransferItem = function(item) return item ~= nil end,
@@ -284,6 +292,34 @@ assert(#pane.itemslist==1 and pane.itemslist[1]==groups[2], 'second restoration 
 groups[3].cat='Tool';pane:restoreSelection({})
 assert(#pane.itemslist==2, 'second restoration could not recover a newly matching hidden stack')
 print('Reused row tables recompute rule, exact/single category, search, stack categories and option changes.')
+local function plantingItem(fullType, category, recipe)
+    local item = {category=category,testItem=true}
+    local script = {getFullName=function() return fullType end,
+        getDisplayCategory=function() return category end,getDoubleClickRecipe=function() return recipe end}
+    item.getFullType = function() return fullType end
+    item.getScriptItem = function() return script end
+    item.getDisplayCategory = function(self) return self.category end
+    item.getCategory = item.getDisplayCategory
+    item.getName = function() return 'Shared planting display name' end
+    item.getUnequippedWeight = function() return 1 end
+    item.getEquippedWeight = function() return 0.5 end
+    item.getContainer = function() return source end
+    item.isHidden = function() return false end
+    item.IsFood = function() return false end
+    return item
+end
+farming_vegetableconf={props={Sunflower={seedName='Base.SunflowerSeeds'}}}
+local sunflower=plantingItem('Base.SunflowerSeeds','foodNonPerishable_candySnack')
+local candy=plantingItem('Base.Candy','foodNonPerishable_candySnack')
+local fullPacket=plantingItem('Base.CarrotBagSeed2','farmingSeed','OpenPacketOfSeeds')
+local emptyPacket=plantingItem('Base.CarrotBagSeed2_Empty','farmingSeed')
+local function javaList(values)
+    return {size=function() return #values end,get=function(_,index) return values[index+1] end}
+end
+ScriptManager={instance={getCraftRecipe=function()
+    return {getInputs=function() return javaList({{getPossibleInputItems=function() return javaList({fullPacket:getScriptItem()}) end}}) end,
+        getOutputs=function() return javaList({{getPossibleResultItems=function() return javaList({emptyPacket:getScriptItem()}) end}}) end}
+end}}
 -- Optional source-backed integration: real native/CleanUI refresh plus our real
 -- Item Details wrapper, which performs the second restoreSelection call.
 for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventoryPaneSource or false}) do
@@ -367,6 +403,29 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
         assert(#p.itemslist==1 and p.itemslist[1].items[1]==objects[3], 'real rows lost hidden electrical item')
         p.toolkitTagRule=nil;p:refreshContainer()
         assert(#p.itemslist==4,'real refresh did not clear rule')
+        objects[#objects+1],objects[#objects+2]=candy,sunflower
+        p.toolkitTagRule={mode='all',include={'seed'},exclude={}};p:refreshContainer()
+        assert(#p.itemslist==1 and p.itemslist[1].items[1]==sunflower and #p.itemslist[1].items==2,
+            'actual native mixed stack kept candy or lost seed header/child')
+        local sourceGroup=p.itemindex[sunflower:getName()]
+        assert(sourceGroup~=p.itemslist[1] and #sourceGroup.items==3 and sourceGroup.items[1]==candy,
+            'actual native itemindex was mutated by partial stack filtering')
+        assert(p.toolkitVisibleItems[sunflower] and not p.toolkitVisibleItems[candy],
+            'actual native mixed stack transfer visibility is wrong')
+        p.toolkitTagRule=nil;p:restoreSelection({})
+        assert(#p.itemslist==5 and #sourceGroup.items==3,'actual native rule clear lost mixed stack contents')
+        p.selected={};p.toolkitTagRule={mode='all',include={'seed'},exclude={}}
+        local savedGroupSelection={[candy]='group'}
+        p:restoreSelection(savedGroupSelection)
+        local selection=p.selected[1]
+        assert(selection==sunflower or selection and selection.items and selection.items[1]==sunflower,
+            'actual mixed stack lost group selection when its filtered header changed')
+        assert(not savedGroupSelection[sunflower],'partial stack changed caller saved selection')
+        p.selected={[1]=candy};p:refreshContainer()
+        assert(next(p.selected)==nil,'actual hidden item selection moved onto a visible item')
+        p.collapsed[sunflower:getName()]=false;p.selected={[2]=sunflower};p:refreshContainer()
+        assert(p.selected[2]==sunflower and not p.selected[1] and not p.selected[3],
+            'actual explicit child selection was lost or duplicated')
         print('Actual inventory refresh + Item Details integration passed.')
     end
 end
@@ -384,3 +443,67 @@ assert(pane.toolkitTagRule.include[1]=='tool','applied saved rule aliases storag
 pane.searchText=nil;pane:refreshContainer()
 assert(#pane.itemslist==2,'saved rule was frozen to prior search results')
 print('Saved inventory filters share combined-rule application and detached rules.')
+
+local originalGroups=groups
+local mixed={name='mixed',cat='foodNonPerishable_candySnack',items={candy,candy,sunflower},
+    count=3,weight=2,matchesSearch=true,equipped=true,cleanUIWeightKnown=true,cleanUIWeightText='2',
+    firstItem=candy,cleanUIDisplayItem=candy,cleanUITooltipWeightKnown=true}
+groups={mixed,{name='full',cat='farmingSeed',items={fullPacket,fullPacket},matchesSearch=true},
+    {name='empty',cat='farmingSeed',items={emptyPacket,emptyPacket},matchesSearch=true}}
+pane.itemindex={mixed=mixed}
+pane.toolkitTagRule={mode='all',include={'seed'},exclude={}}
+pane.saved={[sunflower]=true,[candy]=true}
+pane:refreshContainer()
+local shown=pane.itemslist[1]
+assert(#pane.itemslist==2 and shown~=mixed and shown.items[1]==sunflower and shown.items[2]==sunflower,
+    'item seed filter contaminated same-category candy or lost a mixed-stack seed')
+assert(shown.count==2 and shown.realCount==1 and shown.weight==1 and shown.equippedWeight==0.5,
+    'partial stack retained unfiltered count/weight')
+assert(shown.firstItem==sunflower and shown.cleanUIDisplayItem==sunflower and not shown.cleanUIWeightText
+    and not shown.cleanUITooltipWeightKnown,'partial stack retained cached hidden header or weight')
+assert(pane.selected[1]==shown and not pane.toolkitVisibleItems[candy] and not pane.toolkitVisibleItems[emptyPacket],
+    'mixed-stack selection or item visibility included rejected items')
+pane:transferItemsByWeight({candy,sunflower,fullPacket,emptyPacket},source)
+assert(#pane.transferred==2 and pane.transferred[1]==sunflower and pane.transferred[2]==fullPacket,
+    'seed bulk transfer included candy or empty packet')
+assert(pane.itemindex.mixed==mixed and #mixed.items==3 and mixed.items[1]==candy and mixed.count==3,
+    'filter modified native source stack/itemindex')
+pane.toolkitTagRule={mode='all',include={'food','seed'},exclude={}};pane:restoreSelection({})
+assert(#pane.itemslist==1 and pane.itemslist[1].items[1]==sunflower,'item all rule lost dual food/seed role')
+pane.toolkitTagRule={mode='any',include={'food','seed'},exclude={'food'}};pane:restoreSelection({})
+assert(#pane.itemslist==1 and pane.itemslist[1].items[1]==fullPacket,'item any/exclude rule included same-category candy')
+pane.toolkitTagRule={mode='all',include={'seed'},exclude={'food'}};pane:restoreSelection({})
+assert(#pane.itemslist==1 and pane.itemslist[1].items[1]==fullPacket,'item exclusion kept sunflower food role')
+pane.toolkitTagRule={mode='all',include={'food','seed'},exclude={'food'}};pane:restoreSelection({})
+assert(#pane.itemslist==0,'contradictory item rule was not empty')
+pane.toolkitTagRule=nil;pane.toolkitCategory='foodNonPerishable_candySnack';pane:restoreSelection({})
+assert(#pane.itemslist==1 and pane.itemslist[1]==mixed,'exact category lost baseline mixed stack')
+pane.toolkitCategory=nil;pane.toolkitTag='seed';sunflower.category='medicalTreatment';pane:restoreSelection({})
+assert(#pane.itemslist==2 and pane.itemslist[1].items[1]==sunflower,'live item category lost planting role')
+pane.toolkitTagRule={mode='all',include={'food','seed'},exclude={}};pane.toolkitTag=nil;pane:restoreSelection({})
+assert(#pane.itemslist==0,'item filter reused stale food category')
+sunflower.category='foodNonPerishable_candySnack'
+mixed.cleanUILargeStackOptimized,mixed.cleanUIFirstActualIndex,mixed.items=true,1,{candy,sunflower}
+pane.toolkitTagRule={mode='all',include={'seed'},exclude={}};pane:restoreSelection({})
+assert(#pane.itemslist[1].items==1 and pane.itemslist[1].items[1]==sunflower and pane.itemslist[1].count==2,
+    'CleanUI virtual header gained a duplicate or lost matching item')
+pane.toolkitTagRule=nil;pane:restoreSelection({})
+assert(pane.itemslist[1]==mixed and #mixed.items==2,'clear did not restore original virtual stack')
+groups={{name='sunflower',cat='foodNonPerishable_candySnack',items={sunflower,sunflower}}}
+root=rootMenu()
+local choices
+for _,option in ipairs(root.options) do if option.name=='UI_PZST_Tags' then choices=option.submenu end end
+local seedOption
+for _,option in ipairs(choices.options) do if option.arg=='seed' then seedOption=option end end
+assert(seedOption,'item-only seed tag missing from dropdown')
+seedOption.callback(seedOption.target,seedOption.arg)
+assert(#pane.itemslist==1,'item-only tag choice could not filter inventory')
+groups={{name='candy',cat='foodNonPerishable_candySnack',items={candy,candy}}}
+root=rootMenu()
+for _,option in ipairs(root.options) do
+    if option.name=='UI_PZST_Tags' then
+        for _,tag in ipairs(option.submenu.options) do assert(tag.arg~='seed','candy category contaminated dropdown') end
+    end
+end
+groups=originalGroups
+print('Item-aware inventory checks passed: mixed native/virtual stacks, packet state, exact categories, dynamic rules and dropdowns.')

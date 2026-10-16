@@ -1,6 +1,8 @@
 local enabled, starts, creates = true, {}, {}
 local openedRulePicker, savedRule
+local scriptCatalog = {}
 local ruleApi = {getBoxRevision = function() return 0 end, getBox = function() end, getPreset = function() end, installClient = function() end, presetsSynced = function() return true end,
+    scriptItems = function() return scriptCatalog end,
     saveBox = function(_, _, rule, _, callback) savedRule = rule; callback('ok') end}
 getSpecificPlayer = function() return {} end
 PZSurvivorToolkit = {}
@@ -17,6 +19,7 @@ require = function(name)
         normalizeRule = function(value) return value or {mode='all',include={},exclude={}} end,
         ruleActive = function(value) return value and (#value.include > 0 or #value.exclude > 0) or false end,
         forCategory = function(category) return categoryTags[category] or {'category:' .. category} end,
+        forScriptItem = function(script) return script.tags end,
         label = function(id) return id end}
 end
 Events = {OnGameStart = {Add = function(fn) starts[#starts + 1] = fn end},
@@ -293,4 +296,66 @@ LootSorter.openPicker(); local newest = LootSorter._picker
 replacedReply('ok', 3)
 assert(LootSorter._picker == newest and not newest.closed and not storedCats.ReplacedMustNotSave,
     'late save from replaced picker overwrote designation or closed current picker')
+
+local function script(name, category, tags)
+    return {tags=tags,getDisplayCategory=function() return category end,getDisplayName=function() return name end}
+end
+for category, ids in pairs({OC_Snack={'food','snack'},OC_Seeds={'farming','seed'},
+    OC_SeedOnly={'farming','seed'}}) do
+    categoryTags[category]=ids;availableCats[#availableCats+1]=category
+end
+local function snapshot(set)
+    local result={};for key,value in pairs(set) do result[key]=value end;return result
+end
+local function unchanged(set,before,message)
+    for key,value in pairs(before) do assert(set[key]==value,message) end
+    for key,value in pairs(set) do assert(before[key]==value,message) end
+end
+for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','Pure seed'},
+    {'Конфеты','Семечки подсолнуха','Пакет семян','Пустой пакет семян','Семена'}}) do
+    scriptCatalog={script(names[1],'OC_Snack',{'food','snack'}),
+        script(names[2],'OC_Snack',{'food','snack','farming','seed'}),
+        script(names[3],'OC_Seeds',{'farming','seed'}),script(names[4],'OC_Seeds',{'farming'}),
+        script(names[5],'OC_SeedOnly',{'farming','seed'})}
+    LootSorter.openPicker();local itemPicker=LootSorter._picker
+    itemPicker.selectedItems['Sunflower seeds']=true
+    local seed,seedIndex=assert(find(itemPicker,'seed'))
+    assert(seed.requiresRule and seed.items==nil and #seed.categories==1 and seed.categories[1]=='OC_SeedOnly',
+        'partial categories did not require a stable tag rule')
+    local catsBefore,itemsBefore=snapshot(itemPicker.selectedCats),snapshot(itemPicker.selectedItems)
+    click(itemPicker,'seed')
+    assert(openedRulePicker.owner==itemPicker and openedRulePicker.rule.mode=='all'
+        and openedRulePicker.rule.include[1]=='seed' and openedRulePicker.scriptItems==scriptCatalog,
+        'partial seed tag did not open a locale-independent real-item rule draft')
+    unchanged(itemPicker.selectedCats,catsBefore,'partial tag click changed exact category picks')
+    unchanged(itemPicker.selectedItems,itemsBefore,'partial tag click persisted localized names')
+    openedRulePicker.onApply({mode='all',include={'seed'},exclude={}})
+    assert(itemPicker.toolkitTagRuleTouched and itemPicker.toolkitTagRule.include[1]=='seed')
+    unchanged(itemPicker.selectedCats,catsBefore,'rule Apply changed manual categories')
+    unchanged(itemPicker.selectedItems,itemsBefore,'rule Apply changed manual items')
+    assert(itemPicker.selectedPresets.Pantry=='generation','rule Apply changed a manual preset')
+    itemPicker.listbox.selected=seedIndex
+    itemPicker.listbox.onJoypadDown(itemPicker.listbox,Joypad.AButton)
+    assert(openedRulePicker.owner==itemPicker and openedRulePicker.rule.include[1]=='seed',
+        'controller bypassed the stable rule draft for a partial tag')
+    itemPicker.contentsSet=function() return {OC_Snack=true} end
+    itemPicker.onlyContents,itemPicker.needRebuild=true,true;itemPicker:prerender()
+    assert(find(itemPicker,'seed'),'Only Contents hid a partial category planting input')
+    itemPicker.onlyContents,itemPicker.needRebuild=false,true;itemPicker:prerender()
+    click(itemPicker,'snack')
+    assert(itemPicker.selectedCats.OC_Snack,'whole-category tag stopped selecting exact category IDs')
+    unchanged(itemPicker.selectedItems,itemsBefore,'whole-category batch changed manual items')
+    itemPicker.btnClear.onclick(itemPicker);itemPicker:prerender()
+    assert(next(itemPicker.selectedCats)==nil,'native Uncheck all failed to clear exact category picks')
+    unchanged(itemPicker.selectedItems,itemsBefore,'Uncheck all removed existing manual items')
+    itemPicker.filterText,itemPicker.needRebuild='seed',true;itemPicker:prerender()
+    itemPicker.btnAll.onclick(itemPicker)
+    assert(openedRulePicker.rule.mode=='any' and openedRulePicker.rule.include[1]=='seed',
+        'Select all omitted a partial filtered tag')
+    openedRulePicker.onApply({mode='any',include={'seed'},exclude={}})
+    unchanged(itemPicker.selectedItems,itemsBefore,'Select all rule Apply persisted localized names')
+    assert(next(itemPicker.selectedCats)==nil,'Select all broadened a partial category')
+    itemPicker.toolkitTagRuleButton.onclick(itemPicker)
+    assert(openedRulePicker.scriptItems==scriptCatalog,'dynamic editor preview lacks the script catalog')
+end
 print('Quartermaster tag checks passed: exact saved keys, partial/refined batches, filters, controller, modes, conflicts, reopens and opt-out.')

@@ -1,6 +1,12 @@
+# Оставшиеся проверки тегов
+
+- [ ] На Windows Host проверить сохранение/сортировку после полного рестарта с тем же набором модов; текущий native launcher работает на macOS.
+- [ ] На 0.1.56 повторить native cold restart и добавить глобальные preset-правила Quartermaster: полный рестарт правил контейнеров и локальных фильтров проверялся на 0.1.55; preset store пока покрыт Lua/native-source тестами.
+- [ ] Сравнить native/toolkit загрузку одного saved full49 мира для четырёх IsoMetaGrid.load invalid room metaID в map_meta.bin (cell25,33); отделить ошибку нативной загрузки/модпака от тегов до объявления чистого runtime.
+
 # Совместимость Quartermaster
 
-- [ ] Проверить штатные переносы и custom-действия Quartermaster в очереди Toolkit. Аудировать обёртки ISInventoryTransferAction.perform и ISTimedActionQueue.resetQueue перед разрешением отмены/перестановки; не обходить защиту неизвестных callbacks.
+- [ ] Проверить отмену/перестановку custom-действий Quartermaster, частичные/отклонённые переносы и SP Manifest в фактическом порядке загрузки перед добавлением queue-контрактов; не обходить защиту неизвестных callbacks. Отдельно проверить горячую перезагрузку LootSorter_WalkAction: сохранённый до Toolkit reset delegate может обойти его invalidation; холодная цепочка wrappers и обычный MP-перенос проверены.
 
 # Дальнейшая миграция очереди действий
 

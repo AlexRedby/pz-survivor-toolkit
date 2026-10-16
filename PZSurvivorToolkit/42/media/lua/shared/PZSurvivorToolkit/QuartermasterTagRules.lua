@@ -5,6 +5,7 @@ PZSurvivorToolkit.QuartermasterTagRules = Rules
 local FIELD, STORE, FILE = "PZSTQuartermasterTagRules", "PZSTQuartermasterTagRules", "PZSTQuartermasterTagRules.txt"
 local ANY = "__PZST_ANY__"
 local byCategories = setmetatable({}, {__mode = "k"})
+local resolvedRules = setmetatable({}, {__mode = "k"})
 local gatheringPlayer
 local REVISIONS = FIELD .. "Revisions"
 
@@ -77,6 +78,18 @@ function Rules.getPreset(name, preset)
     return copy(entry.rule)
 end
 
+function Rules.scriptItems()
+    local items = getAllItems and getAllItems()
+    local result = {}
+    if items then
+        for i = 0, items:size() - 1 do
+            local script = items:get(i)
+            if script and (not script.getObsolete or not script:getObsolete()) then result[#result + 1] = script end
+        end
+    end
+    return result
+end
+
 local function addMatches(cats, rule)
     if not Tags.enabled() or not rule or not Tags.ruleActive(rule) then return end
     for _, category in ipairs(LootSorter.getCategories()) do
@@ -119,17 +132,71 @@ function Rules.installShared()
     end
     LootSorter.resolveEffective = function(cats, items, links, presets)
         local resultCats, resultItems = resolve(cats, items, links, presets)
-        addMatches(resultCats, copy(byCategories[cats]))
+        local entry = {cats = {}, rules = {}}
+        for category, selected in pairs(resultCats) do entry.cats[category] = selected end
+        local function include(rule)
+            if Tags.ruleActive(rule) then
+                entry.rules[#entry.rules + 1] = rule
+                addMatches(resultCats, rule)
+            end
+        end
+        include(copy(byCategories[cats]))
         for name, link in pairs(links or {}) do
             local preset = presets and presets[name]
-            if LootSorter.linkResolves(preset, link) then addMatches(resultCats, Rules.getPreset(name, preset)) end
+            if LootSorter.linkResolves(preset, link) then include(Rules.getPreset(name, preset)) end
+        end
+        if #entry.rules > 0 then
+            resolvedRules[resultCats] = entry
+            -- Native gathering drops empty category sets before the item-aware planner runs.
+            if Tags.enabled() then resultCats["\0PZSTTagRule"] = true end
         end
         return resultCats, resultItems
     end
 end
 
+local function installPlanner()
+    if not LootSorter or not LootSorter.planTrips or LootSorter.pzstTagRulePlanner then return end
+    LootSorter.pzstTagRulePlanner = true
+    local plan = LootSorter.planTrips
+    LootSorter.planTrips = function(items, boxes, carriers, budget, accepts)
+        local active = false
+        for _, box in ipairs(boxes) do if resolvedRules[box.cats] then active = true; break end end
+        if not active then return plan(items, boxes, carriers, budget, accepts) end
+        local categories, boxCats, tags, matches = {}, {}, {}, {}
+        local enabled = Tags.enabled()
+        for index, item in ipairs(items) do
+            categories[index] = item.cat
+            tags[index] = enabled and Tags.forItem(item.ref) or nil
+        end
+        -- Quartermaster names specific-item selections by display name; route tag rules by actual item instead.
+        for index, box in ipairs(boxes) do
+            boxCats[index] = box.cats
+            local entry = resolvedRules[box.cats]
+            local manual = entry and entry.cats or box.cats
+            matches[index] = {}
+            for i, item in ipairs(items) do
+                local matching = categories[i] and manual and manual[categories[i]]
+                if not matching and entry and tags[i] then
+                    for _, rule in ipairs(entry.rules) do
+                        if Tags.matchesRule(tags[i], rule) then matching = true; break end
+                    end
+                end
+                if matching then matches[index]["\0PZSTTag:" .. i] = true end
+            end
+        end
+        for index, item in ipairs(items) do item.cat = "\0PZSTTag:" .. index end
+        for index, box in ipairs(boxes) do box.cats = matches[index] end
+        local ok, result = pcall(plan, items, boxes, carriers, budget, accepts)
+        for index, item in ipairs(items) do item.cat = categories[index] end
+        for index, box in ipairs(boxes) do box.cats = boxCats[index] end
+        if not ok then error(result) end
+        return result
+    end
+end
+
 function Rules.installClient()
     Rules.installShared()
+    installPlanner()
     if not LootSorter or LootSorter.pzstTagRuleClient or not LootSorter.getRegistry
         or not LootSorter.findDesignatedOnSquare then return end
     LootSorter.pzstTagRuleClient = true
@@ -157,6 +224,7 @@ function Rules.installClient()
     LootSorter.getRegistry = function(...)
         local result = registry(...)
         byCategories = setmetatable({}, {__mode = "k"})
+        resolvedRules = setmetatable({}, {__mode = "k"})
         local cell = getCell()
         for key in pairs(result) do
             local x, y, z = LootSorter.parseCoordKey(key)

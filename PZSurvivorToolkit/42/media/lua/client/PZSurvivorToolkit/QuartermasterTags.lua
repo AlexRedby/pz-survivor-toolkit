@@ -36,6 +36,60 @@ local function selectRow(picker, row, selected)
     picker.needRebuild = true
 end
 
+local function openRule(picker, rule, onApply)
+    RulePicker.open({player = getSpecificPlayer(picker.playerNum or 0), owner = picker,
+        rule = rule, categories = picker:activeList(), scriptItems = Rules.scriptItems(),
+        title = getText("UI_PZST_QMTagRuleTitle"), onApply = function(value)
+            picker.toolkitTagRule = Tags.normalizeRule(value)
+            picker.toolkitTagRuleTouched = true
+            if onApply then onApply() end
+        end})
+end
+
+local function tagRows(categoryList, catalog)
+    local rows, byTag, groups = {}, {}, {}
+    for _, script in ipairs(catalog) do
+        local category = script:getDisplayCategory()
+        local entry = {tags = {}}
+        for _, id in ipairs(Tags.forScriptItem(script)) do entry.tags[id] = true end
+        if category then
+            groups[category] = groups[category] or {}
+            groups[category][#groups[category] + 1] = entry
+        end
+    end
+    for _, category in ipairs(categoryList) do
+        local members, ids = groups[category], {}
+        if members then
+            for _, entry in ipairs(members) do for id in pairs(entry.tags) do ids[id] = true end end
+        else
+            for _, id in ipairs(Tags.forCategory(category)) do ids[id] = true end
+        end
+        for id in pairs(ids) do
+            local exact = id == "category:" .. category
+            local row = byTag[id]
+            if not row then
+                row = {tag = not exact and id or nil, key = exact and category or nil,
+                    label = exact and (getTextOrNull("IGUI_ItemCat_" .. category) or category) or Tags.label(id),
+                    categories = {}, sourceCategories = {}, toolkitTagRow = true}
+                byTag[id], rows[#rows + 1] = row, row
+            end
+            row.sourceCategories[#row.sourceCategories + 1] = category
+            local matches = 0
+            for _, entry in ipairs(members or {}) do if entry.tags[id] then matches = matches + 1 end end
+            if not members or matches == #members then
+                row.categories[#row.categories + 1] = category
+            else
+                -- Native specific-item keys are localized names; item refinements need a stable tag rule.
+                row.requiresRule = true
+            end
+        end
+    end
+    for _, row in ipairs(rows) do
+        if row.requiresRule then row.label = row.label .. " (" .. getText("UI_PZST_QMTagRule") .. ")" end
+    end
+    return rows
+end
+
 local function drawTag(list, y, item)
     local row, picker = item.item, list.target
     local checked, total = state(picker, row)
@@ -50,7 +104,7 @@ local function drawTag(list, y, item)
     local bx, by = 6, y + (h - 16) / 2
     list:drawRect(bx, by, 16, 16, 0.7, 0.08, 0.08, 0.08)
     list:drawRectBorder(bx, by, 16, 16, 0.9, 0.7, 0.7, 0.7)
-    if checked == total then
+    if total > 0 and checked == total then
         local color = getCore():getGoodHighlitedColor()
         list:drawTextureScaled(getTexture("media/ui/inventoryPanes/Tickbox_Tick.png"), bx + 2, by + 2,
             12, 12, 1, color:getR(), color:getG(), color:getB())
@@ -86,12 +140,7 @@ function Adapter.attach(picker)
         picker.toolkitTagRule = Rules.getBox(picker.targetObj, picker.targetCI)
     end
     local ruleButton = ISButton:new(10, 0, 10, 22, "", picker, function(target)
-        RulePicker.open({player = getSpecificPlayer(target.playerNum or 0), owner = target,
-            rule = target.toolkitTagRule, categories = target:activeList(),
-            title = getText("UI_PZST_QMTagRuleTitle"), onApply = function(rule)
-                target.toolkitTagRule = Tags.normalizeRule(rule)
-                target.toolkitTagRuleTouched = true
-            end})
+        openRule(target, target.toolkitTagRule)
     end)
     ruleButton:initialise(); ruleButton:instantiate()
     ruleButton:setTooltip(getText("UI_PZST_QMTagRuleHint"))
@@ -154,23 +203,7 @@ function Adapter.attach(picker)
     end
     picker.rebuild = function(self)
         if not tagView(self) then return original.rebuild(self) end
-        local rows, byTag = {}, {}
-        for _, category in ipairs(self:activeList()) do
-            local ids = Tags.forCategory(category)
-            if #ids == 0 or (#ids == 1 and ids[1] == "category:" .. category) then
-                rows[#rows + 1] = {key = category, label = getTextOrNull("IGUI_ItemCat_" .. category) or category,
-                    categories = {category}, toolkitTagRow = true}
-            else
-                for _, id in ipairs(ids) do
-                    local row = byTag[id]
-                    if not row then
-                        row = {tag = id, label = Tags.label(id), categories = {}, toolkitTagRow = true}
-                        byTag[id], rows[#rows + 1] = row, row
-                    end
-                    row.categories[#row.categories + 1] = category
-                end
-            end
-        end
+        local rows = tagRows(self:activeList(), Rules.scriptItems())
         table.sort(rows, function(a, b) return a.label < b.label end)
         local filter = string.lower(self:currentFilter())
         local contents = self.onlyContents and self:contentsSet() or nil
@@ -179,7 +212,7 @@ function Adapter.attach(picker)
             local checked = state(self, row)
             local hasContents = not contents
             if contents then
-                for _, category in ipairs(row.categories) do
+                for _, category in ipairs(row.sourceCategories) do
                     if contents[category] then hasContents = true; break end
                 end
             end
@@ -238,6 +271,10 @@ function Adapter.attach(picker)
     local list, rowClick = picker.listbox, picker.listbox.onmousedown
     list.onmousedown = function(target, row, ...)
         if tagView(target) and row and row.toolkitTagRow then
+            if row.requiresRule then
+                openRule(target, {mode = "all", include = {row.tag}, exclude = {}})
+                return
+            end
             local checked, total = state(target, row)
             selectRow(target, row, checked ~= total)
             return
@@ -272,6 +309,18 @@ function Adapter.attach(picker)
     local selectFiltered = picker.btnAll.onclick
     picker.btnAll.onclick = function(target, ...)
         if not tagView(target) then return selectFiltered(target, ...) end
+        local include, entries = {}, target.listbox.items
+        for _, entry in ipairs(entries) do
+            if entry.item.requiresRule then include[#include + 1] = entry.item.tag end
+        end
+        if #include > 0 then
+            openRule(target, {mode = "any", include = include, exclude = {}}, function()
+                for _, entry in ipairs(entries) do
+                    if not entry.item.requiresRule then selectRow(target, entry.item, true) end
+                end
+            end)
+            return
+        end
         for _, row in ipairs(target.listbox.items) do selectRow(target, row.item, true) end
     end
     picker.needRebuild = true

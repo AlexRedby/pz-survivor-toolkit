@@ -79,7 +79,16 @@ function Fixture.position(player,x,y,z)
  player:teleportTo(math.floor(x),math.floor(y),z);player:setX(x);player:setY(y);player:setZ(z)
  player:setLastX(x);player:setLastY(y);player:setLastZ(z);player:setCurrentSquareFromPosition()
 end
-function Fixture.sameRule(rule)
+function Fixture.sameRule(rule,expected)
+ if expected then
+  if type(rule)~='table' or rule.mode~=expected.mode then return false end
+  for _,field in ipairs({'include','exclude'}) do
+   local actual={};for _,id in ipairs(rule[field] or {}) do actual[id]=true end
+   if #(rule[field] or {})~=#expected[field] then return false end
+   for _,id in ipairs(expected[field]) do if not actual[id] then return false end end
+  end
+  return true
+ end
  if type(rule)~='table' or rule.mode~='all' then return false end
  local include,exclude={},{}
  for _,id in ipairs(rule.include or {}) do include[id]=true end
@@ -87,6 +96,33 @@ function Fixture.sameRule(rule)
  return #rule.include==2 and include.food and include.perishable and #rule.exclude==1 and exclude.meat
 end
 function Fixture.rule() return {mode='all',include={'food','perishable'},exclude={'meat'}} end
+Fixture.plantingItems={{'sunflower','Base.SunflowerSeeds'},{'candy','Base.Candycane'},
+ {'carrot','Base.CarrotSeed'},{'fullPacket','Base.CarrotBagSeed2'},{'emptyPacket','Base.CarrotBagSeed2_Empty'},
+ {'potato','Base.Potato'},{'lemongrass','Base.LemonGrass'},{'hemp','Base.HempBundle'}}
+Fixture.plantingSeeds={sunflower=true,carrot=true,fullPacket=true,potato=true,lemongrass=true}
+function Fixture.plantingRule(phase)
+ if phase=='seed' then return {mode='all',include={'seed'},exclude={}} end
+ if phase=='exclude' then return {mode='all',include={'food'},exclude={'seed'}} end
+ return Fixture.rule()
+end
+function Fixture.plantingReceipt(sourceContainer,destContainer,ids,phase)
+ assert(phase=='setup' or phase=='seed' or phase=='reset' or phase=='exclude' or phase=='restored','unknown planting phase')
+ local source,destination=Fixture.counts(sourceContainer),Fixture.counts(destContainer)
+ local status,reason,facts='ready',nil,{}
+ local seen={}
+ for _,entry in ipairs(Fixture.plantingItems) do
+  local key,fullType=entry[1],entry[2];local id=assert(ids[key],'planting ID absent '..key)
+  assert(not seen[id],'planting IDs are not unique');seen[id]=true
+  local expected=(phase=='seed' and Fixture.plantingSeeds[key])
+   or ((phase=='exclude' or phase=='restored') and key=='candy')
+  local a,b=source[id] or 0,destination[id] or 0
+  facts[tostring(id)]={item=key,fullType=fullType,source=a,destination=b,expected=expected and 'destination' or 'source'}
+  if a+b>1 then return 'invalid','duplicate planting ID '..key,facts,source,destination end
+  if not expected and b>0 then return 'invalid','nonmatching planting item moved '..key,facts,source,destination end
+  if a+b~=1 or (expected and b~=1) then status,reason='pending','awaiting planting location '..key end
+ end
+ return status,reason,facts,source,destination
+end
 function Fixture.placementLoaded(packet)
  if type(packet)~='table' or type(packet.signature)~='string' or packet.signature==''
   or type(packet.squares)~='table' or #packet.squares~=4 then return false end

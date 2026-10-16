@@ -133,3 +133,61 @@ assert(#picker.rule.include==64 and picker:state('tool')=='Neutral' and picker.v
 owner.removed=true;picker:apply()
 assert(not picker.added,'removed parent accepted child Apply')
 print('Tag rule picker limit and removed-owner checks passed.')
+
+local function scriptItem(fullType, category, name, recipe)
+    return {getFullName=function() return fullType end,getDisplayCategory=function() return category end,
+        getDisplayName=function() return name end,getDoubleClickRecipe=function() return recipe end}
+end
+local function inventoryItem(script)
+    return {category=script:getDisplayCategory(),getScriptItem=function() return script end,
+        getFullType=function() return script:getFullName() end,getDisplayCategory=function(self) return self.category end,
+        getName=function() return script:getDisplayName() end}
+end
+local function javaList(values)
+    return {size=function() return #values end,get=function(_,index) return values[index+1] end}
+end
+farming_vegetableconf={props={Sunflower={seedName='Base.SunflowerSeeds'}}}
+local sunflower=scriptItem('Base.SunflowerSeeds','foodNonPerishable_candySnack','Sunflower seeds')
+local candy=scriptItem('Base.Candy','foodNonPerishable_candySnack','Candy')
+local full=scriptItem('Base.CarrotBagSeed2','farmingSeed','Full seed packet','OpenPacketOfSeeds')
+local empty=scriptItem('Base.CarrotBagSeed2_Empty','farmingSeed','Empty seed packet')
+ScriptManager={instance={getCraftRecipe=function()
+    return {getInputs=function() return javaList({{getPossibleInputItems=function() return javaList({full}) end}}) end,
+        getOutputs=function() return javaList({{getPossibleResultItems=function() return javaList({empty}) end}}) end}
+end}}
+local seedRule={mode='all',include={'seed'},exclude={}}
+local live=inventoryItem(sunflower)
+picker=Picker.open({categories={'foodNonPerishable_candySnack'},items={live},rule=seedRule,onApply=function() end})
+rows={}
+for _,row in ipairs(picker.entries) do rows[row.id]=row end
+assert(rows.seed and rows.seed.bucket==2 and rows.farming and rows.food,
+    'inventory-only sunflower did not expose item-specific seed choice')
+assert(rows.seed.families.food and rows.seed.families.farming,'dual-use item lost a family filter')
+assert(picker.matchCount==1 and picker.preview.items[1].text=='Sunflower seeds','item-aware seed preview is empty')
+picker:close()
+picker=Picker.open({categories={'farmingSeed'},items={inventoryItem(candy)},onApply=function() end})
+for _,row in ipairs(picker.entries) do assert(row.id~='seed','coarse category contaminated item choices') end
+picker:close()
+picker=Picker.open({items={live,inventoryItem(candy),inventoryItem(full),inventoryItem(empty)},rule=seedRule,onApply=function() end})
+assert(picker.matchCount==2,'inventory preview counted candy or empty seed packet')
+picker.rule={mode='all',include={'food','seed'},exclude={}};picker:refreshPreview()
+assert(picker.matchCount==1 and picker.preview.items[1].text=='Sunflower seeds','all preview lost food/seed intersection')
+picker.rule={mode='any',include={'food','seed'},exclude={'food'}};picker:refreshPreview()
+assert(picker.matchCount==1 and picker.preview.items[1].text=='Full seed packet','any/exclude preview included food')
+picker.rule={mode='all',include={'food','seed'},exclude={}}
+live.category='medicalTreatment';picker:refreshPreview()
+assert(picker.matchCount==0,'inventory preview reused stale instance category')
+live.category='foodNonPerishable_candySnack';picker:close()
+picker=Picker.open({categories={'Tool'},scriptItems={sunflower,candy,full,empty},rule=seedRule,onApply=function() end})
+rows={}
+for _,row in ipairs(picker.entries) do rows[row.id]=row end
+assert(rows.seed and rows.food and rows.farming and not rows.tool,'script item choices used category fallback')
+assert(picker.matchCount==2 and picker.preview.items[1].text=='Full seed packet'
+    and picker.preview.items[2].text=='Sunflower seeds','script catalog seed preview counted candy/empty or used inventory names')
+picker.rule={mode='all',include={'food','seed'},exclude={}};picker:refreshPreview()
+assert(picker.matchCount==1 and picker.preview.items[1].text=='Sunflower seeds','script preview lost dual role')
+picker:close()
+picker=Picker.open({categories={'Tool'},scriptItems={},onApply=function() end})
+assert(#picker.entries==0 and picker.matchCount==0,'empty script catalog fell back to coarse categories')
+picker:close()
+print('Item-aware tag picker checks passed: item/script choices, seed packets, dynamic preview and independent food/seed roles.')
