@@ -136,6 +136,15 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(1, cli.main(command + ['--mode', 'toolkit']))
         prepare.assert_not_called()
 
+    def test_batch_vanilla_and_empty_mods_do_not_fall_back_to_suite_defaults(self):
+        self.write_plan([{'id': 'vanilla', 'suite': 'startup', 'mode': 'native', 'mods': 'vanilla'},
+                         {'id': 'empty', 'suite': 'startup', 'mode': 'native', 'mods': []},
+                         {'id': 'wrong-suite', 'suite': 'video-recording', 'mode': 'native', 'mods': 'vanilla'}])
+        self.assertEqual(1, self.invoke())
+        self.assertEqual(['vanilla'], [name for name, _ in self.calls])
+        self.assertEqual([], self.calls[0][1]['mods'])
+        cli.native._validate(self.calls[0][1])
+
     def test_explicit_empty_jobs_never_broadens_to_the_full_plan(self):
         self.write_plan([{'id': 'wanted', 'suite': 'item-tags'}, {'id': 'unrelated', 'suite': 'video-recording'}])
         self.args.jobs = ''

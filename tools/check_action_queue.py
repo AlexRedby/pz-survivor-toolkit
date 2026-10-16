@@ -139,12 +139,12 @@ def batch(args, catalog):
             if job.get('seed_job'):
                 options['seed_run'] = str(completed[job['seed_job']])
             mods = job.get('mods', plan.get('mods'))
-            if mods is not None and mods != 'selected' and (not isinstance(mods, list) or any(not isinstance(id, str) for id in mods)):
-                raise ValueError('Batch mods must be a list of Mod IDs or selected')
+            if mods is not None and mods not in ('selected', 'vanilla') and (not isinstance(mods, list) or not mods or any(not isinstance(id, str) for id in mods)):
+                raise ValueError('Batch mods must be a nonempty list of Mod IDs, selected or vanilla')
             if not isinstance(plan.get('resources', {}), dict) or not isinstance(job.get('resources', {}), dict):
                 raise ValueError('Batch resources must be objects')
             namespace = argparse.Namespace(suite=job['suite'], cases=job.get('case'), mode=job.get('mode', 'toolkit'),
-                kind=job.get('kind'), language=job.get('language'), mods='selected' if mods == 'selected' else ','.join(mods) if mods else None,
+                kind=job.get('kind'), language=job.get('language'), mods=mods if isinstance(mods, str) else ','.join(mods) if mods else None,
                 config=args.plan, mod_source=[], timeout=job.get('timeout', 900), ports=job.get('ports'),
                 resources=dict(plan.get('resources', {}), **job.get('resources', {})))
             selected = selection(namespace, catalog, options)
