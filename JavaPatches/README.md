@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` **0.1.6** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; this is not an established fix for minute-long vehicle freezes or every movement jerk.
+`PZToolkitJavaPatches` **0.1.7** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; this is not an established fix for minute-long vehicle freezes or every movement jerk.
 
 ## Prepare and install
 
@@ -45,10 +45,11 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 
 ### Verify activation
 
-Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true, video=true, animal=true, equipment=true, hutch=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
+Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, media=true, build=true, video=true, animal=true, equipment=true, hutch=true, properties=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
 
 - Server: `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
 - Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI`, `[ZB] Transformed: zombie.vehicles.VehicleInterpolation` `[ZB] Transformed: zombie.characters.NetworkPlayerAI` and `[ZB] Transformed: zombie.network.packets.EquipPacket`.
+- Client and server property fallback: `[ZB] Transformed: zombie.core.properties.IsoPropertyType`.
 - Client and server hutch guard: `[ZB] Transformed: zombie.iso.objects.IsoHutch`.
 
 The selected Workshop `AnimalTrailerSyncMPFix` supplies a separate trailer timer fix; check `[AnimalTrailerSyncMPFix] ACTIVE` in the server log too (verified v1.3). See its [scope and installation](../MOD_INSTALL.md#animal-trailer-fix).
@@ -76,6 +77,12 @@ Verify `equipment=true` and `zombie.network.packets.EquipPacket` transformation 
 Version 0.1.6 guards null animal references during native `IsoHutch.removeFromWorld` cleanup in clients, single-player and servers. It preserves stored slots/counts, animal references and the original map; it creates/deletes no animals, edits no saves and does not suppress unrelated exceptions. Unsupported bytecode and custom map implementations retain native behavior. The guard does not diagnose or restore missing animals.
 
 Install the rebuilt folder on the server and **every client, including the host**, save the changed JAR approval and restart. No new Mod ID or Workshop item is needed. Check `hutch=true` and the actual `IsoHutch` transformation. This prevents this specific unload failure; it does not restore missing animals or diagnose their original loss.
+
+## Native string properties
+
+Version 0.1.7 prevents five startup `IsoPropertyTypeNotFoundException` exceptions for `ladderW`, `ladderN`, `ladderE`, `ladderS` and `WindowShape`. B42.21 ships these string properties in its tile definitions but uses a throwing enum lookup before returning their original names. The patch returns those same names before the throwing lookup, preserving alias IDs, values and string storage, including the cutaway shader's `WindowShape` reads. Typed aliases supplied by other mods still use native lookup.
+
+The mod entry point resolves the property enum before advice installation so the loader can transform it reliably. This guard requires matching `IsoPropertyType` and `TilePropertyAliasMap` bytecode. Strict enum lookup and diagnostics for every other unknown property remain native. Install the rebuilt folder on the server and every client, save the changed JAR approval and restart; verify `properties=true` and the actual `IsoPropertyType` transformation. This fix does not classify or suppress other startup errors.
 
 ## Verification limits
 

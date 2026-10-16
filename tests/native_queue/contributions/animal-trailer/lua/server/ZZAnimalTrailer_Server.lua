@@ -26,13 +26,18 @@ local function createFixture(Session)
 local Events=Session and Session.events or Events
 local fixtureState
 local timer=not Session or Session.case:find('timer') or Session.case:find('combined')
+local movement=require 'QueueAnimalMovement'
 local function reply(command,args)
  if Session then Session.reply(fixtureState.player,command,args or {}) else sendServerCommand(fixtureState.player,'AnimalTrailerBaseline',command,args or {}) end
+end
+local function fail(reason)
+ fixtureState.failed=true
+ if Session then Session.quarantine(reason) else error(reason) end
 end
 Events.OnClientCommand.Add(function(module,command,player,args)
  if module~='AnimalTrailerBaseline' then return end
  if command=='Ready' then
-  if fixtureState then if fixtureState.sent then reply('Fixture',fixtureState.args) end;return end
+  if fixtureState then assert(fixtureState.player==player,'foreign fixture owner');if fixtureState.sent then reply('Fixture',fixtureState.args) end;return end
   local v,x,y=spawn();if not v then return end;fixtureState={vehicle=v,player=player,args={ids={},origin={x=player:getX(),y=player:getY(),z=player:getZ()}},animals={},items={}}
   for i,kind in ipairs({'hen','hen','chick'}) do
    local breed=AnimalDefinitions.getDef(kind):getBreedByName('rhodeisland')
@@ -42,6 +47,10 @@ Events.OnClientCommand.Add(function(module,command,player,args)
    log('SEEDED kind='..kind..' animal='..a:getAnimalID()..' online='..a:getOnlineID())
   end
   fixtureState.observationStart=getTimestampMs();if timer and animalTimerObserve then log('TIMER '..animalTimerObserve(v)) end
+ elseif command=='VerifyStartPosition' then
+  assert(fixtureState and fixtureState.player==player and fixtureState.startIssued
+   and not fixtureState.startRequest and not fixtureState.startReady,'unexpected fixture start receipt')
+  fixtureState.startRequest=true
  elseif command=='EquipWeapon' then
   local weapon=player:getInventory():AddItem('Base.BaseballBat');sendAddItemToContainer(player:getInventory(),weapon)
   fixtureState.items[weapon:getID()]=weapon;reply('WeaponReady',{id=weapon:getID()});log('WEAPON_CREATED id='..weapon:getID())
@@ -79,13 +88,36 @@ Events.OnClientCommand.Add(function(module,command,player,args)
  end
 end)
 Events.OnTick.Add(function()
+ if fixtureState and fixtureState.failed then return end
+ if fixtureState and not fixtureState.startReady then
+  local state=fixtureState
+  if not state.startIssued and state.vehicle:getId()>=0 then
+   state.failed=true
+   local square=movement.startSquare(state.vehicle)
+   if not square then fail('no free reachable square at trailer AnimalEntry');return end
+   state.start={x=square:getX()+0.5,y=square:getY()+0.5,z=square:getZ()}
+   local result=animalFixtureRestorePosition(state.player,state.start.x,state.start.y,state.start.z)
+   if result~='issued' then fail('native fixture start failed: '..tostring(result));return end
+   state.startIssued=getTimestampMs()
+   state.failed=false
+   reply('StartPositionIssued',{x=state.start.x,y=state.start.y,z=state.start.z,vehicleId=state.vehicle:getId()})
+  end
+  if state.startIssued then
+   if getTimestampMs()-state.startIssued>30000 then fail('native fixture start/client receipt deadline');return end
+   if state.startRequest and movement.stagedAt(state.player,state.start) and movement.nearEntry(state.player,state.vehicle) then
+    state.startReady=true
+    reply('StartPositionReady',state.start)
+    log('START_POSITION nativeTeleport=true clientAck=true '..movement.describe(state.player,state.start))
+   end
+  end
+ end
  if fixtureState and fixtureState.positionRequest and (require 'QueueAnimalMovement').at(fixtureState.player,fixtureState.args.origin) then
   fixtureState.positionRequest=false
   fixtureState.positionAcknowledged=true
   reply('PositionReset',{x=fixtureState.player:getX(),y=fixtureState.player:getY(),z=fixtureState.player:getZ()})
   log('POSITION_RESET nativeTeleport=true serverAck=true '..(require 'QueueAnimalMovement').describe(fixtureState.player,fixtureState.args.origin))
  end
- if fixtureState and not fixtureState.sent and fixtureState.vehicle:getId()>=0 and getTimestampMs()-fixtureState.observationStart>(timer and animalTimerObserve and cfg.timerObservationMs or 0) then
+ if fixtureState and fixtureState.startReady and not fixtureState.sent and getTimestampMs()-fixtureState.observationStart>(timer and animalTimerObserve and cfg.timerObservationMs or 0) then
   if timer and animalTimerResult then log('TIMER '..animalTimerResult()) end
   fixtureState.sent=true;fixtureState.args.vehicleId=fixtureState.vehicle:getId();reply('Fixture',fixtureState.args)
   log('FIXTURE trailer='..fixtureState.args.vehicleId..' count='..fixtureState.vehicle:getAnimals():size())
