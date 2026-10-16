@@ -61,6 +61,8 @@ function Tags.matches(categoryOrTags, selected, mode)
     local tags = type(categoryOrTags) == "string" and Tags.forCategory(categoryOrTags) or categoryOrTags
     local present = {}
     for _, id in ipairs(tags or {}) do present[id] = true end
+    -- Saved exact-category filters survive a category gaining semantic tags later.
+    if tags and type(tags.legacyCategory) == "string" then present["category:" .. tags.legacyCategory] = true end
     local count = 0
     for _, id in ipairs(selected) do
         count = count + 1

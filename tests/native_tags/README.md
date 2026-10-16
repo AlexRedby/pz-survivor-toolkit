@@ -11,6 +11,8 @@ Build the local Java patch with `tools/prepare_install.py` before `--selected`. 
 
 For the four-case selection/sort/reconnect baseline, add `--baseline --source-ref <committed-ref>`. Otherwise 16 cases exercise all/any/excluded/empty inventory filters, match previews, named filter save/apply and disk-read/delete after reconnect, real Quartermaster Save callbacks, saved/reopened rules, stale writes, peer replication, live disable/re-enable, native sorting, every configured icon, and actual client reconnection with the same saved crate/bag/item IDs. Only fixture-owned bags/crates/items are mutated; server receipts check their original IDs and preserve pre-existing inventory IDs. Both modes disconnect/reconnect both clients and require separate authoritative receipts before and after that transition.
 
+The icon case also resolves all 209 defined tags through the actual native texture loader, checks the generic custom-category icon, and verifies the case-sensitive `FurnitureDoor` projection plus compatibility with previously saved exact-category rules.
+
 Before either crate is created, both clients must acknowledge that all four staging and crate squares are loaded. This prevents late-joining observers from missing a test object created during their world load. Peer checks continue polling and log square/object/rule/revision diagnostics until the actual native object is available; no synthetic object or injected rule satisfies this check.
 
 Reconnect reacquires native squares and the unique owned crate from primitive saved coordinates, then finds the bag by its original item ID. It does not retain square references across chunk unloads or create replacement fixtures. Missing world objects remain pending with bounded diagnostics.

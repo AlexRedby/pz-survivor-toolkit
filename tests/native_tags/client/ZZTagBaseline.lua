@@ -10,7 +10,7 @@ local verified,ruleVerified,staleReply={}, {}, nil
 local step,since,lastReady,lastPeer=1,0,0,0
 local placement,lastPlacementAck=nil,0
 local steps,passed={},{}
-local Tags,Rules,presetDialog
+local Tags,Rules,presetDialog,iconCatalog
 local lastSortWait=0
 local localReceipts={}
 local providerConfigured=false
@@ -36,6 +36,31 @@ local function pass(id)
 end
 local function add(fn) steps[#steps+1]=fn end
 local function shot(name) getCore():TakeFullScreenshot('tag-'..user..'-'..language..'-'..name..'.png') end
+local function showIconCatalog(schema,visuals)
+ local rows={}
+ for id in pairs(schema.labels) do rows[#rows+1]={id=id,label=Tags.label(id),style=visuals.get(id)} end
+ table.sort(rows,function(a,b) return a.label==b.label and a.id<b.id or a.label<b.label end)
+ local width,height=math.min(1520,getCore():getScreenWidth()-40),math.min(1000,getCore():getScreenHeight()-40)
+ local panel=ISPanel:new((getCore():getScreenWidth()-width)/2,(getCore():getScreenHeight()-height)/2,width,height)
+ panel.backgroundColor={r=0.045,g=0.055,b=0.075,a=0.99};panel.page=1
+ panel:initialise();panel:addToUIManager();panel:bringToTop()
+ panel.render=function(self)
+  ISPanel.render(self)
+  self:drawText('Tag icon catalog '..self.page..'/3 - all 209 defined tags',16,12,1,1,1,1,UIFont.Medium)
+  local cellW,cellH=(self.width-32)/4,(self.height-70)/18
+  for slot=1,72 do
+   local row=rows[(self.page-1)*72+slot]
+   if row then
+    local x,y=16+((slot-1)%4)*cellW,54+math.floor((slot-1)/4)*cellH
+    self:drawRect(x,y,cellW-6,cellH-4,1,0.08,0.10,0.14)
+    self:drawTextureScaledAspect(row.style.texture,x+5,y+5,28,28,1,1,1,1)
+    self:drawText(row.label,x+40,y+3,1,1,1,1,UIFont.Small)
+    self:drawText(row.id,x+40,y+22,0.65,0.72,0.80,1,UIFont.Small)
+   end
+  end
+ end
+ return panel
+end
 local function idle()
  local player=getPlayer()
  return not player:hasTimedActions() and #ISTimedActionQueue.getTimedActionQueue(player).queue==0
@@ -247,7 +272,20 @@ if config.tagRules then
   assert(player:getWornItem(bag:canBeEquipped())==bag,'fixture source bag did not reach native worn slot')
   assert(type(config.textureNames)=='table' and #config.textureNames>0,'immutable TagVisuals texture list missing')
   for _,name in ipairs(config.textureNames) do assert(getTexture(name),'tag texture missing '..name) end
-  print('[TAG_TEXTURES] actor='..user..' checked='..#config.textureNames);pass('icons')
+  local schema=require 'PZSurvivorToolkit/ItemTagSchema'
+  local visuals=require 'PZSurvivorToolkit/TagVisuals'
+  local labels=0
+  for id in pairs(schema.labels) do
+   assert(visuals.get(id).texture,'defined tag has no native icon '..id);labels=labels+1
+  end
+  assert(labels==209,'defined tag count changed without coverage update')
+  assert(visuals.get('category:FutureModCategory').texture,'custom category has no generic icon')
+  assert(Tags.matches('FurnitureDoor',{'furniture','door'}),'FurnitureDoor alias absent')
+  assert(Tags.category(Tags.forCategory('FurnitureDoor'))=='FurnitureDoor','legacy case identity changed')
+  assert(Tags.matchesRule('FurnitureDoor',assert(Tags.normalizeRule({include={'category:FurnitureDoor'}}))),
+   'saved exact-category rule no longer matches')
+  print('[TAG_ICON_COVERAGE] actor='..user..' defined='..labels..' FurnitureDoor=true exactRule=true')
+  print('[TAG_TEXTURES] actor='..user..' checked='..#config.textureNames)
   local page=getPlayerInventory(0);page:setVisible(true);page.isCollapsed=false;page:setPinned()
   page:setX(35);page:setY(70);page:setWidth(1000);page:setHeight(650);page:setMaxDrawHeight(650)
   page:refreshBackpacks();page:setNewContainer(source)
@@ -259,8 +297,12 @@ if config.tagRules then
   assert(not Tags.matchesRule(Fixture.find(source,setup.steak):getDisplayCategory(),Fixture.rule()),'native Steak category differs')
   openInventoryRule();selectRule({'food','perishable'},{},'all')
   assert(rulePicker.matchCount==2,'all preview expected Apple and Steak')
+  iconCatalog=showIconCatalog(schema,visuals)
   return true
  end)
+ add(function() shot('catalog-1');iconCatalog.page=2;return true end)
+ add(function() shot('catalog-2');iconCatalog.page=3;return true end)
+ add(function() shot('catalog-3');iconCatalog:removeFromUIManager();iconCatalog=nil;pass('icons');return true end)
  add(function() shot('inventory-all');applyInventoryRule('inventory-all');expectVisible({'apple','steak'},'inventory-all');pass('inventory-all')
   openInventoryRule();selectRule({'perishable','electrical'},{},'any');assert(rulePicker.matchCount==3,'any preview expected three items');return true end)
  add(function() shot('inventory-any');applyInventoryRule('inventory-any');expectVisible({'apple','steak','battery'},'inventory-any');pass('inventory-any')
