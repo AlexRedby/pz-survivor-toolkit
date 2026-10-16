@@ -113,6 +113,14 @@ class BatchTests(unittest.TestCase):
                 self.invoke()
             self.assertFalse(self.args.output.exists())
 
+    def test_explicit_empty_cases_never_broadens_to_the_suite_default(self):
+        output = self.root / 'empty-cases'
+        with patch.object(cli.native, 'prepare') as prepare:
+            result = cli.main(['prepare', str(output), '--game', '/game', '--jdk', '/jdk', '--cases', ''])
+        self.assertEqual(1, result)
+        prepare.assert_not_called()
+        self.assertFalse(output.exists())
+
     def test_explicit_empty_jobs_never_broadens_to_the_full_plan(self):
         self.write_plan([{'id': 'wanted', 'suite': 'item-tags'}, {'id': 'unrelated', 'suite': 'video-recording'}])
         self.args.jobs = ''

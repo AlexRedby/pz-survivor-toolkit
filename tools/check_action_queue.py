@@ -17,6 +17,8 @@ def selection(args, catalog, options=None):
     if suite["status"] != "ready":
         raise ValueError("Suite has not been migrated: " + args.suite)
     all_cases = {case["id"]: case for case in suite["cases"]}
+    if args.cases == '':
+        raise ValueError('--cases requires at least one case ID')
     kind = args.kind or suite['cases'][0]['kinds'][0]
     cases = args.cases.split(",") if args.cases else ([suite['cases'][0]['id']] if args.suite != 'health' else [case['id'] for case in suite['cases'] if kind in case['kinds']])
     if not cases or len(cases) != len(set(cases)) or any(identifier not in all_cases for identifier in cases):
