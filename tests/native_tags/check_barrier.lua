@@ -62,9 +62,10 @@ sendServerCommand=function(auth,module,command,args)
 end
 instanceof=function(value,kind) return kind=='InventoryContainer' and value.inventory~=nil end
 local handler
+local fixtureConfig={tagRules=true}
 Events={OnServerStarted={Add=function() end},OnClientCommand={Add=function(fn) handler=fn end}}
 require=function(module)
- if module=='QueueTestSelection' then return {tagRules=true} end
+ if module=='QueueTestSelection' then return fixtureConfig end
  if module=='TagFixture' then return Fixture end
  if module=='TagTestEvents' then return {encode=function(value)
   if value.reason then diagnostics[#diagnostics+1]=value end;return '{}'
@@ -171,4 +172,18 @@ freshCrate.objects={unowned,reloadedBox};reloadedPlayer.inventory=container();no
 command(reloadedPlayer,'Ready',{reconnect=true})
 assert(diagnostics[#diagnostics].reason=='owned source bag missing' and #packets==before)
 assert(created==2 and nextID==lastID,'pending reconnect paths created new objects/items')
+-- A fresh server Lua state receives expected identities, never replacement objects.
+reloadedPlayer.inventory=replicatedInventory
+fixtureConfig={tagRules=true,tagRestart={client1={setup=updatedSetup,start={x=0,y=0,z=0},original={},manual={}}}}
+dofile(root..'server/ZZTagBaseline.lua')
+before=#packets
+command(reloadedPlayer,'Ready',{reconnect=true})
+assert(#packets==before+1 and packets[#packets].command=='Setup' and packets[#packets].args.source==updatedSetup.source,
+ 'cold restart did not resolve exact saved source bag')
+assert(created==2 and nextID==lastID,'cold restart recreated fixture objects or items')
+assert(not pcall(command,stranger,'Ready',{reconnect=true}),'cold restart admitted a new fixture owner')
+assert(created==2 and nextID==lastID,'unknown restart owner created fixture state')
+freshCrate.objects={unowned};now=now+1000;before=#packets
+command(reloadedPlayer,'Ready',{reconnect=true})
+assert(#packets==before and created==2 and nextID==lastID,'missing saved crate was recreated on cold restart')
 print('Native placement barrier checks passed: two-actor load barrier, invalid/stale ack rejection, reconnect with fresh/pooled squares, exact owner/index and replicated item IDs.')

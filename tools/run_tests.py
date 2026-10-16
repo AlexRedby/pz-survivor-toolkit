@@ -64,6 +64,10 @@ def main() -> None:
     check.globals().ProjectRoot = str(ROOT)
     check.globals().BaselineTagReconnect = True
     check.execute((ROOT / "tests/native_tags/check_reconnect.lua").read_text(encoding="utf-8"))
+    check = LuaRuntime(unpack_returned_tuples=True)
+    check.globals().ProjectRoot = str(ROOT)
+    check.globals().RestartTagReconnect = True
+    check.execute((ROOT / "tests/native_tags/check_reconnect.lua").read_text(encoding="utf-8"))
     if args.native_action_root:
         for name in ("check_transfer_source.lua", "check_placement.lua"):
             check = LuaRuntime(unpack_returned_tuples=True)

@@ -17,7 +17,8 @@ local providerConfigured=false
 local bagWearQueued=false
 local resuming,awaitingReconnect=false,false
 local RECONNECT_FILE='tag-fixture-reconnect.txt'
-local RECONNECT_CASE=config.tagRules and 'rule-reconnect' or 'baseline-reconnect'
+local RECONNECT_CASE=config.tagRestart and 'server-restart' or config.tagRules and 'rule-reconnect' or 'baseline-reconnect'
+local RESUME_PHASE=config.tagRestart and 'restart-before' or 'reconnect'
 local PRESET_NAME='Toolkit food '..user
 local function reconnectFlag()
  local reader=getFileReader(RECONNECT_FILE,false);if not reader then return end
@@ -461,7 +462,7 @@ resumeSteps[1]=function()
  assert(Rules.getBoxRevision(box,0)==setup.revision,'reconnect rule revision changed')
  LootSorter.openPicker(box,0,0);picker=assert(LootSorter._picker)
  assert(Fixture.sameRule(picker.toolkitTagRule) and picker.selectedCats[batteryCategory],'reopened rule after reconnect differs')
- sendClientCommand('TagBaseline','VerifyRule',{phase='reconnect'})
+ sendClientCommand('TagBaseline','VerifyRule',{phase=RESUME_PHASE})
  sendClientCommand('TagBaseline','Verify',{phase='enabled'})
  return true
 end
@@ -472,21 +473,49 @@ resumeSteps[2]=function()
   print('[TAG_RECONNECT] actor='..user..' phase=verified baseline=true')
   return true
  end
- if not ruleVerified.reconnect or not awaitReceipt('enabled') then return end
- assert(ruleVerified.reconnect.revision==setup.revision,'authoritative revision changed after reconnect')
+ if not ruleVerified[RESUME_PHASE] or not awaitReceipt('enabled') then return end
+ assert(ruleVerified[RESUME_PHASE].revision==setup.revision,'authoritative revision changed after reconnect')
  shot('quartermaster-rule-reconnect');picker:closePicker()
  local page=getPlayerInventory(0);page:setVisible(true);page.isCollapsed=false;page:setPinned()
  page:refreshBackpacks();page:setNewContainer(source);pane=page.inventoryPane;pane:setVisible(true)
  assert(pane.inventory==source,'reconnect preset menu lost fixture source')
- local root,menu=presetMenu()
- local deletes=menu:getSubMenu(optionKey(menu,'tagPresetDelete').subOption)
- invoke(root,optionKey(deletes,'tagPresetDelete:'..PRESET_NAME))
- assert(not storedPreset(),'preset deletion did not persist after reconnect')
+ if not config.tagRestartSeed and not config.tagRestart then
+  local root,menu=presetMenu()
+  local deletes=menu:getSubMenu(optionKey(menu,'tagPresetDelete').subOption)
+  invoke(root,optionKey(deletes,'tagPresetDelete:'..PRESET_NAME))
+  assert(not storedPreset(),'preset deletion did not persist after reconnect')
+ else assert(Fixture.sameRule(storedPreset()),'restart seed/reload lost the disk-backed named filter') end
  writeReconnect('done');print('[TAG_RECONNECT] actor='..user..' phase=verified revision='..setup.revision)
  pass(RECONNECT_CASE)
+ if config.tagRestart then print('[TAG_RESTART] actor='..user..' phase=verified') end
  return true
 end
-resumeSteps[3]=complete
+if config.tagRestart then
+ resumeSteps[3]=function()
+  local apple=Fixture.find(box:getContainerByIndex(0),setup.apple)
+  assert(apple,'persisted Apple missing before native pickup')
+  verified.enabled=nil;localReceipts.enabled=nil
+  ISTimedActionQueue.add(ISInventoryTransferAction:new(getPlayer(),apple,box:getContainerByIndex(0),source))
+  return true
+ end
+ resumeSteps[4]=function()
+  if not idle() or not awaitReceipt('disabled') then return end
+  return sortSource()
+ end
+ resumeSteps[5]=function()
+  if not idle() or not awaitReceipt('enabled') then return end
+  if not ruleVerified['restart-after'] then
+   if getTimestampMs()-lastReady>1000 then
+    lastReady=getTimestampMs();sendClientCommand('TagBaseline','VerifyRule',{phase='restart-after'})
+   end
+   return
+  end
+  assert(ruleVerified['restart-after'].revision==setup.revision,'sorting changed persisted rule revision')
+  shot('server-restart-sorted');pass('restart-sort')
+  print('[TAG_RESTART] actor='..user..' phase=sorted');return true
+ end
+ resumeSteps[6]=complete
+else resumeSteps[3]=complete end
 local function beginResume()
  resuming,awaitingReconnect=true,false
  connected,advanced,started,done=false,false,false,false
@@ -496,9 +525,11 @@ local function beginResume()
  step,since,lastReady,lastPeer=1,getTimestampMs(),0,0
  placement,lastPlacementAck=nil,0
  steps,passed=resumeSteps,{}
- for _,id in ipairs(config.cases) do if id~=RECONNECT_CASE then passed[id]=true end end
+ if not config.tagRestart then
+  for _,id in ipairs(config.cases) do if id~=RECONNECT_CASE then passed[id]=true end end
+ end
 end
-if reconnectFlag()=='pending' then beginResume() end
+if config.tagRestart or reconnectFlag()=='pending' then beginResume() end
 local function connect()
  if connected or isClient() or not MainScreen.instance or not ConnectToServer.instance then return end
  connected=true
@@ -520,7 +551,7 @@ Events.OnGameStart.Add(function()
  getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false);getPlayer():setGodMod(true)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
  print('[QUEUE_TEST] NATIVE_CONNECTED '..user)
- if not resuming then emit({event='setup',cases=config.cases,expected=#config.cases,language=language,nativeDurations=true,queueEnabled=true})
+ if not resuming or config.tagRestart then emit({event='setup',cases=config.cases,expected=#config.cases,language=language,nativeDurations=true,queueEnabled=true})
  else print('[TAG_RECONNECT] actor='..user..' phase=connected') end
 end)
 Events.OnServerCommand.Add(function(module,command,args)

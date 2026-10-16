@@ -1,6 +1,7 @@
 """Run isolated two-client tag checks using the shared native process guard."""
 import argparse
 import io
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -29,10 +30,19 @@ def main():
     parser.add_argument('--source-ref', help='Use committed product bytes; fixture stays current')
     parser.add_argument('--baseline', action='store_true', help='Check old selection/sort and actual reconnect')
     parser.add_argument('--selected', action='store_true', help='Use all Mods from the selected INI')
-    parser.add_argument('--port', type=int, default=17493)
+    restart = parser.add_mutually_exclusive_group()
+    restart.add_argument('--restart-seed', action='store_true', help='Retain and seal the completed 16-case world')
+    restart.add_argument('--restart-from', type=Path, help='Reload a completed sealed restart seed')
+    parser.add_argument('--port', type=int)
     parser.add_argument('--prepare-only', action='store_true')
     args = parser.parse_args()
+    if args.baseline and (args.restart_seed or args.restart_from):
+        parser.error('Restart checks require candidate tag rules')
+    seed = validate_seed(args.restart_from) if args.restart_from else None
+    port = args.port if args.port is not None else (seed['selection']['ports'][0] if seed else 17493)
     output = args.output.resolve()
+    if seed:
+        assert not output.is_relative_to(seed['output'].resolve()), 'Restart output must be outside seed'
     protected = [args.game, args.jdk, *args.workshop, ROOT / 'PZSurvivorToolkit',
                  ROOT / 'PZSurvivorWishlist', ROOT / 'tools', ROOT / 'tests']
     if any(output.is_relative_to(path.resolve()) for path in protected):
@@ -54,8 +64,8 @@ def main():
     sys.path.insert(0, str(source / 'tools'))
     from queue_checks.native import prepare, _matching_roots
     from queue_checks.runner import run
-    identifiers = INTEGRATION
-    if args.selected:
+    identifiers = seed['selection']['mods'] if seed else INTEGRATION
+    if args.selected and not seed:
         line = next(line for line in (source / 'SurvivorQoL-selected.ini').read_text().splitlines()
                     if line.startswith('Mods='))
         identifiers = line[5:].split(';')
@@ -88,12 +98,19 @@ def main():
                 (layer / 'media' / name).mkdir(parents=True, exist_ok=True)
     visuals = (source / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/TagVisuals.lua').read_text()
     textures = sorted(set(re.findall(r'"((?:Item_|media/ui/)[^"]+)"', visuals)))
-    cases = BASELINE if args.baseline else CASES
+    cases = ['server-restart', 'restart-sort'] if seed else (BASELINE if args.baseline else CASES)
     selection = dict(schema_version=1, suite='tags', kind='mp', mode='toolkit', cases=cases,
-                     mods=identifiers, languages=['EN', 'RU'], ports=[args.port, args.port + 1],
+                     mods=identifiers, languages=['EN', 'RU'], ports=[port, port + 1],
                      timeout_seconds=600, expected_checks=len(cases) + 2,
                      tagRules=not args.baseline, textureNames=textures, placementBarrier=True, reconnectEvidence=True)
+    if args.restart_seed:
+        selection['tagRestartSeed'] = True
+    if seed:
+        selection.update(tagRestart=seed['states'], placementBarrier=False, reconnectEvidence=False)
+        assert selection['ports'] == seed['selection']['ports'], 'Restart endpoints changed'
     prepared = prepare(source, output / 'run', args.game, args.jdk, selection)
+    if seed:
+        restore_seed(seed, prepared)
     (output / 'candidate.json').write_text(json.dumps({'source_ref': args.source_ref or 'working-tree',
          'fixture': str(HERE), 'baseline': args.baseline, 'mods': len(identifiers)}, indent=2) + '\n')
     print('PREPARED ' + str(prepared), flush=True)
@@ -103,6 +120,183 @@ def main():
     if execution['status'] != 'completed':
         raise RuntimeError(execution)
     verify(output)
+
+
+ROLES = ('server', 'client1', 'client2')
+
+
+def digest(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def write_json(path, value):
+    Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
+
+
+def no_symlinks(root):
+    root = Path(root)
+    assert not any(path.is_symlink() for path in (root, *root.parents, *root.rglob('*'))), 'Symlink in restart seed'
+
+
+def rows(text, marker):
+    return [json.loads(line.split(marker, 1)[1]) for line in text.splitlines() if marker in line]
+
+
+def persisted_files(run):
+    files = {}
+    for role in ROLES:
+        for directory in ('Saves', 'db', 'Server'):
+            path = run / role / directory
+            if directory != 'Server' or role == 'server':
+                assert path.is_dir() and any(p.is_file() for p in path.rglob('*')), 'Missing persisted ' + role + '/' + directory
+            files.update({p.relative_to(run).as_posix(): digest(p) for p in path.rglob('*') if p.is_file()})
+        presets = sorted((run / role / 'Lua').glob('PZSurvivorToolkit_TagFilters_*.txt'))
+        if role != 'server':
+            assert presets, 'Missing retained client tag filter preset'
+        files.update({p.relative_to(run).as_posix(): digest(p) for p in presets})
+    return files
+
+
+def seed_states(text):
+    snapshots = rows(text, '[TAG_RESTART_SEED] ')
+    assert len(snapshots) == 2 and {row['actor'] for row in snapshots} == {'client1', 'client2'}, 'Missing or repeated actor seed'
+    states = {row['actor']: row for row in snapshots}
+    for actor, row in states.items():
+        setup = row['setup']
+        assert setup['owner'] == actor, 'Seed setup owner differs'
+        assert all(key in setup for key in ('x', 'y', 'z', 'index', 'owner', 'battery', 'apple', 'beans', 'steak', 'source', 'revision', 'manualCategory'))
+        assert len({str(setup[key]) for key in ('battery', 'apple', 'beans', 'steak')}) == 4
+        assert all(key in row['start'] for key in ('x', 'y', 'z'))
+        assert isinstance(row['original'], list) and all('id' in item and 'count' in item for item in row['original'])
+        assert all(key in row['manual'] for key in ('priority', 'LSBox', 'LSBoxItems', 'LSBoxPresets'))
+    return states
+
+
+def validate_saved_endpoint(run, selection, runtime):
+    name = runtime['server_name']
+    assert re.fullmatch(r'[A-Za-z0-9_.-]+', name), 'Invalid saved server name'
+    path = run / 'server/Server' / (name + '.ini')
+    values = dict(line.split('=', 1) for line in path.read_text().splitlines() if '=' in line)
+    assert [int(values['DefaultPort']), int(values['UDPPort'])] == selection['ports'], 'Saved server endpoints changed'
+    assert values['Mods'].split(';') == [*selection['mods'], 'ActionQueueTest'], 'Saved server mod IDs changed'
+
+
+def completed_execution(run):
+    execution = json.loads((run / 'execution.json').read_text())
+    assert execution['status'] == 'completed' and not execution.get('cleanup_errors'), 'Seed execution incomplete'
+    assert set(execution['processes']) == set(ROLES)
+    assert all(type(row.get('exit_code')) is int for row in execution['processes'].values()), 'Seed role still running'
+    text = (run / 'server-launch.log').read_text(errors='replace')
+    assert 'Saving finish' in text and re.search(r'Shutdown(?: handling)?\s+finished', text, re.I), 'Seed server did not save and shut down'
+    return text
+
+
+def seal_seed(output):
+    run = output / 'run'
+    no_symlinks(run)
+    text = completed_execution(run)
+    states = seed_states(text)
+    evidence = {name: digest(run / name) for name in ('execution.json', 'server-launch.log', 'client1-launch.log', 'client2-launch.log')}
+    record = dict(kind='seed', files=persisted_files(run), states=states, evidence=evidence, result_sha256=digest(output / 'result.json'))
+    write_json(run / 'restart-inputs.json', record)
+    frozen = json.loads((run / 'snapshot-hashes.json').read_text())
+    frozen['restart-inputs.json'] = digest(run / 'restart-inputs.json')
+    write_json(run / 'snapshot-hashes.json', frozen)
+
+
+def validate_seed(output):
+    output = Path(output).absolute()
+    assert not output.is_symlink(), 'Symlink in restart seed'
+    output = output.resolve()
+    no_symlinks(output)
+    run = output / 'run'
+    selection = json.loads((run / 'selection.json').read_text())
+    assert selection.get('tagRestartSeed') and selection['cases'] == CASES and selection['tagRules'], 'Not a completed candidate restart seed'
+    result = json.loads((output / 'result.json').read_text())
+    assert result.get('functional') == 'passed' and result.get('cases_per_client') == 16 and result.get('provenance_verified') is True
+    text = completed_execution(run)
+    runtime = json.loads((run / 'runtime.json').read_text())
+    validate_saved_endpoint(run, selection, runtime)
+    record = json.loads((run / 'restart-inputs.json').read_text())
+    assert record['kind'] == 'seed' and record['files'] == persisted_files(run), 'Persisted seed inputs changed'
+    assert record['states'] == seed_states(text) and record['result_sha256'] == digest(output / 'result.json')
+    assert all(digest(run / name) == value for name, value in record['evidence'].items()), 'Seed execution evidence changed'
+    sys.path.insert(0, str(output / 'source/tools'))
+    from queue_checks.report import verify_manifest
+    errors = verify_manifest(run, 'source-manifest.json', True) + verify_manifest(run, 'snapshot-hashes.json')
+    assert not errors, errors
+    return dict(output=output, selection=selection, states=record['states'], files=record['files'],
+                runtime=runtime)
+
+
+def restore_seed(seed, prepared):
+    run = seed['output'] / 'run'
+    assert json.loads((prepared / 'selection.json').read_text())['ports'] == seed['selection']['ports'], 'Restart endpoints changed'
+    runtime = json.loads((prepared / 'runtime.json').read_text())
+    assert runtime['server_name'] == seed['runtime']['server_name'], 'Restart server name changed'
+    before = json.loads((run / 'manifest.json').read_text())
+    after = json.loads((prepared / 'manifest.json').read_text())
+    assert {row['id']: row['files'] for row in before} == {row['id']: row['files'] for row in after}, 'Restart product/mod bytes changed'
+    no_symlinks(run)
+    assert persisted_files(run) == seed['files'], 'Seed changed before copy'
+    for name, expected in seed['files'].items():
+        source, target = run / name, prepared / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        assert digest(target) == expected, 'Persisted input changed during copy'
+    write_json(prepared / 'restart-inputs.json', dict(kind='restart', seed=str(seed['output']), files=seed['files'], states=seed['states']))
+    # Only prepared immutable inputs are resealed. Saved worlds/databases remain mutable runtime inputs.
+    initial = json.loads((prepared / 'initial-settings.json').read_text())
+    for role in ROLES:
+        for path in (prepared / role / 'Server').glob('*'):
+            if path.is_file():
+                initial[path.relative_to(prepared).as_posix()] = path.read_text()
+    write_json(prepared / 'initial-settings.json', initial)
+    fingerprint = json.loads((prepared / 'settings-fingerprint.json').read_text())
+    fingerprint['inputs']['settings'] = initial
+    fingerprint['sha256'] = hashlib.sha256(json.dumps(fingerprint['inputs'], sort_keys=True).replace(str(prepared), '<run>').encode()).hexdigest()
+    write_json(prepared / 'settings-fingerprint.json', fingerprint)
+    frozen = json.loads((prepared / 'snapshot-hashes.json').read_text())
+    for name in seed['files']:
+        if '/Lua/' in name:
+            frozen[name] = digest(prepared / name)
+    for name in ('restart-inputs.json', 'initial-settings.json', 'settings-fingerprint.json'):
+        frozen[name] = digest(prepared / name)
+    write_json(prepared / 'snapshot-hashes.json', frozen)
+
+
+def consecutive_phases(records, expected):
+    compact = []
+    for row in records:
+        if compact and row['phase'] == compact[-1]['phase']:
+            assert row == compact[-1], 'Repeated restart phase evidence differs'
+        else:
+            compact.append(row)
+    assert [row['phase'] for row in compact] == expected, 'Missing ordered restart evidence'
+    return compact
+
+
+def validate_restart_receipts(text, actor, state):
+    receipts = rows(text, '[TAG_RECEIPT] ')
+    selected = [row for row in receipts if row['actor'] == actor]
+    selected = consecutive_phases(selected, ['enabled', 'disabled', 'enabled'])
+    setup = state['setup']
+    for row in selected:
+        assert row['exact'] and row['originalInventoryUnchanged'] and row.get('reconnected') is True
+        expected = {str(setup[key]): key for key in ('battery', 'apple', 'beans', 'steak')}
+        assert set(row['ids']) == set(expected), 'Restart item IDs changed'
+        for identity, key in expected.items():
+            item = row['ids'][identity]
+            destination = key == 'battery' or (key == 'apple' and row['phase'] == 'enabled')
+            assert item['item'] == key and item['destination'] == int(destination) and item['source'] == int(not destination)
+    rules = [row for row in rows(text, '[TAG_RESTART_VERIFIED] ') if row['actor'] == actor]
+    rules = consecutive_phases(rules, ['restart-before', 'restart-after'])
+    for row in rules:
+        actual = row['setup']
+        assert type(actual.get('index')) is int and actual['index'] >= 0, 'Invalid saved box object index'
+        assert row['revision'] == setup['revision'] and {key: value for key, value in actual.items() if key != 'index'} == {key: value for key, value in setup.items() if key != 'index'}, 'Restart saved setup/revision changed'
+        rule = row['rule']
+        assert rule['mode'] == 'all' and sorted(rule['include']) == ['food', 'perishable'] and rule['exclude'] == ['meat'], 'Restart actual rule missing or changed'
 
 
 def validate_receipts(receipts, actor, phases):
@@ -138,6 +332,7 @@ def verify(output):
     prepared = output / 'run'
     selection = json.loads((prepared / 'selection.json').read_text())
     baseline, cases = not selection['tagRules'], selection['cases']
+    restart = selection.get('tagRestart')
     sys.path.insert(0, str(output / 'source/tools'))
     from queue_checks.report import audit_logs, events, verify_manifest
     receipts = []
@@ -158,14 +353,22 @@ def verify(output):
         for marker in ('VOICE_DISABLED', 'DISPLAY_READY', 'PREFLIGHT_COMPLETE', 'NATIVE_CONNECTED'):
             assert '[QUEUE_TEST] ' + marker in text, (role, marker)
         phases = ['baseline'] if baseline else ['disabled', 'enabled']
-        validate_receipts(receipts, role, phases)
+        if restart:
+            assert text.count('[QUEUE_TEST] NATIVE_CONNECTED ' + role) == 1
+            assert '[TAG_PLACEMENT' not in server_text
+            for phase in ('verified', 'sorted'):
+                assert '[TAG_RESTART] actor=' + role + ' phase=' + phase in text
+            validate_restart_receipts(server_text, role, restart[role])
+        else:
+            validate_receipts(receipts, role, phases)
         if selection.get('reconnectEvidence'):
             assert text.count('[QUEUE_TEST] NATIVE_CONNECTED ' + role) == 2, 'Not two actual client connections'
             for phase in ('disconnect', 'connected', 'verified'):
                 assert '[TAG_RECONNECT] actor=' + role + ' phase=' + phase in text, (role, phase)
             validate_reconnect_receipts(receipts, role, phases[-1])
         screenshots = list((prepared / role / 'Screenshots').glob('tag-*.png'))
-        assert len(screenshots) >= (1 if baseline else 6), (role, screenshots)
+        if not restart:
+            assert len(screenshots) >= (1 if baseline else 6), (role, screenshots)
     provenance = verify_manifest(prepared, 'source-manifest.json', True) + verify_manifest(prepared, 'snapshot-hashes.json')
     assert not provenance, provenance
     audits = audit_logs(prepared, ['server', 'client1', 'client2'])
@@ -174,6 +377,8 @@ def verify(output):
                   runtime=audits, provenance_verified=True,
                   runtime_needs_review=any(value['error_count'] for value in audits.values()))
     (output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+    if selection.get('tagRestartSeed'):
+        seal_seed(output)
     print('FUNCTIONAL_PASS; see result.json for independent runtime audit', flush=True)
 
 

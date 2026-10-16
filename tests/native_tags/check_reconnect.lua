@@ -1,8 +1,10 @@
 local root=ProjectRoot..'/tests/native_tags/'
 local baseline=BaselineTagReconnect==true
-local cases=baseline and {'configure','reopen','sort','baseline-reconnect'} or {'configure','reopen','icons','inventory-all','inventory-any','inventory-exclude','preset-save','inventory-empty',
+local restart=RestartTagReconnect==true
+local cases=restart and {'server-restart','restart-sort'} or baseline and {'configure','reopen','sort','baseline-reconnect'} or {'configure','reopen','icons','inventory-all','inventory-any','inventory-exclude','preset-save','inventory-empty',
  'preset-apply','rule-save','rule-reopen','rule-stale','rule-peer','rule-toggle','sort','rule-reconnect'}
 local files={['smoke-user.txt']='client1',['queue-health-language.txt']='EN',['tag-fixture-reconnect.txt']='pending'}
+if restart then files['tag-fixture-reconnect.txt']=nil end
 getFileReader=function(path)
  local value=files[path];if not value then return end
  return {readLine=function() return value end,close=function() end}
@@ -19,7 +21,7 @@ local providerPanel={getOption=function(_,id)
 end,apply=function() providerOptions.applied=true end}
 local originalRequire=require
 require=function(name)
- if name=='QueueTestSelection' then return {tagRules=not baseline,cases=cases,port=19101} end
+ if name=='QueueTestSelection' then return {tagRules=not baseline,tagRestart=restart and {} or nil,cases=cases,port=19101} end
  if name=='TagTestEvents' then return {emit=function(event) events[#events+1]=event end,encode=function() return '{}' end} end
  if name=='TagFixture' then return Fixture end
  if name=='PZSurvivorToolkit/QuartermasterTagRules' then
@@ -50,7 +52,7 @@ local core={setOptionPauseOnFocusloss=function() end,setOptionAutoDrink=function
 getCore=function() return core end
 local function container(ids)
  local items={};for _,id in ipairs(ids) do items[#items+1]={getID=function() return id end} end
- return {getItems=function() return {size=function() return #items end,get=function(_,index) return items[index+1] end} end}
+ return {_testItems=items,getItems=function() return {size=function() return #items end,get=function(_,index) return items[index+1] end} end}
 end
 instanceof=function() return false end
 local sourceContainer,destContainer=container(baseline and {2} or {3,4}),container(baseline and {1} or {1,2})
@@ -78,10 +80,37 @@ local pane={prerender=function() end,setVisible=function() end,toolkitCategoryBu
 local page={inventoryPane=pane,setVisible=function() end,setPinned=function() end,refreshBackpacks=function() end,
  setNewContainer=function(_,container) pane.inventory=container end}
 getPlayerInventory=function() return page end
+if restart then
+ player.hasTimedActions=function() return false end
+ player.getCurrentSquare=function() return square end
+ square.canStand=function() return true end;square.canReachTo=function() return true end
+ box.getSquare=function() return square end
+ AdjacentFreeTileFinder={Find=function() return square end}
+ LootSorter.isRegistrySynced=function() return true end
+ LootSorter.arePresetsSynced=function() return true end
+ LootSorter.gatherBoxes=function() return {{obj=box,container=destContainer}},true end
+ LootSorter.WalkAction={new=function() end}
+ local function move(from,to)
+  for index,item in ipairs(from._testItems) do
+   if item:getID()==2 then table.remove(from._testItems,index);to._testItems[#to._testItems+1]=item;return end
+  end
+  error('exact Apple missing')
+ end
+ ISInventoryTransferAction={new=function(_,auth,item,from,to)
+  assert(auth==player and item:getID()==2 and from==destContainer and to==sourceContainer)
+  return {from=from,to=to}
+ end}
+ ISTimedActionQueue={getTimedActionQueue=function() return {queue={}} end,
+  add=function(action) move(action.from,action.to) end}
+ LootSorter.sort=function(from,index)
+  assert(from==sourceContainer and index==0)
+  LootSorter._sortRunSeq=(LootSorter._sortRunSeq or 0)+1;move(sourceContainer,destContainer)
+ end
+end
 sendClientCommand=function(module,command,args) commands[#commands+1]={module=module,command=command,args=args} end
 dofile(root..'client/ZZTagBaseline.lua')
 fire('OnGameStart')
-assert(#events==0,'resume emitted duplicate setup')
+assert(#events==(restart and 1 or 0),'resume setup count differs')
 now=3000;fire('OnTick')
 assert(providerOptions.applied and providerOptions.showAdvancedDisplayCategories==false and #commands==0,'provider was not configured before resumed phases')
 now=3001;fire('OnTick')
@@ -89,15 +118,36 @@ assert(#commands==1 and commands[1].command=='Ready' and commands[1].args.reconn
 fire('OnServerCommand','TagBaseline','Setup',{x=10,y=20,z=0,index=0,source=99,revision=5,manualCategory='BatteryCategory',battery=1,apple=2,beans=not baseline and 3 or nil,steak=not baseline and 4 or nil})
 now=5000;fire('OnTick')
 if not baseline then
-assert(commands[2].command=='VerifyRule' and commands[2].args.phase=='reconnect','resume did not audit rule authority')
+assert(commands[2].command=='VerifyRule' and commands[2].args.phase==(restart and 'restart-before' or 'reconnect'),'resume did not audit rule authority')
 assert(commands[3].command=='Verify' and commands[3].args.phase=='enabled','resume did not audit exact item receipts')
-fire('OnServerCommand','TagBaseline','RuleVerified',{ok=true,phase='reconnect',revision=5})
+fire('OnServerCommand','TagBaseline','RuleVerified',{ok=true,phase=restart and 'restart-before' or 'reconnect',revision=5})
 fire('OnServerCommand','TagBaseline','Verified',{ok=true,phase='enabled',ids={}})
 else
  assert(#commands==2 and commands[2].command=='Verify' and commands[2].args.phase=='baseline','baseline reconnect missed exact authority receipt')
  fire('OnServerCommand','TagBaseline','Verified',{ok=true,phase='baseline',ids={}})
 end
 now=7000;fire('OnTick')
+if restart then
+ assert(files['tag-fixture-reconnect.txt']=='done' and #events==2 and events[2].id=='server-restart')
+ assert(presetReads==2 and presetDeletes==0 and presetStored,'cold restart mutated saved local filter')
+ now=9000;fire('OnTick')
+ assert(Fixture.find(sourceContainer,2),'restart did not queue exact native Apple pickup')
+ now=11000;fire('OnTick')
+ assert(commands[#commands].command=='Verify' and commands[#commands].args.phase=='disabled')
+ fire('OnServerCommand','TagBaseline','Verified',{ok=true,phase='disabled',ids={}})
+ now=13000;fire('OnTick');assert(LootSorter._sortRunSeq==1,'restart skipped native Quartermaster planner')
+ now=15000;fire('OnTick')
+ assert(commands[#commands].command=='Verify' and commands[#commands].args.phase=='enabled','restart reused pre-sort receipt')
+ fire('OnServerCommand','TagBaseline','Verified',{ok=true,phase='enabled',ids={}})
+ now=17000;fire('OnTick')
+ assert(commands[#commands].command=='VerifyRule' and commands[#commands].args.phase=='restart-after')
+ fire('OnServerCommand','TagBaseline','RuleVerified',{ok=true,phase='restart-after',revision=5})
+ now=19000;fire('OnTick');assert(#events==3 and events[3].id=='restart-sort')
+ now=21000;fire('OnTick')
+ assert(#events==4 and events[4].event=='complete' and events[4].performed==2)
+ print('Native tag cold restart checks passed: fresh setup, persisted preset read-only, exact pickup, fresh authority receipts and native re-sort.')
+ return
+end
 assert(files['tag-fixture-reconnect.txt']=='done' and #events==1 and events[1].id==cases[#cases],'reconnect completion not gated by authority')
 if baseline then
  assert(presetReads==0 and presetDeletes==0,'baseline invoked candidate-only preset API')

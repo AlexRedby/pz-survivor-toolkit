@@ -3,6 +3,16 @@ require 'Util/AdjacentFreeTileFinder'
 local Fixture=require 'TagFixture'
 local json=require 'TagTestEvents'
 local states,slots,staging,anchor,nextSlot={},{},{},nil,0
+if config.tagRestart then
+ for name,expected in pairs(config.tagRestart) do
+  local value=expected.setup
+  local original={};for _,entry in ipairs(expected.original) do original[entry.id]=entry.count end
+  states[name]={owner=name,x=value.x,y=value.y,z=value.z,index=value.index,sourceID=value.source,
+   battery=value.battery,apple=value.apple,beans=value.beans,steak=value.steak,
+   ruleRevision=value.revision,manualCategory=value.manualCategory,manual=expected.manual,original=original,
+   startX=expected.start.x,startY=expected.start.y,startZ=expected.start.z}
+ end
+end
 local placementPlayers,placementAcks,placementSignature={},{},nil
 local readyWaitAt={}
 local function readyWait(player,reason,state,target)
@@ -83,6 +93,7 @@ local function ownedBox(state,square)
 end
 local function ready(player,args)
  local name=player:getUsername()
+ if config.tagRestart then assert(states[name],'restart may only resolve the original fixture owner') end
  if args.reconnect and not states[name] then error('reconnect fixture state missing; refusing duplicate fixture creation') end
  local state=states[name]
  if state then state.player=player end
@@ -199,6 +210,12 @@ local function verifyItems(state,phase)
  end
  state.receiptWaiting[phase]=nil
  print('[TAG_RECEIPT] '..json.encode({actor=state.owner,phase=phase,ids=fixtureIDs,exact=true,originalInventoryUnchanged=true,reconnected=state.reconnected or false}))
+ if config.tagRestartSeed and state.reconnected and phase=='enabled' and not state.restartSeedLogged then
+  local original={};for id,count in pairs(state.original) do original[#original+1]={id=id,count=count} end
+  print('[TAG_RESTART_SEED] '..json.encode({actor=state.owner,setup=packet(state),
+   start={x=state.startX,y=state.startY,z=state.startZ},original=original,manual=state.manual}))
+  state.restartSeedLogged=true
+ end
  sendServerCommand(state.player,'TagBaseline','Verified',{ok=true,phase=phase,ids=fixtureIDs})
 end
 local function peers()
@@ -245,6 +262,10 @@ Events.OnClientCommand.Add(function(module,command,player,args)
    local revision=verifyRules(state)
    if args.phase=='saved' then state.ruleRevision=revision
    else assert(revision==state.ruleRevision,'stale command mutated authoritative revision') end
+   if config.tagRestart then
+    print('[TAG_RESTART_VERIFIED] '..json.encode({actor=state.owner,phase=args.phase,revision=revision,
+     rule=require('PZSurvivorToolkit/QuartermasterTagRules').getBox(state.box,0),setup=packet(state)}))
+   end
    sendServerCommand(player,module,'RuleVerified',{ok=true,phase=args.phase,revision=revision})
    peers()
   elseif command=='Peers' then peers() end
