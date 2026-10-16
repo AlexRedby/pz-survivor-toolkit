@@ -9,6 +9,9 @@
     "ffprobe": "/path/to/ffprobe"
   },
   "sets": {
+    "startup": [
+      "startup"
+    ],
     "craft": [
       "craft"
     ],
@@ -33,6 +36,12 @@
     ]
   },
   "jobs": [
+    {
+      "id": "startup",
+      "suite": "startup",
+      "kind": "mp",
+      "case": "loaded"
+    },
     {
       "id": "craft",
       "suite": "crafting-plans",

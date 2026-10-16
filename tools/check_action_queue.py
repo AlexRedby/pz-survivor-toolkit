@@ -24,7 +24,11 @@ def selection(args, catalog, options=None):
     if not cases or len(cases) != len(set(cases)) or any(identifier not in all_cases for identifier in cases):
         raise ValueError("Select known unique case IDs; see matrix")
     spec = all_cases[cases[0]]
-    if args.mods == "selected":
+    if args.mods == 'vanilla':
+        if args.suite != 'startup' or args.mode != 'native':
+            raise ValueError('--mods vanilla requires startup in native mode')
+        mods = []
+    elif args.mods == "selected":
         mods = native._metadata(ROOT / "SurvivorQoL-selected.ini")["Mods"].split(";")
     else:
         mods = args.mods.split(",") if args.mods else spec.get('default_mods', suite.get('default_mods', ['PZSurvivorToolkit']))
@@ -175,7 +179,7 @@ def main(argv=None):
         command.add_argument("--kind", choices=("sp", "mp"))
         command.add_argument("--mode", choices=("toolkit", "native"), default="toolkit")
         command.add_argument("--cases", help="Comma-separated case IDs; omitted uses the suite default (all health cases for kind)")
-        command.add_argument("--mods", help="Comma-separated Mod IDs, or selected for project INI; omitted uses suite defaults")
+        command.add_argument("--mods", help="Comma-separated Mod IDs, selected for project INI, or vanilla for startup/native without production mods; omitted uses suite defaults")
         command.add_argument('--config', type=Path, help='JSON suite options with explicit dependency paths')
         command.add_argument('--mod-source', action='append', default=[], help='Explicit candidate MOD_ID=/absolute/mod/root; repeatable')
         command.add_argument('--world-template', type=Path, help='Copy a sealed prepared world into this fresh run; never launch the template itself')

@@ -45,7 +45,7 @@ jar = mod / '42/media/java/PZToolkitJavaPatches.jar'
 jar.parent.mkdir(parents=True, exist_ok=True)
 (mod/'common').mkdir(exist_ok=True)
 subprocess.run([str(args.jdk/'bin/jar'), '--create', '--file', str(jar), '-C', str(classes), '.'], check=True)
-(mod/'42/mod.info').write_text('name=Toolkit Java Patches (Experimental)\nid=PZToolkitJavaPatches\nversion=0.1.7\nauthor=AlexRedby\nversionMin=42.21\nversionMax=42.21\nrequire=\\ZombieBuddy\njavaJarFile=media/java/PZToolkitJavaPatches.jar\njavaPkgName=net.alexredby.pztoolkitjavapatches\nZBVersionMin=2.3.4\ndescription=B42.21 fixes for client zombie speed decoding, vehicle interpolation recovery, authoritative cassette restart after stopping, multiplayer build cancellation acknowledgements, live-animal trailer location reconciliation, incomplete equipment acknowledgement handling, null-animal hutch unloading crashes and five native string-property startup exceptions. Requires the ZombieBuddy Java agent on clients for zombie, vehicle, animal and equipment patches and on the server for cassette playback and safe queue build interruption. The hutch unloading and native string-property guards apply in clients, single-player and servers. Unsupported target bytecode disables the patches.\n')
+(mod/'42/mod.info').write_text('name=Toolkit Java Patches (Experimental)\nid=PZToolkitJavaPatches\nversion=0.1.8\nauthor=AlexRedby\nversionMin=42.21\nversionMax=42.21\nrequire=\\ZombieBuddy\njavaJarFile=media/java/PZToolkitJavaPatches.jar\njavaPkgName=net.alexredby.pztoolkitjavapatches\nZBVersionMin=2.3.4\ndescription=B42.21 fixes for client zombie speed decoding, vehicle interpolation recovery, authoritative cassette restart after stopping, multiplayer build cancellation acknowledgements, live-animal trailer location reconciliation, incomplete equipment acknowledgement handling, null-animal hutch unloading crashes, five native string-property startup exceptions and two malformed native fluid-container names. Requires the ZombieBuddy Java agent on clients for zombie, vehicle, animal and equipment patches and on the server for cassette playback and safe queue build interruption. The hutch unloading, native string-property and fluid-name guards apply in clients, single-player and servers. Unsupported target bytecode disables the patches.\n')
 for base in [mod/'common/media', mod/'42/media']:
     for name in ['AnimSets', 'actiongroups']: (base/name).mkdir(parents=True, exist_ok=True)
 print(jar)
@@ -60,14 +60,16 @@ if args.check or args.check_video:
               'zombie.network.packets.EquipmentChecks': 'EQUIPMENT_CHECKS_PASS',
               'zombie.iso.objects.HutchChecks': 'HUTCH_CHECKS_PASS',
               'zombie.core.PropertyChecks': 'PROPERTY_CHECKS_PASS',
-              'zombie.core.PropertyColdChecks': 'PROPERTY_COLD_CHECKS_PASS'} if args.check else {}
+              'zombie.core.PropertyColdChecks': 'PROPERTY_COLD_CHECKS_PASS',
+              'zombie.scripting.entity.components.fluids.FluidChecks': 'FLUID_CHECKS_PASS',
+              'zombie.scripting.entity.components.fluids.FluidColdChecks': 'FLUID_COLD_CHECKS_PASS'} if args.check else {}
     if args.check_video:
         checks['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
     sources = [ROOT / 'tests' / (name.replace('.', '/') + '.java') for name in checks]
     subprocess.run([javac, '--release', '17', '-cp', classpath + os.pathsep + str(jar), '-d', str(testclasses), *map(str, sources)], check=True)
     for name, marker in checks.items():
         with tempfile.TemporaryDirectory(prefix='pz-java-native-') as cache:
-            result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1', '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join([str(testclasses), str(jar), classpath]), name], cwd=args.game, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1', '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join([str(testclasses), str(jar), classpath]), name], cwd=args.game, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         (ROOT / 'build' / (name.rsplit('.', 1)[-1] + '.log')).write_text(result.stdout)
         print(result.stdout)
         result.check_returncode()

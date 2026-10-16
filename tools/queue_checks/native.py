@@ -93,7 +93,8 @@ def _validate(selection):
         raise ValueError("Expected kind=sp|mp and mode=toolkit|native")
     for key in ("cases", "mods"):
         values = selection.get(key)
-        if not isinstance(values, list) or not values or any(not isinstance(value, str) or not MOD_ID.fullmatch(value) or value in ('.', '..') for value in values):
+        empty_control = key == 'mods' and suite == 'startup' and selection['mode'] == 'native'
+        if not isinstance(values, list) or not values and not empty_control or any(not isinstance(value, str) or not MOD_ID.fullmatch(value) or value in ('.', '..') for value in values):
             raise ValueError("Expected nonempty IDs in " + key)
         if len(values) != len(set(values)):
             raise ValueError("Duplicate IDs in " + key)

@@ -22,6 +22,8 @@ import zombie.network.GameServer;
 import zombie.network.packets.character.ZombiePacket;
 import zombie.network.packets.character.AnimalPacket;
 import zombie.radio.devices.DeviceData;
+import zombie.scripting.ScriptParser;
+import zombie.scripting.entity.components.fluids.FluidContainerScript;
 import zombie.vehicles.VehicleInterpolation;
 
 public final class Main {
@@ -57,6 +59,12 @@ public final class Main {
         "7e7deb55cc8a949a4cab6cf93e0cabef01090229154203730f758526c948ebd3")
         && supports("zombie/core/TilePropertyAliasMap.class",
             "05124f3536bc2026fb29d5f7369dc0d809d1a725477d4733a1e0e827911a0a80");
+    public static final boolean FLUID_SUPPORTED = supports("zombie/scripting/entity/components/fluids/FluidContainerScript.class",
+        "d3a4191471515e9ec18f29e153559369d13dd448d02747370546f1af75ac5595")
+        && supports("zombie/scripting/ScriptParser$Block.class",
+            "14a54eee1c27b98431913e8daa28f2dcae58d8fedb9e3b0ed8b6426f717062d2")
+        && supports("zombie/scripting/ScriptParser$Value.class",
+            "5cf9e1fa32ef946ac194fd8cf2bf7f95da9eda67076eccd3dfc321b31e14a637");
     public static final boolean MEDIA_SUPPORTED = supports("zombie/radio/devices/DeviceData.class",
         "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102");
     public static final boolean BUILD_SUPPORTED = supports("zombie/core/BuildAction.class",
@@ -81,12 +89,31 @@ public final class Main {
     }
 
     public static void main(String[] args) {
-        // Resolve before the loader installs advice; resolving inside another transformer can miss this enum.
+        // Resolve before advice installation; resolving inside another transformer can miss these targets.
         if (PROPERTY_SUPPORTED) IsoPropertyType.values();
+        if (FLUID_SUPPORTED) FluidContainerScript.class.getName();
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
-            + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED);
+            + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED);
+    }
+
+    @Patch(className="zombie.scripting.entity.components.fluids.FluidContainerScript", methodName="load", warmUp=true, strictMatch=true)
+    public static class NativeFluidName {
+        public static void normalize(ScriptParser.Block block, boolean supported) {
+            if (!supported || block == null) return;
+            var value = block.getValue("ContainerName");
+            if (value == null) return;
+            String name = value.getValue().trim();
+            // Preserve the native parser's result for two malformed shipped tokens.
+            if (name.equals("Large Bucket")) block.setValue("ContainerName", "LargeBucket");
+            else if (name.equals("Fuel Pump")) block.setValue("ContainerName", "FuelPump");
+        }
+
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) ScriptParser.Block block) {
+            normalize(block, Main.FLUID_SUPPORTED);
+        }
     }
 
     @Patch(className="zombie.core.properties.IsoPropertyType", methodName="lookupOrDefaultStr", warmUp=true, strictMatch=true)

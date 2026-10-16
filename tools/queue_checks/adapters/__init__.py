@@ -2,7 +2,7 @@
 from collections import Counter
 from importlib import import_module
 
-MODULES = {'crafting-plans': 'craft_wishlist', 'shared-wishlist': 'craft_wishlist',
+MODULES = {'startup': 'startup', 'crafting-plans': 'craft_wishlist', 'shared-wishlist': 'craft_wishlist',
            'video-recording': 'auxiliary', 'item-tags': 'auxiliary', 'animal-trailer': 'auxiliary',
            'wooden_cart_motion': 'carts', 'wooden_cart_multiplayer': 'carts'}
 
