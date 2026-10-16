@@ -17,8 +17,8 @@ def selection(args, catalog, options=None):
     if suite["status"] != "ready":
         raise ValueError("Suite has not been migrated: " + args.suite)
     all_cases = {case["id"]: case for case in suite["cases"]}
-    if args.cases == '':
-        raise ValueError('--cases requires at least one case ID')
+    if args.cases is not None and (not isinstance(args.cases, str) or not args.cases):
+        raise ValueError('--cases requires a nonempty comma-separated string of case IDs')
     kind = args.kind or suite['cases'][0]['kinds'][0]
     cases = args.cases.split(",") if args.cases else ([suite['cases'][0]['id']] if args.suite != 'health' else [case['id'] for case in suite['cases'] if kind in case['kinds']])
     if not cases or len(cases) != len(set(cases)) or any(identifier not in all_cases for identifier in cases):
@@ -42,7 +42,10 @@ def selection(args, catalog, options=None):
     if options.get('pack_lock') and not args.mods:
         locked = report.read_json(options['pack_lock'])
         mods = [row['id'] for row in locked['mods']]
-    overrides = dict(options.get('mod_sources', {}))
+    sources = options.get('mod_sources', {})
+    if not isinstance(sources, dict):
+        raise ValueError('options.mod_sources must contain a JSON object')
+    overrides = dict(sources)
     for value in args.mod_source:
         identifier, separator, path = value.partition('=')
         if not separator or not identifier or not Path(path).is_absolute():
@@ -135,6 +138,8 @@ def batch(args, catalog):
         interrupted = False
         print('START ' + job['id'], flush=True)
         try:
+            if not isinstance(plan.get('options', {}), dict) or not isinstance(job.get('options', {}), dict):
+                raise ValueError('Batch options must contain JSON objects')
             options = dict(plan.get('options', {}), **job.get('options', {}))
             if job.get('seed_job'):
                 options['seed_run'] = str(completed[job['seed_job']])

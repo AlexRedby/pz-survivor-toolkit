@@ -145,6 +145,34 @@ class BatchTests(unittest.TestCase):
         self.assertEqual([], self.calls[0][1]['mods'])
         cli.native._validate(self.calls[0][1])
 
+    def test_invalid_job_inputs_preserve_batch_report_and_later_jobs(self):
+        jobs = [{'id': 'bad-options-' + str(i), 'suite': 'startup', 'options': value}
+                for i, value in enumerate((None, [], 'bad'))]
+        jobs += [{'id': 'bad-case-' + str(i), 'suite': 'startup', 'case': value}
+                 for i, value in enumerate(([], ['loaded'], False, 0, ''))]
+        jobs += [{'id': 'bad-sources-' + str(i), 'suite': 'startup', 'options': {'mod_sources': value}}
+                 for i, value in enumerate((None, [], 'bad'))]
+        self.write_plan(jobs + [{'id': 'valid', 'suite': 'startup'}])
+        self.assertEqual(1, self.invoke())
+        self.assertEqual(['valid'], [name for name, _ in self.calls])
+        result = json.loads((self.args.output / 'batch-report.json').read_text())
+        self.assertEqual(['blocked'] * len(jobs) + ['passed'], [job['status'] for job in result['jobs']])
+        self.assertEqual([], result['remaining'])
+
+    def test_invalid_plan_options_are_reported_for_every_unrun_job(self):
+        for index, value in enumerate((None, [], 'bad')):
+            with self.subTest(value=value):
+                self.write_plan([{'id': 'first', 'suite': 'startup'}, {'id': 'second', 'suite': 'startup'}])
+                plan = json.loads(self.plan.read_text())
+                plan['options'] = value
+                self.plan.write_text(json.dumps(plan))
+                self.args.output = self.root / ('bad-plan-' + str(index))
+                self.assertEqual(1, self.invoke())
+                self.assertEqual([], self.calls)
+                result = json.loads((self.args.output / 'batch-report.json').read_text())
+                self.assertEqual(['blocked', 'blocked'], [job['status'] for job in result['jobs']])
+                self.assertEqual([], result['remaining'])
+
     def test_explicit_empty_jobs_never_broadens_to_the_full_plan(self):
         self.write_plan([{'id': 'wanted', 'suite': 'item-tags'}, {'id': 'unrelated', 'suite': 'video-recording'}])
         self.args.jobs = ''

@@ -81,6 +81,12 @@ class NativeSnapshotTests(unittest.TestCase):
         self.assertNotEqual(source[str(original)], native.sha256(original))
         self.assertNotEqual(copied.read_bytes(), original.read_bytes())
 
+    def test_source_overrides_reject_invalid_types_and_relative_paths(self):
+        for sources in ([], False, {'PZSurvivorToolkit': None}, {'PZSurvivorToolkit': []},
+                        {'PZSurvivorToolkit': 1}, {'PZSurvivorToolkit': 'relative/path'}):
+            with self.subTest(sources=sources), self.assertRaises(ValueError):
+                native._locations(self.project, [], ['PZSurvivorToolkit'], sources)
+
     def test_empty_common_layer_has_native_animation_directories_only_in_snapshot(self):
         source = self.project / "Toolkit/common"
         self.write(source / ".gitkeep", "")

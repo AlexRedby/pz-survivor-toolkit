@@ -47,7 +47,10 @@ def _matching_roots(infos, identifier):
 
 
 def _locations(project, workshop, identifiers, overrides=None):
-    overrides = overrides or {}
+    overrides = {} if overrides is None else overrides
+    if not isinstance(overrides, dict) or any(not isinstance(id, str) or not isinstance(path, (str, Path))
+            or not Path(path).is_absolute() for id, path in overrides.items()):
+        raise ValueError('Mod source overrides must map Mod IDs to absolute paths')
     if set(overrides) - set(identifiers):
         raise ValueError('Mod source override is not selected')
     local_infos = list(project.glob("*/mod.info")) + list(project.glob("*/*/mod.info"))
