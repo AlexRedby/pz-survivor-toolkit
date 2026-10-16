@@ -47,6 +47,7 @@ def temporal_return(frames,start,release,end):
 
 parser=argparse.ArgumentParser(description="Check native wooden-cart stop motion; separate pose/geometry evidence required")
 parser.add_argument("--profile",type=Path,required=True)
+parser.add_argument("--log",type=Path,help="Full native stdout; defaults to profile/native-launch.log")
 parser.add_argument("--output",type=Path,required=True)
 args=parser.parse_args()
 assert args.profile.is_dir()
@@ -61,8 +62,8 @@ if wheelFile.exists():
    point={k:float(row[k])for k in ['time','wallTimeMillis','wheelX','wheelY','playerX','playerY','forwardX','forwardY']}
    assert all(math.isfinite(v)for v in point.values()),'Nonfinite native wheel measurement'
    wheel.append(point)
-log=(ROOT/'native-launch.log').read_text().rsplit('[WOOD_BANK] RUN_STARTED',1)[-1]
-assert '[WOOD_BANK] ALL_COMPLETE cases=24' in log
+log=(args.log if args.log is not None else ROOT/'native-launch.log').read_text().rsplit('[WOOD_BANK] RUN_STARTED',1)[-1]
+assert re.search(r'\[WOOD_BANK\] ALL_COMPLETE cases=24(?:\s|$)',log)
 assert '[WOOD_BANK] FAIL' not in log
 completed=re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)',log)
 assert len(completed)==24,'Require exactly one completed recording per case'

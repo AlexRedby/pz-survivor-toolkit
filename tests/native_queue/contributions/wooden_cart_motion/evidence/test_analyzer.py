@@ -48,15 +48,35 @@ class AnalyzerEvidenceTests(unittest.TestCase):
             for row in rows:
                 writer.writerow({'event': 'grounding', **row})
 
-    def analyze(self, profile, output):
-        return subprocess.run([sys.executable, str(HERE / 'analyze-native.py'),
-                               '--profile', str(profile), '--output', str(output)],
-                              capture_output=True, text=True)
+    def analyze(self, profile, output, log=None):
+        command = [sys.executable, str(HERE / 'analyze-native.py'), '--profile', str(profile), '--output', str(output)]
+        if log is not None:
+            command += ['--log', str(log)]
+        return subprocess.run(command, capture_output=True, text=True)
 
     def test_complete_finite_evidence_passes(self):
         with tempfile.TemporaryDirectory() as temp:
             result = self.analyze(*self.fixture(Path(temp)))
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_explicit_stdout_overrides_rotated_console_without_rewriting_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            profile, output = self.fixture(Path(temp))
+            log = profile.parent / 'client1-launch.log'
+            original = (profile / 'console.txt').read_text()
+            log.write_text(original)
+            (profile / 'console.txt').write_text('[WOOD_BANK] ALL_COMPLETE cases=16\n')
+            result = self.analyze(profile, output, log)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads((output / 'native-metrics.json').read_text())['validatedCartCases'], 16)
+            self.assertEqual(log.read_text(), original)
+            self.assertEqual((profile / 'console.txt').read_text(), '[WOOD_BANK] ALL_COMPLETE cases=16\n')
+
+    def test_missing_explicit_stdout_does_not_fall_back_to_console(self):
+        with tempfile.TemporaryDirectory() as temp:
+            profile, output = self.fixture(Path(temp))
+            self.assertNotEqual(self.analyze(profile, output, profile / 'missing.log').returncode, 0)
+            self.assertFalse((output / 'native-metrics.json').exists())
 
     def test_empty_or_missing_case_geometry_fails(self):
         for filename in ['hip-triangle-frames.json', 'pants-triangle-frames.json', 'body-clearance.jsonl']:

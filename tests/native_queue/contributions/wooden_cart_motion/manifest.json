@@ -14,6 +14,7 @@
     "reverse_scenario": "scenario-reverse.lua",
     "reverse_analyzer": "analyze-reverse.py",
     "reversal_scenario": "scenario-reversal.lua",
+    "reversal_analyzer": "analyze-reversal.py",
     "stop_scenario": "scenario-stop.lua",
     "stop_analyzer": "analyze-stop.py"
   },

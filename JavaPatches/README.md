@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` **0.1.15** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
+`PZToolkitJavaPatches` **0.1.18** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
 
 ## Prepare and install
 
@@ -45,13 +45,14 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 
 ### Verify activation
 
-Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, vehicleOwnership=true, media=true, build=true, video=true, animal=true, equipment=true, hutch=true, properties=true, fluids=true, fences=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
+Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, vehicleOwnership=true, media=true, build=true, video=true, animal=true, equipment=true, hutch=true, cart=true, properties=true, fluids=true, fences=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
 
 - Server: `[ZB] Transformed: zombie.vehicles.BaseVehicle`, `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
 - Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI`, `[ZB] Transformed: zombie.vehicles.VehicleInterpolation` `[ZB] Transformed: zombie.characters.NetworkPlayerAI` and `[ZB] Transformed: zombie.network.packets.EquipPacket`.
 - Client and server fluid parser: `[ZB] Transformed: zombie.scripting.entity.components.fluids.FluidContainerScript`.
 - Client and server property fallback: `[ZB] Transformed: zombie.core.properties.IsoPropertyType`.
 - Client and server hutch guard: `[ZB] Transformed: zombie.iso.objects.IsoHutch`.
+- Local cart control and pose rendering: transformations of `zombie.characters.IsoPlayer`, `zombie.characters.IsoGameCharacter` and `zombie.core.skinnedmodel.model.ModelSlotRenderData`. See [cart behavior and limits](../docs/FEATURES.md#saucedcarts).
 
 The selected Workshop `AnimalTrailerSyncMPFix` supplies a separate trailer timer fix; check `[AnimalTrailerSyncMPFix] ACTIVE` in the server log too (verified v1.3). See its [scope and installation](../MOD_INSTALL.md#animal-trailer-fix).
 

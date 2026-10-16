@@ -23,6 +23,7 @@ def check_manifest():
         "java": "Main.java", "test_area": "test-area.lua",
         "bootstrap": "bootstrap.lua", "scenario": "scenario-clips.lua", "reverse_scenario": "scenario-reverse.lua", "reverse_analyzer": "analyze-reverse.py", "reversal_scenario": "scenario-reversal.lua", "stop_scenario": "scenario-stop.lua", "stop_analyzer": "analyze-stop.py",
         "evidence": "evidence/README.md",
+        "reversal_analyzer": "analyze-reversal.py",
     }
     for name in manifest["sources"].values():
         assert (HERE / name).is_file(), name
@@ -38,7 +39,7 @@ def check_manifest():
     axes = manifest["scenario"]["axes"]
     assert len(axes["sex"]) * len(axes["cargo"]) * len(axes["spec"]) == 16
     assert set(manifest["criteria"]) == {"completion", "grip", "geometry", "native_pose", "floor", "gait", "diagnostics"}
-    allowed = {"Main.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "scenario-stop.lua", "analyze-stop.py"}
+    allowed = {"Main.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py"}
     assert {p.name for p in HERE.iterdir() if p.is_file()} == allowed
     for path in HERE.rglob("*"):
         if path.is_file():

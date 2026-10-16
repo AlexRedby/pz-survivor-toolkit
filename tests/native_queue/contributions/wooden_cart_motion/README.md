@@ -1,10 +1,41 @@
-# Wooden cart motion fixture intake
+# Wooden cart motion scenarios
 
 [Development](../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../README.md)
 
 Source fixtures are connected through `tools/queue_checks/adapters/carts.py`. The common runner stages fresh profiles, owns probe attachment and records captures separately from functional passes. The manifest retains historical intake metadata. `self_check.py` checks the manifest, files, Lua parsing and optional Java compilation. It never starts Project Zomboid.
 
 The Java fixture supplies native keyboard input (`drive`, `gait`) and reads the current cart bank, root-speed ramp and animation tracks. `bootstrap.lua` equips carts, creates its HUD and prepares the disposable floor. `scenario-clips.lua` records 16 cases: two sexes, empty/full cargo, and comparison/direct Sprint/gait transitions plus a Run-stop control. The full 12-second records include turns, stops and returns to walking. It samples every 100 ms.
+
+## Common runner
+
+Choose one case per fresh lifecycle: `sprint` (16 records), `reverse` (20), `reversal` (20) or `stop` (24). All use the same adapter-owned profile, area, launcher and probe setup. Supply candidate resources once in a JSON file:
+
+```json
+{
+  "patch_jar": "/absolute/candidate/PZToolkitJavaPatches.jar",
+  "mesh_fbx": "/absolute/original/Wheelbarrow_wood.fbx",
+  "ffmpeg": "/absolute/ffmpeg",
+  "ffprobe": "/absolute/ffprobe",
+  "mod_sources": {
+    "PZSurvivorToolkit": "/absolute/checkout/PZSurvivorToolkit",
+    "PZToolkitJavaPatches": "/absolute/checkout/JavaPatches/build/PZToolkitJavaPatches"
+  }
+}
+```
+
+```sh
+python3 tools/check_action_queue.py prepare /tmp/cart-stop-fresh \
+  --suite wooden_cart_motion --cases stop --language RU \
+  --game "$PZ_GAME_JAVA_DIR" --jdk "$JAVA_HOME" \
+  --workshop "$PZ_WORKSHOP" --config /absolute/cart-resources.json
+python3 tools/check_action_queue.py resume /tmp/cart-stop-fresh
+python3 tools/check_action_queue.py report /tmp/cart-stop-fresh
+python3 tools/check_action_queue.py matrix /tmp/cart-stop-fresh/report.json
+```
+
+Coordinate the GUI slot before `resume`. Preparation compiles fixtures and records exact source/mod/JAR hashes, but never launches the game. Do not rebuild or edit those inputs between preparation and reporting. Use a new output path for another case; no copied old profile or save is needed. Reports retain `captured` and `needs-review` separately from animation quality. Reversal retains measured rest-before-direction-change, backward gait and braking-displacement checks; those motion gates remain separate from grip/mesh and visual quality.
+
+The adapter reads full `client1-launch.log` when available because high-rate scenario output rotates `console.txt`. Both stop and pose analyzers receive that same original path through `--log`; logs are never rewritten. A standalone analyzer can also accept `--log /absolute/full-stdout.log`.
 
 ## Parameters and adapter boundary
 
@@ -31,7 +62,7 @@ Create a **fresh, owned, disposable profile** with the manifest options/sandbox 
 
 Compile `Main.java` against local B42.21 `projectzomboid.jar` and `ZombieBuddy.jar` with JDK 25+ and `--release 17`. Package it as a test-only `CartLab` mod exposing `net.alexredby.cartlab`; approve the exact JAR hash in the isolated ZombieBuddy config. The manifest records the original JVM/game arguments as adapter templates, not an executable launch command. Supply the platform runtime/native libraries and exactly one ZombieBuddy agent with `policy=deny-new`. The macOS first-thread flag is platform-specific.
 
-The live fixture requires Toolkit >=0.1.58 and JavaPatches >=0.1.15 **with the current candidate B42.21 cart-motion changes integrated**. Version numbers alone are insufficient: `cartLabRamp` reflects `State.pace`, `sprintMomentum`, `load`, `heading` and calls `CartLegPace.targetSpeed`. These APIs are absent from the current main queue checkout. This contribution does not include or integrate those production changes. A missing reflected member must remain an exception that stops the record, never an empty diagnostic or PASS.
+The live fixture requires Toolkit >=0.1.58 and JavaPatches >=0.1.15 **with the current candidate B42.21 cart-motion changes integrated**. Version numbers alone are insufficient: `cartLabRamp` reflects `State.pace`, `sprintMomentum`, `load`, `heading` and calls `CartLegPace.targetSpeed`. These APIs must be present in the selected candidate bytes; the rebased cart branch integrates them, while older main snapshots may not. A missing reflected member must remain an exception that stops the record, never an empty diagnostic or PASS.
 
 The adapter must own the exclusive native queue lock, existing-process checks, profile preparation, mod installation/approvals, launcher, probe agents, analyzers and cleanup. Those operations are implemented in the common adapter, outside this source contribution. Load the config, test area and bootstrap; wait for `BOOTSTRAP_READY`; then load the scenario. Missing bridges/configuration fail before the scenario changes the player. Bootstrap also checks the disposable world before equipping anything.
 
@@ -47,7 +78,7 @@ python3 tests/native_queue/contributions/wooden_cart_motion/self_check.py \
 
 Lua syntax requires `luajit` or `lua` on PATH, or `--lua`. Java compilation requires both explicit dependency paths; omitted checks are reported as skipped. Compilation output goes to a temporary directory. There are no runtime binaries, saves, screenshots, videos, copied mods or game assets in this contribution.
 
-Keep `[WOOD_BANK]` markers stable for existing analyzers. A complete record needs 16 unique `COMPLETE` markers after the latest `RUN_STARTED`, valid per-case windows and `ALL_COMPLETE cases=16`. Check `FAIL` and rejected video starts/stops. The manifest criteria additionally require grip, actual mesh, floor and original hip/leg/arm probes. Their source, dependencies, build commands, offline checks and limits are preserved in [evidence/README.md](evidence/README.md). The common adapter runs these probes and analyzers; missing instrumentation means **not verified**, not PASS.
+Keep `[WOOD_BANK]` markers stable for existing analyzers. A complete record needs one unique `COMPLETE` marker per selected case (16/20/20/24 for sprint/reverse/reversal/stop), valid per-case windows and a matching `ALL_COMPLETE cases=N`. Check `FAIL` and rejected video starts/stops. The manifest criteria additionally require grip, actual mesh, floor and original hip/leg/arm probes. Their source, dependencies, build commands, offline checks and limits are preserved in [evidence/README.md](evidence/README.md). The common adapter runs these probes and analyzers; missing instrumentation means **not verified**, not PASS.
 
 ## Known traps and limits
 
@@ -62,7 +93,7 @@ Keep `[WOOD_BANK]` markers stable for existing analyzers. A complete record need
 
 The copied source origins are listed in `manifest.json`. Legacy local profiles/launchers and frozen binaries are intentionally not dependencies.
 
-`scenario-reverse.lua` is a separate 20-case matrix: backward start/stop, held Run/Sprint modifiers, reverse arcs from ±22.5deg and a forward 180-degree U-turn composed of two 90-degree turns, plus a 90-degree turn requested directly from idle. `cartLabPoseHeading` sets both actor/animation headings and resets cart steering only during fixture setup; it is not the stationary-turn implementation. Use this instead of `scenario-clips.lua` after BOOTSTRAP_READY. The new scenario requires Toolkit>=0.1.58/JavaPatches>=0.1.15; do not infer success from its source or completion marker alone.
+`scenario-reverse.lua` is a separate 20-case matrix: backward start/stop, held Run/Sprint modifiers, reverse arcs from ±22.5deg and a forward 180-degree U-turn composed of two 90-degree turns, plus a 90-degree turn requested directly from idle. `cartLabPoseHeading` sets both actor/animation headings and resets cart steering only during fixture setup; it is not the stationary-turn implementation. Select the common runner case `reverse`; the adapter loads this source after BOOTSTRAP_READY. The new scenario requires Toolkit>=0.1.58/JavaPatches>=0.1.15; do not infer success from its source or completion marker alone.
 
 Analyze its 20 motion cases with `python3 tests/native_queue/contributions/wooden_cart_motion/analyze-reverse.py --profile "$PZ_CAPTURE_DIR" --output "$PZ_ANALYSIS_DIR/reverse-motion.json"`. This checks native Walk despite speed modifiers, authored backward pace, sign/heading, reverse arcs, 180/90-degree controls and stop position. It requires samples for every completed case and refuses an existing report. Its `motionPass` deliberately does not claim grip/mesh/floor or visual success; use separate probes/analyzers from `evidence/`.
 
@@ -70,10 +101,10 @@ Backward cases require samples from every requested gait stage, away from switch
 
 The reverse analyzer checks motion only; it does not claim grip, mesh, floor or visual success. Geometry and rendering require their separate probes, and any failed intersection or reach criterion remains a failure.
 
-`scenario-reversal.lua` records 20 forward/reverse transitions: Walk, Run, Sprint, rapid cancellation/release and a command change on an arc, for both sexes and cargo states. It requires the >=0.1.59/0.1.16 candidate with `State.reversal`; `cartLabReversal` reads its latched direction, requested sign, braking/neutral state and accepted displacement. Sampling is every 25 ms. A complete record has `ALL_COMPLETE cases=20`. Keep character-info/chat hidden and disable the MiniHealthPlus overlay in the disposable profile so hands/feet remain visible. The reverse-only analyzer does not accept these case IDs; completion alone is not a motion or pose PASS.
+`scenario-reversal.lua` records 20 forward/reverse transitions: Walk, Run, Sprint, rapid cancellation/release and a command change on an arc, for both sexes and cargo states. It requires the >=0.1.59/0.1.16 candidate with `State.reversal`; `cartLabReversal` reads its latched direction, requested sign, braking/neutral state and accepted displacement. Sampling is every 25 ms. A complete record has `ALL_COMPLETE cases=20`. Keep character-info/chat hidden and disable the MiniHealthPlus overlay in the disposable profile so hands/feet remain visible. The separate `analyze-reversal.py` retains measured rest before direction flips, forward braking displacement and walking-only reverse gates. Use `--profile "$PZ_CAPTURE_DIR" --log "$PZ_FULL_STDOUT" --output "$PZ_ANALYSIS_DIR/reversal-motion.json"` for a standalone report. It refuses existing output; completion alone is not a motion or pose PASS.
 
 At 25 ms sampling the game rotates `console.txt` during this matrix. Retain full native stdout and select each successful `COMPLETE` attempt by its recorded start timestamp; a failed/retried framebuffer recording must not be combined with the successful attempt.
 
-`scenario-stop.lua` records 24 wooden-cart braking cases: Run/Sprint release, short acceleration, resumed input, a reverse command during braking and stopping on an arc, for both sexes and cargo states. It requires the >=0.1.61/0.1.18 candidate. `cartLabBrake` reads the stop state separately so older reversal scenarios keep their existing API. Sampling is every 25 ms; completion is `ALL_COMPLETE cases=24`. Its HUD records wall elapsed time and input stage in the video, so dropped render submissions do not masquerade as exact event-relative video timestamps. The .60 s stop blend-out candidate completed all 24 native B42.21 macOS cases on 2026-10-16: 15,544 measured in-scene grip samples without rejection, 5,991 actual body/trousers frames without intersections, grounded wheel and unchanged hip/leg/arm-link checks. All 24 videos decoded with 358–359 frames. Both straight-stop repeats reported lower sampled return peaks and 100 ms average speeds than the .18 s capture; raw speed differences still depend on sampling cadence. Stop/resume/reverse log gates passed. This validates the isolated candidate, not the common runner or MP. Bootstrap/reset frames are outside scene windows; one rejected setup grip pose was recorded before the first CASE and is not covered by these scene counts.
+`scenario-stop.lua` records 24 wooden-cart braking cases: Run/Sprint release, short acceleration, resumed input, a reverse command during braking and stopping on an arc, for both sexes and cargo states. It requires the >=0.1.61/0.1.18 candidate. `cartLabBrake` reads the stop state separately so older reversal scenarios keep their existing API. Sampling is every 25 ms; completion is `ALL_COMPLETE cases=24`. Its HUD records wall elapsed time and input stage in the video, so dropped render submissions do not masquerade as exact event-relative video timestamps. The stop contract requires complete scene windows, the actual heavy-item stop clip, accepted coasting, stable hand/mesh/floor contact and immediate cancellation on new input. Bootstrap/setup frames are outside the scene windows and require separate review when changing setup or pickup behavior. Captures from earlier candidates do not verify a rebuilt or rebased candidate.
 
 Run `python3 tests/native_queue/contributions/wooden_cart_motion/analyze-stop.py --profile "$PZ_CAPTURE_DIR" --output "$PZ_ANALYSIS_DIR/stop-motion.json"` against the full native stdout. It requires all 24 cases and samples, selected heavy stop tracks, observed coasting, bounded settling and cancellation on new input. It refuses to overwrite a report. Grip, actual body/trousers geometry, wheel contact and visible foot motion still require their separate probes and video inspection. If `wood-wheel-native.csv` is present, straight Run/Sprint stops also report cart return relative to the stopped actor, using the monotonic probe clock: excursion, sample cadence, raw speed changes and maximum 100 ms average return speed. These are descriptive comparisons, without a calibrated quality PASS threshold. Sparse console samples are not used as a substitute for native temporal measurements.

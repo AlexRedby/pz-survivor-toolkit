@@ -10,6 +10,12 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.61
+
+- **Changed:** Added cargo-dependent cart acceleration/steering, distinct shopping-cart and wheelbarrow turns, and rolling wheel contact.
+- **Changed:** Refined the wooden wheelbarrow's anchored grip, natural Walk/Run/Sprint legs, 7-degree turn lean, backward steps and forward/reverse transitions.
+- **Fixed:** Smoothed heavy-item braking and the final return to the standing grip, preserving immediate input interruption and hand contact.
+- **Note:** Remote cart-pose reconstruction, stationary turns and natural pickup/put-down remain unfinished; these local animation changes do not establish multiplayer equivalence.
 ### 0.1.58
 
 - **Fixed:** Preserve the verified SP transfer chain when Quartermaster Manifest and SaucedCarts are both enabled.
@@ -297,6 +303,11 @@ The older README associates medicine indicators with this label, but no separate
 
 Previously named **PZ Network Fix** through 0.1.1.
 
+### 0.1.18
+
+- **Added:** Guarded client cart movement, pose/grip, grounded wheel rendering and cargo-dependent pace for the selected carts and wheelbarrows.
+- **Fixed:** Preserved native gait cadence during transitions, capped braking by release speed and retained cart contact while heavy-item stops settle.
+- **Changed:** Consolidated the cart candidate with the existing animal, equipment and hutch fixes. Native collisions and server-authoritative item ownership remain unchanged.
 ### 0.1.15
 
 - **Fixed:** Rejected a late server medical action whose BodyPart owner disconnected before argument decoding. Native Reject acknowledgement replaces the null-player exception; valid requests and existing queued actions remain native.

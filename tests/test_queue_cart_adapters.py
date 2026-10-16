@@ -2,6 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -103,6 +104,25 @@ class CartAdapterTests(unittest.TestCase):
             self.assertIn('CartLab', self.runtime['fixture']['mods'])
         self.assertNotIn('server', self.runtime['fixture']['attach'])
 
+    def test_stop_and_reversal_stage_their_own_scenarios(self):
+        self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
+                         ['sprint', 'reverse', 'reversal', 'stop'])
+        for case, count in [('stop', 24), ('reversal', 20)]:
+            with self.subTest(case=case):
+                self.output = self.root / case
+                self.output.mkdir()
+                self.role('client1')
+                self.selection['cases'] = [case]
+                self.stage()
+                text = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+                self.assertIn((ROOT / f'tests/native_queue/contributions/wooden_cart_motion/scenario-{case}.lua').read_text(), text)
+                self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 3)
+                self.assertTrue(carts.complete(self.selection, 'client1', f'[WOOD_BANK] ALL_COMPLETE cases={count}\n'))
+                for wrong in (16, count * 10):
+                    self.assertFalse(carts.complete(self.selection, 'client1', f'[WOOD_BANK] ALL_COMPLETE cases={wrong}\n'))
+                self.assertFalse(carts.complete(self.selection, 'client1',
+                    f'[WOOD_BANK] ALL_COMPLETE cases={count}\n[WOOD_BANK] RUN_STARTED\n'))
+
     def test_missing_candidates_and_native_mode_are_rejected(self):
         self.selection['mode'] = 'native'
         with self.assertRaisesRegex(ValueError, 'toolkit mode'):
@@ -111,6 +131,12 @@ class CartAdapterTests(unittest.TestCase):
         self.selection['options']['mod_sources'].pop('PZSurvivorToolkit')
         with self.assertRaisesRegex(ValueError, 'Explicit candidate'):
             carts.validate(self.selection)
+
+    def test_unknown_or_combined_sp_cases_are_rejected(self):
+        for cases in (['unknown'], ['stop', 'reversal']):
+            self.selection['cases'] = cases
+            with self.assertRaisesRegex(ValueError, 'one capture case'):
+                carts.validate(self.selection)
 
     def test_mp_exact_analyzer_preserves_captured_and_rejects_render_window_gap(self):
         intake = ROOT / 'tests/native_queue/contributions/wooden_cart_multiplayer'
@@ -135,13 +161,14 @@ class CartAdapterTests(unittest.TestCase):
             self.assertTrue(result['issues'])
             self.assertTrue(all(row['status'] == 'failed' for row in result['outcomes']))
 
-    def test_sp_coverage_requires_each_probe_window_and_mesh_presence(self):
+    def coverage_fixture(self, count=20, text=None):
         cache = self.output / 'client1'
-        text = '[WOOD_BANK] RUN_STARTED\n'
+        if text is None:
+            text = '[WOOD_BANK] RUN_STARTED\n' + ''.join(
+                f'[WOOD_BANK] COMPLETE case-{index} wall={100000 + index * 15000}\n' for index in range(count))
         samples, metrics = [], {'cases': []}
-        for index in range(20):
-            name, start = 'case-' + str(index), 100000 + index * 15000
-            text += f'[WOOD_BANK] COMPLETE {name} wall={start}\n'
+        for name, start in re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)', text):
+            start = int(start)
             samples += [{'wallTimeMillis': start + elapsed} for elapsed in range(900, 11600, 500)]
             metrics['cases'].append(dict(case=name, gripSamples=22, wheelFloorMaxError=.1, body={'samples':22}, pants={'samples':22}))
         for name in ('body-clearance.jsonl', 'wood-grip-poses.jsonl'):
@@ -149,6 +176,11 @@ class CartAdapterTests(unittest.TestCase):
         native = b'actual native test bytes'
         (cache / 'WheelbarrowWood.bin').write_bytes(native)
         (cache / 'wood-wheel-mesh-proof.json').write_text(json.dumps(dict(matchesOriginal=True, proofAfterPhaseChanged=True, bytes=len(native), sha256=hashlib.sha256(native).hexdigest())))
+        return text, samples, metrics
+
+    def test_sp_coverage_requires_each_probe_window_and_mesh_presence(self):
+        cache = self.output / 'client1'
+        text, samples, metrics = self.coverage_fixture()
         carts._coverage(cache, text, 20, metrics)
         metrics['cases'][7]['pants']['samples'] = 0
         with self.assertRaisesRegex(ValueError, 'pose/mesh'):
@@ -157,6 +189,111 @@ class CartAdapterTests(unittest.TestCase):
         (cache / 'wood-grip-poses.jsonl').write_text('\n'.join(map(json.dumps, samples[22:])))
         with self.assertRaisesRegex(ValueError, 'probe window'):
             carts._coverage(cache, text, 20, metrics)
+
+    def test_stop_coverage_rejects_wrong_count_case_and_duplicate_completion(self):
+        text, _, metrics = self.coverage_fixture(24)
+        cache = self.output / 'client1'
+        carts._coverage(cache, text, 24, metrics)
+        for invalid in (text.replace('COMPLETE case-0 ', 'COMPLETE case-1 '),
+                        '\n'.join(text.splitlines()[:-1])):
+            with self.assertRaisesRegex(ValueError, 'Missing/duplicate cart cases'):
+                carts._coverage(cache, invalid, 24, metrics)
+        metrics['cases'][0]['case'] = 'unexpected'
+        with self.assertRaisesRegex(ValueError, 'Native metrics'):
+            carts._coverage(cache, text, 24, metrics)
+
+    def test_stop_video_count_and_duplicates_are_checked_before_decode(self):
+        self.selection['cases'] = ['stop']
+        videos = self.output / 'client1/videos'
+        videos.mkdir()
+        lines = []
+        for index in range(24):
+            path = videos / f'{index}.mp4'
+            path.write_bytes(b'video')
+            lines.append(f'[WOOD_BANK] COMPLETE case-{index} wall=100 file={path} frames=360 seconds=12.0')
+        probe = SimpleNamespace(stdout=json.dumps({'streams': [dict(codec_type='video', codec_name='h264', nb_read_frames='360', duration='12.0')]}))
+        with patch.object(carts.subprocess, 'run', return_value=probe) as decode:
+            text = lines[0] + '\n[WOOD_BANK] RUN_STARTED\n' + '\n'.join(lines)
+            self.assertEqual(len(carts._videos(self.output, self.selection, 'client1', text)), 24)
+            self.assertEqual(decode.call_count, 48)
+            decode.reset_mock()
+            for invalid in ('\n'.join(lines[:-1]), '\n'.join(lines[:-1] + [lines[0]])):
+                with self.assertRaisesRegex(ValueError, 'Missing/duplicate completed cart clips'):
+                    carts._videos(self.output, self.selection, 'client1', invalid)
+            decode.assert_not_called()
+
+    def test_stop_uses_selected_original_log_and_retains_failed_motion_diagnostics(self):
+        self.selection['cases'] = ['stop']
+        fixture = carts._load(ROOT / 'tests/test_cart_stop_analyzer.py')
+        text = fixture.evidence().replace('Bob_SprintToStop2h_Heavy', 'Bob_RunToStop2H_Heavy')
+        _, _, metrics = self.coverage_fixture(text=text)
+        (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
+        original_run = carts._run
+        for filename in ('client1/console.txt', 'client1-launch.log'):
+            with self.subTest(log=filename):
+                log = self.output / filename
+                log.write_text(text)
+                console = self.output / 'client1/console.txt'
+                if filename == 'client1-launch.log':
+                    console.write_text('[WOOD_BANK] ALL_COMPLETE cases=24\n')
+                commands = {}
+                def run(command, directory, name):
+                    commands[name] = command
+                    if name == 'stop':
+                        return original_run(command, directory, name)
+                    if name == 'native':
+                        (directory / 'native-metrics.json').write_text(json.dumps(metrics))
+                    return {'exit_code': 0}
+                with patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]) as videos:
+                    result = carts.verify(self.output, self.selection, {})
+                self.assertFalse(result['issues'], result['issues'])
+                self.assertEqual(result['outcomes'][0]['status'], 'captured')
+                self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+                self.assertTrue(result['evidence']['nativePartialDiagnostic'])
+                self.assertEqual(result['evidence']['analyzers']['stop']['exit_code'], 1)
+                self.assertTrue(result['evidence']['motion']['problems'])
+                self.assertIn('--partial', commands['native'])
+                self.assertEqual(commands['native'][commands['native'].index('--log') + 1], str(log))
+                self.assertEqual(commands['stop'][commands['stop'].index('--log') + 1], str(log))
+                self.assertEqual(videos.call_args.args[3], text)
+                self.assertEqual(log.read_text(), text)
+                self.assertFalse((self.output / 'client1/native-launch.log').exists())
+                if filename == 'client1-launch.log':
+                    self.assertEqual(console.read_text(), '[WOOD_BANK] ALL_COMPLETE cases=24\n')
+                log.unlink()
+
+    def test_reversal_capture_preserves_motion_report_and_failed_diagnostics(self):
+        self.selection['cases'] = ['reversal']
+        fixture = carts._load(ROOT / 'tests/test_cart_reversal_analyzer.py')
+        text, _, metrics = self.coverage_fixture(text=fixture.evidence())
+        log = self.output / 'client1-launch.log'
+        log.write_text(text)
+        (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
+        def run(command, directory, name):
+            if name == 'native':
+                self.assertIn('--partial', command)
+                (directory / 'native-metrics.json').write_text(json.dumps(metrics))
+            return {'exit_code': 0}
+        with patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
+            result = carts.verify(self.output, self.selection, {})
+        self.assertFalse(result['issues'], result['issues'])
+        self.assertEqual(result['outcomes'][0]['status'], 'captured')
+        self.assertTrue(result['evidence']['motion']['motionPass'])
+        self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+        saved = Path(result['evidence']['analysis']) / 'reversal-motion.json'
+        self.assertEqual(json.loads(saved.read_text()), result['evidence']['motion'])
+        log.write_text(text.replace('run=false', 'run=true'))
+        with patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
+            result = carts.verify(self.output, self.selection, {})
+        self.assertEqual(result['outcomes'][0]['status'], 'captured')
+        self.assertFalse(result['evidence']['motion']['motionPass'])
+        self.assertTrue(result['evidence']['motion']['failures'])
+        log.write_text(text.replace('case=male-empty-walk-switch ', 'case=unexpected ').replace('COMPLETE male-empty-walk-switch ', 'COMPLETE unexpected '))
+        metrics['cases'][0]['case'] = 'unexpected'
+        with patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
+            result = carts.verify(self.output, self.selection, {})
+        self.assertEqual(result['outcomes'][0]['status'], 'failed')
+        self.assertIn('Missing, duplicate or unexpected reversal cases', result['issues'])
 
     def test_cart_completion_alone_never_produces_capture_evidence(self):
         (self.output / 'client1/console.txt').write_text('[WOOD_BANK] ALL_COMPLETE cases=20\n')

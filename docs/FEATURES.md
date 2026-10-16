@@ -119,7 +119,11 @@ With **SaucedCarts**, dedicated servers initialize the upstream drop, unequip an
 
 **Cart world spawns:** shopping carts use retail and warehouse buildings; standalone sheds and farm storage retain wooden/metal SaucedWheelbarrow spawns. Outdoor carts require a nearby building eligible for that type (a three-chunk margin, roughly 24 tiles, includes adjacent parking). Ordinary distant driveways no longer receive these carts. Existing carts and saved spawn decisions remain intact; restart the game/server and explore undecided areas for the new distribution. Spawn rate, building limits and world-spawning switches retain their native effects.
 
-**Cart motion:** body and hand animation tracks use matching clip speeds and transitions. Normal walking turns ease into a light load-dependent response: empty carts stay close to ordinary steering, full carts turn more slowly. Running and sprinting retain native steering. Releasing a cart, aiming, sneaking, injury or a timed action restores ordinary handling; while running, restoration of the walking setting waits until that setting is readable again. External turn-controller changes take precedence until the cart is released. This adds steering inertia, without separate wheel physics or new collision behavior.
+**Cart motion:** selected shopping carts and wheelbarrows use load-dependent acceleration and steering. Shopping carts pivot near the front wheels; wheelbarrows lean into a turn. Native character collision still limits movement. Releasing the cart, aiming, sneaking, injury or a timed action restores ordinary handling.
+
+The wooden wheelbarrow has the refined animation: hands remain attached to its handles, the grounded wheel rolls with actual movement and turns lean up to 7 degrees. Walk, Run and Sprint retain moving legs; cargo affects acceleration and Sprint entry/exit. Releasing Run/Sprint uses a heavy-item braking step and a smooth return to the standing grip. New input interrupts braking. An opposite-direction command requests a slower backward step; turn through a forward arc to make a U-turn.
+
+This tuning was checked locally with empty/full wooden wheelbarrows on both body models. Remote players currently do not receive the complete cart pose; local capture does not establish multiplayer equivalence. Stationary turns, the remaining maneuver matrix and natural pickup/put-down transitions remain [open work](../TODO.md#естественная-анимация-деревянной-тачки). There is no separate cart rigid-body simulation.
 
 ### Multiplayer auto-drink
 

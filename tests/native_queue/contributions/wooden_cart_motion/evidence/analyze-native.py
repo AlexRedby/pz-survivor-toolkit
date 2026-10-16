@@ -5,6 +5,7 @@ import bisect,csv,json,re,sys,math,io
 import argparse
 parser=argparse.ArgumentParser(description="Analyze the existing 16-case WOOD_BANK protocol; never launches a game")
 parser.add_argument('--profile',type=Path,required=True,help='Owned capture/profile directory containing console.txt and probe outputs')
+parser.add_argument('--log',type=Path,help='Full native stdout; defaults to profile/console.txt')
 parser.add_argument('--output',type=Path,required=True,help='Result directory; may already contain the two mesh intersection JSON files')
 parser.add_argument('--partial',action='store_true')
 args=parser.parse_args()
@@ -12,7 +13,7 @@ ROOT=args.profile
 HERE=args.output
 HERE.mkdir(parents=True,exist_ok=True)
 assert not any((HERE/name).exists() for name in ['native-metrics.json','native-body-cases.jsonl','selected']), 'Preserve existing analysis output first'
-log=(ROOT/'console.txt').read_text().rsplit('[WOOD_BANK] RUN_STARTED',1)[-1]
+log=(args.log if args.log is not None else ROOT/'console.txt').read_text().rsplit('[WOOD_BANK] RUN_STARTED',1)[-1]
 complete='[WOOD_BANK] ALL_COMPLETE cases=16' in log
 cases={name:int(start) for name,start in re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)',log)}
 if args.partial:

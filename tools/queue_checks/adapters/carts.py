@@ -16,6 +16,8 @@ MODS = ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit', 'PZSurvivorW
         'SaucedCarts', 'saucedwheelbarrow']
 SP = 'wooden_cart_motion'
 MP = 'wooden_cart_multiplayer'
+SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.lua', 20),
+            'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 
 
@@ -25,7 +27,7 @@ def definitions():
                                'kinds': ['sp' if suite == SP else 'mp'], 'modes': ['toolkit'],
                                'control_reason': 'Preserved candidate capture requires toolkit mode; it does not assess animation equivalence',
                                'languages': ['RU'] if suite == SP else ['EN', 'RU']}
-                              for case in (['sprint', 'reverse'] if suite == SP else ['owner_observer_motion'])]}
+                              for case in (SP_CASES if suite == SP else ['owner_observer_motion'])]}
             for suite in (SP, MP)}
     result[SP]['game_inputs'] = ['media/models_X/Skinned/MaleBody.x', 'media/models_X/Skinned/FemaleBody.x',
         'media/models_X/Skinned/Clothes/Bob_Trousers.x', 'media/models_X/Skinned/Clothes/Kate_Trousers.x']
@@ -38,7 +40,7 @@ def _intake(project, suite):
 
 def validate(selection):
     suite = selection['suite']
-    cases = ['sprint', 'reverse'] if suite == SP else ['owner_observer_motion']
+    cases = SP_CASES if suite == SP else ['owner_observer_motion']
     if len(selection['cases']) != 1 or selection['cases'][0] not in cases or selection['mode'] != 'toolkit':
         raise ValueError('Cart candidates support one capture case in toolkit mode only')
     if selection['kind'] != ('sp' if suite == SP else 'mp') or selection['languages'] != (['RU'] if suite == SP else ['EN', 'RU']):
@@ -159,7 +161,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             motion = dict(disposable=True, ffmpeg=config['ffmpeg'], videoRoot=videos[role], area=AREA)
             runtime_source = 'CartMotionConfig=' + _lua(motion) + '\nif not CartAdapterBootstrapped then\nCartAdapterBootstrapped=true\n'
             runtime_source += '(function()\n' + (sp / 'test-area.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'bootstrap.lua').read_text() + '\nend)()'
-            runtime_source += '\nelse\n(function()\n' + (sp / ('scenario-reverse.lua' if selection['cases'] == ['reverse'] else 'scenario-clips.lua')).read_text() + '\nend)()\nend\n'
+            runtime_source += '\nelse\n(function()\n' + (sp / SP_CASES[selection['cases'][0]][0]).read_text() + '\nend)()\nend\n'
             _write(runtime_lua, runtime_source)
         else:
             _write(runtime_lua, 'return true\n')
@@ -167,7 +169,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 def complete(selection, role, text):
     if selection['suite'] == SP:
-        return '[WOOD_BANK] ALL_COMPLETE cases=' + ('20' if selection['cases'] == ['reverse'] else '16') in text
+        log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
+        return re.search(r'\[WOOD_BANK\] ALL_COMPLETE cases=' + str(SP_CASES[selection['cases'][0]][1]) + r'(?:\s|$)', log) is not None
     return '"event":"complete"' in text.replace(' ', '') and '[CART_MP] VIDEO_FINAL' in text
 
 
@@ -183,13 +186,15 @@ def _run(command, directory, name):
 
 
 def _videos(root, selection, role, text):
+    if selection['suite'] == SP:
+        text = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
     records = re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+) file=(.+?) frames=(\d+) seconds=([\d.]+)', text)
     if selection['suite'] == MP:
         rows = re.findall(r'\[CART_MP\] VIDEO_FINAL (\{[^\n]+\})', text)
         if len(rows) != 1:
             raise ValueError('Expected one final MP video receipt')
         item = json.loads(rows[0]); records = [(role, '0', item['file'], str(item['frames']), str(item['seconds']))]
-    expected = 1 if selection['suite'] == MP else 20 if selection['cases'] == ['reverse'] else 16
+    expected = 1 if selection['suite'] == MP else SP_CASES[selection['cases'][0]][1]
     if len(records) != expected or len({row[2] for row in records}) != expected:
         raise ValueError('Missing/duplicate completed cart clips')
     output = []
@@ -243,8 +248,11 @@ def verify(root, selection, catalog):
     parent = root / 'analysis'; parent.mkdir(exist_ok=True)
     analysis = Path(tempfile.mkdtemp(prefix='cart-', dir=parent))
     try:
-        texts = {role: (root / role / 'console.txt').read_text(errors='replace') if (root / role / 'console.txt').is_file()
-                 else (root / (role + '-launch.log')).read_text(errors='replace') for role in roles}
+        logs = {}
+        for role in roles:
+            launch, console = root / (role + '-launch.log'), root / role / 'console.txt'
+            logs[role] = launch if selection['suite'] == SP and launch.is_file() else console if console.is_file() else launch
+        texts = {role: path.read_text(errors='replace') for role, path in logs.items()}
         if any(not complete(selection, role, text) for role, text in texts.items()):
             raise ValueError('Cart capture did not complete')
         for text in texts.values():
@@ -256,6 +264,7 @@ def verify(root, selection, catalog):
             evidence['comparison'] = report
             _write(analysis / 'mp-comparison.json', json.dumps(report, indent=2, allow_nan=False))
         else:
+            case = selection['cases'][0]
             runtime = _json(root / 'runtime.json')
             game = Path(runtime['game'])
             cache = root / 'client1'
@@ -265,17 +274,25 @@ def verify(root, selection, catalog):
                 ('body', [sys.executable, str(ev / 'check-hip-actual.py'), '--game-java-dir', str(game), '--mesh', str(_path(selection, 'mesh_fbx')), '--mesh-vbo', str(cache / 'WheelbarrowWood.bin'), '--capture', str(cache / 'body-clearance.jsonl'), '--output', str(analysis)]),
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
-            commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--output', str(analysis)] + (['--partial'] if selection['cases'] == ['reverse'] else [])))
+            commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if case != 'sprint' else [])))
             evidence['analyzers'] = {name: _run(command, analysis, name) for name, command in commands}
             metrics = _json(analysis / 'native-metrics.json')
-            _coverage(cache, texts['client1'], 20 if selection['cases'] == ['reverse'] else 16, metrics)
+            _coverage(cache, texts['client1'], SP_CASES[case][1], metrics)
             evidence['native'] = metrics
-            if selection['cases'] == ['reverse']:
+            if case == 'reverse':
                 motion = _load(intake / 'analyze-reverse.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reverse-motion.json', json.dumps(motion, indent=2, allow_nan=False))
+            elif case == 'stop':
+                evidence['analyzers']['stop'] = _run([sys.executable, str(intake / 'analyze-stop.py'),
+                    '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'stop-motion.json')], analysis, 'stop')
+                evidence['motion'] = _json(analysis / 'stop-motion.json')
+            elif case == 'reversal':
+                motion = _load(intake / 'analyze-reversal.py').analyze(texts['client1'])
+                evidence['motion'] = motion
+                _write(analysis / 'reversal-motion.json', json.dumps(motion, indent=2, allow_nan=False))
             evidence['evidenceComplete'] = True
-            evidence['nativePartialDiagnostic'] = selection['cases'] == ['reverse']
+            evidence['nativePartialDiagnostic'] = case != 'sprint'
         evidence['analysis'] = str(analysis)
     except (ValueError, OSError, KeyError, TypeError, AssertionError, subprocess.SubprocessError) as error:
         issues.append(str(error))

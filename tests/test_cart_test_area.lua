@@ -38,7 +38,8 @@ getCell = function() return cell end
 getWorld = function() return {getWorld = function() return world end} end
 isClient = function() return false end
 isServer = function() return false end
-local area = dofile(ProjectRoot .. '/tools/cart_test_area.lua')
+CartMotionConfig = {disposable=true, area={x=3.5,y=3.5,z=7,minX=0,minY=0,size=8,margin=2,floorSprite='carpentry_02_57'}}
+local area = dofile(ProjectRoot .. '/tests/native_queue/contributions/wooden_cart_motion/test-area.lua')
 local player = {x = area.x, y = area.y, z = area.z}
 function player:getX() return self.x end
 function player:getY() return self.y end

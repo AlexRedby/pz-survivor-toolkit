@@ -43,14 +43,21 @@ class CartStopAnalyzerTest(unittest.TestCase):
  @classmethod
  def setUpClass(cls):cls.log=evidence()
 
- def analyze(self,log,wheel=None):
+ def analyze(self,log,wheel=None,explicit_log=False):
   with tempfile.TemporaryDirectory()as directory:
    root=Path(directory);(root/'native-launch.log').write_text(log)
+   log_path=root/'client1-launch.log'
+   if explicit_log:
+    log_path.write_text(log)
+    (root/'native-launch.log').write_text('Wrong legacy log must not be read')
    if wheel:
     with (root/'wood-wheel-native.csv').open('w')as stream:
      writer=csv.DictWriter(stream,fieldnames=wheel[0]);writer.writeheader();writer.writerows(wheel)
    output=root/'result.json'
-   result=subprocess.run([sys.executable,str(SCRIPT),'--profile',str(root),'--output',str(output)],capture_output=True,text=True)
+   command=[sys.executable,str(SCRIPT),'--profile',str(root),'--output',str(output)]
+   if explicit_log:command+=['--log',str(log_path)]
+   result=subprocess.run(command,capture_output=True,text=True)
+   if explicit_log:self.assertEqual(log_path.read_text(),log)
    report=json.loads(output.read_text())if output.exists()else None
    return result,report
 
@@ -60,6 +67,25 @@ class CartStopAnalyzerTest(unittest.TestCase):
   self.assertEqual(len(report['cases']),24)
   self.assertEqual(report['problems'],[])
   self.assertFalse(report['cases'][0]['stops'][0]['temporalReturn']['available'])
+
+ def test_explicit_stdout_path_overrides_legacy_log_without_rewriting_it(self):
+  result,report=self.analyze(self.log,explicit_log=True)
+  self.assertEqual(result.returncode,0,result.stderr)
+  self.assertEqual(len(report['cases']),24)
+
+ def test_missing_explicit_stdout_does_not_fall_back(self):
+  with tempfile.TemporaryDirectory()as directory:
+   root=Path(directory);(root/'native-launch.log').write_text(self.log)
+   output=root/'result.json'
+   result=subprocess.run([sys.executable,str(SCRIPT),'--profile',str(root),
+    '--log',str(root/'missing.log'),'--output',str(output)],capture_output=True,text=True)
+   self.assertNotEqual(result.returncode,0)
+   self.assertFalse(output.exists())
+
+ def test_wrong_completion_count_is_rejected(self):
+  for count in (16,20,240):
+   with self.subTest(count=count):
+    self.assertNotEqual(self.analyze(self.log.replace('ALL_COMPLETE cases=24',f'ALL_COMPLETE cases={count}'))[0].returncode,0)
 
  def test_return_uses_native_clock_and_wheel_offset_after_actor_rest(self):
   start=int(re.search(r'COMPLETE male-empty-run-stop wall=(\d+)',self.log)[1])
