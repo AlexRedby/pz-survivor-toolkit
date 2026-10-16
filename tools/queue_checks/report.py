@@ -8,14 +8,26 @@ from . import adapters
 
 
 MARKER = "[QUEUE_CHECK] "
-RECORD = re.compile(r"^(?:LOG|WARN|ERROR|DEBUG|TRACE)\s*:")
-STAMP = re.compile(r"^\[\d{2}-\d{2}-\d{2,4}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\]\s*")
+RECORD = re.compile(r"^\s*(?:LOG|WARN|ERROR|DEBUG|TRACE)\s*:")
+STAMP = re.compile(r"^\s*\[\d{2}-\d{2}-\d{2,4}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\]\s*")
 MIC = ("System create record sound", "initialisedRecDev=true", "fmodRecordSound=", "Microphone was not disabled")
 RECEIPT = re.compile(r"HEALTH_AUTH_RECEIPT (\S*) phase=(\w+) ok=(true|false) patient=(\S*) error=([^\n]+)")
 SESSION = re.compile(r"\[QUEUE_SESSION\] (BEGIN|START|FINISH|CLEANUP|JOINT_CLEAN|COMPLETE|QUARANTINE) case=(\S+) epoch=(\d+) actor=(\S+)(?:\s|$)")
 ANTICHEAT_KICK = re.compile(
-    r'^WARN\s*:\s*Multiplayer\b.*\bat AntiCheat\.log\s*>\s*Anti-cheat="[^"\r\n]+" '
+    r'^\s*WARN\s*:\s*Multiplayer\b.*\bat AntiCheat\.log\s*>\s*Anti-cheat="[^"\r\n]+" '
     r'is triggered for connection="[^"\r\n]*" .*\bcounter=(\d+)/(\d+) action="Kick"(?:\s|$)')
+EXCEPTION = re.compile(r"\b[\w.$]+(?:Exception|Error):"
+                       r"|(?:^|\n)\s*(?:Exception in thread \"[^\"]+\"\s+)?(?:[\w$]+\.)+(?:[\w$]+(?:Exception|Error)|Exception|Error)(?:\s|$)"
+                       r"|(?:^|\n)\s*KahluaException(?:\s|$)")
+RUNTIME_FAILURE = re.compile(
+    r"\b(?:OutOfMemoryError|EXCEPTION_ACCESS_VIOLATION|SIGSEGV|SIGBUS|SQLITE_(?:CORRUPT|NOTADB|FULL|IOERR))\b"
+    r"|(?:failed|unable|cannot|could not) (?:to )?(?:bind|save|write|connect)\b"
+    r"|database (?:disk image is malformed|is locked|is corrupt)|checksum mismatch", re.I)
+BACKGROUND_GAME_SHA256 = "e1a69eb743ede60b213a0fe7f8b83d4fcab773036d256cc4543a336f3b058a33"
+THUMP_TILES = ({"fencing_01_" + str(i) for i in
+                (1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 24, 25, 26, 27, 28, 32, 33, 34, 35, 36,
+                 40, 41, 42, 56, 57, 58, 59, 60, 64, 65, 66, 67, 68, 72, 73, 75)} |
+               {"carpentry_02_" + str(i) for i in (40, 41, 44, 45, 48, 49)})
 
 
 def read_json(path):
@@ -93,7 +105,50 @@ def log_paths(root, role):
     return [path for path in paths if path.is_file()]
 
 
-def audit_log(path, cache):
+def background_profile(root, selection, verified):
+    """Only the two source-verified profiles whose startup fallbacks were inspected."""
+    if not verified or selection.get("suite") != "animal-trailer" or selection.get("kind") != "mp" or selection.get("clients") != 1 or selection.get("languages") != ["EN"] or selection.get("cases") not in (["equipment-fixed"], ["equipment-missing"]):
+        return False
+    expected = ["ZombieBuddy", "PZSurvivorToolkit"]
+    if selection["cases"] == ["equipment-fixed"]:
+        expected.insert(1, "PZToolkitJavaPatches")
+    if selection.get("mods") != expected:
+        return False
+    try:
+        game = Path(read_json(root / "runtime.json")["game"])
+        return read_json(root / "source-manifest.json").get(str(game / "projectzomboid.jar")) == BACKGROUND_GAME_SHA256
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def background_rule(block, role):
+    message = block[0].split(">", 1)[-1].strip().rstrip(".")
+    text = "\n".join(block)
+    if not any(line.strip() for line in block[1:]) and not EXCEPTION.search(text) and not RUNTIME_FAILURE.search(text):
+        if re.search(r"\bat FluidContainerScript\.load\s*>", block[0]) and message in (
+                "Sanitizing container name 'Large Bucket', name may not contain whitespaces",
+                "Sanitizing container name 'Fuel Pump', name may not contain whitespaces"):
+            return "fluid-name-normalization", 1 if role == "server" else 2
+        if role == "server" and re.search(r"\bat BrokenFences\.addBrokenTiles\s*>", block[0]) and message.startswith("Missing ThumpSound for breakable object ") and message.removeprefix("Missing ThumpSound for breakable object ") in THUMP_TILES:
+            return "default-fence-break-sound", 1
+        if re.search(r"\bat CraftRecipeComponentScript\.getIconTexture\s*>", block[0]) and message == "CraftRecipeComponentScript: Recipe Piano missing UiConfigScript - falling back to SpriteConfigScript first world object face for recipe icon":
+            return "piano-icon-fallback", 1
+    if role == "server" and message == "IsoPropertyType.lookupOrDefaultStr> Exception thrown":
+        body = [line.strip().rstrip(".") for line in block[1:] if line.strip()]
+        frames = ["Stack trace:", "zombie.core.properties.IsoPropertyType.lookup(IsoPropertyType.java:273)",
+                  "zombie.core.properties.IsoPropertyType.lookupOrDefaultStr(IsoPropertyType.java:281)",
+                  "zombie.core.TilePropertyAliasMap.register(TilePropertyAliasMap.java:54)",
+                  "zombie.core.TilePropertyAliasMap.Generate(TilePropertyAliasMap.java:27)",
+                  "zombie.iso.IsoWorld.GenerateTilePropertyLookupTables(IsoWorld.java:1337)",
+                  "zombie.iso.IsoWorld.init(IsoWorld.java:2257)", "zombie.network.GameServer.main(GameServer.java:817)"]
+        for name in ("ladderW", "ladderS", "ladderE", "ladderN", "WindowShape"):
+            cause = "zombie.core.properties.IsoPropertyType$IsoPropertyTypeNotFoundException: Property Name not found: " + name + " at IsoPropertyType.lookup(IsoPropertyType.java:273). Message: Property Name not found: " + name
+            if body == [cause, *frames]:
+                return "property-name-string-fallback", 1
+    return None
+
+
+def audit_log(path, cache, background=False):
     """Keep counts within a file; mirrors are merged using max, never summed."""
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     findings, microphone = [], []
@@ -102,6 +157,8 @@ def audit_log(path, cache):
             if marker in line and not (marker == "fmodRecordSound=" and re.search(r"fmodRecordSound=0(?:\s|$|[,;}])", line)):
                 microphone.append({"file": str(path), "line": number, "message": line})
     lines = [STAMP.sub("", line) for line in lines]
+    marker = "[ANIMAL_TRAILER] SERVER READY" if cache.name == "server" else "[ANIMAL_TRAILER] CLIENT INGAME"
+    ready = next((i for i, line in enumerate(lines) if marker in line), None)
     starts = [i for i, line in enumerate(lines) if RECORD.match(line)]
     if lines and (not starts or starts[0] != 0):
         starts.insert(0, 0)
@@ -110,7 +167,9 @@ def audit_log(path, cache):
         kick = ANTICHEAT_KICK.match(block[0])
         # Kick names the configured policy even before the counter reaches its enforcement threshold.
         terminal_kick = kick is not None and 0 < int(kick[2]) <= int(kick[1])
-        is_error = terminal_kick or re.match(r"^ERROR\s*:", block[0]) or re.search(r"(?:KahluaException|\b[\w.]+(?:Exception|Error):)", "\n".join(block))
+        text = "\n".join(block)
+        serious = bool(terminal_kick or EXCEPTION.search(text) or RUNTIME_FAILURE.search(text))
+        is_error = re.match(r"^\s*ERROR\s*:", block[0]) or serious
         if not is_error:
             continue
         message = block[0].split(">", 1)[-1].strip()
@@ -119,9 +178,16 @@ def audit_log(path, cache):
         cause = cause.replace(str(cache), "<cache>")
         # DebugLog's formatter can append a second full stop to a mirrored console message.
         key = message.rstrip(".") + ("\n" + cause.rstrip(".") if cause else "")
+        rule = background_rule(block, cache.name) if not terminal_kick and background and ready is not None and start < ready else None
         findings.append({"fingerprint": hashlib.sha256(key.encode()).hexdigest(), "message": message,
                          "cause": cause, "file": str(path), "line": start + 1,
+                         "severity": "background" if rule else "fatal" if serious else "unclassified",
+                         "background_rule": rule[0] if rule else None, "background_limit": rule[1] if rule else None,
                          "category": "lua" if "Kahlua" in key or "Lua(" in key else "native"})
+    counts = Counter(row["fingerprint"] for row in findings)
+    for row in findings:
+        if row["severity"] == "background" and counts[row["fingerprint"]] > row["background_limit"]:
+            row["severity"] = "unclassified"
     return findings, microphone
 
 
@@ -180,17 +246,21 @@ def diagnostic_windows(logs):
             'interpretation': 'File-local marker placement only, not case verdicts or causes. Buckets are not additive when unmarked mirrors remain unassigned.'}
 
 
-def audit_logs(root, roles):
+def audit_logs(root, roles, background=False):
     result = {}
     for role in roles:
         merged, details, microphone, logs = Counter(), {}, [], []
         paths = log_paths(root, role)
         for path in paths:
-            findings, mic = audit_log(path, root / role)
+            findings, mic = audit_log(path, root / role, background)
             logs.append((path, findings))
             current = Counter(row["fingerprint"] for row in findings)
             merged |= current
-            details.update({row["fingerprint"]: row for row in findings})
+            for row in findings:
+                previous = details.get(row["fingerprint"])
+                rank = {"background": 0, "unclassified": 1, "fatal": 2}
+                if previous is None or rank[row["severity"]] >= rank[previous["severity"]]:
+                    details[row["fingerprint"]] = row
             microphone.extend(mic)
         result[role] = {"files": list(map(str, paths)), "issues": [dict(details[key], count=count) for key, count in sorted(merged.items())],
                         "error_count": sum(merged.values()), "microphone": microphone,
@@ -198,6 +268,8 @@ def audit_logs(root, roles):
         windows = diagnostic_windows(logs)
         if windows is not None:
             result[role]['diagnostic_windows'] = windows
+        for severity in ("fatal", "unclassified", "background"):
+            result[role][severity + "_count"] = sum(count for key, count in merged.items() if details[key]["severity"] == severity)
     return result
 
 
@@ -298,7 +370,7 @@ def compare(current, control):
         for after, before in zip(current["coverage"], control["coverage"]):
             outcomes.append({"actor": after["actor"], "case": after["case"], "toolkit": after.get("outcome"), "native": before.get("outcome"), "equal": after.get("outcome") == before.get("outcome")})
     return {"compatible": not reasons, "reasons": reasons, "errors": differences, "outcomes": outcomes,
-            "interpretation": "Matching errors reproduce without queue; differences require investigation, not automatic attribution."}
+            "interpretation": "Matching errors reproduce without queue; comparison never clears failures or unclassified errors."}
 
 
 def build_report(root, catalog, control=None):
@@ -307,7 +379,7 @@ def build_report(root, catalog, control=None):
     provenance_errors = verify_manifest(root, "source-manifest.json", absolute=True) + verify_manifest(root, "snapshot-hashes.json")
     result, coverage = functional(root, selection, catalog)
     roles = adapters.roles(selection)
-    audits = audit_logs(root, roles)
+    audits = audit_logs(root, roles, background_profile(root, selection, not provenance_errors))
     try:
         execution = read_json(root / "execution.json")
     except (OSError, ValueError):
@@ -315,19 +387,22 @@ def build_report(root, catalog, control=None):
     if not isinstance(execution, dict):
         execution = {"status": "invalid"}
     microphone = any(row["microphone"] for row in audits.values())
-    total = sum(row["error_count"] for row in audits.values())
+    counts = {severity + "_count": sum(row[severity + "_count"] for row in audits.values())
+              for severity in ("fatal", "unclassified", "background")}
+    runtime_status = "failed" if counts["fatal_count"] else "unclassified-errors" if counts["unclassified_count"] else "background-only" if counts["background_count"] else "clean"
     fingerprint = read_json(root / "settings-fingerprint.json")["sha256"]
     report = {"schema_version": 1, "run": str(root), "selection": selection,
               "settings_fingerprint": fingerprint, "provenance": {"verified": not provenance_errors, "issues": provenance_errors},
               "functional": result, "coverage": coverage, "execution": execution,
-              "runtime": {"status": "unavailable" if any(not row["available"] for row in audits.values()) else "unclassified-errors" if total else "clean", "roles": audits, "microphone": microphone},
+              "runtime": dict(counts, status="unavailable" if any(not row["available"] for row in audits.values()) else runtime_status, roles=audits, microphone=microphone),
               "limits": ["Callback-driven native fixture; physical UI, WAN and long sessions are separate coverage."]}
     if control is not None:
         report["comparison"] = compare(report, control)
-        if report["comparison"]["compatible"]:
-            new = any(row["only_toolkit"] for row in report["comparison"]["errors"].values())
-            report["runtime"]["status"] = "new-errors" if new else "reproduced-without-queue" if total else "clean"
-    failed = result["status"] not in ('passed', 'captured') or provenance_errors or microphone or execution.get("status") != "completed" or any(not row["available"] for row in audits.values())
+        if report["comparison"]["compatible"] and not counts["fatal_count"] and counts["unclassified_count"]:
+            new = any(issue["severity"] == "unclassified" and issue["fingerprint"] in report["comparison"]["errors"][role]["only_toolkit"]
+                      for role, audit in audits.items() for issue in audit["issues"])
+            report["runtime"]["status"] = "new-errors" if new else "unclassified-errors"
+    failed = counts["fatal_count"] or result["status"] not in ('passed', 'captured') or provenance_errors or microphone or execution.get("status") != "completed" or any(not row["available"] for row in audits.values())
     if failed:
         report["status"] = "failed"
     elif control is not None and not report["comparison"]["compatible"]:
@@ -370,7 +445,9 @@ def summary(report):
     for role, counts in report["functional"]["clients"].items():
         lines.append(role + ": " + ", ".join(str(counts.get(status, 0)) + " " + status for status in ("passed", "skipped", "failed", 'captured') if status != 'captured' or counts.get(status)))
     for role, audit in report["runtime"]["roles"].items():
-        lines.append(role + ": " + str(audit["error_count"]) + " errors, " + str(len(audit["microphone"])) + " microphone markers")
+        lines.append(role + ": " + str(audit["error_count"]) + " errors, " +
+                     ", ".join(str(audit.get(severity + "_count", 0)) + " " + severity for severity in ("fatal", "unclassified", "background")) +
+                     ", " + str(len(audit["microphone"])) + " microphone markers")
         if windows := audit.get('diagnostic_windows'):
             lines.append(role + ' diagnostic errors: startup=' + str(windows['startup']['error_count']) +
                          ', between-cases=' + str(windows['between_cases']['error_count']) + ', unassigned=' + str(windows['unassigned']['error_count']))

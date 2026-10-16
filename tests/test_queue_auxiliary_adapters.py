@@ -132,7 +132,7 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         (harness.root / 'selection.json').write_text(json.dumps(harness.selection))
         (harness.root / 'runtime.json').write_text(json.dumps(harness.runtime))
         harness.content = '[ANIMAL_TRAILER] SERVER READY\n' + missing
-        with patch('queue_checks.runner.socket.socket'):
+        with patch('queue_checks.admission.socket.socket'):
             execution, kills = harness.invoke(sleep=lambda _: self.fail('Terminal missing marker waited for timeout'))
         self.assertEqual(execution['status'], 'failed')
         self.assertIn('Native fixture failed', execution['error'])

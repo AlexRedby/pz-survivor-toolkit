@@ -763,6 +763,8 @@ io.write(world, '\0', slots.a)
                     ("needs-review", "unclassified-errors", True, True),
                     ("needs-review", "unclassified-errors", False, False),
                     ("passed", "new-errors", False, True),
+                    ("passed", "reproduced-without-queue", False, True),
+                    ("passed", "failed", False, True),
                 ):
                     bad = json.loads(json.dumps(clean))
                     bad["status"] = status
@@ -771,6 +773,18 @@ io.write(world, '\0', slots.a)
                     (seed / "report.json").write_text(json.dumps(bad))
                     with self.assertRaisesRegex(ValueError, "verified successful"):
                         adapter._seed(value)
+                background = json.loads(json.dumps(clean))
+                background["runtime"]["status"] = "background-only"
+                (seed / "report.json").write_text(json.dumps(background))
+                self.assertEqual([state, *slots], adapter._seed(value)[1])
+                for message in ("ERROR: General > java.lang.OutOfMemoryError: late failure\n",
+                                "ERROR: General > unknown late failure\n",
+                                "LOG: General > initialisedRecDev=true\n"):
+                    mirror = seed / "server/console.txt"
+                    mirror.write_text(message)
+                    with self.assertRaisesRegex(ValueError, "runtime audit"):
+                        adapter._seed(value)
+                    mirror.unlink()
                 pending = json.loads(json.dumps(clean))
                 pending["status"] = "needs-review"
                 pending["runtime"]["status"] = "unclassified-errors"
@@ -782,6 +796,11 @@ io.write(world, '\0', slots.a)
                 self.assertEqual([], result["issues"])
                 self.assertTrue(result["evidence"]["requires_review"])
                 self.assertTrue(result["evidence"]["seed_native_audit"]["pending"])
+                with (seed / "server-launch.log").open("a") as stream:
+                    stream.write("ERROR: General > java.lang.OutOfMemoryError: pending cannot waive this\n")
+                with self.assertRaisesRegex(ValueError, "runtime audit"):
+                    adapter._seed(value)
+                (seed / "server-launch.log").write_text(server_log(initial))
                 evidence["execution.json"]["processes"]["server"].pop("exit_code")
                 (seed / "execution.json").write_text(json.dumps(evidence["execution.json"]))
                 with self.assertRaisesRegex(ValueError, "not stopped"):

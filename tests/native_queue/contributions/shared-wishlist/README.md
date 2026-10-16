@@ -82,6 +82,8 @@ A seed with verified functional assertions may still have an unresolved native
 startup audit. Reload accepts `needs-review` only for `unclassified-errors` with
 microphone disabled and every role's logs available; stopped processes, sealed
 provenance, exact native stages and server authority receipts remain mandatory.
+Seed runtime logs are audited again before reuse; late failures, microphone
+activation or unknown errors behind a stale green report reject the seed.
 The reload evidence retains `seed_native_audit.pending=true` and
 `requires_review=true`, so passing persistence assertions cannot clear that
 pending audit. Failed, new-error, unknown, microphone-active or unavailable seed

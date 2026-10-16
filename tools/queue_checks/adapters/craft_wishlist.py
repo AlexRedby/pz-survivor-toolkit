@@ -374,7 +374,7 @@ def _seed(selection):
         raise ValueError("Wishlist seed must have verified successful runtime evidence")
     audit_roles = audit.get("roles", {})
     pending = report.get("status") == "needs-review" and audit.get("status") == "unclassified-errors"
-    accepted = report.get("status") == "passed" and audit.get("status") in ("clean", "reproduced-without-queue")
+    accepted = report.get("status") == "passed" and audit.get("status") in ("clean", "background-only")
     grouped = initial.get("cases") in (["visual", "standalone"], ["standalone", "visual"])
     if (initial.get("suite") != "shared-wishlist" or (initial.get("cases") not in (["full"], ["standalone"]) and not grouped)
             or execution.get("status") != "completed" or not (accepted or pending)
@@ -384,13 +384,18 @@ def _seed(selection):
         raise ValueError("Wishlist reload seed must have verified successful full/standalone native evidence")
     if initial.get("ports") != selection["ports"]:
         raise ValueError("Wishlist reload must preserve the seed endpoint for native client save identities")
-    from ..report import verify_manifest
+    from ..report import verify_manifest, audit_logs
     if verify_manifest(root, "source-manifest.json", True) or verify_manifest(root, "snapshot-hashes.json"):
         raise ValueError("Wishlist seed source/snapshot evidence has changed")
     if grouped:
         issues = _verify_session(root, initial, {"suites": definitions()})["issues"]
         if issues:
             raise ValueError("Wishlist seed native assertions are incomplete: " + "; ".join(issues))
+    # Runtime logs remain writable after report.json; a stale green report is not a safe seed.
+    fresh = audit_logs(root, ("server", "client1", "client2"))
+    if any(not row["available"] or row["microphone"] or row["fatal_count"] or
+           (row["unclassified_count"] and not pending) for row in fresh.values()):
+        raise ValueError("Wishlist seed runtime audit is unsafe or stale")
     initial_case = initial["cases"][0]
     for role in ("server", "client1", "client2"):
         if execution.get("processes", {}).get(role, {}).get("exit_code") is None:

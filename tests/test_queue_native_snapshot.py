@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
-from queue_checks import native, worlds, pack, runner
+from queue_checks import native, worlds, pack, runner, admission, report
 
 
 class NativeSnapshotTests(unittest.TestCase):
@@ -167,8 +167,8 @@ class NativeSnapshotTests(unittest.TestCase):
         pack.create(self.project, lock, self.game)
         return lock
 
-    def stopped_mp_template(self, lock):
-        seed = self.prepare('mp-seed', kind='mp', languages=['EN', 'RU'], options={'pack_lock': str(lock)})
+    def stopped_mp_template(self, lock, ports=None):
+        seed = self.prepare('mp-seed', kind='mp', languages=['EN', 'RU'], options={'pack_lock': str(lock)}, ports=ports or [17343, 17344])
         self.write(seed / 'server/Saves/Multiplayer/queue-smoke/map.bin', 'saved multiplayer world')
         for role in ('client1', 'client2'):
             self.write(seed / role / 'db/players.db', 'saved ' + role)
@@ -219,6 +219,18 @@ class NativeSnapshotTests(unittest.TestCase):
         worlds.verify_settings(json.loads((template / 'world.json').read_text()), output, runtime)
         self.assertEqual(initial, native.hashes(template))
         self.assertTrue((output / 'snapshot-hashes.json').is_file())
+
+    def test_world_template_keeps_saved_endpoint_when_cli_ports_are_automatic(self):
+        lock = self.locked_pack()
+        template = self.stopped_mp_template(lock, ports=[17521, 17522])
+        with patch.object(admission, 'allocate_ports') as allocate:
+            output = self.prepare('auto-world', kind='mp', languages=['EN', 'RU'], ports_auto=True,
+                                  options={'pack_lock': str(lock), 'world_template': str(template)})
+        allocate.assert_not_called()
+        selection = report.read_json(output / 'selection.json')
+        self.assertEqual([17521, 17522], selection['ports'])
+        self.assertFalse(selection['ports_auto'])
+        self.assertEqual('saved client1', (output / 'client1/db/players.db').read_text())
 
     def test_mp_world_rejects_effective_adapter_sandbox_mismatch_before_sealing(self):
         lock = self.locked_pack()
@@ -284,6 +296,26 @@ class NativeSnapshotTests(unittest.TestCase):
         for role in ("server", "client1"):
             self.assertEqual(config, (output / role / "mods/ActionQueueTest/42/media/lua/shared/QueueTestSelection.lua").read_text(), "Shared MP Lua must keep native checksums identical")
         self.assertEqual(self.compile_mock.call_count, 2)
+
+    def test_automatic_ports_are_unique_frozen_and_do_not_change_control_fingerprint(self):
+        with patch.object(admission, 'STATE', self.root / 'leases'):
+            first = self.prepare('auto-native', ports_auto=True, kind='mp', languages=['EN', 'RU'], mode='native')
+            second = self.prepare('auto-toolkit', ports_auto=True, kind='mp', languages=['EN', 'RU'])
+        selections = [report.read_json(run / 'selection.json') for run in (first, second)]
+        self.assertFalse(set(selections[0]['ports']).intersection(selections[1]['ports']))
+        self.assertEqual(report.read_json(first / 'settings-fingerprint.json')['sha256'],
+                         report.read_json(second / 'settings-fingerprint.json')['sha256'])
+        for run, selected in zip((first, second), selections):
+            self.assertEqual([], report.verify_manifest(run, 'snapshot-hashes.json'))
+            self.assertIn('DefaultPort=' + str(selected['ports'][0]), (run / 'server/Server/queue-smoke.ini').read_text())
+            self.assertIn('pauseOnFocusLoss=false', (run / 'client1/options.ini').read_text())
+
+    def test_resource_budget_is_validated_before_output(self):
+        for resources in ({'heap_mib': 0}, {'native_mib': -1}, {'cpu_per_instance': float('nan')},
+                          {'exclusive': 1}, {'unknown': 1}, []):
+            with self.subTest(resources=resources), self.assertRaises(ValueError):
+                self.prepare(resources=resources)
+            self.assertFalse((self.root / 'run').exists())
 
     def test_output_inside_source_mod_and_ambiguous_runtime_paths_fail(self):
         for output in (self.project / "Toolkit" / "run", self.root / "bad,path"):

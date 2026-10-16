@@ -1,21 +1,17 @@
 """One guarded native game lifecycle; only processes created here are stopped."""
-from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
 import re
 import signal
-import socket
 import subprocess
 import sys
 import time
 
 from .report import events, read_json, verify_manifest, write_json
-from . import adapters, pack, worlds
+from . import adapters, admission, pack, worlds
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
-GAME_PROCESS = re.compile(r"\b(?:ToolkitSmokeLauncher|ToolkitVideoLauncher|zombie\.network\.GameServer|zombie\.gameStates\.MainScreenState)\b|Project Zomboid\.app/Contents/MacOS/JavaAppLauncher(?:\s|$)")
 
 
 def stop(process):
@@ -62,18 +58,7 @@ def _verify_initial_settings(root, selection, runtime):
             raise ValueError('Prepared initial settings changed before launch: ' + name)
 
 
-def run(root):
-    if sys.platform != "darwin":
-        raise ValueError("Native GUI launch currently supports macOS; reports/matrix work on any platform")
-    import fcntl
-    root = Path(root).resolve()
-    selection, runtime = read_json(root / "selection.json"), read_json(root / "runtime.json")
-    adapter = adapters.get(selection['suite'])
-    changed = verify_manifest(root, "source-manifest.json", True) + verify_manifest(root, "snapshot-hashes.json")
-    if changed:
-        raise ValueError("\n".join(changed))
-    if list(root.glob("*-launch.log")) or (root / "execution.json").exists():
-        raise ValueError("Run directory has already launched; prepare a fresh snapshot")
+def _verify_live_inputs(root, selection, runtime):
     _verify_initial_settings(root, selection, runtime)
     locked = selection.get('options', {}).get('pack_lock')
     if locked:
@@ -83,33 +68,33 @@ def run(root):
         _path, state = worlds.validate(template, selection, Path(runtime['game']))
         if worlds._state(root, adapters.roles(selection)) != state['files']:
             raise ValueError('Restored world changed before its first launch; prepare a fresh copy')
-    with LOCK.open("a+") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
-            lock.seek(0)
-            raise RuntimeError("Another native run holds " + str(LOCK) + ": " + lock.read().strip()) from error
-        lock.seek(0)
-        lock.truncate()
-        json.dump({'pid': os.getpid(), 'run': str(root), 'suite': selection['suite'],
-                   'cases': selection['cases'], 'started_utc': datetime.now(timezone.utc).isoformat()}, lock)
-        lock.write('\n')
-        lock.flush()
-        process_list = subprocess.check_output(["/bin/ps", "-axo", "pid=,command="], text=True)
-        collisions = [line for line in process_list.splitlines() if GAME_PROCESS.search(line)]
-        if collisions:
-            raise RuntimeError("Existing game process; no launch performed:\n" + "\n".join(collisions))
-        if selection["kind"] == "mp":
-            for port in selection["ports"]:
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as check:
-                    check.bind(("127.0.0.1", port))
+    return {'pack_lock': bool(locked), 'world_template': bool(template)}
+
+
+def run(root, resource_wait=300):
+    if sys.platform != "darwin":
+        raise ValueError("Native GUI launch currently supports macOS; reports/matrix work on any platform")
+    root = Path(root).resolve()
+    selection, runtime = read_json(root / "selection.json"), read_json(root / "runtime.json")
+    adapter = adapters.get(selection['suite'])
+    changed = verify_manifest(root, "source-manifest.json", True) + verify_manifest(root, "snapshot-hashes.json")
+    if changed:
+        raise ValueError("\n".join(changed))
+    if list(root.glob("*-launch.log")) or (root / "execution.json").exists():
+        raise ValueError("Run directory has already launched; prepare a fresh snapshot")
+    _verify_live_inputs(root, selection, runtime)
+    with admission.acquire(root, selection, runtime, resource_wait, legacy_lock=LOCK) as resources:
+        changed = verify_manifest(root, 'source-manifest.json', True) + verify_manifest(root, 'snapshot-hashes.json')
+        if changed:
+            raise ValueError('Inputs changed while waiting for resources:\n' + '\n'.join(changed))
+        input_guards = _verify_live_inputs(root, selection, runtime)
         processes, streams, displayed = {}, [], set()
-        execution = {"status": "running", "processes": {}, "peer_disconnected": False, 'attachments': []}
-        execution['input_guards'] = {'pack_lock': bool(locked), 'world_template': bool(template)}
+        execution = {"status": "running", "processes": {}, "peer_disconnected": False, 'attachments': [],
+                     'resources': resources, 'input_guards': input_guards}
         game = Path(runtime["game"])
         base = [runtime["java"], "-Djava.awt.headless=true", "--enable-native-access=ALL-UNNAMED",
                 "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED", "-Dzomboid.steam=0",
-                "-Djava.library.path=.", "-Xmx2048m", "-XX:+UseZGC", "-XX:-OmitStackTraceInFastThrow"]
+                "-Djava.library.path=.", "-Xmx" + str(resources["budget"]["heap_mib"]) + "m", "-XX:+UseZGC", "-XX:-OmitStackTraceInFastThrow"]
 
         def text(role):
             path = root / (role + "-launch.log")
@@ -157,6 +142,7 @@ def run(root):
                                check=True, stdout=log, stderr=subprocess.STDOUT, timeout=20,
                                env={key: value for key, value in os.environ.items() if key not in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS')})
 
+        cleaning = False
         def interrupted(signum, frame):
             message = "Native run interrupted by signal " + str(signum)
             execution.update(status='failed', interrupted=True)
