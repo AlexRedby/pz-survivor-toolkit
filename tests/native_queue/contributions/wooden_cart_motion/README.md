@@ -1,6 +1,6 @@
 # Wooden cart motion fixture intake
 
-Source-only contribution for a future native queue adapter. It is **not connected to a runner** and has **not been run live after parameterization**. `self_check.py` checks the manifest, files, Lua parsing and optional Java compilation. It never starts Project Zomboid.
+Source-only contribution for a future native queue adapter. It is **not connected to the common runner**. The parameterized reverse scenario completed 20 live B42.21 macOS cases on 2026-10-16 through the existing isolated launcher; the original 16-case scenario was not re-run after parameterization. `self_check.py` checks the manifest, files, Lua parsing and optional Java compilation. It never starts Project Zomboid.
 
 The Java fixture supplies native keyboard input (`drive`, `gait`) and reads the current cart bank, root-speed ramp and animation tracks. `bootstrap.lua` equips carts, creates its HUD and prepares the disposable floor. `scenario-clips.lua` records 16 cases: two sexes, empty/full cargo, and comparison/direct Sprint/gait transitions plus a Run-stop control. The full 12-second records include turns, stops and returns to walking. It samples every 100 ms.
 
@@ -29,7 +29,7 @@ Create a **fresh, owned, disposable profile** with the manifest options/sandbox 
 
 Compile `Main.java` against local B42.21 `projectzomboid.jar` and `ZombieBuddy.jar` with JDK 25+ and `--release 17`. Package it as a test-only `CartLab` mod exposing `net.alexredby.cartlab`; approve the exact JAR hash in the isolated ZombieBuddy config. The manifest records the original JVM/game arguments as adapter templates, not an executable launch command. Supply the platform runtime/native libraries and exactly one ZombieBuddy agent with `policy=deny-new`. The macOS first-thread flag is platform-specific.
 
-The live fixture requires Toolkit >=0.1.57 and JavaPatches >=0.1.14 **with the current candidate B42.21 cart-motion changes integrated**. Version numbers alone are insufficient: `cartLabRamp` reflects `State.pace`, `sprintMomentum`, `load` and calls `CartLegPace.targetSpeed`. These APIs are absent from the current main queue checkout. This contribution does not include or integrate those production changes. A missing reflected member must remain an exception that stops the record, never an empty diagnostic or PASS.
+The live fixture requires Toolkit >=0.1.58 and JavaPatches >=0.1.15 **with the current candidate B42.21 cart-motion changes integrated**. Version numbers alone are insufficient: `cartLabRamp` reflects `State.pace`, `sprintMomentum`, `load` and calls `CartLegPace.targetSpeed`. These APIs are absent from the current main queue checkout. This contribution does not include or integrate those production changes. A missing reflected member must remain an exception that stops the record, never an empty diagnostic or PASS.
 
 The adapter must own the exclusive native queue lock, existing-process checks, profile preparation, mod installation/approvals, launcher, probe agents, analyzers and cleanup. None is implemented here. Load the config, test area and bootstrap; wait for `BOOTSTRAP_READY`; then load the scenario. Missing bridges/configuration fail before the scenario changes the player. Bootstrap also checks the disposable world before equipping anything.
 
@@ -59,3 +59,9 @@ Keep `[WOOD_BANK]` markers stable for existing analyzers. A complete record need
 - Capture is game-rendered video; world coordinates and native gait phases differ between records. Speed comparisons require measured positions/timestamps, and pose correctness requires matrix/mesh probes. A clip and completion marker alone are insufficient.
 
 The copied source origins are listed in `manifest.json`. Legacy local profiles/launchers and frozen binaries are intentionally not dependencies.
+
+`scenario-reverse.lua` is a separate 20-case matrix: backward start/stop, held Run/Sprint modifiers, reverse arcs from ±22.5deg and a forward 180-degree U-turn composed of two 90-degree turns, plus a 90-degree turn requested directly from idle. `cartLabPoseHeading` sets both actor/animation headings and resets cart steering only during fixture setup; it is not the stationary-turn implementation. Use this instead of `scenario-clips.lua` after BOOTSTRAP_READY. The new scenario requires Toolkit>=0.1.58/JavaPatches>=0.1.15; do not infer success from its source or completion marker alone.
+
+Analyze its 20 motion cases with `python3 tests/native_queue/contributions/wooden_cart_motion/analyze-reverse.py --profile "$PZ_CAPTURE_DIR" --output "$PZ_ANALYSIS_DIR/reverse-motion.json"`. This checks native Walk despite speed modifiers, authored backward pace, sign/heading, reverse arcs, 180/90-degree controls and stop position. It requires samples for every completed case and refuses an existing report. Its `motionPass` deliberately does not claim grip/mesh/floor or visual success; use separate probes/analyzers from `evidence/`.
+
+The reverse live record passed all motion gates, 13,075 grip samples, original hip/leg/arm checks and wheel-floor checks. Body mesh had zero intersections in 4,993 frames. Trousers had six left-shaft intersections in the male empty reverse-left arc; geometry is not an all-cases PASS. These results apply to the candidate APIs above, not the common runner or a released production baseline.

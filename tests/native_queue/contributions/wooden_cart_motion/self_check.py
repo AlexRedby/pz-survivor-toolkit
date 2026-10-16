@@ -3,6 +3,7 @@ from pathlib import Path
 import argparse
 import json
 import os
+import runpy
 import re
 import shutil
 import subprocess
@@ -16,18 +17,19 @@ def check_manifest():
     assert manifest["schema_version"] == 1
     assert manifest["id"] == "wooden_cart_motion"
     assert manifest["status"] == "intake_only" and manifest["runner_adapter"] is None
-    assert manifest["live_after_parameterization"] == "not_run"
+    assert manifest["live_after_parameterization"] == "reverse_only_2026-10-16"
     assert manifest["exclusive_native_process"] is True
     assert manifest["sources"] == {
         "java": "Main.java", "test_area": "test-area.lua",
         "bootstrap": "bootstrap.lua", "scenario": "scenario-clips.lua", "evidence": "evidence/README.md",
+        "reverse_scenario": "scenario-reverse.lua", "reverse_analyzer": "analyze-reverse.py",
     }
     for name in manifest["sources"].values():
         assert (HERE / name).is_file(), name
     assert manifest["dependencies"]["compile_jdk_minimum"] == 25
     assert manifest["dependencies"]["compile_release"] == 17
-    assert manifest["dependencies"]["required_project_versions"]["PZSurvivorToolkit"] == ">=0.1.57"
-    assert manifest["dependencies"]["required_project_versions"]["PZToolkitJavaPatches"] == ">=0.1.14"
+    assert manifest["dependencies"]["required_project_versions"]["PZSurvivorToolkit"] == ">=0.1.58"
+    assert manifest["dependencies"]["required_project_versions"]["PZToolkitJavaPatches"] == ">=0.1.15"
     assert manifest["required_environment"] == ["PZ_CART_RUNTIME_FILE", "PZ_CART_COMMAND_FILE"]
     assert manifest["required_lua_fields"] == ["disposable", "videoRoot", "ffmpeg", "area"]
     assert manifest["runtime_contract"]["world_name"] == "CartTestArea"
@@ -36,7 +38,7 @@ def check_manifest():
     axes = manifest["scenario"]["axes"]
     assert len(axes["sex"]) * len(axes["cargo"]) * len(axes["spec"]) == 16
     assert set(manifest["criteria"]) == {"completion", "grip", "geometry", "native_pose", "floor", "gait", "diagnostics"}
-    allowed = {"Main.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py"}
+    allowed = {"Main.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py"}
     assert {p.name for p in HERE.iterdir() if p.is_file()} == allowed
     for path in HERE.rglob("*"):
         if path.is_file():
@@ -45,16 +47,63 @@ def check_manifest():
         text = (HERE / name).read_text()
         assert not re.search(r"/(?:Users|home|private/tmp|opt/homebrew)/", text), name
         assert all(line.rstrip() == line for line in text.splitlines()), name
-    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua"):
+    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua"):
         first = next(line for line in (HERE / name).read_text().splitlines() if line.strip() and not line.startswith("--"))
         assert first.startswith("local config=assert(CartMotionConfig,"), name
+    assert manifest['reverse_scenario']['case_count'] == 20
+    analyzer = runpy.run_path(str(HERE/'analyze-reverse.py'))
+    for empty in ['', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=20']:
+        try:
+            analyzer['analyze'](empty)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError('Empty motion evidence must fail')
+    assert abs(analyzer['wrap'](3.141592653589793*2)) < 1e-10
+    check_reverse_analyzer(analyzer)
     return manifest
+
+
+
+def check_reverse_analyzer(analyzer):
+    import math
+    lines = ['[WOOD_BANK] RUN_STARTED']
+    for index, (sex, cargo, spec) in enumerate(
+        (sex, cargo, spec) for sex in ('male', 'female')
+        for cargo in ('empty', 'full') for spec in analyzer['SPECS']
+    ):
+        name = f'{sex}-{cargo}-{spec}'
+        start = 100000 + index*15000
+        lines.append(f'[WOOD_BANK] COMPLETE {name} wall={start}')
+        for elapsed in range(0, 12000, 100):
+            heading = math.pi*.75
+            stop = 6000 if 'start-turn' in spec else 10500 if 'u-turn' in spec else 9500
+            if 'back-arc' in spec:
+                heading += (1 if 'left' in spec else -1)*math.pi/8*max(0, 1-elapsed/4000)
+            elif 'turn-control' in spec:
+                heading += (math.pi if 'u-turn' in spec else math.pi/2)*min(1, max(0, (elapsed-1000)/(stop-1000)))
+            distance = max(0, min(elapsed, stop)-1000)/1000*(.3 if cargo == 'full' else .5)
+            x, y = -distance*math.cos(math.pi*.75), -distance*math.sin(math.pi*.75)
+            speed = .36 if cargo == 'full' else .56
+            lines.append(f'[WOOD_BANK_SAMPLE] case={name} wall={start+elapsed} elapsed={elapsed} run=false sprint=false speed={speed} pace=1.04 stepY=-0.56 x={x} y={y} ramp=heading:{heading}')
+    lines.append('[WOOD_BANK] ALL_COMPLETE cases=20')
+    valid = '\n'.join(lines)
+    assert analyzer['analyze'](valid)['motionPass']
+    invalid = valid.replace('run=false', 'run=true')
+    assert not analyzer['analyze'](invalid)['motionPass']
+    for invalid in (valid.replace('pace=1.04', 'pace=nan'), valid.replace('male-empty-back-modifiers', 'unexpected')):
+        try:
+            analyzer['analyze'](invalid)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError('Malformed motion evidence must fail')
 
 
 def check_lua(executable):
     if not executable:
         return "SKIPPED (supply --lua or install Lua/LuaJIT)"
-    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua"):
+    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua"):
         path = json.dumps(str(HERE / name), ensure_ascii=False)
         # loadfile parses without executing game APIs; missing config must fail first.
         code = f"assert(loadfile({path})); local ok,err=pcall(dofile,{path}); assert(not ok and tostring(err):find('CartMotionConfig',1,true),tostring(err))"

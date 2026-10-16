@@ -36,7 +36,7 @@ public final class Main {
         Object state = ((java.util.Map<?, ?>) field.get(null)).get(IsoPlayer.getInstance());
         if (state == null) return "none";
         var out = new StringBuilder();
-        for (String key : new String[]{"pace", "sprintMomentum", "load"}) {
+        for (String key : new String[]{"pace", "sprintMomentum", "load", "heading"}) {
             var member = state.getClass().getDeclaredField(key);
             member.setAccessible(true);
             var value = member.get(state);
@@ -56,6 +56,17 @@ public final class Main {
         for (var node : player.getAdvancedAnimator().getRootLayer().getLiveAnimNodes())
             if (node.getName().equals("ToolkitCartPivotSprint")) out.append("fade:").append(node.getBlendOutTime()).append(",");
         return out.toString();
+    }
+
+    @LuaMethod(name="cartLabPoseHeading", global=true)
+    public static void poseHeading(double angle) throws Exception {
+        if (!Double.isFinite(angle)) throw new IllegalArgumentException("finite heading required");
+        var player = IsoPlayer.getInstance();
+        float x = (float) Math.cos(angle), y = (float) Math.sin(angle);
+        player.setTargetAndCurrentDirection(x, y);
+        player.getAnimationPlayer().setTargetAndCurrentDirection(x, y);
+        Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks")
+            .getMethod("reset", IsoPlayer.class).invoke(null, player);
     }
 
     @LuaMethod(name="cartLabGait", global=true)
