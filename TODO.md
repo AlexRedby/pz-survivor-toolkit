@@ -1,11 +1,7 @@
-# Предметные теги посадочного материала
-
-- [ ] Завершить свежую native full49 main60ff control16/candidate20 пару после исправления deferred UI вызовов в стенде: точные server receipts, EN/RU UI, переносы и reconnect; сравнить весь runtime и подтвердить идентичность ZIP протестированным файлам.
-
 # Оставшиеся проверки тегов
 
 - [ ] На Windows Host проверить сохранение/сортировку после полного рестарта с тем же набором модов; текущий native launcher работает на macOS.
-- [ ] Дополнить native cold-restart проверку глобальными preset-правилами Quartermaster: текущий прогон покрывает правила контейнеров и локальные сохранённые фильтры; preset store пока покрыт Lua/native-source тестами.
+- [ ] На 0.1.56 повторить native cold restart и добавить глобальные preset-правила Quartermaster: полный рестарт правил контейнеров и локальных фильтров проверялся на 0.1.55; preset store пока покрыт Lua/native-source тестами.
 - [ ] Сравнить native/toolkit загрузку одного saved full49 мира для четырёх IsoMetaGrid.load invalid room metaID в map_meta.bin (cell25,33); отделить ошибку нативной загрузки/модпака от тегов до объявления чистого runtime.
 
 # Совместимость Quartermaster
