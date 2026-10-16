@@ -8,10 +8,9 @@
 
 ## Общие игровые сессии и регрессия сборки
 
-- [ ] Прогнать animal `timer-shared -> combined-shared` на полном locked49 pack в независимых native/toolkit сессиях с одинаковой неизменяемой средой JAR. Проверить точные native animal/item/trailer IDs, replicated cleanup ACK и reset probes между cases. Original/patched parse3 headless контроль сохранён; missing-patch и alternate timer/JAR остаются отдельными профилями.
-- [ ] Подтвердить выборочный SP pack job через `--jobs`/`--set` на актуальном main и новом полном lock, не запуская посторонние jobs; проверить staging common-only B42 fallback `42.0` без изменения выбранного слоя/Lua. Сохранить общий итог со startup/case/cleanup аудитом и provenance; загрузка49модов не означает behavioral coverage каждого.
+- [ ] Прогнать animal `equipment-fixed -> ghost -> timer-starved -> combined-starved` с текущим fixture в совместимом профиле без `AnimalTrailerSyncMPFix`; проверить native ghost replay и joint reset всех4cases. Missing-patch и alternate timer/JAR controls проверять отдельными неизменяемыми профилями.
 - [ ] Разобрать startup `IsoPropertyTypeNotFoundException` (`ladderW/N/E/S`, `WindowShape`) и остальные неклассифицированные ошибки full-pack/cold baseline: строгий runtime gate оставляет их failed/needs-review, даже при успешных functional assertions. Сравнить source-verified native/toolkit логи; не расширять background allowlist по одному совпадению сообщения.
-- [ ] Согласовать и интегрировать объединённые SP cart matrices с чатом тележек после доступности merged runtime API; frozen raw07 candidate остаётся диагностическим источником, а не доказательством main. Сохранять независимые cold controls. Расчётные17startup cycles вместо29 пока не измерены полным общим прогоном.
+- [ ] Интегрировать опубликованные объединённые SP cart matrices и collision cases после завершения их native-проверок. Сохранять независимые cold controls; отдельно измерить явный полный регрессионный профиль (расчётные17startup cycles вместо29 пока не подтверждены).
 
 ## Адаптеры ближайшего этапа
 
