@@ -47,7 +47,7 @@ def sample(line):
     for key in ('wall', 'elapsed', 'drive', 'requestedGait'):
         row[key] = int(row[key])
     assert row['actualDistance'] >= 0 and row['axle'] > 0, 'Invalid stationary distance/axle'
-    assert row['drive'] in range(5) and row['requestedGait'] in range(3), 'Invalid stationary input'
+    assert row['drive'] in range(9) and row['requestedGait'] in range(3), 'Invalid stationary input'
     row['clips'] = []
     for value in tracks.split(';'):
         if not value:

@@ -20,11 +20,12 @@ def check_manifest():
     assert manifest["live_after_parameterization"] == "reverse_only_2026-10-16"
     assert manifest["exclusive_native_process"] is True
     assert manifest["sources"] == {
-        "java": "Main.java", "test_area": "test-area.lua",
+        "java": "Main.java", "kahlua_checks": "KahluaChecks.java", "test_area": "test-area.lua",
         "bootstrap": "bootstrap.lua", "scenario": "scenario-clips.lua", "reverse_scenario": "scenario-reverse.lua", "reverse_analyzer": "analyze-reverse.py", "reversal_scenario": "scenario-reversal.lua", "stop_scenario": "scenario-stop.lua", "stop_analyzer": "analyze-stop.py",
         "evidence": "evidence/README.md",
         "reversal_analyzer": "analyze-reversal.py", "stationary_scenario": "scenario-stationary.lua", "stationary_analyzer": "analyze-stationary.py",
         "maneuvers_scenario": "scenario-maneuvers.lua", "maneuvers_analyzer": "analyze-maneuvers.py",
+        "obstacles": "obstacles.lua", "collision_scenario": "scenario-collision.lua", "collision_analyzer": "analyze-collision.py",
     }
     for name in manifest["sources"].values():
         assert (HERE / name).is_file(), name
@@ -40,7 +41,7 @@ def check_manifest():
     axes = manifest["scenario"]["axes"]
     assert len(axes["sex"]) * len(axes["cargo"]) * len(axes["spec"]) == 16
     assert set(manifest["criteria"]) == {"completion", "grip", "geometry", "native_pose", "floor", "gait", "diagnostics"}
-    allowed = {"Main.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py"}
+    allowed = {"Main.java", "KahluaChecks.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py", "obstacles.lua", "scenario-collision.lua", "analyze-collision.py"}
     assert {p.name for p in HERE.iterdir() if p.is_file()} == allowed
     for path in HERE.rglob("*"):
         if path.is_file():
@@ -49,7 +50,7 @@ def check_manifest():
         text = (HERE / name).read_text()
         assert not re.search(r"/(?:Users|home|private/tmp|opt/homebrew)/", text), name
         assert all(line.rstrip() == line for line in text.splitlines()), name
-    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua", "scenario-reversal.lua", "scenario-stop.lua", "scenario-stationary.lua", "scenario-maneuvers.lua"):
+    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua", "scenario-reversal.lua", "scenario-stop.lua", "scenario-stationary.lua", "scenario-maneuvers.lua", "obstacles.lua", "scenario-collision.lua"):
         first = next(line for line in (HERE / name).read_text().splitlines() if line.strip() and not line.startswith("--"))
         assert first.startswith("local config=assert(CartMotionConfig,"), name
     assert manifest['reverse_scenario']['case_count'] == 20
@@ -60,6 +61,8 @@ def check_manifest():
     assert manifest['stationary_scenario']['required_candidate_versions'] == {'PZSurvivorToolkit':'>=0.1.61','PZToolkitJavaPatches':'>=0.1.19'}
     assert manifest['maneuvers_scenario']['case_count'] == 32
     assert manifest['maneuvers_scenario']['axes']['spec'] == ['idle-swap-left','idle-swap-right','moving-swap-left','moving-swap-right','reverse-rest','reverse-moving','uturn-left','uturn-right']
+    assert manifest['collision_scenario']['case_count'] == 16
+    assert manifest['collision_scenario']['native_bare_controls'] == ['wall','corner','passage']
     stationary = runpy.run_path(str(HERE/'analyze-stationary.py'))
     assert len(stationary['STEPS']) == 5
     for empty in ('', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=20'):
@@ -143,7 +146,7 @@ def check_reverse_analyzer(analyzer):
 def check_lua(executable):
     if not executable:
         return "SKIPPED (supply --lua or install Lua/LuaJIT)"
-    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua", "scenario-reversal.lua", "scenario-stop.lua", "scenario-stationary.lua", "scenario-maneuvers.lua"):
+    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua", "scenario-reversal.lua", "scenario-stop.lua", "scenario-stationary.lua", "scenario-maneuvers.lua", "obstacles.lua", "scenario-collision.lua"):
         path = json.dumps(str(HERE / name), ensure_ascii=False)
         # loadfile parses without executing game APIs; missing config must fail first.
         code = f"assert(loadfile({path})); local ok,err=pcall(dofile,{path}); assert(not ok and tostring(err):find('CartMotionConfig',1,true),tostring(err))"
@@ -160,6 +163,7 @@ def check_java(game, jdk):
     if game is None and jdk is None:
         return "SKIPPED (supply --game-java-dir and --jdk)"
     assert game is not None and jdk is not None, "Supply both Java dependency paths"
+    game, jdk = game.resolve(), jdk.resolve()
     compiler = jdk / "bin" / ("javac.exe" if os.name == "nt" else "javac")
     version = subprocess.run([str(compiler), "-version"], check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
     match = re.search(r"javac (\d+)", version)
@@ -167,9 +171,11 @@ def check_java(game, jdk):
     jars = [game / name for name in ("projectzomboid.jar", "ZombieBuddy.jar")]
     assert all(path.is_file() for path in jars), "Local game/ZombieBuddy JARs required"
     with tempfile.TemporaryDirectory(prefix="wooden-cart-compile-") as output:
-        subprocess.run([str(compiler), "--release", "17", "-cp", os.pathsep.join(map(str, jars)), "-d", output, str(HERE / "Main.java")], check=True)
+        subprocess.run([str(compiler), "--release", "17", "-cp", os.pathsep.join(map(str, jars)), "-d", output, str(HERE / "Main.java"), str(HERE / "KahluaChecks.java")], check=True)
         assert (Path(output) / "net/alexredby/cartlab/Main.class").is_file()
-    return "PASS (compile only; fixture/game not launched)"
+        runtime = jdk / "bin" / ("java.exe" if os.name == "nt" else "java")
+        subprocess.run([str(runtime), "-cp", os.pathsep.join([output, *map(str, jars)]), "KahluaChecks", str(HERE.parents[3])], check=True, cwd=game)
+    return "PASS (compile and stock Kahlua obstacle checks; native game not launched)"
 
 
 def main():

@@ -18,7 +18,7 @@ SP = 'wooden_cart_motion'
 MP = 'wooden_cart_multiplayer'
 SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.lua', 20),
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
-            'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32)}
+            'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32), 'collision': ('scenario-collision.lua', 16)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 
 
@@ -161,7 +161,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         if selection['suite'] == SP:
             motion = dict(disposable=True, ffmpeg=config['ffmpeg'], videoRoot=videos[role], area=AREA)
             runtime_source = 'CartMotionConfig=' + _lua(motion) + '\nif not CartAdapterBootstrapped then\nCartAdapterBootstrapped=true\n'
-            runtime_source += '(function()\n' + (sp / 'test-area.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'bootstrap.lua').read_text() + '\nend)()'
+            runtime_source += '(function()\n' + (sp / 'test-area.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'obstacles.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'bootstrap.lua').read_text() + '\nend)()'
             runtime_source += '\nelse\n(function()\n' + (sp / SP_CASES[selection['cases'][0]][0]).read_text() + '\nend)()\nend\n'
             _write(runtime_lua, runtime_source)
         else:
@@ -278,13 +278,13 @@ def verify(root, selection, catalog):
             commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if case != 'sprint' else [])))
             evidence['analyzers'] = {name: _run(command, analysis, name) for name, command in commands}
             metrics = _json(analysis / 'native-metrics.json')
-            _coverage(cache, texts['client1'], SP_CASES[case][1], metrics)
             evidence['native'] = metrics
+            evidence['analysis'] = str(analysis)
             if case == 'reverse':
                 motion = _load(intake / 'analyze-reverse.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reverse-motion.json', json.dumps(motion, indent=2, allow_nan=False))
-            elif case in ('stop', 'stationary', 'maneuvers'):
+            elif case in ('stop', 'stationary', 'maneuvers', 'collision'):
                 evidence['analyzers'][case] = _run([sys.executable, str(intake / ('analyze-' + case + '.py')),
                     '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / (case + '-motion.json'))], analysis, case)
                 evidence['motion'] = _json(analysis / (case + '-motion.json'))
@@ -292,6 +292,7 @@ def verify(root, selection, catalog):
                 motion = _load(intake / 'analyze-reversal.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reversal-motion.json', json.dumps(motion, indent=2, allow_nan=False))
+            _coverage(cache, texts['client1'], SP_CASES[case][1], metrics)
             evidence['evidenceComplete'] = True
             evidence['nativePartialDiagnostic'] = case != 'sprint'
         evidence['analysis'] = str(analysis)

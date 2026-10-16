@@ -114,6 +114,10 @@ def main() -> None:
 
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)
+    lua.execute((ROOT / "tests/test_cart_obstacles.lua").read_text(encoding="utf-8"))
+
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.globals().ProjectRoot = str(ROOT)
     lua.execute((ROOT / "tests/test_auto_drink.lua").read_text(encoding="utf-8"))
 
     lua = LuaRuntime(unpack_returned_tuples=True)

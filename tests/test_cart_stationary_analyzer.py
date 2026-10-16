@@ -86,7 +86,8 @@ class StationaryAnalyzerTests(unittest.TestCase):
                 analyzer.analyze(bad, self.wheel)
 
     def test_each_case_requires_finite_ordered_edges_and_input_events(self):
-        for bad in (self.log.replace('stationary:false', 'stationary:unknown', 1),
+        for bad in (self.log.replace('drive=0 ', 'drive=9 ', 1),
+                    self.log.replace('stationary:false', 'stationary:unknown', 1),
                     self.log.replace('elapsed=100 ', 'elapsed=0 ', 1),
                     '\n'.join(line for line in self.log.splitlines() if not ('SAMPLE]' in line and int(re.search(r'elapsed=(\d+)', line)[1]) >= 11500)),
                     '\n'.join(line for line in self.log.splitlines() if '[WOOD_RAMP_EVENT]' not in line),

@@ -106,8 +106,8 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers'])
-        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32)]:
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision'])
+        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 16)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -118,7 +118,7 @@ class CartAdapterTests(unittest.TestCase):
                 self.assertIn((ROOT / f'tests/native_queue/contributions/wooden_cart_motion/scenario-{case}.lua').read_text(), text)
                 self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 3)
                 self.assertTrue(carts.complete(self.selection, 'client1', f'[WOOD_BANK] ALL_COMPLETE cases={count}\n'))
-                for wrong in (16, count * 10):
+                for wrong in (count + 1, count * 10):
                     self.assertFalse(carts.complete(self.selection, 'client1', f'[WOOD_BANK] ALL_COMPLETE cases={wrong}\n'))
                 self.assertFalse(carts.complete(self.selection, 'client1',
                     f'[WOOD_BANK] ALL_COMPLETE cases={count}\n[WOOD_BANK] RUN_STARTED\n'))
@@ -330,6 +330,44 @@ class CartAdapterTests(unittest.TestCase):
                 self.assertEqual(result['evidence']['analyzers']['maneuvers']['exit_code'], int(bad))
                 saved = Path(result['evidence']['analysis']) / 'maneuvers-motion.json'
                 self.assertEqual(json.loads(saved.read_text()), result['evidence']['motion'])
+
+    def test_collision_controls_and_motion_survive_failed_diagnostics(self):
+        self.selection['cases'] = ['collision']
+        fixture = carts._load(ROOT / 'tests/test_cart_collision_analyzer.py')
+        text = fixture.evidence()
+        _, _, metrics = self.coverage_fixture(text=text)
+        log = self.output / 'client1-launch.log'
+        (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
+        original_run = carts._run
+        def run(command, directory, name):
+            if name == 'collision':
+                self.assertEqual(command[command.index('--log') + 1], str(log))
+                return original_run(command, directory, name)
+            if name == 'native':
+                self.assertIn('--partial', command)
+                (directory / 'native-metrics.json').write_text(json.dumps(metrics))
+            return {'exit_code': 0}
+        for bad in (False, True):
+            with self.subTest(failed_motion=bad):
+                log.write_text(text.replace('run=false', 'run=true') if bad else text)
+                with patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
+                    result = carts.verify(self.output, self.selection, {})
+                self.assertFalse(result['issues'], result['issues'])
+                self.assertEqual(result['outcomes'][0]['status'], 'captured')
+                self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+                self.assertEqual(result['evidence']['motion']['motionPass'], not bad)
+                self.assertEqual(result['evidence']['motion']['controlCount'], 3)
+                self.assertEqual(result['evidence']['analyzers']['collision']['exit_code'], int(bad))
+                saved = Path(result['evidence']['analysis']) / 'collision-motion.json'
+                self.assertEqual(json.loads(saved.read_text()), result['evidence']['motion'])
+        log.write_text(text)
+        with patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]), patch.object(carts, '_coverage', side_effect=ValueError('Incomplete grip window')):
+            result = carts.verify(self.output, self.selection, {})
+        self.assertEqual(result['outcomes'][0]['status'], 'failed')
+        self.assertFalse(result['outcomes'][0]['outcome']['evidenceComplete'])
+        self.assertIn('Incomplete grip window', result['issues'])
+        self.assertTrue(result['evidence']['motion']['motionPass'])
+        self.assertTrue((Path(result['evidence']['analysis']) / 'collision-motion.json').is_file())
 
     def test_reversal_capture_preserves_motion_report_and_failed_diagnostics(self):
         self.selection['cases'] = ['reversal']

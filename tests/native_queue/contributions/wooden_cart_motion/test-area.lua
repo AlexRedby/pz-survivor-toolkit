@@ -14,9 +14,19 @@ CartTestArea = {
     x=supplied.x, y=supplied.y, z=supplied.z,
     minX=supplied.minX, minY=supplied.minY, size=supplied.size, margin=supplied.margin,
     floorSprite=supplied.floorSprite,
+    obstacles={}, obstacleEdges={},
     sandbox={Zombies=6, EnableVehicles=false, VehicleStoryChance=1, ZoneStoryChance=1, SurvivorHouseChance=1},
 }
 local area = CartTestArea
+
+local function edge(x, y, dx, dy)
+    return area.obstacleEdges[x..','..y..','..dx..','..dy] == true
+end
+
+local function expectedCollision(x, y, dx, dy)
+    if dx == 0 or dy == 0 then return edge(x, y, dx, dy) end
+    return edge(x,y,dx,0) or edge(x,y,0,dy) or edge(x+dx,y,0,dy) or edge(x,y+dy,dx,0)
+end
 
 local function fail(reason, x, y, z)
     error('[CART_TEST_AREA] ' .. reason .. ' at ' .. x .. ',' .. y .. ',' .. z, 0)
@@ -32,7 +42,14 @@ local function checkSquare(square, player, x, y, building)
     if not building and (not floor or not square:TreatAsSolidFloor()) then fail('missing solid floor', x, y, area.z) end
     local objects = square:getObjects()
     for i = 0, objects:size() - 1 do
-        if objects:get(i) ~= floor then fail('unexpected tile object', x, y, area.z) end
+        local object = objects:get(i)
+        if object ~= floor then
+            local owned = area.obstacles and area.obstacles[object]
+            if not owned or owned.x ~= x or owned.y ~= y or owned.z ~= area.z
+                or object:getSquare() ~= square or object:getSpriteName() ~= owned.sprite then
+                fail('unexpected tile object', x, y, area.z)
+            end
+        end
     end
     if square:getWorldObjects():size() > 0 or square:getStaticMovingObjects():size() > 0 then
         fail('ground item or corpse', x, y, area.z)
@@ -68,8 +85,11 @@ function area.check(player)
                 for dy = -1, 1 do
                     if (dx ~= 0 or dy ~= 0) and x + dx >= area.minX and x + dx < area.minX + area.size
                         and y + dy >= area.minY and y + dy < area.minY + area.size
-                        and square:testCollideAdjacent(nil, dx, dy, 0) then
-                        fail('blocked pad edge', x, y, area.z)
+                        then
+                        local expected = expectedCollision(x, y, dx, dy)
+                        if square:testCollideAdjacent(nil, dx, dy, 0) ~= expected then
+                            fail(expected and 'missing fixture collision edge' or 'blocked pad edge', x, y, area.z)
+                        end
                     end
                 end
             end

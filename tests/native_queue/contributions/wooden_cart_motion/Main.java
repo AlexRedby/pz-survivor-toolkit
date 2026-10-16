@@ -164,9 +164,21 @@ public final class Main {
         gait = value;
     }
 
+    @LuaMethod(name="cartLabHeading", global=true)
+    public static double heading() {
+        var direction=IsoPlayer.getInstance().getAnimForwardDirection(new zombie.iso.Vector2());
+        return Math.atan2(direction.y,direction.x);
+    }
+
+    @LuaMethod(name="cartLabWheelPhase", global=true)
+    public static double wheelPhase() throws Exception {
+        return ((Number)Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks")
+            .getMethod("wheelPhase",IsoPlayer.class).invoke(null,IsoPlayer.getInstance())).doubleValue();
+    }
+
     @LuaMethod(name="cartLabDrive", global=true)
     public static void drive(int value) {
-        if (value < -1 || value > 4) throw new IllegalArgumentException("drive must be -1..4");
+        if (value < -1 || value > 8) throw new IllegalArgumentException("drive must be -1..8");
         drive = value;
     }
 
@@ -201,8 +213,17 @@ public final class Main {
     public static void main(String[] args) { System.out.println("[CART_LAB] LOADED"); }
 
     public static boolean fixtureKey(int key) {
-        return drive > 0 && (key == Core.getInstance().getKey(drive == 1 ? "Forward" : drive == 2 ? "Left" : drive == 4 ? "Backward" : "Right")
-            || gait > 0 && key == Core.getInstance().getKey(gait == 1 ? "Run" : "Sprint"));
+        if (drive <= 0) return false;
+        String first = switch(drive) {
+            case 1, 5 -> "Forward"; case 2, 6 -> "Left";
+            case 3, 8 -> "Right"; default -> "Backward";
+        };
+        String second = switch(drive) {
+            case 5 -> "Left"; case 6 -> "Backward"; case 7 -> "Right"; case 8 -> "Forward"; default -> null;
+        };
+        return key == Core.getInstance().getKey(first)
+            || second != null && key == Core.getInstance().getKey(second)
+            || gait > 0 && key == Core.getInstance().getKey(gait == 1 ? "Run" : "Sprint");
     }
 
     @Patch(className="zombie.input.GameKeyboard", methodName="isKeyDown", warmUp=true)
