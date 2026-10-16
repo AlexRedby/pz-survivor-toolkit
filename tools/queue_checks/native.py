@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-from . import adapters
+from . import adapters, admission
 
 
 VERSION = re.compile(r"\d+(?:\.\d+)*")
@@ -107,6 +107,7 @@ def _validate(selection):
         raise ValueError('Provide one language per actual client; SP has one, MP one or two')
     if selection['suite'] == 'health' and selection['kind'] == 'mp' and languages != ['EN', 'RU']:
         raise ValueError('Health MP requires both EN and RU')
+    admission.budget(selection)
     ports = selection.get("ports")
     if not isinstance(ports, list) or len(ports) != 2 or len(set(ports)) != 2 or any(type(port) is not int or not 1024 <= port <= 65535 for port in ports):
         raise ValueError("Expected two distinct unprivileged ports")
@@ -140,6 +141,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     project, output, game, jdk = (Path(path).resolve() for path in (project, output, game, jdk))
     if output.exists():
         raise FileExistsError("Fresh output directory required: " + str(output))
+    if selection.get('ports_auto') and selection.get('options', {}).get('seed_run'):
+        selection = dict(selection, ports=json.loads((Path(selection['options']['seed_run']) / 'selection.json').read_text())['ports'])
     _validate(selection)
     for path in (game / "projectzomboid.jar", jdk / "bin/java", jdk / "bin/javac"):
         if not path.is_file():
@@ -196,6 +199,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     runtime = {"game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
                "java": str(jdk / "bin/java"), "server_name": "queue-smoke", "roles": {}}
     output.mkdir(parents=True)
+    if selection.get('ports_auto'):
+        selection = dict(selection, ports=admission.allocate_ports(output, selection) if selection['kind'] == 'mp' else [17343, 17344])
     for role in roles:
         cache = output / role
         for directory in ("mods", "Lua", "classes", "zombie-buddy"):
@@ -232,7 +237,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             (cache / "Lua" / (name + ".txt")).write_text(value + "\n", encoding="utf-8")
         (cache / "mods/default.txt").write_text("VERSION = 1,\nmods\n{\n" + "".join(" mod = " + mod + ",\n" for mod in [*selection["mods"], "ActionQueueTest"]) + "}\nmaps\n{\n}\n", encoding="utf-8")
         (cache / "mods/reset-mods-42_00.txt").write_text("Keep isolated native queue fixture selection.\n", encoding="utf-8")
-        (cache / "options.ini").write_text("version=10\nwidth=1280\nheight=720\nfullScreen=false\nborderless=false\nmusicVolume=0\nsoundVolume=0\nvoiceEnable=false\nlanguage=" + language + "\n", encoding="utf-8")
+        (cache / "options.ini").write_text("version=10\nwidth=1280\nheight=720\nfullScreen=false\nborderless=false\nmusicVolume=0\nsoundVolume=0\nvoiceEnable=false\npauseOnFocusLoss=false\nlanguage=" + language + "\n", encoding="utf-8")
         approvals = [{"id": identifier, "jar_hash": sha256(jar), "decision": True, "time": "2026-01-01T00:00:00Z"}
                      for identifier in locations for jar in sorted((cache / "mods" / identifier).rglob("*.jar"))]
         _json(cache / "zombie-buddy/mod_approvals.json", {"formatVersion": 2, "mods": approvals})
@@ -295,6 +300,10 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         comparison['selection'] = dict(comparison['selection'], config_source='<suite-config>')
         comparison['sources'] = dict(source_manifest)
         comparison['sources']['<suite-config>'] = comparison['sources'].pop(config_path)
+    if selection.get('ports_auto'):
+        comparison['selection']['ports'] = '<automatic-endpoint>'
+        comparison['settings'] = {name: re.sub(r'^(DefaultPort|UDPPort)=\d+$', r'\1=<automatic-endpoint>', text, flags=re.M)
+                                  for name, text in initial_settings.items()}
     fingerprint = hashlib.sha256(json.dumps(comparison, sort_keys=True).replace(str(output), '<run>').encode()).hexdigest()
     _json(output / "settings-fingerprint.json", {"sha256": fingerprint, "inputs": comparison})
     for path, digest in source_manifest.items():

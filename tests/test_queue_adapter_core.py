@@ -187,10 +187,10 @@ class AdapterRunnerBoundaryTests(unittest.TestCase):
                 "jar": str(self.fixture.root / "owned-probe.jar"), "output": str(self.fixture.root / "probe.tsv"),
                 "ready": "OWNED_READY", "pid": 999999}
 
-    def test_steam_macos_launcher_collision_blocks_before_any_process_starts(self):
-        with self.assertRaisesRegex(RuntimeError, "Existing game"):
-            self.fixture.invoke("37 /Steam/steamapps/common/Project Zomboid/Project Zomboid.app/Contents/MacOS/JavaAppLauncher\n")
-        self.assertEqual([], self.fixture.commands)
+    def test_unrelated_steam_game_can_coexist_with_isolated_profile(self):
+        result, kills = self.fixture.invoke("37 /Steam/steamapps/common/Project Zomboid/Project Zomboid.app/Contents/MacOS/JavaAppLauncher\n")
+        self.assertEqual('completed', result['status'])
+        self.assertEqual([101], [call.args[0] for call in kills])
 
     def test_sigkill_disappearance_race_still_reaps_the_owned_process(self):
         process = Mock(pid=9876, returncode=None)
@@ -278,7 +278,7 @@ class AdapterRunnerBoundaryTests(unittest.TestCase):
             return process
 
         fixture.popen = popen
-        with patch.object(adapters, "get", return_value=adapter), patch.object(runner.socket, "socket"):
+        with patch.object(adapters, "get", return_value=adapter), patch.object(runner.admission.socket, "socket"):
             result, kills = fixture.invoke()
         self.assertEqual("completed", result["status"])
         self.assertEqual(1, len(servers))

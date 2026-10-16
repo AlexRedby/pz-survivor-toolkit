@@ -34,7 +34,7 @@ class BatchTests(unittest.TestCase):
         if output.name == 'blocked':
             raise ValueError('Missing declared dependency')
 
-    def run_job(self, output):
+    def run_job(self, output, resource_wait=300):
         result = {'status': 'failed' if output.name == 'interrupt' else 'completed',
                   'interrupted': output.name == 'interrupt'}
         (output / 'execution.json').write_text(json.dumps(result))
@@ -79,6 +79,32 @@ class BatchTests(unittest.TestCase):
         result = json.loads((self.args.output / 'batch-report.json').read_text())
         self.assertEqual(result['remaining'], ['not-run'])
         self.assertEqual(len(self.calls), 1)
+
+    def test_budget_and_wait_are_passed_per_job_and_ports_default_to_auto(self):
+        self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk',
+            'resources': {'heap_mib': 1024, 'cpu_per_instance': 0.5}, 'resource_wait': 15,
+            'jobs': [{'id': 'custom', 'suite': 'video-recording', 'resources': {'native_mib': 512}}]}))
+        waits = []
+        original = self.run_job
+        def run_job(output, resource_wait=300):
+            waits.append(resource_wait)
+            return original(output, resource_wait)
+        self.run_job = run_job
+        self.assertEqual(self.invoke(), 0)
+        resources = self.calls[0][1]['resources']
+        self.assertEqual((resources['heap_mib'], resources['native_mib'], resources['cpu_per_instance']), (1024, 512, 0.5))
+        self.assertTrue(self.calls[0][1]['ports_auto'])
+        self.assertEqual(waits, [15])
+
+    def test_prepare_cli_parses_budget_and_exclusive_without_launching(self):
+        with patch.object(cli.native, 'prepare') as prepare:
+            result = cli.main(['prepare', str(self.root / 'fresh'), '--game', '/game', '--jdk', '/jdk',
+                              '--suite', 'video-recording', '--heap-mib', '1536', '--native-mib', '768',
+                              '--cpu-per-instance', '0.75', '--exclusive'])
+        self.assertEqual(result, 0)
+        selection = prepare.call_args.args[4]
+        self.assertEqual(selection['resources'], {'heap_mib': 1536, 'native_mib': 768, 'cpu_per_instance': 0.75, 'exclusive': True})
+        self.assertTrue(selection['ports_auto'])
 
     def test_duplicate_or_escaping_ids_fail_before_any_preparation(self):
         for names in [('same', 'same'), ('../escape', 'next')]:
