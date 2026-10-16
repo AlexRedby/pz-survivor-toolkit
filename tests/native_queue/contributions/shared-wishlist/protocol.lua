@@ -83,29 +83,74 @@ do
 end
 
 do
- local env=client('client1',false,{now=0})
+ local env=client('client1',true,{now=0})
  env.PZSurvivorWishlist.Settings={rowsEnabled=function()return true end,color=function()return{r=.25,g=.85,b=.75}end}
- env.PZSurvivorWishlist.Client.isWanted=function()return true end
- env.instanceof=function(_,kind)return kind=='InventoryItem'end
- env.ISInventoryPane={renderdetails=function()end}
+ env.PZSurvivorWishlist.Client.isWanted=function(_,fullType)return fullType=='Base.Nails'or fullType=='Base.Hammer'end
+ env.instanceof=function(value,kind)return kind=='InventoryItem'and value.isItem==true end
+ env.ISInventoryPane={renderdetails=function(self)
+  self.renderCalls=self.renderCalls+1;self.items=self.nativeRows
+ end}
  load(project..'/PZSurvivorWishlist/42/media/lua/client/PZSurvivorWishlist/Inventory.lua',env)
  local inventory=env.PZSurvivorWishlist.Inventory;inventory.install()
- local item={getFullType=function()return'Base.Nails'end}
- local pane={player=0,items={item,item,item},itemHgt=20,headerHgt=20,
-  getYScroll=function()return 0 end,getHeight=function()return 60 end,getWidth=function()return 100 end,
-  drawRect=function()end,drawRectBorder=function()end}
  local render=env.ISInventoryPane.renderdetails
- pane.renderdetails=render
- env.WishlistTestFixture.checkHighlight({inventoryPane=pane}) -- Three marked rows, only two intersect the viewport.
+ local function item(fullType)return{isItem=true,getFullType=function()return fullType end}end
+ local nails=item('Base.Nails')
+ local function makePane(rows,height,rowHeight,header)
+  return{player=0,items={},nativeRows=rows,renderCalls=0,itemHgt=rowHeight,headerHgt=header,scroll=0,
+   getYScroll=function(self)return self.scroll end,setYScroll=function(self,value)self.scroll=value end,
+   getHeight=function()return height end,getWidth=function()return 100 end,
+   getScrollHeight=function(self)return #self.items*self.itemHgt end,
+   getScrollAreaHeight=function(self)return height-self.headerHgt end,
+   refreshContainer=function()end,drawRect=function()end,drawRectBorder=function()end,renderdetails=render}
+ end
+ local check=env.WishlistTestFixture.checkHighlight
+ local pane=makePane({nails,nails,nails},60,20,20)
+ check({inventoryPane=pane},'Base.Nails') -- Three marked rows, only two intersect the viewport.
+ assert(pane.renderCalls==2,'setup and measured draw must both use native rendering')
  pane.renderdetails=function(self,dragged)render(self,dragged);render(self,dragged)end
- assert(not pcall(env.WishlistTestFixture.checkHighlight,{inventoryPane=pane}),'duplicate native overlay calls must fail')
+ assert(not pcall(check,{inventoryPane=pane},'Base.Nails'),'duplicate native overlay calls must fail')
  pane.renderdetails=function()end
- assert(not pcall(env.WishlistTestFixture.checkHighlight,{inventoryPane=pane}),'missing native overlay calls must fail')
+ assert(not pcall(check,{inventoryPane=pane},'Base.Nails'),'missing native overlay calls must fail')
  local border,draw=pane.drawRectBorder,inventory.draw
- pane.renderdetails=function()error('native render failure')end
- assert(not pcall(env.WishlistTestFixture.checkHighlight,{inventoryPane=pane}))
+ local draws=0;pane.renderdetails=function(self,dragged)draws=draws+1;if draws==2 then error('native render failure')end;render(self,dragged)end
+ assert(not pcall(check,{inventoryPane=pane},'Base.Nails'))
  assert(pane.drawRectBorder==border and inventory.draw==draw,'failed render must restore both probes')
- print('PASS wishlist fixture highlights: clipped rows, exactly one overlay, missing/duplicate hooks and cleanup')
+ for _,count in ipairs({10,20})do
+  local rows={};for i=1,count do rows[i]=item('Base.Stone')end
+  rows[10]={items={item('Base.Stone'),nails}}
+  pane=makePane(rows,285,31,22);pane.scroll=-300;pane.smoothScrollTargetY=0;pane.smoothScrollY=-300
+  check({inventoryPane=pane},'Base.Nails')
+  assert(pane.scroll==-math.min(279,count*31-263),'target scroll must clamp to native extent')
+  assert(pane.smoothScrollTargetY==nil and pane.smoothScrollY==nil,'pending smooth scroll must not undo target setup')
+ end
+ pane=makePane({item('Base.Hammer')},285,31,22)
+ assert(not pcall(check,{inventoryPane=pane},'Base.Nails'),'another wanted item cannot replace the absent target')
+ pane=makePane({nails,item('Base.Hammer')},285,31,22)
+ local wanted=env.PZSurvivorWishlist.Client.isWanted
+ env.PZSurvivorWishlist.Client.isWanted=function(_,fullType)return fullType=='Base.Hammer'end
+ assert(not pcall(check,{inventoryPane=pane},'Base.Nails'),'visible unrelated highlights cannot satisfy the target assertion')
+ env.PZSurvivorWishlist.Client.isWanted=wanted
+ print('PASS wishlist fixture highlights: native target rows, clamped scroll, clipped borders, exact overlay and cleanup')
+
+ local aggregate,other={},{};local selected,forced=0,false
+ local page={inventoryPane=makePane({nails},285,31,22),backpacks={{inventory=aggregate}},
+  refreshBackpacks=function()end,setVisible=function()end,setPinned=function()end,
+  selectContainer=function(self,button)selected=selected+1;self.inventoryPane.inventory=button.inventory end}
+ env.require=function(name)assert(name=='BetterContainers/Proximity');return{GetItemContainer=function()return aggregate end,
+  ForceSelectContainer=function()forced=true end}end
+ env.getPlayerLoot=function()return page end
+ env.ISInventoryPage={}
+ env.PZSurvivorWishlist.Client.addItem=function(_,fullType,amount)assert(fullType=='Base.Nails'and amount==1)end
+ spec(env,'prepare Better Containers combined loot')[2]()
+ assert(selected==1 and page.inventoryPane.inventory==aggregate,'setup must select the real aggregate button')
+ page.inventoryPane.inventory=other
+ spec(env,'combined reachable loot highlights item rows')[2]()
+ assert(selected==2 and page.inventoryPane.inventory==aggregate,'measurement must restore actual aggregate selection')
+ page.inventoryPane.inventory=other;page.selectContainer=function()forced=true end
+ assert(not pcall(spec(env,'combined reachable loot highlights item rows')[2])and forced,'force intent without actual selection must fail')
+ page.backpacks={}
+ assert(not pcall(spec(env,'combined reachable loot highlights item rows')[2]),'missing aggregate button must fail')
+ print('PASS wishlist fixture combined loot: actual aggregate button, selection drift and force-only rejection')
 end
 
 local completion='peer completion synchronizes and removes owner highlight'

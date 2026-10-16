@@ -15,8 +15,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 tests/native_queue/contributions/shared-wishli
 The check registers all original stage names/counts, checks helper installation
 and rejects invalid/colliding parameters. Its focused protocol test executes the
 actual fixture guards against controlled UI/network doubles: sidebar actions and
-absolute rectangles, clipped row borders with exactly one overlay call, joint
-observation ordering and deadlines, and restoration before server readiness.
+absolute rectangles, native target-row lookup and bounded scrolling, clipped row
+borders with exactly one overlay call, actual combined-container selection,
+joint observation ordering and deadlines, and restoration before server readiness.
 It does not launch the game or claim native UI/network coverage.
 
 ## Install hookup for a later authorized native run
@@ -98,7 +99,13 @@ stage follows the Wishlist entry in the tools hub; standalone uses its direct
 button. Geometry checks use absolute rectangles in both dimensions. Inventory
 checks retain actual border drawing and independently require exactly one
 Wishlist overlay invocation, so a clipped candidate row does not masquerade as
-a duplicate wrapper.
+a duplicate wrapper. Before measurement, a real native render builds flattened
+rows and scroll bounds; the fixture finds its exact item type, clears pending
+smooth scrolling and uses native scrolling to expose that row. The measured
+render must highlight that target, not merely another wanted item. This handles
+localized loot ordering without replacing items or changing row/pane geometry.
+Combined loot is selected through its existing BC button immediately before
+measurement, and the fixture verifies the actual selected container.
 
 For completion/revocation and faction removal/restoration, the server releases
 each destructive transition only after both clients successfully observed the

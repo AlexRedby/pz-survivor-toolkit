@@ -30,8 +30,32 @@ local function list(id)for _,l in ipairs(W().Client.state(0).lists)do if l.id==(
 local function item(name)local items=getPlayer():getInventory():getItems();for i=0,items:size()-1 do local it=items:get(i);if it:getID()==ids[name]then return it end end end
 local function flatten(menu,out)out=out or{};for _,o in ipairs(menu.options)do out[#out+1]=o;if o.subOption then local s=menu:getSubMenu(o.subOption);if s then flatten(s,out)end end end;return out end
 local function preparePane(page)page:setVisible(true);page:setPinned();page.inventoryPane:setYScroll(0);page.inventoryPane:refreshContainer();ISInventoryPage.renderDirty=true end
-local function checkHighlight(page)
+local function rowHasType(row,fullType)
+ if instanceof(row,'InventoryItem')then return row:getFullType()==fullType end
+ if type(row)=='table'and type(row.items)=='table'then for _,it in ipairs(row.items)do
+  if instanceof(it,'InventoryItem')and it:getFullType()==fullType then return true end
+ end end
+ return false
+end
+local function targetRow(pane,fullType)
+ for index,row in ipairs(pane.items)do if rowHasType(row,fullType)then return index end end
+end
+local function selectCombinedLoot(page)
+ local p=require'BetterContainers/Proximity';local container=assert(p.GetItemContainer(0))
+ page:refreshBackpacks();local selected=false
+ for _,button in ipairs(page.backpacks)do if button.inventory==container then page:selectContainer(button);selected=true;break end end
+ assert(selected,'combined loot button absent')
+ assert(page.inventoryPane.inventory==container,'combined loot container not actually selected')
+end
+local function checkHighlight(page,fullType)
  local pane=page.inventoryPane;local borders,calls={},0
+ -- Native rendering builds flattened rows and scroll height, including rows outside the viewport.
+ pane.smoothScrollTargetY=nil;pane.smoothScrollY=nil;pane:refreshContainer();pane:renderdetails(false)
+ local index=assert(targetRow(pane,fullType),'wanted item absent from native rows: '..fullType)
+ assert(pane.itemHgt>0 and pane:getScrollAreaHeight()>0,'inventory viewport has no row area')
+ local maxScroll=math.max(0,pane:getScrollHeight()-pane:getScrollAreaHeight())
+ pane.smoothScrollTargetY=nil;pane.smoothScrollY=nil
+ pane:setYScroll(-math.min((index-1)*pane.itemHgt,maxScroll))
  local original,originalDraw=pane.drawRectBorder,W().Inventory.draw
  pane.drawRectBorder=function(self,x,y,w,h,a,r,g,b)
   if math.abs((r or 0)-.25)<.001 and math.abs((g or 0)-.85)<.001 and math.abs((b or 0)-.75)<.001 then borders[#borders+1]={y=y,h=h}end
@@ -43,13 +67,15 @@ local function checkHighlight(page)
  end
  local ok,err=pcall(function()pane:renderdetails(false)end)
  pane.drawRectBorder=original;W().Inventory.draw=originalDraw;assert(ok,err)
- local marks=W().Inventory.marks(pane);local visible=0;local scroll=pane:getYScroll()
- for _,index in ipairs(marks)do
-  local top=(index-1)*pane.itemHgt+pane.headerHgt+scroll
-  if top+pane.itemHgt>pane.headerHgt and top<pane:getHeight()then visible=visible+1 end
+ local marks=W().Inventory.marks(pane);local visible,targetVisible=0,false;local scroll=pane:getYScroll()
+ for _,marked in ipairs(marks)do
+  local top=(marked-1)*pane.itemHgt+pane.headerHgt+scroll
+  if top+pane.itemHgt>pane.headerHgt and top<pane:getHeight()then
+   visible=visible+1;if rowHasType(pane.items[marked],fullType)then targetVisible=true end
+  end
  end
- print('[WISHLIST_TEST] HIGHLIGHT '..user..' calls='..calls..' marks='..#marks..' visible='..visible..' borders='..#borders..' height='..pane:getHeight()..' header='..pane.headerHgt..' row='..pane.itemHgt..' scroll='..scroll)
- assert(#marks>0 and visible>0,'wanted row absent from viewport')
+ print('[WISHLIST_TEST] HIGHLIGHT '..user..' calls='..calls..' marks='..#marks..' visible='..visible..' borders='..#borders..' height='..pane:getHeight()..' header='..pane.headerHgt..' row='..pane.itemHgt..' scroll='..scroll..' target='..fullType..' index='..index..' rows='..#pane.items)
+ assert(#marks>0 and visible>0 and targetVisible,'wanted row absent from viewport')
  assert(calls==1,'highlight overlay missing/duplicated')
  assert(#borders==visible,'visible highlight borders missing/duplicated')
  for _,border in ipairs(borders)do
@@ -107,7 +133,7 @@ else
   assert(found,'context action absent');found.onSelect(found.target);m:hideAndChildren();preparePane(getPlayerInventory(0))
  end)
  stage('CleanUI inventory highlights real rows once',function()
-  assert(list().entries['Base.AlarmClock2'].amount==1);checkHighlight(getPlayerInventory(0))
+  assert(list().entries['Base.AlarmClock2'].amount==1);checkHighlight(getPlayerInventory(0),'Base.AlarmClock2')
  end)
  stage('sidebar opens wishlist without overlapping existing buttons',function()
   local equipped=getPlayerData(0).equipped
@@ -130,15 +156,12 @@ else
  end)
  stage('switch CleanUI off',function()CleanUI_setCleanInventoryUIEnabled(false)end)
  stage('prepare native inventory mode',function()preparePane(getPlayerInventory(0))end)
- stage('native inventory mode preserves highlights',function()checkHighlight(getPlayerInventory(0))end)
+ stage('native inventory mode preserves highlights',function()checkHighlight(getPlayerInventory(0),'Base.AlarmClock2')end)
  stage('restore CleanUI',function()CleanUI_setCleanInventoryUIEnabled(true)end)
  stage('prepare Better Containers combined loot',function()
-  local page=getPlayerLoot(0);page:refreshBackpacks();local p=require'BetterContainers/Proximity';local c=assert(p.GetItemContainer(0))
-  page.tempForceSelectUnlock=true;local selected=false
-  for _,b in ipairs(page.backpacks)do if b.inventory==c then page:selectContainer(b);selected=true;break end end
-  assert(selected);preparePane(page);W().Client.addItem(0,'Base.Nails',1)
+  local page=getPlayerLoot(0);selectCombinedLoot(page);preparePane(page);W().Client.addItem(0,'Base.Nails',1)
  end)
- stage('combined reachable loot highlights item rows',function()checkHighlight(getPlayerLoot(0))end)
+ stage('combined reachable loot highlights item rows',function()local page=getPlayerLoot(0);selectCombinedLoot(page);checkHighlight(page,'Base.Nails')end)
  stage('Neat Crafting panel integrates wishlist',function()
   ISEntityUI.OpenHandcraftWindow(getPlayer(),nil,'*',false)
   local window=assert(ISEntityUI.GetWindowInstance(0,'HandcraftWindow'));data.nc=window

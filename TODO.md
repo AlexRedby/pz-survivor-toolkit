@@ -8,6 +8,7 @@
 
 ## Подключение сохранённых стендов
 
+- [ ] Устранить зависимость Wishlist overlay fixture от случайной сортировки: выбрать настоящий BC aggregate, найти целевой предмет в native rows и прокрутить его в viewport без подмены overlay; сохранить проверки единственного вызова и точных видимых borders, повторить все пять Wishlist jobs.
 - [ ] Проверить исправления Wishlist fixture: актуальный sidebar, барьеры наблюдения двух клиентов, видимые overlay rows и перенос точных world-specific persistence slots; затем повторить native прогоны из свежих profiles.
 
 - [ ] Последовательно прогнать свежие snapshots всех семи подключённых suite с совместимыми toolkit/control режимами; проверить restart persistence из seed, точные server/UI/video/probe receipts и полный аудит логов. Cart `captured` сохранять как измерение, не equivalence PASS; не считать candidate API покрытием main.
