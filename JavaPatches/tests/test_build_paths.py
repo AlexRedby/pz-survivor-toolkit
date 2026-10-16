@@ -69,10 +69,19 @@ class BuildPaths(unittest.TestCase):
                 metadata = (self.root / 'build/PZToolkitJavaPatches/42/mod.info').read_text()
                 self.assertIn('name=Toolkit Java Patches (Experimental)\n', metadata)
                 self.assertIn('id=PZToolkitJavaPatches\n', metadata)
-                self.assertIn('version=0.1.8\n', metadata)
+                self.assertIn('version=0.1.9\n', metadata)
                 self.assertIn('javaPkgName=net.alexredby.pztoolkitjavapatches\n', metadata)
                 self.assertIn('javaJarFile=media/java/PZToolkitJavaPatches.jar\n', metadata)
+                self.assertNotIn('javaPreload=true\n', metadata)
+                self.assertIn('ZB-Preload: true\n', (self.root / 'build/FONT-MANIFEST.MF').read_text())
                 self.assertNotIn('media/java/client/', metadata)
+                jars = [call.args[0] for call in calls if '--create' in call.args[0]]
+                self.assertEqual(len(jars), 2)
+                ordinary = next(command for command in jars if 'net/alexredby/pztoolkitjavapatches' in command)
+                early = next(command for command in jars if 'net/alexredby/pztoolkitbootstrap' in command)
+                self.assertNotIn('--manifest', ordinary)
+                self.assertIn('--manifest', early)
+                self.assertTrue(any(arg.endswith('42/media/bootstrap/PZToolkitFonts.jar') for arg in early))
 
     def test_missing_zombiebuddy_is_explained_before_compiling(self):
         (self.root / 'projectzomboid.jar').touch()

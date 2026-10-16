@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` **0.1.8** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; this is not an established fix for minute-long vehicle freezes or every movement jerk.
+`PZToolkitJavaPatches` **0.1.9** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; this is not an established fix for minute-long vehicle freezes or every movement jerk.
 
 ## Prepare and install
 
@@ -88,6 +88,22 @@ The mod entry point resolves the property enum before advice installation so the
 ## Native fluid-container names
 
 Version 0.1.8 normalizes the two shipped `ContainerName` tokens `Large Bucket` and `Fuel Pump` before the native fluid parser validates them. Their resulting names remain `LargeBucket` and `FuelPump`; capacity, contents and other component fields retain native behavior. Every other token and its validation remain native. Matching fluid parser and script-block/value bytecode is required. Verify `fluids=true` and the actual `FluidContainerScript` transformation on clients and the server after restarting with the rebuilt JAR approved.
+
+## Native fence validation and font pages
+
+Version 0.1.9 leaves native fence registration, debris and gameplay methods intact. It validates sound properties after `OnLoadedTileDefinitions` callbacks finish and accepts native `FenceTypeLow` values as well as `ThumpSound`. Reset clears deferred validation. Both empty events and completed callbacks drain the validation once; queued callbacks finish on actual dispatch. The completion marker reports `Fence validation ready: checked=42, missing=2` for the shipped definitions. Unsupported or modified target bytecode retains native behavior. The shipped `carpentry_02_48/49` entries still lack both properties and remain reported in the server log; no sound values or map/save data are invented.
+
+The font patch makes the two native main-font atlas entries available before initial font construction and corrects the native Dialogue page typo. Exact font-definition, UI-pack and engine-class hashes guard the correction; existing PNG overrides and custom font definitions retain their native handling. Glyph checks compare UV coordinates and decoded alpha/RGB pixels against the shipped atlas. They do not prove GPU rendering.
+
+**Cold-start fonts need explicit early activation of the separate `42/media/bootstrap/PZToolkitFonts.jar`.** The main `PZToolkitJavaPatches.jar` keeps its ordinary approved mod entry point. Ordinary saved mod approval does not grant ZombieBuddy's signed preload permission. For a trusted local build, append the documented `patches_jar` option to the **existing single** ZombieBuddy agent, with the JAR path before the package:
+
+```text
+-javaagent:/actual/game/ZombieBuddy.jar=patches_jar=/actual/mod/42/media/bootstrap/PZToolkitFonts.jar:net.alexredby.pztoolkitbootstrap
+```
+
+Retain any existing loader options, separating this option with a comma. Keep the entire argument as one JVM argument when paths contain spaces. A configured launcher must pass it into its client JVM before the game starts; enabling the mod later cannot repair fonts already constructed. Existing Host launch scripts do not add this option automatically. Do not edit ZombieBuddy's signed preload cache to force an unsigned JAR. Native Windows loading requires a game-relative JAR path without a drive colon because ZombieBuddy 2.3.4 splits this option at the first colon; that launch path has not been verified here. Commas and semicolons in the JAR path are unsupported.
+
+Check `[PZToolkitJavaPatches] Early font phase enabled=true` before native font initialization, the Texture transformation and the ordinary patch activation line (`fences=true`). The normal mod phase still installs the earlier patches; the font phase loads only its Texture advice. Use the separate font JAR here: preloading the ordinary mod JAR would cause ZombieBuddy to skip its later mod entry point. The common test runner opts into the same documented loader path with `options.preload_toolkit_fonts=true`, using only its sealed selected JAR copy. Default launches remain unchanged.
 
 ## Verification limits
 

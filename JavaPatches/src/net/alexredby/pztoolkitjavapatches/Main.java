@@ -65,6 +65,20 @@ public final class Main {
             "14a54eee1c27b98431913e8daa28f2dcae58d8fedb9e3b0ed8b6426f717062d2")
         && supports("zombie/scripting/ScriptParser$Value.class",
             "5cf9e1fa32ef946ac194fd8cf2bf7f95da9eda67076eccd3dfc321b31e14a637");
+    public static final boolean FENCE_SUPPORTED = supports("zombie/iso/BrokenFences.class",
+        "4368bbe6d2ec26198062bced328c3fef349e6be8e0f7184cbb9086de4cccc015")
+        && supports("zombie/Lua/Event.class",
+            "cf4b0ba953b8f965fbcacb73ebb5d1a173dc3ed140656e15b90ad932eff0e952")
+        && supports("zombie/Lua/LuaEventManager.class",
+            "9706f17e9b5e095a0e24230dc944de5d552fa62c997214636c4deb4957cf354b")
+        && supports("zombie/iso/IsoWorld.class",
+            "5b7406a70f33578a47ff417b0b6aa7a2b7a5bebfa00487a60935303f5747fb71")
+        && supports("zombie/iso/sprite/IsoSpriteManager.class",
+            "2b2a7b9de0ebd5fb4e346a998a1618503422ddffb8098caa365e8b626054e14a")
+        && supports("zombie/core/properties/PropertyContainer.class",
+            "bc236f8e9e4e0da8a86b0d1fd19ad8d44a040fe4f67d1baac77401b3b148bd77")
+        && supports("zombie/audio/parameters/ParameterFenceTypeLow$FenceType.class",
+            "8b69bc70ce19066b64ec887a049320046c2659b4727dd51d4038e4e756bcfd09");
     public static final boolean MEDIA_SUPPORTED = supports("zombie/radio/devices/DeviceData.class",
         "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102");
     public static final boolean BUILD_SUPPORTED = supports("zombie/core/BuildAction.class",
@@ -92,10 +106,38 @@ public final class Main {
         // Resolve before advice installation; resolving inside another transformer can miss these targets.
         if (PROPERTY_SUPPORTED) IsoPropertyType.values();
         if (FLUID_SUPPORTED) FluidContainerScript.class.getName();
+        boolean fences = FenceValidation.install(FENCE_SUPPORTED);
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
-            + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED);
+            + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
+            + ", fences=" + fences);
+    }
+
+    @Patch(className="zombie.Lua.LuaEventManager", methodName="triggerEvent", strictMatch=true)
+    public static class FenceTileDefinitionsDispatch {
+        @Patch.OnExit
+        public static void exit(@Patch.Argument(0) String event, @Patch.Argument(1) Object manager) {
+            // Empty events bypass Event.trigger; queued callbacks complete through its separate advice.
+            if (Main.FENCE_SUPPORTED && "OnLoadedTileDefinitions".equals(event)
+                && manager == zombie.iso.sprite.IsoSpriteManager.instance
+                && zombie.Lua.LuaManager.env != null && zombie.Lua.LuaManager.thread != null
+                && zombie.Lua.LuaManager.thread.debugOwnerThread == Thread.currentThread())
+                FenceValidation.tilesLoaded();
+        }
+    }
+
+    @Patch(className="zombie.Lua.Event", methodName="trigger", strictMatch=true)
+    public static class FenceTileDefinitions {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.Lua.Event event,
+                                @Patch.Argument(0) se.krka.kahlua.vm.KahluaTable env,
+                                @Patch.Argument(1) se.krka.kahlua.integration.LuaCaller caller,
+                                @Patch.Argument(2) Object[] args) {
+            if (Main.FENCE_SUPPORTED && "OnLoadedTileDefinitions".equals(event.name)
+                && args != null && args.length == 1 && args[0] == zombie.iso.sprite.IsoSpriteManager.instance)
+                FenceValidation.tilesLoaded();
+        }
     }
 
     @Patch(className="zombie.scripting.entity.components.fluids.FluidContainerScript", methodName="load", warmUp=true, strictMatch=true)

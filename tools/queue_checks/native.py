@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import zipfile
 from . import adapters, worlds, pack, admission
 
 
@@ -34,6 +35,39 @@ def _json(path, value):
 def _metadata(path):
     return {key.strip(): value.strip() for line in path.read_text(encoding="utf-8-sig").splitlines()
             if "=" in line and not line.lstrip().startswith("#") for key, value in [line.split("=", 1)]}
+
+
+def font_preload(cache, selection):
+    """Explicit local-JAR opt-in; ordinary approvals do not grant signed early loading."""
+    enabled = selection.get('options', {}).get('preload_toolkit_fonts', False)
+    if type(enabled) is not bool:
+        raise ValueError('preload_toolkit_fonts must be boolean')
+    if not enabled:
+        return ''
+    if not {'ZombieBuddy', 'PZToolkitJavaPatches'} <= set(selection['mods']):
+        raise ValueError('Font preload requires selected ZombieBuddy and PZToolkitJavaPatches')
+    layer = Path(cache) / 'mods/PZToolkitJavaPatches/42'
+    info = _metadata(layer / 'mod.info')
+    package = 'net.alexredby.pztoolkitbootstrap'
+    if (info.get('id'), info.get('javaPkgName'), info.get('javaJarFile')) != (
+            'PZToolkitJavaPatches', 'net.alexredby.pztoolkitjavapatches', 'media/java/PZToolkitJavaPatches.jar'):
+        raise ValueError('Font preload requires the selected early-font bootstrap metadata')
+    jar = layer / 'media/bootstrap/PZToolkitFonts.jar'
+    if any(char in str(jar) for char in (',', ':', ';', '\n', '\r')):
+        raise ValueError('Font preload path contains loader separators')
+    with zipfile.ZipFile(jar) as archive:
+        manifest = archive.read('META-INF/MANIFEST.MF').decode('utf-8')
+        if not re.search(r'^ZB-Preload: true\r?$', manifest, re.M):
+            raise ValueError('Font preload requires ZB-Preload manifest')
+    return ',patches_jar=' + str(jar) + ':' + package
+
+
+def _approvals(cache, identifiers):
+    return [{'id': id, 'jar_hash': sha256(jar), 'decision': True, 'time': '2026-01-01T00:00:00Z'}
+            for id in identifiers for jar in sorted((cache / 'mods' / id).rglob('*.jar'))
+            # This separate bootstrap is loaded only by explicit patches_jar, never as the ordinary mod.
+            if not (id == 'PZToolkitJavaPatches' and jar.relative_to(cache / 'mods' / id).as_posix()
+                    == '42/media/bootstrap/PZToolkitFonts.jar')]
 
 
 def _mod_root(info):
@@ -272,11 +306,11 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         (cache / "mods/default.txt").write_text("VERSION = 1,\nmods\n{\n" + "".join(" mod = " + mod + ",\n" for mod in [*selection["mods"], "ActionQueueTest"]) + "}\nmaps\n{\n}\n", encoding="utf-8")
         (cache / "mods/reset-mods-42_00.txt").write_text("Keep isolated native queue fixture selection.\n", encoding="utf-8")
         (cache / "options.ini").write_text("version=10\nwidth=1280\nheight=720\nfullScreen=false\nborderless=false\nmusicVolume=0\nsoundVolume=0\njumpScareVolume=0\nvehicleEngineVolume=0\nvoiceEnable=false\npauseOnFocusLoss=false\nlanguage=" + language + "\n", encoding="utf-8")
-        approvals = [{"id": identifier, "jar_hash": sha256(jar), "decision": True, "time": "2026-01-01T00:00:00Z"}
-                     for identifier in locations for jar in sorted((cache / "mods" / identifier).rglob("*.jar"))]
+        approvals = _approvals(cache, locations)
         _json(cache / "zombie-buddy/mod_approvals.json", {"formatVersion": 2, "mods": approvals})
         runtime["roles"][role] = {"cache": str(cache), "language": language}
         if role != "server":
+            font_preload(cache, selection)
             shutil.copy2(support / "ToolkitSmokeLauncher.java", cache / "classes")
             subprocess.run([str(jdk / "bin/javac"), "-cp", str(game / "projectzomboid.jar"),
                             str(cache / "classes/ToolkitSmokeLauncher.java")], check=True, capture_output=True, text=True, timeout=60,
@@ -337,8 +371,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
                 for directory in ('AnimSets', 'actiongroups'):
                     (cache / 'mods' / id / layer / 'media' / directory).mkdir(parents=True, exist_ok=True)
         (cache / 'mods/default.txt').write_text('VERSION = 1,\nmods\n{\n' + ''.join(' mod = ' + id + ',\n' for id in active) + '}\nmaps\n{\n}\n')
-        approvals = [{'id': id, 'jar_hash': sha256(jar), 'decision': True, 'time': '2026-01-01T00:00:00Z'}
-                     for id in active for jar in sorted((cache / 'mods' / id).rglob('*.jar'))]
+        approvals = _approvals(cache, active)
         _json(cache / 'zombie-buddy/mod_approvals.json', {'formatVersion': 2, 'mods': approvals})
     if selection['kind'] == 'mp':
         path = output / 'server/Server/queue-smoke.ini'

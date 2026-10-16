@@ -6,6 +6,7 @@ import shutil
 import tempfile
 from types import SimpleNamespace
 import unittest
+import zipfile
 from unittest.mock import patch
 
 
@@ -56,6 +57,38 @@ class NativeSnapshotTests(unittest.TestCase):
     def prepare(self, name="run", **changes):
         selection = dict(self.selection, **changes)
         return native.prepare(self.project, self.root / name, self.game, self.jdk, selection)
+
+    def test_font_preload_is_explicit_and_uses_only_selected_snapshot_jar(self):
+        cache = self.root / 'owned client'
+        selection = dict(self.selection, mods=['ZombieBuddy', 'PZToolkitJavaPatches'],
+                         options={'preload_toolkit_fonts': True})
+        layer = cache / 'mods/PZToolkitJavaPatches/42'
+        metadata = ('id=PZToolkitJavaPatches\njavaPkgName=net.alexredby.pztoolkitjavapatches\n'
+                    'javaJarFile=media/java/PZToolkitJavaPatches.jar\n')
+        self.write(layer / 'mod.info', metadata)
+        jar = layer / 'media/bootstrap/PZToolkitFonts.jar'
+        jar.parent.mkdir(parents=True)
+        with zipfile.ZipFile(jar, 'w') as archive:
+            archive.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\r\nZB-Preload: true\r\n\r\n')
+        self.assertEqual(native.font_preload(cache, selection),
+                         ',patches_jar=' + str(jar) + ':net.alexredby.pztoolkitbootstrap')
+        self.write(layer / 'media/java/PZToolkitJavaPatches.jar', 'ordinary mod jar')
+        approvals = native._approvals(cache, ['PZToolkitJavaPatches'])
+        self.assertEqual([row['jar_hash'] for row in approvals], [native.sha256(layer / 'media/java/PZToolkitJavaPatches.jar')])
+        self.assertEqual(native.font_preload(cache, dict(selection, options={})), '')
+        for value in ('true', 1, None):
+            with self.assertRaisesRegex(ValueError, 'boolean'):
+                native.font_preload(cache, dict(selection, options={'preload_toolkit_fonts': value}))
+        with self.assertRaisesRegex(ValueError, 'requires selected'):
+            native.font_preload(cache, dict(selection, mods=['ZombieBuddy']))
+        self.write(layer / 'mod.info', metadata.replace('pztoolkitjavapatches', 'wrongpackage'))
+        with self.assertRaisesRegex(ValueError, 'metadata'):
+            native.font_preload(cache, selection)
+        self.write(layer / 'mod.info', metadata)
+        with zipfile.ZipFile(jar, 'w') as archive:
+            archive.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\n')
+        with self.assertRaisesRegex(ValueError, 'manifest'):
+            native.font_preload(cache, selection)
 
     def test_fresh_snapshot_pins_sources_configs_mods_and_compiler_output(self):
         output = self.prepare()

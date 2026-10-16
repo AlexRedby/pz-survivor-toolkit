@@ -25,6 +25,9 @@ class PrepareInstall(unittest.TestCase):
         self.jar = self.patch / "42/media/java/PZToolkitJavaPatches.jar"
         self.jar.parent.mkdir(parents=True)
         self.jar.write_bytes(b"built patch")
+        self.fontjar = self.patch / "42/media/bootstrap/PZToolkitFonts.jar"
+        self.fontjar.parent.mkdir(parents=True)
+        self.fontjar.write_bytes(b"built early font bootstrap")
         (self.patch / "42/mod.info").write_text(
             "id=PZToolkitJavaPatches\nversion=0.1.2\n"
             "versionMin=42.21\nversionMax=42.21\n"
@@ -95,8 +98,8 @@ class PrepareInstall(unittest.TestCase):
         self.build.assert_called_once_with(
             [sys.executable, str(self.root / "JavaPatches/build.py")], cwd=self.root, check=True)
         paths = [path for path in self.output.rglob("*") if path.is_file()]
-        self.assertEqual([path.name for path in paths if path.suffix == ".jar"],
-                         ["PZToolkitJavaPatches.jar"])
+        self.assertEqual(sorted(path.name for path in paths if path.suffix == ".jar"),
+                         ["PZToolkitFonts.jar", "PZToolkitJavaPatches.jar"])
         self.assertFalse(any(path.suffix in (".class", ".log", ".zip") for path in paths))
 
     def test_build_failure_preserves_previous_set_even_with_existing_patch(self):
