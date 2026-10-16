@@ -1,6 +1,7 @@
 require "PZSurvivorToolkit/Settings"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
 local Tags = require "PZSurvivorToolkit/ItemTags"
+local Visuals = require "PZSurvivorToolkit/TagVisuals"
 
 local Toolkit = PZSurvivorToolkit
 local Filter = {}
@@ -94,6 +95,9 @@ local function showCategories(pane, button)
         menu:addSubMenu(root, submenu)
         for _, entry in ipairs(entries) do
             local option = submenu:addOption(entry.label, pane, selectTag, entry.id)
+            local style = Visuals.get(entry.id)
+            option.iconTexture = style.texture
+            if style.texture then option.color = {r = style.r, g = style.g, b = style.b} end
             submenu:setOptionChecked(option, entry.id == pane.toolkitTag)
         end
         menu:setOptionChecked(all, pane.toolkitCategory == nil and pane.toolkitTag == nil)

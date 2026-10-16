@@ -3,6 +3,9 @@ PZSurvivorToolkit = {}
 local categoryTags = {OC_Food = {'food'}, OC_FoodPerishable = {'food', 'perishable'},
     OC_Electrical = {'electrical'}, OC_FoodElectrical = {'food', 'electrical'}}
 require = function(name)
+    if name == 'PZSurvivorToolkit/TagVisuals' then
+        return {get=function(id) return {r=0.3,g=0.7,b=0.3,texture=id and {id=id} or nil} end}
+    end
     assert(name == 'PZSurvivorToolkit/ItemTags')
     return {enabled = function() return enabled end,
         forCategory = function(category) return categoryTags[category] or {'category:' .. category} end,
@@ -35,6 +38,7 @@ local function control()
     function b:drawRect(_, _, width, height) self.draws[#self.draws + 1] = {width, height} end
     function b:drawRectBorder() end
     function b:drawTextureScaled() self.ticks = (self.ticks or 0) + 1 end
+    function b:drawTextureScaledAspect(texture) self.semanticIcon=texture end
     function b:drawText(text) self.drawnText = text end
     function b:isMouseOver() return false end
     b.draws = {}
@@ -153,6 +157,7 @@ assert(find(p, 'food') and find(p, 'electrical') and find(p, 'perishable'))
 assert(find(p, 'MissingModCategory') and find(p, 'OtherMod'), 'unknown categories lost')
 local food, fi = find(p, 'food')
 p.listbox.doDrawItem(p.listbox, 0, p.listbox.items[fi])
+assert(p.listbox.semanticIcon and p.listbox.semanticIcon.id=='food','tag association icon missing')
 assert(p.listbox.drawnText == 'food (1/3)' and not p.listbox.ticks, 'partial selection not displayed')
 local dash = false
 for _, size in ipairs(p.listbox.draws) do if size[1] == 10 and size[2] == 2 then dash = true end end

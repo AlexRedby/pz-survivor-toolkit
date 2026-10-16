@@ -1,4 +1,7 @@
 require = function(name)
+    if name == "PZSurvivorToolkit/TagVisuals" then
+        return {get=function() return {r=0.4,g=0.8,b=0.3,texture={}} end}
+    end
     if name == "PZSurvivorToolkit/ItemTagSchema" or name == "PZSurvivorToolkit/ItemTags" then
         return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
     end
@@ -28,12 +31,14 @@ end}
 local menu
 ISContextMenu = {get = function()
     menu = {options = {}, setOptionChecked = function(_, option, checked) option.checked = checked end}
+    function menu:addSubMenu(option, submenu) option.submenu=submenu end
     function menu:addOption(name, target, callback, arg)
         local option = {name = name, target = target, callback = callback, arg = arg}
         self.options[#self.options + 1] = option; return option
     end
     return menu
 end}
+ISContextMenu.getNew = ISContextMenu.get
 local hammer, beans, screwdriver, modItem = {}, {}, {}, {}
 local source, incomingSource = {}, {}
 for _, item in ipairs({hammer, beans, screwdriver, modItem}) do
@@ -158,4 +163,16 @@ assert(#pane.itemslist == 0, 'live enable ignored the selected tag')
 tagsEnabled = false;pane:prerender()
 assert(#pane.itemslist == 4, 'live disable kept tag-filtered rows')
 assert(groups[1].cat == 'Food', 'legacy category changed')
+tagsEnabled=true
+pane:prerender()
+local trigger=pane.toolkitCategoryButton
+trigger.callback(trigger.target,trigger)
+local tagMenu=assert(menu)
+assert(#tagMenu.options>0 and tagMenu.options[1].iconTexture,'tag picker missing icons')
+assert(tagMenu.options[1].color.g>tagMenu.options[1].color.r,'tag picker missing family color')
+local foodOption
+for _,option in ipairs(tagMenu.options) do if option.arg=='food' then foodOption=option end end
+assert(foodOption,'food tag missing from picker')
+foodOption.callback(foodOption.target,foodOption.arg)
+assert(pane.toolkitTag=='food' and #pane.itemslist==1,'decorated picker changed tag filtering')
 print('Inventory filter checks passed: exact categories, search, empty results, selections, bulk actions and clear.')

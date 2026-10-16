@@ -46,7 +46,7 @@ def main() -> None:
     for path in sorted((ROOT / "PZSurvivorWishlist").rglob("*.lua")):
         lua.execute("assert(loadstring(...))", path.read_text(encoding="utf-8"))
     print("All mod files compile as Lua 5.1.", flush=True)
-    for name in ("test_item_tags.lua", "test_inventory_tags.lua", "test_quartermaster_tags.lua"):
+    for name in ("test_item_tags.lua", "test_tag_visuals.lua", "test_inventory_tags.lua", "test_quartermaster_tags.lua"):
         check = LuaRuntime(unpack_returned_tuples=True)
         check.globals().ProjectRoot = str(ROOT)
         if args.native_inventory_pane:

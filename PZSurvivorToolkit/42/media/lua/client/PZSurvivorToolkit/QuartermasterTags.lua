@@ -1,4 +1,5 @@
 local Tags = require "PZSurvivorToolkit/ItemTags"
+local Visuals = require "PZSurvivorToolkit/TagVisuals"
 
 local Adapter = {}
 PZSurvivorToolkit.QuartermasterTags = Adapter
@@ -56,7 +57,15 @@ local function drawTag(list, y, item)
     end
     local label = row.label
     if total > 1 then label = label .. " (" .. checked .. "/" .. total .. ")" end
-    list:drawText(label, bx + 24, y + (h - getTextManager():getFontHeight(UIFont.Medium)) / 2,
+    local style, textX = Visuals.get(row.tag), bx + 24
+    list:drawRect(textX, y + 3, 3, h - 6, 1, style.r, style.g, style.b)
+    textX = textX + 7
+    if style.texture then
+        local size = math.min(18, h - 4)
+        list:drawTextureScaledAspect(style.texture, textX, y + (h - size) / 2, size, size, 1, 1, 1, 1)
+        textX = textX + size + 4
+    end
+    list:drawText(label, textX, y + (h - getTextManager():getFontHeight(UIFont.Medium)) / 2,
         1, 1, 1, 1, UIFont.Medium)
     return y + h
 end

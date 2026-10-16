@@ -5,7 +5,14 @@ local labels = {Food='Food', Cooking='Cooking', Perishable='Perishable'}
 PZSurvivorToolkit = {}
 local Tags = {enabled=function() return enabled end, forItem=function(item) return item.tags end,
     label=function(id) return labels[id] end}
-require = function(name) if name == 'PZSurvivorToolkit/ItemTags' then return Tags end end
+local foodIcon, clockIcon = {}, {}
+local styles = {Food={r=0.4,g=0.8,b=0.3,texture=foodIcon}, Cooking={r=0.5,g=0.4,b=0.2},
+    Perishable={r=0.4,g=0.8,b=0.3,texture=clockIcon}}
+local neutral = {r=0.5,g=0.5,b=0.5}
+require = function(name)
+    if name == 'PZSurvivorToolkit/ItemTags' then return Tags end
+    if name == 'PZSurvivorToolkit/TagVisuals' then return {get=function(id) return styles[id] or neutral end} end
+end
 Events = {OnGameStart={Add=function(callback) starts[#starts+1]=callback end}}
 CleanUI_RegisterInventoryUiToggleCallback = function(callback) toggles[#toggles+1]=callback end
 getText = function(key)
@@ -66,10 +73,15 @@ local function class(clean)
     function c:drawTextRight(text,x,y,r,g,b,a,font)
         self.draws[#self.draws+1] = {text=text,x=x,y=y,font=font,right=true}
     end
-    function c:drawRect(x,y,width,height)
+    function c:drawRect(x,y,width,height,a,r,g,b)
         assert(width >= 0 and height >= 0, 'negative chip geometry')
         assert(x >= self.column3 and x+width <= self.categoryRight, 'chip escaped category column')
-        self.rects[#self.rects+1] = {x=x,y=y,width=width,height=height}
+        self.rects[#self.rects+1] = {x=x,y=y,width=width,height=height,r=r,g=g,b=b}
+    end
+    function c:drawTextureScaledAspect(texture,x,y,width,height)
+        assert(x >= self.column3 and x+width <= self.categoryRight, 'icon escaped category column')
+        assert(width > 0 and height > 0 and width == height, 'invalid icon size')
+        self.icons[#self.icons+1]={texture=texture,width=width}
     end
     function c:renderdetails(dragged, token)
         self.nativeCalls = self.nativeCalls + 1
@@ -115,13 +127,13 @@ local function pane(c, clean)
     return setmetatable({mode='details',itemslist=groups,items={},column2=30,column3=160,width=430,
         categoryRight=clean and 330 or 422,cleanUIItemIconSize=clean and 32 or nil,padding=5,
         _cleanUIRarityMetricsCache=clean and {value={categoryRight=330}} or nil,
-        itemHgt=24,fontHgt=12,headerHgt=20,font='Small',draws={},rects={},align='2',nativeCalls=0,nativeTooltips=0,
+        itemHgt=24,fontHgt=12,headerHgt=20,font='Small',draws={},rects={},icons={},align='2',nativeCalls=0,nativeTooltips=0,
         typeHeader={title='Category',setTitle=function(self,title) self.title=title end},
         isVScrollBarVisible=function() return false end,player=0,isReallyVisible=function(self) return not self.hidden end,
         isMouseOver=function(self) return not self.outside end,getMouseX=function(self) return self.mouseX or 170 end,
         getMouseY=function(self) return self.mouseY or 25 end,getYScroll=function(self) return self.scroll or 0 end}, {__index=c})
 end
-local function reset(p) p.draws,p.rects={},{} end
+local function reset(p) p.draws,p.rects,p.icons={},{},{} end
 local function has(p,text)
     for _,draw in ipairs(p.draws) do if draw.text == text then return true end end
     return false
@@ -132,6 +144,8 @@ for _,case in ipairs({{native,false},{enhanced,true},{vanilla,false}}) do
     assert(p:renderdetails(false,'render result') == 'render result')
     assert(p.drawText == originalText and p.drawTextRight == originalRight and rawget(p,'drawText') == nil, 'draw wrapper leaked')
     assert(has(p,'Food') and has(p,'Cooking'), 'missing tag chips')
+    assert(#p.icons>0 and p.icons[1].texture==foodIcon, 'semantic icon missing')
+    assert(p.rects[1].g>p.rects[1].r, 'food family color missing')
     assert(p.toolkitTagRows[1].drawnChips > 0, 'tag metadata reported no chip draws')
     assert(p.typeHeader.title == 'Tags', 'category header was not renamed')
     p.typeHeader.title='Category (A-Z)'; p:renderdetails(false)
@@ -157,7 +171,7 @@ for _,case in ipairs({{native,false},{enhanced,true},{vanilla,false}}) do
     end
     p.itemHgt,p.fontHgt=42,24
     reset(p); p:renderdetails(false)
-    assert(#p.rects > 0, 'scaled row lost chips')
+    assert(#p.rects > 0 and p.icons[1].width==16, 'scaled row lost chips/icons')
     p.itemHgt,p.fontHgt=24,12
     if case[2] then p._cleanUIRarityMetricsCache.value.categoryRight=220 else p.width=228 end
     p.categoryRight=220
@@ -172,7 +186,7 @@ for _,case in ipairs({{native,false},{enhanced,true},{vanilla,false}}) do
     if case[2] then p._cleanUIRarityMetricsCache.value.categoryRight=170 else p.width=178 end
     p.categoryRight=170
     reset(p); p:renderdetails(false)
-    assert(#p.rects == 0, 'tiny column overflowed')
+    assert(#p.rects == 0 and #p.icons==0, 'tiny column overflowed')
     assert(p.toolkitTagRows[1].drawnChips == 0, 'tiny-column metadata falsely reported chip draws')
     enabled=false; reset(p); p:renderdetails(false)
     assert(#p.rects == 0 and p.toolkitTagRows == nil and not p.toolkitTagTooltip.visible, 'live disable failed')

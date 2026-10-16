@@ -6,7 +6,7 @@ Quality-of-life mods for Project Zomboid Build 42: inventory filtering and quant
 
 | Component | Version | Installation |
 |---|---|---|
-| PZ Survivor Toolkit | 0.1.52 | Required; included in the prepared `mods` folder and server INI. |
+| PZ Survivor Toolkit | 0.1.53 | Required; included in the prepared `mods` folder and server INI. |
 | Survivor Wishlist | 0.1.0 | Required; included in the prepared `mods` folder and server INI. |
 | Toolkit Java Patches | 0.1.5 | Required; built by the preparation command. Needs ZombieBuddy 2.3.4+ in clients and server. |
 
@@ -208,13 +208,13 @@ Checked in-game on B42.21 with CleanUI 2.9.7 and CCI 1.2.0, including container 
 
 ## Item tags
 
-Toolkit imports organizedCategories categories as independent, localized tags: for example `foodPerishable_fruit` becomes Food, Perishable and Fruit; Electrical is shared by electrical tools and crafting supplies. Native inventory and both CleanUI inventory modes display compact chips in the category column, with a `+N` overflow indicator and a tooltip listing every tag. The column dropdown offers tag filters alongside exact categories. **Options > Mods > PZ Survivor Toolkit > Show item tags** restores the original presentation and controls when disabled.
+Toolkit imports organizedCategories categories as independent, localized tags: for example `foodPerishable_fruit` becomes Food, Perishable and Fruit; Electrical is shared by electrical tools and crafting supplies. Tags use vanilla pictograms and stable family colors: Food green, Electrical yellow, Tools blue, Medical red and Materials brown. Qualifiers such as Perishable, Fruit and Preserved have clock, apple and jar icons; qualifiers inherit the item's family color. Text remains visible and missing icons fall back to text/color. Quartermaster and the tag dropdown use the same associations. Native inventory and both CleanUI inventory modes display compact chips in the category column, with a `+N` overflow indicator and a tooltip listing every tag. The column dropdown offers tag filters alongside exact categories. **Options > Mods > PZ Survivor Toolkit > Show item tags** restores the original presentation and controls when disabled.
 
 Quartermaster's category picker defaults to tags. Selecting Food or Electrical selects all currently available matching categories; a dash indicates a partially selected tag. The view switch retains exact category refinement, individual items and presets. Saves and multiplayer requests still contain Quartermaster's exact legacy category IDs; selecting a tag is a batch selection, not a saved rule that automatically accepts categories introduced by a future mod update.
 
 The shared `PZSurvivorToolkit/ItemTags` API exposes `forItem`, `forCategory`, `label`, `matches` (all/any) and lossless `category` projection. Original IDs are retained to disambiguate aliases with identical tag sets; arbitrary tag combinations without a legacy equivalent return no category rather than inventing one. Unknown mod categories remain single opaque tags. Item reads follow the current instance category, including organizedCategories fluid changes. This layer does not modify native recipe `ItemTag`s, loot ScriptItems, item identities or existing category settings. Other mods continue receiving the original `getDisplayCategory()` value.
 
-Checked in B42.21 single-player with CleanUI, Better Containers, Item Details, organizedCategories and Quartermaster: native callbacks passed tag selection, exact-category refinement, save/reopen, Food filtering and live option changes; all five screenshots were inspected. Lua tests cover lossless projections, clipping/overflow, unknown categories, fluid classification changes and existing inventory interactions. Multiplayer and the complete selected mod set remain unverified for tags.
+Checked in B42.21 single-player with CleanUI, Better Containers, Item Details, organizedCategories and Quartermaster: native callbacks passed tag selection, exact-category refinement, save/reopen, Food filtering and live option changes; all five screenshots were inspected. Lua tests cover lossless projections, clipping/overflow, unknown categories, fluid classification changes and existing inventory interactions. Toolkit 0.1.53 also loaded all 33 visual textures and passed the same native scenario with seven inventory groups, including medical icons; five new screenshots were inspected and no new error signatures appeared relative to the preceding tag SP run. Multiplayer and the complete selected mod set remain unverified for tags.
 
 ## Item Details
 

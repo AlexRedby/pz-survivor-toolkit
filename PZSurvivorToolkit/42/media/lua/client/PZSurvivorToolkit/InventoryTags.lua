@@ -1,6 +1,7 @@
 require "ISUI/ISInventoryPane"
 require "ISUI/ISToolTip"
 local Tags = require "PZSurvivorToolkit/ItemTags"
+local Visuals = require "PZSurvivorToolkit/TagVisuals"
 
 local InventoryTags = {}
 PZSurvivorToolkit.InventoryTags = InventoryTags
@@ -29,13 +30,21 @@ local function categoryBounds(pane)
     return left, math.min(right, pane.width - 1)
 end
 
-local function pill(pane, draw, text, x, y, width, height, textY, font)
-    pane:drawRect(x + 2, y, width - 4, height, 0.85, 0.23, 0.19, 0.14)
-    pane:drawRect(x + 1, y + 1, 1, height - 2, 0.85, 0.23, 0.19, 0.14)
-    pane:drawRect(x, y + 2, 1, height - 4, 0.85, 0.23, 0.19, 0.14)
-    pane:drawRect(x + width - 2, y + 1, 1, height - 2, 0.85, 0.23, 0.19, 0.14)
-    pane:drawRect(x + width - 1, y + 2, 1, height - 4, 0.85, 0.23, 0.19, 0.14)
-    draw(pane, text, x + 4, textY, 0.94, 0.90, 0.83, 1, font)
+local function pill(pane, draw, text, x, y, width, height, textY, font, style, iconSize)
+    style = style or Visuals.get()
+    local r, g, b = style.r * 0.30, style.g * 0.30, style.b * 0.30
+    pane:drawRect(x + 2, y, width - 4, height, 0.95, r, g, b)
+    pane:drawRect(x + 1, y + 1, 1, height - 2, 0.95, r, g, b)
+    pane:drawRect(x, y + 2, 1, height - 4, 0.95, r, g, b)
+    pane:drawRect(x + width - 2, y + 1, 1, height - 2, 0.95, r, g, b)
+    pane:drawRect(x + width - 1, y + 2, 1, height - 4, 0.95, r, g, b)
+    local textX = x + 4
+    if style.texture then
+        pane:drawTextureScaledAspect(style.texture, textX, y + (height - iconSize) / 2,
+            iconSize, iconSize, 1, 1, 1, 1)
+        textX = textX + iconSize + 3
+    end
+    draw(pane, text, textX, textY, 0.94, 0.94, 0.94, 1, font)
 end
 
 local function drawTags(pane, draw, text, x, y, font, rightAligned)
@@ -52,10 +61,14 @@ local function drawTags(pane, draw, text, x, y, font, rightAligned)
     if text ~= categoryText then return false end
     local tags = Tags.forItem(item)
     if not tags or #tags == 0 then return false end
-    local labels, sizes, fullWidth = {}, {}, 0
+    local top = pane.headerHgt + (row - 1) * pane.itemHgt
+    local height = math.min(pane.itemHgt - 2, pane.fontHgt + 4)
+    local iconSize = math.max(0, math.min(16, height - 4))
+    local labels, sizes, styles, fullWidth = {}, {}, {}, 0
     for i, id in ipairs(tags) do
         labels[i] = Tags.label(id)
-        sizes[i] = measure(font, labels[i]) + 8
+        styles[i] = Visuals.get(id, tags)
+        sizes[i] = measure(font, labels[i]) + 8 + (styles[i].texture and iconSize + 3 or 0)
         fullWidth = fullWidth + sizes[i] + (i > 1 and 3 or 0)
     end
     local available, count, used = math.max(0, right - left), #labels, fullWidth
@@ -68,12 +81,10 @@ local function drawTags(pane, draw, text, x, y, font, rightAligned)
         used = used + measure(font, overflow) + 8
     end
     if used > available then count, overflow, used = 0, nil, 0 end
-    local top = pane.headerHgt + (row - 1) * pane.itemHgt
-    local height = math.min(pane.itemHgt - 2, pane.fontHgt + 4)
     local chipY = top + (pane.itemHgt - height) / 2
     local cursor = rightAligned and right - used or left
     for i = 1, count do
-        pill(pane, draw, labels[i], cursor, chipY, sizes[i], height, y, font)
+        pill(pane, draw, labels[i], cursor, chipY, sizes[i], height, y, font, styles[i], iconSize)
         cursor = cursor + sizes[i] + 3
     end
     if overflow then pill(pane, draw, overflow, cursor, chipY, measure(font, overflow) + 8, height, y, font) end

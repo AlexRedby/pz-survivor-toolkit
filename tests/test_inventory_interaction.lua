@@ -1,4 +1,7 @@
 require = function(name)
+    if name == "PZSurvivorToolkit/TagVisuals" then
+        return {get=function() return {r=0.4,g=0.8,b=0.3,texture={}} end}
+    end
     if name == "PZSurvivorToolkit/ItemTags" or name == "PZSurvivorToolkit/ItemTagSchema" then
         return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
     end
