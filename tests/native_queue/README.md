@@ -16,7 +16,7 @@ For a suite, read `QueueTestSelection` for exact kind/mode/cases/port. Emit JSON
 
 ## Commands
 
-Preparation needs Python 3.11+, JDK 25+ and installed B42.21 game files. Native GUI launch currently supports macOS. The runner needs no Python packages. Health fixture selfchecks use `luajit` on PATH; existing product Lua regressions separately use `lupa`.
+Preparation needs Python 3.11+, JDK 25+ and installed B42.21 game files. Native GUI launch currently supports macOS. The core runner needs no Python packages; the SP cart mesh analyzers additionally require NumPy, as declared in their contribution. Health fixture selfchecks use `luajit` on PATH; existing product Lua regressions separately use `lupa`.
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_queue_*.py'
@@ -62,7 +62,7 @@ For sequential runs, `batch` accepts a JSON plan and a new output directory:
 python3 tools/check_action_queue.py batch /path/to/plan.json /tmp/native-stands-fresh
 ```
 
-Jobs may override `options`, `mods`, `ports`, `language`, `kind` and `timeout`; default deadline is 900 seconds. Native GUI jobs run serially under the same lock. A blocked/failed job remains visible while later independent jobs continue; interruption stops the batch. `batch-report.json` and `coverage.json` are updated after every job. Each job retains its full report and raw logs. Reload copies only owned save/DB state from a verified, stopped seed into a new profile, with the same endpoint; the server receives bounded native `save`/`quit` before signal fallback. A pending seed log audit remains `needs-review` in reload results.
+Jobs may override `options`, `mods`, `ports`, `language`, `kind` and `timeout`; default deadline is 900 seconds. Native GUI jobs run serially under the same lock. A blocked/failed job remains visible while later independent jobs continue; interruption stops the batch. `batch-report.json` and `coverage.json` are updated after every job. Each job retains its full report and raw logs. Reload copies owned save/DB state and pins the exact world-specific Wishlist storage slots from a verified, stopped seed. A sealed test helper restores their unchanged text under the new absolute world path before server readiness, with the same endpoint; the server receives bounded native `save`/`quit` before signal fallback. A pending seed log audit remains `needs-review` in reload results.
 
 A comparable control uses the same game/source/mod bytes/cases/languages/ports/settings; only queue mode changes. MP uses two actual clients with reversed doctor/patient roles. EN `remoteRemoved` explicitly skips treatment to keep the actual peer connected; RU performs the real disconnect. Toolkit-only controls skip with reasons in native mode.
 

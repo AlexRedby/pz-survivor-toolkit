@@ -12,9 +12,12 @@ Run the no-game check from the repository root:
 PYTHONDONTWRITEBYTECODE=1 python3 tests/native_queue/contributions/shared-wishlist/check.py
 ```
 
-The check loads Lua only to register callbacks and count stages. It also checks
-helper installation and rejection of invalid/colliding parameters. It never
-executes a stage body or launches the game.
+The check registers all original stage names/counts, checks helper installation
+and rejects invalid/colliding parameters. Its focused protocol test executes the
+actual fixture guards against controlled UI/network doubles: sidebar actions and
+absolute rectangles, clipped row borders with exactly one overlay call, joint
+observation ordering and deadlines, and restoration before server readiness.
+It does not launch the game or claim native UI/network coverage.
 
 ## Install hookup for a later authorized native run
 
@@ -72,11 +75,14 @@ explicitly report that the queue control is inapplicable.
 For persistence through the common runner, finish a successful full/standalone
 run and supply its absolute directory as `options.seed_run` in the JSON passed
 to `--config` for the `reload` case. The adapter requires verified seed evidence,
-stopped clients/server and the same ports. It copies only the seed's owned
-`Saves/` and `db/` state into a new snapshot, pins that state as input and writes
-a fresh reload config. It never modifies the completed seed or starts reload
-with an empty world. For layout checks use fresh standalone caches and `visual`
-mode. Screenshots are runtime outputs and still need visual inspection.
+stopped clients/server and the same ports. It copies the seed's owned `Saves/`
+and `db/` state and pins the current product's exact wishlist storage slots under
+`Lua/PZSurvivorWishlist/`. Those slots use an encoded absolute world path: a
+reload helper carries the unchanged slot text as frozen input data and restores
+it through native file APIs for the new world path before `SERVER_READY`.
+The completed seed stays unchanged; the new live storage slots are native
+outputs. For layout checks use fresh standalone caches and `visual` mode.
+Screenshots still need visual inspection.
 
 A seed with verified functional assertions may still have an unresolved native
 startup audit. Reload accepts `needs-review` only for `unclassified-errors` with
@@ -86,6 +92,19 @@ The reload evidence retains `seed_native_audit.pending=true` and
 `requires_review=true`, so passing persistence assertions cannot clear that
 pending audit. Failed, new-error, unknown, microphone-active or unavailable seed
 audits are rejected.
+
+The retained stage labels/counts are unchanged. With Toolkit loaded, the sidebar
+stage follows the Wishlist entry in the tools hub; standalone uses its direct
+button. Geometry checks use absolute rectangles in both dimensions. Inventory
+checks retain actual border drawing and independently require exactly one
+Wishlist overlay invocation, so a clipped candidate row does not masquerade as
+a duplicate wrapper.
+
+For completion/revocation and faction removal/restoration, the server releases
+each destructive transition only after both clients successfully observed the
+state that it replaces. A missing peer fails within 15 seconds; unknown actors,
+out-of-order keys and duplicate observations cannot release it. This barrier
+protects the assertions themselves instead of extending fixed sleeps.
 
 ## Historical evidence and known traps
 

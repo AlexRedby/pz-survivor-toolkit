@@ -71,6 +71,7 @@ def sources(project, selection):
     paths = sorted(path for path in source.rglob("*") if path.is_file() and path.suffix in (".py", ".lua", ".json"))
     if selection["suite"] == "shared-wishlist" and selection["cases"] == ["reload"]:
         seed, state = _seed(selection)
+        paths.append(Path(project) / "tests/native_queue/support/QueueWishlistRestore.lua")
         paths += [seed / name for name in ("selection.json", "runtime.json", "execution.json", "report.json", "source-manifest.json", "snapshot-hashes.json")]
         paths += [seed / (role + "-launch.log") for role in ("server", "client1", "client2")]
         paths += [path for path in state if path.is_file()]
@@ -95,11 +96,30 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         namespace["prepare"](*args)
     if selection["suite"] == "shared-wishlist" and selection["cases"] == ["reload"]:
         seed, state = _seed(selection)
+        name = json.loads((seed / "runtime.json").read_text())["server_name"]
+        if runtime["server_name"] != name:
+            raise ValueError("Wishlist reload must preserve the seed server name")
+        prefix = _store_prefix(seed / "server", name)
+        slots = {}
         for source in state:
             if source.is_file():
+                if source.parent == prefix:
+                    text = source.read_text(encoding="utf-8")
+                    if any(ord(char) < 32 and char not in "\t\r\n" for char in text):
+                        raise ValueError("Invalid control character in wishlist seed store")
+                    slots[source.stem] = text
+                    continue
                 target = Path(output) / source.relative_to(seed)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
+        from ..native import _lua
+        config = {"world": str(Path(output) / "server/Saves/Multiplayer" / name), "slots": slots}
+        for role in runtime["roles"]:
+            helper = Path(output) / role / "mods/WishlistTest/42/media/lua/server"
+            shutil.copy2(Path(project) / "tests/native_queue/support/QueueWishlistRestore.lua", helper)
+            (helper / "WishlistSeedRestore.lua").write_text(
+                "local Restore=require 'QueueWishlistRestore'\nlocal input=" + _lua(config) +
+                "\nWishlistSeedRestore=function() Restore(input.world,input.slots) end\n", encoding="utf-8")
     runtime["fixture"] = {"mods": [HELPERS[selection["suite"]]], "server_ready": server_ready(selection),
                           "sandbox": server_settings(selection), "client_launch_stagger_seconds": 8,
                           "queue_control": "intrinsic toolkit operation API" if selection["suite"] == "crafting-plans" else "queue toggle if Toolkit is selected; standalone product otherwise"}
@@ -175,6 +195,13 @@ def _server_issues(text, selection, case):
         for role in ("client1", "client2"):
             if len(re.findall(r"\[WISHLIST_TEST\] SERVER_VERIFY " + role + r" ok=true(?:\s|$)", text)) != 1:
                 issues.append("server: missing, duplicate or failed wishlist authority receipt " + role)
+    if selection["suite"] == "shared-wishlist" and case == "reload":
+        slots = re.findall(r"\[WISHLIST_TEST\] RESTORE slot=([ab]) chars=([1-9][0-9]*)(?:\s|$)", text)
+        completed = re.findall(r"\[WISHLIST_TEST\] RESTORE_COMPLETE slots=([12])(?:\s|$)", text)
+        if not slots or len({slot for slot, _ in slots}) != len(slots) or completed != [str(len(slots))]:
+            issues.append("server: missing, duplicate or inconsistent wishlist restore receipts")
+        elif text.index("[WISHLIST_TEST] RESTORE_COMPLETE") > text.index(server_ready(selection)):
+            issues.append("server: wishlist restore completed after readiness")
     if re.search(r"\[(?:CRAFT_TEST|WISHLIST_TEST|QUEUE_TEST)\] FAIL(?:\s|$)", text):
         issues.append("server: fixture failure")
     if re.search(r"\[(?:CRAFT_TEST|WISHLIST_TEST)\] SERVER_[A-Z_]*VERIFY [^\n]*ok=false(?:\s|$)", text):
@@ -210,6 +237,15 @@ def verify(root, selection, catalog):
                                          "runtime_status": initial["runtime"]["status"], "pending": pending}
         evidence["requires_review"] = pending
     return {"issues": issues, "outcomes": coverage, "evidence": evidence}
+
+
+def _store_prefix(cache, name):
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name in (".", ".."):
+        raise ValueError("Invalid wishlist seed server name")
+    # Kahlua string.byte returns Java UTF-16 code units, not UTF-8 bytes.
+    raw = str(cache / "Saves/Multiplayer" / name).encode("utf-16-be")
+    encoded = "".join(f"{int.from_bytes(raw[i:i+2], 'big'):04x}" for i in range(0, len(raw), 2))
+    return cache / "Lua/PZSurvivorWishlist" / Path(*[encoded[i:i+80] for i in range(0, len(encoded), 80)])
 
 
 def _seed(selection):
@@ -267,4 +303,18 @@ def _seed(selection):
                         state.append(path)
     if not any(path.is_relative_to(root / "server/Saves") for path in state):
         raise ValueError("Wishlist seed has no persisted server world")
+    cache = root / "server"
+    prefix = _store_prefix(cache, runtime.get("server_name"))
+    if any(path.is_symlink() for path in (prefix, *prefix.parents) if path.is_relative_to(cache)):
+        raise ValueError("Wishlist seed store cannot contain symlinks")
+    slots = []
+    for name in ("a", "b"):
+        path = prefix / (name + ".txt")
+        if path.is_symlink() or path.exists() and not path.is_file():
+            raise ValueError("Wishlist seed store must contain regular slot files")
+        if path.is_file():
+            slots.append(path)
+    if not slots:
+        raise ValueError("Wishlist seed has no persisted product store for its owned world")
+    state += slots
     return root, state

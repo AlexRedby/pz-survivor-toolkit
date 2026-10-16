@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import shutil
 import sys
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -45,6 +46,8 @@ def server_log(value):
                   for role in ("client1", "client2") for phase in ("chain", "repeat", "logs")]
     elif suite == "shared-wishlist" and case in ("full", "standalone"):
         lines += ["[WISHLIST_TEST] SERVER_VERIFY " + role + " ok=true" for role in ("client1", "client2")]
+    if suite == "shared-wishlist" and case == "reload":
+        lines[0:0] = ["[WISHLIST_TEST] RESTORE slot=a chars=12", "[WISHLIST_TEST] RESTORE_COMPLETE slots=1"]
     return "\n".join(lines) + "\n"
 
 
@@ -115,7 +118,7 @@ class CraftWishlistAdapterTests(unittest.TestCase):
             value = selection(suite, case)
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                runtime = {"roles": {role: {"cache": str(root / role)} for role in ("server", "client1", "client2")}}
+                runtime = {"server_name": "queue-smoke", "roles": {role: {"cache": str(root / role)} for role in ("server", "client1", "client2")}}
                 adapter.stage(ROOT, root, None, None, value, {}, runtime)
                 expected = adapter.HELPERS[suite]
                 self.assertEqual([expected], runtime["fixture"]["mods"])
@@ -158,17 +161,76 @@ class CraftWishlistAdapterTests(unittest.TestCase):
             shutil.copy2(ROOT / relative / "prepare.py", source)
             for side in ("client", "server"):
                 shutil.copytree(ROOT / relative / side, source / side)
-            runtime = {"roles": {role: {"cache": str(output / role)} for role in ("server", "client1", "client2")}}
+            runtime = {"server_name": "queue-smoke", "roles": {role: {"cache": str(output / role)} for role in ("server", "client1", "client2")}}
             with patch.object(sys, "dont_write_bytecode", False):
                 adapter.stage(project, output, None, None, selection("shared-wishlist", "standalone"), {}, runtime)
             self.assertFalse((source / "__pycache__").exists())
+
+    def test_reload_requires_exact_restore_receipts_before_ready(self):
+        value = selection("shared-wishlist", "reload")
+        text = server_log(value)
+        self.assertEqual([], adapter._server_issues(text, value, "reload"))
+        for broken in (text.replace("RESTORE_COMPLETE slots=1", "RESTORE_COMPLETE slots=2"),
+                       text.replace("RESTORE slot=a chars=12", "RESTORE slot=a chars=0"),
+                       text + "[WISHLIST_TEST] RESTORE slot=a chars=12\n",
+                       text.replace("[WISHLIST_TEST] RESTORE_COMPLETE slots=1\n", ""),
+                       adapter.server_ready(value) + "\n" + text.replace(adapter.server_ready(value), "")):
+            self.assertTrue(adapter._server_issues(broken, value, "reload"))
+
+    def test_native_restore_roundtrip_and_fail_closed_guards(self):
+        lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+        self.assertIsNotNone(lua, "Lua interpreter required for the retained native restore helper")
+        code = r'''local restore = dofile(arg[1])
+local files, current, server, client = {}, '/fixture/world', true, false
+isServer=function() return server end
+isClient=function() return client end
+getCurrentSaveName=function() return current end
+getFileWriter=function(path)
+  return {write=function(_, text) files[path]=text end, close=function() end}
+end
+getFileReader=function(path)
+  if not files[path] then return end
+  local pos=1
+  return {close=function() end, readLine=function()
+    local a,b=files[path]:find('\n',pos,true)
+    if not a then return end
+    local line=files[path]:sub(pos,a-1); pos=b+1; return line
+  end}
+end
+local text='PZSW\t1\t19\nEND\tfixture\n'
+restore(current,{a=text,b=text})
+local n=0; for path,value in pairs(files) do n=n+1; assert(value==text) end; assert(n==2)
+assert(not pcall(restore,current,{a=text}))
+files={}; assert(not pcall(restore,'other',{a=text}))
+assert(not pcall(restore,current,{}))
+assert(not pcall(restore,current,{foreign=text}))
+server=false; assert(not pcall(restore,current,{a=text})); server=true
+client=true; assert(not pcall(restore,current,{a=text})); client=false
+getFileWriter=function() return nil end
+assert(not pcall(restore,current,{a=text}))
+print('PASS native restore roundtrip and guards')
+'''
+        result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueWishlistRestore.lua")],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_store_prefix_matches_kahlua_utf16_units_and_path_chunks(self):
+        cache = Path("/fixture/мир-😀/server")
+        prefix = adapter._store_prefix(cache, "queue-smoke")
+        chunks = prefix.relative_to(cache / "Lua/PZSurvivorWishlist").parts
+        self.assertTrue(all(len(part) == 80 for part in chunks[:-1]))
+        raw = bytes.fromhex("".join(chunks))
+        self.assertEqual(str(cache / "Saves/Multiplayer/queue-smoke"), raw.decode("utf-16-be"))
+        for name in ("..", "bad/name", None):
+            with self.assertRaises(ValueError):
+                adapter._store_prefix(cache, name)
 
     def test_reload_copies_only_owned_persisted_state_and_checks_seed(self):
         initial = selection("shared-wishlist", "standalone")
         with tempfile.TemporaryDirectory() as directory:
             seed, target = Path(directory).resolve() / "seed", Path(directory).resolve() / "target"
             seed.mkdir()
-            runtime = {"roles": {role: {"cache": str(seed / role)} for role in ("server", "client1", "client2")}}
+            runtime = {"server_name": "queue-smoke", "roles": {role: {"cache": str(seed / role)} for role in ("server", "client1", "client2")}}
             evidence = {"selection.json": initial, "runtime.json": runtime,
                         "execution.json": {"status": "completed", "processes": {role: {"exit_code": 0} for role in runtime["roles"]}},
                         "report.json": {"status": "passed", "functional": {"status": "passed"}, "provenance": {"verified": True},
@@ -184,13 +246,32 @@ class CraftWishlistAdapterTests(unittest.TestCase):
             forbidden = seed / "server/Lua/unrelated.txt"
             forbidden.parent.mkdir(parents=True)
             forbidden.write_text("do not copy")
+            prefix = adapter._store_prefix(seed / "server", "queue-smoke")
+            prefix.mkdir(parents=True)
+            slots = [prefix / (name + ".txt") for name in ("a", "b")]
+            for index, slot in enumerate(slots):
+                slot.write_text("PZSW\t1\t" + str(index + 19) + "\nEND\tfixture\n")
+            foreign = adapter._store_prefix(seed / "server", "unrelated-world") / "a.txt"
+            foreign.parent.mkdir(parents=True)
+            foreign.write_text("do not restore another world")
             value = dict(selection("shared-wishlist", "reload"), options={"seed_run": str(seed)})
             with patch("queue_checks.report.verify_manifest", return_value=[]):
-                self.assertEqual([state], adapter._seed(value)[1])
-                output_runtime = {"roles": {role: {"cache": str(target / role)} for role in runtime["roles"]}}
+                self.assertEqual([state, *slots], adapter._seed(value)[1])
+                output_runtime = {"server_name": "queue-smoke", "roles": {role: {"cache": str(target / role)} for role in runtime["roles"]}}
                 adapter.stage(ROOT, target, None, None, value, {}, output_runtime)
                 self.assertEqual(state.read_bytes(), (target / state.relative_to(seed)).read_bytes())
                 self.assertFalse((target / forbidden.relative_to(seed)).exists())
+                self.assertFalse(adapter._store_prefix(target / "server", "queue-smoke").exists(), "Live userdata must be restored only after native launch")
+                helpers = []
+                for role in runtime["roles"]:
+                    helper = target / role / "mods/WishlistTest/42/media/lua/server"
+                    text = (helper / "WishlistSeedRestore.lua").read_text()
+                    self.assertIn(str(target / "server/Saves/Multiplayer/queue-smoke"), text)
+                    self.assertIn('PZSW\\t1\\t19', text)
+                    self.assertNotIn("unrelated-world", text)
+                    helpers.append(text)
+                self.assertEqual(helpers, [helpers[0]] * 3)
+                self.assertTrue(all(slot.read_text().startswith("PZSW") for slot in slots))
                 self.assertEqual("reload", (target / "client1/Lua/wishlist-fixture.txt").read_text().splitlines()[1])
                 with self.assertRaisesRegex(ValueError, "endpoint"):
                     adapter._seed(dict(value, ports=[19061, 19062]))
@@ -219,7 +300,7 @@ class CraftWishlistAdapterTests(unittest.TestCase):
                 pending["status"] = "needs-review"
                 pending["runtime"]["status"] = "unclassified-errors"
                 (seed / "report.json").write_text(json.dumps(pending))
-                self.assertEqual([state], adapter._seed(value)[1])
+                self.assertEqual([state, *slots], adapter._seed(value)[1])
                 for role in runtime["roles"]:
                     (target / (role + "-launch.log")).write_text(server_log(value) if role == "server" else client_log(value, role))
                 result = adapter.verify(target, value, {"suites": adapter.definitions()})
