@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "id": "shared-wishlist",
+  "status": "intake-only",
+  "source": ".codex/investigations/wishlist-20261012/native",
+  "source_files": ["ZZWishlist.lua", "ZZWishlist_Server.lua", "setup.py", "run.py", "ToolkitSmokeLauncher.java"],
+  "source_sha256": {
+    "ZZWishlist.lua": "46fb302599c2af58967922cf39d8af6c468625a2a8e1c4e10789c21bd9cf7eb3",
+    "ZZWishlist_Server.lua": "04ed890e29b0e7742d39e51678f2610b59930b248e6e6426fd644ea515e9153f",
+    "setup.py": "178da9b7197307dd36fd7943a47b5f20d4c20e9ae691e505bc00ad9f0014a855",
+    "run.py": "80ca6b463599f1d84c876384f883ae393f68e0b2c8564aa647e61077356cb85f",
+    "ToolkitSmokeLauncher.java": "33b6b409f4650f4b803c9c5edd2c1cb2e3c234987f6a4ad7a2f2e924ef69b40c"
+  },
+  "preserved": ["client/ZZWishlist.lua", "server/ZZWishlist_Server.lua"],
+  "game": "Project Zomboid B42.21; historical macOS native engine",
+  "native_kinds": ["mp"],
+  "clients": {"client1": "EN", "client2": "RU"},
+  "dependencies": {
+    "all_modes": ["PZSurvivorWishlist", "WishlistTest (this helper)"],
+    "full_integrations": ["PZSurvivorToolkit", "CleanUI", "Better Containers implementation exposing BetterContainers/Proximity", "Neat_Crafting", "Neat_Building_UIOnly", "Project_Cook"],
+    "offline_check": ["Python 3", "Lua 5.1 or LuaJIT"],
+    "future_native_launch": ["installed licensed game and JDK", "awake display", "shared safe ToolkitSmokeLauncher.java", "isolated server and two client caches", "matching product/mod snapshots on all roles"]
+  },
+  "parameters": {
+    "runtime_file": "<cache>/Lua/wishlist-fixture.txt",
+    "ordered_lines": ["user: client1|client2|server", "mode: full|standalone|reload|visual", "host", "port: 1..65534; UDP uses port+1", "password: supplied from named environment variable", "semicolon-separated product mod IDs excluding WishlistTest"],
+    "fixed_fixture_identities": ["client1", "client2", "WishlistTest faction"],
+    "game_profile": ["client1 language EN", "client2 language RU", "voice disabled and -novoip", "Lua checksum enabled", "fresh isolated world for full/standalone; reuse that world for reload"]
+  },
+  "historical_checks_per_client": {"full": 33, "standalone": 26, "reload": 5, "visual": 11},
+  "assertions": {
+    "full": ["selected mods and personal snapshot", "catalog add and inventory context deduplication", "inventory/combined-loot/ground highlights", "sidebar and crafting integrations", "explicit sharing, concurrent revisions and completion", "revocation rejects forged editor", "live faction departure revokes cached access", "authoritative final state and connected clients"],
+    "standalone": ["full path excluding CleanUI toggles, combined loot and Project Cook integration"],
+    "reload": ["private list, membership and amount survive full server/client restart", "peer edit reaches both clients", "wishlist renders after reconnect"],
+    "visual": ["final native handcraft/build layout", "EN/RU catalog search", "catalog close releases focus and UIManager references", "share dialog bounds", "crafting option toggles"]
+  },
+  "historical_evidence": ["initial-summary.json", "standalone2-summary.json", "reload-summary.json", "visual-final-summary.json"],
+  "historical_evidence_root": ".codex/investigations/wishlist-20261012/evidence",
+  "output_contract": "[WISHLIST_TEST] PASS|FAIL and exactly one COMPLETE checks=N failures=0 per client; server emits SERVER_READY",
+  "integration": "Not registered in catalog.json or the common runner; does not implement queue events or queue case selectors.",
+  "limits": ["No native run performed for this intake", "No native SP evidence", "Historical summaries are evidence about older product snapshots only", "Programmatic native UI calls, not physical keyboard/mouse automation", "Race accepts either concurrent winner; does not assert which client wins", "Fixed delays and exact B42.21 APIs require future native revalidation", "No game, Workshop/JAR, profile/save, log or generated media is included"]
+}

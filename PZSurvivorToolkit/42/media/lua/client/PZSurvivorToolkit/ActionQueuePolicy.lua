@@ -535,7 +535,9 @@ local function fluidResources(action)
         elseif wrapper.fluidResource then return end
         local owner = wrapper.isFluidResource and wrapper.fluidResource:getGameEntity() or wrapper.fluidContainer:getOwner()
         if not owner then return end
-        if instanceof(owner, "InventoryItem") then result.items[itemKey(owner)] = true else result.targets[owner] = true end
+        if instanceof(owner, "InventoryItem") then
+            result.items[itemKey(owner)], result.itemTypes[owner:getFullType()] = true, true
+        else result.targets[owner] = true end
         if wrapper.fluidResource then result.targets[wrapper.fluidResource] = true end
     end
     return result
@@ -730,6 +732,7 @@ local capacityNeutral = {ISReadABook = true, ISWalkToTimedAction = true, ISWalkT
 local function carriedContainer(container, character)
     return carriedContainers(container, character) ~= nil
 end
+Policy.isCarriedContainer = carriedContainer
 
 local function finiteWeight(value)
     return type(value) == "number" and value >= 0 and value < math.huge

@@ -242,6 +242,7 @@ project('ActionQueueFire')
 ISBBQLightFromPetrol.new = originalBBQPetrol
 project('ActionQueuePolicy')
 local api, policy, operations = PZSurvivorToolkit.ActionQueueFire, PZSurvivorToolkit.ActionQueuePolicy, PZSurvivorToolkit.ActionQueueOperations
+assert(not api.matchesContainerGetter(function()end),'an unrelated getter cannot borrow the observed predecessor proof')
 if bcControls then
     if FireTestBCPreinstalled then
         inventory.items={};local fuel=item('Log');containers=list({inventory})
@@ -254,6 +255,8 @@ if bcControls then
     local originalGetter=ISInventoryPaneContextMenu.getContainers
     if FireTestBCForeignPredecessor then ISInventoryPaneContextMenu.getContainers=function(...) return originalGetter(...) end end
     bcControls.install()
+    assert(api.matchesContainerGetter(originalGetter)==not FireTestBCForeignPredecessor,'only the observed BC predecessor can be shared')
+    assert(api.matchesContainerGetter(ISInventoryPaneContextMenu.getContainers)==not FireTestBCForeignPredecessor,'current getter needs the same intact owner proof')
     if FireTestBCForeignPredecessor then
         inventory.items={};item('Log');containers=list({inventory})
         local first=synthetic(ISReadABook,player);ISTimedActionQueue.add(first)

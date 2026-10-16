@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "id": "wooden_cart_multiplayer",
+  "status": "intake_only",
+  "runner_adapter": null,
+  "live_after_parameterization": false,
+  "exclusive_native_process": true,
+  "origin": ".codex/investigations/cart-mp-20261016; original run07 replication counterexample before parameterization",
+  "sources": [
+    "ClearanceProbe.java",
+    "ClearanceProbe.mf",
+    "MPMain.methods",
+    "README.md",
+    "analyze.py",
+    "client.lua",
+    "json.lua",
+    "placement.lua",
+    "self_check.py",
+    "server.lua",
+    "manifest.json"
+  ],
+  "selection_template": {
+    "schema_version": 1,
+    "suite": "cart_motion_mp",
+    "kind": "mp",
+    "mode": "toolkit",
+    "cases": [
+      "owner_observer_motion"
+    ],
+    "mods": [
+      "ZombieBuddy",
+      "PZToolkitJavaPatches",
+      "PZSurvivorToolkit",
+      "SaucedCarts",
+      "saucedwheelbarrow",
+      "CartLab"
+    ],
+    "languages": [
+      "EN",
+      "RU"
+    ],
+    "timeout_seconds": 480,
+    "ports": [
+      17373,
+      17374
+    ],
+    "expected_checks": 3,
+    "disposable": true,
+    "ffmpeg": "REPLACE_WITH_ABSOLUTE_FFMPEG",
+    "videoRoot": {
+      "client1": "REPLACE_WITH_ABSOLUTE_CLIENT1_VIDEO_DIRECTORY",
+      "client2": "REPLACE_WITH_ABSOLUTE_CLIENT2_VIDEO_DIRECTORY"
+    }
+  },
+  "dependencies": {
+    "game": "B42.21",
+    "jdk_minimum": 25,
+    "java_release": 17,
+    "compile_jars": [
+      "projectzomboid.jar",
+      "ZombieBuddy.jar",
+      "candidate PZToolkitJavaPatches.jar"
+    ],
+    "keyboard_base": "../wooden_cart_motion/Main.java",
+    "attach_helper": "../wooden_cart_motion/evidence/AttachWoodenWheelProbe.java",
+    "common_core": [
+      "queue_checks.native.prepare",
+      "queue_checks.runner.run"
+    ],
+    "video": "Toolkit video Lua bridge and external FFmpeg"
+  },
+  "required_environment": [
+    "PZ_CART_RUNTIME_FILE",
+    "PZ_CART_COMMAND_FILE"
+  ],
+  "roles": [
+    "server",
+    "client1",
+    "client2"
+  ],
+  "owner": "client1",
+  "observer": "client2",
+  "scenario_ms": 15000,
+  "phases_ms": {
+    "idle": [
+      0,
+      2000
+    ],
+    "walk": [
+      2000,
+      5000
+    ],
+    "turn": [
+      5000,
+      8000
+    ],
+    "stop": [
+      8000,
+      10000
+    ],
+    "reverse": [
+      10000,
+      12000
+    ],
+    "stop-back": [
+      12000,
+      15000
+    ]
+  },
+  "coverage": {
+    "minimum_samples": 5,
+    "edge_tolerance_ms": 350,
+    "minimum_span_fraction": 0.55,
+    "maximum_gap_ms": 600,
+    "both_clients_render_every_phase": true
+  },
+  "result_semantics": "evidenceComplete only; captured/lifecycle completion never implies animation equivalence PASS",
+  "legacy_probe_compatible": false,
+  "video_root_contract": "Fresh absolute per-role directories; VideoRecording creates capture-*.mp4 inside",
+  "historical_capture": {
+    "name": "pz-cart-mp-animation-20261016-07",
+    "date": "2026-10-16",
+    "parameterized_lua": false,
+    "evidence": "Read-only analysis of original unmodified logs; replication counterexample, not animation equivalence PASS",
+    "strict_versioned_analyzer_accepted": true,
+    "state_and_both_render_coverage": "all six phases",
+    "owner_online_id": 4,
+    "cart_id": 1938632659,
+    "turn_bank_degrees": {
+      "owner": 7,
+      "observer": 0
+    },
+    "walk_turn_palm_target_error_model_units": {
+      "owner_max_exclusive": 2.6e-07,
+      "observer_approx_range": [
+        0.044,
+        0.046
+      ]
+    },
+    "walk_turn_wheel_floor_model_units": {
+      "owner_approx": 0.008,
+      "observer_approx_range": [
+        -0.0975,
+        -0.0893
+      ]
+    },
+    "final_position_delta_tiles": {
+      "server": 0,
+      "observer": 0.0367695526214741
+    },
+    "probe": "Same identity-aware source probe compiled for original07; Lua still pre-parameterization",
+    "visual_qa": "Limited: character-info/chat windows still occlude hands despite UIManager.setVisibleAllUI(false)",
+    "future_adapter_requirement": "Direct Lua UI hiding before clean visual inspection; not implemented here",
+    "excluded_attempts": "05 incomplete render coverage; 06 failed decoration-count placement"
+  }
+}

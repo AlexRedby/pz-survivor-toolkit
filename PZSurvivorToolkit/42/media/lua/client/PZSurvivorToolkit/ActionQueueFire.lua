@@ -138,6 +138,7 @@ for _, name in ipairs({"getFuelDurationForItem", "getFuelDurationForItemInHours"
     trusted = trusted and nativeClosure(helpers[name], "ISCampingMenu.lua")
 end
 local getContainers = ISInventoryPaneContextMenu.getContainers
+local initialGetContainers = getContainers
 local transferIfNeeded = ISInventoryPaneContextMenu.transferIfNeeded
 local returnItem = ISCraftingUI.ReturnItemToContainer
 local proximity, proximityGetter
@@ -215,6 +216,13 @@ if getActivatedMods and getActivatedMods():contains("EURY_CONTAINERS")
         end
         controls.install = install
     end
+end
+
+function Fire.matchesContainerGetter(callback)
+    return containerSourceSafe and (callback == initialGetContainers or callback == getContainers)
+        and ISInventoryPaneContextMenu.getContainers == getContainers
+        and (not proximity or proximity.GetItemContainer == proximityGetter)
+        and (not containerFilterUnchanged or containerFilterUnchanged())
 end
 
 local function unchanged(class)
