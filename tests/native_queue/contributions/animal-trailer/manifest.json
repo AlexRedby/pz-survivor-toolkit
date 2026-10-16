@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "id": "animal-trailer",
+  "integration": "intake-only; not registered in shared catalog",
+  "engine": {
+    "build": "42.21.0",
+    "revision": "4a0e9546ec",
+    "jdk_min": 25,
+    "bytecode_target": 17,
+    "python_min": "3.10",
+    "zombiebuddy_min": "2.3.4"
+  },
+  "runtime": {
+    "kind": "mp",
+    "clients": 1,
+    "languages": [
+      "EN"
+    ],
+    "platforms_verified": [
+      "macOS arm64"
+    ],
+    "voip": false,
+    "fresh_save_only": true,
+    "server_name": "animal-baseline",
+    "spawn_point": [
+      10835,
+      10144,
+      0
+    ],
+    "map": "Muldraugh, KY",
+    "default_port": 17463,
+    "udp_port": 17464,
+    "lua_checksum": true,
+    "pause_empty": true,
+    "zombies": 6,
+    "startup_timeout_seconds": 120,
+    "client_timeout_seconds": 180
+  },
+  "parameters": {
+    "timerObservationMs": 8500,
+    "waitBeforeGrabMs": 4000,
+    "waitAfterGrabMs": 9000,
+    "waitAfterDropMs": 7000
+  },
+  "fixture_mod": "AnimalTrailerBaseline",
+  "probes": {
+    "equipment": {
+      "mod_id": "AnimalHandsRace",
+      "package": "net.alexredby.animalhandsrace",
+      "source": "java/equipment/Main.java",
+      "effect": "Delays real decoded grant until actual Equip handler exits; copies reused packet fields, preserves packet values and native handlers."
+    },
+    "ghost": {
+      "mod_id": "AnimalReplayProbe",
+      "package": "net.alexredby.animalreplayprobe",
+      "source": "java/ghost/Main.java",
+      "effect": "Temporarily disables only AnimalTrailerLocation during real decoder replay, restores in finally, verifies repair and identities."
+    },
+    "timer": {
+      "mod_id": "AnimalTimerProbe",
+      "package": "net.alexredby.animaltimerprobe",
+      "source": "java/timer/Main.java",
+      "effect": "Observation only: counts direct BaseVehicle.update sends, excludes nested animal update sends."
+    }
+  },
+  "scenarios": {
+    "equipment": [
+      "equipment"
+    ],
+    "ghost": [
+      "ghost"
+    ],
+    "timer": [
+      "timer"
+    ],
+    "combined": [
+      "equipment",
+      "timer"
+    ]
+  },
+  "dependencies": {
+    "always": [
+      "ZombieBuddy"
+    ],
+    "fixed": [
+      "PZToolkitJavaPatches >=0.1.5"
+    ],
+    "timer_fixed": {
+      "workshop_id": "3801615436",
+      "mod_id": "AnimalTrailerSyncMPFix",
+      "tested_version": "1.3",
+      "jar_sha256": "010db9240de1fccd5a6fefd4e27b92f49d7697e7cb47ce94664a73a640dcab13"
+    },
+    "optional_historical_context": {
+      "Toolkit": "0.1.48",
+      "Tidy Up Meister": "2.0.8",
+      "production_mod_count_without_timer_fix": 27,
+      "production_mod_count_with_timer_fix": 28
+    }
+  },
+  "source_validation": {
+    "original_sources_native_tested": "2026-10-15",
+    "portable_adaptation_native_retested": false
+  },
+  "class_sha256": {
+    "zombie/vehicles/BaseVehicle.class": "e7ade19e1e6f66450bef2bd37e52b2afccc7377c4e4571d0fa39435ecdb55661",
+    "zombie/characters/NetworkPlayerAI.class": "46df5ede124384e10a848fe9eb6f6ba06cccbb3cc74f51e5e9b0306cd80a628a",
+    "zombie/network/packets/EquipPacket.class": "35e25895c725c3154d0f1e4b3217c7e19795ed1296441dbcea9283026ec5da89"
+  }
+}
