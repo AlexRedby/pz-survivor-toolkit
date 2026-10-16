@@ -80,7 +80,7 @@ See [server setup](../MOD_INSTALL.md#server) for storage location and backup/res
 
 ## Java development
 
-For Java-only development, `python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts `--game` for the directory containing both game/loader JARs, `--jdk` for JDK 25+, and `--check` for native Java regressions. The checks compare original and patched engine vehicle interpolation, media restart, build cancellation/completion behavior, animal location/identity/capacity reconciliation, equipment acknowledgements and hutch unloading; there is no separate zombie-speed regression in this command. Generated output is ignored by Git.
+For Java-only development, `python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts `--game` for the directory containing both game/loader JARs, `--jdk` for JDK 25+, and `--check` for native Java regressions. The checks compare original and patched engine vehicle interpolation, media restart, build cancellation/completion behavior, animal location/identity/capacity reconciliation, equipment acknowledgements, hutch unloading and native string-property startup fallback (cold loader entry, IDs, values, storage and unrelated diagnostics); there is no separate zombie-speed regression in this command. Generated output is ignored by Git.
 
 ## Java patch boundaries
 

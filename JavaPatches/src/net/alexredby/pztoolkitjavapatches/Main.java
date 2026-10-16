@@ -3,12 +3,14 @@ package net.alexredby.pztoolkitjavapatches;
 import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.Map;
 import me.zed_0xff.zombie_buddy.Accessor;
 import me.zed_0xff.zombie_buddy.Patch;
 import zombie.characters.NetworkZombieAI;
 import zombie.characters.NetworkPlayerAI;
 import zombie.characters.animals.IsoAnimal;
 import zombie.core.BuildAction;
+import zombie.core.properties.IsoPropertyType;
 import zombie.core.network.ByteBufferReader;
 import zombie.core.raknet.UdpConnection;
 import zombie.iso.objects.IsoHutch;
@@ -51,6 +53,10 @@ public final class Main {
             "9b81b4f1e3ce8e338f2b8bb838c797353d0b2841396d01325c968051e168419e");
     public static final boolean HUTCH_SUPPORTED = supports("zombie/iso/objects/IsoHutch.class",
         "d9c1944025f6902416c83993199a89b2509bb2af3d09a44ced9c61b28c8589ae");
+    public static final boolean PROPERTY_SUPPORTED = supports("zombie/core/properties/IsoPropertyType.class",
+        "7e7deb55cc8a949a4cab6cf93e0cabef01090229154203730f758526c948ebd3")
+        && supports("zombie/core/TilePropertyAliasMap.class",
+            "05124f3536bc2026fb29d5f7369dc0d809d1a725477d4733a1e0e827911a0a80");
     public static final boolean MEDIA_SUPPORTED = supports("zombie/radio/devices/DeviceData.class",
         "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102");
     public static final boolean BUILD_SUPPORTED = supports("zombie/core/BuildAction.class",
@@ -75,10 +81,38 @@ public final class Main {
     }
 
     public static void main(String[] args) {
+        // Resolve before the loader installs advice; resolving inside another transformer can miss this enum.
+        if (PROPERTY_SUPPORTED) IsoPropertyType.values();
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
-            + ", hutch=" + HUTCH_SUPPORTED);
+            + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED);
+    }
+
+    @Patch(className="zombie.core.properties.IsoPropertyType", methodName="lookupOrDefaultStr", warmUp=true, strictMatch=true)
+    public static class NativeStringProperty {
+        public static boolean accepts(String name, boolean supported) {
+            if (!supported || name == null || !(name.equals("ladderW") || name.equals("ladderN")
+                || name.equals("ladderE") || name.equals("ladderS") || name.equals("WindowShape"))) return false;
+            var types = Accessor.tryGet(IsoPropertyType.class, "BY_NAME", (Map<?, ?>)null);
+            // Preserve typed aliases installed by another mod, and fail closed if access fails.
+            return types != null && types.get(name) == null;
+        }
+
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.Argument(0) String name,
+                                    @Patch.Local("toolkitStringProperty") String fallback) {
+            if (!accepts(name, Main.PROPERTY_SUPPORTED)) return false;
+            // Shipped tile definitions use these string properties without enum entries.
+            fallback = name;
+            return true;
+        }
+
+        @Patch.OnExit
+        public static void exit(@Patch.Local("toolkitStringProperty") String fallback,
+                                @Patch.Return(readOnly=false) String result) {
+            if (fallback != null) result = fallback;
+        }
     }
 
     @Patch(className="zombie.iso.objects.IsoHutch", methodName="removeFromWorld", warmUp=true, strictMatch=true)

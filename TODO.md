@@ -8,8 +8,9 @@
 
 ## Общие игровые сессии и регрессия сборки
 
+- [ ] Убрать лишний путь из дома через высокий забор к трейлеру в Animal Fixtures: проверить позицию игрока из сохранённого мира и серверное размещение fixture; начинать animal-сценарии рядом с доступной стороной трейлера. Для проверки стартовых исключений выбирать только запуск/загрузку и аудит логов; не запускать animal-сценарий ради этой проверки.
 - [ ] Прогнать animal `equipment-fixed -> ghost -> timer-starved -> combined-starved` с текущим fixture в совместимом профиле без `AnimalTrailerSyncMPFix`; проверить native ghost replay и joint reset всех4cases. Missing-patch и alternate timer/JAR controls проверять отдельными неизменяемыми профилями.
-- [ ] Разобрать startup `IsoPropertyTypeNotFoundException` (`ladderW/N/E/S`, `WindowShape`) и остальные неклассифицированные ошибки full-pack/cold baseline: строгий runtime gate оставляет их failed/needs-review, даже при успешных functional assertions. Сравнить source-verified native/toolkit логи; не расширять background allowlist по одному совпадению сообщения.
+- [ ] Разобрать остальные неклассифицированные диагностики full-pack/cold baseline (ThumpSound, Mannequin, duplicate/invalid room metaID, font textures, fluid/recipe fallbacks): строгий runtime gate оставляет их failed/needs-review, даже при успешных functional assertions. Сравнить source-verified native/toolkit логи; не расширять background allowlist по одному совпадению сообщения.
 - [ ] Интегрировать опубликованные объединённые SP cart matrices и collision cases после завершения их native-проверок. Сохранять независимые cold controls; отдельно измерить явный полный регрессионный профиль (расчётные17startup cycles вместо29 пока не подтверждены).
 
 ## Адаптеры ближайшего этапа
