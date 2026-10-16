@@ -79,6 +79,14 @@ class CraftWishlistAdapterTests(unittest.TestCase):
                     self.assertEqual([], result["issues"])
                     self.assertEqual([expected, expected], [row["outcome"]["preserved_stages"] for row in result["outcomes"]])
 
+    def test_failed_or_partial_completion_ends_lifecycle_but_fails_verification(self):
+        for suite, case in (("crafting-plans", "crafting"), ("shared-wishlist", "full")):
+            value = selection(suite, case)
+            for count in (0, adapter.COUNTS[suite][case]):
+                text = "[" + adapter.marker(value) + "] COMPLETE checks=" + str(count) + " failures=1\n"
+                self.assertTrue(adapter.complete(value, "client1", text))
+                self.assertTrue(adapter._client_issues(text, value, "client1", case))
+
     def test_authority_receipts_cannot_be_missing_or_duplicate(self):
         for suite, case in (("crafting-plans", "crafting"), ("crafting-plans", "alternatives"), ("shared-wishlist", "full")):
             value = selection(suite, case)

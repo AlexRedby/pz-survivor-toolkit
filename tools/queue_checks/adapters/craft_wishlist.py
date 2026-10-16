@@ -117,9 +117,9 @@ def marker(selection):
     return "CRAFT_TEST" if selection["suite"] == "crafting-plans" else "WISHLIST_TEST"
 
 
-def complete(selection, role, text, case=None):
-    case = case or selection["cases"][0]
-    return bool(re.search(r"\[" + marker(selection) + r"\] COMPLETE checks=" + str(COUNTS[selection["suite"]][case]) + r" failures=0(?:\s|$)", text))
+def complete(selection, role, text):
+    # Completion ends the lifecycle; the verifier separately rejects partial/failed stages.
+    return bool(re.search(r"\[" + marker(selection) + r"\] COMPLETE checks=\d+ failures=\d+(?:\s|$)", text))
 
 
 def _client_issues(text, selection, role, case):
