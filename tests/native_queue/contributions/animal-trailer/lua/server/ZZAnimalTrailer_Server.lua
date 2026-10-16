@@ -33,7 +33,7 @@ Events.OnClientCommand.Add(function(module,command,player,args)
  if module~='AnimalTrailerBaseline' then return end
  if command=='Ready' then
   if fixtureState then if fixtureState.sent then reply('Fixture',fixtureState.args) end;return end
-  local v,x,y=spawn();if not v then return end;fixtureState={vehicle=v,player=player,args={ids={}},animals={},items={}}
+  local v,x,y=spawn();if not v then return end;fixtureState={vehicle=v,player=player,args={ids={},origin={x=player:getX(),y=player:getY(),z=player:getZ()}},animals={},items={}}
   for i,kind in ipairs({'hen','hen','chick'}) do
    local breed=AnimalDefinitions.getDef(kind):getBreedByName('rhodeisland')
    local a=assert(addAnimal(getCell(),x+3,y,0,kind,breed))
@@ -60,10 +60,18 @@ Events.OnClientCommand.Add(function(module,command,player,args)
   local item=player:getPrimaryHandItem()
   if item then player:removeFromHands(item);player:getInventory():Remove(item);sendRemoveItemFromContainer(player:getInventory(),item) end
   reply('Cleared',{})
+ elseif command=='VerifyPosition' and Session then
+  assert(fixtureState and fixtureState.sent and not fixtureState.positionRequest,'unexpected position reset request')
+  fixtureState.positionRequest=true
  elseif command=='Done' then log('COMPLETE')
  end
 end)
 Events.OnTick.Add(function()
+ if fixtureState and fixtureState.positionRequest and (require 'QueueAnimalMovement').at(fixtureState.player,fixtureState.args.origin) then
+  fixtureState.positionRequest=false
+  reply('PositionReset',{x=fixtureState.player:getX(),y=fixtureState.player:getY(),z=fixtureState.player:getZ()})
+  log('POSITION_RESET nativeWalk=true serverAck=true')
+ end
  if fixtureState and not fixtureState.sent and fixtureState.vehicle:getId()>=0 and getTimestampMs()-fixtureState.observationStart>(timer and animalTimerObserve and cfg.timerObservationMs or 0) then
   if timer and animalTimerResult then log('TIMER '..animalTimerResult()) end
   fixtureState.sent=true;fixtureState.args.vehicleId=fixtureState.vehicle:getId();reply('Fixture',fixtureState.args)

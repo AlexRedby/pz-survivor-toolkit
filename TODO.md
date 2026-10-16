@@ -8,7 +8,6 @@
 
 ## Общие игровые сессии и регрессия сборки
 
-- [ ] Прогнать Wishlist `visual -> standalone` (37/client), затем настоящий отдельный reload5 с тем же world-path persistence protocol. Проверить pending product requests, точные owned ресурсы, joint reset receipts и полный аудит логов; не выдавать warm run за независимый cold control.
 - [ ] Прогнать animal `timer-shared -> combined-shared` на полном locked49 pack в независимых native/toolkit сессиях с одинаковой неизменяемой средой JAR. Проверить точные native animal/item/trailer IDs, replicated cleanup ACK и reset probes между cases. Original/patched parse3 headless контроль сохранён; missing-patch и alternate timer/JAR остаются отдельными профилями.
 - [ ] Подтвердить выборочный SP pack job через `--jobs`/`--set` на актуальном main и новом полном lock, не запуская посторонние jobs; проверить staging common-only B42 fallback `42.0` без изменения выбранного слоя/Lua. Сохранить общий итог со startup/case/cleanup аудитом и provenance; загрузка49модов не означает behavioral coverage каждого.
 - [ ] Согласовать и интегрировать объединённые SP cart matrices с чатом тележек после доступности merged runtime API; frozen raw07 candidate остаётся диагностическим источником, а не доказательством main. Сохранять независимые cold controls. Расчётные17startup cycles вместо29 пока не измерены полным общим прогоном.

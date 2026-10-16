@@ -2,11 +2,17 @@ package net.alexredby.animalsessionprobe;
 
 import se.krka.kahlua.integration.annotations.LuaMethod;
 import zombie.characters.animals.IsoAnimal;
+import zombie.GameWindow;
+import zombie.network.GameClient;
 import zombie.network.GameServer;
 import zombie.popman.animal.AnimalSynchronizationManager;
 
-/** Deletes only the exact fixture-owned animal, using native world and replication cleanup. */
+/** Reads native connection state and deletes only the exact fixture-owned animal. */
 public final class Main {
+    @LuaMethod(name="animalFixtureDisconnected", global=true)
+    public static boolean disconnected() {
+        return GameWindow.serverDisconnected || !GameClient.client;
+    }
     @LuaMethod(name="animalFixtureDelete", global=true)
     public static String delete(IsoAnimal animal) {
         if (!GameServer.server || animal == null || animal.getVehicle() != null || animal.getHutch() != null)

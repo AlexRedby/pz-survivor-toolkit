@@ -8,6 +8,69 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AnimalSessionTests(unittest.TestCase):
+    def test_reset_uses_native_path_then_requires_actual_server_position_receipt(self):
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if not lua:
+            self.skipTest('Lua interpreter unavailable')
+        code = r'''
+local movement=dofile(arg[1])
+local actions,sends,quarantines={},{},{}
+local position={x=20,y=30,z=0};local origin={x=1.25,y=2.75,z=0}
+local player={getX=function()return position.x end,getY=function()return position.y end,getZ=function()return position.z end}
+local context={send=function(command,args)sends[#sends+1]=command end,quarantine=function(reason)quarantines[#quarantines+1]=reason end}
+package.preload['Vehicles/TimedActions/ISPathFindAction']=function()return true end
+ISPathFindAction={pathToLocationF=function(self,owner,x,y,z)
+ assert(owner==player and x==origin.x and y==origin.y and z==origin.z)
+ return {setOnComplete=function(self,fn)self.complete=fn end,setOnFail=function(self,fn)self.fail=fn end}
+end}
+ISTimedActionQueue={add=function(action)actions[#actions+1]=action end}
+local state=movement.restore(context,player,origin)
+assert(#actions==1 and #sends==0 and not state.arrived and not state.confirmed)
+assert(not movement.confirm(state,origin),'a receipt before native arrival must fail')
+actions[1].complete();assert(#quarantines==1 and #sends==0,'wrong native endpoint must quarantine')
+state=movement.restore(context,player,origin)
+position.x=origin.x;position.y=origin.y
+actions[2].complete();assert(state.arrived and #sends==1 and sends[1]=='VerifyPosition' and not state.confirmed)
+assert(not movement.confirm(state,{x=99,y=origin.y,z=0}) and not state.confirmed,'wrong authoritative receipt must fail')
+assert(not movement.confirm(state,{x=0/0,y=origin.y,z=0}) and not state.confirmed,'non-finite authoritative receipt must fail')
+assert(movement.confirm(state,origin) and state.confirmed and movement.at(player,origin))
+actions[2].fail();assert(#quarantines==2,'native path failure must quarantine')
+assert(not pcall(movement.restore,context,player,{}))
+print('PASS native path only, endpoint proof, authoritative ACK and path failure gates')
+'''
+        result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/shared/QueueAnimalMovement.lua')],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_native_disconnect_quarantines_on_ui_event_without_another_game_tick(self):
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if not lua:
+            self.skipTest('Lua interpreter unavailable')
+        code = r'''
+local events={}
+Events=setmetatable({},{__index=function(self,name)
+ local event={Add=function(fn)events[name]=fn end};self[name]=event;return event
+end})
+local active,disconnected,count=nil,false,0
+function animalFixtureDisconnected()return disconnected end
+local S={phase='prepare',current=function()return active end,tick=function()error('OnTick must not be required')end,command=function()end}
+S.prepare=function()active={};S.configure(active);S.phase='running'end
+S.quarantine=function(reason)assert(type(reason)=='string');count=count+1;S.phase='quarantined'end
+package.preload.QueueAnimalSession=function()return function()return S end end
+local lifecycle=dofile(arg[1]);lifecycle.start({cases={'timer-shared'}},function()end,false)
+disconnected=true;events.OnPreUIDraw();assert(count==0,'pre-game UI must not quarantine an unstarted fixture')
+events.OnGameStart();assert(active.quarantine==S.quarantine)
+events.OnPreUIDraw();assert(count==1 and S.phase=='quarantined','actual native kick must quarantine even with no OnTick')
+events.OnPreUIDraw();assert(count==1,'quarantine must be terminal')
+S.phase='running';disconnected=false;events.OnDisconnect();assert(count==2)
+S.phase='running';events.OnMainMenuEnter();assert(count==3)
+S.phase='done';disconnected=true;events.OnPreUIDraw();events.OnDisconnect();assert(count==3,'successful session remains terminal')
+print('PASS disconnect/kick UI and native event guards without a game tick')
+'''
+        result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/shared/QueueAnimalLifecycle.lua')],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
     def test_owned_cleanup_keeps_foreign_entities_and_requires_replicated_absence(self):
         lua = shutil.which('luajit') or shutil.which('lua')
         if not lua:

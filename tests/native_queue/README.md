@@ -83,6 +83,8 @@ python3 tools/check_action_queue.py lock-pack /tmp/selected-pack.lock.json \
 
 Repeat `--mod-source` for explicit local sources. The lock records the INI settings, ordered Mod IDs, Workshop IDs, versions when supplied by the mod, every source file hash and the game build. Use `--pack-lock /tmp/selected-pack.lock.json` with `prepare`/`run`, or `options.pack_lock` in a plan; suite defaults then use the locked pack. Missing sources or changes block preparation and resume. MP runs apply the selected pack’s Map, PVP, DoLuaChecksum, SleepAllowed and SleepNeeded settings; checksums stay enabled. Public listing, UPnP and automatic Workshop downloads stay disabled in disposable local stands. After changing a mod, create a new lock explicitly and keep the previous lock for comparison.
 
+For a modpack change, retain the baseline lock and reports, create a new candidate lock, and run the same selected set against it. Functional case assertions expose regressions in the candidate. A changed pack is not a matching queue-disabled control: use a separate native/toolkit pair inside each pack when that comparison is needed; cross-pack runtime messages remain reviewable rather than being silently accepted as baseline errors.
+
 Reuse a prepared world through a sealed copy:
 
 ```sh

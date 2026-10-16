@@ -13,6 +13,9 @@ STAMP = re.compile(r"^\[\d{2}-\d{2}-\d{2,4}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\]\s*")
 MIC = ("System create record sound", "initialisedRecDev=true", "fmodRecordSound=", "Microphone was not disabled")
 RECEIPT = re.compile(r"HEALTH_AUTH_RECEIPT (\S*) phase=(\w+) ok=(true|false) patient=(\S*) error=([^\n]+)")
 SESSION = re.compile(r"\[QUEUE_SESSION\] (BEGIN|START|FINISH|CLEANUP|JOINT_CLEAN|COMPLETE|QUARANTINE) case=(\S+) epoch=(\d+) actor=(\S+)(?:\s|$)")
+ANTICHEAT_KICK = re.compile(
+    r'^WARN\s*:\s*Multiplayer\b.*\bat AntiCheat\.log\s*>\s*Anti-cheat="[^"\r\n]+" '
+    r'is triggered for connection="[^"\r\n]*" .*\bcounter=(\d+)/(\d+) action="Kick"(?:\s|$)')
 
 
 def read_json(path):
@@ -104,7 +107,10 @@ def audit_log(path, cache):
         starts.insert(0, 0)
     for index, start in enumerate(starts):
         block = lines[start:starts[index + 1] if index + 1 < len(starts) else len(lines)]
-        is_error = re.match(r"^ERROR\s*:", block[0]) or re.search(r"(?:KahluaException|\b[\w.]+(?:Exception|Error):)", "\n".join(block))
+        kick = ANTICHEAT_KICK.match(block[0])
+        # Kick names the configured policy even before the counter reaches its enforcement threshold.
+        terminal_kick = kick is not None and 0 < int(kick[2]) <= int(kick[1])
+        is_error = terminal_kick or re.match(r"^ERROR\s*:", block[0]) or re.search(r"(?:KahluaException|\b[\w.]+(?:Exception|Error):)", "\n".join(block))
         if not is_error:
             continue
         message = block[0].split(">", 1)[-1].strip()
