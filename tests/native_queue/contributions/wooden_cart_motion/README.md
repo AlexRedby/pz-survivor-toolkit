@@ -45,6 +45,12 @@ The selected IDs are pinned in the snapshot. Debug reports retain videos, mesh d
 
 ## Parameters and adapter boundary
 
+### Authored wooden-cart action pilot
+
+Set `cart_authored_clip: true` in the SP resource JSON to compare the authored pickup/setdown body clip with the default procedural version. The fixture sets `ToolkitWoodCartClipPilot`; ordinary play retains the existing version. Pickup and reverse setdown use native `m_TrackTimeToVariable` playback, with deferred movement disabled. Dynamic hand contact and the cart transform remain constrained by Java. Cancellation uses the captured final pose recovery path, so test it separately from successful actions.
+
+The editable normalized pose samples are `assets/animations/wood_cart_pickup.json`. Rebuild the game asset with `python3 tools/cart_clip_bake.py --template "$PZ_GAME_JAVA_DIR/media/anims_X/Bob/Bob_Idle.x" --input assets/animations/wood_cart_pickup.json --output PZSurvivorToolkit/42/media/anims_X/Bob/Toolkit_WoodCart_Pickup.x --name Toolkit_WoodCart_Pickup`. The writer validates all 45 rigid model-space bones. Compile `tools/CartClipCheck.java` against the installed game JAR to check a generated clip with the native importer; it accepts the clip and a TSV containing time, bone name and 16 column-major floats per row. Offline import checks do not replace native transition, contact and ownership checks.
+
 Supply absolute paths in `PZ_CART_RUNTIME_FILE` (Lua file used by `cartLabReload`) and `PZ_CART_COMMAND_FILE` (optional command channel file). Both environment variables are mandatory. The file itself may be absent until a command is submitted. `cartLabPoll` accepts only `reload` and `screenshot`; write commands atomically. Loading/polling is adapter-owned, not installed by this contribution.
 
 Before loading `test-area.lua`, provide this global, using values owned by the runner:

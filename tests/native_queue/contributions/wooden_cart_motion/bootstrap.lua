@@ -8,6 +8,8 @@ require 'SaucedCarts/CartVisuals'
 if CartLabTick then Events.OnTick.Remove(CartLabTick) end
 if CartLabGate then Events.OnPlayerUpdate.Remove(CartLabGate) end
 local player=getPlayer()
+player:setVariable('ToolkitWoodCartClipPilot',config.authoredClip==true)
+if config.authoredClip then assert(cartLabClipInfo('Toolkit_WoodCart_Pickup')~='missing','Authored cart clip missing') end
 player:setGodMod(true);player:setNoClip(false,true)
 local cart=player:getPrimaryHandItem()
 local finished=true

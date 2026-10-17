@@ -306,6 +306,20 @@ class CartAdapterTests(unittest.TestCase):
         self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
         with self.assertRaisesRegex(ValueError,'SP cart'): carts.validate(self.selection)
 
+    def test_authored_clip_pilot_is_explicit_sp_boolean(self):
+        for bad in ('true', 1, None):
+            self.options['cart_authored_clip']=bad
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError,'SP boolean'):
+                carts.validate(self.selection)
+        self.options['cart_authored_clip']=True
+        self.selection['cases']=['interaction']
+        self.stage()
+        text=Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+        self.assertIn('["authoredClip"]=true',text)
+        self.assertIn("player:setVariable('ToolkitWoodCartClipPilot',config.authoredClip==true)",text)
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        with self.assertRaisesRegex(ValueError,'SP boolean'): carts.validate(self.selection)
+
     def test_selected_scene_capture_keeps_diagnostics_and_explicit_partial_scope(self):
         self.selection['cases']=['path'];self.options['cart_scenes']=['male-full-corner']
         cache=self.output/'client1';(self.output/'runtime.json').write_text(json.dumps(self.runtime))

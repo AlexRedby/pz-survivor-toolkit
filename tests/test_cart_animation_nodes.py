@@ -28,12 +28,35 @@ class CartAnimationNodes(unittest.TestCase):
     def test_ground_interaction_drives_full_body_and_has_reachable_low_pose(self):
         node = ET.parse(ANIMATIONS / 'actions/toolkit_wood_cart.xml').getroot()
         self.assertIn(('PerformingAction', 'STRING', 'ToolkitWoodCart'), conditions(node))
+        self.assertIn(('ToolkitWoodCartClipPilot', 'BOOL', 'false'), conditions(node))
         self.assertNotIn(('ToolkitCartMotion', 'BOOL', 'true'), conditions(node))
         self.assertEqual([x.findtext('boneName') for x in node.findall('m_SubStateBoneWeights')],
                          ['Dummy01', 'Translation_Data'])
         self.assertEqual([(x.findtext('m_AnimName'), x.findtext('m_XPos'), x.findtext('m_YPos'))
                           for x in node.findall('m_2DBlends')],
                          [('Bob_Idle', '0', '0'), ('Bob_IdleLooting_Low', '1', '0'), ('Bob_Cart_Idle', '1', '1')])
+
+    def test_authored_interaction_pilot_uses_native_progress_clock_and_reverse(self):
+        for direction, reverse in (('pickup', 'false'), ('setdown', 'true')):
+            with self.subTest(direction=direction):
+                node = ET.parse(ANIMATIONS / f'actions/toolkit_wood_cart_clip_{direction}.xml').getroot()
+                self.assertEqual(conditions(node), {
+                    ('PerformingAction', 'STRING', 'ToolkitWoodCart'),
+                    ('ToolkitWoodCartClipPilot', 'BOOL', 'true'),
+                    ('ToolkitWoodCartClipPickup', 'BOOL', 'true' if direction == 'pickup' else 'false'),
+                })
+                self.assertEqual(node.findtext('m_AnimName'), 'Toolkit_WoodCart_Pickup')
+                self.assertEqual(node.findtext('m_TrackTimeToVariable'), 'ToolkitWoodCartClipTime')
+                self.assertEqual(node.findtext('m_Looped'), 'false')
+                self.assertEqual(node.findtext('m_AnimReverse'), reverse)
+                self.assertEqual(node.findtext('m_SyncTrackingEnabled'), 'false')
+                self.assertEqual(node.findtext('m_useDeferredMovement'), 'false')
+                self.assertEqual(node.findtext('m_useDeferedRotation'), 'false')
+                self.assertEqual(float(node.findtext('m_SpeedScale')), 0)
+                self.assertEqual(node.findtext('m_maxTorsoTwist'), '0')
+                self.assertEqual([x.findtext('boneName') for x in node.findall('m_SubStateBoneWeights')],
+                                 ['Dummy01', 'Translation_Data'])
+                self.assertFalse(node.findall('m_2DBlends'))
 
     @classmethod
     def setUpClass(cls):

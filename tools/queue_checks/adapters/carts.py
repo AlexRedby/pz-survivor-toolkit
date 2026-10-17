@@ -101,6 +101,9 @@ def validate(selection):
         selected_scenes(selection)
     elif 'cart_scenes' in selection.get('options', {}):
         raise ValueError('cart_scenes supports SP cart captures only')
+    if 'cart_authored_clip' in selection.get('options', {}):
+        if suite != SP or type(selection['options']['cart_authored_clip']) is not bool:
+            raise ValueError('cart_authored_clip requires an SP boolean pilot selection')
     overrides = selection.get('options', {}).get('mod_sources', {})
     for identifier in ('PZSurvivorToolkit', 'PZToolkitJavaPatches'):
         value = overrides.get(identifier)
@@ -218,6 +221,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 'ready': '[CART_MP] CONNECTED' if selection['suite'] == MP else '[CART_ADAPTER] PROBE_ATTACH_READY'})
         if selection['suite'] == SP:
             motion = dict(disposable=True, ffmpeg=config['ffmpeg'], videoRoot=videos[role], area=AREA)
+            motion['authoredClip'] = selection.get('options', {}).get('cart_authored_clip', False)
             if 'cart_scenes' in selection.get('options', {}):
                 motion['scenes'] = selected_scenes(selection)
             if selection['cases'][0] in ('collision','footprint'): motion['footprint']=True

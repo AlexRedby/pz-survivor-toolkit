@@ -34,7 +34,8 @@ public final class CartTransitionTest {
         java.util.Map<String,Float> variables;
         java.util.Stack<BaseAction> actions;
         int protection,modelResets,handWrites;
-        boolean performing,otherFloor;
+        boolean performing,otherFloor,clipPilot;
+        java.util.Map<String,Boolean> booleanVariables;
         RuntimeException modelError;
         boolean expectedForceNull;
         int modelScopes;
@@ -59,7 +60,11 @@ public final class CartTransitionTest {
         @Override public boolean isGrappling(){return protection==8;}
         @Override public boolean isBeingGrappled(){return protection==9;}
         @Override public boolean isRagdollSimulationActive(){return protection==10;}
-        @Override public boolean getVariableBoolean(String name){return "IsPerformingAnAction".equals(name) && performing;}
+        @Override public zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator getAdvancedAnimator(){return null;}
+        @Override public boolean getVariableBoolean(String name){
+            if("ToolkitWoodCartClipPilot".equals(name)) return clipPilot;
+            return "IsPerformingAnAction".equals(name) && performing;
+        }
         @Override public java.util.Stack<BaseAction> getCharacterActions(){
             if(actions==null) actions=new java.util.Stack<>();return actions;
         }
@@ -76,7 +81,17 @@ public final class CartTransitionTest {
         @Override public zombie.core.skinnedmodel.advancedanimation.IAnimationVariableSlot setVariable(String name,float value){
             if(variables==null) variables=new java.util.HashMap<>();variables.put(name,value);return null;
         }
-        @Override public void clearVariable(String name){if(variables!=null) variables.remove(name);}
+        @Override public zombie.core.skinnedmodel.advancedanimation.IAnimationVariableSlot setVariable(String name,boolean value){
+            check("ToolkitWoodCartClipPickup".equals(name),"unexpected boolean presentation variable: "+name);
+            if(booleanVariables==null) booleanVariables=new java.util.HashMap<>();booleanVariables.put(name,value);return null;
+        }
+        @Override public float getVariableFloat(String name,float fallback){
+            return variables==null?fallback:variables.getOrDefault(name,fallback);
+        }
+        @Override public void clearVariable(String name){
+            if(variables!=null) variables.remove(name);
+            if(booleanVariables!=null) booleanVariables.remove(name);
+        }
     }
     private static final class Cart extends InventoryItem {
         ItemContainer container;
@@ -245,6 +260,8 @@ public final class CartTransitionTest {
                 check(CartTransition.cancel(player,cart,pickup,stopped),"exact sole stopped action refused recovery");
                 var current=state(player);long start=(Long)value(current,"recoveryStart");
                 check((Boolean)value(current,"recovering"),"cancel did not enter recovery");
+                check(!(Boolean)value(current,"authored") && !(Boolean)value(current,"movingRecovery"),
+                    "default cancellation entered the authored pose recovery pilot");
                 close((Float)value(current,"cancelledProgress"),.55f,"cancel lost interrupted progress");
                 check(!CartTransition.cancel(player,cart,pickup,stopped),"duplicate cancellation restarted the recovery clock");
                 check((Long)value(current,"recoveryStart")==start,"duplicate cancellation changed recovery origin");
@@ -269,6 +286,116 @@ public final class CartTransitionTest {
                 CartTransition.tick(player,start+900_000_000L);CartTransition.end(player);
                 check(player.modelResets==2,"repeated cleanup reset another owner's model");
             } finally {CartTransition.end(player);}
+        }
+    }
+    private static void authoredClockAndRecovery() throws Exception {
+        var layer=allocate(zombie.core.skinnedmodel.advancedanimation.AnimLayer.class);
+        var character=layer.getClass().getDeclaredField("character");character.setAccessible(true);
+        var track=zombie.core.skinnedmodel.animation.AnimationTrack.alloc();
+        track.currentClip=new zombie.core.skinnedmodel.animation.AnimationClip(2,java.util.List.of(),"ClockFixture",false);
+        track.animLayer=layer;track.trackTimeToVariable="ToolkitWoodCartClipTime";track.looping=false;track.setSpeedDelta(0);
+        var tick=track.getClass().getDeclaredMethod("TickCurrentTime",float.class);tick.setAccessible(true);
+        for(boolean pickup:new boolean[]{true,false}) {
+            var fixture=recovery(pickup);var player=fixture.player;
+            try {
+                check(!(Boolean)value(state(player),"authored"),"clip pilot enabled without actor opt-in");
+                check(!player.variables.containsKey("ToolkitWoodCartClipTime") && player.booleanVariables==null,
+                    "default presentation published pilot animation variables");
+                CartTransition.end(player);player.clipPilot=true;
+                character.set(layer,player);track.reverse=!pickup;
+                for(float progress:new float[]{-.1f,0,.25f,.75f,1,1.1f}) {
+                    check(CartTransition.update(player,fixture.cart,pickup,progress),"authored clock update refused");
+                    float clamped=Math.max(0,Math.min(1,progress));
+                    close(player.variables.get("ToolkitWoodCartClipTime"),clamped,"clip clock did not clamp job delta");
+                    check(player.booleanVariables.get("ToolkitWoodCartClipPickup")==pickup,"clip direction changed");
+                    invoke(tick,track,.2f);
+                    close(track.getCurrentTimeValue(),2*clamped,"native clock ignored normalized progress at zero speed");
+                    close(track.getCurrentTrackTime(),2*(pickup?clamped:1-clamped),"native reverse sampled wrong clip time");
+                }
+                CartTransition.update(player,fixture.cart,pickup,.55);
+                var current=state(player);var rendered=current.getClass().getDeclaredField("rendered");
+                rendered.setAccessible(true);rendered.setBoolean(current,true);
+                for(String name:new String[]{"nativeRotation","referenceRotation"}) {
+                    var field=current.getClass().getDeclaredField(name);field.setAccessible(true);field.set(current,new Quaternionf());
+                }
+                var pose=new Matrix4f[]{new Matrix4f()};var cart=new Matrix4f();
+                var poseField=current.getClass().getDeclaredField("recoveryPose");poseField.setAccessible(true);
+                var cartField=current.getClass().getDeclaredField("recoveryCart");cartField.setAccessible(true);
+                check(!CartTransition.cancel(player,fixture.cart,pickup,null),"authored recovery accepted a missing final pose and cart capture");
+                poseField.set(current,pose);
+                check(!CartTransition.cancel(player,fixture.cart,pickup,null),"authored recovery accepted a missing cart capture");
+                poseField.set(current,null);cartField.set(current,cart);
+                check(!CartTransition.cancel(player,fixture.cart,pickup,null),"authored recovery accepted a missing final body pose capture");
+                check(player.overridePrimaryHandModel==null && player.modelResets==0,
+                    "captureless cancellation acquired a visual model lease");
+                poseField.set(current,pose);
+                check(CartTransition.cancel(player,fixture.cart,pickup,null),"authored captured-pose recovery refused");
+                check((Boolean)value(current,"movingRecovery"),"authored cancellation re-entered procedural body recovery");
+                close((Float)value(current,"movementProgress"),.55f,"authored recovery lost its initial pose weight");
+                check(value(current,"recoveryPose")==pose && value(current,"recoveryCart")==cart,
+                    "cancellation replaced its final rendered pose capture");
+                CartTransition.tick(player,(Long)value(current,"recoveryStart")+200_000_000L);
+                close(player.variables.get("ToolkitWoodCartClipTime"),(Float)value(current,"progress"),
+                    "recovery clock diverged from presentation progress");
+                CartTransition.end(player);recovered(fixture);
+                check(player.booleanVariables.isEmpty(),"clip direction leaked after cleanup");
+                check(player.clipPilot,"presentation cleanup erased the actor's pilot opt-in");
+            } finally {CartTransition.end(player);}
+        }
+        track.release();
+    }
+    private static void authoredNodeRetirement() throws Exception {
+        var tick=zombie.core.skinnedmodel.animation.AnimationTrack.class.getDeclaredMethod("TickCurrentTime",float.class);
+        tick.setAccessible(true);
+        var find=zombie.core.skinnedmodel.advancedanimation.AnimLayer.class.getDeclaredMethod("findLiveNode",
+            zombie.core.skinnedmodel.advancedanimation.AnimNode.class);find.setAccessible(true);
+        for(boolean pickup:new boolean[]{true,false}) {
+            var player=allocate(Player.class);player.setVariable("ToolkitWoodCartClipTime",.55f);
+            var layer=allocate(zombie.core.skinnedmodel.advancedanimation.AnimLayer.class);
+            var character=layer.getClass().getDeclaredField("character");character.setAccessible(true);character.set(layer,player);
+            var nodes=new java.util.ArrayList<zombie.core.skinnedmodel.advancedanimation.LiveAnimNode>();
+            var nodesField=layer.getClass().getDeclaredField("liveAnimNodes");nodesField.setAccessible(true);nodesField.set(layer,nodes);
+            var source=new zombie.core.skinnedmodel.advancedanimation.AnimNode();
+            source.name=pickup?"ToolkitWoodCartClipPickup":"ToolkitWoodCartClipSetdown";
+            source.parentState=new zombie.core.skinnedmodel.advancedanimation.AnimState();source.parentState.name="actions";
+            var unrelatedSource=new zombie.core.skinnedmodel.advancedanimation.AnimNode();
+            unrelatedSource.name="UnrelatedAction";unrelatedSource.parentState=source.parentState;
+            var old=zombie.core.skinnedmodel.advancedanimation.LiveAnimNode.alloc(layer,source);
+            var unrelated=zombie.core.skinnedmodel.advancedanimation.LiveAnimNode.alloc(layer,unrelatedSource);
+            old.setActive(true);nodes.add(old);nodes.add(unrelated);
+            var tracks=new zombie.core.skinnedmodel.animation.AnimationTrack[4];
+            for(int i=0;i<tracks.length;i++) {
+                var track=zombie.core.skinnedmodel.animation.AnimationTrack.alloc();tracks[i]=track;
+                track.currentClip=new zombie.core.skinnedmodel.animation.AnimationClip(2,java.util.List.of(),"RetirementFixture",false);
+                track.animLayer=layer;track.trackTimeToVariable="ToolkitWoodCartClipTime";
+                track.looping=false;track.reverse=!pickup;track.setSpeedDelta(1);
+                invoke(tick,track,.2f);
+            }
+            try {
+                old.addMainTrack(tracks[0]);old.addMainTrack(tracks[1]);unrelated.addMainTrack(tracks[2]);
+                check(invoke(find,layer,source)==old,"native selection did not find the active pilot node");
+                check(!CartTransition.retireAuthoredNode(old,!pickup),"retirement accepted the opposite action direction");
+                check(tracks[0].trackTimeToVariable!=null,"opposite-direction retirement changed the clock");
+                check(!CartTransition.retireAuthoredNode(unrelated,pickup),"retirement changed an unrelated action node");
+                check(CartTransition.retireAuthoredNode(old,pickup),"owned pilot node retirement refused");
+                check(!CartTransition.retireAuthoredNode(old,pickup),"already-retired node was retired twice");
+                check(invoke(find,layer,source)==null,"native selection reused the retired same-direction node");
+                player.setVariable("ToolkitWoodCartClipTime",0f);
+                for(int i=0;i<2;i++) {
+                    check(tracks[i].trackTimeToVariable==null,"outgoing main track retained the shared clock binding");
+                    close(tracks[i].getSpeedDelta(),0,"outgoing main track retained autonomous playback");
+                    invoke(tick,tracks[i],.2f);
+                    close(tracks[i].getCurrentTrackTime(),2*(pickup?.55f:.45f),"new action clock reset moved the fading pose");
+                }
+                check("ToolkitWoodCartClipTime".equals(tracks[2].trackTimeToVariable),"unrelated track lost its clock binding");
+                close(tracks[2].getSpeedDelta(),1,"unrelated track playback speed changed");
+                check(invoke(find,layer,unrelatedSource)==unrelated,"retirement made an unrelated node unselectable");
+                var fresh=zombie.core.skinnedmodel.advancedanimation.LiveAnimNode.alloc(layer,source);
+                fresh.addMainTrack(tracks[3]);fresh.setActive(true);nodes.add(fresh);tracks[3].setSpeedDelta(0);
+                check(invoke(find,layer,source)==fresh,"native selection did not choose the fresh same-direction node");
+                player.setVariable("ToolkitWoodCartClipTime",.25f);invoke(tick,tracks[3],.2f);
+                close(tracks[3].getCurrentTrackTime(),2*(pickup?.25f:.75f),"fresh track did not follow the restarted action clock");
+            } finally {for(var track:tracks) track.release();}
         }
     }
     private static void recoveryRefusals() throws Exception {
@@ -448,7 +575,7 @@ public final class CartTransitionTest {
         var cart=allocate(Cart.class);cart.kind="SaucedWheelbarrow.WheelbarrowWood";
         check(Boolean.FALSE.equals(atlas.invoke(null,cart,null,0f,0f,0f,0f,0f,false)),
             "wooden cart atlas must defer to the same renderer as FBO without accessing a scene");
-        bridge();geometry();groundPasses();recoveryLifecycle();recoveryRefusals();recoveryInterruptions();recoveryLeaseIdentity();recoveryModelScope();
+        bridge();geometry();groundPasses();recoveryLifecycle();authoredClockAndRecovery();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();recoveryLeaseIdentity();recoveryModelScope();
         System.out.println("CART_TRANSITION_PASS (scoped exact-owner validation, native yaw geometry, model/depth/sprite/picker/outline suppression and cleanup)");
     }
 }

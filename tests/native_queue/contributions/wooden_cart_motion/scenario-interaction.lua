@@ -117,7 +117,7 @@ local function snapshot(now)
   worldZ=world and world:getSquare():getZ()+world:getOffZ() or -1,worldRotation=item:getWorldZRotation(),
   cargo=weight,cargoIDs=ids,cargoCount=children,x=p:getX(),y=p:getY(),z=p:getZ(),
   statusAvailable=toolkitWoodCartStatus~=nil,active=status.active==true,recovering=status.recovering==true,rendered=status.rendered==true,
-  ik=status.ik==true,presentationProgress=status.progress or 0,pickup=status.pickup==true}
+  ik=status.ik==true,presentationProgress=status.progress or 0,pickup=status.pickup==true,authored=status.authored==true}
 end
 local function event(name,now)
  local row=snapshot(now);row.event=name

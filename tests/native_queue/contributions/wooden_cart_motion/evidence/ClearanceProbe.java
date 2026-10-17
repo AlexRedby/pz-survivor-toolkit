@@ -70,6 +70,7 @@ public final class ClearanceProbe {
             for(var track:body.modelInstance.animPlayer.getMultiTrack().getTracks()) {
                 if(comma)row.append(',');comma=true;
                 row.append("{\"name\":").append(quoted(track.getName())).append(",\"weight\":").append(track.getBlendWeight())
+                    .append(",\"time\":").append(track.getCurrentTrackTime()).append(",\"duration\":").append(track.getDuration())
                     .append(",\"field\":").append(track.getBlendFieldWeight()).append(",\"layer\":").append(track.getLayerIdx())
                     .append(",\"priority\":").append(track.getPriority()).append('}');
             }

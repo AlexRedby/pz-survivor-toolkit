@@ -594,6 +594,21 @@ public final class CartGrip {
         return true;
     }
 
+    static boolean authoredTransition(ModelSlotRenderData slot, ModelInstance owner, AnimationClip clip,
+        Matrix4f delta, Matrix4f cart, float reachWeight, float gripWeight) {
+        ModelInstanceRenderData body=null;
+        for(var data:slot.modelData) if(data.modelInstance==owner) {body=data;break;}
+        if(body==null || body.matrixPalette==null || !(owner.model.tag instanceof SkinningData bodySkin)) return false;
+        var actor=owner.animPlayer.getSkinningData();
+        var poses=livePoses(actor,bodySkin,body.matrixPalette,new Matrix4f(),true);
+        if(poses==null) return false;
+        // The clip owns the approach; constrain hands only after they reach the handles.
+        if(reachWeight<1) return true;
+        if(!transitionGrip(poses,actor,slot.character.isFemale(),delta,cart,1,gripWeight)) return false;
+        skinSlot(slot,owner,clip,actor,poses,true);
+        return true;
+    }
+
     static boolean transitionGrip(Matrix4f[] poses, SkinningData actor, boolean female, Matrix4f delta,
         Matrix4f cart, float reachWeight, float gripWeight) {
         if(reachWeight==1 && gripWeight==1) {

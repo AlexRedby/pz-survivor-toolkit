@@ -1,6 +1,7 @@
 package net.alexredby.pztoolkitjavapatches;
 
 import java.util.WeakHashMap;
+import java.lang.reflect.Field;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -10,6 +11,8 @@ import zombie.Lua.LuaManager;
 import zombie.characters.IsoPlayer;
 import zombie.characters.CharacterTimedActions.BaseAction;
 import zombie.core.skinnedmodel.ModelManager;
+import zombie.core.skinnedmodel.advancedanimation.AnimLayer;
+import zombie.core.skinnedmodel.advancedanimation.LiveAnimNode;
 import zombie.core.skinnedmodel.model.ModelInstanceRenderData;
 import zombie.core.skinnedmodel.model.ModelSlotRenderData;
 import zombie.inventory.InventoryItem;
@@ -21,6 +24,7 @@ import zombie.scripting.ScriptManager;
 /** Presentation only: inventory/world ownership remains with the native timed action. */
 public final class CartTransition {
     private static final WeakHashMap<IsoPlayer, State> states = new WeakHashMap<>();
+    private static final Field CLIP_RETIRING = clipRetiringField();
     // Start behind the handle ends rather than clearing the shafts with a large pelvis-only retreat.
     private static final float STANCE_BACK = .06f;
     // shortcut: the supported wooden attachment and Bob_Cart_Idle reference; recalibrate after either asset changes.
@@ -30,7 +34,7 @@ public final class CartTransition {
 
     private static final class State {
         InventoryItem item;
-        boolean pickup, ik, rendered, recovering;
+        boolean pickup, ik, rendered, recovering, authored, clipRetired;
         float cancelledProgress, nativeHeight, referenceHeight, movementProgress, recoveryReach, recoveryGrip;
         Matrix4f[] recoveryPose;
         Matrix4f recoveryCart;
@@ -101,6 +105,9 @@ public final class CartTransition {
         State state=states.get(player);
         if(state==null || state.recovering || state.item!=item || state.pickup!=pickup) {
             end(player);state=new State();state.item=item;state.pickup=pickup;
+            state.authored=player.getVariableBoolean("ToolkitWoodCartClipPilot");
+            if(state.authored && CLIP_RETIRING==null)
+                throw new IllegalStateException("Authored cart clips require native node retirement support");
             if(pickup) {
                 state.world=item.getWorldItem();
                 if(state.world==null) return false;
@@ -117,6 +124,45 @@ public final class CartTransition {
         var phase=CartTransitionMath.progress(state.progress,!state.pickup);
         player.setVariable("ToolkitWoodCartPoseX",(float)(phase.lift()+.10*phase.crouch()*(1-phase.lift())));
         player.setVariable("ToolkitWoodCartPoseY",(float)phase.lift());
+        if(state.authored) {
+            player.setVariable("ToolkitWoodCartClipTime",state.progress);
+            player.setVariable("ToolkitWoodCartClipPickup",state.pickup);
+        }
+    }
+
+    private static Field clipRetiringField() {
+        try {
+            var field=LiveAnimNode.class.getDeclaredField("transitioningOut");
+            field.setAccessible(true);return field;
+        } catch(ReflectiveOperationException | RuntimeException unsupported) {return null;}
+    }
+
+    static boolean retireAuthoredNode(LiveAnimNode node, boolean pickup) {
+        if(!("ToolkitWoodCartClip"+(pickup?"Pickup":"Setdown")).equals(node.getSourceNode().name)) return false;
+        try {
+            if(CLIP_RETIRING==null) throw new IllegalStateException("Native cart clip retirement unavailable");
+            if(CLIP_RETIRING.getBoolean(node)) return false;
+            // Native selection must create a new clock-bound node while this one fades at its final pose.
+            CLIP_RETIRING.setBoolean(node,true);
+            for(var track:node.getMainAnimationTracks()) {
+                track.trackTimeToVariable=null;track.setSpeedDelta(0);
+            }
+            return true;
+        } catch(IllegalAccessException unsupported) {throw new IllegalStateException(unsupported);}
+    }
+
+    private static void retireAuthoredLayer(AnimLayer layer, boolean pickup) {
+        if(layer!=null) for(var node:layer.getLiveAnimNodes()) retireAuthoredNode(node,pickup);
+    }
+
+    private static void retireAuthored(IsoPlayer player, State state) {
+        if(!state.authored || state.clipRetired) return;
+        var animator=player.getAdvancedAnimator();
+        if(animator!=null) {
+            retireAuthoredLayer(animator.getRootLayer(),state.pickup);
+            for(int i=0;i<animator.getSubLayerCount();i++) retireAuthoredLayer(animator.getSubLayerAt(i),state.pickup);
+        }
+        state.clipRetired=true;
     }
 
     private static boolean protectedState(IsoPlayer player) {
@@ -149,6 +195,7 @@ public final class CartTransition {
         var state=states.get(player);
         if(!Main.CART_TRANSITION_SUPPORTED || state==null || state.item!=item || state.pickup!=pickup
             || state.recovering || !state.rendered || state.progress<=0
+            || state.authored && (state.recoveryPose==null || state.recoveryCart==null)
             || !CartGrip.validPosture(state.nativeHeight,state.nativeRotation)
             || !CartGrip.validPosture(state.referenceHeight,state.referenceRotation) || protectedState(player)
             || player.getVariableBoolean("IsPerformingAnAction")) return false;
@@ -167,6 +214,9 @@ public final class CartTransition {
         }
         player.resetEquippedHandsModels();
         state.recovering=true;state.cancelledProgress=state.progress;state.recoveryStart=System.nanoTime();
+        if(state.authored) {
+            retireAuthored(player,state);state.movingRecovery=true;state.movementProgress=state.progress;
+        }
         return true;
     }
 
@@ -192,6 +242,7 @@ public final class CartTransition {
         if(state!=null) {
             result.rawset("rendered",state.rendered);result.rawset("ik",state.ik);
             result.rawset("progress",(double)state.progress);result.rawset("pickup",state.pickup);
+            result.rawset("authored",state.authored);
         }
         return result;
     }
@@ -210,7 +261,9 @@ public final class CartTransition {
             return;
         }
         var state=states.remove(player);
+        if(state!=null) retireAuthored(player,state);
         player.clearVariable("ToolkitWoodCartPoseX");player.clearVariable("ToolkitWoodCartPoseY");
+        player.clearVariable("ToolkitWoodCartClipTime");player.clearVariable("ToolkitWoodCartClipPickup");
         if(state!=null && state.visualModel!=null && state.visualModel==player.overridePrimaryHandModel) {
             player.overridePrimaryHandModel=null;player.resetEquippedHandsModels();
         }
@@ -276,6 +329,8 @@ public final class CartTransition {
             state.ik=state.movingRecovery
                 ?CartGrip.movingRecovery(slot,instance.parent,clip,delta,transform,held,state.recoveryPose,release,!state.pickup,
                     state.recoveryReach,state.recoveryGrip)
+                :state.authored?CartGrip.authoredTransition(slot,instance.parent,clip,delta,transform,
+                    (float)phase.reach(),(float)phase.grip())
                 :CartGrip.transition(slot,instance.parent,delta,transform,(float)phase.reach(),(float)phase.grip(),
                     (float)phase.lift(),(ground.m30()-held.m30())*(float)phase.center(),lowering,.16f*(float)phase.balance(),
                     (float)Math.toRadians(60*phase.hinge()),baseHeight,baseRotation);
