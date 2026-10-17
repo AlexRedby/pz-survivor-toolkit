@@ -753,6 +753,12 @@ function Compat.install()
             if not ok then classes[id] = {} end
         end
     end
+    if ready.P4TidyUpMeister and transferSourceSafe then
+        local previous=ISInventoryTransferAction.checkQueueList
+        TidyIntent.observeTransfers()
+        local policy=Toolkit.ActionQueuePolicy
+        if policy and policy.adoptTransferQueueObserver then policy.adoptTransferQueueObserver(previous,ISInventoryTransferAction.checkQueueList) end
+    end
     for id, sourceClasses in pairs(classes) do
         if ready[id] then
             for _, name in ipairs(names) do
@@ -799,6 +805,8 @@ function Compat.install()
             local baseline=classes.P4TidyUpMeister[getmetatable(action)]
             if not baseline then return false end
             local record=records[action]
+            if not record and (action.onStartFunc or action.onCompleteFunc or action.onCancelFunc
+                or action.retriggerLastAction or action.onFailFunc or action.additionalTest) then return false end
             return record and matches(action,record) or not record and intentUnchanged(action,getmetatable(action),baseline)
         end,function(menu,name)
             return stickSource and menu==ISInventoryPaneContextMenu and menu['_ocStick_'..name]==menu[name]

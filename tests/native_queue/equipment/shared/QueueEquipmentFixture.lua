@@ -1,6 +1,7 @@
 local Fixture={}
 local Slots=require 'QueueEquipmentSlots'
 local Floor=require 'QueueEquipmentFloor'
+local Bulk=require 'QueueEquipmentBulk'
 local function inventory(player)
  local result={}
  local function scan(container)
@@ -120,6 +121,7 @@ function Fixture.prepare(player,id,ids)
   assert(not fitsAfterRemoval,'pickup would still fit after native bag removal')
   assert(root:hasRoomFor(player,state.pickup),'pickup must fit again after native hand state restore')
  elseif id=='hands-chain' or id=='waiting-cancel' then seed('bat','Base.BaseballBat',state.source);seed('content','Base.Nails',state.source)
+ elseif Bulk.isCase(id) then Bulk.prepare(state,seed)
  elseif id=='floor-pickup' then Floor.prepare(state,seed)
  else Slots.prepare(state,seed) end
  for _,perk in ipairs({Perks.Woodwork,Perks.Doctor}) do
@@ -175,6 +177,7 @@ function Fixture.verify(state,mode,checkpoint)
   assert(state.source:getItems():size()==(cancelled and 2 or 1),'bag content count differs')
  end
  local extra={}
+ if Bulk.isCase(state.id) then extra=Bulk.verify(state,false,false) end
  if state.id=='clothing-chain' or state.id=='hotbar-chain' then extra=Slots.verify(state,mode) end
  assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,state.expectedWorn)
  local outcome={inventoryPreserved=true,frontCompleted=true,tailCompleted=not checkpoint,equipmentMatches=true,nativeDurations=true,
@@ -264,6 +267,11 @@ function Fixture.settled(state,mode,checkpoint)
  for _,book in ipairs(checkpoint and {state.front} or {state.front,state.tail}) do if book:getAlreadyReadPages()~=book:getNumberOfPages() then return false end end
  if state.bat and state.bat:getContainer()~=(cancelled and state.source or state.root) then return false end
  if state.pickup and state.pickup:getContainer()~=state.root then return false end
+ if Bulk.isCase(state.id) then
+  for name,item in pairs(state.items) do
+   if name:match('^bulk') and item:getContainer()~=Bulk.container(state,name,false,false) then return false end
+  end
+ end
  if state.id=='clothing-chain' and player:getWornItem(state.clothingLocation)~=state.clothingB then return false end
  if state.id=='hotbar-chain' then
   local item,old=state.hotbarReplacement,state.hotbarInitial

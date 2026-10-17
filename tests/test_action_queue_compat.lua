@@ -802,6 +802,23 @@ for _,queueEnabled in ipairs({false,true}) do
     assert(player.primary==manual,'real P4 restores the explicit primary instead of its older baseline')
     tickTidy();tickTidy()
 end
+player.getTimedActionToRetrigger=function() end
+player.setTimedActionToRetrigger=function() end
+for index,field in ipairs({'onStartFunc','onCompleteFunc','onCancelFunc','retriggerLastAction','onFailFunc','additionalTest'}) do
+    reset();enabled=false;doNotReequip=false;player.primary,player.secondary=nil,nil
+    local kept=item(tidyBag,90+index)
+    ISInventoryPaneContextMenu.onGrabItems({kept},0)
+    local action=queue.queue[1]
+    action[field]=field=='retriggerLastAction' and true or function() end
+    action.onCompleteArgs={}
+    ISTimedActionQueue.add(ISReadABook:new(player,kept));inventory.values={kept}
+    intent.begin(action,'perform');action:perform();intent.finish(action,'perform',true)
+    while queue.queue[1] do queue.queue[1]:perform() end
+    tickTidy();tickTidy()
+    assert(findReturn(kept),'unknown late '..field..' must leave real P4 return unchanged')
+    while queue.queue[1] do queue.queue[1]:perform() end
+    tickTidy();tickTidy()
+end
 reset()
 -- A changed source and an unknown preloaded owner cannot obtain a private baseline.
 local oldOperations,oldDefinitions,oldCompat=PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat

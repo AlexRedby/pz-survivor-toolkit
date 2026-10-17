@@ -21,7 +21,7 @@ local function fixture(client)
     end
     ISInventoryTransferAction = class("ISInventoryTransferAction")
     function ISInventoryTransferAction:new(player, item, source, destination)
-        return setmetatable({character = player, item = item, srcContainer = source, destContainer = destination}, self)
+        return setmetatable({character = player, item = item, srcContainer = source, destContainer = destination, queueList = {{items={item},time=1,type=item:getFullType()}}}, self)
     end
     ISEquipWeaponAction = class("ISEquipWeaponAction")
     function ISEquipWeaponAction:new(player, item, time, primary, twoHands)
@@ -112,13 +112,17 @@ local function fixture(client)
     h.intent = assert(loadfile(root .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua"))()
     h.lifecycle = assert(loadfile(root .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua"))()
     h.intent.install(function(action)
-        return h.valid and (not action or acceptedClasses[getmetatable(action)] and not action.changed)
+        return h.valid and (not action or acceptedClasses[getmetatable(action)] and not action.changed
+            and not action.onStartFunc and not action.onCompleteFunc and not action.onCancelFunc
+            and not action.retriggerLastAction and not action.onFailFunc and not action.additionalTest)
     end, function(menu,name)
         return h.approvedWrapper and menu==ISInventoryPaneContextMenu and menu['_ocStick_'..name]==menu[name]
     end)
     function h.item(container, id, kind)
         h.nextID = h.nextID + 1
         local value = {inventoryItem = true, id = id or h.nextID, kind = kind or "Base.Hammer", container = container or h.inventory}
+        function value:getWeight() return self.weight or 0.1 end
+        function value:setJobDelta() end
         function value:getID() return self.id end
         function value:getFullType() return self.kind end
         function value:getContainer() return self.container end
@@ -179,6 +183,49 @@ local function fixture(client)
     function h.manualGrab(item)
         ISInventoryPaneContextMenu.onGrabItems({item}, 0)
         h.drain()
+    end
+    function h.nativeMerge()
+        assert(NativeActionRoot, 'native source root required')
+        local path=NativeActionRoot..'/client/TimedActions/ISInventoryTransferAction.lua'
+        local source
+        if NativeReadText then source=NativeReadText(path) else
+            local file=assert(io.open(path));source=file:read('*a');file:close()
+        end
+        source=source:gsub('\r','')
+        for _,name in ipairs({'canMergeAction','checkQueueList','perform'}) do
+            local body=assert(source:match('(function ISInventoryTransferAction:'..name..'%b().-\nend)'))
+            assert(loadstring(body))()
+        end
+        table.wipe=function(value) for key in pairs(value) do value[key]=nil end end
+        round=function(value) return value end
+        ISInventoryPage={}
+        ISBaseTimedAction={perform=function(action)
+            local index=h.queue:indexOf(action)
+            if index~=-1 then table.remove(h.queue.queue,index) end
+        end}
+        createItemTransaction=function() return 1 end
+        removeItemTransaction=function() end
+        local noop=function() end
+        for _,name in ipairs({'playTransferCompleteSound','resetJobDelta','startActionAnim','playSourceContainerCloseSound',
+            'playDestContainerCloseSound','stopLoopingSound'}) do ISInventoryTransferAction[name]=noop end
+        ISInventoryTransferAction.isAlreadyTransferred=function(_,item) return item:getContainer()==h.inventory end
+        ISInventoryTransferAction.isValid=function(action) return not action.blocked or not action.blocked[action.item:getID()] end
+        ISInventoryTransferAction.transferItem=function(action,item) h.move(item,action.destContainer) end
+        h.intent.observeTransfers()
+        function h.prepareNative(action)
+            action.action={reset=noop,setTime=noop,stopTimedActionAnim=noop,setLoopedAction=noop,setWaitForFinished=noop}
+        end
+        function h.performNative(action,failed)
+            h.prepareNative(action)
+            if client then
+                for _,item in ipairs(action.queueList[1].items) do
+                    if not action.blocked or not action.blocked[item:getID()] then h.move(item,action.destContainer) end
+                end
+            end
+            h.lifecycle.begin(action,'perform')
+            action:perform()
+            h.lifecycle.finish(action,'perform',not failed)
+        end
     end
     return h
 end
@@ -693,6 +740,121 @@ test("new queue and main menu invalidate old intent", function()
         assert(#h.queue.queue == 1)
     end
 end)
+
+if NativeActionRoot then
+    test('native small-item merge retains every explicit ID and returns borrowed neighbor',function()
+        for _,client in ipairs({false,true}) do
+            local h=fixture(client);h.nativeMerge()
+            local borrowed,one,two=h.item(h.source),h.item(h.source),h.item(h.source)
+            ISTimedActionQueue.add(h.transfer(borrowed,h.inventory))
+            ISInventoryPaneContextMenu.onGrabItems({one,two},0)
+            local executor,child=h.queue.queue[1],h.queue.queue[2]
+            if client then executor:checkQueueList();h.tick() end
+            h.performNative(executor)
+            assert(child.character==nil and #h.queue.queue==0,'native merge did not wipe child')
+            h.restore(function()
+                for _,item in ipairs({borrowed,one,two}) do ISTimedActionQueue.add(h.transfer(item,h.source)) end
+            end)
+            assert(#h.queue.queue==1 and h.queue.queue[1].item==borrowed,'explicit merged IDs were not distinguished from borrow')
+        end
+    end)
+    test('native heavy groups confirm only completed group across canceled executor',function()
+        for _,client in ipairs({false,true}) do
+            local h=fixture(client);h.nativeMerge()
+            local one,two=h.item(h.source),h.item(h.source);one.weight,two.weight=1,1
+            ISInventoryPaneContextMenu.onGrabItems({one,two},0)
+            local executor=h.queue.queue[1]
+            if client then executor:checkQueueList() end
+            h.performNative(executor)
+            assert(executor.item==two and two:getContainer()==h.source,'native next-group mutation absent')
+            h.queue.queue={};h.player.nativeBusy=true;h.tick();h.player.nativeBusy=false;h.move(two,h.inventory)
+            h.restore(function()
+                ISTimedActionQueue.add(h.transfer(one,h.source));ISTimedActionQueue.add(h.transfer(two,h.source))
+            end)
+            assert(#h.queue.queue==1 and h.queue.queue[1].item==two,'future group gained success after cancellation')
+        end
+    end)
+    test('native partial group protects only successful IDs',function()
+        for _,client in ipairs({false,true}) do
+            local h=fixture(client);h.nativeMerge()
+            local one,two,three=h.item(h.source),h.item(h.source),h.item(h.source)
+            ISInventoryPaneContextMenu.onGrabItems({one,two,three},0)
+            local executor=h.queue.queue[1];executor.blocked={[two:getID()]=true}
+            if client then executor:checkQueueList() end
+            h.performNative(executor)
+            -- MP transaction may reject individual items; neither rejection nor subsequent inventory state is a receipt.
+            h.move(two,h.inventory)
+            h.restore(function()
+                for _,item in ipairs({one,two,three}) do if item:getContainer()==h.inventory then ISTimedActionQueue.add(h.transfer(item,h.source)) end end
+            end)
+            assert(#h.queue.queue==1 and h.queue.queue[1].item==two,'rejected item was protected')
+        end
+    end)
+    test('MP end-of-perform merge cannot confirm the next group early',function()
+        local h=fixture(true);h.nativeMerge()
+        local one,two=h.item(h.source),h.item(h.source);one.weight,two.weight=1,1
+        ISInventoryPaneContextMenu.onGrabItems({one},0)
+        local executor=h.queue.queue[1];executor:checkQueueList()
+        ISInventoryPaneContextMenu.onGrabItems({two},0)
+        h.performNative(executor)
+        assert(two:getContainer()==h.source and executor.item==two)
+        h.queue.queue={};h.player.nativeBusy=true;h.tick();h.player.nativeBusy=false;h.move(two,h.inventory)
+        h.restore(function()
+            ISTimedActionQueue.add(h.transfer(one,h.source));ISTimedActionQueue.add(h.transfer(two,h.source))
+        end)
+        assert(#h.queue.queue==1 and h.queue.queue[1].item==two)
+    end)
+    test('canceled native child cannot attach to later transfer of same ID',function()
+        local h=fixture(true);h.nativeMerge()
+        local one,two=h.item(h.source),h.item(h.source)
+        ISInventoryPaneContextMenu.onGrabItems({one,two},0)
+        table.remove(h.queue.queue,2);h.tick()
+        ISTimedActionQueue.add(h.transfer(two,h.inventory))
+        local executor=h.queue.queue[1];executor:checkQueueList();h.performNative(executor)
+        h.restore(function()
+            ISTimedActionQueue.add(h.transfer(one,h.source));ISTimedActionQueue.add(h.transfer(two,h.source))
+        end)
+        assert(#h.queue.queue==1 and h.queue.queue[1].item==two)
+    end)
+    test('unknown automatic executor callbacks keep native P4 fallback',function()
+        for _,client in ipairs({false,true}) do
+            local h=fixture(client);h.nativeMerge()
+            local borrowed,manual=h.item(h.source),h.item(h.source)
+            local executor=h.transfer(borrowed,h.inventory);executor.onCancelFunc=function() end
+            ISTimedActionQueue.add(executor);ISInventoryPaneContextMenu.onGrabItems({manual},0)
+            if client then executor:checkQueueList() end
+            h.performNative(executor)
+            h.restore(function()
+                ISTimedActionQueue.add(h.transfer(manual,h.source));ISTimedActionQueue.add(h.transfer(borrowed,h.source))
+            end)
+            assert(#h.queue.queue==2,'unknown executor acquired explicit restore privileges')
+        end
+    end)
+    test('late callback mutation after MP merge invalidates every bound record',function()
+        local h=fixture(true);h.nativeMerge()
+        local one,two=h.item(h.source),h.item(h.source)
+        ISInventoryPaneContextMenu.onGrabItems({one,two},0)
+        local executor=h.queue.queue[1];executor:checkQueueList();executor.onCompleteFunc=function() end;executor.onCompleteArgs={}
+        h.performNative(executor)
+        h.restore(function()
+            ISTimedActionQueue.add(h.transfer(one,h.source));ISTimedActionQueue.add(h.transfer(two,h.source))
+        end)
+        assert(#h.queue.queue==2,'late callback mutation retained stale merge rights')
+    end)
+    test('merged outgoing groups end protection for every transferred ID',function()
+        local h=fixture();h.nativeMerge()
+        local one,two=h.item(h.source),h.item(h.source)
+        ISInventoryPaneContextMenu.onGrabItems({one,two},0);h.performNative(h.queue.queue[1])
+        ISTimedActionQueue.add(h.transfer(one,h.source));ISTimedActionQueue.add(h.transfer(two,h.source))
+        h.performNative(h.queue.queue[1])
+        ISTimedActionQueue.add(h.transfer(one,h.inventory));ISTimedActionQueue.add(h.transfer(two,h.inventory))
+        h.performNative(h.queue.queue[1])
+        h.restore(function()
+            ISTimedActionQueue.add(h.transfer(one,h.source));ISTimedActionQueue.add(h.transfer(two,h.source))
+        end)
+        assert(#h.queue.queue==2,'earlier explicit IDs protected later automatic borrow')
+    end)
+end
 
 for _, failure in ipairs(failures) do print("FAIL tidy intent: " .. failure) end
 assert(#failures == 0, tostring(#failures) .. " of " .. checked .. " tidy intent checks failed")

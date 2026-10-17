@@ -1,4 +1,5 @@
 local Postprocess={}
+local Bulk=require 'QueueEquipmentBulk'
 local function same(item,expected)
  return item==nil and expected==nil or item~=nil and expected~=nil
   and item:getID()==expected:getID() and item:getFullType()==expected:getFullType()
@@ -94,11 +95,13 @@ function Postprocess.verify(state,mode,tidy)
  local actualWorn={};local values=player:getWornItems()
  for i=0,values:size()-1 do local item=values:getItemByIndex(i);actualWorn[values:getLocation(item)]=item end
  sameSlots(actualWorn,state.expectedWorn,'worn item')
+ if Bulk.isCase(state.id) then Bulk.verify(state,true,tidy) end
  local rootNames={front=true,tail=true,hammer=true,screwdriver=true,bag=true,pickupBag=true,
   clothingB=true,hotbarInitial=true,hotbarReplacement=true}
  for name,seed in pairs(state.items) do
   local expected=root
-  if name=='bat' then
+  if name:match('^bulk') then expected=Bulk.container(state,name,true,tidy)
+  elseif name=='bat' then
    if state.id=='waiting-cancel' and mode=='toolkit' or tidy and state.id=='hands-chain' then expected=state.source end
   elseif name=='content' or name:match('^plank%d+$') then expected=state.source
   elseif name=='clothingA' then expected=tidy and state.source or root

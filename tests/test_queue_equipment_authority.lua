@@ -2,7 +2,7 @@ isClient,isServer=function() return false end,function() return false end
 local function load(name)
  return assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/'..name..'.lua'))()
 end
-local modules={QueueEquipmentSlots=load('QueueEquipmentSlots'),QueueEquipmentFloor=load('QueueEquipmentFloor')}
+local modules={QueueEquipmentSlots=load('QueueEquipmentSlots'),QueueEquipmentFloor=load('QueueEquipmentFloor'),QueueEquipmentBulk=load('QueueEquipmentBulk')}
 require=function(name) return assert(modules[name],name) end
 local Fixture=load('QueueEquipmentFixture')
 local function book(pages)

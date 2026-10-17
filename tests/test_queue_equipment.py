@@ -36,6 +36,14 @@ class EquipmentTests(unittest.TestCase):
                 result.update(slotsVerified=True, clothing=case == 'clothing-chain', hotbar=case == 'hotbar-chain')
             if case == 'floor-pickup':
                 result.update(floorPickup=True, pickupWorldRemoved=True)
+            if case.startswith('bulk-'):
+                result.update(bulkPickup=True, exactBulkContainers=True)
+                if case == 'bulk-waiting-cancel':
+                    result.update(bulkCancelled=True, unrelatedTailPreserved=True)
+                else:
+                    result.update(lightMerged=True, heavySeparate=True, childrenWiped=True, sharedExecutor=case == 'bulk-mixed')
+                if case == 'bulk-mixed':
+                    result['borrowedReturned'] = 'P4TidyUpMeister' in self.selection['mods']
             if self.selection['kind'] == 'mp':
                 result.update(authoritative=True, receipts=0 if case == 'waiting-cancel' and enabled else equipment.RECEIPTS[case])
                 result['receiptStates'] = ['completed'] * result['receipts']
@@ -160,6 +168,23 @@ class EquipmentTests(unittest.TestCase):
                         text + '\n[QUEUE_TEST] FAIL fixture', text + '\n[EQUIPMENT_TEST] COMPLETE'):
             self.assertTrue(self.verify(changed)['issues'])
         self.assertFalse(equipment.complete(self.selection, 'client2', text))
+
+    def test_bulk_requires_merge_cancellation_and_postprocess_evidence(self):
+        self.selection['mods'].append('P4TidyUpMeister')
+        for mode in ('native', 'toolkit'):
+            self.selection['mode'] = mode
+            for case in ('bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed'):
+                self.selection['cases'] = [case]
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                keys = ['exactBulkContainers']
+                keys += ['bulkCancelled', 'unrelatedTailPreserved'] if case == 'bulk-waiting-cancel' else ['lightMerged', 'heavySeparate', 'childrenWiped']
+                if case == 'bulk-mixed':
+                    keys += ['borrowedReturned', 'sharedExecutor']
+                for key in keys:
+                    rows = self.records()
+                    rows[1]['outcome'][key] = False
+                    with self.subTest(mode=mode, case=case, key=key):
+                        self.assertTrue(self.verify(self.logs(rows))['issues'])
 
     def test_stage_pins_shared_json_writer_and_only_equipment_sources(self):
         target = self.root / 'client1/mods/ActionQueueTest/42/media/lua/shared'

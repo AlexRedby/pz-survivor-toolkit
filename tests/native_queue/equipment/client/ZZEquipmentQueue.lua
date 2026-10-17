@@ -4,6 +4,7 @@ local Fixture=require 'QueueEquipmentFixture'
 local Slots=require 'QueueEquipmentSlots'
 local Floor=require 'QueueEquipmentFloor'
 local Postprocess=require 'QueueEquipmentPostprocess'
+local Bulk=require 'QueueEquipmentBulk'
 local JSON=require 'QueueHealthEvents'
 local Toolkit=PZSurvivorToolkit
 local API,Policy,Ops=Toolkit.ActionQueue,Toolkit.ActionQueuePolicy,Toolkit.ActionQueueOperations
@@ -81,6 +82,7 @@ local function enqueue()
    first,state.hammerAction=equip(state.hammer,true,false)
    first,state.screwdriverAction=equip(state.screwdriver,false,false)
   end
+ elseif Bulk.isCase(state.id) then Bulk.enqueue(state,{run=run,queue=queue})
  elseif state.id=='floor-pickup' then Floor.enqueue(state,{run=run,queue=queue})
  else Slots.enqueue(state,{run=run,queue=queue}) end
  state.tailAction=read(state.tail)
@@ -98,6 +100,10 @@ local function denied(action,target,after,reason)
  assert(not ok and actual==reason,'queue API did not preserve policy barrier');unchanged(before)
 end
 local function controls()
+ if Bulk.isCase(state.id) then
+  Bulk.controls(state,{native=native,queue=queue,policy=Policy,api=API})
+  state.policyChecked=not native;return
+ end
  if native then return end
  if state.id=='hands-chain' then
   denied(state.pickupAction,state.hammerAction,true,'container_capacity')
@@ -145,6 +151,7 @@ Events.OnTick.Add(function()
  if not started or done then return end
  local now=getTimestampMs()
  local ok,problem=pcall(function()
+  if state and Bulk.isCase(state.id) then Bulk.observe(state,queue()) end
   if state and Selection.kind=='mp' then
    local action=queue().current
    local record=action and Toolkit.ActionQueueAcknowledgements.capture(action)
@@ -216,6 +223,7 @@ Events.OnTick.Add(function()
    end
    if state.id=='hands-chain' then assert(state.activeProgress,'equipment never made native active progress') end
    outcome=Fixture.verify(state,Selection.mode,true)
+   if Bulk.isCase(state.id) then for key,value in pairs(Bulk.evidence(state)) do outcome[key]=value end end
    if state.id=='hands-chain' then outcome.activeProgress=true;outcome.activeProtected=not native end
    outcome.receipts=Selection.kind=='mp' and #state.records or 0
    if Selection.kind=='mp' then outcome.receiptStates=receiptStates end
@@ -239,6 +247,7 @@ Events.OnTick.Add(function()
    outcome.tailCompleted=state.tail:getAlreadyReadPages()==state.tail:getNumberOfPages()
     and getPlayer():getAlreadyReadPages(state.tail:getFullType())==state.tail:getNumberOfPages()
    outcome.postprocessingVerified=passed
+   if Bulk.isCase(state.id) then outcome.borrowedReturned=state.id=='bulk-mixed' and passed and tidy or false end
    outcome.finalPrimary=getPlayer():getPrimaryHandItem() and getPlayer():getPrimaryHandItem():getID() or false
    outcome.finalSecondary=getPlayer():getSecondaryHandItem() and getPlayer():getSecondaryHandItem():getID() or false
    if not passed then state.postproblem=tostring(problem) end

@@ -6,8 +6,8 @@ import shutil
 import subprocess
 import zipfile
 
-CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'floor-pickup']
-RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'floor-pickup': 0}
+CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed']
+RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0}
 
 
 def definitions():
@@ -119,6 +119,14 @@ def verify(root, selection, catalog):
             required['clothing' if row['id'] == 'clothing-chain' else 'hotbar'] = True
         if row.get('id') == 'floor-pickup':
             required.update(floorPickup=True, pickupWorldRemoved=True)
+        if row.get('id', '').startswith('bulk-'):
+            required.update(bulkPickup=True, exactBulkContainers=True)
+            if row['id'] == 'bulk-waiting-cancel':
+                required.update(bulkCancelled=True, unrelatedTailPreserved=True)
+            else:
+                required.update(lightMerged=True, heavySeparate=True, childrenWiped=True, sharedExecutor=row['id'] == 'bulk-mixed')
+            if row['id'] == 'bulk-mixed':
+                required['borrowedReturned'] = 'P4TidyUpMeister' in selection['mods']
         if selection['kind'] == 'mp':
             required['authoritative'] = True
             count = 0 if row.get('id') == 'waiting-cancel' and selection['mode'] == 'toolkit' else RECEIPTS.get(row.get('id'))

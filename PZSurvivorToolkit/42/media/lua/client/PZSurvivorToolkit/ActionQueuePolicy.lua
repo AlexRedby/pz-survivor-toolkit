@@ -439,6 +439,15 @@ function Policy.adoptEatStart(previous, replacement, helpersUnchanged)
     return true
 end
 
+function Policy.adoptTransferQueueObserver(previous,replacement)
+    local snapshot=snapshots[ISInventoryTransferAction]
+    local intent=Toolkit.ActionQueueTidyIntent
+    if not snapshot or snapshot.helpers.checkQueueList~=previous or ISInventoryTransferAction.checkQueueList~=replacement
+        or not intent or not intent.isQueueObserver(previous,replacement) then return false end
+    snapshot.helpers.checkQueueList=replacement
+    return true
+end
+
 function Policy.adoptTransferFloorHelper(previous, replacement)
     local snapshot = snapshots[ISInventoryTransferAction]
     if not snapshot or snapshot.helpers.getNotFullFloorSquare ~= previous

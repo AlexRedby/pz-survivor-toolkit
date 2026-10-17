@@ -1,3 +1,4 @@
+package.preload.QueueEquipmentBulk=function() return assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentBulk.lua'))() end
 local Postprocess=assert(loadfile(ProjectRoot..'/tests/native_queue/equipment/shared/QueueEquipmentPostprocess.lua'))()
 local function list(items)
  return {size=function() return #items end,get=function(_,i) return items[i+1] end,
@@ -74,6 +75,12 @@ local function fixture(id,mode)
   state.hotbarIndex,state.hotbarType=1,'Back'
   state.hotbarReplacement.slot,state.hotbarReplacement.slotType,state.hotbarReplacement.model=1,'Back',state.hotbarLocation
   player.attached[state.hotbarLocation]=state.hotbarReplacement
+ elseif id:match('^bulk') then
+  seed('bulkHeavyA',nil,id=='bulk-waiting-cancel' and state.source or state.root)
+  for i=1,3 do seed('bulkLight'..i,nil,id=='bulk-waiting-cancel' and state.source or state.root) end
+  seed('bulkHeavyB',nil,id=='bulk-waiting-cancel' and state.source or state.root)
+  if id=='bulk-mixed' then seed('bulkBorrowed') end
+  if id=='bulk-waiting-cancel' then seed('bulkSurvivor') end
  elseif id=='floor-pickup' then
   seed('pickup');state.floor={id=state.pickup.id,x=1,y=2,z=0}
   local square={objects={}};function square:getWorldObjects() return list(self.objects) end
@@ -86,7 +93,7 @@ local function rejected(state,mode,tidy,reason)
  local ok,problem=pcall(Postprocess.verify,state,mode,tidy)
  assert(not ok and tostring(problem):find(reason,1,true),'missing expected failure '..reason..': '..tostring(problem))
 end
-for _,id in ipairs({'hands-chain','waiting-cancel','bag-capacity','clothing-chain','hotbar-chain','floor-pickup'}) do
+for _,id in ipairs({'hands-chain','waiting-cancel','bag-capacity','clothing-chain','hotbar-chain','floor-pickup','bulk-pickup','bulk-waiting-cancel','bulk-mixed'}) do
  local state=fixture(id,'native');assert(Postprocess.verify(state,'native',false).postprocessingVerified)
 end
 for _,id in ipairs({'hands-chain','clothing-chain'}) do
@@ -126,3 +133,12 @@ rejected(attachment,'native',false,'unexpected attachment')
 local metadata=fixture('hotbar-chain','native');metadata.hotbarReplacement.slotType=nil
 rejected(metadata,'native',false,'postprocessing changed hotbar metadata')
 print('Equipment postprocessing: exact identities, deterministic returns, floor restoration and deliberate equipment protection passed.')
+
+local mixed=fixture('bulk-mixed','toolkit');move(mixed.bulkBorrowed,mixed.source)
+assert(Postprocess.verify(mixed,'toolkit',true).postprocessingVerified,'borrowed bulk item must return after idle')
+move(mixed.bulkLight2,mixed.source)
+rejected(mixed,'toolkit',true,'bulk exact source/destination differs bulkLight2')
+local bulk=fixture('bulk-pickup','toolkit');move(bulk.bulkHeavyB,bulk.source)
+rejected(bulk,'toolkit',true,'bulk exact source/destination differs bulkHeavyB')
+local bulkCancel=fixture('bulk-waiting-cancel','toolkit');move(bulkCancel.bulkSurvivor,bulkCancel.source)
+rejected(bulkCancel,'toolkit',true,'bulk exact source/destination differs bulkSurvivor')

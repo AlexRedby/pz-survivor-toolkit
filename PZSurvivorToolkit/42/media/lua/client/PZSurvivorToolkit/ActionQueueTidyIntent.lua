@@ -2,6 +2,8 @@ require "Hotbar/ISHotbar"
 local Intent = {}
 PZSurvivorToolkit.ActionQueueTidyIntent = Intent
 local states, watching = setmetatable({}, {__mode='k'}), setmetatable({}, {__mode='k'})
+local transfers=setmetatable({}, {__mode='k'})
+local mergeOriginal,mergeObserver
 local scope, guard, wrappedUI, installed
 local serial=0
 local function pack(...) return {n=select('#',...),...} end
@@ -15,6 +17,7 @@ end
 local function clear(player)
     local value=states[player]
     if value then for action in pairs(value.pending) do watching[action]=nil end end
+    for action in pairs(transfers) do if action.character==player then transfers[action]=nil end end
     states[player]=nil
 end
 local function state(player)
@@ -24,7 +27,7 @@ local function state(player)
     return value
 end
 local function confirm(record)
-    local action,player=record.action,record.action.character
+    local action,player=record.executor or record.action,record.player
     if not record.accepted or not record.effect or not guard(action) then return end
     local item=resolve(player,record.item)
     if not item then return end
@@ -54,7 +57,7 @@ local function confirm(record)
         remember('attached',action.slot,record.item)
     end
     if record.kind=='equip' and item:canBeActivated() then value.activation[record.item.id]={item=record.item,activated=record.activated} end
-    value.pending[action],watching[action]=nil,nil
+    value.pending[record.action],watching[record.action]=nil,nil
 end
 local function captureBefore(action,record)
     local primary,secondary=action.character:getPrimaryHandItem(),action.character:getSecondaryHandItem()
@@ -71,13 +74,63 @@ function Intent.start(action)
     local record=watching[action]
     if record and guard(action) then captureBefore(action,record);record.started=true end
 end
+local function groupItems(action)
+    local group=action.queueList and action.queueList[1]
+    local refs={}
+    for _,item in ipairs(group and group.items or {action.item}) do refs[#refs+1]=identity(item) end
+    return refs
+end
+local function transfer(action)
+    local batch=transfers[action]
+    if not batch then batch={records={}};transfers[action]=batch end
+    return batch
+end
+-- Observe the native merge before table.wipe destroys the child action's identity.
+function Intent.observeTransfers()
+    if mergeObserver or type(ISInventoryTransferAction.checkQueueList)~='function' then return end
+    mergeOriginal=ISInventoryTransferAction.checkQueueList
+    mergeObserver=function(action,...)
+        if not guard or not guard(action) then return mergeOriginal(action,...) end
+        local queue=ISTimedActionQueue.getTimedActionQueue(action.character)
+        local candidates={}
+        for _,child in ipairs(queue.queue) do
+            local record=watching[child]
+            if child~=action and record and record.kind=='grab' and guard(child)
+                and child.srcContainer==action.srcContainer and child.destContainer==action.destContainer then
+                candidates[#candidates+1]=record
+            end
+        end
+        local result=pack(mergeOriginal(action,...))
+        for _,record in ipairs(candidates) do
+            if queue:indexOf(record.action)==-1 then
+                for _,group in ipairs(action.queueList or {}) do for _,item in ipairs(group.items) do
+                    if same(item,record.item) then
+                        record.executor=action;record.enqueued=true
+                        transfer(action).records[record.item.id]=record
+                    end
+                end end
+            end
+        end
+        local batch=transfers[action]
+        -- MP calls this again AFTER consuming its group; retain that group's receipt.
+        if batch and batch.attempted and not isClient() then batch.attempted=groupItems(action) end
+        return unpack(result,1,result.n)
+    end
+    ISInventoryTransferAction.checkQueueList=mergeObserver
+end
+function Intent.isQueueObserver(previous,replacement)
+    return previous==mergeOriginal and replacement==mergeObserver and replacement~=nil
+end
 function Intent.begin(action,phase)
     local record=watching[action]
-    if not record then
-        local value=action and states[action.character]
-        if not value or getmetatable(action)~=ISInventoryTransferAction or not guard(action) then return false end
-        return action.srcContainer==action.character:getInventory() and action.destContainer~=action.srcContainer
+    if phase=='perform' and getmetatable(action)==ISInventoryTransferAction and guard and guard(action)
+        and (record or states[action.character] or transfers[action]) then
+        local batch=transfer(action)
+        if record and record.kind=='grab' then batch.records[record.item.id]=record end
+        batch.attempted=groupItems(action)
+        return true
     end
+    if not record then return false end
     if (phase=='complete' or isClient() and phase=='perform') and not (isClient() and record.started) then
         captureBefore(action,record)
     end
@@ -86,21 +139,45 @@ end
 function Intent.finish(action,phase,succeeded)
     -- Inventory transfers apply their effects in perform(), including in SP.
     if phase~='complete' and not (phase=='perform' and (isClient() or getmetatable(action)==ISInventoryTransferAction)) then return end
-    local record=watching[action]
     local player=action.character
-    if not record then
+    local batch=transfers[action]
+    if phase=='perform' and batch then
+        local valid=succeeded and guard(action)
         local value=states[player]
-        if value and succeeded and getmetatable(action)==ISInventoryTransferAction and guard(action)
-            and action.srcContainer==player:getInventory() and action.destContainer~=action.srcContainer
-            and not resolve(player,identity(action.item)) then
-            local ref=identity(action.item)
-            value.pickups[ref.id]=nil
-            for _,group in ipairs({'hands','worn','attached'}) do
-                for slot,wanted in pairs(value[group]) do if same(action.item,wanted) then value[group][slot]=nil end end
+        for _,ref in ipairs(batch.attempted or {}) do
+            local record=batch.records[ref.id]
+            if record and record.item.kind==ref.kind then
+                record.finished=true;record.effect=valid and resolve(player,ref)~=nil
+                confirm(record)
+                batch.records[ref.id]=nil
+                if not record.effect then
+                    watching[record.action]=nil
+                    if value then value.pending[record.action]=nil end
+                end
+            end
+            if valid and value and action.srcContainer==player:getInventory() and action.destContainer~=action.srcContainer
+                and not resolve(player,ref) then
+                value.pickups[ref.id]=nil
+                for _,group in ipairs({'hands','worn','attached'}) do
+                    for slot,wanted in pairs(value[group]) do if wanted and wanted.id==ref.id and wanted.kind==ref.kind then value[group][slot]=nil end end
+                end
+            end
+        end
+        batch.attempted=nil
+        for id,record in pairs(batch.records) do
+            local queued=false
+            for _,group in ipairs(action.queueList or {}) do for _,item in ipairs(group.items) do
+                if same(item,record.item) then queued=true end
+            end end
+            if not queued then
+                batch.records[id],watching[record.action]=nil,nil
+                if value then value.pending[record.action]=nil end
             end
         end
         return
     end
+    local record=watching[action]
+    if not record then return end
     record.finished=true
     if record.kind=='equip' then
         record.clearedOpposite=record.oppositeBefore and not (action.primary and player:getSecondaryHandItem() or not action.primary and player:getPrimaryHandItem())
@@ -131,7 +208,7 @@ local function capture(action)
     elseif class~=({equip=ISEquipWeaponAction,unequip=ISUnequipAction,wear=ISWearClothing,attach=ISAttachItemHotbar})[scope.kind] then return end
     if not instanceof(action.item,'InventoryItem') then return end
     serial=serial+1
-    local record={action=action,item=identity(action.item),kind=scope.kind,serial=serial}
+    local record={action=action,player=action.character,item=identity(action.item),kind=scope.kind,serial=serial}
     watching[action]=record;scope.records[#scope.records+1]=record
 end
 local function wrap(owner,name,kind,hotbar)
@@ -148,7 +225,7 @@ local function wrap(owner,name,kind,hotbar)
         for i,record in ipairs(current.records) do
             if result[1] and record.enqueued and (kind~='equip' or i==#current.records) then
                 local action=record.action;record.accepted=true
-                state(action.character).pending[action]=record
+                state(record.player).pending[action]=record
                 if record.finished then confirm(record) end
             else watching[record.action]=nil end
         end
@@ -182,8 +259,8 @@ function Intent.install(valid,approvedWrapper)
         for _,candidate in ipairs({action,results[2]}) do
             local record=watching[candidate]
             if record then
-                local queue=ISTimedActionQueue.getTimedActionQueue(candidate.character)
-                record.enqueued=queue:indexOf(candidate)~=-1 or record.finished
+                local queue=ISTimedActionQueue.getTimedActionQueue(record.player)
+                record.enqueued=record.enqueued or queue:indexOf(candidate)~=-1 or record.finished
             end
         end
         return unpack(results,1,results.n)
@@ -194,7 +271,7 @@ function Intent.install(valid,approvedWrapper)
     ISTimedActionQueue.addAfter=function(previous,action) return enqueue(action,addAfter,previous,action) end
     local addToQueue=ISTimedActionQueue.addToQueue
     ISTimedActionQueue.addToQueue=function(queue,action) return enqueue(action,addToQueue,queue,action) end
-    if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() states=setmetatable({}, {__mode='k'});watching=setmetatable({}, {__mode='k'}) end) end
+    if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() states=setmetatable({}, {__mode='k'});watching=setmetatable({}, {__mode='k'});transfers=setmetatable({}, {__mode='k'}) end) end
 end
 function Intent.update(player,callback,...)
     local value=states[player]
@@ -203,9 +280,12 @@ function Intent.update(player,callback,...)
         clear(player);return callback(...)
     end
     for action,record in pairs(value.pending) do
-        if value.queue:indexOf(action)==-1 then
+        if value.queue:indexOf(record.executor or action)==-1 then
             value.pending[action],watching[action]=nil,nil
         end
+    end
+    for action,batch in pairs(transfers) do
+        if action.character==player and value.queue:indexOf(action)==-1 then transfers[action]=nil end
     end
     for id,ref in pairs(value.pickups) do if not resolve(player,ref) then value.pickups[id]=nil end end
     local empty=#value.queue.queue==0 and not player:hasTimedActions()
