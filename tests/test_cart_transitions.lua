@@ -284,6 +284,28 @@ release:update()
 assert(p.vars.Weapon == "" and p.vars.RightHandMask == "" and p.vars.LeftHandMask == ""
     and p.primary == wood and p.secondary == wood, "pose retirement changed ownership or allowed a stale idle layer")
 release:stop()
+local stopOriginal = rawget(ISUnequipAction, "stop")
+local stopCalls, visualCalls = 0, 0
+release.action = {}
+ISUnequipAction.stop = function(self)
+    assert(self == release); stopCalls = stopCalls + 1
+    if self.stopError then error("native stop failure") end
+    return "native stopped"
+end
+ToolkitCartRefreshVisual = function(player, action, stopped)
+    assert(player == p and action == release.action and stopped == true and stopCalls == 1,
+        "cancelled setdown refreshed before native stop or lost exact identity")
+    visualCalls = visualCalls + 1
+end
+local completed, performed = p.completeCalls, release.performed
+assert(release:stop() == "native stopped" and visualCalls == 1 and stopCalls == 1)
+assert(p.completeCalls == completed and release.performed == performed, "stop transferred cart ownership")
+p.primary, p.secondary = steel, steel
+release:stop(); assert(stopCalls == 2 and visualCalls == 1, "cancelled setdown adopted a replacement cart")
+p.primary, p.secondary = wood, wood; release.stopError = true
+local stopOK, stopError = pcall(release.stop, release)
+assert(not stopOK and tostring(stopError):find("native stop failure", 1, true) and visualCalls == 1)
+ISUnequipAction.stop, ToolkitCartRefreshVisual = stopOriginal, nil
 local queue = {}
 for _, reason in ipairs({"drop", "place"}) do
     local action = ISUnequipAction:new(p, wood, 1, reason)

@@ -107,8 +107,8 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'interaction'])
-        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('interaction', 4)]:
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'interaction', 'interruption'])
+        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('interaction', 4), ('interruption', 12)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -116,9 +116,10 @@ class CartAdapterTests(unittest.TestCase):
                 self.selection['cases'] = [case]
                 self.stage()
                 text = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
-                source='collision' if case in ('collision','footprint') else case
+                source='collision' if case in ('collision','footprint') else 'interaction' if case=='interruption' else case
                 self.assertIn((ROOT / f'tests/native_queue/contributions/wooden_cart_motion/scenario-{source}.lua').read_text(), text)
                 if case in ('collision','footprint'): self.assertIn('["footprint"]=true',text)
+                if case == 'interruption': self.assertIn('["interruptions"]=true',text)
                 self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 3)
                 self.assertTrue(carts.complete(self.selection, 'client1', f'[WOOD_BANK] ALL_COMPLETE cases={count}\n'))
                 for wrong in (count + 1, count * 10):
@@ -187,6 +188,33 @@ class CartAdapterTests(unittest.TestCase):
             result = carts.verify(self.output, self.selection, {})
             self.assertTrue(result['evidence']['interaction']['functionalPass'])
             self.assertFalse(result['evidence']['interaction']['worldHandoff']['pass'])
+            self.assertTrue(result['issues'])
+            self.assertEqual(result['outcomes'][0]['status'], 'failed')
+
+    def test_interruption_adapter_requires_native_stop_retry_and_first_render_receipts(self):
+        self.selection['cases'] = ['interruption']
+        fixture = carts._load(ROOT / 'tests/test_cart_interruption.py')
+        text, lifecycle, body, grip, world = fixture.fixture()
+        cache = self.output / 'client1'
+        (self.output / 'client1-launch.log').write_text(text)
+        (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
+        for filename, rows in [('action-lifecycle.jsonl', lifecycle), ('body-clearance.jsonl', body),
+                               ('wood-grip-poses.jsonl', grip), ('world-cart-poses.jsonl', world)]:
+            (cache / filename).write_text('\n'.join(map(json.dumps, rows)))
+        original_run = carts._run
+        commands = []
+        def run(command, directory, name):
+            commands.append(name)
+            return original_run(command, directory, name) if name == 'interruption' else {'exit_code': 0}
+        with patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
+            result = carts.verify(self.output, self.selection, {})
+            self.assertFalse(result['issues'], result['issues'])
+            self.assertTrue(result['evidence']['interruption']['functionalPass'])
+            self.assertEqual(set(commands), {'aabb', 'body', 'pants', 'interruption'})
+            self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+            lifecycle[1]['event'] = 'complete'
+            (cache / 'action-lifecycle.jsonl').write_text('\n'.join(map(json.dumps, lifecycle)))
+            result = carts.verify(self.output, self.selection, {})
             self.assertTrue(result['issues'])
             self.assertEqual(result['outcomes'][0]['status'], 'failed')
 

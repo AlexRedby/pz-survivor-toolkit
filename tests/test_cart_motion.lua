@@ -35,6 +35,7 @@ local function setup(server, active, client)
             return {size = function() return self.actions end, get = function(_, index) assert(index == 0); return self.action end}
         end
         function p:getVariableFloat(name, default) return self.vars[name] or default end
+        function p:getVariableBoolean(name) return self.vars[name] == true end
         function p:setVariable(name, value) self.vars[name] = value end
         function p:getTurnDelta() return self.sprinting and 0.75 or self.running and 0.8 or self.normal end
         function p:setTurnDelta(value) self.normal = value end
@@ -151,6 +152,34 @@ assert(p.vars.ToolkitCartMotion and p.normal < 1, "native cleanup did not retain
 w.tick(p)
 assert(p.vars.ToolkitCartMotion, "later native refresh lost the post-pickup visual")
 print("PASS cart motion: exact finished-action refresh preserves next-action, ownership, death and normal frame gates")
+
+w = setup(false, true); p = w.player(); cart = p:equip(50)
+local stopped = {finished = function() return false end}
+p.actions, p.action = 1, stopped
+assert(ToolkitCartRefreshVisual(p, stopped, true) == cart and p.vars.ToolkitCartMotion and p.normal == 1)
+w.tick(p)
+assert(not p.vars.ToolkitCartMotion, "stop allowance persisted into an ordinary active-action frame")
+for _, condition in ipairs({"animated", "wrongidentity", "twoactions", "dead", "aim", "onehand", "world", "owner"}) do
+    p.actions, p.action, p.dead, p.aim = 1, stopped, false, false
+    p.item, p.secondary, cart.world, cart.owner = cart, cart, nil, p.inventory
+    p.vars.IsPerformingAnAction = condition == "animated"
+    if condition == "wrongidentity" then p.action = {}
+    elseif condition == "twoactions" then p.actions = 2
+    elseif condition == "dead" then p.dead = true
+    elseif condition == "aim" then p.aim = true
+    elseif condition == "onehand" then p.secondary = nil
+    elseif condition == "world" then cart.world = {}
+    elseif condition == "owner" then cart.owner = {} end
+    assert(not ToolkitCartRefreshVisual(p, stopped, true), condition .. " bypassed exact stopped-action guards")
+end
+p.actions, p.action, p.dead, p.aim = 1, stopped, false, false
+p.item, p.secondary, cart.world, cart.owner = cart, cart, nil, p.inventory
+for _, value in ipairs({false, 1, "true"}) do
+    assert(not ToolkitCartRefreshVisual(p, stopped, value), "non-boolean stop allowance accepted")
+end
+p.actions = 0; w.tick(p)
+assert(p.vars.ToolkitCartMotion and p.normal < 1, "ordinary cleanup did not restore held controls")
+print("PASS cart motion: exact native stop restores only the visual and preserves active-action/ownership guards")
 
 w = setup(false, true, true)
 p = w.player(); p:equip(50); w.tick(p, 60)

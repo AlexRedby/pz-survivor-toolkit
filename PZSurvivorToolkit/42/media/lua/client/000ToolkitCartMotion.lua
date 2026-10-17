@@ -28,21 +28,22 @@ local function restore(player)
     end
 end
 
-local function heldCart(player, finishingAction)
+local function heldCart(player, finishingAction, stopped)
     local item = player:getPrimaryHandItem()
     if not item or player:getSecondaryHandItem() ~= item or not instanceof(item, "InventoryContainer")
         or not SaucedCarts.safeIsCart(item) or item:getWorldItem() or item:getContainer() ~= player:getInventory()
         or player:isDead() or player:isAiming() or player:isSneaking() or player:getVehicle()
         or math.abs(player:getVariableFloat("WalkInjury", 0)) >= 0.15 then return end
     local actions = player:getCharacterActions()
-    -- Native complete runs before removing its finished action; the next queued action has a different identity.
+    -- Native complete/stop callbacks run before removing their exact action from the stack.
     if actions:size() > 0 and not (finishingAction and actions:size() == 1
-        and actions:get(0) == finishingAction and finishingAction:finished()) then return end
+        and actions:get(0) == finishingAction and (finishingAction:finished()
+            or stopped == true and not player:getVariableBoolean("IsPerformingAnAction"))) then return end
     return item
 end
 
-function ToolkitCartRefreshVisual(player, finishingAction)
-    local cart = heldCart(player, finishingAction)
+function ToolkitCartRefreshVisual(player, finishingAction, stopped)
+    local cart = heldCart(player, finishingAction, stopped)
     setVisual(player, cart ~= nil)
     return cart
 end

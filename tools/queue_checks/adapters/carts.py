@@ -20,7 +20,7 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
             'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
             'collision': ('scenario-collision.lua', 20), 'footprint': ('scenario-collision.lua', 20),
-            'interaction': ('scenario-interaction.lua', 4)}
+            'interaction': ('scenario-interaction.lua', 4), 'interruption': ('scenario-interaction.lua', 12)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 
 
@@ -163,6 +163,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         if selection['suite'] == SP:
             motion = dict(disposable=True, ffmpeg=config['ffmpeg'], videoRoot=videos[role], area=AREA)
             if selection['cases'][0] in ('collision','footprint'): motion['footprint']=True
+            if selection['cases'][0] == 'interruption': motion['interruptions']=True
             runtime_source = 'CartMotionConfig=' + _lua(motion) + '\nif not CartAdapterBootstrapped then\nCartAdapterBootstrapped=true\n'
             runtime_source += '(function()\n' + (sp / 'test-area.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'obstacles.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'bootstrap.lua').read_text() + '\nend)()'
             runtime_source += '\nelse\n(function()\n' + (sp / SP_CASES[selection['cases'][0]][0]).read_text() + '\nend)()\nend\n'
@@ -278,10 +279,17 @@ def verify(root, selection, catalog):
                 ('body', [sys.executable, str(ev / 'check-hip-actual.py'), '--game-java-dir', str(game), '--mesh', str(_path(selection, 'mesh_fbx')), '--mesh-vbo', str(cache / 'WheelbarrowWood.bin'), '--capture', str(cache / 'body-clearance.jsonl'), '--output', str(analysis)]),
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
-            if case != 'interaction':
+            if case not in ('interaction', 'interruption'):
                 commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if case != 'sprint' else [])))
             evidence['analyzers'] = {name: _run(command, analysis, name) for name, command in commands}
-            if case == 'interaction':
+            if case == 'interruption':
+                evidence['analyzers'][case] = _run([sys.executable, str(intake / 'analyze-interruption.py'),
+                    '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'interruption.json')], analysis, case)
+                evidence['interruption'] = _json(analysis / 'interruption.json')
+                if not evidence['interruption']['functionalPass']:
+                    raise ValueError('Interruption verification failed: ' + str(evidence['interruption']['failures']))
+                evidence['nativeMotionNotApplicable'] = True
+            elif case == 'interaction':
                 evidence['analyzers'][case] = _run([sys.executable, str(intake / 'analyze-interaction.py'),
                     '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'interaction.json')], analysis, case)
                 report = _json(analysis / 'interaction.json')
@@ -312,7 +320,7 @@ def verify(root, selection, catalog):
                 motion = _load(intake / 'analyze-reversal.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reversal-motion.json', json.dumps(motion, indent=2, allow_nan=False))
-            if case != 'interaction':
+            if case not in ('interaction', 'interruption'):
                 _coverage(cache, texts['client1'], SP_CASES[case][1], metrics)
                 evidence['nativePartialDiagnostic'] = case != 'sprint'
             evidence['evidenceComplete'] = True

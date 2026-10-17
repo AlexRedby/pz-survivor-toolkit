@@ -109,7 +109,11 @@ function ToolkitWoodCartSetdown:update()
 end
 function ToolkitWoodCartSetdown:stop()
     finish(self)
-    return ISUnequipAction.stop(self)
+    local result = ISUnequipAction.stop(self)
+    if ToolkitCartRefreshVisual and self.character:getPrimaryHandItem() == self.item then
+        ToolkitCartRefreshVisual(self.character, self.action, true)
+    end
+    return result
 end
 function ToolkitWoodCartSetdown:perform()
     finish(self)

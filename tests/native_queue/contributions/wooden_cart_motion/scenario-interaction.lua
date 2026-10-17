@@ -32,8 +32,20 @@ local cases={
  {name='female-full-yaw90',female=true,full=true,yaw=90},
  {name='male-full-yaw270',female=false,full=true,yaw=270},
 }
+if config.interruptions then
+ cases={}
+ for _,action in ipairs({'pickup','drop'}) do
+  for _,phase in ipairs({{name='early',progress=.15},{name='contact',progress=.55},{name='late',progress=.88}}) do
+   for _,route in ipairs({'cancel','walk'}) do
+    cases[#cases+1]={name=action..'-'..phase.name..'-'..route,female=false,full=true,yaw=135,
+     interrupt=action,threshold=phase.progress,route=route}
+   end
+  end
+ end
+end
 local phase,attempt,since,sampleSince=0,0,0,0
 local mode,stage,item,initialCargo,initialCargoIDs,heldAt,droppedAt='settle','grounded'
+local interrupted,cancelAt,cancelledAt,retryStage
 local kind='SaucedWheelbarrow.WheelbarrowWood'
 local function encode(record)
  local out={}
@@ -88,7 +100,11 @@ local function snapshot(now)
  return {case=cases[phase].name,start=since,wall=now,elapsed=now-since,id=item:getID(),stage=stage,
   heldID=handID(p:getPrimaryHandItem()),secondaryID=handID(p:getSecondaryHandItem()),
   worldID=world and world:getItem():getID() or -1,worldCount=count,woodWorldCount=woodCount,inventoryCount=inventoryCount(),
-  actionType=action and action.Type or '',progress=action and action:getJobDelta() or 0,
+  actionType=action and action.Type or '',progress=action and action:getJobDelta() or 0,condition=item:getCondition(),
+  nativeActions=p:getCharacterActions():size(),luaActions=#queue.queue,
+  PerformingAction=p:getVariableString('PerformingAction') or '',
+  IsPerformingAnAction=p:getVariableBoolean('IsPerformingAnAction'),
+  ToolkitWoodCartAction=p:getVariableBoolean('ToolkitWoodCartAction'),
   ToolkitCartMotion=p:getVariableBoolean('ToolkitCartMotion'),worldAlpha=item:getWorldAlpha(),worldObjectAlpha=world and world:getAlpha(0) or -1,
   worldX=world and world:getSquare():getX()+world:getOffX() or -1,worldY=world and world:getSquare():getY()+world:getOffY() or -1,
   worldZ=world and world:getSquare():getZ()+world:getOffZ() or -1,worldRotation=item:getWorldZRotation(),
@@ -145,6 +161,7 @@ local function prepare()
   p:ensureOnTile();p:setCurrentSquareFromPosition();p:setMovingSquareNow()
  end
  stage,heldAt,droppedAt='grounded',nil,nil
+ interrupted,cancelAt,cancelledAt,retryStage=false,nil,nil,nil
  p:getStats():reset(CharacterStat.ENDURANCE)
  mode='settle';since=getTimestampMs()+1800
 end
@@ -193,11 +210,36 @@ local function tick()
  local row=snapshot(now)
  if now-sampleSince>=25 then sampleSince=now;print('[WOOD_INTERACTION_SAMPLE] '..encode(row)) end
  assert(row.worldCount<=1 and row.woodWorldCount==row.worldCount and row.inventoryCount<=1 and row.worldCount+row.inventoryCount==1,'Cart duplicated or disappeared')
+ if config.interruptions and not interrupted and stage==c.interrupt and row.active and row.progress>=c.threshold then
+  local action=assert(ISTimedActionQueue.getTimedActionQueue(p).queue[1],'Cancellation action missing')
+  assert(action.action and not action.action:finished() and row.progress<c.threshold+.1,'Cancellation missed unfinished native window')
+  interrupted=true;cancelAt=now;retryStage=stage;stage='cancelling';event('cancelRequested',now)
+  if c.route=='cancel' then
+   assert(CancelAction,'Native cancel handler missing');CancelAction(p:getPlayerNum())
+  else cartLabDrive(1) end
+  return
+ end
+ if stage=='cancelling' then
+  assert(now-cancelAt<1000,'Native cancellation did not clear the action')
+  if row.nativeActions==0 and row.luaActions==0 then
+   cartLabDrive(0);cancelledAt=now;stage='cancelled';event('cancelled',now)
+  end
+  return
+ elseif stage=='cancelled' then
+  if now-cancelledAt<900 then return end
+  event('retryQueued',now)
+  if retryStage=='pickup' then
+   stage='pickup';ISTimedActionQueue.add(ISCartPickupAction.FromWorldItem(p,assert(item:getWorldItem())))
+  else
+   stage='drop';ISTimedActionQueue.add(ISUnequipAction:new(p,item,1,'drop'))
+  end
+  return
+ end
  if stage=='grounded' and elapsed>=700 then
   local world=assert(item:getWorldItem(),'Pickup target disappeared')
   stage='pickup';ISTimedActionQueue.add(ISCartPickupAction.FromWorldItem(p,world));event('pickupQueued',now)
  elseif stage=='pickup' then
-  assert(elapsed<8500,'Pickup timed out')
+  assert(elapsed<(config.interruptions and 13500 or 8500),'Pickup timed out')
   if row.heldID==item:getID() and row.secondaryID==item:getID() and row.inventoryCount==1 and row.worldCount==0 and row.actionType=='' then
    stage='held';heldAt=now;event('pickedUp',now)
   end
@@ -207,12 +249,12 @@ local function tick()
   assert(action.Type=='ToolkitWoodCartSetdown','Native wooden drop was not safely dispatched')
   event('dropQueued',now)
  elseif stage=='drop' then
-  assert(elapsed<14500,'Setdown timed out')
+  assert(elapsed<(config.interruptions and 19000 or 14500),'Setdown timed out')
   if row.heldID==-1 and row.secondaryID==-1 and row.inventoryCount==0 and row.worldCount==1 and row.actionType=='' then
    stage='dropped';droppedAt=now;event('dropped',now)
   end
  end
- if elapsed>=16000 then
+ if elapsed>=(config.interruptions and 20000 or 16000) then
   assert(stage=='dropped' and now-droppedAt>=1000,'Missing settled drop tail')
   assert(toolkitVideoStop(),'Video stop rejected');mode='finish'
  end
