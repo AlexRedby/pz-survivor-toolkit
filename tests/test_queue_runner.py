@@ -104,6 +104,30 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
 
+    def test_manual_session_waits_for_user_exit_and_releases_without_killing_game(self):
+        self.runtime['fixture'] = {'manual': True}
+        (self.root / 'runtime.json').write_text(json.dumps(self.runtime))
+        self.complete = False
+        waits = []
+        def user_exit(seconds):
+            waits.append(seconds)
+            self.processes[1].returncode = 0
+        result, kills = self.invoke(sleep=user_exit)
+        self.assertEqual(waits, [2])
+        self.assertEqual(result['status'], 'completed')
+        self.assertTrue(result['manual'])
+        self.assertEqual(result['processes']['client1']['exit_code'], 0)
+        self.assertFalse(kills)
+
+    def test_manual_crash_is_not_successful_user_exit(self):
+        self.runtime['fixture'] = {'manual': True}
+        (self.root / 'runtime.json').write_text(json.dumps(self.runtime))
+        self.complete = False
+        def crash(seconds): self.processes[1].returncode = 1
+        result, _ = self.invoke(sleep=crash)
+        self.assertEqual(result['status'], 'failed')
+
+
     def test_cart_pad_flag_is_typed_and_overrides_inherited_environment(self):
         self.runtime['roles']['client1']['env'] = {'PZ_CART_TEST_PAD': 'false', 'PZ_CART_RUNTIME_FILE': '/owned/runtime.lua'}
         (self.root / 'runtime.json').write_text(json.dumps(self.runtime))

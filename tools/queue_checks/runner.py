@@ -209,6 +209,9 @@ def run(root, resource_wait=300):
                     stop(processes["client1"])
                     execution["peer_disconnected"] = True
                 finished = all(adapter.complete(selection, role, current[role]) if adapter else any(event["event"] == "complete" for event in records[role]) for role in clients)
+                if runtime.get('fixture', {}).get('manual') and all(process.poll() == 0 for process in processes.values()):
+                    execution.update(status='completed', manual=True)
+                    break
                 if finished:
                     execution["status"] = "completed"
                     break

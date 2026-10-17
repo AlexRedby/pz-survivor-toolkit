@@ -93,6 +93,39 @@ class CartAdapterTests(unittest.TestCase):
         self.assertIn('toggleToSprint=false', (self.output / 'client1/options.ini').read_text())
         self.assertEqual(self.runtime['roles']['client1']['env']['PZ_CART_TEST_PAD'], 'true')
 
+    def test_manual_sp_stage_only_bootstraps_without_autonomous_scenarios_or_probes(self):
+        self.selection['cases'] = ['manual']
+        compiler = self.stage()
+        self.assertEqual(compiler.call_count, 1)
+        self.assertEqual(carts.scene_names('manual'), [])
+        self.assertEqual(carts.selected_scenes(self.selection), [])
+        self.assertEqual(self.runtime['fixture']['attach'], {})
+        self.assertTrue(self.runtime['fixture']['manual'])
+        runtime = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+        self.assertIn((ROOT / 'tests/native_queue/contributions/wooden_cart_motion/bootstrap.lua').read_text(), runtime)
+        for autonomous_source in [row[0] for bank,row in carts.SP_CASES.items() if bank!='manual']:
+            self.assertNotIn((ROOT / 'tests/native_queue/contributions/wooden_cart_motion' / autonomous_source).read_text(), runtime)
+        self.assertNotIn('["authoredClip"]=', runtime)
+        self.assertFalse(carts.complete(self.selection, 'client1', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=0\n'))
+        self.assertFalse(carts.complete(self.selection, 'client1', '[WOOD_PROTOTYPE] BOOTSTRAP_READY\n'))
+
+    def test_manual_sp_rejects_automatic_scene_selection(self):
+        self.selection['cases'] = ['manual']
+        self.options['cart_scenes'] = ['male-full-corner']
+        with self.assertRaisesRegex(ValueError, 'cart_scenes'):
+            carts.validate(self.selection)
+
+    def test_manual_review_never_claims_automated_animation_verification(self):
+        self.selection['cases']=['manual']
+        for ready in (False,True):
+            (self.output/'client1-launch.log').write_text('[WOOD_PROTOTYPE] BOOTSTRAP_READY' if ready else '')
+            result=carts.verify(self.output,self.selection,{})
+            row=result['outcomes'][0]
+            self.assertEqual(row['status'],'captured' if ready else 'failed')
+            self.assertTrue(row['outcome']['manualReview'])
+            self.assertFalse(row['outcome']['animationEquivalencePass'])
+            self.assertFalse(row['outcome']['evidenceComplete'])
+
     def test_mp_stage_composes_original_methods_and_identical_selection(self):
         self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
         self.role('client2'); server = self.role('server')
@@ -111,7 +144,7 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'path'])
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path'])
         for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
@@ -299,6 +332,7 @@ class CartAdapterTests(unittest.TestCase):
             full=carts.scene_names(bank)
             self.assertEqual(len(full),count,bank)
             self.assertEqual(len(set(full)),count,bank)
+            if bank=='manual': continue
             text=(intake/source).read_text()
             start=text.index('local cases=')
             marker='cases=CartLabSelectScenes(cases)'

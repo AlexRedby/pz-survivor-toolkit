@@ -24,7 +24,7 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'collision': ('scenario-collision.lua', 20), 'footprint': ('scenario-collision.lua', 20),
             'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
-            'repeat': ('scenario-interaction.lua', 12),
+            'repeat': ('scenario-interaction.lua', 12), 'manual': ('bootstrap.lua', 0),
             'path': ('scenario-path.lua', 24)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 SCENE_SPECS = {
@@ -41,6 +41,8 @@ SCENE_SPECS = {
 
 
 def scene_names(case):
+    if case == 'manual':
+        return []
     if case == 'repeat':
         return [sex + '-' + load + '-' + spec for sex in ('male', 'female')
                 for load in ('empty', 'full') for spec in ('complete-chain', 'pickup-restart', 'drop-restart')]
@@ -157,6 +159,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     project, output, game = map(Path, (project, output, game))
     sp, mp = _intake(project, SP), _intake(project, MP)
+    manual = selection['suite'] == SP and selection['cases'] == ['manual']
     patch = _path(selection, 'patch_jar')
     if not any(hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(patch.read_bytes()).digest()
                for path in Path(locations['PZToolkitJavaPatches']).rglob('*.jar')):
@@ -177,13 +180,16 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     evidence = sp / 'evidence'
     probe_sources = ([mp / 'ClearanceProbe.java'] if selection['suite'] == MP else
                      [evidence / (name + '.java') for name in ('WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe')])
-    _compile(jdk, classpath, build / 'probe-classes', [*probe_sources, evidence / 'AttachWoodenWheelProbe.java'])
-    probes = ['ClearanceProbe'] if selection['suite'] == MP else ['WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe']
+    if not manual:
+        _compile(jdk, classpath, build / 'probe-classes', [*probe_sources, evidence / 'AttachWoodenWheelProbe.java'])
+    probes = [] if manual else ['ClearanceProbe'] if selection['suite'] == MP else ['WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe']
     for name in probes:
         _jar(build / (name + '.jar'), build / 'probe-classes', (mp if selection['suite'] == MP else evidence) / (name + '.mf'))
     fixture = runtime.setdefault('fixture', {})
     fixture['mods'] = ['CartLab']
     fixture['attach'] = {}
+    if manual:
+        fixture['manual'] = True
     fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL']
     videos = {role: str(Path(config['cache']) / 'videos') for role, config in runtime['roles'].items() if role != 'server'}
     config = dict(selection, port=selection['ports'][0], disposable=True, ffmpeg=str(_path(selection, 'ffmpeg', True)), videoRoot=videos)
@@ -215,7 +221,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             _write(sandbox, 'SandboxVars={VERSION=6,Zombies=6,EnableVehicles=false,StartMonth=7,StartDay=9,StartTime=2}\n')
             continue
         classes = Path(spec['classes'])
-        shutil.copy2(build / 'probe-classes/AttachWoodenWheelProbe.class', classes / 'AttachWoodenWheelProbe.class')
+        if not manual:
+            shutil.copy2(build / 'probe-classes/AttachWoodenWheelProbe.class', classes / 'AttachWoodenWheelProbe.class')
         for name in probes:
             target = classes / 'probes' / (name + '.jar')
             target.parent.mkdir(exist_ok=True)
@@ -236,13 +243,15 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             if selection['cases'][0] == 'wheel': motion['wheelCycle']=True
             runtime_source = 'CartMotionConfig=' + _lua(motion) + '\n(function()\n' + (sp / 'scene-selection.lua').read_text() + '\nend)()\nif not CartAdapterBootstrapped then\nCartAdapterBootstrapped=true\n'
             runtime_source += '(function()\n' + (sp / 'test-area.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'obstacles.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'bootstrap.lua').read_text() + '\nend)()'
-            runtime_source += '\nelse\n(function()\n' + (sp / SP_CASES[selection['cases'][0]][0]).read_text() + '\nend)()\nend\n'
+            runtime_source += '\nend\n' if manual else '\nelse\n(function()\n' + (sp / SP_CASES[selection['cases'][0]][0]).read_text() + '\nend)()\nend\n'
             _write(runtime_lua, runtime_source)
         else:
             _write(runtime_lua, 'return true\n')
 
 
 def complete(selection, role, text):
+    if selection['suite'] == SP and selection['cases'] == ['manual']:
+        return False
     if selection['suite'] == SP:
         log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
         expected = selected_scenes(selection)
@@ -408,6 +417,14 @@ def _coverage(cache, text, count, metrics):
 
 def verify(root, selection, catalog):
     root = Path(root)
+    if selection['suite'] == SP and selection['cases'] == ['manual']:
+        text = (root / 'client1-launch.log').read_text(errors='replace')
+        ready = '[WOOD_PROTOTYPE] BOOTSTRAP_READY' in text and '[WOOD_PROTOTYPE] BOOTSTRAP_FAIL' not in text
+        issues = [] if ready else ['Manual cart world did not become ready']
+        return {'issues': issues, 'evidence': {'manualReview': True}, 'outcomes': [
+            {'actor': 'client1', 'case': 'manual', 'status': 'captured' if ready else 'failed',
+             'reason': 'Manual human review only; no automated animation verification',
+             'outcome': {'manualReview': True, 'animationEquivalencePass': False, 'evidenceComplete': False}}]}
     project = Path(__file__).resolve().parents[3]
     intake = _intake(project, selection['suite'])
     roles = ['client1'] if selection['suite'] == SP else ['client1', 'client2']

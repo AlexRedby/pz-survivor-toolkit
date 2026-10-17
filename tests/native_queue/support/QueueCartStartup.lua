@@ -26,6 +26,12 @@ Events.OnTick.Add(function()
  if not started or launched then return end
  local ok,problem=pcall(function()
   if not CartTestArea or not CartTestArea.ready then return end
+  if config.cases[1]=='manual' then
+   local player=assert(getPlayer())
+   player:setPerkLevelDebug(Perks.Sprinting,10);player:getXp():setXPToLevel(Perks.Sprinting,10)
+   player:getStats():reset(CharacterStat.ENDURANCE)
+   launched=true;print('[CART_ADAPTER] MANUAL_CONTROL_READY');return
+  end
   local p=assert(getPlayer());local cart=p:getPrimaryHandItem()
   if not cart or cart:getFullType()~='SaucedWheelbarrow.WheelbarrowWood' or p:getZ()~=CartTestArea.z then return end
   CartTestArea.check(p)
