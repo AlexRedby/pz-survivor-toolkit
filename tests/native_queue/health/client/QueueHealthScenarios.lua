@@ -10,6 +10,10 @@ return function(stage,queue,empty,remote)
  local function run(fn,...) if native then return fn(...) end;return Ops.run(fn,...) end
  local function assertMode() assert(Toolkit.Settings.actionQueue()==(not native),'medical queue setting differs from selected mode') end
  local player,observer,restoreHelper,subscribedPatient
+ local replaceSettings
+ local function restoreReplaceSettings()
+  if replaceSettings then SandboxVars.MHP.EnableReplaceBandage=replaceSettings.value;replaceSettings=nil end
+ end
  local function item(id)
   local function scan(container)
    local values=container:getItems();for i=0,values:size()-1 do local value=values:get(i)
@@ -20,7 +24,7 @@ return function(stage,queue,empty,remote)
   return scan(player:getInventory())
  end
  local function patient(name)
-  if remote.kind=='sp' then return player end
+  if remote.kind=='sp' or name==player:getUsername() then return player end
   local values=getOnlinePlayers();for i=0,values:size()-1 do local value=values:get(i);if value:getUsername()==name then return value end end
  end
  local function readyPosition(character,expected)
@@ -56,7 +60,10 @@ return function(stage,queue,empty,remote)
   assertMode()
   local before=#queue().queue
   run(function()
-   if spec.drop then
+   if spec.inventory then
+    assert(panel.character==player and body==player:getBodyDamage():getBodyPart(BodyPartType.FromIndex(body:getIndex())),'inventory bandage must treat exact local body')
+    ISInventoryPaneContextMenu.applyBandage(assert(item(ids.bandage)),body,player:getPlayerNum())
+   elseif spec.drop then
     local values={};for _,entry in ipairs(spec.supply or {}) do values[#values+1]=assert(item(ids[entry[1]])) end
     panel:dropItemsOnBodyPart(body,values)
    else
@@ -80,7 +87,7 @@ return function(stage,queue,empty,remote)
    end
   end)
   local parent=assert(queue().queue[before+1],'native medical producer did not enqueue')
-  assert(parent.Type=='HealthPanelAction','native medical parent contract missing')
+  assert(parent.Type==(spec.inventory and (spec.bag and 'ISInventoryTransferAction' or 'ISApplyBandage') or 'HealthPanelAction'),'native medical producer contract missing')
   if not native then
    assert(Policy.inspect(parent),'medical parent permission missing')
    local description=Toolkit.ActionQueueDefinitions.describe(parent)
@@ -92,6 +99,7 @@ return function(stage,queue,empty,remote)
   if subscribedPatient then player:stopReceivingBodyDamageUpdates(subscribedPatient);subscribedPatient=nil end
  end
  local function closeObserver()
+  restoreReplaceSettings()
   if observer then Events.OnPlayerUpdate.Remove(observer);observer=nil end
   if restoreHelper then ISHealthPanel.DidPatientMove=restoreHelper;restoreHelper=nil end
   stopSubscription()
@@ -134,7 +142,7 @@ return function(stage,queue,empty,remote)
      for _,id in pairs(prep.items) do if not item(id) then return notReady() end end
      if not positioned then Authority.position(player,prep.spawn.x,prep.spawn.y,prep.spawn.z);positioned=true;return notReady() end
      if player:pressedMovement(false) or player:tooDarkToRead() then return notReady() end
-     if remote.kind=='sp' then body=player:getBodyDamage():getBodyPart(BodyPartType.FromIndex(prep.body))
+     if activePatient==player then body=player:getBodyDamage():getBodyPart(BodyPartType.FromIndex(prep.body))
      else
       if not subscribed then player:startReceivingBodyDamageUpdates(activePatient);subscribedPatient=activePatient;subscribed=true;return notReady() end
       body=activePatient:getBodyDamageRemote():getBodyPart(BodyPartType.FromIndex(prep.body))
@@ -152,6 +160,11 @@ return function(stage,queue,empty,remote)
       bag=assert(item(prep.bag));previousSecondary=player:getSecondaryHandItem()
       assert(previousSecondary~=bag,'fixture schoolbag already equipped')
       Authority.setBagHand(player,bag,bag);bagVisible=true
+     end
+     if spec.replace then
+      assert(type(SandboxVars.MHP)=='table','MiniHealthPlus sandbox root missing')
+      replaceSettings={value=SandboxVars.MHP.EnableReplaceBandage};SandboxVars.MHP.EnableReplaceBandage=true
+      assert(MHP_SB_IsReplaceBandageEnabled(),'fixture-owned MiniHealthPlus replacement setting missing')
      end
      front=read(prep.front,prep.frontPages);parent=enqueue(panel,body,spec,prep.items);tail=read(prep.tail,1)
      assert(queue():indexOf(front)<queue():indexOf(parent) and queue():indexOf(parent)<queue():indexOf(tail),'native queue order differs')
@@ -172,8 +185,8 @@ return function(stage,queue,empty,remote)
      local observe=function(character)
       if character~=player or not parent then return end
       for _,child in ipairs(queue().queue) do
-       if child~=parent and child.Type~='HealthPanelAction' and
-        (native and child.Type=='ISDisinfect' and child.bodyPart==body or not native and child.toolkitQueueOperation==parent.toolkitQueueOperation) then
+       if (child~=parent or spec.inventory) and child.Type~='HealthPanelAction' and
+        (native and ((child.Type=='ISDisinfect' or child.Type=='ISApplyBandage') and child.bodyPart==body or spec.bag and child.Type=='ISInventoryTransferAction') or not native and child.toolkitQueueOperation==parent.toolkitQueueOperation) then
         local contract=not native and Policy.inspect(child)
         if spec.guard=='helper' then assert(not contract,'changed helper granted expanded-child permission');return end
         if not native then assert(contract,'expanded native medical child contract missing '..child.Type) end
@@ -182,6 +195,12 @@ return function(stage,queue,empty,remote)
         local startedPrep=child.Type=='ISInventoryTransferAction' and child.action and child.action:isStarted() and not child.action:finished()
         if spec.bag and bagVisible and startedPrep then
          Authority.setBagHand(player,bag,previousSecondary);bagVisible=false;bagHidden=true
+        end
+        if spec.replaceStop and not observed and child.Type=='ISApplyBandage' and child.doIt==(spec.replaceStop=='apply')
+         and child.action and child.action:isStarted() and not child.action:finished() then
+         assert(child.stop==getmetatable(child).stop and child.complete==getmetatable(child).complete,'native replacement callbacks changed')
+         if spec.replaceStop=='apply' then assert(not body:bandaged(),'apply cancellation ran before completed native removal') end
+         local ok,why=API.cancelOperation(queue(),child);assert(ok,'replacement group cancel rejected '..tostring(why));observed=true
         end
         if spec.expanded and not observed then
          if spec.expanded=='cancel' and startedPrep and bagHidden then
@@ -239,7 +258,7 @@ return function(stage,queue,empty,remote)
      end
      if not empty() then return false end
      if nativeObservation and nativeObservation.nativeStallObserved then nativeObservation.cleanupQueueDrained=true end
-     if spec.expanded then assert(observed,'expanded child interception did not execute') end
+     if spec.expanded or spec.replaceStop then assert(observed,'expanded child interception did not execute') end
      if spec.bag then
       assert(bagHidden and not ISInventoryPaneContextMenu.getContainers(player):contains(bag:getItemContainer()),'return destination was exposed through native getter')
       assert(Policy.isCarriedContainer(bag:getItemContainer(),player),'return destination stopped being carried')

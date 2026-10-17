@@ -10,6 +10,12 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.58
+
+- **Fixed:** Preserve the verified SP transfer chain when Quartermaster Manifest and SaucedCarts are both enabled.
+- **Added:** Guarded native inventory bandaging, including carried-bag pickups, with exact selected items and self-treatment targets.
+- **Added:** MiniHealthPlus bandage replacement is one queue operation across removal, pickup and application. Cancellation preserves completed effects and borrowed supplies; lost future materials stop replacement before removing the current bandage.
+
 ### 0.1.57
 
 - **Fixed:** First drops of ready-made and handmade splints enqueue treatment with the exact dropped supplies, preserving native clinical restrictions and earlier handlers.

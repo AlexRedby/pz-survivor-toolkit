@@ -84,6 +84,7 @@ local radioKeys = {
 }
 local medicalKeys = {
     HApplyBandage = "ContextMenu_Apply_Bandage", HRemoveBandage = "ContextMenu_Remove_Bandage",
+    HReplaceBandage = "UI_MHP_ReplaceBandage",
     HDisinfect = "ContextMenu_Disinfect", HStitch = "ContextMenu_Stitch", HRemoveStitch = "ContextMenu_Remove_Stitch",
     HSplint = "ContextMenu_Splint", HRemoveSplint = "ContextMenu_Remove_Splint",
     HRemoveGlass = "ContextMenu_Remove_Glass", HRemoveBullet = "ContextMenu_Remove_Bullet", HCleanBurn = "ContextMenu_Clean_Burn",

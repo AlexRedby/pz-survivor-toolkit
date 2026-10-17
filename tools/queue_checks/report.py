@@ -350,7 +350,7 @@ def functional(root, selection, catalog):
             counts[status] += 1
             if status == "passed":
                 matches = [r for r in receipts if r[1] == identifier and (selection["kind"] == "sp" or r[0] == role)]
-                expected_patient = "client2" if role == "client1" else "client1"
+                expected_patient = role if specs[identifier]["producer"] == "inventory" else "client2" if role == "client1" else "client1"
                 if len(matches) != 1 or matches[0][2] != "true" or matches[0][4] != "nil" or (selection["kind"] == "mp" and matches[0][3] != expected_patient) or (selection["kind"] == "sp" and matches[0][0] != matches[0][3]):
                     issues.append(role + ": missing/duplicate/failed authority receipt " + identifier)
             coverage.append({"suite": selection["suite"], "case": identifier, "producer": specs[identifier]["producer"],

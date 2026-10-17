@@ -426,6 +426,102 @@
             "toolkit",
             "native"
           ]
+        },
+        {
+          "id": "inventoryBandage",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "inventoryBag",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "inventoryWaitingCancel",
+          "producer": "inventory",
+          "capability": "pending-cancel",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "inventoryWaitingMove",
+          "producer": "inventory",
+          "capability": "move",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "miniReplace",
+          "producer": "mini-menu",
+          "capability": "effect",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "miniReplaceBag",
+          "producer": "mini-menu",
+          "capability": "effect",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "miniReplaceStopRemove",
+          "producer": "mini-menu",
+          "capability": "active-cancel",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "miniReplaceStopApply",
+          "producer": "mini-menu",
+          "capability": "active-cancel",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
         }
       ]
     },

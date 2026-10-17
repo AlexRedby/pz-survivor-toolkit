@@ -61,7 +61,7 @@ ISTimedActionQueue.clear=function(character)
 end
 ISBaseTimedAction.begin = function(self)
     self.action = {forceComplete = function() end, isStarted = function() return true end,
-        finished = function() return false end, isForceComplete = function() return false end}
+        finished = function() return false end, isForceComplete = function() return false end, getJobDelta = function() return 0 end}
 end
 local function nativeClass(name)
     local class = ISBaseTimedAction:derive(name)

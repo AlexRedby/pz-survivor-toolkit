@@ -30,13 +30,13 @@ def main():
     catalog = json.loads((ROOT.parent / "catalog.json").read_text())
     assert catalog["schema"] == 1
     cases = catalog["suites"]["health"]["cases"]
-    assert len(cases) == len({case["id"] for case in cases}) == 28
+    assert len(cases) == len({case["id"] for case in cases}) == 42
     assert cases[0]["id"] == "bandageApply"
     assert all(row["status"] == "not-migrated" and not row["cases"] for name, row in catalog["suites"].items() if name != "health")
     for case in cases:
         assert set(case["modes"]) <= {"native", "toolkit"}
-        assert case["producer"] in ("menu", "drop")
-    print("PASS Lua syntax and honest 28-case catalog; other families explicitly not migrated")
+        assert case["producer"] in ("menu", "drop", "mini-menu", "inventory")
+    print("PASS Lua syntax and honest 42-case catalog; other families explicitly not migrated")
     print("NOT RUN: PZ, native durations, SP/MP, real disconnect, or rendered UI")
 
 

@@ -19,7 +19,8 @@ local actionBindings = {}
 local children = {}
 local records = {}
 local droppedSupplies = {}
-local miniPanel, miniBindings
+local miniPanel, miniBindings, miniReplace
+local inventoryBindings
 local dropAttempt
 local panelHelpers = {}
 local containersHelper
@@ -43,7 +44,7 @@ local function nativeSource(path, expected, mod)
             local line = reader:readLine()
             if not line then break end
             bytes = bytes + #line + 1
-            if bytes > 200000 then return end
+            if bytes > 300000 then return end
             for i = 1, #line do value = (value * 33 + string.byte(line, i)) % 4294967296 end
             value = (value * 33 + 10) % 4294967296
         end
@@ -55,11 +56,12 @@ local function nativeSource(path, expected, mod)
 end
 local kinds = {HApplyBandage = 1, HDisinfect = 1, HStitch = 2, HSplint = 2, HRemoveGlass = 1,
     HRemoveBullet = 1, HCleanBurn = 1, HRemoveBandage = 0, HRemoveStitch = 0, HRemoveSplint = 0,
-    HApplyComfrey = 1, HApplyGarlic = 1, HApplyPlantain = 1}
+    HApplyComfrey = 1, HApplyGarlic = 1, HApplyPlantain = 1, HReplaceBandage = 1}
 local childNames = {HApplyBandage = "ISApplyBandage", HRemoveBandage = "ISApplyBandage", HDisinfect = "ISDisinfect",
     HStitch = "ISStitch", HRemoveStitch = "ISStitch", HSplint = "ISSplint", HRemoveSplint = "ISSplint",
     HRemoveGlass = "ISRemoveGlass", HRemoveBullet = "ISRemoveBullet", HCleanBurn = "ISCleanBurn",
-    HApplyComfrey = "ISComfreyCataplasm", HApplyGarlic = "ISGarlicCataplasm", HApplyPlantain = "ISPlantainCataplasm"}
+    HApplyComfrey = "ISComfreyCataplasm", HApplyGarlic = "ISGarlicCataplasm", HApplyPlantain = "ISPlantainCataplasm",
+    HReplaceBandage = "ISApplyBandage"}
 local childSources = {ISApplyBandage = 2803499221, ISDisinfect = 3741707122, ISStitch = 2530457766,
     ISSplint = 2375527233, ISRemoveGlass = 3698948194, ISRemoveBullet = 3894979839, ISCleanBurn = 3569789416,
     ISComfreyCataplasm = 2138588477, ISGarlicCataplasm = 3991409036, ISPlantainCataplasm = 2742789526}
@@ -107,6 +109,23 @@ local function miniMatches()
     if not miniBindings or not TwisTonFire_MHP or TwisTonFire_MHP.MiniHealthTreatment ~= miniPanel then return false end
     for name, callback in pairs(miniBindings) do if miniPanel[name] ~= callback then return false end end
     return true
+end
+local function inventoryHelpersMatch()
+    local saved = inventoryBindings
+    if not saved or ISInventoryPaneContextMenu ~= saved.menu or luautils ~= saved.utils
+        or ISInventoryTransferUtil ~= saved.transfer or getSpecificPlayer ~= saved.player then return false end
+    for name, callback in pairs(saved.menuMethods) do if saved.menu[name] ~= callback then return false end end
+    for name, callback in pairs(saved.utilsMethods) do if saved.utils[name] ~= callback then return false end end
+    for name, callback in pairs(saved.transferMethods) do if saved.transfer[name] ~= callback then return false end end
+    if saved.cartVerified or ISInventoryTransferAction.new ~= saved.constructor then
+        return saved.carts ~= nil and Toolkit.ActionQueueCarts == saved.carts and saved.carts.isTransferConstructor == saved.cartConstructor
+            and saved.cartConstructor(saved.constructor) == true and saved.cartConstructor(ISInventoryTransferAction.new) == true
+    end
+    return true
+end
+local function replaceHelpersMatch()
+    return miniReplace and MHP_SB_IsReplaceBandageEnabled == miniReplace.enabled and MHP_SB_GetBool == miniReplace.boolean
+        and inventoryHelpersMatch()
 end
 local function patientFor(handler)
     return handler.getPatient == boundDoctor and handler.toolkitHealthActor or handler.panel.character
@@ -157,6 +176,19 @@ local function producer(callback, panel, ...)
     return unpack(result, 2, result.n)
 end
 
+local function bodyResources(patient, body)
+    local result = {items = {}, itemTypes = {}, targets = {[body] = true}, outputTypes = {},
+        cancelWaiting = true, interrupt = "finish-step"}
+    -- Native body updates add/remove hidden clothing in the patient's inventory.
+    local part, gender = body:getType(), patient:getCharacterGender()
+    local bandage = part:getBandageModel()
+    for _, kind in pairs({bandage, bandage and bandage ~= "" and bandage .. "_Blood" or nil, part:getBiteWoundModel(gender),
+        part:getScratchWoundModel(gender), part:getCutWoundModel(gender)}) do
+        if kind ~= "" then result.itemTypes[kind], result.outputTypes[kind] = true, true end
+    end
+    return result
+end
+
 local function handlerContract(action)
     for name, callback in pairs(bindings) do if ISHealthPanel[name] ~= callback then return end end
     for name, callback in pairs(actionBindings) do if HealthPanelAction[name] ~= callback then return end end
@@ -170,6 +202,7 @@ local function handlerContract(action)
         if not miniMatches() or not handler.toolkitHealthActor or handler.panel ~= miniPanel
             or handler.getDoctor ~= boundDoctor or handler.getPatient ~= boundDoctor then return end
     end
+    if handler.Type == "HReplaceBandage" and (not snapshot.mini or not replaceHelpersMatch()) then return end
     if not childMatches(handler.Type) then return end
     if handler.actionClass and handler.actionClass ~= children[childNames[handler.Type]].class then return end
     for name, method in pairs(snapshot.methods) do
@@ -193,9 +226,9 @@ local function handlerContract(action)
         elseif type(value) ~= "string" then return
         elseif value ~= "Hands" then inputs[value] = true end
     end
-    local result = {items = {}, itemTypes = {}, targets = {[handler.bodyPart] = true}, dynamicInputs = inputs,
-        cancelWaiting = true, interrupt = "finish-step",
-        unknownOutputs = handler.Type == "HRemoveBandage" or handler.Type == "HRemoveSplint"}
+    local result = bodyResources(patient, handler.bodyPart)
+    result.dynamicInputs = inputs
+    result.unknownOutputs = handler.Type == "HRemoveBandage" or handler.Type == "HRemoveSplint" or handler.Type == "HReplaceBandage"
     local dropped = droppedSupplies[handler]
     if snapshot.dropped then
         if not dropped or dropped.panel ~= handler.panel or dropped.bodyPart ~= handler.bodyPart
@@ -203,14 +236,6 @@ local function handlerContract(action)
             or (dropped[1] and dropped[1]:getFullType() or nil) ~= action.args[1]
             or dropped[2]:getFullType() ~= action.args[2] then return end
         for _, item in pairs({dropped[1], dropped[2]}) do result.items[item:getID()] = true end
-    end
-    -- Native body updates add/remove hidden clothing in the patient's inventory.
-    local part, gender = handler.bodyPart:getType(), patient:getCharacterGender()
-    result.outputTypes = {}
-    local bandage = part:getBandageModel()
-    for _, kind in pairs({bandage, bandage and bandage ~= "" and bandage .. "_Blood" or nil, part:getBiteWoundModel(gender),
-        part:getScratchWoundModel(gender), part:getCutWoundModel(gender)}) do
-        if kind ~= "" then result.itemTypes[kind], result.outputTypes[kind] = true, true end
     end
     if handler.Type == "HStitch" or handler.Type == "HRemoveStitch" then result.dynamicInputsByType = {SutureNeedleHolder = true} end
     if handler.Type == "HStitch" or handler.Type == "HDisinfect" or handler.Type == "HCleanBurn" then
@@ -245,6 +270,7 @@ local function parentMatches(action, saved)
     return true
 end
 local function originMatches(saved)
+    if saved.direct and (not inventoryHelpersMatch() or inventoryBindings.player(saved.playerNum) ~= saved.character) then return false end
     return not saved.origin or parentMatches(saved.origin, saved) and handlerContract(saved.origin) ~= nil
 end
 
@@ -319,6 +345,9 @@ end
 
 local function clinicalAvailable(saved)
     local body, kind = saved.bodyPart, saved.kind
+    if saved.direct then return true end -- The native inventory producer also permits covering an already bandaged part.
+    if kind == "HReplaceBandage" then return miniReplace.enabled() and body:bandaged() and body:getBandageLife() <= 0 end
+    if saved.replacement and kind == "HApplyBandage" then return not body:bandaged() end
     if kind == "HRemoveBandage" then return body:bandaged() end
     if kind == "HRemoveStitch" then return body:stitched() end
     if kind == "HRemoveSplint" then return body:getSplintFactor() > 0 end
@@ -342,6 +371,14 @@ local function preparationMatches(action, saved)
 end
 
 local function suppliesAvailable(saved, inventory)
+    if saved.replacement and saved.kind == "HRemoveBandage" then
+        local item, transfer = saved.replacement.item, saved.replacement.transfer
+        local container = item:getContainer()
+        if not container or container:getItemById(item:getID()) ~= item then return false end
+        if container == inventory then return true end
+        local preparation = transfer and records[transfer]
+        return preparation and container == preparation.source and preparationMatches(transfer, preparation) and transfer:isValid() or false
+    end
     for _, item in pairs(saved.selected) do
         local current = inventory:getItemById(item:getID())
         if not current or current:getFullType() ~= item:getFullType() then return false end
@@ -399,6 +436,20 @@ end
 local function captureExpanded(action, saved, selected, before)
     local queue = ISTimedActionQueue.queues[action.character]
     if not queue then return end
+    local replacement
+    if saved.kind == "HReplaceBandage" then
+        local added = {}
+        for _, child in ipairs(queue.queue) do if not before[child] then added[#added + 1] = child end end
+        local remove, apply = added[1], added[#added]
+        if (#added ~= 2 and #added ~= 3) or not childMatches("HRemoveBandage", remove)
+            or not childMatches("HApplyBandage", apply) or remove.doIt ~= false or remove.item ~= nil
+            or apply.doIt ~= true or apply.item ~= selected[1] then return end
+        local transfer = #added == 3 and added[2] or nil
+        if transfer and (not Toolkit.ActionQueueOperations.isTransfer(transfer) or not Toolkit.ActionQueuePolicy.inspect(transfer)
+            or transfer.item ~= selected[1] or transfer.srcContainer ~= selected[1]:getContainer()
+            or transfer.destContainer ~= saved.character:getInventory()) then return end
+        replacement = {item = selected[1], transfer = transfer}
+    end
     for _, child in ipairs(queue.queue) do
         if not before[child] and child.toolkitQueueOperation == action.toolkitQueueOperation
             and child.character == saved.character and Toolkit.ActionQueueOperations.isTransfer(child)
@@ -412,17 +463,18 @@ local function captureExpanded(action, saved, selected, before)
         if not before[child] and child.toolkitQueueOperation == action.toolkitQueueOperation
             and getmetatable(child) == children[childNames[saved.kind]].class
             and child.character == saved.character and child.otherPlayer == saved.patient and child.bodyPart == saved.bodyPart then
+            local kind = replacement and (child.doIt and "HApplyBandage" or "HRemoveBandage") or saved.kind
             local fields = {item = false, alcohol = false, bandage = false, rippedSheet = false, plank = false}
             if saved.kind == "HDisinfect" then fields.alcohol = selected[1]
             elseif saved.kind == "HCleanBurn" then fields.bandage = selected[1]
             elseif saved.kind == "HStitch" then fields.item = selected[2]
             elseif saved.kind == "HSplint" then fields.rippedSheet, fields.plank = selected[1] or false, selected[2]
-            elseif saved.kind ~= "HRemoveGlass" and saved.kind ~= "HRemoveBullet" then fields.item = selected[1] or false end
-            local record = {kind = saved.kind, character = saved.character, patient = saved.patient, bodyPart = saved.bodyPart,
+            elseif kind ~= "HRemoveGlass" and kind ~= "HRemoveBullet" and kind ~= "HRemoveBandage" then fields.item = selected[1] or false end
+            local record = {kind = kind, character = saved.character, patient = saved.patient, bodyPart = saved.bodyPart,
                 origin = action, handler = saved.handler, panel = saved.panel, args = saved.args,
                 patientX = saved.patientX, patientY = saved.patientY, doctorX = saved.doctorX, doctorY = saved.doctorY,
                 token = action.toolkitQueueOperation, selected = selected, fields = fields, contract = handlerContract(action),
-                doIt = child.doIt, handPain = child.handPain}
+                doIt = child.doIt, handPain = child.handPain, replacement = replacement}
             if saved.kind == "HDisinfect" or saved.kind == "HStitch" or saved.kind == "HRemoveStitch"
                 or saved.kind == "HSplint" or saved.kind == "HRemoveSplint" or saved.kind == "HRemoveGlass"
                 or saved.kind == "HRemoveBullet" then record.doctor = saved.character end
@@ -516,6 +568,10 @@ function Health.installMiniHealth()
         if not nativeClosure(panel[name], "MiniHealthTreatments.lua") then return end
     end
     miniPanel, miniBindings = panel, {}
+    if nativeSource("media/lua/shared/MHP_Sandbox.lua", 2138062714, "MiniHealthPlus")
+        and nativeClosure(MHP_SB_IsReplaceBandageEnabled, "MHP_Sandbox.lua") and nativeClosure(MHP_SB_GetBool, "MHP_Sandbox.lua") then
+        miniReplace = {enabled = MHP_SB_IsReplaceBandageEnabled, boolean = MHP_SB_GetBool}
+    end
     local check = panel.checkItems
     panel.checkItems = function(current, list)
         if trustedPanel == current and miniMatches() then
@@ -531,6 +587,90 @@ function Health.installMiniHealth()
     for _, name in ipairs({"checkItems", "checkContainerItems", "doBodyPartContextMenu", "_MiniHealthOwn_doBodyPartContextMenu", "restoreOwnContextMenu"}) do
         miniBindings[name] = panel[name]
     end
+end
+
+local function installInventoryProducer()
+    local menu, utils, transfer = ISInventoryPaneContextMenu, luautils, ISInventoryTransferUtil
+    local cleanUI = nativeSource("media/lua/client/ISUI/ISInventoryPaneContextMenu.lua", 1953753890)
+    if not (cleanUI or nativeSource("media/lua/client/ISUI/ISInventoryPaneContextMenu.lua", 4293448388))
+        or not nativeSource("media/lua/shared/luautils.lua", 1091751327)
+        or not nativeSource("media/lua/shared/TimedActions/ISInventoryTransferUtil.lua", 1281392797)
+        or type(getSpecificPlayer) ~= "function" then return end
+    local saved = {menu = menu, utils = utils, transfer = transfer, player = getSpecificPlayer,
+        menuMethods = {}, utilsMethods = {}, transferMethods = {}, constructor = ISInventoryTransferAction.new}
+    local carts = Toolkit.ActionQueueCarts
+    if carts and type(carts.isTransferConstructor) == "function" then
+        saved.carts, saved.cartConstructor = carts, carts.isTransferConstructor
+        saved.cartVerified = saved.cartConstructor(saved.constructor) == true
+    end
+    if not saved.cartVerified and not nativeClosure(saved.constructor, "ISInventoryTransferAction.lua") then return end
+    for _, name in ipairs({"applyBandage", "transferIfNeeded"}) do
+        if not nativeClosure(menu[name], "ISInventoryPaneContextMenu.lua") then return end
+        saved.menuMethods[name] = menu[name]
+    end
+    if cleanUI then
+        for _, name in ipairs({"cleanUIResetStaleTimedActionRetrigger", "cleanUILogTimedActionFix"}) do
+            if not nativeClosure(menu[name], "ISInventoryPaneContextMenu.lua") then return end
+            saved.menuMethods[name] = menu[name]
+        end
+    end
+    for _, name in ipairs({"haveToBeTransfered", "walkToContainer"}) do
+        if not nativeClosure(utils[name], "luautils.lua") then return end
+        saved.utilsMethods[name] = utils[name]
+    end
+    for _, name in ipairs({"newInventoryTransferAction", "isPlayerCharacter", "isCharacterGrabbingCorpseItem", "isPlayerGrabbingCorpseItem"}) do
+        if not nativeClosure(transfer[name], "ISInventoryTransferUtil.lua") then return end
+        saved.transferMethods[name] = transfer[name]
+    end
+    inventoryBindings = saved
+    local original = menu.applyBandage
+    menu.applyBandage = function(item, bodyPart, player)
+        local character = saved.player(player)
+        local source = instanceof(item, "InventoryItem") and item:getContainer()
+        local eligible = inventoryHelpersMatch() and helpersMatch() and childMatches("HApplyBandage")
+            and instanceof(character, "IsoPlayer") and instanceof(bodyPart, "BodyPart")
+            and instanceof(item, "InventoryItem") and item:isCanBandage()
+            and character:getBodyDamage():getBodyPart(bodyPart:getType()) == bodyPart
+            and Toolkit.ActionQueuePolicy.isCarriedContainer(source, character)
+        if not eligible then return original(item, bodyPart, player) end
+        return Toolkit.ActionQueueOperations.run(function()
+            local queue, before = ISTimedActionQueue.queues[character], {}
+            if queue then for _, action in ipairs(queue.queue) do before[action] = true end end
+            local result = pack(original(item, bodyPart, player))
+            queue = ISTimedActionQueue.queues[character]
+            if not queue or not inventoryHelpersMatch() then return unpack(result, 1, result.n) end
+            local added = {}
+            for _, action in ipairs(queue.queue) do if not before[action] then added[#added + 1] = action end end
+            local child = added[#added]
+            if (#added ~= 1 and #added ~= 2) or not childMatches("HApplyBandage", child)
+                or child.character ~= character or child.otherPlayer ~= character or child.bodyPart ~= bodyPart
+                or child.item ~= item or child.doIt ~= true then return unpack(result, 1, result.n) end
+            local pickup = #added == 2 and added[1] or nil
+            if pickup and (not Toolkit.ActionQueueOperations.isTransfer(pickup) or not Toolkit.ActionQueuePolicy.inspect(pickup)
+                or pickup.character ~= character or pickup.item ~= item or pickup.srcContainer ~= source
+                or pickup.destContainer ~= character:getInventory() or pickup.toolkitQueueOperation ~= child.toolkitQueueOperation) then
+                return unpack(result, 1, result.n)
+            end
+            if (source ~= character:getInventory()) ~= (pickup ~= nil) then return unpack(result, 1, result.n) end
+            local record = {kind = "HApplyBandage", character = character, patient = character, bodyPart = bodyPart,
+                direct = true, playerNum = player, token = child.toolkitQueueOperation,
+                doctorX = character:getX(), doctorY = character:getY(), patientX = character:getX(), patientY = character:getY(),
+                selected = {item}, fields = {item = item, alcohol = false, bandage = false, rippedSheet = false, plank = false},
+                doIt = true, contract = bodyResources(character, bodyPart)}
+            if childMatchesRecord(child, record) then
+                records[child] = record
+                if pickup then
+                    pickup.toolkitQueueLinked, child.toolkitQueueLinked = true, true
+                    records[pickup] = {preparation = true, direct = true, playerNum = player, kind = record.kind,
+                        character = character, patient = character, bodyPart = bodyPart, token = record.token,
+                        doctorX = record.doctorX, doctorY = record.doctorY, patientX = record.patientX, patientY = record.patientY,
+                        item = item, source = source, destination = character:getInventory()}
+                end
+            end
+            return unpack(result, 1, result.n)
+        end)
+    end
+    saved.menuMethods.applyBandage = menu.applyBandage
 end
 
 local installed
@@ -662,6 +802,7 @@ function Health.install()
         for handler in pairs(droppedSupplies) do if not live[handler] then droppedSupplies[handler] = nil end end
     end)
     if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() records, droppedSupplies = {}, {} end) end
+    installInventoryProducer()
     Health.installMiniHealth()
     if Events.OnGameBoot then Events.OnGameBoot.Add(Health.installMiniHealth) end
 end

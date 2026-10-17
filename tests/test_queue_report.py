@@ -119,6 +119,23 @@ class QueueReportTests(unittest.TestCase):
             path.write_text(invalid)
             self.assertEqual(report.build_report(root, self.catalog)["functional"]["status"], "failed")
 
+    def test_inventory_treatment_requires_exact_self_patient_receipt(self):
+        self.catalog["suites"]["health"]["cases"][0]["producer"] = "inventory"
+        for mode in ("native", "toolkit"):
+            root = self.fixture(mode, kind="mp", mode=mode)
+            path = root / "server-launch.log"
+            receipts = ["[QUEUE_TEST] HEALTH_AUTH_RECEIPT " + role
+                        + " phase=bandageApply ok=true patient=" + role + " error=nil\n"
+                        for role in ("client1", "client2")]
+            valid = "[QUEUE_TEST] SERVER_READY\n" + "".join(receipts)
+            path.write_text(valid)
+            self.assertEqual(report.build_report(root, self.catalog)["functional"]["status"], "passed")
+            for invalid in (valid.replace("patient=client1", "patient=client2"),
+                            valid.replace("error=nil", "error=unexpected"), valid + receipts[0]):
+                with self.subTest(mode=mode, receipt=invalid):
+                    path.write_text(invalid)
+                    self.assertEqual(report.build_report(root, self.catalog)["functional"]["status"], "failed")
+
     def test_native_only_skip_is_honest_but_not_a_supported_capability(self):
         self.catalog["suites"]["health"]["cases"][0]["modes"] = ["toolkit"]
         root = self.fixture(mode="native", status="skipped")

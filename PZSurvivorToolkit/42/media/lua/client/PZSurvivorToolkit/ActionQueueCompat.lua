@@ -17,6 +17,7 @@ local readFixAttempted
 local transferSourceSafe = true
 local containerTransferPerform
 local containerHelpersUnchanged
+local manifestTransferPerform, manifestHelpersUnchanged
 local washWalkHelper
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform",
     "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceStop", "forceCancel"}
@@ -24,6 +25,11 @@ local sourceFiles = {
     Quartermaster = {
         {"client/LootSorter_CraftMenu.lua", 2721161845},
         {"shared/LootSorter_Debug.lua", 948729780},
+    },
+    QuartermasterManifest = {
+        {"client/LootSorter_Core.lua", 3616909975},
+        {"client/LootSorter_Manifest.lua", 4018553120},
+        {"shared/LootSorter_Util.lua", 3149945372},
     },
     SaucedCartsTransfers = {
         {"shared/SaucedCarts/TimedActions/ISCartTransferAction.lua", 3962234240},
@@ -615,11 +621,44 @@ local function installCartEating()
         and policy.adoptEatStart(previous, ISEatFoodAction.start, helpersUnchanged) == true
 end
 
+local function installManifestTransfers()
+    if isClient() or not getActivatedMods or not getActivatedMods():contains("Quartermaster")
+        or not verified("Quartermaster", sourceFiles.QuartermasterManifest) or type(LootSorter) ~= "table"
+        or LootSorter._manifestXferHooked or not quartermasterClosure(LootSorter.addOrReplaceHandler, "LootSorter_Util.lua")
+        or not quartermasterClosure(LootSorter.parseCoordKey, "LootSorter_Util.lua") then return end
+    local owner, modData, getOrCreate = LootSorter, ModData, ModData and ModData.getOrCreate
+    if type(getOrCreate) ~= "function" or not pcall(require, "LootSorter_Core") or LootSorter ~= owner
+        or not quartermasterClosure(owner.getRegistry, "LootSorter_Core.lua") then return end
+    local registry = owner.getRegistry
+    local parse = owner.parseCoordKey
+    local rules = Toolkit.QuartermasterTagRules
+    local registryMatch = rules and rules.matchesRegistryGetter
+    local previous = {new = ISInventoryTransferAction.new, perform = ISInventoryTransferAction.perform,
+        transferItem = ISInventoryTransferAction.transferItem}
+    if not pcall(require, "LootSorter_Manifest") or LootSorter ~= owner or not owner._manifestXferHooked
+        or not quartermasterClosure(ISInventoryTransferAction.perform, "LootSorter_Manifest.lua") then return end
+    local function unchanged()
+        local registrySafe = owner.getRegistry == registry or (type(registryMatch) == "function"
+            and Toolkit.QuartermasterTagRules == rules and rules.matchesRegistryGetter == registryMatch
+            and registryMatch(registry, owner.getRegistry))
+        return LootSorter == owner and registrySafe and owner.parseCoordKey == parse and owner._manifestXferHooked == true
+            and ModData == modData and modData.getOrCreate == getOrCreate and owner._receivedRegistry == nil
+            and type(owner._manifestDirty) == "table" and getmetatable(owner._manifestDirty) == nil
+            and (not containerHelpersUnchanged or containerHelpersUnchanged())
+    end
+    local replacement = {new = ISInventoryTransferAction.new, perform = ISInventoryTransferAction.perform,
+        transferItem = ISInventoryTransferAction.transferItem}
+    if not Toolkit.ActionQueuePolicy.adoptTransferHooks(previous, replacement, unchanged)
+        or not Operations.adoptReturnHooks(previous, replacement, unchanged) then return end
+    manifestTransferPerform, manifestHelpersUnchanged = replacement.perform, unchanged
+end
+
 function Compat.install()
     if installAttempted then return end
     installAttempted = true
     installCartEating()
     installContainerTransfers()
+    installManifestTransfers()
     if getActivatedMods and getActivatedMods():contains("SaucedCarts") and verified("SaucedCarts", sourceFiles.SaucedCartsTransfers) then
         ready.SaucedCartsTransfers = require("PZSurvivorToolkit/ActionQueueCarts").install()
     end
@@ -753,8 +792,8 @@ function Compat.isCartCapacitySource()
 end
 
 function Compat.isTransferPerform(callback)
-    return ready.EURY_CONTAINERS == true and callback == containerTransferPerform
-        and type(callback) == "function" and containerHelpersUnchanged()
+    return type(callback) == "function" and ((ready.EURY_CONTAINERS == true and callback == containerTransferPerform
+        and containerHelpersUnchanged()) or (callback == manifestTransferPerform and manifestHelpersUnchanged()))
 end
 
 function Compat.isCraftOwner(name, target, action)
