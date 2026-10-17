@@ -4,10 +4,13 @@ from verify import verify
 
 def logs(missing=False, timer='shared'):
     server = 'SERVER COMPLETE\n[AnimalTrailerSyncMPFix] ACTIVE 1.3\n'
-    client = 'CLIENT COMPLETE\nCLIENT INGAME 42.21.0\nCLIENT WEAPON_NATIVE_EQUIP\n'
+    client = 'CLIENT COMPLETE\nCLIENT INGAME 42.21.0\n' + ('' if missing else 'CLIENT WEAPON_NATIVE_EQUIP\n')
     server += 'SERVER START_POSITION nativeTeleport=true clientAck=true actual=10.5,20.5,0 expected=10.5,20.5,0\nSERVER FIXTURE trailer=7\n'
     client += 'CLIENT START_POSITION nativeTeleport=true serverAck=true actual=10.5,20.5,0 expected=10.5,20.5,0\nCLIENT FIXTURE 7\n'
     for i, kind in enumerate(['hen', 'hen', 'chick'], 1):
+        if missing and i == 2:
+            server += 'SERVER WEAPON_CREATED id=900\n'
+            client += 'CLIENT WEAPON_NATIVE_EQUIP id=900\n'
         server += f'SERVER SEEDED kind={kind} animal={i + 100} online={i + 200}\n'
         hand, animal = ('nil', 'nil') if missing else ('Base.Animal:test', str(i + 100))
         server += f'SERVER VERIFY index={i} count={3 - i} hand={hand} animal={animal}\n'
@@ -16,7 +19,9 @@ def logs(missing=False, timer='shared'):
         client += f'RELEASE_AFTER item={i + 300} inventoryHas=true\nCLIENT ORDER_STATUS releases=1\n'
         if i == 1: client += 'CLIENT REPLAY PASS stale trailer snapshot reproduced; woven authoritative item snapshot repaired; hands, identities, neighbors and capacity preserved\n'
         for side in ['SERVER', 'CLIENT']:
-            audit = f'{side} WHERE index={i} inventory={i + 300}/{i + 100} groundAlive= groundItems=\n'
+            inventory = ','.join(f'{j + 300}/{j + 100}' for j in (range(1, i + 1) if missing else [i]))
+            hands = 'handsEmpty=true scannedSquares=121 primaryID=-1 secondaryID=-1' if i == 1 else 'handsEmpty=false scannedSquares=121 primaryID=-1 secondaryID=900'
+            audit = f'{side} WHERE index={i} inventory={inventory} groundAlive= groundItems=' + (' ' + hands if missing else '') + '\n'
             if side == 'SERVER': server += audit
             else: client += audit
         if not missing:
@@ -55,6 +60,66 @@ class VerifyTests(unittest.TestCase):
         server, client = logs(missing=True)
         with self.assertRaisesRegex(ValueError, 'absent from inventory'):
             verify(server, client.replace('inventory=301/101', 'inventory='), scenario='equipment', hands='missing')
+
+    def test_equipment_negative_control_requires_cumulative_complete_audits(self):
+        server, client = logs(missing=True)
+        for side in ('server', 'client'):
+            original = server if side == 'server' else client
+            audit = next(line for line in original.splitlines() if 'WHERE index=3 ' in line)
+            mutations = [
+                audit.replace('301/101,', ''),
+                audit.replace('301/101', '999/101'),
+                audit.replace('301/101', '301/101,301/101'),
+                audit.replace('groundAlive=', 'groundAlive=101'),
+                audit.replace('groundItems=', 'groundItems=301/101'),
+                audit.replace('handsEmpty=false', 'handsEmpty=true'),
+                audit.replace(' handsEmpty=false scannedSquares=121', ''),
+                audit.replace('scannedSquares=121', 'scannedSquares=120'),
+                '',
+                audit + '\n' + audit,
+            ]
+            for replacement in mutations:
+                broken = original.replace(audit, replacement)
+                with self.subTest(side=side, audit=replacement), self.assertRaises(ValueError):
+                    verify(broken if side == 'server' else server, broken if side == 'client' else client,
+                           scenario='equipment', hands='missing')
+
+    def test_equipment_negative_control_correlates_released_grants(self):
+        server, client = logs(missing=True)
+        with self.assertRaisesRegex(ValueError, 'Released grant item IDs'):
+            verify(server, client.replace('RELEASE_AFTER item=301', 'RELEASE_AFTER item=999'),
+                   scenario='equipment', hands='missing')
+
+    def test_equipment_negative_control_requires_exact_hand_ids(self):
+        server, client = logs(missing=True)
+        for side, original in [('server', server), ('client', client)]:
+            for index in range(1, 4):
+                audit = next(line for line in original.splitlines() if f'WHERE index={index} ' in line)
+                secondary = '-1' if index == 1 else '900'
+                for replacement in [
+                    audit.replace('primaryID=-1', 'primaryID=301'),
+                    audit.replace('secondaryID=' + secondary, 'secondaryID=999'),
+                    audit.replace('secondaryID=' + secondary, 'secondaryID=301'),
+                    audit.replace('secondaryID=' + secondary, 'secondaryID=' + ('900' if index == 1 else '-1')),
+                    audit.replace('handsEmpty=' + ('true' if index == 1 else 'false'), 'handsEmpty=' + ('false' if index == 1 else 'true')),
+                    audit.replace(' primaryID=-1 secondaryID=' + secondary, ''),
+                ]:
+                    broken = original.replace(audit, replacement)
+                    with self.subTest(side=side, index=index, audit=replacement), self.assertRaises(ValueError):
+                        verify(broken if side == 'server' else server, broken if side == 'client' else client,
+                               scenario='equipment', hands='missing')
+
+    def test_equipment_negative_control_requires_exact_weapon_receipts(self):
+        server, client = logs(missing=True)
+        for side, original, receipt in [('server', server, 'SERVER WEAPON_CREATED id=900'),
+                                        ('client', client, 'CLIENT WEAPON_NATIVE_EQUIP id=900')]:
+            for replacement in ['', receipt + '\n' + receipt, receipt.replace('900', '999')]:
+                broken = original.replace(receipt, replacement)
+                with self.subTest(side=side, receipt=replacement), self.assertRaises(ValueError):
+                    verify(broken if side == 'server' else server, broken if side == 'client' else client,
+                           scenario='equipment', hands='missing')
+        with self.assertRaisesRegex(ValueError, 'Weapon ID matches'):
+            verify(server.replace('900', '301'), client.replace('900', '301'), scenario='equipment', hands='missing')
 
     def test_identity_and_completion(self):
         server, client = logs()
