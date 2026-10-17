@@ -24,6 +24,7 @@ RUNTIME_FAILURE = re.compile(
     r"|(?:failed|unable|cannot|could not) (?:to )?(?:bind|save|write|connect)\b"
     r"|database (?:disk image is malformed|is locked|is corrupt)|checksum mismatch", re.I)
 BACKGROUND_GAME_SHA256 = "e1a69eb743ede60b213a0fe7f8b83d4fcab773036d256cc4543a336f3b058a33"
+KNOWN_ROOM_GAME_SHA256 = BACKGROUND_GAME_SHA256  # Native B42.21.0 revision 4a0e9546ec only.
 THUMP_TILES = ({"fencing_01_" + str(i) for i in
                 (1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 24, 25, 26, 27, 28, 32, 33, 34, 35, 36,
                  40, 41, 42, 56, 57, 58, 59, 60, 64, 65, 66, 67, 68, 72, 73, 75)} |
@@ -121,6 +122,21 @@ def background_profile(root, selection, verified):
         return False
 
 
+def verified_game_sha256(root, verified):
+    """The caller has verified both manifests, including the actual game JAR and runtime path."""
+    if not verified:
+        return None
+    try:
+        game = Path(read_json(root / "runtime.json")["game"])
+        if game.is_absolute():
+            digest = read_json(root / "source-manifest.json").get(str(game / "projectzomboid.jar"))
+            if digest == KNOWN_ROOM_GAME_SHA256:
+                return digest
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
 def background_rule(block, role):
     message = block[0].split(">", 1)[-1].strip().rstrip(".")
     text = "\n".join(block)
@@ -148,7 +164,7 @@ def background_rule(block, role):
     return None
 
 
-def audit_log(path, cache, background=False):
+def audit_log(path, cache, background=False, native_game_sha256=None):
     """Keep counts within a file; mirrors are merged using max, never summed."""
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     findings, microphone = [], []
@@ -179,6 +195,11 @@ def audit_log(path, cache, background=False):
         # DebugLog's formatter can append a second full stop to a mirrored console message.
         key = message.rstrip(".") + ("\n" + cause.rstrip(".") if cause else "")
         rule = background_rule(block, cache.name) if not terminal_kick and background and ready is not None and start < ready else None
+        if (native_game_sha256 == KNOWN_ROOM_GAME_SHA256 and not serious
+                and not any(line.strip() for line in block[1:])
+                and re.fullmatch(r"\s*ERROR\s*:\s*General\b[^>\r\n]*\bat Basements\.mergeRoomsOntoMetaCell\s*>\s*"
+                                 r"duplicate RoomDef\.metaID for room at 10707,9484,0\.{0,2}\s*", block[0])):
+            rule = ("known-upstream-b42.21-room-metaid", None)
         findings.append({"fingerprint": hashlib.sha256(key.encode()).hexdigest(), "message": message,
                          "cause": cause, "file": str(path), "line": start + 1,
                          "severity": "background" if rule else "fatal" if serious else "unclassified",
@@ -186,7 +207,8 @@ def audit_log(path, cache, background=False):
                          "category": "lua" if "Kahlua" in key or "Lua(" in key else "native"})
     counts = Counter(row["fingerprint"] for row in findings)
     for row in findings:
-        if row["severity"] == "background" and counts[row["fingerprint"]] > row["background_limit"]:
+        if (row["severity"] == "background" and row["background_limit"] is not None
+                and counts[row["fingerprint"]] > row["background_limit"]):
             row["severity"] = "unclassified"
     return findings, microphone
 
@@ -246,13 +268,13 @@ def diagnostic_windows(logs):
             'interpretation': 'File-local marker placement only, not case verdicts or causes. Buckets are not additive when unmarked mirrors remain unassigned.'}
 
 
-def audit_logs(root, roles, background=False):
+def audit_logs(root, roles, background=False, native_game_sha256=None):
     result = {}
     for role in roles:
         merged, details, microphone, logs = Counter(), {}, [], []
         paths = log_paths(root, role)
         for path in paths:
-            findings, mic = audit_log(path, root / role, background)
+            findings, mic = audit_log(path, root / role, background, native_game_sha256)
             logs.append((path, findings))
             current = Counter(row["fingerprint"] for row in findings)
             merged |= current
@@ -379,7 +401,8 @@ def build_report(root, catalog, control=None):
     provenance_errors = verify_manifest(root, "source-manifest.json", absolute=True) + verify_manifest(root, "snapshot-hashes.json")
     result, coverage = functional(root, selection, catalog)
     roles = adapters.roles(selection)
-    audits = audit_logs(root, roles, background_profile(root, selection, not provenance_errors))
+    audits = audit_logs(root, roles, background_profile(root, selection, not provenance_errors),
+                        verified_game_sha256(root, not provenance_errors))
     try:
         execution = read_json(root / "execution.json")
     except (OSError, ValueError):

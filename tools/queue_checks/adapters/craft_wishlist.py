@@ -384,7 +384,7 @@ def _seed(selection):
         raise ValueError("Wishlist reload seed must have verified successful full/standalone native evidence")
     if initial.get("ports") != selection["ports"]:
         raise ValueError("Wishlist reload must preserve the seed endpoint for native client save identities")
-    from ..report import verify_manifest, audit_logs
+    from ..report import verify_manifest, audit_logs, verified_game_sha256
     if verify_manifest(root, "source-manifest.json", True) or verify_manifest(root, "snapshot-hashes.json"):
         raise ValueError("Wishlist seed source/snapshot evidence has changed")
     if grouped:
@@ -392,7 +392,8 @@ def _seed(selection):
         if issues:
             raise ValueError("Wishlist seed native assertions are incomplete: " + "; ".join(issues))
     # Runtime logs remain writable after report.json; a stale green report is not a safe seed.
-    fresh = audit_logs(root, ("server", "client1", "client2"))
+    fresh = audit_logs(root, ("server", "client1", "client2"),
+                       native_game_sha256=verified_game_sha256(root, True))
     if any(not row["available"] or row["microphone"] or row["fatal_count"] or
            (row["unclassified_count"] and not pending) for row in fresh.values()):
         raise ValueError("Wishlist seed runtime audit is unsafe or stale")
