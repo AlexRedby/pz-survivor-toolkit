@@ -22,6 +22,8 @@ local function present(self, pickup)
     if isServer() or not toolkitWoodCartUpdate then return end
     local item = pickup and self:findItem() or self.item
     if not item then return end
+    -- Retire the lower cart-idle layer while the action owns the pose, before its idle endpoint fades out.
+    if not pickup then SaucedCarts.clearCartPose(self.character) end
     toolkitWoodCartUpdate(self.character, item, pickup, self:getJobDelta())
     self.character:setVariable("ToolkitWoodCartProgress", self:getJobDelta())
 end
@@ -62,9 +64,23 @@ function ToolkitWoodCartPickup:stop()
     finish(self)
     return ISCartPickupAction.stop(self)
 end
+local function pickupVisual(self)
+    local cart = self.character:getPrimaryHandItem()
+    if ToolkitCartRefreshVisual and cart and cart:getID() == self.itemId then
+        ToolkitCartRefreshVisual(self.character, self.action)
+    end
+end
 function ToolkitWoodCartPickup:perform()
     finish(self)
-    return ISCartPickupAction.perform(self)
+    local result = ISCartPickupAction.perform(self)
+    pickupVisual(self)
+    return result
+end
+function ToolkitWoodCartPickup:complete()
+    local result = ISCartPickupAction.complete(self)
+    -- SP equips in complete, after perform; its exact finished native action is still in the stack here.
+    pickupVisual(self)
+    return result
 end
 function ToolkitWoodCartPickup:forceCancel()
     finish(self)

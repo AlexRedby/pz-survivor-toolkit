@@ -4,6 +4,7 @@ local hands = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/000ToolkitC
 local originalRequire = require
 local function setup(server, enabled, bridge)
     local w = {added = {}, ended = 0, presented = 0, equipped = 0}
+    ToolkitCartRefreshVisual = nil
     isServer = function() return server end
     isClient = function() return not server end
     getActivatedMods = function() return {contains = function(_, name) return enabled and name == "SaucedCarts" end} end
@@ -51,6 +52,9 @@ local function setup(server, enabled, bridge)
     function ISBaseTimedAction:stop() self.stopped = true; return "stopped" end
     function ISBaseTimedAction:forceCancel() end
     SaucedCarts = {isCart = function(item) return item.cart == true end}
+    function SaucedCarts.clearCartPose(player)
+        for _, name in ipairs({"Weapon", "RightHandMask", "LeftHandMask"}) do player:setVariable(name, "") end
+    end
     sendEquip = function() w.equipped = w.equipped + 1 end
     require = function() return true end
     ISCartPickupAction = ISBaseTimedAction:derive("ISCartPickupAction")
@@ -181,7 +185,7 @@ local w = setup(false, false, true)
 assert(not ToolkitWoodCartPickup and not ToolkitWoodCartSetdown)
 w = setup(true, true, false)
 assert(ToolkitWoodCartPickup.Type == "ToolkitWoodCartPickup" and ToolkitWoodCartSetdown.Type == "ToolkitWoodCartSetdown")
-assert(ToolkitWoodCartPickup.complete == w.nativeComplete and ISUnequipAction.complete == w.nativeUnequipComplete,
+assert(ISCartPickupAction.complete == w.nativeComplete and ISUnequipAction.complete == w.nativeUnequipComplete,
     "shared registration must retain authoritative pickup and ordinary unequip complete")
 local wood = w.item(); w.worldFor(wood)
 assert(getmetatable(ISCartPickupAction:new(w.p, 1, 2, 0, 123)) == ISCartPickupAction)
@@ -199,7 +203,7 @@ local unequipFingerprint = w.unequipFingerprint
 local pickup = ISCartPickupAction:new(p, 1, 2, 0, 123)
 assert(getmetatable(pickup) == ToolkitWoodCartPickup and pickup.maxTime == 88)
 assert(pickup.stopOnWalk and pickup.stopOnRun and pickup.stopOnAim)
-assert(pickup.complete == w.nativeComplete and ToolkitWoodCartPickup.perform ~= w.pickupPerform)
+assert(ISCartPickupAction.complete == w.nativeComplete and ToolkitWoodCartPickup.perform ~= w.pickupPerform)
 p.instant = true
 local instantPickup = ISCartPickupAction:new(p, 1, 2, 0, 123)
 assert(instantPickup.maxTime == 1 and getmetatable(instantPickup) == ISCartPickupAction)
@@ -234,8 +238,52 @@ assert(not p.primary and not p.secondary and w.equipped == beforeEquip, "pickup 
 p.primary, p.secondary = steel, steel; pickup.expectCart = nil; pickup:perform()
 assert(p.primary == steel and p.secondary == steel and w.equipped == beforeEquip, "pickup overwrote a foreign heavy cart")
 print("PASS wooden pickup selects exact IDs, preserves ordinary carts, faces the stance, clears owned presentation and routes MP hand repair through native perform")
+local nativeComplete, nativePerform = ISCartPickupAction.complete, ISCartPickupAction.perform
+local order, finishing = {}, {}
+pickup.action = finishing
+ToolkitCartRefreshVisual = function(player, action)
+    assert(player == p and action == finishing, "visual refresh lost its exact finishing native action")
+    order[#order + 1] = "visual"
+end
+ISCartPickupAction.complete = function(self)
+    assert(self == pickup); order[#order + 1] = "complete"
+    p.primary, p.secondary = wood, wood
+    return false
+end
+assert(pickup:complete() == false and table.concat(order, ",") == "complete,visual",
+    "SP visual handoff must follow exactly one authoritative complete and preserve its result")
+order = {}
+ISCartPickupAction.perform = function(self)
+    assert(self == pickup); order[#order + 1] = "perform"
+    p.primary, p.secondary = wood, wood
+    return "native-result"
+end
+assert(pickup:perform() == "native-result" and table.concat(order, ",") == "perform,visual",
+    "client visual handoff must follow native perform/equip repair")
+order = {}
+ISCartPickupAction.perform = function() p.primary, p.secondary = steel, steel end
+pickup:perform()
+assert(#order == 0, "pickup visual handoff adopted a replacement cart")
+ISCartPickupAction.complete = function() error("native pickup failure") end
+local ok, err = pcall(pickup.complete, pickup)
+assert(not ok and tostring(err):find("native pickup failure", 1, true) and #order == 0,
+    "visual handoff swallowed native completion failure")
+ISCartPickupAction.complete, ISCartPickupAction.perform = nativeComplete, nativePerform
+ToolkitCartRefreshVisual = nil
+
 
 w.world = world; wood.world = world; p.primary, p.secondary = wood, wood
+local release = setmetatable({character=p, item=wood}, ToolkitWoodCartSetdown)
+p.vars.Weapon, p.vars.RightHandMask, p.vars.LeftHandMask = "cart", "holdingcartright", "holdingcartleft"
+release:start()
+assert(p.vars.Weapon == "" and p.vars.RightHandMask == "" and p.vars.LeftHandMask == "",
+    "setdown must fade the underlying cart-idle before releasing its action pose")
+-- A first holder update may restore cart variables once in an immediate pickup -> setdown chain.
+p.vars.Weapon, p.vars.RightHandMask, p.vars.LeftHandMask = "cart", "holdingcartright", "holdingcartleft"
+release:update()
+assert(p.vars.Weapon == "" and p.vars.RightHandMask == "" and p.vars.LeftHandMask == ""
+    and p.primary == wood and p.secondary == wood, "pose retirement changed ownership or allowed a stale idle layer")
+release:stop()
 local queue = {}
 for _, reason in ipairs({"drop", "place"}) do
     local action = ISUnequipAction:new(p, wood, 1, reason)

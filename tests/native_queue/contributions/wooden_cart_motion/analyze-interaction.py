@@ -67,8 +67,10 @@ def handoff(text, body, world, vertices):
         native = [r for r in world if r['itemId'] == rows[0]['id'] and start-4000 <= r['wallTimeMillis'] <= start+DURATION]
         for row in native:
             _finite(row)
-        before = [r for r in native if r['alpha'] > .01 and r['wallTimeMillis'] <= receipts['pickupQueued']['wall']]
-        after = [r for r in native if r['alpha'] > .01 and r['wallTimeMillis'] >= receipts['dropped']['wall']-200]
+        visible = [r for r in native if r.get('renderStatus') == 'Ready'
+                   and r.get('transitionHidden') is not True and r['alpha'] > .01]
+        before = [r for r in visible if r['wallTimeMillis'] <= receipts['pickupQueued']['wall']]
+        after = [r for r in visible if r['wallTimeMillis'] >= receipts['dropped']['wall']-200]
         assert before and after, 'Missing actual visible world render endpoint: ' + name
         entry = {'case': name, 'endpoints': {}}
         matched = _matched([r for r in body if start <= r['wallTimeMillis'] <= start+DURATION], rows)
@@ -80,14 +82,17 @@ def handoff(text, body, world, vertices):
             entry['endpoints'][action] = {'samples': len(frames), 'maxVertexDistanceTiles': max(errors)}
             if max(errors) > .01:
                 failures.append((name, action + ' world/held mesh handoff exceeds .01 tiles'))
-        hidden = [r for r in native if receipts['pickupQueued']['wall']+500 < r['wallTimeMillis'] < receipts['pickedUp']['wall']-200 and r['alpha'] == 0]
+        # The world-object gate can skip the model renderer entirely; only its named exit probe proves that path.
+        hidden = [r for r in native if receipts['pickupQueued']['wall']+500 < r['wallTimeMillis'] < receipts['pickedUp']['wall']-200
+                  and r.get('transitionHidden') is True and (r.get('renderStatus') == 'NoModel'
+                  or r.get('renderStatus') == 'Suppressed' and r.get('source') == 'IsoWorldInventoryObject.render-exit')]
         entry['suppressedWorldSamples'] = len(hidden)
         if not hidden:
             failures.append((name, 'missing exact-item world suppression evidence'))
         # Cached world rendering need not initialize every frame; every later observed init must stay visible.
         settled = [r for r in native if r['wallTimeMillis'] >= receipts['dropped']['wall']+SETTLE_MS]
         entry['settledWorldRenderSamples'] = len(settled)
-        if any(r['alpha'] <= .01 for r in settled):
+        if any(r.get('renderStatus') != 'Ready' or r.get('transitionHidden') is True or r['alpha'] <= .01 for r in settled):
             failures.append((name, 'settled world renderer was suppressed after drop'))
         result.append(entry)
     return {'pass': not failures, 'failures': failures, 'cases': result,
@@ -270,9 +275,11 @@ def fixture():
 
 
 def world_fixture():
-    return [dict(wallTimeMillis=100000+index*20000+elapsed,itemId=1000+index,x=0,y=0,z=0,
-                 angle=[0,0,0],transform=[-1,0,0,0,0,1,0,0,0,0,-1,0,-.1,.2,-.3,1],alpha=alpha)
-            for index in range(len(CASES)) for elapsed,alpha in [(100,1),(3000,0),(9400,1)]]
+    return [dict(wallTimeMillis=100000+index*20000+elapsed,itemId=1000+index,
+                 **(dict(renderStatus='NoModel',transitionHidden=True) if elapsed == 3000 else
+                    dict(renderStatus='Ready',x=0,y=0,z=0,angle=[0,0,0],
+                         transform=[-1,0,0,0,0,1,0,0,0,0,-1,0,-.1,.2,-.3,1],alpha=1)))
+            for index in range(len(CASES)) for elapsed in (100,3000,9400)]
 
 
 def self_check():
@@ -290,11 +297,33 @@ def self_check():
     assert result['functionalPass'] and result['ikCoverageVerified']
     assert handoff(text,body,world_fixture(),vertices)['pass']
     assert handoff('\n'.join('LOG : Lua > '+line for line in text.splitlines()),body,world_fixture(),vertices)['pass']
+    world_suppressed=[dict(row,renderStatus='Suppressed',source='IsoWorldInventoryObject.render-exit')
+                      if row['renderStatus']=='NoModel' else row for row in world_fixture()]
+    assert handoff(text,body,world_suppressed,vertices)['pass'], 'Explicit suppressed world pass was not recognized'
+    for changes in ({'transitionHidden':False}, {'transitionHidden':1}, {'source':None},
+                    {'source':'ItemModelRenderer.renderMain-exit'}, {'renderStatus':'Ready'}):
+        fake_suppressed=[dict(row) for row in world_suppressed];fake_suppressed[1].update(changes)
+        assert not handoff(text,body,fake_suppressed,vertices)['pass'], 'Unconfirmed world-pass suppression accepted'
     broken=world_fixture();broken[0]['x']+=.03
     assert not handoff(text,body,broken,vertices)['pass'], 'Actual endpoint jump accepted'
+    for value in (False, None, 1, 'true'):
+        fake_hidden=world_fixture();fake_hidden[1]['transitionHidden']=value
+        assert not handoff(text,body,fake_hidden,vertices)['pass'], 'Unconfirmed NoModel became suppression evidence'
+    fake_hidden=world_fixture();fake_hidden[1].update(renderStatus='Ready',alpha=0)
+    assert not handoff(text,body,fake_hidden,vertices)['pass'], 'Alpha-zero draw became suppression evidence'
     late_hidden=world_fixture()
-    late_hidden.append(dict(late_hidden[2],wallTimeMillis=112000,alpha=0))
+    late_hidden.append(dict(late_hidden[1],wallTimeMillis=112000))
     assert not handoff(text,body,late_hidden,vertices)['pass'], 'Late world suppression accepted'
+    late_hidden[-1]['transitionHidden']=False
+    assert not handoff(text,body,late_hidden,vertices)['pass'], 'Settled NoModel false became visible rendering'
+    for index in (0,2):
+        missing_endpoint=world_fixture();missing_endpoint[index].update(renderStatus='NoModel',transitionHidden=False)
+        try:
+            handoff(text,body,missing_endpoint,vertices)
+        except AssertionError as error:
+            assert 'Missing actual visible world render endpoint' in str(error)
+        else:
+            raise AssertionError('NoModel became a visible handoff endpoint')
     for stage, changes in [('held', {'heldID': -1, 'secondaryID': -1}),
                            ('held', {'secondaryID': -1}),
                            ('dropped', {'active': True}),

@@ -199,6 +199,8 @@ public final class Main {
 
     public static final boolean CART_TRANSITION_SUPPORTED = CART_SUPPORTED
         && supports("zombie/iso/IsoGridSquare.class", "e8192f87d88da607abe0293228c84efbd822ed4ac0a331102c030bc3eeaba467")
+        && supports("zombie/iso/objects/IsoWorldInventoryObject.class", "7be6f2d54525fa587908ce8efa7da5d26cfd3d19bd1cc02911ee12f7649857b3")
+        && supports("zombie/iso/fboRenderChunk/FBORenderObjectOutline.class", "175e9ae7b5307a2ddaa02adb006c18e30823dbae626348c8e73d6613173d8471")
         && supports("zombie/core/skinnedmodel/model/ItemModelRenderer.class", "7bca60683441a873571bb4a8e3030de21852916432040a2dcdacc297757fb008")
         && supports("zombie/core/skinnedmodel/model/WorldItemModelDrawer.class", "f9a83f5dbb3a5f897a502e945fb53150aa4cc4fb98c7996f5eb4bd0475d965d2");
 
@@ -568,8 +570,50 @@ public final class Main {
             if(Main.CART_TRANSITION_SUPPORTED && CartTransition.wooden(item)) {
                 var transform=Accessor.tryGet(renderer,"transform",(org.joml.Matrix4f)null);
                 if(transform!=null) transform.scale(.85f);
-                if(CartTransition.hidden(item)) Accessor.trySet(renderer,"alpha",0f);
             }
+        }
+    }
+
+    // Alpha-zero ground models still write depth, and the outline uses a separate sprite/atlas pass.
+    @Patch(className="zombie.core.skinnedmodel.model.ItemModelRenderer", methodName="renderMain", warmUp=true)
+    public static class WoodenWorldModel {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.core.skinnedmodel.model.ItemModelRenderer renderer,
+            @Patch.Argument(0) zombie.inventory.InventoryItem item,
+            @Patch.Local("toolkitHiddenWorldCart") boolean hidden) {
+            hidden=Main.CART_TRANSITION_SUPPORTED && CartTransition.hidden(item);
+            if(hidden) renderer.reset();
+            return hidden;
+        }
+        @Patch.OnExit
+        public static void exit(@Patch.Local("toolkitHiddenWorldCart") boolean hidden,
+            @Patch.Return(readOnly=false) zombie.core.skinnedmodel.model.ItemModelRenderer.RenderStatus result) {
+            if(hidden) result=zombie.core.skinnedmodel.model.ItemModelRenderer.RenderStatus.NoModel;
+        }
+    }
+
+    @Patch(className="zombie.iso.objects.IsoWorldInventoryObject", methodName="render", warmUp=true)
+    public static class WoodenWorldSprite {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.iso.objects.IsoWorldInventoryObject world) {
+            return Main.CART_TRANSITION_SUPPORTED && CartTransition.hidden(world.getItem());
+        }
+    }
+
+    @Patch(className="zombie.iso.objects.IsoWorldInventoryObject", methodName="renderObjectPicker", warmUp=true)
+    public static class WoodenWorldPicker {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.iso.objects.IsoWorldInventoryObject world) {
+            return Main.CART_TRANSITION_SUPPORTED && CartTransition.hidden(world.getItem());
+        }
+    }
+
+    @Patch(className="zombie.iso.fboRenderChunk.FBORenderObjectOutline", methodName="renderObject", warmUp=true)
+    public static class WoodenWorldOutline {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.Argument(1) zombie.iso.IsoObject object) {
+            return Main.CART_TRANSITION_SUPPORTED && object instanceof zombie.iso.objects.IsoWorldInventoryObject world
+                && CartTransition.hidden(world.getItem());
         }
     }
 

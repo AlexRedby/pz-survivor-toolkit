@@ -14,7 +14,8 @@ import zombie.inventory.InventoryItem;
 /** Read-only final render poses for native body/handle clearance measurements. */
 public final class ClearanceProbe {
     private static BufferedWriter output;
-    private static BufferedWriter worldOutput;
+    private static BufferedWriter worldOutput, tailOutput;
+    private static long lastTail;
     private static final Field WORLD_TRANSFORM=field("transform"), WORLD_ALPHA=field("alpha");
     private static long last;
     private static boolean installed;
@@ -26,7 +27,47 @@ public final class ClearanceProbe {
         float[] v=value.get(new float[16]);row.append('[');
         for(int i=0;i<16;i++){if(i>0)row.append(',');row.append(v[i]);}row.append(']');
     }
+    private static String quoted(String value) {
+        return value==null?"null":"\""+value.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\\n").replace("\r","\\r")+"\"";
+    }
+    private static Matrix4f pose(ModelInstanceRenderData body,SkinningData skin,int index) {
+        if((index+1)*16>body.matrixPalette.limit())throw new AssertionError("palette bounds");
+        var buffer=body.matrixPalette.duplicate();buffer.position(index*16);
+        var raw=new org.lwjgl.util.vector.Matrix4f();raw.load(buffer);
+        var result=PZMath.convertMatrix(raw,new Matrix4f()).transpose()
+            .mul(PZMath.convertMatrix(skin.boneOffset.get(index),new Matrix4f()).transpose().invert());
+        if(!result.isFinite())throw new AssertionError("nonfinite pose");
+        return result;
+    }
+    private static void tail(ModelSlotRenderData slot) throws Exception {
+        if(tailOutput==null || System.nanoTime()-lastTail<16_666_667L)return;
+        for(var body:slot.modelData) {
+            if(body.modelInstance==null || body.modelInstance.parent!=null || body.matrixPalette==null
+                || !(body.modelInstance.model.tag instanceof SkinningData skin))continue;
+            var row=new StringBuilder(4096).append("{\"wallTimeMillis\":").append(System.currentTimeMillis());
+            for(String name:new String[]{"PerformingAction","Weapon","RightHandMask","LeftHandMask"})
+                row.append(',').append(quoted(name)).append(':').append(quoted(slot.character.getVariableString(name)));
+            row.append(",\"cartModel\":").append(slot.modelData.stream().anyMatch(d->d.modelInstance!=null
+                && d.modelInstance.modelScript!=null && "WheelbarrowWood".equals(d.modelInstance.modelScript.getName())))
+                .append(",\"bones\":{");
+            boolean comma=false;
+            for(String side:new String[]{"L","R"})for(String part:new String[]{"UpperArm","Forearm","Hand"}) {
+                String name="Bip01_"+side+"_"+part;Integer index=skin.boneIndices.get(name);
+                if(index==null)throw new AssertionError("Missing tail bone "+name);
+                if(comma)row.append(',');comma=true;row.append(quoted(name)).append(':');matrix(row,pose(body,skin,index));
+            }
+            row.append("},\"tracks\":[");comma=false;
+            for(var track:body.modelInstance.animPlayer.getMultiTrack().getTracks()) {
+                if(comma)row.append(',');comma=true;
+                row.append("{\"name\":").append(quoted(track.getName())).append(",\"weight\":").append(track.getBlendWeight())
+                    .append(",\"field\":").append(track.getBlendFieldWeight()).append(",\"layer\":").append(track.getLayerIdx())
+                    .append(",\"priority\":").append(track.getPriority()).append('}');
+            }
+            row.append("]}\n");tailOutput.write(row.toString());tailOutput.flush();lastTail=System.nanoTime();return;
+        }
+    }
     public static synchronized void snapshot(ModelSlotRenderData slot) throws Exception {
+        tail(slot);
         if(output==null || System.nanoTime()-last<33_333_333L) return;
         for(var cart:slot.modelData) {
             var instance=cart.modelInstance;
@@ -42,12 +83,7 @@ public final class ClearanceProbe {
                 matrix(row,new Matrix4f(cart.xfrm).transpose());row.append(",\"bones\":{");
                 boolean comma=false;
                 for(var entry:skin.boneIndices.entrySet()) {
-                    int i=entry.getValue();if((i+1)*16>body.matrixPalette.limit())throw new AssertionError("palette bounds");
-                    var buffer=body.matrixPalette.duplicate();buffer.position(i*16);
-                    var raw=new org.lwjgl.util.vector.Matrix4f();raw.load(buffer);
-                    var pose=PZMath.convertMatrix(raw,new Matrix4f()).transpose()
-                        .mul(PZMath.convertMatrix(skin.boneOffset.get(i),new Matrix4f()).transpose().invert());
-                    if(!pose.isFinite())throw new AssertionError("nonfinite pose");
+                    var pose=pose(body,skin,entry.getValue());
                     if(comma)row.append(',');comma=true;row.append('"').append(entry.getKey()).append("\":");matrix(row,pose);
                 }
                 row.append("}}\n");output.write(row.toString());output.flush();last=System.nanoTime();return;
@@ -65,7 +101,13 @@ public final class ClearanceProbe {
         ItemModelRenderer.RenderStatus status) throws Exception {
         if(worldOutput==null || item==null || item.getWorldItem()==null
             || !"SaucedWheelbarrow.WheelbarrowWood".equals(item.getFullType())
-            || status!=ItemModelRenderer.RenderStatus.Ready) return;
+            ) return;
+        if(status==ItemModelRenderer.RenderStatus.NoModel
+            && net.alexredby.pztoolkitjavapatches.CartTransition.hidden(item)) {
+            worldOutput.write("{\"wallTimeMillis\":"+System.currentTimeMillis()+",\"itemId\":"+item.getID()
+                +",\"renderStatus\":\"NoModel\",\"transitionHidden\":true}\n");worldOutput.flush();return;
+        }
+        if(status!=ItemModelRenderer.RenderStatus.Ready)return;
         var transform=new Matrix4f((Matrix4f)WORLD_TRANSFORM.get(renderer));
         float alpha=WORLD_ALPHA.getFloat(renderer);
         if(!transform.isFinite() || !renderer.angle.isFinite() || !Float.isFinite(renderer.x)
@@ -73,7 +115,7 @@ public final class ClearanceProbe {
             throw new IllegalStateException("Nonfinite world cart render pose");
         var row=new StringBuilder(768).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
             .append(",\"itemId\":").append(item.getID())
-            .append(",\"source\":\"ItemModelRenderer.renderMain-exit\",\"matrixOrder\":\"column-major\"")
+            .append(",\"renderStatus\":\"Ready\",\"source\":\"ItemModelRenderer.renderMain-exit\",\"matrixOrder\":\"column-major\"")
             .append(",\"x\":").append(renderer.x).append(",\"y\":").append(renderer.y)
             .append(",\"z\":").append(renderer.z).append(",\"angle\":[")
             .append(renderer.angle.x).append(',').append(renderer.angle.y).append(',').append(renderer.angle.z)
@@ -91,11 +133,28 @@ public final class ClearanceProbe {
         }
     }
 
+    public static synchronized void worldSuppressed(zombie.iso.objects.IsoWorldInventoryObject world) throws Exception {
+        var item=world.getItem();
+        if(worldOutput!=null && net.alexredby.pztoolkitjavapatches.CartTransition.hidden(item)) {
+            worldOutput.write("{\"wallTimeMillis\":"+System.currentTimeMillis()+",\"itemId\":"+item.getID()
+                +",\"renderStatus\":\"Suppressed\",\"transitionHidden\":true,\"source\":\"IsoWorldInventoryObject.render-exit\"}\n");
+            worldOutput.flush();
+        }
+    }
+    public static class WorldSuppressedCapture {
+        @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
+        public static void exit(@Advice.This zombie.iso.objects.IsoWorldInventoryObject world,@Advice.Thrown Throwable thrown) {
+            try{if(thrown==null)ClearanceProbe.worldSuppressed(world);}
+            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] SUPPRESSION ERROR "+error);}
+        }
+    }
+
     private static void closeOutputs() throws Exception {
-        var body=output;var world=worldOutput;output=null;worldOutput=null;
+        var body=output;var world=worldOutput;var tails=tailOutput;output=null;worldOutput=null;tailOutput=null;
         Exception failure=null;
         try{if(body!=null)body.close();}catch(Exception error){failure=error;}
         try{if(world!=null)world.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
+        try{if(tails!=null)tails.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
         if(failure!=null)throw failure;
     }
 
@@ -107,17 +166,22 @@ public final class ClearanceProbe {
         if(!Files.isDirectory(directory))throw new IllegalArgumentException("Output directory must exist");
         Path file=directory.resolve("body-clearance.jsonl");
         Path worldFile=directory.resolve("world-cart-poses.jsonl");
-        if(Files.exists(file) || Files.exists(worldFile))throw new IllegalStateException("Preserve existing clearance output first");
+        Path tailFile=directory.resolve("action-tail-poses.jsonl");
+        if(Files.exists(file) || Files.exists(worldFile) || Files.exists(tailFile))throw new IllegalStateException("Preserve existing clearance output first");
         try {
             output=Files.newBufferedWriter(file,java.nio.file.StandardOpenOption.CREATE_NEW);
-            worldOutput=Files.newBufferedWriter(worldFile,java.nio.file.StandardOpenOption.CREATE_NEW);last=0;
+            worldOutput=Files.newBufferedWriter(worldFile,java.nio.file.StandardOpenOption.CREATE_NEW);
+            tailOutput=Files.newBufferedWriter(tailFile,java.nio.file.StandardOpenOption.CREATE_NEW);last=0;lastTail=0;
             if(!installed){new AgentBuilder.Default().disableClassFormatChanges()
                 .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
                 .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
                 .type(named("net.alexredby.pztoolkitjavapatches.CartGrounding")
-                    .or(named("zombie.core.skinnedmodel.model.ItemModelRenderer")))
+                    .or(named("zombie.core.skinnedmodel.model.ItemModelRenderer"))
+                    .or(named("zombie.iso.objects.IsoWorldInventoryObject")))
                 .transform((b,d,l,m,p)->d.getName().equals("net.alexredby.pztoolkitjavapatches.CartGrounding")
                     ?b.visit(Advice.to(Capture.class).on(named("render")))
+                    :d.getName().equals("zombie.iso.objects.IsoWorldInventoryObject")
+                    ?b.visit(Advice.to(WorldSuppressedCapture.class).on(named("render")))
                     :b.visit(Advice.to(WorldRenderCapture.class).on(named("renderMain").and(takesArguments(9)))))
                 .installOn(instrumentation);installed=true;}
         } catch(Exception error) {

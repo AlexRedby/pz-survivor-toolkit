@@ -2,6 +2,7 @@ local source = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/000Toolkit
 local originalRequire = require
 local function setup(server, active, client)
     local w = {events = {}, dt = 1 / 60, online = {}}
+    ToolkitCartRefreshVisual = nil
     isServer = function() return server end
     isClient = function() return client == true end
     getActivatedMods = function() return {contains = function(_, name) return active and name == "SaucedCarts" end} end
@@ -30,7 +31,9 @@ local function setup(server, active, client)
         function p:isRunning() return self.running end
         function p:isSprinting() return self.sprinting end
         function p:isLocalPlayer() return self.localPlayer end
-        function p:getCharacterActions() return {size = function() return self.actions end} end
+        function p:getCharacterActions()
+            return {size = function() return self.actions end, get = function(_, index) assert(index == 0); return self.action end}
+        end
         function p:getVariableFloat(name, default) return self.vars[name] or default end
         function p:setVariable(name, value) self.vars[name] = value end
         function p:getTurnDelta() return self.sprinting and 0.75 or self.running and 0.8 or self.normal end
@@ -57,7 +60,7 @@ end
 
 for _, flags in ipairs({{true, true}, {false, false}}) do
     local w = setup(flags[1], flags[2])
-    assert(#w.events.OnPlayerUpdate == 0)
+    assert(#w.events.OnPlayerUpdate == 0 and ToolkitCartRefreshVisual == nil)
 end
 assert(#setup(true, true, true).events.OnPlayerUpdate == 1, "host client motion was disabled")
 print("PASS cart motion: disabled without SaucedCarts and on dedicated servers; enabled for host clients")
@@ -120,6 +123,34 @@ for _, condition in ipairs({"aim", "sneak", "dead", "vehicle", "actions", "injur
     assert(p.normal == 1 and not p.vars.ToolkitCartMotion, condition .. " did not restore native controls")
 end
 print("PASS cart motion: aim, sneak, death, vehicle, actions, injury and stale hand state restore controls")
+
+w = setup(false, true); p = w.player(); cart = p:equip(50)
+local finishing = {done = true, finished = function(self) return self.done end}
+p.actions, p.action = 1, finishing
+assert(ToolkitCartRefreshVisual(p, finishing) == cart and p.vars.ToolkitCartMotion and p.normal == 1,
+    "completed exact pickup did not restore its visual without changing steering")
+w.tick(p)
+assert(not p.vars.ToolkitCartMotion, "finishing-action allowance leaked into an ordinary native frame")
+assert(ToolkitCartRefreshVisual(p, finishing) == cart and p.vars.ToolkitCartMotion)
+for _, condition in ipairs({"unfinished", "wrongidentity", "newqueued", "twoactions", "dead", "cartmissing"}) do
+    p.actions, p.action, p.dead, finishing.done = 1, finishing, false, true
+    p.item, p.secondary = cart, cart
+    local owner = finishing
+    if condition == "unfinished" then finishing.done = false
+    elseif condition == "wrongidentity" then owner = {finished = function() return true end}
+    elseif condition == "newqueued" then p.action = {finished = function() return true end}
+    elseif condition == "twoactions" then p.actions = 2
+    elseif condition == "dead" then p.dead = true
+    elseif condition == "cartmissing" then p:drop() end
+    assert(ToolkitCartRefreshVisual(p, owner) == nil and not p.vars.ToolkitCartMotion,
+        condition .. " bypassed the exact finished-action visual gate")
+end
+p.actions, p.action, p.dead = 0, nil, false; p.item, p.secondary = cart, cart
+w.tick(p)
+assert(p.vars.ToolkitCartMotion and p.normal < 1, "native cleanup did not retain the ordinary owned-cart visual")
+w.tick(p)
+assert(p.vars.ToolkitCartMotion, "later native refresh lost the post-pickup visual")
+print("PASS cart motion: exact finished-action refresh preserves next-action, ownership, death and normal frame gates")
 
 w = setup(false, true, true)
 p = w.player(); p:equip(50); w.tick(p, 60)

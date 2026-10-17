@@ -16,6 +16,15 @@ public final class CartTransitionTest {
     private static void close(float actual, float expected, String message) {
         check(Math.abs(actual-expected)<.00002f,message+": "+actual+" != "+expected);
     }
+    private static final class NativePass extends RuntimeException {}
+    private static void nativePass(Runnable render, String message) {
+        try {render.run();throw new AssertionError(message);} catch(NativePass expected) {}
+    }
+    private static Object invoke(java.lang.reflect.Method method, Object receiver, Object... args) {
+        try {return method.invoke(receiver,args);}
+        catch(java.lang.reflect.InvocationTargetException error) {throw (RuntimeException)error.getCause();}
+        catch(ReflectiveOperationException error) {throw new AssertionError(error);}
+    }
     private static final class Player extends IsoPlayer {
         InventoryItem primary,secondary;
         ItemContainer inventory;
@@ -41,6 +50,7 @@ public final class CartTransitionTest {
         IsoWorldInventoryObject world;
         String kind;
         float rotation,alpha;
+        boolean probeNative;
         Cart(){super(null,null,null,(String)null);}
         @Override public String getFullType(){return kind;}
         @Override public ItemContainer getContainer(){return container;}
@@ -48,14 +58,78 @@ public final class CartTransitionTest {
         @Override public void setWorldZRotation(float value){rotation=value;}
         @Override public float getWorldAlpha(){return alpha;}
         @Override public void setWorldAlpha(float value){alpha=value;}
+        @Override public zombie.scripting.objects.Item getScriptItem(){if(probeNative) throw new NativePass();return null;}
+        @Override public String getWorldStaticItem(){if(probeNative) throw new NativePass();return null;}
     }
     private static final class WorldItem extends IsoWorldInventoryObject {
         int invalidations;
+        InventoryItem item;
+        IsoGridSquare square;
+        boolean probeNative;
         WorldItem(){super((zombie.iso.IsoCell)null);}
         @Override public float getWorldPosX(){return 10.25f;}
         @Override public float getWorldPosY(){return 20.75f;}
         @Override public float getWorldPosZ(){return 2;}
+        @Override public InventoryItem getItem(){return item;}
+        @Override public IsoGridSquare getSquare(){return square;}
+        @Override public IsoGridSquare getRenderSquare(){return square;}
+        @Override public zombie.iso.SpriteModel getSpriteModel(){if(probeNative) throw new NativePass();return null;}
+        @Override public zombie.iso.IsoDirections getForwardIsoDirection(){throw new NativePass();}
         @Override public void invalidateRenderChunkLevel(long flags){check(flags==256,"wrong visual invalidation flags");invalidations++;}
+    }
+    private static void groundPasses() throws Exception {
+        var player=allocate(Player.class);var cart=allocate(Cart.class);var world=allocate(WorldItem.class);
+        cart.kind="SaucedWheelbarrow.WheelbarrowWood";cart.world=world;cart.alpha=.7f;cart.worldScale=1;world.item=cart;
+        var renderer=new zombie.core.skinnedmodel.model.ItemModelRenderer();
+        var outlineType=zombie.iso.fboRenderChunk.FBORenderObjectOutline.class;
+        var outline=allocate(outlineType);
+        var outlineRender=outlineType.getDeclaredMethod("renderObject",int.class,zombie.iso.IsoObject.class);
+        outlineRender.setAccessible(true);
+        Runnable outlinePass=()->invoke(outlineRender,outline,0,world);
+        var jobType=Class.forName("zombie.iso.fboRenderChunk.FBORenderItems$RenderJob");
+        var job=allocate(jobType);
+        var jobWorld=jobType.getDeclaredField("worldInventoryObject");jobWorld.setAccessible(true);jobWorld.set(job,world);
+        var jobModels=jobType.getDeclaredField("renderer");jobModels.setAccessible(true);
+        jobModels.set(job,new zombie.core.skinnedmodel.model.ItemModelRenderer[]{renderer,renderer,renderer});
+        var jobRender=jobType.getDeclaredMethod("renderMain");jobRender.setAccessible(true);
+        world.square=allocate(IsoGridSquare.class);
+        try {
+            check(CartTransition.update(player,cart,true,.6),"pickup ground-pass setup refused");
+            check(!CartTransition.hidden(cart),"ground disappeared before a held model rendered");
+            var statesField=CartTransition.class.getDeclaredField("states");statesField.setAccessible(true);
+            var state=((java.util.Map<?,?>)statesField.get(null)).get(player);
+            var rendered=state.getClass().getDeclaredField("rendered");rendered.setAccessible(true);rendered.setBoolean(state,true);
+            check(CartTransition.hidden(cart),"rendered held model must hide the exact ground item");
+            var other=allocate(Cart.class);other.kind=cart.kind;
+            check(!CartTransition.hidden(other),"held visual hid a different cart");
+            var sprite=allocate(zombie.iso.sprite.IsoSprite.class);
+            var texture=zombie.iso.sprite.IsoSprite.class.getDeclaredField("texture");texture.setAccessible(true);
+            texture.set(sprite,allocate(zombie.core.textures.Texture.class));world.sprite=sprite;
+            cart.probeNative=true;world.probeNative=true;
+            for(int i=0;i<3;i++) {
+                check(renderer.renderMain(cart,null,null,0,0,0,0,0,true)
+                    ==zombie.core.skinnedmodel.model.ItemModelRenderer.RenderStatus.NoModel,
+                    "cached FBO model/depth pass survived held visual");
+                check(invoke(jobRender,job)==zombie.core.skinnedmodel.model.ItemModelRenderer.RenderStatus.NoModel,
+                    "cached native FBO job survived held visual");
+                world.render(0,0,0,null,false,false,null);
+                world.renderObjectPicker(0,0,0,null);
+                outlinePass.run();
+            }
+            close(cart.alpha,.7f,"world passes changed serialized alpha");
+            CartTransition.end(player);
+            check(!CartTransition.hidden(cart),"cancel did not restore the ground visual");
+            check(world.invalidations==1,"cancel did not invalidate the ground cache once");
+            nativePass(()->renderer.renderMain(cart,null,null,0,0,0,0,0,true),"model pass stayed hidden after cleanup");
+            nativePass(()->invoke(jobRender,job),"cached FBO job stayed hidden after cleanup");
+            nativePass(()->world.render(0,0,0,null,false,false,null),"sprite pass stayed hidden after cleanup");
+            nativePass(()->world.renderObjectPicker(0,0,0,null),"picker stayed hidden after cleanup");
+            nativePass(outlinePass,"outline stayed hidden after cleanup");
+            cart.world=null;
+            check(CartTransition.update(player,cart,false,.6),"setdown setup refused");
+            state=((java.util.Map<?,?>)statesField.get(null)).get(player);rendered.setBoolean(state,true);
+            check(!CartTransition.hidden(cart),"setdown without a native world item hid a static item");
+        } finally {CartTransition.end(player);}
     }
     private static void bridge() throws Exception {
         var player=allocate(Player.class);player.inventory=allocate(ItemContainer.class);player.square=allocate(IsoGridSquare.class);
@@ -124,6 +198,7 @@ public final class CartTransitionTest {
     }
     public static void main(String[] args) throws Exception {
         Field field=Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);unsafe=(Unsafe)field.get(null);
+        me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches",CartTransitionTest.class.getClassLoader());
         check(Main.CART_SUPPORTED,"installed B42.21 bytecode fixture unsupported");
         check(Main.CART_TRANSITION_SUPPORTED,"installed transition render bytecode unsupported");
         for(var name:new String[]{"wooden","hidden","place"}) {
@@ -138,7 +213,7 @@ public final class CartTransitionTest {
         var cart=allocate(Cart.class);cart.kind="SaucedWheelbarrow.WheelbarrowWood";
         check(Boolean.FALSE.equals(atlas.invoke(null,cart,null,0f,0f,0f,0f,0f,false)),
             "wooden cart atlas must defer to the same renderer as FBO without accessing a scene");
-        bridge();geometry();
-        System.out.println("CART_TRANSITION_PASS (scoped exact-owner validation, native yaw geometry, cancellation cache cleanup)");
+        bridge();geometry();groundPasses();
+        System.out.println("CART_TRANSITION_PASS (scoped exact-owner validation, native yaw geometry, model/depth/sprite/picker/outline suppression and cleanup)");
     }
 }

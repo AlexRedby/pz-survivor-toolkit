@@ -28,18 +28,27 @@ local function restore(player)
     end
 end
 
-local function heldCart(player)
+local function heldCart(player, finishingAction)
     local item = player:getPrimaryHandItem()
     if not item or player:getSecondaryHandItem() ~= item or not instanceof(item, "InventoryContainer")
         or not SaucedCarts.safeIsCart(item) or item:getWorldItem() or item:getContainer() ~= player:getInventory()
         or player:isDead() or player:isAiming() or player:isSneaking() or player:getVehicle()
-        or player:getCharacterActions():size() > 0 or math.abs(player:getVariableFloat("WalkInjury", 0)) >= 0.15 then return end
+        or math.abs(player:getVariableFloat("WalkInjury", 0)) >= 0.15 then return end
+    local actions = player:getCharacterActions()
+    -- Native complete runs before removing its finished action; the next queued action has a different identity.
+    if actions:size() > 0 and not (finishingAction and actions:size() == 1
+        and actions:get(0) == finishingAction and finishingAction:finished()) then return end
     return item
 end
 
-local function update(player)
-    local cart = heldCart(player)
+function ToolkitCartRefreshVisual(player, finishingAction)
+    local cart = heldCart(player, finishingAction)
     setVisual(player, cart ~= nil)
+    return cart
+end
+
+local function update(player)
+    local cart = ToolkitCartRefreshVisual(player)
     if not player:isLocalPlayer() then return end
     if blocked[player] and (player:getPrimaryHandItem() ~= blocked[player] or player:getSecondaryHandItem() ~= blocked[player]) then
         blocked[player] = nil
@@ -102,7 +111,7 @@ if isClient() then
         if not players then return end
         for i = 0, players:size() - 1 do
             local player = players:get(i)
-            if not player:isLocalPlayer() then setVisual(player, heldCart(player) ~= nil) end
+            if not player:isLocalPlayer() then ToolkitCartRefreshVisual(player) end
         end
     end)
 end
