@@ -89,6 +89,14 @@ public final class Main {
             "d40d1b745a70ad3bf562c15765b9f46a117ecb48aeeabf05597ce646a73e0b56")
         && supports("zombie/network/packets/BodyDamageUpdatePacket$Type.class",
             "e7694d5cfa682aa1fb60cdc85fdbb231bd87f758ce82ef0dc3dd0ccdead52c6c");
+    public static final boolean MEDICAL_VISUALS_SUPPORTED = supports("zombie/characters/IsoGameCharacter$Bandages.class",
+            "bb87836b717355811e6f699377896918b9d4f4d050a5ad7bc1f1a35a70ebdedd")
+        && supports("zombie/characters/IsoGameCharacter.class",
+            "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b")
+        && supports("zombie/characters/WornItems/WornItems.class",
+            "3a01a9b5b7e13d0902fcac9342ac0b42e5c2e87284d88ce9a6a01f45294409c1")
+        && supports("zombie/network/packets/SyncClothingPacket.class",
+            "09e83606c9de4555802b2171e26df4739a78c787afeb8b2907d46c19be311dff");
     public static final boolean MEDICAL_TIMED_ACTION_SUPPORTED = supports("zombie/network/PZNetKahluaTableImpl.class",
             "201f0e59502fc5a106f8c9021e0b0d13a30dcb8d0beb9e8934cec390231ddba6")
         && supports("zombie/core/NetTimedAction.class",
@@ -184,8 +192,23 @@ public final class Main {
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
-            + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
+            + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", medicalVisuals=" + MEDICAL_VISUALS_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
             + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED + ", basementRooms=" + BASEMENT_ROOMS_SUPPORTED + ", mannequin=" + MANNEQUIN_SUPPORTED);
+    }
+
+    @Patch(className="zombie.characters.IsoGameCharacter$Bandages", methodName="removeBandageModel", warmUp=true, strictMatch=true)
+    public static class NativeMedicalVisualRemoval {
+        @Patch.OnEnter
+        public static void enter(@Patch.This Object models, @Patch.Argument(0) zombie.characters.IsoGameCharacter player,
+                                 @Patch.Argument(1) String type,
+                                 @Patch.Local("toolkitRemovedVisual") zombie.inventory.InventoryItem removed) {
+            removed = MedicalVisuals.before(models, player, type, Main.MEDICAL_VISUALS_SUPPORTED);
+        }
+        @Patch.OnExit
+        public static void exit(@Patch.Argument(0) zombie.characters.IsoGameCharacter player, @Patch.Argument(1) String type,
+                                @Patch.Local("toolkitRemovedVisual") zombie.inventory.InventoryItem removed) {
+            MedicalVisuals.after(player, removed);
+        }
     }
 
     @Patch(className="zombie.network.packets.BodyDamageUpdatePacket", methodName="processClient", warmUp=true, strictMatch=true)
