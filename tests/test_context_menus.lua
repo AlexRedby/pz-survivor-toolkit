@@ -479,3 +479,67 @@ assert(handGroup.options[1].onSelect==ISInventoryPaneContextMenu.OnPrimaryWeapon
 menu:addOption('Wear',nil,ISInventoryPaneContextMenu.onWearItems);menu:prerender()
 assert(group(menu,'equipment') and #group(menu,'equipment').options==3,'mixed equipment actions keep their broader label')
 print('PASS hand-only group label and unchanged mixed equipment group')
+
+Organizer.reset()
+local dropKey='callback:ISInventoryPaneContextMenu.onDropItems'
+local placeKey='callback:ISInventoryPaneContextMenu.onPlaceItemOnGround'
+menu,actions=potMenu(true,true);menu.toolkitContextItemType='Base.Pot';menu:prerender()
+assert(#Organizer.getLayout('Base.Pot','root')==6,'editor must show the actual compact default layout')
+local foundRoot=false
+for _,entry in ipairs(Organizer.getEntries('Base.Pot')) do if entry.key==dropKey then foundRoot=entry.category=='root' end end
+assert(foundRoot,'editor must report rendered placement, not semantic classifier category')
+local custom=assert(Organizer.createGroup('Kitchen | Кухня','Base.Pot'))
+assert(not Organizer.createGroup('in\nvalid'))
+assert(Organizer.renameGroup('equipment','My hands','Base.Pot'))
+assert(Organizer.setOverride(dropKey,custom,'Base.Pot'))
+assert(Organizer.setOverride(placeKey,'hidden'))
+assert(Organizer.setOrder('Base.Pot','root',{'group:'..custom,'label:Cooking'}))
+menu,actions=potMenu(true,true);menu.toolkitContextItemType='Base.Pot';menu:prerender()
+assert(menu.options[1].toolkitContextGroupId==custom and not contains(menu,actions.place))
+local customMenu=menu:getSubMenu(menu.options[1].subOption)
+assert(customMenu.options[1]==actions.drop and actions.drop.onSelect==ISInventoryPaneContextMenu.onDropItems)
+local renamed=false
+for _,row in ipairs(menu.options) do if row.name=='My hands' then renamed=true end end
+assert(renamed,'item group rename missing')
+Organizer.restore(menu);same(menu,actions.original)
+menu,actions=potMenu(true,true);menu.toolkitContextItemType='Base.Hammer';menu:prerender()
+assert(contains(menu,actions.drop) and not contains(menu,actions.place),'item placement leaked or global placement not inherited')
+for _,row in ipairs(menu.options) do assert(row.name~='My hands','item name leaked') end
+local persisted=dofile(client..'PZSurvivorToolkit/ContextMenuProfile.lua').new(require('PZSurvivorToolkit/ContextMenuRules'))
+assert(persisted.getOverride(dropKey,'Base.Pot')==custom and persisted.getOverride(dropKey,'Base.Hammer')==nil)
+assert(persisted.getOverride(placeKey,'Base.Pot')=='hidden' and persisted.groupName('equipment','Base.Pot')=='My hands')
+assert(persisted.getOrder('Base.Pot','root')[1]=='group:'..custom and persisted.isCustomGroup(custom))
+Organizer.reset('Base.Pot')
+assert(Organizer.getOverride(dropKey,'Base.Pot')==nil and Organizer.getOverride(placeKey,'Base.Pot')=='hidden')
+assert(Organizer.setOverride(dropKey,custom,'Base.Pot'))
+assert(Organizer.deleteGroup(custom) and Organizer.getOverride(dropKey,'Base.Pot')==nil)
+Organizer.reset()
+menu,actions=potMenu(true,true);menu.toolkitContextItemType='Base.Pot';menu:prerender()
+assert(#menu.options==6 and contains(menu,actions.drop) and contains(menu,actions.place),'full reset must restore current defaults')
+for _,row in ipairs(menu.options) do assert(row.name~='My hands') end
+print('PASS item rules, custom groups, renaming, order, persistence, deletion and exact defaults reset')
+
+local anotherPot={getFullType=function() return 'Base.Pot' end}
+local mixed=wrapper(0,true,{{items={pot,anotherPot}}})
+assert(mixed.toolkitContextItemType=='Base.Pot','a same-type stack must use type rules')
+local hammer={getFullType=function() return 'Base.Hammer' end}
+mixed=wrapper(0,true,{pot,hammer})
+assert(mixed.toolkitContextItemType==nil,'mixed selections must not pick an arbitrary item rule')
+mixed:clear();assert(mixed.toolkitContextItemType==nil,'pooled menus must clear item scope')
+
+menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextKind='inventory'
+local a=menu:addOption('A',nil,function() end)
+local title=menu:addOption('Section',nil,nil);title.isTitle=true
+local b=menu:addOption('B',nil,function() end)
+menu:prerender()
+assert(not Organizer.moveEntry('*','root','label:B',-1),'editor must not cross a native title barrier')
+print('PASS item scope capture, mixed stacks and title barriers in editor ordering')
+Organizer.reset()
+Organizer.setOverride('label:Recipe search','hidden','Base.Pot')
+menu,actions=potMenu(true,true);menu.toolkitContextItemType='Base.Pot';menu:prerender()
+assert(contains(menu,actions.native),'native lookup fallback missing')
+local fallbackVisible=false
+for _,row in ipairs(Organizer.getLayout('Base.Pot','root')) do if row.key=='callback:ISEntityUI.OpenHandcraftWindow' then fallbackVisible=true end end
+assert(fallbackVisible,'editor must show restored native fallback, not only the baseline tree')
+Organizer.reset()
+print('PASS editor reflects conditional fallback actions in the actual menu')
