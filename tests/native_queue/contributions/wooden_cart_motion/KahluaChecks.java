@@ -8,6 +8,24 @@ import se.krka.kahlua.vm.KahluaThread;
 
 public final class KahluaChecks {
     public static void main(String[] args) throws Exception {
+        boolean pad = "true".equals(System.getenv("PZ_CART_TEST_PAD"));
+        for (int original : new int[]{5, 13, 19, 25, 27}) {
+            zombie.iso.IsoChunkMap.chunkGridWidth = original;
+            zombie.iso.IsoChunkMap.chunkWidthInTiles = original * 8;
+            net.alexredby.cartlab.Main.PadChunks.exit();
+            int width = zombie.iso.IsoChunkMap.chunkGridWidth;
+            if (width != (pad ? Math.max(25, original) : original)
+                    || zombie.iso.IsoChunkMap.chunkWidthInTiles != width * 8)
+                throw new AssertionError("Chunk window guard or wider native map changed");
+            if (pad) for (int origin = 0; origin < 8; origin++) {
+                for (int tile = origin + 2; tile < origin + 94; tile++) {
+                    int min = (Math.floorDiv(tile, 8) - width / 2) * 8;
+                    if (min > origin || min + width * 8 <= origin + 95)
+                        throw new AssertionError("Pad edge can unload at safe tile " + tile);
+                }
+            }
+        }
+        System.out.println("CART_CHUNK_WINDOW_PASS enabled=" + pad);
         var platform=J2SEPlatform.getInstance();
         var environment=platform.newEnvironment();
         var thread=new KahluaThread(System.out,platform,environment);

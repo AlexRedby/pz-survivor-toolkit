@@ -86,7 +86,8 @@
   },
   "required_environment": [
     "PZ_CART_RUNTIME_FILE",
-    "PZ_CART_COMMAND_FILE"
+    "PZ_CART_COMMAND_FILE",
+    "PZ_CART_TEST_PAD"
   ],
   "required_lua_global": "CartMotionConfig",
   "required_lua_fields": [

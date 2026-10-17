@@ -201,6 +201,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             _write(lua / 'client/QueueCartStartup.lua', (project / 'tests/native_queue/support/QueueCartStartup.lua').read_text())
         runtime_lua = cache / 'Lua/cart-runtime.lua'
         spec['env'] = dict(spec.get('env', {}), PZ_CART_RUNTIME_FILE=str(runtime_lua), PZ_CART_COMMAND_FILE=str(cache / 'Lua/cart-command.txt'))
+        spec['env']['PZ_CART_TEST_PAD'] = 'true' if selection['suite'] == SP else 'false'
         if role == 'server':
             _write(runtime_lua, 'return true\n')
             sandbox = cache / 'Server' / (runtime['server_name'] + '_SandboxVars.lua')

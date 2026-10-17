@@ -62,7 +62,7 @@ CartMotionConfig = {
 }
 ```
 
-The coordinates are the original B42.21 calibration, not portable world discovery. The adapter must establish that the whole configured ground footprint is loaded. Required fields have no hidden path/profile defaults. The area accepts finite grid parameters and a bounded size up to 96; it retains the original object/floor/actor/collision validation and refuses any world other than single-player `CartTestArea`.
+The coordinates are the original B42.21 calibration, not portable world discovery. The adapter must establish that the whole configured ground footprint is loaded. Required fields have no hidden path/profile defaults. The area accepts finite grid parameters and a bounded size up to 96; it retains the original object/floor/actor/collision validation and refuses any world other than single-player `CartTestArea`. The SP adapter sets `PZ_CART_TEST_PAD=true`: CartLab then keeps the native chunk window at least 25x25 chunks (200x200 tiles), enough to retain the complete pad from every safe player position. Streaming still follows the player. MP explicitly disables this test-only override. Bootstrap checks and logs the actual chunk width and render dimensions before floor preparation.
 
 Create a **fresh, owned, disposable profile** with the manifest options/sandbox settings. Do not reuse a player save, delete an existing save automatically, or copy an old investigation profile. The fixture changes test inventory, clothing, Sprinting skill and floor tiles. It validates the complete footprint before creating floors and never clears unexpected objects.
 

@@ -91,6 +91,7 @@ class CartAdapterTests(unittest.TestCase):
         self.assertIn("assert(ready=='ready'", startup)
         self.assertFalse((self.output / 'client1/Lua/queue-probes-ready.txt').exists())
         self.assertIn('toggleToSprint=false', (self.output / 'client1/options.ini').read_text())
+        self.assertEqual(self.runtime['roles']['client1']['env']['PZ_CART_TEST_PAD'], 'true')
 
     def test_mp_stage_composes_original_methods_and_identical_selection(self):
         self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
@@ -105,6 +106,8 @@ class CartAdapterTests(unittest.TestCase):
             self.assertEqual(len(self.runtime['fixture']['attach'][role]), 1)
             self.assertIn('CartLab', self.runtime['fixture']['mods'])
         self.assertNotIn('server', self.runtime['fixture']['attach'])
+        for role in ('client1', 'client2', 'server'):
+            self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_TEST_PAD'], 'false')
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],

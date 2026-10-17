@@ -72,6 +72,8 @@ woodReady=function()
  if getTimestampMs()-woodSince<3000 then return end
  Events.OnTick.Remove(woodReady)
  local ok,err=pcall(function()
+  assert(cartLabChunkWidth()>=200,'[CART_TEST_AREA] native chunk window too small')
+  print('[CART_TEST_AREA] CHUNK_WINDOW tiles='..cartLabChunkWidth()..' screen='..getCore():getScreenWidth()..'x'..getCore():getScreenHeight())
   CartTestArea.prepare()
   local p=assert(getPlayer())
   local x,y,z=CartTestArea.x,CartTestArea.y,CartTestArea.z

@@ -125,7 +125,10 @@ def run(root, resource_wait=300):
             streams.append(stream)
             environment = {key: value for key, value in os.environ.items() if key not in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")}
             extra_env = config.get('env', {})
-            if set(extra_env) - {'PZ_CART_RUNTIME_FILE', 'PZ_CART_COMMAND_FILE'} or any(not isinstance(value, str) or not Path(value).is_absolute() for value in extra_env.values()):
+            if (set(extra_env) - {'PZ_CART_RUNTIME_FILE', 'PZ_CART_COMMAND_FILE', 'PZ_CART_TEST_PAD'}
+                    or any(not isinstance(value, str) or not Path(value).is_absolute()
+                           for name, value in extra_env.items() if name != 'PZ_CART_TEST_PAD')
+                    or 'PZ_CART_TEST_PAD' in extra_env and extra_env['PZ_CART_TEST_PAD'] not in ('true', 'false')):
                 raise ValueError('Invalid fixture-owned client environment')
             environment.update(extra_env)
             process = subprocess.Popen(command, cwd=game, env=environment, stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.PIPE, text=True, start_new_session=True)

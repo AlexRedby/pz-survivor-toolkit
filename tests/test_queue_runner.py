@@ -104,6 +104,35 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
 
+    def test_cart_pad_flag_is_typed_and_overrides_inherited_environment(self):
+        self.runtime['roles']['client1']['env'] = {'PZ_CART_TEST_PAD': 'false', 'PZ_CART_RUNTIME_FILE': '/owned/runtime.lua'}
+        (self.root / 'runtime.json').write_text(json.dumps(self.runtime))
+        environments = []
+        popen = self.popen
+        def capture(command, **kwargs):
+            if 'env' in kwargs: environments.append(kwargs['env'])
+            return popen(command, **kwargs)
+        self.popen = capture
+        with patch.dict(runner.os.environ, {'PZ_CART_TEST_PAD': 'true'}):
+            result, _ = self.invoke()
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(environments[0]['PZ_CART_TEST_PAD'], 'false')
+        self.assertEqual(environments[0]['PZ_CART_RUNTIME_FILE'], '/owned/runtime.lua')
+
+    def test_non_boolean_cart_pad_flag_is_rejected_before_game_launch(self):
+        self.runtime['roles']['client1']['env'] = {'PZ_CART_TEST_PAD': '/arbitrary/path'}
+        (self.root / 'runtime.json').write_text(json.dumps(self.runtime))
+        result, _ = self.invoke()
+        self.assertIn('Invalid fixture-owned client environment', result['error'])
+        self.assertFalse(result['processes'])
+
+    def test_cart_pad_flag_does_not_admit_unknown_environment_keys(self):
+        self.runtime['roles']['client1']['env'] = {'PZ_CART_TEST_PAD': 'true', 'JAVA_TOOL_OPTIONS': '/untrusted'}
+        (self.root / 'runtime.json').write_text(json.dumps(self.runtime))
+        result, _ = self.invoke()
+        self.assertIn('Invalid fixture-owned client environment', result['error'])
+        self.assertFalse(result['processes'])
+
     def test_explicit_font_preload_extends_single_client_agent(self):
         self.selection['mods'] = ['ZombieBuddy', 'PZToolkitJavaPatches']
         self.selection['options'] = {'preload_toolkit_fonts': True}

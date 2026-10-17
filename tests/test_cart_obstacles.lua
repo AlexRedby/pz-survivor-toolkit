@@ -211,6 +211,13 @@ local before=removals
 rejects(function() area.clearObstacles(player) end,'unexpected tile object')
 assert(removals==before and here.objects[#here.objects]==foreign,'cleanup removed a foreign object')
 table.remove(here.objects)
+local distantKey=key(area.minX+area.size-1,area.minY,area.z)
+local distant=squares[distantKey];squares[distantKey]=nil
+local registry,edges=area.obstacles,area.obstacleEdges
+rejects(function() area.clearObstacles(player) end,'square not loaded')
+assert(removals==before and area.obstacles==registry and area.obstacleEdges==edges,
+ 'missing distant square allowed partial cleanup')
+squares[distantKey]=distant
 forcedEdges[edgeKey(3,4,0,-1)]=false
 rejects(function() area.check(player) end,'edge')
 forcedEdges={}

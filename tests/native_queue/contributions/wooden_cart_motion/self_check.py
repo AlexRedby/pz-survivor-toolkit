@@ -38,7 +38,7 @@ def check_manifest():
     assert manifest["dependencies"]["compile_release"] == 17
     assert manifest["dependencies"]["required_project_versions"]["PZSurvivorToolkit"] == ">=0.1.58"
     assert manifest["dependencies"]["required_project_versions"]["PZToolkitJavaPatches"] == ">=0.1.15"
-    assert manifest["required_environment"] == ["PZ_CART_RUNTIME_FILE", "PZ_CART_COMMAND_FILE"]
+    assert manifest["required_environment"] == ["PZ_CART_RUNTIME_FILE", "PZ_CART_COMMAND_FILE", "PZ_CART_TEST_PAD"]
     assert manifest["required_lua_fields"] == ["disposable", "videoRoot", "ffmpeg", "area"]
     assert manifest["runtime_contract"]["world_name"] == "CartTestArea"
     assert manifest["runtime_contract"]["fresh_owned_profile"] is True
@@ -183,8 +183,10 @@ def check_java(game, jdk):
         subprocess.run([str(compiler), "--release", "17", "-cp", os.pathsep.join(map(str, jars)), "-d", output, str(HERE / "Main.java"), str(HERE / "KahluaChecks.java")], check=True)
         assert (Path(output) / "net/alexredby/cartlab/Main.class").is_file()
         runtime = jdk / "bin" / ("java.exe" if os.name == "nt" else "java")
-        subprocess.run([str(runtime), "-cp", os.pathsep.join([output, *map(str, jars)]), "KahluaChecks", str(HERE.parents[3])], check=True, cwd=game)
-    return "PASS (compile and stock Kahlua obstacle checks; native game not launched)"
+        for pad in ('false', 'true'):
+            subprocess.run([str(runtime), "-cp", os.pathsep.join([output, *map(str, jars)]), "KahluaChecks", str(HERE.parents[3])],
+                           check=True, cwd=game, env=dict(os.environ, PZ_CART_TEST_PAD=pad))
+    return "PASS (compile, chunk-window bounds/guard and stock Kahlua obstacle checks; native game not launched)"
 
 
 def main():

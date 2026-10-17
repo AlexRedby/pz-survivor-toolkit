@@ -14,6 +14,22 @@ public final class Main {
     public static int drive = -1, gait;
     private static long lastCommand;
 
+    @Patch(className="zombie.iso.IsoChunkMap", methodName="CalcChunkWidth", warmUp=true)
+    public static class PadChunks {
+        @Patch.OnExit
+        public static void exit() {
+            if (!"true".equals(System.getenv("PZ_CART_TEST_PAD"))) return;
+            // A 96-tile radius keeps the complete 96x96 pad resident from any safe position.
+            zombie.iso.IsoChunkMap.chunkGridWidth = Math.max(25, zombie.iso.IsoChunkMap.chunkGridWidth);
+            zombie.iso.IsoChunkMap.chunkWidthInTiles = zombie.iso.IsoChunkMap.chunkGridWidth * 8;
+        }
+    }
+
+    @LuaMethod(name="cartLabChunkWidth", global=true)
+    public static int chunkWidth() {
+        return zombie.iso.IsoChunkMap.chunkWidthInTiles;
+    }
+
     private static Path configuredPath(String name) {
         String value = System.getenv(name);
         if (value == null || value.isBlank()) throw new IllegalStateException("Missing required " + name);
