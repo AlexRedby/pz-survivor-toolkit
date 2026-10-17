@@ -33,8 +33,8 @@ public final class CartTransitionTest {
         IsoGridSquare square;
         java.util.Map<String,Float> variables;
         java.util.Stack<BaseAction> actions;
-        int protection,modelResets,handWrites;
-        boolean performing,otherFloor,clipPilot;
+        int protection,modelResets,handWrites,clipPilotWrites;
+        boolean performing,otherFloor,clipPilot,clipPilotAbsent;
         java.util.Map<String,Boolean> booleanVariables;
         RuntimeException modelError;
         boolean expectedForceNull;
@@ -61,6 +61,10 @@ public final class CartTransitionTest {
         @Override public boolean isBeingGrappled(){return protection==9;}
         @Override public boolean isRagdollSimulationActive(){return protection==10;}
         @Override public zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator getAdvancedAnimator(){return null;}
+        @Override public boolean containsVariable(String name){
+            if("ToolkitWoodCartClipPilot".equals(name)) return !clipPilotAbsent;
+            return variables!=null && variables.containsKey(name) || booleanVariables!=null && booleanVariables.containsKey(name);
+        }
         @Override public boolean getVariableBoolean(String name){
             if("ToolkitWoodCartClipPilot".equals(name)) return clipPilot;
             return "IsPerformingAnAction".equals(name) && performing;
@@ -82,6 +86,9 @@ public final class CartTransitionTest {
             if(variables==null) variables=new java.util.HashMap<>();variables.put(name,value);return null;
         }
         @Override public zombie.core.skinnedmodel.advancedanimation.IAnimationVariableSlot setVariable(String name,boolean value){
+            if("ToolkitWoodCartClipPilot".equals(name)) {
+                clipPilot=value;clipPilotAbsent=false;clipPilotWrites++;return null;
+            }
             check("ToolkitWoodCartClipPickup".equals(name),"unexpected boolean presentation variable: "+name);
             if(booleanVariables==null) booleanVariables=new java.util.HashMap<>();booleanVariables.put(name,value);return null;
         }
@@ -231,6 +238,13 @@ public final class CartTransitionTest {
     private static Object value(Object state,String name) throws Exception {
         var field=state.getClass().getDeclaredField(name);field.setAccessible(true);return field.get(state);
     }
+    private static void value(Object state,String name,Object value) throws Exception {
+        var field=state.getClass().getDeclaredField(name);field.setAccessible(true);field.set(state,value);
+    }
+    private static Object cancelled(Player player) throws Exception {
+        var field=CartTransition.class.getDeclaredField("cancelled");field.setAccessible(true);
+        return ((java.util.Map<?,?>)field.get(null)).get(player);
+    }
     private record Recovery(Player player,Cart cart,WorldItem world,boolean pickup) {}
     private static Recovery recovery(boolean pickup) throws Exception {
         var player=allocate(Player.class);player.inventory=allocate(ItemContainer.class);player.square=allocate(IsoGridSquare.class);
@@ -288,6 +302,48 @@ public final class CartTransitionTest {
             } finally {CartTransition.end(player);}
         }
     }
+    private static void authoredClipDefault() throws Exception {
+        boolean client=zombie.network.GameClient.client,server=zombie.network.GameServer.server;
+        try {
+            for(boolean networkClient:new boolean[]{false,true}) for(boolean networkServer:new boolean[]{false,true})
+                for(int choice=-1;choice<=1;choice++) {
+                zombie.network.GameClient.client=networkClient;zombie.network.GameServer.server=networkServer;
+                var player=allocate(Player.class);player.clipPilotAbsent=choice<0;player.clipPilot=choice==1;
+                boolean expected=choice<0?!networkClient && !networkServer:choice==1;
+                check(CartTransition.authoredClip(player,true)==expected,"clip default did not distinguish SP from network roles or explicit choice");
+                check(!player.clipPilotAbsent && player.clipPilot==expected,"clip default did not publish the matching XML selector");
+                check(player.clipPilotWrites==(choice<0?1:0),"clip default rewrote an explicit actor choice");
+                check(CartTransition.authoredClip(player,true)==expected && player.clipPilotWrites==(choice<0?1:0),
+                    "repeated action initialization rewrote the selected clip mode");
+            }
+            zombie.network.GameClient.client=false;zombie.network.GameServer.server=false;
+            for(int choice=-1;choice<=1;choice++) {
+                var player=allocate(Player.class);player.clipPilotAbsent=choice<0;player.clipPilot=choice==1;
+                if(choice==1) {
+                    try {CartTransition.authoredClip(player,false);throw new AssertionError("explicit unsupported clip opt-in did not fail fast");}
+                    catch(IllegalStateException expected) {
+                        check(expected.getMessage().contains("native node retirement"),"unsupported clip changed its failure reason");
+                    }
+                    check(player.clipPilot && !player.clipPilotAbsent && player.clipPilotWrites==0,"unsupported clip fallback erased an explicit opt-in");
+                } else {
+                    check(!CartTransition.authoredClip(player,false) && !player.clipPilot && !player.clipPilotAbsent,
+                        "unsupported absent clip mode did not select the procedural XML node");
+                    check(player.clipPilotWrites==(choice<0?1:0),"unsupported fallback rewrote an explicit opt-out");
+                }
+            }
+            for(boolean pickup:new boolean[]{true,false}) {
+                var fixture=recovery(pickup);var player=fixture.player;
+                try {
+                    CartTransition.end(player);player.clipPilotAbsent=true;
+                    check(CartTransition.update(player,fixture.cart,pickup,0),"SP default action setup refused");
+                    check((Boolean)value(state(player),"authored") && player.clipPilot && !player.clipPilotAbsent,
+                        "ordinary SP action did not consume the absent authored-clip default");
+                    CartTransition.end(player);
+                    check(player.clipPilot && !player.clipPilotAbsent,"presentation cleanup erased the actor's selected clip mode");
+                } finally {CartTransition.end(player);}
+            }
+        } finally {zombie.network.GameClient.client=client;zombie.network.GameServer.server=server;}
+    }
     private static void authoredClockAndRecovery() throws Exception {
         var layer=allocate(zombie.core.skinnedmodel.advancedanimation.AnimLayer.class);
         var character=layer.getClass().getDeclaredField("character");character.setAccessible(true);
@@ -343,6 +399,259 @@ public final class CartTransitionTest {
             } finally {CartTransition.end(player);}
         }
         track.release();
+    }
+    private static Recovery restartRecovery(boolean pickup) throws Exception {
+        var fixture=recovery(pickup);var player=fixture.player;player.clipPilot=true;
+        var current=state(player);value(current,"authored",true);
+        value(current,"recoveryPose",new Matrix4f[]{new Matrix4f().translation(0,.1f,0)});
+        value(current,"recoveryCart",new Matrix4f().translation(0,.2f,0));
+        // The displayed recovery frame has already moved away from its immutable cancellation seed.
+        value(current,"lastPose",new Matrix4f[]{new Matrix4f().translation(0,.3f,0)});
+        value(current,"lastPlacement",new CartTransitionMath.Placement(10.2f,20.7f,2.1f,5,20,0,1));
+        value(current,"lastReach",.35f);value(current,"lastGrip",.15f);
+        value(current,"lastRender",System.nanoTime());
+        check(CartTransition.cancel(player,fixture.cart,pickup,null),"authored restart setup refused");
+        check(cancelled(player)==current,"authored cancellation did not retain its latest-frame candidate");
+        return fixture;
+    }
+    private static void authoredRestartHandoff() throws Exception {
+        for(boolean pickup:new boolean[]{true,false}) for(int route=0;route<3;route++) {
+            var fixture=restartRecovery(pickup);var player=fixture.player;
+            try {
+                var previous=state(player);var pose=value(previous,"lastPose");var placement=value(previous,"lastPlacement");
+                String replacement=null;
+                if(route>0) {
+                    player.getCharacterActions().add(allocate(BaseAction.class));player.performing=true;
+                    if(route==2) {replacement=new String("WheelbarrowWood");player.overridePrimaryHandModel=replacement;}
+                    CartTransition.tick(player,System.nanoTime());
+                    check(state(player)==null && cancelled(player)==previous,
+                        "native queue cleanup discarded the immediate restart candidate");
+                }
+                check(CartTransition.update(player,fixture.cart,pickup,0),"same-item restart refused");
+                var restarted=state(player);
+                check(restarted!=previous && !(Boolean)value(restarted,"recovering"),"restart reused cancellation progress");
+                check(value(restarted,"restartPose")==pose && value(restarted,"restartPlacement")==placement,
+                    "restart did not inherit the last displayed pose and cart placement");
+                check(value(restarted,"restartPose")!=value(previous,"recoveryPose"),"restart inherited the stale cancellation seed");
+                close((Float)value(restarted,"restartReach"),.35f,"restart lost the displayed reach weight");
+                close((Float)value(restarted,"restartGrip"),.15f,"restart lost the displayed grip weight");
+                close((Float)value(restarted,"progress"),0,"restart did not reset native action progress");
+                check((Long)value(restarted,"restartStart")>0 && cancelled(player)==null,"restart candidate was not consumed once");
+                check(player.overridePrimaryHandModel==replacement,"restart cleanup erased a replacement model identity");
+                check(player.handWrites==0 && fixture.cart.world==(pickup?fixture.world:null)
+                    && fixture.cart.container==(pickup?null:player.inventory)
+                    && player.primary==(pickup?null:fixture.cart) && player.secondary==player.primary,
+                    "restart handoff changed authoritative item ownership");
+            } finally {CartTransition.end(player);}
+        }
+    }
+    private static void authoredRestartRefusals() throws Exception {
+        for(boolean pickup:new boolean[]{true,false}) for(String failure:new String[]{
+            "stale","pruned","item","direction","world","world-item","world-square","world-unloaded","world-placement",
+            "hands","inventory","protected","protected-tick","protected-after-cleanup","explicit","global"}) {
+            if(pickup && failure.equals("inventory") || !pickup && failure.startsWith("world")) continue;
+            var fixture=restartRecovery(pickup);var player=fixture.player;
+            try {
+                var previous=state(player);Cart item=fixture.cart;boolean direction=pickup;
+                switch(failure) {
+                    case "stale" -> value(previous,"lastRender",System.nanoTime()-201_000_000L);
+                    case "pruned" -> {
+                        CartTransition.tick(player,(Long)value(previous,"lastRender")+200_000_001L);
+                        check(cancelled(player)==null,"stale cancelled candidate survived the player tick");
+                    }
+                    case "item" -> {
+                        item=allocate(Cart.class);item.kind=fixture.cart.kind;item.worldScale=1;
+                        if(pickup) {var world=allocate(WorldItem.class);world.item=item;world.square=player.square;item.world=world;}
+                        else {item.container=player.inventory;player.primary=item;player.secondary=item;}
+                    }
+                    case "direction" -> {
+                        direction=!pickup;
+                        if(direction) fixture.cart.world=fixture.world;
+                        else {fixture.cart.world=null;fixture.cart.container=player.inventory;player.primary=item;player.secondary=item;}
+                    }
+                    case "world" -> {
+                        var world=allocate(WorldItem.class);world.item=item;world.square=player.square;item.world=world;
+                    }
+                    case "world-item" -> fixture.world.item=allocate(Cart.class);
+                    case "world-square" -> fixture.world.square=allocate(IsoGridSquare.class);
+                    case "world-unloaded" -> fixture.world.square=null;
+                    case "world-placement" -> item.worldScale=1.1f;
+                    case "hands" -> {if(pickup) player.primary=allocate(Cart.class);else player.secondary=null;}
+                    case "inventory" -> item.container=allocate(ItemContainer.class);
+                    case "protected" -> player.protection=3;
+                    case "protected-tick" -> {
+                        player.protection=3;CartTransition.tick(player,System.nanoTime());
+                        check(state(player)==null && cancelled(player)==null,"protected-state cleanup retained a restart candidate");
+                        player.protection=0;
+                    }
+                    case "protected-after-cleanup" -> {
+                        player.getCharacterActions().add(allocate(BaseAction.class));
+                        CartTransition.tick(player,System.nanoTime());
+                        check(state(player)==null && cancelled(player)==previous,"queue cleanup did not preserve its pending candidate");
+                        player.actions.clear();player.protection=3;
+                        CartTransition.tick(player,System.nanoTime());
+                        check(state(player)==null && cancelled(player)==null,"protected tick retained a candidate without an active state");
+                        player.protection=0;
+                    }
+                    case "explicit" -> CartTransition.end(player);
+                    case "global" -> CartTransition.end(null);
+                }
+                if(failure.equals("explicit") || failure.equals("global"))
+                    check(cancelled(player)==null,"explicit cleanup retained a cancelled presentation candidate");
+                check(CartTransition.update(player,item,direction,0),"restart refusal fixture did not create a new state: "+failure);
+                check(value(state(player),"restartPose")==null && value(state(player),"restartPlacement")==null,
+                    "unsafe cancelled snapshot inherited: "+pickup+"/"+failure);
+                check(!CartTransition.hidden(item),"rejected snapshot hid the native world cart: "+failure);
+                check(cancelled(player)==null && player.handWrites==0,"rejected restart leaked a candidate or changed hands");
+            } finally {CartTransition.end(player);}
+        }
+    }
+    private static void authoredRestartRecancellation() throws Exception {
+        for(boolean pickup:new boolean[]{true,false}) {
+            var fixture=restartRecovery(pickup);var player=fixture.player;
+            try {
+                check(CartTransition.update(player,fixture.cart,pickup,.35),"recancellation restart setup refused");
+                var current=state(player);
+                check(value(current,"restartPose")!=null && value(current,"restartPlacement")!=null,
+                    "recancellation fixture did not inherit the unfinished handoff");
+                var pose=new Matrix4f[]{new Matrix4f().translation(0,.4f,0)};
+                var cart=new Matrix4f().translation(0,.5f,0);
+                value(current,"rendered",true);value(current,"recoveryPose",pose);value(current,"recoveryCart",cart);
+                value(current,"nativeRotation",new Quaternionf());value(current,"referenceRotation",new Quaternionf());
+                check(CartTransition.cancel(player,fixture.cart,pickup,null),"cancellation during inherited handoff refused");
+                check(value(current,"restartPose")==null && value(current,"restartPlacement")==null,
+                    "recancellation retained the old handoff and would blend the recovery cart twice");
+                check(value(current,"recoveryPose")==pose && value(current,"recoveryCart")==cart,
+                    "recancellation discarded the newly displayed recovery seed");
+                check((Boolean)value(current,"movingRecovery") && cancelled(player)==current,
+                    "recancellation did not retain its own recovery state");
+                check(player.handWrites==0,"recancellation changed authoritative hand ownership");
+            } finally {CartTransition.end(player);}
+        }
+    }
+    private static zombie.characters.CharacterTimedActions.LuaTimedActionNew pendingAction(Player player,Cart item,String type) throws Exception {
+        var action=allocate(zombie.characters.CharacterTimedActions.LuaTimedActionNew.class);
+        var table=new se.krka.kahlua.j2se.KahluaTableImpl(new java.util.HashMap<>());
+        var meta=new se.krka.kahlua.j2se.KahluaTableImpl(new java.util.HashMap<>());
+        meta.rawset("Type",type);table.setMetatable(meta);table.rawset("character",player);
+        if(type.equals("ISWalkToTimedActionF")) table.rawset("toolkitWoodCartItem",item);
+        else if(type.equals("ToolkitWoodCartPickup")) table.rawset("itemId",(double)item.getID());
+        else table.rawset("item",item);
+        value(action,"table",table);action.chr=player;action.maxTime=-1;
+        return action;
+    }
+    private static void authoredPendingHandoff() throws Exception {
+        for(String type:new String[]{"ISWalkToTimedActionF","ToolkitWoodCartPickup","ToolkitWoodCartSetdown"}) {
+            boolean pickup=!type.equals("ToolkitWoodCartSetdown");
+            var fixture=restartRecovery(pickup);var player=fixture.player;
+            try {
+                var current=state(player);var lease=player.overridePrimaryHandModel;
+                float progress=(Float)value(current,"progress");
+                player.actions.add(pendingAction(player,fixture.cart,type));player.performing=true;
+                long start=System.nanoTime();CartTransition.tick(player,start);
+                check(state(player)==current && cancelled(player)==current,"owned pending action discarded its rendered recovery: "+type);
+                CartTransition.tick(null);
+                check(state(player)==current && cancelled(player)==current,"null-player tick disturbed another player's pending presentation");
+                check((Long)value(current,"pendingStart")==start,"pending action did not establish its first-seen deadline");
+                check(player.overridePrimaryHandModel==lease,"pending action lost its exact visual lease");
+                check(CartTransition.hidden(fixture.cart)==pickup,"pending pickup exposed its ground model");
+                check(CartTransition.suppressHeldModel(player)==!pickup,"pending setdown exposed a duplicate held model");
+                CartTransition.tick(player,start+100_000_000L);
+                close((Float)value(current,"progress"),progress,"pending action continued returning the cart to an endpoint");
+                if(type.equals("ISWalkToTimedActionF")) player.actions.set(0,pendingAction(player,fixture.cart,"ToolkitWoodCartPickup"));
+                CartTransition.tick(player,start+150_000_000L);
+                check((Long)value(current,"pendingStart")==start,"repeated pending ticks or walk-to-pickup handoff extended the deadline");
+                check(CartTransition.update(player,fixture.cart,pickup,0),"owned pending action could not take over presentation");
+                var fresh=state(player);
+                check(fresh!=current && value(fresh,"restartPose")==value(current,"lastPose"),"pending takeover lost its latest displayed pose");
+                check((Boolean)value(fresh,"rendered") && CartTransition.hidden(fixture.cart)==pickup,
+                    "fresh inherited pickup exposed the ground cart before its first actor render");
+                check(player.handWrites==0 && fixture.cart.world==(pickup?fixture.world:null)
+                    && player.primary==(pickup?null:fixture.cart) && player.secondary==player.primary,
+                    "pending presentation changed native cart ownership");
+            } finally {CartTransition.end(player);}
+        }
+    }
+    private static void authoredPendingDeadline() throws Exception {
+        for(boolean pickup:new boolean[]{true,false}) for(boolean admittedBeforeDeadline:new boolean[]{true,false}) {
+            var fixture=restartRecovery(pickup);var player=fixture.player;
+            try {
+                var current=state(player);
+                long origin=(Long)value(current,"recoveryStart");
+                long deadline=origin+(long)Math.ceil((.4+.2*(Float)value(current,"cancelledProgress"))*1_000_000_000.0);
+                long admission=deadline-50_000_000L;
+                value(current,"lastRender",admission);
+                CartTransition.tick(player,admission-1);
+                check(state(player)==current,"late pending fixture ended before its original recovery deadline");
+                player.actions.add(pendingAction(player,fixture.cart,pickup?"ToolkitWoodCartPickup":"ToolkitWoodCartSetdown"));
+                player.performing=true;
+                if(admittedBeforeDeadline) {
+                    CartTransition.tick(player,admission);
+                    check(state(player)==current && cancelled(player)==current,"valid pending action was rejected before the original deadline");
+                    check((Long)value(current,"pendingStart")==admission,"late pending action lost its first-seen time");
+                    CartTransition.tick(player,deadline-1);
+                    check(state(player)==current,"pending presentation ended before the original recovery deadline");
+                }
+                CartTransition.tick(player,deadline);
+                check(state(player)==null && cancelled(player)==null,"late pending action extended the original recovery deadline");
+                check(!CartTransition.hidden(fixture.cart) && !CartTransition.suppressHeldModel(player)
+                    && player.overridePrimaryHandModel==null,"recovery deadline leaked its visual lease or model suppression");
+                check(CartTransition.update(player,fixture.cart,pickup,0),"native action setup failed after pending expiration");
+                check(value(state(player),"restartPose")==null && !CartTransition.hidden(fixture.cart),
+                    "expired late pending action reused its cancelled presentation snapshot");
+                check(player.handWrites==0,"pending deadline cleanup changed authoritative hand ownership");
+            } finally {CartTransition.end(player);}
+        }
+    }
+    private static void authoredPendingRefusals() throws Exception {
+        for(String type:new String[]{"ISWalkToTimedActionF","ToolkitWoodCartPickup","ToolkitWoodCartSetdown"})
+            for(String failure:new String[]{"wrong-item","unmarked","wrong-type","native-owner","lua-owner","multiple","finished","stopped",
+                "timeout","expired-update","protected","foreign-model","physical-owner"}) {
+            boolean pickup=!type.equals("ToolkitWoodCartSetdown");
+            var fixture=restartRecovery(pickup);var player=fixture.player;
+            try {
+                var current=state(player);var action=pendingAction(player,fixture.cart,type);var table=action.getTable();
+                player.actions.add(action);player.performing=true;String foreign=null;
+                switch(failure) {
+                    case "wrong-item" -> {
+                        if(type.equals("ISWalkToTimedActionF")) table.rawset("toolkitWoodCartItem",allocate(Cart.class));
+                        else if(pickup) table.rawset("itemId",(double)fixture.cart.getID()+1);
+                        else table.rawset("item",allocate(Cart.class));
+                    }
+                    case "unmarked" -> table.rawset(type.equals("ISWalkToTimedActionF")?"toolkitWoodCartItem":pickup?"itemId":"item",null);
+                    case "wrong-type" -> table.getMetatable().rawset("Type","ISUnequipAction");
+                    case "native-owner" -> action.chr=allocate(Player.class);
+                    case "lua-owner" -> table.rawset("character",allocate(Player.class));
+                    case "multiple" -> player.actions.add(allocate(BaseAction.class));
+                    case "finished" -> action.maxTime=0;
+                    case "stopped" -> action.forceStop=true;
+                    case "protected" -> player.protection=3;
+                    case "foreign-model" -> {foreign=new String("WheelbarrowWood");player.overridePrimaryHandModel=foreign;}
+                    case "physical-owner" -> {if(pickup) fixture.world.item=allocate(Cart.class);else player.secondary=null;}
+                    case "timeout", "expired-update" -> {
+                        long start=System.nanoTime();CartTransition.tick(player,start);
+                        check(state(player)==current,"valid pending timeout fixture was not retained");
+                        if(failure.equals("expired-update")) {
+                            value(current,"pendingStart",System.nanoTime()-201_000_000L);
+                            value(current,"lastRender",System.nanoTime());
+                            check(CartTransition.update(player,fixture.cart,pickup,0),"expired pending update refused the native action");
+                            check(value(state(player),"restartPose")==null && !CartTransition.hidden(fixture.cart),
+                                "fresh render timestamp bypassed the fixed pending deadline");
+                            continue;
+                        }
+                        CartTransition.tick(player,start+150_000_000L);
+                        CartTransition.tick(player,start+200_000_001L);
+                    }
+                }
+                if(!failure.equals("timeout")) CartTransition.tick(player,System.nanoTime());
+                check(state(player)==null && !CartTransition.hidden(fixture.cart) && !CartTransition.suppressHeldModel(player),
+                    "unsafe pending action retained cart presentation: "+type+"/"+failure);
+                if(failure.equals("timeout") || failure.equals("protected"))
+                    check(cancelled(player)==null,"expired/protected pending action retained a restart candidate");
+                check(player.overridePrimaryHandModel==foreign,"pending cleanup clobbered a foreign visual identity");
+                check(player.handWrites==0,"rejected pending action changed native hand ownership");
+            } finally {CartTransition.end(player);}
+        }
     }
     private static void authoredNodeRetirement() throws Exception {
         var tick=zombie.core.skinnedmodel.animation.AnimationTrack.class.getDeclaredMethod("TickCurrentTime",float.class);
@@ -559,6 +868,7 @@ public final class CartTransitionTest {
         }
     }
     public static void main(String[] args) throws Exception {
+        zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         Field field=Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);unsafe=(Unsafe)field.get(null);
         me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches",CartTransitionTest.class.getClassLoader());
         check(Main.CART_SUPPORTED,"installed B42.21 bytecode fixture unsupported");
@@ -575,7 +885,7 @@ public final class CartTransitionTest {
         var cart=allocate(Cart.class);cart.kind="SaucedWheelbarrow.WheelbarrowWood";
         check(Boolean.FALSE.equals(atlas.invoke(null,cart,null,0f,0f,0f,0f,0f,false)),
             "wooden cart atlas must defer to the same renderer as FBO without accessing a scene");
-        bridge();geometry();groundPasses();recoveryLifecycle();authoredClockAndRecovery();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();recoveryLeaseIdentity();recoveryModelScope();
+        bridge();geometry();groundPasses();recoveryLifecycle();authoredClipDefault();authoredClockAndRecovery();authoredRestartHandoff();authoredRestartRefusals();authoredRestartRecancellation();authoredPendingHandoff();authoredPendingDeadline();authoredPendingRefusals();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();recoveryLeaseIdentity();recoveryModelScope();
         System.out.println("CART_TRANSITION_PASS (scoped exact-owner validation, native yaw geometry, model/depth/sprite/picker/outline suppression and cleanup)");
     }
 }

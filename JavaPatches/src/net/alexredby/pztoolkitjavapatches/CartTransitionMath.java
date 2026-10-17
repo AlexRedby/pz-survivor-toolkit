@@ -59,6 +59,20 @@ final class CartTransitionMath {
         return (low+high)*.5;
     }
 
+    static double recoveryRelease(double progress, double start, boolean authoredPickup) {
+        if(!Double.isFinite(progress) || !Double.isFinite(start) || start<=0) return Double.NaN;
+        double remaining=Math.max(0,Math.min(1,progress/start));
+        // recover already eases time; easing pickup again holds the hip against the descending shafts.
+        return authoredPickup?remaining:smooth(remaining);
+    }
+
+    static double recoveryClearance(double start, double elapsedSeconds) {
+        if(!Double.isFinite(start) || !Double.isFinite(elapsedSeconds)) return Double.NaN;
+        double origin=Math.max(0,Math.min(1,start));
+        double u=Math.max(0,Math.min(1,elapsedSeconds/(.4+.2*origin)));
+        return progress(origin,false).lift()*u*(1-u);
+    }
+
     static double nativeHeight(Progress phase, double idle, double low, double cart) {
         double lowWeight=.10*phase.crouch()*(1-phase.lift());
         return idle*(1-phase.lift()-lowWeight)+low*lowWeight+cart*phase.lift();

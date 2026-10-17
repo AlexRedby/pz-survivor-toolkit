@@ -10,6 +10,7 @@ import se.krka.kahlua.vm.KahluaTable;
 import zombie.Lua.LuaManager;
 import zombie.characters.IsoPlayer;
 import zombie.characters.CharacterTimedActions.BaseAction;
+import zombie.characters.CharacterTimedActions.LuaTimedActionNew;
 import zombie.core.skinnedmodel.ModelManager;
 import zombie.core.skinnedmodel.advancedanimation.AnimLayer;
 import zombie.core.skinnedmodel.advancedanimation.LiveAnimNode;
@@ -19,12 +20,17 @@ import zombie.inventory.InventoryItem;
 import zombie.iso.IsoGridSquare;
 import zombie.iso.IsoWorld;
 import zombie.iso.objects.IsoWorldInventoryObject;
+import zombie.network.GameClient;
+import zombie.network.GameServer;
 import zombie.scripting.ScriptManager;
 
 /** Presentation only: inventory/world ownership remains with the native timed action. */
 public final class CartTransition {
     private static final WeakHashMap<IsoPlayer, State> states = new WeakHashMap<>();
+    // Native queue/render cleanup can run before the replacement action's first update.
+    private static final WeakHashMap<IsoPlayer, State> cancelled = new WeakHashMap<>();
     private static final Field CLIP_RETIRING = clipRetiringField();
+    private static final double RESTART_BLEND_NANOS = 350_000_000.0;
     // Start behind the handle ends rather than clearing the shafts with a large pelvis-only retreat.
     private static final float STANCE_BACK = .06f;
     // shortcut: the supported wooden attachment and Bob_Cart_Idle reference; recalibrate after either asset changes.
@@ -39,12 +45,17 @@ public final class CartTransition {
         Matrix4f[] recoveryPose;
         Matrix4f recoveryCart;
         boolean movingRecovery;
+        Matrix4f[] lastPose, restartPose;
+        CartTransitionMath.Placement lastPlacement, restartPlacement;
+        float lastReach, lastGrip, restartReach, restartGrip;
+        long lastRender, restartStart, pendingStart;
         Quaternionf nativeRotation, referenceRotation;
         long recoveryStart;
         String visualModel;
         float progress;
         long updated;
         IsoWorldInventoryObject world;
+        IsoGridSquare cancelSquare;
         CartTransitionMath.Placement placement;
     }
 
@@ -98,20 +109,43 @@ public final class CartTransition {
         return result;
     }
 
+    static boolean authoredClip(IsoPlayer player, boolean retirementSupported) {
+        if(!player.containsVariable("ToolkitWoodCartClipPilot"))
+            player.setVariable("ToolkitWoodCartClipPilot",retirementSupported && !GameClient.client && !GameServer.server);
+        boolean selected=player.getVariableBoolean("ToolkitWoodCartClipPilot");
+        if(selected && !retirementSupported)
+            throw new IllegalStateException("Authored cart clips require native node retirement support");
+        return selected;
+    }
+
     @LuaMethod(name="toolkitWoodCartUpdate", global=true)
     public static synchronized boolean update(IsoPlayer player, InventoryItem item, boolean pickup, double progress) {
         if(!Main.CART_TRANSITION_SUPPORTED || player==null || !player.isLocalPlayer() || !wooden(item)
             || !Double.isFinite(progress) || player.isDead()) return false;
         State state=states.get(player);
         if(state==null || state.recovering || state.item!=item || state.pickup!=pickup) {
+            var previous=cancelled.remove(player);
             end(player);state=new State();state.item=item;state.pickup=pickup;
-            state.authored=player.getVariableBoolean("ToolkitWoodCartClipPilot");
-            if(state.authored && CLIP_RETIRING==null)
-                throw new IllegalStateException("Authored cart clips require native node retirement support");
+            state.authored=authoredClip(player,CLIP_RETIRING!=null);
             if(pickup) {
                 state.world=item.getWorldItem();
                 if(state.world==null) return false;
                 state.placement=placement(item,state.world);
+            }
+            if(state.authored && previous!=null && previous.item==item && previous.pickup==pickup
+                && previous.lastPose!=null && previous.lastPlacement!=null
+                && System.nanoTime()-previous.lastRender<=200_000_000L
+                && !pendingExpired(previous,System.nanoTime()) && !protectedState(player)
+                && (pickup?previous.world==state.world && state.world.getItem()==item
+                    && state.world.getSquare()!=null && state.world.getSquare()==previous.cancelSquare
+                    && previous.placement.equals(state.placement)
+                    && player.getPrimaryHandItem()==null && player.getSecondaryHandItem()==null
+                    :item.getWorldItem()==null && item.getContainer()==player.getInventory()
+                        && player.getPrimaryHandItem()==item && player.getSecondaryHandItem()==item)) {
+                state.restartPose=previous.lastPose;state.restartPlacement=previous.lastPlacement;
+                state.restartReach=previous.lastReach;state.restartGrip=previous.lastGrip;
+                state.restartStart=System.nanoTime();
+                state.rendered=previous.rendered;
             }
             states.put(player,state);
         }
@@ -183,11 +217,36 @@ public final class CartTransition {
             && state.visualModel==player.overridePrimaryHandModel && player.overrideSecondaryHandModel==null;
     }
 
+    private static boolean pendingExpired(State state, long now) {
+        return now-state.recoveryStart>=(.4+.2*state.cancelledProgress)*1_000_000_000.0
+            || state.pendingStart!=0 && now-state.pendingStart>200_000_000L;
+    }
+
+    private static boolean recoveryActions(IsoPlayer player, State state, long now) {
+        if(pendingExpired(state,now)) return false;
+        var actions=player.getCharacterActions();
+        if(actions.isEmpty()) return !player.getVariableBoolean("IsPerformingAnAction");
+        if(!state.authored || actions.size()!=1 || !(actions.get(0) instanceof LuaTimedActionNew action)
+            || action.chr!=player || action.forceStop || action.forceComplete || action.finished()) return false;
+        var table=action.getTable();
+        if(table==null || table.rawget("character")!=player) return false;
+        String type=action.getMetaType();
+        boolean owned=state.pickup
+            ?"ISWalkToTimedActionF".equals(type) && table.rawget("toolkitWoodCartItem")==state.item
+                || "ToolkitWoodCartPickup".equals(type) && table.rawget("itemId") instanceof Number id
+                    && id.doubleValue()==state.item.getID()
+            :"ToolkitWoodCartSetdown".equals(type) && table.rawget("item")==state.item;
+        if(owned && state.pickup && (state.world.getSquare()!=state.cancelSquare
+            || !state.placement.equals(placement(state.item,state.world)))) return false;
+        if(owned && state.pendingStart==0) state.pendingStart=now;
+        return owned;
+    }
+
     public static synchronized boolean suppressHeldModel(zombie.characters.IsoGameCharacter character) {
         if(!(character instanceof IsoPlayer player)) return false;
         var state=states.get(player);
         return state!=null && state.recovering && !state.pickup && recoveryOwner(player,state)
-            && player.getCharacterActions().isEmpty() && !player.getVariableBoolean("IsPerformingAnAction");
+            && recoveryActions(player,state,System.nanoTime());
     }
 
     @LuaMethod(name="toolkitWoodCartCancel", global=true)
@@ -216,6 +275,9 @@ public final class CartTransition {
         state.recovering=true;state.cancelledProgress=state.progress;state.recoveryStart=System.nanoTime();
         if(state.authored) {
             retireAuthored(player,state);state.movingRecovery=true;state.movementProgress=state.progress;
+            state.restartPose=null;state.restartPlacement=null;
+            state.cancelSquare=state.world==null?null:state.world.getSquare();
+            cancelled.put(player,state);
         }
         return true;
     }
@@ -224,10 +286,14 @@ public final class CartTransition {
     public static synchronized void tick(IsoPlayer player) {tick(player,System.nanoTime());}
 
     static void tick(IsoPlayer player, long now) {
+        var previous=cancelled.get(player);
+        if(previous!=null && (protectedState(player) || now-previous.lastRender>200_000_000L)) cancelled.remove(player);
         var state=states.get(player);
         if(state==null || !state.recovering) return;
-        if(!recoveryOwner(player,state) || !player.getCharacterActions().isEmpty()
-            || player.getVariableBoolean("IsPerformingAnAction")) {end(player);return;}
+        if(!recoveryOwner(player,state) || !recoveryActions(player,state,now)) {
+            end(player,!protectedState(player) && !pendingExpired(state,now));return;
+        }
+        if(!player.getCharacterActions().isEmpty()) {state.updated=now;return;}
         state.progress=(float)CartTransitionMath.recover(state.cancelledProgress,(now-state.recoveryStart)*1e-9,!state.pickup);
         state.updated=now;
         if(state.progress<=0) end(player);
@@ -256,10 +322,16 @@ public final class CartTransition {
 
     @LuaMethod(name="toolkitWoodCartEnd", global=true)
     public static synchronized void end(IsoPlayer player) {
+        end(player,false);
+    }
+
+    private static void end(IsoPlayer player, boolean preserveCancelled) {
         if(player==null) {
             for(var owner:new java.util.ArrayList<>(states.keySet())) end(owner);
+            cancelled.clear();
             return;
         }
+        if(!preserveCancelled) cancelled.remove(player);
         var state=states.remove(player);
         if(state!=null) retireAuthored(player,state);
         player.clearVariable("ToolkitWoodCartPoseX");player.clearVariable("ToolkitWoodCartPoseY");
@@ -276,9 +348,11 @@ public final class CartTransition {
         if(!(slot.character instanceof IsoPlayer player)) return false;
         var state=states.get(player);
         if(state==null) return false;
-        if(protectedState(player) || state.recovering && !recoveryOwner(player,state)
-            || System.nanoTime()-state.updated>1_000_000_000L) {
+        if(protectedState(player) || System.nanoTime()-state.updated>1_000_000_000L) {
             end(player);return false;
+        }
+        if(state.recovering && (!recoveryOwner(player,state) || !recoveryActions(player,state,System.nanoTime()))) {
+            end(player,!pendingExpired(state,System.nanoTime()));return false;
         }
         var clip=ModelManager.instance.getAnimationClip("Bob_Cart_Idle");
         if(clip==null) return false;
@@ -299,7 +373,7 @@ public final class CartTransition {
             if(state.recovering && !state.movingRecovery && player.isJustMoved() && state.recoveryPose!=null) {
                 state.movingRecovery=true;state.movementProgress=state.progress;
             }
-            float release=state.movingRecovery?(float)CartTransitionMath.smooth(state.progress/state.movementProgress):1;
+            float release=state.movingRecovery?(float)CartTransitionMath.recoveryRelease(state.progress,state.movementProgress,state.authored && state.pickup):1;
             var transform=new Matrix4f();
             if(!CartTransitionMath.blend(ground,held,phase.lift(),transform)) continue;
             var axle=new Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z);
@@ -309,6 +383,23 @@ public final class CartTransition {
             // A cancelled setdown still owns the held cart; carry its return path with the walking actor.
             if(state.movingRecovery && !state.pickup
                 && !CartTransitionMath.blend(held,state.recoveryCart,release,transform)) {end(player);return false;}
+            double restartAge=System.nanoTime()-state.restartStart;
+            float restart=state.restartPose==null?0:1-(float)CartTransitionMath.smooth(restartAge/RESTART_BLEND_NANOS);
+            float cartRestart=restart;
+            if(state.pickup && state.restartPose!=null) {
+                // Let the hip clear the shafts before lowering the cart after an interrupted pickup.
+                double u=Math.max(0,Math.min(1,restartAge/400_000_000.0));
+                cartRestart=1-(float)CartTransitionMath.smooth(u-.7*u*(1-u));
+            }
+            if(cartRestart>0) {
+                var from=new Matrix4f();
+                if(!CartTransitionMath.worldToActor(state.restartPlacement,model,slot.x,slot.y,slot.z,slot.animPlayerAngle,from))
+                    {end(player);return false;}
+                var target=new Matrix4f(transform);
+                if(!CartTransitionMath.blend(target,from,cartRestart,transform)) {end(player);return false;}
+                var pivot=from.transformPosition(axle,new Vector3f()).lerp(target.transformPosition(axle,new Vector3f()),1-cartRestart);
+                transform.translateLocal(pivot.sub(transform.transformPosition(axle,new Vector3f())));
+            } else {state.restartPose=null;state.restartPlacement=null;}
             var reference=CartGrip.referencePosture(instance.parent.animPlayer.getSkinningData(),phase);
             float baseHeight=Float.NaN;Quaternionf baseRotation=null;
             if(state.recovering && !state.movingRecovery) {
@@ -326,11 +417,16 @@ public final class CartTransition {
             }
             // Keep the knee bend and hip hinge in one continuous descent, without an early sink/rebound.
             float lowering=(float)(-.03*phase.balance());
+            // A restarted pickup releases the old grip while its clip begins the approach again.
+            float reach=state.pickup?(float)phase.reach():(float)phase.reach()*(1-restart)+state.restartReach*restart;
+            float grip=state.pickup?(float)phase.grip():(float)phase.grip()*(1-restart)+state.restartGrip*restart;
+            float clearance=state.authored && state.movingRecovery && state.pickup
+                ?(float)CartTransitionMath.recoveryClearance(state.cancelledProgress,(System.nanoTime()-state.recoveryStart)*1e-9):0;
             state.ik=state.movingRecovery
                 ?CartGrip.movingRecovery(slot,instance.parent,clip,delta,transform,held,state.recoveryPose,release,!state.pickup,
-                    state.recoveryReach,state.recoveryGrip)
+                    state.recoveryReach,state.recoveryGrip,clearance)
                 :state.authored?CartGrip.authoredTransition(slot,instance.parent,clip,delta,transform,
-                    (float)phase.reach(),(float)phase.grip())
+                    reach,grip,state.restartPose,restart)
                 :CartGrip.transition(slot,instance.parent,delta,transform,(float)phase.reach(),(float)phase.grip(),
                     (float)phase.lift(),(ground.m30()-held.m30())*(float)phase.center(),lowering,.16f*(float)phase.balance(),
                     (float)Math.toRadians(60*phase.hinge()),baseHeight,baseRotation);
@@ -339,7 +435,14 @@ public final class CartTransition {
                 state.recoveryPose=CartGrip.capture(instance.parent.animPlayer.getSkinningData(),state.recoveryPose);
                 if(state.recoveryCart==null) state.recoveryCart=new Matrix4f();
                 state.recoveryCart.set(transform);
-                state.recoveryReach=(float)phase.reach();state.recoveryGrip=(float)phase.grip();
+                state.recoveryReach=reach;state.recoveryGrip=grip;
+            }
+            if(state.ik && state.authored) {
+                state.lastPose=CartGrip.capture(instance.parent.animPlayer.getSkinningData(),state.lastPose);
+                state.lastPlacement=CartTransitionMath.actorToWorldPlacement(transform,model,slot.x,slot.y,slot.z,slot.animPlayerAngle);
+                state.lastReach=state.movingRecovery?(state.pickup?state.recoveryReach*release:1-release*(1-state.recoveryReach)):reach;
+                state.lastGrip=state.movingRecovery?(state.pickup?state.recoveryGrip*release:1-release*(1-state.recoveryGrip)):grip;
+                state.lastRender=System.nanoTime();
             }
             data.xfrm.set(transform).transpose();
             CartWheelSpin.prepare(slot,CartWheelSpin.follow(state.item,slot.x,slot.y,slot.animPlayerAngle,transform));

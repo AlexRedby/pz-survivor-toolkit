@@ -48,11 +48,21 @@ if config.interruptions then
   end
  end
 end
+if config.rapidRepeats then
+ cases={}
+ for _,variant in ipairs({{name='male-empty',female=false,full=false},{name='male-full',female=false,full=true},
+  {name='female-empty',female=true,full=false},{name='female-full',female=true,full=true}}) do
+  for _,repeatKind in ipairs({'complete-chain','pickup-restart','drop-restart'}) do
+   cases[#cases+1]={name=variant.name..'-'..repeatKind,female=variant.female,full=variant.full,yaw=135,repeatKind=repeatKind}
+  end
+ end
+end
 cases=CartLabSelectScenes(cases)
 local phase,attempt,since,sampleSince=0,0,0,0
 local mode,stage,item,initialCargo,initialCargoIDs,heldAt,droppedAt='settle','grounded'
 local interrupted,cancelAt,cancelledAt,retryStage
 local cycle,driveStage=1,0
+local actionSerial,restartCount,cleanupAt=0,0,nil
 local kind='SaucedWheelbarrow.WheelbarrowWood'
 local function encode(record)
  local out={}
@@ -105,7 +115,7 @@ local function snapshot(now)
  assert(CartTestArea.contains(p:getX(),p:getY(),p:getZ()) and math.abs(p:getX()-CartTestArea.x)<4 and math.abs(p:getY()-CartTestArea.y)<4,'Interaction left checked local pad')
  local status=toolkitWoodCartStatus and toolkitWoodCartStatus(p) or {}
  return {case=cases[phase].name,start=since,wall=now,elapsed=now-since,id=item:getID(),stage=stage,female=p:isFemale(),driveCommand=driveStage,
-  cycle=cycle,driveStage=driveStage,heldID=handID(p:getPrimaryHandItem()),secondaryID=handID(p:getSecondaryHandItem()),
+  cycle=cycle,driveStage=driveStage,actionSerial=actionSerial,restartCount=restartCount,heldID=handID(p:getPrimaryHandItem()),secondaryID=handID(p:getSecondaryHandItem()),
   worldID=world and world:getItem():getID() or -1,worldCount=count,woodWorldCount=woodCount,inventoryCount=inventoryCount(),
   actionType=action and action.Type or '',progress=action and action:getJobDelta() or 0,condition=item:getCondition(),
   nativeActions=p:getCharacterActions():size(),luaActions=#queue.queue,
@@ -169,6 +179,7 @@ local function prepare()
  end
  stage,heldAt,droppedAt='grounded',nil,nil
  cycle,driveStage=1,0
+ actionSerial,restartCount,cleanupAt=0,0,nil
  interrupted,cancelAt,cancelledAt,retryStage=false,nil,nil,nil
  p:getStats():reset(CharacterStat.ENDURANCE)
  mode='settle';since=getTimestampMs()+1800
@@ -186,6 +197,49 @@ CartLabHUD.prerender=function(self)
  self:drawRect(0,0,self.width,self.height,.85,0,0,0)
  local c=cases[phase]
  self:drawText(c and c.name..' '..stage..' wallMs='..math.max(0,getTimestampMs()-since) or 'Complete',10,5,1,1,1,1,UIFont.Medium)
+end
+local function rapidQueue(action,now)
+ actionSerial=actionSerial+1;stage=action
+ if action=='pickup' then
+  ISTimedActionQueue.add(ISCartPickupAction.FromWorldItem(p,assert(item:getWorldItem())))
+ else
+  local queued=ISUnequipAction:new(p,item,1,'drop');ISTimedActionQueue.add(queued)
+  assert(queued.Type=='ToolkitWoodCartSetdown','Native rapid drop was not dispatched')
+ end
+ event('actionQueued',now)
+end
+local function rapidTick(now,elapsed,row,c)
+ assert(elapsed<19000 or stage=='dropped','Rapid action sequence timed out')
+ if stage=='grounded' then
+  if elapsed>=700 then rapidQueue('pickup',now) end
+ elseif stage=='cancelling' then
+  assert(now-cancelAt<1000,'Rapid cancellation did not clear native/Lua queues')
+  if row.nativeActions==0 and row.luaActions==0 then
+   event('cancelCleared',now);rapidQueue(retryStage,now)
+  end
+ elseif stage=='pickup' or stage=='drop' then
+  local expected=c.repeatKind==stage..'-restart'
+  local threshold=restartCount==0 and .55 or .88
+  if expected and restartCount<2 and row.active and row.progress>=threshold then
+   local action=assert(ISTimedActionQueue.getTimedActionQueue(p).queue[1])
+   assert(action.action and not action.action:finished() and row.progress<threshold+.1,'Rapid cancellation missed native phase')
+   restartCount=restartCount+1;retryStage=stage;cancelAt=now;event('cancelRequested',now)
+   stage='cancelling';assert(CancelAction,'Native cancel handler missing');CancelAction(p:getPlayerNum())
+  elseif row.nativeActions==0 and row.luaActions==0 then
+   local picked=stage=='pickup'
+   assert(row.inventoryCount==(picked and 1 or 0) and row.worldCount==(picked and 0 or 1),'Rapid completion lost ownership')
+   assert(row.heldID==(picked and item:getID() or -1) and row.secondaryID==row.heldID,'Rapid completion lost hands')
+   event('actionCompleted',now)
+   if picked then rapidQueue('drop',now)
+   elseif c.repeatKind=='complete-chain' and cycle==1 then cycle=2;rapidQueue('pickup',now)
+   else stage='dropped';droppedAt=now;event('dropped',now) end
+  end
+ elseif stage=='dropped' and elapsed>=19000 and not cleanupAt then
+  assert(row.nativeActions==0 and row.luaActions==0 and row.actionType=='' and not row.active and not row.recovering
+   and not row.rendered and not row.ToolkitWoodCartAction and not row.IsPerformingAnAction and row.PerformingAction=='',
+   'Rapid final cleanup incomplete')
+  cleanupAt=now;event('finalCleanup',now)
+ end
 end
 local function tick()
  local data=getPlayerData(0)
@@ -218,6 +272,14 @@ local function tick()
  local row=snapshot(now)
  if now-sampleSince>=25 then sampleSince=now;print('[WOOD_INTERACTION_SAMPLE] '..encode(row)) end
  assert(row.worldCount<=1 and row.woodWorldCount==row.worldCount and row.inventoryCount<=1 and row.worldCount+row.inventoryCount==1,'Cart duplicated or disappeared')
+ if config.rapidRepeats then
+  rapidTick(now,elapsed,row,c)
+  if elapsed>=20000 then
+   assert(stage=='dropped' and cleanupAt and now-droppedAt>=1000,'Missing rapid settled cleanup tail')
+   assert(toolkitVideoStop(),'Video stop rejected');mode='finish'
+  end
+  return
+ end
  if config.interruptions and not interrupted and stage==c.interrupt and row.active and row.progress>=c.threshold then
   local action=assert(ISTimedActionQueue.getTimedActionQueue(p).queue[1],'Cancellation action missing')
   assert(action.action and not action.action:finished() and row.progress<c.threshold+.1,'Cancellation missed unfinished native window')

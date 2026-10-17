@@ -69,7 +69,10 @@ public final class ClearanceProbe {
             row.append("},\"tracks\":[");comma=false;
             for(var track:body.modelInstance.animPlayer.getMultiTrack().getTracks()) {
                 if(comma)row.append(',');comma=true;
-                row.append("{\"name\":").append(quoted(track.getName())).append(",\"weight\":").append(track.getBlendWeight())
+                row.append("{\"trackId\":").append(track.getId())
+                    .append(",\"reverse\":").append(track.reverse)
+                    .append(",\"clockBinding\":").append(quoted(track.trackTimeToVariable))
+                    .append(",\"name\":").append(quoted(track.getName())).append(",\"weight\":").append(track.getBlendWeight())
                     .append(",\"time\":").append(track.getCurrentTrackTime()).append(",\"duration\":").append(track.getDuration())
                     .append(",\"field\":").append(track.getBlendFieldWeight()).append(",\"layer\":").append(track.getLayerIdx())
                     .append(",\"priority\":").append(track.getPriority()).append('}');

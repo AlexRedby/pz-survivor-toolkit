@@ -24,6 +24,7 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'collision': ('scenario-collision.lua', 20), 'footprint': ('scenario-collision.lua', 20),
             'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
+            'repeat': ('scenario-interaction.lua', 12),
             'path': ('scenario-path.lua', 24)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 SCENE_SPECS = {
@@ -40,6 +41,9 @@ SCENE_SPECS = {
 
 
 def scene_names(case):
+    if case == 'repeat':
+        return [sex + '-' + load + '-' + spec for sex in ('male', 'female')
+                for load in ('empty', 'full') for spec in ('complete-chain', 'pickup-restart', 'drop-restart')]
     if case in ('interruption', 'interruption-matrix'):
         prefixes = ('male-full-', 'male-empty-', 'female-full-', 'female-empty-') if case.endswith('-matrix') else ('',)
         return [prefix + action + '-' + phase + '-' + route for prefix in prefixes
@@ -221,12 +225,14 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 'ready': '[CART_MP] CONNECTED' if selection['suite'] == MP else '[CART_ADAPTER] PROBE_ATTACH_READY'})
         if selection['suite'] == SP:
             motion = dict(disposable=True, ffmpeg=config['ffmpeg'], videoRoot=videos[role], area=AREA)
-            motion['authoredClip'] = selection.get('options', {}).get('cart_authored_clip', False)
+            if 'cart_authored_clip' in selection.get('options', {}):
+                motion['authoredClip'] = selection['options']['cart_authored_clip']
             if 'cart_scenes' in selection.get('options', {}):
                 motion['scenes'] = selected_scenes(selection)
             if selection['cases'][0] in ('collision','footprint'): motion['footprint']=True
             if selection['cases'][0] in ('interruption', 'interruption-matrix'): motion['interruptions']=True
             if selection['cases'][0] == 'interruption-matrix': motion['interruptionMatrix']=True
+            if selection['cases'][0] == 'repeat': motion['rapidRepeats']=True
             if selection['cases'][0] == 'wheel': motion['wheelCycle']=True
             runtime_source = 'CartMotionConfig=' + _lua(motion) + '\n(function()\n' + (sp / 'scene-selection.lua').read_text() + '\nend)()\nif not CartAdapterBootstrapped then\nCartAdapterBootstrapped=true\n'
             runtime_source += '(function()\n' + (sp / 'test-area.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'obstacles.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'bootstrap.lua').read_text() + '\nend)()'
@@ -349,7 +355,7 @@ def _debug_coverage(cache, text, selection):
     if [row[0] for row in clips] != selected_scenes(selection):
         raise ValueError('Selected cart scene receipts differ from the snapshot')
     bank = selection['cases'][0]
-    seconds = {'interaction': 16, 'wheel': 30, 'interruption': 20, 'interruption-matrix': 20}.get(bank, 12)
+    seconds = {'interaction': 16, 'wheel': 30, 'interruption': 20, 'interruption-matrix': 20, 'repeat': 20}.get(bank, 12)
     probes = {kind: [json.loads(line) for line in (cache / file).read_text().splitlines()]
               for kind, file in (('body', 'body-clearance.jsonl'), ('grip', 'wood-grip-poses.jsonl'))}
     result = []
@@ -371,10 +377,10 @@ def _debug_coverage(cache, text, selection):
                 if any(type(r['result']) is not bool for r in selected):
                     raise ValueError('Invalid selected-scene grip result: ' + name)
                 row['gripFailures'] = sum(not r['result'] for r in selected)
-        if bank in ('interaction', 'wheel', 'interruption', 'interruption-matrix'):
+        if bank in ('interaction', 'wheel', 'interruption', 'interruption-matrix', 'repeat'):
             row['actionCoverage'] = _debug_action_coverage(log, name, start, seconds, probes)
         result.append(row)
-    _mesh_proof(cache, moving=bank not in ('interaction', 'wheel', 'interruption', 'interruption-matrix'))
+    _mesh_proof(cache, moving=bank not in ('interaction', 'wheel', 'interruption', 'interruption-matrix', 'repeat'))
     return result
 
 
@@ -436,11 +442,11 @@ def verify(root, selection, catalog):
                 ('body', [sys.executable, str(ev / 'check-hip-actual.py'), '--game-java-dir', str(game), '--mesh', str(_path(selection, 'mesh_fbx')), '--mesh-vbo', str(cache / 'WheelbarrowWood.bin'), '--capture', str(cache / 'body-clearance.jsonl'), '--output', str(analysis)]),
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
-            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel'):
+            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat'):
                 commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if debug or case != 'sprint' else [])))
             evidence['analyzers'] = {name: _run(command, analysis, name) for name, command in commands}
             if debug:
-                if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel'):
+                if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat'):
                     _coverage(cache, texts['client1'], len(selected_scenes(selection)), _json(analysis / 'native-metrics.json'))
                 evidence.update(scope='selected-scenes', selectedScenes=selected_scenes(selection),
                                 fullSceneCount=SP_CASES[case][1], diagnosticOnly=True, evidenceComplete=True,
@@ -457,6 +463,13 @@ def verify(root, selection, catalog):
                 evidence['wheel'] = _json(analysis / 'wheel-cycle.json')
                 if not evidence['wheel']['pass']:
                     raise ValueError('Wheel cycle verification failed: ' + str(evidence['wheel']['failures']))
+                evidence['nativeMotionNotApplicable'] = True
+            elif case == 'repeat':
+                evidence['analyzers'][case] = _run([sys.executable, str(intake / 'analyze-repeat.py'),
+                    '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'repeat.json')], analysis, case)
+                evidence['repeat'] = _json(analysis / 'repeat.json')
+                if not all(evidence['repeat'].get(key) for key in ('functionalPass', 'clockVerified', 'recoveryVerified', 'wheelCoverageVerified')):
+                    raise ValueError('Rapid repeat verification failed: ' + str(evidence['repeat']['failures']))
                 evidence['nativeMotionNotApplicable'] = True
             elif case in ('interruption', 'interruption-matrix'):
                 evidence['analyzers'][case] = _run([sys.executable, str(intake / 'analyze-interruption.py'),
@@ -500,7 +513,7 @@ def verify(root, selection, catalog):
                 motion = _load(intake / 'analyze-reversal.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reversal-motion.json', json.dumps(motion, indent=2, allow_nan=False))
-            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel'):
+            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat'):
                 _coverage(cache, texts['client1'], SP_CASES[case][1], metrics)
                 evidence['nativePartialDiagnostic'] = case != 'sprint'
             evidence['evidenceComplete'] = True

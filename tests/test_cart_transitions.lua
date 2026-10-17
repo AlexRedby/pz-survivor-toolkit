@@ -391,6 +391,8 @@ print("PASS wooden placement forwards the stored pose, runs native complete once
 p.primary, p.secondary = nil, nil
 local walk = ISCartPickupAction.FromWorldItem(p, world)
 assert(getmetatable(walk) == ISWalkToTimedActionF and #w.added == 0)
+assert(walk.toolkitWoodCartItem == wood, "cart approach lost the exact pending item")
+assert(ISWalkToTimedActionF:new(p, walk.location).toolkitWoodCartItem == nil, "ordinary approach inherited a cart owner")
 assert(walk.location:x() == 1.3 and walk.location:y() == 2.2 and walk.location:z() == 0)
 walk:stop(); assert(#w.added == 0, "cancelled approach enqueued a pickup")
 local replaced = ISCartPickupAction.FromWorldItem(p, world)

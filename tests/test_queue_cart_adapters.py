@@ -111,8 +111,8 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'path'])
-        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('path', 24)]:
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'path'])
+        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -120,12 +120,13 @@ class CartAdapterTests(unittest.TestCase):
                 self.selection['cases'] = [case]
                 self.stage()
                 text = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
-                source='collision' if case in ('collision','footprint') else 'interaction' if case in ('interruption','interruption-matrix','wheel') else case
+                source='collision' if case in ('collision','footprint') else 'interaction' if case in ('interruption','interruption-matrix','wheel','repeat') else case
                 self.assertIn((ROOT / f'tests/native_queue/contributions/wooden_cart_motion/scenario-{source}.lua').read_text(), text)
                 if case in ('collision','footprint'): self.assertIn('["footprint"]=true',text)
                 if case == 'wheel': self.assertIn('["wheelCycle"]=true',text)
                 if case in ('interruption', 'interruption-matrix'): self.assertIn('["interruptions"]=true',text)
                 if case == 'interruption-matrix': self.assertIn('["interruptionMatrix"]=true',text)
+                if case == 'repeat': self.assertIn('["rapidRepeats"]=true',text)
                 self.assertIn('["size"]=96',text)
                 self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 3)
                 self.assertTrue(carts.complete(self.selection, 'client1', f'[WOOD_BANK] ALL_COMPLETE cases={count}\n'))
@@ -242,6 +243,30 @@ class CartAdapterTests(unittest.TestCase):
                 self.assertTrue(result['issues'])
                 self.assertEqual(result['outcomes'][0]['status'], 'failed')
 
+    def test_repeat_adapter_requires_clock_recovery_and_wheel_gates(self):
+        self.selection['cases'] = ['repeat']
+        (self.output / 'client1-launch.log').write_text('[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=12\n')
+        (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
+        required = ('functionalPass', 'clockVerified', 'recoveryVerified', 'wheelCoverageVerified')
+        for failure in (None, *required):
+            commands = []
+            def run(command, directory, name):
+                commands.append(name)
+                if name == 'repeat':
+                    self.assertIn('analyze-repeat.py', command[1])
+                    self.assertIn('--profile', command)
+                    report = dict.fromkeys(required, True)
+                    if failure: report[failure] = False
+                    report['failures'] = [failure] if failure else []
+                    Path(command[command.index('--output')+1]).write_text(json.dumps(report))
+                return {'exit_code': int(bool(failure)) if name == 'repeat' else 0}
+            with self.subTest(failure=failure), patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
+                result = carts.verify(self.output, self.selection, {})
+                self.assertEqual(bool(result['issues']), bool(failure))
+                self.assertEqual(result['outcomes'][0]['status'], 'failed' if failure else 'captured')
+                self.assertEqual(set(commands), {'aabb', 'body', 'pants', 'repeat'})
+                self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+
     def test_missing_candidates_and_native_mode_are_rejected(self):
         self.selection['mode'] = 'native'
         with self.assertRaisesRegex(ValueError, 'toolkit mode'):
@@ -280,7 +305,7 @@ class CartAdapterTests(unittest.TestCase):
             body=text[start:text.index(marker,start)+len(marker)]
             flags=dict(disposable=True,footprint=bank in ('collision','footprint'),
                        wheelCycle=bank=='wheel',interruptions=bank in ('interruption','interruption-matrix'),
-                       interruptionMatrix=bank=='interruption-matrix')
+                       interruptionMatrix=bank=='interruption-matrix',rapidRepeats=bank=='repeat')
             from queue_checks.native import _lua
             for chosen in (None,[full[-1],full[0]] if count>1 else [full[0]]):
                 if chosen: flags['scenes']=chosen
@@ -311,14 +336,25 @@ class CartAdapterTests(unittest.TestCase):
             self.options['cart_authored_clip']=bad
             with self.subTest(bad=bad), self.assertRaisesRegex(ValueError,'SP boolean'):
                 carts.validate(self.selection)
-        self.options['cart_authored_clip']=True
         self.selection['cases']=['interaction']
+        self.options['cart_authored_clip']=True
         self.stage()
         text=Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
         self.assertIn('["authoredClip"]=true',text)
-        self.assertIn("player:setVariable('ToolkitWoodCartClipPilot',config.authoredClip==true)",text)
+        self.assertIn("if config.authoredClip~=nil then player:setVariable('ToolkitWoodCartClipPilot',config.authoredClip) end",text)
         self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
         with self.assertRaisesRegex(ValueError,'SP boolean'): carts.validate(self.selection)
+
+    def test_authored_clip_explicit_false_keeps_legacy_comparison(self):
+        self.options['cart_authored_clip']=False
+        self.stage()
+        text=Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+        self.assertIn('["authoredClip"]=false',text)
+
+    def test_missing_authored_clip_option_preserves_production_default(self):
+        self.stage()
+        text=Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+        self.assertNotIn('["authoredClip"]=',text)
 
     def test_selected_scene_capture_keeps_diagnostics_and_explicit_partial_scope(self):
         self.selection['cases']=['path'];self.options['cart_scenes']=['male-full-corner']

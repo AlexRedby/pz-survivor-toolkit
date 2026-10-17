@@ -28,7 +28,7 @@ def check_manifest():
         "obstacles": "obstacles.lua", "collision_scenario": "scenario-collision.lua", "collision_analyzer": "analyze-collision.py",
         "footprint_analyzer": "analyze-footprint.py",
         "interaction_scenario": "scenario-interaction.lua", "interaction_analyzer": "analyze-interaction.py",
-        "interruption_analyzer": "analyze-interruption.py", "wheel_cycle_analyzer": "analyze-wheel-cycle.py",
+        "interruption_analyzer": "analyze-interruption.py", "repeat_analyzer": "analyze-repeat.py", "wheel_cycle_analyzer": "analyze-wheel-cycle.py",
         "path_scenario": "scenario-path.lua", "path_analyzer": "analyze-path.py",
         "scene_selection": "scene-selection.lua",
     }
@@ -47,7 +47,7 @@ def check_manifest():
     assert len(axes["sex"]) * len(axes["cargo"]) * len(axes["spec"]) == 16
     assert set(manifest["criteria"]) == {"completion", "grip", "geometry", "native_pose", "floor", "gait", "diagnostics"}
     allowed = {"Main.java", "KahluaChecks.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py", "obstacles.lua", "scenario-collision.lua", "analyze-collision.py", "analyze-footprint.py"}
-    allowed |= {"scenario-interaction.lua", "analyze-interaction.py", "analyze-interruption.py",
+    allowed |= {"scenario-interaction.lua", "analyze-interaction.py", "analyze-interruption.py", "analyze-repeat.py",
                 "analyze-wheel-cycle.py", "scenario-path.lua", "analyze-path.py", "scene-selection.lua"}
     assert {p.name for p in HERE.iterdir() if p.is_file()} == allowed
     for path in HERE.rglob("*"):

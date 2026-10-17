@@ -14,6 +14,7 @@ ISCartPickupAction.FromWorldItem = function(character, world)
     if not stance or character:DistTo(stance.x, stance.y) < .05 then return fromWorld(character, world) end
     local x, y, z, id = world:getSquare():getX(), world:getSquare():getY(), world:getSquare():getZ(), world:getItem():getID()
     local walk = ISWalkToTimedActionF:new(character, Vector3f.new(stance.x, stance.y, z))
+    walk.toolkitWoodCartItem = world:getItem()
     local perform = walk.perform
     walk.perform = function(self)
         local action = ISCartPickupAction:new(character, x, y, z, id)

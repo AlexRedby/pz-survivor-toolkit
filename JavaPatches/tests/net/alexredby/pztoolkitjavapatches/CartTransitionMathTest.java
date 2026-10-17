@@ -168,6 +168,65 @@ public final class CartTransitionMathTest {
             check(Double.isNaN(CartTransitionMath.recover(.5,invalid,false)),"nonfinite recovery clock rejected");
         }
     }
+    private static void recoveryRelease() {
+        close(CartTransitionMath.recoveryRelease(.8,.88,true),10.0/11,1e-12,
+            "late pickup releases the hip with recovered progress instead of freezing it through a second easing");
+        close(CartTransitionMath.recoveryRelease(.8,.88,false),160000.0/161051,1e-12,
+            "setdown preserves the existing eased recovery weight");
+        for(boolean pickup:new boolean[]{true,false}) for(double start:new double[]{.15,.55,.88}) {
+            double duration=.4+.2*start,previous=1;
+            close(CartTransitionMath.recoveryRelease(start,start,pickup),1,0,"body recovery preserves the captured first frame");
+            close(CartTransitionMath.recoveryRelease(0,start,pickup),0,0,"body recovery reaches the native endpoint");
+            for(int frame=0;frame<=Math.ceil(duration*60);frame++) {
+                double progress=CartTransitionMath.recover(start,frame/60.0,!pickup);
+                double weight=CartTransitionMath.recoveryRelease(progress,start,pickup);
+                check(Double.isFinite(weight) && weight>=0 && weight<=1 && weight<=previous,
+                    "60 Hz body recovery weights must remain finite, bounded and monotonic");
+                previous=weight;
+            }
+            close(previous,0,0,"60 Hz body recovery finishes within the existing duration");
+            close(CartTransitionMath.recoveryRelease(CartTransitionMath.recover(start,.600001,!pickup),start,pickup),0,0,
+                "body recovery cannot extend the 600 ms lifetime");
+            double step=duration*.00001;
+            close((1-CartTransitionMath.recoveryRelease(CartTransitionMath.recover(start,step,!pickup),start,pickup))/step,
+                0,.00001,"body recovery starts without a velocity jump");
+            close(CartTransitionMath.recoveryRelease(CartTransitionMath.recover(start,duration-step,!pickup),start,pickup)/step,
+                0,.00001,"body recovery finishes without endpoint velocity");
+            close(CartTransitionMath.recoveryRelease(-1,start,pickup),0,0,"negative body progress clamps to native endpoint");
+            close(CartTransitionMath.recoveryRelease(start+1,start,pickup),1,0,"overshot body progress clamps to captured pose");
+        }
+        for(boolean pickup:new boolean[]{true,false}) {
+            for(double invalid:new double[]{0,-1,Double.NaN,Double.POSITIVE_INFINITY,Double.NEGATIVE_INFINITY})
+                check(Double.isNaN(CartTransitionMath.recoveryRelease(.5,invalid,pickup)),"invalid body recovery origin rejected");
+            for(double invalid:new double[]{Double.NaN,Double.POSITIVE_INFINITY,Double.NEGATIVE_INFINITY})
+                check(Double.isNaN(CartTransitionMath.recoveryRelease(invalid,.5,pickup)),"nonfinite body recovery progress rejected");
+        }
+    }
+    private static void recoveryClearance() {
+        for(double start:new double[]{0,.15,.48,.55,.88,1}) {
+            double duration=.4+.2*start,lift=CartTransitionMath.progress(start,false).lift();
+            close(CartTransitionMath.recoveryClearance(start,0),0,0,"clearance preserves the captured first pose");
+            close(CartTransitionMath.recoveryClearance(start,duration),0,0,"clearance reaches the native endpoint on time");
+            close(CartTransitionMath.recoveryClearance(start,duration/2),lift/4,1e-12,"clearance is bounded by the captured lift");
+            close(CartTransitionMath.recoveryClearance(start,-1),0,0,"clearance cannot start before cancellation");
+            close(CartTransitionMath.recoveryClearance(start,.600001),0,0,"clearance cannot extend the recovery lifetime");
+            double previous=0;
+            for(int frame=0;frame<=Math.ceil(duration*60);frame++) {
+                double weight=CartTransitionMath.recoveryClearance(start,frame/60.0);
+                check(Double.isFinite(weight) && weight>=0 && weight<=lift/4+1e-12,"60 Hz clearance must remain finite and bounded");
+                check(Math.abs(weight-previous)<=lift/(60*duration)+1e-12,"clearance moved farther than one frame of its bounded trajectory");
+                if(lift==0) close(weight,0,0,"grounded pickup cannot acquire a clearance detour");
+                previous=weight;
+            }
+            close(previous,0,0,"60 Hz clearance finishes within the existing deadline");
+        }
+        for(double invalid:new double[]{Double.NaN,Double.POSITIVE_INFINITY,Double.NEGATIVE_INFINITY}) {
+            check(Double.isNaN(CartTransitionMath.recoveryClearance(invalid,.1)),"nonfinite clearance origin rejected");
+            check(Double.isNaN(CartTransitionMath.recoveryClearance(.88,invalid)),"nonfinite clearance clock rejected");
+        }
+        close(CartTransitionMath.recoveryClearance(-1,.1),0,0,"negative clearance origin clamps to grounded pickup");
+        close(CartTransitionMath.recoveryClearance(2,.3),.25,1e-12,"overshot clearance origin clamps to full lift");
+    }
     private static void recoveryPoseSteps() {
         for(boolean setdown:new boolean[]{false,true}) for(double start:new double[]{.15,.55,.88,1}) {
             double duration=.4+.2*start;
@@ -237,7 +296,7 @@ public final class CartTransitionMathTest {
         check(out.equals(sentinel), "all validation failures preserve output");
     }
     public static void main(String[] args) {
-        roundtrips(); timingAndBlend(); stances(); recovery(); recoveryPoseSteps(); nativeHeight(); invalid();
+        roundtrips(); timingAndBlend(); stances(); recovery(); recoveryRelease(); recoveryClearance(); recoveryPoseSteps(); nativeHeight(); invalid();
         System.out.println("PASS cart transition world/actor roundtrips, native Euler order, rigid interpolation, phase reversal and handle stance");
     }
 }

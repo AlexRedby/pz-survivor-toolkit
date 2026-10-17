@@ -29,6 +29,7 @@
     "interaction_scenario": "scenario-interaction.lua",
     "interaction_analyzer": "analyze-interaction.py",
     "interruption_analyzer": "analyze-interruption.py",
+    "repeat_analyzer": "analyze-repeat.py",
     "wheel_cycle_analyzer": "analyze-wheel-cycle.py",
     "path_scenario": "scenario-path.lua",
     "path_analyzer": "analyze-path.py",

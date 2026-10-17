@@ -918,6 +918,33 @@ public final class CartGripTest {
                 if(!poses[torso].equals(new Matrix4f(nativePose[torso]).translateLocal(shiftX,shiftY,shiftZ),.00001f))
                     throw new AssertionError("stance shift distorted the torso or arms");
         }
+        for(int frame=0;frame<=6;frame++) {
+            var current=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            for(int foot:new int[]{3,7}) {
+                float height=(foot==3?.01f:.02f)+frame*.002f;
+                current[foot].m31(current[foot].m31()+height);current[foot+1].m31(current[foot+1].m31()+height);
+            }
+            var poses=java.util.Arrays.stream(current).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            float shiftX=-.032f,shiftY=-.008f,shiftZ=.016f;
+            if(!CartGrip.groundFeet(poses,actor,null,null,0,shiftX,shiftY,shiftZ,true))
+                throw new AssertionError("current elevated walking feet cannot support the recovery clearance shift");
+            for(int foot:new int[]{3,7}) {
+                if(!poses[foot].equals(current[foot],.00001f) || !poses[foot+1].equals(current[foot+1],.00001f))
+                    throw new AssertionError("current-foot recovery changed a walking ankle/toe matrix or forced idle floor height");
+                for(int upper:new int[]{foot-2,foot-1}) {
+                    float before=current[upper].getTranslation(new Vector3f()).distance(current[upper+1].getTranslation(new Vector3f()));
+                    float after=poses[upper].getTranslation(new Vector3f()).distance(poses[upper+1].getTranslation(new Vector3f()));
+                    if(Math.abs(before-after)>.00001f) throw new AssertionError("current-foot recovery stretched a leg");
+                }
+            }
+            for(int torso:new int[]{0,9,10,11,12,13,14})
+                if(!poses[torso].equals(new Matrix4f(current[torso]).translateLocal(shiftX,shiftY,shiftZ),.00001f))
+                    throw new AssertionError("current-foot recovery bent the pelvis/torso or arms instead of translating the whole body");
+            var endpoint=java.util.Arrays.stream(current).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.groundFeet(endpoint,actor,null,null,0,0,0,0,true)) throw new AssertionError("zero recovery shift required idle reference clips");
+            for(int i=0;i<endpoint.length;i++) if(!endpoint[i].equals(current[i]))
+                throw new AssertionError("zero recovery shift changed a native walking endpoint");
+        }
         var rejected=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
         // A reference floor two units above the actor cannot be reached by either native leg.
         if(CartGrip.groundFeet(rejected,actor,clips[0],clips[2],1))
@@ -1316,7 +1343,34 @@ public final class CartGripTest {
             }
             // Pickup release uses the same local interpolation without holding the hands at the world cart.
             var free=java.util.Arrays.stream(nativeWalk).map(Matrix4f::new).toArray(Matrix4f[]::new);
-            if(!CartGrip.releasePose(free,actor,start,amount)) throw new AssertionError("free walking release refused");
+            double elapsed=(.4+.2*.88)*step/60;
+            float pickupAmount=(float)CartTransitionMath.recoveryRelease(CartTransitionMath.recover(.88,elapsed,false),.88,true);
+            if(!CartGrip.releasePose(free,actor,start,pickupAmount)) throw new AssertionError("free walking release refused");
+            var before=java.util.Arrays.stream(free).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            float clearance=(float)CartTransitionMath.recoveryClearance(.88,elapsed);
+            float shiftX=-.18f*clearance,shiftY=-.04f*clearance,shiftZ=.12f*clearance;
+            if(!CartGrip.groundFeet(free,actor,null,null,0,shiftX,shiftY,shiftZ,true))
+                throw new AssertionError("captured walking recovery cannot reach this frame's foot targets at step "+step);
+            for(int foot:new int[]{12,16}) {
+                if(!free[foot].equals(before[foot],.00001f) || !free[foot+1].equals(before[foot+1],.00001f))
+                    throw new AssertionError("captured pickup recovery froze a seed foot instead of retaining this frame's walking foot");
+                for(int upper:new int[]{foot-2,foot-1}) {
+                    float length=before[upper].getTranslation(new Vector3f()).distance(before[upper+1].getTranslation(new Vector3f()));
+                    if(Math.abs(length-free[upper].getTranslation(new Vector3f()).distance(free[upper+1].getTranslation(new Vector3f())))>.00001f)
+                        throw new AssertionError("captured pickup clearance shift stretched a leg link");
+                }
+                if(clearance>0) {
+                    var hip=free[foot-2].getTranslation(new Vector3f());
+                    var axis=free[foot].getTranslation(new Vector3f()).sub(hip).normalize();
+                    var bend=free[foot-1].getTranslation(new Vector3f()).sub(hip);
+                    var toe=free[foot+1].getTranslation(new Vector3f()).sub(free[foot].getTranslation(new Vector3f()));toe.y=0;
+                    bend.fma(-bend.dot(axis),axis);toe.fma(-toe.dot(axis),axis);
+                    if(bend.dot(toe)<=0) throw new AssertionError("captured pickup clearance shift inverted a walking knee");
+                }
+            }
+            for(int upper=0;upper<10;upper++)
+                if(!free[upper].equals(new Matrix4f(before[upper]).translateLocal(shiftX,shiftY,shiftZ),.00001f))
+                    throw new AssertionError("captured pickup clearance shift changed upper-body shape");
         }
         for(float amount:new float[]{Float.NaN,-.1f,1.1f}) {
             var poses=java.util.Arrays.stream(nativeWalk).map(Matrix4f::new).toArray(Matrix4f[]::new);
