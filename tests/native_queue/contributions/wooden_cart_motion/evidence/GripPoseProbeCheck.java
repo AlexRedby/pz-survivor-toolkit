@@ -7,8 +7,12 @@ import net.bytebuddy.asm.Advice;
 import static net.bytebuddy.matcher.ElementMatchers.*;
 public final class GripPoseProbeCheck {
     public static void main(String[] args) throws Exception {
+        if(new net.bytebuddy.description.type.TypeDescription.ForLoadedType(Class.forName("net.alexredby.pztoolkitjavapatches.CartGrip"))
+            .getDeclaredMethods().filter(named("reach").and(takesArguments(7))).size()!=1)
+            throw new AssertionError("weighted reach diagnostic target changed");
         var transformed=new ByteBuddy().redefine(Class.forName("net.alexredby.pztoolkitjavapatches.CartGrip"))
-            .visit(Advice.to(GripPoseProbe.GripAdvice.class).on(named("grip").and(takesArguments(6)))).make();
+            .visit(Advice.to(GripPoseProbe.GripAdvice.class).on(named("grip").and(takesArguments(6))))
+            .visit(Advice.to(GripPoseProbe.ReachAdvice.class).on(named("reach").and(takesArguments(7)))).make();
         if(transformed.getBytes().length==0)throw new AssertionError("empty instrumentation");
         var text=new StringWriter();var writer=new BufferedWriter(text);
         Field output=GripPoseProbe.class.getDeclaredField("output");output.setAccessible(true);output.set(null,writer);
@@ -21,6 +25,13 @@ public final class GripPoseProbeCheck {
         if(GripPoseProbe.before(null,null,"WheelbarrowMetal",false,delta,cart)!=null)
             throw new AssertionError("nonwood model captured");
         writer.close();output.set(null,null);
+        var failures=new StringWriter();var failureWriter=new BufferedWriter(failures);
+        Field reach=GripPoseProbe.class.getDeclaredField("reachFailures");reach.setAccessible(true);reach.set(null,failureWriter);
+        GripPoseProbe.reachAfter("{\"bone\":\"Bip01_L_Foot\"}",true);
+        if(!failures.toString().isEmpty())throw new AssertionError("successful reach logged as failure");
+        GripPoseProbe.reachAfter("{\"bone\":\"Bip01_L_Foot\"}",false);
+        if(!failures.toString().contains("Bip01_L_Foot"))throw new AssertionError("failed leg reach omitted");
+        failureWriter.close();reach.set(null,null);
         System.err.println("GRIP_POSE_PROBE_CHECK_PASS (advice transform, immutable entry copy, false result, wood scope)");
     }
 }

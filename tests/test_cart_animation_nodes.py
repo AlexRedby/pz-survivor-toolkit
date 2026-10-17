@@ -25,6 +25,16 @@ def conditions(node):
 
 
 class CartAnimationNodes(unittest.TestCase):
+    def test_ground_interaction_drives_full_body_and_has_reachable_low_pose(self):
+        node = ET.parse(ANIMATIONS / 'actions/toolkit_wood_cart.xml').getroot()
+        self.assertIn(('PerformingAction', 'STRING', 'ToolkitWoodCart'), conditions(node))
+        self.assertNotIn(('ToolkitCartMotion', 'BOOL', 'true'), conditions(node))
+        self.assertEqual([x.findtext('boneName') for x in node.findall('m_SubStateBoneWeights')],
+                         ['Dummy01', 'Translation_Data'])
+        self.assertEqual([(x.findtext('m_AnimName'), x.findtext('m_XPos'), x.findtext('m_YPos'))
+                          for x in node.findall('m_2DBlends')],
+                         [('Bob_Idle', '0', '0'), ('Bob_IdleLooting_Low', '1', '0'), ('Bob_Cart_Idle', '1', '1')])
+
     @classmethod
     def setUpClass(cls):
         cls.nodes = {node.findtext("m_Name"): (path, node)

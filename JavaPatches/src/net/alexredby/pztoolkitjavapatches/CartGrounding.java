@@ -172,6 +172,7 @@ public final class CartGrounding {
 
     public static void render(ModelSlotRenderData slot) {
         CartWheelSpin.prepare(slot,Double.NaN);
+        if(CartTransition.render(slot)) return;
         if(!(slot.character instanceof IsoPlayer player) || !CartSteeringHooks.enabled(player)) return;
         String name=player.getPrimaryHandItem().getStaticModel();
         var clip=ModelManager.instance.getAnimationClip("Bob_Cart_Idle");

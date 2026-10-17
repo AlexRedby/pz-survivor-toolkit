@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import struct
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -106,8 +107,8 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint'])
-        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20)]:
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'interaction'])
+        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('interaction', 4)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -124,6 +125,70 @@ class CartAdapterTests(unittest.TestCase):
                     self.assertFalse(carts.complete(self.selection, 'client1', f'[WOOD_BANK] ALL_COMPLETE cases={wrong}\n'))
                 self.assertFalse(carts.complete(self.selection, 'client1',
                     f'[WOOD_BANK] ALL_COMPLETE cases={count}\n[WOOD_BANK] RUN_STARTED\n'))
+
+    def test_interaction_requires_actions_identity_cargo_rendered_ik_and_scoped_coverage(self):
+        self.selection['cases'] = ['interaction']
+        analyzer = carts._load(ROOT / 'tests/native_queue/contributions/wooden_cart_motion/analyze-interaction.py')
+        analyzer.self_check()
+        text, body, grip = analyzer.fixture()
+        cache = self.output / 'client1'
+        log = self.output / 'client1-launch.log'
+        log.write_text(text)
+        for filename, rows in [('body-clearance.jsonl', body), ('wood-grip-poses.jsonl', grip),
+                               ('world-cart-poses.jsonl', analyzer.world_fixture())]:
+            (cache / filename).write_text('\n'.join(map(json.dumps, rows)))
+        native = struct.pack('<8f', .01,.02,-.03,0,0,0,0,0)
+        (cache / 'WheelbarrowWood.bin').write_bytes(native)
+        (cache / 'wood-wheel-mesh-proof.json').write_text(json.dumps(dict(matchesOriginal=True,
+            proofAfterPhaseChanged=False, bytes=len(native), sha256=hashlib.sha256(native).hexdigest())))
+        (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
+        commands = {}
+        original_run = carts._run
+        def run(command, directory, name):
+            commands[name] = command
+            if name == 'interaction':
+                return original_run(command, directory, name)
+            return {'exit_code': 0}
+        with patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
+            result = carts.verify(self.output, self.selection, {})
+            self.assertFalse(result['issues'], result['issues'])
+            self.assertTrue(result['evidence']['interaction']['functionalPass'])
+            self.assertTrue(result['evidence']['interaction']['worldHandoff']['pass'])
+            self.assertTrue(result['evidence']['nativeMotionNotApplicable'])
+            self.assertNotIn('native', commands)
+            self.assertNotIn('nativePartialDiagnostic', result['evidence'])
+            self.assertEqual(set(commands), {'aabb', 'body', 'pants', 'interaction'})
+            self.assertEqual(result['outcomes'][0]['status'], 'captured')
+            self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+            log.write_text(text.replace('"ik": true', '"ik": false'))
+            result = carts.verify(self.output, self.selection, {})
+            self.assertTrue(result['issues'])
+            self.assertEqual(result['outcomes'][0]['status'], 'failed')
+            for stage, changes in [('held', {'heldID': -1, 'secondaryID': -1}),
+                                   ('dropped', {'active': True, 'rendered': True, 'ik': False})]:
+                with self.subTest(stage=stage):
+                    lines = []
+                    for line in text.splitlines():
+                        if '[WOOD_INTERACTION_SAMPLE]' in line:
+                            row = json.loads(line.split('] ', 1)[1])
+                            if row['stage'] == stage:
+                                row.update(changes)
+                            line = '[WOOD_INTERACTION_SAMPLE] ' + json.dumps(row)
+                        lines.append(line)
+                    log.write_text('\n'.join(lines))
+                    result = carts.verify(self.output, self.selection, {})
+                    self.assertFalse(result['evidence']['interaction']['functionalPass'])
+                    self.assertTrue(result['issues'])
+                    self.assertEqual(result['outcomes'][0]['status'], 'failed')
+            log.write_text(text)
+            late_hidden = analyzer.world_fixture()
+            late_hidden.append(dict(late_hidden[2], wallTimeMillis=112000, alpha=0))
+            (cache / 'world-cart-poses.jsonl').write_text('\n'.join(map(json.dumps, late_hidden)))
+            result = carts.verify(self.output, self.selection, {})
+            self.assertTrue(result['evidence']['interaction']['functionalPass'])
+            self.assertFalse(result['evidence']['interaction']['worldHandoff']['pass'])
+            self.assertTrue(result['issues'])
+            self.assertEqual(result['outcomes'][0]['status'], 'failed')
 
     def test_missing_candidates_and_native_mode_are_rejected(self):
         self.selection['mode'] = 'native'

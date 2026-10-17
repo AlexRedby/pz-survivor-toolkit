@@ -106,6 +106,14 @@ def main() -> None:
 
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)
+    if args.saucedcarts_source:
+        lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
+    if args.native_action_root:
+        lua.globals().NativeActionRoot = str(args.native_action_root)
+    lua.execute((ROOT / "tests/test_cart_transitions.lua").read_text(encoding="utf-8"))
+
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.globals().ProjectRoot = str(ROOT)
     lua.execute((ROOT / "tests/test_cart_motion.lua").read_text(encoding="utf-8"))
 
     lua = LuaRuntime(unpack_returned_tuples=True)

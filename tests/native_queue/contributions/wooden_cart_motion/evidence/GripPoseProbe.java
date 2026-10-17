@@ -12,7 +12,7 @@ import zombie.core.skinnedmodel.model.SkinningData;
 public final class GripPoseProbe {
     private static final String[] BONES={"Bip01_Spine","Bip01_Spine1","Bip01_L_Clavicle","Bip01_R_Clavicle",
         "Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand"};
-    private static BufferedWriter output;
+    private static BufferedWriter output,reachFailures;
     private static long start,sequence;
     private static boolean installed,errorLogged;
 
@@ -67,21 +67,50 @@ public final class GripPoseProbe {
             GripPoseProbe.after(snapshot,result,thrown);
         }
     }
+    public static synchronized String reachBefore(Matrix4f[] poses,SkinningData actor,String name,Matrix4f target,float weight) {
+        if(reachFailures==null)return null;
+        var bone=actor==null?null:actor.getBone(name);
+        if(bone==null || bone.parent==null || bone.parent.parent==null)return null;
+        var row=new StringBuilder().append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
+            .append(",\"bone\":\"").append(name).append("\",\"weight\":").append(weight).append(",\"target\":");
+        matrix(row,target);row.append(",\"chain\":[");
+        matrix(row,poses[bone.parent.parent.index]);row.append(',');matrix(row,poses[bone.parent.index]);
+        row.append(',');matrix(row,poses[bone.index]);return row.append("]}").toString();
+    }
+    public static synchronized void reachAfter(String snapshot,boolean result) {
+        if(snapshot==null || result || reachFailures==null)return;
+        try {reachFailures.write(snapshot);reachFailures.newLine();reachFailures.flush();}
+        catch(Throwable error){fail(error);}
+    }
+    public static class ReachAdvice {
+        @Advice.OnMethodEnter(suppress=Throwable.class)
+        public static String enter(@Advice.Argument(0) Matrix4f[] poses,@Advice.Argument(1) SkinningData actor,
+            @Advice.Argument(2) String name,@Advice.Argument(3) Matrix4f target,@Advice.Argument(6) float weight) {
+            return GripPoseProbe.reachBefore(poses,actor,name,target,weight);
+        }
+        @Advice.OnMethodExit(suppress=Throwable.class)
+        public static void exit(@Advice.Enter String snapshot,@Advice.Return boolean result) {
+            GripPoseProbe.reachAfter(snapshot,result);
+        }
+    }
     public static synchronized void agentmain(String args,Instrumentation instrumentation) throws Exception {
         if(output!=null){output.close();output=null;}
+        if(reachFailures!=null){reachFailures.close();reachFailures=null;}
         if("stop".equals(args)){System.out.println("[GRIP_POSE_PROBE] stopped");return;}
         if(args==null || args.isBlank() || !Path.of(args).isAbsolute())throw new IllegalArgumentException("Agent args: absolute output directory, or stop");
         Path directory=Path.of(args);
         if(!Files.isDirectory(directory))throw new IllegalArgumentException("Output directory must exist");
         Path file=directory.resolve("wood-grip-poses.jsonl");
         output=Files.newBufferedWriter(file,java.nio.file.StandardOpenOption.CREATE_NEW);start=System.nanoTime();sequence=0;errorLogged=false;
+        reachFailures=Files.newBufferedWriter(directory.resolve("wood-reach-failures.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);
         if(!installed){
             new AgentBuilder.Default().disableClassFormatChanges()
                 .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
                 .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
                 .type(named("net.alexredby.pztoolkitjavapatches.CartGrip"))
                 .transform((builder,description,loader,module,protection)->builder.visit(
-                    Advice.to(GripAdvice.class).on(named("grip").and(takesArguments(6)))))
+                    Advice.to(GripAdvice.class).on(named("grip").and(takesArguments(6))))
+                    .visit(Advice.to(ReachAdvice.class).on(named("reach").and(takesArguments(7)))))
                 .installOn(instrumentation);installed=true;
         }
         System.out.println("[GRIP_POSE_PROBE] capturing every wooden grip call, including failures: "+file);

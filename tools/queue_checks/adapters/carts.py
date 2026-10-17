@@ -19,7 +19,8 @@ MP = 'wooden_cart_multiplayer'
 SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.lua', 20),
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
             'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
-            'collision': ('scenario-collision.lua', 20), 'footprint': ('scenario-collision.lua', 20)}
+            'collision': ('scenario-collision.lua', 20), 'footprint': ('scenario-collision.lua', 20),
+            'interaction': ('scenario-interaction.lua', 4)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 
 
@@ -277,10 +278,26 @@ def verify(root, selection, catalog):
                 ('body', [sys.executable, str(ev / 'check-hip-actual.py'), '--game-java-dir', str(game), '--mesh', str(_path(selection, 'mesh_fbx')), '--mesh-vbo', str(cache / 'WheelbarrowWood.bin'), '--capture', str(cache / 'body-clearance.jsonl'), '--output', str(analysis)]),
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
-            commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if case != 'sprint' else [])))
+            if case != 'interaction':
+                commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if case != 'sprint' else [])))
             evidence['analyzers'] = {name: _run(command, analysis, name) for name, command in commands}
-            metrics = _json(analysis / 'native-metrics.json')
-            evidence['native'] = metrics
+            if case == 'interaction':
+                evidence['analyzers'][case] = _run([sys.executable, str(intake / 'analyze-interaction.py'),
+                    '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'interaction.json')], analysis, case)
+                report = _json(analysis / 'interaction.json')
+                evidence['interaction'] = report
+                if not report['functionalPass'] or not report['ikCoverageVerified']:
+                    raise ValueError('Interaction functional/rendered IK verification failed: ' + str(report['failures']))
+                if not report['worldHandoff']['pass']:
+                    raise ValueError('Interaction world/held handoff failed: ' + str(report['worldHandoff']['failures']))
+                proof = _json(cache / 'wood-wheel-mesh-proof.json')
+                native = (cache / 'WheelbarrowWood.bin').read_bytes()
+                if proof.get('matchesOriginal') is not True or proof.get('sha256') != hashlib.sha256(native).hexdigest() or proof.get('bytes') != len(native):
+                    raise ValueError('Interaction native cart mesh proof is missing or mismatched')
+                evidence['nativeMotionNotApplicable'] = True
+            else:
+                metrics = _json(analysis / 'native-metrics.json')
+                evidence['native'] = metrics
             evidence['analysis'] = str(analysis)
             if case == 'reverse':
                 motion = _load(intake / 'analyze-reverse.py').analyze(texts['client1'])
@@ -295,13 +312,15 @@ def verify(root, selection, catalog):
                 motion = _load(intake / 'analyze-reversal.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reversal-motion.json', json.dumps(motion, indent=2, allow_nan=False))
-            _coverage(cache, texts['client1'], SP_CASES[case][1], metrics)
+            if case != 'interaction':
+                _coverage(cache, texts['client1'], SP_CASES[case][1], metrics)
+                evidence['nativePartialDiagnostic'] = case != 'sprint'
             evidence['evidenceComplete'] = True
-            evidence['nativePartialDiagnostic'] = case != 'sprint'
         evidence['analysis'] = str(analysis)
     except (ValueError, OSError, KeyError, TypeError, AssertionError, subprocess.SubprocessError) as error:
         issues.append(str(error))
     return {'issues': issues, 'evidence': evidence, 'outcomes': [
         {'actor': role, 'case': selection['cases'][0], 'status': 'failed' if issues else 'captured',
-         'reason': '; '.join(issues) if issues else 'Capture coverage verified; motion, geometry and replication diagnostics require review',
+         'reason': '; '.join(issues) if issues else ('Native pickup/setdown functional and render coverage verified; geometry and videos require review'
+             if selection['suite'] == SP and selection['cases'] == ['interaction'] else 'Capture coverage verified; motion, geometry and replication diagnostics require review'),
          'outcome': {'animationEquivalencePass': False, 'evidenceComplete': not issues}} for role in roles]}

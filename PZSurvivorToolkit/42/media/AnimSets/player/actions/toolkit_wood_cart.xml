@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animNode>
+    <m_Name>ToolkitWoodCartAction</m_Name>
+    <m_AnimName>Bob_Idle</m_AnimName>
+    <m_Priority>20</m_Priority>
+    <m_ConditionPriority>110</m_ConditionPriority>
+    <m_BlendTime>0.20</m_BlendTime>
+    <m_SpeedScale>0.48</m_SpeedScale>
+    <m_SyncTrackingEnabled>false</m_SyncTrackingEnabled>
+    <m_Scalar>ToolkitWoodCartPoseX</m_Scalar>
+    <m_Scalar2>ToolkitWoodCartPoseY</m_Scalar2>
+    <m_2DBlends referenceID="1">
+        <m_AnimName>Bob_Idle</m_AnimName>
+        <m_XPos>0</m_XPos><m_YPos>0</m_YPos>
+    </m_2DBlends>
+    <m_2DBlends referenceID="2">
+        <m_AnimName>Bob_IdleLooting_Low</m_AnimName>
+        <m_XPos>1</m_XPos><m_YPos>0</m_YPos>
+    </m_2DBlends>
+    <m_2DBlends referenceID="3">
+        <m_AnimName>Bob_Cart_Idle</m_AnimName>
+        <m_XPos>1</m_XPos><m_YPos>1</m_YPos>
+    </m_2DBlends>
+    <m_2DBlendTri><node1>1</node1><node2>2</node2><node3>3</node3></m_2DBlendTri>
+    <m_SubStateBoneWeights><boneName>Dummy01</boneName></m_SubStateBoneWeights>
+    <m_SubStateBoneWeights><boneName>Translation_Data</boneName></m_SubStateBoneWeights>
+    <m_Conditions>
+        <m_Name>PerformingAction</m_Name>
+        <m_Type>STRING</m_Type>
+        <m_Value>ToolkitWoodCart</m_Value>
+    </m_Conditions>
+    <m_maxTorsoTwist>0</m_maxTorsoTwist>
+</animNode>

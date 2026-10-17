@@ -197,6 +197,11 @@ public final class Main {
         && supports("zombie/core/skinnedmodel/shader/Shader.class",
             "e9377a60cfe66b4907f57ab6a7a6d6275c991035e7326a1c4663520c09a04014");
 
+    public static final boolean CART_TRANSITION_SUPPORTED = CART_SUPPORTED
+        && supports("zombie/iso/IsoGridSquare.class", "e8192f87d88da607abe0293228c84efbd822ed4ac0a331102c030bc3eeaba467")
+        && supports("zombie/core/skinnedmodel/model/ItemModelRenderer.class", "7bca60683441a873571bb4a8e3030de21852916432040a2dcdacc297757fb008")
+        && supports("zombie/core/skinnedmodel/model/WorldItemModelDrawer.class", "f9a83f5dbb3a5f897a502e945fb53150aa4cc4fb98c7996f5eb4bd0475d965d2");
+
     public static boolean supports(String resource, String expected) {
         try (var stream = Main.class.getClassLoader().getResourceAsStream(resource)) {
             return stream != null && expected.equals(HexFormat.of().formatHex(
@@ -552,6 +557,45 @@ public final class Main {
         @Patch.OnExit
         public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot) {
             if(Main.CART_SUPPORTED) CartGrounding.render(slot);
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.model.ItemModelRenderer", methodName="init")
+    public static class WoodenWorldScale {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.core.skinnedmodel.model.ItemModelRenderer renderer,
+            @Patch.Argument(0) zombie.inventory.InventoryItem item) {
+            if(Main.CART_TRANSITION_SUPPORTED && CartTransition.wooden(item)) {
+                var transform=Accessor.tryGet(renderer,"transform",(org.joml.Matrix4f)null);
+                if(transform!=null) transform.scale(.85f);
+                if(CartTransition.hidden(item)) Accessor.trySet(renderer,"alpha",0f);
+            }
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.model.WorldItemModelDrawer", methodName="renderAtlasTexture", warmUp=true)
+    public static class WoodenWorldAtlas {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.Argument(0) zombie.inventory.InventoryItem item) {
+            return Main.CART_TRANSITION_SUPPORTED && CartTransition.wooden(item);
+        }
+    }
+
+    @Patch(className="zombie.iso.IsoGridSquare", methodName="AddWorldInventoryItem", strictMatch=true, warmUp=true)
+    public static class WoodenSetdownPlacement {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.iso.IsoGridSquare square,
+            @Patch.Argument(0) zombie.inventory.InventoryItem item,
+            @Patch.Argument(1) float x, @Patch.Argument(2) float y, @Patch.Argument(3) float z,
+            @Patch.Argument(4) boolean transmit,
+            @Patch.Local("toolkitPlacedCart") zombie.inventory.InventoryItem placed) {
+            placed=Main.CART_TRANSITION_SUPPORTED?CartTransition.place(square,item):null;
+            return placed!=null;
+        }
+        @Patch.OnExit
+        public static void exit(@Patch.Local("toolkitPlacedCart") zombie.inventory.InventoryItem placed,
+            @Patch.Return(readOnly=false) zombie.inventory.InventoryItem result) {
+            if(placed!=null) result=placed;
         }
     }
 

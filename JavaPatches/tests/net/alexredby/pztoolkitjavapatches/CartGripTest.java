@@ -438,6 +438,59 @@ public final class CartGripTest {
         }
     }
 
+    private static void checkTransitionReachContinuity() {
+        String[] names={"Bip01_Spine","Bip01_L_Clavicle","Bip01_L_UpperArm","Bip01_L_Forearm",
+            "Bip01_L_Hand","Bip01_L_Finger1","Bip01_L_Thigh"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,2,3,4,0),offsets);
+        Matrix4f[] nativePoses={new Matrix4f().translation(0,.5f,0),new Matrix4f().translation(.02f,.81f,.04f),
+            new Matrix4f().translation(.10f,.8f,.04f),new Matrix4f().translation(.15f,.62f,.02f),
+            new Matrix4f().translation(.10f,.50f,-.11f).rotateXYZ(.15f,-.2f,.35f),
+            new Matrix4f().translation(.10f,.50f,-.15f),new Matrix4f().translation(.08f,.4f,0)};
+        Matrix4f cart=new Matrix4f().set(76.5f,-3.9394883e-5f,-1.4673389e-5f,0,
+            2.8023098e-5f,20.771942f,73.62592f,0,-2.4333809e-5f,-73.625916f,20.771938f,0,
+            -.0060535767f,.097179376f,-.34652624f,1);
+        for(boolean female:new boolean[]{false,true}) {
+            Matrix4f grip=new Matrix4f();
+            if(!CartGrip.target("WheelbarrowWood",true,female,new Matrix4f(),cart,grip))
+                throw new AssertionError("measured cart grip target rejected");
+            Matrix4f[] full=null;
+            for(float weight:new float[]{0,.000001f,.00001f,.0001f,.001f,.01f,.1f,.5f,.9f,.99999f,1}) {
+                var poses=java.util.Arrays.stream(nativePoses).map(Matrix4f::new).toArray(Matrix4f[]::new);
+                Matrix4f target=new Matrix4f();
+                if(!CartTransitionMath.blend(nativePoses[4],grip,CartTransitionMath.smooth(weight),target)
+                    || !CartGrip.reach(poses,actor,"Bip01_L_Hand",target,new Matrix4f(),true,weight))
+                    throw new AssertionError("transition reach rejected weight="+weight);
+                if(!poses[4].equals(target,.00001f)) throw new AssertionError("transition wrist left blended grip");
+                for(int i=1;i<4;i++) {
+                    float before=nativePoses[i].getTranslation(new Vector3f()).distance(nativePoses[i+1].getTranslation(new Vector3f()));
+                    float after=poses[i].getTranslation(new Vector3f()).distance(poses[i+1].getTranslation(new Vector3f()));
+                    if(Math.abs(before-after)>.00001f) throw new AssertionError("transition stretched arm at "+weight);
+                }
+                if(weight==0) for(int i=0;i<poses.length;i++) {
+                    if(!poses[i].equals(nativePoses[i])) throw new AssertionError("zero reach changed native pose");
+                }
+                if(weight>0 && weight<=.001f) for(int i=1;i<=5;i++) {
+                    if(!poses[i].equals(nativePoses[i],weight*8+.000002f))
+                        throw new AssertionError("epsilon reach jumps elbow/pronation at "+weight+" bone="+names[i]);
+                }
+                if(!poses[0].equals(nativePoses[0]) || !poses[6].equals(nativePoses[6]))
+                    throw new AssertionError("transition touched torso/leg");
+                var fingerLocal=new Matrix4f(poses[4]).invert().mul(poses[5]);
+                if(!fingerLocal.equals(new Matrix4f(nativePoses[4]).invert().mul(nativePoses[5]),.00001f))
+                    throw new AssertionError("transition detached finger before grip interpolation");
+                if(weight==1) full=poses;
+            }
+            var original=java.util.Arrays.stream(nativePoses).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.reach(original,actor,"Bip01_L_Hand",grip,new Matrix4f(),true))
+                throw new AssertionError("existing full grip rejected");
+            for(int i=0;i<original.length;i++) if(!original[i].equals(full[i]))
+                throw new AssertionError("transition changed existing full-weight solver");
+            if(!full[4].equals(grip,.00001f)) throw new AssertionError("full transition missed measured grip");
+        }
+    }
+
     private static void checkTransitionShoulders() {
         // B42.21 pre-IK right-arm inputs and unchanged wrist targets from every failed Run/Sprint transition.
         // Each row is clavicle/shoulder/elbow/wrist xyz, followed by the column-major grip target.
@@ -485,6 +538,19 @@ public final class CartGripTest {
             var direction=capturedTarget.getTranslation(new Vector3f()).sub(shoulder).normalize();
             if(shoulder.distance(capturedTarget.getTranslation(new Vector3f()))<=length)
                 throw new AssertionError("transition fixture no longer reproduces native overreach");
+            for(float weight:new float[]{0,.000001f,.01f,.1f,.5f,.9f,1}) {
+                var intermediate=new Matrix4f();
+                var eased=java.util.Arrays.stream(nativePoses).map(Matrix4f::new).toArray(Matrix4f[]::new);
+                if(!CartTransitionMath.blend(nativePoses[6],capturedTarget,CartTransitionMath.smooth(weight),intermediate)
+                    || !CartGrip.reach(eased,actor,"Bip01_R_Hand",intermediate,new Matrix4f(),true,weight))
+                    throw new AssertionError("weighted clavicle failed during captured overreach at "+weight);
+                if(!eased[6].equals(intermediate,.00001f)) throw new AssertionError("weighted shoulder lost grip");
+                for(int i=3;i<6;i++) {
+                    float before=nativePoses[i].getTranslation(new Vector3f()).distance(nativePoses[i+1].getTranslation(new Vector3f()));
+                    float after=eased[i].getTranslation(new Vector3f()).distance(eased[i+1].getTranslation(new Vector3f()));
+                    if(Math.abs(before-after)>.00001f) throw new AssertionError("weighted shoulder stretched a link");
+                }
+            }
             Vector3f previous=null;
             // Sweep across the correction onset and full extension in 0.1mm increments, then replay the actual failure.
             for(int sample=0;sample<=231;sample++) {
@@ -588,12 +654,186 @@ public final class CartGripTest {
                     throw new AssertionError("live remapped clothing pose disagrees: "+names[i]);
             }
         }
+        var full=CartGrip.livePoses(actor,body,palette,new Matrix4f(),true);
+        if(full==null) throw new AssertionError("full transition palette rejected");
+        var fullClothing=FloatBuffer.allocate(names.length*16);fullClothing.position(7);
+        var fullShader=new org.lwjgl.util.vector.Matrix4f[names.length];
+        if(CartGrip.skin(fullClothing,fullShader,body,actor,full,true)!=names.length || fullClothing.position()!=7)
+            throw new AssertionError("full transition clothing palette/cursor changed");
+        for(int i=0;i<names.length;i++) {
+            int index=body.boneIndices.get(names[i]);
+            var nativeRaw=new org.lwjgl.util.vector.Matrix4f();var original=palette.duplicate();original.position(index*16);nativeRaw.load(original);
+            var nativePose=PZMath.convertMatrix(nativeRaw,new Matrix4f()).transpose()
+                .mul(PZMath.convertMatrix(body.boneOffset.get(index),new Matrix4f()).transpose().invert());
+            if(!full[i].equals(nativePose,.00001f)) throw new AssertionError("full capture lost native pelvis/leg pose: "+names[i]);
+            var raw=new org.lwjgl.util.vector.Matrix4f();var view=fullClothing.duplicate();view.position(index*16);raw.load(view);
+            var decoded=PZMath.convertMatrix(raw,new Matrix4f()).transpose()
+                .mul(PZMath.convertMatrix(body.boneOffset.get(index),new Matrix4f()).transpose().invert());
+            if(!decoded.equals(full[i],.00001f) || !PZMath.convertMatrix(fullShader[index],new Matrix4f()).equals(PZMath.convertMatrix(raw,new Matrix4f())))
+                throw new AssertionError("full transition remapped skin/shader disagrees: "+names[i]);
+        }
+        int footIndex=body.boneIndices.get("Bip01_L_Foot")*16;
+        float footValue=palette.get(footIndex);palette.put(footIndex,Float.NaN);
+        if(CartGrip.livePoses(actor,body,palette,new Matrix4f())==null
+            || CartGrip.livePoses(actor,body,palette,new Matrix4f(),true)!=null)
+            throw new AssertionError("normal/full leg palette validation is not isolated");
+        palette.put(footIndex,footValue);
         palette.limit(16);
         if(CartGrip.livePoses(actor,body,palette,new Matrix4f())!=null || palette.position()!=7)
             throw new AssertionError("truncated live palette accepted or cursor changed");
         palette.limit(palette.capacity());palette.put(body.boneIndices.get(names[0])*16,Float.NaN);
         if(CartGrip.livePoses(actor,body,palette,new Matrix4f())!=null)
             throw new AssertionError("non-finite live pose accepted");
+    }
+
+    private static void checkTransitionFeet() {
+        String[] names={"Bip01_Spine","Bip01_L_Thigh","Bip01_L_Calf","Bip01_L_Foot","Bip01_L_Toe0",
+            "Bip01_R_Thigh","Bip01_R_Calf","Bip01_R_Foot","Bip01_R_Toe0",
+            "Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand",
+            "Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,2,3,0,5,6,7,0,9,10,0,12,13),offsets);
+        // FK of installed B42.21 Idle -> IdleLooting_Low local-quaternion blend at weight .5.
+        float[][] legs={
+            {0.0419115031f,-0.663097744f,-0.747358554f,0f,-0.99786869f,-0.0652259341f,0.00191205823f,0f,-0.0500150413f,0.745685564f,-0.664418193f,0f,0.0582248804f,0.356009938f,0.0792231038f,1f}, // Bip01_L_Thigh
+            {0.0594622987f,-0.896843377f,0.438333427f,0f,-0.99786869f,-0.0652259341f,0.00191205823f,0f,0.0268758905f,-0.437512897f,-0.898810409f,0f,0.0681788623f,0.198524224f,-0.0982745528f,1f}, // Bip01_L_Calf
+            {0.00821408269f,-0.99996585f,0.000910252311f,0f,-0.999909551f,-0.00820391876f,0.0106576471f,0f,-0.0106498155f,-0.000997712775f,-0.999942791f,0f,0.0804781037f,0.0130202429f,-0.00760922854f,1f}, // Bip01_L_Foot
+            {-0.0106498155f,-0.000997712775f,-0.999942791f,0f,-0.999909551f,-0.00820391876f,0.0106576471f,0f,-0.00821408269f,0.99996585f,-0.000910252311f,0f,0.0803074026f,-0.0524168226f,-0.0739959211f,1f}, // Bip01_L_Toe0
+            {-0.0932105959f,-0.970621983f,-0.221821439f,0f,-0.99511509f,0.0980968826f,-0.0110887397f,0f,0.0325229662f,0.219704273f,-0.975024251f,0f,-0.0522251196f,0.356010048f,0.0792232446f,1f}, // Bip01_R_Thigh
+            {-0.0541896937f,-0.448887354f,0.891943732f,0f,-0.99511509f,0.0980968826f,-0.0110887397f,0f,-0.0825193045f,-0.888187562f,-0.452010419f,0f,-0.0743626362f,0.125487327f,0.0265406529f,1f}, // Bip01_R_Calf
+            {-0.0369611221f,-0.75860352f,0.650503324f,0f,-0.999225101f,0.019241789f,-0.0343358615f,0f,0.0135304576f,-0.651268342f,-0.758726877f,0f,-0.0855712866f,0.0326390183f,0.211031186f,1f}, // Bip01_R_Foot
+            {0.0342894229f,-0.00273827272f,-0.999408194f,0f,-0.999225101f,0.019241789f,-0.0343358615f,0f,0.0193244226f,0.99981111f,-0.00207636099f,0f,-0.0870884471f,-0.060229951f,0.203139139f,1f}, // Bip01_R_Toe0
+        };
+        var nativePose=new Matrix4f[names.length];
+        nativePose[0]=new Matrix4f().translation(.003f,.3547495f,.079361f);
+        for(int i=0;i<legs.length;i++) nativePose[i+1]=new Matrix4f().set(legs[i]);
+        nativePose[9]=new Matrix4f().translation(.10f,.39f,0);
+        nativePose[10]=new Matrix4f().translation(.11f,.28f,-.08f);
+        nativePose[11]=new Matrix4f().translation(.12f,.20f,-.15f).rotateY(.3f);
+        nativePose[12]=new Matrix4f().translation(-.10f,.39f,0);
+        nativePose[13]=new Matrix4f().translation(-.11f,.28f,-.08f);
+        nativePose[14]=new Matrix4f().translation(-.12f,.20f,-.15f).rotateY(-.3f);
+        var reversedKnee=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
+        reversedKnee[1].identity().translation(0,.50f,0);
+        reversedKnee[2].identity().translation(0,.25f,.10f);
+        reversedKnee[3].identity();reversedKnee[4].identity().translation(0,0,-.10f);
+        var footTarget=new Matrix4f(reversedKnee[3]);
+        if(!CartGrip.reach(reversedKnee,actor,"Bip01_L_Foot",footTarget,null,false)
+            || Math.abs(reversedKnee[2].m32()+.10f)>.00001f)
+            throw new AssertionError("planted leg retained a backward knee pole");
+        if(!reversedKnee[3].equals(footTarget,.00001f)
+            || !reversedKnee[4].equals(new Matrix4f().translation(0,0,-.10f),.00001f))
+            throw new AssertionError("forward knee correction moved the planted foot/toes");
+        for(int upper:new int[]{1,2})
+            if(Math.abs(reversedKnee[upper].getTranslation(new Vector3f())
+                .distance(reversedKnee[upper+1].getTranslation(new Vector3f()))-(float)Math.hypot(.25,.10))>.00001f)
+                throw new AssertionError("forward knee correction stretched a leg link");
+        var hinged=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
+        if(!CartGrip.bendTransitionTorso(hinged,actor,(float)Math.toRadians(83)))
+            throw new AssertionError("shallow pickup hinge rejected");
+        for(int i=1;i<=8;i++) if(!hinged[i].equals(nativePose[i]))
+            throw new AssertionError("hip hinge rotated a native thigh branch or planted foot");
+        if(!hinged[0].getTranslation(new Vector3f()).equals(nativePose[0].getTranslation(new Vector3f()),.00001f))
+            throw new AssertionError("hip hinge moved its pivot");
+        for(int[] link:new int[][]{{0,9},{9,10},{10,11},{0,12},{12,13},{13,14}}) {
+            float before=nativePose[link[0]].getTranslation(new Vector3f()).distance(nativePose[link[1]].getTranslation(new Vector3f()));
+            float after=hinged[link[0]].getTranslation(new Vector3f()).distance(hinged[link[1]].getTranslation(new Vector3f()));
+            if(Math.abs(before-after)>.00001f) throw new AssertionError("hip hinge stretched the torso or an arm");
+        }
+        for(int link:new int[]{9,10,12,13}) {
+            var before=nativePose[link+1].getTranslation(new Vector3f()).sub(nativePose[link].getTranslation(new Vector3f()));
+            var after=hinged[link+1].getTranslation(new Vector3f()).sub(hinged[link].getTranslation(new Vector3f()));
+            if(!before.equals(after,.00001f)) throw new AssertionError("hip hinge carried a relaxed arm backward");
+        }
+        var invalidHinge=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
+        if(CartGrip.bendTransitionTorso(invalidHinge,actor,Float.NaN)
+            || CartGrip.bendTransitionTorso(invalidHinge,actor,2)) throw new AssertionError("invalid hip hinge accepted");
+        for(int i=0;i<invalidHinge.length;i++) if(!invalidHinge[i].equals(nativePose[i]))
+            throw new AssertionError("invalid hip hinge changed the input pose");
+        var clips=new AnimationClip[3];
+        for(int endpoint=0;endpoint<3;endpoint++) {
+            var frames=new ArrayList<Keyframe>();
+            for(int i=0;i<names.length;i++) {
+                // Only reference toe heights are used; make their difference observable in the lift test.
+                var position=new org.lwjgl.util.vector.Vector3f(0,names[i].endsWith("Toe0")?(endpoint==2?2:.006f*endpoint):0,0);
+                var frame=new Keyframe(position,new org.lwjgl.util.vector.Quaternion(),new org.lwjgl.util.vector.Vector3f(1,1,1));
+                frame.bone=i;frame.boneName=names[i];frame.time=0;frames.add(frame);
+            }
+            clips[endpoint]=new AnimationClip(1,frames,endpoint==0?"Bob_Idle":"Bob_Cart_Idle",true);
+        }
+        for(float lift:new float[]{0,.25f,.5f,1}) {
+            var poses=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.groundFeet(poses,actor,clips[0],clips[1],lift))
+                throw new AssertionError("native blended legs cannot reach the reference floor at lift="+lift);
+            for(int toe:new int[]{4,8}) {
+                int foot=toe-1,calf=toe-2,thigh=toe-3;
+                if(Math.abs(poses[toe].m31()-.006f*lift)>.00001f)
+                    throw new AssertionError("blended toe missed reference height");
+                var expected=new Matrix4f(nativePose[foot]);expected.m31(expected.m31()+.006f*lift-nativePose[toe].m31());
+                if(!poses[foot].equals(expected,.00001f))
+                    throw new AssertionError("floor correction changed native ankle X/Z or foot orientation");
+                if(!poses[thigh].getTranslation(new Vector3f()).equals(nativePose[thigh].getTranslation(new Vector3f()),.00001f))
+                    throw new AssertionError("floor correction moved the native hip pivot");
+                for(int[] link:new int[][]{{thigh,calf},{calf,foot},{foot,toe}}) {
+                    float before=nativePose[link[0]].getTranslation(new Vector3f()).distance(nativePose[link[1]].getTranslation(new Vector3f()));
+                    float after=poses[link[0]].getTranslation(new Vector3f()).distance(poses[link[1]].getTranslation(new Vector3f()));
+                    if(Math.abs(before-after)>.00001f) throw new AssertionError("floor correction stretched a leg/toe link");
+                }
+                if(!new Matrix4f(poses[foot]).invert().mul(poses[toe])
+                    .equals(new Matrix4f(nativePose[foot]).invert().mul(nativePose[toe]),.00001f))
+                    throw new AssertionError("toe detached from native foot");
+            }
+            for(int i:new int[]{0,9,10,11,12,13,14}) if(!poses[i].equals(nativePose[i]))
+                throw new AssertionError("foot grounding changed the native pelvis or arms");
+            var grounded=java.util.Arrays.stream(poses).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            var wrist=new Matrix4f(nativePose[11]).setTranslation(.13f,.262f,-.16f);
+            if(!CartGrip.reach(poses,actor,"Bip01_L_Hand",wrist,null,false) || !poses[11].equals(wrist,.00001f))
+                throw new AssertionError("hand IK lost its wrist target after foot grounding");
+            for(int i=0;i<9;i++) if(!poses[i].equals(grounded[i])) throw new AssertionError("hand IK changed grounded legs");
+            for(int upper:new int[]{9,10}) {
+                float before=nativePose[upper].getTranslation(new Vector3f()).distance(nativePose[upper+1].getTranslation(new Vector3f()));
+                float after=poses[upper].getTranslation(new Vector3f()).distance(poses[upper+1].getTranslation(new Vector3f()));
+                if(Math.abs(before-after)>.00001f) throw new AssertionError("hand IK stretched an arm");
+            }
+            // An already grounded endpoint, including a sub-threshold delta, must stay bit-for-bit native.
+            for(int toe:new int[]{4,8}) {
+                float correction=.006f*lift-poses[toe].m31()+.00001f;
+                poses[toe-1].m31(poses[toe-1].m31()+correction);poses[toe].m31(poses[toe].m31()+correction);
+            }
+            var endpoint=java.util.Arrays.stream(poses).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.groundFeet(poses,actor,clips[0],clips[1],lift)) throw new AssertionError("grounded endpoint rejected");
+            for(int i=0;i<poses.length;i++) if(!poses[i].equals(endpoint[i])) throw new AssertionError("grounded endpoint changed");
+        }
+        for(float shiftX:new float[]{-.04f,0,.04f}) for(float shiftZ:new float[]{.03f,.05f,.15f,.20f,.22f}) for(float shiftY:new float[]{0,-.025f,-.04f}) {
+            var poses=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.groundFeet(poses,actor,clips[0],clips[1],0,shiftX,shiftY,shiftZ))
+                throw new AssertionError("balanced squat cannot reach the planted feet");
+            for(int foot:new int[]{3,7}) {
+                var expected=new Matrix4f(nativePose[foot]);expected.m31(expected.m31()-nativePose[foot+1].m31());
+                if(!poses[foot].equals(expected,.00001f)) throw new AssertionError("stance shift slid or twisted a planted foot");
+                for(int upper:new int[]{foot-2,foot-1}) {
+                    float before=nativePose[upper].getTranslation(new Vector3f()).distance(nativePose[upper+1].getTranslation(new Vector3f()));
+                    float after=poses[upper].getTranslation(new Vector3f()).distance(poses[upper+1].getTranslation(new Vector3f()));
+                    if(Math.abs(before-after)>.00001f) throw new AssertionError("stance shift stretched a leg");
+                }
+            }
+            for(int torso:new int[]{0,9,10,11,12,13,14})
+                if(!poses[torso].equals(new Matrix4f(nativePose[torso]).translateLocal(shiftX,shiftY,shiftZ),.00001f))
+                    throw new AssertionError("stance shift distorted the torso or arms");
+        }
+        var rejected=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
+        // A reference floor two units above the actor cannot be reached by either native leg.
+        if(CartGrip.groundFeet(rejected,actor,clips[0],clips[2],1))
+            throw new AssertionError("unreachable grounded leg accepted");
+        for(int i=0;i<rejected.length;i++) if(!rejected[i].equals(nativePose[i])) throw new AssertionError("rejected leg target changed native pose");
+        var unchanged=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
+        if(CartGrip.groundFeet(unchanged,actor,clips[0],clips[1],Float.NaN)
+            || CartGrip.groundFeet(unchanged,actor,null,clips[1],0)) throw new AssertionError("missing/invalid foot reference accepted");
+        for(float shiftY:new float[]{Float.NaN,.01f,-.09f})
+            if(CartGrip.groundFeet(unchanged,actor,clips[0],clips[1],0,0,shiftY,0))
+                throw new AssertionError("invalid transition hip lowering accepted");
+        for(int i=0;i<unchanged.length;i++) if(!unchanged[i].equals(nativePose[i])) throw new AssertionError("invalid foot reference changed native pose");
     }
 
     private static void checkRunningHead() {
@@ -678,12 +918,14 @@ public final class CartGripTest {
 
     public static void main(String[] args) {
         checkReach();
+        checkTransitionReachContinuity();
         checkTransitionShoulders();
         checkFingers();
         checkNativeHandles();
         checkCapturedWoodGait();
         checkCapturedWoodRunning();
         checkLivePoses();
+        checkTransitionFeet();
         checkRunningHead();
         String[] names={"Dummy01","Bip01","Bip01_Spine","Bip01_R_Hand","Bip01_L_Hand","Bip01_R_Thigh",
             "Bip01_L_Thigh","Bip01_L_Calf","Bip01_L_Foot","Bip01_L_Toe0",
