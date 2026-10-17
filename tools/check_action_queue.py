@@ -37,6 +37,10 @@ def selection(args, catalog, options=None):
     options = (report.read_json(args.config) if args.config else {}) if options is None else options
     if not isinstance(options, dict):
         raise ValueError('--config must contain a JSON object of suite options')
+    if getattr(args, 'cart_scene', None):
+        if args.suite != 'wooden_cart_motion':
+            raise ValueError('--cart-scene requires the wooden_cart_motion suite')
+        options['cart_scenes'] = args.cart_scene
     if getattr(args, 'pack_lock', None):
         options['pack_lock'] = str(args.pack_lock.resolve())
     if options.get('pack_lock') and not args.mods:
@@ -184,6 +188,7 @@ def main(argv=None):
         command.add_argument("--kind", choices=("sp", "mp"))
         command.add_argument("--mode", choices=("toolkit", "native"), default="toolkit")
         command.add_argument("--cases", help="Comma-separated case IDs; omitted uses the suite default (all health cases for kind)")
+        command.add_argument('--cart-scene', action='append', help='Exact SP cart scene ID for a partial debug capture; repeatable, e.g. male-full-corner')
         command.add_argument("--mods", help="Comma-separated Mod IDs, selected for project INI, or vanilla for startup/native without production mods; omitted uses suite defaults")
         command.add_argument('--config', type=Path, help='JSON suite options with explicit dependency paths')
         command.add_argument('--mod-source', action='append', default=[], help='Explicit candidate MOD_ID=/absolute/mod/root; repeatable')

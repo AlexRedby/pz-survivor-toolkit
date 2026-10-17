@@ -451,9 +451,15 @@ def matrix(catalog, reports=()):
                     expected_actors = {'client' + str(i+1) for i in range(1 if kind == 'sp' else case.get('clients', definition.get('clients', 2)))}
                     relevant = [(report, [row for row in report["coverage"] if row["suite"] == suite and row["case"] == case["id"] and row["kind"] == kind and row["mode"] == mode]) for report in reports]
                     relevant = [(report, matches) for report, matches in relevant if matches]
+                    full = [(report, matches) for report, matches in relevant
+                            if not any((row.get('outcome') or {}).get('partialCoverage') is True for row in matches)]
+                    if full:
+                        relevant = full
                     matches = [row for _, values in relevant for row in values]
                     invalid = any(report.get("status") == "failed" or report["functional"]["status"] not in ('passed', 'captured') or not report["provenance"]["verified"] or report.get("execution", {}).get("status") != "completed" for report, _ in relevant)
-                    incomplete = any({row["actor"] for row in values} != expected_actors or len(values) != len(expected_actors) for _, values in relevant)
+                    incomplete = any({row["actor"] for row in values} != expected_actors or len(values) != len(expected_actors)
+                                     or any((row.get('outcome') or {}).get('partialCoverage') is True for row in values)
+                                     for _, values in relevant)
                     rows.append({"suite": suite, "case": case["id"], "producer": case["producer"], "capability": case["capability"],
                                  "kind": kind, "mode": mode, "status": "not-run" if not matches else "failed" if invalid or any(row["status"] == "failed" for row in matches) else "partial" if incomplete else "skipped" if all(row["status"] == "skipped" for row in matches) else "partial" if any(row["status"] == "skipped" for row in matches) else "passed",
                                  "evidence": matches})

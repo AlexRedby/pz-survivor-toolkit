@@ -31,7 +31,8 @@
     "interruption_analyzer": "analyze-interruption.py",
     "wheel_cycle_analyzer": "analyze-wheel-cycle.py",
     "path_scenario": "scenario-path.lua",
-    "path_analyzer": "analyze-path.py"
+    "path_analyzer": "analyze-path.py",
+    "scene_selection": "scene-selection.lua"
   },
   "origin": {
     "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",

@@ -50,6 +50,7 @@ for _,female in ipairs({false,true}) do
  end
 end
 assert(#cases==20)
+cases=CartLabSelectScenes(cases)
 local phase,since,stage,taken=0,0,0,{}
 local mode,attempt,videoSince='settle',0,0
 local sampleSince=0

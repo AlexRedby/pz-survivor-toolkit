@@ -2,6 +2,7 @@
 import hashlib
 import importlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -25,6 +26,47 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
             'path': ('scenario-path.lua', 24)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
+SCENE_SPECS = {
+    'sprint': ('comparison', 'direct', 'gait', 'runstop'),
+    'reverse': ('back-modifiers', 'back-arc-left', 'back-arc-right', 'u-turn-control', 'start-turn-control'),
+    'reversal': ('walk-switch', 'run-switch', 'sprint-switch', 'cancel-switch', 'arc-switch'),
+    'stop': ('run-stop', 'sprint-stop', 'short-release', 'run-resume-reverse', 'sprint-resume-turn', 'arc-stop'),
+    'stationary': ('left', 'right', 'cancel-restart', 'run-exit', 'sprint-sequence'),
+    'maneuvers': ('idle-swap-left', 'idle-swap-right', 'moving-swap-left', 'moving-swap-right',
+                  'reverse-rest', 'reverse-moving', 'uturn-left', 'uturn-right'),
+    'footprint': ('wall-block', 'wall-slide', 'corner-pivot', 'passage'),
+    'path': ('straight', 'corner', 'door-open', 'door-closed', 'overlap', 'cancel'),
+}
+
+
+def scene_names(case):
+    if case in ('interruption', 'interruption-matrix'):
+        prefixes = ('male-full-', 'male-empty-', 'female-full-', 'female-empty-') if case.endswith('-matrix') else ('',)
+        return [prefix + action + '-' + phase + '-' + route for prefix in prefixes
+                for phase in ('late', 'contact', 'early') for action in ('drop', 'pickup') for route in ('cancel', 'walk')]
+    if case == 'interaction':
+        return ['male-empty-yaw0', 'male-empty-yaw135', 'female-full-yaw90', 'male-full-yaw270']
+    if case == 'wheel':
+        return ['wood-wheel-cycle']
+    case = 'footprint' if case == 'collision' else case
+    names = [sex + '-' + load + '-' + spec
+             for sex in ('male', 'female') for load in ('empty', 'full') for spec in SCENE_SPECS[case]]
+    if case == 'sprint':
+        names = [name + ('-right' if '-full-' in name else '-left') for name in names]
+    if case == 'footprint':
+        names += ['male-empty-' + spec for spec in ('door-closed', 'door-open', 'overlap', 'gait-contact')]
+    return names
+
+
+def selected_scenes(selection):
+    names = scene_names(selection['cases'][0])
+    options = selection.get('options', {})
+    if 'cart_scenes' not in options:
+        return names
+    chosen = options['cart_scenes']
+    if not isinstance(chosen, list) or not chosen or any(not isinstance(name, str) or name not in names for name in chosen) or len(set(chosen)) != len(chosen):
+        raise ValueError('cart_scenes requires nonempty unique exact scene IDs from the selected SP cart bank')
+    return [name for name in names if name in chosen]
 
 
 def definitions():
@@ -37,6 +79,8 @@ def definitions():
             for suite in (SP, MP)}
     result[SP]['game_inputs'] = ['media/models_X/Skinned/MaleBody.x', 'media/models_X/Skinned/FemaleBody.x',
         'media/models_X/Skinned/Clothes/Bob_Trousers.x', 'media/models_X/Skinned/Clothes/Kate_Trousers.x']
+    for case in result[SP]['cases']:
+        case['scenes'] = scene_names(case['id'])
     return result
 
 
@@ -53,6 +97,10 @@ def validate(selection):
         raise ValueError('Unsupported cart kind/languages')
     if not set(MODS) <= set(selection['mods']):
         raise ValueError('Missing required cart fixture mods')
+    if suite == SP:
+        selected_scenes(selection)
+    elif 'cart_scenes' in selection.get('options', {}):
+        raise ValueError('cart_scenes supports SP cart captures only')
     overrides = selection.get('options', {}).get('mod_sources', {})
     for identifier in ('PZSurvivorToolkit', 'PZToolkitJavaPatches'):
         value = overrides.get(identifier)
@@ -169,11 +217,13 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 'ready': '[CART_MP] CONNECTED' if selection['suite'] == MP else '[CART_ADAPTER] PROBE_ATTACH_READY'})
         if selection['suite'] == SP:
             motion = dict(disposable=True, ffmpeg=config['ffmpeg'], videoRoot=videos[role], area=AREA)
+            if 'cart_scenes' in selection.get('options', {}):
+                motion['scenes'] = selected_scenes(selection)
             if selection['cases'][0] in ('collision','footprint'): motion['footprint']=True
             if selection['cases'][0] in ('interruption', 'interruption-matrix'): motion['interruptions']=True
             if selection['cases'][0] == 'interruption-matrix': motion['interruptionMatrix']=True
             if selection['cases'][0] == 'wheel': motion['wheelCycle']=True
-            runtime_source = 'CartMotionConfig=' + _lua(motion) + '\nif not CartAdapterBootstrapped then\nCartAdapterBootstrapped=true\n'
+            runtime_source = 'CartMotionConfig=' + _lua(motion) + '\n(function()\n' + (sp / 'scene-selection.lua').read_text() + '\nend)()\nif not CartAdapterBootstrapped then\nCartAdapterBootstrapped=true\n'
             runtime_source += '(function()\n' + (sp / 'test-area.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'obstacles.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'bootstrap.lua').read_text() + '\nend)()'
             runtime_source += '\nelse\n(function()\n' + (sp / SP_CASES[selection['cases'][0]][0]).read_text() + '\nend)()\nend\n'
             _write(runtime_lua, runtime_source)
@@ -184,7 +234,12 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 def complete(selection, role, text):
     if selection['suite'] == SP:
         log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
-        return re.search(r'\[WOOD_BANK\] ALL_COMPLETE cases=' + str(SP_CASES[selection['cases'][0]][1]) + r'(?:\s|$)', log) is not None
+        expected = selected_scenes(selection)
+        if 'cart_scenes' in selection.get('options', {}):
+            recorded = re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=\d+', log)
+            if recorded != expected or '[WOOD_BANK] FAIL' in log:
+                return False
+        return re.search(r'\[WOOD_BANK\] ALL_COMPLETE cases=' + str(len(expected)) + r'(?:\s|$)', log) is not None
     return '"event":"complete"' in text.replace(' ', '') and '[CART_MP] VIDEO_FINAL' in text
 
 
@@ -208,7 +263,7 @@ def _videos(root, selection, role, text):
         if len(rows) != 1:
             raise ValueError('Expected one final MP video receipt')
         item = json.loads(rows[0]); records = [(role, '0', item['file'], str(item['frames']), str(item['seconds']))]
-    expected = 1 if selection['suite'] == MP else SP_CASES[selection['cases'][0]][1]
+    expected = 1 if selection['suite'] == MP else len(selected_scenes(selection))
     if len(records) != expected or len({row[2] for row in records}) != expected:
         raise ValueError('Missing/duplicate completed cart clips')
     output = []
@@ -226,6 +281,96 @@ def _videos(root, selection, role, text):
         subprocess.run([str(_path(selection, 'ffmpeg', True)), '-v', 'error', '-xerror', '-i', str(video), '-f', 'null', '-'], check=True, capture_output=True, text=True, timeout=120)
         output.append({'file': str(video), 'frames': int(frames), 'seconds': float(seconds), 'metadata': stream})
     return output
+
+
+def _mesh_proof(cache, moving=True):
+    proof = _json(cache / 'wood-wheel-mesh-proof.json')
+    native = (cache / 'WheelbarrowWood.bin').read_bytes()
+    if proof.get('matchesOriginal') is not True or moving and proof.get('proofAfterPhaseChanged') is not True or proof.get('sha256') != hashlib.sha256(native).hexdigest() or proof.get('bytes') != len(native):
+        raise ValueError('Native cart mesh proof does not match the calibrated moving VBO')
+
+
+def _debug_action_coverage(log, name, start, seconds, probes):
+    from bisect import bisect_left
+
+    rows = []
+    for line in log.splitlines():
+        if '[WOOD_INTERACTION_SAMPLE] ' not in line:
+            continue
+        sample = json.loads(line.split('[WOOD_INTERACTION_SAMPLE] ', 1)[1])
+        if not isinstance(sample, dict) or not isinstance(sample.get('case'), str) or type(sample.get('start')) is not int:
+            raise ValueError('Invalid selected-scene action telemetry: ' + name)
+        if sample['case'] != name or sample['start'] != start:
+            continue
+        if (any(type(sample.get(key)) is not int for key in ('wall', 'elapsed', 'id', 'heldID'))
+                or any(type(sample.get(key)) is not bool for key in ('rendered', 'ToolkitCartMotion'))
+                or any(isinstance(value, float) and not math.isfinite(value) for value in sample.values())
+                or sample['id'] < 0 or abs(sample['wall'] - start - sample['elapsed']) > 5
+                or not 0 <= sample['elapsed'] <= seconds * 1000 + 500):
+            raise ValueError('Invalid selected-scene action telemetry: ' + name)
+        rows.append(sample)
+    if (len(rows) < 100 or rows[0]['elapsed'] > 500 or rows[-1]['elapsed'] < seconds * 1000 - 500
+            or any(not 0 < b['wall'] - a['wall'] <= 500 for a, b in zip(rows, rows[1:]))
+            or len({row['id'] for row in rows}) != 1):
+        raise ValueError('Incomplete selected-scene action telemetry window: ' + name)
+    summary = {'telemetrySamples': len(rows)}
+    for kind in ('body', 'grip'):
+        times = []
+        for probe in probes[kind]:
+            wall = probe.get('wallTimeMillis')
+            if type(wall) is not int:
+                raise ValueError('Invalid selected-scene ' + kind + ' timestamp: ' + name)
+            if start <= wall < start + seconds * 1000:
+                times.append(wall)
+        times.sort()
+        # Transition rendering may use reach() directly, bypassing the grip() probe.
+        expected = [row['wall'] for row in rows
+                    if ((row['rendered'] or row['heldID'] == row['id']) if kind == 'body'
+                        else row['ToolkitCartMotion'] and not row['rendered'])]
+        if len(expected) < 5:
+            raise ValueError('Missing selected-scene ' + kind + ' action phase: ' + name)
+        for wall in expected:
+            index = bisect_left(times, wall)
+            nearest = times[max(0, index - 1):index + 1]
+            if not nearest or min(abs(value - wall) for value in nearest) > 250:
+                raise ValueError('Missing selected-scene ' + kind + ' phase coverage: ' + name)
+        summary[kind + 'RequiredSamples'] = len(expected)
+    return summary
+
+
+def _debug_coverage(cache, text, selection):
+    log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
+    clips = re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+) file=.+? frames=\d+ seconds=([\d.]+)', log)
+    if [row[0] for row in clips] != selected_scenes(selection):
+        raise ValueError('Selected cart scene receipts differ from the snapshot')
+    bank = selection['cases'][0]
+    seconds = {'interaction': 16, 'wheel': 30, 'interruption': 20, 'interruption-matrix': 20}.get(bank, 12)
+    probes = {kind: [json.loads(line) for line in (cache / file).read_text().splitlines()]
+              for kind, file in (('body', 'body-clearance.jsonl'), ('grip', 'wood-grip-poses.jsonl'))}
+    result = []
+    for name, start, duration in clips:
+        if abs(float(duration) - seconds) > .2:
+            raise ValueError('Selected cart clip has an incomplete recording window: ' + name)
+        start = int(start)
+        row = {'scene': name, 'recordSeconds': float(duration)}
+        for kind, records in probes.items():
+            selected = [r for r in records if start <= r['wallTimeMillis'] < start + seconds * 1000]
+            if len({r['wallTimeMillis'] for r in selected}) < 5:
+                raise ValueError('Missing selected-scene ' + kind + ' probe samples: ' + name)
+            if kind == 'body' and any(len(r['cart']) != 16 or not all(math.isfinite(v) for v in r['cart']) for r in selected):
+                raise ValueError('Invalid selected-scene cart matrices: ' + name)
+            if kind == 'body' and any(r.get('female') is not name.startswith('female-') for r in selected):
+                raise ValueError('Selected-scene body model differs from the requested scene: ' + name)
+            row[kind + 'Samples'] = len(selected)
+            if kind == 'grip':
+                if any(type(r['result']) is not bool for r in selected):
+                    raise ValueError('Invalid selected-scene grip result: ' + name)
+                row['gripFailures'] = sum(not r['result'] for r in selected)
+        if bank in ('interaction', 'wheel', 'interruption', 'interruption-matrix'):
+            row['actionCoverage'] = _debug_action_coverage(log, name, start, seconds, probes)
+        result.append(row)
+    _mesh_proof(cache, moving=bank not in ('interaction', 'wheel', 'interruption', 'interruption-matrix'))
+    return result
 
 
 def _coverage(cache, text, count, metrics):
@@ -247,10 +392,7 @@ def _coverage(cache, text, count, metrics):
         row = next(row for row in rows if row['case'] == name)
         if row['gripSamples'] <= 0 or row['wheelFloorMaxError'] is None or any(row.get(kind, {}).get('samples', 0) <= 0 for kind in ('body', 'pants')):
             raise ValueError('Missing pose/mesh evidence for ' + name)
-    proof = _json(cache / 'wood-wheel-mesh-proof.json')
-    native = (cache / 'WheelbarrowWood.bin').read_bytes()
-    if proof.get('matchesOriginal') is not True or proof.get('proofAfterPhaseChanged') is not True or proof.get('sha256') != hashlib.sha256(native).hexdigest() or proof.get('bytes') != len(native):
-        raise ValueError('Native cart mesh proof does not match the calibrated moving VBO')
+    _mesh_proof(cache)
 
 
 def verify(root, selection, catalog):
@@ -258,6 +400,7 @@ def verify(root, selection, catalog):
     project = Path(__file__).resolve().parents[3]
     intake = _intake(project, selection['suite'])
     roles = ['client1'] if selection['suite'] == SP else ['client1', 'client2']
+    debug = selection['suite'] == SP and 'cart_scenes' in selection.get('options', {})
     issues, evidence = [], {}
     parent = root / 'analysis'; parent.mkdir(exist_ok=True)
     analysis = Path(tempfile.mkdtemp(prefix='cart-', dir=parent))
@@ -289,8 +432,20 @@ def verify(root, selection, catalog):
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
             if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel'):
-                commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if case != 'sprint' else [])))
+                commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if debug or case != 'sprint' else [])))
             evidence['analyzers'] = {name: _run(command, analysis, name) for name, command in commands}
+            if debug:
+                if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel'):
+                    _coverage(cache, texts['client1'], len(selected_scenes(selection)), _json(analysis / 'native-metrics.json'))
+                evidence.update(scope='selected-scenes', selectedScenes=selected_scenes(selection),
+                                fullSceneCount=SP_CASES[case][1], diagnosticOnly=True, evidenceComplete=True,
+                                sceneProbes=_debug_coverage(cache, texts['client1'], selection), analysis=str(analysis))
+                return {'issues': [], 'evidence': evidence, 'outcomes': [
+                    {'actor': 'client1', 'case': case, 'status': 'captured',
+                     'reason': 'Selected-scene debug capture only; full matrix and motion gates were not run',
+                     'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
+                                 'partialCoverage': True, 'selectedScenes': selected_scenes(selection),
+                                 'fullSceneCount': SP_CASES[case][1]}}]}
             if case == 'wheel':
                 evidence['analyzers'][case] = _run([sys.executable, str(intake / 'analyze-wheel-cycle.py'),
                     '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'wheel-cycle.json')], analysis, case)
@@ -347,8 +502,12 @@ def verify(root, selection, catalog):
         evidence['analysis'] = str(analysis)
     except (ValueError, OSError, KeyError, TypeError, AssertionError, subprocess.SubprocessError) as error:
         issues.append(str(error))
+    outcome = {'animationEquivalencePass': False, 'evidenceComplete': not issues}
+    if debug:
+        outcome.update(partialCoverage=True, selectedScenes=selection['options']['cart_scenes'],
+                       fullSceneCount=SP_CASES[selection['cases'][0]][1])
     return {'issues': issues, 'evidence': evidence, 'outcomes': [
         {'actor': role, 'case': selection['cases'][0], 'status': 'failed' if issues else 'captured',
          'reason': '; '.join(issues) if issues else ('Native pickup/setdown functional and render coverage verified; geometry and videos require review'
              if selection['suite'] == SP and selection['cases'] == ['interaction'] else 'Capture coverage verified; motion, geometry and replication diagnostics require review'),
-         'outcome': {'animationEquivalencePass': False, 'evidenceComplete': not issues}} for role in roles]}
+         'outcome': outcome} for role in roles]}

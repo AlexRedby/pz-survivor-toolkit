@@ -16,6 +16,7 @@ for _,female in ipairs({false,true}) do for _,full in ipairs({false,true}) do
   cases[#cases+1]={female=female,full=full,spec=spec,name=(female and 'female-' or 'male-')..(full and 'full-' or 'empty-')..spec}
  end
 end end
+cases=CartLabSelectScenes(cases)
 local phase,since,sampled,attempt=0,0,0,0
 local mode,action,item,terminalAt,manualAt,manualDrive,queuedAt,cancelled
 local goalX,goalY,startX,startY,cargo,door

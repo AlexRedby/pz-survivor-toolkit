@@ -48,6 +48,7 @@ if config.interruptions then
   end
  end
 end
+cases=CartLabSelectScenes(cases)
 local phase,attempt,since,sampleSince=0,0,0,0
 local mode,stage,item,initialCargo,initialCargoIDs,heldAt,droppedAt='settle','grounded'
 local interrupted,cancelAt,cancelledAt,retryStage

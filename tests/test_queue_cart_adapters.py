@@ -263,6 +263,115 @@ class CartAdapterTests(unittest.TestCase):
             carts.validate(self.selection)
         dependency.assert_not_called()
 
+    def test_scene_catalog_matches_every_lua_bank_and_selected_order(self):
+        lua=shutil.which('luajit') or shutil.which('lua')
+        if not lua: self.skipTest('Lua interpreter unavailable')
+        intake=ROOT/'tests/native_queue/contributions/wooden_cart_motion'
+        for bank,(source,count) in carts.SP_CASES.items():
+            full=carts.scene_names(bank)
+            self.assertEqual(len(full),count,bank)
+            self.assertEqual(len(set(full)),count,bank)
+            text=(intake/source).read_text()
+            start=text.index('local cases=')
+            marker='cases=CartLabSelectScenes(cases)'
+            body=text[start:text.index(marker,start)+len(marker)]
+            flags=dict(disposable=True,footprint=bank in ('collision','footprint'),
+                       wheelCycle=bank=='wheel',interruptions=bank in ('interruption','interruption-matrix'),
+                       interruptionMatrix=bank=='interruption-matrix')
+            from queue_checks.native import _lua
+            for chosen in (None,[full[-1],full[0]] if count>1 else [full[0]]):
+                if chosen: flags['scenes']=chosen
+                code='CartMotionConfig='+_lua(flags)+';local config=CartMotionConfig;local footprint=config.footprint==true;dofile('+json.dumps(str(intake/'scene-selection.lua'))+');'+body+';for _,c in ipairs(cases) do print(c.name) end'
+                result=subprocess.run([lua,'-e',code],check=True,text=True,capture_output=True)
+                self.assertEqual(result.stdout.splitlines(),[n for n in full if chosen is None or n in chosen],bank)
+
+    def test_scene_selection_is_strict_and_is_staged_in_snapshot_order(self):
+        self.selection['cases']=['path']
+        for bad in (None,[],True,'male-full-corner',['unknown'],['male-full-corner']*2,[2],['male-full-yaw0']):
+            self.options['cart_scenes']=bad
+            with self.subTest(bad=bad),self.assertRaisesRegex(ValueError,'cart_scenes'):
+                carts.validate(self.selection)
+        self.options['cart_scenes']=['female-full-corner','male-empty-cancel']
+        self.stage()
+        text=Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+        self.assertIn('["scenes"]={"male-empty-cancel","female-full-corner"}',text)
+        self.assertLess(text.index('function CartLabSelectScenes'),text.index('local cases='))
+        log='[WOOD_BANK] RUN_STARTED\n'+''.join('[WOOD_BANK] COMPLETE '+n+' wall=100\n' for n in carts.selected_scenes(self.selection))+'[WOOD_BANK] ALL_COMPLETE cases=2'
+        self.assertTrue(carts.complete(self.selection,'client1',log))
+        self.assertFalse(carts.complete(self.selection,'client1',log.replace('male-empty-cancel','male-full-cancel')))
+        self.assertFalse(carts.complete(self.selection,'client1',log.replace('cases=2','cases=24')))
+        self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
+        with self.assertRaisesRegex(ValueError,'SP cart'): carts.validate(self.selection)
+
+    def test_selected_scene_capture_keeps_diagnostics_and_explicit_partial_scope(self):
+        self.selection['cases']=['path'];self.options['cart_scenes']=['male-full-corner']
+        cache=self.output/'client1';(self.output/'runtime.json').write_text(json.dumps(self.runtime))
+        text='[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] COMPLETE male-full-corner wall=1000 file=owned.mp4 frames=361 seconds=12.033\n[WOOD_BANK] ALL_COMPLETE cases=1'
+        (self.output/'client1-launch.log').write_text(text)
+        body=[dict(wallTimeMillis=1000+i*100,cart=[1.]*16,female=False) for i in range(120)]
+        grip=[dict(wallTimeMillis=1000+i*100,result=i!=4) for i in range(120)]
+        for file,rows in [('body-clearance.jsonl',body),('wood-grip-poses.jsonl',grip)]:
+            (cache/file).write_text(''.join(json.dumps(r)+'\n' for r in rows))
+        data=b'calibrated';(cache/'WheelbarrowWood.bin').write_bytes(data)
+        (cache/'wood-wheel-mesh-proof.json').write_text(json.dumps(dict(matchesOriginal=True,proofAfterPhaseChanged=True,bytes=len(data),sha256=hashlib.sha256(data).hexdigest())))
+        calls=[]
+        def run(command,directory,name):
+            calls.append(name)
+            if name=='native':
+                self.assertIn('--partial',command)
+                metrics={'cases':[dict(case='male-full-corner',gripSamples=120,wheelFloorMaxError=.01,body={'samples':120},pants={'samples':120})]}
+                (directory/'native-metrics.json').write_text(json.dumps(metrics))
+            return dict(exit_code=1 if name=='pants' else 0)
+        with patch.object(carts,'_run',side_effect=run),patch.object(carts,'_videos',return_value=[]):
+            result=carts.verify(self.output,self.selection,{})
+            self.assertFalse(result['issues'],result)
+            self.assertEqual(calls,['aabb','body','pants','native'])
+            self.assertTrue(result['outcomes'][0]['outcome']['partialCoverage'])
+            self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+            self.assertTrue(result['evidence']['diagnosticOnly'])
+            self.assertEqual(result['evidence']['sceneProbes'][0]['gripFailures'],1)
+            self.assertEqual(result['evidence']['fullSceneCount'],24)
+            for failure in ('empty','wrong-body','nonfinite','sparse'):
+                rows=json.loads(json.dumps(body))
+                if failure=='empty': rows=[]
+                if failure=='wrong-body': rows[0]['female']=True
+                if failure=='nonfinite': rows[0]['cart'][0]=float('nan')
+                if failure=='sparse': rows=rows[:6]
+                (cache/'body-clearance.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in rows))
+                with self.subTest(failure=failure):
+                    failed=carts.verify(self.output,self.selection,{})
+                    self.assertTrue(failed['issues'])
+                    self.assertTrue(failed['outcomes'][0]['outcome']['partialCoverage'])
+
+    def test_action_debug_requires_pose_coverage_only_during_rendered_and_held_phases(self):
+        self.selection['cases']=['interaction'];self.options['cart_scenes']=['male-empty-yaw0']
+        cache=self.output/'client1';name='male-empty-yaw0';start=100000
+        records=[dict(case=name,start=start,wall=start+t,elapsed=t,id=1,female=False,
+                      rendered=1000<=t<=6000,heldID=1 if 3000<=t<=7000 else -1,
+                      ToolkitCartMotion=3500<=t<=7000) for t in range(0,16001,100)]
+        body=[dict(wallTimeMillis=start+t,cart=[1.]*16,female=False) for t in range(1000,7001,100)]
+        grip=[dict(wallTimeMillis=start+t,result=True) for t in range(6100,7001,100)]
+        data=b'calibrated static mesh';(cache/'WheelbarrowWood.bin').write_bytes(data)
+        (cache/'wood-wheel-mesh-proof.json').write_text(json.dumps(dict(matchesOriginal=True,proofAfterPhaseChanged=False,bytes=len(data),sha256=hashlib.sha256(data).hexdigest())))
+        for failure in (None,'body-gap','grip-gap','telemetry-gap','short-tail','missing-held-phase'):
+            rows=[dict(r) for r in records]
+            poses=list(body);hands=list(grip)
+            if failure=='body-gap': poses=poses[:6]
+            if failure=='grip-gap': hands=hands[:6]
+            if failure=='telemetry-gap': rows=[r for r in rows if not 6000<r['elapsed']<10000]
+            if failure=='short-tail': rows=rows[:80]
+            if failure=='missing-held-phase':
+                for row in rows: row['ToolkitCartMotion']=False
+            for file,values in [('body-clearance.jsonl',poses),('wood-grip-poses.jsonl',hands)]:
+                (cache/file).write_text(''.join(json.dumps(r)+'\n' for r in values))
+            text='[WOOD_BANK] RUN_STARTED\n'+''.join('[WOOD_INTERACTION_SAMPLE] '+json.dumps(r)+'\n' for r in rows)
+            text+='[WOOD_BANK] COMPLETE '+name+' wall=100000 file=owned.mp4 frames=481 seconds=16.033\n[WOOD_BANK] ALL_COMPLETE cases=1'
+            with self.subTest(failure=failure):
+                if failure:
+                    with self.assertRaises(ValueError): carts._debug_coverage(cache,text,self.selection)
+                else:
+                    self.assertEqual(carts._debug_coverage(cache,text,self.selection)[0]['scene'],name)
+
     def test_unknown_or_combined_sp_cases_are_rejected(self):
         for cases in (['unknown'], ['stop', 'reversal']):
             self.selection['cases'] = cases

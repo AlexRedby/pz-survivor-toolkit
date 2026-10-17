@@ -59,6 +59,7 @@ if footprint then
  end
 end
 assert(#cases==(footprint and 20 or 16))
+cases=CartLabSelectScenes(cases)
 local phase,since,stage,taken=0,0,0,{}
 local mode,attempt,videoSince='layout',0,0
 local wallX,southY,gapY=math.floor(CartTestArea.x)-(footprint and 3 or 1),math.floor(CartTestArea.y)+2,math.floor(CartTestArea.y)

@@ -475,6 +475,21 @@ class QueueReportTests(unittest.TestCase):
             row["status"] = "skipped"
         self.assertEqual(cell(partial)["status"], "skipped")
 
+    def test_selected_scene_capture_never_establishes_full_coverage(self):
+        full = report.build_report(self.fixture(), self.catalog)
+        selected = copy.deepcopy(full)
+        for row in selected['coverage']:
+            row.update(status='captured', outcome={'partialCoverage': True, 'selectedScenes': ['probe']})
+        def cell(reports):
+            return next(row for row in report.matrix(self.catalog, reports)['rows']
+                        if row.get('kind') == 'sp' and row['mode'] == 'toolkit')
+        self.assertEqual(cell([selected])['status'], 'partial')
+        self.assertEqual(cell([selected, selected])['status'], 'partial')
+        self.assertEqual(cell([selected, full])['status'], 'passed')
+        selected.update(status='failed', functional={'status':'failed'})
+        self.assertEqual(cell([selected])['status'], 'failed')
+        self.assertEqual(cell([selected, full])['status'], 'passed')
+
 
     def test_generated_user_data_is_allowed_but_prepared_inputs_stay_pinned(self):
         root = self.fixture()

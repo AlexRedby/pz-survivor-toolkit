@@ -106,6 +106,20 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(selection['resources'], {'heap_mib': 1536, 'native_mib': 768, 'cpu_per_instance': 0.75, 'exclusive': True})
         self.assertTrue(selection['ports_auto'])
 
+    def test_cart_scene_flag_is_pinned_and_rejected_for_other_suites(self):
+        command=['prepare',str(self.root/'cart'),'--game','/game','--jdk','/jdk',
+                 '--suite','wooden_cart_motion','--cases','path','--cart-scene','male-full-corner',
+                 '--cart-scene','female-empty-straight']
+        with patch.object(cli.native,'prepare') as prepare:
+            self.assertEqual(cli.main(command),0)
+            selected=prepare.call_args.args[4]
+            self.assertEqual(selected['options']['cart_scenes'],['male-full-corner','female-empty-straight'])
+            prepare.reset_mock()
+            command[command.index('wooden_cart_motion')]='video-recording'
+            command[command.index('path')]='captures'
+            self.assertEqual(cli.main(command),1)
+            prepare.assert_not_called()
+
     def test_duplicate_or_escaping_ids_fail_before_any_preparation(self):
         for names in [('same', 'same'), ('../escape', 'next')]:
             self.write_plan([{'id': name, 'suite': 'video-recording'} for name in names])
