@@ -332,7 +332,7 @@ instanceof=function(item,kind) return type(item)=='table' and item.kind==kind en
 PJCK_CookingUI={OnOpenPanel=function() end}
 NC_InventorySearch={searchAsInput=function() end,searchAsOutput=function() end}
 ISEntityUI={OpenHandcraftWindow=function() end}
-for _,name in ipairs({'onAddItemInEvoRecipe','OnNewCraft','onPlaceItemOnGround','onFavorite','onUnwanted','onNoRecipes'}) do
+for _,name in ipairs({'onAddItemInEvoRecipe','OnNewCraft','onPlaceItemOnGround','onFavorite','onUnwanted','onNoRecipes','OnSecondWeapon','OnTwoHandsEquip'}) do
  ISInventoryPaneContextMenu[name]=function() end
 end
 local controller,buttonVisible=false,true
@@ -349,7 +349,7 @@ local function potMenu(withCook,withInput,ingredient)
  local o={}
  if withCook then o.cook=m:addOption('Cooking',{},PJCK_CookingUI.OnOpenPanel,pot) end
  m:addOption('Primary',nil,ISInventoryPaneContextMenu.OnPrimaryWeapon)
- m:addOption('Secondary',nil,ISInventoryPaneContextMenu.onWearItems)
+ m:addOption('Secondary',nil,ISInventoryPaneContextMenu.OnSecondWeapon)
  o.fluid=m:addOption('Fluid',nil,nil);local fluids=m:getNew(m);m:addSubMenu(o.fluid,fluids)
  fluids:addOption('Info',nil,function() end);fluids:addOption('Transfer',nil,function() end)
  o.native=m:addOption('Recipes',{},ISEntityUI.OpenHandcraftWindow,nil,'*',false,nil,'!Base.Pot')
@@ -469,3 +469,13 @@ menu:prerender()
 assert(contains(menu,actions.recipe) and #actions.ingredients.options==6 and not group(actions.ingredients,'craft'),
  'Project Cook must not replace custom crafting recipes, and native crafting selectors stay flat')
 print('PASS custom crafting recipe fallback stays available without an extra category level')
+menu,actions=potMenu(true,true);menu:prerender()
+local handGroup
+for _,row in ipairs(menu.options) do
+ if row.name=='UI_PZSurvivorToolkit_context_take_in_hand' then handGroup=menu:getSubMenu(row.subOption) end
+end
+assert(handGroup and #handGroup.options==2,'hand-only actions need a specific label')
+assert(handGroup.options[1].onSelect==ISInventoryPaneContextMenu.OnPrimaryWeapon and handGroup.options[2].onSelect==ISInventoryPaneContextMenu.OnSecondWeapon)
+menu:addOption('Wear',nil,ISInventoryPaneContextMenu.onWearItems);menu:prerender()
+assert(group(menu,'equipment') and #group(menu,'equipment').options==3,'mixed equipment actions keep their broader label')
+print('PASS hand-only group label and unchanged mixed equipment group')

@@ -298,6 +298,14 @@ local function organizeNode(menu, state, visited, selectorsOnly, context)
             result[#result + 1] = option
         end
     end
+    if groups.equipment then
+        local handsOnly = true
+        for _, option in ipairs(groups.equipment.options) do
+            local method = keys[option] and keys[option]:match("^callback:ISInventoryPaneContextMenu%.(.*)$")
+            if method ~= "OnPrimaryWeapon" and method ~= "OnSecondWeapon" and method ~= "OnTwoHandsEquip" then handsOnly = false; break end
+        end
+        if handsOnly then groups.equipment.toolkitContextAnchor.name = getText("UI_PZSurvivorToolkit_context_take_in_hand") end
+    end
     if not selectorsOnly then
         changed = sortActions(result, priorities) or changed
         for _, group in pairs(groups) do sortActions(group.options, priorities) end
