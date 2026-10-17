@@ -164,6 +164,12 @@ public final class Main {
         && supports("zombie/network/packets/GeneralActionPacket.class",
             "398a8729da87a4c222f17473cc46c9b5cb7fd9b3f74492d283765619c1d57c8a");
 
+    public static final boolean COMPLETION_SUPPORTED = supports("zombie/characters/CharacterTimedActions/LuaTimedActionNew.class",
+        "f10236f1e8be9d0822dc144ebe61c42fa1d0e8ded3279c7aa6dd0ffb7291feb0")
+        && supports("zombie/characters/CharacterTimedActions/BaseAction.class", "ce23d4ebefaf3f35b15d24e5139a1d5a9e3bdc97d176d20307dafdaf8c3b3392")
+        && supports("zombie/characters/IsoGameCharacter.class", "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b")
+        && supports("se/krka/kahlua/integration/LuaCaller.class", "0443930027e8f312ae9cb192c628f4b6c10743204597c508f8693cfd7bd79d0b");
+
     public static boolean supports(String resource, String expected) {
         try (var stream = Main.class.getClassLoader().getResourceAsStream(resource)) {
             return stream != null && expected.equals(HexFormat.of().formatHex(
@@ -193,7 +199,43 @@ public final class Main {
             + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
             + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", medicalVisuals=" + MEDICAL_VISUALS_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
-            + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED + ", basementRooms=" + BASEMENT_ROOMS_SUPPORTED + ", mannequin=" + MANNEQUIN_SUPPORTED);
+            + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED + ", basementRooms=" + BASEMENT_ROOMS_SUPPORTED + ", mannequin=" + MANNEQUIN_SUPPORTED
+            + ", itemTransactions=" + QueueManagers.ITEM_SUPPORTED + ", actionManager=" + QueueManagers.ACTION_SUPPORTED
+            + ", actionCompletion=" + COMPLETION_SUPPORTED + ", actionAcknowledgements=" + ActionAcknowledgements.SUPPORTED);
+    }
+
+    @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="perform", warmUp=true, strictMatch=true)
+    public static class ActionPerformed {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,
+                @Patch.Local("toolkitCompletion") ActionCompletion.Scope scope) {
+            scope = ActionCompletion.begin(action, "perform", Main.COMPLETION_SUPPORTED);
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Local("toolkitCompletion") ActionCompletion.Scope scope, @Patch.Thrown Throwable failure) {
+            ActionCompletion.end(scope, failure);
+        }
+    }
+
+    @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="complete", warmUp=true, strictMatch=true)
+    public static class ActionCompleted {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,
+                @Patch.Local("toolkitCompletion") ActionCompletion.Scope scope) {
+            scope = ActionCompletion.begin(action, "complete", Main.COMPLETION_SUPPORTED);
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Local("toolkitCompletion") ActionCompletion.Scope scope, @Patch.Thrown Throwable failure) {
+            ActionCompletion.end(scope, failure);
+        }
+    }
+
+    @Patch(className="se.krka.kahlua.integration.LuaCaller", methodName="pcall", warmUp=true, strictMatch=true)
+    public static class ActionCallbackResult {
+        @Patch.OnExit
+        public static void exit(@Patch.Argument(1) Object callback, @Patch.Argument(2) Object action, @Patch.Return Object[] result) {
+            ActionCompletion.observe(callback, action, result);
+        }
     }
 
     @Patch(className="zombie.characters.IsoGameCharacter$Bandages", methodName="removeBandageModel", warmUp=true, strictMatch=true)

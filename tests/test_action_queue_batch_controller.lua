@@ -18,6 +18,7 @@ isClient, isServer = function() return true end, function() return false end
 CharacterTrait = {ALL_THUMBS = 'AllThumbs', DISORGANIZED = 'disorganized'}
 table.wipe = function(t) for key in pairs(t) do t[key] = nil end end
 Events = {OnTick = {Add = function() end}, OnGameStart = {Add = function() end}}
+Events.OnServerCommand = {Add = function() end}
 for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
@@ -25,6 +26,7 @@ end
 local function native(path) assert(loadfile(NativeActionRoot .. '/' .. path))() end
 native('shared/TimedActions/ISBaseTimedAction.lua')
 native('client/TimedActions/ISTimedActionQueue.lua')
+native('client/TimedActions/ISQueueActionsAction.lua')
 native('shared/TimedActions/ISReadABook.lua')
 native('shared/TimedActions/ISFixAction.lua')
 for _, name in ipairs({'ISUnloadBulletsFromFirearm','ISUnloadBulletsFromMagazine','ISRemoveWeaponUpgrade'}) do
@@ -54,6 +56,8 @@ ISBaseTimedAction.begin = function(action)
         isForceComplete = function() return false end, hasStalled = function() return false end}
 end
 local function project(name)
+    if name == 'ActionQueue' then project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
+
     return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))()
 end
 project('BulkActions')

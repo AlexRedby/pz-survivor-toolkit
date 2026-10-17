@@ -233,7 +233,12 @@ end
 
 function World.resume(action, acknowledgement)
     if acknowledgement then
-        if World.buildState(action, acknowledgement) ~= "canceled" then return end
+        local receipts = Toolkit.ActionQueueAcknowledgements
+        if receipts and receipts.state(action, acknowledgement) == "canceled" then
+            if action.Type == "ISMoveablesAction" then
+                if not World.canResume(action) then return end
+            elseif not ownedBuild(action, action.toolkitWorldResume) then return end
+        elseif World.buildState(action, acknowledgement) ~= "canceled" then return end
     elseif not World.canResume(action) then return end
     local saved = action.toolkitWorldResume.snapshot
     if action.Type == "ISMoveablesAction" then

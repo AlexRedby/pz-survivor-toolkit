@@ -75,7 +75,9 @@ luautils = {walkAdj = function(character)
     ISTimedActionQueue.clear(character)
     return true
 end}
-local function project(name) assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
+local function project(name)
+    if name == 'ActionQueue' then project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
+ assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
 project('ActionQueueOperations'); project('ActionQueueDefinitions'); project('ActionQueueLabels'); project('ActionQueuePolicy'); project('ActionQueue'); project('ActionQueueWorld'); install()
 local operations, api = PZSurvivorToolkit.ActionQueueOperations, PZSurvivorToolkit.ActionQueue
 local q = ISTimedActionQueue.getTimedActionQueue(player)

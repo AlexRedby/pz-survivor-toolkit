@@ -572,6 +572,47 @@
     "literature": {
       "status": "not-migrated",
       "cases": []
+    },
+    "engine": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "PZSurvivorToolkit",
+        "ZombieBuddy",
+        "PZToolkitJavaPatches"
+      ],
+      "cases": [
+        {
+          "id": "repair",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "cancel",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        }
+      ]
     }
   }
 }

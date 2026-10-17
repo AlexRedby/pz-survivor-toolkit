@@ -248,6 +248,8 @@ fixturePolicy.resumableWorld=function() return false end
 fixturePolicy.replaceStop=function() end
 fixturePolicy.inspect=definitions.inspect
 PZSurvivorToolkit.ActionQueueLabels={label=function() end}
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local compatSource = read(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua')
 local compat = assert(loadstring((compatSource:gsub('\nreturn Compat', '\nCompat.fixtureRegistries = {records, sessions}\nreturn Compat'))))()

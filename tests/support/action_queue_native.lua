@@ -7,6 +7,7 @@ end
 ISBaseObject={derive=derive,new=function() return {} end}
 PZSurvivorToolkit={Settings={actionQueue=function() return true end},BulkActions={isGuardedTransfer=function() return false end}}
 Events={OnTick={Add=function() end},OnGameStart={Add=function() end}}
+Events.OnServerCommand = {Add = function() end}
 for _,name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState','ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name]={instance=function() return {} end}
 end
@@ -20,7 +21,9 @@ local function native(path)
     -- Stock Kahlua accepts this native suffix; Lua 5.1 used by the fixture does not.
     assert(loadstring((source:gsub('(%d+%.%d+)f','%1'))))()
 end
-local function project(name) return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/'..name..'.lua'))() end
+local function project(name)
+    if name == 'ActionQueue' then project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
+ return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/'..name..'.lua'))() end
 native('shared/TimedActions/ISBaseTimedAction.lua')
 native('client/TimedActions/ISTimedActionQueue.lua')
 native('client/TimedActions/ISQueueActionsAction.lua')

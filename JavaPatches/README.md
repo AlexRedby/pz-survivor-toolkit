@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` **0.1.15** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
+`PZToolkitJavaPatches` **0.1.17** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
 
 ## Prepare and install
 
@@ -56,6 +56,16 @@ Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.2
 The selected Workshop `AnimalTrailerSyncMPFix` supplies a separate trailer timer fix; check `[AnimalTrailerSyncMPFix] ACTIVE` in the server log too (verified v1.3). See its [scope and installation](../MOD_INSTALL.md#animal-trailer-fix).
 
 These appear at the default log verbosity. Missing output, `false` values, or target-class/transformation errors mean setup is incomplete or needs investigation. The client also shows **ZombieBuddy ... loaded** in the upper-left corner. A client message alone does not confirm server activation.
+
+## Shared action lifecycle and outcomes
+
+Version 0.1.17 restricts incoming item-transfer cancellation to transactions owned by its connection, and prevents an absent action from being reported as completed. These corrections preserve native packet validation and effect execution.
+
+With Toolkit 0.1.60's queue enabled, the common native completion boundary holds queue advancement until the whole `perform` callback, SP `complete` effects and Java action removal have finished. Callback errors and explicit `complete=false` fail closed. Native actions still execute through `ISTimedActionQueue`; resource contracts and required cleanup remain in place. Generator repairs use this common boundary when active and retain their earlier fallback for clients without a supported Java patch.
+
+Native timed actions and builds receive owner/type/transaction-correlated start and terminal receipts on native ordered channel 1. Each server action instance has a UUID token. Supported selective interruption waits for both local removal and the authoritative outcome; only `canceled` permits replay. A missing result times out after 30 seconds without replay. Existing build acknowledgements and family workarounds remain available until their live SP/MP replacement gates pass. Custom mod commands and item transfers do not gain new interruption permissions from this protocol.
+
+Verify `itemTransactions=true`, `actionManager=true`, `actionCompletion=true` and `actionAcknowledgements=true` in the activation line, plus actual `TransactionManager`, `ItemTransactionPacket`, `ActionManager` and `LuaTimedActionNew` transformations. Install and approve the same rebuilt JAR in clients and the server. The reproducible gameplay gate is `tools/check_action_queue.py run <fresh-output> --suite engine --kind sp|mp --mode toolkit --cases repair,cancel --game <game-java-directory> --jdk <jdk-25-directory> --workshop <workshop-content-108600>`; it checks real generator repair/cancellation, exact scrap IDs and an independent native reading tail.
 
 ## Build cancellation
 

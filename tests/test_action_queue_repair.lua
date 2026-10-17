@@ -20,6 +20,7 @@ end
 local function native(path) assert(loadfile(NativeActionRoot .. '/' .. path))() end
 native('shared/TimedActions/ISBaseTimedAction.lua')
 native('client/TimedActions/ISTimedActionQueue.lua')
+native('client/TimedActions/ISQueueActionsAction.lua')
 native('shared/TimedActions/ISReadABook.lua')
 native('shared/TimedActions/ISFixAction.lua')
 native('shared/TimedActions/ISFixVehiclePartAction.lua')
@@ -39,6 +40,8 @@ local operations = toolkit('ActionQueueOperations')
 local craft = toolkit('ActionQueueCraft')
 if not PZSurvivorToolkit.ActionQueueDefinitions then assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))() end
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePolicy.lua'))()
+Events.OnServerCommand = {Add = function() end}
+toolkit('ActionQueueLifecycle'); toolkit('ActionQueueAcknowledgements')
 local queueAPI = toolkit('ActionQueue')
 local player = {getPlayerNum = function() return 0 end, isDead = function() return false end,
     isAsleep = function() return false end, isTimedActionInstant = function() return false end}
