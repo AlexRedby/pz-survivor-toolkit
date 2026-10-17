@@ -279,7 +279,9 @@ function Authority.verify(player,phase)
   for _,name in ipairs({'front','tail'}) do local book=current.items[name]
    assert(actual[book:getID()]==book,'unrelated book ID not preserved '..name)
    local pages,total=book:getAlreadyReadPages(),book:getNumberOfPages()
-   if Selection.mode=='native' and name=='tail' and (spec.id=='nativeStop' or spec.id=='remoteRemoved') then
+   -- The native MP handmade splint can consume both inputs while leaving its one-page tail unread.
+   if Selection.mode=='native' and name=='tail' and (spec.id=='nativeStop' or spec.id=='remoteRemoved'
+    or Selection.kind=='mp' and spec.id=='splintDrop') then
     assert(pages==total or pages==total-1,'native control tail pages outside exact fixture range')
    else assert(pages==total,'unrelated book pages not preserved '..name) end
   end

@@ -314,6 +314,66 @@ local function wound(mode)
     body.getSplintItem=function()return 'Base.Splint' end
     return body
 end
+local clinicalWound=wound
+do
+    local function drop(body, items)
+        local head=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')})
+        local queue=f.queue(head)
+        panel:dropItemsOnBodyPart(body,items)
+        return queue.queue[2],queue,head
+    end
+    local menu=ISContextMenu.get
+    ISContextMenu.get=function()error('drop must never open or simulate a menu')end
+    local body=wound('HSplint')
+    local pending,q,head=drop(body,{supplies.Splint})
+    assert(pending and pending.handler.Type=='HSplint' and adapter.inspect(pending) and pending:isValid(),
+        'first drop before any native splint menu capture enqueues the audited fallback')
+    assert(adapter.inspect(pending).items[supplies.Splint:getID()],'fallback binds the exact dropped ready-made splint')
+    table.remove(q.queue,1);q.current=pending
+    q.onCompleted=function(self,current)
+        if PZSurvivorToolkit.ActionQueueOperations.deferCompletion(self,current) then return end
+        table.remove(self.queue,1);self.current=self.queue[1]
+    end
+    table.insert(q.queue,head);pending:perform()
+    assert(q.current.Type=='ISSplint' and q.current.plank==supplies.Splint and q.current.rippedSheet==nil
+        and adapter.inspect(q.current) and q.queue[2]==head,'first drop expands to the exact child before its tail')
+    local handmade=drop(wound('HSplint'),{supplies.RippedSheets,supplies.Plank})
+    assert(handmade and handmade:isValid() and handmade.args[1]=='Base.RippedSheets' and handmade.args[2]=='Base.Plank')
+    for _,kind in ipairs({'TreeBranch','TreeBranch2','WoodenStick','WoodenStick2'}) do
+        local material=supply('Base.'..kind)
+        local pending=drop(wound('HSplint'),{supplies.RippedSheets,material})
+        assert(pending and pending:isValid() and pending.args[2]==material:getFullType()
+            and adapter.inspect(pending).items[material:getID()],'drop retains native splint material '..kind)
+    end
+    local original=supplies.Splint.getBandagePower
+    supplies.Splint.getBandagePower=function()return 4 end
+    local priority,priorityQueue=drop(wound('HSplint'),{supplies.Splint})
+    assert(priority.handler.Type=='HApplyBandage' and #priorityQueue.queue==2,'original earlier handlers keep drop priority')
+    supplies.Splint.getBandagePower=original
+    for _,mode in ipairs({'no-fracture','stitched','already-splinted','head','upper-torso','lower-torso'}) do
+        local body=wound('HSplint')
+        if mode=='no-fracture' then body.getFractureTime=function()return 0 end end
+        if mode=='stitched' then body.stitched=function()return true end end
+        if mode=='already-splinted' then body.getSplintFactor=function()return 1 end end
+        local kind=mode=='head' and BodyPartType.Head or mode=='upper-torso' and 'Torso_Upper' or mode=='lower-torso' and 'Torso_Lower'
+        if kind then BodyPartType.Torso_Upper='Torso_Upper';BodyPartType.Torso_Lower='Torso_Lower';body.getType=function()return kind end end
+        local pending=drop(body,{supplies.Splint})
+        assert(not pending or not pending:isValid(),'illegal '..mode..' drop cannot treat a fracture')
+    end
+    assert(not drop(wound('HSplint'),{supplies.Plank}),'a missing dropped sheet is not borrowed from unrelated inventory')
+    local exact=drop(wound('HSplint'),{supplies.Splint})
+    local oldItems=f.player.inventory.items
+    f.player.inventory.items={};supply('Base.Splint')
+    assert(not exact:isValid(),'a different ready-made splint cannot replace the lost dropped ID')
+    f.player.inventory.items=oldItems
+    local setting=PZSurvivorToolkit.Settings.actionQueue
+    PZSurvivorToolkit.Settings.actionQueue=function()return false end
+    local disabled=drop(wound('HSplint'),{supplies.Splint})
+    assert(disabled and disabled:isValid(),'normal first splint drop works with queue editing disabled')
+    PZSurvivorToolkit.Settings.actionQueue=setting
+    ISContextMenu.get=menu
+end
+print('Health first drop: ready-made and handmade splints, exact supplies, native priority, clinical legality and queue-off behavior passed.')
 local function expanded(mode,...)
     local body=wound(mode)
     local parent=request(body,mode,...)
@@ -587,3 +647,103 @@ patient.getBodyDamageRemote=function()error('a local coop patient uses live loca
 assert(adapter.inspect(parent) and not adapter.canSkip(parent),'another local coop player retains its actual body parts')
 isClient=function()return false end
 print('Health runtime guards: hidden tools, fluid state, panel/actor identity, moving/removed patients, same-car exception and native stop preserve exact tail.')
+
+if NativeWishlistWorkshopRoot then
+    local path=NativeWishlistWorkshopRoot..'/3710913197/mods/MiniHealthPlus/42.20/media/lua/client/MiniHealthPlus/MiniHealthTreatments.lua'
+    local reader=assert(io.open(path));local miniSource=reader:read('*a');reader:close()
+    local function loadMini()
+        TwisTonFire_MHP={handle={player=f.player,playerIndex=0}}
+        assert(loadstring(miniSource,'@media/lua/client/MiniHealthPlus/MiniHealthTreatments.lua'))()
+        return TwisTonFire_MHP.MiniHealthTreatment
+    end
+    getModFileReader=function(id,file)
+        assert(id=='MiniHealthPlus' and file=='media/lua/client/MiniHealthPlus/MiniHealthTreatments.lua')
+        local file=assert(io.open(path))
+        return {readLine=function()return file:read('*l')end,close=function()file:close()end}
+    end
+    adapter=freshHealth();policy=PZSurvivorToolkit.ActionQueuePolicy
+    local treatment=loadMini()
+    adapter.installMiniHealth()
+    Perks={Doctor=1};f.player.getPerkLevel=function()return 2 end;f.player.setIsFarming=function()end
+    f.player.inventory.items={}
+    f.player.inventory.getItems=function(self)return list(self.items)end
+    f.player.inventory.getItemById=function(self,id)for _,item in ipairs(self.items)do if item:getID()==id then return item end end end
+    f.player.inventory.contains=function(self,value)
+        for _,item in ipairs(self.items)do if item==value or type(value)=='string' and item:getType()==value then return true end end
+        return false
+    end
+    f.player.inventory.containsID=function(self,id)return self:getItemById(id)~=nil end
+    for _,kind in ipairs({'Bandage','Disinfectant','Needle','Thread','SutureNeedle','SutureNeedleHolder','Splint',
+        'RippedSheets','Plank','Tweezers','ComfreyCataplasm','WildGarlicCataplasm','PlantainCataplasm'}) do
+        supplies[kind]=supply('Base.'..kind)
+    end
+    local function miniRequest(body,kind,...)
+        body.getDeepWoundTime=function()return 0 end;body.getBandageLife=function()return 0 end
+        context.options={};treatment:doBodyPartContextMenu(body,context)
+        for _,option in ipairs(context.options)do
+            if option.target and option.target.Type==kind then
+                return HealthPanelAction:new(f.player,option.target,...)
+            end
+        end
+        error('MiniHealthPlus menu did not expose '..kind)
+    end
+    for _,case in ipairs(cases)do
+        local body=clinicalWound(case[1])
+        local arg=case[2];if arg==false then arg=nil end
+        local pending=miniRequest(body,case[1],arg,case[3])
+        assert(adapter.inspect(pending),'reviewed MHP '..case[1]..' shares the native contract')
+        local tail=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')})
+        local q=f.queue(pending,tail)
+        q.onCompleted=function(self,current)
+            if PZSurvivorToolkit.ActionQueueOperations.deferCompletion(self,current)then return end
+            table.remove(self.queue,1);self.current=self.queue[1]
+        end
+        pending:perform()
+        assert(q.current~=pending and adapter.inspect(q.current) and q.queue[#q.queue]==tail,
+            'MHP '..case[1]..' child keeps the shared audited contract and original tail')
+    end
+    local body=clinicalWound('HApplyBandage')
+    local pending=miniRequest(body,'HApplyBandage','Base.Bandage')
+    local actor=f.player
+    actor.getDisplayName=function()return "Doctor" end
+    BodyPartType.getDisplayName=function()return "Forearm" end
+    assert(adapter.patient(pending)==actor and PZSurvivorToolkit.ActionQueueDefinitions.describe(pending).target=="Doctor / Forearm",
+        "MiniHealthPlus presentation uses the captured patient without calling unknown getters: "..tostring(PZSurvivorToolkit.ActionQueueDefinitions.describe(pending).target))
+    local nextActor={isDead=function()return false end,getPlayerNum=function()return 1 end};doctor(nextActor)
+    TwisTonFire_MHP.handle.player=nextActor
+    assert(pending.handler:getDoctor()==actor and pending.handler:getPatient()==actor and adapter.inspect(pending)
+        and not adapter.canSkip(pending),'shared MHP handle changes cannot redirect an existing menu request')
+    local getter=pending.handler.getDoctor
+    pending.handler.getDoctor=function()return nextActor end
+    assert(not adapter.inspect(pending),'an unknown per-handler getter revokes MHP permissions')
+    pending.handler.getDoctor=getter
+    pending.handler.toolkitHealthActor=nextActor
+    assert(not adapter.inspect(pending),'mutating the captured MHP actor revokes the action proof')
+    pending.handler.toolkitHealthActor=actor;TwisTonFire_MHP.handle.player=actor
+    local base=getmetatable(getmetatable(pending.handler)).__index
+    local nativeGetter=base.getDoctor;base.getDoctor=function()return actor end
+    assert(not adapter.inspect(pending),'a changed MHP prototype getter stays opaque despite its instance binding')
+    base.getDoctor=nativeGetter
+    local callback=treatment.checkContainerItems;treatment.checkContainerItems=function()end
+    assert(not adapter.inspect(pending),'a changed MHP inventory helper revokes existing proofs')
+    treatment.checkContainerItems=callback
+    assert(adapter.inspect(pending));treatment.restoreOwnContextMenu();assert(adapter.inspect(pending),'mod restore retains the owned producer wrapper')
+    local q=f.queue(pending)
+    q.onCompleted=function(self,current)
+        if PZSurvivorToolkit.ActionQueueOperations.deferCompletion(self,current)then return end
+        table.remove(self.queue,1);self.current=self.queue[1]
+    end
+    pending:perform();local child=q.current
+    body.getFractureTime=function()return 10 end
+    assert(adapter.canSkip(child),'MHP child retains its fracture-only wound exclusion')
+    body.getFractureTime=function()return 0 end
+    local replacement=miniRequest(clinicalWound('HRemoveBandage'),'HReplaceBandage','Base.Bandage')
+    assert(not adapter.inspect(replacement) and replacement:isValid(),'two-phase MHP replace-bandage keeps native behavior and opaque queue permissions')
+    local oldReader=getModFileReader
+    adapter=freshHealth();treatment=loadMini()
+    getModFileReader=function()return {readLine=function()end,close=function()end}end
+    local original=treatment.doBodyPartContextMenu;adapter.installMiniHealth()
+    assert(treatment.doBodyPartContextMenu==original,'unreviewed MHP source never installs producer hooks')
+    getModFileReader=oldReader
+    print('MiniHealthPlus contracts: all 16 supported branches, stable menu actor, clinical differences, changed callbacks and opaque two-phase replacement passed.')
+else print('MiniHealthPlus native contracts SKIP (pass --wishlist-workshop-root).')end

@@ -510,7 +510,9 @@ end
 local function target(action, presentation)
     if action.Type == "HealthPanelAction" and type(action.handler) == "table" then
         local panel = action.handler.panel
-        local patient, body = name(type(panel) == "table" and panel.character), name(action.handler.bodyPart)
+        local health = PZSurvivorToolkit.ActionQueueHealth
+        local actor = health and health.patient and health.patient(action) or type(panel) == "table" and panel.character
+        local patient, body = name(actor), name(action.handler.bodyPart)
         if patient and body then return patient .. " / " .. body end
         return patient or body
     end

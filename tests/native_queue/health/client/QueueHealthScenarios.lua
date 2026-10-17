@@ -9,7 +9,7 @@ return function(stage,queue,empty,remote)
  local native=Selection.mode=='native'
  local function run(fn,...) if native then return fn(...) end;return Ops.run(fn,...) end
  local function assertMode() assert(Toolkit.Settings.actionQueue()==(not native),'medical queue setting differs from selected mode') end
- local player,observer,restoreHelper
+ local player,observer,restoreHelper,subscribedPatient
  local function item(id)
   local function scan(container)
    local values=container:getItems();for i=0,values:size()-1 do local value=values:get(i)
@@ -60,9 +60,21 @@ return function(stage,queue,empty,remote)
     local values={};for _,entry in ipairs(spec.supply or {}) do values[#values+1]=assert(item(ids[entry[1]])) end
     panel:dropItemsOnBodyPart(body,values)
    else
-    panel:doBodyPartContextMenu(body,0,0)
-    local context=getPlayerContextMenu(player:getPlayerNum())
+    local context
+    if spec.mini then
+     local mhp=assert(TwisTonFire_MHP,'MiniHealthPlus not loaded')
+     assert(mhp.handle and mhp.handle.player==player and mhp.handle.playerIndex==player:getPlayerNum(),'actual MiniHealthPlus actor differs')
+     context=ISContextMenu.get(player:getPlayerNum(),0,0)
+     mhp.MiniHealthTreatment:doBodyPartContextMenu(body,context)
+    else
+     panel:doBodyPartContextMenu(body,0,0)
+     context=getPlayerContextMenu(player:getPlayerNum())
+    end
     local option=assert(menuOption(context,spec,ids),'native medical menu missing '..spec.handler)
+    if spec.mini then
+     assert(getFilenameOfClosure(option.target.perform):match('MiniHealthTreatments.lua$'),'MiniHealthPlus producer was replaced')
+     print('[QUEUE_TEST] HEALTH_MINI_PRODUCER case='..spec.id..' handler='..option.target.Type..' actor='..player:getUsername())
+    end
     option.onSelect(option.target,option.param1,option.param2,option.param3,option.param4,option.param5,option.param6,option.param7,option.param8)
     context:hideAndChildren()
    end
@@ -76,9 +88,13 @@ return function(stage,queue,empty,remote)
   end
   return parent
  end
+ local function stopSubscription()
+  if subscribedPatient then player:stopReceivingBodyDamageUpdates(subscribedPatient);subscribedPatient=nil end
+ end
  local function closeObserver()
   if observer then Events.OnPlayerUpdate.Remove(observer);observer=nil end
   if restoreHelper then ISHealthPanel.DidPatientMove=restoreHelper;restoreHelper=nil end
+  stopSubscription()
  end
  stage('medical native setup',function()
   player=getPlayer();assert(remote.ids())
@@ -120,7 +136,7 @@ return function(stage,queue,empty,remote)
      if player:pressedMovement(false) or player:tooDarkToRead() then return notReady() end
      if remote.kind=='sp' then body=player:getBodyDamage():getBodyPart(BodyPartType.FromIndex(prep.body))
      else
-      if not subscribed then player:startReceivingBodyDamageUpdates(activePatient);subscribed=true;return notReady() end
+      if not subscribed then player:startReceivingBodyDamageUpdates(activePatient);subscribedPatient=activePatient;subscribed=true;return notReady() end
       body=activePatient:getBodyDamageRemote():getBodyPart(BodyPartType.FromIndex(prep.body))
      end
      if not Authority.clinicalReady(body,assert(prep.readiness,'authority categorical readiness missing'))
@@ -144,7 +160,7 @@ return function(stage,queue,empty,remote)
       local ok,why=API.move(queue(),parent,tail,true);assert(ok,'waiting medical reorder rejected '..tostring(why))
       ok,why=API.move(queue(),parent,tail,false);assert(ok,'waiting medical reorder restore rejected '..tostring(why))
      elseif spec.guard=='closed' then
-      if activePatient==player then panel.character=nil else panel:tryStopReceivingBodyDamageUpdates() end
+      if activePatient==player then panel.character=nil else panel:tryStopReceivingBodyDamageUpdates();subscribedPatient=nil end
       assert(not Policy.inspect(parent),'closed panel kept permission')
      elseif spec.guard=='reassigned' then
       panel.character=activePatient==player and {} or player
@@ -191,6 +207,7 @@ return function(stage,queue,empty,remote)
      elseif spec.remote=='removed' then
       if not controlSent then print('[QUEUE_TEST] PATIENT_DISCONNECT_REQUEST patient=client1 doctor=client2');controlSent=true end
       if patient(prep.patient) then return false end
+      stopSubscription()
       print('[QUEUE_TEST] PATIENT_DISCONNECTED actualOnlinePeerAbsent=true')
       removedAt=getTimestampMs()
      end

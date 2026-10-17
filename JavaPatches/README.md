@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` **0.1.14** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
+`PZToolkitJavaPatches` **0.1.15** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
 
 ## Prepare and install
 
@@ -88,6 +88,12 @@ The mod entry point resolves the property enum before advice installation so the
 ## Native fluid-container names
 
 Version 0.1.8 normalizes the two shipped `ContainerName` tokens `Large Bucket` and `Fuel Pump` before the native fluid parser validates them. Their resulting names remain `LargeBucket` and `FuelPump`; capacity, contents and other component fields retain native behavior. Every other token and its validation remain native. Matching fluid parser and script-block/value bytecode is required. Verify `fluids=true` and the actual `FluidContainerScript` transformation on clients and the server after restarting with the rebuilt JAR approved.
+
+## Medical updates after patient disconnect
+
+Version 0.1.15 skips only a native `BodyDamageUpdatePacket` UPDATE whose resolved patient has already disappeared on the client. B42.21 otherwise dereferences that missing player while a packet is still in flight after disconnect. Exact packet, PlayerID and packet-type class hashes guard the change. Valid updates keep native health, pain and infection parsing; START/STOP subscription packets are unchanged. This does not alter treatment effects or accept mismatched clothing synchronization packets.
+
+The server also rejects a new `NetTimedAction` request when a serialized BodyPart belongs to a player who has already disconnected. The guard inspects only the new request’s argument table, preserves unrelated/cached actions and lets the native transaction send Reject before any Lua constructor runs. Valid medical and nonmedical requests retain native decoding; malformed unrelated payloads retain their errors. Exact decoder, transaction, player-ID and datagram-boundary bytecode is required. Check `medicalBodyDamage=true` on clients and `medicalTimedAction=true` on the server after approving the rebuilt JAR and restarting.
 
 ## Native fence validation and font pages
 

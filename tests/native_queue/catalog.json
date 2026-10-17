@@ -322,6 +322,78 @@
           ]
         },
         {
+          "id": "splintDrop",
+          "producer": "drop",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "readySplintDrop",
+          "producer": "drop",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "miniBandage",
+          "producer": "mini-menu",
+          "capability": "effect",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "miniDisinfect",
+          "producer": "mini-menu",
+          "capability": "effect",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "miniWaitingCancel",
+          "producer": "mini-menu",
+          "capability": "cancel",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "miniWaitingMove",
+          "producer": "mini-menu",
+          "capability": "reorder",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
           "id": "remoteMove",
           "producer": "menu",
           "capability": "remote",

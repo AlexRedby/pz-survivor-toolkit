@@ -24,7 +24,7 @@ def main() -> None:
     parser.add_argument("--native-vehicles", type=Path, help="vanilla Vehicles.lua for mechanics item-collection checks")
     parser.add_argument("--medicine-framework-source", type=Path, help="installed MF_ISMoodle.lua")
     parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
-    parser.add_argument("--quartermaster-source", type=Path, help="Quartermaster media/lua root for native rule resolver checks")
+    parser.add_argument("--quartermaster-source", type=Path, help="Quartermaster media/lua root for native integration checks")
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
     parser.add_argument("--native-inventory-context-menu", type=Path, help="vanilla inventory transfer callbacks")
     parser.add_argument("--native-action-root", type=Path, help="vanilla media/lua for queue/base/read contracts")
@@ -164,8 +164,10 @@ def main() -> None:
             lua.globals().NativeActionRoot = str(args.native_action_root)
         if name == "test_food_cart_compat.lua" and args.saucedcarts_source:
             lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
-        if name in ("test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_dispatch.lua", "test_action_queue_compat.lua", "test_action_queue_fire.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua") and args.wishlist_workshop_root:
+        if name in ("test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_dispatch.lua", "test_action_queue_compat.lua", "test_action_queue_health.lua", "test_action_queue_fire.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua") and args.wishlist_workshop_root:
             lua.globals().NativeWishlistWorkshopRoot = str(args.wishlist_workshop_root)
+        if name == "test_action_queue_fire.lua" and args.quartermaster_source:
+            lua.globals().NativeQuartermasterLuaRoot = str(args.quartermaster_source)
         if args.project_cook_picker:
             lua.globals().ProjectCookPickerSourcePath = str(args.project_cook_picker)
         if name == "test_action_queue_labels.lua":
@@ -201,11 +203,16 @@ def main() -> None:
             lua.globals().ProximityInventoryPageSource = (args.proximity_source.parent / "ISInventoryPage.lua").read_text(encoding="utf-8")
         lua.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
         if name == "test_action_queue_fire.lua" and args.native_action_root and args.wishlist_workshop_root:
-            for scenario in ("FireTestBCPreinstalled", "FireTestBCForeignPredecessor"):
+            scenarios = ["FireTestBCPreinstalled", "FireTestBCForeignPredecessor"]
+            if args.quartermaster_source:
+                scenarios += ["FireTestQMBeforeBC", "FireTestQMPreloaded", "FireTestQMForeignPredecessor", "FireTestQMChangedSource", "FireTestQMForeignGather"]
+            for scenario in scenarios:
                 variant = LuaRuntime(unpack_returned_tuples=True)
                 variant.globals().ProjectRoot = str(ROOT)
                 variant.globals().NativeActionRoot = str(args.native_action_root)
                 variant.globals().NativeWishlistWorkshopRoot = str(args.wishlist_workshop_root)
+                if args.quartermaster_source:
+                    variant.globals().NativeQuartermasterLuaRoot = str(args.quartermaster_source)
                 variant.globals()[scenario] = True
                 variant.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
 

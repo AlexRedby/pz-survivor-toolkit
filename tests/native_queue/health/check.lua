@@ -2,7 +2,8 @@ local root=assert(arg[1])
 isClient=function()return false end
 local function source(side,name) return assert(loadfile(root..'/'..side..'/'..name..'.lua'))() end
 AllCases=source('shared','QueueHealthCases')
-assert(#AllCases==28)
+assert(#AllCases==34)
+getActivatedMods=function() return {contains=function(_,id)return id=="MiniHealthPlus" end} end
 local TestSelection={kind='sp',mode='toolkit',cases={}}
 for _,spec in ipairs(AllCases) do TestSelection.cases[#TestSelection.cases+1]=spec.id end
 require=function(name)
@@ -538,6 +539,7 @@ do
   function actor:isPlayerMoving()return false end;function actor:pressedMovement()return false end
   function actor:tooDarkToRead()return false end;function actor:isTimedActionInstant()return false end
   function actor:startReceivingBodyDamageUpdates()end
+  function actor:stopReceivingBodyDamageUpdates()end
   function actor:getBodyDamageRemote()return self:getBodyDamage()end
  end
  getPlayer=function()return doctor end
@@ -598,3 +600,111 @@ do
  isServer=function()return false end
 end
 print('PASS actual native disconnect60s observation before owned cleanup; wrong action/patient/supply/front/tail rejected; exact authority receipts retained and pre-cleanup stall remains explicit')
+
+-- Headless panels never run native UI teardown; the fixture owns their exact patient subscription.
+for _,mode in ipairs({'native','toolkit'}) do for _,disconnect in ipairs({false,true}) do
+ local doctor,patientActor=player('doctor'),player('patient')
+ local starts,stops,now=0,0,0
+ local currentPanel,observer
+ local spec={id='subscription',handler='HApplyBandage',remote=disconnect and 'removed' or nil}
+ local selection={mode=mode,cases={spec},skipReason=function()end}
+ local authority={position=function(actor,x,y,z)actor:teleportTo(x,y,z)end,clinicalReady=function()return true end}
+ doctor:teleportTo(10.5,10.5,0);patientActor:teleportTo(11.5,10.5,0)
+ for _,actor in ipairs({doctor,patientActor}) do
+  function actor:getPlayerNum()return 0 end
+  function actor:getX()return self.x end;function actor:getY()return self.y end;function actor:getZ()return self.z end
+  function actor:getCurrentSquare()return {getX=function()return math.floor(actor.x)end,getY=function()return math.floor(actor.y)end,getZ=function()return actor.z end}end
+  function actor:isPlayerMoving()return false end;function actor:pressedMovement()return false end
+  function actor:tooDarkToRead()return false end;function actor:isTimedActionInstant()return false end
+  function actor:getBodyDamageRemote()return self:getBodyDamage()end
+ end
+ function doctor:startReceivingBodyDamageUpdates(patient)assert(patient==patientActor);starts=starts+1 end
+ function doctor:stopReceivingBodyDamageUpdates(patient)assert(patient==patientActor,'teardown followed reassigned panel');stops=stops+1 end
+ local online={doctor,patientActor}
+ getOnlinePlayers=function()return values(online)end;getPlayer=function()return doctor end;getTimestampMs=function()return now end
+ local front=doctor.inventory:AddItem('Base.BookCarpentry1');local tail=doctor.inventory:AddItem('Base.BookFirstAid1')
+ local prep={ok=true,patient='patient',items={},body=0,readiness={},front=front.id,frontPages=1,tail=tail.id,
+  spawn={x=10.5,y=10.5,z=0},patientSpawn={x=11.5,y=10.5,z=0}}
+ local q={queue={}};function q:indexOf(target)for i,value in ipairs(self.queue)do if value==target then return i end end end
+ local context={hideAndChildren=function()end}
+ ISHealthPanel={new=function(_,patient)return {character=patient,initialise=function()end,
+  setOtherPlayer=function(self,doctor)self.otherPlayer=doctor end,
+  tryStopReceivingBodyDamageUpdates=function()error('fixture changed native panel semantics')end,
+  doBodyPartContextMenu=function(self)
+   currentPanel=self;context.options={{target={Type='HApplyBandage'},onSelect=function()q.queue[#q.queue+1]={Type='HealthPanelAction'}end}}
+  end}end}
+ ISInventoryPaneContextMenu={onLiteratureItems=function(items)q.queue[#q.queue+1]={Type='ISReadABook',item=items[1],getDuration=ISReadABook.getDuration,minutesPerPage=2.0}end}
+ getPlayerContextMenu=function()return context end
+ Events={OnPlayerUpdate={Add=function(fn)observer=fn end,Remove=function(fn)assert(fn==observer);observer=nil end}}
+ PZSurvivorToolkit={Settings={actionQueue=function()return mode=='toolkit'end},ActionQueue={},
+  ActionQueuePolicy={setDiagnostics=function()end,inspect=function()return {}end},
+  ActionQueueDefinitions={describe=function()return {title='treatment',target='patient'}end},
+  ActionQueueOperations={run=function(fn,...)return fn(...)end}}
+ require=function(name)if name=='QueueHealthSelection'then return selection elseif name=='QueueHealthAuthority'then return authority end;return {}end
+ local stages,prepared,baselines,receipts={},{},{},{}
+ source('client','QueueHealthScenarios')(function(_,fn)stages[#stages+1]=fn end,function()return q end,function()return #q.queue==0 end,
+  {kind='mp',language='EN',ids=function()return {}end,preparations=prepared,baselines=baselines,receipts=receipts,
+   send=function(command,args)if command=='Prepare'then prepared[args.phase]=prep
+    elseif command=='Baseline'then baselines[args.phase]={ok=true}
+    elseif command=='Verify'then receipts[args.phase]={ok=true,front=front.id,tail=tail.id}
+    else error(command)end end})
+ stages[1]();local run=stages[2]
+ assert(run()==false and run()==false and run()==false and run()==false);now=500;assert(run()==false);now=501;assert(run()==false)
+ assert(starts==1 and stops==0 and currentPanel.otherPlayer==doctor,'subscription did not stay active during treatment')
+ currentPanel.character=doctor
+ if disconnect then online={doctor} end
+ assert(run()==false and stops==(disconnect and 1 or 0),'remote absence did not release subscription immediately')
+ q.queue={};assert(run()==false and stops==1 and not observer,'case drain did not release subscription')
+ now=1502;assert(run()==false);assert(run().status=='passed');stages[3]()
+ assert(starts==1 and stops==1 and currentPanel.otherPlayer==doctor,'cleanup repeated stop or mutated native panel')
+end end
+print('PASS actual fixture native/toolkit subscription lifecycle, immediate disconnect stop, exact reassigned patient reference and idempotent cleanup')
+
+-- Native MP handmade splint consumed both inputs and cleared the unread tail in full49 v5.
+-- Keep that observed control outcome separate from toolkit guarantees and ready-made splints.
+for _,scenario in ipairs({
+ {kind='mp',mode='native',case='splintDrop',allow=true},
+ {kind='mp',mode='native',case='splintDrop',allow=true,complete=true},
+ {kind='mp',mode='toolkit',case='splintDrop'},
+ {kind='sp',mode='native',case='splintDrop'},
+ {kind='mp',mode='native',case='readySplintDrop'},
+ {kind='mp',mode='native',case='splintApply'},
+}) do
+ require=AuthorityRequire
+ select(scenario.kind,scenario.mode,{scenario.case})
+ isServer=function()return scenario.kind=='mp'end
+ local doctor,patientActor=player('client1'),player('client2')
+ getOnlinePlayers=function()return values({doctor,patientActor})end
+ local authority=source('shared','QueueHealthAuthority')
+ authority.setup(doctor);if scenario.kind=='mp'then authority.setup(patientActor)else patientActor=doctor end
+ local prep=authority.prepare(doctor,scenario.case)
+ if scenario.kind=='sp'then fixtureVisuals(doctor)end
+ authority.baseline(doctor,scenario.case)
+ local front,tail,consumed
+ consumed={}
+ for i=#doctor.inventory.items,1,-1 do local item=doctor.inventory.items[i]
+  if item.id==prep.front then front=item;front.pages=100
+  elseif item.id==prep.tail then tail=item
+  else for _,id in pairs(prep.items)do if item.id==id then consumed[#consumed+1]=item;doctor.inventory:Remove(item)end end end
+ end
+ patientActor.body.splint=0.5;tail.pages=99
+ if scenario.allow then
+  tail.pages=98;assert(not authority.verify(doctor,scenario.case).ok,'native handmade control accepted extra tail loss');tail.pages=99
+  front.pages=99;assert(not authority.verify(doctor,scenario.case).ok,'native handmade control accepted front loss');front.pages=100
+  patientActor.body.splint=0;assert(not authority.verify(doctor,scenario.case).ok,'native handmade control accepted missing clinical effect');patientActor.body.splint=0.5
+  doctor.inventory:AddItem(consumed[1]);assert(not authority.verify(doctor,scenario.case).ok,'native handmade control accepted unconsumed exact supply');doctor.inventory:Remove(consumed[1])
+  doctor.inventory:Remove(tail);local replacement=doctor.inventory:AddItem('Base.BookFirstAid1');replacement.pages=99
+  assert(not authority.verify(doctor,scenario.case).ok,'native handmade control accepted replaced tail ID')
+  doctor.inventory:Remove(replacement);doctor.inventory:AddItem(tail)
+  if scenario.complete then tail.pages=100 end
+  local receipt=authority.verify(doctor,scenario.case);assert(receipt.ok,receipt.error)
+  assert(receipt.tail==prep.tail and receipt.outcome.tailCompleted==(scenario.complete==true) and receipt.outcome.tailPages==(scenario.complete and 100 or 99)
+   and receipt.outcome.tailTotal==100 and receipt.outcome.body.splint==0.5,'native handmade tail degradation was hidden')
+ else
+  assert(not authority.verify(doctor,scenario.case).ok,'unobserved native case or toolkit accepted lost tail')
+  tail.pages=100;local receipt=authority.verify(doctor,scenario.case);assert(receipt.ok,receipt.error)
+  assert(receipt.outcome.tailCompleted==true and receipt.outcome.tailPages==100,'complete tail was misreported')
+ end
+end
+isServer=function()return false end
+print('PASS exact native MP handmade splint tail degradation; toolkit, SP, ready-made and menu controls stay strict; clinical, consumed IDs, front and tail identity remain checked')

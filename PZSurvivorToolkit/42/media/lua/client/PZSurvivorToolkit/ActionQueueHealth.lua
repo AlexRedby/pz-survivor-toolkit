@@ -18,6 +18,9 @@ local bindings = {}
 local actionBindings = {}
 local children = {}
 local records = {}
+local droppedSupplies = {}
+local miniPanel, miniBindings
+local dropAttempt
 local panelHelpers = {}
 local containersHelper
 local containerAdapter, containerGuard
@@ -27,9 +30,12 @@ local function nativeClosure(callback, filename)
     local ok, source = pcall(getFilenameOfClosure, callback)
     return ok and type(source) == "string" and source:gsub("\\", "/"):match("([^/]+)$") == (filename or "ISHealthPanel.lua")
 end
-local function nativeSource(path, expected)
-    if type(getGameFilesInput) ~= "function" then return false end
-    local ok, reader = pcall(getGameFilesInput, path or "media/lua/client/XpSystem/ISUI/ISHealthPanel.lua")
+local function nativeSource(path, expected, mod)
+    local input = mod and getModFileReader or getGameFilesInput
+    if type(input) ~= "function" then return false end
+    local ok, reader
+    if mod then ok, reader = pcall(input, mod, path, false)
+    else ok, reader = pcall(input, path or "media/lua/client/XpSystem/ISUI/ISHealthPanel.lua") end
     if not ok or not reader then return false end
     local valid, hash = pcall(function()
         local value, bytes = 5381, 0
@@ -96,19 +102,34 @@ local function childMatches(kind, action)
     return true
 end
 
-local function capture(handler)
+local function boundDoctor(handler) return handler.toolkitHealthActor end
+local function miniMatches()
+    if not miniBindings or not TwisTonFire_MHP or TwisTonFire_MHP.MiniHealthTreatment ~= miniPanel then return false end
+    for name, callback in pairs(miniBindings) do if miniPanel[name] ~= callback then return false end end
+    return true
+end
+local function patientFor(handler)
+    return handler.getPatient == boundDoctor and handler.toolkitHealthActor or handler.panel.character
+end
+local function doctorFor(handler)
+    return handler.getDoctor == boundDoctor and handler.toolkitHealthActor or handler.panel.otherPlayer or handler.panel.character
+end
+local function capture(handler, miniActor)
     if not handler or handler.panel ~= trustedPanel or not kinds[handler.Type] then return end
     local class = getmetatable(handler)
-    if handlers[class] then return end
+    if handlers[class] then
+        if not miniActor then return end
+    end
+    local filename = miniActor and "MiniHealthTreatments.lua" or "ISHealthPanel.lua"
     for _, name in ipairs({"new", "perform", "isValid", "checkItems", "getDoctor", "getPatient", "toPlayerInventory"}) do
-        if not nativeClosure(handler[name]) then return end
+        if not nativeClosure(handler[name], filename) then return end
     end
     local methods, prototypes, parent = {}, {}, class
     while parent and parent ~= ISBaseObject do
         local own = {}
         for key, value in pairs(parent) do
             if type(value) == "function" then
-                if not (key == "derive" and value == ISBaseObject.derive) and not nativeClosure(value) then return end
+                if not (key == "derive" and value == ISBaseObject.derive) and not nativeClosure(value, filename) then return end
                 own[key] = value
                 if methods[key] == nil then methods[key] = value end
             end
@@ -118,7 +139,12 @@ local function capture(handler)
         parent = meta and type(meta.__index) == "table" and meta.__index or nil
     end
     if parent ~= ISBaseObject or handler.derive ~= ISBaseObject.derive then return end
-    handlers[class] = {methods = methods, prototypes = prototypes, kind = handler.Type, actionClass = handler.actionClass, itemType = handler.itemType}
+    handlers[class] = {methods = methods, prototypes = prototypes, kind = handler.Type, actionClass = handler.actionClass,
+        itemType = handler.itemType, mini = miniActor ~= nil}
+    if miniActor then
+        handler.toolkitHealthActor = miniActor
+        handler.getDoctor, handler.getPatient = boundDoctor, boundDoctor
+    end
 end
 
 local function pack(...) return {n = select("#", ...), ...} end
@@ -138,17 +164,26 @@ local function handlerContract(action)
     local snapshot = handler and handlers[getmetatable(handler)]
     if not snapshot or handler.Type ~= snapshot.kind or handler.actionClass ~= snapshot.actionClass
         or handler.itemType ~= snapshot.itemType or not handler.panel or not handler.bodyPart then return end
-    if not instanceof(handler.panel.character, "IsoPlayer") or not instanceof(handler.bodyPart, "BodyPart") then return end
+    local patient, doctor = patientFor(handler), doctorFor(handler)
+    if not instanceof(patient, "IsoPlayer") or not instanceof(handler.bodyPart, "BodyPart") then return end
+    if snapshot.mini then
+        if not miniMatches() or not handler.toolkitHealthActor or handler.panel ~= miniPanel
+            or handler.getDoctor ~= boundDoctor or handler.getPatient ~= boundDoctor then return end
+    end
     if not childMatches(handler.Type) then return end
     if handler.actionClass and handler.actionClass ~= children[childNames[handler.Type]].class then return end
-    for name, method in pairs(snapshot.methods) do if handler[name] ~= method then return end end
+    for name, method in pairs(snapshot.methods) do
+        if not (snapshot.mini and (name == "getDoctor" or name == "getPatient")) and handler[name] ~= method then return end
+    end
     -- Native leaf handlers call parent methods explicitly, even when a leaf shadows the same name.
     for class, methods in pairs(snapshot.prototypes) do
         for name, method in pairs(methods) do if rawget(class, name) ~= method then return end end
     end
-    if (handler.panel.otherPlayer or handler.panel.character) ~= action.character then return end
-    for _, name in ipairs({"getDoctor", "checkContainerItems"}) do
-        if handler.panel[name] ~= panelHelpers[name] then return end
+    if doctor ~= action.character then return end
+    if not snapshot.mini then
+        for _, name in ipairs({"getDoctor", "checkContainerItems"}) do
+            if handler.panel[name] ~= panelHelpers[name] then return end
+        end
     end
     local inputs = {}
     for i = 1, kinds[handler.Type] do
@@ -161,8 +196,16 @@ local function handlerContract(action)
     local result = {items = {}, itemTypes = {}, targets = {[handler.bodyPart] = true}, dynamicInputs = inputs,
         cancelWaiting = true, interrupt = "finish-step",
         unknownOutputs = handler.Type == "HRemoveBandage" or handler.Type == "HRemoveSplint"}
+    local dropped = droppedSupplies[handler]
+    if snapshot.dropped then
+        if not dropped or dropped.panel ~= handler.panel or dropped.bodyPart ~= handler.bodyPart
+            or dropped.actor ~= doctor or dropped.patient ~= patient
+            or (dropped[1] and dropped[1]:getFullType() or nil) ~= action.args[1]
+            or dropped[2]:getFullType() ~= action.args[2] then return end
+        for _, item in pairs({dropped[1], dropped[2]}) do result.items[item:getID()] = true end
+    end
     -- Native body updates add/remove hidden clothing in the patient's inventory.
-    local part, gender = handler.bodyPart:getType(), handler.panel.character:getCharacterGender()
+    local part, gender = handler.bodyPart:getType(), patient:getCharacterGender()
     result.outputTypes = {}
     local bandage = part:getBandageModel()
     for _, kind in pairs({bandage, bandage and bandage ~= "" and bandage .. "_Blood" or nil, part:getBiteWoundModel(gender),
@@ -197,9 +240,12 @@ end
 local function parentMatches(action, saved)
     if action.character ~= saved.character or action.toolkitQueueOperation ~= saved.token or action.handler ~= saved.handler
         or action.handler.panel ~= saved.panel or action.handler.bodyPart ~= saved.bodyPart
-        or saved.panel.character ~= saved.patient or (saved.panel.otherPlayer or saved.panel.character) ~= saved.character then return false end
+        or patientFor(saved.handler) ~= saved.patient or doctorFor(saved.handler) ~= saved.character then return false end
     for i = 1, 8 do if not action.args or action.args[i] ~= saved.args[i] then return false end end
     return true
+end
+local function originMatches(saved)
+    return not saved.origin or parentMatches(saved.origin, saved) and handlerContract(saved.origin) ~= nil
 end
 
 local function patientAvailable(saved)
@@ -253,6 +299,7 @@ function Health.inspect(action)
         if not parentMatches(action, saved) then return end
         return handlerContract(action)
     end
+    if not originMatches(saved) then return end
     if not childMatches(saved.kind, action) or not childMatchesRecord(action, saved) then return end
     local result = {items = {}, itemTypes = {}, targets = {[saved.bodyPart] = true},
         dynamicInputs = saved.contract.dynamicInputs, dynamicInputsByType = saved.contract.dynamicInputsByType,
@@ -265,12 +312,18 @@ function Health.inspect(action)
     return result
 end
 
+function Health.patient(action)
+    local saved = records[action]
+    return saved and saved.patient
+end
+
 local function clinicalAvailable(saved)
     local body, kind = saved.bodyPart, saved.kind
     if kind == "HRemoveBandage" then return body:bandaged() end
     if kind == "HRemoveStitch" then return body:stitched() end
     if kind == "HRemoveSplint" then return body:getSplintFactor() > 0 end
     if kind == "HSplint" then return body:HasInjury() and not body:stitched() and body:getFractureTime() > 0 and body:getSplintFactor() <= 0 end
+    if saved.origin and handlers[getmetatable(saved.origin.handler)].mini and not saved.origin.handler:isInjured() then return false end
     if body:bandaged() or not (body:HasInjury() or body:stitched() or body:getSplintFactor() > 0) then return false end
     if kind == "HStitch" then return body:isDeepWounded() and not body:haveGlass() end
     if kind == "HRemoveGlass" then return body:haveGlass() end
@@ -310,6 +363,7 @@ function Health.canSkip(action)
     local saved = records[action]
     if not saved or not helpersMatch() or not childMatches(saved.kind) then return false end
     if saved.preparation then
+        if not originMatches(saved) then return false end
         return preparationMatches(action, saved) and (not patientAvailable(saved) or not action:isValid())
     end
     if saved.parent then
@@ -320,6 +374,7 @@ function Health.canSkip(action)
         action.handler:checkItems()
         return not selectedItems(action) or not clinicalAvailable(saved)
     end
+    if not originMatches(saved) then return false end
     if not childMatches(saved.kind, action) then return false end
     if not childMatchesRecord(action, saved) or not patientAvailable(saved) then return true end
     -- Authoritative consumption/body updates can precede MP perform; never veto completed effects.
@@ -335,6 +390,7 @@ function Health.canPreserveStop(action)
     if not saved or action.character ~= saved.character or action.toolkitQueueOperation ~= saved.token
         or not helpersMatch() or not childMatches(saved.kind) then return false end
     if saved.parent then return Health.canSkip(action) end
+    if not originMatches(saved) then return false end
     if saved.preparation then return preparationMatches(action, saved) end
     -- A server refusal can stop a child before its local inventory/body snapshot reflects the reason.
     return childMatches(saved.kind, action)
@@ -348,6 +404,7 @@ local function captureExpanded(action, saved, selected, before)
             and child.character == saved.character and Toolkit.ActionQueueOperations.isTransfer(child)
             and Toolkit.ActionQueuePolicy.inspect(child) then
             records[child] = {preparation = true, kind = saved.kind, character = saved.character, patient = saved.patient,
+                origin = action, handler = saved.handler, panel = saved.panel, args = saved.args,
                 bodyPart = saved.bodyPart, patientX = saved.patientX, patientY = saved.patientY,
                 doctorX = saved.doctorX, doctorY = saved.doctorY, token = action.toolkitQueueOperation,
                 item = child.item, source = child.srcContainer, destination = child.destContainer}
@@ -362,6 +419,7 @@ local function captureExpanded(action, saved, selected, before)
             elseif saved.kind == "HSplint" then fields.rippedSheet, fields.plank = selected[1] or false, selected[2]
             elseif saved.kind ~= "HRemoveGlass" and saved.kind ~= "HRemoveBullet" then fields.item = selected[1] or false end
             local record = {kind = saved.kind, character = saved.character, patient = saved.patient, bodyPart = saved.bodyPart,
+                origin = action, handler = saved.handler, panel = saved.panel, args = saved.args,
                 patientX = saved.patientX, patientY = saved.patientY, doctorX = saved.doctorX, doctorY = saved.doctorY,
                 token = action.toolkitQueueOperation, selected = selected, fields = fields, contract = handlerContract(action),
                 doIt = child.doIt, handPain = child.handPain}
@@ -370,10 +428,108 @@ local function captureExpanded(action, saved, selected, before)
                 or saved.kind == "HRemoveBullet" then record.doctor = saved.character end
             if saved.kind == "HApplyBandage" or saved.kind == "HStitch" or saved.kind == "HSplint" then record.doIt = true
             elseif saved.kind == "HRemoveBandage" or saved.kind == "HRemoveStitch" or saved.kind == "HRemoveSplint" then record.doIt = false end
-            if saved.kind == "HRemoveGlass" then record.handPain = action.args[1] == "Hands" end
+            if saved.kind == "HRemoveGlass" then
+                record.handPain = action.args[1] == "Hands"
+                if handlers[getmetatable(action.handler)].mini and not record.handPain then record.handPain = nil end
+            end
             records[child] = record
             if not childMatchesRecord(child, record) then records[child] = nil end
         end
+    end
+end
+
+local DropSplint = {Type = "HSplint"}
+DropSplint.__index = DropSplint
+local function splintAvailable(body)
+    local part = body:getType()
+    return part ~= BodyPartType.Head and part ~= BodyPartType.Torso_Upper and part ~= BodyPartType.Torso_Lower
+        and body:HasInjury() and not body:stitched() and body:getFractureTime() > 0 and body:getSplintFactor() <= 0
+end
+function DropSplint:getDoctor() return self.panel.otherPlayer or self.panel.character end
+function DropSplint:getPatient() return self.panel.character end
+function DropSplint:checkItem(item)
+    local selected = droppedSupplies[self]
+    if selected and (item == selected[1] or item == selected[2]) then
+        for _, existing in ipairs(self.items.selected) do if existing == item then return end end
+        self.items.selected[#self.items.selected + 1] = item
+    end
+end
+function DropSplint:checkItems()
+    self.items.selected = {}
+    self.panel:checkItems({self})
+end
+function DropSplint:isValid(rippedSheetType, plankType)
+    local selected = droppedSupplies[self]
+    if not selected or selected.panel ~= self.panel or selected.bodyPart ~= self.bodyPart
+        or selected.actor ~= self:getDoctor() or selected.patient ~= self:getPatient() or not splintAvailable(self.bodyPart)
+        or (selected[1] and selected[1]:getFullType() or nil) ~= rippedSheetType
+        or selected[2]:getFullType() ~= plankType then return false end
+    self:checkItems()
+    return #self.items.selected == (selected[1] and 2 or 1)
+end
+function DropSplint:toPlayerInventory(item, previousAction)
+    local doctor = self:getDoctor()
+    if item:getContainer() ~= doctor:getInventory() then
+        local action = ISInventoryTransferUtil.newInventoryTransferAction(doctor, item, item:getContainer(), doctor:getInventory())
+        ISTimedActionQueue.addAfter(previousAction, action)
+        self.panel.actions = self.panel.actions or {}
+        self.panel.actions[action] = self.bodyPart
+        return action
+    end
+    return previousAction
+end
+function DropSplint:perform(previousAction)
+    local selected = droppedSupplies[self]
+    if selected[1] then previousAction = self:toPlayerInventory(selected[1], previousAction) end
+    previousAction = self:toPlayerInventory(selected[2], previousAction)
+    ISTimedActionQueue.addAfter(previousAction, ISSplint:new(self:getDoctor(), self:getPatient(), selected[1], selected[2], self.bodyPart, true))
+end
+local function dropSplint(panel, body, items)
+    if not helpersMatch() or not childMatches("HSplint") or not instanceof(body, "BodyPart") or not splintAvailable(body)
+        or not instanceof(panel.character, "IsoPlayer") or not instanceof(panel.otherPlayer or panel.character, "IsoPlayer") then return end
+    local splint, plank, sheet
+    for _, item in ipairs(items) do
+        local kind = item:getType()
+        if kind == "Splint" and not splint then splint = item end
+        if (kind == "Plank" or kind == "TreeBranch2" or kind == "WoodenStick2" or kind == "TreeBranch" or kind == "WoodenStick") and not plank then plank = item end
+        if kind == "RippedSheets" and not sheet then sheet = item end
+    end
+    if not splint and not (plank and sheet) then return end
+    local handler = setmetatable({panel = panel, bodyPart = body, items = {selected = {}}}, DropSplint)
+    local selected = {sheet, splint or plank, panel = panel, bodyPart = body,
+        actor = panel.otherPlayer or panel.character, patient = panel.character}
+    -- A drop keeps its exact supplies; an identical item elsewhere must not replace a lost one.
+    if splint then selected[1] = nil end
+    droppedSupplies[handler] = selected
+    handler:checkItems()
+    if handler:isValid(selected[1] and selected[1]:getFullType(), selected[2]:getFullType()) then
+        ISTimedActionQueue.add(HealthPanelAction:new(selected.actor, handler,
+            selected[1] and selected[1]:getFullType(), selected[2]:getFullType()))
+    else droppedSupplies[handler] = nil end
+end
+
+function Health.installMiniHealth()
+    if miniBindings or not TwisTonFire_MHP or not actionBindings.new or actionBindings.new ~= HealthPanelAction.new then return end
+    local panel = TwisTonFire_MHP.MiniHealthTreatment
+    if not panel or not nativeSource("media/lua/client/MiniHealthPlus/MiniHealthTreatments.lua", 59501056, "MiniHealthPlus") then return end
+    for _, name in ipairs({"checkItems", "checkContainerItems", "doBodyPartContextMenu", "_MiniHealthOwn_doBodyPartContextMenu", "restoreOwnContextMenu"}) do
+        if not nativeClosure(panel[name], "MiniHealthTreatments.lua") then return end
+    end
+    miniPanel, miniBindings = panel, {}
+    local check = panel.checkItems
+    panel.checkItems = function(current, list)
+        if trustedPanel == current and miniMatches() then
+            local actor = TwisTonFire_MHP.handle and TwisTonFire_MHP.handle.player
+            if instanceof(actor, "IsoPlayer") then for _, handler in ipairs(list) do capture(handler, actor) end end
+        end
+        return check(current, list)
+    end
+    local menu = panel.doBodyPartContextMenu
+    panel.doBodyPartContextMenu = function(current, ...) return producer(menu, current, ...) end
+    -- The mod deliberately restores this alias when toggling its menu mode.
+    panel._MiniHealthOwn_doBodyPartContextMenu = panel.doBodyPartContextMenu
+    for _, name in ipairs({"checkItems", "checkContainerItems", "doBodyPartContextMenu", "_MiniHealthOwn_doBodyPartContextMenu", "restoreOwnContextMenu"}) do
+        miniBindings[name] = panel[name]
     end
 end
 
@@ -403,10 +559,23 @@ function Health.install()
     for name, hash in pairs(childSources) do
         if nativeSource("media/lua/shared/TimedActions/" .. name .. ".lua", hash) then children[name] = captureChild(name) end
     end
+    local ownMethods = {}
+    for name, callback in pairs(DropSplint) do if type(callback) == "function" then ownMethods[name] = callback end end
+    handlers[DropSplint] = {kind = "HSplint", methods = ownMethods, prototypes = {[DropSplint] = ownMethods}, dropped = true}
     for _, name in ipairs({"doBodyPartContextMenu", "dropItemsOnBodyPart"}) do
         local callback = ISHealthPanel[name]
         if callback then
-            ISHealthPanel[name] = function(panel, ...) return producer(callback, panel, ...) end
+            if name == "dropItemsOnBodyPart" then
+                ISHealthPanel[name] = function(panel, body, items)
+                    local previous, attempt = dropAttempt, {panel = panel}
+                    dropAttempt = attempt
+                    local result = pack(pcall(producer, callback, panel, body, items))
+                    dropAttempt = previous
+                    if not result[1] then error(result[2], 0) end
+                    if not attempt.selected then producer(dropSplint, panel, body, items) end
+                    return unpack(result, 2, result.n)
+                end
+            else ISHealthPanel[name] = function(panel, ...) return producer(callback, panel, ...) end end
             bindings[name] = ISHealthPanel[name]
         end
     end
@@ -419,11 +588,12 @@ function Health.install()
     local new = HealthPanelAction.new
     -- Keep native parameter names: NetTimedAction serializes constructor parameters by name.
     HealthPanelAction.new = function(self, character, handler, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+        if dropAttempt and handler and handler.panel == dropAttempt.panel then dropAttempt.selected = true end
         if trustedPanel then capture(handler) end
         local action = new(self, character, handler, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
-        if handlerContract(action) and instanceof(character, "IsoPlayer") and instanceof(handler.panel.character, "IsoPlayer")
+        if handlerContract(action) and instanceof(character, "IsoPlayer") and instanceof(patientFor(handler), "IsoPlayer")
             and instanceof(handler.bodyPart, "BodyPart") then
-            local patient = handler.panel.character
+            local patient = patientFor(handler)
             Toolkit.ActionQueueOperations.adopt(action)
             records[action] = {parent = true, kind = handler.Type, handler = handler, panel = handler.panel,
                 character = character, patient = patient, bodyPart = handler.bodyPart,
@@ -473,7 +643,7 @@ function Health.install()
     end, function(parent, child)
         if not glass or parent.handler.Type ~= "HRemoveGlass" or parent.args[1] ~= "Hands"
             or getmetatable(child) ~= glass or child.bodyPart ~= parent.handler.bodyPart
-            or child.otherPlayer ~= parent.handler.panel.character or child.character ~= parent.character
+            or child.otherPlayer ~= patientFor(parent.handler) or child.character ~= parent.character
             or child.onStartFunc or child.onCompleteFunc or child.onCancelFunc or child.retriggerLastAction then return false end
         for name, method in pairs(methods) do if (child[name] or false) ~= method then return false end end
         return true
@@ -484,8 +654,16 @@ function Health.install()
             local queue = ISTimedActionQueue.queues[action.character]
             if not queue or queue:indexOf(action) == -1 then records[action] = nil end
         end
+        local live = {}
+        for _, saved in pairs(records) do
+            if saved.handler then live[saved.handler] = true end
+            if saved.origin then live[saved.origin.handler] = true end
+        end
+        for handler in pairs(droppedSupplies) do if not live[handler] then droppedSupplies[handler] = nil end end
     end)
-    if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() records = {} end) end
+    if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() records, droppedSupplies = {}, {} end) end
+    Health.installMiniHealth()
+    if Events.OnGameBoot then Events.OnGameBoot.Add(Health.installMiniHealth) end
 end
 
 Health.install()

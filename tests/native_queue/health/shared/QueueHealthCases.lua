@@ -1,5 +1,4 @@
 -- Fixture setup changes wounds; every tested treatment still uses native menu/drop and timing.
--- Native ready-made-splint drop rejects its own valid injury state; exercise that mode through its real menu.
 return {
  {id='bandageApply',handler='HApplyBandage',kind='scratch',supply={{'bandage','Base.Bandage','remove'}}},
  {id='bandageRemove',handler='HRemoveBandage',kind='bandaged',output={['Base.Bandage']=1}},
@@ -26,7 +25,14 @@ return {
  {id='expandedCancel',handler='HStitch',kind='deep',expanded='cancel',bag=true,supply={{'needle','Base.Needle'},{'thread','Base.Thread'},{'holder','Base.SutureNeedleHolder'}}},
  {id='missingChildSupply',handler='HApplyBandage',kind='scratch',expanded='missing',bag=true,supply={{'bandage','Base.Bandage'}}},
  {id='nativeStop',handler='HDisinfect',kind='scratch',expanded='stop',supply={{'alcohol','Base.Disinfectant'}}},
+ {id='splintDrop',handler='HSplint',kind='fracture',drop=true,supply={{'sheet','Base.RippedSheets','remove'},{'plank','Base.Plank','remove'}}},
+ {id='readySplintDrop',handler='HSplint',kind='fracture',drop=true,supply={{'splint','Base.Splint','remove'}}},
+ {id='miniBandage',handler='HApplyBandage',kind='scratch',mini=true,supply={{'bandage','Base.Bandage','remove'}}},
+ {id='miniDisinfect',handler='HDisinfect',kind='scratch',mini=true,supply={{'alcohol','Base.Disinfectant','fluid'}}},
+ {id='miniWaitingCancel',handler='HApplyBandage',kind='scratch',mini=true,cancel=true,supply={{'bandage','Base.Bandage'}}},
+ {id='miniWaitingMove',handler='HApplyBandage',kind='scratch',mini=true,move=true,supply={{'bandage','Base.Bandage','remove'}}},
  {id='remoteMove',handler='HApplyBandage',kind='scratch',remote='move',supply={{'bandage','Base.Bandage'}}},
  {id='remoteRange',handler='HApplyBandage',kind='scratch',remote='range',supply={{'bandage','Base.Bandage'}}},
  {id='remoteRemoved',handler='HApplyBandage',kind='scratch',remote='removed',supply={{'bandage','Base.Bandage'}}},
+
 }

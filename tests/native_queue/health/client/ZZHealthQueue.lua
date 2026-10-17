@@ -95,6 +95,23 @@ Events.OnTick.Add(function()
   return spec.fn()
  end)
  if not ok then
+  for className,class in pairs({HealthPanelAction=HealthPanelAction,ISHealthPanel=ISHealthPanel,ISSplint=ISSplint,ISInventoryPaneContextMenu=ISInventoryPaneContextMenu}) do
+   for name,callback in pairs(class) do
+    if type(callback)=='function' and (className~='ISHealthPanel' and className~='ISInventoryPaneContextMenu'
+     or name=='checkItems' or name=='dropItemsOnBodyPart' or name=='doBodyPartContextMenu' or name=='getContainers') then
+     local known,filename=pcall(getFilenameOfClosure,callback)
+     print('[QUEUE_TEST] HEALTH_BINDING '..className..'.'..name..' source='..tostring(known and filename))
+    end
+   end
+  end
+  print('[QUEUE_TEST] HEALTH_CONTAINER_GUARD '..tostring(PZSurvivorToolkit.ActionQueueFire.matchesContainerGetter(ISInventoryPaneContextMenu.getContainers)))
+  if LootSorter then
+   for _,entry in ipairs({{'client/LootSorter_CraftMenu.lua',2721161845},{'shared/LootSorter_Debug.lua',948729780}}) do
+    print('[QUEUE_TEST] HEALTH_QM_SOURCE '..entry[1]..' verified='..tostring(PZSurvivorToolkit.ActionQueueCompat.verifySources('Quartermaster',{entry})))
+   end
+   print('[QUEUE_TEST] HEALTH_QM_STATE hooks='..tostring(LootSorter._craftHooksAdded)..' wrapped='..tostring(LootSorter._getContainersWrapped)
+    ..' availability='..tostring(LootSorter.craftFromBoxes)..' crafting='..tostring(LootSorter._activelyCrafting)..' context='..tostring(LootSorter._craftContextUntil)..' now='..getTimestampMs())
+  end
   print('[QUEUE_TEST] HEALTH_DIAG current='..tostring(queue().current and queue().current.Type)..' native='..tostring(getPlayer():hasTimedActions()))
   for i,action in ipairs(queue().queue) do print('[QUEUE_TEST] HEALTH_QUEUE '..i..' '..action.Type..' started='..tostring(action:isStarted())) end
   print('[QUEUE_TEST] FAIL '..spec.name..' '..tostring(result));failures=failures+1

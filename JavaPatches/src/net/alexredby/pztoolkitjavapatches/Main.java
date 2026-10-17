@@ -83,6 +83,28 @@ public final class Main {
             "bc236f8e9e4e0da8a86b0d1fd19ad8d44a040fe4f67d1baac77401b3b148bd77")
         && supports("zombie/audio/parameters/ParameterFenceTypeLow$FenceType.class",
             "8b69bc70ce19066b64ec887a049320046c2659b4727dd51d4038e4e756bcfd09");
+    public static final boolean MEDICAL_BODY_DAMAGE_SUPPORTED = supports("zombie/network/packets/BodyDamageUpdatePacket.class",
+            "2e37ca1add6b8696464285bd498e7c97cd9712c9094c51d1d57daac688145c8c")
+        && supports("zombie/network/fields/character/PlayerID.class",
+            "d40d1b745a70ad3bf562c15765b9f46a117ecb48aeeabf05597ce646a73e0b56")
+        && supports("zombie/network/packets/BodyDamageUpdatePacket$Type.class",
+            "e7694d5cfa682aa1fb60cdc85fdbb231bd87f758ce82ef0dc3dd0ccdead52c6c");
+    public static final boolean MEDICAL_TIMED_ACTION_SUPPORTED = supports("zombie/network/PZNetKahluaTableImpl.class",
+            "201f0e59502fc5a106f8c9021e0b0d13a30dcb8d0beb9e8934cec390231ddba6")
+        && supports("zombie/core/NetTimedAction.class",
+            "d4a3046eeaec409977a756c6ea80b0676229274684012ad51210559ebfcb1090")
+        && supports("zombie/network/packets/NetTimedActionPacket.class",
+            "ce367190ce6158eb88809f3215ebc471e6161896d9d526eb9ef0e73d58de847b")
+        && supports("zombie/core/Action.class",
+            "4a2fe6aaf0cf73235279946e930b40489ec44859aff64cc19d97976bcc75610d")
+        && supports("zombie/network/fields/character/PlayerID.class",
+            "d40d1b745a70ad3bf562c15765b9f46a117ecb48aeeabf05597ce646a73e0b56")
+        && supports("zombie/network/ZomboidNetData.class",
+            "9b81b4f1e3ce8e338f2b8bb838c797353d0b2841396d01325c968051e168419e")
+        && supports("zombie/network/fields/IDShort.class",
+            "852188ce7dceb2a40c32ae233d6fcdbdec3cc74dd45d9d5151334308f514cdcd")
+        && supports("zombie/core/network/ByteBufferReader.class",
+            "1c2731f2a49b57d2ad895069d499705f8492e3cb6ac275a8f1163b4940e370ff");
     public static final boolean BASEMENT_ROOMS_SUPPORTED = supports("zombie/basements/Basements.class",
             "769908ad1fdab2fb667d41943fde29e91b2148d365e5993117601c07c854380c")
         && supports("zombie/iso/BuildingID.class",
@@ -162,8 +184,53 @@ public final class Main {
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
-            + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
+            + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
             + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED + ", basementRooms=" + BASEMENT_ROOMS_SUPPORTED + ", mannequin=" + MANNEQUIN_SUPPORTED);
+    }
+
+    @Patch(className="zombie.network.packets.BodyDamageUpdatePacket", methodName="processClient", warmUp=true, strictMatch=true)
+    public static class NativeMedicalBodyDamage {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.network.packets.BodyDamageUpdatePacket packet,
+                                    @Patch.Argument(0) zombie.core.raknet.UdpConnection connection) {
+            return MedicalBodyDamage.skip(packet, Main.MEDICAL_BODY_DAMAGE_SUPPORTED);
+        }
+    }
+
+    @Patch(className="zombie.core.NetTimedAction", methodName="parse", warmUp=true, strictMatch=true)
+    public static class NativeMedicalTimedAction {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.core.NetTimedAction packet, @Patch.Argument(0) ByteBufferReader reader,
+                                 @Patch.Argument(1) IConnection connection,
+                                 @Patch.Local("medicalScope") MedicalTimedActions.Scope scope) {
+            scope = MedicalTimedActions.begin(packet, reader, Main.MEDICAL_TIMED_ACTION_SUPPORTED);
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Local("medicalScope") MedicalTimedActions.Scope scope,
+                                @Patch.Thrown(readOnly=false) Throwable failure) {
+            if (MedicalTimedActions.end(scope, failure)) failure = null;
+        }
+    }
+    @Patch(className="zombie.network.PZNetKahluaTableImpl", methodName="load", warmUp=true, strictMatch=true)
+    public static class NativeMedicalArguments {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.network.PZNetKahluaTableImpl table, @Patch.Argument(0) ByteBufferReader reader,
+                                 @Patch.Argument(1) IConnection connection,
+                                 @Patch.Local("medicalArguments") MedicalTimedActions.Arguments arguments) {
+            arguments = MedicalTimedActions.beginArguments(table, reader);
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Local("medicalArguments") MedicalTimedActions.Arguments arguments) {
+            MedicalTimedActions.endArguments(arguments);
+        }
+    }
+    @Patch(className="zombie.network.PZNetKahluaTableImpl", methodName="load", warmUp=true, strictMatch=true)
+    public static class NativeMedicalBodyPart {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.network.PZNetKahluaTableImpl table, @Patch.Argument(0) ByteBufferReader reader,
+                                 @Patch.Argument(1) IConnection connection, @Patch.Argument(2) byte type) {
+            MedicalTimedActions.beforeValue(table, reader, connection, type);
+        }
     }
 
     @Patch(className="zombie.basements.Basements", methodName="mergeBuildings", strictMatch=true)

@@ -21,6 +21,10 @@ local washWalkHelper
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform",
     "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceStop", "forceCancel"}
 local sourceFiles = {
+    Quartermaster = {
+        {"client/LootSorter_CraftMenu.lua", 2721161845},
+        {"shared/LootSorter_Debug.lua", 948729780},
+    },
     SaucedCartsTransfers = {
         {"shared/SaucedCarts/TimedActions/ISCartTransferAction.lua", 3962234240},
         {"shared/SaucedCarts/CartTransferInterceptor.lua", 2772644904},
@@ -136,6 +140,51 @@ local function verified(id, files)
     return true
 end
 Compat.verifySources = verified
+
+local quartermasterContainers
+local function quartermasterClosure(callback, filename)
+    if type(callback) ~= "function" or type(getFilenameOfClosure) ~= "function" then return false end
+    local ok, source = pcall(getFilenameOfClosure, callback)
+    return ok and type(source) == "string" and source:gsub("\\", "/"):match("([^/]+)$") == filename
+end
+function Compat.matchesQuartermasterContainerGetter(previous, replacement)
+    local saved = quartermasterContainers
+    if not saved or saved.previous ~= previous or saved.replacement ~= replacement or LootSorter ~= saved.owner
+        or not saved.owner._craftHooksAdded or not saved.owner._getContainersWrapped
+        or ISTimedActionQueue ~= saved.queue or saved.queue.isPlayerDoingAction ~= saved.busy
+        or getTimestampMs ~= saved.clock or saved.owner.DBG ~= saved.debug then return false end
+    -- Only forwarding is audited; an active availability scan may call arbitrary storage helpers.
+    if saved.owner.craftFromBoxes and not saved.owner._activelyCrafting and saved.owner._craftContextUntil
+        and (type(saved.owner._craftContextUntil) ~= "number" or saved.clock() < saved.owner._craftContextUntil) then return false end
+    return true
+end
+local function prepareQuartermasterContainers()
+    if not getActivatedMods or not getActivatedMods():contains("Quartermaster") or not verified("Quartermaster")
+        or type(LootSorter) ~= "table" or LootSorter._craftHooksAdded or LootSorter._getContainersWrapped
+        or not quartermasterClosure(LootSorter.DBG, "LootSorter_Debug.lua") then return end
+    local owner, debug = LootSorter, LootSorter.DBG
+    local event, add = Events.OnGameStart, Events.OnGameStart.Add
+    -- Capture the private installer at registration; an already loaded module has no observable delegate chain.
+    event.Add = function(callback)
+        if not quartermasterClosure(callback, "LootSorter_CraftMenu.lua") then return add(callback) end
+        return add(function(...)
+            local previous = ISInventoryPaneContextMenu.getContainers
+            local valid = LootSorter == owner and owner.DBG == debug and not owner._craftHooksAdded and not owner._getContainersWrapped
+            local queue, busy, clock = ISTimedActionQueue, ISTimedActionQueue.isPlayerDoingAction, getTimestampMs
+            local results = pack(pcall(callback, ...))
+            local replacement = ISInventoryPaneContextMenu.getContainers
+            if results[1] and valid and owner._craftHooksAdded and owner._getContainersWrapped and replacement ~= previous
+                and quartermasterClosure(replacement, "LootSorter_CraftMenu.lua") then
+                quartermasterContainers = {previous = previous, replacement = replacement, owner = owner, debug = debug,
+                    queue = queue, busy = busy, clock = clock}
+            end
+            if not results[1] then error(results[2], 0) end
+            return unpack(results, 2, results.n)
+        end)
+    end
+    pcall(require, "LootSorter_CraftMenu")
+    event.Add = add
+end
 
 local function snapshot(class)
     local methods = {Type = class.Type}
@@ -780,5 +829,6 @@ Toolkit.ActionQueueDefinitions.registerBehavior("compat.selected-chains", {match
 Operations.registerProducer("compat.selected-chains", matches, function(parent, child)
     return matches(child) and child.toolkitQueueOperation == parent.toolkitQueueOperation
 end)
+prepareQuartermasterContainers()
 Compat.install()
 return Compat
