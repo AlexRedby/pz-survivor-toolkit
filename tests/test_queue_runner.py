@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -34,6 +35,9 @@ class NativeRunnerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        disk = patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=100 * 1024**3))
+        disk.start()
+        self.addCleanup(disk.stop)
         self.root = Path(self.temp.name)
         (self.root / "client1").mkdir()
         (self.root / "client1/options.ini").write_text("voiceEnable=false\n")
@@ -103,6 +107,22 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertIn("-novoip", self.commands[1])
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
+
+    def test_low_disk_or_failed_disk_sampling_never_launches(self):
+        for error in (None, OSError('disk sampling failed')):
+            with self.subTest(error=error), patch.object(admission.shutil, 'disk_usage',
+                    return_value=SimpleNamespace(free=1), side_effect=error):
+                with self.assertRaisesRegex((RuntimeError, OSError), 'disk'):
+                    self.invoke()
+            self.assertEqual(self.commands, [])
+            self.assertFalse((self.root / 'execution.json').exists())
+
+    def test_disk_budget_is_recorded_with_execution(self):
+        result, _ = self.invoke()
+        disk = result['resources']['disk']
+        self.assertEqual(disk['runtime_bytes'], admission.DISK_PER_ROLE)
+        self.assertEqual(disk['copy_bytes'], 0)
+        self.assertEqual(disk['required_bytes'], admission.DISK_PER_ROLE + admission.DISK_MARGIN)
 
     def test_explicit_font_preload_extends_single_client_agent(self):
         self.selection['mods'] = ['ZombieBuddy', 'PZToolkitJavaPatches']

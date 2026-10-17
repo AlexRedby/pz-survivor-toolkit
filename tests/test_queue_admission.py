@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -26,6 +27,7 @@ admission.STATE = directory / 'state'
 admission.LEGACY_LOCK = directory / 'legacy.lock'
 snapshot = json.loads((directory / 'snapshot.json').read_text())
 admission.host.sample = lambda: snapshot
+admission.shutil.disk_usage = lambda path: type('Disk', (), {'free': 100 * 1024**3})()
 selection = {'kind': 'sp', 'clients': 1, 'resources': {'heap_mib': 1, 'native_mib': 1, 'cpu_per_instance': .25}}
 (root / 'ready').touch()
 deadline = time.monotonic() + 10
@@ -65,6 +67,7 @@ class AdmissionTests(unittest.TestCase):
         patch.object(admission, 'STATE', self.state).start()
         patch.object(admission, 'LEGACY_LOCK', self.legacy).start()
         self.sample = patch.object(admission.host, 'sample', return_value=snapshot()).start()
+        patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=100 * GIB)).start()
 
     def run_config(self, name, kind='sp', ports=None, exclusive=False):
         root = self.directory / name
@@ -78,6 +81,52 @@ class AdmissionTests(unittest.TestCase):
 
     def records(self):
         return [json.loads(path.read_text()) for path in self.state.glob('*.json')]
+
+    def test_disk_reserves_live_peer_space_on_same_filesystem(self):
+        first = self.run_config('disk-first')
+        second = self.run_config('disk-second')
+        with patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(
+                free=admission.DISK_MARGIN + admission.DISK_PER_ROLE)):
+            with admission.acquire(*first, wait=0):
+                with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
+                    admission.require_disk(second[0], 1, copy_bytes=128)
+                with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
+                    with admission.acquire(*second, wait=0):
+                        self.fail('Second run used its peer disk reserve')
+            with admission.acquire(*second, wait=0) as details:
+                self.assertEqual(details['disk']['peer_reserved_bytes'], 0)
+
+    def test_snapshot_disk_check_works_without_native_posix_launch_support(self):
+        with patch.object(admission, 'fcntl', None):
+            details = admission.require_disk(self.directory / 'future-run', 1, copy_bytes=321)
+        self.assertEqual(details['copy_bytes'], 321)
+        self.assertFalse(self.state.exists())
+
+    def test_prepare_reconciles_crashed_run_disk_reservation(self):
+        old = self.run_config('crashed-run')
+        admission._directory()
+        admission._save({'root': str(old[0]), 'phase': 'running', 'ports': [], 'pid': 999999999,
+                        'caches': [str(old[0] / 'client1')], 'budget': admission.budget(old[1])})
+        with patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(
+                free=admission.DISK_MARGIN + admission.DISK_PER_ROLE)):
+            details = admission.require_disk(self.directory / 'new-run', 1)
+        self.assertEqual(details['peer_reserved_bytes'], 0)
+        self.assertEqual(self.records(), [])
+
+    def test_disk_reserve_ignores_other_filesystems_and_prepared_ports(self):
+        root = self.directory / 'new' / 'nested'
+        records = [{'root': '/other-device', 'phase': 'running', 'caches': ['one', 'two']},
+                   {'root': '/missing-prepared', 'phase': 'prepared', 'caches': []}]
+        real_stat = Path.stat
+        def stat(path, *args, **kwargs):
+            if str(path) == '/other-device':
+                return type('Device', (), {'st_dev': -1})()
+            return real_stat(path, *args, **kwargs)
+        with patch.object(Path, 'stat', stat):
+            permitted, details = admission.disk_capacity(root, 2, records, copy_bytes=123)
+        self.assertTrue(permitted)
+        self.assertEqual(details['peer_reserved_bytes'], 0)
+        self.assertEqual(details['required_bytes'], admission.DISK_MARGIN + 2 * admission.DISK_PER_ROLE + 123)
 
     def free_ports(self):
         with ExitStack() as stack:

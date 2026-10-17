@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import socket
 import time
 
@@ -19,6 +20,39 @@ MIB = 1024 ** 2
 STATE = Path('/tmp') / ('pz-native-' + str(os.getuid() if hasattr(os, 'getuid') else 'unsupported'))
 LEGACY_LOCK = Path('/tmp/pz-queue-native-launch.lock')
 DEFAULTS = {'heap_mib': 2048, 'native_mib': 1024, 'cpu_per_instance': 1.0, 'exclusive': False}
+DISK_MARGIN = 1024 ** 3
+DISK_PER_ROLE = 1024 ** 3
+
+
+def disk_capacity(root, instances, records=(), copy_bytes=0):
+    # shortcut: admission estimates are not quotas; add filesystem quotas if concurrent writers exhaust the reserve.
+    path = Path(root).resolve()
+    while not path.exists():
+        path = path.parent
+    device = path.stat().st_dev
+    reserved = sum(len(item['caches']) * DISK_PER_ROLE for item in records
+                   if item['phase'] == 'running' and Path(item['root']).stat().st_dev == device)
+    required = copy_bytes + instances * DISK_PER_ROLE + DISK_MARGIN + reserved
+    details = {'path': str(path), 'free_bytes': shutil.disk_usage(path).free, 'copy_bytes': copy_bytes,
+               'runtime_bytes': instances * DISK_PER_ROLE, 'margin_bytes': DISK_MARGIN,
+               'peer_reserved_bytes': reserved, 'required_bytes': required}
+    return details['free_bytes'] >= required, details
+
+
+def require_disk(root, instances, copy_bytes=0):
+    if fcntl is None:
+        permitted, details = disk_capacity(root, instances, copy_bytes=copy_bytes)
+    else:
+        with _locked():
+            permitted, details = disk_capacity(root, instances, _records(host.sample()), copy_bytes)
+    if not permitted:
+        raise RuntimeError(disk_reason(details))
+    return details
+
+
+def disk_reason(details):
+    return ('Insufficient disk space at %s: need %.2f GiB (copies, world/cache reserves and margin); free %.2f GiB'
+            % (details['path'], details['required_bytes'] / 1024**3, details['free_bytes'] / 1024**3))
 
 
 def budget(selection):
@@ -222,6 +256,7 @@ def acquire(root, selection, runtime, wait=300, legacy_lock=None):
                             raise ValueError('Run directory has already launched; prepare a fresh snapshot')
                         reserved = {port for item in peers for port in item['ports']}
                         permitted, details = capacity(snapshot, peers, request)
+                        disk_permitted, details['disk'] = disk_capacity(root, request['instances'], peers)
                         if any(item['phase'] == 'running' and (request['exclusive'] or item['budget']['exclusive']) for item in peers):
                             reason = 'Exclusive native run still has live game processes'
                         elif reserved.intersection(record['ports']):
@@ -229,6 +264,8 @@ def acquire(root, selection, runtime, wait=300, legacy_lock=None):
                         elif not permitted:
                             reason = ('Insufficient resources: need %.2f GiB / %.2f CPU; available after reserves %.2f GiB / %.2f CPU'
                                       % (request['memory'] / 1024**3, request['cpu'], details['memory_available'] / 1024**3, details['cpu_available']))
+                        elif not disk_permitted:
+                            reason = disk_reason(details['disk'])
                         else:
                             try:
                                 with _udp(record['ports']):

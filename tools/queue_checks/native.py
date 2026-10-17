@@ -259,12 +259,21 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     for row in manifest:
         source_manifest.update({str(Path(row["source"]) / relative): digest for relative, digest in row["files"].items()})
     roles = adapters.roles(selection)
+    # copytree materializes logical file sizes, including sparse files; allow allocation/metadata overhead.
+    def copy_size(paths):
+        return sum(((path.stat().st_size + 4095) // 4096 + 1) * 4096 for path in paths)
+
+    mod_bytes = sum(copy_size(Path(row['source']) / name for name in row['files']) for row in manifest)
+    fixture_bytes = copy_size(path for path in sources if path.is_relative_to(project) and path.is_file())
+    world_bytes = copy_size(template / 'state' / name for name in world['files']) if world else 0
+    admission.require_disk(output, len(roles), len(roles) * (mod_bytes + fixture_bytes) + world_bytes)
     runtime = {"project": str(project), "game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
                "java": str(jdk / "bin/java"), "server_name": "queue-smoke", "roles": {}}
     output.mkdir(parents=True)
     if selection.get('ports_auto'):
         selection = dict(selection, ports=admission.allocate_ports(output, selection) if selection['kind'] == 'mp' else [17343, 17344])
-    for role in roles:
+    for index, role in enumerate(roles):
+        admission.require_disk(output, len(roles), (len(roles) - index) * (mod_bytes + fixture_bytes) + world_bytes)
         cache = output / role
         for directory in ("mods", "Lua", "classes", "zombie-buddy"):
             (cache / directory).mkdir(parents=True)
@@ -341,6 +350,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         worlds.restore(template, world, output, runtime)
     if adapter:
         adapter.stage(project, output, game, jdk, selection, locations, runtime)
+    admission.require_disk(output, len(roles))
     for role in roles:
         path = output / role / 'options.ini'
         settings = path.read_text()
