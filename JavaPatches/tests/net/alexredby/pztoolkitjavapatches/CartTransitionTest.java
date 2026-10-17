@@ -112,6 +112,13 @@ public final class CartTransitionTest {
             check(Math.abs(Math.atan2(Math.sin(actual-expected),Math.cos(actual-expected)))<.00001,"drop yaw folded across native Euler singularity");
             close(pose.worldScale(),.85f,"world/held scale agreement");
             check(pose.zRotation()>=0 && pose.zRotation()<360,"native yaw normalization");
+            var ground=new Matrix4f();
+            check(CartTransitionMath.worldToActor(pose,model,10.25f,20.75f,2,angle,ground),"grounded stance projects");
+            var axle=new org.joml.Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z);
+            var offset=ground.transformPosition(axle,new org.joml.Vector3f())
+                .sub(held.transformPosition(axle,new org.joml.Vector3f()));
+            close(offset.x,0,"grounded wheel stays laterally aligned");
+            close(offset.z,-.06f,"lowering rolls forward to leave feet behind the handle ends at every heading");
         }
         check(CartTransition.dropPlacement(new Matrix4f().m00(Float.NaN),model,0,0,0,0,1)==null,"invalid held transform accepted");
     }

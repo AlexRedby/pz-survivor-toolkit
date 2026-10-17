@@ -327,7 +327,9 @@ assert(w.startedNext == w.added[1] and w.queue[1] == w.added[1] and w.queue[2] =
     "pickup must run before commands already queued after the approach")
 w.queue = nil
 assert(#w.added == 1 and w.added[1].itemId == 123 and getmetatable(w.added[1]) == ToolkitWoodCartPickup)
-p.distance = .1
+p.distance = .09
+assert(getmetatable(ISCartPickupAction.FromWorldItem(p, world)) == ISWalkToTimedActionF, "old stance skipped the small step behind the handles")
+p.distance = .04
 assert(getmetatable(ISCartPickupAction.FromWorldItem(p, world)) == ToolkitWoodCartPickup, "already-positioned pickup queued another walk")
 p.distance = 1; p.instant = true
 assert(getmetatable(ISCartPickupAction.FromWorldItem(p, world)) == ISCartPickupAction, "instant pickup queued an approach")

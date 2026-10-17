@@ -100,7 +100,12 @@ public final class CartTransitionMathTest {
             "only final finger closure remains once the body has reached the handles");
         check(CartTransitionMath.progress(0, true).equals(new CartTransitionMath.Progress(1,1,1,1,0,0,0,1)), "setdown starts holding");
         check(CartTransitionMath.progress(1, true).equals(new CartTransitionMath.Progress(0,0,0,0,0,0,0,0)), "setdown ends released");
-        check(CartTransitionMath.progress(.20,false).knees()==1 && CartTransitionMath.progress(.20,false).crouch()<1,"knee weight shift leads the continuing torso descent");
+        for (double t=0;t<=.44;t+=.001) {
+            var phase=CartTransitionMath.progress(t,false);
+            close(phase.knees(),phase.crouch(),1e-12,"knees and torso descend together");
+            close(phase.balance(),phase.crouch(),1e-12,"pelvis must not finish retreating before the torso bends");
+        }
+        check(CartTransitionMath.progress(.20,false).balance()<.5,"no early full pelvis retreat");
         check(CartTransitionMath.progress(.10,false).center()==1 && CartTransitionMath.progress(.44,false).balance()==1, "centering leads the bend and weight shift follows it");
         close(CartTransitionMath.progress(.000001,false).balance()/.000001,0,.000001,"zero starting weight-shift velocity");
         double coarseVelocity=CartTransitionMath.progress(.9999,false).balance()/.0001;

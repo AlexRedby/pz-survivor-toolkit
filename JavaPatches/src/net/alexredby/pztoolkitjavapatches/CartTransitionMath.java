@@ -30,10 +30,11 @@ final class CartTransitionMath {
         if (!Double.isFinite(fraction)) return null;
         double t = Math.max(0, Math.min(1, fraction));
         if (setdown) t = 1 - t;
-        // Reach while bending; fingers close over the last few millimetres before lifting.
-        double crouch=phase(t,0,.44), lift=phase(t,.48,1), stance=phase(t,0,.10), knees=phase(t,0,.20);
+        // Knees, hips and chest descend together; a separate early retreat produces a butt-first bow.
+        // Fingers close over the last few millimetres before lifting.
+        double crouch=phase(t,0,.44), lift=phase(t,.48,1), stance=phase(t,0,.10);
         return new Progress(crouch,phase(t,.24,.44),phase(t,.38,.48),lift,stance*(1-lift),
-            knees*Math.sqrt(1-lift),crouch*(1-lift*lift),knees);
+            crouch*Math.sqrt(1-lift),crouch*(1-lift*lift),crouch);
     }
 
     private static double phase(double t, double start, double end) {

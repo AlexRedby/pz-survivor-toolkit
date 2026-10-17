@@ -27,7 +27,7 @@ for _,index in ipairs({ClimateManager.FLOAT_FOG_INTENSITY,ClimateManager.FLOAT_P
  local value=climate:getClimateFloat(index);value:setEnableAdmin(true);value:setAdminValue(0)
 end
 local cases={
- {name='male-empty-yaw0',female=false,full=false,yaw=0},
+ {name='male-empty-yaw0',female=false,full=false,yaw=0,nearStance=true},
  {name='male-empty-yaw135',female=false,full=false,yaw=135},
  {name='female-full-yaw90',female=true,full=true,yaw=90},
  {name='male-full-yaw270',female=false,full=true,yaw=270},
@@ -136,6 +136,14 @@ local function prepare()
  square:AddWorldInventoryItem(item,.5,.5,0,true);item:setWorldZRotation(cases[phase].yaw)
  assert(item:getWorldItem() and inventoryCount()==0,'Fixture ground placement failed')
  assert(SaucedCarts.markDropPersistent(item),'Fixture cart persistence marking failed');SaucedCarts.updateCartVisual(item,p,true)
+ if cases[phase].nearStance then
+  -- A legal start inside the former .12-tile skip radius must still take the small approach step.
+  local stance=assert(toolkitWoodCartStance(p,item:getWorldItem()),'Missing near-stance target')
+  local heading=math.atan2(stance.faceY-p:getY(),stance.faceX-p:getX())
+  local nearX,nearY=stance.x+.09*math.cos(heading),stance.y+.09*math.sin(heading)
+  p:setX(nearX);p:setY(nearY);p:setNextX(nearX);p:setNextY(nearY);p:setLastX(nearX);p:setLastY(nearY)
+  p:ensureOnTile();p:setCurrentSquareFromPosition();p:setMovingSquareNow()
+ end
  stage,heldAt,droppedAt='grounded',nil,nil
  p:getStats():reset(CharacterStat.ENDURANCE)
  mode='settle';since=getTimestampMs()+1800

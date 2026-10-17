@@ -19,6 +19,8 @@ import zombie.scripting.ScriptManager;
 /** Presentation only: inventory/world ownership remains with the native timed action. */
 public final class CartTransition {
     private static final WeakHashMap<IsoPlayer, State> states = new WeakHashMap<>();
+    // Start behind the handle ends rather than clearing the shafts with a large pelvis-only retreat.
+    private static final float STANCE_BACK = .06f;
     // shortcut: the supported wooden attachment and Bob_Cart_Idle reference; recalibrate after either asset changes.
     private static final Matrix4f HELD = new Matrix4f().set(
         76.5f,-3.9394883e-5f,-1.4673389e-5f,0,2.8023098e-5f,20.771942f,73.62592f,0,
@@ -68,6 +70,7 @@ public final class CartTransition {
         if(!CartTransitionMath.worldToActor(pose,model,target.x(),target.y(),player.getZ(),target.slotAngle(),ground)) return null;
         var axle=new Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z);
         var difference=ground.transformPosition(axle,new Vector3f()).sub(HELD.transformPosition(axle,new Vector3f()));
+        difference.z+=STANCE_BACK;
         float c=(float)Math.cos(target.slotAngle()),s=(float)Math.sin(target.slotAngle());
         float x=target.x()-1.5f*(c*difference.x+s*difference.z);
         float y=target.y()+1.5f*(-s*difference.x+c*difference.z);
@@ -164,11 +167,11 @@ public final class CartTransition {
             var center=ground.transformPosition(axle,new Vector3f()).lerp(held.transformPosition(axle,new Vector3f()),
                 (float)phase.lift());
             transform.translateLocal(center.sub(transform.transformPosition(axle,new Vector3f())));
-            // Settle the knees before reaching, then let the continuing hip hinge supply the remaining height.
-            float lowering=(float)(-(.055*phase.knees()-.025*phase.crouch())*Math.sqrt(1-phase.lift()));
+            // Keep the knee bend and hip hinge in one continuous descent, without an early sink/rebound.
+            float lowering=(float)(-.03*phase.balance());
             state.ik=CartGrip.transition(slot,instance.parent,delta,transform,(float)phase.reach(),(float)phase.grip(),
-                (float)phase.lift(),(ground.m30()-held.m30())*(float)phase.center(),lowering,.22f*(float)phase.balance(),
-                (float)Math.toRadians(65*phase.hinge()));
+                (float)phase.lift(),(ground.m30()-held.m30())*(float)phase.center(),lowering,.16f*(float)phase.balance(),
+                (float)Math.toRadians(60*phase.hinge()));
             data.xfrm.set(transform).transpose();
             if(state.world!=null && !state.rendered) state.world.invalidateRenderChunkLevel(256);
             state.rendered=true;
@@ -197,6 +200,7 @@ public final class CartTransition {
         if(!CartTransitionMath.worldToActor(groundPose,model,x,y,z,angle,ground)) return null;
         var axle=new Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z);
         var difference=held.transformPosition(axle,new Vector3f()).sub(ground.transformPosition(axle,new Vector3f()));
+        difference.z-=STANCE_BACK;
         float c=(float)Math.cos(angle),s=(float)Math.sin(angle);
         return new CartTransitionMath.Placement(pose.x()-1.5f*(c*difference.x+s*difference.z),
             pose.y()+1.5f*(-s*difference.x+c*difference.z),z+.00175f,0,yaw,0,scale*.85f);
