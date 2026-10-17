@@ -21,7 +21,7 @@ public final class CartSteeringHooks {
         double brakeTarget, actualDistance, fastPoseTail, nativeSpeed, brakeLimit, brakeWait, brakePace;
         zombie.inventory.InventoryItem cart;
         float startX, startY;
-        boolean wheelRendered, stationary, stationaryRoot, cartBlocked, recovering;
+        boolean wheelRendered, stationary, stationaryRoot, cartBlocked, recovering, path;
         double footprintFront=CartFootprint.WALK_FRONT;
         boolean moving, pending, sprintMomentum, sprintRequested, hasInput, wantsMove, braking, brakeSeen, fastMoving;
         final CartSteeringMath.Step requested = new CartSteeringMath.Step();
@@ -40,22 +40,27 @@ public final class CartSteeringHooks {
     }
 
     public static boolean enabled(IsoPlayer player) {
-        return player.isLocalPlayer() && player.getVariableBoolean("ToolkitCartMotion")
+        return player.isLocalPlayer() && !player.isNpc() && player.getVariableBoolean("ToolkitCartMotion")
                 && !player.isDead() && !player.hasHitReaction() && !player.isKnockedDown()
                 && !player.isGettingUp() && !player.isGrappling() && !player.isBeingGrappled()
                 && !player.isRagdollSimulationActive()
                 && supportedCart(player)
-                // Path following needs its own corner/collision acceptance tests.
-                && !player.hasPath()
+                && (!pathMode(player) || wooden(player))
                 && player.getPrimaryHandItem() instanceof InventoryContainer;
+    }
+
+    private static boolean pathMode(IsoPlayer player) {
+        var path=player.getPathFindBehavior2();
+        return player.hasPath() || path!=null && path.isMovingUsingPathFind();
     }
 
     private static State state(IsoPlayer player) {
         State state=states.get(player);
-        if(state==null || state.cart!=player.getPrimaryHandItem()) {
+        if(state==null || state.cart!=player.getPrimaryHandItem() || state.path!=pathMode(player) && !state.pending) {
             if(state!=null) reset(player);
             state=new State();
             state.cart=player.getPrimaryHandItem();
+            state.path=pathMode(player);
             state.wheelOrigin=CartWheelSpin.itemPhase(state.cart);
             Vector2 facing=player.getAnimForwardDirection(new Vector2());
             state.heading=Math.atan2(facing.y,facing.x);
@@ -70,6 +75,7 @@ public final class CartSteeringHooks {
             return;
         }
         State state=state(player);
+        if(state.path) return;
         if(wooden(player)) {
             boolean wasMoving=state.wantsMove;
             Vector2 move=player.getInputMoveVector(state.input);
@@ -129,12 +135,14 @@ public final class CartSteeringHooks {
     public static double wheelPhase(IsoPlayer player) {
         State state=states.get(player);
         return state!=null && enabled(player) && wooden(player)
-            ? CartWheelSpin.advance(state.wheelOrigin+state.wheelPhase,CartSteeringMath.woodenAxle((float)state.lean,CartLegPace.woodenGaitShift(player))
+            ? state.path?CartWheelSpin.itemPhase(state.cart):CartWheelSpin.advance(state.wheelOrigin+state.wheelPhase,CartSteeringMath.woodenAxle((float)state.lean,CartLegPace.woodenGaitShift(player))
                 -CartSteeringMath.woodenAxle(0,0)) : Double.NaN;
     }
 
     static double wheelPhase(IsoPlayer player, zombie.core.skinnedmodel.model.ModelSlotRenderData slot, org.joml.Matrix4f cart) {
         var state=states.get(player);
+        if(state!=null && state.path && enabled(player))
+            return CartWheelSpin.follow(state.cart,slot.x,slot.y,slot.animPlayerAngle,cart);
         double phase=wheelPhase(player);
         if(state==null || !Double.isFinite(phase)) return phase;
         if(!state.wheelRendered) {
@@ -185,13 +193,16 @@ public final class CartSteeringHooks {
      */
     public static Vector2 movement(IsoPlayer player, float x, float y) {
         State state = states.get(player);
-        if (state == null || !enabled(player)) return passthrough.get().set(x, y);
+        if (!enabled(player)) return passthrough.get().set(x, y);
+        if(pathMode(player) || state!=null && state.path) state=state(player);
+        if(state==null) return passthrough.get().set(x,y);
         if(state.cart!=player.getPrimaryHandItem()) {reset(player);return passthrough.get().set(x,y);}
         // Only the native locomotion call should be redirected; do not double-plan.
         if (state.pending) return passthrough.get().set(x, y);
         state.startX = player.getX();
         state.startY = player.getY();
         double distance = Math.hypot(x, y);
+        if(state.path) return pathMovement(player,state,x,y);
         double dt=Math.max(0,Math.min(.1,GameTime.getInstance().getRealworldSecondsSinceLastUpdate()));
         if(state.braking || state.brakeLimit>0 && CartLegPace.brakeTrack(player)!=null)
             distance=Math.min(distance,state.brakeLimit*dt);
@@ -237,6 +248,94 @@ public final class CartSteeringHooks {
         return state.result;
     }
 
+    private static Vector2 pathMovement(IsoPlayer player,State state,float x,float y) {
+        Vector2 facing=player.getAnimForwardDirection(state.input);
+        state.heading=Math.atan2(facing.y,facing.x);
+        state.pending=true;state.result.set(x,y);
+        state.footprintFront=player.isRunning() || player.isSprinting() || state.fastPoseTail>0
+            || CartLegPace.woodenGaitShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
+        state.cartBlocked=state.recovering=false;
+        if(player.getCurrentSquare()!=null) {
+            var query=CartFootprint.world(player);
+            if(!CartFootprint.clear(query,state.startX,state.startY,state.heading,state.footprintFront)) {
+                state.recovering=true;
+                double reverse=Math.min(0,x*Math.cos(state.heading)+y*Math.sin(state.heading));
+                state.result.set((float)(reverse*Math.cos(state.heading)),(float)(reverse*Math.sin(state.heading)));
+                state.cartBlocked=reverse==0;
+            } else {
+                double allowed=CartFootprint.rigidLimit(query,state.startX,state.startY,state.heading,
+                    x,y,state.heading,state.footprintFront);
+                state.result.scale((float)allowed);state.cartBlocked=allowed<1;
+            }
+        }
+        if(state.cartBlocked) failPath(player);
+        return state.result;
+    }
+
+    public static void beginPath(IsoGameCharacter character) {
+        if(character instanceof IsoPlayer player && enabled(player) && pathMode(player))
+            state(player).cartBlocked=false;
+    }
+
+    private static void failPath(IsoPlayer player) {
+        var path=player.getPathFindBehavior2();
+        if(path!=null && pathMode(player)) path.Failed(player);
+    }
+
+    public static zombie.pathfind.PathFindBehavior2.BehaviorResult pathResult(IsoGameCharacter character,
+            zombie.pathfind.PathFindBehavior2.BehaviorResult result) {
+        if(!(character instanceof IsoPlayer player) || !enabled(player) || !pathMode(player)) return result;
+        State state=state(player);
+        state.footprintFront=player.isRunning() || player.isSprinting() || state.fastPoseTail>0
+            || CartLegPace.woodenGaitShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
+        boolean blocked=state.cartBlocked;
+        if(result==zombie.pathfind.PathFindBehavior2.BehaviorResult.Succeeded && player.getCurrentSquare()!=null) {
+            Vector2 facing=player.getAnimForwardDirection(state.input);
+            double heading=Math.atan2(facing.y,facing.x);
+            double target=Math.atan2(player.getForwardDirectionY(),player.getForwardDirectionX());
+            blocked|=CartFootprint.rigidLimit(CartFootprint.world(player),player.getX(),player.getY(),heading,
+                0,0,target,state.footprintFront)<1;
+            if(blocked) player.setTargetAndCurrentDirection((float)Math.cos(heading),(float)Math.sin(heading));
+        }
+        if(blocked) {
+            failPath(player);
+            return zombie.pathfind.PathFindBehavior2.BehaviorResult.Failed;
+        }
+        return result;
+    }
+
+    private static void pathHeading(IsoPlayer player,State state) {
+        Vector2 facing=player.getAnimForwardDirection(state.input);
+        double heading=state.pending?state.heading:Math.atan2(facing.y,facing.x);
+        double target=Math.atan2(player.getForwardDirectionY(),player.getForwardDirectionX());
+        double dt=Math.max(0,Math.min(.1,GameTime.getInstance().getRealworldSecondsSinceLastUpdate()));
+        state.fastPoseTail=player.isRunning() || player.isSprinting() || CartLegPace.brakeTrack(player)!=null
+            ?.4:Math.max(0,state.fastPoseTail-dt);
+        state.footprintFront=player.isRunning() || player.isSprinting() || state.fastPoseTail>0
+            || CartLegPace.woodenGaitShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
+        if(player.getCurrentSquare()!=null) {
+            var query=CartFootprint.world(player);
+            if(state.pending && !state.recovering) {
+                double dx=player.getX()-state.startX,dy=player.getY()-state.startY;
+                double allowed=CartFootprint.rigidLimit(query,state.startX,state.startY,heading,dx,dy,heading,state.footprintFront);
+                if(allowed<1) {
+                    player.setX((float)(state.startX+dx*allowed));player.setY((float)(state.startY+dy*allowed));
+                    player.setNextX(player.getX());player.setNextY(player.getY());
+                    player.setCurrentSquareFromPosition();player.setMovingSquareNow();
+                    state.cartBlocked=true;
+                }
+            }
+            boolean rotation=CartFootprint.rigidLimit(query,player.getX(),player.getY(),heading,0,0,target,state.footprintFront)<1;
+            if(rotation) {
+                // Restore the clear pose before native animation can rotate its nose through an obstacle.
+                player.setTargetAndCurrentDirection((float)Math.cos(heading),(float)Math.sin(heading));
+                state.cartBlocked=true;
+            }
+        }
+        if(state.cartBlocked) failPath(player);
+        state.pending=false;
+    }
+
     /**
      * Hook 2: IsoGameCharacter.postUpdateAnimating()V ENTRY. Its caller already
      * ran IsoMovingObject.postupdate() collisions. Capture native input-facing
@@ -249,6 +348,8 @@ public final class CartSteeringHooks {
             if (state != null) reset(player);
             return;
         }
+        state=state(player);
+        if(state.path) { pathHeading(player,state);return; }
         player.setVariable("ToolkitCartPivot",true);
         double desired = Math.atan2(player.getForwardDirectionY(), player.getForwardDirectionX());
         state=state(player);

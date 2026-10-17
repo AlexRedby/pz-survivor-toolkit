@@ -65,6 +65,21 @@ public final class CartFootprintTest {
                     "rounded world coordinates and their resulting yaw must remain clear after each pass");
             }
         }
+        for(double heading:new double[]{0,.3,Math.PI/2,Math.PI,-Math.PI/2})
+            for(double dx:new double[]{-.2,0,.2}) for(double dy:new double[]{-.2,0,.2})
+                for(double target:new double[]{heading,heading+Math.PI/2,heading-Math.PI})
+                    check(CartFootprint.rigidLimit(empty,10825.5,10142.5,heading,dx,dy,target,1.62)==1,
+                        "native rigid routes must retain independent displacement and facing in open space");
+        check(CartFootprint.rigidLimit(sideWall,0,0,0,0,0,Math.PI/2,1.62)<1,
+            "a pure native yaw must sweep its nose even with no root movement");
+        double yaw=CartFootprint.rigidLimit(sideWall,0,0,0,0,0,Math.PI/2,1.62);
+        check(CartFootprint.clear(sideWall,0,0,Math.PI/2*yaw,1.62),"clipped native yaw must retain a clear pose");
+        check(CartFootprint.rigidLimit(eastWall,.648,0,0,0,-.1,0,1.26)==1,
+            "native lateral displacement must not invent rolling yaw into a nearby wall");
+        double rigidSlide=CartFootprint.rigidLimit(sideWall,0,0,0,0,1,0,1.62);
+        check(rigidSlide>0 && rigidSlide<1,"actual native slide still needs a footprint translation sweep");
+        for(double bad:new double[]{Double.NaN,Double.POSITIVE_INFINITY})
+            check(CartFootprint.rigidLimit(empty,0,0,0,0,0,bad,1.26)==0,"invalid native yaw fails closed");
         System.out.println("CART_FOOTPRINT_PASS (native budget, wall/door contact, passage, swept turn, slide, promotion, rear caps)");
     }
 }

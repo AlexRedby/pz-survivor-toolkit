@@ -37,7 +37,9 @@ public final class CartSteeringHooksTest {
     // Skip world/renderer constructors, as the existing NativeChecks fixture does.
     private static final class Player extends IsoPlayer {
         int blocked;
-        boolean pivot, woodBrake, moving, run, sprint;
+        boolean pivot, woodBrake, moving, run, sprint, pathActive, npc;
+        zombie.pathfind.PathFindBehavior2 nativePath;
+        zombie.ai.astar.AStarPathFinderResult finder;
         float walkSpeed;
         float stepX, stepY, legPace;
         float actualX, actualY, inputX, inputY;
@@ -64,7 +66,10 @@ public final class CartSteeringHooksTest {
         @Override public boolean isGrappling() { return blocked == 5; }
         @Override public boolean isBeingGrappled() { return blocked == 6; }
         @Override public boolean isRagdollSimulationActive() { return blocked == 7; }
-        @Override public boolean hasPath() { return blocked == 9; }
+        @Override public boolean hasPath() { return pathActive || blocked == 9; }
+        @Override public boolean isNpc() { return npc; }
+        @Override public zombie.pathfind.PathFindBehavior2 getPathFindBehavior2() { return nativePath; }
+        @Override public zombie.ai.astar.AStarPathFinderResult getFinder() { return finder; }
         @Override public boolean getVariableBoolean(String name) {
             return switch(name) {case "ToolkitCartMotion"->blocked!=10;case "ToolkitCartPivot"->pivot;
                 case "ToolkitCartWoodBrake"->woodBrake;default->false;};
@@ -270,6 +275,104 @@ public final class CartSteeringHooksTest {
         } finally {
             CartSteeringHooks.reset(player);time.fpsMultiplier=oldFps;
         }
+    }
+
+    private static void pathControls(Unsafe unsafe,Map<?,?> states) throws Exception {
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
+        type(cart,"SaucedWheelbarrow.WheelbarrowWood");player.walkSpeed=.8f;
+        player.nativePath=new zombie.pathfind.PathFindBehavior2(player);
+        player.finder=new zombie.ai.astar.AStarPathFinderResult();
+        var input=new IsoPlayer.InputState();
+        CartSteeringHooks.heading(player);
+        Object manual=states.get(player);
+        field(manual,"braking").setBoolean(manual,true);
+        field(manual,"stationaryRoot").setBoolean(manual,true);
+        var reversal=(CartSteeringMath.Reversal)field(manual,"reversal").get(manual);
+        reversal.request(-1,false);
+        player.pathActive=true;player.inputX=-.5f;player.inputY=.5f;
+        input.setRunning(true);input.sprinting=true;
+        CartSteeringHooks.input(player,input);
+        Object path=states.get(player);
+        check(path!=manual && field(path,"path").getBoolean(path)
+            && !field(path,"braking").getBoolean(path) && !field(path,"stationaryRoot").getBoolean(path),
+            "native path must discard manual brake, stationary turn and reversal state");
+        check(input.isRunning() && input.sprinting && !field(path,"hasInput").getBoolean(path),
+            "path mode must leave native gait untouched and ignore keyboard steering");
+        player.moving=true;
+        var step=CartSteeringHooks.movement(player,.02f,0);
+        check(step.x>.019 && Math.abs(step.y)<1e-6,"native path delta must own intent despite opposing keyboard input");
+        accept(player,step);
+        double before=field(path,"heading").getDouble(path);
+        step=CartSteeringHooks.movement(player,0,.02f);
+        check(step.x==0 && step.y==.02f,"native path must preserve its exact world delta instead of creating a pursuit arc");
+        accept(player,step);
+        check(field(path,"heading").getDouble(path)==before && !player.pivot && player.legPace==0,
+            "path following must retain native yaw/cadence and leave manual pivot variables released");
+        for(double gx:new double[]{-2,0,2}) for(double gy:new double[]{-2,0,2}) {
+            player.actualX=player.actualY=0;
+            for(int tick=0;tick<500 && Math.hypot(gx-player.actualX,gy-player.actualY)>.01;tick++) {
+                double dx=gx-player.actualX,dy=gy-player.actualY,distance=Math.hypot(dx,dy);
+                double budget=Math.min(.02,distance);
+                step=CartSteeringHooks.movement(player,(float)(dx/distance*budget),(float)(dy/distance*budget));
+                accept(player,step);
+            }
+            check(Math.hypot(gx-player.actualX,gy-player.actualY)<.01,
+                "native route endpoint convergence must survive every open-space target direction: "+gx+"/"+gy);
+        }
+        CartSteeringHooks.beginPath(player);
+        field(path,"cartBlocked").setBoolean(path,true);
+        check(CartSteeringHooks.pathResult(player,zombie.pathfind.PathFindBehavior2.BehaviorResult.Succeeded)
+            ==zombie.pathfind.PathFindBehavior2.BehaviorResult.Failed,
+            "native same-call success must not bypass a cart-blocked step");
+        check(player.finder.progress==zombie.ai.astar.AStarPathFinder.PathFindProgress.failed,
+            "cart obstruction must reach native Failed, not silently cancel a waiting queue");
+        CartSteeringHooks.beginPath(player);
+        check(CartSteeringHooks.pathResult(player,zombie.pathfind.PathFindBehavior2.BehaviorResult.Working)
+            ==zombie.pathfind.PathFindBehavior2.BehaviorResult.Working,"new native update must release old per-call obstruction");
+        for(String kind:new String[]{"SaucedWheelbarrow.WheelbarrowMetal","SaucedCarts.ShoppingCart"}) {
+            type(cart,kind);check(!CartSteeringHooks.enabled(player),
+                "other carts must retain native path behavior: "+kind);
+        }
+        type(cart,"SaucedWheelbarrow.WheelbarrowWood");player.npc=true;
+        check(!CartSteeringHooks.enabled(player),"NPC movement must remain native");player.npc=false;
+        player.blocked=8;check(!CartSteeringHooks.enabled(player),"remote path must remain native");player.blocked=0;
+        player.pathActive=false;player.nativePath.cancel();
+        field(path,"pending").setBoolean(path,true);
+        CartSteeringHooks.input(player,input);
+        check(states.get(player)==path,"same-call path stop must retain its last pending collision acceptance");
+        CartSteeringHooks.heading(player);CartSteeringHooks.input(player,input);
+        check(states.get(player)!=path && !field(states.get(player),"path").getBoolean(states.get(player)),
+            "path cancellation must discard native target and restore fresh manual input ownership");
+        CartSteeringHooks.reset(player);
+    }
+
+    private static void wovenPathControls(Unsafe unsafe,Map<?,?> states) throws Exception {
+        Main.main(new String[0]);
+        check(Main.CART_SUPPORTED,"woven path regression requires the supported native fingerprint");
+        me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches",
+            CartSteeringHooksTest.class.getClassLoader());
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
+        type(cart,"SaucedWheelbarrow.WheelbarrowWood");player.walkSpeed=.8f;player.pathActive=true;
+        player.nativePath=new zombie.pathfind.PathFindBehavior2(player);
+        player.finder=new zombie.ai.astar.AStarPathFinderResult();
+        player.finder.progress=zombie.ai.astar.AStarPathFinder.PathFindProgress.failed;
+        check(player.nativePath.update()==zombie.pathfind.PathFindBehavior2.BehaviorResult.Failed,
+            "real woven update() must reach both public path advice hooks without an access error");
+        Object state=states.get(player);
+        check(state!=null && field(state,"path").getBoolean(state),
+            "real woven path entry must acquire the local wooden cart state");
+        field(state,"cartBlocked").setBoolean(state,true);
+        check(player.nativePath.update(1)==zombie.pathfind.PathFindBehavior2.BehaviorResult.Failed
+            && !field(state,"cartBlocked").getBoolean(state),
+            "real woven update(float) must reset per-call obstruction and preserve native failure");
+        CartSteeringHooks.reset(player);player.blocked=8;
+        check(player.nativePath.update()==zombie.pathfind.PathFindBehavior2.BehaviorResult.Failed
+            && player.nativePath.update(1)==zombie.pathfind.PathFindBehavior2.BehaviorResult.Failed
+            && !states.containsKey(player),"woven path advice must leave remote native failure/state untouched");
     }
 
     private static void direction(Player player,double heading) {
@@ -726,9 +829,11 @@ public final class CartSteeringHooksTest {
         player.run=true;CartSteeringHooks.heading(player);CartSteeringHooks.reset(player);
         check(CartSteeringHooks.fastPoseWeight(player)==0,"reset must release delayed pose clearance");
         player.run=false;
+        pathControls(unsafe,states);
         stationaryControls(unsafe,states);
         stationaryCadence(unsafe,states);
         brakeControls(unsafe,states);
+        wovenPathControls(unsafe,states);
         System.out.println("CART_STEERING_HOOKS_PASS (combat, local, path, scope, ownership, reset, native direction transitions)");
     }
 }

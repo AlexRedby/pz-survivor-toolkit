@@ -21,7 +21,8 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
             'collision': ('scenario-collision.lua', 20), 'footprint': ('scenario-collision.lua', 20),
             'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
-            'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48)}
+            'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
+            'path': ('scenario-path.lua', 24)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 
 
@@ -323,11 +324,13 @@ def verify(root, selection, catalog):
                 motion = _load(intake / 'analyze-reverse.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reverse-motion.json', json.dumps(motion, indent=2, allow_nan=False))
-            elif case in ('stop', 'stationary', 'maneuvers', 'collision', 'footprint'):
+            elif case in ('stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'path'):
                 analyzer='footprint' if case=='collision' else case
                 evidence['analyzers'][case] = _run([sys.executable, str(intake / ('analyze-' + analyzer + '.py')),
                     '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / (case + '-motion.json'))], analysis, case)
                 evidence['motion'] = _json(analysis / (case + '-motion.json'))
+                if case == 'path' and not all(evidence['motion'].get(key) for key in ('motionPass', 'footprintVerified')):
+                    raise ValueError('Native path/footprint verification failed: ' + str(evidence['motion'].get('failures')))
             elif case == 'reversal':
                 motion = _load(intake / 'analyze-reversal.py').analyze(texts['client1'])
                 evidence['motion'] = motion

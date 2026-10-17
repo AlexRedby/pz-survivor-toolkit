@@ -30,6 +30,7 @@ public final class CartGroundingTest {
   ItemContainer inventory;
   Player() {super(null,null,0,0,0);}
   @Override public boolean isLocalPlayer() {return true;}
+  @Override public boolean isNpc() {return false;}
   @Override public boolean getVariableBoolean(String name) {return "ToolkitCartMotion".equals(name);}
   @Override public boolean isDead() {return false;}
   @Override public boolean hasHitReaction() {return false;}

@@ -108,8 +108,8 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'wheel', 'interaction', 'interruption', 'interruption-matrix'])
-        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48)]:
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'path'])
+        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -487,6 +487,29 @@ class CartAdapterTests(unittest.TestCase):
         self.assertIn('Incomplete grip window', result['issues'])
         self.assertTrue(result['evidence']['motion']['motionPass'])
         self.assertTrue((Path(result['evidence']['analysis']) / 'footprint-motion.json').is_file())
+
+    def test_native_path_requires_route_and_footprint_proof(self):
+        self.selection['cases'] = ['path']
+        fixture = carts._load(ROOT / 'tests/test_cart_path_analyzer.py')
+        text, _ = fixture.fixture()
+        _, _, metrics = self.coverage_fixture(24, text)
+        log = self.output / 'client1-launch.log'; log.write_text(text)
+        (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
+        for failed in (None, 'motionPass', 'footprintVerified'):
+            def run(command, directory, name):
+                if name == 'native':
+                    (directory / 'native-metrics.json').write_text(json.dumps(metrics))
+                if name == 'path':
+                    self.assertTrue(command[1].endswith('analyze-path.py'))
+                    self.assertEqual(command[command.index('--log')+1], str(log))
+                    report = dict(motionPass=failed!='motionPass', footprintVerified=failed!='footprintVerified', failures=[])
+                    (directory / 'path-motion.json').write_text(json.dumps(report))
+                return {'exit_code': int(name=='path' and failed is not None)}
+            with self.subTest(failed=failed), patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
+                result = carts.verify(self.output, self.selection, {})
+            self.assertEqual(bool(result['issues']), failed is not None, result)
+            self.assertEqual(result['outcomes'][0]['status'], 'failed' if failed else 'captured')
+            self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
 
     def test_reversal_capture_preserves_motion_report_and_failed_diagnostics(self):
         self.selection['cases'] = ['reversal']

@@ -35,12 +35,12 @@ final class CartFootprint {
     }
 
     private static boolean sweep(Query query,double x,double y,double heading,double dx,double dy,
-                                 double axle,double front,double from,double to) {
+                                 double axle,double front,double from,double to,double turn,boolean rolling) {
         double ax=(float)(x+dx*from),ay=(float)(y+dy*from);
         double bx=(float)(x+dx*to),by=(float)(y+dy*to);
         // Native position rounding can change rolling yaw; verify the coordinates we will actually commit.
-        double a=heading+CartSteeringMath.acceptedTurn(heading,axle,ax-x,ay-y);
-        double b=heading+CartSteeringMath.acceptedTurn(heading,axle,bx-x,by-y);
+        double a=heading+(rolling?CartSteeringMath.acceptedTurn(heading,axle,ax-x,ay-y):turn*from);
+        double b=heading+(rolling?CartSteeringMath.acceptedTurn(heading,axle,bx-x,by-y):turn*to);
         if(!clear(query,bx,by,b,front)) return false;
         for(int side=-1;side<=1;side+=2) for(int end=0;end<=1;end++) {
             double length=end*(front-NOSE_INSET),offset=side*RAIL;
@@ -55,20 +55,30 @@ final class CartFootprint {
 
     /** Shorten only the supplied displacement, using its actual rolling yaw after native sliding. */
     static double limit(Query query,double x,double y,double heading,double dx,double dy,double axle,double front) {
-        double distance=Math.hypot(dx,dy),turn=CartSteeringMath.acceptedTurn(heading,axle,dx,dy);
-        if(!Double.isFinite(x+y+distance+turn+heading+front) || !(axle>0)) return 0;
+        return limit(query,x,y,heading,dx,dy,axle,front,CartSteeringMath.acceptedTurn(heading,axle,dx,dy),true);
+    }
+
+    /** Native routes own displacement and facing independently, including turns without root motion. */
+    static double rigidLimit(Query query,double x,double y,double heading,double dx,double dy,double target,double front) {
+        return limit(query,x,y,heading,dx,dy,0,front,CartSteeringMath.wrap(target-heading),false);
+    }
+
+    private static double limit(Query query,double x,double y,double heading,double dx,double dy,
+                                double axle,double front,double turn,boolean rolling) {
+        double distance=Math.hypot(dx,dy);
+        if(!Double.isFinite(x+y+distance+turn+heading+front) || rolling && !(axle>0)) return 0;
         if(!clear(query,x,y,heading,front)) return 0;
-        if(distance==0) return 1;
+        if(distance==0 && turn==0) return 1;
         int steps=Math.max(1,(int)Math.ceil((distance+Math.abs(turn)*front)/.04));
-        if(steps>128) return 0;
+        if(steps>(rolling?128:256)) return 0;
         double previous=0;
         for(int step=1;step<=steps;step++) {
             double next=step/(double)steps;
-            if(!sweep(query,x,y,heading,dx,dy,axle,front,previous,next)) {
+            if(!sweep(query,x,y,heading,dx,dy,axle,front,previous,next,turn,rolling)) {
                 double low=previous,high=next;
                 for(int i=0;i<12;i++) {
                     double mid=(low+high)/2;
-                    if(sweep(query,x,y,heading,dx,dy,axle,front,previous,mid)) low=mid;
+                    if(sweep(query,x,y,heading,dx,dy,axle,front,previous,mid,turn,rolling)) low=mid;
                     else high=mid;
                 }
                 return low;

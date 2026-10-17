@@ -1,5 +1,25 @@
 if isServer() and not isClient() or not getActivatedMods():contains("SaucedCarts") then return end
 require "SaucedCarts/Core"
+require "TimedActions/WalkToTimedAction"
+require "TimedActions/WalkToTimedActionF"
+require "Vehicles/TimedActions/ISPathFindAction"
+
+local pathActions = {}
+for _, class in ipairs({ISWalkToTimedAction, ISWalkToTimedActionF, ISPathFindAction}) do
+    pathActions[class.Type] = {class = class, start = class.start, update = class.update,
+        stop = class.stop, perform = class.perform, isValid = class.isValid}
+end
+
+local function nativePathAction(action)
+    if not action or not instanceof(action, "LuaTimedActionNew") then return false end
+    local known = pathActions[action:getMetaType()]
+    local object = action:getTable()
+    if not known or not object or getmetatable(object) ~= known.class then return false end
+    for _, name in ipairs({"start", "update", "stop", "perform", "isValid"}) do
+        if object[name] ~= known[name] then return false end
+    end
+    return true
+end
 
 local states = setmetatable({}, {__mode = "k"})
 local blocked = setmetatable({}, {__mode = "k"})
@@ -36,7 +56,9 @@ local function heldCart(player, finishingAction, stopped)
         or math.abs(player:getVariableFloat("WalkInjury", 0)) >= 0.15 then return end
     local actions = player:getCharacterActions()
     -- Native complete/stop callbacks run before removing their exact action from the stack.
-    if actions:size() > 0 and not (finishingAction and actions:size() == 1
+    if actions:size() > 0 and not (actions:size() == 1 and player:isLocalPlayer()
+        and item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood" and nativePathAction(actions:get(0)))
+        and not (finishingAction and actions:size() == 1
         and actions:get(0) == finishingAction and (finishingAction:finished()
             or stopped == true and not player:getVariableBoolean("IsPerformingAnAction"))) then return end
     return item

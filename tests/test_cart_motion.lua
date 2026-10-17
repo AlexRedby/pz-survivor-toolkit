@@ -6,8 +6,16 @@ local function setup(server, active, client)
     isServer = function() return server end
     isClient = function() return client == true end
     getActivatedMods = function() return {contains = function(_, name) return active and name == "SaucedCarts" end} end
-    require = function(name) assert(name == "SaucedCarts/Core") end
-    instanceof = function(item, kind) return kind == "InventoryContainer" and item.container == true end
+    ISWalkToTimedAction, ISWalkToTimedActionF, ISPathFindAction = {}, {}, {}
+    for _, entry in ipairs({{ISWalkToTimedAction, "ISWalkToTimedAction"},
+        {ISWalkToTimedActionF, "ISWalkToTimedActionF"}, {ISPathFindAction, "ISPathFindAction"}}) do
+        local class = entry[1]; class.Type = entry[2]; class.__index = class
+        for _, name in ipairs({"start", "update", "stop", "perform", "isValid"}) do class[name] = function() end end
+    end
+    require = function(name) assert(name == "SaucedCarts/Core" or name == "TimedActions/WalkToTimedAction"
+        or name == "TimedActions/WalkToTimedActionF" or name == "Vehicles/TimedActions/ISPathFindAction") end
+    instanceof = function(item, kind) return kind == "InventoryContainer" and item.container == true
+        or kind == "LuaTimedActionNew" and item.native == true end
     SaucedCarts = {safeIsCart = function(item) return item.cart == true end}
     getGameTime = function() return {getRealworldSecondsSinceLastUpdate = function() return w.dt end} end
     getOnlinePlayers = function() return {size = function() return #w.online end, get = function(_, i) return w.online[i + 1] end} end
@@ -41,6 +49,7 @@ local function setup(server, active, client)
         function p:setTurnDelta(value) self.normal = value end
         function p:equip(weight, capacity)
             local cart = {container = true, cart = true, weight = weight or 0, capacity = capacity or 50, owner = self.inventory}
+            function cart:getFullType() return self.fullType or "SaucedWheelbarrow.WheelbarrowWood" end
             function cart:getWorldItem() return self.world end
             function cart:getContainer() return self.owner end
             function cart:getInventory()
@@ -213,4 +222,27 @@ assert(p.normal == 0.33, "external override while running was overwritten")
 getOnlinePlayers = function() return nil end
 for _ = 1, 10 do w.fire("OnTick") end
 print("PASS cart motion: external controls, death, remote-only visuals, menu cleanup and disconnected clients preserved")
+w = setup(false, true); p = w.player(); cart = p:equip()
+for _, class in ipairs({ISWalkToTimedAction, ISWalkToTimedActionF, ISPathFindAction}) do
+    local object = setmetatable({}, class)
+    local action = {native = true, getTable = function() return object end,
+        getMetaType = function() return class.Type end}
+    p.actions, p.action = 1, action
+    assert(ToolkitCartRefreshVisual(p) == cart, "stock path action hid the held wooden cart: " .. class.Type)
+    for _, condition in ipairs({"override", "subclass", "forgedtype", "twotypes", "remote", "metal", "shopping"}) do
+        p.localPlayer, p.actions, cart.fullType = true, 1, nil
+        object = setmetatable({}, class)
+        if condition == "override" then object.update = function() end
+        elseif condition == "subclass" then object = setmetatable({}, {__index = class})
+        elseif condition == "forgedtype" then action.native = false
+        elseif condition == "twotypes" then p.actions = 2
+        elseif condition == "remote" then p.localPlayer = false
+        elseif condition == "metal" then cart.fullType = "SaucedWheelbarrow.WheelbarrowMetal"
+        elseif condition == "shopping" then cart.fullType = "SaucedCarts.ShoppingCart" end
+        assert(not ToolkitCartRefreshVisual(p), condition .. " bypassed the exact stock path visual gate")
+        action.native = true
+    end
+    p.localPlayer, p.actions, cart.fullType = true, 1, nil
+end
+print("PASS cart motion: exact stock WalkTo/F/PathFind retains wooden visual; overrides, subclasses, other carts and remote stay gated")
 require = originalRequire

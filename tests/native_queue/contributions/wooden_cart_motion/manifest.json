@@ -25,7 +25,13 @@
     "collision_scenario": "scenario-collision.lua",
     "collision_analyzer": "analyze-collision.py",
     "kahlua_checks": "KahluaChecks.java",
-    "footprint_analyzer": "analyze-footprint.py"
+    "footprint_analyzer": "analyze-footprint.py",
+    "interaction_scenario": "scenario-interaction.lua",
+    "interaction_analyzer": "analyze-interaction.py",
+    "interruption_analyzer": "analyze-interruption.py",
+    "wheel_cycle_analyzer": "analyze-wheel-cycle.py",
+    "path_scenario": "scenario-path.lua",
+    "path_analyzer": "analyze-path.py"
   },
   "origin": {
     "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",

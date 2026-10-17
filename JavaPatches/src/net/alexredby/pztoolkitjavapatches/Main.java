@@ -168,6 +168,7 @@ public final class Main {
             "3f1c4634d3a8e7e36baf4b33f76cf7ef79d88c3351bd0eb2a6a6bb34c2d9858f")
         && supports("zombie/characters/IsoGameCharacter.class",
             "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b")
+        && supports("zombie/pathfind/PathFindBehavior2.class","06b4af799cd9e335aee738bcad498215c5068038d8dfc524bb7b6337e923a127")
         && supports("zombie/iso/IsoMovingObject.class",
             "7e6e84fe9d3cb264e8d8e682d91e0abe919d481b7349d17b997e8a78f2293a5f")
         && supports("zombie/core/skinnedmodel/animation/AnimationPlayer.class",
@@ -526,6 +527,21 @@ public final class Main {
                 disabled = true;
                 System.err.println("[PZToolkitJavaPatches] Animal trailer reconciliation disabled: " + error);
             }
+        }
+    }
+
+    @Patch(className="zombie.pathfind.PathFindBehavior2", methodName="update", warmUp=true)
+    public static class CartPathResult {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.pathfind.PathFindBehavior2 path) {
+            if(Main.CART_SUPPORTED)
+                CartSteeringHooks.beginPath(Accessor.tryGet(path,"chr",(zombie.characters.IsoGameCharacter)null));
+        }
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.pathfind.PathFindBehavior2 path,
+                @Patch.Return(readOnly=false) zombie.pathfind.PathFindBehavior2.BehaviorResult result) {
+            if(Main.CART_SUPPORTED)
+                result=CartSteeringHooks.pathResult(Accessor.tryGet(path,"chr",(zombie.characters.IsoGameCharacter)null),result);
         }
     }
 
