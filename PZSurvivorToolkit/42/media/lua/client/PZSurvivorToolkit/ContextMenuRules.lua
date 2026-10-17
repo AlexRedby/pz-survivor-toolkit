@@ -207,6 +207,9 @@ function Rules.classify(option)
         if sourceEndsWith(option, "/BetterContainers/Upgrades/PinnedItems.lua") then
             return "world", "mod:BetterContainers.pin"
         end
+        if sourceEndsWith(option, "/PZSurvivorWishlist/Inventory.lua") then
+            return "world", "mod:PZSurvivorWishlist.addWanted"
+        end
         return nil
     end
     local name = option.name or option.text
@@ -218,12 +221,23 @@ function Rules.classify(option)
     return nil
 end
 
+function Rules.isRecipeSearch(menu, option)
+    if option.onSelect or not option.subOption or not NC_InventorySearch then return false end
+    local child = menu:getSubMenu(option.subOption)
+    if not child or #child.options == 0 then return false end
+    for _, row in ipairs(child.options) do
+        if row.isDefaultOption or not row.onSelect or (row.onSelect ~= NC_InventorySearch.searchAsInput
+            and row.onSelect ~= NC_InventorySearch.searchAsOutput) then return false end
+    end
+    return true
+end
+
 function Rules.isMore(menu, option)
     if option.onSelect or option.name ~= getText("ContextMenu_More") or not option.subOption then return false end
     local child = menu:getSubMenu(option.subOption)
     if not child or #child.options == 0 then return false end
     for _, row in ipairs(child.options) do
-        if not row.isDefaultOption and Rules.classify(row) ~= "world" then return false end
+        if not row.isDefaultOption and Rules.classify(row) ~= "world" and not Rules.isRecipeSearch(child, row) then return false end
     end
     return true
 end
@@ -243,6 +257,10 @@ function Rules.defaults(menu, options, context, visible)
     if menu.parent or (context and context ~= "inventory" and context ~= "loot") then return defaults end
     local cook, input, fluid
     for _, option in ipairs(options) do
+        local _, key = Rules.classify(option)
+        if key == "mod:BetterContainers.category" and PZSurvivorToolkit.Settings.itemTags
+            and PZSurvivorToolkit.Settings.itemTags() then defaults[option] = "hidden" end
+        if Rules.isRecipeSearch(menu, option) then defaults[option] = "world" end
         if PJCK_CookingUI and option.onSelect and option.onSelect == PJCK_CookingUI.OnOpenPanel and visible(option) then cook = option end
         if Rules.classify(option) == "transfer" and not option.onSelect and option.name == getText("ContextMenu_Fluid") then
             defaults[option], fluid = "root", true

@@ -238,7 +238,8 @@ local function organizeNode(menu, state, visited, selectorsOnly, context)
         -- Portion/recipe selectors already form coherent native submenus.
         if option.subOption then
             local child = menu:getSubMenu(option.subOption)
-            if child then organizeNode(child, state, visited, selectorsOnly or category ~= nil or Rules.isRecipeSelector(menu, option), context) end
+            if child then organizeNode(child, state, visited,
+                selectorsOnly or (category ~= nil and not Rules.isRecipeSearch(menu, option)) or Rules.isRecipeSelector(menu, option), context) end
         end
     end
     if context ~= "inventory" and context ~= "loot" then

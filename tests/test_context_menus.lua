@@ -326,6 +326,8 @@ local translations={ContextMenu_Fluid='Fluid',ContextMenu_More='More'}
 getText=function(key) return translations[key] or key end
 local sources={}
 getFilenameOfClosure=function(callback) return sources[callback] or 'foreign.lua' end
+local tagsEnabled=true
+PZSurvivorToolkit.Settings.itemTags=function() return tagsEnabled end
 instanceof=function(item,kind) return type(item)=='table' and item.kind==kind end
 PJCK_CookingUI={OnOpenPanel=function() end}
 NC_InventorySearch={searchAsInput=function() end,searchAsOutput=function() end}
@@ -362,6 +364,7 @@ local function potMenu(withCook,withInput,ingredient)
  if withInput then search:addOption('Uses',pot,NC_InventorySearch.searchAsInput,0) end
  search:addOption('Makes',pot,NC_InventorySearch.searchAsOutput,0)
  o.wishlist=m:addOption('Wishlist',nil,function() end)
+ sources[o.wishlist.onSelect]='/mods/PZSurvivorWishlist/Inventory.lua'
  o.distribute=m:addOption('Distribute Loot',nil,function() end);sources[o.distribute.onSelect]='/mods/LootSorter_ContextMenu.lua'
  o.drop=m:addOption('Drop',nil,ISInventoryPaneContextMenu.onDropItems)
  o.original={unpack(m.options)};o.originalMisc={unpack(o.misc.options)}
@@ -379,10 +382,12 @@ for i=1,5 do
  menu:prerender()
  assert(not contains(menu,actions.recipe) and not contains(menu,actions.native), 'covered cooking and input-search paths must disappear, not move into another group')
  assert(not contains(menu,actions.distribute),'mouse distribution uses the visible toolbar button')
- assert(contains(menu,actions.cook) and contains(menu,actions.fluid) and contains(menu,actions.search))
+ assert(contains(menu,actions.cook) and contains(menu,actions.fluid))
  assert(contains(menu,actions.drop) and contains(menu,actions.place) and not group(menu,'transfer'),'fluid, drop and placement must not gain an extra transfer group')
- local misc=assert(moreGroup(menu));assert(#misc.options==5 and contains(misc,actions.category) and contains(misc,actions.pin))
- assert(#menu.options==8,'one entry per purpose leaves eight root actions')
+ local misc=assert(moreGroup(menu));assert(#misc.options==6 and not contains(misc,actions.category) and contains(misc,actions.pin))
+ assert(contains(misc,actions.search) and contains(misc,actions.wishlist),'rare search and wishlist commands belong in More')
+ assert(not contains(menu,actions.search) and not contains(menu,actions.wishlist))
+ assert(#menu.options==6,'rare commands must not clutter the root')
  Organizer.restore(menu);same(menu,actions.original);same(actions.misc,actions.originalMisc)
 end
 menu:prerender();enabled=false;menu:prerender();same(menu,actions.original);enabled=true
@@ -424,8 +429,15 @@ for _,hidden in ipairs({'Cooking','Recipe search','Uses'}) do
  menu,actions=potMenu(true,true);menu:prerender()
  if hidden=='Cooking' then assert(contains(menu,actions.recipe),'hiding Project Cook must restore native cooking')
  else assert(contains(menu,actions.native),'hiding a replacement search must restore native lookup') end
+ if hidden=='Uses' then
+  for _,row in ipairs(menu:getSubMenu(actions.search.subOption).options) do assert(row.name~='Uses','hidden input search must remain hidden inside More') end
+ end
  Organizer.reset()
 end
+Organizer.setOverride('label:Makes','hidden')
+menu,actions=potMenu(true,true);menu:prerender()
+for _,row in ipairs(menu:getSubMenu(actions.search.subOption).options) do assert(row.name~='Makes','hidden output search must remain hidden inside More') end
+Organizer.reset()
 menu,actions=potMenu(true,true)
 local buildAction=actions.misc:addOption('Build',nil,ISEntityUI.OpenBuildWindow or function() end)
 menu:prerender()
@@ -435,6 +447,22 @@ assert(moreCount==1 and contains(menu,actions.more) and contains(actions.misc,bu
  'a native More branch with additional actions must stay intact without creating a second More group')
 Organizer.restore(menu);assert(contains(actions.misc,buildAction))
 print('PASS hidden replacement fallbacks and distinct labels for mixed native More branches')
+tagsEnabled=false
+menu,actions=potMenu(true,true);menu:prerender()
+assert(contains(assert(moreGroup(menu)),actions.category),'BC category editing remains available without Toolkit tags')
+tagsEnabled=true
+Organizer.setOverride('mod:BetterContainers.category','root')
+Organizer.setOverride('mod:PZSurvivorWishlist.addWanted','root')
+Organizer.setOverride('label:Recipe search','root')
+menu,actions=potMenu(true,true);menu:prerender()
+assert(contains(menu,actions.category) and contains(menu,actions.wishlist) and contains(menu,actions.search),'manual placements still win')
+Organizer.reset()
+menu,actions=potMenu(true,true);sources[actions.wishlist.onSelect]='foreign.lua';menu:prerender()
+assert(contains(menu,actions.wishlist),'a foreign wishlist command must not move by label')
+menu,actions=potMenu(true,true)
+menu:getSubMenu(actions.search.subOption):addOption('Custom search',pot,function() end)
+menu:prerender();assert(contains(menu,actions.search),'mixed recipe search headers keep their original placement')
+print('PASS Toolkit tag/category ownership, rare actions, exact mod callbacks and manual placement')
 menu,actions=potMenu(true,true)
 for _,row in ipairs(actions.ingredients.options) do row.onSelect=ISInventoryPaneContextMenu.OnNewCraft end
 menu:prerender()
