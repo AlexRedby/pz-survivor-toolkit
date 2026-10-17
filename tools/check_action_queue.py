@@ -177,6 +177,8 @@ def batch(args, catalog):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    command = commands.add_parser('status', help='Show native stand owners, FIFO waiters and blocking reasons without launching the game')
+    command.add_argument('--json', action='store_true', help='Print the machine-readable admission snapshot')
     for name in ("prepare", "run"):
         command = commands.add_parser(name)
         command.add_argument("output", type=Path, help="Fresh isolated output directory")
@@ -228,6 +230,29 @@ def main(argv=None):
     command.add_argument('output', type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.command == 'status':
+            value = admission.status(legacy_lock=runner.LOCK)
+            if args.json:
+                print(json.dumps(value, indent=2))
+            else:
+                print('Running: ' + str(len(value['running'])))
+                for item in value['running']:
+                    print('  %s | PID %s%s | %s/%s/%s | %s | game PIDs %s' % (
+                        item['root'], item.get('pid', '?'), ' (owner exited)' if not item['owner_alive'] else '', item.get('suite') or '?',
+                        item.get('kind') or '?', item.get('mode') or '?',
+                        'exclusive' if item['budget']['exclusive'] else 'shared',
+                        ','.join(str(p['pid']) for p in item['processes']) or 'none'))
+                print('Waiting: ' + str(len(value['waiting'])))
+                for item in value['waiting']:
+                    print('  #%s %s | PID %s | %.0fs | %s | %s' % (
+                        item['position'], item['root'], item['pid'], item['wait_seconds'],
+                        'exclusive' if item['exclusive'] else 'shared', item['reason']))
+                print('Prepared port reservations: ' + str(len(value['prepared'])))
+                lock = value['legacy_lock']
+                print('Legacy lock: ' + ('exclusive' if lock['exclusive'] else 'shared/busy' if lock['busy'] else 'free'))
+                for limit in value['limits']:
+                    print('Note: ' + limit)
+            return 0
         catalog = report.read_json(CATALOG)
         catalog['suites'].update(adapters.definitions())
         if args.command == 'lock-pack':

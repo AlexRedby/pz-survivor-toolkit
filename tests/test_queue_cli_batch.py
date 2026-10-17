@@ -1,6 +1,7 @@
 """Batch sequencing and failure reporting without native processes."""
 import argparse
 import importlib.util
+import io
 import json
 from pathlib import Path
 import sys
@@ -220,6 +221,53 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(['wishlist-control', 'wishlist'], [job['id'] for job in cli.selected_jobs(plan, sets=['wishlist'])])
         self.assertEqual(['tags-control', 'tags', 'video-control', 'video'],
                          [job['id'] for job in cli.selected_jobs(plan, sets=['tags', 'video'])])
+
+
+class StatusTests(unittest.TestCase):
+    def setUp(self):
+        self.value = {'schema_version': 1,
+            'running': [{'root': '/old/run', 'pid': 10, 'owner_alive': False, 'budget': {'exclusive': False},
+                         'processes': [{'pid': 11}]}],
+            'waiting': [{'root': '/new/run', 'pid': 12, 'position': 1, 'wait_seconds': 5,
+                         'exclusive': True, 'reason': 'Legacy or exclusive native run is using the desktop'}],
+            'prepared': [{'root': '/prepared', 'ports': [24000, 24001]}],
+            'legacy_lock': {'path': '/lock', 'busy': True, 'exclusive': False},
+            'limits': ['FIFO applies to updated runners only.']}
+
+    def invoke(self, arguments):
+        output = io.StringIO()
+        with patch.object(cli.admission, 'status', return_value=self.value) as status, \
+             patch.object(cli.report, 'read_json', side_effect=AssertionError('Status must not read catalog')), \
+             patch.object(cli.runner, 'run', side_effect=AssertionError('Status must not launch')), \
+             patch('sys.stdout', output):
+            result = cli.main(arguments)
+        status.assert_called_once_with(legacy_lock=cli.runner.LOCK)
+        self.assertEqual(result, 0)
+        return output.getvalue()
+
+    def test_json_status_preserves_machine_readable_snapshot_without_launching(self):
+        self.assertEqual(json.loads(self.invoke(['status', '--json'])), self.value)
+
+    def test_text_status_shows_owners_fifo_position_reason_and_legacy_limits(self):
+        value = self.invoke(['status'])
+        for expected in ('Running: 1', '/old/run | PID 10 (owner exited)', 'game PIDs 11', 'Waiting: 1',
+                         '#1 /new/run | PID 12', '5s | exclusive', self.value['waiting'][0]['reason'],
+                         'Prepared port reservations: 1', 'Legacy lock: shared/busy', self.value['limits'][0]):
+            self.assertIn(expected, value)
+
+    def test_empty_status_and_legacy_exclusive_status(self):
+        self.value.update(running=[], waiting=[], prepared=[])
+        self.value['legacy_lock'].update(busy=False, exclusive=False)
+        self.assertIn('Legacy lock: free', self.invoke(['status']))
+        self.value['legacy_lock'].update(busy=True, exclusive=True)
+        self.assertIn('Legacy lock: exclusive', self.invoke(['status']))
+
+    def test_status_error_is_clear_and_does_not_claim_free_stand(self):
+        error = io.StringIO()
+        with patch.object(cli.admission, 'status', side_effect=RuntimeError('Cannot sample host resources')), \
+             patch('sys.stderr', error):
+            self.assertEqual(cli.main(['status', '--json']), 1)
+        self.assertIn('ERROR: Cannot sample host resources', error.getvalue())
 
 
 if __name__ == '__main__':
