@@ -60,7 +60,8 @@ function ISContextMenu:calcWidth() return 100 end
 function ISContextMenu:setWidth(width) self.width = width end
 function ISContextMenu.onGetUpAndThen() end
 ISInventoryPaneContextMenu = {}
-for _, name in ipairs({'onEatItems','onDrinkFluid','onWearItems','OnPrimaryWeapon','onDropItems','onResearchRecipe'}) do
+for _, name in ipairs({'onEatItems','onDrinkFluid','onWearItems','OnPrimaryWeapon','onDropItems','onResearchRecipe',
+    'onSetAlarm','onWringClothing','AutoDrinkOn','AutoDrinkOff','onConsolidate','onConsolidateAll'}) do
     ISInventoryPaneContextMenu[name] = function(target, item) return target, item end
 end
 require = function(name)
@@ -83,7 +84,7 @@ local function build()
 end
 local function anchor(menu, category)
     for _, option in ipairs(menu.options) do
-        if option.name == Organizer.groupName(category) and option.toolkitContextGroup then return option end
+        if option.toolkitContextGroupId == category and option.toolkitContextGroup then return option end
     end
 end
 local function group(menu, category)
@@ -96,17 +97,15 @@ local function same(menu, original)
 end
 local menu, actions = build()
 assert(menu:prerender('native-result') == 'native-result')
-assert(menu.nativeRendered and #menu.options == 4)
-local food, gear = group(menu, 'consume'), group(menu, 'equipment')
-assert(food.options[1] == actions[1] and food.options[2] == actions[2])
-assert(gear.options[1] == actions[3] and gear.options[2] == actions[4])
-assert(menu.options[4] == actions[6], 'unknown mod callback with native-looking label remains visible at root')
-assert(food.options[1].onSelect(food.options[1].target, food.options[1].param1) == 'owner')
+assert(menu.nativeRendered and #menu.options == 6)
+assert(not group(menu, 'consume') and not group(menu, 'equipment'), 'primary food/wear actions stay root and one hand choice needs no shell')
+assert(menu.options[6] == actions[6], 'unknown mod callback with native-looking label remains visible at root')
+assert(actions[1].onSelect(actions[1].target, actions[1].param1) == 'owner')
 local counts = nextSub
 menu:prerender(); menu:prerender(); assert(nextSub == counts, 'no per-frame group allocations')
 assert(writes == 0, 'discovery never writes config per frame/menu')
 enabled = false; menu:prerender(); same(menu, actions)
-enabled = true; menu:prerender(); assert(group(menu,'consume'))
+enabled = true; menu:prerender(); same(menu,actions)
 menu:addOption('Late mod action', nil, function() end)
 assert(#menu.options == 7 and menu.options[1] == actions[1], 'late native additions restore the original tree first')
 menu:prerender(); assert(menu.options[#menu.options].name == 'Late mod action')
@@ -123,7 +122,7 @@ assert(not Organizer.setOverride('key', 'unknown-category'))
 Organizer.reset()
 menu, actions = build()
 Organizer.setOverride('callback:ISInventoryPaneContextMenu.onDropItems', 'hidden')
-menu:prerender(); assert(#menu.options == 3)
+menu:prerender(); assert(#menu.options == 5)
 Organizer.setOverride('callback:ISInventoryPaneContextMenu.onEatItems', 'root')
 menu:prerender(); assert(menu.options[1] == actions[1])
 Organizer.setOverride('label:Read', 'research')
@@ -152,6 +151,7 @@ native:addSubMenu(batch,deep)
 local dismantle = menu:addOption('Dismantle',nil,nil)
 dismantle.toolkitBulkRecipe = 'DismantleElectronics'
 menu:addSubMenu(dismantle,native)
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.OnNewCraft:DismantleElectronics','electronics')
 local second = menu:addOption('Radio',nil,nil); second.pzstCategory='electronics';second.pzstKey='radio'
 menu:prerender()
 local devices = group(menu,'electronics')
@@ -178,8 +178,11 @@ for _, groupMenu in ipairs({devices}) do
     assert(created ~= dismantle and created ~= second and one.param1 == 'exact-one')
 end
 assert(native.options[1] == one and one.onSelect('body') == 'one')
+Organizer.reset()
 print('PASS original nested selectors, third-level actions, parent links and arbitrary option metadata')
 
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.onEatItems','consume')
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.onWearItems','equipment')
 menu, actions = build()
 local originalGetNew = menu.getNew
 local calls = 0
@@ -190,17 +193,21 @@ menu.getNew = function(self,parent)
 end
 menu:prerender(); same(menu,actions)
 assert(menu.toolkitContextState == nil and menu.nativeRendered, 'failed grouping leaves native rendering usable')
+Organizer.reset()
 print('PASS partial grouping failure restores every native action')
 print('Context menu organization checks passed (actual classifier, menu/file boundaries are doubles).')
 
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.onEatItems','consume')
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.onDrinkFluid','consume')
 menu, actions = build();menu.mouseOver=2;menu:prerender()
 assert(menu.mouseOver==1 and menu.options[1].toolkitContextGroup,'joypad selection follows its action into the group')
 Organizer.restore(menu);assert(menu.mouseOver==1 and menu.options[1]==actions[1])
+Organizer.reset()
 local parent=ISContextMenu:new(nil);root=parent
 local header=parent:addOption('Unknown item header',nil,nil)
 local child=parent:getNew(parent);parent:addSubMenu(header,child)
-for _, name in ipairs({'onEatItems','onDrinkFluid','onWearItems','OnPrimaryWeapon','onDropItems'})do child:addOption(name,nil,ISInventoryPaneContextMenu[name])end
-parent:prerender();assert(group(child,'consume'))
+for _, name in ipairs({'AutoDrinkOn','AutoDrinkOff','onSetAlarm','onWringClothing','onDropItems'})do child:addOption(name,nil,ISInventoryPaneContextMenu[name])end
+parent:prerender();assert(#child.options==5 and not group(child,'consume') and not group(child,'equipment'), 'native object submenus retain their own actions without automatic shells')
 child:clear();assert(parent.toolkitContextState==nil and #child.options==0)
 child:addOption('Replacement',nil,function()end);parent:prerender()
 assert(#child.options==1 and child.options[1].name=='Replacement','late submenu rebuild never resurrects pooled actions')
@@ -212,7 +219,7 @@ local duplicate=menu:addOption(actions[1].name,actions[1].target,actions[1].onSe
 menu.mouseOver=#menu.options
 for i=1,5 do
  menu:prerender()
- local food=group(menu,'consume');assert(#food.options==2,'exact repeated button must appear once')
+ assert(#menu.options==6 and menu.options[1]==actions[1] and menu.options[2]==actions[2], 'exact repeated primary button must appear once at root')
  Organizer.restore(menu);same(menu,{actions[1],actions[2],actions[3],actions[4],actions[5],actions[6],duplicate})
 end
 menu:clear()
@@ -231,9 +238,8 @@ local variants={
  menu:addOption('Drop',target,callback,item),
 }
 variants[5].toolTip={description='different tooltip'};variants[6].notAvailable=true
-menu:prerender();local transfers=group(menu,'transfer')
-assert(transfers and #transfers.options==5 and menu.options[2]==variants[3],
- 'same labels with different target/callback/arguments/metadata must retain distinct actions')
+menu:prerender();same(menu,variants)
+assert(not group(menu,'transfer'), 'distinct Drop actions stay root with their target/callback/arguments/metadata')
 Organizer.restore(menu);same(menu,variants)
 
 menu=ISContextMenu:new(nil);root=menu
@@ -375,13 +381,21 @@ local function contains(m,option)
  for _,row in ipairs(m.options) do if row==option then return true end end
  return false
 end
+local function present(m,option)
+ if contains(m,option) then return true end
+ for _,row in ipairs(m.options) do
+  local child=row.subOption and m:getSubMenu(row.subOption)
+  if child and present(child,option) then return true end
+ end
+ return false
+end
 local function moreGroup(m)
  for _,row in ipairs(m.options) do if row.toolkitContextGroup and row.name=='More' then return m:getSubMenu(row.subOption) end end
 end
 menu,actions=potMenu(true,true)
 for i=1,5 do
  menu:prerender()
- assert(not contains(menu,actions.recipe) and not contains(menu,actions.native), 'covered cooking and input-search paths must disappear, not move into another group')
+ assert(not contains(menu,actions.recipe) and not present(menu,actions.native), 'covered cooking and input-search paths must disappear, not move into another group')
  assert(not contains(menu,actions.distribute),'mouse distribution uses the visible toolbar button')
  assert(contains(menu,actions.cook) and contains(menu,actions.fluid))
  assert(contains(menu,actions.drop) and contains(menu,actions.place) and not group(menu,'transfer'),'fluid, drop and placement must not gain an extra transfer group')
@@ -400,7 +414,7 @@ end
 print('PASS preferred cooking/search routes, fluid depth, shared More group, live rollback and native option pools')
 
 menu,actions=potMenu(false,false);menu:prerender()
-assert(contains(menu,actions.recipe) and contains(menu,actions.native),'missing replacements must retain native actions')
+assert(contains(menu,actions.recipe) and present(menu,actions.native),'missing replacements must retain native actions')
 assert(#actions.ingredients.options==6 and not group(actions.ingredients,'craft'),'native recipe selectors never get a redundant craft group')
 menu,actions=potMenu(true,true,{kind='InventoryItem'});menu:prerender()
 assert(contains(menu,actions.recipe),'Project Cook cannot replace non-Food scripted ingredients')
@@ -409,7 +423,7 @@ assert(contains(menu,actions.recipe),'cooking another base item is not a replace
 menu,actions=potMenu(true,true);actions.cook.notAvailable=true;menu:prerender()
 assert(contains(menu,actions.recipe),'disabled preferred entry cannot replace a native action')
 menu,actions=potMenu(true,true);actions.native.param5='!Base.Other';menu:prerender()
-assert(contains(menu,actions.native),'search for another full type is not redundant')
+assert(present(menu,actions.native),'search for another full type is not redundant')
 for _,fallback in ipairs({'controller','hidden','absent'}) do
  controller=fallback=='controller';buttonVisible=fallback~='hidden';page.controlsUI=fallback~='absent' and controls or nil
  menu,actions=potMenu(true,true);menu:prerender();assert(contains(menu,actions.distribute),'distribution context fallback missing: '..fallback)
@@ -429,7 +443,7 @@ for _,hidden in ipairs({'Cooking','Recipe search','Uses'}) do
  Organizer.setOverride('label:'..hidden,'hidden')
  menu,actions=potMenu(true,true);menu:prerender()
  if hidden=='Cooking' then assert(contains(menu,actions.recipe),'hiding Project Cook must restore native cooking')
- else assert(contains(menu,actions.native),'hiding a replacement search must restore native lookup') end
+ else assert(present(menu,actions.native),'hiding a replacement search must restore native lookup') end
  if hidden=='Uses' then
   for _,row in ipairs(menu:getSubMenu(actions.search.subOption).options) do assert(row.name~='Uses','hidden input search must remain hidden inside More') end
  end
@@ -477,9 +491,10 @@ for _,row in ipairs(menu.options) do
 end
 assert(handGroup and #handGroup.options==2,'hand-only actions need a specific label')
 assert(handGroup.options[1].onSelect==ISInventoryPaneContextMenu.OnPrimaryWeapon and handGroup.options[2].onSelect==ISInventoryPaneContextMenu.OnSecondWeapon)
-menu:addOption('Wear',nil,ISInventoryPaneContextMenu.onWearItems);menu:prerender()
-assert(group(menu,'equipment') and #group(menu,'equipment').options==3,'mixed equipment actions keep their broader label')
-print('PASS hand-only group label and unchanged mixed equipment group')
+local wear=menu:addOption('Wear',nil,ISInventoryPaneContextMenu.onWearItems);menu:prerender()
+assert(group(menu,'equipment') and #group(menu,'equipment').options==2 and contains(menu,wear), 'hand choices retain their group independently of root Wear')
+assert(anchor(menu,'equipment').name=='UI_PZSurvivorToolkit_context_take_in_hand')
+print('PASS hand-only group stays independent of root Wear')
 
 Organizer.reset()
 local dropKey='callback:ISInventoryPaneContextMenu.onDropItems'
@@ -538,15 +553,17 @@ print('PASS item scope capture, mixed stacks and title barriers in editor orderi
 Organizer.reset()
 Organizer.setOverride('label:Recipe search','hidden','Base.Pot')
 menu,actions=potMenu(true,true);menu.toolkitContextItemType='Base.Pot';menu:prerender()
-assert(contains(menu,actions.native),'native lookup fallback missing')
-local fallbackVisible=false
-for _,row in ipairs(Organizer.getLayout('Base.Pot','root')) do if row.key=='callback:ISEntityUI.OpenHandcraftWindow' then fallbackVisible=true end end
-assert(fallbackVisible,'editor must show restored native fallback, not only the baseline tree')
-fallbackVisible=false
-for _,row in ipairs(Organizer.getLayout('Base.Pot','root','Base.Pot')) do
- if row.key=='callback:ISEntityUI.OpenHandcraftWindow' then fallbackVisible=true end
+assert(present(menu,actions.native),'native lookup fallback missing')
+local function fallbackVisible(sample)
+ for _,parent in ipairs({'root','world'}) do
+  for _,row in ipairs(Organizer.getLayout('Base.Pot',parent,sample)) do
+   if row.key=='callback:ISEntityUI.OpenHandcraftWindow' then return true end
+  end
+ end
+ return false
 end
-assert(fallbackVisible,'same-type sample preview must show the native fallback restored by current rules')
+assert(fallbackVisible(), 'editor must show restored native fallback, not only the baseline tree')
+assert(fallbackVisible('Base.Pot'), 'same-type sample preview must show the native fallback restored by current rules')
 Organizer.reset()
 print('PASS editor reflects conditional fallback actions in the actual menu')
 
@@ -576,10 +593,11 @@ print('PASS native menu marker tag routing across types, mixed selection safety,
 
 Organizer.reset()
 menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextItemType='Base.Pot'
-menu:addOption('Eat',nil,ISInventoryPaneContextMenu.onEatItems)
-menu:addOption('Drink',nil,ISInventoryPaneContextMenu.onDrinkFluid)
+menu:addOption('Auto drink on',nil,ISInventoryPaneContextMenu.AutoDrinkOn)
+menu:addOption('Auto drink off',nil,ISInventoryPaneContextMenu.AutoDrinkOff)
 for index=1,4 do menu:addOption('Other '..index,nil,function() end) end
-Organizer.setOverride('callback:ISInventoryPaneContextMenu.onEatItems','root')
+menu:prerender();assert(group(menu,'consume'), 'secondary consume controls initially share a group')
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.AutoDrinkOn','root')
 menu:prerender()
 assert(not group(menu,'consume'),'singleton automatic category must remain at root')
 local phantomGroup=false
@@ -655,3 +673,183 @@ assert(previewHasDrop(Organizer.getLayout('Base.Pot','root','Base.Pot')),'sample
 assert(#Organizer.getLayout(stateProfile,'root','Base.Pot')==0,'nonmatching mixed-state sample applied tag profile')
 Organizer.reset()
 print('PASS same-type mixed-state sample preserves all-match selection semantics')
+
+
+-- Native selectors stay root, while their portion/variant/quantity choices retain exact objects and order.
+Organizer.reset()
+translations.ContextMenu_Eat='Eat';translations.ContextMenu_Wear='Wear'
+ISInventoryPaneContextMenu.onClothingItemExtra=function() end
+ISInventoryPaneContextMenu.onUnloadBulletsFromFirearm=function() end
+menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextKind='inventory';menu.toolkitContextItemType='Base.Selectors'
+local wear=menu:addOption('Wear',{},nil)
+local wearChoices=menu:getNew(menu);menu:addSubMenu(wear,wearChoices)
+local wearOne=wearChoices:addOption('Normal',{},ISInventoryPaneContextMenu.onWearItems,0)
+local wearVariant=wearChoices:addOption('Tucked',{},ISInventoryPaneContextMenu.onClothingItemExtra,'Base.Shirt',{})
+local eatHeader=menu:addOption('Eat',{},nil)
+local foodChoices=menu:getNew(menu);menu:addSubMenu(eatHeader,foodChoices)
+local all=foodChoices:addOption('All',{},ISInventoryPaneContextMenu.onEatItems,1)
+local half=foodChoices:addOption('Half',{},ISInventoryPaneContextMenu.onEatItems,.5)
+local unload=menu:addOption('Unload',{},nil)
+unload.toolkitBulkUnload=true;unload.toolkitOriginalOnSelect=ISInventoryPaneContextMenu.onUnloadBulletsFromFirearm
+local unloadChoices=menu:getNew(menu);menu:addSubMenu(unload,unloadChoices)
+local singleUnload=unloadChoices:addOption('This firearm',{},ISInventoryPaneContextMenu.onUnloadBulletsFromFirearm,{})
+local selectedUnload=unloadChoices:addOption('Selected firearms',{},function() end,{})
+local drop=menu:addOption('Drop',{},ISInventoryPaneContextMenu.onDropItems)
+local place=menu:addOption('Place',{},ISInventoryPaneContextMenu.onPlaceItemOnGround)
+local foreign=menu:addOption('Foreign',{},function() end)
+local originals={unpack(menu.options)}
+for cycle=1,3 do
+ menu:prerender()
+ assert(#menu.options==6 and contains(menu,wear) and contains(menu,eatHeader) and contains(menu,unload))
+ assert(contains(menu,drop) and contains(menu,place), 'drop and placement stay direct beside selectors')
+ assert(wearChoices.parent==menu and foodChoices.parent==menu and unloadChoices.parent==menu)
+ same(wearChoices,{wearOne,wearVariant});same(foodChoices,{all,half});same(unloadChoices,{singleUnload,selectedUnload})
+ assert(#Organizer.getLayout('Base.Selectors','root','Base.Selectors')==6, 'preview must preserve native selector depth')
+ Organizer.restore(menu);same(menu,originals)
+end
+menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextKind='inventory'
+local uniform={}
+for index=1,5 do uniform[index]=menu:addOption('Alarm '..index,{},ISInventoryPaneContextMenu.onSetAlarm,index) end
+menu:prerender();same(menu,uniform);assert(not group(menu,'electronics'), 'uniform secondary menus need no pointless wrapper')
+local hiddenDrop=menu:addOption('Drop',{},ISInventoryPaneContextMenu.onDropItems)
+local uniformRaw={unpack(menu.options)}
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.onDropItems','hidden')
+menu:prerender();same(menu,uniform)
+assert(not group(menu,'electronics') and not present(menu,hiddenDrop), 'hidden actions must not turn a uniform visible menu into one automatic wrapper')
+Organizer.restore(menu);same(menu,uniformRaw)
+Organizer.reset()
+menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextKind='inventory'
+local drop=menu:addOption('Drop',{},ISInventoryPaneContextMenu.onDropItems)
+local place=menu:addOption('Place',{},ISInventoryPaneContextMenu.onPlaceItemOnGround)
+local consolidate=menu:addOption('Consolidate',{},ISInventoryPaneContextMenu.onConsolidate)
+local consolidateAll=menu:addOption('Consolidate all',{},ISInventoryPaneContextMenu.onConsolidateAll)
+menu:addOption('Foreign',{},function() end)
+menu:prerender()
+assert(contains(menu,drop) and contains(menu,place))
+assert(group(menu,'transfer') and contains(group(menu,'transfer'),consolidate) and contains(group(menu,'transfer'),consolidateAll),
+ 'root drop/placement are excluded from an otherwise useful secondary transfer group')
+print('PASS native Wear/Eat/Unload root selectors, exact choice preservation, root drop/placement and uniform menu policy')
+
+-- A filtered native Build lookup inside More must merge with Neat Building's richer lookup.
+Organizer.reset()
+ISEntityUI.OpenBuildWindow=function() end
+NB_InventoryBuildSearch={openExact=function() end,openByDisplayName=function() end}
+local buildPlayer={getPlayerNum=function() return 0 end,getInventory=function() return container end}
+getSpecificPlayer=function(index) return index==0 and buildPlayer or nil end
+local torch={getFullType=function() return 'Base.Torch' end}
+local function buildingUtilityMenu()
+ local m=ISContextMenu:new(nil);root=m;m.toolkitContextKind='inventory'
+ local more=m:addOption('More',nil,nil);local misc=m:getNew(m);m:addSubMenu(more,misc)
+ local native=misc:addOption('Build with this item',buildPlayer,ISEntityUI.OpenBuildWindow,nil,'*',false,nil,'!Base.Torch')
+ misc:addOption('Favorite',torch,ISInventoryPaneContextMenu.onFavorite)
+ misc:addOption('Unwanted',torch,ISInventoryPaneContextMenu.onUnwanted)
+ local search=m:addOption('Building search',torch,nil);local choices=m:getNew(m);m:addSubMenu(search,choices)
+ local exact=choices:addOption('Exact building input',torch,NB_InventoryBuildSearch.openExact,0)
+ choices:addOption('Matching building names',torch,NB_InventoryBuildSearch.openByDisplayName,0)
+ m:addOption('Primary',nil,ISInventoryPaneContextMenu.OnPrimaryWeapon)
+ m:addOption('Secondary',nil,ISInventoryPaneContextMenu.OnSecondWeapon)
+ m:addOption('Drop',nil,ISInventoryPaneContextMenu.onDropItems)
+ m:addOption('Place',nil,ISInventoryPaneContextMenu.onPlaceItemOnGround)
+ return m,native,search,exact,misc
+end
+menu,native,search,exact=buildingUtilityMenu();menu:prerender()
+local moreCount=0;for _,row in ipairs(menu.options) do if row.name=='More' then moreCount=moreCount+1 end end
+assert(moreCount==1 and contains(assert(moreGroup(menu)),search) and not present(menu,native),
+ 'native exact Build utility must not leave a second More branch or duplicate lookup')
+Organizer.restore(menu)
+exact.notAvailable=true;menu:prerender();assert(present(menu,native),'unavailable Neat exact lookup restores native utility')
+Organizer.reset();Organizer.setOverride('label:Exact building input','hidden')
+menu,native=buildingUtilityMenu();menu:prerender();assert(present(menu,native),'hidden Neat child restores native utility')
+Organizer.reset()
+menu,native,search,exact=buildingUtilityMenu()
+menu:getSubMenu(search.subOption):addOption('Foreign lookup',torch,function() end)
+menu:prerender();assert(present(menu,native) and contains(menu,search),'foreign mixed selector cannot replace the native lookup')
+print('PASS exact native Build utility merges one More branch and retains unavailable/hidden/foreign fallbacks')
+
+-- Cart corpse routes are duplicates only for the same player/cart and a usable top-level quick action.
+Organizer.reset()
+local oldGetText=getText
+getText=function(key,name)
+ if key=='UI_SaucedCarts_LoadCorpseInto' then return 'Load corpse into '..tostring(name) end
+ if key=='UI_SaucedCarts_LoadCorpse' then return 'Load corpse' end
+ return oldGetText(key)
+end
+local cartA,cartB={kind='Cart',name='Shopping cart'},{kind='Cart',name='Shopping cart'}
+local corpseEnabled=false
+SaucedCarts={isCart=function(item) return type(item)=='table' and item.kind=='Cart' end,
+ getCartDisplayName=function(cart) return cart.name end,CorpseStorage={isEnabled=function() return corpseEnabled end}}
+local cartPlayer={getPlayerNum=function() return 0 end,getInventory=function() return container end,isDraggingCorpse=function() return true end}
+local otherPlayer={getPlayerNum=function() return 1 end,getInventory=function() return {} end,isDraggingCorpse=function() return true end}
+local rootCorpseKey,nestedCorpseKey='mod:SaucedCarts.loadCorpseRoot','mod:SaucedCarts.loadCorpseNested'
+local function cartMenu(withRoot)
+ local m=ISContextMenu:new(nil);root=m;m.toolkitContextKind='world'
+ local quick
+ if withRoot then
+  quick=m:addOption(getText('UI_SaucedCarts_LoadCorpseInto',cartA.name),cartPlayer,function() end,cartA)
+  sources[quick.onSelect]='/mods/SaucedCarts/ContextMenu.lua'
+ end
+ local header=m:addOption('Shopping cart',cartA,nil);local child=m:getNew(m);m:addSubMenu(header,child)
+ local nested=child:addOption(getText('UI_SaucedCarts_LoadCorpse'),cartPlayer,function() end,cartA)
+ local otherCart=child:addOption(getText('UI_SaucedCarts_LoadCorpse'),cartPlayer,function() end,cartB)
+ local otherActor=child:addOption(getText('UI_SaucedCarts_LoadCorpse'),otherPlayer,function() end,cartA)
+ for _,row in ipairs({nested,otherCart,otherActor}) do sources[row.onSelect]='/mods/SaucedCarts/ContextMenu/CartSubmenu.lua' end
+ local foreign=child:addOption(getText('UI_SaucedCarts_LoadCorpse'),cartPlayer,function() end,cartA)
+ sources[foreign.onSelect]='/mods/OtherCartMod/CartSubmenu.lua'
+ return m,quick,child,nested,otherCart,otherActor,foreign
+end
+menu,quick,cartChild,nested,otherCart,otherActor,foreign=cartMenu(true)
+local rawRoot,rawChild={unpack(menu.options)},{unpack(cartChild.options)}
+for cycle=1,3 do
+ menu:prerender()
+ assert(contains(menu,quick) and not contains(cartChild,nested), 'usable quick action replaces only its matching nested route')
+ assert(contains(cartChild,otherCart) and contains(cartChild,otherActor) and contains(cartChild,foreign),
+  'same labels preserve other cart/player identities and foreign callbacks')
+ assert(quick.target==cartPlayer and quick.param1==cartA and nested.target==cartPlayer and nested.param1==cartA and not corpseEnabled)
+ Organizer.restore(menu);same(menu,rawRoot);same(cartChild,rawChild)
+end
+menu:clear();cartChild:clear()
+local pooled={}
+for _,pool in ipairs({menu.optionPool,cartChild.optionPool}) do
+ for _,option in ipairs(pool) do assert(not pooled[option], 'cart route restoration pooled a borrowed option twice');pooled[option]=true end
+end
+for _,option in ipairs(rawRoot) do assert(pooled[option]) end
+for _,option in ipairs(rawChild) do assert(pooled[option]) end
+for _,fallback in ipairs({'missing','disabled','hidden'}) do
+ Organizer.reset()
+ if fallback=='hidden' then Organizer.setOverride(rootCorpseKey,'hidden') end
+ menu,quick,cartChild,nested=cartMenu(fallback~='missing')
+ if fallback=='disabled' then quick.notAvailable=true end
+ menu:prerender();assert(contains(cartChild,nested),'nested cart fallback lost for '..fallback)
+ if fallback=='hidden' then assert(not present(menu,quick),'manual hiding of quick action remains effective') end
+end
+Organizer.reset();Organizer.setOverride(nestedCorpseKey,'root')
+menu,quick,cartChild,nested=cartMenu(true);menu:prerender()
+assert(contains(menu,quick) and contains(cartChild,nested),'explicit child placement overrides duplicate suppression')
+Organizer.reset();Organizer.setOverride(nestedCorpseKey,'hidden')
+menu,quick,cartChild,nested=cartMenu(false);menu:prerender();assert(not contains(cartChild,nested),'explicit child hiding remains effective without a replacement')
+Organizer.reset()
+menu,quick,cartChild,nested=cartMenu(true);quick.param1=cartB;menu:prerender()
+assert(contains(cartChild,nested),'quick action for another cart cannot hide the selected cart route')
+menu,quick,cartChild,nested=cartMenu(true);sources[quick.onSelect]='foreign.lua';menu:prerender()
+assert(contains(cartChild,nested),'foreign quick action cannot hide a native cart route')
+menu,quick,cartChild,nested=cartMenu(true)
+local holder=menu:getNew(menu);holder.options={quick};quick.id=1
+menu.options={menu.options[2]};menu.numOptions=2
+local wrapper=menu:addOption('Other mod quick-action wrapper',nil,nil);menu:addSubMenu(wrapper,holder)
+menu:prerender();assert(contains(cartChild,nested),'a nested quick-action role does not count as the top-level replacement')
+Organizer.reset()
+-- A mod can expose the nested closure at root; preview must still apply its semantic duplicate policy.
+menu,quick,cartChild,nested=cartMenu(true);menu.toolkitContextItemType='Base.CartPreview'
+cartChild.options={};cartChild.numOptions=1
+nested.id=#menu.options+1;menu.options[#menu.options+1]=nested;menu.numOptions=#menu.options+1
+menu:prerender();assert(not present(menu,nested))
+local function previewHasCorpse(key)
+ for _,row in ipairs(Organizer.getLayout('Base.CartPreview','root','Base.CartPreview')) do if row.key==key then return true end end
+ return false
+end
+assert(previewHasCorpse(rootCorpseKey) and not previewHasCorpse(nestedCorpseKey), 'preview must hide the same duplicate as the live tree')
+Organizer.setOverride(rootCorpseKey,'hidden','Base.CartPreview')
+assert(not previewHasCorpse(rootCorpseKey) and previewHasCorpse(nestedCorpseKey), 'preview restores the child when its root replacement is manually hidden')
+assert(present(menu,nested) and not present(menu,quick),'live fallback must agree with its preview')
+Organizer.reset();SaucedCarts=nil;getText=oldGetText
+print('PASS cart role identity, unavailable/hidden/missing fallbacks, manual child placement, pool restoration and preview parity')

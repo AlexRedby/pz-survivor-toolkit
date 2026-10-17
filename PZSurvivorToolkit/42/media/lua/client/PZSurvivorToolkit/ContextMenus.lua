@@ -8,7 +8,7 @@ local Tags = require "PZSurvivorToolkit/ItemTags"
 local Organizer = Profile.new(Rules, Tags)
 PZSurvivorToolkit.ContextMenus = Organizer
 local busy, automatic, scope, tagScopes = false, false, "*", {}
-local examples, previews = {}, {}
+local examples, previews, semanticDefaults = {}, {}, {}
 
 -- Preview runs the same organizer on copied options, without allocating native UI or invoking callbacks.
 local function copyMenu(source)
@@ -62,7 +62,7 @@ end
 local function action(option, defaults, discover)
     if option.isDefaultOption or option.isTitle or option.toolkitContextGroup then return nil end
     local category, key = Rules.classify(option)
-    category = defaults and defaults[option] or category
+    category = defaults and defaults[option] or semanticDefaults[option] or category
     local label = tostring(option.name or option.text or "")
     if label == "" then return nil end
     key = key or "label:" .. label:gsub("%s*%(%d+%)$", "")
@@ -179,11 +179,41 @@ local function sortActions(options, priorities)
     return changed
 end
 
+local function menuDefaults(root)
+    local defaults, roots, visited = {}, {}, {}
+    for _, option in ipairs(root.options) do
+        if Rules.cartCorpseRole(option) == "root" then
+            defaults[option] = "root"
+            local _, key = Rules.classify(option)
+            if not option.notAvailable and (automatic or Organizer.getOverride(key, scope, tagScopes) ~= "hidden") then
+                roots[#roots + 1] = option
+            end
+        end
+    end
+    if #roots == 0 then return defaults end
+    local function children(menu)
+        if visited[menu] then return end; visited[menu] = true
+        for _, option in ipairs(menu.options) do
+            if Rules.cartCorpseRole(option) == "nested" then
+                for _, alternative in ipairs(roots) do
+                    if option.target == alternative.target and option.param1 == alternative.param1 then defaults[option] = "hidden"; break end
+                end
+            end
+            if option.subOption then
+                local child = menu:getSubMenu(option.subOption)
+                if child then children(child) end
+            end
+        end
+    end
+    children(root)
+    return defaults
+end
+
 local function organizeNode(menu, state, visited, selectorsOnly, context, parentKey)
     if visited[menu] or not menu.options then return end
     visited[menu] = true
     local original, unique, categories, explicit, counts, keys, priorities = {}, {}, {}, {}, {}, {}, {}
-    local changed, hasTitle = false, false
+    local changed, hasTitle, groupable, visibleCount = false, false, {}, 0
     local selected = menu.options[menu.mouseOver]
     for index, option in ipairs(menu.options) do
         if not option.isDefaultOption then
@@ -238,7 +268,9 @@ local function organizeNode(menu, state, visited, selectorsOnly, context, parent
         keys[option] = key
         categories[option] = category
         explicit[option] = manual
-        if category and category ~= "root" and category ~= "hidden" then
+        if category ~= "hidden" then visibleCount = visibleCount + 1 end
+        groupable[option] = not menu.parent and Rules.canGroupAutomatically(menu, option, category, key, context)
+        if category and category ~= "root" and category ~= "hidden" and (manual or groupable[option]) then
             counts[category] = (counts[category] or 0) + 1
         end
         -- Portion/recipe selectors already form coherent native submenus.
@@ -264,10 +296,10 @@ local function organizeNode(menu, state, visited, selectorsOnly, context, parent
     end
     for _, option in ipairs(unique) do
         local category = categories[option]
-        if (not selectorsOnly or explicit[option]) and category == "hidden" then
+        if (not selectorsOnly or explicit[option] or semanticDefaults[option] == "hidden") and category == "hidden" then
             changed = true
         elseif (not selectorsOnly or explicit[option]) and category and category ~= "root"
-            and (explicit[option] or (not hasTitle and #unique >= 5 and counts[category] >= 2)) then
+            and (explicit[option] or (groupable[option] and not hasTitle and visibleCount >= 5 and (counts[category] or 0) >= 2 and counts[category] < visibleCount)) then
             local group = groups[category]
             if not group then
                 group = menu:getNew(menu)
@@ -375,6 +407,7 @@ function Organizer.organize(root)
     local function pass()
         local state = { nodes = {}, parents = {}, groups = {}, borrowed = {}, anchors = {}, anchorOptions = {} }
         root.toolkitContextState = state
+        semanticDefaults = menuDefaults(root)
         organizeNode(root, state, {}, false, root.toolkitContextKind, "root")
     end
     local ok, error = pcall(function()
@@ -391,7 +424,7 @@ function Organizer.organize(root)
         end
         Organizer.captureActualLayout(scope, snapshot(root))
     end)
-    busy, automatic = false, false
+    busy, automatic, semanticDefaults = false, false, {}
     if not ok then
         restore(root)
         print("[PZSurvivorToolkit] Context menu organization failed: " .. tostring(error))
@@ -404,7 +437,7 @@ function Organizer.renderPreview(editScope, itemType)
     local cached = previews[itemType]
     local tagsEnabled = Tags.enabled()
     if cached and cached.scope == editScope and cached.revision == Organizer.revision and cached.tagsEnabled == tagsEnabled then return cached.layout end
-    local wasBusy, wasAutomatic, wasScope, wasTags = busy, automatic, scope, tagScopes
+    local wasBusy, wasAutomatic, wasScope, wasTags, wasDefaults = busy, automatic, scope, tagScopes, semanticDefaults
     local matches = tagsEnabled and Organizer.matchingTagProfiles(source.toolkitContextTagSets or {Organizer.typeTags[itemType] or {}}) or {}
     if Organizer.getTagProfile(editScope) then
         local found = false; for _, id in ipairs(matches) do if id == editScope then found = true; break end end
@@ -413,11 +446,12 @@ function Organizer.renderPreview(editScope, itemType)
     busy, automatic, scope, tagScopes = true, false, editScope, editScope ~= "*" and matches or {}
     local ok, layout = pcall(function()
         local menu = copyMenu(source)
+        semanticDefaults = menuDefaults(menu)
         local state = {nodes = {}, parents = {}, groups = {}, borrowed = {}, anchors = {}, anchorOptions = {}}
         organizeNode(menu, state, {}, false, source.toolkitContextKind, "root")
         return snapshot(menu)
     end)
-    busy, automatic, scope, tagScopes = wasBusy, wasAutomatic, wasScope, wasTags
+    busy, automatic, scope, tagScopes, semanticDefaults = wasBusy, wasAutomatic, wasScope, wasTags, wasDefaults
     if not ok then error(layout) end
     previews[itemType] = {scope = editScope, revision = Organizer.revision, tagsEnabled = tagsEnabled, layout = layout}
     return layout
