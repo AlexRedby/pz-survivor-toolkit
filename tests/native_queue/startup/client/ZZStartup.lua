@@ -4,7 +4,8 @@ Events.OnMainMenuEnter.Add(function()
  entered=true
  if config.kind~='mp' or connecting or isClient() then return end
  connecting=true
- local connection=config.options and config.options.startup_connection or {username='client1',password='smoke-local-only'}
+ local reader=assert(getFileReader('smoke-user.txt',false));local user=reader:readLine();reader:close()
+ local connection=config.options and config.options.startup_connection or {username=user,password='smoke-local-only'}
  ConnectToServer.instance:connect(MainScreen.instance,'Native startup test',connection.username,connection.password,'127.0.0.1','',tostring(config.port),'',false,true,1)
 end)
 Events.OnPreUIDraw.Add(function()

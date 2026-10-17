@@ -573,6 +573,21 @@
       "status": "not-migrated",
       "cases": []
     },
+    "engine-peers": {
+      "status": "ready",
+      "clients": 2,
+      "default_mods": ["PZSurvivorToolkit", "ZombieBuddy", "PZToolkitJavaPatches"],
+      "cases": [
+        {
+          "id": "peer-cancel",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": ["mp"],
+          "languages": ["EN", "RU"],
+          "modes": ["toolkit"]
+        }
+      ]
+    },
     "engine": {
       "status": "ready",
       "clients": 1,

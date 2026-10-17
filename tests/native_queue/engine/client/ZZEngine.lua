@@ -5,6 +5,8 @@ require 'TimedActions/ISQueueActionsAction'
 local config=require 'QueueTestSelection'
 local Authority=require 'QueueEngineAuthority'
 local Toolkit=PZSurvivorToolkit
+local peers=config.suite=='engine-peers'
+local go,released,announced=false,false,false
 local ids,receipt,current,tail,emptyCommand,done,started,step,since,phase=nil,nil,nil,nil,nil,false,false,1,0,'prepare'
 local repairs,completes,progress,tailProgress,records,seen,boundaries=0,0,false,false,{},{},{}
 local begin=Toolkit.ActionQueueLifecycle.begin
@@ -30,13 +32,14 @@ local function generator()
     if not square then return end
     for i=0,square:getSpecialObjects():size()-1 do
         local object=square:getSpecialObjects():get(i)
-        if instanceof(object,'IsoGenerator') then return object end
+        if instanceof(object,'IsoGenerator') and object:getObjectIndex()==ids.objectIndex then return object end
     end
 end
 Events.OnServerCommand.Add(function(module,command,args)
     if module~='EngineQueueTest' then return end
     assert(args.ok~=false,args.error)
-    if command=='Prepared' then ids=args elseif command=='Verified' then receipt=args end
+    if command=='Prepared' then ids=args elseif command=='Verified' then receipt=args
+    elseif command=='Begin' then go=true elseif command=='Release' then released=true end
 end)
 Events.OnGameStart.Add(function()
     started=true;since=getTimestampMs()
@@ -52,6 +55,7 @@ Events.OnTick.Add(function()
         local player=getPlayer()
         if not player or player:isDead() or not player:getSquare() then return end
         if config.kind=='mp' and (not isClient() or player:getOnlineID()<0) then return end
+        local cancels=Authority.cancels(case,player)
         if tail and queue().current==tail and tail:isStarted() and tail:getJobDelta()>0 then tailProgress=true end
         if phase=='prepare' then
             assert(Toolkit.Settings.actionQueue(),'engine suite requires enabled queue')
@@ -65,6 +69,10 @@ Events.OnTick.Add(function()
             if not gen or not book then return end
             if gen:getCondition()~=94 then return end
             for _,id in ipairs(ids.scraps) do if not player:getInventory():getItemById(id) then return end end
+            if peers and not go then
+                if not announced then send('Ready',case);announced=true end
+                return
+            end
             player:teleportTo(ids.spawn.x,ids.spawn.y,ids.spawn.z)
             assert(gen:getCondition()==94 and not gen:isActivated(),'client generator baseline differs')
             book:setAlreadyReadPages(book:getNumberOfPages()-1)
@@ -88,33 +96,37 @@ Events.OnTick.Add(function()
                 local record=Toolkit.ActionQueueAcknowledgements.capture(active)
                 if record and not seen[record.token] then
                     seen[record.token]=true;records[#records+1]=record
-                    print('[ENGINE_TEST] CAPTURE case='..case..' kind=ISFixGenerator token='..record.token)
+                    print('[ENGINE_TEST] CAPTURE case='..case..' kind=ISFixGenerator token='..record.token
+                        ..' transaction='..record.transaction..' player='..player:getOnlineID())
+                    if peers and active==current then
+                        sendClientCommand('EngineQueueTest','Started',{case=case,transaction=record.transaction,token=record.token})
+                    end
                 end
             end
             if active==current and current:isStarted() and current:getJobDelta()>0 then
                 progress=true
-                if case=='cancel' and (config.kind=='sp' or #records==1 and records[1].state=='started') then
+                if cancels and (not peers or released) and (config.kind=='sp' or #records==1 and records[1].state=='started') then
                     local allowed,reason=Toolkit.ActionQueue.cancel(q,current)
                     assert(allowed,'native repair cancellation denied '..tostring(reason))
-                    print('[ENGINE_TEST] CANCEL_REQUEST case=cancel progress=true')
+                    print('[ENGINE_TEST] CANCEL_REQUEST case='..case..' progress=true')
                     phase='draining';return
                 end
             end
-            if case=='repair' and #q.queue==0 and not player:hasTimedActions() then phase='draining' end
+            if not cancels and #q.queue==0 and not player:hasTimedActions() then phase='draining' end
         end
         if phase=='draining' then
             if #queue().queue>0 or player:hasTimedActions() then return end
             assert(progress,'native repair never made progress')
             assert(boundaries[emptyCommand],'empty native command failed to complete through shared lifecycle')
             assert(tailProgress and boundaries[tail] and tail.item:getAlreadyReadPages()==tail.item:getNumberOfPages(),'native reading tail did not progress and complete through lifecycle')
-            local expected=case=='repair' and 2 or 0
+            local expected=cancels and 0 or 2
             -- MP effects can make the last client action invalid before its local perform; receipts own the result.
-            assert(repairs==expected or config.kind=='mp' and case=='repair' and repairs==1,
+            assert(repairs==expected or config.kind=='mp' and not cancels and repairs==1,
                 'native repair perform count '..repairs)
             assert(completes==(config.kind=='sp' and expected or 0),'native complete phase count '..completes)
             if config.kind=='mp' then
-                assert(#records==(case=='repair' and 2 or 1),'missing captured native acknowledgements')
-                for _,record in ipairs(records) do assert(record.state==(case=='repair' and 'completed' or 'canceled'),'wrong authoritative action outcome '..record.state) end
+                assert(#records==(cancels and 1 or 2),'missing captured native acknowledgements')
+                for _,record in ipairs(records) do assert(record.state==(cancels and 'canceled' or 'completed'),'wrong authoritative action outcome '..record.state) end
             end
             print('[ENGINE_TEST] PHASES case='..case..' perform='..repairs..' complete='..completes)
             send('Verify',case);phase='receipt';return

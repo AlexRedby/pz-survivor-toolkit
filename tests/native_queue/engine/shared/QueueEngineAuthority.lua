@@ -1,20 +1,37 @@
 local Authority, sessions = {}, {}
 local selection = require 'QueueTestSelection'
+function Authority.cancels(case, player)
+    return case=='cancel' or case=='peer-cancel' and player:getUsername()=='client1'
+end
 local function count(player)
     local total, values = 0, player:getInventory():getItems()
     for i=0,values:size()-1 do if values:get(i):getFullType()=='Base.ElectronicsScrap' then total=total+1 end end
     return total
 end
+local function free(square)
+    return square and square:isFree(false) and not square:getRoom()
+        and square:getSpecialObjects():size()==0 and square:getObjects():size()<=1
+end
+local function placement(player)
+    local point=require('QueueEnergyPlacement')(player)
+    for offset=0,4 do
+        local x,y,z=point:getX()+1+offset*3,point:getY(),point:getZ()
+        local square=getCell():getGridSquare(x,y,z)
+        if free(square) and free(getCell():getGridSquare(x-1,y,z)) then
+            return square,{x=x-0.5,y=y+0.5,z=z}
+        end
+    end
+    error('No distinct loaded native generator and adjacent standing square')
+end
 function Authority.prepare(player, case)
     local key=player:getUsername()
     local session=sessions[key]
     if not session then
-        local point=require('QueueEnergyPlacement')(player)
-        local square=assert(getCell():getGridSquare(point:getX()+1,point:getY(),point:getZ()))
+        local square,spawn=placement(player)
+        for _,existing in pairs(sessions) do assert(existing.generator:getSquare()~=square,'peer targets overlap') end
         local item=assert(instanceItem('Base.Generator'))
         item:setCondition(94)
-        session={generator=IsoGenerator.new(item,getCell(),square),verified=0,
-            spawn={x=point:getX()+0.5,y=point:getY()+0.5,z=point:getZ()}}
+        session={generator=IsoGenerator.new(item,getCell(),square),verified=0,spawn=spawn}
         sessions[key]=session
     end
     if session.pending then assert(session.pending.case==case,'out-of-order engine prepare');return session.pending.ids end
@@ -22,7 +39,8 @@ function Authority.prepare(player, case)
     assert(player:getPerkLevel(Perks.Electricity)==0,'fixture requires native Electricity zero')
     assert(count(player)==0,'unexpected ElectronicsScrap before fixture')
     session.generator:setCondition(94)
-    local ids={case=case,scraps={},spawn=session.spawn,x=session.generator:getX(),y=session.generator:getY(),z=session.generator:getZ()}
+    local ids={case=case,scraps={},spawn=session.spawn,x=session.generator:getX(),y=session.generator:getY(),z=session.generator:getZ(),
+        objectIndex=session.generator:getObjectIndex()}
     local function seed(kind)
         local item=assert(player:getInventory():AddItem(kind),kind)
         if isServer() then sendAddItemToContainer(player:getInventory(),item) end
@@ -35,15 +53,16 @@ function Authority.prepare(player, case)
     ids.tail=book:getID()
     session.pending={case=case,ids=ids,book=book}
     assert(session.generator:getObjectIndex()>=0 and session.generator:getCondition()==94 and count(player)==2,'native generator fixture not ready')
-    print('[ENGINE_TEST] PREPARED case='..case..' condition=94 scraps=2 electricity=0 nativeGenerator=true')
+    print('[ENGINE_TEST] PREPARED case='..case..' condition=94 scraps=2 electricity=0 nativeGenerator=true actor='..key)
+    print('[ENGINE_TEST] TARGET case='..case..' x='..ids.x..' y='..ids.y..' z='..ids.z..' index='..ids.objectIndex..' actor='..key)
     return ids
 end
 function Authority.verify(player, case)
     local session=assert(sessions[player:getUsername()])
     local pending=assert(session.pending)
     assert(pending.case==case,'out-of-order engine verification')
-    local expected=case=='repair' and 0 or 2
-    assert(session.generator:getCondition()==(case=='repair' and 100 or 94),'authoritative generator condition differs')
+    local expected=Authority.cancels(case,player) and 2 or 0
+    assert(session.generator:getCondition()==(expected==0 and 100 or 94),'authoritative generator condition differs')
     assert(count(player)==expected,'authoritative scrap count differs')
     for _,id in ipairs(pending.ids.scraps) do
         assert((player:getInventory():getItemById(id)~=nil)==(expected==2),'exact scrap identity differs')
@@ -51,7 +70,7 @@ function Authority.verify(player, case)
     assert(player:getInventory():getItemById(pending.ids.tail)==pending.book,'tail identity changed')
     assert(pending.book:getAlreadyReadPages()==pending.book:getNumberOfPages(),'authoritative native tail did not finish reading')
     local result={case=case,ok=true,condition=session.generator:getCondition(),scraps=expected,tailRead=true}
-    print('[ENGINE_TEST] AUTHORITY case='..case..' condition='..result.condition..' scraps='..expected..' tailRead=true')
+    print('[ENGINE_TEST] AUTHORITY case='..case..' condition='..result.condition..' scraps='..expected..' tailRead=true actor='..player:getUsername())
     session.pending=nil;session.verified=session.verified+1
     return result
 end

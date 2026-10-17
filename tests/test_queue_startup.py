@@ -106,6 +106,11 @@ for index,kind in ipairs({'sp','mp','mp'})do
   local event={Add=function(fn)handlers[key]=fn end};rawset(self,key,event);return event
  end})
  local connection=index==3 and {username='animal-fixture',password='isolated-native-only'} or nil
+ local role=index==2 and 'client2' or 'client1'
+ function getFileReader(name,create)
+  assert(name=='smoke-user.txt'and create==false)
+  return {readLine=function()return role end,close=function()end}
+ end
  package.loaded.QueueTestSelection={kind=kind,mode='native',port=17463,options={startup_connection=connection}}
  local ingame,connected,player=false,false,nil
  function isClient()return connected end
@@ -117,7 +122,7 @@ for index,kind in ipairs({'sp','mp','mp'})do
   charCreationMain={onOptionMouseDown=function()nexts=nexts+1 end},setDefaultSandboxVars=function()end}}
  MapSpawnSelect={instance={getIsVisible=function()return false end,useDefaultSpawnRegion=function()end,setVisible=function()end}}
  ConnectToServer={instance={connect=function(self,screen,name,user,password,host,unused,port)
-  assert(user==(connection and connection.username or 'client1')and port=='17463')
+  assert(user==(connection and connection.username or role)and port=='17463')
   assert(password==(connection and connection.password or 'smoke-local-only'),'explicit credentials must reach native connect')
   connects=connects+1
  end}}
