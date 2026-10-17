@@ -4,9 +4,60 @@ local Rules = require "PZSurvivorToolkit/ContextMenuRules"
 
 if PZSurvivorToolkit.ContextMenus then return PZSurvivorToolkit.ContextMenus end
 local Profile = require "PZSurvivorToolkit/ContextMenuProfile"
-local Organizer = Profile.new(Rules)
+local Tags = require "PZSurvivorToolkit/ItemTags"
+local Organizer = Profile.new(Rules, Tags)
 PZSurvivorToolkit.ContextMenus = Organizer
-local busy, automatic, scope = false, false, "*"
+local busy, automatic, scope, tagScopes = false, false, "*", {}
+local examples, previews = {}, {}
+
+-- Preview runs the same organizer on copied options, without allocating native UI or invoking callbacks.
+local function copyMenu(source)
+    local nodes, menus = {}, {}
+    local methods = {}
+    function methods:getNew(parent)
+        local node = setmetatable({options = {}, optionPool = {}, parent = parent, player = source.player}, {__index = methods})
+        nodes[#nodes + 1] = node; node.subOptionNums = #nodes
+        return node
+    end
+    function methods:getSubMenu(index) return nodes[index] end
+    function methods:addSubMenu(option, child) option.subOption = child.subOptionNums end
+    function methods:addOption(name, target, callback)
+        local option = {name = name, target = target, onSelect = callback}
+        self.options[#self.options + 1] = option
+        return option
+    end
+    function methods:calcHeight() end
+    function methods:calcWidth() return 0 end
+    function methods:setWidth() end
+    function methods:hideAndChildren() end
+    local function clone(menu, parent)
+        if menus[menu] then return menus[menu] end
+        local node = methods:getNew(parent)
+        menus[menu] = node
+        node.toolkitContextKind = menu.toolkitContextKind
+        node.toolkitContextTagSets = menu.toolkitContextTagSets
+        for _, option in ipairs(menu.options) do
+            if not option.isDefaultOption then
+                local copied = {}; for key, value in pairs(option) do copied[key] = value end
+                if getmetatable(option) then
+                    -- Snapshot inherited fields without running a foreign __newindex on preview writes.
+                    for key in ([[isDefaultOption isTitle name text notAvailable onSelect target subOption
+                        pzstCategory pzstKey toolkitBulkAttachments toolkitBulkRecipe toolkitBulkUnload
+                        toolkitContextGroup toolkitContextGroupId toolkitOriginalOnSelect]]):gmatch("%S+") do copied[key] = option[key] end
+                    for index = 1, 10 do local key = "param" .. index; copied[key] = option[key] end
+                    setmetatable(copied, {})
+                end
+                node.options[#node.options + 1] = copied
+                if option.subOption then
+                    local child = menu:getSubMenu(option.subOption)
+                    copied.subOption = child and clone(child, node).subOptionNums or nil
+                end
+            end
+        end
+        return node
+    end
+    return clone(source)
+end
 
 local function action(option, defaults, discover)
     if option.isDefaultOption or option.isTitle or option.toolkitContextGroup then return nil end
@@ -16,7 +67,7 @@ local function action(option, defaults, discover)
     if label == "" then return nil end
     key = key or "label:" .. label:gsub("%s*%(%d+%)$", "")
     if discover and automatic then Organizer.record(scope, key, label, category) end
-    local override = not automatic and Organizer.getOverride(key, scope) or nil
+    local override = not automatic and Organizer.getOverride(key, scope, tagScopes) or nil
     return override or category, override ~= nil, key
 end
 
@@ -224,8 +275,8 @@ local function organizeNode(menu, state, visited, selectorsOnly, context, parent
                 state.groups[#state.groups + 1] = group
                 local label = category == "world" and not hasMore and (context == "inventory" or context == "loot")
                     and getText("ContextMenu_More") or Organizer.defaultGroupName(category)
-                if not automatic and Organizer.hasGroupName(category, scope) then label = Organizer.groupName(category, scope) end
-                if not automatic and Organizer.isCustomGroup(category) then label = Organizer.groupName(category, scope) end
+                if not automatic and Organizer.hasGroupName(category, scope, tagScopes) then label = Organizer.groupName(category, scope, tagScopes) end
+                if not automatic and Organizer.isCustomGroup(category) then label = Organizer.groupName(category, scope, tagScopes) end
                 local anchor = menu:addOption(label, nil, nil)
                 anchor.toolkitContextGroup = true
                 anchor.toolkitContextGroupId = category
@@ -262,7 +313,7 @@ local function organizeNode(menu, state, visited, selectorsOnly, context, parent
             local method = keys[option] and keys[option]:match("^callback:ISInventoryPaneContextMenu%.(.*)$")
             if method ~= "OnPrimaryWeapon" and method ~= "OnSecondWeapon" and method ~= "OnTwoHandsEquip" then handsOnly = false; break end
         end
-        if handsOnly and (automatic or not Organizer.hasGroupName("equipment", scope)) then groups.equipment.toolkitContextAnchor.name = getText("UI_PZSurvivorToolkit_context_take_in_hand") end
+        if handsOnly and (automatic or not Organizer.hasGroupName("equipment", scope, tagScopes)) then groups.equipment.toolkitContextAnchor.name = getText("UI_PZSurvivorToolkit_context_take_in_hand") end
     end
     if not selectorsOnly then
         changed = sortActions(result, priorities) or changed
@@ -270,7 +321,7 @@ local function organizeNode(menu, state, visited, selectorsOnly, context, parent
     end
     if not automatic then
         local function applyOrder(options, parent)
-            local ranks = {}; for index, key in ipairs(Organizer.getOrder(scope, parent)) do ranks[key] = index end
+            local ranks = {}; for index, key in ipairs(Organizer.getOrder(scope, parent, tagScopes)) do ranks[key] = index end
             local any = false; for _ in pairs(ranks) do any = true; break end
             if not any then return false end
             local order = {}
@@ -319,18 +370,21 @@ function Organizer.organize(root)
     if not PZSurvivorToolkit.Settings.contextMenus() then restore(root); return end
     if root.toolkitContextState then return end
     busy, scope = true, root.toolkitContextItemType or "*"
+    tagScopes = Tags.enabled() and Organizer.matchingTagProfiles(root.toolkitContextTagSets or {}) or {}
+    root.toolkitContextTagScopes = tagScopes
     local function pass()
         local state = { nodes = {}, parents = {}, groups = {}, borrowed = {}, anchors = {}, anchorOptions = {} }
         root.toolkitContextState = state
         organizeNode(root, state, {}, false, root.toolkitContextKind, "root")
     end
     local ok, error = pcall(function()
+        if scope ~= "*" then examples[scope] = copyMenu(root); previews[scope] = nil end
         automatic = true
         pass()
         local layout = snapshot(root)
         Organizer.captureLayout(scope, layout)
         if scope ~= "*" then Organizer.captureLayout("*", layout) end
-        if Organizer.hasChanges(scope) then
+        if Organizer.hasChanges(scope, tagScopes) then
             restore(root)
             automatic = false
             pass()
@@ -342,6 +396,31 @@ function Organizer.organize(root)
         restore(root)
         print("[PZSurvivorToolkit] Context menu organization failed: " .. tostring(error))
     end
+end
+
+function Organizer.renderPreview(editScope, itemType)
+    local source = examples[itemType]
+    if not source then return nil end
+    local cached = previews[itemType]
+    local tagsEnabled = Tags.enabled()
+    if cached and cached.scope == editScope and cached.revision == Organizer.revision and cached.tagsEnabled == tagsEnabled then return cached.layout end
+    local wasBusy, wasAutomatic, wasScope, wasTags = busy, automatic, scope, tagScopes
+    local matches = tagsEnabled and Organizer.matchingTagProfiles(source.toolkitContextTagSets or {Organizer.typeTags[itemType] or {}}) or {}
+    if Organizer.getTagProfile(editScope) then
+        local found = false; for _, id in ipairs(matches) do if id == editScope then found = true; break end end
+        if not found then return {} end
+    end
+    busy, automatic, scope, tagScopes = true, false, editScope, editScope ~= "*" and matches or {}
+    local ok, layout = pcall(function()
+        local menu = copyMenu(source)
+        local state = {nodes = {}, parents = {}, groups = {}, borrowed = {}, anchors = {}, anchorOptions = {}}
+        organizeNode(menu, state, {}, false, source.toolkitContextKind, "root")
+        return snapshot(menu)
+    end)
+    busy, automatic, scope, tagScopes = wasBusy, wasAutomatic, wasScope, wasTags
+    if not ok then error(layout) end
+    previews[itemType] = {scope = editScope, revision = Organizer.revision, tagsEnabled = tagsEnabled, layout = layout}
+    return layout
 end
 
 function Organizer.settingsChanged()
@@ -371,7 +450,7 @@ ISContextMenu.clear = function(self, ...)
         while root.parent and root.parent.options do root = root.parent end
         restore(root)
     end
-    self.toolkitContextState, self.toolkitContextGroupMenu, self.toolkitContextSkip, self.toolkitContextKind, self.toolkitContextItemType = nil, nil, nil, nil, nil
+    self.toolkitContextState, self.toolkitContextGroupMenu, self.toolkitContextSkip, self.toolkitContextKind, self.toolkitContextItemType, self.toolkitContextTagScopes, self.toolkitContextTagSets = nil, nil, nil, nil, nil, nil, nil
     return clear(self, ...)
 end
 local function beforeMutation(menu)
@@ -395,8 +474,8 @@ end
 local function markContext(menu, kind, items)
     if type(menu) == "table" and menu.options then
         restore(menu)
-        menu.toolkitContextKind, menu.toolkitContextItemType = kind, nil
-        local itemType, mixed
+        menu.toolkitContextKind, menu.toolkitContextItemType, menu.toolkitContextTagScopes, menu.toolkitContextTagSets = kind, nil, {}, {}
+        local itemType, mixed, tagSets = nil, false, {}
         for _, selection in ipairs(items or {}) do
             local selected = type(selection) == "table" and selection.items or {selection}
             for _, item in ipairs(selected) do
@@ -405,10 +484,14 @@ local function markContext(menu, kind, items)
                     if itemType and itemType ~= fullType then mixed = true end
                     itemType = fullType
                     local script = item.getScriptItem and item:getScriptItem()
-                    Organizer.items[fullType] = script and script:getDisplayName() or fullType
+                    local tags = Tags.forItem(item)
+                    Organizer.rememberItem(fullType, script and script:getDisplayName() or fullType, tags)
+                    tagSets[#tagSets + 1] = tags
                 end
             end
         end
+        menu.toolkitContextTagSets = tagSets
+        if Tags.enabled() then menu.toolkitContextTagScopes = Organizer.matchingTagProfiles(tagSets) end
         if itemType and not mixed then
             menu.toolkitContextItemType, Organizer.lastItemType = itemType, itemType
         end
@@ -429,7 +512,7 @@ Events.OnGameStart.Add(function()
     end
 end)
 Events.OnPreFillWorldObjectContextMenu.Add(function(_, menu)
-    menu.toolkitContextKind, menu.toolkitContextItemType = "world", nil
+    menu.toolkitContextKind, menu.toolkitContextItemType, menu.toolkitContextTagScopes, menu.toolkitContextTagSets = "world", nil, {}, {}
 end)
 
 return Organizer

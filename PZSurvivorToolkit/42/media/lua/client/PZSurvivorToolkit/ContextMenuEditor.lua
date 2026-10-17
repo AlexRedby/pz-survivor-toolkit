@@ -4,6 +4,9 @@ require "ISUI/ISComboBox"
 require "ISUI/ISTextEntryBox"
 require "ISUI/ISButton"
 local Organizer = require "PZSurvivorToolkit/ContextMenus"
+local Tags = require "PZSurvivorToolkit/ItemTags"
+local Schema = require "PZSurvivorToolkit/ItemTagSchema"
+local TagRulePicker = require "PZSurvivorToolkit/TagRulePicker"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
 local Editor = ISCollapsableWindow:derive("PZSurvivorToolkitContextMenuEditor")
 local instance
@@ -16,6 +19,10 @@ end
 local function selected(list)
     local row = list.items[list.selected]
     return row and row.item
+end
+
+local function previewContext(editor)
+    return Tags.enabled() and editor.previewID or {}
 end
 
 local function choose(combo, value)
@@ -44,7 +51,7 @@ function Editor:createChildren()
     local width, height = self.width, self.height
     local column = math.floor((width - 36) / 2)
     self.rightX = column + 24
-    self.scopeID, self.parentID = Organizer.lastItemType or "*", "root"
+    self.scopeID, self.parentID, self.previewID = "*", "root", Organizer.lastItemType
     local function add(control)
         control:initialise(); control:instantiate(); self:addChild(control)
         return control
@@ -54,18 +61,39 @@ function Editor:createChildren()
         UIStyle.button(control)
         return control
     end
-    self.scope = add(ISComboBox:new(12, 54, width - 24, 28, self, Editor.changeScope))
-    self.search = add(ISTextEntryBox:new("", 12, 108, column, 28))
+    self.scope = add(ISComboBox:new(12, 54, column, 28, self, Editor.changeScope))
+    self.preview = add(ISComboBox:new(self.rightX, 54, column, 28, self, Editor.changePreview))
+    local nameWidth = math.floor((width - 24) * 0.27)
+    self.profileName = add(ISTextEntryBox:new("", 12, 90, nameWidth, 28))
+    self.profileName:setPlaceholderText(text("profile_name"))
+    self.profileName:setTooltip(text("profile_name_tip"))
+    local profileButtonWidth = math.floor((width - 24 - nameWidth - 36) / 6)
+    local profileX = 12 + nameWidth + 6
+    for index, definition in ipairs({
+        {"profileCreateButton", "profile_create", Editor.createTagProfile},
+        {"profileRenameButton", "profile_rename", Editor.renameTagProfile},
+        {"profileFilterButton", "profile_filter", Editor.editTagProfile},
+        {"profileDeleteButton", "delete", Editor.deleteTagProfile},
+        {"profileUpButton", "profile_up", Editor.raiseTagProfile},
+        {"profileDownButton", "profile_down", Editor.lowerTagProfile},
+    }) do
+        self[definition[1]] = button(profileX + (index - 1) * (profileButtonWidth + 6), 90, profileButtonWidth, definition[2], definition[3])
+    end
+    self.profileUpButton:setTooltip(text("priority_tip"))
+    self.profileDownButton:setTooltip(text("priority_tip"))
+    self.search = add(ISTextEntryBox:new("", 12, 152, column, 28))
     self.search:setTooltip(text("search"))
-    self.parent = add(ISComboBox:new(self.rightX, 108, column, 28, self, Editor.changeParent))
-    self.list = add(ISScrollingListBox:new(12, 144, column, height - 304))
-    self.orderList = add(ISScrollingListBox:new(self.rightX, 144, column, height - 414))
+    self.parent = add(ISComboBox:new(self.rightX, 152, column, 28, self, Editor.changeParent))
+    self.list = add(ISScrollingListBox:new(12, 188, column, height - 348))
+    self.orderList = add(ISScrollingListBox:new(self.rightX, 188, column, height - 458))
     local fontHeight = getTextManager():getFontHeight(UIFont.Small)
     self.list.itemheight = fontHeight * 2 + 12
     self.list.doDrawItem = function(list, y, row)
         if list.selected == row.index then list:drawRect(0, y, list.width, list.itemheight, 0.4, 0.2, 0.35, 0.6) end
         list:drawText(fit(row.item.label, list.width - 28), 8, y + 5, 1, 1, 1, 1, UIFont.Small)
-        local label = Organizer.groupName(row.item.category or "root", self.scopeID)
+        local context = previewContext(self)
+        local category = Organizer.getOverride(row.item.key, self.scopeID, context) or row.item.category or "root"
+        local label = Organizer.groupName(category, self.scopeID, context)
         list:drawText(fit(label, list.width - 28), 8, y + 6 + fontHeight, 0.7, 0.8, 0.9, 1, UIFont.Small)
         return y + list.itemheight
     end
@@ -103,10 +131,21 @@ function Editor:reload()
     local entry, orderEntry = selected(self.list), selected(self.orderList)
     self.scope:clear()
     self.scope:addOptionWithData(text("scope_all"), "*")
+    for index, profile in ipairs(Organizer.tagProfiles) do
+        self.scope:addOptionWithData(index .. ". " .. text("profile_prefix") .. profile.name, profile.id)
+    end
+    self.preview:clear()
+    self.preview:addOptionWithData(text("preview_none"), false)
     local items = {}
     for fullType, name in pairs(Organizer.items) do items[#items + 1] = {id=fullType, name=name} end
     table.sort(items, function(a, b) return a.name < b.name or a.name == b.name and a.id < b.id end)
-    for _, item in ipairs(items) do self.scope:addOptionWithData(item.name, item.id) end
+    for _, item in ipairs(items) do
+        self.scope:addOptionWithData(text("type_prefix") .. item.name, item.id)
+        self.preview:addOptionWithData(item.name, item.id)
+    end
+    choose(self.preview, self.previewID or false)
+    self.previewID = self.preview:getOptionData(self.preview.selected) or nil
+    self.preview:setToolTipMap({defaultTooltip = text("preview_tip")})
     self.scope:setToolTipMap({defaultTooltip = text("scope_tip")})
     choose(self.scope, self.scopeID)
     self.scopeID = self.scope:getOptionData(self.scope.selected)
@@ -114,9 +153,10 @@ function Editor:reload()
     self.parent:addOptionWithData(text("order_root"), "root")
     self.destination:clear()
     self.destination:addOptionWithData(text("auto"), false)
-    for _, id in ipairs({"root", "hidden"}) do self.destination:addOptionWithData(Organizer.groupName(id, self.scopeID), id) end
+    local context = previewContext(self)
+    for _, id in ipairs({"root", "hidden"}) do self.destination:addOptionWithData(Organizer.groupName(id, self.scopeID, context), id) end
     for _, id in ipairs(Organizer.groupIds(self.scopeID)) do
-        local name = Organizer.groupName(id, self.scopeID)
+        local name = Organizer.groupName(id, self.scopeID, context)
         self.parent:addOptionWithData(name, id)
         self.destination:addOptionWithData(name, id)
     end
@@ -136,7 +176,7 @@ function Editor:reload()
     end
     self.orderList:clear()
     self.orderList.selected = 0
-    for _, value in ipairs(Organizer.getLayout(self.scopeID, self.parentID)) do
+    for _, value in ipairs(Organizer.getLayout(self.scopeID, self.parentID, self.previewID)) do
         self.orderList:addItem(value.label, value)
         if orderEntry and value.key == orderEntry.key then self.orderList.selected = #self.orderList.items end
     end
@@ -148,6 +188,33 @@ end
 function Editor:changeScope()
     self.scopeID = self.scope:getOptionData(self.scope.selected)
     self.status = nil
+    self:selectScopePreview()
+    self:reload()
+    self:selectOrderEntry()
+    local profile = Organizer.getTagProfile(self.scopeID)
+    self.profileName:setText(profile and profile.name or "")
+end
+
+function Editor:selectScopePreview()
+    if Organizer.items[self.scopeID] then self.previewID = self.scopeID; return end
+    local profile = Organizer.getTagProfile(self.scopeID)
+    if not profile then return end
+    local tags = Organizer.typeTags[self.previewID]
+    if tags and Tags.matchesRule(tags, profile.rule) then return end
+    self.previewID = nil
+    for fullType, name in pairs(Organizer.items) do
+        local candidateTags = Organizer.typeTags[fullType]
+        if candidateTags and Tags.matchesRule(candidateTags, profile.rule)
+            and (not self.previewID or name < Organizer.items[self.previewID]
+                or name == Organizer.items[self.previewID] and fullType < self.previewID) then
+            self.previewID = fullType
+        end
+    end
+end
+
+function Editor:changePreview()
+    self.previewID = self.preview:getOptionData(self.preview.selected) or nil
+    self.orderList:clear()
     self:reload()
     self:selectOrderEntry()
 end
@@ -161,7 +228,7 @@ function Editor:changeParent()
 end
 
 function Editor:selectEntry(entry)
-    choose(self.destination, Organizer.getOverride(entry.key, self.scopeID) or false)
+    choose(self.destination, Organizer.getOwnOverride(entry.key, self.scopeID) or false)
 end
 
 function Editor:selectedGroup()
@@ -172,7 +239,7 @@ end
 
 function Editor:selectOrderEntry()
     local id = self:selectedGroup()
-    self.groupName:setText(id and Organizer.groupName(id, self.scopeID) or "")
+    self.groupName:setText(id and Organizer.groupName(id, self.scopeID, previewContext(self)) or "")
     self:updateButtons()
 end
 
@@ -186,6 +253,13 @@ function Editor:updateButtons()
     self.renameButton:setEnable(id ~= nil)
     self.deleteButton:setEnable(id ~= nil and Organizer.isCustomGroup(id))
     self.resetButton:setEnable(self.scopeID ~= "*")
+    local tagsEnabled, profileIndex = Tags.enabled(), Organizer.tagProfileIndex(self.scopeID)
+    self.profileCreateButton:setEnable(tagsEnabled)
+    self.profileRenameButton:setEnable(tagsEnabled and profileIndex ~= nil)
+    self.profileFilterButton:setEnable(tagsEnabled and profileIndex ~= nil)
+    self.profileDeleteButton:setEnable(profileIndex ~= nil)
+    self.profileUpButton:setEnable(tagsEnabled and profileIndex ~= nil and profileIndex > 1)
+    self.profileDownButton:setEnable(tagsEnabled and profileIndex ~= nil and profileIndex < #Organizer.tagProfiles)
 end
 
 function Editor:applyEntry()
@@ -198,11 +272,66 @@ end
 
 function Editor:moveEntry(delta)
     local entry = selected(self.orderList)
-    if entry then Organizer.moveEntry(self.scopeID, self.parentID, entry.key, delta); self:reload() end
+    if entry then Organizer.moveEntry(self.scopeID, self.parentID, entry.key, delta, self.previewID); self:reload() end
 end
 
 function Editor:moveUp() self:moveEntry(-1) end
 function Editor:moveDown() self:moveEntry(1) end
+
+function Editor:openTagFilter(create)
+    if not Tags.enabled() then self.status = text("tags_disabled"); return end
+    local profile = not create and Organizer.getTagProfile(self.scopeID)
+    if not create and not profile then return end
+    local name = create and self.profileName:getText() or profile.name
+    if not name:find("%S") then self.status = text("profile_invalid"); return end
+    local categories = {}
+    for category in pairs(Schema.categories) do categories[#categories + 1] = category end
+    table.sort(categories)
+    TagRulePicker.open({owner=self, title=text("profile_filter_title"), categories=categories,
+        rule=profile and profile.rule or nil, onApply=function(rule)
+            if self.removed or not Tags.enabled() then return end
+            self.status = nil
+            if not Tags.ruleActive(rule) then self.status = text("profile_inactive"); return end
+            local id
+            if create then id = Organizer.createTagProfile(name, rule)
+            else
+                local current = Organizer.getTagProfile(profile.id)
+                if current and Organizer.updateTagProfile(profile.id, current.name, rule) then id = profile.id end
+            end
+            if id then
+                self.scopeID = id
+                self.profileName:setText(Organizer.getTagProfile(id).name)
+                self:selectScopePreview()
+                self:reload()
+            else self.status = text("profile_invalid") end
+        end})
+end
+
+function Editor:createTagProfile() self:openTagFilter(true) end
+function Editor:editTagProfile() self:openTagFilter(false) end
+
+function Editor:renameTagProfile()
+    if not Tags.enabled() then return end
+    local profile = Organizer.getTagProfile(self.scopeID)
+    if not profile then return end
+    self.status = nil
+    if not Organizer.updateTagProfile(profile.id, self.profileName:getText(), profile.rule) then self.status = text("profile_invalid") end
+    self:reload()
+end
+
+function Editor:deleteTagProfile()
+    if Organizer.deleteTagProfile(self.scopeID) then
+        self.scopeID, self.status = "*", nil
+        self.profileName:setText("")
+        self:reload()
+    end
+end
+
+function Editor:moveTagProfile(delta)
+    if Tags.enabled() and Organizer.moveTagProfile(self.scopeID, delta) then self:reload() end
+end
+function Editor:raiseTagProfile() self:moveTagProfile(-1) end
+function Editor:lowerTagProfile() self:moveTagProfile(1) end
 
 function Editor:createGroup()
     local id = Organizer.createGroup(self.groupName:getText(), self.scopeID)
@@ -249,17 +378,23 @@ function Editor:prerender()
     self:updateButtons()
     ISCollapsableWindow.prerender(self)
     self:drawText(text("scope"), 12, 34, 0.8, 0.8, 0.8, 1, UIFont.Small)
-    self:drawText(text("search"), 12, 88, 0.8, 0.8, 0.8, 1, UIFont.Small)
-    self:drawText(text("order"), self.rightX, 88, 0.8, 0.8, 0.8, 1, UIFont.Small)
+    self:drawText(text("preview"), self.rightX, 34, 0.8, 0.8, 0.8, 1, UIFont.Small)
+    self:drawText(text("search"), 12, 132, 0.8, 0.8, 0.8, 1, UIFont.Small)
+    self:drawText(text("order"), self.rightX, 132, 0.8, 0.8, 0.8, 1, UIFont.Small)
     self:drawText(text("group_name"), self.rightX, self.height - 224, 0.8, 0.8, 0.8, 1, UIFont.Small)
     self:drawText(fit(text("group_scope_tip"), self.width - self.rightX - 16), self.rightX, self.height - 128, 0.7, 0.8, 0.9, 1, UIFont.Small)
-    self:drawText(fit(self.status or text("scope_tip"), self.width - 28), 12, self.height - 66, 0.8, 0.8, 0.8, 1, UIFont.Small)
+    self:drawText(fit(self.status or text(Tags.enabled() and "priority_tip" or "tags_disabled"), self.width - 28), 12, self.height - 66, 0.8, 0.8, 0.8, 1, UIFont.Small)
     if #self.list.items == 0 then
-        self:drawText(fit(text("empty"), self.list.width - 20), 20, 152, 0.8, 0.8, 0.8, 1, UIFont.Small)
+        self:drawText(fit(text("empty"), self.list.width - 20), 20, 196, 0.8, 0.8, 0.8, 1, UIFont.Small)
+    end
+    if #self.orderList.items == 0 then
+        self:drawText(fit(text("preview_empty"), self.orderList.width - 20), self.rightX + 8, 196, 0.8, 0.8, 0.8, 1, UIFont.Small)
     end
 end
 
 function Editor:close()
+    self.removed = true
+    if self.toolkitRulePicker then self.toolkitRulePicker:close() end
     Organizer.save()
     self:setVisible(false)
     self:removeFromUIManager()
@@ -270,7 +405,7 @@ function Editor.show()
     if not PZSurvivorToolkit.Settings.contextMenus() then return end
     if instance then instance:bringToTop(); return instance end
     local width = math.min(960, getCore():getScreenWidth() - 24)
-    local height = math.min(680, getCore():getScreenHeight() - 24)
+    local height = math.min(760, getCore():getScreenHeight() - 24)
     instance = Editor:new((getCore():getScreenWidth() - width) / 2, (getCore():getScreenHeight() - height) / 2, width, height)
     instance.title = text("editor")
     instance.resizable = false

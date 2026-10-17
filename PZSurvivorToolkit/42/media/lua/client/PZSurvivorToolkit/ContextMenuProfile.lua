@@ -23,18 +23,92 @@ local function copy(values)
     local out = {}; for i, value in ipairs(values or {}) do out[i] = value end; return out
 end
 
-function Profile.new(Rules)
-    local self = {entries = {}, overrides = {}, items = {}, scoped = {}, customGroups = {}, names = {}, orders = {}, layouts = {}, discovered = {}, revision = 0}
+function Profile.new(Rules, Tags)
+    local self = {entries = {}, overrides = {}, items = {}, scoped = {}, customGroups = {}, names = {}, orders = {}, layouts = {}, discovered = {}, tagProfiles = {}, typeTags = {}, revision = 0}
     local preferencesRevision, actualLayouts = 0, {}
     local builtin = {root = true, hidden = true}
     for _, id in ipairs(Rules.groups) do builtin[id] = true end
     local function allowed(id) return builtin[id] or self.customGroups[id] ~= nil end
     local function scopeOf(scope) return scope or "*" end
+    function self.tagProfileIndex(id)
+        for index, profile in ipairs(self.tagProfiles) do if profile.id == id then return index end end
+    end
+    function self.getTagProfile(id)
+        local index = self.tagProfileIndex(id)
+        return index and self.tagProfiles[index]
+    end
+    local typeScope = validScope
+    local function validScope(scope) return typeScope(scope) or self.getTagProfile(scope) ~= nil end
+    function self.matchingTagProfiles(tagSets)
+        local ids = {}
+        if not Tags or #tagSets == 0 then return ids end
+        for _, profile in ipairs(self.tagProfiles) do
+            local matches = true
+            for _, tags in ipairs(tagSets) do if not Tags.matchesRule(tags, profile.rule) then matches = false; break end end
+            if matches then ids[#ids + 1] = profile.id end
+        end
+        return ids
+    end
+    local function scopes(scope, context)
+        scope = scopeOf(scope)
+        local result, index = {}, self.tagProfileIndex(scope)
+        if scope ~= "*" then result[#result + 1] = scope end
+        local matches
+        if type(context) == "table" then matches = context
+        elseif scope ~= "*" then
+            local tags = self.typeTags[type(context) == "string" and context or scope]
+            matches = tags and self.matchingTagProfiles({tags}) or {}
+        else matches = {} end
+        for _, id in ipairs(matches) do
+            if id ~= scope and (not index or (self.tagProfileIndex(id) or 0) > index) then result[#result + 1] = id end
+        end
+        result[#result + 1] = "*"
+        return result
+    end
+    local function inherited(values, key, scope, context)
+        for _, id in ipairs(scopes(scope, context)) do
+            if values[id] and values[id][key] ~= nil then return values[id][key] end
+        end
+    end
     local function changed()
         preferencesRevision = preferencesRevision + 1
         self.revision = self.revision + 1
         self.save()
         if self.settingsChanged then self.settingsChanged() end
+    end
+    function self.rememberItem(id, name, tags)
+        self.items[id] = name
+        self.typeTags[id] = copy(tags)
+        self.typeTags[id].legacyCategory = tags and tags.legacyCategory
+    end
+    function self.createTagProfile(name, rule)
+        name = cleanName(name)
+        rule = Tags and Tags.normalizeRule(rule)
+        if not name or not rule or not Tags.ruleActive(rule) or #self.tagProfiles >= 64 then return nil end
+        local index = 1; while self.getTagProfile("tags:" .. index) do index = index + 1 end
+        local id = "tags:" .. index
+        self.tagProfiles[#self.tagProfiles + 1] = {id = id, name = name, rule = rule}
+        changed(); return id
+    end
+    function self.updateTagProfile(id, name, rule)
+        local profile = self.getTagProfile(id)
+        name, rule = cleanName(name), Tags and Tags.normalizeRule(rule)
+        if not profile or not name or not rule or not Tags.ruleActive(rule) then return false end
+        profile.name, profile.rule = name, rule
+        changed(); return true
+    end
+    function self.deleteTagProfile(id)
+        local index = self.tagProfileIndex(id)
+        if not index then return false end
+        table.remove(self.tagProfiles, index)
+        self.scoped[id], self.names[id], self.orders[id], self.discovered[id], self.layouts[id] = nil, nil, nil, nil, nil
+        changed(); return true
+    end
+    function self.moveTagProfile(id, delta)
+        local index = self.tagProfileIndex(id)
+        if (delta ~= -1 and delta ~= 1) or not index or not self.tagProfiles[index + delta] then return false end
+        self.tagProfiles[index], self.tagProfiles[index + delta] = self.tagProfiles[index + delta], self.tagProfiles[index]
+        changed(); return true
     end
     function self.isCustomGroup(id) return self.customGroups[id] ~= nil end
     function self.defaultGroupName(id) return getText("UI_PZSurvivorToolkit_context_group_" .. id) end
@@ -45,23 +119,27 @@ function Profile.new(Rules)
         for _, id in ipairs(custom) do out[#out + 1] = id end
         return out
     end
-    function self.hasGroupName(id, scope)
-        scope = scopeOf(scope)
-        return (self.names[scope] and self.names[scope][id]) or (self.names["*"] and self.names["*"][id])
+    function self.hasGroupName(id, scope, context)
+        return inherited(self.names, id, scope, context)
     end
-    function self.groupName(id, scope)
-        local name = self.hasGroupName(id, scope)
+    function self.groupName(id, scope, context)
+        local name = self.hasGroupName(id, scope, context)
         if name then return name end
-        local layout = self.layouts[scopeOf(scope)]
+        local layout = self.layouts[type(context) == "string" and context or scopeOf(scope)]
         if layout then
             for _, row in ipairs(layout.root or {}) do if row.key == "group:" .. id then return row.label end end
         end
         return self.customGroups[id] or self.defaultGroupName(id)
     end
-    function self.getOverride(key, scope)
-        local scoped = self.scoped[scopeOf(scope)]
-        if scoped and scoped[key] ~= nil then return scoped[key] end
-        return self.overrides[key]
+    function self.getOwnOverride(key, scope)
+        if scopeOf(scope) == "*" then return self.overrides[key] end
+        return (self.scoped[scopeOf(scope)] or {})[key]
+    end
+    function self.getOverride(key, scope, context)
+        for _, id in ipairs(scopes(scope, context)) do
+            local value = self.getOwnOverride(key, id)
+            if value ~= nil then return value end
+        end
     end
     function self.setOverride(key, category, scope)
         scope = scopeOf(scope)
@@ -102,9 +180,8 @@ function Profile.new(Rules)
         end
         changed(); return true
     end
-    function self.getOrder(scope, parent)
-        scope = scopeOf(scope); parent = parent or "root"
-        return copy((self.orders[scope] and self.orders[scope][parent]) or (self.orders["*"] and self.orders["*"][parent]))
+    function self.getOrder(scope, parent, context)
+        return copy(inherited(self.orders, parent or "root", scope, context))
     end
     function self.setOrder(scope, parent, keys)
         scope = scopeOf(scope)
@@ -114,8 +191,8 @@ function Profile.new(Rules)
         self.orders[scope] = self.orders[scope] or {}; self.orders[scope][parent] = copy(keys)
         changed(); return true
     end
-    local function orderRows(rows, scope, parent)
-        local ranks = {}; for i, key in ipairs(self.getOrder(scope, parent)) do ranks[key] = i end
+    local function orderRows(rows, scope, parent, context)
+        local ranks = {}; for i, key in ipairs(self.getOrder(scope, parent, context)) do ranks[key] = i end
         for i, row in ipairs(rows) do row.position = i end
         local function before(a, b)
             local x, y = ranks[a.key], ranks[b.key]
@@ -134,28 +211,43 @@ function Profile.new(Rules)
         end
         return rows
     end
-    function self.getLayout(scope, parent)
+    function self.getLayout(scope, parent, previewType)
         scope, parent = scopeOf(scope), parent or "root"
+        if previewType and scope ~= "*" and not self.getTagProfile(scope) and scope ~= previewType then return {} end
         local actual = actualLayouts[scope]
-        if actual and actual.version == preferencesRevision then
+        if not previewType and actual and actual.version == preferencesRevision then
             local rows = {}
             for _, row in ipairs(actual.layout[parent] or {}) do
                 rows[#rows + 1] = {key = row.key, label = row.label, kind = row.kind, category = row.category}
             end
             return rows
         end
-        local layout = self.layouts[scope] or {}
+        if previewType and self.getTagProfile(scope) then
+            local tags = self.typeTags[previewType]
+            if not Tags or not tags or not Tags.matchesRule(tags, self.getTagProfile(scope).rule) then return {} end
+        end
+        if previewType and self.renderPreview then
+            local rendered = self.renderPreview(scope, previewType)
+            if rendered then
+                local rows = {}
+                for _, row in ipairs(rendered[parent] or {}) do
+                    rows[#rows + 1] = {key = row.key, label = row.label, kind = row.kind, category = row.category}
+                end
+                return rows
+            end
+        end
+        local layout = self.layouts[previewType or scope] or {}
         local root, groups, seen = {}, {}, {}
         local function add(row, originalParent)
             if seen[row.key] then return end; seen[row.key] = true
-            local category = self.getOverride(row.key, scope) or originalParent
+            local category = self.getOverride(row.key, scope, previewType) or originalParent
             if category == "hidden" then return end
             local out = {key = row.key, label = row.label, kind = "action", category = category}
             if category == "root" then root[#root + 1] = out
             else
                 if not groups[category] then
                     groups[category] = {}
-                    root[#root + 1] = {key = "group:" .. category, label = self.groupName(category, scope), kind = "group", category = category}
+                    root[#root + 1] = {key = "group:" .. category, label = self.groupName(category, scope, previewType), kind = "group", category = category}
                 end
                 groups[category][#groups[category] + 1] = out
             end
@@ -169,13 +261,13 @@ function Profile.new(Rules)
         end
         -- Hidden defaults can be explicitly restored without reopening the native menu.
         for _, row in ipairs(self.getEntries(scope)) do
-            if not seen[row.key] and self.getOverride(row.key, scope) then add(row, row.category or "root") end
+            if not seen[row.key] and self.getOverride(row.key, scope, previewType) and (not previewType or (self.discovered[previewType] or {})[row.key]) then add(row, row.category or "root") end
         end
-        return orderRows(parent == "root" and root or (groups[parent] or {}), scope, parent)
+        return orderRows(parent == "root" and root or (groups[parent] or {}), scope, parent, previewType)
     end
-    function self.moveEntry(scope, parent, key, delta)
+    function self.moveEntry(scope, parent, key, delta, previewType)
         if delta ~= -1 and delta ~= 1 then return false end
-        local rows = self.getLayout(scope, parent); local at
+        local rows = self.getLayout(scope, parent, previewType); local at
         for i, row in ipairs(rows) do if row.key == key then at = i; break end end
         if not at or not rows[at + delta] or rows[at].kind == "title" or rows[at + delta].kind == "title" then return false end
         rows[at], rows[at + delta] = rows[at + delta], rows[at]
@@ -185,6 +277,15 @@ function Profile.new(Rules)
     function self.getEntries(scope)
         scope = scopeOf(scope)
         local entries = scope == "*" and self.entries or (self.discovered[scope] or {})
+        local profile = self.getTagProfile(scope)
+        if profile then
+            entries = {}
+            for itemType, tags in pairs(self.typeTags) do
+                if Tags.matchesRule(tags, profile.rule) then
+                    for key, entry in pairs(self.discovered[itemType] or {}) do entries[key] = entry end
+                end
+            end
+        end
         local actual = actualLayouts[scope]
         local parents = actual and actual.version == preferencesRevision and actual.parents or {}
         local out = {}
@@ -224,19 +325,17 @@ function Profile.new(Rules)
         end
         actualLayouts[scopeOf(scope)] = {version = preferencesRevision, layout = layout, parents = parents}
     end
-    function self.hasChanges(scope)
-        for _ in pairs(self.overrides) do return true end
-        for _ in pairs(self.names["*"] or {}) do return true end
-        for _ in pairs(self.orders["*"] or {}) do return true end
-        scope = scopeOf(scope)
-        for _ in pairs(self.scoped[scope] or {}) do return true end
-        for _ in pairs(self.names[scope] or {}) do return true end
-        for _ in pairs(self.orders[scope] or {}) do return true end
+    function self.hasChanges(scope, context)
+        for _, id in ipairs(scopes(scope, context)) do
+            for _ in pairs(id == "*" and self.overrides or (self.scoped[id] or {})) do return true end
+            for _ in pairs(self.names[id] or {}) do return true end
+            for _ in pairs(self.orders[id] or {}) do return true end
+        end
         return false
     end
     function self.reset(scope)
         scope = scopeOf(scope)
-        if scope == "*" then self.overrides, self.scoped, self.names, self.orders, self.customGroups = {}, {}, {}, {}, {}
+        if scope == "*" then self.overrides, self.scoped, self.names, self.orders, self.customGroups, self.tagProfiles = {}, {}, {}, {}, {}, {}
         else self.scoped[scope], self.names[scope], self.orders[scope] = nil, nil, nil end
         changed()
     end
@@ -248,6 +347,16 @@ function Profile.new(Rules)
             writer:write(table.concat(fields, "|") .. "\n")
         end
         for id, name in pairs(self.customGroups) do line("G", id, name) end
+        for _, profile in ipairs(self.tagProfiles) do
+            line("F", profile.id, profile.name, profile.rule.mode)
+            for _, field in ipairs({"include", "exclude"}) do
+                for _, tag in ipairs(profile.rule[field]) do line("A", profile.id, field, tag) end
+            end
+        end
+        for itemType, tags in pairs(self.typeTags) do
+            for _, tag in ipairs(tags) do line("T", itemType, tag) end
+            if tags.legacyCategory then line("C", itemType, tags.legacyCategory) end
+        end
         for key, entry in pairs(self.entries) do line("E", key, entry.label, entry.category) end
         for key, id in pairs(self.overrides) do line("R", key, id) end
         for scope, name in pairs(self.items) do line("I", scope, name) end
@@ -273,11 +382,35 @@ function Profile.new(Rules)
             end
         end
         reader:close()
+        -- Load filters before their scoped preferences, regardless of record order.
+        local filters, ordered = {}, {}
+        for _, row in ipairs(pending) do
+            if row[1] == "F" and type(row[2]) == "string" and row[2]:match("^tags:%d+$") and #row[2] <= 160
+                and not filters[row[2]] and #ordered < 64 and cleanName(row[3]) and (row[4] == "all" or row[4] == "any") then
+                filters[row[2]] = {id = row[2], name = row[3], rule = {mode = row[4], include = {}, exclude = {}}}
+                ordered[#ordered + 1] = filters[row[2]]
+            end
+        end
+        for _, row in ipairs(pending) do
+            local profile = row[1] == "A" and filters[row[2]]
+            if profile and (row[3] == "include" or row[3] == "exclude") then
+                local values = profile.rule[row[3]]
+                if #values < 65 then values[#values + 1] = row[4] or "" end
+            end
+        end
+        for _, profile in ipairs(ordered) do
+            local rule = Tags and Tags.normalizeRule(profile.rule)
+            if rule and Tags.ruleActive(rule) then profile.rule = rule; self.tagProfiles[#self.tagProfiles + 1] = profile end
+        end
         for _, row in ipairs(pending) do
             local kind, a, b, c, d = unpack(row)
             if kind == "E" and validKey(a) and validKey(b) then self.entries[a] = {key = a, label = b, category = allowed(c) and c or nil}
             elseif kind == "R" and validKey(a) and allowed(b) then self.overrides[a] = b
             elseif kind == "I" and validScope(a) and a ~= "*" and cleanName(b) then self.items[a] = b
+            elseif kind == "T" and typeScope(a) and a ~= "*" and Tags and Tags.normalizeRule({include = {b}}) then
+                self.typeTags[a] = self.typeTags[a] or {}; self.typeTags[a][#self.typeTags[a] + 1] = b
+            elseif kind == "C" and typeScope(a) and a ~= "*" and validKey(b) then
+                self.typeTags[a] = self.typeTags[a] or {}; self.typeTags[a].legacyCategory = b
             elseif kind == "D" and validScope(a) and validKey(b) and validKey(c) then
                 self.discovered[a] = self.discovered[a] or {}; self.discovered[a][b] = {key = b, label = c, category = allowed(d) and d or nil}
             elseif kind == "P" and validScope(a) and a ~= "*" and validKey(b) and allowed(c) then

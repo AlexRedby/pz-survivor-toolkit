@@ -1,5 +1,5 @@
-local enabled = true
-PZSurvivorToolkit = {Settings={contextMenus=function() return enabled end}}
+local enabled, tagsEnabled = true, true
+PZSurvivorToolkit = {Settings={contextMenus=function() return enabled end,itemTags=function() return tagsEnabled end}}
 UIFont={Small=1}
 getText=function(key) return key end
 getTextManager=function()
@@ -22,6 +22,7 @@ function Base:addToUIManager() self.added=true end
 function Base:removeFromUIManager() self.added=false end
 function Base:setVisible(value) self.visible=value end
 function Base:setTooltip(value) self.tooltip=value end
+function Base:setPlaceholderText(value) self.placeholder=value end
 function Base:setEnable(value) self.enable=value end
 function Base:bringToTop() self.raised=true end
 function Base:drawText() end
@@ -45,9 +46,26 @@ function ISTextEntryBox:getText() return self.value end
 function ISTextEntryBox:setText(value) self.value=value end
 
 local client=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/'
-local Organizer=dofile(client..'ContextMenuProfile.lua').new({groups={'equipment','research'}})
-Organizer.items={['Base.Hammer']='Hammer',['Base.Book']='Book'}
+local shared=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'
+local sharedModules={}
+local function sharedRequire(name)
+    if not sharedModules[name] then sharedModules[name]=assert(loadfile(shared..name..'.lua'))() end
+    return sharedModules[name]
+end
+require=sharedRequire
+local Tags=sharedRequire('PZSurvivorToolkit/ItemTags')
+local Schema=sharedRequire('PZSurvivorToolkit/ItemTagSchema')
+local Organizer=dofile(client..'ContextMenuProfile.lua').new({groups={'equipment','research'}},Tags)
+Organizer.rememberItem('Base.Hammer','Hammer',{'tool'})
+Organizer.rememberItem('Base.Book','Book',{'literature'})
 Organizer.lastItemType='Base.Hammer'
+local pickerOptions, lastPicker
+local Picker={open=function(options)
+    pickerOptions=options
+    lastPicker={close=function(self) self.closed=true;if options.owner.toolkitRulePicker==self then options.owner.toolkitRulePicker=nil end end}
+    options.owner.toolkitRulePicker=lastPicker
+    return lastPicker
+end}
 local root={{key='inspect',label='Inspect',kind='action'},{key='group:equipment',label='Equipment',kind='group',category='equipment'}}
 local equipment={{key='equip',label='Equip',kind='action'},{key='unequip',label='Unequip',kind='action'}}
 for _,scope in ipairs({'*','Base.Hammer'}) do
@@ -62,6 +80,9 @@ require=function(name)
     if name:sub(1,5)=='ISUI/' then return end
     if name=='PZSurvivorToolkit/ContextMenus' then return Organizer end
     if name=='PZSurvivorToolkit/UIStyle' then return {button=function() end} end
+    if name=='PZSurvivorToolkit/TagRulePicker' then return Picker end
+    if name=='PZSurvivorToolkit/ItemTags' then return Tags end
+    if name=='PZSurvivorToolkit/ItemTagSchema' then return Schema end
     error('unexpected dependency '..name)
 end
 local Editor=dofile(client..'ContextMenuEditor.lua')
@@ -83,7 +104,7 @@ assert(not drawn[1]:gsub('[\194-\244][\128-\191]+',''):find('[\128-\255]'),'clip
 for _,child in ipairs(editor.children) do
     assert(child.x>=0 and child.y>=0 and child.x+child.width<=editor.width and child.y+child.height<=editor.height,'control outside window')
 end
-assert(editor.scopeID=='Base.Hammer' and #editor.list.items==3,'latest item type not selected')
+assert(editor.scopeID=='*' and editor.previewID=='Base.Hammer' and #editor.list.items==4,'scope must default to all items independently of preview')
 assert(Editor.show()==editor and editor.raised,'editor duplicated')
 local function option(combo,id)
     for index=1,#combo.options do if combo:getOptionData(index)==id then combo.selected=index;return end end
@@ -93,6 +114,7 @@ local function row(list,key)
     for index,value in ipairs(list.items) do if value.item.key==key then list.selected=index;return value.item end end
     error('missing row '..key)
 end
+option(editor.scope,'Base.Hammer');editor:changeScope()
 editor:selectEntry(row(editor.list,'equip'))
 option(editor.destination,'root');editor:applyEntry()
 assert(Organizer.getOverride('equip','Base.Hammer')=='root' and Organizer.getOverride('equip','Base.Book')==nil,'item rule leaked')
@@ -141,6 +163,7 @@ Organizer.captureLayout('*',{root={
     {key='section-title',label='Section',kind='title'},
     {key='after-title',label='After',kind='action'},
 }})
+option(editor.preview,false);editor:changePreview()
 editor:reload()
 row(editor.orderList,'before-title');editor:updateButtons()
 assert(not editor.downButton.enable,'move down enabled across a native title')
@@ -148,6 +171,44 @@ row(editor.orderList,'after-title');editor:updateButtons()
 assert(not editor.upButton.enable,'move up enabled across a native title')
 row(editor.orderList,'section-title');editor:updateButtons()
 assert(not editor.upButton.enable and not editor.downButton.enable,'native title can be moved')
+local toolRule={mode='all',include={'tool'},exclude={}}
+editor.profileName:setText('');editor:createTagProfile()
+assert(not pickerOptions and editor.status,'blank profile name opened picker')
+editor.profileName:setText('Tools');editor:createTagProfile()
+local categoryCount=0;for _ in pairs(Schema.categories) do categoryCount=categoryCount+1 end
+assert(pickerOptions.owner==editor and #pickerOptions.categories==categoryCount,'profile picker omitted undiscovered categories')
+pickerOptions.onApply({mode='all',include={},exclude={}});lastPicker:close()
+assert(#Organizer.tagProfiles==0 and editor.status,'empty filter created a profile')
+editor:createTagProfile();pickerOptions.onApply(toolRule);lastPicker:close()
+local toolsProfile=editor.scopeID
+assert(Organizer.getTagProfile(toolsProfile).name=='Tools' and editor.previewID=='Base.Hammer','profile creation did not choose a matching example')
+editor.profileName:setText('Hand tools');editor:renameTagProfile()
+assert(Organizer.getTagProfile(toolsProfile).name=='Hand tools','profile rename failed')
+editor:editTagProfile()
+assert(pickerOptions.rule.include[1]=='tool','saved profile filter not loaded')
+pickerOptions.onApply({mode='any',include={'tool','crafting'},exclude={}});lastPicker:close()
+assert(Organizer.getTagProfile(toolsProfile).rule.mode=='any','profile filter update failed')
+editor.profileName:setText('Other tools');editor:createTagProfile();pickerOptions.onApply(toolRule);lastPicker:close()
+local otherProfile=editor.scopeID
+assert(editor.profileUpButton.enable and not editor.profileDownButton.enable,'profile priority boundaries incorrect')
+editor:raiseTagProfile()
+assert(Organizer.tagProfiles[1].id==otherProfile and not editor.profileUpButton.enable and editor.profileDownButton.enable,'profile higher priority not saved')
+editor:lowerTagProfile()
+assert(Organizer.tagProfiles[2].id==otherProfile,'profile lower priority not saved')
+Organizer.setOverride('equip','hidden','*')
+option(editor.scope,'Base.Hammer');editor:changeScope()
+editor:selectEntry(row(editor.list,'equip'))
+assert(editor.destination:getOptionData(editor.destination.selected)==false,'inherited placement shown as an own override')
+option(editor.preview,'Base.Book');editor:changePreview()
+assert(editor.scopeID=='Base.Hammer' and editor.previewID=='Base.Book','example selection changed rule scope')
+option(editor.scope,otherProfile);editor:changeScope();editor:deleteTagProfile()
+assert(not Organizer.getTagProfile(otherProfile) and editor.scopeID=='*','profile deletion or scope fallback failed')
+tagsEnabled=false;editor:updateButtons();pickerOptions=nil
+assert(not editor.profileCreateButton.enable,'profile creation enabled with tags off')
+editor:createTagProfile()
+assert(pickerOptions==nil,'disabled tags opened picker')
+tagsEnabled=true;editor.profileName:setText('Closing test');editor:createTagProfile()
+local childPicker=lastPicker
 enabled=false;editor:prerender()
-assert(not editor.added and not Editor.show(),'disabled editor remained open')
-print('Context menu editor checks passed: scopes, automatic placement, action/group ordering, group CRUD, search and resets.')
+assert(not editor.added and not Editor.show() and childPicker.closed,'disabled editor or child picker remained open')
+print('Context menu editor checks passed: scopes, previews, tag profiles, inheritance, ordering, group CRUD, search and resets.')

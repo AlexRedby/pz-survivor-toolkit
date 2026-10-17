@@ -66,7 +66,8 @@ end
 require = function(name)
     if name == 'ISUI/ISContextMenu' or name == 'PZSurvivorToolkit/Settings' then return end
     if loaded[name] then return loaded[name] end
-    loaded[name] = assert(loadfile(client .. name .. '.lua'))()
+    local source = loadfile(client .. name .. '.lua') or loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua')
+    loaded[name] = assert(source, name)()
     return loaded[name]
 end
 local nativeMethods = {prerender=ISContextMenu.prerender, clear=ISContextMenu.clear, addOption=ISContextMenu.addOption, addOptionOnTop=ISContextMenu.addOptionOnTop}
@@ -343,7 +344,7 @@ controls.handlers[ISInventoryWindowControlHandler_LootSorterDistribute]={contain
 local page={controlsUI=controls,inventoryPane={inventory=container},getIsVisible=function() return true end}
 getSpecificPlayer=function() return {getJoypadBind=function() return controller and 0 or -1 end} end
 getPlayerInventory=function() return page end
-local pot={getFullType=function() return 'Base.Pot' end}
+local pot={getFullType=function() return 'Base.Pot' end,getDisplayCategory=function() return 'Cooking' end}
 local function potMenu(withCook,withInput,ingredient)
  local m=ISContextMenu:new(nil);root=m;m.toolkitContextKind='inventory'
  local o={}
@@ -519,10 +520,10 @@ assert(#menu.options==6 and contains(menu,actions.drop) and contains(menu,action
 for _,row in ipairs(menu.options) do assert(row.name~='My hands') end
 print('PASS item rules, custom groups, renaming, order, persistence, deletion and exact defaults reset')
 
-local anotherPot={getFullType=function() return 'Base.Pot' end}
+local anotherPot={getFullType=function() return 'Base.Pot' end,getDisplayCategory=function() return 'Cooking' end}
 local mixed=wrapper(0,true,{{items={pot,anotherPot}}})
 assert(mixed.toolkitContextItemType=='Base.Pot','a same-type stack must use type rules')
-local hammer={getFullType=function() return 'Base.Hammer' end}
+local hammer={getFullType=function() return 'Base.Hammer' end,getDisplayCategory=function() return 'Tool' end}
 mixed=wrapper(0,true,{pot,hammer})
 assert(mixed.toolkitContextItemType==nil,'mixed selections must not pick an arbitrary item rule')
 mixed:clear();assert(mixed.toolkitContextItemType==nil,'pooled menus must clear item scope')
@@ -541,5 +542,116 @@ assert(contains(menu,actions.native),'native lookup fallback missing')
 local fallbackVisible=false
 for _,row in ipairs(Organizer.getLayout('Base.Pot','root')) do if row.key=='callback:ISEntityUI.OpenHandcraftWindow' then fallbackVisible=true end end
 assert(fallbackVisible,'editor must show restored native fallback, not only the baseline tree')
+fallbackVisible=false
+for _,row in ipairs(Organizer.getLayout('Base.Pot','root','Base.Pot')) do
+ if row.key=='callback:ISEntityUI.OpenHandcraftWindow' then fallbackVisible=true end
+end
+assert(fallbackVisible,'same-type sample preview must show the native fallback restored by current rules')
 Organizer.reset()
 print('PASS editor reflects conditional fallback actions in the actual menu')
+
+Organizer.reset()
+local kitchen=assert(Organizer.createTagProfile('Kitchen',{include={'cooking'}}))
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.onDropItems','hidden',kitchen)
+local bowl={getFullType=function() return 'Base.Bowl' end,getDisplayCategory=function() return 'Cooking' end}
+local function taggedMenu(items)
+ local m=wrapper(0,true,items);root=m
+ local drop=m:addOption('Drop',nil,ISInventoryPaneContextMenu.onDropItems)
+ m:addOption('Primary',nil,ISInventoryPaneContextMenu.OnPrimaryWeapon)
+ m:prerender();return m,drop
+end
+menu,actions=taggedMenu({pot});assert(not contains(menu,actions),'tag rule not applied to pot')
+menu,actions=taggedMenu({bowl});assert(not contains(menu,actions),'same tag on another type was ignored')
+menu,actions=taggedMenu({pot,bowl});assert(not contains(menu,actions) and menu.toolkitContextItemType==nil,'shared tag profile missing on mixed types')
+menu,actions=taggedMenu({pot,hammer});assert(contains(menu,actions),'partial mixed match applied to unrelated item')
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.onDropItems','root','Base.Pot')
+menu,actions=taggedMenu({pot});assert(contains(menu,actions),'exact type did not override tag rule')
+tagsEnabled=false
+menu,actions=taggedMenu({bowl});assert(contains(menu,actions),'disabled tag system still applies tag profiles')
+tagsEnabled=true
+menu,actions=taggedMenu({bowl});menu:clear();assert(menu.toolkitContextTagScopes==nil,'pooled menu retained tag profiles')
+worldFill(0,menu);assert(#menu.toolkitContextTagScopes==0,'world menu inherited inventory tag filters')
+Organizer.reset()
+print('PASS native menu marker tag routing across types, mixed selection safety, exact exceptions, disabled tags and pooled/world isolation')
+
+Organizer.reset()
+menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextItemType='Base.Pot'
+menu:addOption('Eat',nil,ISInventoryPaneContextMenu.onEatItems)
+menu:addOption('Drink',nil,ISInventoryPaneContextMenu.onDrinkFluid)
+for index=1,4 do menu:addOption('Other '..index,nil,function() end) end
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.onEatItems','root')
+menu:prerender()
+assert(not group(menu,'consume'),'singleton automatic category must remain at root')
+local phantomGroup=false
+for _,row in ipairs(Organizer.getLayout('*','root','Base.Pot')) do
+ if row.key=='group:consume' then phantomGroup=true end
+end
+assert(not phantomGroup,'sample preview kept an automatic group after its action count dropped below the threshold')
+Organizer.reset()
+print('PASS sample preview recalculates automatic grouping thresholds')
+
+local firstProfile=assert(Organizer.createTagProfile('First kitchen',{include={'cooking'}}))
+local secondProfile=assert(Organizer.createTagProfile('Second kitchen',{include={'cooking'}}))
+Organizer.setOverride(dropKey,'root',firstProfile)
+Organizer.setOverride(dropKey,'hidden',secondProfile)
+menu,actions=taggedMenu({pot})
+assert(contains(menu,actions),'first profile should initially keep Drop visible')
+Organizer.moveTagProfile(secondProfile,-1)
+assert(not contains(menu,actions) and menu.toolkitContextTagScopes[1]==secondProfile,
+ 'changing priority must recompute matching profiles on the existing menu')
+Organizer.updateTagProfile(secondProfile,'Second kitchen',{include={'tool'}})
+assert(contains(menu,actions),'editing a filter must stop applying its old match on the existing menu')
+Organizer.updateTagProfile(secondProfile,'Second kitchen',{include={'cooking'}})
+assert(not contains(menu,actions),'editing a filter must apply its new match on the existing menu')
+tagsEnabled=false;Organizer.settingsChanged()
+assert(contains(menu,actions),'disabling tags must stop applying cached profile matches on the existing menu')
+tagsEnabled=true;Organizer.settingsChanged()
+assert(not contains(menu,actions),'enabling tags must restore matching profiles on the existing menu')
+menu,actions=taggedMenu({pot,hammer})
+assert(contains(menu,actions),'mixed selection must require all items to match before an edit')
+Organizer.updateTagProfile(secondProfile,'Second kitchen',{include={'tool'}})
+assert(contains(menu,actions),'filter edits must preserve all-item matching for the original mixed selection')
+Organizer.reset()
+print('PASS live profile priority, filter edits, tag disable/enable and mixed selection context refresh')
+
+Organizer.reset()
+menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextItemType='Base.Meta';menu.toolkitContextKind='inventory'
+local opaqueCallback=function() end
+local first=menu:addOption('Opaque action',nil,opaqueCallback)
+local second=menu:addOption('Opaque action',nil,opaqueCallback)
+setmetatable(first,{__index={notAvailable=true},__newindex=function() error('foreign option was mutated') end})
+setmetatable(second,{__metatable='protected'})
+menu:prerender();assert(#menu.options==2)
+local preview=Organizer.getLayout('Base.Meta','root','Base.Meta')
+assert(#preview==2,'preview deduplicated opaque mod option tables')
+local source=menu.options[1];assert(source==first and getmetatable(first).__index.notAvailable,'preview mutated native option/metatable')
+menu=ISContextMenu:new(nil);root=menu;menu.toolkitContextItemType='Base.Inherited';menu.toolkitContextKind='inventory'
+local inheritedOption=setmetatable({}, {__index={name='Inherited action',onSelect=opaqueCallback},__newindex=function() error('foreign inherited option was mutated') end})
+-- The native organizer writes ids, so leave that existing field writable like a real mod option.
+rawset(inheritedOption,'id',1);menu.options[1]=inheritedOption
+menu:prerender();preview=Organizer.getLayout('Base.Inherited','root','Base.Inherited')
+assert(#preview==1 and preview[1].label=='Inherited action','preview lost inherited option fields')
+Organizer.reset()
+local profile=assert(Organizer.createTagProfile('Cache',{include={'cooking'}}))
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.onDropItems','hidden',profile)
+menu,actions=taggedMenu({pot})
+preview=Organizer.getLayout('Base.Pot','root','Base.Pot')
+local function previewHasDrop(rows)
+ for _,value in ipairs(rows) do if value.key=='callback:ISInventoryPaneContextMenu.onDropItems' then return true end end
+ return false
+end
+assert(not previewHasDrop(preview))
+menu:clear();tagsEnabled=false;Organizer.settingsChanged()
+assert(previewHasDrop(Organizer.getLayout('Base.Pot','root','Base.Pot')),'preview cached obsolete tag-enabled state')
+tagsEnabled=true;Organizer.reset()
+print('PASS preview preserves opaque/inherited mod option fields without foreign writes and invalidates disabled-tag cache')
+
+local stateProfile=assert(Organizer.createTagProfile('State cooking',{include={'cooking'}}))
+Organizer.setOverride('callback:ISInventoryPaneContextMenu.onDropItems','hidden',stateProfile)
+local changedPot={getFullType=function() return 'Base.Pot' end,getDisplayCategory=function() return 'Tool' end}
+menu,actions=taggedMenu({changedPot,pot})
+assert(menu.toolkitContextItemType=='Base.Pot' and contains(menu,actions),'same-type mixed states should require all tag matches')
+assert(previewHasDrop(Organizer.getLayout('Base.Pot','root','Base.Pot')),'sample lost the actual selection tag sets')
+assert(#Organizer.getLayout(stateProfile,'root','Base.Pot')==0,'nonmatching mixed-state sample applied tag profile')
+Organizer.reset()
+print('PASS same-type mixed-state sample preserves all-match selection semantics')
