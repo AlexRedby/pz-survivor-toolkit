@@ -50,9 +50,10 @@ function Organizer.groupName(id)
     return getText("UI_PZSurvivorToolkit_context_group_" .. id)
 end
 
-local function action(option)
+local function action(option, defaults)
     if option.isDefaultOption or option.isTitle or option.toolkitContextGroup then return nil end
     local category, key = Rules.classify(option)
+    category = defaults and defaults[option] or category
     local label = tostring(option.name or option.text or "")
     if label == "" then return nil end
     key = key or "label:" .. label:gsub("%s*%(%d+%)$", "")
@@ -186,13 +187,36 @@ local function organizeNode(menu, state, visited, selectorsOnly, context)
         end
     end
     state.nodes[menu] = original
-    local named = {}
+    local candidates = {}
     for _, option in ipairs(original) do
+        local _, manual = action(option)
+        if not menu.parent and not selectorsOnly and not manual and (not context or context == "inventory" or context == "loot")
+            and Rules.isMore(menu, option) then
+            local child = menu:getSubMenu(option.subOption)
+            local rows = {}
+            for _, row in ipairs(child.options) do
+                if not row.isDefaultOption then
+                    rows[#rows + 1] = row
+                    candidates[#candidates + 1] = row
+                    state.borrowed[row] = true
+                    state.anchorOptions[row] = option
+                    if selected == option then selected = row end
+                end
+            end
+            state.nodes[child] = rows
+            changed = true
+        else candidates[#candidates + 1] = option end
+    end
+    local defaults = Rules.defaults(menu, candidates, context, function(option)
+        return not option.notAvailable and action(option) ~= "hidden"
+    end)
+    local named = {}
+    for _, option in ipairs(candidates) do
         local name = option.name or false
-        local candidates = named[name] or {}
-        named[name] = candidates
+        local matches = named[name] or {}
+        named[name] = matches
         local duplicate
-        for _, kept in ipairs(candidates) do
+        for _, kept in ipairs(matches) do
             if sameAction(option, kept) then duplicate = kept; break end
         end
         if duplicate then
@@ -200,11 +224,11 @@ local function organizeNode(menu, state, visited, selectorsOnly, context)
             if selected == option then selected = duplicate end
         else
             unique[#unique + 1] = option
-            candidates[#candidates + 1] = option
+            matches[#matches + 1] = option
         end
     end
     for _, option in ipairs(unique) do
-        local category, manual, key = action(option)
+        local category, manual, key = action(option, defaults)
         keys[option] = key
         categories[option] = category
         explicit[option] = manual
@@ -214,7 +238,7 @@ local function organizeNode(menu, state, visited, selectorsOnly, context)
         -- Portion/recipe selectors already form coherent native submenus.
         if option.subOption then
             local child = menu:getSubMenu(option.subOption)
-            if child then organizeNode(child, state, visited, selectorsOnly or category ~= nil, context) end
+            if child then organizeNode(child, state, visited, selectorsOnly or category ~= nil or Rules.isRecipeSelector(menu, option), context) end
         end
     end
     if context ~= "inventory" and context ~= "loot" then
@@ -227,6 +251,10 @@ local function organizeNode(menu, state, visited, selectorsOnly, context)
         if not explicit[option] then priorities[option] = Rules.priority(categories[option], keys[option], context) end
     end
     local groups, result = {}, {}
+    local hasMore = false
+    for _, option in ipairs(unique) do
+        hasMore = hasMore or (option.name == getText("ContextMenu_More") and categories[option] ~= "hidden")
+    end
     for _, option in ipairs(unique) do
         local category = categories[option]
         if not selectorsOnly and category == "hidden" then
@@ -238,10 +266,12 @@ local function organizeNode(menu, state, visited, selectorsOnly, context)
                 group = menu:getNew(menu)
                 group.toolkitContextGroupMenu = true
                 state.groups[#state.groups + 1] = group
-                local anchor = menu:addOption(Organizer.groupName(category), nil, nil)
+                local label = category == "world" and not hasMore and (context == "inventory" or context == "loot")
+                    and getText("ContextMenu_More") or Organizer.groupName(category)
+                local anchor = menu:addOption(label, nil, nil)
                 anchor.toolkitContextGroup = true
                 state.anchors[anchor] = menu
-                state.anchorOptions[anchor] = option
+                state.anchorOptions[anchor] = state.anchorOptions[option] or option
                 menu:addSubMenu(anchor, group)
                 group.toolkitContextAnchor = anchor
                 groups[category] = group

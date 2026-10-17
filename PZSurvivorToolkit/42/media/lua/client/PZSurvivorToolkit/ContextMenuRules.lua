@@ -140,6 +140,11 @@ local electronicRecipes = {
     DismantleElectronics = true, DismantleMiscElectronics = true, DismantleElectronicsDevice = true,
     DismantlePowerBar = true, DismantleImprovisedLighter = true, RemoveBattery = true,
 }
+local function sourceEndsWith(option, suffix)
+    if not getFilenameOfClosure or type(option.onSelect) ~= "function" then return false end
+    local ok, source = pcall(getFilenameOfClosure, option.onSelect)
+    return ok and type(source) == "string" and source:gsub("\\", "/"):sub(-#suffix) == suffix
+end
 local healthHandlers = {}
 for name in ([[HApplyBandage HRemoveBandage HApplyComfrey HApplyGarlic HApplyPlantain HDisinfect
     HStitch HRemoveStitch HRemoveGlass HSplint HRemoveSplint HRemoveBullet HCleanBurn]]):gmatch("%S+") do
@@ -196,6 +201,12 @@ function Rules.classify(option)
             and callback == target.onMenuOptionSelected then
             return "medical", "medical:" .. target.Type
         end
+        if sourceEndsWith(option, "/BetterContainers/Categorize.lua") then
+            return "world", "mod:BetterContainers.category"
+        end
+        if sourceEndsWith(option, "/BetterContainers/Upgrades/PinnedItems.lua") then
+            return "world", "mod:BetterContainers.pin"
+        end
         return nil
     end
     local name = option.name or option.text
@@ -205,6 +216,72 @@ function Rules.classify(option)
         if translated ~= rule.key and name == translated then return rule.category, "text:" .. rule.key end
     end
     return nil
+end
+
+function Rules.isMore(menu, option)
+    if option.onSelect or option.name ~= getText("ContextMenu_More") or not option.subOption then return false end
+    local child = menu:getSubMenu(option.subOption)
+    if not child or #child.options == 0 then return false end
+    for _, row in ipairs(child.options) do
+        if not row.isDefaultOption and Rules.classify(row) ~= "world" then return false end
+    end
+    return true
+end
+
+function Rules.isRecipeSelector(menu, option)
+    local child = option.subOption and menu:getSubMenu(option.subOption)
+    if not child or #child.options == 0 or not ISInventoryPaneContextMenu then return false end
+    for _, row in ipairs(child.options) do
+        if row.isDefaultOption or not row.onSelect or (row.onSelect ~= ISInventoryPaneContextMenu.onAddItemInEvoRecipe
+            and row.onSelect ~= ISInventoryPaneContextMenu.OnCraft and row.onSelect ~= ISInventoryPaneContextMenu.OnNewCraft) then return false end
+    end
+    return true
+end
+
+function Rules.defaults(menu, options, context, visible)
+    local defaults = {}
+    if menu.parent or (context and context ~= "inventory" and context ~= "loot") then return defaults end
+    local cook, input, fluid
+    for _, option in ipairs(options) do
+        if PJCK_CookingUI and option.onSelect and option.onSelect == PJCK_CookingUI.OnOpenPanel and visible(option) then cook = option end
+        if Rules.classify(option) == "transfer" and not option.onSelect and option.name == getText("ContextMenu_Fluid") then
+            defaults[option], fluid = "root", true
+        end
+        local child = option.subOption and menu:getSubMenu(option.subOption)
+        if child and NC_InventorySearch and visible(option) then
+            for _, row in ipairs(child.options) do
+                if row.onSelect and row.onSelect == NC_InventorySearch.searchAsInput and visible(row) then input = row end
+            end
+        end
+    end
+    for _, option in ipairs(options) do
+        if input and ISEntityUI and option.onSelect == ISEntityUI.OpenHandcraftWindow and input.target
+            and input.target.getFullType and option.param5 == "!" .. input.target:getFullType() then defaults[option] = "hidden" end
+        if cook or fluid then
+            if option.onSelect and (option.onSelect == ISInventoryPaneContextMenu.onDropItems or option.onSelect == ISInventoryPaneContextMenu.onPlaceItemOnGround) then
+                defaults[option] = "root"
+            end
+        end
+        if cook and Rules.isRecipeSelector(menu, option) then
+            local covered = true
+            for _, row in ipairs(menu:getSubMenu(option.subOption).options) do
+                -- Project Cook's ingredient and seasoning lists accept Food only.
+                if row.onSelect ~= ISInventoryPaneContextMenu.onAddItemInEvoRecipe or row.param1 ~= cook.param1
+                    or not instanceof(row.param2, "Food") then covered = false; break end
+            end
+            if covered then defaults[option] = "hidden" end
+        end
+        if context == "inventory" and option.name == "Distribute Loot" and sourceEndsWith(option, "/LootSorter_ContextMenu.lua") then
+            local player = getSpecificPlayer(menu.player)
+            local page = getPlayerInventory(menu.player)
+            local controls = page and page.controlsUI
+            local handler = controls and controls.handlers and controls.handlers[ISInventoryWindowControlHandler_LootSorterDistribute]
+            if handler and handler.control and player and player:getJoypadBind() == -1 and page:getIsVisible() and controls:getIsVisible()
+                and handler.control:getIsVisible()
+                and handler.container == page.inventoryPane.inventory then defaults[option] = "hidden" end
+        end
+    end
+    return defaults
 end
 
 -- Curated defaults by purpose, not measured player click frequency.

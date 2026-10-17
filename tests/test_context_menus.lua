@@ -37,7 +37,7 @@ function ISContextMenu:addOption(name, target, callback, ...)
     local option = table.remove(self.optionPool) or {}
     for key in pairs(option) do option[key] = nil end
     option.name, option.target, option.onSelect, option.id = name, target, callback, self.numOptions
-    for index, param in ipairs({...}) do option['param' .. index] = param end
+    for index = 1, select('#', ...) do option['param' .. index] = select(index, ...) end
     self.options[#self.options + 1] = option; self.numOptions = #self.options + 1
     return option
 end
@@ -320,3 +320,124 @@ emptyPanel=true
 assert(ISInventoryPaneContextMenu.createMenuNoItems(0,true)==nil,'native empty panel stays absent')
 worldFill(0,owned);assert(owned.toolkitContextKind=='world')
 print('PASS contextual priorities, stable ties, title barriers, selection identity, native selectors, manual placement and pooled context markers')
+
+-- Prefer the richer cooking/search routes only while their actual replacements are in this menu.
+local translations={ContextMenu_Fluid='Fluid',ContextMenu_More='More'}
+getText=function(key) return translations[key] or key end
+local sources={}
+getFilenameOfClosure=function(callback) return sources[callback] or 'foreign.lua' end
+instanceof=function(item,kind) return type(item)=='table' and item.kind==kind end
+PJCK_CookingUI={OnOpenPanel=function() end}
+NC_InventorySearch={searchAsInput=function() end,searchAsOutput=function() end}
+ISEntityUI={OpenHandcraftWindow=function() end}
+for _,name in ipairs({'onAddItemInEvoRecipe','OnNewCraft','onPlaceItemOnGround','onFavorite','onUnwanted','onNoRecipes'}) do
+ ISInventoryPaneContextMenu[name]=function() end
+end
+local controller,buttonVisible=false,true
+local container={}
+ISInventoryWindowControlHandler_LootSorterDistribute={}
+local controls={getIsVisible=function() return true end,handlers={}}
+controls.handlers[ISInventoryWindowControlHandler_LootSorterDistribute]={container=container,control={getIsVisible=function() return buttonVisible end}}
+local page={controlsUI=controls,inventoryPane={inventory=container},getIsVisible=function() return true end}
+getSpecificPlayer=function() return {getJoypadBind=function() return controller and 0 or -1 end} end
+getPlayerInventory=function() return page end
+local pot={getFullType=function() return 'Base.Pot' end}
+local function potMenu(withCook,withInput,ingredient)
+ local m=ISContextMenu:new(nil);root=m;m.toolkitContextKind='inventory'
+ local o={}
+ if withCook then o.cook=m:addOption('Cooking',{},PJCK_CookingUI.OnOpenPanel,pot) end
+ m:addOption('Primary',nil,ISInventoryPaneContextMenu.OnPrimaryWeapon)
+ m:addOption('Secondary',nil,ISInventoryPaneContextMenu.onWearItems)
+ o.fluid=m:addOption('Fluid',nil,nil);local fluids=m:getNew(m);m:addSubMenu(o.fluid,fluids)
+ fluids:addOption('Info',nil,function() end);fluids:addOption('Transfer',nil,function() end)
+ o.native=m:addOption('Recipes',{},ISEntityUI.OpenHandcraftWindow,nil,'*',false,nil,'!Base.Pot')
+ o.recipe=m:addOption('Soup',nil,nil);o.ingredients=m:getNew(m);m:addSubMenu(o.recipe,o.ingredients)
+ for i=1,6 do o.ingredients:addOption('Ingredient '..i,{},ISInventoryPaneContextMenu.onAddItemInEvoRecipe,pot,ingredient or {kind='Food'},0) end
+ o.place=m:addOption('Place',nil,ISInventoryPaneContextMenu.onPlaceItemOnGround)
+ o.more=m:addOption('More',nil,nil);o.misc=m:getNew(m);m:addSubMenu(o.more,o.misc)
+ for _,name in ipairs({'onFavorite','onUnwanted','onNoRecipes'}) do o.misc:addOption(name,pot,ISInventoryPaneContextMenu[name]) end
+ o.category=m:addOption('Change category',nil,function() end);sources[o.category.onSelect]='/mods/BetterContainers/Categorize.lua'
+ o.pin=m:addOption('Pin type',nil,function() end);sources[o.pin.onSelect]='C:\\mods\\BetterContainers\\Upgrades\\PinnedItems.lua'
+ o.search=m:addOption('Recipe search',pot,nil);local search=m:getNew(m);m:addSubMenu(o.search,search)
+ if withInput then search:addOption('Uses',pot,NC_InventorySearch.searchAsInput,0) end
+ search:addOption('Makes',pot,NC_InventorySearch.searchAsOutput,0)
+ o.wishlist=m:addOption('Wishlist',nil,function() end)
+ o.distribute=m:addOption('Distribute Loot',nil,function() end);sources[o.distribute.onSelect]='/mods/LootSorter_ContextMenu.lua'
+ o.drop=m:addOption('Drop',nil,ISInventoryPaneContextMenu.onDropItems)
+ o.original={unpack(m.options)};o.originalMisc={unpack(o.misc.options)}
+ return m,o
+end
+local function contains(m,option)
+ for _,row in ipairs(m.options) do if row==option then return true end end
+ return false
+end
+local function moreGroup(m)
+ for _,row in ipairs(m.options) do if row.toolkitContextGroup and row.name=='More' then return m:getSubMenu(row.subOption) end end
+end
+menu,actions=potMenu(true,true)
+for i=1,5 do
+ menu:prerender()
+ assert(not contains(menu,actions.recipe) and not contains(menu,actions.native), 'covered cooking and input-search paths must disappear, not move into another group')
+ assert(not contains(menu,actions.distribute),'mouse distribution uses the visible toolbar button')
+ assert(contains(menu,actions.cook) and contains(menu,actions.fluid) and contains(menu,actions.search))
+ assert(contains(menu,actions.drop) and contains(menu,actions.place) and not group(menu,'transfer'),'fluid, drop and placement must not gain an extra transfer group')
+ local misc=assert(moreGroup(menu));assert(#misc.options==5 and contains(misc,actions.category) and contains(misc,actions.pin))
+ assert(#menu.options==8,'one entry per purpose leaves eight root actions')
+ Organizer.restore(menu);same(menu,actions.original);same(actions.misc,actions.originalMisc)
+end
+menu:prerender();enabled=false;menu:prerender();same(menu,actions.original);enabled=true
+menu:clear();actions.misc:clear()
+local pooled={}
+for _,pool in ipairs({menu.optionPool,actions.misc.optionPool}) do
+ for _,row in ipairs(pool) do assert(not pooled[row],'flattened native children must only be pooled once');pooled[row]=true end
+end
+print('PASS preferred cooking/search routes, fluid depth, shared More group, live rollback and native option pools')
+
+menu,actions=potMenu(false,false);menu:prerender()
+assert(contains(menu,actions.recipe) and contains(menu,actions.native),'missing replacements must retain native actions')
+assert(#actions.ingredients.options==6 and not group(actions.ingredients,'craft'),'native recipe selectors never get a redundant craft group')
+menu,actions=potMenu(true,true,{kind='InventoryItem'});menu:prerender()
+assert(contains(menu,actions.recipe),'Project Cook cannot replace non-Food scripted ingredients')
+menu,actions=potMenu(true,true);actions.ingredients.options[1].param1={};menu:prerender()
+assert(contains(menu,actions.recipe),'cooking another base item is not a replacement')
+menu,actions=potMenu(true,true);actions.cook.notAvailable=true;menu:prerender()
+assert(contains(menu,actions.recipe),'disabled preferred entry cannot replace a native action')
+menu,actions=potMenu(true,true);actions.native.param5='!Base.Other';menu:prerender()
+assert(contains(menu,actions.native),'search for another full type is not redundant')
+for _,fallback in ipairs({'controller','hidden','absent'}) do
+ controller=fallback=='controller';buttonVisible=fallback~='hidden';page.controlsUI=fallback~='absent' and controls or nil
+ menu,actions=potMenu(true,true);menu:prerender();assert(contains(menu,actions.distribute),'distribution context fallback missing: '..fallback)
+end
+controller=false;buttonVisible=true;page.controlsUI=controls
+Organizer.setOverride('label:Soup','root')
+menu,actions=potMenu(true,true);menu:prerender();assert(contains(menu,actions.recipe),'manual placements override preferred routes')
+Organizer.reset()
+Organizer.setOverride('mod:BetterContainers.pin','root')
+menu,actions=potMenu(true,true);menu:prerender();assert(contains(menu,actions.pin),'manual placement of a secondary mod control stays at root')
+Organizer.reset()
+menu,actions=potMenu(true,true);sources[actions.distribute.onSelect]='foreign.lua';menu:prerender()
+assert(contains(menu,actions.distribute),'a foreign callback with the same label must remain available')
+print('PASS missing/disabled replacements, modded ingredients, exact item identity, controller/toolbar fallbacks and manual overrides')
+
+for _,hidden in ipairs({'Cooking','Recipe search','Uses'}) do
+ Organizer.setOverride('label:'..hidden,'hidden')
+ menu,actions=potMenu(true,true);menu:prerender()
+ if hidden=='Cooking' then assert(contains(menu,actions.recipe),'hiding Project Cook must restore native cooking')
+ else assert(contains(menu,actions.native),'hiding a replacement search must restore native lookup') end
+ Organizer.reset()
+end
+menu,actions=potMenu(true,true)
+local buildAction=actions.misc:addOption('Build',nil,ISEntityUI.OpenBuildWindow or function() end)
+menu:prerender()
+local moreCount=0
+for _,row in ipairs(menu.options) do if row.name=='More' then moreCount=moreCount+1 end end
+assert(moreCount==1 and contains(menu,actions.more) and contains(actions.misc,buildAction),
+ 'a native More branch with additional actions must stay intact without creating a second More group')
+Organizer.restore(menu);assert(contains(actions.misc,buildAction))
+print('PASS hidden replacement fallbacks and distinct labels for mixed native More branches')
+menu,actions=potMenu(true,true)
+for _,row in ipairs(actions.ingredients.options) do row.onSelect=ISInventoryPaneContextMenu.OnNewCraft end
+menu:prerender()
+assert(contains(menu,actions.recipe) and #actions.ingredients.options==6 and not group(actions.ingredients,'craft'),
+ 'Project Cook must not replace custom crafting recipes, and native crafting selectors stay flat')
+print('PASS custom crafting recipe fallback stays available without an extra category level')

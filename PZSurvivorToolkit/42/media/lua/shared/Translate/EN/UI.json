@@ -87,7 +87,7 @@
   "UI_PZSurvivorToolkit_queue_move_dependent": "This operation is still adding steps or its linked steps are separated in the queue.",
   "UI_PZSurvivorToolkit_context_title": "Context menus",
   "UI_PZSurvivorToolkit_context_enabled": "Group context menu actions",
-  "UI_PZSurvivorToolkit_context_tooltip": "Groups known actions and removes exact duplicates. Common actions appear above secondary/destructive commands, with different priorities for carried items, loot, world and vehicles. Uses fixed purpose-based defaults, not click tracking. Native selectors and manual placements are preserved.",
+  "UI_PZSurvivorToolkit_context_tooltip": "Groups known actions and removes duplicate routes to cooking, recipe search and loot distribution when their preferred interface is available. Fluid controls stay directly accessible; secondary inventory commands share More. Native fallbacks and manual placements are preserved. Uses fixed priorities, without click tracking.",
   "UI_PZSurvivorToolkit_context_editor": "Context menu rules",
   "UI_PZSurvivorToolkit_context_editor_tooltip": "Optional: change groups for discovered actions, keep them at the root, hide them or restore automatic rules. Settings are local to this client.",
   "UI_PZSurvivorToolkit_context_search": "Search discovered actions",
