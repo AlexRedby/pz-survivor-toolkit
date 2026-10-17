@@ -248,6 +248,21 @@ class CartAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Explicit candidate'):
             carts.validate(self.selection)
 
+    def test_missing_numpy_fails_before_cart_fixture_compilation(self):
+        with patch.object(carts.importlib, 'import_module', side_effect=ModuleNotFoundError('numpy')) as dependency, \
+             patch.object(carts, '_compile') as compiler:
+            with self.assertRaisesRegex(ValueError, 'NumPy in ' + re.escape(sys.executable)):
+                self.stage()
+        dependency.assert_called_once_with('numpy')
+        compiler.assert_not_called()
+        self.assertFalse((self.output / 'cart-build').exists())
+
+    def test_mp_analysis_does_not_require_numpy(self):
+        self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+        with patch.object(carts.importlib, 'import_module', side_effect=ModuleNotFoundError('numpy')) as dependency:
+            carts.validate(self.selection)
+        dependency.assert_not_called()
+
     def test_unknown_or_combined_sp_cases_are_rejected(self):
         for cases in (['unknown'], ['stop', 'reversal']):
             self.selection['cases'] = cases

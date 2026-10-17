@@ -1,5 +1,6 @@
 """Cart captures keep source probes and diagnostics separate from a functional pass."""
 import hashlib
+import importlib
 import json
 import os
 from pathlib import Path
@@ -61,6 +62,10 @@ def validate(selection):
         _path(selection, key, executable=key != 'patch_jar')
     if suite == SP:
         _path(selection, 'mesh_fbx')
+        try:
+            importlib.import_module('numpy')
+        except ImportError as error:
+            raise ValueError('SP cart analyzers require working NumPy in ' + sys.executable) from error
 
 
 def sources(project, selection):

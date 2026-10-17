@@ -180,7 +180,8 @@ class AdapterRunnerBoundaryTests(unittest.TestCase):
         report.write_json(fixture.root / "selection.json", fixture.selection)
         report.write_json(fixture.root / "runtime.json", fixture.runtime)
         fixture.content = "OWNED_READY\n"
-        return SimpleNamespace(complete=lambda selection, role, text: "OWNED_READY" in text)
+        return SimpleNamespace(validate=lambda selection: None,
+                               complete=lambda selection, role, text: "OWNED_READY" in text)
 
     def spec(self):
         return {"classpath": str(self.fixture.root / "owned-probe-classes"), "class": "AttachProbe",

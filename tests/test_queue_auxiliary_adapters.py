@@ -121,6 +121,7 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         harness = adapter._load(ROOT / 'tests/test_queue_runner.py').NativeRunnerTests()
         harness.setUp()
         self.addCleanup(harness.doCleanups)
+        harness.selection.update(self.selection)
         harness.selection.update(suite='animal-trailer', cases=['equipment-fixed'], kind='mp', clients=1,
                                  ports=[29343, 29344], timeout_seconds=1200)
         server_cache = harness.root / 'server'

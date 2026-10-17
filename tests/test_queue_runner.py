@@ -367,6 +367,15 @@ class NativeRunnerTests(unittest.TestCase):
         verify.assert_called_once_with('/owned/pack.json', '/owned/project', str(self.root), [])
         self.assertEqual(self.commands, [])
 
+    def test_adapter_dependencies_are_revalidated_on_resume_before_any_process(self):
+        with patch.object(runner.adapters, 'get') as adapter:
+            adapter.return_value.validate.side_effect = ValueError('SP cart analyzers require working NumPy')
+            with self.assertRaisesRegex(ValueError, 'NumPy'):
+                self.invoke()
+        adapter.return_value.validate.assert_called_once_with(self.selection)
+        self.assertEqual(self.commands, [])
+        self.assertFalse((self.root / 'execution.json').exists())
+
     def test_heap_budget_controls_jvm_and_is_recorded(self):
         self.selection['resources'] = {'heap_mib': 512, 'native_mib': 512, 'cpu_per_instance': 0.5}
         (self.root / 'selection.json').write_text(json.dumps(self.selection))

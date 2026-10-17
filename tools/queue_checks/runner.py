@@ -83,6 +83,8 @@ def run(root, resource_wait=300):
         raise ValueError("\n".join(changed))
     if list(root.glob("*-launch.log")) or (root / "execution.json").exists():
         raise ValueError("Run directory has already launched; prepare a fresh snapshot")
+    if adapter:
+        adapter.validate(selection)
     _verify_live_inputs(root, selection, runtime)
     with admission.acquire(root, selection, runtime, resource_wait, legacy_lock=LOCK) as resources:
         changed = verify_manifest(root, 'source-manifest.json', True) + verify_manifest(root, 'snapshot-hashes.json')
