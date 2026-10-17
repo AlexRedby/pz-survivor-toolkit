@@ -32,7 +32,11 @@
       "wishlist",
       "tags",
       "video",
-      "animals"
+      "animals",
+      "equipment"
+    ],
+    "equipment": [
+      "equipment"
     ]
   },
   "jobs": [
@@ -90,6 +94,21 @@
       "suite": "animal-trailer",
       "case": "timer-shared,combined-shared",
       "control_job": "animals-control"
+    },
+    {
+      "id": "equipment-control",
+      "suite": "equipment",
+      "kind": "sp",
+      "mode": "native",
+      "case": "hands-chain,waiting-cancel,bag-capacity"
+    },
+    {
+      "id": "equipment",
+      "suite": "equipment",
+      "kind": "sp",
+      "mode": "toolkit",
+      "case": "hands-chain,waiting-cancel,bag-capacity",
+      "control_job": "equipment-control"
     }
   ]
 }

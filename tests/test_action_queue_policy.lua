@@ -408,6 +408,24 @@ local function both(a,b,reason)
     assert(policy.cancelOperationReason(queue,a)==reason and policy.cancelOperationReason(queue,b)==reason,'symmetric transfer cancellation: '..tostring(reason))
 end
 both(outgoingA,outgoingB);both(incomingA,incomingB);both(outgoingA,incomingB)
+-- Equipment weight can invalidate a transfer of a different item, even with only one transfer.
+f.native('shared/TimedActions/ISUnequipAction.lua');f.native('shared/TimedActions/ISEquipHeavyItem.lua');policy.installContracts()
+for _,class in ipairs({ISEquipWeaponAction,ISUnequipAction,ISEquipHeavyItem}) do
+    local equipment=f.action(class,{item=f.item('Base.Bag_DuffelBag')})
+    local q=f.queue(head,outgoingA,equipment)
+    assert(policy.moveReason(q,outgoingA,equipment,true)=='container_capacity')
+    assert(policy.moveReason(q,equipment,outgoingA)=='container_capacity')
+    assert(policy.cancelOperationReason(q,outgoingA)=='container_capacity')
+    local result=policy.evaluateMove(q,equipment,outgoingA)
+    assert(result.blocker==outgoingA and result.resource==f.player.inventory)
+    local book=f.action(ISReadABook,{item=f.item('Base.BookFirstAid1')})
+    assert(not policy.moveReason(f.queue(head,equipment,book),book,equipment),'unrelated reading stays reorderable')
+    local other=f.action(ISEquipWeaponAction,{item=f.item('Base.Screwdriver')})
+    assert(policy.moveReason(f.queue(head,equipment,other),other,equipment)=='move_dependent','hand dependencies remain protected')
+    equipment.complete=function()end
+    assert(policy.moveReason(f.queue(head,outgoingA,equipment),equipment,outgoingA)=='move_dependent','foreign equipment remains closed')
+end
+print('Equipment/transfer capacity barrier and independent reading passed.')
 local replicated=f.item('Base.Bag_Schoolbag');replicated.class='InventoryContainer';replicated.id=carriedBag.id
 local bagUse=f.action(ISEquipWeaponAction,{item=replicated})
 q=f.queue(head,outgoingA,bagUse)
