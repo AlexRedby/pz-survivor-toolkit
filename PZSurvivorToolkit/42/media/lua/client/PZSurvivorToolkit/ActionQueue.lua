@@ -38,6 +38,8 @@ end
 
 local begin = ISBaseTimedAction.begin
 ISBaseTimedAction.begin = function(action)
+    local intent=Toolkit.ActionQueueTidyIntent
+    if intent and isClient() then intent.start(action) end
     local token = action.toolkitQueueOperation
     if type(token) == "table" then token.toolkitStarted = true end
     return begin(action)
@@ -264,6 +266,7 @@ ISBaseTimedAction.stop = function(action)
     return stop(action)
 end
 Policy.replaceStop(stop, ISBaseTimedAction.stop)
+if Toolkit.ActionQueueCompat then Toolkit.ActionQueueCompat.adoptStop(stop, ISBaseTimedAction.stop) end
 if Operations.adoptCommandLifecycle then Operations.adoptCommandLifecycle("stop", stop, ISBaseTimedAction.stop) end
 
 local reset = ISTimedActionQueue.resetQueue

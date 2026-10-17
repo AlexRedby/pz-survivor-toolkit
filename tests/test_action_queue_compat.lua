@@ -119,6 +119,35 @@ ISInventoryPaneContextMenu = {getContainers = function() return list({}) end,
     transferIfNeeded = function(character, item)
         if item:getContainer() ~= character:getInventory() then ISTimedActionQueue.add(ISInventoryTransferAction:new(character,item,item:getContainer(),character:getInventory())) end
     end}
+-- UI producers use native queue APIs; their engine effects are applied below.
+ISInventoryPaneContextMenu.onGrabItems=function(items,playerNum)
+    local player=getSpecificPlayer(playerNum)
+    for _,item in ipairs(items) do ISInventoryPaneContextMenu.transferIfNeeded(player,item) end
+end
+ISEquipWeaponAction.new=function(self,player,item,time,primary,twoHands)
+    local action=ISBaseTimedAction.new(self,player)
+    action.item,action.primary,action.twoHands=item,primary,twoHands
+    return action
+end
+ISEquipWeaponAction.complete=function(action)
+    if action.twoHands then action.character.primary,action.character.secondary=action.item,action.item
+    elseif action.primary then action.character.primary=action.item
+    else action.character.secondary=action.item end
+    return true
+end
+ISUnequipAction.complete=function(action)
+    if action.character.primary==action.item then action.character.primary=nil end
+    if action.character.secondary==action.item then action.character.secondary=nil end
+    return true
+end
+ISInventoryPaneContextMenu.equipWeapon=function(item,primary,twoHands,playerNum)
+    local player=getSpecificPlayer(playerNum)
+    ISInventoryPaneContextMenu.transferIfNeeded(player,item)
+    ISTimedActionQueue.add(ISEquipWeaponAction:new(player,item,50,primary,twoHands))
+end
+ISInventoryPaneContextMenu.OnPrimaryWeapon=function(items,playerNum)
+    ISInventoryPaneContextMenu.equipWeapon(items[1],true,false,playerNum)
+end
 local menu = {options = {}}
 ISContextMenu = {addOption = function(self, name, target, callback, ...)
     local option = {name = name, target = target, callback = callback, args = {...}}
@@ -226,6 +255,10 @@ require = function(module)
     elseif module == 'Project_Cook/PJCK_FrozenCooking' or module == 'Project_Cook/PJCK_EvolvedSpiceGuard' then id, branch = 'Project_Cook', 'shared/'
     elseif module:match('^ISUI/WMI_') and module ~= 'ISUI/WMI_Compat_TABAS' then id, branch = 'WashFix', 'client/'
     elseif module == 'TimedActions/WMI_PatchWashClothing' then id, branch = 'WashFix', 'shared/'
+    elseif module == 'PZSurvivorToolkit/ActionQueueTidyIntent' then return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'))()
+    elseif module == 'PZSurvivorToolkit/ActionQueueLifecycle' then
+        if PZSurvivorToolkit.ActionQueueLifecycle then return PZSurvivorToolkit.ActionQueueLifecycle end
+        return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
     elseif module == 'P4TidyUpMeister' then id, branch = 'P4TidyUpMeister', 'client/'
     elseif module == 'MPFastForward_ReadFix' then id, branch = 'MPFastForward', 'server/'
     elseif module:match('^BetterContainers/') then id,branch='EURY_CONTAINERS','client/'
@@ -260,6 +293,7 @@ assert(transferHelperAdopted,'verified Tidy load hands the exact native wrapper 
 assert(transferItemGuard and transferItemGuard() and adoptedTransferItem==ISTransferAction.transferItem,
     'actual pinned Tidy source adopts its once-captured native delegate wrapper')
 assert(TidyFixture.ISTransferAction_transferItem==nativeTransferItem,'actual source saves the captured helper as its private delegate')
+assert(PZSurvivorToolkit.ActionQueueLifecycle,'early Compat load must install Lifecycle before P4 method snapshots')
 local tidyPublic=P4TidyUpMeister
 P4TidyUpMeister={registerActionPolicy=tidyPublic.registerActionPolicy,registerWornItemReplacement=tidyPublic.registerWornItemReplacement}
 assert(not transferItemGuard(),'late public owner replacement invalidates adopted helper identity')
@@ -295,7 +329,7 @@ local player = {class = 'IsoPlayer', getInventory = function() return inventory 
     isPlayerMoving=function() return false end, pressedMovement=function() return false end,
     hasTimedActions = function() return false end, getModData = function() return {P4TidyUpMeister = {doNotReequip = doNotReequip}} end,
     getWornItems = function() return list({}) end, getPrimaryHandItem = function(self) return self.primary end,
-    getSecondaryHandItem = function() end, isEquipped = function() return false end, setIsFarming = function() end,
+    getSecondaryHandItem = function(self) return self.secondary end, isEquipped = function() return false end, setIsFarming = function() end,
     isTimedActionInstant = function() return false end, hasTrait = function() return false end}
 player.getPerkLevel=function() return 0 end
 player.getX=function() return 0 end; player.getY=function() return 0 end
@@ -719,6 +753,56 @@ assert(floorRestores==2,'actual installed Tidy builds MP floor cleanup without t
 while queue.queue[1] do queue.queue[1]:perform() end
 isClient=nativeClient; tickTidy(); tickTidy()
 assert(TidyFixture.restoring[player]==nil and TidyFixture.restoreFloor[player]==nil)
+-- Match the early-Compat / later-ActionQueue startup order, including inherited P4 stop methods.
+local previousStop=ISBaseTimedAction.stop
+ISBaseTimedAction.stop=function(...) return previousStop(...) end
+assert(compat.adoptStop(previousStop,ISBaseTimedAction.stop))
+-- Exercise the installed, unmodified P4 session builder, including its stale hand baseline.
+local intent=PZSurvivorToolkit.ActionQueueTidyIntent
+for _,queueEnabled in ipairs({false,true}) do
+    reset();enabled=queueEnabled;doNotReequip=false;player.primary,player.secondary=nil,nil
+    local kept,borrowed=item(tidyBag,71),item(tidyBag,72)
+    ISInventoryPaneContextMenu.onGrabItems({kept},0)
+    local manualPickup=queue.queue[1]
+    local borrowedPickup=ISInventoryTransferAction:new(player,borrowed,tidyBag,inventory)
+    ISTimedActionQueue.add(borrowedPickup);ISTimedActionQueue.add(ISReadABook:new(player,borrowed))
+    inventory.values={kept,borrowed}
+    while queue.queue[1] do
+        local action=queue.queue[1]
+        if action==manualPickup then intent.begin(action,'perform') end
+        action:perform()
+        if action==manualPickup then intent.finish(action,'perform',true) end
+    end
+    tickTidy();tickTidy()
+    assert(not findReturn(kept) and findReturn(borrowed),
+        'real P4 keeps confirmed manual pickup and returns only the borrowed item with queue '..tostring(queueEnabled))
+    while queue.queue[1] do queue.queue[1]:perform() end
+    tickTidy();tickTidy()
+    reset();enabled=queueEnabled;doNotReequip=false
+    local original,manual,tool=item(inventory,81),item(inventory,82),item(inventory,83)
+    inventory.values={original,manual,tool};player.primary,player.secondary=original,nil
+    ISInventoryPaneContextMenu.OnPrimaryWeapon({manual},0)
+    local manualEquip=queue.queue[1]
+    ISTimedActionQueue.add(ISEquipWeaponAction:new(player,tool,50,true,false))
+    P4TidyUpMeister.registerActionPolicy('ISReadABook',{restoreHands=true})
+    ISTimedActionQueue.add(ISReadABook:new(player,tool))
+    while queue.queue[1] do
+        local action=queue.queue[1]
+        if action==manualEquip then intent.begin(action,'complete') end
+        if action.complete then action:complete() end
+        if action==manualEquip then intent.finish(action,'complete',true) end
+        action:perform()
+    end
+    assert(player.primary==tool and TidyFixture.sessions[player].primaryItem==original,
+        'automatic tool prep changes hands after P4 captured the older baseline')
+    tickTidy();tickTidy()
+    while queue.queue[1] do
+        local action=queue.queue[1];if action.complete then action:complete() end;action:perform()
+    end
+    assert(player.primary==manual,'real P4 restores the explicit primary instead of its older baseline')
+    tickTidy();tickTidy()
+end
+reset()
 -- A changed source and an unknown preloaded owner cannot obtain a private baseline.
 local oldOperations,oldDefinitions,oldCompat=PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat
 local oldAdd,oldMods,oldReader,oldClass=ISTimedActionQueue.add,getActivatedMods,getModFileReader,NC_CraftActionPanel

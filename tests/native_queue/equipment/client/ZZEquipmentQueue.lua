@@ -49,7 +49,7 @@ local function read(book)
 end
 local function equip(item,primary,both)
  local before=#queue().queue
- run(ISInventoryPaneContextMenu.equipWeapon,item,primary,both,getPlayer():getPlayerNum())
+ run(both and ISInventoryPaneContextMenu.OnTwoHandsEquip or primary and ISInventoryPaneContextMenu.OnPrimaryWeapon or ISInventoryPaneContextMenu.OnSecondWeapon,{item},getPlayer():getPlayerNum())
  local first,last=queue().queue[before+1],queue().queue[#queue().queue]
  assert(first and last.Type=='ISEquipWeaponAction' and last.item==item,'native equip callback missing')
  return first,last

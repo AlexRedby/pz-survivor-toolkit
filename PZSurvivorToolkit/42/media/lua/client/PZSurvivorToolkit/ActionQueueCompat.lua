@@ -1,8 +1,10 @@
 require "PZSurvivorToolkit/ActionQueueOperations"
+require "PZSurvivorToolkit/ActionQueueLifecycle"
 require "PZSurvivorToolkit/ActionQueueDefinitions"
 
 local Toolkit = PZSurvivorToolkit
 local Operations = Toolkit.ActionQueueOperations
+local TidyIntent = require "PZSurvivorToolkit/ActionQueueTidyIntent"
 local Compat = {}
 Toolkit.ActionQueueCompat = Compat
 local records = {}
@@ -522,20 +524,20 @@ local function loadSource(id, module, eventName)
                     if record then
                         if not Toolkit.Settings.actionQueue() then
                             sessions[character] = nil
-                            return callback(...)
+                            return TidyIntent.update(character, callback, ...)
                         end
                         -- Shared native equipment and ambiguous returns outlive cancellation of any one task.
                         if record.mixed and not record.restoreToken then record.restoreToken = {} end
                         local context = {id = id, token = record.restoreToken or record.token, character = character, queue = record.queue,
                             generation = record.generation, tidySession = record, sharedCleanup = record.mixed}
-                        local results = pack(scoped(context, callback, ...))
+                        local results = pack(scoped(context, function(...) return TidyIntent.update(character, callback, ...) end, ...))
                         if #record.queue.queue == 0 and not character:hasTimedActions() then
                             record.idleTicks = (record.idleTicks or 0) + 1
                         else record.idleTicks = 0 end
                         if record.restored or record.idleTicks >= 2 then sessions[character] = nil end
                         return unpack(results, 1, results.n)
                     end
-                    return callback(...)
+                    return TidyIntent.update(character, callback, ...)
                 end
                 return scoped({id = id}, callback, ...)
             end)
@@ -764,6 +766,54 @@ function Compat.install()
             if target then owners[id][#owners[id] + 1] = {target = target, methods = snapshot(target)} end
         end
     end
+    if ready.P4TidyUpMeister then
+        local owner=P4TidyUpMeister
+        local actionPolicy,wornPolicy=owner.registerActionPolicy,owner.registerWornItemReplacement
+        local carts=ready.SaucedCartsTransfers and Toolkit.ActionQueueCarts
+        local transfer=carts and carts.isTransferConstructor
+        local unequip=carts and carts.isUnequipConstructor
+        local nonCart=carts and carts.isNonCartUnequip
+        local function intentUnchanged(target,class,methods)
+            if classUnchanged(target,methods) then return true end
+            if not carts or Toolkit.ActionQueueCarts~=carts or carts.isTransferConstructor~=transfer
+                or carts.isUnequipConstructor~=unequip or carts.isNonCartUnequip~=nonCart then return false end
+            local allowed
+            if class==ISInventoryTransferAction and transfer(methods.new) and transfer(class.new) then
+                allowed={new=true,perform=true,transferItem=true}
+            elseif class==ISUnequipAction and unequip(methods.new) and unequip(class.new) then
+                if target~=class and not nonCart(target) then return false end
+                allowed={new=true,complete=true}
+            else return false end
+            for name in pairs(allowed) do if target[name]~=class[name] then return false end end
+            -- Reuse the existing source-pinned late Cart hooks without accepting other method changes.
+            for name,method in pairs(methods) do if not allowed[name] and target[name]~=method then return false end end
+            for _,name in ipairs(lifecycle) do if not allowed[name] and target[name]~=methods[name] then return false end end
+            return true
+        end
+        local stickSource=getActivatedMods and getActivatedMods():contains('organizedCategories_core')
+            and verified('organizedCategories_core',{{'client/organizedCategories_itemStick.lua',2877670095}})
+        TidyIntent.install(function(action)
+            if P4TidyUpMeister~=owner or owner.registerActionPolicy~=actionPolicy or owner.registerWornItemReplacement~=wornPolicy then return false end
+            for class,methods in pairs(classes.P4TidyUpMeister) do if not intentUnchanged(class,class,methods) then return false end end
+            if not action then return true end
+            local baseline=classes.P4TidyUpMeister[getmetatable(action)]
+            if not baseline then return false end
+            local record=records[action]
+            return record and matches(action,record) or not record and intentUnchanged(action,getmetatable(action),baseline)
+        end,function(menu,name)
+            return stickSource and menu==ISInventoryPaneContextMenu and menu['_ocStick_'..name]==menu[name]
+                and quartermasterClosure(menu[name],'organizedCategories_itemStick.lua')
+        end)
+    end
+end
+
+-- Early compatibility entrypoints can precede ActionQueue's shared native stop wrapper.
+function Compat.adoptStop(previous,replacement)
+    if ISBaseTimedAction.stop~=replacement then return false end
+    for _,registry in pairs(classes) do
+        for _,methods in pairs(registry) do if methods.stop==previous then methods.stop=replacement end end
+    end
+    return true
 end
 
 -- Server Lua is not resolvable during the client load pass; the early SP server bridge calls this.

@@ -29,14 +29,16 @@ end
 
 -- Called by the supported native LuaTimedActionNew boundary, never by individual action adapters.
 function Lifecycle.begin(action, phase)
-    if not Toolkit.Settings or not Toolkit.Settings.actionQueue() then return false end
     if phase ~= "perform" and phase ~= "complete" then return false end
+    local intent=Toolkit.ActionQueueTidyIntent
+    local observing=intent and intent.begin(action,phase)
+    if not Toolkit.Settings or not Toolkit.Settings.actionQueue() then return observing==true end
     local queue = action and ISTimedActionQueue.queues[action.character]
-    if not owned(queue, action) or not action.action then return false end
+    if not owned(queue, action) or not action.action then return observing==true end
     local state = pending[queue]
     if state and state.action ~= action then pending[queue] = nil; state = nil end
     if not state then
-        if phase ~= "perform" then return false end
+        if phase ~= "perform" then return observing==true end
         state = {action = action, native = action.action, depth = 0, needsComplete = not isClient()}
         pending[queue] = state
     end
@@ -45,6 +47,8 @@ function Lifecycle.begin(action, phase)
 end
 
 function Lifecycle.finish(action, phase, succeeded)
+    local intent=Toolkit.ActionQueueTidyIntent
+    if intent then intent.finish(action,phase,succeeded) end
     local queue = action and ISTimedActionQueue.queues[action.character]
     local state = queue and pending[queue]
     if not state or state.action ~= action then return end
