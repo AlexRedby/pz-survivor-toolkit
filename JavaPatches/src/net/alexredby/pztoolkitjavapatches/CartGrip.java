@@ -218,11 +218,14 @@ public final class CartGrip {
             float angle=(float)Math.acos(Math.max(-1,Math.min(1,from.dot(to)/(c*d))));
             float remaining=(float)Math.acos(Math.max(-1,Math.min(1,(c*c+d*d-desired*desired)/(2*c*d))));
             float turn=angle-remaining;
-            if(!Float.isFinite(turn) || turn>(float)Math.toRadians(30)) return false;
+            if(!Float.isFinite(turn)) return false;
+            // The elbow reserve is preferred; a reachable grip can use less at the clavicle limit.
+            turn=Math.min(turn,(float)Math.toRadians(30));
             if(turn>.000001f) {
                 var axis=from.cross(to,new Vector3f());
                 if(axis.lengthSquared()<.00000001f) return false;
                 var shifted=new Quaternionf().rotationAxis(turn,axis.normalize()).transform(from).add(pivot);
+                if(shifted.distance(goal)>=a+b) return false;
                 aim(poses,actor,clavicle,pivot,shoulder,shifted);
                 poses[clavicle.index].setTranslation(pivot);
                 poses[upper.index].getTranslation(shoulder);poses[forearm.index].getTranslation(elbow);
