@@ -586,21 +586,89 @@ public final class CartGrip {
             || !bendTransitionTorso(poses,actor,hinge)) return false;
         var cartIdle=ModelManager.instance.getAnimationClip("Bob_Cart_Idle");
         if(!groundFeet(poses,actor,ModelManager.instance.getAnimationClip("Bob_Idle"),cartIdle,liftWeight,shiftX,shiftY,shiftZ)) return false;
+        if(!transitionGrip(poses,actor,slot.character.isFemale(),delta,cart,reachWeight,gripWeight)) return false;
+        skinSlot(slot,owner,cartIdle,actor,poses,true);
+        return true;
+    }
+
+    static boolean transitionGrip(Matrix4f[] poses, SkinningData actor, boolean female, Matrix4f delta,
+        Matrix4f cart, float reachWeight, float gripWeight) {
         if(reachWeight==1 && gripWeight==1) {
-            if(!grip(poses,actor,"WheelbarrowWood",slot.character.isFemale(),delta,cart)) return false;
+            if(!grip(poses,actor,"WheelbarrowWood",female,delta,cart)) return false;
         } else for(String side:new String[]{"L","R"}) {
             var hand=actor.getBone("Bip01_"+side+"_Hand");
             var target=new Matrix4f();
-            if(!target("WheelbarrowWood","L".equals(side),slot.character.isFemale(),delta,cart,target)
+            if(!target("WheelbarrowWood","L".equals(side),female,delta,cart,target)
                 || !CartTransitionMath.blend(poses[hand.index],target,CartTransitionMath.smooth(reachWeight),target)
                 || !reach(poses,actor,hand.name,target,delta,true,reachWeight)) return false;
             var before=new Matrix4f[actor.numBones()];
             for(int i=0;i<before.length;i++) if(descendant(actor.getBoneAt(i),hand)) before[i]=new Matrix4f(poses[i]);
-            closeFingers(poses,actor,side,grasp(slot.character.isFemale(),"WheelbarrowWood"),true);
+            closeFingers(poses,actor,side,grasp(female,"WheelbarrowWood"),true);
             for(int i=0;i<before.length;i++) if(before[i]!=null)
                 CartTransitionMath.blend(before[i],poses[i],CartTransitionMath.smooth(gripWeight),poses[i]);
         }
-        skinSlot(slot,owner,cartIdle,actor,poses,true);
+        return true;
+    }
+
+    static Matrix4f[] capture(SkinningData actor, Matrix4f[] saved) {
+        var poses=matrices.get().poses;
+        if(actor==null || actor.numBones()>poses.length) return null;
+        if(saved==null || saved.length!=actor.numBones()) saved=new Matrix4f[actor.numBones()];
+        for(int i=0;i<saved.length;i++) {
+            if(poses[i]==null || !poses[i].isFinite()) return null;
+            if(saved[i]==null) saved[i]=new Matrix4f();
+            saved[i].set(poses[i]);
+        }
+        return saved;
+    }
+
+    static boolean releasePose(Matrix4f[] poses, SkinningData actor, Matrix4f[] start, float amount) {
+        if(actor==null || poses==null || start==null || poses.length<actor.numBones()
+            || start.length!=actor.numBones() || !Float.isFinite(amount) || amount<0 || amount>1) return false;
+        var local=new Matrix4f[actor.numBones()];
+        for(int i=0;i<local.length;i++) {
+            var parent=actor.getBoneAt(i).parent;
+            if(poses[i]==null || start[i]==null || !poses[i].isFinite() || !start[i].isFinite()
+                || parent!=null && parent.index>=i) return false;
+            var from=new Matrix4f(start[i]);var to=new Matrix4f(poses[i]);
+            if(parent!=null) {
+                new Matrix4f(start[parent.index]).invert().mul(from,from);
+                new Matrix4f(poses[parent.index]).invert().mul(to,to);
+            }
+            local[i]=new Matrix4f();
+            // Blend joint rotations in their parent frame; global matrix blending shortens bent limbs.
+            if(!CartTransitionMath.blend(to,from,amount,local[i])) return false;
+            // Native idle/walk transfer root translation between Bip01 and Pelvis; neither offset is a fixed bone.
+            String name=actor.getBoneAt(i).name;
+            if(parent!=null && !"Bip01".equals(name) && !"Bip01_Pelvis".equals(name)) {
+                float length=from.getTranslation(new Vector3f()).length()*amount
+                    +to.getTranslation(new Vector3f()).length()*(1-amount);
+                var offset=local[i].getTranslation(new Vector3f());
+                if(length>0 && offset.lengthSquared()==0) return false;
+                if(length>0) local[i].setTranslation(offset.normalize(length));
+            }
+        }
+        for(int i=0;i<local.length;i++) {
+            var parent=actor.getBoneAt(i).parent;
+            if(parent==null) poses[i].set(local[i]);
+            else poses[parent.index].mul(local[i],poses[i]);
+        }
+        return true;
+    }
+
+    static boolean movingRecovery(ModelSlotRenderData slot, ModelInstance owner, AnimationClip clip,
+        Matrix4f delta, Matrix4f cart, Matrix4f held, Matrix4f[] start, float amount, boolean carrying,
+        float startReach, float startGrip) {
+        ModelInstanceRenderData body=null;
+        for(var data:slot.modelData) if(data.modelInstance==owner) {body=data;break;}
+        if(body==null || body.matrixPalette==null || !(owner.model.tag instanceof SkinningData bodySkin)) return false;
+        var actor=owner.animPlayer.getSkinningData();
+        var poses=livePoses(actor,bodySkin,body.matrixPalette,new Matrix4f(),true);
+        if(poses==null || carrying && !grip(poses,actor,"WheelbarrowWood",slot.character.isFemale(),delta,held)
+            || !releasePose(poses,actor,start,amount)
+            || carrying && !transitionGrip(poses,actor,slot.character.isFemale(),delta,cart,
+                1-amount*(1-startReach),1-amount*(1-startGrip))) return false;
+        skinSlot(slot,owner,clip,actor,poses,true);
         return true;
     }
 

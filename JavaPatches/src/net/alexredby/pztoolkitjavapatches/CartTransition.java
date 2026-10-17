@@ -31,7 +31,10 @@ public final class CartTransition {
     private static final class State {
         InventoryItem item;
         boolean pickup, ik, rendered, recovering;
-        float cancelledProgress, nativeHeight, referenceHeight;
+        float cancelledProgress, nativeHeight, referenceHeight, movementProgress, recoveryReach, recoveryGrip;
+        Matrix4f[] recoveryPose;
+        Matrix4f recoveryCart;
+        boolean movingRecovery;
         Quaternionf nativeRotation, referenceRotation;
         long recoveryStart;
         String visualModel;
@@ -240,21 +243,28 @@ public final class CartTransition {
             var ground=new Matrix4f();
             if(!CartTransitionMath.worldToActor(state.placement,model,slot.x,slot.y,slot.z,slot.animPlayerAngle,ground)) continue;
             var phase=CartTransitionMath.progress(state.progress,!state.pickup);
+            if(state.recovering && !state.movingRecovery && player.isJustMoved() && state.recoveryPose!=null) {
+                state.movingRecovery=true;state.movementProgress=state.progress;
+            }
+            float release=state.movingRecovery?(float)CartTransitionMath.smooth(state.progress/state.movementProgress):1;
             var transform=new Matrix4f();
             if(!CartTransitionMath.blend(ground,held,phase.lift(),transform)) continue;
             var axle=new Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z);
             var center=ground.transformPosition(axle,new Vector3f()).lerp(held.transformPosition(axle,new Vector3f()),
                 (float)phase.lift());
             transform.translateLocal(center.sub(transform.transformPosition(axle,new Vector3f())));
+            // A cancelled setdown still owns the held cart; carry its return path with the walking actor.
+            if(state.movingRecovery && !state.pickup
+                && !CartTransitionMath.blend(held,state.recoveryCart,release,transform)) {end(player);return false;}
             var reference=CartGrip.referencePosture(instance.parent.animPlayer.getSkinningData(),phase);
             float baseHeight=Float.NaN;Quaternionf baseRotation=null;
-            if(state.recovering) {
+            if(state.recovering && !state.movingRecovery) {
                 // Native stop fades the action layer into cart idle; retain its calibrated height and chest posture.
                 var posture=CartGrip.recoverPosture(new CartGrip.Posture(state.nativeHeight,state.nativeRotation),
                     new CartGrip.Posture(state.referenceHeight,state.referenceRotation),reference,state.progress/state.cancelledProgress);
                 if(posture==null) {end(player);return false;}
                 baseHeight=posture.height();baseRotation=posture.rotation();
-            } else {
+            } else if(!state.recovering) {
                 var posture=CartGrip.nativePosture(slot,instance.parent);
                 state.nativeHeight=posture==null?Float.NaN:posture.height();
                 state.referenceHeight=reference==null?Float.NaN:reference.height();
@@ -263,10 +273,19 @@ public final class CartTransition {
             }
             // Keep the knee bend and hip hinge in one continuous descent, without an early sink/rebound.
             float lowering=(float)(-.03*phase.balance());
-            state.ik=CartGrip.transition(slot,instance.parent,delta,transform,(float)phase.reach(),(float)phase.grip(),
-                (float)phase.lift(),(ground.m30()-held.m30())*(float)phase.center(),lowering,.16f*(float)phase.balance(),
-                (float)Math.toRadians(60*phase.hinge()),baseHeight,baseRotation);
+            state.ik=state.movingRecovery
+                ?CartGrip.movingRecovery(slot,instance.parent,clip,delta,transform,held,state.recoveryPose,release,!state.pickup,
+                    state.recoveryReach,state.recoveryGrip)
+                :CartGrip.transition(slot,instance.parent,delta,transform,(float)phase.reach(),(float)phase.grip(),
+                    (float)phase.lift(),(ground.m30()-held.m30())*(float)phase.center(),lowering,.16f*(float)phase.balance(),
+                    (float)Math.toRadians(60*phase.hinge()),baseHeight,baseRotation);
             if(state.recovering && !state.ik) {end(player);return false;}
+            if(state.ik && !state.movingRecovery) {
+                state.recoveryPose=CartGrip.capture(instance.parent.animPlayer.getSkinningData(),state.recoveryPose);
+                if(state.recoveryCart==null) state.recoveryCart=new Matrix4f();
+                state.recoveryCart.set(transform);
+                state.recoveryReach=(float)phase.reach();state.recoveryGrip=(float)phase.grip();
+            }
             data.xfrm.set(transform).transpose();
             CartWheelSpin.prepare(slot,CartWheelSpin.follow(state.item,slot.x,slot.y,slot.animPlayerAngle,transform));
             if(state.world!=null && !state.rendered) state.world.invalidateRenderChunkLevel(256);

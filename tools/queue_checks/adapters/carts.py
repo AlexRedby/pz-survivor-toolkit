@@ -20,7 +20,8 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
             'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
             'collision': ('scenario-collision.lua', 20), 'footprint': ('scenario-collision.lua', 20),
-            'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4), 'interruption': ('scenario-interaction.lua', 12)}
+            'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
+            'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 
 
@@ -163,7 +164,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         if selection['suite'] == SP:
             motion = dict(disposable=True, ffmpeg=config['ffmpeg'], videoRoot=videos[role], area=AREA)
             if selection['cases'][0] in ('collision','footprint'): motion['footprint']=True
-            if selection['cases'][0] == 'interruption': motion['interruptions']=True
+            if selection['cases'][0] in ('interruption', 'interruption-matrix'): motion['interruptions']=True
+            if selection['cases'][0] == 'interruption-matrix': motion['interruptionMatrix']=True
             if selection['cases'][0] == 'wheel': motion['wheelCycle']=True
             runtime_source = 'CartMotionConfig=' + _lua(motion) + '\nif not CartAdapterBootstrapped then\nCartAdapterBootstrapped=true\n'
             runtime_source += '(function()\n' + (sp / 'test-area.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'obstacles.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'bootstrap.lua').read_text() + '\nend)()'
@@ -280,7 +282,7 @@ def verify(root, selection, catalog):
                 ('body', [sys.executable, str(ev / 'check-hip-actual.py'), '--game-java-dir', str(game), '--mesh', str(_path(selection, 'mesh_fbx')), '--mesh-vbo', str(cache / 'WheelbarrowWood.bin'), '--capture', str(cache / 'body-clearance.jsonl'), '--output', str(analysis)]),
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
-            if case not in ('interaction', 'interruption', 'wheel'):
+            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel'):
                 commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if case != 'sprint' else [])))
             evidence['analyzers'] = {name: _run(command, analysis, name) for name, command in commands}
             if case == 'wheel':
@@ -290,9 +292,9 @@ def verify(root, selection, catalog):
                 if not evidence['wheel']['pass']:
                     raise ValueError('Wheel cycle verification failed: ' + str(evidence['wheel']['failures']))
                 evidence['nativeMotionNotApplicable'] = True
-            elif case == 'interruption':
+            elif case in ('interruption', 'interruption-matrix'):
                 evidence['analyzers'][case] = _run([sys.executable, str(intake / 'analyze-interruption.py'),
-                    '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'interruption.json')], analysis, case)
+                    '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'interruption.json')] + (['--matrix'] if case == 'interruption-matrix' else []), analysis, case)
                 evidence['interruption'] = _json(analysis / 'interruption.json')
                 if not all(evidence['interruption'].get(key) for key in ('functionalPass','recoveryVerified','wheelCoverageVerified')):
                     raise ValueError('Interruption verification failed: ' + str(evidence['interruption']['failures']))
@@ -330,7 +332,7 @@ def verify(root, selection, catalog):
                 motion = _load(intake / 'analyze-reversal.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reversal-motion.json', json.dumps(motion, indent=2, allow_nan=False))
-            if case not in ('interaction', 'interruption', 'wheel'):
+            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel'):
                 _coverage(cache, texts['client1'], SP_CASES[case][1], metrics)
                 evidence['nativePartialDiagnostic'] = case != 'sprint'
             evidence['evidenceComplete'] = True

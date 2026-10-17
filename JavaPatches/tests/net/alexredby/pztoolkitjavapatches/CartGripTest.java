@@ -167,6 +167,26 @@ public final class CartGripTest {
                 }
                 if(!CartGrip.grip(poses,actor,"WheelbarrowWood",female,delta,cart))
                     throw new AssertionError("captured native wood grip unreachable: frame="+frame+" bank="+bank);
+                if(tick==0) {
+                    var contact=java.util.Arrays.stream(poses).limit(names.length).map(Matrix4f::new).toArray(Matrix4f[]::new);
+                    for(float amount:new float[]{0,.5f,1}) {
+                        var released=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+                        if(!CartGrip.releasePose(released,actor,contact,amount)) throw new AssertionError("captured pickup hand release refused");
+                        if(amount==0 || amount==1) for(int i=0;i<released.length;i++)
+                            if(!released[i].equals(amount==1?contact[i]:before[i],.00001f))
+                                throw new AssertionError("free pickup release endpoint jumped");
+                        if(!CartGrip.transitionGrip(released,actor,female,delta,cart,1,1))
+                            throw new AssertionError("moving recovery lost an already held handle");
+                        for(int i=0;i<released.length;i++) if(!released[i].isFinite())
+                            throw new AssertionError("captured moving grip became nonfinite");
+                        for(int hand:new int[]{6,9}) {
+                            var shape=CartGrip.grasp(female,"WheelbarrowWood");
+                            var palm=released[hand].transformPosition(new Vector3f(shape.palmX(),0,shape.palmDepth()));
+                            var handle=new Vector3f();CartGrip.handle("WheelbarrowWood",hand==6,handle);cart.transformPosition(handle);
+                            if(palm.distance(handle)>.00002f) throw new AssertionError("moving contact palm left its handle");
+                        }
+                    }
+                }
                 for(int side=0;side<2;side++) {
                     int upper=side==0?4:7,forearm=upper+1,hand=upper+2;
                     var shoulder=poses[upper].getTranslation(new Vector3f());
@@ -1083,11 +1103,158 @@ public final class CartGripTest {
         }
     }
 
+    private static void checkMovingUnreachableTargets() {
+        // Native39 refused world-fixed LHand and idle-floor RFoot targets after the owner had begun walking.
+        String captures="""
+            -0.06796998,-0.9251077,-0.37357047,0.0,0.15771584,-0.37969154,0.9115696,0.0,-0.98514205,0.0030412355,0.17171156,0.0,0.1502846,0.32451946,0.13160507,1.0,0.16026844,-0.98569894,-0.05194971,0.0,0.974743,0.16634372,-0.14898148,0.0,0.15549338,-0.026761651,0.9874701,0.0,0.10721406,0.60547173,-0.005737528,1.0,-0.17243154,0.13695958,-0.975441,0.0,0.9747426,0.16637504,-0.14894857,0.0,0.14188498,-0.976491,-0.16218829,0.0,0.12918031,0.4703699,-0.012857601,1.0,0.033911876,0.1530641,-0.9876222,0.0,0.99182844,0.11640856,0.05209408,0.0,0.12293688,-0.9813224,-0.14786524,0.0,0.10554758,0.48914108,-0.14655347,1.0
+            -0.008512766,-0.9850376,-0.17213112,0.0,-0.99691856,-0.0050632292,0.07827763,0.0,-0.077977866,0.17226712,-0.9819597,0.0,-0.052257888,0.054321684,-0.066870876,1.0,0.007937454,-0.92044026,-0.39080375,0.0,-0.9979747,0.017374635,-0.061191108,0.0,0.06311275,0.39049795,-0.91843873,0.0,-0.06715133,0.45650974,0.14770676,1.0,-0.022433117,-0.9962994,0.08297592,0.0,-0.99797463,0.017374627,-0.0611911,0.0,0.05952292,-0.08418049,-0.9946717,0.0,-0.06526619,0.2379052,0.054890886,1.0,-0.008512766,-0.9850376,-0.17213112,0.0,-0.99691856,-0.0050632292,0.07827763,0.0,-0.077977866,0.17226712,-0.9819597,0.0,-0.06990627,0.031829648,0.07205369,1.0
+            """;
+        int frame=0;
+        for(String line:captures.strip().split("\\n")) {
+            var cells=line.split(",");var recorded=new Matrix4f[4];
+            for(int i=0;i<recorded.length;i++) {
+                var values=new float[16];
+                for(int j=0;j<16;j++) values[j]=Float.parseFloat(cells[i*16+j]);
+                recorded[i]=new Matrix4f().set(values);
+            }
+            String side=frame==0?"L":"R",end=frame==0?"Hand":"Foot";
+            String[] names=frame==0?new String[]{"Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand"}
+                :new String[]{"Bip01_R_Thigh","Bip01_R_Calf","Bip01_R_Foot","Bip01_R_Toe0"};
+            var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+            for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+            var actor=skeleton(names,frame==0?List.of(-1,0,1):List.of(-1,0,1,2),offsets);
+            var start=new Matrix4f[names.length];
+            for(int i=0;i<3;i++) start[i]=recorded[i+1];
+            if(frame==1) start[3]=new Matrix4f(start[2]).translate(.05f,0,0);
+            var refused=java.util.Arrays.stream(start).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(CartGrip.reach(refused,actor,"Bip01_"+side+"_"+end,recorded[0],frame==0?new Matrix4f():null,frame==0,.8015352f))
+                throw new AssertionError("Native39 unreachable moving target no longer reproduced");
+            var walk=java.util.Arrays.stream(start).map(m->new Matrix4f().rotateX(.3f).mul(m)).toArray(Matrix4f[]::new);
+            for(float amount:new float[]{0,.25f,.5f,.75f,1}) {
+                var poses=java.util.Arrays.stream(walk).map(Matrix4f::new).toArray(Matrix4f[]::new);
+                if(!CartGrip.releasePose(poses,actor,start,amount)) throw new AssertionError("walking chain release refused");
+                for(int i=1;i<poses.length;i++) {
+                    float before=start[i].getTranslation(new Vector3f()).distance(start[i-1].getTranslation(new Vector3f()));
+                    float after=poses[i].getTranslation(new Vector3f()).distance(poses[i-1].getTranslation(new Vector3f()));
+                    if(Math.abs(before-after)>.000001f || !poses[i].isFinite())
+                        throw new AssertionError("Native39 moving chain stretched or became nonfinite");
+                }
+            }
+            frame++;
+        }
+    }
+
+    private static void checkMovingRootTranslation() {
+        // Native40 pickup start and Native39 unmodified walking endpoint: translation moves from Pelvis to Bip01.
+        String captures="""
+            1.0,0.0,0.0,0.0,0.0,-3.5762787e-07,-1.0,0.0,0.0,1.0,-3.5762787e-07,0.0,-0.0018964171,-0.00853876,0.045540053,1.0,0.99191964,-0.0014311157,-0.1268599,0.0,0.0012597367,0.9999982,-0.0014310479,0.0,0.12686172,0.0012596817,0.99191964,0.0,-0.0016533823,-0.050956547,0.047626544,1.0,0.001260084,0.99999833,-0.0014311526,0.0,0.9999994,-0.0012602825,4.4435263e-05,0.0,4.2632222e-05,-0.0014312315,-0.9999992,0.0,0.00030612387,0.49896812,0.05674094,1.0,0.0012580663,0.9925004,-0.12223618,0.0,0.9999993,-0.0012365954,0.00025362443,0.0,0.00010055534,-0.12223646,-0.9925013,0.0,0.00037030727,0.55059737,0.05675116,1.0
+            1.0,0.0,0.0,0.0,0.0,-1.66893e-06,-1.0000006,0.0,0.0,1.0000006,-1.66893e-06,0.0,0.0,0.0,0.0,1.0,0.067276,-0.14975822,-0.98643184,0.0,-0.0006234944,0.9886652,-0.15013976,0.0,0.99773425,0.01071584,0.0664201,0.0,0.0055837436,0.49661073,0.012290092,1.0,-0.019843813,0.98827523,-0.15139171,0.0,0.9975369,0.029759804,0.06351682,0.0,0.06727737,-0.14975847,-0.98643166,0.0,0.0055837445,0.4966107,0.012290083,1.0,-0.011075109,0.99992806,0.004724447,0.0,0.99772173,0.010735996,0.06660427,0.0,0.066548645,0.0054512923,-0.997769,0.0,0.0055461274,0.5476564,0.0046222033,1.0
+            """;
+        String[] names={"Dummy01","Bip01","Bip01_Pelvis","Bip01_Spine"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,2),offsets);
+        var endpoints=new Matrix4f[2][names.length];int row=0;
+        for(String line:captures.strip().split("\\n")) {
+            var cells=line.split(",");
+            for(int i=0;i<names.length;i++) {
+                var values=new float[16];
+                for(int j=0;j<16;j++) values[j]=Float.parseFloat(cells[i*16+j]);
+                endpoints[row][i]=new Matrix4f().set(values);
+            }
+            row++;
+        }
+        float low=Math.min(endpoints[0][3].m31(),endpoints[1][3].m31());
+        float high=Math.max(endpoints[0][3].m31(),endpoints[1][3].m31());
+        Vector3f previous=null;
+        for(int step=0;step<=120;step++) {
+            float amount=1-step/120f;
+            var poses=java.util.Arrays.stream(endpoints[1]).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.releasePose(poses,actor,endpoints[0],amount)) throw new AssertionError("animated root release refused");
+            if(step==0 || step==120) for(int i=0;i<poses.length;i++)
+                if(!poses[i].equals(endpoints[step==0?0:1][i],.00001f)) throw new AssertionError("animated root endpoint jumped");
+            var spine=poses[3].getTranslation(new Vector3f());
+            if(spine.y<low-.005f || spine.y>high+.005f || previous!=null && previous.distance(spine)>.005f)
+                throw new AssertionError("animated root length normalization displaced the spine: step="+step+" spine="+spine);
+            previous=spine;
+            float nativeLength=endpoints[0][2].getTranslation(new Vector3f()).distance(endpoints[0][3].getTranslation(new Vector3f()))*amount
+                +endpoints[1][2].getTranslation(new Vector3f()).distance(endpoints[1][3].getTranslation(new Vector3f()))*(1-amount);
+            if(Math.abs(poses[2].getTranslation(new Vector3f()).distance(spine)-nativeLength)>.000001f)
+                throw new AssertionError("animated root release stretched the anatomical spine link");
+        }
+    }
+
+    private static void checkMovingRecovery() {
+        // Native39 male/full late setdown, first post-stop pose and restored walking pose, without game state mutation.
+        String captures="""
+            76.5153,0.0,0.0,0.0,0.0,-1.24659255e-05,76.5153,0.0,0.0,-76.515305,-1.2465925e-05,0.0,-0.0059846193,0.002857726,-0.41662216,1.0,-7.3838773e-06,0.9931056,-0.117230594,0.0,1.0,3.2583407e-06,-3.5623754e-05,0.0,-3.4906265e-05,-0.117230535,-0.9931056,0.0,0.003068854,0.5492204,0.033796407,1.0,-8.21145e-05,0.9977529,0.067013584,0.0,1.0,0.00010567563,-0.0003478744,0.0,-0.00035408032,0.0670136,-0.99775285,0.0,0.0030680937,0.6549606,0.021397896,1.0,0.946618,-0.32145604,-0.024097051,0.0,0.32234937,0.9444816,0.06361268,0.0,0.0023104644,-0.0679846,0.9976844,0.0,0.018774264,0.76120245,0.028527573,1.0,-0.94656754,-0.3216532,-0.023443785,0.0,0.32250202,-0.9444146,-0.063835435,0.0,-0.0016078964,-0.067985184,0.99768597,0.0,-0.012654752,0.76119953,0.028538471,1.0,0.17002314,-0.95075774,0.25914064,0.0,0.98053604,0.18942568,0.051647075,0.0,-0.09819172,0.24531549,0.9644585,0.0,0.10121158,0.7332083,0.0264291,1.0,0.1956541,-0.96467036,-0.17644243,0.0,0.98053586,0.18942562,0.051647056,0.0,-0.016399752,-0.18311317,0.98295563,0.0,0.12451502,0.60289544,0.06194735,1.0,-0.07968485,-0.993669,-0.079207614,0.0,0.0062465547,-0.0799559,0.99677837,0.0,-0.99679935,0.07893357,0.012578402,0.0,0.15133196,0.4706759,0.037763856,1.0,-0.20215754,-0.951321,0.23264255,0.0,0.97432405,-0.2194053,-0.050540455,0.0,0.09912306,0.21645203,0.9712492,0.0,-0.09508766,0.73318815,0.026496863,1.0,-0.22456813,-0.9631458,-0.14805877,0.0,0.9743241,-0.21940535,-0.05054047,0.0,0.016192853,-0.15560699,0.9876872,0.0,-0.12279567,0.6027981,0.05838326,1.0,0.0527198,-0.9973113,-0.050913382,0.0,0.0025800793,0.05111961,-0.9986887,0.0,0.9986048,0.05251974,0.005268201,0.0,-0.15357526,0.47078744,0.038090058,1.0,0.028390631,-0.98027974,-0.19546779,0.0,-0.9995773,-0.027849004,-0.0055195186,0.0,-3.2891054e-05,0.19554867,-0.98069483,0.0,0.05829385,0.49758938,0.033847325,1.0,0.02823782,-0.96434367,0.26307666,0.0,-0.9994983,-0.03064219,-0.005039883,0.0,0.012921605,-0.26280296,-0.96476287,0.0,0.065036625,0.26477304,-0.012576266,1.0,-8.8551315e-06,-0.999981,0.0003180793,0.0,-0.99998003,9.027775e-06,0.0006693368,0.0,-0.0006691506,-0.00031647348,-1.0000002,0.0,0.07087736,0.0653074,0.04183872,1.0,-0.0006750984,-8.856431e-05,-1.0000002,0.0,-0.99998003,1.4978345e-05,0.0006752861,0.0,1.4957739e-05,0.9999808,-9.017637e-05,0.0,0.07083232,-8.53862e-05,-0.024590505,1.0,-0.049219258,-0.9815011,-0.18502617,0.0,-0.9987755,0.04929532,0.004191801,0.0,0.005006759,0.18500593,-0.9827255,0.0,-0.052156128,0.49758938,0.033847526,1.0,-0.04802365,-0.95752853,0.28431275,0.0,-0.99867946,0.051227413,0.0038388688,0.0,-0.018240336,-0.2837529,-0.9587245,0.0,-0.0638457,0.26448295,-0.010096172,1.0,-0.001246338,-0.9998499,0.017305363,0.0,-0.99999833,0.0012246758,-0.0012612774,0.0,0.0012399824,-0.01730682,-0.99985,0.0,-0.07377899,0.06642683,0.048711352,1.0,0.0012533087,-0.00018720262,-0.9999993,0.0,-0.99999833,0.0012326394,-0.0012534524,0.0,0.001232889,0.99999917,-0.00018573382,0.0,-0.07377807,-8.641437e-05,-0.016597385,1.0
+            76.5,-3.9394883e-05,-1.4673389e-05,0.0,2.8023098e-05,20.771942,73.62592,0.0,-2.4333809e-05,-73.625916,20.771938,0.0,-0.0060535767,0.097179376,-0.34652624,1.0,-0.024349742,0.9525491,-0.30341235,0.0,0.9996874,0.021461764,-0.012848678,0.0,-0.0057272636,-0.30363053,-0.95277375,0.0,-0.001970284,0.55650204,0.00862667,1.0,-0.022731315,0.9938342,-0.10852965,0.0,0.9996874,0.02146125,-0.012853702,0.0,-0.010445351,-0.108788095,-0.9940109,0.0,-0.004562661,0.6579436,-0.023597099,1.0,0.99319714,-0.11259146,0.029695392,0.0,0.11514839,0.98759997,-0.10671056,0.0,-0.017312614,0.109403856,0.9938462,0.0,0.0074759694,0.7633425,-0.035096467,1.0,-0.9826181,-0.17522824,0.061296888,0.0,0.18079676,-0.9782413,0.10177523,0.0,0.042129297,0.11108857,0.9929179,0.0,-0.021377817,0.7627342,-0.03472932,1.0,0.34456265,-0.81761926,0.4612757,0.0,0.93470037,0.25313625,-0.24951416,0.0,0.0872419,0.51712763,0.8514499,0.0,0.093970284,0.7535373,-0.032510765,1.0,0.08525657,-0.9314603,-0.35371208,0.0,0.041794688,-0.351349,0.93531126,0.0,-0.9954817,-0.09452454,0.0089742765,0.0,0.14119637,0.6414728,0.030712891,1.0,-0.13509181,-0.98952526,-0.05089362,0.0,0.0853488,-0.062794775,0.9943706,0.0,-0.9871505,0.12998755,0.09293785,0.0,0.152881,0.5138049,-0.01776652,1.0,-0.35994747,-0.7932881,0.49105382,0.0,0.9329157,-0.3001993,0.1988714,0.0,-0.010348078,0.5296949,0.8481262,0.0,-0.106951274,0.74747455,-0.029392079,1.0,-0.06349191,-0.91155875,-0.406241,0.0,0.032706793,0.4049431,-0.91375774,0.0,0.9974473,-0.07130305,0.004103031,0.0,-0.15628597,0.638745,0.037912898,1.0,0.1350909,-0.9895252,-0.05089363,0.0,0.08534834,0.06279465,-0.99437034,0.0,0.9871506,0.12998675,0.092937335,0.0,-0.16498837,0.5138049,-0.017766438,1.0,0.009742975,-0.9955209,-0.09404959,0.0,-0.9999513,-0.009534627,-0.0026615541,0.0,0.0017527393,0.09407074,-0.99556494,0.0,0.05435614,0.50622267,0.012233773,1.0,0.008738302,-0.9765078,0.21530998,0.0,-0.9999513,-0.00953462,-0.0026615523,0.0,0.0046518464,-0.21527635,-0.97654307,0.0,0.0566701,0.26978648,-0.010103,1.0,-0.0006952407,-0.9999915,-0.0043094456,0.0,-0.9981298,0.0009576548,-0.06112674,0.0,0.06113011,0.004258707,-0.9981216,0.0,0.058477525,0.06780465,0.03443193,1.0,0.061104737,-0.015350085,-0.99801415,0.0,-0.9981298,0.00095765153,-0.061126757,0.0,0.0018937518,0.99988264,-0.015262691,0.0,0.06249418,0.0027151927,-0.03217497,1.0,-0.019104153,-0.99270386,-0.11906547,0.0,-0.9998156,0.01922948,9.860657e-05,0.0,0.0021915073,0.119045295,-0.9928874,0.0,-0.05603402,0.5038117,0.012411137,1.0,-0.017087549,-0.89079446,0.45408744,0.0,-0.9998155,0.019229487,9.8608434e-05,0.0,-0.008819681,-0.45400196,-0.89095813,0.0,-0.06057127,0.26804456,-0.01586692,1.0,0.004273128,-0.95376086,0.30053994,0.0,-0.9999424,-0.0011029817,0.010716016,0.0,-0.009889053,-0.30056846,-0.95370996,0.0,-0.064105675,0.08379173,0.07805698,1.0,-0.009889066,-0.30056706,-0.95371103,0.0,-0.9999424,-0.0011029814,0.010716016,0.0,-0.0042731143,0.95376194,-0.30053854,0.0,-0.06448346,0.0014687479,0.03433016,1.0
+            """;
+        String[] names={"Bip01_Spine","Bip01_Spine1","Bip01_L_Clavicle","Bip01_R_Clavicle","Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_L_Thigh","Bip01_L_Calf","Bip01_L_Foot","Bip01_L_Toe0","Bip01_R_Thigh","Bip01_R_Calf","Bip01_R_Foot","Bip01_R_Toe0"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,1,2,4,5,3,7,8,0,10,11,12,0,14,15,16),offsets);
+        var endpoints=new Matrix4f[2][names.length+1];int frame=0;
+        for(String line:captures.strip().split("\\n")) {
+            var cells=line.split(",");
+            for(int i=0;i<endpoints[frame].length;i++) {
+                var values=new float[16];
+                for(int j=0;j<16;j++) values[j]=Float.parseFloat(cells[i*16+j]);
+                endpoints[frame][i]=new Matrix4f().set(values);
+            }
+            frame++;
+        }
+        var start=java.util.Arrays.copyOfRange(endpoints[0],1,endpoints[0].length);
+        var nativeWalk=java.util.Arrays.copyOfRange(endpoints[1],1,endpoints[1].length);
+        for(int step=0;step<=60;step++) {
+            float amount=(float)(1-CartTransitionMath.smooth(step/60.0));
+            var poses=java.util.Arrays.stream(nativeWalk).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.releasePose(poses,actor,start,amount)) throw new AssertionError("moving joint release refused");
+            if(step==0 || step==60) for(int i=0;i<poses.length;i++)
+                if(!poses[i].equals(step==0?start[i]:nativeWalk[i],.00001f)) throw new AssertionError("moving release endpoint jumped");
+            var cart=new Matrix4f();
+            if(!CartTransitionMath.blend(endpoints[1][0],endpoints[0][0],amount,cart)
+                || !CartGrip.transitionGrip(poses,actor,false,new Matrix4f(),cart,1-amount,1-amount))
+                throw new AssertionError("moving held recovery lost its actual cart grip at step "+step);
+            if(step==0) for(int i=0;i<poses.length;i++)
+                if(!poses[i].equals(start[i],.00001f)) throw new AssertionError("released hands snapped to the low cart on first moving frame");
+            for(int i=0;i<poses.length;i++) {
+                var parent=actor.getBoneAt(i).parent;
+                if(!poses[i].isFinite()) throw new AssertionError("moving release produced a nonfinite pose");
+                if(parent!=null) {
+                    float before=start[i].getTranslation(new Vector3f()).distance(start[parent.index].getTranslation(new Vector3f()));
+                    float endpoint=nativeWalk[i].getTranslation(new Vector3f()).distance(nativeWalk[parent.index].getTranslation(new Vector3f()));
+                    float expected=before*amount+endpoint*(1-amount);
+                    float after=poses[i].getTranslation(new Vector3f()).distance(poses[parent.index].getTranslation(new Vector3f()));
+                    if(Math.abs(expected-after)>.00001f) throw new AssertionError("moving release stretched "+names[i]+" step="+step+" expected="+expected+" actual="+after);
+                }
+            }
+            for(int side=0;side<2;side++) {
+                int hand=side==0?6:9;
+                var shape=CartGrip.grasp(false,"WheelbarrowWood");
+                var palm=poses[hand].transformPosition(new Vector3f(shape.palmX(),0,shape.palmDepth()));
+                var handle=new Vector3f();CartGrip.handle("WheelbarrowWood",side==0,handle);cart.transformPosition(handle);
+                if(step==60 && palm.distance(handle)>.00002f) throw new AssertionError("moving palm missed rendered handle");
+            }
+            // Pickup release uses the same local interpolation without holding the hands at the world cart.
+            var free=java.util.Arrays.stream(nativeWalk).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.releasePose(free,actor,start,amount)) throw new AssertionError("free walking release refused");
+        }
+        for(float amount:new float[]{Float.NaN,-.1f,1.1f}) {
+            var poses=java.util.Arrays.stream(nativeWalk).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(CartGrip.releasePose(poses,actor,start,amount)) throw new AssertionError("invalid walking release accepted");
+            for(int i=0;i<poses.length;i++) if(!poses[i].equals(nativeWalk[i])) throw new AssertionError("invalid release changed native input");
+        }
+    }
+
     public static void main(String[] args) {
         checkNativeHeight();
         checkRecoveryPosture();
         checkRecoveryRotation();
         checkLateRecoveryReach();
+        checkMovingRecovery();
+        checkMovingRootTranslation();
+        checkMovingUnreachableTargets();
         checkReach();
         checkTransitionReachContinuity();
         checkTransitionShoulders();

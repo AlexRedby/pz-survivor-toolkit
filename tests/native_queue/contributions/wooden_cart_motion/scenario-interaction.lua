@@ -35,11 +35,15 @@ local cases={
 if config.wheelCycle then cases={{name='wood-wheel-cycle',female=false,full=true,yaw=135}} end
 if config.interruptions then
  cases={}
- for _,phase in ipairs({{name='late',progress=.88},{name='contact',progress=.55},{name='early',progress=.15}}) do
-  for _,action in ipairs({'drop','pickup'}) do
-   for _,route in ipairs({'cancel','walk'}) do
-    cases[#cases+1]={name=action..'-'..phase.name..'-'..route,female=false,full=true,yaw=135,
-     interrupt=action,threshold=phase.progress,route=route}
+ local variants=config.interruptionMatrix and {{name='male-full-',female=false,full=true},{name='male-empty-',female=false,full=false},
+  {name='female-full-',female=true,full=true},{name='female-empty-',female=true,full=false}} or {{name='',female=false,full=true}}
+ for _,variant in ipairs(variants) do
+  for _,phase in ipairs({{name='late',progress=.88},{name='contact',progress=.55},{name='early',progress=.15}}) do
+   for _,action in ipairs({'drop','pickup'}) do
+    for _,route in ipairs({'cancel','walk'}) do
+     cases[#cases+1]={name=variant.name..action..'-'..phase.name..'-'..route,female=variant.female,full=variant.full,yaw=135,
+      interrupt=action,threshold=phase.progress,route=route}
+    end
    end
   end
  end
@@ -99,7 +103,7 @@ local function snapshot(now)
  assert(math.abs(weight-initialCargo)<.001 and ids==initialCargoIDs,'Cargo changed during interaction')
  assert(CartTestArea.contains(p:getX(),p:getY(),p:getZ()) and math.abs(p:getX()-CartTestArea.x)<4 and math.abs(p:getY()-CartTestArea.y)<4,'Interaction left checked local pad')
  local status=toolkitWoodCartStatus and toolkitWoodCartStatus(p) or {}
- return {case=cases[phase].name,start=since,wall=now,elapsed=now-since,id=item:getID(),stage=stage,
+ return {case=cases[phase].name,start=since,wall=now,elapsed=now-since,id=item:getID(),stage=stage,female=p:isFemale(),driveCommand=driveStage,
   cycle=cycle,driveStage=driveStage,heldID=handID(p:getPrimaryHandItem()),secondaryID=handID(p:getSecondaryHandItem()),
   worldID=world and world:getItem():getID() or -1,worldCount=count,woodWorldCount=woodCount,inventoryCount=inventoryCount(),
   actionType=action and action.Type or '',progress=action and action:getJobDelta() or 0,condition=item:getCondition(),
@@ -219,17 +223,21 @@ local function tick()
   interrupted=true;cancelAt=now;retryStage=stage;stage='cancelling';event('cancelRequested',now)
   if c.route=='cancel' then
    assert(CancelAction,'Native cancel handler missing');CancelAction(p:getPlayerNum())
-  else cartLabDrive(1) end
+  else driveStage=1;cartLabDrive(1) end
   return
  end
  if stage=='cancelling' then
   assert(now-cancelAt<1000,'Native cancellation did not clear the action')
   if row.nativeActions==0 and row.luaActions==0 then
-   cartLabDrive(0);cancelledAt=now;stage='cancelled';event('cancelled',now)
+   if not config.interruptionMatrix then driveStage=0;cartLabDrive(0) end
+   cancelledAt=now;stage='cancelled';event('cancelled',now)
   end
   return
  elseif stage=='cancelled' then
-  if now-cancelledAt<900 then return end
+  if config.interruptionMatrix and c.route=='walk' and driveStage~=0 and now-cancelledAt>=900 then
+   driveStage=0;cartLabDrive(0);event('movementReleased',now)
+  end
+  if now-cancelledAt<(config.interruptionMatrix and c.route=='walk' and 1400 or 900) then return end
   event('retryQueued',now)
   if retryStage=='pickup' then
    stage='pickup';ISTimedActionQueue.add(ISCartPickupAction.FromWorldItem(p,assert(item:getWorldItem())))
