@@ -132,10 +132,12 @@ class CartAdapterTests(unittest.TestCase):
         analyzer = carts._load(ROOT / 'tests/native_queue/contributions/wooden_cart_motion/analyze-interaction.py')
         analyzer.self_check()
         text, body, grip = analyzer.fixture()
+        tail, life = analyzer.entry_fixture()
         cache = self.output / 'client1'
         log = self.output / 'client1-launch.log'
         log.write_text(text)
         for filename, rows in [('body-clearance.jsonl', body), ('wood-grip-poses.jsonl', grip),
+                               ('action-tail-poses.jsonl', tail), ('action-lifecycle.jsonl', life),
                                ('world-cart-poses.jsonl', analyzer.world_fixture())]:
             (cache / filename).write_text('\n'.join(map(json.dumps, rows)))
         native = struct.pack('<8f', .01,.02,-.03,0,0,0,0,0)
@@ -155,12 +157,21 @@ class CartAdapterTests(unittest.TestCase):
             self.assertFalse(result['issues'], result['issues'])
             self.assertTrue(result['evidence']['interaction']['functionalPass'])
             self.assertTrue(result['evidence']['interaction']['worldHandoff']['pass'])
+            self.assertTrue(result['evidence']['interaction']['entryMotion']['pass'])
             self.assertTrue(result['evidence']['nativeMotionNotApplicable'])
             self.assertNotIn('native', commands)
             self.assertNotIn('nativePartialDiagnostic', result['evidence'])
             self.assertEqual(set(commands), {'aabb', 'body', 'pants', 'interaction'})
             self.assertEqual(result['outcomes'][0]['status'], 'captured')
             self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+            bad_tail = json.loads(json.dumps(tail))
+            bad_tail[2]['bones']['Bip01_R_Hand'][13] += .10
+            (cache / 'action-tail-poses.jsonl').write_text('\n'.join(map(json.dumps, bad_tail)))
+            result = carts.verify(self.output, self.selection, {})
+            self.assertFalse(result['evidence']['interaction']['entryMotion']['pass'])
+            self.assertTrue(result['issues'])
+            self.assertEqual(result['outcomes'][0]['status'], 'failed')
+            (cache / 'action-tail-poses.jsonl').write_text('\n'.join(map(json.dumps, tail)))
             log.write_text(text.replace('"ik": true', '"ik": false'))
             result = carts.verify(self.output, self.selection, {})
             self.assertTrue(result['issues'])

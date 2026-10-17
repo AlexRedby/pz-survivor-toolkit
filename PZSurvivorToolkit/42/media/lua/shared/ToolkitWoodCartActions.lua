@@ -32,7 +32,9 @@ local function start(self, pickup)
     self.character:setVariable("ToolkitCartMotion", false)
     self:setActionAnim("ToolkitWoodCart")
     self.character:setVariable("ToolkitWoodCartAction", true)
-    self:setOverrideHandModels(pickup and self:findItem() or self.item, nil)
+    local item = pickup and self:findItem() or self.item
+    -- An item override also installs its right-hand cart mask during the action's blend-in.
+    self:setOverrideHandModelsString(item and item:getStaticModel() or nil, nil)
     present(self, pickup)
 end
 

@@ -33,6 +33,11 @@ local function setup(server, enabled, bridge)
     function ISBaseTimedAction:setActionAnim(anim) self.anim = anim end
     function ISBaseTimedAction:setAnimVariable() end
     function ISBaseTimedAction:setOverrideHandModels(item) self.override = item end
+    function ISBaseTimedAction:setOverrideHandModelsString(primary, secondary)
+        assert(primary == nil or type(primary) == "string", "action must override the model without item hand masks")
+        assert(secondary == nil, "transition duplicated its cart model")
+        self.override = primary; self.stringOverride = true
+    end
     function ISBaseTimedAction:addAfter(action)
         w.added[#w.added + 1] = action
         if w.queue then
@@ -159,6 +164,7 @@ local function setup(server, enabled, bridge)
         function item:isTwoHandWeapon() return true end
         function item:isRequiresEquippedBothHands() return true end
         function item:getWorldItem() return self.world end
+        function item:getStaticModel() return "WheelbarrowWood" end
         function item:setJobDelta(value) self.delta = value end
         function item:setJobType(value) self.job = value end
         function item:getName() return "cart" end
@@ -220,7 +226,8 @@ w.aligned = true; assert(not pickup:waitToStart(), "aligned body should start pi
 p.vars.ToolkitCartMotion = true
 pickup:start(); pickup:update()
 assert(p.vars.ToolkitCartMotion == false, "timed action must disable steering immediately")
-assert(p.vars.ToolkitWoodCartAction and p.vars.ToolkitWoodCartProgress == .4 and pickup.override == wood and wood.delta == .4)
+assert(p.vars.ToolkitWoodCartAction and p.vars.ToolkitWoodCartProgress == .4
+    and pickup.stringOverride and pickup.override == wood:getStaticModel() and wood.delta == .4)
 local queued = ISCartPickupAction:new(p, 1, 2, 0, 123)
 queued:forceCancel(); assert(p.vars.ToolkitWoodCartAction and w.ended == 0, "queued cancellation cleared the current presentation")
 pickup:stop()
@@ -276,6 +283,7 @@ w.world = world; wood.world = world; p.primary, p.secondary = wood, wood
 local release = setmetatable({character=p, item=wood}, ToolkitWoodCartSetdown)
 p.vars.Weapon, p.vars.RightHandMask, p.vars.LeftHandMask = "cart", "holdingcartright", "holdingcartleft"
 release:start()
+assert(release.stringOverride and release.override == wood:getStaticModel(), "setdown reused the item's hand mask")
 assert(p.vars.Weapon == "" and p.vars.RightHandMask == "" and p.vars.LeftHandMask == "",
     "setdown must fade the underlying cart-idle before releasing its action pose")
 -- A first holder update may restore cart variables once in an immediate pickup -> setdown chain.
@@ -421,5 +429,10 @@ assert(getmetatable(ISCartPickupAction.FromWorldItem(p, world)) == ISCartPickupA
 p.primary, p.secondary = wood, wood
 local fallback = ISUnequipAction:new(p, wood, 1, "drop"); ISTimedActionQueue.addToQueue(queue, fallback)
 assert(getmetatable(fallback) == ISUnequipAction)
+w = setup(false, true, true)
+local missing = setmetatable({character=w.p, squareX=1, itemId=-1}, ToolkitWoodCartPickup)
+missing:start()
+assert(missing.stringOverride and missing.override == nil, "missing pickup target should clear the model override safely")
+missing:stop()
 require = originalRequire
 print("PASS wooden approach preserves exact world identity, skips disappeared/replaced targets, does not queue after cancellation and falls back safely without bridge helpers")

@@ -298,6 +298,8 @@ def verify(root, selection, catalog):
                     raise ValueError('Interaction functional/rendered IK verification failed: ' + str(report['failures']))
                 if not report['worldHandoff']['pass']:
                     raise ValueError('Interaction world/held handoff failed: ' + str(report['worldHandoff']['failures']))
+                if not report['entryMotion']['pass']:
+                    raise ValueError('Interaction pickup entry motion failed: ' + str(report['entryMotion']['failures']))
                 proof = _json(cache / 'wood-wheel-mesh-proof.json')
                 native = (cache / 'WheelbarrowWood.bin').read_bytes()
                 if proof.get('matchesOriginal') is not True or proof.get('sha256') != hashlib.sha256(native).hexdigest() or proof.get('bytes') != len(native):

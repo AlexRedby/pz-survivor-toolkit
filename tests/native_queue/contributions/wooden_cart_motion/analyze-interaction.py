@@ -12,6 +12,98 @@ EVENTS = ('prepared', 'pickupQueued', 'pickedUp', 'dropQueued', 'dropped')
 ACTIONS = ('ToolkitWoodCartPickup', 'ToolkitWoodCartSetdown')
 DURATION = 16000
 SETTLE_MS = 500
+ENTRY_MS = 200
+ENTRY_GUARD_MS = 35
+ENTRY_GAP_MS = 75
+ENTRY_RISE = .035
+ENTRY_STEP = .045
+ARM_BONES = tuple('Bip01_'+side+'_'+part for side in 'LR' for part in ('UpperArm', 'Forearm', 'Hand'))
+
+
+def entryMotion(text, tail, life):
+    """Bound sampled pickup entry motion, independently of the final held-cart probes."""
+    assert '[WOOD_BANK] RUN_STARTED' in text, 'Missing interaction run boundary'
+    log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
+    events = [_decode(line.split('[WOOD_INTERACTION_EVENT] ', 1)[1]) for line in log.splitlines()
+              if '[WOOD_INTERACTION_EVENT] ' in line]
+    cases, failures = [], []
+    for name in CASES:
+        entry = {'case': name}
+        cases.append(entry)
+        try:
+            attempts = re.findall(r'\[WOOD_BANK\] COMPLETE '+re.escape(name)+r' wall=(\d+)(?:\s|$)', log)
+            assert len(attempts) == 1, 'Missing unique selected entry case'
+            selected = [r for r in events if r['case'] == name and r['start'] == int(attempts[0])]
+            queued = [r for r in selected if r['event'] == 'pickupQueued']
+            picked = [r for r in selected if r['event'] == 'pickedUp']
+            assert len(queued) == len(picked) == 1, 'Missing unique pickup boundaries'
+            starts = [r for r in life if r.get('metaType') == ACTIONS[0] and r.get('event') == 'start'
+                      and queued[0]['wall'] <= r['wallTimeMillis'] < picked[0]['wall']]
+            assert len(starts) == 1, 'Missing unique native pickup start'
+            start = starts[0]
+            assert start.get('phase') == 'exit' and start.get('started') is True and start.get('threw') is None \
+                and start.get('playerNum') == 0 and type(start.get('nativeActionId')) is int \
+                and start['nativeActionId'] > 0, 'Invalid native pickup start receipt'
+            wall = start['wallTimeMillis']
+            entry.update(nativeActionId=start['nativeActionId'], actorId=start.get('actorId'), startWall=wall)
+            candidates = [r for r in tail if wall <= r['wallTimeMillis'] <= wall+ENTRY_MS+ENTRY_GUARD_MS]
+            end = next((i for i, r in enumerate(candidates) if r['wallTimeMillis'] >= wall+ENTRY_MS), None)
+            assert end is not None, 'Missing frame bracketing pickup entry end'
+            frames = candidates[:end+1]
+            before = [r for r in tail if wall-50 <= r['wallTimeMillis'] <= wall]
+            assert len(frames) >= 4, 'Missing pickup entry render window'
+            stamps = [r['wallTimeMillis'] for r in frames]
+            assert all(b > a for a, b in zip(stamps, stamps[1:])), 'Nonmonotonic entry frames'
+            baseline = max(before, key=lambda r: r['wallTimeMillis']) if before else frames[0]
+            assert baseline['wallTimeMillis'] <= wall+35, 'Missing pre-start/immediate entry baseline'
+            observed = ([baseline] if baseline['wallTimeMillis'] < stamps[0] else []) + frames
+            gaps = [b['wallTimeMillis']-a['wallTimeMillis'] for a, b in zip(observed, observed[1:])]
+            entry.update(samples=len(frames), baselineOffsetMs=baseline['wallTimeMillis']-wall,
+                         firstOffsetMs=stamps[0]-wall, lastOffsetMs=stamps[-1]-wall, maxSampleGapMs=max(gaps),
+                         metricsWindowOffsetMs=[baseline['wallTimeMillis']-wall, stamps[-1]-wall])
+            assert stamps[0]-wall <= 35 and ENTRY_MS <= stamps[-1]-wall <= ENTRY_MS+ENTRY_GUARD_MS \
+                and max(gaps) <= ENTRY_GAP_MS, 'Incomplete pickup entry render coverage'
+            for frame in observed:
+                _finite(frame)
+                assert all(len(frame['bones'][bone]) == 16
+                           and all(type(value) in (int, float) for value in frame['bones'][bone])
+                           for bone in ARM_BONES), 'Missing/invalid entry arm matrices'
+            assert all(r.get('PerformingAction') == 'ToolkitWoodCart' and r.get('cartModel') is True
+                       for r in frames), 'Entry frames do not show the pickup presentation'
+            assert all('RightHandMask' in r and isinstance(r['tracks'], list) and r['tracks']
+                       for r in frames), 'Missing entry mask/track evidence'
+            masked = [r['wallTimeMillis']-wall for r in frames if r['RightHandMask'] != '']
+            stock = []
+            for frame in frames:
+                for track in frame['tracks']:
+                    assert isinstance(track['name'], str) and type(track['priority']) is int \
+                        and type(track['layer']) is int and 0 <= track['weight'] <= 1.001 \
+                        and 0 <= track['field'] <= 1.001, 'Invalid entry animation track'
+                    if track['name'] == 'Bob_Cart_Idle' and track['priority'] < 20 \
+                            and track['weight']*track['field'] > .0001:
+                        stock.append(dict(offsetMs=frame['wallTimeMillis']-wall, **track))
+            entry.update(rightMaskOffsetsMs=masked, lowerPriorityCartTracks=stock, bones={})
+            for bone in ARM_BONES:
+                points = [np.asarray(r['bones'][bone][12:15], dtype=float) for r in observed]
+                rise = max(float(point[1]-points[0][1]) for point in points)
+                step = max(float(np.linalg.norm(b-a)) for a, b in zip(points, points[1:]))
+                entry['bones'][bone] = dict(maxRiseActorUnits=rise, maxAdjacentDistanceActorUnits=step)
+                if bone.endswith('_Hand') and (rise > ENTRY_RISE or step > ENTRY_STEP):
+                    failures.append((name, bone+' pickup entry wrist motion exceeds limits'))
+            if masked:
+                failures.append((name, 'right hand mask active during pickup entry'))
+            if stock:
+                failures.append((name, 'lower-priority cart idle active during pickup entry'))
+        except (AssertionError, KeyError, TypeError, ValueError) as error:
+            entry['evidenceError'] = str(error)
+            failures.append((name, str(error)))
+    return dict(failures=failures, cases=cases,
+                limits=dict(windowMs=ENTRY_MS, maxBaselineBeforeMs=50, maxFirstOffsetMs=35,
+                            minLastOffsetMs=ENTRY_MS, endGuardMs=ENTRY_GUARD_MS, maxSampleGapMs=ENTRY_GAP_MS,
+                            maxWristRiseActorUnits=ENTRY_RISE, maxAdjacentWristDistanceActorUnits=ENTRY_STEP),
+                limit='Sampled first 200ms of each selected SP pickup, through its first bracketing frame (up to +35ms); '
+                      'tail probe has no actor identifier. '
+                      'Native player-0 start and the isolated scene bound the window. No full animation equivalence claim.') | {'pass': not failures}
 
 
 def knee_direction(frame):
@@ -282,6 +374,22 @@ def world_fixture():
             for index in range(len(CASES)) for elapsed in (100,3000,9400)]
 
 
+def entry_fixture():
+    tail, life = [], []
+    for index, _ in enumerate(CASES):
+        wall = 101200+index*20000
+        life.append(dict(wallTimeMillis=wall, event='start', phase='exit', metaType=ACTIONS[0],
+                         nativeActionId=index+1, actorId=3, playerNum=0, started=True, threw=None))
+        for offset in range(-25, 201, 25):
+            tail.append(dict(wallTimeMillis=wall+offset, PerformingAction='ToolkitWoodCart' if offset >= 0 else '',
+                             RightHandMask='', cartModel=offset >= 0,
+                             bones={bone: [1,0,0,0,0,1,0,0,0,0,1,0,
+                                           .15 if '_L_' in bone else -.15, .48-offset*.00002, .03-offset*.00002, 1]
+                                    for bone in ARM_BONES},
+                             tracks=[dict(name='Bob_Idle', weight=1, field=1, layer=1, priority=20)]))
+    return tail, life
+
+
 def self_check():
     held = dict(slotX=10, slotY=20, slotAngle=.3, cart=[1,0,0,0,0,1,0,0,0,0,1,0,.1,.2,.3,1])
     theta = .3 + math.pi
@@ -293,6 +401,38 @@ def self_check():
     world['x'] += .03
     assert np.max(abs(world_points(held,vertices,7)-world_points(world,vertices))) > .01, 'Handoff jump accepted'
     text, body, grip = fixture()
+    tail, life = entry_fixture()
+    assert entryMotion(text, tail, life)['pass']
+    bracketed = [dict(row, wallTimeMillis=101403) if row['wallTimeMillis'] == 101400 else row for row in tail]
+    outside = json.loads(json.dumps(bracketed[2])); outside['wallTimeMillis'] = 101425
+    outside['bones']['Bip01_R_Hand'][13] += .10
+    bracketed.insert(10, outside)
+    bracketed_result = entryMotion(text, bracketed, life)
+    assert bracketed_result['pass'] and bracketed_result['cases'][0]['lastOffsetMs'] == 203, 'First end-bracketing frame was not used'
+    no_bracket = [row for row in tail if row['wallTimeMillis'] != 101400]
+    assert not entryMotion(text, no_bracket, life)['pass'], 'Unbracketed entry end accepted'
+    late_bracket = [dict(row, wallTimeMillis=101436) if row['wallTimeMillis'] == 101400 else row for row in tail]
+    assert not entryMotion(text, late_bracket, life)['pass'], 'Entry end guard exceeded'
+    # Foreign cases/actions outside selected pickup boundaries cannot satisfy missing native evidence.
+    unrelated = [dict(r, wallTimeMillis=r['wallTimeMillis']+10000) for r in life]
+    for missing_tail, missing_life in [(tail, []), ([], life), (tail, unrelated),
+                                       (tail, [dict(r, metaType='ToolkitWoodCartSetdown') for r in life]),
+                                       (tail[4:], life)]:
+        assert not entryMotion(text, missing_tail, missing_life)['pass'], 'Missing entry evidence accepted'
+    assert entryMotion(text, tail+[dict(tail[2], wallTimeMillis=111200)], life+unrelated)['pass'], 'Unrelated scene evidence changed selected entry'
+    for mutation in ('mask', 'stock', 'rise', 'step', 'missingbone', 'missingtracks', 'emptytracks', 'gap', 'duplicatestart'):
+        changed = json.loads(json.dumps(tail)); changed_life = json.loads(json.dumps(life))
+        row = changed[2]
+        if mutation == 'mask': row['RightHandMask'] = 'holdingcartright'
+        elif mutation == 'stock': row['tracks'].append(dict(name='Bob_Cart_Idle', weight=.5, field=1, layer=2, priority=10))
+        elif mutation == 'rise': row['bones']['Bip01_R_Hand'][13] += .10
+        elif mutation == 'step': row['bones']['Bip01_R_Hand'][12] += .16
+        elif mutation == 'missingbone': del row['bones']['Bip01_R_Hand']
+        elif mutation == 'missingtracks': del row['tracks']
+        elif mutation == 'emptytracks': row['tracks'] = []
+        elif mutation == 'gap': changed = [r for r in changed if not 101225 <= r['wallTimeMillis'] <= 101300]
+        elif mutation == 'duplicatestart': changed_life.append(dict(life[0], nativeActionId=99))
+        assert not entryMotion(text, changed, changed_life)['pass'], 'Bad entry evidence accepted: '+mutation
     result = analyze(text, body, grip)
     assert result['functionalPass'] and result['ikCoverageVerified']
     assert handoff(text,body,world_fixture(),vertices)['pass']
@@ -390,9 +530,12 @@ def main():
     vertices = np.c_[vertices, np.ones(len(vertices))]
     world = [_decode(line) for line in (args.profile / 'world-cart-poses.jsonl').read_text().splitlines()]
     result['worldHandoff'] = handoff((args.log or args.profile / 'console.txt').read_text(errors='replace'), body, world, vertices)
+    tail = [_decode(line) for line in (args.profile / 'action-tail-poses.jsonl').read_text().splitlines()]
+    life = [_decode(line) for line in (args.profile / 'action-lifecycle.jsonl').read_text().splitlines()]
+    result['entryMotion'] = entryMotion((args.log or args.profile / 'console.txt').read_text(errors='replace'), tail, life)
     args.output.write_text(json.dumps(result, indent=2, allow_nan=False) + '\n')
     print(json.dumps(result, indent=2, allow_nan=False))
-    return 0 if result['functionalPass'] and result['worldHandoff']['pass'] else 1
+    return 0 if result['functionalPass'] and result['worldHandoff']['pass'] and result['entryMotion']['pass'] else 1
 
 
 if __name__ == '__main__':
