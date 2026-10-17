@@ -11,12 +11,28 @@ ToolkitWoodCartSetdown.Type = "ToolkitWoodCartSetdown"
 local function wooden(item)
     return item and item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood"
 end
-local function finish(self)
-    if not self.toolkitPresentation then return end
+local function retire(self)
     self.toolkitPresentation = nil
-    if toolkitWoodCartEnd then toolkitWoodCartEnd(self.character) end
     self.character:clearVariable("ToolkitWoodCartAction")
     self.character:clearVariable("ToolkitWoodCartProgress")
+end
+local function finish(self)
+    if not self.toolkitPresentation then return end
+    if toolkitWoodCartEnd then toolkitWoodCartEnd(self.character) end
+    retire(self)
+end
+local function stop(self, pickup, nativeStop)
+    local item = pickup and self:findItem() or self.item
+    local ok, result = pcall(nativeStop, self)
+    if not ok then finish(self); error(result, 0) end
+    if self.toolkitPresentation then
+        if toolkitWoodCartCancel and toolkitWoodCartCancel(self.character, item, pickup, self.action) then
+            retire(self)
+        else
+            finish(self)
+        end
+    end
+    return result
 end
 local function present(self, pickup)
     if isServer() or not toolkitWoodCartUpdate then return end
@@ -63,8 +79,7 @@ function ToolkitWoodCartPickup:update()
     self.character:setMetabolicTarget(Metabolics.HeavyDomestic)
 end
 function ToolkitWoodCartPickup:stop()
-    finish(self)
-    return ISCartPickupAction.stop(self)
+    return stop(self, true, ISCartPickupAction.stop)
 end
 local function pickupVisual(self)
     local cart = self.character:getPrimaryHandItem()
@@ -110,8 +125,7 @@ function ToolkitWoodCartSetdown:update()
     present(self, false)
 end
 function ToolkitWoodCartSetdown:stop()
-    finish(self)
-    local result = ISUnequipAction.stop(self)
+    local result = stop(self, false, ISUnequipAction.stop)
     if ToolkitCartRefreshVisual and self.character:getPrimaryHandItem() == self.item then
         ToolkitCartRefreshVisual(self.character, self.action, true)
     end

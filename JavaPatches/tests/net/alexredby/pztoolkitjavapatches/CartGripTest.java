@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import org.joml.Matrix4f;
+import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import zombie.core.math.PZMath;
 import zombie.core.skinnedmodel.animation.AnimationClip;
@@ -916,7 +917,177 @@ public final class CartGripTest {
             throw new AssertionError("head neutral calculation mutated shared animation keys");
     }
 
+    private static void checkNativeHeight() {
+        String[] names={"Bip01_Spine","Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,2),offsets);
+        var before=new Matrix4f[names.length];
+        for(int i=0;i<before.length;i++) before[i]=new Matrix4f().translation(.1f*i,.2f*i,-.15f*i)
+            .rotateXYZ(.1f*i,-.2f*i,.3f*i);
+        for(float correction:new float[]{0,-.067f,.067f,-.2f,.2f}) {
+            var poses=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.nativeHeight(poses,actor,correction)) throw new AssertionError("bounded native height correction refused");
+            for(int i=0;i<poses.length;i++) {
+                var expected=new Matrix4f(before[i]).m31(before[i].m31()+correction);
+                if(!poses[i].equals(expected,.000001f)) throw new AssertionError("height correction changed orientation, scale or horizontal position: "+names[i]);
+                if(i>0) {
+                    var previousLocal=new Matrix4f(before[i-1]).invert().mul(before[i]);
+                    var actualLocal=new Matrix4f(poses[i-1]).invert().mul(poses[i]);
+                    if(!actualLocal.equals(previousLocal,.000001f)) throw new AssertionError("native height correction stretched or rotated a bone link");
+                }
+            }
+        }
+        for(float target:new float[]{Float.NaN,Float.POSITIVE_INFINITY,Float.NEGATIVE_INFINITY,-.2001f,.2001f}) {
+            var poses=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(CartGrip.nativeHeight(poses,actor,target)) throw new AssertionError("unsafe native height correction accepted");
+            for(int i=0;i<poses.length;i++) if(!poses[i].equals(before[i]))
+                throw new AssertionError("rejected native height correction mutated bone "+names[i]);
+        }
+        var poses=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+        var missingSpine=skeleton(new String[]{"Root","Upper","Forearm","Hand"},List.of(-1,0,1,2),offsets);
+        if(CartGrip.nativeHeight(poses,missingSpine,.067f)) throw new AssertionError("height correction accepted a missing native anchor");
+        for(int i=0;i<poses.length;i++) if(!poses[i].equals(before[i])) throw new AssertionError("missing anchor mutated bone poses");
+        poses[0].m31(Float.NaN);
+        var invalid=java.util.Arrays.stream(poses).map(pose->pose.get(new float[16])).toArray(float[][]::new);
+        if(CartGrip.nativeHeight(poses,actor,.067f)) throw new AssertionError("nonfinite native height anchor accepted");
+        for(int i=0;i<poses.length;i++) if(!java.util.Arrays.equals(invalid[i],poses[i].get(new float[16])))
+            throw new AssertionError("invalid anchor correction mutated bone poses");
+    }
+
+    private static void checkRecoveryPosture() {
+        var start=new CartGrip.Posture(.531f,new Quaternionf().rotationXYZ(.13f,-.09f,.07f));
+        var canonical=new CartGrip.Posture(.519f,new Quaternionf().rotationYXZ(.05f,-.04f,.03f));
+        var startCopy=new Quaternionf(start.rotation());var canonicalCopy=new Quaternionf(canonical.rotation());
+        var first=CartGrip.recoverPosture(start,canonical,canonical,1);
+        if(first==null || Math.abs(first.height()-start.height())>.0000001f
+            || Math.abs(first.rotation().dot(start.rotation()))<.9999999f)
+            throw new AssertionError("recovery calibration changed its first native posture");
+        var endpoint=new CartGrip.Posture(.562f,new Quaternionf().rotationXYZ(-.1f,.12f,.02f));
+        var last=CartGrip.recoverPosture(start,canonical,endpoint,0);
+        if(last==null || last.height()!=endpoint.height() || Math.abs(last.rotation().dot(endpoint.rotation()))<.9999999f)
+            throw new AssertionError("recovery retained native calibration at the canonical endpoint");
+        if(!start.rotation().equals(startCopy) || !canonical.rotation().equals(canonicalCopy)
+            || first.rotation()==start.rotation() || last.rotation()==endpoint.rotation())
+            throw new AssertionError("posture calibration mutated or borrowed a shared quaternion");
+        var negated=new CartGrip.Posture(start.height(),new Quaternionf(-start.rotation().x,-start.rotation().y,-start.rotation().z,-start.rotation().w));
+        var middle=CartGrip.recoverPosture(start,canonical,endpoint,.5f);
+        var same=CartGrip.recoverPosture(negated,canonical,endpoint,.5f);
+        if(Math.abs(middle.rotation().dot(same.rotation()))<.9999999f)
+            throw new AssertionError("recovery calibration took the long quaternion path");
+        CartGrip.Posture previous=first;
+        for(int i=1;i<=100;i++) {
+            float t=i/100f;
+            var reference=new CartGrip.Posture(canonical.height()+(endpoint.height()-canonical.height())*t,
+                new Quaternionf(canonical.rotation()).slerp(endpoint.rotation(),t));
+            var now=CartGrip.recoverPosture(start,canonical,reference,1-t);
+            if(now==null || !now.rotation().isFinite() || Math.abs(now.rotation().lengthSquared()-1)>.000001f
+                || Math.abs(now.height()-previous.height())>.001f
+                || Math.abs(now.rotation().dot(previous.rotation()))<.99999f)
+                throw new AssertionError("canonical recovery posture jumped or became nonfinite");
+            previous=now;
+        }
+        for(float amount:new float[]{Float.NaN,Float.POSITIVE_INFINITY,-.001f,1.001f})
+            if(CartGrip.recoverPosture(start,canonical,endpoint,amount)!=null)
+                throw new AssertionError("invalid posture calibration fraction accepted");
+        for(var bad:new CartGrip.Posture[]{null,new CartGrip.Posture(Float.NaN,new Quaternionf()),
+            new CartGrip.Posture(0,null),new CartGrip.Posture(0,new Quaternionf(0,0,0,0)),
+            new CartGrip.Posture(0,new Quaternionf(Float.NaN,0,0,1)),
+            new CartGrip.Posture(0,new Quaternionf(Float.MAX_VALUE,0,0,1))}) {
+            if(CartGrip.recoverPosture(bad,canonical,endpoint,1)!=null
+                || CartGrip.recoverPosture(start,bad,endpoint,1)!=null
+                || CartGrip.recoverPosture(start,canonical,bad,1)!=null)
+                throw new AssertionError("invalid native/reference posture accepted");
+        }
+    }
+
+    private static void checkRecoveryRotation() {
+        String[] names={"Bip01","Bip01_Spine","Bip01_Spine1","Bip01_R_Clavicle",
+            "Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_R_Finger1",
+            "Bip01_L_Thigh","Bip01_L_Calf","Bip01_R_Thigh","Bip01_R_Calf"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,2,3,4,5,6,1,8,1,10),offsets);
+        var before=new Matrix4f[names.length];
+        for(int i=0;i<before.length;i++) before[i]=new Matrix4f().translation(.03f*i,.5f+.02f*i,-.01f*i)
+            .rotateXYZ(.01f*i,-.02f*i,.03f*i);
+        var current=before[2].getUnnormalizedRotation(new Quaternionf()).normalize();
+        var pivot=before[1].getTranslation(new Vector3f());
+        for(float angle:new float[]{0,-.15f,.15f,-.349f,.349f}) {
+            var correction=new Quaternionf().rotationAxis(angle,new Vector3f(1,2,3).normalize());
+            var target=new Quaternionf(correction).mul(current);
+            var poses=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.nativeRotation(poses,actor,target)) throw new AssertionError("bounded recovery posture refused");
+            var change=new Matrix4f().translation(pivot).rotate(correction).translate(-pivot.x,-pivot.y,-pivot.z);
+            for(int i=0;i<poses.length;i++) {
+                boolean upper=i>=1 && i<=7;
+                var expected=upper?change.mul(before[i],new Matrix4f()):before[i];
+                if(!poses[i].equals(expected,.000001f)) throw new AssertionError("recovery rotation changed a leg/root or distorted upper bone: "+names[i]);
+                if(i>=2 && i<=7) {
+                    var local=new Matrix4f(before[i-1]).invert().mul(before[i]);
+                    if(!new Matrix4f(poses[i-1]).invert().mul(poses[i]).equals(local,.000001f))
+                        throw new AssertionError("recovery rotation stretched or twisted a local bone link");
+                }
+            }
+            if(!poses[1].getTranslation(new Vector3f()).equals(pivot)) throw new AssertionError("recovery moved its spine pivot");
+            if(Math.abs(poses[2].getUnnormalizedRotation(new Quaternionf()).normalize().dot(target))<.999999f)
+                throw new AssertionError("recovery did not reach canonical chest orientation");
+        }
+        for(var target:new Quaternionf[]{null,new Quaternionf(0,0,0,0),new Quaternionf(Float.NaN,0,0,1),
+            new Quaternionf().rotationX(.350f).mul(current),new Quaternionf().rotationY(-.350f).mul(current)}) {
+            var poses=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(CartGrip.nativeRotation(poses,actor,target)) throw new AssertionError("unsafe recovery orientation accepted");
+            for(int i=0;i<poses.length;i++) if(!poses[i].equals(before[i]))
+                throw new AssertionError("rejected recovery orientation mutated native bones");
+        }
+        var broken=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+        broken[6].m31(Float.NaN);
+        var original=java.util.Arrays.stream(broken).map(pose->pose.get(new float[16])).toArray(float[][]::new);
+        if(CartGrip.nativeRotation(broken,actor,new Quaternionf().rotationX(.1f).mul(current)))
+            throw new AssertionError("recovery accepted a nonfinite upper body");
+        for(int i=0;i<broken.length;i++) if(!java.util.Arrays.equals(original[i],broken[i].get(new float[16])))
+            throw new AssertionError("invalid upper body was partially rotated");
+    }
+
+    private static void checkLateRecoveryReach() {
+        // Native33 failed arm/target at setdown p=.6063169, plus the preceding observed clavicle-to-shoulder offset.
+        // The missing failed clavicle/root are reconstructed anchors, so this checks geometry rather than a full frame replay.
+        String[] names={"Bip01_Spine","Bip01_Spine1","Bip01_R_Clavicle", "Bip01_R_UpperArm",
+            "Bip01_R_Forearm","Bip01_R_Hand"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,2,3,4),offsets);
+        var nativePoses=new Matrix4f[]{new Matrix4f().translation(0,.4996f,.169f),
+            new Matrix4f().translation(0,.56f,.09f),
+            new Matrix4f().translation(-.01438938f,.62748386f,.003435921f),
+            new Matrix4f().set(new float[]{-.23096856f,-.97005546f,-.07512277f,0,.95380545f,-.24099244f,.17938115f,0,
+                -.19211398f,-.030220956f,.98090625f,0,-.10029138f,.61632586f,.012404621f,1}),
+            new Matrix4f().set(new float[]{.17374115f,-.04449612f,-.98378485f,0,.9538033f,-.24102634f,.1793474f,0,
+                -.24509694f,-.9694972f,.0005644858f,0,-.13194816f,.48336843f,.0021084845f,1}),
+            new Matrix4f().set(new float[]{-.021295473f,-.0020800233f,-.9997703f,0,.9930215f,-.116063744f,-.020910319f,0,
+                -.11599202f,-.99323887f,.0045372546f,0,-.108135544f,.47726992f,-.13273081f,1})};
+        var target=new Matrix4f().set(new float[]{.12924546f,-.9377757f,-.32229277f,0,.09246594f,.33500016f,-.9376701f,0,
+            .9872922f,.09138861f,.13000941f,0,-.16470511f,.3156233f,.012414888f,1});
+        var refused=java.util.Arrays.stream(nativePoses).map(Matrix4f::new).toArray(Matrix4f[]::new);
+        if(CartGrip.reach(refused,actor,"Bip01_R_Hand",target,new Matrix4f(),true,.91494614f))
+            throw new AssertionError("late recovery fixture no longer reproduces the bounded shoulder failure");
+        var corrected=java.util.Arrays.stream(nativePoses).map(Matrix4f::new).toArray(Matrix4f[]::new);
+        if(!CartGrip.nativeRotation(corrected,actor,new Quaternionf().rotationX(-.15f))
+            || !CartGrip.reach(corrected,actor,"Bip01_R_Hand",target,new Matrix4f(),true,.91494614f)
+            || !corrected[5].equals(target,.00001f))
+            throw new AssertionError("bounded canonical torso rotation did not recover the fixed late wrist target");
+        for(int i=2;i<5;i++) {
+            float old=nativePoses[i].getTranslation(new Vector3f()).distance(nativePoses[i+1].getTranslation(new Vector3f()));
+            float now=corrected[i].getTranslation(new Vector3f()).distance(corrected[i+1].getTranslation(new Vector3f()));
+            if(Math.abs(old-now)>.000001f) throw new AssertionError("late recovery stretched a clavicle or arm link");
+        }
+    }
+
     public static void main(String[] args) {
+        checkNativeHeight();
+        checkRecoveryPosture();
+        checkRecoveryRotation();
+        checkLateRecoveryReach();
         checkReach();
         checkTransitionReachContinuity();
         checkTransitionShoulders();

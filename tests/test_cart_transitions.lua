@@ -10,7 +10,7 @@ local function setup(server, enabled, bridge)
     getActivatedMods = function() return {contains = function(_, name) return enabled and name == "SaucedCarts" end} end
     Events = {}
     w.events = {}
-    for _, event in ipairs({"OnPlayerDeath", "OnMainMenuEnter"}) do
+    for _, event in ipairs({"OnPlayerUpdate", "OnPlayerDeath", "OnMainMenuEnter"}) do
         Events[event] = {Add = function(fn) w.events[event] = fn end}
     end
     getTimestampMs = function() return 100 end
@@ -107,6 +107,8 @@ local function setup(server, enabled, bridge)
     toolkitWoodCartStance = bridge and function() return {x = 1.3, y = 2.2, faceX = 1.8, faceY = 2.8, aligned = w.aligned} end or nil
     toolkitWoodCartUpdate = bridge and function() w.presented = w.presented + 1 end or nil
     toolkitWoodCartEnd = bridge and function(character) w.ended = w.ended + 1; w.endedCharacter = character end or nil
+    toolkitWoodCartCancel = nil
+    toolkitWoodCartTick = bridge and function(character) w.ticked = character end or nil
     toolkitWoodCartDropPose = bridge and function(character, item)
         assert(character == w.p and item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood")
         return not w.noDropPose and (w.dropPose or {x = 1.25, y = 2.75, z = 0, rotation = 90}) or nil
@@ -280,7 +282,7 @@ ToolkitCartRefreshVisual = nil
 
 
 w.world = world; wood.world = world; p.primary, p.secondary = wood, wood
-local release = setmetatable({character=p, item=wood}, ToolkitWoodCartSetdown)
+local release = setmetatable({character=p, item=wood, reason="drop"}, ToolkitWoodCartSetdown)
 p.vars.Weapon, p.vars.RightHandMask, p.vars.LeftHandMask = "cart", "holdingcartright", "holdingcartleft"
 release:start()
 assert(release.stringOverride and release.override == wood:getStaticModel(), "setdown reused the item's hand mask")
@@ -415,6 +417,10 @@ p.instant = false
 p.distance = 1; w.worldFor(steel)
 assert(getmetatable(ISCartPickupAction.FromWorldItem(p, steel.world)) == ISCartPickupAction)
 local beforeEnd = w.ended
+w.events.OnPlayerUpdate(p)
+assert(w.ticked == p, "presentation recovery tick lost its exact player")
+toolkitWoodCartTick = nil
+w.events.OnPlayerUpdate(p)
 w.events.OnPlayerDeath(p)
 assert(w.ended == beforeEnd + 1 and w.endedCharacter == p)
 w.events.OnMainMenuEnter()
@@ -434,5 +440,95 @@ local missing = setmetatable({character=w.p, squareX=1, itemId=-1}, ToolkitWoodC
 missing:start()
 assert(missing.stringOverride and missing.override == nil, "missing pickup target should clear the model override safely")
 missing:stop()
+
+for _, pickupAction in ipairs({true, false}) do
+    for _, outcome in ipairs({"accepted", "refused", "missing", "error"}) do
+        local state = setup(false, true, true)
+        local player, item = state.p, state.item()
+        state.worldFor(item)
+        if not pickupAction then player.primary, player.secondary = item, item end
+        local action
+        if pickupAction then
+            action = ISCartPickupAction:new(player, 1, 2, 0, 123)
+        else
+            action = ISUnequipAction:new(player, item, 1, "drop")
+            ISTimedActionQueue.addToQueue({}, action)
+        end
+        action.action = {}
+        action:start()
+        local owner = pickupAction and ISCartPickupAction or ISUnequipAction
+        local order, sourceError = {}, {}
+        local nativeStop = owner.stop
+        owner.stop = function(self)
+            assert(self == action and self.toolkitPresentation, "native stop lost its owned action")
+            order[#order + 1] = "stop"
+            if pickupAction then item.world, state.world = nil, nil end
+            if outcome == "error" then error(sourceError) end
+            return "native stopped"
+        end
+        if outcome ~= "missing" then
+            toolkitWoodCartCancel = function(character, cart, pickup, stoppingAction)
+                assert(character == player and cart == item and pickup == pickupAction and stoppingAction == action.action,
+                    "recovery lost the exact player, pre-stop item, direction or native action")
+                assert(table.concat(order, ",") == "stop", "recovery preceded or repeated native stop")
+                order[#order + 1] = "cancel"
+                return outcome == "accepted"
+            end
+        end
+        local ended = toolkitWoodCartEnd
+        toolkitWoodCartEnd = function(character)
+            order[#order + 1] = "end"
+            ended(character)
+        end
+        local visualCalls = 0
+        ToolkitCartRefreshVisual = function(character, stoppingAction, stopped)
+            assert(not pickupAction and character == player and stoppingAction == action.action and stopped == true,
+                "stopped setdown lost its exact visual handoff")
+            assert(not action.toolkitPresentation and not player.vars.ToolkitWoodCartAction and not player.vars.ToolkitWoodCartProgress,
+                "visual refresh preceded Lua presentation retirement")
+            order[#order + 1] = "visual"
+            visualCalls = visualCalls + 1
+        end
+        local completed, performed = player.completeCalls, action.performed
+        local ok, result = pcall(action.stop, action)
+        assert(not action.toolkitPresentation and not player.vars.ToolkitWoodCartAction and not player.vars.ToolkitWoodCartProgress,
+            "stop retained Lua presentation ownership")
+        assert(player.completeCalls == completed and action.performed == performed, "stop performed an ownership transfer")
+        if outcome == "error" then
+            assert(not ok and result == sourceError and table.concat(order, ",") == "stop,end" and visualCalls == 0,
+                "native stop error changed identity, started recovery or skipped immediate cleanup")
+        else
+            local expected = outcome == "accepted" and "stop,cancel" or outcome == "refused" and "stop,cancel,end" or "stop,end"
+            if not pickupAction then expected = expected .. ",visual" end
+            assert(ok and result == "native stopped" and table.concat(order, ",") == expected,
+                "stop order, fallback or native result changed: " .. outcome)
+            assert(state.ended == (outcome == "accepted" and 0 or 1), "recovery ended the accepted state or leaked a refused state")
+        end
+        local before = #order
+        action:forceCancel()
+        assert(#order == before, "forceCancel repeated retired presentation cleanup")
+        owner.stop = nativeStop
+    end
+end
+print("PASS wooden cancellation follows one native stop, preserves exact identities/results/errors, retires Lua ownership and falls back without recovery")
+
+for _, pickupAction in ipairs({true, false}) do
+    local state = setup(false, true, true)
+    local item, player = state.item(), state.p
+    state.worldFor(item)
+    player.primary, player.secondary = item, item
+    local class = pickupAction and ToolkitWoodCartPickup or ToolkitWoodCartSetdown
+    local action = setmetatable({character = player, item = item, itemId = 123, squareX = 1, reason = "drop"}, class)
+    local cancels = 0
+    toolkitWoodCartCancel = function() cancels = cancels + 1; return true end
+    action:start()
+    local waiting = setmetatable({character = player}, class)
+    waiting:forceCancel()
+    assert(action.toolkitPresentation and player.vars.ToolkitWoodCartAction and state.ended == 0 and cancels == 0,
+        "waiting forceCancel touched the current presentation")
+    action:forceCancel()
+    assert(not action.toolkitPresentation and not player.vars.ToolkitWoodCartAction and state.ended == 1 and cancels == 0,
+        "forceCancel started recovery instead of immediate owned cleanup")
+end
 require = originalRequire
 print("PASS wooden approach preserves exact world identity, skips disappeared/replaced targets, does not queue after cancellation and falls back safely without bridge helpers")

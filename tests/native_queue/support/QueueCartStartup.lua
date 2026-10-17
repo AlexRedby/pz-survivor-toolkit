@@ -14,7 +14,7 @@ Events.OnPreUIDraw.Add(function()
  local current,active=ActiveMods.getById('currentGame'),getActivatedMods()
  current:getMods():clear();for i=0,active:size()-1 do current:getMods():add(active:get(i)) end
  MainScreen.instance.createWorld=true
- MapSpawnSelect.instance.selectedRegion={points={unemployed={{posX=10835,posY=10144,posZ=0}}}}
+ MapSpawnSelect.instance.selectedRegion={points={unemployed={{posX=10825,posY=10142,posZ=0}}}}
  MainScreen.instance.charCreationProfession:onOptionMouseDown({internal='NEXT'})
  MainScreen.instance.charCreationMain:onOptionMouseDown({internal='NEXT'})
 end)

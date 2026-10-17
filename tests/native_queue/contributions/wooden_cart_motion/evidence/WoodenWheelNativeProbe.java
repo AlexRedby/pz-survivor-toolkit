@@ -263,6 +263,32 @@ public final class WoodenWheelNativeProbe {
         @Advice.OnMethodExit(suppress=Throwable.class)
         public static void exit(@Advice.This ItemModelRenderer renderer){WoodenWheelNativeProbe.worldRoll(renderer);}
     }
+    public static void transitionTrace(String event, IsoPlayer player) {
+        try {
+            var type=Class.forName("net.alexredby.pztoolkitjavapatches.CartTransition");
+            var field=type.getDeclaredField("states");field.setAccessible(true);
+            var state=((Map<?,?>)field.get(null)).get(player);
+            if(state==null)return;
+            var row=new StringBuilder("[WOOD_TRANSITION_TRACE] ").append(System.currentTimeMillis()).append(' ').append(event)
+                .append(" state=").append(System.identityHashCode(state));
+            for(String name:new String[]{"pickup","recovering","rendered","progress","nativeHeight","referenceHeight"}) {
+                var value=state.getClass().getDeclaredField(name);value.setAccessible(true);row.append(' ').append(name).append('=').append(value.get(state));
+            }
+            row.append(" action=").append(player.getVariableBoolean("IsPerformingAnAction"))
+                .append(" overrides=").append(player.overridePrimaryHandModel).append('/').append(player.overrideSecondaryHandModel)
+                .append(" stack=").append(player.getCharacterActions().size()).append(" callers=");
+            for(var caller:Thread.currentThread().getStackTrace()) if(caller.getClassName().equals(type.getName()))row.append(caller).append(';');
+            System.out.println(row);
+        } catch(Throwable error){fail(error);}
+    }
+    public static class Cancelling {
+        @Advice.OnMethodExit(suppress=Throwable.class)
+        public static void exit(@Advice.Argument(0) IsoPlayer player,@Advice.Return boolean result){transitionTrace("cancel="+result,player);}
+    }
+    public static class Ending {
+        @Advice.OnMethodEnter(suppress=Throwable.class)
+        public static void enter(@Advice.Argument(0) IsoPlayer player){transitionTrace("end",player);}
+    }
     public static class Grounding {
         @Advice.OnMethodEnter(suppress=Throwable.class)
         public static NativeSnapshot enter(@Advice.Argument(0) ModelSlotRenderData slot){return WoodenWheelNativeProbe.beforeGrounding(slot);}
@@ -296,6 +322,9 @@ public final class WoodenWheelNativeProbe {
                 .transform((b,d,l,m,p)->b.visit(Advice.to(Drawing.class).on(named("render"))))
                 .type(named("zombie.core.skinnedmodel.model.ItemModelRenderer"))
                 .transform((b,d,l,m,p)->b.visit(Advice.to(WorldDrawing.class).on(named("DoRender"))))
+                .type(named("net.alexredby.pztoolkitjavapatches.CartTransition"))
+                .transform((b,d,l,m,p)->b.visit(Advice.to(Cancelling.class).on(named("cancel")))
+                    .visit(Advice.to(Ending.class).on(named("end"))))
                 .installOn(instrumentation);installed=true;
         }
         System.out.println("[WOOD_WHEEL_NATIVE_PROBE] capturing "+directory.resolve("wood-wheel-native.csv"));

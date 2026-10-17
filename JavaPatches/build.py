@@ -89,7 +89,8 @@ if args.check or args.check_video:
               'net.alexredby.pztoolkitjavapatches.CartWheelWorldTest': 'CART_WHEEL_WORLD_PASS',
               'net.alexredby.pztoolkitjavapatches.CartGroundingTest': 'CART_GROUNDING_PASS',
               'net.alexredby.pztoolkitjavapatches.CartTransitionTest': 'CART_TRANSITION_PASS',
-              'net.alexredby.pztoolkitjavapatches.CartTransitionMathTest': 'PASS cart transition world/actor roundtrips'} if args.check else {}
+              'net.alexredby.pztoolkitjavapatches.CartTransitionMathTest': 'PASS cart transition world/actor roundtrips',
+              'net.alexredby.javapatchfixture.CartBootstrapCheck': 'CART_BOOTSTRAP_PASS'} if args.check else {}
     if args.check_video:
         checks['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
     sources = [ROOT / 'tests' / (name.replace('.', '/') + '.java') for name in checks]
@@ -97,11 +98,19 @@ if args.check or args.check_video:
     for name, marker in checks.items():
         for trace in ([False, True] if name.endswith("VehicleTraceChecks") else [False]):
             with tempfile.TemporaryDirectory(prefix='pz-java-native-') as cache:
+                runtime_classes = testclasses
+                if name == 'net.alexredby.javapatchfixture.CartBootstrapCheck':
+                    runtime_classes = Path(cache) / 'classes'
+                    relative = Path(name.replace('.', '/') + '.class')
+                    (runtime_classes / relative).parent.mkdir(parents=True)
+                    shutil.copy2(testclasses / relative, runtime_classes / relative)
                 cold_fonts = name == 'zombie.core.fonts.FontColdChecks'
-                testpath = [str(testclasses), classpath] if cold_fonts else [str(testclasses), str(jar), str(fontjar), classpath]
+                testpath = [str(testclasses), classpath] if cold_fonts else [str(runtime_classes), str(jar), str(fontjar), classpath]
                 result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             (ROOT / 'build' / (name.rsplit('.', 1)[-1] + ('-trace' if trace else '') + '.log')).write_text(result.stdout)
             print(result.stdout)
             result.check_returncode()
             if 'ERROR transforming' in result.stdout: raise RuntimeError(name + ' bytecode transformation failed')
             if marker not in result.stdout: raise RuntimeError(name + ' regression did not complete')
+            if name == 'net.alexredby.javapatchfixture.CartBootstrapCheck' and '[ZB] Transformed: zombie.core.skinnedmodel.ModelManager (retransformed)' not in result.stdout:
+                raise RuntimeError('cold bootstrap did not apply the model recovery patch')

@@ -51,13 +51,19 @@ public final class ClearanceProbe {
             var row=new StringBuilder(4096).append("{\"wallTimeMillis\":").append(System.currentTimeMillis());
             for(String name:new String[]{"PerformingAction","Weapon","RightHandMask","LeftHandMask"})
                 row.append(',').append(quoted(name)).append(':').append(quoted(slot.character.getVariableString(name)));
-            row.append(",\"cartModel\":").append(slot.modelData.stream().anyMatch(d->d.modelInstance!=null
-                && d.modelInstance.modelScript!=null && "WheelbarrowWood".equals(d.modelInstance.modelScript.getName())))
+            long carts=slot.modelData.stream().filter(d->d.modelInstance!=null
+                && d.modelInstance.modelScript!=null && "WheelbarrowWood".equals(d.modelInstance.modelScript.getName())).count();
+            row.append(",\"cartModel\":").append(carts>0).append(",\"cartModelCount\":").append(carts)
                 .append(",\"bones\":{");
             boolean comma=false;
             for(String side:new String[]{"L","R"})for(String part:new String[]{"UpperArm","Forearm","Hand"}) {
                 String name="Bip01_"+side+"_"+part;Integer index=skin.boneIndices.get(name);
                 if(index==null)throw new AssertionError("Missing tail bone "+name);
+                if(comma)row.append(',');comma=true;row.append(quoted(name)).append(':');matrix(row,pose(body,skin,index));
+            }
+            for(String name:new String[]{"Bip01_Spine","Bip01_Head","Bip01_L_Foot","Bip01_R_Foot"}) {
+                Integer index=skin.boneIndices.get(name);
+                if(index==null)throw new AssertionError("Missing recovery bone "+name);
                 if(comma)row.append(',');comma=true;row.append(quoted(name)).append(':');matrix(row,pose(body,skin,index));
             }
             row.append("},\"tracks\":[");comma=false;
@@ -73,8 +79,10 @@ public final class ClearanceProbe {
     public static synchronized void snapshot(ModelSlotRenderData slot) throws Exception {
         tail(slot);
         var stopped=stoppedCarts.get(slot.character);
-        boolean afterStop=stopped!=null && slot.character.getPrimaryHandItem()==stopped.item
-            && slot.character.getSecondaryHandItem()==stopped.item;
+        boolean afterStop=stopped!=null && (slot.character.getPrimaryHandItem()==stopped.item
+            && slot.character.getSecondaryHandItem()==stopped.item
+            || slot.character.getPrimaryHandItem()==null && slot.character.getSecondaryHandItem()==null
+            && stopped.item.getWorldItem()!=null && stopped.item.getWorldItem().getItem()==stopped.item);
         if(output==null || !afterStop && System.nanoTime()-last<33_333_333L) return;
         for(var cart:slot.modelData) {
             var instance=cart.modelInstance;
@@ -188,9 +196,20 @@ public final class ClearanceProbe {
             .append(",\"nativeStackCurrentIdentity\":").append(current==null?0:System.identityHashCode(current))
             .append(",\"threw\":").append(quoted(thrown==null?null:thrown.getClass().getName())).append("}\n");
         lifecycleOutput.write(row.toString());lifecycleOutput.flush();
-        if("stop".equals(event) && thrown==null && primary!=null && primary==secondary
-            && "SaucedWheelbarrow.WheelbarrowWood".equals(primary.getFullType())) {
-            if(stoppedCarts.putIfAbsent(actor,new StoppedCart(identity,primary))!=null)
+        if("stop".equals(event) && thrown==null) {
+            InventoryItem item=primary!=null && primary==secondary
+                && "SaucedWheelbarrow.WheelbarrowWood".equals(primary.getFullType())?primary:null;
+            if(item==null && "ToolkitWoodCartPickup".equals(action.getMetaType())) {
+                synchronized(net.alexredby.pztoolkitjavapatches.CartTransition.class) {
+                    var states=net.alexredby.pztoolkitjavapatches.CartTransition.class.getDeclaredField("states");states.setAccessible(true);
+                    var state=((java.util.Map<?,?>)states.get(null)).get(actor);
+                    if(state!=null) {
+                        var field=state.getClass().getDeclaredField("item");field.setAccessible(true);
+                        item=(InventoryItem)field.get(state);
+                    }
+                }
+            }
+            if(item!=null && stoppedCarts.putIfAbsent(actor,new StoppedCart(identity,item))!=null)
                 throw new IllegalStateException("Previous stopped cart still has no render receipt");
         }
     }

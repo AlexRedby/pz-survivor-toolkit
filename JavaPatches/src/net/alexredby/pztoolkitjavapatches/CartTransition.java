@@ -2,11 +2,13 @@ package net.alexredby.pztoolkitjavapatches;
 
 import java.util.WeakHashMap;
 import org.joml.Matrix4f;
+import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import se.krka.kahlua.integration.annotations.LuaMethod;
 import se.krka.kahlua.vm.KahluaTable;
 import zombie.Lua.LuaManager;
 import zombie.characters.IsoPlayer;
+import zombie.characters.CharacterTimedActions.BaseAction;
 import zombie.core.skinnedmodel.ModelManager;
 import zombie.core.skinnedmodel.model.ModelInstanceRenderData;
 import zombie.core.skinnedmodel.model.ModelSlotRenderData;
@@ -28,7 +30,11 @@ public final class CartTransition {
 
     private static final class State {
         InventoryItem item;
-        boolean pickup, ik, rendered;
+        boolean pickup, ik, rendered, recovering;
+        float cancelledProgress, nativeHeight, referenceHeight;
+        Quaternionf nativeRotation, referenceRotation;
+        long recoveryStart;
+        String visualModel;
         float progress;
         long updated;
         IsoWorldInventoryObject world;
@@ -90,7 +96,7 @@ public final class CartTransition {
         if(!Main.CART_TRANSITION_SUPPORTED || player==null || !player.isLocalPlayer() || !wooden(item)
             || !Double.isFinite(progress) || player.isDead()) return false;
         State state=states.get(player);
-        if(state==null || state.item!=item || state.pickup!=pickup) {
+        if(state==null || state.recovering || state.item!=item || state.pickup!=pickup) {
             end(player);state=new State();state.item=item;state.pickup=pickup;
             if(pickup) {
                 state.world=item.getWorldItem();
@@ -100,16 +106,86 @@ public final class CartTransition {
             states.put(player,state);
         }
         state.progress=(float)Math.max(0,Math.min(1,progress));state.updated=System.nanoTime();
-        var phase=CartTransitionMath.progress(state.progress,!pickup);
+        poseVariables(player,state);
+        return true;
+    }
+
+    private static void poseVariables(IsoPlayer player, State state) {
+        var phase=CartTransitionMath.progress(state.progress,!state.pickup);
         player.setVariable("ToolkitWoodCartPoseX",(float)(phase.lift()+.10*phase.crouch()*(1-phase.lift())));
         player.setVariable("ToolkitWoodCartPoseY",(float)phase.lift());
+    }
+
+    private static boolean protectedState(IsoPlayer player) {
+        return !player.isLocalPlayer() || player.isDead() || player.isAiming() || player.hasHitReaction()
+            || player.isKnockedDown() || player.isGettingUp() || player.getVehicle()!=null
+            || player.isGrappling() || player.isBeingGrappled() || player.isRagdollSimulationActive();
+    }
+
+    private static boolean recoveryOwner(IsoPlayer player, State state) {
+        if(state.visualModel==null || protectedState(player)) return false;
+        if(state.pickup) return state.world!=null && state.item.getWorldItem()==state.world
+            && state.world.getItem()==state.item && state.world.getSquare()!=null
+            && player.getPrimaryHandItem()==null && player.getSecondaryHandItem()==null
+            && Math.abs(player.getZ()-state.placement.z())<.25f
+            && state.visualModel==player.overridePrimaryHandModel && player.overrideSecondaryHandModel==null;
+        return state.item.getWorldItem()==null && state.item.getContainer()==player.getInventory()
+            && player.getPrimaryHandItem()==state.item && player.getSecondaryHandItem()==state.item
+            && state.visualModel==player.overridePrimaryHandModel && player.overrideSecondaryHandModel==null;
+    }
+
+    public static synchronized boolean suppressHeldModel(zombie.characters.IsoGameCharacter character) {
+        if(!(character instanceof IsoPlayer player)) return false;
+        var state=states.get(player);
+        return state!=null && state.recovering && !state.pickup && recoveryOwner(player,state)
+            && player.getCharacterActions().isEmpty() && !player.getVariableBoolean("IsPerformingAnAction");
+    }
+
+    @LuaMethod(name="toolkitWoodCartCancel", global=true)
+    public static synchronized boolean cancel(IsoPlayer player, InventoryItem item, boolean pickup, BaseAction stoppedAction) {
+        var state=states.get(player);
+        if(!Main.CART_TRANSITION_SUPPORTED || state==null || state.item!=item || state.pickup!=pickup
+            || state.recovering || !state.rendered || state.progress<=0
+            || !CartGrip.validPosture(state.nativeHeight,state.nativeRotation)
+            || !CartGrip.validPosture(state.referenceHeight,state.referenceRotation) || protectedState(player)
+            || player.getVariableBoolean("IsPerformingAnAction")) return false;
+        var actions=player.getCharacterActions();
+        if(!actions.isEmpty() && (actions.size()!=1 || actions.get(0)!=stoppedAction)) return false;
+        // Keep the same visual model through native stop's same-frame override removal, including held setdown.
+        String model=item.getStaticModel();
+        if(model==null || model.isBlank() || player.overridePrimaryHandModel!=null
+            || player.overrideSecondaryHandModel!=null) return false;
+        // Its identity is the lease token; another writer may select the very same model name.
+        state.visualModel=new String(model);
+        player.overridePrimaryHandModel=state.visualModel;
+        if(!recoveryOwner(player,state)) {
+            if(player.overridePrimaryHandModel==state.visualModel) player.overridePrimaryHandModel=null;
+            state.visualModel=null;return false;
+        }
+        player.resetEquippedHandsModels();
+        state.recovering=true;state.cancelledProgress=state.progress;state.recoveryStart=System.nanoTime();
         return true;
+    }
+
+    @LuaMethod(name="toolkitWoodCartTick", global=true)
+    public static synchronized void tick(IsoPlayer player) {tick(player,System.nanoTime());}
+
+    static void tick(IsoPlayer player, long now) {
+        var state=states.get(player);
+        if(state==null || !state.recovering) return;
+        if(!recoveryOwner(player,state) || !player.getCharacterActions().isEmpty()
+            || player.getVariableBoolean("IsPerformingAnAction")) {end(player);return;}
+        state.progress=(float)CartTransitionMath.recover(state.cancelledProgress,(now-state.recoveryStart)*1e-9,!state.pickup);
+        state.updated=now;
+        if(state.progress<=0) end(player);
+        else poseVariables(player,state);
     }
 
     @LuaMethod(name="toolkitWoodCartStatus", global=true)
     public static synchronized KahluaTable status(IsoPlayer player) {
         var result=LuaManager.platform.newTable();var state=states.get(player);
-        result.rawset("active",state!=null);
+        result.rawset("active",state!=null && !state.recovering);
+        result.rawset("recovering",state!=null && state.recovering);
         if(state!=null) {
             result.rawset("rendered",state.rendered);result.rawset("ik",state.ik);
             result.rawset("progress",(double)state.progress);result.rawset("pickup",state.pickup);
@@ -132,6 +208,9 @@ public final class CartTransition {
         }
         var state=states.remove(player);
         player.clearVariable("ToolkitWoodCartPoseX");player.clearVariable("ToolkitWoodCartPoseY");
+        if(state!=null && state.visualModel!=null && state.visualModel==player.overridePrimaryHandModel) {
+            player.overridePrimaryHandModel=null;player.resetEquippedHandsModels();
+        }
         if(state!=null && state.world!=null) {
             state.world.invalidateRenderChunkLevel(256);
         }
@@ -141,8 +220,8 @@ public final class CartTransition {
         if(!(slot.character instanceof IsoPlayer player)) return false;
         var state=states.get(player);
         if(state==null) return false;
-        if(player.isDead() || player.isAiming() || player.hasHitReaction() || player.isKnockedDown()
-            || player.isGettingUp() || player.getVehicle()!=null || System.nanoTime()-state.updated>1_000_000_000L) {
+        if(protectedState(player) || state.recovering && !recoveryOwner(player,state)
+            || System.nanoTime()-state.updated>1_000_000_000L) {
             end(player);return false;
         }
         var clip=ModelManager.instance.getAnimationClip("Bob_Cart_Idle");
@@ -167,17 +246,34 @@ public final class CartTransition {
             var center=ground.transformPosition(axle,new Vector3f()).lerp(held.transformPosition(axle,new Vector3f()),
                 (float)phase.lift());
             transform.translateLocal(center.sub(transform.transformPosition(axle,new Vector3f())));
+            var reference=CartGrip.referencePosture(instance.parent.animPlayer.getSkinningData(),phase);
+            float baseHeight=Float.NaN;Quaternionf baseRotation=null;
+            if(state.recovering) {
+                // Native stop fades the action layer into cart idle; retain its calibrated height and chest posture.
+                var posture=CartGrip.recoverPosture(new CartGrip.Posture(state.nativeHeight,state.nativeRotation),
+                    new CartGrip.Posture(state.referenceHeight,state.referenceRotation),reference,state.progress/state.cancelledProgress);
+                if(posture==null) {end(player);return false;}
+                baseHeight=posture.height();baseRotation=posture.rotation();
+            } else {
+                var posture=CartGrip.nativePosture(slot,instance.parent);
+                state.nativeHeight=posture==null?Float.NaN:posture.height();
+                state.referenceHeight=reference==null?Float.NaN:reference.height();
+                state.nativeRotation=posture==null?null:new Quaternionf(posture.rotation());
+                state.referenceRotation=reference==null?null:new Quaternionf(reference.rotation());
+            }
             // Keep the knee bend and hip hinge in one continuous descent, without an early sink/rebound.
             float lowering=(float)(-.03*phase.balance());
             state.ik=CartGrip.transition(slot,instance.parent,delta,transform,(float)phase.reach(),(float)phase.grip(),
                 (float)phase.lift(),(ground.m30()-held.m30())*(float)phase.center(),lowering,.16f*(float)phase.balance(),
-                (float)Math.toRadians(60*phase.hinge()));
+                (float)Math.toRadians(60*phase.hinge()),baseHeight,baseRotation);
+            if(state.recovering && !state.ik) {end(player);return false;}
             data.xfrm.set(transform).transpose();
             CartWheelSpin.prepare(slot,CartWheelSpin.follow(state.item,slot.x,slot.y,slot.animPlayerAngle,transform));
             if(state.world!=null && !state.rendered) state.world.invalidateRenderChunkLevel(256);
             state.rendered=true;
             return true;
         }
+        if(state.recovering) end(player);
         return false;
     }
 

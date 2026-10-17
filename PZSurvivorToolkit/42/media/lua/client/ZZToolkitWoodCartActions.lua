@@ -23,6 +23,9 @@ ISCartPickupAction.FromWorldItem = function(character, world)
     return walk
 end
 
+Events.OnPlayerUpdate.Add(function(player)
+    if toolkitWoodCartTick then toolkitWoodCartTick(player) end
+end)
 Events.OnPlayerDeath.Add(function(player)
     if toolkitWoodCartEnd then toolkitWoodCartEnd(player) end
 end)

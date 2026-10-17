@@ -484,14 +484,106 @@ public final class CartGrip {
         return true;
     }
 
+    record Posture(float height, Quaternionf rotation) {}
+
+    private static boolean validRotation(Quaternionf rotation) {
+        return rotation!=null && rotation.isFinite() && Float.isFinite(rotation.lengthSquared())
+            && rotation.lengthSquared()>1e-12f;
+    }
+
+    static boolean validPosture(float height, Quaternionf rotation) {
+        return Float.isFinite(height) && validRotation(rotation);
+    }
+
+    static Posture nativePosture(ModelSlotRenderData slot, ModelInstance owner) {
+        for(var body:slot.modelData) if(body.modelInstance==owner && body.matrixPalette!=null
+            && owner.model.tag instanceof SkinningData skin) {
+            var actor=owner.animPlayer.getSkinningData();
+            var spine=actor==null?null:actor.getBone("Bip01_Spine");
+            var chest=actor==null?null:actor.getBone("Bip01_Spine1");
+            if(spine==null || chest==null) return null;
+            var poses=livePoses(actor,skin,body.matrixPalette,new Matrix4f(),true);
+            if(poses==null) return null;
+            var rotation=poses[chest.index].getUnnormalizedRotation(new Quaternionf());
+            float height=poses[spine.index].m31();
+            return validPosture(height,rotation)?new Posture(height,rotation.normalize()):null;
+        }
+        return null;
+    }
+
+    static Posture referencePosture(SkinningData actor, CartTransitionMath.Progress phase) {
+        var reference=new Matrix4f();var heights=new float[3];var rotations=new Quaternionf[3];
+        String[] clips={"Bob_Idle","Bob_IdleLooting_Low","Bob_Cart_Idle"};
+        for(int i=0;i<clips.length;i++) {
+            var clip=ModelManager.instance.getAnimationClip(clips[i]);
+            if(!CartGrounding.referencePose(clip,actor,"Bip01_Spine",reference)) return null;
+            heights[i]=reference.m31();
+            if(!CartGrounding.referencePose(clip,actor,"Bip01_Spine1",reference)) return null;
+            rotations[i]=reference.getUnnormalizedRotation(new Quaternionf());
+            if(!validRotation(rotations[i])) return null;
+            rotations[i].normalize();
+        }
+        float height=(float)CartTransitionMath.nativeHeight(phase,heights[0],heights[1],heights[2]);
+        // The same shallow low/idle edge and lift weight as the native action's 2D triangle.
+        var rotation=rotations[0].slerp(rotations[1],(float)(.10*phase.crouch()))
+            .slerp(rotations[2],(float)phase.lift()).normalize();
+        return validPosture(height,rotation)?new Posture(height,rotation):null;
+    }
+
+    static Posture recoverPosture(Posture start, Posture referenceStart, Posture reference, float amount) {
+        if(start==null || referenceStart==null || reference==null || !Float.isFinite(amount) || amount<0 || amount>1
+            || !validPosture(start.height(),start.rotation()) || !validPosture(referenceStart.height(),referenceStart.rotation())
+            || !validPosture(reference.height(),reference.rotation())) return null;
+        var residual=new Quaternionf(referenceStart.rotation()).normalize().conjugate()
+            .mul(new Quaternionf(start.rotation()).normalize()).normalize();
+        var rotation=new Quaternionf(reference.rotation()).normalize()
+            .mul(new Quaternionf().slerp(residual,amount)).normalize();
+        float height=reference.height()+(start.height()-referenceStart.height())*amount;
+        return validPosture(height,rotation)?new Posture(height,rotation):null;
+    }
+
+    static boolean nativeRotation(Matrix4f[] poses, SkinningData actor, Quaternionf target) {
+        if(actor==null || poses==null || poses.length<actor.numBones() || !validRotation(target)) return false;
+        var spine=actor.getBone("Bip01_Spine");var chest=actor.getBone("Bip01_Spine1");
+        if(spine==null || chest==null || poses[spine.index]==null || poses[chest.index]==null
+            || !poses[spine.index].isFinite() || !poses[chest.index].isFinite()) return false;
+        var current=poses[chest.index].getUnnormalizedRotation(new Quaternionf());
+        if(!validRotation(current)) return false;
+        var correction=new Quaternionf(target).normalize().mul(current.normalize().conjugate()).normalize();
+        float angle=2*(float)Math.acos(Math.min(1,Math.abs(correction.w)));
+        if(!Float.isFinite(angle) || angle>(float)Math.toRadians(20)) return false;
+        for(int i=0;i<actor.numBones();i++) if(upperBody(actor.getBoneAt(i))
+            && (poses[i]==null || !poses[i].isFinite())) return false;
+        if(angle<.000001f) return true;
+        var pivot=poses[spine.index].getTranslation(new Vector3f());
+        var change=new Matrix4f().translation(pivot).rotate(correction).translate(-pivot.x,-pivot.y,-pivot.z);
+        if(!change.isFinite()) return false;
+        for(int i=0;i<actor.numBones();i++) if(upperBody(actor.getBoneAt(i))) change.mul(poses[i],poses[i]);
+        poses[spine.index].setTranslation(pivot);
+        return true;
+    }
+
+    static boolean nativeHeight(Matrix4f[] poses, SkinningData actor, float target) {
+        if(!Float.isFinite(target)) return false;
+        var spine=actor.getBone("Bip01_Spine");
+        if(spine==null) return false;
+        float correction=target-poses[spine.index].m31();
+        if(!Float.isFinite(correction) || Math.abs(correction)>.2f) return false;
+        for(int i=0;i<actor.numBones();i++) poses[i].translateLocal(0,correction,0);
+        return true;
+    }
+
     static boolean transition(ModelSlotRenderData slot, ModelInstance owner, Matrix4f delta,
-        Matrix4f cart, float reachWeight, float gripWeight, float liftWeight, float shiftX, float shiftY, float shiftZ, float hinge) {
+        Matrix4f cart, float reachWeight, float gripWeight, float liftWeight, float shiftX, float shiftY, float shiftZ, float hinge,
+        float baseHeight, Quaternionf baseRotation) {
         ModelInstanceRenderData body=null;
         for(var data:slot.modelData) if(data.modelInstance==owner) {body=data;break;}
         if(body==null || body.matrixPalette==null || !(owner.model.tag instanceof SkinningData bodySkin)) return false;
         var actor=owner.animPlayer.getSkinningData();
         var poses=livePoses(actor,bodySkin,body.matrixPalette,new Matrix4f(),true);
-        if(poses==null || !bendTransitionTorso(poses,actor,hinge)) return false;
+        if(poses==null || Float.isFinite(baseHeight) && !nativeHeight(poses,actor,baseHeight)
+            || baseRotation!=null && !nativeRotation(poses,actor,baseRotation)
+            || !bendTransitionTorso(poses,actor,hinge)) return false;
         var cartIdle=ModelManager.instance.getAnimationClip("Bob_Cart_Idle");
         if(!groundFeet(poses,actor,ModelManager.instance.getAnimationClip("Bob_Idle"),cartIdle,liftWeight,shiftX,shiftY,shiftZ)) return false;
         if(reachWeight==1 && gripWeight==1) {

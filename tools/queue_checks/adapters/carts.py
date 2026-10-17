@@ -294,7 +294,7 @@ def verify(root, selection, catalog):
                 evidence['analyzers'][case] = _run([sys.executable, str(intake / 'analyze-interruption.py'),
                     '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'interruption.json')], analysis, case)
                 evidence['interruption'] = _json(analysis / 'interruption.json')
-                if not evidence['interruption']['functionalPass']:
+                if not all(evidence['interruption'].get(key) for key in ('functionalPass','recoveryVerified','wheelCoverageVerified')):
                     raise ValueError('Interruption verification failed: ' + str(evidence['interruption']['failures']))
                 evidence['nativeMotionNotApplicable'] = True
             elif case == 'interaction':

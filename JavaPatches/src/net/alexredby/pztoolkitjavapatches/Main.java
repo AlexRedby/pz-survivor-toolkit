@@ -198,6 +198,7 @@ public final class Main {
             "e9377a60cfe66b4907f57ab6a7a6d6275c991035e7326a1c4663520c09a04014");
 
     public static final boolean CART_TRANSITION_SUPPORTED = CART_SUPPORTED
+        && supports("zombie/core/skinnedmodel/ModelManager.class", "9bd955ded08c284dd1e1a5f39c84dd8576e7a46186b3c6fdf69ef4b12d8709e5")
         && supports("zombie/iso/IsoGridSquare.class", "e8192f87d88da607abe0293228c84efbd822ed4ac0a331102c030bc3eeaba467")
         && supports("zombie/iso/objects/IsoWorldInventoryObject.class", "7be6f2d54525fa587908ce8efa7da5d26cfd3d19bd1cc02911ee12f7649857b3")
         && supports("zombie/iso/fboRenderChunk/FBORenderObjectOutline.class", "175e9ae7b5307a2ddaa02adb006c18e30823dbae626348c8e73d6613173d8471")
@@ -214,7 +215,7 @@ public final class Main {
         }
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws ClassNotFoundException {
         // Resolve before advice installation; resolving inside another transformer can miss these targets.
         if (PROPERTY_SUPPORTED) IsoPropertyType.values();
         if (FLUID_SUPPORTED) FluidContainerScript.class.getName();
@@ -229,6 +230,9 @@ public final class Main {
             zombie.iso.IsoMetaGrid.class.getName();
         }
         boolean fences = FenceValidation.install(FENCE_SUPPORTED);
+        // Define before patch registration: recursive loads during another transform bypass instrumentation.
+        if(CART_TRANSITION_SUPPORTED)
+            Class.forName("zombie.core.skinnedmodel.ModelManager",false,Main.class.getClassLoader());
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
@@ -551,6 +555,24 @@ public final class Main {
         @Patch.OnEnter
         public static void enter(@Patch.This zombie.characters.IsoGameCharacter character) {
             if(Main.CART_SUPPORTED) CartSteeringHooks.heading(character);
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.ModelManager", methodName="DoCharacterModelEquipped", warmUp=true, strictMatch=true)
+    public static class WoodenRecoveryModel {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) zombie.characters.IsoGameCharacter character,
+            @Patch.Local("toolkitCartVisualOnly") boolean active,
+            @Patch.Local("toolkitCartForceNull") boolean previous) {
+            active=Main.CART_TRANSITION_SUPPORTED && CartTransition.suppressHeldModel(character);
+            // Native held-item binding would add a second copy beside the leased string model.
+            if(active) {previous=character.forceNullOverride;character.forceNullOverride=true;}
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Argument(0) zombie.characters.IsoGameCharacter character,
+            @Patch.Local("toolkitCartVisualOnly") boolean active,
+            @Patch.Local("toolkitCartForceNull") boolean previous) {
+            if(active) character.forceNullOverride=previous;
         }
     }
 

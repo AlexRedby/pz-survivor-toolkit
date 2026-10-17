@@ -86,6 +86,7 @@ class CartAdapterTests(unittest.TestCase):
             with zipfile.ZipFile(row['jar']) as jar:
                 self.assertIn(b'Agent-Class:', jar.read('META-INF/MANIFEST.MF'))
         startup = (self.output / 'client1/mods/ActionQueueTest/42/media/lua/client/QueueCartStartup.lua').read_text()
+        self.assertIn(f'posX={int(carts.AREA["x"])},posY={int(carts.AREA["y"])},posZ=0', startup)
         self.assertIn("getFileReader('queue-probes-ready.txt',false)", startup)
         self.assertIn("assert(ready=='ready'", startup)
         self.assertFalse((self.output / 'client1/Lua/queue-probes-ready.txt').exists())
@@ -121,6 +122,7 @@ class CartAdapterTests(unittest.TestCase):
                 if case in ('collision','footprint'): self.assertIn('["footprint"]=true',text)
                 if case == 'wheel': self.assertIn('["wheelCycle"]=true',text)
                 if case == 'interruption': self.assertIn('["interruptions"]=true',text)
+                self.assertIn('["size"]=96',text)
                 self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 3)
                 self.assertTrue(carts.complete(self.selection, 'client1', f'[WOOD_BANK] ALL_COMPLETE cases={count}\n'))
                 for wrong in (count + 1, count * 10):
@@ -210,12 +212,13 @@ class CartAdapterTests(unittest.TestCase):
     def test_interruption_adapter_requires_native_stop_retry_and_first_render_receipts(self):
         self.selection['cases'] = ['interruption']
         fixture = carts._load(ROOT / 'tests/test_cart_interruption.py')
-        text, lifecycle, body, grip, world = fixture.fixture()
+        text, lifecycle, body, grip, world, draws, tail = fixture.fixture()
         cache = self.output / 'client1'
         (self.output / 'client1-launch.log').write_text(text)
         (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
         for filename, rows in [('action-lifecycle.jsonl', lifecycle), ('body-clearance.jsonl', body),
-                               ('wood-grip-poses.jsonl', grip), ('world-cart-poses.jsonl', world)]:
+                               ('wood-grip-poses.jsonl', grip), ('world-cart-poses.jsonl', world),
+                               ('wheel-roll-draws.jsonl', draws), ('action-tail-poses.jsonl', tail)]:
             (cache / filename).write_text('\n'.join(map(json.dumps, rows)))
         original_run = carts._run
         commands = []

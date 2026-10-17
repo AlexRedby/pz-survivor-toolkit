@@ -2,8 +2,10 @@ package net.alexredby.pztoolkitjavapatches;
 
 import java.lang.reflect.Field;
 import org.joml.Matrix4f;
+import org.joml.Quaternionf;
 import sun.misc.Unsafe;
 import zombie.characters.IsoPlayer;
+import zombie.characters.CharacterTimedActions.BaseAction;
 import zombie.inventory.InventoryItem;
 import zombie.inventory.ItemContainer;
 import zombie.iso.IsoGridSquare;
@@ -30,16 +32,47 @@ public final class CartTransitionTest {
         ItemContainer inventory;
         IsoGridSquare square;
         java.util.Map<String,Float> variables;
+        java.util.Stack<BaseAction> actions;
+        int protection,modelResets,handWrites;
+        boolean performing,otherFloor;
+        RuntimeException modelError;
+        boolean expectedForceNull;
+        int modelScopes;
         Player(){super(null,null,0,0,0);}
         @Override public float getX(){return 10.25f;}
         @Override public float getY(){return 20.75f;}
-        @Override public float getZ(){return 2;}
+        @Override public float getZ(){return otherFloor?3:2;}
         @Override public IsoGridSquare getCurrentSquare(){return square;}
         @Override public InventoryItem getPrimaryHandItem(){return primary;}
         @Override public InventoryItem getSecondaryHandItem(){return secondary;}
         @Override public ItemContainer getInventory(){return inventory;}
-        @Override public boolean isLocalPlayer(){return true;}
-        @Override public boolean isDead(){return false;}
+        @Override public void setPrimaryHandItem(InventoryItem item){handWrites++;primary=item;}
+        @Override public void setSecondaryHandItem(InventoryItem item){handWrites++;secondary=item;}
+        @Override public boolean isLocalPlayer(){return protection!=1;}
+        @Override public boolean isDead(){return protection==2;}
+        @Override public boolean isAiming(){return protection==3;}
+        @Override public boolean hasHitReaction(){return protection==4;}
+        @Override public boolean isKnockedDown(){return protection==5;}
+        @Override public boolean isGettingUp(){return protection==6;}
+        @Override public zombie.vehicles.BaseVehicle getVehicle(){return protection==7?vehicle:null;}
+        zombie.vehicles.BaseVehicle vehicle;
+        @Override public boolean isGrappling(){return protection==8;}
+        @Override public boolean isBeingGrappled(){return protection==9;}
+        @Override public boolean isRagdollSimulationActive(){return protection==10;}
+        @Override public boolean getVariableBoolean(String name){return "IsPerformingAnAction".equals(name) && performing;}
+        @Override public java.util.Stack<BaseAction> getCharacterActions(){
+            if(actions==null) actions=new java.util.Stack<>();return actions;
+        }
+        @Override public void resetEquippedHandsModels(){modelResets++;}
+        @Override public void getItemVisuals(zombie.core.skinnedmodel.visual.ItemVisuals visuals){
+            if(modelError!=null) {
+                check(forceNullOverride==expectedForceNull,"native model scope did not isolate the leased visual");
+                modelScopes++;throw modelError;
+            }
+        }
+        @Override public zombie.characters.AttachedItems.AttachedItems getAttachedItems(){
+            return new zombie.characters.AttachedItems.AttachedItems(new zombie.characters.AttachedItems.AttachedLocationGroup("fixture"));
+        }
         @Override public zombie.core.skinnedmodel.advancedanimation.IAnimationVariableSlot setVariable(String name,float value){
             if(variables==null) variables=new java.util.HashMap<>();variables.put(name,value);return null;
         }
@@ -53,6 +86,7 @@ public final class CartTransitionTest {
         boolean probeNative;
         Cart(){super(null,null,null,(String)null);}
         @Override public String getFullType(){return kind;}
+        @Override public String getStaticModel(){return "WheelbarrowWood";}
         @Override public ItemContainer getContainer(){return container;}
         @Override public IsoWorldInventoryObject getWorldItem(){return world;}
         @Override public void setWorldZRotation(float value){rotation=value;}
@@ -175,6 +209,172 @@ public final class CartTransitionTest {
             check(world.invalidations==1,"cleanup is idempotent");
         } finally {CartTransition.endDrop();CartTransition.end(player);}
     }
+    private static Object state(Player player) throws Exception {
+        var field=CartTransition.class.getDeclaredField("states");field.setAccessible(true);
+        return ((java.util.Map<?,?>)field.get(null)).get(player);
+    }
+    private static Object value(Object state,String name) throws Exception {
+        var field=state.getClass().getDeclaredField(name);field.setAccessible(true);return field.get(state);
+    }
+    private record Recovery(Player player,Cart cart,WorldItem world,boolean pickup) {}
+    private static Recovery recovery(boolean pickup) throws Exception {
+        var player=allocate(Player.class);player.inventory=allocate(ItemContainer.class);player.square=allocate(IsoGridSquare.class);
+        player.vehicle=allocate(zombie.vehicles.BaseVehicle.class);
+        var cart=allocate(Cart.class);cart.kind="SaucedWheelbarrow.WheelbarrowWood";cart.alpha=.7f;cart.worldScale=1;
+        var world=allocate(WorldItem.class);world.item=cart;world.square=player.square;
+        if(pickup) cart.world=world;
+        else {cart.container=player.inventory;player.primary=cart;player.secondary=cart;}
+        check(CartTransition.update(player,cart,pickup,.55),"recovery setup refused");
+        var current=state(player);var field=current.getClass().getDeclaredField("rendered");field.setAccessible(true);field.setBoolean(current,true);
+        for(String name:new String[]{"nativeRotation","referenceRotation"}) {
+            field=current.getClass().getDeclaredField(name);field.setAccessible(true);field.set(current,new Quaternionf());
+        }
+        return new Recovery(player,cart,world,pickup);
+    }
+    private static void recovered(Recovery fixture) throws Exception {
+        check(state(fixture.player)==null,"recovery state leaked after cleanup");
+        check(fixture.player.variables.isEmpty(),"recovery pose variables leaked");
+        close(fixture.cart.alpha,.7f,"recovery changed serialized alpha");
+        check(fixture.player.handWrites==0,"presentation recovery wrote native hand ownership");
+    }
+    private static void recoveryLifecycle() throws Exception {
+        for(boolean pickup:new boolean[]{true,false}) {
+            var fixture=recovery(pickup);var player=fixture.player;var cart=fixture.cart;
+            try {
+                var stopped=allocate(BaseAction.class);player.getCharacterActions().add(stopped);
+                check(CartTransition.cancel(player,cart,pickup,stopped),"exact sole stopped action refused recovery");
+                var current=state(player);long start=(Long)value(current,"recoveryStart");
+                check((Boolean)value(current,"recovering"),"cancel did not enter recovery");
+                close((Float)value(current,"cancelledProgress"),.55f,"cancel lost interrupted progress");
+                check(!CartTransition.cancel(player,cart,pickup,stopped),"duplicate cancellation restarted the recovery clock");
+                check((Long)value(current,"recoveryStart")==start,"duplicate cancellation changed recovery origin");
+                check("WheelbarrowWood".equals(player.overridePrimaryHandModel) && player.modelResets==1,
+                    "recovery did not preserve its exact visual model through native override removal");
+                if(pickup) check(CartTransition.hidden(cart),"pickup recovery exposed both visual cart copies");
+                else check(!CartTransition.hidden(cart),"held setdown recovery hid an unrelated world cart");
+                player.actions.clear();
+                check(CartTransition.suppressHeldModel(player)==!pickup,"visual suppression did not match exact held recovery");
+                CartTransition.tick(player,start);
+                close((Float)value(current,"progress"),.55f,"first recovery tick jumped the pose");
+                CartTransition.tick(player,start+200_000_000L);
+                float intermediate=(Float)value(current,"progress");
+                check(intermediate>0 && intermediate<.55f,"recovery did not advance back along the action timeline");
+                CartTransition.tick(player,start+600_001_000L);
+                recovered(fixture);
+                check(player.overridePrimaryHandModel==null,"finished recovery retained its visual lease");
+                check(player.modelResets==2,"visual lease did not reset models exactly on acquire/release");
+                check(cart.world==(pickup?fixture.world:null) && cart.container==(pickup?null:player.inventory)
+                    && player.primary==(pickup?null:cart) && player.secondary==(pickup?null:cart),"recovery transferred the cart");
+                check(!CartTransition.hidden(cart),"finished recovery left the real world cart hidden");
+                CartTransition.tick(player,start+900_000_000L);CartTransition.end(player);
+                check(player.modelResets==2,"repeated cleanup reset another owner's model");
+            } finally {CartTransition.end(player);}
+        }
+    }
+    private static void recoveryRefusals() throws Exception {
+        for(boolean pickup:new boolean[]{true,false}) for(int failure=0;failure<20;failure++) {
+            var fixture=recovery(pickup);var player=fixture.player;var cart=fixture.cart;
+            InventoryItem requested=cart;boolean direction=pickup;
+            try {
+                switch(failure) {
+                    case 0 -> {var field=state(player).getClass().getDeclaredField("rendered");field.setAccessible(true);field.setBoolean(state(player),false);}
+                    case 1 -> requested=allocate(Cart.class);
+                    case 2 -> direction=!pickup;
+                    case 3 -> player.performing=true;
+                    case 4 -> player.getCharacterActions().add(allocate(BaseAction.class));
+                    case 5 -> {player.getCharacterActions().add(allocate(BaseAction.class));player.actions.add(allocate(BaseAction.class));}
+                    case 6 -> player.overridePrimaryHandModel="ForeignPrimary";
+                    case 7 -> player.overrideSecondaryHandModel="ForeignSecondary";
+                    case 8 -> player.primary=pickup?allocate(Cart.class):null;
+                    case 9 -> {if(pickup) cart.world=null;else cart.container=allocate(ItemContainer.class);}
+                    case 10 -> {if(pickup) fixture.world.item=allocate(Cart.class);else cart.world=fixture.world;}
+                    case 11 -> {if(pickup) fixture.world.square=null;else player.secondary=null;}
+                    case 12 -> {if(pickup) player.otherFloor=true;else player.secondary=allocate(Cart.class);}
+                    case 13,14 -> {
+                        var field=state(player).getClass().getDeclaredField(failure==13?"nativeHeight":"referenceHeight");
+                        field.setAccessible(true);field.setFloat(state(player),Float.NaN);
+                    }
+                    case 15,16,17,18 -> {
+                        var field=state(player).getClass().getDeclaredField(failure%2==1?"nativeRotation":"referenceRotation");
+                        field.setAccessible(true);field.set(state(player),failure<17?null:new Quaternionf(0,0,0,0));
+                    }
+                    case 19 -> check(CartTransition.update(player,cart,pickup,0),"zero-progress setup refused");
+                }
+                check(!CartTransition.cancel(player,requested,direction,null),"invalid recovery accepted: "+pickup+"/"+failure);
+                check(!(Boolean)value(state(player),"recovering"),"refused cancellation retained recovery state");
+                check(!CartTransition.suppressHeldModel(player),"refused cancellation suppressed an equipped visual");
+                check(player.modelResets==0 && player.handWrites==0,"refused cancellation changed models or hand ownership");
+                check(java.util.Objects.equals(player.overridePrimaryHandModel,failure==6?"ForeignPrimary":null),"refusal overwrote another primary visual");
+                check(java.util.Objects.equals(player.overrideSecondaryHandModel,failure==7?"ForeignSecondary":null),"refusal overwrote another secondary visual");
+                close(cart.alpha,.7f,"refused recovery changed serialized alpha");
+            } finally {CartTransition.end(player);}
+        }
+    }
+    private static void recoveryInterruptions() throws Exception {
+        for(boolean pickup:new boolean[]{true,false}) for(int protection=1;protection<=10;protection++) {
+            var fixture=recovery(pickup);var player=fixture.player;
+            try {
+                player.protection=protection;
+                check(!CartTransition.cancel(player,fixture.cart,pickup,null),"protected state accepted recovery: "+protection);
+                player.protection=0;
+                check(CartTransition.cancel(player,fixture.cart,pickup,null),"valid empty-stack recovery refused");
+                long start=(Long)value(state(player),"recoveryStart");
+                player.protection=protection;CartTransition.tick(player,start+10_000_000L);
+                recovered(fixture);
+            } finally {CartTransition.end(player);}
+        }
+        for(boolean pickup:new boolean[]{true,false}) for(int interruption=0;interruption<6;interruption++) {
+            var fixture=recovery(pickup);var player=fixture.player;
+            try {
+                check(CartTransition.cancel(player,fixture.cart,pickup,null),"valid recovery refused");
+                long start=(Long)value(state(player),"recoveryStart");
+                switch(interruption) {
+                    case 0 -> player.getCharacterActions().add(allocate(BaseAction.class));
+                    case 1 -> player.performing=true;
+                    case 2 -> {if(pickup) fixture.cart.world=null;else player.secondary=null;}
+                    case 3 -> player.overridePrimaryHandModel="ReplacementPrimary";
+                    case 4 -> player.overrideSecondaryHandModel="ReplacementSecondary";
+                    case 5 -> {
+                        var previous=state(player);
+                        check(CartTransition.update(player,fixture.cart,pickup,.2),"new same-cart action update refused");
+                        check(state(player)!=previous && !(Boolean)value(state(player),"recovering"),"new same-cart action reused recovery state");
+                        close((Float)value(state(player),"progress"),.2f,"new action inherited recovery progress");
+                        check(player.overridePrimaryHandModel==null && player.modelResets==2,"new action retained the stopped action's model lease");
+                        continue;
+                    }
+                }
+                CartTransition.tick(player,start+10_000_000L);recovered(fixture);
+                check(java.util.Objects.equals(player.overridePrimaryHandModel,interruption==3?"ReplacementPrimary":null),
+                    "recovery cleanup erased a replacement primary model");
+                check(java.util.Objects.equals(player.overrideSecondaryHandModel,interruption==4?"ReplacementSecondary":null),
+                    "recovery cleanup erased a replacement secondary model");
+            } finally {CartTransition.end(player);}
+        }
+    }
+    private static void recoveryLeaseIdentity() throws Exception {
+        for(boolean pickup:new boolean[]{true,false}) for(boolean tick:new boolean[]{false,true}) {
+            var fixture=recovery(pickup);var player=fixture.player;
+            try {
+                check(CartTransition.cancel(player,fixture.cart,pickup,null),"identity lease setup refused");
+                var current=state(player);var lease=player.overridePrimaryHandModel;
+                check(lease==value(current,"visualModel") && lease!=fixture.cart.getStaticModel(),
+                    "recovery did not acquire a unique model lease token");
+                String foreign=tick?fixture.cart.getStaticModel():new String(lease);
+                check(foreign!=lease && foreign.equals(lease),"foreign lease fixture must have equal text and different identity");
+                player.overridePrimaryHandModel=foreign;
+                check(!CartTransition.suppressHeldModel(player),"equal-text foreign override retained held-model suppression");
+                if(tick) {
+                    player.getCharacterActions().add(allocate(BaseAction.class));
+                    CartTransition.tick(player,(Long)value(current,"recoveryStart")+10_000_000L);
+                } else CartTransition.end(player);
+                recovered(fixture);
+                check(player.overridePrimaryHandModel==foreign,"cleanup erased an equal-text foreign model lease");
+                check(player.modelResets==1,"cleanup rebuilt a model owned by an equal-text foreign writer");
+                CartTransition.end(player);
+                check(player.overridePrimaryHandModel==foreign && player.modelResets==1,"repeated cleanup touched a foreign model lease");
+            } finally {CartTransition.end(player);}
+        }
+    }
     private static void geometry() {
         Matrix4f model=new Matrix4f().rotateX((float)Math.PI/2).scale(90);
         Matrix4f held=new Matrix4f().translation(-.0060535767f,.097179376f,-.34652624f)
@@ -196,12 +396,47 @@ public final class CartTransitionTest {
         }
         check(CartTransition.dropPlacement(new Matrix4f().m00(Float.NaN),model,0,0,0,0,1)==null,"invalid held transform accepted");
     }
+    private static void recoveryModelScope() throws Exception {
+        var manager=allocate(zombie.core.skinnedmodel.ModelManager.class);
+        var type=zombie.core.skinnedmodel.ModelManager.ModelSlot.class;
+        var method=zombie.core.skinnedmodel.ModelManager.class.getDeclaredMethod("DoCharacterModelEquipped",zombie.characters.IsoGameCharacter.class,type);
+        method.setAccessible(true);
+        for(boolean previous:new boolean[]{false,true}) {
+            var ordinary=allocate(Player.class);ordinary.forceNullOverride=previous;
+            invoke(method,manager,ordinary,new zombie.core.skinnedmodel.ModelManager.ModelSlot(0,new zombie.core.skinnedmodel.model.ModelInstance(),ordinary));
+            check(ordinary.forceNullOverride==previous,"ordinary native model rebuild changed the caller's override flag");
+            for(boolean pickup:new boolean[]{false,true}) for(int guard=0;guard<6;guard++) {
+                var fixture=recovery(pickup);var player=fixture.player;
+                try {
+                    check(CartTransition.cancel(player,fixture.cart,pickup,null),"model-scope recovery setup refused");
+                    switch(guard) {
+                        case 1 -> player.overridePrimaryHandModel="ForeignPrimary";
+                        case 2 -> player.overrideSecondaryHandModel="ForeignSecondary";
+                        case 3 -> player.getCharacterActions().add(allocate(BaseAction.class));
+                        case 4 -> player.protection=3;
+                        case 5 -> player.performing=true;
+                    }
+                    player.forceNullOverride=previous;
+                    player.expectedForceNull=previous || !pickup && guard==0;
+                    player.modelError=new NativePass();
+                    var slot=new zombie.core.skinnedmodel.ModelManager.ModelSlot(0,new zombie.core.skinnedmodel.model.ModelInstance(),player);
+                    try {invoke(method,manager,player,slot);throw new AssertionError("native model error was suppressed");}
+                    catch(NativePass error) {check(error==player.modelError,"model scope changed the native exception identity");}
+                    check(player.modelScopes==1 && player.forceNullOverride==previous,"native model error leaked its temporary visual suppression");
+                    check(player.handWrites==0 && player.primary==(pickup?null:fixture.cart) && player.secondary==(pickup?null:fixture.cart),
+                        "visual suppression changed native item ownership");
+                    check(fixture.cart.world==(pickup?fixture.world:null) && fixture.cart.container==(pickup?null:player.inventory),
+                        "visual suppression moved the exact cart");
+                } finally {CartTransition.end(player);}
+            }
+        }
+    }
     public static void main(String[] args) throws Exception {
         Field field=Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);unsafe=(Unsafe)field.get(null);
         me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches",CartTransitionTest.class.getClassLoader());
         check(Main.CART_SUPPORTED,"installed B42.21 bytecode fixture unsupported");
         check(Main.CART_TRANSITION_SUPPORTED,"installed transition render bytecode unsupported");
-        for(var name:new String[]{"wooden","hidden","place"}) {
+        for(var name:new String[]{"wooden","hidden","place","suppressHeldModel"}) {
             boolean exported=false;
             for(var method:CartTransition.class.getDeclaredMethods()) if(name.equals(method.getName()))
                 exported=java.lang.reflect.Modifier.isPublic(method.getModifiers());
@@ -213,7 +448,7 @@ public final class CartTransitionTest {
         var cart=allocate(Cart.class);cart.kind="SaucedWheelbarrow.WheelbarrowWood";
         check(Boolean.FALSE.equals(atlas.invoke(null,cart,null,0f,0f,0f,0f,0f,false)),
             "wooden cart atlas must defer to the same renderer as FBO without accessing a scene");
-        bridge();geometry();groundPasses();
+        bridge();geometry();groundPasses();recoveryLifecycle();recoveryRefusals();recoveryInterruptions();recoveryLeaseIdentity();recoveryModelScope();
         System.out.println("CART_TRANSITION_PASS (scoped exact-owner validation, native yaw geometry, model/depth/sprite/picker/outline suppression and cleanup)");
     }
 }

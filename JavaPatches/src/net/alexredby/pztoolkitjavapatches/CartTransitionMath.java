@@ -37,6 +37,33 @@ final class CartTransitionMath {
             crouch*Math.sqrt(1-lift),crouch*(1-lift*lift),crouch);
     }
 
+    private static double recoveryDistance(double progress, boolean setdown) {
+        var phase=progress(progress,setdown);
+        double balance=phase.balance(),reach=smooth(phase.reach()),lift=phase.lift();
+        return progress+4*(progress<=(setdown?.52:.48)?balance:2-balance)
+            +6*(setdown?1-reach:reach)+3*(setdown?1-lift:lift);
+    }
+
+    static double recover(double start, double elapsedSeconds, boolean setdown) {
+        if(!Double.isFinite(start) || !Double.isFinite(elapsedSeconds)) return Double.NaN;
+        double progress=Math.max(0,Math.min(1,start)),duration=.4+.2*progress;
+        if(elapsedSeconds<=0) return progress;
+        if(elapsedSeconds>=duration) return 0;
+        // Pace the squat, hand contact and wheel lift together, in the interrupted action's direction.
+        double target=recoveryDistance(progress,setdown)*(1-smooth(elapsedSeconds/duration));
+        double low=0,high=progress;
+        for(int i=0;i<48;i++) {
+            double middle=(low+high)*.5;
+            if(recoveryDistance(middle,setdown)<target) low=middle; else high=middle;
+        }
+        return (low+high)*.5;
+    }
+
+    static double nativeHeight(Progress phase, double idle, double low, double cart) {
+        double lowWeight=.10*phase.crouch()*(1-phase.lift());
+        return idle*(1-phase.lift()-lowWeight)+low*lowWeight+cart*phase.lift();
+    }
+
     private static double phase(double t, double start, double end) {
         return t <= start ? 0 : t >= end ? 1 : smooth((t - start) / (end - start));
     }

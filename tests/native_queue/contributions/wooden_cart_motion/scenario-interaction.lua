@@ -35,8 +35,8 @@ local cases={
 if config.wheelCycle then cases={{name='wood-wheel-cycle',female=false,full=true,yaw=135}} end
 if config.interruptions then
  cases={}
- for _,action in ipairs({'pickup','drop'}) do
-  for _,phase in ipairs({{name='early',progress=.15},{name='contact',progress=.55},{name='late',progress=.88}}) do
+ for _,phase in ipairs({{name='late',progress=.88},{name='contact',progress=.55},{name='early',progress=.15}}) do
+  for _,action in ipairs({'drop','pickup'}) do
    for _,route in ipairs({'cancel','walk'}) do
     cases[#cases+1]={name=action..'-'..phase.name..'-'..route,female=false,full=true,yaw=135,
      interrupt=action,threshold=phase.progress,route=route}
@@ -111,7 +111,7 @@ local function snapshot(now)
   worldX=world and world:getSquare():getX()+world:getOffX() or -1,worldY=world and world:getSquare():getY()+world:getOffY() or -1,
   worldZ=world and world:getSquare():getZ()+world:getOffZ() or -1,worldRotation=item:getWorldZRotation(),
   cargo=weight,cargoIDs=ids,cargoCount=children,x=p:getX(),y=p:getY(),z=p:getZ(),
-  statusAvailable=toolkitWoodCartStatus~=nil,active=status.active==true,rendered=status.rendered==true,
+  statusAvailable=toolkitWoodCartStatus~=nil,active=status.active==true,recovering=status.recovering==true,rendered=status.rendered==true,
   ik=status.ik==true,presentationProgress=status.progress or 0,pickup=status.pickup==true}
 end
 local function event(name,now)

@@ -135,6 +135,91 @@ public final class CartTransitionMathTest {
         }
         check(model.equals(modelBefore) && held.equals(heldBefore) && left.equals(leftBefore) && right.equals(rightBefore), "stance has no input mutation");
     }
+    private static void recovery() {
+        for(boolean setdown:new boolean[]{false,true}) for(double start:new double[]{0,.001,.15,.38,.44,.48,.55,.88,1}) {
+            double duration=.4+.2*start;
+            close(CartTransitionMath.recover(start,0,setdown),start,0,"recovery starts at the interrupted pose");
+            close(CartTransitionMath.recover(start,-1,setdown),start,0,"early clock cannot advance recovery");
+            close(CartTransitionMath.recover(start,duration,setdown),0,0,"recovery reaches the exact native endpoint");
+            close(CartTransitionMath.recover(start,.600001,setdown),0,0,"recovery always ends within 600 ms");
+            double previous=start;
+            for(int i=0;i<=1000;i++) {
+                double current=CartTransitionMath.recover(start,duration*i/1000,setdown);
+                check(Double.isFinite(current) && current>=0 && current<=previous,"recovery is finite, bounded and monotonic");
+                for(boolean direction:new boolean[]{false,true}) {
+                    var phase=CartTransitionMath.progress(current,direction);
+                    for(double value:new double[]{phase.crouch(),phase.reach(),phase.grip(),phase.lift(),
+                            phase.center(),phase.balance(),phase.hinge(),phase.knees()})
+                        check(Double.isFinite(value) && value>=0 && value<=1,"reverse pose dimensions remain finite and bounded");
+                    check(phase.lift()==0 || phase.grip()==1,"recovery preserves grip before moving the cart");
+                    check(phase.grip()==0 || CartTransitionMath.smooth(phase.reach())>.95,
+                        "recovery preserves reach before finger contact");
+                }
+                previous=current;
+            }
+            double step=duration*.00001;
+            close((start-CartTransitionMath.recover(start,step,setdown))/step,0,.000001,"recovery starts without a velocity jump");
+            close(CartTransitionMath.recover(start,duration-step,setdown)/step,0,.000001,"recovery settles without endpoint velocity");
+        }
+        close(CartTransitionMath.recover(-1,0,false),0,0,"negative recovery progress clamps to released");
+        close(CartTransitionMath.recover(2,0,false),1,0,"overshot recovery progress clamps to held");
+        for(double invalid:new double[]{Double.NaN,Double.POSITIVE_INFINITY,Double.NEGATIVE_INFINITY}) {
+            check(Double.isNaN(CartTransitionMath.recover(invalid,.1,false)),"nonfinite recovery origin rejected");
+            check(Double.isNaN(CartTransitionMath.recover(.5,invalid,false)),"nonfinite recovery clock rejected");
+        }
+    }
+    private static void recoveryPoseSteps() {
+        for(boolean setdown:new boolean[]{false,true}) for(double start:new double[]{.15,.55,.88,1}) {
+            double duration=.4+.2*start;
+            for(double elapsed=0;elapsed<duration;elapsed+=.001) {
+                var before=CartTransitionMath.progress(CartTransitionMath.recover(start,elapsed,setdown),setdown);
+                var after=CartTransitionMath.progress(CartTransitionMath.recover(start,elapsed+1.0/30,setdown),setdown);
+                double balance=after.balance()-before.balance();
+                double height=CartTransitionMath.nativeHeight(after,.5566668,.26,.561988)
+                    -CartTransitionMath.nativeHeight(before,.5566668,.26,.561988)-.03*balance;
+                double spineStep=Math.hypot(height,.16*balance);
+                check(spineStep<.05,"late recovery bunched the squat into one 33 ms pose step: "+spineStep);
+                check(recoveryWrist(before).distance(recoveryWrist(after))<.07,
+                    "late setdown bunched reaching or wheel lift into one 33 ms wrist step");
+                check(Math.abs(CartTransitionMath.smooth(after.reach())-CartTransitionMath.smooth(before.reach()))<.30,
+                    "late37 advanced over a third of hand contact in one frame");
+            }
+        }
+    }
+    private static Vector3f recoveryWrist(CartTransitionMath.Progress phase) {
+        // Native36 open-hand/floor/held wrist anchors: a pacing proxy, not a full rendered-frame replay.
+        double reach=CartTransitionMath.smooth(phase.reach()),balance=phase.balance(),lift=phase.lift();
+        return new Vector3f((float)(.11+.055*reach),
+            (float)((.50-.03*balance)*(1-reach)+(.315+.199*lift)*reach),
+            (float)((-.13+.04*balance)*(1-reach)+(.013-.031*lift)*reach));
+    }
+    private static void nativeHeight() {
+        double idle=.56,low=.02,cart=.57;
+        close(CartTransitionMath.nativeHeight(CartTransitionMath.progress(0,false),idle,low,cart),idle,0,"released height is native idle");
+        close(CartTransitionMath.nativeHeight(CartTransitionMath.progress(1,false),idle,low,cart),cart,0,"held height is native cart idle");
+        close(CartTransitionMath.nativeHeight(CartTransitionMath.progress(.44,false),idle,low,cart),.9*idle+.1*low,1e-12,
+            "grounded crouch uses only the authored tenth of the low pose");
+        var mixed=new CartTransitionMath.Progress(1,1,1,.5,0,0,0,0);
+        close(CartTransitionMath.nativeHeight(mixed,idle,low,cart),.45*idle+.05*low+.5*cart,1e-12,
+            "lift reduces low and idle weights together in the 2D blend triangle");
+        for(boolean setdown:new boolean[]{false,true}) for(double start:new double[]{.55,.88}) {
+            double offset=.008;
+            double first=CartTransitionMath.nativeHeight(CartTransitionMath.progress(start,setdown),idle,low,cart)+offset;
+            double endpoint=CartTransitionMath.nativeHeight(CartTransitionMath.progress(0,setdown),idle,low,cart);
+            double previous=first;
+            for(int i=0;i<=1000;i++) {
+                double elapsed=.601*i/1000,progress=CartTransitionMath.recover(start,elapsed,setdown);
+                double target=CartTransitionMath.nativeHeight(CartTransitionMath.progress(progress,setdown),idle,low,cart)+offset*progress/start;
+                // Native action fades out in 200 ms while the canonical reverse can remain gripped longer.
+                double live=first+(endpoint-first)*CartTransitionMath.smooth(elapsed/.2);
+                check(Double.isFinite(target) && Math.abs(target-live)<.2,"native blend-out compensation stays within its safe correction bound");
+                check(Math.abs(target-previous)<.001,"native blend-out does not introduce a recovery height jump");
+                if(i==0) close(target,first,1e-12,"height recovery starts at the measured native pose");
+                if(i==1000) close(target,endpoint,1e-12,"calibration offset fades completely at the native endpoint");
+                previous=target;
+            }
+        }
+    }
     private static void invalid() {
         Matrix4f sentinel = new Matrix4f().translation(9,8,7), out = new Matrix4f(sentinel);
         for (Matrix4f invalid : new Matrix4f[]{new Matrix4f().scale(0), new Matrix4f().m00(Float.NaN),
@@ -152,7 +237,7 @@ public final class CartTransitionMathTest {
         check(out.equals(sentinel), "all validation failures preserve output");
     }
     public static void main(String[] args) {
-        roundtrips(); timingAndBlend(); stances(); invalid();
+        roundtrips(); timingAndBlend(); stances(); recovery(); recoveryPoseSteps(); nativeHeight(); invalid();
         System.out.println("PASS cart transition world/actor roundtrips, native Euler order, rigid interpolation, phase reversal and handle stance");
     }
 }
