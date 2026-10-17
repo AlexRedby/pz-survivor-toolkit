@@ -290,7 +290,7 @@ function Authority.verify(player,phase)
    local pages,total=book:getAlreadyReadPages(),book:getNumberOfPages()
    -- The native MP handmade splint can consume both inputs while leaving its one-page tail unread.
    if Selection.mode=='native' and name=='tail' and (spec.id=='nativeStop' or spec.id=='remoteRemoved'
-    or Selection.kind=='mp' and spec.id=='splintDrop') then
+    or Selection.kind=='mp' and (spec.id=='splintApply' or spec.id=='splintDrop')) then
     assert(pages==total or pages==total-1,'native control tail pages outside exact fixture range')
    else assert(pages==total,'unrelated book pages not preserved '..name) end
   end

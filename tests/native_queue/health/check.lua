@@ -678,7 +678,7 @@ for _,mode in ipairs({'native','toolkit'}) do for _,disconnect in ipairs({false,
 end end
 print('PASS actual fixture native/toolkit subscription lifecycle, immediate disconnect stop, exact reassigned patient reference and idempotent cleanup')
 
--- Native MP handmade splint consumed both inputs and cleared the unread tail in full49 v5.
+-- Native MP handmade splint can consume both inputs and clear the unread tail before Done.
 -- Keep that observed control outcome separate from toolkit guarantees and ready-made splints.
 for _,scenario in ipairs({
  {kind='mp',mode='native',case='splintDrop',allow=true},
@@ -686,7 +686,11 @@ for _,scenario in ipairs({
  {kind='mp',mode='toolkit',case='splintDrop'},
  {kind='sp',mode='native',case='splintDrop'},
  {kind='mp',mode='native',case='readySplintDrop'},
- {kind='mp',mode='native',case='splintApply'},
+ {kind='mp',mode='native',case='splintApply',allow=true},
+ {kind='mp',mode='native',case='splintApply',allow=true,complete=true},
+ {kind='mp',mode='toolkit',case='splintApply'},
+ {kind='sp',mode='native',case='splintApply'},
+ {kind='mp',mode='native',case='readySplint'},
 }) do
  require=AuthorityRequire
  select(scenario.kind,scenario.mode,{scenario.case})
@@ -725,7 +729,7 @@ for _,scenario in ipairs({
  end
 end
 isServer=function()return false end
-print('PASS exact native MP handmade splint tail degradation; toolkit, SP, ready-made and menu controls stay strict; clinical, consumed IDs, front and tail identity remain checked')
+print('PASS exact native MP handmade splint tail degradation; toolkit, SP and ready-made controls stay strict; clinical, consumed IDs, front and tail identity remain checked')
 
 -- Inventory context-menu medicine is always self care, even while the MP session has a peer patient.
 do
