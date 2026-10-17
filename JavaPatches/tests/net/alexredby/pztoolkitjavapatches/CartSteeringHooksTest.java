@@ -680,6 +680,24 @@ public final class CartSteeringHooksTest {
             } else check(Double.isNaN(CartSteeringHooks.wheelPhase(player)),"metal wheel opted into wooden prototype");
             CartSteeringHooks.reset(player);player.actualX=player.actualY=0;
         }
+        var continuityPlayer=(Player)unsafe.allocateInstance(Player.class);
+        continuityPlayer.inventory=new ItemContainer();
+        var continuityCart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        type(continuityCart,"SaucedWheelbarrow.WheelbarrowWood");continuityCart.setContainer(continuityPlayer.inventory);
+        continuityPlayer.primary=continuityPlayer.secondary=continuityCart;
+        var wheelPose=new org.joml.Matrix4f().scale(76.5f);
+        CartWheelSpin.record(continuityCart,0,0,0,wheelPose,.8);
+        CartSteeringHooks.heading(continuityPlayer);
+        check(Math.abs(CartSteeringHooks.wheelPhase(continuityPlayer)-.8)<1e-6,"steering lost the same item's world phase");
+        var wheelSlot=new zombie.core.skinnedmodel.model.ModelSlotRenderData();wheelSlot.y=-.02f;
+        double followed=CartSteeringHooks.wheelPhase(continuityPlayer,wheelSlot,wheelPose);
+        double expected=.8-.02/CartWheelSpin.WORLD_RADIUS;
+        check(Math.abs(followed-expected)<1e-6 && Math.abs(CartSteeringHooks.wheelPhase(continuityPlayer)-expected)<1e-6,
+            "first held render did not rebase the exact final handoff travel");
+        check(CartSteeringHooks.wheelPhase(continuityPlayer,wheelSlot,wheelPose)==followed,"repeated render spun wheel twice");
+        CartSteeringHooks.reset(continuityPlayer);CartSteeringHooks.heading(continuityPlayer);
+        check(Math.abs(CartSteeringHooks.wheelPhase(continuityPlayer)-expected)<1e-6,"state reset discarded rendered item phase");
+        CartSteeringHooks.reset(continuityPlayer);
         type(cart,"SaucedWheelbarrow.WheelbarrowWood");
         player.moving=true;player.walkSpeed=.25f;
         for(int gait=0;gait<3;gait++) {

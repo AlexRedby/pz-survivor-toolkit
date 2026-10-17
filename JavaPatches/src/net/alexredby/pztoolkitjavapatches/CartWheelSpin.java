@@ -7,10 +7,12 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.WeakHashMap;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL15;
 import zombie.characters.IsoPlayer;
+import zombie.inventory.InventoryItem;
 import zombie.core.skinnedmodel.model.Model;
 import zombie.core.skinnedmodel.model.ModelInstanceRenderData;
 import zombie.core.skinnedmodel.model.ModelSlotRenderData;
@@ -28,12 +30,64 @@ public final class CartWheelSpin {
     static final double WORLD_RADIUS=RADIUS*76.5*1.5;
     private static final WeakHashMap<ModelInstanceRenderData, Double> phases=new WeakHashMap<>();
     private static final WeakHashMap<VertexBufferObject, int[][]> meshes=new WeakHashMap<>();
+    private record Pose(double x, double y, double forwardX, double forwardY, double pitch, double radius) {}
+    private record Wheel(double phase, Pose pose) {}
+    // Cosmetic continuity follows the exact item while it moves between world and hands.
+    private static final WeakHashMap<InventoryItem, Wheel> wheels=new WeakHashMap<>();
     private static final Matrix4f wheelTransform=new Matrix4f();
     private static boolean errorLogged;
 
     static double advance(double phase, double acceptedTravel) {
         if(!Double.isFinite(acceptedTravel) || Math.abs(acceptedTravel)>1) return phase;
         return Math.IEEEremainder(phase-acceptedTravel/WORLD_RADIUS,Math.PI*2);
+    }
+
+    public static synchronized double itemPhase(InventoryItem item) {
+        var wheel=wheels.get(item);
+        return wheel==null?0:wheel.phase;
+    }
+
+    private static Pose pose(float x, float y, float angle, Matrix4f cart) {
+        if(!Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(angle) || cart==null || !cart.isFinite()) return null;
+        var center=cart.transformPosition(new Vector3f(CENTER_X,CENTER_Y,CENTER_Z));
+        var axle=cart.getColumn(0,new Vector3f());
+        if(axle.lengthSquared()<1e-12f) return null;
+        axle.normalize();
+        var up=new Vector3f(0,1,0).fma(-axle.y,axle);
+        if(up.lengthSquared()<1e-8f) return null;
+        up.normalize();
+        var radial=cart.getColumn(1,new Vector3f());
+        double pitch=Math.atan2(radial.dot(new Vector3f(axle).cross(up)),radial.dot(up));
+        double c=Math.cos(angle),s=Math.sin(angle);
+        double sideX=-(c*axle.x+s*axle.z),sideY=-s*axle.x+c*axle.z;
+        double length=Math.hypot(sideX,sideY);
+        if(length<1e-6) return null;
+        return new Pose(x-1.5*(c*center.x+s*center.z),y-1.5*s*center.x+1.5*c*center.z,
+            -sideY/length,sideX/length,pitch,radial.length()*RADIUS*1.5);
+    }
+
+    public static synchronized double follow(InventoryItem item, float x, float y, float angle, Matrix4f cart) {
+        if(!CartTransition.wooden(item)) return Double.NaN;
+        var pose=pose(x,y,angle,cart);
+        if(pose==null) return Double.NaN;
+        var previous=wheels.get(item);
+        double phase=previous==null?0:previous.phase;
+        if(previous!=null) {
+            double fx=previous.pose.forwardX+pose.forwardX,fy=previous.pose.forwardY+pose.forwardY;
+            double length=Math.hypot(fx,fy);
+            double dx=pose.x-previous.pose.x,dy=pose.y-previous.pose.y;
+            if(length>1e-6 && Math.hypot(dx,dy)<=1 && pose.radius>1e-6 && previous.pose.radius>1e-6)
+                phase-=(dx*fx+dy*fy)/length/((pose.radius+previous.pose.radius)*.5);
+            // Rotation is relative to the cart; lifting its handles must leave a stationary tire still.
+            phase=Math.IEEEremainder(phase-Math.IEEEremainder(pose.pitch-previous.pose.pitch,Math.PI*2),Math.PI*2);
+        }
+        wheels.put(item,new Wheel(phase,pose));
+        return phase;
+    }
+
+    static synchronized void record(InventoryItem item, float x, float y, float angle, Matrix4f cart, double phase) {
+        var pose=pose(x,y,angle,cart);
+        if(CartTransition.wooden(item) && pose!=null && Double.isFinite(phase)) wheels.put(item,new Wheel(phase,pose));
     }
 
     /** Snapshot the simulation angle; NaN clears recycled render data before eligibility checks. */
@@ -123,26 +177,39 @@ public final class CartWheelSpin {
         if(runs==null) return false;
         Shader shader=ShaderManager.instance.getOrCreateShader("basicEffect",true,false);
         if(shader==null || shader.getID()==0) return false;
-        int oldArray=GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING);
-        int oldElements=GL11.glGetInteger(GL15.GL_ELEMENT_ARRAY_BUFFER_BINDING);
         shader.Start();
         try {
             shader.startCharacter(slot,data);
             shader.setScale(slot.finalScale);
-            transform(data.xfrm,phase,wheelTransform);
-            boolean blend=model.mesh.vb.BeginDraw(shader);
-            try {
-                for(int[] run:runs) {
-                    shader.setTransformMatrix(run[2]==1?wheelTransform:data.xfrm,true);
-                    GL11.glDrawElements(GL11.GL_TRIANGLES,run[1],GL11.GL_UNSIGNED_INT,(long)run[0]*Integer.BYTES);
-                }
-            } finally {
-                shader.setTransformMatrix(data.xfrm,true);
-                model.mesh.vb.FinishDraw(shader,blend);
-            }
+            return draw(model.mesh.vb,shader,data.xfrm,phase,true);
         } finally {
             shader.setScale(1);
             shader.End();
+        }
+    }
+
+    /** Draw within the caller's native shader/material scope. */
+    public static boolean draw(VertexBufferObject buffer, Shader shader, Matrix4f cart, double phase, boolean transpose) {
+        if(buffer==null || shader==null || cart==null || !cart.isFinite() || !Double.isFinite(phase)) return false;
+        int[][] runs=mesh(buffer);
+        if(runs==null) return false;
+        int oldArray=GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING);
+        int oldElements=GL11.glGetInteger(GL15.GL_ELEMENT_ARRAY_BUFFER_BINDING);
+        if(transpose) transform(cart,phase,wheelTransform);
+        else wheelTransform.set(cart).translate(CENTER_X,CENTER_Y,CENTER_Z)
+            .rotateX((float)phase).translate(-CENTER_X,-CENTER_Y,-CENTER_Z);
+        try {
+            boolean blend=buffer.BeginDraw(shader);
+            try {
+                for(int[] run:runs) {
+                    shader.setTransformMatrix(run[2]==1?wheelTransform:cart,transpose);
+                    GL11.glDrawElements(GL11.GL_TRIANGLES,run[1],GL11.GL_UNSIGNED_INT,(long)run[0]*Integer.BYTES);
+                }
+            } finally {
+                shader.setTransformMatrix(cart,transpose);
+                buffer.FinishDraw(shader,blend);
+            }
+        } finally {
             GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER,oldArray);
             GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER,oldElements);
         }

@@ -107,8 +107,8 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'interaction', 'interruption'])
-        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('interaction', 4), ('interruption', 12)]:
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'wheel', 'interaction', 'interruption'])
+        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('wheel', 1), ('interaction', 4), ('interruption', 12)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -116,9 +116,10 @@ class CartAdapterTests(unittest.TestCase):
                 self.selection['cases'] = [case]
                 self.stage()
                 text = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
-                source='collision' if case in ('collision','footprint') else 'interaction' if case=='interruption' else case
+                source='collision' if case in ('collision','footprint') else 'interaction' if case in ('interruption','wheel') else case
                 self.assertIn((ROOT / f'tests/native_queue/contributions/wooden_cart_motion/scenario-{source}.lua').read_text(), text)
                 if case in ('collision','footprint'): self.assertIn('["footprint"]=true',text)
+                if case == 'wheel': self.assertIn('["wheelCycle"]=true',text)
                 if case == 'interruption': self.assertIn('["interruptions"]=true',text)
                 self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 3)
                 self.assertTrue(carts.complete(self.selection, 'client1', f'[WOOD_BANK] ALL_COMPLETE cases={count}\n'))
@@ -126,6 +127,10 @@ class CartAdapterTests(unittest.TestCase):
                     self.assertFalse(carts.complete(self.selection, 'client1', f'[WOOD_BANK] ALL_COMPLETE cases={wrong}\n'))
                 self.assertFalse(carts.complete(self.selection, 'client1',
                     f'[WOOD_BANK] ALL_COMPLETE cases={count}\n[WOOD_BANK] RUN_STARTED\n'))
+
+    def test_wheel_cycle_detects_phase_reset_from_actual_draws(self):
+        analyzer = carts._load(ROOT / 'tests/native_queue/contributions/wooden_cart_motion/analyze-wheel-cycle.py')
+        analyzer.self_check()
 
     def test_interaction_requires_actions_identity_cargo_rendered_ik_and_scoped_coverage(self):
         self.selection['cases'] = ['interaction']

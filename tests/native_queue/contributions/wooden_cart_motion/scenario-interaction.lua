@@ -32,6 +32,7 @@ local cases={
  {name='female-full-yaw90',female=true,full=true,yaw=90},
  {name='male-full-yaw270',female=false,full=true,yaw=270},
 }
+if config.wheelCycle then cases={{name='wood-wheel-cycle',female=false,full=true,yaw=135}} end
 if config.interruptions then
  cases={}
  for _,action in ipairs({'pickup','drop'}) do
@@ -46,6 +47,7 @@ end
 local phase,attempt,since,sampleSince=0,0,0,0
 local mode,stage,item,initialCargo,initialCargoIDs,heldAt,droppedAt='settle','grounded'
 local interrupted,cancelAt,cancelledAt,retryStage
+local cycle,driveStage=1,0
 local kind='SaucedWheelbarrow.WheelbarrowWood'
 local function encode(record)
  local out={}
@@ -98,7 +100,7 @@ local function snapshot(now)
  assert(CartTestArea.contains(p:getX(),p:getY(),p:getZ()) and math.abs(p:getX()-CartTestArea.x)<4 and math.abs(p:getY()-CartTestArea.y)<4,'Interaction left checked local pad')
  local status=toolkitWoodCartStatus and toolkitWoodCartStatus(p) or {}
  return {case=cases[phase].name,start=since,wall=now,elapsed=now-since,id=item:getID(),stage=stage,
-  heldID=handID(p:getPrimaryHandItem()),secondaryID=handID(p:getSecondaryHandItem()),
+  cycle=cycle,driveStage=driveStage,heldID=handID(p:getPrimaryHandItem()),secondaryID=handID(p:getSecondaryHandItem()),
   worldID=world and world:getItem():getID() or -1,worldCount=count,woodWorldCount=woodCount,inventoryCount=inventoryCount(),
   actionType=action and action.Type or '',progress=action and action:getJobDelta() or 0,condition=item:getCondition(),
   nativeActions=p:getCharacterActions():size(),luaActions=#queue.queue,
@@ -161,6 +163,7 @@ local function prepare()
   p:ensureOnTile();p:setCurrentSquareFromPosition();p:setMovingSquareNow()
  end
  stage,heldAt,droppedAt='grounded',nil,nil
+ cycle,driveStage=1,0
  interrupted,cancelAt,cancelledAt,retryStage=false,nil,nil,nil
  p:getStats():reset(CharacterStat.ENDURANCE)
  mode='settle';since=getTimestampMs()+1800
@@ -199,7 +202,7 @@ local function tick()
   print('[WOOD_BANK] RETRY '..c.name..' reason='..tostring(video.error));prepare();return
  end
  if mode=='finish' then
-  assert(now-since<28000,'Video finalization timed out')
+  assert(now-since<(config.wheelCycle and 40000 or 28000),'Video finalization timed out')
   if video.state=='completed' then
    print('[WOOD_BANK] COMPLETE '..c.name..' wall='..since..' file='..tostring(video.file)..' frames='..tostring(video.frames)..' seconds='..tostring(video.seconds))
    nextCase()
@@ -239,22 +242,33 @@ local function tick()
   local world=assert(item:getWorldItem(),'Pickup target disappeared')
   stage='pickup';ISTimedActionQueue.add(ISCartPickupAction.FromWorldItem(p,world));event('pickupQueued',now)
  elseif stage=='pickup' then
-  assert(elapsed<(config.interruptions and 13500 or 8500),'Pickup timed out')
+  assert(elapsed<(config.wheelCycle and 29000 or config.interruptions and 13500 or 8500),'Pickup timed out')
   if row.heldID==item:getID() and row.secondaryID==item:getID() and row.inventoryCount==1 and row.worldCount==0 and row.actionType=='' then
    stage='held';heldAt=now;event('pickedUp',now)
   end
- elseif stage=='held' and now-heldAt>=1100 then
-  stage='drop'
+ elseif stage=='held' then
+  local heldFor=now-heldAt
+  if config.wheelCycle and cycle==1 then
+   local nextDrive=heldFor<350 and 0 or heldFor<1200 and 1 or heldFor<2100 and 2 or heldFor<3100 and 4 or 0
+   if nextDrive~=driveStage then
+    driveStage=nextDrive;cartLabDrive(nextDrive);event('driveChanged',now)
+   end
+   if heldFor<3900 then return end
+  elseif heldFor<1100 then return end
+  cartLabDrive(0);stage='drop'
   local action=ISUnequipAction:new(p,item,1,'drop');ISTimedActionQueue.add(action)
   assert(action.Type=='ToolkitWoodCartSetdown','Native wooden drop was not safely dispatched')
   event('dropQueued',now)
  elseif stage=='drop' then
-  assert(elapsed<(config.interruptions and 19000 or 14500),'Setdown timed out')
+  assert(elapsed<(config.wheelCycle and 29000 or config.interruptions and 19000 or 14500),'Setdown timed out')
   if row.heldID==-1 and row.secondaryID==-1 and row.inventoryCount==0 and row.worldCount==1 and row.actionType=='' then
    stage='dropped';droppedAt=now;event('dropped',now)
   end
+ elseif config.wheelCycle and stage=='dropped' and cycle==1 and now-droppedAt>=900 then
+  cycle=2;stage='pickup';ISTimedActionQueue.add(ISCartPickupAction.FromWorldItem(p,assert(item:getWorldItem())))
+  event('pickupQueued',now)
  end
- if elapsed>=(config.interruptions and 20000 or 16000) then
+ if elapsed>=(config.wheelCycle and 30000 or config.interruptions and 20000 or 16000) then
   assert(stage=='dropped' and now-droppedAt>=1000,'Missing settled drop tail')
   assert(toolkitVideoStop(),'Video stop rejected');mode='finish'
  end

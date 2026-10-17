@@ -192,7 +192,7 @@ public final class CartGrounding {
                 // A failed arm solve must not replace the grounded cart with the moving hand attachment.
                 CartGrip.render(slot,instance.parent,clip,state.delta,name,transform);
                 data.xfrm.set(transform).transpose();
-                CartWheelSpin.prepare(slot,CartSteeringHooks.wheelPhase(player));
+                CartWheelSpin.prepare(slot,CartSteeringHooks.wheelPhase(player,slot,transform));
             } else {
                 transform.set(data.xfrm).transpose();
                 if(ground(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz)) data.xfrm.set(transform).transpose();

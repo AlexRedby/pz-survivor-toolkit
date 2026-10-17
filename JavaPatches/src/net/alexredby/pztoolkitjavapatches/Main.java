@@ -569,7 +569,10 @@ public final class Main {
             @Patch.Argument(0) zombie.inventory.InventoryItem item) {
             if(Main.CART_TRANSITION_SUPPORTED && CartTransition.wooden(item)) {
                 var transform=Accessor.tryGet(renderer,"transform",(org.joml.Matrix4f)null);
-                if(transform!=null) transform.scale(.85f);
+                if(transform!=null) {
+                    transform.scale(.85f);
+                    if(Main.CART_WHEEL_SUPPORTED) CartWheelWorld.snapshot(renderer,item,transform);
+                }
             }
         }
     }
@@ -586,9 +589,47 @@ public final class Main {
             return hidden;
         }
         @Patch.OnExit
-        public static void exit(@Patch.Local("toolkitHiddenWorldCart") boolean hidden,
+        public static void exit(@Patch.This zombie.core.skinnedmodel.model.ItemModelRenderer renderer,
+            @Patch.Local("toolkitHiddenWorldCart") boolean hidden,
             @Patch.Return(readOnly=false) zombie.core.skinnedmodel.model.ItemModelRenderer.RenderStatus result) {
             if(hidden) result=zombie.core.skinnedmodel.model.ItemModelRenderer.RenderStatus.NoModel;
+            if(Main.CART_WHEEL_SUPPORTED && Main.CART_TRANSITION_SUPPORTED) {
+                if(result==zombie.core.skinnedmodel.model.ItemModelRenderer.RenderStatus.Ready) CartWheelWorld.ready(renderer);
+                else CartWheelWorld.clear(renderer);
+            }
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.model.ItemModelRenderer", methodName="reset")
+    public static class WoodenWorldWheelReset {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.core.skinnedmodel.model.ItemModelRenderer renderer) {
+            if(Main.CART_WHEEL_SUPPORTED && Main.CART_TRANSITION_SUPPORTED) CartWheelWorld.clear(renderer);
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.model.ItemModelRenderer", methodName="renderModel")
+    public static class WoodenWorldWheelScope {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.core.skinnedmodel.model.ItemModelRenderer renderer,
+            @Patch.Argument(0) zombie.core.skinnedmodel.model.Model model,
+            @Patch.Argument(1) org.joml.Matrix4f transform, @Patch.Argument(4) boolean weaponPart,
+            @Patch.Local("toolkitWorldWheelScope") Object previous) {
+            if(Main.CART_WHEEL_SUPPORTED && Main.CART_TRANSITION_SUPPORTED)
+                previous=CartWheelWorld.begin(renderer,model,transform,weaponPart);
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Local("toolkitWorldWheelScope") Object previous) {
+            if(Main.CART_WHEEL_SUPPORTED && Main.CART_TRANSITION_SUPPORTED) CartWheelWorld.end(previous);
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.model.ModelMesh", methodName="Draw")
+    public static class WoodenWorldWheelDraw {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.core.skinnedmodel.model.ModelMesh mesh,
+            @Patch.Argument(0) zombie.core.skinnedmodel.shader.Shader shader) {
+            return Main.CART_WHEEL_SUPPORTED && Main.CART_TRANSITION_SUPPORTED && CartWheelWorld.render(mesh,shader);
         }
     }
 

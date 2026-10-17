@@ -36,6 +36,7 @@ public final class WoodenWheelNativeProbe {
     static { if (Math.abs(distance(0,0,0,3,4,0)-5)>1e-6) throw new AssertionError("distance self-check"); }
     private record NativeSnapshot(ModelInstanceRenderData cart, Map<String,Matrix4f> bones) {}
     private static volatile BufferedWriter output;
+    private static BufferedWriter rollOutput;
     private static Path directory;
     private static long start,sequence,lastSnapshot,lastDraw;
     private static boolean installed,errorLogged,firstDraw,meshProof,movingMeshProof;
@@ -234,6 +235,34 @@ public final class WoodenWheelNativeProbe {
             row("draw",slot,data,bone);
         }catch(Throwable error){fail(error);}
     }
+    private static synchronized void roll(String source, long itemId, float x, float y, float angle, Matrix4f cart, double phase) throws Exception {
+        if(rollOutput==null || !Double.isFinite(phase)) return;
+        var row=new StringBuilder(512).append("{\"source\":\"").append(source)
+            .append("\",\"wall\":").append(System.currentTimeMillis()).append(",\"itemId\":").append(itemId)
+            .append(",\"x\":").append(x).append(",\"y\":").append(y).append(",\"angle\":").append(angle)
+            .append(",\"phase\":").append(phase).append(",\"cart\":[");
+        var values=cart.get(new float[16]);
+        for(int i=0;i<values.length;i++){if(i>0)row.append(',');row.append(values[i]);}
+        row.append("]}\n");rollOutput.write(row.toString());rollOutput.flush();
+    }
+    public static void heldRoll(ModelSlotRenderData slot, ModelInstanceRenderData data, boolean rendered) {
+        if(!rendered)return;
+        try {roll("held",-1,slot.x,slot.y,slot.animPlayerAngle,new Matrix4f(data.xfrm).transpose(),phase(data));}
+        catch(Throwable error){fail(error);}
+    }
+    public static void worldRoll(ItemModelRenderer renderer) {
+        try {
+            var receipt=net.alexredby.pztoolkitjavapatches.CartWheelWorld.rendered(renderer);
+            if(receipt==null)return;
+            var cart=new Matrix4f().rotationXYZ((float)Math.toRadians(renderer.angle.x),
+                (float)Math.toRadians(renderer.angle.y),(float)Math.toRadians(renderer.angle.z)).mul(receipt.cart());
+            roll("world",receipt.item().getID(),renderer.x,renderer.y,(float)Math.PI,cart,receipt.phase());
+        } catch(Throwable error){fail(error);}
+    }
+    public static class WorldDrawing {
+        @Advice.OnMethodExit(suppress=Throwable.class)
+        public static void exit(@Advice.This ItemModelRenderer renderer){WoodenWheelNativeProbe.worldRoll(renderer);}
+    }
     public static class Grounding {
         @Advice.OnMethodEnter(suppress=Throwable.class)
         public static NativeSnapshot enter(@Advice.Argument(0) ModelSlotRenderData slot){return WoodenWheelNativeProbe.beforeGrounding(slot);}
@@ -245,15 +274,17 @@ public final class WoodenWheelNativeProbe {
     public static class Drawing {
         @Advice.OnMethodExit(suppress=Throwable.class)
         public static void exit(@Advice.Argument(1) ModelSlotRenderData slot,@Advice.Argument(2) ModelInstanceRenderData data,
-            @Advice.Return boolean rendered){WoodenWheelNativeProbe.draw(slot,data,rendered);}
+            @Advice.Return boolean rendered){WoodenWheelNativeProbe.draw(slot,data,rendered);WoodenWheelNativeProbe.heldRoll(slot,data,rendered);}
     }
     public static synchronized void agentmain(String args,Instrumentation instrumentation) throws Exception {
         var previous=output;output=null;
         if(previous!=null)previous.close();
+        if(rollOutput!=null){rollOutput.close();rollOutput=null;}
         if("stop".equals(args)){System.out.println("[WOOD_WHEEL_NATIVE_PROBE] stopped");return;}
         if(args==null || args.isBlank() || !Path.of(args).isAbsolute())throw new IllegalArgumentException("Agent args: absolute output directory, or stop");
         directory=Path.of(args);
         if(!Files.isDirectory(directory))throw new IllegalArgumentException("Output directory must exist");
+        rollOutput=Files.newBufferedWriter(directory.resolve("wheel-roll-draws.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);
         output=Files.newBufferedWriter(directory.resolve("wood-wheel-native.csv"),java.nio.file.StandardOpenOption.CREATE_NEW);
         output.write("sequence,time,event,drive,type,phase,dt,playerX,playerY,playerZ,slotX,slotY,slotZ,slotAngle,actorHeading,lean,wheelX,wheelY,wheelZ,contactX,contactY,contactZ,contactLocalY,planeX,planeY,planeZ,forwardX,forwardY,wheelYaw,stepX,stepY,justMoved,leftHandX,leftHandY,leftHandZ,rightHandX,rightHandY,rightHandZ,upperDelta,legDelta,spineDelta,clavicleDelta,spineRootDx,spineRootDy,spineRootDz,spineRootOrientationMaxDelta,leftThighMatrixDelta,rightThighMatrixDelta,leftCalfMatrixDelta,rightCalfMatrixDelta,leftArmLengthBefore,leftArmLengthAfter,rightArmLengthBefore,rightArmLengthAfter,torsoLengthBefore,torsoLengthAfter,torsoLengthDelta,maxLegMatrixDelta,wallTimeMillis\n");output.flush();
         start=System.nanoTime();sequence=lastSnapshot=lastDraw=0;firstDraw=meshProof=movingMeshProof=errorLogged=false;snapshots.clear();previousBones.clear();
@@ -263,6 +294,8 @@ public final class WoodenWheelNativeProbe {
                 .transform((b,d,l,m,p)->b.visit(Advice.to(Grounding.class).on(named("render"))))
                 .type(named("net.alexredby.pztoolkitjavapatches.CartWheelSpin"))
                 .transform((b,d,l,m,p)->b.visit(Advice.to(Drawing.class).on(named("render"))))
+                .type(named("zombie.core.skinnedmodel.model.ItemModelRenderer"))
+                .transform((b,d,l,m,p)->b.visit(Advice.to(WorldDrawing.class).on(named("DoRender"))))
                 .installOn(instrumentation);installed=true;
         }
         System.out.println("[WOOD_WHEEL_NATIVE_PROBE] capturing "+directory.resolve("wood-wheel-native.csv"));

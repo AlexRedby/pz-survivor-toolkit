@@ -86,6 +86,7 @@ if args.check or args.check_video:
               'net.alexredby.pztoolkitjavapatches.CartLegPaceTest': 'CART_LEG_PACE_PASS',
               'net.alexredby.pztoolkitjavapatches.CartGripTest': 'CART_GRIP_PASS',
               'net.alexredby.pztoolkitjavapatches.CartWheelSpinTest': 'CART_WHEEL_SPIN_PASS',
+              'net.alexredby.pztoolkitjavapatches.CartWheelWorldTest': 'CART_WHEEL_WORLD_PASS',
               'net.alexredby.pztoolkitjavapatches.CartGroundingTest': 'CART_GROUNDING_PASS',
               'net.alexredby.pztoolkitjavapatches.CartTransitionTest': 'CART_TRANSITION_PASS',
               'net.alexredby.pztoolkitjavapatches.CartTransitionMathTest': 'PASS cart transition world/actor roundtrips'} if args.check else {}

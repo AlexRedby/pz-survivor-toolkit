@@ -7,6 +7,8 @@ import zombie.core.skinnedmodel.model.ModelInstance;
 import zombie.core.skinnedmodel.model.ModelInstanceRenderData;
 import zombie.core.skinnedmodel.model.ModelSlotRenderData;
 import zombie.scripting.objects.ModelScript;
+import zombie.inventory.InventoryItem;
+import sun.misc.Unsafe;
 
 public final class CartWheelSpinTest {
     private static void close(double actual, double expected, String message) {
@@ -44,6 +46,31 @@ public final class CartWheelSpinTest {
             if(angle!=0 && spun.transformPosition(new Vector3f(point)).distance(cart.transformPosition(new Vector3f(point)))<.001f)
                 throw new AssertionError("wheel did not visibly rotate");
         }
+        var unsafeField=Unsafe.class.getDeclaredField("theUnsafe");unsafeField.setAccessible(true);
+        var unsafe=(Unsafe)unsafeField.get(null);
+        var item=(InventoryItem)unsafe.allocateInstance(InventoryItem.class);
+        item.setModule("SaucedWheelbarrow");item.setType("WheelbarrowWood");
+        var identity=new Matrix4f().scale(76.5f);
+        close(CartWheelSpin.follow(item,0,0,0,identity),0,"first world pose");
+        double distance=CartWheelSpin.WORLD_RADIUS*.7;
+        close(CartWheelSpin.follow(item,0,(float)-distance,0,identity),-.7,"actual axle travel");
+        var tilted=new Matrix4f(identity).translate(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z)
+            .rotateX(.4f).translate(-CartWheelSpin.CENTER_X,-CartWheelSpin.CENTER_Y,-CartWheelSpin.CENTER_Z);
+        close(CartWheelSpin.follow(item,0,(float)-distance,0,tilted),-1.1,"stationary tire compensates cart pitch");
+        var banked=new Matrix4f(tilted).rotateLocalZ(.12f);
+        var centerBefore=tilted.transformPosition(new Vector3f(center));
+        banked.translateLocal(centerBefore.sub(banked.transformPosition(new Vector3f(center))));
+        close(CartWheelSpin.follow(item,0,(float)-distance,0,banked),-1.1,"bank did not introduce a false pitch change");
+        close(CartWheelSpin.itemPhase(item),-1.1,"same item retains rendered phase");
+        close(CartWheelSpin.follow(item,0,(float)-distance,0,tilted),-1.1,"held/world handoff continuity");
+        close(CartWheelSpin.follow(item,0,0,0,tilted),-.4,"reverse travel");
+        close(CartWheelSpin.follow(item,50,50,0,tilted),-.4,"teleport does not spin wheel");
+        if(!Double.isNaN(CartWheelSpin.follow(item,Float.NaN,0,0,identity))) throw new AssertionError("invalid pose accepted");
+        close(CartWheelSpin.itemPhase(item),-.4,"invalid pose poisoned phase");
+        var other=(InventoryItem)unsafe.allocateInstance(InventoryItem.class);other.setModule("SaucedWheelbarrow");other.setType("WheelbarrowWood");
+        close(CartWheelSpin.follow(other,0,0,0,identity),0,"phase leaked to a different cart");
+        other.setType("WheelbarrowMetal");
+        if(!Double.isNaN(CartWheelSpin.follow(other,0,0,0,identity))) throw new AssertionError("metal followed wooden wheel");
         var slot=new ModelSlotRenderData();
         var data=new ModelInstanceRenderData();
         data.modelInstance=new ModelInstance();data.modelInstance.modelScript=new ModelScript();

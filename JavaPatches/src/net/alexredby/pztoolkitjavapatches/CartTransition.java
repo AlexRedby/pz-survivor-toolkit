@@ -173,6 +173,7 @@ public final class CartTransition {
                 (float)phase.lift(),(ground.m30()-held.m30())*(float)phase.center(),lowering,.16f*(float)phase.balance(),
                 (float)Math.toRadians(60*phase.hinge()));
             data.xfrm.set(transform).transpose();
+            CartWheelSpin.prepare(slot,CartWheelSpin.follow(state.item,slot.x,slot.y,slot.animPlayerAngle,transform));
             if(state.world!=null && !state.rendered) state.world.invalidateRenderChunkLevel(256);
             state.rendered=true;
             return true;

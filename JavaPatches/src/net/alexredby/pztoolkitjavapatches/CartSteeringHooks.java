@@ -14,14 +14,14 @@ public final class CartSteeringHooks {
     private static final ThreadLocal<Vector2> passthrough = ThreadLocal.withInitial(Vector2::new);
 
     private static final class State {
-        double heading, target, load, lean, wheelPhase, turnRate, stationaryRate;
+        double heading, target, load, lean, wheelPhase, wheelOrigin, turnRate, stationaryRate;
         final CartSteeringMath.Bank bank = new CartSteeringMath.Bank();
         final CartLegPace.Ramp pace = new CartLegPace.Ramp();
         final CartSteeringMath.Reversal reversal = new CartSteeringMath.Reversal();
         double brakeTarget, actualDistance, fastPoseTail, nativeSpeed, brakeLimit, brakeWait, brakePace;
         zombie.inventory.InventoryItem cart;
         float startX, startY;
-        boolean stationary, stationaryRoot, cartBlocked, recovering;
+        boolean wheelRendered, stationary, stationaryRoot, cartBlocked, recovering;
         double footprintFront=CartFootprint.WALK_FRONT;
         boolean moving, pending, sprintMomentum, sprintRequested, hasInput, wantsMove, braking, brakeSeen, fastMoving;
         final CartSteeringMath.Step requested = new CartSteeringMath.Step();
@@ -56,6 +56,7 @@ public final class CartSteeringHooks {
             if(state!=null) reset(player);
             state=new State();
             state.cart=player.getPrimaryHandItem();
+            state.wheelOrigin=CartWheelSpin.itemPhase(state.cart);
             Vector2 facing=player.getAnimForwardDirection(new Vector2());
             state.heading=Math.atan2(facing.y,facing.x);
             states.put(player,state);
@@ -128,8 +129,23 @@ public final class CartSteeringHooks {
     public static double wheelPhase(IsoPlayer player) {
         State state=states.get(player);
         return state!=null && enabled(player) && wooden(player)
-            ? CartWheelSpin.advance(state.wheelPhase,CartSteeringMath.woodenAxle((float)state.lean,CartLegPace.woodenGaitShift(player))
+            ? CartWheelSpin.advance(state.wheelOrigin+state.wheelPhase,CartSteeringMath.woodenAxle((float)state.lean,CartLegPace.woodenGaitShift(player))
                 -CartSteeringMath.woodenAxle(0,0)) : Double.NaN;
+    }
+
+    static double wheelPhase(IsoPlayer player, zombie.core.skinnedmodel.model.ModelSlotRenderData slot, org.joml.Matrix4f cart) {
+        var state=states.get(player);
+        double phase=wheelPhase(player);
+        if(state==null || !Double.isFinite(phase)) return phase;
+        if(!state.wheelRendered) {
+            double followed=CartWheelSpin.follow(state.cart,slot.x,slot.y,slot.animPlayerAngle,cart);
+            if(!Double.isFinite(followed)) return Double.NaN;
+            state.wheelOrigin+=Math.IEEEremainder(followed-phase,Math.PI*2);
+            state.wheelRendered=true;
+            phase=followed;
+        }
+        CartWheelSpin.record(state.cart,slot.x,slot.y,slot.animPlayerAngle,cart,phase);
+        return phase;
     }
 
     private static boolean wheelbarrow(IsoPlayer player) {
