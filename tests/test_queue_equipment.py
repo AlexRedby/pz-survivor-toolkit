@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -24,22 +25,39 @@ class EquipmentTests(unittest.TestCase):
         rows = [{'event': 'setup', 'cases': cases, 'expected': len(cases), 'nativeDurations': True, 'queueEnabled': enabled}]
         for case in cases:
             result = dict(inventoryPreserved=True, frontCompleted=True, tailCompleted=True,
-                          equipmentMatches=True, nativeDurations=True, policyChecked=enabled)
+                          equipmentMatches=True, nativeDurations=True, postprocessingVerified=True, policyChecked=enabled)
+            if case == 'hands-chain':
+                result.update(activeProgress=True, activeProtected=enabled)
             if case == 'waiting-cancel':
                 result['cancelled'] = enabled
             if case == 'bag-capacity':
                 result['capacityBarrier'] = enabled
+            if case in ('clothing-chain', 'hotbar-chain'):
+                result.update(slotsVerified=True, clothing=case == 'clothing-chain', hotbar=case == 'hotbar-chain')
+            if case == 'floor-pickup':
+                result.update(floorPickup=True, pickupWorldRemoved=True)
+            if self.selection['kind'] == 'mp':
+                result.update(authoritative=True, receipts=0 if case == 'waiting-cancel' and enabled else equipment.RECEIPTS[case])
+                result['receiptStates'] = ['completed'] * result['receipts']
             rows.append({'event': 'case', 'id': case, 'status': 'passed', 'outcome': result})
         rows.append({'event': 'complete', 'cases': cases, 'expected': len(cases), 'performed': len(cases), 'skipped': 0, 'failed': 0})
-        return [dict(row, suite='equipment', kind='sp', mode=self.selection['mode'], actor='client1') for row in rows]
+        return [dict(row, suite='equipment', kind=self.selection['kind'], mode=self.selection['mode'], actor='client1') for row in rows]
 
     def logs(self, records=None):
-        return '\n'.join(['[QUEUE_CHECK] ' + json.dumps(row) for row in (records or self.records())]
+        captures=[]
+        if self.selection['kind'] == 'mp':
+            for case in self.selection['cases']:
+                count=0 if case == 'waiting-cancel' and self.selection['mode'] == 'toolkit' else equipment.RECEIPTS[case]
+                for _ in range(count):
+                    captures.append('[EQUIPMENT_TEST] CAPTURE case=' + case + ' kind=ISEquipWeaponAction token=00000000-0000-0000-0000-' + str(len(captures)+1).zfill(12))
+        return '\n'.join(captures + ['[QUEUE_CHECK] ' + json.dumps(row) for row in (records or self.records())]
                          + ['[EQUIPMENT_TEST] RECEIPT case=' + case for case in self.selection['cases']]
                          + ['[EQUIPMENT_TEST] COMPLETE'])
 
     def verify(self, text):
         (self.root / 'client1-launch.log').write_text(text)
+        if self.selection['kind'] == 'mp' and not (self.root / 'server-launch.log').exists():
+            (self.root / 'server-launch.log').write_text('[EQUIPMENT_TEST] TRANSFER_PROBE active=true\n[EQUIPMENT_TEST] SERVER_READY\n' + '\n'.join('[EQUIPMENT_TEST] CHECKPOINT case=' + case + '\n[EQUIPMENT_TEST] AUTHORITY case=' + case + ' inventoryPreserved=true equipmentMatches=true tailCompleted=true' for case in self.selection['cases']))
         return equipment.verify(self.root, self.selection, {})
 
     def test_subset_and_mode_selection(self):
@@ -59,6 +77,58 @@ class EquipmentTests(unittest.TestCase):
             self.assertEqual(self.verify(self.logs())['issues'], [])
         self.selection['cases'] = ['bag-capacity']
         self.assertEqual(self.verify(self.logs())['issues'], [])
+
+    def test_mp_requires_server_and_correlated_native_outcomes(self):
+        self.selection.update(kind='mp', mods=['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit'])
+        equipment.validate(self.selection)
+        for mode in ('native', 'toolkit'):
+            self.selection['mode'] = mode
+            self.assertEqual(self.verify(self.logs())['issues'], [])
+            changed = self.records()
+            changed[1]['outcome']['authoritative'] = False
+            self.assertTrue(self.verify(self.logs(changed))['issues'])
+            changed = self.records()
+            changed[1]['outcome']['receipts'] = True
+            self.assertTrue(self.verify(self.logs(changed))['issues'])
+            text = self.logs()
+            self.assertTrue(self.verify(text.replace('[EQUIPMENT_TEST] CAPTURE case=hands-chain', '[IGNORED] CAPTURE case=hands-chain', 1))['issues'])
+        (self.root / 'server-launch.log').write_text('[EQUIPMENT_TEST] SERVER_READY\n')
+        self.assertTrue(self.verify(self.logs())['issues'])
+
+    def test_only_client_owned_hotbar_timer_may_cancel_with_authoritative_effects(self):
+        self.selection.update(kind='mp', mods=['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit'])
+        rows = self.records()
+        hotbar = next(row for row in rows if row.get('id') == 'hotbar-chain')
+        hotbar['outcome']['receiptStates'] = ['canceled']
+        self.assertEqual(self.verify(self.logs(rows))['issues'], [])
+        for states in (['started'], ['rejected'], [], ['completed', 'canceled'], None):
+            changed = copy.deepcopy(rows)
+            next(row for row in changed if row.get('id') == 'hotbar-chain')['outcome']['receiptStates'] = states
+            self.assertTrue(self.verify(self.logs(changed))['issues'])
+        for case in ('hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain'):
+            changed = copy.deepcopy(rows)
+            target = next(row for row in changed if row.get('id') == case)['outcome']
+            target['receiptStates'] = ['canceled'] * target['receipts']
+            if target['receipts']:
+                self.assertTrue(self.verify(self.logs(changed))['issues'])
+        hotbar['outcome']['authoritative'] = False
+        self.assertTrue(self.verify(self.logs(rows))['issues'])
+
+    def test_mp_stage_pins_read_only_transfer_probe_for_both_roles(self):
+        self.selection.update(kind='mp', mods=['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit'])
+        for role in ('server', 'client1'):
+            (self.root / role / 'mods/ActionQueueTest/42/media/lua/shared').mkdir(parents=True)
+        probe = self.root / 'probe.jar'
+        probe.write_bytes(b'read-only fixture probe')
+        runtime = {'roles': {'server': {}, 'client1': {}}, 'fixture': {'mods': []}}
+        with patch.object(equipment, '_transfer_probe', return_value=probe):
+            equipment.stage(ROOT, self.root, None, None, self.selection, {}, runtime)
+        self.assertEqual(runtime['fixture']['mods'], ['EquipmentTransferProbe'])
+        for role in ('server', 'client1'):
+            layer = self.root / role / 'mods/EquipmentTransferProbe/42'
+            self.assertEqual((layer / 'media/java/EquipmentTransferProbe.jar').read_bytes(), probe.read_bytes())
+            self.assertIn('javaPkgName=net.alexredby.equipmentprobe', (layer / 'mod.info').read_text())
+        self.assertIn(ROOT / 'tests/native_queue/equipment/java/Main.java', equipment.sources(ROOT, self.selection))
 
     def test_missing_effect_or_policy_proof_fails(self):
         records = self.records()
@@ -98,10 +168,11 @@ class EquipmentTests(unittest.TestCase):
         equipment.stage(ROOT, self.root, None, None, self.selection, {}, runtime)
         self.assertEqual((target / 'QueueHealthEvents.lua').read_bytes(),
                          (ROOT / 'tests/native_queue/health/shared/QueueHealthEvents.lua').read_bytes())
-        self.assertEqual(runtime, {'fixture': {'mods': []}})
+        self.assertEqual(runtime['fixture']['server_ready'], '[EQUIPMENT_TEST] SERVER_READY')
+        self.assertTrue((target.parent / 'client/ZZStartup.lua').is_file())
         sources = equipment.sources(ROOT, self.selection)
         self.assertTrue(any('equipment' in path.parts for path in sources))
-        self.assertTrue(all('equipment' in path.parts or path.name == 'QueueHealthEvents.lua' for path in sources))
+        self.assertTrue(all('equipment' in path.parts or path.name in ('QueueHealthEvents.lua', 'ZZStartup.lua') for path in sources))
 
 
 if __name__ == '__main__':
