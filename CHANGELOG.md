@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.88
+
+- **Fixed:** Context-menu preferences use alternating checked snapshots with readback verification, retain the legacy INI for import and refuse stale writes. Failed loads cannot overwrite saved settings; failed preference edits roll back without reporting success. Reopening the editor retries in the same profile object, and storage failure leaves ordinary menus usable.
+
 ### 0.1.87
 
 - **Fixed:** Fullness no longer silently cancels water drinking after a backpack transfer. Empty containers remain invalid; nutritious drinks keep their native fullness restriction. Applies in single-player and Host, with or without the Toolkit queue.

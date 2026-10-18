@@ -1,12 +1,7 @@
 local content='E|legacy|Old entry\nR|legacy|medical\nR|bad|missing\nO|*|root|0|bad\nO|*|root|999999|bad\nP|bad scope|x|medical\n'
 getText=function(key) return key end
-getFileReader=function()
- local index=0;local lines={};for line in content:gmatch('[^\n]+') do lines[#lines+1]=line end
- return {readLine=function() index=index+1;return lines[index] end,close=function() end}
-end
-getFileWriter=function()
- content='';return {write=function(_,s) content=content..s end,close=function() end}
-end
+package.path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/?.lua;'..package.path
+local disk=dofile(ProjectRoot..'/tests/support/context_menu_files.lua')(content)
 local Profile=dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ContextMenuProfile.lua')
 local rules={groups={'equipment','medical','world'}}
 local model=Profile.new(rules)
@@ -19,7 +14,9 @@ assert(model.setOverride(key,custom,'Base.Pot'))
 assert(model.setOrder('Base.Pot','root',{'group:'..custom,key}))
 model.items['Base.Pot']='Кастрюля'
 model.record('Base.Pot',key,'Escaped | entry','root');model.save()
-assert(content:find('%%7C') and content:find('%%0A') and content:find('%%25'))
+local saved=table.concat({disk.files['PZSurvivorToolkit_ContextMenus_a.txt'],disk.files['PZSurvivorToolkit_ContextMenus_b.txt']})
+assert(saved:find('%%7C') and saved:find('%%0A') and saved:find('%%25'))
+assert(disk.files['PZSurvivorToolkit_ContextMenus.ini']==content,'legacy import was overwritten')
 local again=Profile.new(rules)
 assert(again.getOverride(key,'Base.Pot')==custom and again.getOverride(key,'Base.Hammer')==nil)
 assert(again.groupName(custom,'Base.Pot')=='Name % | with unicode: Кухня' and again.items['Base.Pot']=='Кастрюля')
@@ -42,14 +39,14 @@ reset.setOrder('*','root',{'b','a'})
 local layout=reset.getLayout('*','root')
 assert(layout[1].key=='a' and layout[2].kind=='title' and layout[3].key=='b','preview must honor the same title barriers as native menu')
 print('Context menu profile checks passed: legacy and escaped persistence, validation, scoped inheritance, deletion, resets and exact preview placement.')
-content=string.rep('D|Base.Pot|a|A|root\n',20000)..'P|Base.Pot|a|hidden\n'
+disk.reset(string.rep('D|Base.Pot|a|A|root\n',20000)..'P|Base.Pot|a|hidden\n')
 local large=Profile.new(rules)
 assert(large.getOverride('a','Base.Pot')=='hidden','large discovery files must not truncate user rules at the tail')
 print('PASS large discovery file retains configuration records')
 
 package.path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/?.lua;'..package.path
 local Tags=require 'PZSurvivorToolkit/ItemTags'
-content=''
+disk.reset('')
 local tagged=Profile.new(rules,Tags)
 local kitchen=assert(tagged.createTagProfile('Kitchen | Кухня',{include={'cooking'}}))
 local weapons=assert(tagged.createTagProfile('Weapons',{include={'weapon'}}))
@@ -104,7 +101,7 @@ assert(restored.deleteTagProfile(kitchen) and not restored.getTagProfile(kitchen
 assert(restored.getOverride('drop','Base.Pot')=='hidden','deleting tag profile must restore inheritance')
 restored.reset()
 assert(#restored.tagProfiles==0 and restored.getOverride('drop','Base.Pot')==nil and restored.items['Base.Pot'])
-content='P|tags:1|drop|hidden\nF|tags:1|Invalid|all\nA|tags:1|include|not-a-tag\nF|tags:2|Empty|all\n'
+disk.reset('P|tags:1|drop|hidden\nF|tags:1|Invalid|all\nA|tags:1|include|not-a-tag\nF|tags:2|Empty|all\n')
 local invalid=Profile.new(rules,Tags)
 assert(#invalid.tagProfiles==0 and not invalid.scoped['tags:1'],'invalid persisted filters must not activate scoped rules')
 print('PASS tag profile precedence, field inheritance, mixed selections, sample isolation, escaped persistence, exact-category matching, validation and resets')

@@ -401,6 +401,7 @@ function Organizer.organize(root)
     if busy or not root or (root.parent and root.parent.options) or root.toolkitContextSkip then return end
     if not PZSurvivorToolkit.Settings.contextMenus() then restore(root); return end
     if root.toolkitContextState then return end
+    Organizer.ensureLoaded()
     busy, scope = true, root.toolkitContextItemType or "*"
     tagScopes = Tags.enabled() and Organizer.matchingTagProfiles(root.toolkitContextTagSets or {}) or {}
     root.toolkitContextTagScopes = tagScopes

@@ -383,7 +383,7 @@ function Editor:prerender()
     self:drawText(text("order"), self.rightX, 132, 0.8, 0.8, 0.8, 1, UIFont.Small)
     self:drawText(text("group_name"), self.rightX, self.height - 224, 0.8, 0.8, 0.8, 1, UIFont.Small)
     self:drawText(fit(text("group_scope_tip"), self.width - self.rightX - 16), self.rightX, self.height - 128, 0.7, 0.8, 0.9, 1, UIFont.Small)
-    self:drawText(fit(self.status or text(Tags.enabled() and "priority_tip" or "tags_disabled"), self.width - 28), 12, self.height - 66, 0.8, 0.8, 0.8, 1, UIFont.Small)
+    self:drawText(fit((Organizer.storageError and text("storage_error")) or self.status or text(Tags.enabled() and "priority_tip" or "tags_disabled"), self.width - 28), 12, self.height - 66, 0.8, 0.8, 0.8, 1, UIFont.Small)
     if #self.list.items == 0 then
         self:drawText(fit(text("empty"), self.list.width - 20), 20, 196, 0.8, 0.8, 0.8, 1, UIFont.Small)
     end
@@ -395,14 +395,16 @@ end
 function Editor:close()
     self.removed = true
     if self.toolkitRulePicker then self.toolkitRulePicker:close() end
-    Organizer.save()
+    local saved = Organizer.save()
     self:setVisible(false)
     self:removeFromUIManager()
     instance = nil
+    return saved
 end
 
 function Editor.show()
     if not PZSurvivorToolkit.Settings.contextMenus() then return end
+    Organizer.ensureLoaded()
     if instance then instance:bringToTop(); return instance end
     local width = math.min(960, getCore():getScreenWidth() - 24)
     local height = math.min(760, getCore():getScreenHeight() - 24)

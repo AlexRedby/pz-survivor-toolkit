@@ -6,16 +6,8 @@ Events = { OnGameExit = { Add = function() end },
     OnGameStart = {Add=function(fn) gameStart=fn end},
     OnPreFillWorldObjectContextMenu = {Add=function(fn) worldFill=fn end} }
 function getText(key) return key end
-function getFileReader(name)
-    if not files[name] then return nil end
-    local lines = {}; for line in files[name]:gmatch('[^\n]+') do lines[#lines + 1] = line end
-    local index = 0
-    return { readLine = function() index = index + 1; return lines[index] end, close = function() end }
-end
-function getFileWriter(name)
-    writes = writes + 1; files[name] = ''
-    return { write = function(_, value) files[name] = files[name] .. value end, close = function() end }
-end
+local disk=dofile(ProjectRoot..'/tests/support/context_menu_files.lua')()
+files=disk.files
 local root
 function getNumActivePlayers() return 1 end
 function getPlayerContextMenu() return root end
@@ -103,7 +95,7 @@ assert(menu.options[6] == actions[6], 'unknown mod callback with native-looking 
 assert(actions[1].onSelect(actions[1].target, actions[1].param1) == 'owner')
 local counts = nextSub
 menu:prerender(); menu:prerender(); assert(nextSub == counts, 'no per-frame group allocations')
-assert(writes == 0, 'discovery never writes config per frame/menu')
+assert(disk.writes == 0, 'discovery never writes config per frame/menu')
 enabled = false; menu:prerender(); same(menu, actions)
 enabled = true; menu:prerender(); same(menu,actions)
 menu:addOption('Late mod action', nil, function() end)
@@ -128,7 +120,7 @@ menu:prerender(); assert(menu.options[1] == actions[1])
 Organizer.setOverride('label:Read', 'research')
 menu:prerender(); assert(group(menu,'research').options[1] == actions[6])
 Organizer.setOverride('label:with|pipe\nand%text', 'medical')
-assert(files['PZSurvivorToolkit_ContextMenus.ini']:find('%%7C'))
+assert((files['PZSurvivorToolkit_ContextMenus_a.txt']..files['PZSurvivorToolkit_ContextMenus_b.txt']):find('%%7C'))
 loaded['PZSurvivorToolkit/ContextMenus'] = nil
 assert(require('PZSurvivorToolkit/ContextMenus') == Organizer, 'duplicate load reuses service/hooks')
 loaded['PZSurvivorToolkit/ContextMenus'] = nil
@@ -853,3 +845,17 @@ assert(not previewHasCorpse(rootCorpseKey) and previewHasCorpse(nestedCorpseKey)
 assert(present(menu,nested) and not present(menu,quick),'live fallback must agree with its preview')
 Organizer.reset();SaucedCarts=nil;getText=oldGetText
 print('PASS cart role identity, unavailable/hidden/missing fallbacks, manual child placement, pool restoration and preview parity')
+local Storage=require 'PZSurvivorToolkit/ContextMenuProfileStorage'
+local target=Storage.load().slot==1 and 'PZSurvivorToolkit_ContextMenus_b.txt' or 'PZSurvivorToolkit_ContextMenus_a.txt'
+disk.faults[target]={prefix=0}
+assert(not Organizer.save())
+for _,path in ipairs({'PZSurvivorToolkit_ContextMenus_a.txt','PZSurvivorToolkit_ContextMenus_b.txt'}) do
+ disk.faults[path]={nilReader=true}
+end
+local count=disk.writes
+menu,actions=build();menu:prerender()
+assert(#menu.options>0 and Organizer.storageError=='ReadFailed','blocked settings broke ordinary menus')
+assert(not Organizer.setOverride('label:Read','hidden') and disk.writes==count,'blocked profile permitted save')
+disk.faults={}
+assert(Organizer.ensureLoaded() and not Organizer.storageError)
+print('PASS ordinary context menus survive unavailable settings without permitting replacement writes')

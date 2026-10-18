@@ -1,5 +1,5 @@
 local Profile = {}
-local file = "PZSurvivorToolkit_ContextMenus.ini"
+local Storage = require "PZSurvivorToolkit/ContextMenuProfileStorage"
 
 local function encode(value)
     return tostring(value or ""):gsub("%%", "%%25"):gsub("|", "%%7C"):gsub("\r", "%%0D"):gsub("\n", "%%0A")
@@ -23,9 +23,158 @@ local function copy(values)
     local out = {}; for i, value in ipairs(values or {}) do out[i] = value end; return out
 end
 
+local fields = {"entries", "overrides", "items", "scoped", "customGroups", "names", "orders", "discovered", "tagProfiles", "typeTags"}
+local function empty()
+    local result = {layouts = {}, revision = 0}
+    for _, field in ipairs(fields) do result[field] = {} end
+    return result
+end
+local function clone(value)
+    if type(value) ~= "table" then return value end
+    local result = {}
+    for key, child in pairs(value) do result[key] = clone(child) end
+    return result
+end
+local function parse(lines, Rules, Tags)
+    local self, builtin = empty(), {root = true, hidden = true}
+    for _, id in ipairs(Rules.groups) do builtin[id] = true end
+    local function allowed(id) return builtin[id] or self.customGroups[id] ~= nil end
+    local typeScope = validScope
+    local function validScope(value)
+        if typeScope(value) then return true end
+        for _, profile in ipairs(self.tagProfiles) do if profile.id == value then return true end end
+        return false
+    end
+    local pending = {}
+    for _, raw in ipairs(lines) do
+        if #raw <= 8192 then
+            local fields = {}; for value in (raw .. "|"):gmatch("(.-)|") do fields[#fields + 1] = decode(value) end
+            pending[#pending + 1] = fields
+            if fields[1] == "G" and fields[2] and fields[2]:match("^custom:%d+$") and cleanName(fields[3]) then self.customGroups[fields[2]] = fields[3] end
+        end
+    end
+    -- Load filters before their scoped preferences, regardless of record order.
+    local filters, ordered = {}, {}
+    for _, row in ipairs(pending) do
+        if row[1] == "F" and type(row[2]) == "string" and row[2]:match("^tags:%d+$") and #row[2] <= 160
+            and not filters[row[2]] and #ordered < 64 and cleanName(row[3]) and (row[4] == "all" or row[4] == "any") then
+            filters[row[2]] = {id = row[2], name = row[3], rule = {mode = row[4], include = {}, exclude = {}}}
+            ordered[#ordered + 1] = filters[row[2]]
+        end
+    end
+    for _, row in ipairs(pending) do
+        local profile = row[1] == "A" and filters[row[2]]
+        if profile and (row[3] == "include" or row[3] == "exclude") then
+            local values = profile.rule[row[3]]
+            if #values < 65 then values[#values + 1] = row[4] or "" end
+        end
+    end
+    for _, profile in ipairs(ordered) do
+        local rule = Tags and Tags.normalizeRule(profile.rule)
+        if rule and Tags.ruleActive(rule) then profile.rule = rule; self.tagProfiles[#self.tagProfiles + 1] = profile end
+    end
+    for _, row in ipairs(pending) do
+        local kind, a, b, c, d = unpack(row)
+        if kind == "E" and validKey(a) and validKey(b) then self.entries[a] = {key = a, label = b, category = allowed(c) and c or nil}
+        elseif kind == "R" and validKey(a) and allowed(b) then self.overrides[a] = b
+        elseif kind == "I" and validScope(a) and a ~= "*" and cleanName(b) then self.items[a] = b
+        elseif kind == "T" and typeScope(a) and a ~= "*" and Tags and Tags.normalizeRule({include = {b}}) then
+            self.typeTags[a] = self.typeTags[a] or {}; self.typeTags[a][#self.typeTags[a] + 1] = b
+        elseif kind == "C" and typeScope(a) and a ~= "*" and validKey(b) then
+            self.typeTags[a] = self.typeTags[a] or {}; self.typeTags[a].legacyCategory = b
+        elseif kind == "D" and validScope(a) and validKey(b) and validKey(c) then
+            self.discovered[a] = self.discovered[a] or {}; self.discovered[a][b] = {key = b, label = c, category = allowed(d) and d or nil}
+        elseif kind == "P" and validScope(a) and a ~= "*" and validKey(b) and allowed(c) then
+            self.scoped[a] = self.scoped[a] or {}; self.scoped[a][b] = c
+        elseif kind == "N" and validScope(a) and allowed(b) and b ~= "root" and b ~= "hidden" and cleanName(c) then
+            self.names[a] = self.names[a] or {}; self.names[a][b] = c
+        elseif kind == "O" and validScope(a) and validKey(b) and tonumber(c) and validKey(d) then
+            local index = tonumber(c)
+            if index >= 1 and index <= 512 and index == math.floor(index) then
+                self.orders[a] = self.orders[a] or {}; self.orders[a][b] = self.orders[a][b] or {}; self.orders[a][b][index] = d
+            end
+        end
+    end
+    for _, parents in pairs(self.orders) do
+        for parent, keys in pairs(parents) do
+            local out, seen = {}, {}
+            for i = 1, 512 do local key = keys[i]; if key and not seen[key] then out[#out + 1] = key; seen[key] = true end end
+            parents[parent] = out
+        end
+    end
+    return self
+end
+
+local function serialize(self)
+    local lines = {}
+    local function line(...)
+        local fields = {}; for i = 1, select('#', ...) do fields[i] = encode(select(i, ...)) end
+        lines[#lines + 1] = table.concat(fields, "|")
+    end
+    for id, name in pairs(self.customGroups) do line("G", id, name) end
+    for _, profile in ipairs(self.tagProfiles) do
+        line("F", profile.id, profile.name, profile.rule.mode)
+        for _, field in ipairs({"include", "exclude"}) do
+            for _, tag in ipairs(profile.rule[field]) do line("A", profile.id, field, tag) end
+        end
+    end
+    for itemType, tags in pairs(self.typeTags) do
+        for _, tag in ipairs(tags) do line("T", itemType, tag) end
+        if tags.legacyCategory then line("C", itemType, tags.legacyCategory) end
+    end
+    for key, entry in pairs(self.entries) do line("E", key, entry.label, entry.category) end
+    for key, id in pairs(self.overrides) do line("R", key, id) end
+    for scope, name in pairs(self.items) do line("I", scope, name) end
+    for scope, entries in pairs(self.discovered) do
+        for key, entry in pairs(entries) do line("D", scope, key, entry.label, entry.category) end
+    end
+    for scope, rules in pairs(self.scoped) do for key, id in pairs(rules) do line("P", scope, key, id) end end
+    for scope, names in pairs(self.names) do for id, name in pairs(names) do line("N", scope, id, name) end end
+    for scope, parents in pairs(self.orders) do
+        for parent, keys in pairs(parents) do for index, key in ipairs(keys) do line("O", scope, parent, index, key) end end
+    end
+    return lines
+end
+
 function Profile.new(Rules, Tags)
-    local self = {entries = {}, overrides = {}, items = {}, scoped = {}, customGroups = {}, names = {}, orders = {}, layouts = {}, discovered = {}, tagProfiles = {}, typeTags = {}, revision = 0}
+    local self = empty()
     local preferencesRevision, actualLayouts = 0, {}
+    local snapshot, writeFailed
+    local function failed(code, detail)
+        if self.storageError ~= code then print("[PZSurvivorToolkit] Context menu settings " .. code .. ": " .. tostring(detail)) end
+        self.storageError = code
+        return false, code
+    end
+    function self.ensureLoaded()
+        if snapshot then return true end
+        local ok, candidate, data = pcall(function()
+            local context = Storage.load()
+            return context, parse(context.lines, Rules, Tags)
+        end)
+        if not ok then return failed("ReadFailed", candidate) end
+        -- Discovery may continue while storage is unavailable; preferences always come from the verified disk state.
+        for _, field in ipairs({"entries", "items", "typeTags"}) do
+            for key, value in pairs(self[field]) do data[field][key] = value end
+        end
+        for scope, entries in pairs(self.discovered) do
+            data.discovered[scope] = data.discovered[scope] or {}
+            for key, entry in pairs(entries) do data.discovered[scope][key] = entry end
+        end
+        for _, field in ipairs(fields) do self[field] = data[field] end
+        snapshot, self.storageError = candidate, nil
+        preferencesRevision, self.revision = preferencesRevision + 1, self.revision + 1
+        return true
+    end
+    function self.save()
+        if not self.ensureLoaded() then return false, self.storageError end
+        local ok, candidate = pcall(function() return Storage.save(snapshot, serialize(self)) end)
+        if not ok then
+            snapshot = nil -- A complete slot can exist despite a close/readback error; reload before any next edit.
+            return failed("WriteFailed", candidate)
+        end
+        snapshot, self.storageError = candidate, nil
+        return true
+    end
     local builtin = {root = true, hidden = true}
     for _, id in ipairs(Rules.groups) do builtin[id] = true end
     local function allowed(id) return builtin[id] or self.customGroups[id] ~= nil end
@@ -71,9 +220,9 @@ function Profile.new(Rules, Tags)
         end
     end
     local function changed()
+        if not self.save() then writeFailed = true; return end
         preferencesRevision = preferencesRevision + 1
         self.revision = self.revision + 1
-        self.save()
         if self.settingsChanged then self.settingsChanged() end
     end
     function self.rememberItem(id, name, tags)
@@ -339,99 +488,24 @@ function Profile.new(Rules, Tags)
         else self.scoped[scope], self.names[scope], self.orders[scope] = nil, nil, nil end
         changed()
     end
-    function self.save()
-        local writer = getFileWriter(file, true, false)
-        if not writer then return false end
-        local function line(...)
-            local fields = {}; for i = 1, select('#', ...) do fields[i] = encode(select(i, ...)) end
-            writer:write(table.concat(fields, "|") .. "\n")
-        end
-        for id, name in pairs(self.customGroups) do line("G", id, name) end
-        for _, profile in ipairs(self.tagProfiles) do
-            line("F", profile.id, profile.name, profile.rule.mode)
-            for _, field in ipairs({"include", "exclude"}) do
-                for _, tag in ipairs(profile.rule[field]) do line("A", profile.id, field, tag) end
+    for _, name in ipairs({"createTagProfile", "updateTagProfile", "deleteTagProfile", "moveTagProfile",
+        "setOverride", "createGroup", "renameGroup", "deleteGroup", "setOrder", "reset"}) do
+        local mutate = self[name]
+        self[name] = function(...)
+            if not self.ensureLoaded() then return nil, self.storageError end
+            local previous = {}
+            for _, field in ipairs(fields) do previous[field] = clone(self[field]) end
+            previous.layouts = clone(self.layouts)
+            writeFailed = false
+            local result = mutate(...)
+            if writeFailed then
+                for field, value in pairs(previous) do self[field] = value end
+                return nil, self.storageError
             end
-        end
-        for itemType, tags in pairs(self.typeTags) do
-            for _, tag in ipairs(tags) do line("T", itemType, tag) end
-            if tags.legacyCategory then line("C", itemType, tags.legacyCategory) end
-        end
-        for key, entry in pairs(self.entries) do line("E", key, entry.label, entry.category) end
-        for key, id in pairs(self.overrides) do line("R", key, id) end
-        for scope, name in pairs(self.items) do line("I", scope, name) end
-        for scope, entries in pairs(self.discovered) do
-            for key, entry in pairs(entries) do line("D", scope, key, entry.label, entry.category) end
-        end
-        for scope, rules in pairs(self.scoped) do for key, id in pairs(rules) do line("P", scope, key, id) end end
-        for scope, names in pairs(self.names) do for id, name in pairs(names) do line("N", scope, id, name) end end
-        for scope, parents in pairs(self.orders) do
-            for parent, keys in pairs(parents) do for index, key in ipairs(keys) do line("O", scope, parent, index, key) end end
-        end
-        writer:close(); return true
-    end
-    local reader = getFileReader(file, false)
-    if reader then
-        local pending = {}
-        while true do
-            local raw = reader:readLine(); if not raw then break end
-            if #raw <= 8192 then
-                local fields = {}; for value in (raw .. "|"):gmatch("(.-)|") do fields[#fields + 1] = decode(value) end
-                pending[#pending + 1] = fields
-                if fields[1] == "G" and fields[2] and fields[2]:match("^custom:%d+$") and cleanName(fields[3]) then self.customGroups[fields[2]] = fields[3] end
-            end
-        end
-        reader:close()
-        -- Load filters before their scoped preferences, regardless of record order.
-        local filters, ordered = {}, {}
-        for _, row in ipairs(pending) do
-            if row[1] == "F" and type(row[2]) == "string" and row[2]:match("^tags:%d+$") and #row[2] <= 160
-                and not filters[row[2]] and #ordered < 64 and cleanName(row[3]) and (row[4] == "all" or row[4] == "any") then
-                filters[row[2]] = {id = row[2], name = row[3], rule = {mode = row[4], include = {}, exclude = {}}}
-                ordered[#ordered + 1] = filters[row[2]]
-            end
-        end
-        for _, row in ipairs(pending) do
-            local profile = row[1] == "A" and filters[row[2]]
-            if profile and (row[3] == "include" or row[3] == "exclude") then
-                local values = profile.rule[row[3]]
-                if #values < 65 then values[#values + 1] = row[4] or "" end
-            end
-        end
-        for _, profile in ipairs(ordered) do
-            local rule = Tags and Tags.normalizeRule(profile.rule)
-            if rule and Tags.ruleActive(rule) then profile.rule = rule; self.tagProfiles[#self.tagProfiles + 1] = profile end
-        end
-        for _, row in ipairs(pending) do
-            local kind, a, b, c, d = unpack(row)
-            if kind == "E" and validKey(a) and validKey(b) then self.entries[a] = {key = a, label = b, category = allowed(c) and c or nil}
-            elseif kind == "R" and validKey(a) and allowed(b) then self.overrides[a] = b
-            elseif kind == "I" and validScope(a) and a ~= "*" and cleanName(b) then self.items[a] = b
-            elseif kind == "T" and typeScope(a) and a ~= "*" and Tags and Tags.normalizeRule({include = {b}}) then
-                self.typeTags[a] = self.typeTags[a] or {}; self.typeTags[a][#self.typeTags[a] + 1] = b
-            elseif kind == "C" and typeScope(a) and a ~= "*" and validKey(b) then
-                self.typeTags[a] = self.typeTags[a] or {}; self.typeTags[a].legacyCategory = b
-            elseif kind == "D" and validScope(a) and validKey(b) and validKey(c) then
-                self.discovered[a] = self.discovered[a] or {}; self.discovered[a][b] = {key = b, label = c, category = allowed(d) and d or nil}
-            elseif kind == "P" and validScope(a) and a ~= "*" and validKey(b) and allowed(c) then
-                self.scoped[a] = self.scoped[a] or {}; self.scoped[a][b] = c
-            elseif kind == "N" and validScope(a) and allowed(b) and b ~= "root" and b ~= "hidden" and cleanName(c) then
-                self.names[a] = self.names[a] or {}; self.names[a][b] = c
-            elseif kind == "O" and validScope(a) and validKey(b) and tonumber(c) and validKey(d) then
-                local index = tonumber(c)
-                if index >= 1 and index <= 512 and index == math.floor(index) then
-                    self.orders[a] = self.orders[a] or {}; self.orders[a][b] = self.orders[a][b] or {}; self.orders[a][b][index] = d
-                end
-            end
-        end
-        for _, parents in pairs(self.orders) do
-            for parent, keys in pairs(parents) do
-                local out, seen = {}, {}
-                for i = 1, 512 do local key = keys[i]; if key and not seen[key] then out[#out + 1] = key; seen[key] = true end end
-                parents[parent] = out
-            end
+            return result
         end
     end
+    self.ensureLoaded()
     return self
 end
 return Profile

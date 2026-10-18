@@ -2,10 +2,6 @@
 
 - [ ] Investigate the seven client font-loading errors remaining in both full forge Host runs; do not declare the entire set runtime-clean based on the functional forge fix. The Forge Simple Blade stall itself was reproduced in a separate Windows Host world with 48 mods after removing an earlier object on the square: 0.1.22 stalls at 100%, while 0.1.23 passes all three cases (manual control, ordinary forge, shifted index) with one result, exact consumption and idle action/UI. Reports `forge-baseline-05` and `forge-candidate-01` retain a separate runtime verdict; this does not verify Mac, WAN or two clients. See the [test setup](tests/native_queue/forge/README.md).
 
-# Context-menu settings integrity
-
-- [ ] In `ContextMenuProfile.lua`, distinguish a `getFileReader` failure from a new profile: currently nil leaves empty settings, and the next `changed()` directly overwrites `PZSurvivorToolkit_ContextMenus.ini`. Preserve existing settings on open/read/close failure and unconfirmed writes; check recovery of access without replacing user overrides/order/groups/tag profiles, plus a separate cold reload.
-
 # Faster animation development
 
 - [ ] Pass the expected scenes and time windows of the selected bank to the shared cart analyzer instead of sprint16/`--partial`; retain separate checks for movement, grip, body/clothing and runtime. Check missing scenes, incorrect phases and same-tick receipts with negative tests.

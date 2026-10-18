@@ -763,5 +763,6 @@
     "UI_PZSW_Error_storage_error": "Could not save the list. Check the server log.",
     "UI_PZSW_Error_storage_read": "Wishlist storage is unavailable. Check the server log.",
     "UI_PZSW_Error_storage_write": "Wishlist storage is unavailable. Check the server log.",
-    "UI_PZSW_Error_storage_unavailable": "Wishlist storage is unavailable. Check the server log."
+    "UI_PZSW_Error_storage_unavailable": "Wishlist storage is unavailable. Check the server log.",
+    "UI_PZSurvivorToolkit_context_storage_error": "Menu settings could not be loaded or saved. Reopen the editor to reload them."
 }

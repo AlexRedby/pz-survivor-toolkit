@@ -6,8 +6,7 @@ getTextManager=function()
     return {getFontHeight=function() return 16 end, MeasureStringX=function(_,_,value) return #value*8 end}
 end
 getCore=function() return {getScreenWidth=function() return 784 end, getScreenHeight=function() return 564 end} end
-getFileReader=function() end
-getFileWriter=function() return {write=function() end,close=function() end} end
+local disk=dofile(ProjectRoot..'/tests/support/context_menu_files.lua')()
 local Base={}
 function Base:new(x,y,width,height)
     return setmetatable({x=x,y=y,width=width,height=height,items={},options={},selected=0,children={}}, {__index=self})
@@ -212,3 +211,41 @@ local childPicker=lastPicker
 enabled=false;editor:prerender()
 assert(not editor.added and not Editor.show() and childPicker.closed,'disabled editor or child picker remained open')
 print('Context menu editor checks passed: scopes, previews, tag profiles, inheritance, ordering, group CRUD, search and resets.')
+
+enabled=true
+editor=Editor.show()
+local Storage=sharedModules['PZSurvivorToolkit/ContextMenuProfileStorage']
+local function nextSlot()
+ return Storage.load().slot==1 and 'PZSurvivorToolkit_ContextMenus_b.txt' or 'PZSurvivorToolkit_ContextMenus_a.txt'
+end
+local target=nextSlot()
+disk.faults[target]={prefix=0}
+editor.groupName:setText('Failed group')
+local groups=#Organizer.groupIds()
+editor:createGroup()
+assert(Organizer.storageError=='WriteFailed' and #Organizer.groupIds()==groups,'failed editor change was accepted')
+local messages={}
+function editor:drawText(value) messages[#messages+1]=value end
+editor:prerender()
+local visibleError=false
+for _,value in ipairs(messages) do if value=='UI_PZSurvivorToolkit_context_storage_error' then visibleError=true end end
+assert(visibleError,'editor hid failed persistence behind a validation/default message')
+disk.faults={}
+assert(editor:close() and not editor.added)
+editor=Editor.show()
+assert(not Organizer.storageError and #Organizer.groupIds()==groups,'reopen retained failed change or failed to recover')
+-- A failed Close still releases the UI; reopening retries the same model rather than replacing its runtime methods.
+disk.faults[nextSlot()]={prefix=0}
+assert(not editor:close() and not editor.added)
+for _,path in ipairs({'PZSurvivorToolkit_ContextMenus_a.txt','PZSurvivorToolkit_ContextMenus_b.txt'}) do
+ disk.faults[path]={nilReader=true}
+end
+local same=Organizer
+editor=Editor.show()
+assert(editor.added and Organizer==same and Organizer.storageError=='ReadFailed')
+disk.faults={}
+assert(Editor.show()==editor and not Organizer.storageError and #Organizer.groupIds()==groups)
+disk.faults[nextSlot()]={writerClose=true}
+enabled=false;editor:prerender()
+assert(not editor.added and Organizer.storageError=='WriteFailed','disabled feature trapped editor after save failure')
+print('PASS editor persistence errors, rollback, close cleanup, stable-owner retry and settings-off failure')
