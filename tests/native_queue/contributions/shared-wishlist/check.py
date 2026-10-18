@@ -17,17 +17,17 @@ def main():
     exec(compile(source.read_text(), str(source), "exec"), module)
     with tempfile.TemporaryDirectory() as directory:
         cache = Path(directory)
-        config = module["prepare"](cache, "client1", "standalone", "configured-host", 12345, "ephemeral-check-value", ["PZSurvivorWishlist"])
+        config = module["prepare"](cache, "client1", "standalone", "configured-host", 12345, "ephemeral-check-value", ["PZSurvivorToolkit"])
         assert config.read_text().splitlines()[:4] == ["client1", "standalone", "configured-host", "12345"]
         assert config.stat().st_mode & 0o077 == 0
         assert sorted(p.name for p in (cache / "mods/WishlistTest/42/media/lua/client").iterdir()) == ["ZZWishlist.lua"]
         try:
-            module["prepare"](cache, "client1", "standalone", "configured-host", 12345, "ephemeral-check-value", ["PZSurvivorWishlist"])
+            module["prepare"](cache, "client1", "standalone", "configured-host", 12345, "ephemeral-check-value", ["PZSurvivorToolkit"])
         except ValueError:
             pass
         else:
             raise AssertionError("Prepared cache was overwritten")
-        for host, port, password, mods in [("host\nextra", 12345, "value", ["PZSurvivorWishlist"]), ("host", 65535, "value", ["PZSurvivorWishlist"]), ("host", 12345, "", ["PZSurvivorWishlist"]), ("host", 12345, "value", ["bad/id"])]:
+        for host, port, password, mods in [("host\nextra", 12345, "value", ["PZSurvivorToolkit"]), ("host", 65535, "value", ["PZSurvivorToolkit"]), ("host", 12345, "", ["PZSurvivorToolkit"]), ("host", 12345, "value", ["bad/id"])]:
             try:
                 module["prepare"](cache / "invalid", "client1", "standalone", host, port, password, mods)
             except ValueError:

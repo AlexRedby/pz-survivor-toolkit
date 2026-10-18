@@ -39,7 +39,7 @@ python3 tests/native_queue/contributions/shared-wishlist/prepare.py "$TEST_CACHE
 Repeat for `client2` and `server`, changing the cache/actor. The fresh configuration
 has six lines in the order documented in `manifest.json`. For full integrations,
 use `--mode full --mods ...` with the exact selected product IDs, including
-`PZSurvivorWishlist` and `PZSurvivorToolkit`, but excluding `WishlistTest`.
+`PZSurvivorToolkit`, but excluding `WishlistTest`.
 Use the dependency APIs in the manifest; the current selected INI defines the mod set.
 
 Enable `WishlistTest` after the selected product mods in each cache's
@@ -49,7 +49,7 @@ checksums, and use an isolated local server/world. Use client usernames `client1
 and `client2` with the runtime password, languages EN and RU respectively. The
 server fixture waits for both fixed actors before it sends their item IDs/start
 signal. Full mode needs the CleanUI, combined-container, Neat and Project Cook
-APIs listed in the manifest; standalone/visual selects only the wishlist product.
+APIs listed in the manifest; standalone/visual selects only Toolkit, which includes Wishlist.
 
 Reuse `tests/native_queue/support/ToolkitSmokeLauncher.java` from the common
 support. Compile it against the installed game with the selected
@@ -61,10 +61,10 @@ configuration; do not embed them in fixture sources.
 The common runner installs these Lua sides and their six-line config, retains
 its safe launcher/preflight and verifies the `[WISHLIST_TEST]` contract. Select
 exactly one case (`full`, `standalone`, `visual` or `reload`) per run. Full uses
-the declared UI integrations; standalone and visual select only Wishlist.
-Only full has a native queue-off control. Standalone, visual and reload contain
-no Toolkit queue option, so they run only in the catalog's `toolkit` mode and
-explicitly report that the queue control is inapplicable.
+the declared UI integrations; `standalone` is a retained scenario ID for Toolkit
+without optional UI mods, also used by visual and reload. All cases support the
+Toolkit queue-off control. Historical standalone evidence predates the merge
+and does not validate the integrated product.
 
 For persistence through the common runner, finish a successful full/standalone
 run and supply its absolute directory as `options.seed_run` in the JSON passed
@@ -89,9 +89,8 @@ The reload evidence retains `seed_native_audit.pending=true` and
 pending audit. Failed, new-error, unknown, microphone-active or unavailable seed
 audits are rejected.
 
-The retained stage labels/counts are unchanged. With Toolkit loaded, the sidebar
-stage follows the Wishlist entry in the tools hub; standalone uses its direct
-button. Geometry checks use absolute rectangles in both dimensions. Inventory
+The retained stage labels/counts are unchanged. The sidebar stage follows the
+Wishlist entry in the Toolkit tools hub in every mode. Geometry checks use absolute rectangles in both dimensions. Inventory
 checks retain actual border drawing and independently require exactly one
 Wishlist overlay invocation, so a clipped candidate row does not masquerade as
 a duplicate wrapper. Before measurement, a real native render builds flattened

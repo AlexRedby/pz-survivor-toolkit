@@ -7,7 +7,8 @@ local config={};for _,key in ipairs({'user','mode','host','port','password','mod
 if Session then config.mode=Session.case end
 local user=config.user;assert(user=='client1'or user=='client2','Expected two fixed fixture actors')
 assert(config.mode=='full'or config.mode=='standalone'or config.mode=='reload'or config.mode=='visual','Invalid fixture mode')
-local standalone=not getActivatedMods():contains('PZSurvivorToolkit')
+-- The legacy scenario name now means Toolkit without the optional UI integrations.
+local standalone=config.mode~='full'
 local reload=config.mode=='reload'
 if not Session then
 Events.OnConnected.Add(function()connecting=true end)
@@ -145,21 +146,18 @@ else
  end)
  stage('sidebar opens wishlist without overlapping existing buttons',function()
   local equipped=getPlayerData(0).equipped
-  local toolkit=getActivatedMods():contains('PZSurvivorToolkit')
-  local b=assert(toolkit and equipped.toolkitToolsButton or equipped.pzswButton,'wishlist sidebar control absent')
+  local b=assert(equipped.toolkitToolsButton,'wishlist sidebar control absent')
   assert(b:getIsVisible()and b:getWidth()>0 and b:getHeight()>0,'wishlist sidebar control hidden')
-  if toolkit then assert(not equipped.pzswButton,'duplicate standalone wishlist sidebar control')end
+  assert(not equipped.pzswButton,'duplicate standalone wishlist sidebar control')
   for _,child in pairs(equipped:getChildren())do if child~=b and child.Type=='ISButton'and child:getIsVisible()then
    assert(separate(b,child),'sidebar overlap')
   end end
   local highlight=equipped.toolkitHighlightButton
   if highlight and highlight:getIsVisible()then assert(separate(b,highlight),'sidebar controls overlap')end
   if W().UI.windows[0] then W().UI.windows[0]:close()end;b.onclick(b.target,b)
-  if toolkit then
-   local menu=assert(getPlayerContextMenu(0));local found
-   for _,option in ipairs(flatten(menu))do if option.name==getText('UI_PZSW_Open')then assert(not found,'duplicate Wishlist hub action');found=option end end
-   assert(found,'Wishlist hub action absent');found.onSelect(found.target);menu:hideAndChildren()
-  end
+  local menu=assert(getPlayerContextMenu(0));local found
+  for _,option in ipairs(flatten(menu))do if option.name==getText('UI_PZSW_Open')then assert(not found,'duplicate Wishlist hub action');found=option end end
+  assert(found,'Wishlist hub action absent');found.onSelect(found.target);menu:hideAndChildren()
   assert(W().UI.windows[0]:getIsVisible());W().UI.windows[0]:close()
  end)
  stage('switch CleanUI off',function()CleanUI_setCleanInventoryUIEnabled(false)end)

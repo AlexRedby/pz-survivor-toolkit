@@ -18,6 +18,7 @@ local function setup(savedFile, mediaActive, medicineActive, navigatorActive, ex
         OnMainMenuEnter = event(), OnKeyPressed = event() }
     Keyboard = { KEY_F8 = 66 }
     PZSurvivorToolkit = {}
+    PZSurvivorWishlist = nil
     getActivatedMods = function()
         return {contains = function(_, id) return mediaActive == true and id == "TVRadio_ReInvented"
             or medicineActive == true and id == "MoodleFramework"
@@ -893,8 +894,9 @@ test("wishlist highlights only wanted visible loose items and cooperates with To
     }
     local oldRequire = require
     require = function() end
-    dofile(ProjectRoot .. "/PZSurvivorWishlist/42/media/lua/client/PZSurvivorWishlist/Ground.lua")
+    dofile(client .. "PZSurvivorWishlist/Ground.lua")
     require = oldRequire
+    equal(PZSurvivorWishlist.Highlighter, w.highlighter, "settings retain the shared scanner alias")
     local visible = w:add(0.3, 0.4, 0, "Base.Hammer")
     local hidden = w:add(1.3, 0.4, 0, "Base.Hammer")
     local other = w:add(0.3, 1.4, 0, "Base.Nails")
@@ -921,6 +923,101 @@ test("wishlist highlights only wanted visible loose items and cooperates with To
     w:advance(70)
     equal(visible:isHighlighted(0), false, "wishlist toggle releases existing outlines")
     PZSurvivorWishlist = nil
+end)
+
+test("wishlist revisions, colour and enable changes reclassify owned outlines", function()
+    local w = setup()
+    local object = w:add(0.5, 0.5, 0, "Base.Hammer")
+    object.item.getFullType = function() return object.name end
+    w:advance(70)
+    equal(object:getHighlightColor(0):getG(), 0.55)
+    local list = {revision = 1, entries = { ["Base.Hammer"] = {done = false} }}
+    local enabled, colour = true, {r = 0.25, g = 0.85, b = 0.75, a = 1}
+    PZSurvivorWishlist = {
+        Client = {isWanted = function(_, fullType)
+            return list.entries[fullType] and not list.entries[fullType].done
+        end},
+        Settings = {groundEnabled = function() return enabled end, color = function() return colour end},
+    }
+    w:advance(1)
+    equal(object:getHighlightColor(0):getG(), 0.85, "a late Wishlist load takes over our normal outline")
+    list = {revision = 2, entries = { ["Base.Hammer"] = {done = true} }}
+    w:advance(1)
+    equal(object:getHighlightColor(0):getG(), 0.55, "a completed entry returns to normal highlighting")
+    list = {revision = 3, entries = { ["Base.Hammer"] = {done = false} }}
+    w:advance(1)
+    equal(object:getHighlightColor(0):getG(), 0.85)
+    colour.g = 0.4
+    w:advance(1)
+    equal(object:getHighlightColor(0):getG(), 0.4, "changed wanted colour replaces only our own colour")
+    enabled = false
+    w:advance(1)
+    equal(object:getHighlightColor(0):getG(), 0.55, "disabling wanted highlighting restores the normal colour")
+    enabled = true
+    w:advance(1)
+    object:setHighlightColor(0, 0.1, 0.2, 0.3, 1)
+    object:setOutlineHighlightCol(0, 0.1, 0.2, 0.3, 1)
+    list = {revision = 4, entries = {}}
+    w:advance(1)
+    equal(object:getHighlightColor(0):getG(), 0.2, "revision changes preserve foreign takeover")
+    w.highlighter.settingsChanged()
+    equal(object:isHighlighted(0), true)
+    equal(object:getHighlightColor(0):getG(), 0.2)
+end)
+
+test("one scanner retains the separate normal and wanted radii", function()
+    local w = setup()
+    local enabled = true
+    PZSurvivorWishlist = {
+        Client = {isWanted = function(_, fullType) return fullType == "Base.Hammer" end},
+        Settings = {groundEnabled = function() return enabled end,
+            color = function() return {r = 0.25, g = 0.85, b = 0.75, a = 1} end},
+    }
+    local wanted = w:add(12.5, 0.5, 0, "Base.Hammer")
+    local normal = w:add(12.5, 1.5, 0, "Base.Nails")
+    local farWanted = w:add(18.5, 0.5, 0, "Base.Hammer")
+    local farNormal = w:add(18.5, 1.5, 0, "Base.Nails")
+    for _, object in ipairs({wanted, normal, farWanted, farNormal}) do
+        object.item.getFullType = function() return object.name end
+    end
+    w:apply("Radius", 1)
+    w:advance(70)
+    equal(wanted:isHighlighted(0), true, "wanted radius remains fifteen with normal radius five")
+    equal(normal:isHighlighted(0), false)
+    w:apply("Radius", 4)
+    w:advance(100)
+    equal(farNormal:isHighlighted(0), true)
+    equal(farWanted:isHighlighted(0), false, "wanted items outside fifteen do not fall back to normal")
+    enabled = false
+    w:advance(100)
+    equal(farWanted:isHighlighted(0), true, "disabling wanted highlighting restores the normal radius")
+    enabled = true
+    w:advance(1)
+    equal(farWanted:isHighlighted(0), false)
+    w:pickup(wanted)
+    w:advance(1)
+    equal(wanted:isHighlighted(0), false, "the shared scanner releases stale wanted world items")
+end)
+
+test("wanted and normal items share the same dense-pile budget", function()
+    local w = setup()
+    PZSurvivorWishlist = {
+        Client = {isWanted = function(_, fullType) return fullType == "Base.Hammer" end},
+        Settings = {groundEnabled = function() return true end,
+            color = function() return {r = 0.25, g = 0.85, b = 0.75, a = 1} end},
+    }
+    local pile = {}
+    for i = 1, 1000 do
+        local object = w:add(0.5, 0.5, 0, i % 2 == 0 and "Base.Hammer" or "Base.Nails")
+        object.item.getFullType = function() return object.name end
+        pile[i] = object
+    end
+    w:advance(100)
+    for i, object in ipairs(pile) do
+        equal(object:getHighlightColor(0):getG(), i % 2 == 0 and 0.85 or 0.55)
+    end
+    assert(w.maxItemReads <= 128, "wanted items must not start a second discovery pass")
+    assert(w.maxInspections <= 256, "wanted items must not start a second maintenance pass")
 end)
 
 print("Passed " .. count .. " behavioural tests (Lua 5.1; game rendering remains untested).")

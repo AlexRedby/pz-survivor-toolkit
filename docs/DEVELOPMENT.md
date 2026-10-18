@@ -13,7 +13,6 @@ python3 -m venv .venv
 .venv/bin/python -m pip install lupa
 .venv/bin/python tools/run_tests.py --test test_tv_controls
 python3 tools/package_mod.py --check
-python3 tools/package_mod.py --mod PZSurvivorWishlist --check
 python3 -m unittest discover -s tests -p 'test_prepare_install.py'
 python3 -m unittest discover -s JavaPatches/tests
 python3 tools/prepare_install.py --check
@@ -29,7 +28,7 @@ Vehicle ground-placement regressions run by default. Add `--native-uninstall /pa
 
 Action queue checks require `--native-action-root /path/to/media/lua`. Wishlist crafting checks can additionally inspect native menu callbacks and installed adapters with `--wishlist-game-root /path/to/game/Java-directory --wishlist-workshop-root /path/to/steamapps/workshop/content/108600`.
 
-For a developer-only archive of one Lua mod, run `python3 tools/package_mod.py` or add `--mod PZSurvivorWishlist`. Output goes to `dist/<mod>.zip` and is excluded from Git. Use `tools/prepare_install.py` for the complete installable set; it creates no archive.
+For a developer-only archive of the Toolkit Lua mod, run `python3 tools/package_mod.py --check`. Wishlist Lua sources are part of the Toolkit tree and are included automatically. Use `tools/prepare_install.py` to prepare both local folders, including the Java mod; it creates no archive.
 
 To run the same checks against your installed game's native Mod Options implementation:
 

@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.65
+
+- **Changed:** Wishlist is included in Toolkit, with one ground-item scanner and sidebar entry. Existing lists and settings retain their identifiers and format. Remove the old Wishlist mod folder and Mod ID when updating; keep its saved data.
+
 ### 0.1.58
 
 - **Fixed:** Preserve the verified SP transfer chain when Quartermaster Manifest and SaucedCarts are both enabled.

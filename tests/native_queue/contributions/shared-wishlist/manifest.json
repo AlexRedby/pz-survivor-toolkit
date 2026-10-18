@@ -16,8 +16,8 @@
   "native_kinds": ["mp"],
   "clients": {"client1": "EN", "client2": "RU"},
   "dependencies": {
-    "all_modes": ["PZSurvivorWishlist", "WishlistTest (this helper)"],
-    "full_integrations": ["PZSurvivorToolkit", "CleanUI", "Better Containers implementation exposing BetterContainers/Proximity", "Neat_Crafting", "Neat_Building_UIOnly", "Project_Cook"],
+    "all_modes": ["PZSurvivorToolkit", "WishlistTest (this helper)"],
+    "full_integrations": ["CleanUI", "Better Containers implementation exposing BetterContainers/Proximity", "Neat_Crafting", "Neat_Building_UIOnly", "Project_Cook"],
     "offline_check": ["Python 3", "Lua 5.1 or LuaJIT"],
     "future_native_launch": ["installed licensed game and JDK", "awake display", "shared safe ToolkitSmokeLauncher.java", "isolated server and two client caches", "matching product/mod snapshots on all roles"]
   },
@@ -38,5 +38,5 @@
   "historical_evidence_root": ".codex/investigations/wishlist-20261012/evidence",
   "output_contract": "[WISHLIST_TEST] PASS|FAIL and exactly one COMPLETE checks=N failures=0 per client; server emits SERVER_READY",
   "integration": "Common shared-wishlist suite dispatches preserved cases through tools/queue_checks/adapters/craft_wishlist.py; exact stage names and native authority markers are verified. Catalog readiness is not native pass evidence.",
-  "limits": ["No native run performed for this intake", "No native SP evidence", "Historical summaries are evidence about older product snapshots only", "Programmatic native UI calls, not physical keyboard/mouse automation", "Race accepts either concurrent winner; does not assert which client wins", "Fixed delays and exact B42.21 APIs require future native revalidation", "No game, Workshop/JAR, profile/save, log or generated media is included"]
+  "limits": ["The legacy standalone case now runs Toolkit with its integrated Wishlist and no optional UI mods; historical evidence predates that merge", "No native run performed for this intake", "No native SP evidence", "Historical summaries are evidence about older product snapshots only", "Programmatic native UI calls, not physical keyboard/mouse automation", "Race accepts either concurrent winner; does not assert which client wins", "Fixed delays and exact B42.21 APIs require future native revalidation", "No game, Workshop/JAR, profile/save, log or generated media is included"]
 }

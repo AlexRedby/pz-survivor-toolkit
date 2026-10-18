@@ -16,7 +16,7 @@ local function client(user,toolkit,clock)
  env.getActivatedMods=function()return{contains=function()return toolkit end}end
  env.getTimestampMs=function()return clock.now end
  env.getFileReader=function()
-  local lines={user,'full','host','17343','runtime-only','PZSurvivorWishlist'};local i=0
+  local lines={user,'full','host','17343','runtime-only','PZSurvivorToolkit'};local i=0
   return{readLine=function()i=i+1;return lines[i]end,close=function()end}
  end
  env.PZSurvivorWishlist={Client={},UI={windows={}}}
@@ -56,16 +56,9 @@ do
  assert(separate(rectangle(50,100,20,20),rectangle(0,100,40,40)),'side-by-side controls are disjoint')
  assert(separate(rectangle(10,150,20,20),rectangle(0,100,40,40)),'vertical gap is disjoint')
  assert(not separate(rectangle(10,110,20,20),rectangle(0,100,40,40)),'overlapping absolute rectangles must fail')
- local b=rectangle(50,100,20,20)
  local window={visible=false,getIsVisible=function(self)return self.visible end,close=function(self)self.visible=false end}
- env.PZSurvivorWishlist.UI.windows[0]=window
  local opened=0
- b.onclick=function()opened=opened+1;window.visible=true end
- local equipped={pzswButton=b,getChildren=function()return{rectangle(0,100,40,40)}end}
- env.getPlayerData=function()return{equipped=equipped}end
- env.getText=function(key)return key end
- spec(env,'sidebar opens wishlist without overlapping existing buttons')[2]()
- assert(opened==1 and not window.visible,'standalone direct sidebar opens and closes Wishlist')
+ local equipped
  env=client('client1',true,{now=0});env.getText=function(key)return key end
  env.PZSurvivorWishlist.UI.windows[0]=window
  local hub=rectangle(75,100,20,20);local highlight=rectangle(50,100,20,20)
@@ -76,10 +69,10 @@ do
  equipped={toolkitToolsButton=hub,toolkitHighlightButton=highlight,getChildren=function()return{rectangle(0,100,40,40)}end}
  env.getPlayerData=function()return{equipped=equipped}end
  local sidebar=spec(env,'sidebar opens wishlist without overlapping existing buttons')[2]
- sidebar();assert(opened==2 and not window.visible,'Toolkit sidebar must execute the real Wishlist hub entry')
+ sidebar();assert(opened==1 and not window.visible,'Toolkit sidebar must execute the real Wishlist hub entry')
  menu.options={option,option};assert(not pcall(sidebar),'duplicate hub entries must fail')
  menu.options={option};equipped.toolkitToolsButton=highlight;assert(not pcall(sidebar),'overlapping sibling controls must fail')
- print('PASS wishlist fixture sidebar: direct/hub actions, absolute rectangles and duplicate guards')
+ print('PASS wishlist fixture sidebar: hub actions, absolute rectangles and duplicate guards')
 end
 
 do
@@ -90,7 +83,7 @@ do
  env.ISInventoryPane={renderdetails=function(self)
   self.renderCalls=self.renderCalls+1;self.items=self.nativeRows
  end}
- load(project..'/PZSurvivorWishlist/42/media/lua/client/PZSurvivorWishlist/Inventory.lua',env)
+ load(project..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/Inventory.lua',env)
  local inventory=env.PZSurvivorWishlist.Inventory;inventory.install()
  local render=env.ISInventoryPane.renderdetails
  local function item(fullType)return{isItem=true,getFullType=function()return fullType end}end

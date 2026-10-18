@@ -9,7 +9,7 @@ COUNTS = {"crafting-plans": {"crafting": 20, "ui": 28, "alternatives": 23},
           "shared-wishlist": {"full": 33, "standalone": 26, "visual": 11, "reload": 5}}
 HELPERS = {"crafting-plans": "CraftPlanTest", "shared-wishlist": "WishlistTest"}
 PROJECT = Path(__file__).resolve().parents[3]
-FULL_MODS = ["NeatUI_Framework", "CleanUI", "PZSurvivorToolkit", "EURY_CONTAINERS", "Neat_Crafting", "Project_Cook", "Neat_Building_UIOnly", "PZSurvivorWishlist"]
+FULL_MODS = ["NeatUI_Framework", "CleanUI", "PZSurvivorToolkit", "EURY_CONTAINERS", "Neat_Crafting", "Project_Cook", "Neat_Building_UIOnly"]
 
 
 def definitions():
@@ -20,13 +20,10 @@ def definitions():
                   "preserved_stages": count} for case, count in counts.items()]
         if suite == "shared-wishlist":
             for case in cases:
-                case["default_mods"] = FULL_MODS if case["id"] == "full" else ["PZSurvivorWishlist"]
-                if case["id"] != "full":
-                    case["modes"] = ["toolkit"]
-                    case["control_reason"] = "Wishlist-only scenario has no Toolkit queue option to disable"
-        defaults = ["PZSurvivorWishlist"]
+                case["default_mods"] = FULL_MODS if case["id"] == "full" else ["PZSurvivorToolkit"]
+        defaults = ["PZSurvivorToolkit"]
         if suite == "crafting-plans":
-            defaults = ["NeatUI_Framework", "PZSurvivorToolkit", "Neat_Crafting", "PZSurvivorWishlist"]
+            defaults = ["NeatUI_Framework", "PZSurvivorToolkit", "Neat_Crafting"]
         result[suite] = {"status": "ready", "native_validation": "not-run", "adapter": "craft_wishlist", "clients": 2,
                          "default_mods": defaults, "cases": cases,
                          "limits": ["MP callback-driven assertions; physical input and visual screenshot review remain separate."]}
@@ -48,8 +45,8 @@ def validate(selection):
         raise ValueError("Preserved fixtures require an adjacent UDP port")
     case = selection["cases"][0]
     mods = selection["mods"]
-    if "PZSurvivorWishlist" not in mods:
-        raise ValueError("Preserved fixtures require PZSurvivorWishlist")
+    if "PZSurvivorToolkit" not in mods:
+        raise ValueError("Preserved fixtures require PZSurvivorToolkit")
     if suite == "crafting-plans":
         if selection["mode"] != "toolkit":
             raise ValueError("Craft plan operations require the toolkit queue API")
@@ -57,10 +54,8 @@ def validate(selection):
             if required not in mods:
                 raise ValueError("Craft plan dependency missing: " + required)
     elif case in ("standalone", "visual", "reload"):
-        if selection["mode"] != "toolkit":
-            raise ValueError("Wishlist-only scenario has no Toolkit queue option to disable")
-        if mods != ["PZSurvivorWishlist"]:
-            raise ValueError("Wishlist standalone/visual/reload requires only PZSurvivorWishlist")
+        if mods != ["PZSurvivorToolkit"]:
+            raise ValueError("Wishlist standalone/visual/reload requires only PZSurvivorToolkit")
         if case == "reload":
             _seed(selection)
     else:
@@ -139,7 +134,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     runtime["fixture"] = {"mods": [HELPERS[selection["suite"]]], "server_ready": server_ready(selection),
                           "sandbox": server_settings(selection), "client_launch_stagger_seconds": 8,
                           "session_cases": ordered_cases(selection),
-                          "queue_control": "intrinsic toolkit operation API" if selection["suite"] == "crafting-plans" else "queue toggle if Toolkit is selected; standalone product otherwise"}
+                          "queue_control": "intrinsic toolkit operation API" if selection["suite"] == "crafting-plans" else "Toolkit queue toggle; Wishlist is included"}
 
 
 def server_settings(selection):

@@ -24,9 +24,10 @@ class LuaRunner(unittest.TestCase):
             path = self.root / "tests" / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(name)
-        for mod in ("PZSurvivorToolkit", "PZSurvivorWishlist"):
-            (self.root / mod).mkdir()
-            (self.root / mod / "module.lua").write_text("return {}")
+        (self.root / "PZSurvivorToolkit").mkdir()
+        (self.root / "PZSurvivorToolkit" / "module.lua").write_text("return {}")
+        (self.root / "PZSurvivorWishlist").mkdir()
+        (self.root / "PZSurvivorWishlist" / "module.lua").write_text("return {}")
         for language in ("EN", "RU"):
             path = self.root / "PZSurvivorToolkit/42/media/lua/shared/Translate" / language
             path.mkdir(parents=True)
@@ -68,7 +69,7 @@ class LuaRunner(unittest.TestCase):
         conditional = {"test_quartermaster_craft_ui.lua", "native_tags/check_transfer_source.lua",
                        "native_tags/check_placement.lua"}
         self.assertEqual(set(names) - {"assert(loadstring(...))"}, self.names - conditional)
-        self.assertEqual(names.count("assert(loadstring(...))"), 2)
+        self.assertEqual(names.count("assert(loadstring(...))"), 1)
         self.assertEqual(names.count("native_tags/check_reconnect.lua"), 4)
 
     def test_selection_retains_tv_sources_without_reading_other_test_inputs(self):

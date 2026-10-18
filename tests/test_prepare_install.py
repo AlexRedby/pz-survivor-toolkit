@@ -18,7 +18,7 @@ class PrepareInstall(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        for name in prepare_install.MOD_IDS[:2]:
+        for name in prepare_install.MOD_IDS[:1]:
             shutil.copytree(ROOT / name, self.root / name)
         self.patch = self.root / "JavaPatches/build/PZToolkitJavaPatches"
         (self.patch / "common").mkdir(parents=True)
@@ -69,7 +69,7 @@ class PrepareInstall(unittest.TestCase):
         self.assertEqual({folder.name for folder in (result / "mods").iterdir()},
                          set(prepare_install.MOD_IDS))
         for name in prepare_install.MOD_IDS:
-            source = self.patch if name == prepare_install.MOD_IDS[2] else self.root / name
+            source = self.patch if name == prepare_install.MOD_IDS[1] else self.root / name
             self.assertEqual((result / "mods" / name / "42/mod.info").read_bytes(),
                              (source / "42/mod.info").read_bytes())
         self.assertEqual((result / "mods/PZToolkitJavaPatches/42/media/java/PZToolkitJavaPatches.jar").read_bytes(),
@@ -121,7 +121,7 @@ class PrepareInstall(unittest.TestCase):
 
     def test_ini_requires_every_local_mod_without_local_workshop_entries(self):
         for invalid in (
-            "Mods=PZSurvivorToolkit;PZSurvivorWishlist\nWorkshopItems=123\n",
+            "Mods=PZSurvivorToolkit\nWorkshopItems=123\n",
             "Mods=" + ";".join(prepare_install.MOD_IDS) + "\nWorkshopItems=PZToolkitJavaPatches\n",
         ):
             with self.subTest(ini=invalid):
@@ -143,6 +143,7 @@ class PrepareInstall(unittest.TestCase):
         sibling.write_bytes(b"unrelated output")
         prepare_install.prepare(self.root)
         stale = self.output / "mods/PZSurvivorWishlist/obsolete.lua"
+        stale.parent.mkdir(parents=True)
         stale.write_text("removed from sources")
         prepare_install.prepare(self.root)
         self.assertFalse(stale.exists())

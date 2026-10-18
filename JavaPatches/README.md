@@ -4,7 +4,7 @@
 
 ## Prepare and install
 
-Use the [combined installation guide](../MOD_INSTALL.md#prepare-once) to build and distribute the three repository mods. The selected INI already includes this patch. [Java-only builds and tests](../docs/DEVELOPMENT.md#java-development) are documented separately.
+Use the [combined installation guide](../MOD_INSTALL.md#prepare-once) to build and distribute the two repository mods. The selected INI already includes this patch. [Java-only builds and tests](../docs/DEVELOPMENT.md#java-development) are documented separately.
 
 ## Server loader
 
@@ -38,7 +38,7 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 
 ### Dedicated server
 
-1. Put the platform's ZombieBuddy loader files in the server installation following the [official guide](https://github.com/zed-0xff/ZombieBuddy/blob/master/doc/Installation.md). Keep all three local mods and the selected INI in the server account's Zomboid directory.
+1. Put the platform's ZombieBuddy loader files in the server installation following the [official guide](https://github.com/zed-0xff/ZombieBuddy/blob/master/doc/Installation.md). Keep both local mods and the selected INI in the server account's Zomboid directory.
 2. Add one loader argument to the server's JVM options, before `zombie.network.GameServer`: `-javaagent:"/full/path/ZombieBuddy.jar"` on macOS/Linux, or `-agentpath:"D:\path\zbNative.dll"` on Windows. Keep the existing server arguments. If your launcher uses a JSON `vmArgs` array, add it there using valid JSON escaping. Do not add a second loader if it is already configured.
 3. Run the first start interactively under the **account that will run the server**. ZombieBuddy's dedicated-server default uses console prompts: answer `y` to allow the **PZToolkitJavaPatches** JAR, then `y` to save. Review the selected **AnimalTrailerSyncMPFix** and other Java mod prompts too. Start it as a service only after approvals are saved; repeat interactively when a changed JAR needs approval.
 4. Check the server log before using it for play.

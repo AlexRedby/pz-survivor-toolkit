@@ -371,7 +371,7 @@ local function potMenu(withCook,withInput,ingredient)
  if withInput then search:addOption('Uses',pot,NC_InventorySearch.searchAsInput,0) end
  search:addOption('Makes',pot,NC_InventorySearch.searchAsOutput,0)
  o.wishlist=m:addOption('Wishlist',nil,function() end)
- sources[o.wishlist.onSelect]='/mods/PZSurvivorWishlist/Inventory.lua'
+ sources[o.wishlist.onSelect]='/mods/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/Inventory.lua'
  o.distribute=m:addOption('Distribute Loot',nil,function() end);sources[o.distribute.onSelect]='/mods/LootSorter_ContextMenu.lua'
  o.drop=m:addOption('Drop',nil,ISInventoryPaneContextMenu.onDropItems)
  o.original={unpack(m.options)};o.originalMisc={unpack(o.misc.options)}

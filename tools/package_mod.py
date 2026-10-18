@@ -10,7 +10,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 MOD_ROOT = ROOT / "PZSurvivorToolkit"
-MOD_NAMES = {"PZSurvivorToolkit": "PZ Survivor Toolkit", "PZSurvivorWishlist": "Survivor Wishlist"}
+MOD_NAMES = {"PZSurvivorToolkit": "PZ Survivor Toolkit"}
 
 
 def validate(mod_root: Path = MOD_ROOT) -> list[str]:
@@ -38,8 +38,6 @@ def validate(mod_root: Path = MOD_ROOT) -> list[str]:
             errors.append(f"mod.info must declare id={mod_root.name}")
         for key in ("icon", "poster"):
             name = metadata.get(key, "")
-            if not name and mod_root.name == "PZSurvivorWishlist":
-                continue
             candidates = [mod_root / folder / name for folder in ("42", "common")]
             if not name or not any(path.is_file() and path.resolve().is_relative_to(mod_root.resolve())
                                    for path in candidates):

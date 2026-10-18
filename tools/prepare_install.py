@@ -16,7 +16,7 @@ except ImportError:
     from package_mod import ROOT, validate
 
 
-MOD_IDS = ("PZSurvivorToolkit", "PZSurvivorWishlist", "PZToolkitJavaPatches")
+MOD_IDS = ("PZSurvivorToolkit", "PZToolkitJavaPatches")
 INI_NAME = "SurvivorQoL-selected.ini"
 
 
@@ -34,7 +34,7 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
     if dist.is_symlink() or output.is_symlink() or (output.exists() and not output.is_dir()):
         raise ValueError(f"Prepared output must be a regular directory: {output}")
 
-    for name in MOD_IDS[:2]:
+    for name in MOD_IDS[:1]:
         errors = validate(root / name)
         if errors:
             raise ValueError("; ".join(errors))
@@ -55,9 +55,9 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
         command.append("--check")
     subprocess.run(command, cwd=root, check=True)
 
-    patch = root / "JavaPatches/build" / MOD_IDS[2]
+    patch = root / "JavaPatches/build" / MOD_IDS[1]
     info = metadata(patch / "42/mod.info")
-    if info.get("id") != MOD_IDS[2] or not (patch / "common").is_dir():
+    if info.get("id") != MOD_IDS[1] or not (patch / "common").is_dir():
         raise ValueError("Generated Java patch mod has an invalid ID or missing common directory")
     jar_name = info.get("javaJarFile", "")
     jar = patch / "42" / jar_name
@@ -71,7 +71,7 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
     try:
         staging = temporary / "prepared"
         for name in MOD_IDS:
-            source = patch if name == MOD_IDS[2] else root / name
+            source = patch if name == MOD_IDS[1] else root / name
             shutil.copytree(source, staging / "mods" / name)
         (staging / "Server").mkdir()
         shutil.copy2(root / INI_NAME, staging / "Server" / INI_NAME)

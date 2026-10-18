@@ -81,9 +81,6 @@ local function eligible(object, context)
     local square = object:getSquare()
     local item = object:getItem()
     if not square or not item or item:getWorldItem() ~= object then return false end
-    local wishlist = PZSurvivorWishlist
-    if wishlist and wishlist.Client and wishlist.Settings and wishlist.Settings.groundEnabled()
-        and wishlist.Client.isWanted(context.playerNum, item:getFullType()) then return false end
     if square:getZ() ~= context.z then return false end
     if context.cell:getGridSquare(square:getX(), square:getY(), square:getZ()) ~= square then
         return false
@@ -94,19 +91,28 @@ local function eligible(object, context)
     if not item:getScriptItem():isWorldRender() then return false end
     local dx = object:getWorldPosX() - context.x
     local dy = object:getWorldPosY() - context.y
-    return dx * dx + dy * dy <= context.radius * context.radius
+    local radius, colour = context.normalRadius, context.normalColour
+    if context.wishlist and context.wishlist.isWanted(context.playerNum, item:getFullType()) then
+        radius, colour = 15, context.wantedColour
+    elseif not context.normalEnabled then
+        return false
+    end
+    if dx * dx + dy * dy <= radius * radius then return colour end
+    return false
 end
 
 local function refresh(record, context)
     local ok, valid = pcall(function()
         local object = record.object
-        if not eligible(object, context) then return false end
-        if object:isOutlineHighlight(record.playerNum) or object:isHighlighted(record.playerNum) then
-            if record.owned and not sameHighlight(record) then record.owned = false end
-        else
-            local colour = context.colour
+        local colour = eligible(object, context)
+        if not colour then return false end
+        local ours = record.owned and sameHighlight(record)
+        if (object:isOutlineHighlight(record.playerNum) or object:isHighlighted(record.playerNum)) and not ours then
+            record.owned = false
+        elseif not ours or record.requestedColour.r ~= colour.r or record.requestedColour.g ~= colour.g
+            or record.requestedColour.b ~= colour.b or record.requestedColour.a ~= colour.a then
             -- The world-item override sets the vanilla colour and outline, so colour comes last.
-            object:setHighlighted(record.playerNum, true, false)
+            if not ours then object:setHighlighted(record.playerNum, true, false) end
             object:setHighlightColor(record.playerNum, colour.r, colour.g, colour.b, colour.a)
             object:setOutlineHlAttached(record.playerNum, false)
             object:setOutlineHighlightCol(record.playerNum, colour.r, colour.g, colour.b, colour.a)
@@ -114,6 +120,7 @@ local function refresh(record, context)
             local actual = object:getHighlightColor(record.playerNum)
             record.modelColour = { r = actual:getR(), g = actual:getG(), b = actual:getB(), a = actual:getA() }
             record.attached = object:isOutlineHlAttached(record.playerNum)
+            record.requestedColour = { r = colour.r, g = colour.g, b = colour.b, a = colour.a }
             record.owned = true
         end
         return true
@@ -229,15 +236,25 @@ local function tick()
     if clearing then return end
     local player = getPlayer()
     local cell = getCell()
-    if not Toolkit.Settings.isEnabled() or not player or player:isDead() or not cell then
+    local normalEnabled = Toolkit.Settings.isEnabled()
+    local wishlist = PZSurvivorWishlist
+    local wantedEnabled = wishlist and wishlist.Client and wishlist.Settings and wishlist.Settings.groundEnabled()
+    if (not normalEnabled and not wantedEnabled) or not player or player:isDead() or not cell then
         if #tracked > 0 or scan or previous then Highlighter.clear() end
         return
     end
     local context = {
         playerNum = player:getPlayerNum(),
         x = player:getX(), y = player:getY(), z = math.floor(player:getZ()),
-        radius = Toolkit.Settings.getRadius(), colour = Toolkit.Settings.getColor(), cell = cell,
+        normalEnabled = normalEnabled, normalRadius = Toolkit.Settings.getRadius(),
+        normalColour = Toolkit.Settings.getColor(), cell = cell,
+        wishlist = wantedEnabled and wishlist.Client,
+        wantedColour = wantedEnabled and wishlist.Settings.color(),
     }
+    context.radius = math.max(normalEnabled and context.normalRadius or 0, wantedEnabled and 15 or 0)
+    if previous and context.radius ~= previous.radius then
+        scan, nextScanAt = nil, 0
+    end
     if previous then
         local dx, dy = context.x - previous.x, context.y - previous.y
         if context.playerNum ~= previous.playerNum or context.z ~= previous.z

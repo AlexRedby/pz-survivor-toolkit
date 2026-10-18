@@ -12,7 +12,7 @@ import zipfile
 
 from .auxiliary import _load, _path, _write
 
-MODS = ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit', 'PZSurvivorWishlist',
+MODS = ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit',
         'SaucedCarts', 'saucedwheelbarrow']
 SP = 'wooden_cart_motion'
 MP = 'wooden_cart_multiplayer'

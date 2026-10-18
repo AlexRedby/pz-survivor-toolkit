@@ -8,21 +8,20 @@ Quality-of-life mods for **Project Zomboid Build 42**: inventory tools, bulk act
 
 | Component | Version | Purpose |
 |---|---|---|
-| PZ Survivor Toolkit | 0.1.64 | Inventory tools, queues, crafting plans and compatibility. |
-| Survivor Wishlist | 0.1.0 | Personal/shared lists with inventory and crafting integration. |
+| PZ Survivor Toolkit | 0.1.65 | Inventory tools, queues, crafting plans, shared Wishlist and compatibility. |
 | Toolkit Java Patches | 0.1.17 | Experimental B42.21 engine fixes; requires ZombieBuddy 2.3.4+. |
 
-The [selected set](SurvivorQoL-selected.ini) requires all three components on the server and every client: **49 Mod IDs / 45 Workshop items**, targeting **B42.21**. Other game builds are outside the Java patches' supported scope.
+The [selected set](SurvivorQoL-selected.ini) requires both local mod folders on the server and every client: **48 Mod IDs / 45 Workshop items**, targeting **B42.21**. Wishlist is included in Toolkit; existing lists and settings are preserved. Other game builds are outside the Java patches' supported scope.
 
 ## Installation
 
-The server owner needs Python 3.10+, JDK 25+ and the ZombieBuddy loader:
+The server owner needs Python 3.10+, JDK 25+ and the ZombieBuddy loader to prepare Toolkit and Java Patches:
 
 ```sh
 python3 tools/prepare_install.py
 ```
 
-On Windows, use `py -3` instead of `python3`. Distribute the resulting `dist/SurvivorQoL` folder to all players; recipients need neither Python nor a JDK. The three repository mods have no Workshop downloads and must be copied to every installation.
+On Windows, use `py -3` instead of `python3`. Distribute the resulting `dist/SurvivorQoL` folder to all players; recipients need neither Python nor a JDK. The two repository mod folders have no Workshop downloads and must be copied to every installation.
 
 Follow [the installation guide](MOD_INSTALL.md) for game/JDK paths, server profiles, client setup, Java approvals, Host launchers, updates and backups. Preparation does not modify live profiles.
 
@@ -33,7 +32,7 @@ Follow [the installation guide](MOD_INSTALL.md) for game/JDK paths, server profi
 | **F8** / sidebar flashlight | Toggle visible ground-item highlights. |
 | Sidebar tools icon | Open Wishlist, context-menu rules or Toolkit settings. |
 | **K** | Open Survivor Wishlist. |
-| **Options > Mods** | Configure each component; settings are per player. |
+| **Options > Mods** | Configure Toolkit features, including the Survivor Wishlist settings section; settings are per player. |
 | **Actions** window | Inspect, reorder or cancel supported queued operations. |
 | **Plan crafting** | Review prerequisites in native crafting or Neat Crafting. |
 
