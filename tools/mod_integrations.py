@@ -41,6 +41,13 @@ INTEGRATIONS = {
         'tests': {'test_tv_controls.lua': ['RadioWindowModules/RWMMergedTV.lua', 'ISRadioWindow.lua'],
                   'test_tv_videos.lua': ['RadioWindowModules/RWMMergedTV.lua']},
     },
+    'MoodleFramework': {
+        'owners': ['client/PZSurvivorToolkit/MedicineMoodles.lua',
+                   'shared/PZSurvivorToolkit/MedicineEffects.lua',
+                   'server/PZSurvivorToolkit/MedicineMoodles.lua'],
+        'option': 'medicine_framework_source', 'root': 'media/lua/client', 'argument': 'MF_ISMoodle.lua',
+        'tests': {'test_medicine_moodles.lua': ['MF_ISMoodle.lua']},
+    },
     'MPFastForward': {
         'owners': ['server/000ToolkitMPFFCompatibility.lua'],
         'option': 'mpff_source', 'root': 'media/lua',
@@ -61,7 +68,8 @@ INTEGRATIONS = {
         'option': 'quartermaster_source', 'root': 'media/lua',
         'tests': {'test_quartermaster_tags.lua': ['client/LootSorter_Picker.lua'],
                   'test_quartermaster_tag_rules.lua': ['shared/LootSorter_Presets.lua', 'shared/LootSorter_Util.lua',
-                                                      'shared/LootSorter_Plan.lua', 'client/LootSorter_Core.lua'],
+                                                      'shared/LootSorter_Plan.lua', 'client/LootSorter_PresetSync.lua',
+                                                      'client/LootSorter_Core.lua'],
                   'test_quartermaster_sync.lua': ['shared/LootSorter_Util.lua', 'shared/LootSorter_Presets.lua',
                                                    'client/LootSorter_PresetSync.lua', 'client/LootSorter_Core.lua'],
                   'test_quartermaster_preset_codec.lua': ['shared/LootSorter_Presets.lua'],
