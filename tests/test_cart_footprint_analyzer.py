@@ -26,7 +26,7 @@ def lerp(t, knots):
     return knots[-1][1]
 
 
-def fixture(profile, slide_stop=5800):
+def fixture(profile, slide_stop=5800, fast_slide=False):
     directory = profile;directory.mkdir(exist_ok=True)
     vertices = np.zeros((8116, 8), dtype='<f4')
     for i in range(1114, 8116):
@@ -48,12 +48,14 @@ def fixture(profile, slide_stop=5800):
             extra=' run=false sprint=false bare=true tracks=Bob_Walk=1@1;' if slide else ''
             lines.append(f'[CART_COLLISION_CONTROL_SAMPLE] spec={control} wall={start+t} elapsed={t} x={x} y={y} heading=3.14159 drive={drive}{extra}')
         lines.append(f'[CART_COLLISION_CONTROL] COMPLETE spec={control} wall={start+duration} x={x} y={y}')
-    for i, name in enumerate(sorted(analyzer.EXPECTED)):
+    expected = analyzer.FAST_SLIDE_EXPECTED if fast_slide else analyzer.EXPECTED
+    for i, name in enumerate(sorted(expected)):
         scene, start = name.split('-', 2)[2], 100000+i*15000
+        if fast_slide: _, scene = scene.split('-', 1)
         initial = (1.3, 10.82) if scene=='corner-pivot' else (1.8, 10.5) if scene in ('passage', 'door-open') else (.65, 10.5) if scene=='overlap' else (1.4, 10.5) if scene=='gait-contact' else (3.5, 10.5)
         lines.extend([f'[CART_COLLISION_LAYOUT] case={name} wallX=0 southY=12 gapY=10 startX={initial[0]} startY={initial[1]} baselineX=.3 baselineY=11.7',
                       f'[WOOD_BANK] CASE {name} attempt=0 wall={start}'])
-        events = [(at, g, (1 if scene=='corner-pivot' else 3 if scene=='wall-slide' else 4 if scene=='wall-slide-right' else 7) if d is None else d) for at, g, d in analyzer.steps(name)]
+        events = [(at, g, (1 if scene=='corner-pivot' else 3 if scene=='wall-slide' else 4 if scene=='wall-slide-right' else 7) if d is None else d) for at, g, d in analyzer.steps(name, fast_slide)]
         previous, phase = initial, 0.
         for t in range(0, 12000, 100):
             command = [e for e in events if e[0] < t]
@@ -81,11 +83,12 @@ def fixture(profile, slide_stop=5800):
             requested = direction if drive else 0
             stationary = scene=='corner-pivot' and 1000<t<4000
             run = gait==1 and moving and scene!='gait-contact'
-            clip = 'Bob_WalkBwdNoAim1Hand' if reverse else 'Bob_Run' if run else 'Bob_Idle' if not moving else 'Bob_Walk'
+            sprint = gait==2 and moving and fast_slide
+            clip = 'Bob_WalkBwdNoAim1Hand' if reverse else 'Bob_Run' if run else 'Bob_Sprint' if sprint else 'Bob_Idle' if not moving else 'Bob_Walk'
             actual = .002 if moving else 0
             target=-math.pi/4 if stationary else heading
             state = f'heading:{heading},target:{target},stationary:{str(stationary).lower()},stationaryRoot:{str(stationary).lower()},actualDistance:{actual},axle:1,rootTracks:{clip}@1/{t/1000}/1;'
-            lines.append(f'[WOOD_BANK_SAMPLE] case={name} wall={start+t} elapsed={t} x={x} y={y} run={str(run).lower()} sprint=false skill=10 speed=.8 drive={drive} requestedGait={gait} '
+            lines.append(f'[WOOD_BANK_SAMPLE] case={name} wall={start+t} elapsed={t} x={x} y={y} run={str(run).lower()} sprint={str(sprint).lower()} skill=10 speed=.8 drive={drive} requestedGait={gait} '
                 f'stepX=0 stepY={direction if moving else 0} pace=1 wheelPhase={phase} bank=0 reversal=direction:{direction},requested:{requested},active:false,braking:false,neutral:0,actualDistance:{actual},brakeTarget:{heading}, '
                 f'ramp=speed:{.2 if moving else 0},velocity:0,sprintMomentum:0,load:{1 if "-full-" in name else 0},heading:{heading},target:0, stationary={state} tracks={clip}=1@1;')
             blocked = scene not in ('passage', 'door-open', 'corner-pivot', 'gait-contact') and 1200<=t<reverse_at
@@ -97,7 +100,7 @@ def fixture(profile, slide_stop=5800):
             for at, g, d in events:
                 if at==t: lines.append(f'[WOOD_RAMP_EVENT] case={name} elapsed={at} gait={g} drive={d}')
         lines.append(f'[WOOD_BANK] COMPLETE {name} wall={start}')
-    lines.append('[WOOD_BANK] ALL_COMPLETE cases=24')
+    lines.append(f'[WOOD_BANK] ALL_COMPLETE cases={len(expected)}')
     (directory/'body-clearance.jsonl').write_text('\n'.join(map(json.dumps, frames)))
     write_updates(directory, updates)
     return '\n'.join(lines), sha
@@ -413,6 +416,107 @@ class FootprintTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Refuse to overwrite', result.stderr)
         self.assertEqual(output.read_text(), 'immutable')
+
+
+class FastSlideTests(unittest.TestCase):
+    mutate_frames = FootprintTests.mutate_frames
+    mutate_updates = FootprintTests.mutate_updates
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+        self.log, sha=fixture(self.root, fast_slide=True)
+        self.hash_patch=patch.object(analyzer, 'MESH_SHA', sha);self.hash_patch.start();self.addCleanup(self.hash_patch.stop)
+
+    def report(self, log=None):
+        return analyzer.analyze(self.log if log is None else log, self.root, fast_slide=True)
+
+    def mutate_samples(self, name, start, stop, update):
+        return '\n'.join(update(line) if '[WOOD_BANK_SAMPLE]' in line and f'case={name} ' in line
+            and start<=int(re.search(r'elapsed=(\d+)',line)[1])<stop else line for line in self.log.splitlines())
+
+    def test_exact_fast_matrix_preserves_controls_and_measured_contact(self):
+        report=self.report()
+        self.assertTrue(report['motionPass'], report['motionFailures'])
+        self.assertTrue(report['footprintPass'], report['footprintFailures'])
+        self.assertEqual((report['caseCount'], report['controlCount']), (16, 5))
+        self.assertEqual({c['case'] for c in report['cases']}, analyzer.FAST_SLIDE_EXPECTED)
+        for case in report['cases']:
+            comparison=case['slideComparison']
+            self.assertEqual(comparison['requestedGait'], 'Sprint' if '-sprint-' in case['case'] else 'Run')
+            self.assertGreaterEqual(comparison['cart']['durationMs'], 500)
+            self.assertGreaterEqual(comparison['cart']['tangent'], .15)
+
+    def test_requested_gait_alone_cannot_prove_approach_or_contact(self):
+        for gait in ('run', 'sprint'):
+            name=f'male-empty-{gait}-wall-slide'
+            clip='Bob_Run' if gait=='run' else 'Bob_Sprint'
+            for start, stop, reason in ((1100, 6000, 'native requested fast gait does not progress'),
+                                        (4500, 5800, 'native requested fast gait does not progress at wall contact')):
+                for update in (lambda line: line.replace(clip+'@', 'Bob_Walk@'),
+                               lambda line: line.replace(gait+'=true', gait+'=false'),
+                               lambda line: line.replace(clip+'@1/', clip+'@0/'),
+                               lambda line: re.sub(clip+r'@1/[^/]+/', clip+'@1/0/', line)):
+                    with self.subTest(gait=gait, start=start, update=update):
+                        report=self.report(self.mutate_samples(name, start, stop, update))
+                        self.assertIn((name, reason), report['motionFailures'])
+
+    def test_fast_gait_only_at_contact_cannot_hide_missing_approach(self):
+        name='male-empty-sprint-wall-slide'
+        log=self.mutate_samples(name, 1100, 3000, lambda line: line.replace('Bob_Sprint@', 'Bob_Walk@'))
+        self.assertIn((name, 'native requested fast gait does not progress'), self.report(log)['motionFailures'])
+
+    def test_two_fast_contact_samples_cannot_prove_sustained_fast_gait(self):
+        name='male-empty-run-wall-slide'
+        for update in (lambda line: line.replace('run=true', 'run=false'),
+                       lambda line: line.replace('Bob_Run@', 'Bob_Walk@')):
+            log=self.mutate_samples(name, 4700, 5800, update)
+            with self.subTest(update=update):
+                self.assertIn((name, 'native requested fast gait does not progress at wall contact'), self.report(log)['motionFailures'])
+
+    def test_wrong_fast_gait_cannot_satisfy_the_other_bank_case(self):
+        name='female-full-sprint-wall-slide-right'
+        log=self.mutate_samples(name, 1100, 6000,
+            lambda line: line.replace('sprint=true', 'sprint=false').replace('run=false', 'run=true').replace('Bob_Sprint', 'Bob_Run'))
+        self.assertIn((name, 'native requested fast gait does not progress at wall contact'), self.report(log)['motionFailures'])
+
+    def test_missing_case_and_truncated_samples_fail_closed(self):
+        name='male-empty-run-wall-slide'
+        missing='\n'.join(line for line in self.log.splitlines() if name not in line)
+        truncated='\n'.join(line for line in self.log.splitlines() if not (f'case={name} ' in line and 'elapsed=' in line
+            and int(re.search(r'elapsed=(\d+)',line)[1])>=11000))
+        for log in (missing, truncated, self.log.replace('ALL_COMPLETE cases=16', 'ALL_COMPLETE cases=24')):
+            with self.subTest(log=log[-80:]), self.assertRaises(AssertionError): self.report(log)
+        with self.assertRaises(AssertionError): analyzer.analyze(self.log, self.root)
+
+    def test_early_tangent_then_freeze_does_not_prove_sustained_slide(self):
+        log,_=fixture(self.root, slide_stop=4200, fast_slide=True)
+        report=self.report(log)
+        for name in analyzer.FAST_SLIDE_EXPECTED:
+            self.assertIn((name, 'wall slide has no accepted tangential movement at contact'), report['motionFailures'])
+
+    def test_moving_yaw_oscillation_at_steady_contact_fails(self):
+        name='female-full-sprint-wall-slide-right'
+        def oscillate(line):
+            t=int(re.search(r'elapsed=(\d+)', line)[1])
+            heading=-3*math.pi/4+math.radians(2)*(1 if t%200 else -1)
+            return re.sub(r'heading:[^,]+,', f'heading:{heading},', line)
+        log=self.mutate_samples(name, 4500, 5800, oscillate)
+        self.assertIn((name, 'wall slide heading oscillates at steady contact'), self.report(log)['motionFailures'])
+
+    def test_contact_rejection_and_mesh_penetration_remain_required(self):
+        name='female-full-sprint-wall-slide-right'
+        no_rejection='\n'.join(line.replace('blocked=true', 'blocked=false') if f'case={name} ' in line else line for line in self.log.splitlines())
+        self.assertIn((name, 'wall slide contact never reports normal rejection'), self.report(no_rejection)['motionFailures'])
+        self.mutate_frames(name, lambda row,t: row['cart'].__setitem__(14, -2.) if t==4000 else None)
+        self.assertIn((name, 'wooden mesh enters closed wall'), self.report()['footprintFailures'])
+
+    def test_native_update_jumps_and_frame_slot_mismatch_remain_failures(self):
+        name='male-empty-sprint-wall-slide'
+        self.mutate_updates(name, lambda row,t: row.__setitem__('playerX', float(row['playerX'])+3) if t==2000 else None)
+        self.assertIn((name, 'position jumps outside native update budget'), self.report()['motionFailures'])
+        self.mutate_frames(name, lambda row,t: row.__setitem__('slotX', 100) if t==2000 else None)
+        with self.assertRaisesRegex(AssertionError, 'Same-frame slot'): self.report()
 
 
 if __name__=='__main__': unittest.main()

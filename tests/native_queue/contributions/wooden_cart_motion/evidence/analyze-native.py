@@ -12,6 +12,7 @@ timing=parser.add_mutually_exclusive_group()
 timing.add_argument('--stop-timing',action='store_true',help='Cover all three stops in the 16-second timing bank')
 timing.add_argument('--vehicles',action='store_true',help='Include the extended full-load vehicle slide and release')
 timing.add_argument('--brace',action='store_true',help='Cover the complete 18-second blocked-stance bank')
+timing.add_argument('--fast-slide',action='store_true',help='Label Run/Sprint wall sliding, release and reverse phases')
 args=parser.parse_args()
 end_ms=17800 if args.brace else 15800 if args.stop_timing else 11800
 def measurement_end(name):
@@ -30,6 +31,11 @@ if not args.partial:
 assert len(cases)==16 or args.partial
 
 def stage(elapsed,name=''):
+ if args.fast_slide:
+  if elapsed<1000:return 'idle'
+  if elapsed<6000:return 'wall-slide'
+  if elapsed<7000:return 'release'
+  return 'reverse' if elapsed<9500 else 'release'
  if args.brace:
   if elapsed<1000:return 'idle'
   if name.endswith('wall-release'):

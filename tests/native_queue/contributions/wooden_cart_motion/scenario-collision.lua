@@ -8,6 +8,8 @@ end
 local videoRoot,ffmpeg=absolutePath('videoRoot'),absolutePath('ffmpeg')
 local footprint=config.footprint==true
 local brace=config.brace==true
+local fastSlide=config.fastSlide==true
+assert(not fastSlide or footprint and not brace and not config.impact,'Fast slide bank requires footprint without brace or impact')
 assert(not brace or footprint and not config.impact,'Brace bank requires footprint without impact')
 assert(getWorld():getWorld()=='CartTestArea' and not isClient() and not isServer(),'Disposable single-player CartTestArea save required')
 local p=assert(getPlayer(),'Live actor required')
@@ -63,6 +65,18 @@ if footprint then
  end
 end
 assert(#cases==(footprint and 24 or 16))
+if fastSlide then
+ cases={}
+ for _,female in ipairs({false,true}) do for _,full in ipairs({false,true}) do
+  for _,gait in ipairs({'run','sprint'}) do for _,right in ipairs({false,true}) do
+   local spec=right and 'wall-slide-right' or 'wall-slide'
+   cases[#cases+1]={female=female,full=full,spec=spec,startYaw=right and math.pi/2 or 0,
+    steps={{1000,gait=='run' and 1 or 2,right and 1 or 2},{6000,0,0},{7000,0,7},{9500,0,0}},
+    name=(female and 'female-' or 'male-')..(full and 'full-' or 'empty-')..gait..'-'..spec}
+  end end
+ end end
+ assert(#cases==16)
+end
 if config.impact then
  cases={}
  for _,female in ipairs({false,true}) do for _,full in ipairs({false,true}) do

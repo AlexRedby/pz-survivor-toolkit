@@ -20,12 +20,18 @@ RADIUS, HALF_AXLE = .001062454, .00024333253
 SPECIAL = ('door-closed', 'door-open', 'overlap', 'gait-contact')
 EXPECTED = {f'{sex}-{cargo}-{spec}' for sex in ('male', 'female') for cargo in ('empty', 'full') for spec in (*collision.SPECS, 'wall-slide-right')}
 EXPECTED.update('male-empty-' + spec for spec in SPECIAL)
+FAST_SLIDE_EXPECTED = {f'{sex}-{cargo}-{gait}-{spec}' for sex in ('male', 'female') for cargo in ('empty', 'full')
+                       for gait in ('run', 'sprint') for spec in ('wall-slide', 'wall-slide-right')}
 ANGLES = {1: -3*math.pi/4, 2: 3*math.pi/4, 3: -math.pi/4, 4: math.pi/4,
           5: math.pi, 6: math.pi/2, 7: 0., 8: -math.pi/2}
 
 
-def steps(name):
+def steps(name, fast_slide=False):
     spec = name.split('-', 2)[2]
+    if fast_slide:
+        gait, spec = spec.split('-', 1)
+        return [(1000, 1 if gait == 'run' else 2, 1 if spec.endswith('right') else 2),
+                (6000, 0, 0), (7000, 0, None), (9500, 0, 0)]
     if spec in ('passage', 'door-open'):
         return [(1000, 0, 5), (4200 if '-full-' in name else 3000, 0, 0),
                 (4600 if '-full-' in name else 3500, 0, None), (9500, 0, 0)]
@@ -39,11 +45,12 @@ def steps(name):
     return result
 
 
-def selected(log):
-    assert re.search(r'\[WOOD_BANK\] ALL_COMPLETE cases=24(?:\s|$)', log), 'Capture incomplete'
+def selected(log, fast_slide=False):
+    expected = FAST_SLIDE_EXPECTED if fast_slide else EXPECTED
+    assert re.search(r'\[WOOD_BANK\] ALL_COMPLETE cases='+str(len(expected))+r'(?:\s|$)', log), 'Capture incomplete'
     assert '[WOOD_BANK] FAIL' not in log, 'Scenario failed'
     complete = re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)', log)
-    assert len(complete) == 24 and {n for n, _ in complete} == EXPECTED, 'Missing, duplicate or unexpected footprint cases'
+    assert len(complete) == len(expected) and {n for n, _ in complete} == expected, 'Missing, duplicate or unexpected footprint cases'
     starts = {n: int(t) for n, t in complete}
     attempts = re.findall(r'\[WOOD_BANK\] CASE (\S+) attempt=\d+ wall=(\d+)', log)
     assert all(attempts.count((n, str(t))) == 1 for n, t in starts.items()), 'Missing or duplicate selected footprint attempt'
@@ -176,11 +183,11 @@ def native_updates(profile, starts, durations=None):
     return cases, failures
 
 
-def analyze(text, profile):
+def analyze(text, profile, fast_slide=False):
     assert '[WOOD_BANK] RUN_STARTED' in text, 'Missing footprint run boundary'
     log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[1]
     native, control_failures = collision.controls(log, wall_offset=3)
-    starts, cases = selected(log)
+    starts, cases = selected(log, fast_slide)
     assert max(c['end']['wall'] for c in native.values()) < min(starts.values()), 'Native controls must precede footprint scenes'
     vertices, sha = mesh(profile)
     updates, native_failures = native_updates(profile, starts)
@@ -204,6 +211,10 @@ def analyze(text, profile):
         row_times = [r['wall'] for r in rows]
         native_rows = updates[name]
         spec, measured = name.split('-', 2)[2], frames[name]
+        desired_gait = 'Run'
+        if fast_slide:
+            gait, spec = spec.split('-', 1)
+            desired_gait = 'Run' if gait == 'run' else 'Sprint'
         collision.coverage(rows, starts[name], 12000, 'footprint motion '+name, 80)
         collision.coverage(measured, starts[name], 12000, 'footprint mesh '+name, 80)
         assert [(r['wall'], r['elapsed']) for r in states] == [(r['wall'], r['elapsed']) for r in rows], 'Missing, duplicate or misaligned footprint diagnostics'
@@ -217,7 +228,7 @@ def analyze(text, profile):
                            (wx+.65, gy+.5) if spec == 'overlap' else
                            (wx+1.4, gy+.5) if spec == 'gait-contact' else (geometry['x'], geometry['y']))
         assert math.dist(origin, expected_origin) <= .025, 'Wrong footprint fixture start'
-        planned = steps(name)
+        planned = steps(name, fast_slide)
         assert len(events) == len(planned), 'Missing footprint input events'
         for actual, expected in zip(events, planned):
             at, gait, drive = actual
@@ -261,7 +272,16 @@ def analyze(text, profile):
             fail('fast gait during stationary or reverse motion')
         if spec in ('wall-block', 'wall-slide', 'wall-slide-right', 'door-closed'):
             approach = window(1100, events[1][0])
-            if not any(r['run'] and r['actualDistance'] > 1e-6 for r in approach) or not progressing(approach, {'Bob_Run'}):
+            if fast_slide:
+                frame_times = [f['wall'] for f in measured]
+                approach = [r for r in approach if all(f['minX'] > wx+.65
+                    for f in brackets(measured, frame_times, r['wall']))]
+                actual_fast = [r for r in approach if r['run'] == (desired_gait == 'Run')
+                               and r['sprint'] == (desired_gait == 'Sprint') and r['actualDistance'] > 1e-6]
+                fast_progress = progressing(actual_fast, {'Bob_'+desired_gait})
+            else:
+                fast_progress = any(r['run'] and r['actualDistance'] > 1e-6 for r in approach) and progressing(approach, {'Bob_Run'})
+            if not fast_progress:
                 fail('native requested fast gait does not progress')
         if spec in ('passage', 'door-open'):
             if min(r['x'] for r in window(1200, events[1][0])) >= wx-.2: fail('opening never crossed west')
@@ -293,13 +313,22 @@ def analyze(text, profile):
             contact = [r for r in window(4500, 5800) if any(f['minX'] <= wx+.65
                 for f in brackets(measured, frame_times, r['wall']))]
             metrics = collision.slide_metrics(contact, direction)
+            if fast_slide and collision.angle_drift(contact, 'heading') > math.radians(1.5):
+                fail('wall slide heading oscillates at steady contact')
             bare = native['wall-slide-right' if direction < 0 else 'wall-slide-left']['slide']
-            slide_comparison = dict(cart=metrics, bareWalk=bare, requestedGait='Run')
+            slide_comparison = dict(cart=metrics, bareWalk=bare, requestedGait=desired_gait)
             if metrics['durationMs'] < 500 or metrics['tangent'] < .15 or metrics['normal'] > .15 or any(b['wall']-a['wall'] > 500 for a,b in zip(contact,contact[1:])):
                 fail('wall slide has no accepted tangential movement at contact')
             if not any(s['blocked'] for s in states if contact and contact[0]['wall'] <= s['wall'] <= contact[-1]['wall']):
                 fail('wall slide contact never reports normal rejection')
-            if not progressing(contact, {'Bob_Run'}): fail('native requested fast gait does not progress at wall contact')
+            actual_contact = ([r for r in contact if r['run'] == (desired_gait == 'Run')
+                               and r['sprint'] == (desired_gait == 'Sprint') and r['actualDistance'] > 1e-6
+                               and any(c['name'] == 'Bob_'+desired_gait and c['weight'] > .1 and c['speed'] > 0 for c in r['clips'])]
+                              if fast_slide else contact)
+            if (not progressing(actual_contact, {'Bob_'+desired_gait}) or fast_slide and
+                (collision.slide_metrics(actual_contact, direction)['durationMs'] < 500
+                 or any(b['wall']-a['wall'] > 500 for a,b in zip(actual_contact,actual_contact[1:])))):
+                fail('native requested fast gait does not progress at wall contact')
         if spec == 'overlap':
             quiet(window(1200, 2800), 'initial overlap accepts forward movement')
             if collision.angle_drift(window(0, events[-1][0]), 'heading') > math.radians(1): fail('overlap escape adds yaw')
@@ -341,12 +370,13 @@ def analyze(text, profile):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--profile', type=Path, required=True)
+    parser.add_argument('--fast-slide', action='store_true', help='Require the separate 16-case native Run/Sprint slide bank')
     parser.add_argument('--log', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     assert args.profile.is_dir(), 'Capture profile is missing'
     assert not args.output.exists(), 'Refuse to overwrite an existing report'
-    result = analyze((args.log or args.profile/'native-launch.log').read_text(errors='replace'), args.profile)
+    result = analyze((args.log or args.profile/'native-launch.log').read_text(errors='replace'), args.profile, args.fast_slide)
     with args.output.open('x') as target:
         json.dump(result, target, indent=2, allow_nan=False);target.write('\n')
     print(json.dumps(result, indent=2, allow_nan=False))

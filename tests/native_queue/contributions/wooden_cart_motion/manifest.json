@@ -372,6 +372,41 @@
     },
     "scope": "Native tile-wall/door guard for the original wooden mesh, both body models and loads; includes wall sliding in both directions against bare Walk controls, initial-overlap reverse and stopped gait promotion. Full vehicle clearance and MP authority are separate coverage."
   },
+  "fast_slide_scenario": {
+    "case_count": 16,
+    "native_bare_controls": [
+      "wall",
+      "corner",
+      "passage",
+      "wall-slide-left",
+      "wall-slide-right"
+    ],
+    "scenario": "scenario-collision.lua with config.footprint=true and config.fastSlide=true",
+    "analyzer": "analyze-footprint.py --fast-slide",
+    "axes": {
+      "sex": [
+        "male",
+        "female"
+      ],
+      "cargo": [
+        "empty",
+        "full"
+      ],
+      "spec": [
+        "run-wall-slide",
+        "run-wall-slide-right",
+        "sprint-wall-slide",
+        "sprint-wall-slide-right"
+      ]
+    },
+    "record_seconds_per_case": 12,
+    "sample_interval_ms": 25,
+    "required_candidate_versions": {
+      "PZSurvivorToolkit": ">=0.1.61",
+      "PZToolkitJavaPatches": ">=0.1.20"
+    },
+    "scope": "Separate Run/Sprint wall sliding in both directions for both body models and loads; actual native gait progression during approach and sustained mesh contact, retained normal rejection, bare Walk controls, reverse escape, final settle and original wooden mesh clearance. Native capture pending; grip/body/clothing, manual visual quality and multiplayer authority are separate gates."
+  },
   "collision_scenario": {
     "case_count": 16,
     "native_bare_controls": [
