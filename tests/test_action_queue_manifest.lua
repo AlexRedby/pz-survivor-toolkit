@@ -50,7 +50,7 @@ local function fixture(mode)
     local cell={getGridSquare=function()return square end}
     getCell=function()return cell end
     require=function(module)
-        if module=='PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/SourceProof.lua'))() end
+        if module=='PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
         if module=='PZSurvivorToolkit/ItemTags'then return tags end
         if module=='LootSorter_Core'or module=='LootSorter_Manifest'then loadModule(module)end
     end

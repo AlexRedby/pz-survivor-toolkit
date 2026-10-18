@@ -24,7 +24,7 @@ return function(source)
     end
     require = function(module)
         if module == 'PZSurvivorToolkit/SourceProof' then
-            return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/SourceProof.lua'))()
+            return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()
         end
         if module == 'Neat_Crafting/NC_CraftActionPanel' then return assert(loadstring(source))() end
         return previousRequire(module)

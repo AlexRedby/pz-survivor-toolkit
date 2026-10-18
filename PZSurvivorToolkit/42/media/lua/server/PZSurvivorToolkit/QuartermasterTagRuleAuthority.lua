@@ -57,8 +57,20 @@ function Rules.installAuthority()
         or not LootSorter.serverFns.putPreset then return end
     LootSorter.pzstTagRuleAuthority = true
     if isServer() then Rules.presetStore() end
+    if not isClient() and not isServer() then
+        require("PZSurvivorToolkit/QuartermasterPresets").install(Rules)
+    end
+    local function transaction(fn)
+        return function(player, args)
+            if not isClient() and not isServer() then
+                local storage = require("PZSurvivorToolkit/QuartermasterPresets").install(Rules)
+                return storage.transaction(function() return fn(player, args) end)
+            end
+            return fn(player, args)
+        end
+    end
     local put, remove = LootSorter.serverFns.putPreset, LootSorter.serverFns.removePreset
-    LootSorter.serverFns.putPreset = function(player, args)
+    LootSorter.serverFns.putPreset = transaction(function(player, args)
         local rule
         if type(args) == "table" and args.pzstTagRule ~= nil then
             local value = args.pzstTagRule
@@ -82,15 +94,15 @@ function Rules.installAuthority()
             end
         end
         return verdict, detail
-    end
-    LootSorter.serverFns.removePreset = function(player, args)
+    end)
+    LootSorter.serverFns.removePreset = transaction(function(player, args)
         local store = Rules.presetStore()
         local verdict, detail = remove(player, args)
         if verdict == "ok" and args and store[args.name] then
             store[args.name] = nil; Rules.persistPresets()
         end
         return verdict, detail
-    end
+    end)
 end
 
 Events.OnInitGlobalModData.Add(Rules.installAuthority)

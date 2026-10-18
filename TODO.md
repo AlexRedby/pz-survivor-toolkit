@@ -2,11 +2,9 @@
 
 - [ ] Разобрать семь клиентских font-loading ошибок, оставшихся в обоих полных forge Host-прогонах; не объявлять весь набор runtime-clean по функциональному исправлению кузницы. Сам Forge Simple Blade stall воспроизведён в отдельном Windows Host-мире с 48 модами после удаления более раннего объекта на square: 0.1.22 зависает на 100%, 0.1.23 проходит все три случая (ручной контроль, обычная кузница, сдвиг индекса) с одним результатом, точным расходом и idle action/UI. Отчёты `forge-baseline-05` и `forge-candidate-01` сохраняют отдельный runtime verdict; Mac, WAN и два клиента этим не проверены. См. [стенд](tests/native_queue/forge/README.md).
 
-# Надёжная запись пресетов Quartermaster
+# Отказ чтения пользовательских хранилищ
 
-- [ ] Восстановить общий Lua-прогон: `test_quartermaster_tag_rules.lua` падает в `QuartermasterTagRules.lua:53` на `pairs(PresetStore.entries)`, когда entries отсутствует. Сверить контракт preset store и тестовые doubles; гейт — успешный общий `tools/run_tests.py`.
-
-- [ ] Устранить подтверждённую уязвимость прямой SP-перезаписи `QuartermasterPresets.txt` и `PZSTQuartermasterTagRules.txt`: native `LuaFileWriter` скрывает ошибки `PrintWriter`, а открытие файла уже удаляет прежний текст. Сохранить последний проверенный снимок при частичной записи/обрыве, подтверждать результат чтением и сохранять связь native preset generation с tag rule. Native `presetDeserialize` также превращает повреждённый непустой текст в пустую таблицу; отличать такой отказ от корректного пустого store. Переход должен читать существующие глобальные файлы и пройти отдельный cold restart; текущая защита от исключений загрузки/сериализации не заменяет этот гейт.
+- [ ] В `PZSurvivorWishlist/Service.lua` и `TagFilterPresets.lua` отличать отсутствующий файл от native I/O failure: `getFileReader(..., false)` возвращает `nil` в обоих случаях, а недоступный каталог может дать пустую enumeration. Не публиковать пустой cache и не открывать writer после неоднозначного чтения. Проверить `nil` reader существующих slots и пустую enumeration недоступного каталога, сохранив создание нового store и прежние данные.
 
 # Ускорение разработки анимаций
 

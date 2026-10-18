@@ -110,7 +110,7 @@ class BuildChecks(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), 'MEDIA_CHECKS_PASS')
 
     def test_default_and_group_selection_remain_compatible(self):
-        for flags, count, video in [((), 0, False), (('--check',), 42, False), (('--check-video',), 1, True), (('--check', '--check-video'), 43, True)]:
+        for flags, count, video in [((), 0, False), (('--check',), 43, False), (('--check-video',), 1, True), (('--check', '--check-video'), 44, True)]:
             with self.subTest(flags=flags):
                 self.run_build(*flags)
                 calls = self.java_calls()

@@ -480,7 +480,7 @@ local restrictionsSource=read(restrictionsPath)
 local coreSource=read(SaucedCartsSource..'/Core.lua')
 local compatPath=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
 local compatSource=read(compatPath)
-local pinCode='local Proof=assert(loadfile(ProjectRoot..\'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/SourceProof.lua\'))();local sourceFiles={}\n'
+local pinCode='local Proof=assert(loadfile(ProjectRoot..\'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua\'))();local sourceFiles={}\n'
     ..assert(compatSource:match('(local function verified%(id, files%).-\nend)'))..'\nlocal Compat={}\n'
     ..assert(compatSource:match('(function Compat.isCartMaskSource%(%).-\nend)'))..'\nreturn Compat'
 local maskHookCode='local unequipHookInitialized=false\n'
@@ -599,7 +599,7 @@ do
  local dataPath=SaucedCartsSource..'/CartData.lua'
  local dataSource=read(dataPath)
  local preloader=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/000ToolkitCartCapacity.lua'
- local capacityPins='local Proof=assert(loadfile(ProjectRoot..\'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/SourceProof.lua\'))();local sourceFiles={}\n'
+ local capacityPins='local Proof=assert(loadfile(ProjectRoot..\'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua\'))();local sourceFiles={}\n'
   ..assert(compatSource:match('(local function verified%(id, files%).-\nend)'))..'\nlocal Compat={}\n'
   ..assert(compatSource:match('(function Compat.isCartCapacitySource%(%).-\nend)'))..'\nreturn Compat'
  local function scenario(mode)

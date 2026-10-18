@@ -39,7 +39,8 @@ local function fixture(options)
         end, close = function() end}
     end
     env.getFilenameOfClosure = NativeFilenameOfClosure or function(callback) return debug.getinfo(callback, 'S').source:gsub('^@', '') end
-    local proof = run(read(base .. 'PZSurvivorToolkit/SourceProof.lua'), base .. 'PZSurvivorToolkit/SourceProof.lua', env)
+    local proofPath = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'
+    local proof = run(read(proofPath), proofPath, env)
     local nativeClosure = proof.closure
     env.getGameFilesInput = function(path)
         path = path:gsub('^media/lua/', '')

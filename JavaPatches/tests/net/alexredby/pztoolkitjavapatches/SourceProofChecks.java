@@ -14,7 +14,7 @@ public final class SourceProofChecks {
         var thread = new KahluaThread(platform, environment);
         thread.debugOwnerThread = Thread.currentThread();
         try (var reader = Files.newBufferedReader(root.resolve(
-                "PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/SourceProof.lua"))) {
+                "PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua"))) {
             environment.rawset("TestSourceProof", thread.call(
                 LuaCompiler.loadis(reader, "SourceProof.lua", environment), new Object[]{}));
         }

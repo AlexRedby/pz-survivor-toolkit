@@ -3,7 +3,8 @@ import argparse, os, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-CHECKS = {'net.alexredby.pztoolkitjavapatches.SourceProofChecks': 'SOURCE_PROOF_CHECKS_PASS',
+CHECKS = {'net.alexredby.pztoolkitjavapatches.QuartermasterPresetChecks': 'QUARTERMASTER_PRESET_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.SourceProofChecks': 'SOURCE_PROOF_CHECKS_PASS',
           'zombie.vehicles.NativeChecks': 'NATIVE_CHECKS_PASS',
           'zombie.entity.CraftBenchChecks': 'CRAFT_BENCH_CHECKS_PASS',
           'zombie.vehicles.VehicleOwnershipChecks': 'VEHICLE_OWNERSHIP_CHECKS_PASS',
