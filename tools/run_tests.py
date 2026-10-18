@@ -6,6 +6,11 @@ import json
 import locale
 from pathlib import Path
 
+try:
+    from . import mod_integrations
+except ImportError:
+    import mod_integrations
+
 ROOT = Path(__file__).resolve().parent.parent
 
 TAG_TESTS = ("test_item_tags.lua", "test_tag_visuals.lua", "test_inventory_tags.lua", "test_quartermaster_tags.lua", "test_tag_rule_picker.lua", "test_quartermaster_tag_rules.lua", "test_quartermaster_item_routing.lua", "test_tag_filter_presets.lua", "test_tag_filter_presets_menu.lua", "native_tags/check_reconnect.lua", "native_tags/check_sort_receipts.lua", "native_tags/check_barrier.lua")
@@ -39,6 +44,11 @@ def main() -> None:
     parser.add_argument("--test", action="append", default=[], metavar="NAME",
                         help="run only this test relative to tests/ (optional .lua suffix); repeatable")
     parser.add_argument("--list", action="store_true", help="list available test names without running checks")
+    parser.add_argument('--integration', action='append', default=[], choices=mod_integrations.INTEGRATIONS,
+                        help='run this integration against its locked upstream sources; repeatable')
+    parser.add_argument('--list-integrations', action='store_true', help='show upstream inputs, Toolkit owners and focused checks')
+    parser.add_argument('--pack-lock', type=Path, help='validated selected-pack lock supplying integration source paths')
+    parser.add_argument('--game', type=Path, help='game Java directory matching --pack-lock')
     parser.add_argument("--native-mod-options", type=Path,
                         help="test against an extracted vanilla PZAPI/ModOptions.lua")
     parser.add_argument("--cci-source", type=Path, help="test against ContainerCapacityIndicator.lua")
@@ -72,6 +82,14 @@ def main() -> None:
     if args.list:
         print("\n".join(sorted(available)))
         return
+    if args.list_integrations:
+        print(json.dumps(mod_integrations.INTEGRATIONS, indent=2))
+        return
+    if args.integration or args.pack_lock:
+        try:
+            mod_integrations.configure(args, ROOT, requested)
+        except (OSError, ValueError, KeyError) as error:
+            parser.error(str(error))
     if "test_quartermaster_craft_ui.lua" in requested and not (args.quartermaster_source and args.native_action_root):
         parser.error("test_quartermaster_craft_ui requires --quartermaster-source and --native-action-root")
     if requested.intersection({"native_tags/check_transfer_source.lua", "native_tags/check_placement.lua"}) and not args.native_action_root:

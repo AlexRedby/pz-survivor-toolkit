@@ -359,3 +359,10 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
     assert(openedRulePicker.scriptItems==scriptCatalog,'dynamic editor preview lacks the script catalog')
 end
 print('Quartermaster tag checks passed: exact saved keys, partial/refined batches, filters, controller, modes, conflicts, reopens and opt-out.')
+if NativeQuartermasterLuaRoot then
+    scriptCatalog = {}
+    dofile(ProjectRoot .. '/tests/support/quartermaster_picker_source.lua')(adapter, control, ruleApi, find, click,
+        function() return openedRulePicker end)
+else
+    print('SKIP: upstream Quartermaster picker contract requires --quartermaster-source')
+end

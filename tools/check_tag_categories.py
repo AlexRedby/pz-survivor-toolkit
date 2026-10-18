@@ -1,11 +1,52 @@
 #!/usr/bin/env python3
-"""Compare known DisplayCategory IDs with the item-tag schema."""
+"""Compare DisplayCategory coverage and the reviewed organizedCategories source identity."""
 
 import argparse
+import hashlib
 import json
 import re
 import sys
 from pathlib import Path
+
+EN_TRANSLATION = "shared/Translate/EN/IG_UI.json"
+OC_BASELINE = Path(__file__).with_name("organized_categories_baseline.json")
+
+
+def taxonomy_fingerprints(lua_root):
+    files = [lua_root / EN_TRANSLATION]
+    # Conservatively include readers/helpers too: dynamic writers need more than literal-ID checks.
+    files.extend(path for path in source_files(lua_root, {".lua"})
+                 if any(marker in path.read_bytes() for marker in (b"DisplayCategory", b"TweakItem")))
+    return {path.relative_to(lua_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(files)}
+
+
+def load_baseline(path):
+    baseline = json.loads(path.read_text())
+    if not isinstance(baseline, dict) or baseline.get("format") != 1:
+        raise ValueError(f"invalid organizedCategories baseline format: {path}")
+    files = baseline.get("files")
+    digest = baseline.get("schema_sha256")
+    valid_digest = lambda value: isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+    if (not isinstance(files, dict) or EN_TRANSLATION not in files or not valid_digest(digest)
+            or any(not isinstance(name, str) or Path(name).is_absolute() or ".." in Path(name).parts
+                   or "\\" in name or name != Path(name).as_posix()
+                   or (not name.endswith(".lua") and name != EN_TRANSLATION)
+                   or not valid_digest(value) for name, value in files.items())):
+        raise ValueError(f"invalid organizedCategories baseline hashes: {path}")
+    return baseline
+
+
+def baseline_changes(expected, current):
+    changes = []
+    for name in sorted(expected.keys() | current.keys()):
+        if name not in expected:
+            changes.append(f"added source: {name}")
+        elif name not in current:
+            changes.append(f"removed source: {name}")
+        elif expected[name] != current[name]:
+            changes.append(f"changed source: {name}")
+    return changes
 
 
 def lua_roots(path):
@@ -88,6 +129,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--schema", type=Path, required=True)
     parser.add_argument("--oc-root", type=Path, help="organizedCategories Core root or its 42/media/lua directory")
+    parser.add_argument("--oc-baseline", type=Path, default=OC_BASELINE,
+                        help="reviewed source hash manifest (checked when --oc-root is supplied)")
     parser.add_argument("--mod-root", type=Path, help="selected mod source tree")
     parser.add_argument("--game", type=Path, help="game root or media/scripts directory")
     args = parser.parse_args()
@@ -107,13 +150,14 @@ def main():
     roots = []
     oc_root = None
     oc_source_root = None
+    source_changes = []
     try:
         if args.oc_root:
             require_directory(args.oc_root, "--oc-root")
             oc_root = lua_roots(args.oc_root)[0]
             oc_source_root = organized_categories_source_root(args.oc_root)
             require_sources(oc_root, {".lua"}, "--oc-root")
-            translation = oc_root / "shared" / "Translate" / "EN" / "IG_UI.json"
+            translation = oc_root / EN_TRANSLATION
             if not translation.is_file():
                 raise ValueError(f"--oc-root is missing EN translation: {translation}")
             content = json.loads(translation.read_text())
@@ -125,6 +169,10 @@ def main():
             }
             if not en_keys:
                 raise ValueError(f"EN translation contains no IGUI_ItemCat_ keys: {translation}")
+            baseline = load_baseline(args.oc_baseline)
+            source_changes = baseline_changes(baseline["files"], taxonomy_fingerprints(oc_root))
+            if baseline["schema_sha256"] != hashlib.sha256(args.schema.read_bytes()).hexdigest():
+                source_changes.append("changed imported schema: " + str(args.schema))
             roots.append(oc_root)
         if args.mod_root:
             require_directory(args.mod_root, "--mod-root")
@@ -160,6 +208,11 @@ def main():
     print(f"schema categories: {len(known)}")
     if args.oc_root:
         print(f"organizedCategories EN labels: {len(en_keys)}; uncovered: {len(missing_labels)}")
+        print("organizedCategories source baseline: " + ("REVIEW REQUIRED" if source_changes else "unchanged"))
+        for change in source_changes:
+            print(change)
+    else:
+        print("organizedCategories source baseline: not checked (--oc-root not supplied)")
     print(f"source category IDs: {len(discovered)}; uncovered: {len(missing)}")
     if dynamic:
         print("unresolved dynamic category variables: " + ", ".join(sorted(dynamic)))
@@ -167,7 +220,7 @@ def main():
         print(f"missing EN category mapping: {category}")
     for category in missing:
         print(f"missing source category mapping: {category}")
-    return 1 if missing or missing_labels else 0
+    return 1 if missing or missing_labels or source_changes else 0
 
 
 if __name__ == "__main__":

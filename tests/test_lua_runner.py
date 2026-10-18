@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools import run_tests
+from tools.queue_checks import pack
 
 
 class LuaRunner(unittest.TestCase):
@@ -164,7 +165,9 @@ class LuaRunner(unittest.TestCase):
     def test_invalid_or_unconfigured_selection_fails_before_execution(self):
         for arguments in (("--test", "test_tv_controls", "--test", "missing"),
                           ("--test", "native_tags/check_placement"),
-                          ("--test", "test_quartermaster_craft_ui")):
+                          ("--test", "test_quartermaster_craft_ui"),
+                          ('--integration', 'Navigator'),
+                          ('--test', 'test_tv_videos', '--pack-lock', '/missing/pack.json')):
             with self.subTest(arguments=arguments), self.assertRaises(SystemExit) as failure:
                 self.invoke(*arguments)
             self.assertEqual(failure.exception.code, 2)
@@ -173,6 +176,32 @@ class LuaRunner(unittest.TestCase):
     def test_list_is_available_without_running_checks(self):
         self.invoke("--list")
         self.assertEqual(set(self.output.getvalue().splitlines()), self.names)
+
+    def test_locked_integration_runs_only_real_navigator_source_branch(self):
+        game = self.root / 'game'
+        game.mkdir()
+        (game / 'projectzomboid.jar').write_bytes(b'game')
+        (self.root / 'SurvivorQoL-selected.ini').write_text('Mods=Navigator\n')
+        layer = self.root / 'Navigator/42'
+        layer.mkdir(parents=True)
+        (layer / 'mod.info').write_text('id=Navigator\n')
+        source = layer / 'media/lua/client/NavigatorRadio'
+        source.mkdir(parents=True)
+        for name in ('MonitorConfig.lua', 'MonitorRender.lua', 'NavigatorMonitorDrag.lua'):
+            (source / name).write_text(name)
+        lock = (self.root / 'pack.json').resolve()
+        pack.create(self.root.resolve(), lock, game)
+        self.invoke('--integration', 'Navigator', '--pack-lock', str(lock), '--game', str(game))
+        self.assertEqual([name for name, _ in self.executions], ['test_navigator.lua'])
+        variables = self.executions[0][1]
+        self.assertEqual('MonitorConfig.lua', variables['NativeNavigatorConfig'])
+        self.assertEqual('MonitorRender.lua', variables['NativeNavigatorRender'])
+        self.assertEqual('NavigatorMonitorDrag.lua', variables['NativeNavigatorDrag'])
+
+    def test_profile_listing_needs_no_lua_execution(self):
+        self.invoke('--list-integrations')
+        self.assertIn('QuartermasterTags.lua', self.output.getvalue())
+        self.assertEqual([], self.executions)
         self.assertEqual(self.executions, [])
 
 
