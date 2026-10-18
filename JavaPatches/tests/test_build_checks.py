@@ -1,6 +1,7 @@
 """Check selection and timeout handling without the game; use a JDK for helper resolution."""
 import contextlib
 import io
+import os
 from pathlib import Path
 import re
 import runpy
@@ -27,6 +28,9 @@ class BuildChecks(unittest.TestCase):
         for name in ('projectzomboid.jar', 'ZombieBuddy.jar'):
             (self.game / name).touch()
         self.markers = '\n'.join(re.findall(r"'([A-Z_]+_PASS)'", BUILD.read_text()))
+        self.sentinel = self.root / 'build/PZToolkitJavaPatches/previous.txt'
+        self.sentinel.parent.mkdir(parents=True)
+        self.sentinel.write_text('previous Java mod')
 
     def run_build(self, *args, java_result=None):
         def run(command, **kwargs):
@@ -39,6 +43,8 @@ class BuildChecks(unittest.TestCase):
                 if isinstance(java_result, Exception):
                     raise java_result
                 return java_result or subprocess.CompletedProcess(command, 0)
+            if '--create' in command:
+                Path(command[command.index('--file') + 1]).write_bytes(b'new JAR')
             return subprocess.CompletedProcess(command, 0, stdout='javac 25.0.1')
 
         self.error = io.StringIO()
@@ -58,13 +64,13 @@ class BuildChecks(unittest.TestCase):
         self.assertEqual([call.args[0][-1] for call in calls], ['zombie.radio.devices.MediaChecks', 'zombie.characters.AnimalChecks'])
         self.assertTrue(all(call.kwargs['timeout'] == 120 for call in calls))
         self.assertTrue(all(call.kwargs['cwd'] == self.game for call in calls))
-        compilation = next(call.args[0] for call in self.run.call_args_list if str(self.root / 'build/test-classes') in call.args[0])
+        compilation = next(call.args[0] for call in self.run.call_args_list if '-sourcepath' in call.args[0])
         self.assertEqual([Path(arg).name for arg in compilation if arg.endswith('.java')], ['MediaChecks.java', 'AnimalChecks.java'])
 
     @unittest.skipUnless(shutil.which('javac') and shutil.which('java'), 'requires a local JDK')
     def test_selected_source_compiles_referenced_helper_without_unrelated_checks(self):
         self.run_build('--test', 'MediaChecks')
-        command = next(call.args[0] for call in self.run.call_args_list if str(self.root / 'build/test-classes') in call.args[0])
+        command = next(call.args[0] for call in self.run.call_args_list if '-sourcepath' in call.args[0])
         package = self.root / 'tests/zombie/radio/devices'
         package.mkdir(parents=True)
         (package / 'MediaChecks.java').write_text('package zombie.radio.devices; public class MediaChecks { public static void main(String[] args) { System.out.println(MediaHelper.marker()); } }')
@@ -74,14 +80,15 @@ class BuildChecks(unittest.TestCase):
             with zipfile.ZipFile(jar, 'w'):
                 pass
         command[0] = shutil.which('javac')
+        classes = self.root / 'probe-classes'
+        command[command.index('-d') + 1] = str(classes)
         subprocess.run(command, check=True, capture_output=True, text=True, timeout=20)
-        classes = self.root / 'build/test-classes'
         self.assertTrue((classes / 'zombie/radio/devices/MediaHelper.class').is_file())
         result = subprocess.run([shutil.which('java'), '-cp', str(classes), 'zombie.radio.devices.MediaChecks'], check=True, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.stdout.strip(), 'MEDIA_CHECKS_PASS')
 
     def test_default_and_group_selection_remain_compatible(self):
-        for flags, count, video in [((), 0, False), (('--check',), 26, False), (('--check-video',), 1, True), (('--check', '--check-video'), 27, True)]:
+        for flags, count, video in [((), 0, False), (('--check',), 27, False), (('--check-video',), 1, True), (('--check', '--check-video'), 28, True)]:
             with self.subTest(flags=flags):
                 self.run_build(*flags)
                 calls = self.java_calls()
@@ -121,12 +128,33 @@ class BuildChecks(unittest.TestCase):
                 expected = output if isinstance(output, bytes) else (output or '').encode()
                 self.assertEqual((self.root / 'build/MediaChecks.log').read_bytes(), expected)
                 self.assertEqual(len(self.java_calls()), 1)
+                self.assertEqual(self.sentinel.read_text(), 'previous Java mod')
+                self.assertFalse(list((self.root / 'build').glob('.build-*')))
 
     def test_completed_checks_still_require_successful_exit_and_marker(self):
         for result, failure in [(subprocess.CompletedProcess(['java'], 1, stdout='MEDIA_CHECKS_PASS'), subprocess.CalledProcessError), (subprocess.CompletedProcess(['java'], 0, stdout='incomplete'), RuntimeError)]:
             with self.subTest(result=result), self.assertRaises(failure):
                 self.run_build('--test', 'MediaChecks', java_result=result)
             self.assertEqual((self.root / 'build/MediaChecks.log').read_text(), result.stdout)
+            self.assertEqual(self.sentinel.read_text(), 'previous Java mod')
+            self.assertFalse(list((self.root / 'build').glob('.build-*')))
+
+    def test_selected_checks_use_a_fresh_classpath_each_run(self):
+        stale = self.root / 'build/test-classes/RemovedHelper.class'
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b'stale class')
+        paths = []
+        for _ in range(2):
+            self.run_build('--test', 'MediaChecks')
+            compilation = next(call.args[0] for call in self.run.call_args_list if '-sourcepath' in call.args[0])
+            classes = Path(compilation[compilation.index('-d') + 1])
+            command = self.java_calls()[0].args[0]
+            self.assertEqual(command[command.index('-cp') + 1].split(os.pathsep)[0], str(classes))
+            self.assertNotEqual(classes, stale.parent)
+            self.assertFalse(classes.exists())
+            paths.append(classes)
+        self.assertNotEqual(*paths)
+        self.assertEqual(stale.read_bytes(), b'stale class')
 
 
 if __name__ == '__main__':

@@ -75,48 +75,80 @@ version = re.search(r'^javac (\d+)', compiler.stdout, re.MULTILINE)
 if version is None or int(version.group(1)) < 25:
     parser.error(f'B42.21 requires JDK 25 or newer to read game classes. Found "{compiler.stdout.strip()}" at "{javac}". Select JDK 25+ with --jdk or JAVA_HOME.')
 classpath = os.pathsep.join(str(args.game / name) for name in ['projectzomboid.jar', 'ZombieBuddy.jar'])
-classes = ROOT / 'build/classes'
-if classes.exists(): shutil.rmtree(classes)
-classes.mkdir(parents=True)
-# Output targets Java 17; reading the game's Java 25 classes still requires javac 25+.
-subprocess.run([javac, '--release', '17', '-cp', classpath, '-d', str(classes), *map(str, (ROOT/'src').rglob('*.java'))], check=True)
-mod = ROOT / 'build/PZToolkitJavaPatches'
-if mod.exists(): shutil.rmtree(mod)
-jar = mod / '42/media/java/PZToolkitJavaPatches.jar'
-jar.parent.mkdir(parents=True, exist_ok=True)
-(mod/'common').mkdir(exist_ok=True)
-fontjar = mod / '42/media/bootstrap/PZToolkitFonts.jar'
-fontjar.parent.mkdir(parents=True, exist_ok=True)
-manifest = ROOT / 'build/FONT-MANIFEST.MF'
-manifest.write_text('Manifest-Version: 1.0\nZB-Preload: true\n\n')
-# Stable ZIP dates preserve approval hashes when the compiled contents do not change.
-jar_date = '--date=2000-01-01T00:00:00Z'
-subprocess.run([str(args.jdk/'bin/jar'), '--create', jar_date, '--file', str(jar), '-C', str(classes), 'net/alexredby/pztoolkitjavapatches'], check=True)
-subprocess.run([str(args.jdk/'bin/jar'), '--create', jar_date, '--file', str(fontjar), '--manifest', str(manifest), '-C', str(classes), 'net/alexredby/pztoolkitbootstrap'], check=True)
-(mod/'42/mod.info').write_text('name=Toolkit Java Patches (Experimental)\nid=PZToolkitJavaPatches\nversion=0.1.18\nauthor=AlexRedby\nversionMin=42.21\nversionMax=42.21\nrequire=\\ZombieBuddy\njavaJarFile=media/java/PZToolkitJavaPatches.jar\njavaPkgName=net.alexredby.pztoolkitjavapatches\nZBVersionMin=2.3.4\ndescription=B42.21 fixes for item-transaction cancellation ownership, missing-action completion detection, common action completion boundaries and native action outcome acknowledgements, client zombie speed decoding, vehicle interpolation recovery, authoritative cassette restart after stopping, multiplayer build cancellation acknowledgements, live-animal trailer location reconciliation, incomplete equipment acknowledgement handling, late medical updates and requests after patient disconnect, medical visual removal synchronization, null-animal hutch unloading crashes, five native string-property startup exceptions, two malformed native fluid-container names, premature breakable-fence validation, missing level-three wooden-fence material metadata, the native Piano recipe icon, cross-cell basement room lookup loss, the duplicate stock basement-access hall persistent key, the malformed stock mannequin zone, early native font-page loading and occupied-vehicle authority loss after collision handoff. Requires the ZombieBuddy Java agent on clients for zombie, vehicle, animal and equipment patches and on the server for cassette playback, safe queue build interruption and vehicle authority recovery. The hutch unloading, native string-property and fluid-name guards apply in clients, single-player and servers. The font startup fix requires explicit early patches_jar activation of the separate local font JAR; enabling the mod alone is insufficient. Unsupported target bytecode disables the patches.\n')
-for base in [mod/'common/media', mod/'42/media']:
-    for name in ['AnimSets', 'actiongroups']: (base/name).mkdir(parents=True, exist_ok=True)
-print(jar)
+build = ROOT / 'build'
+destination = build / 'PZToolkitJavaPatches'
+for directory in (build, destination):
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        parser.error(f'Build output must be a regular directory: {directory}')
 
-if selected:
-    testclasses = ROOT / 'build/test-classes'
-    testclasses.mkdir(exist_ok=True)
-    checks = {name: CHECKS[name] for name in selected}
-    sources = [ROOT / 'tests' / (name.replace('.', '/') + '.java') for name in checks]
-    subprocess.run([javac, '--release', '17', '-cp', os.pathsep.join([classpath, str(jar), str(fontjar)]), '-sourcepath', str(ROOT / 'tests'), '-d', str(testclasses), *map(str, sources)], check=True)
-    for name, marker in checks.items():
-        for trace in ([False, True] if name.endswith("VehicleTraceChecks") else [False]):
-            with tempfile.TemporaryDirectory(prefix='pz-java-native-') as cache:
-                cold_fonts = name == 'zombie.core.fonts.FontColdChecks'
-                testpath = [str(testclasses), classpath] if cold_fonts else [str(testclasses), str(jar), str(fontjar), classpath]
-                log = ROOT / 'build' / (name.rsplit('.', 1)[-1] + ('-trace' if trace else '') + '.log')
-                try:
-                    with log.open('w') as output:
-                        result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=output, stderr=subprocess.STDOUT, timeout=args.test_timeout)
-                except subprocess.TimeoutExpired as error:
-                    print(log.read_text(errors='replace'))
-                    raise RuntimeError(f'{name} timed out after {args.test_timeout} seconds; output saved to {log}') from error
-            output = log.read_text(errors='replace')
-            print(output)
-            result.check_returncode()
-            if marker not in output: raise RuntimeError(name + ' regression did not complete')
+def log_path(name, trace):
+    return build / (name.rsplit('.', 1)[-1] + ('-trace' if trace else '') + '.log')
+
+for name in selected:
+    for trace in ([False, True] if name.endswith('VehicleTraceChecks') else [False]):
+        log = log_path(name, trace)
+        if log.is_symlink() or (log.exists() and not log.is_file()):
+            parser.error(f'Check log must be a regular file: {log}')
+build.mkdir(exist_ok=True)
+temporary = Path(tempfile.mkdtemp(prefix='.build-', dir=build))
+previous = temporary / 'previous'
+promoted = False
+try:
+    classes = temporary / 'classes'
+    classes.mkdir()
+    # Output targets Java 17; reading the game's Java 25 classes still requires javac 25+.
+    subprocess.run([javac, '--release', '17', '-cp', classpath, '-d', str(classes), *map(str, (ROOT/'src').rglob('*.java'))], check=True)
+    mod = temporary / 'PZToolkitJavaPatches'
+    jar = mod / '42/media/java/PZToolkitJavaPatches.jar'
+    jar.parent.mkdir(parents=True, exist_ok=True)
+    (mod/'common').mkdir(exist_ok=True)
+    fontjar = mod / '42/media/bootstrap/PZToolkitFonts.jar'
+    fontjar.parent.mkdir(parents=True, exist_ok=True)
+    manifest = temporary / 'FONT-MANIFEST.MF'
+    manifest.write_text('Manifest-Version: 1.0\nZB-Preload: true\n\n')
+    # Stable ZIP dates preserve approval hashes when the compiled contents do not change.
+    jar_date = '--date=2000-01-01T00:00:00Z'
+    subprocess.run([str(args.jdk/'bin/jar'), '--create', jar_date, '--file', str(jar), '-C', str(classes), 'net/alexredby/pztoolkitjavapatches'], check=True)
+    subprocess.run([str(args.jdk/'bin/jar'), '--create', jar_date, '--file', str(fontjar), '--manifest', str(manifest), '-C', str(classes), 'net/alexredby/pztoolkitbootstrap'], check=True)
+    (mod/'42/mod.info').write_text('name=Toolkit Java Patches (Experimental)\nid=PZToolkitJavaPatches\nversion=0.1.18\nauthor=AlexRedby\nversionMin=42.21\nversionMax=42.21\nrequire=\\ZombieBuddy\njavaJarFile=media/java/PZToolkitJavaPatches.jar\njavaPkgName=net.alexredby.pztoolkitjavapatches\nZBVersionMin=2.3.4\ndescription=B42.21 fixes for item-transaction cancellation ownership, missing-action completion detection, common action completion boundaries and native action outcome acknowledgements, client zombie speed decoding, vehicle interpolation recovery, authoritative cassette restart after stopping, multiplayer build cancellation acknowledgements, live-animal trailer location reconciliation, incomplete equipment acknowledgement handling, late medical updates and requests after patient disconnect, medical visual removal synchronization, null-animal hutch unloading crashes, five native string-property startup exceptions, two malformed native fluid-container names, premature breakable-fence validation, missing level-three wooden-fence material metadata, the native Piano recipe icon, cross-cell basement room lookup loss, the duplicate stock basement-access hall persistent key, the malformed stock mannequin zone, early native font-page loading and occupied-vehicle authority loss after collision handoff. Requires the ZombieBuddy Java agent on clients for zombie, vehicle, animal and equipment patches and on the server for cassette playback, safe queue build interruption and vehicle authority recovery. The hutch unloading, native string-property and fluid-name guards apply in clients, single-player and servers. The font startup fix requires explicit early patches_jar activation of the separate local font JAR; enabling the mod alone is insufficient. Unsupported target bytecode disables the patches.\n')
+    for base in [mod/'common/media', mod/'42/media']:
+        for name in ['AnimSets', 'actiongroups']: (base/name).mkdir(parents=True, exist_ok=True)
+
+    if selected:
+        testclasses = temporary / 'test-classes'
+        testclasses.mkdir(exist_ok=True)
+        checks = {name: CHECKS[name] for name in selected}
+        sources = [ROOT / 'tests' / (name.replace('.', '/') + '.java') for name in checks]
+        subprocess.run([javac, '--release', '17', '-cp', os.pathsep.join([classpath, str(jar), str(fontjar)]), '-sourcepath', str(ROOT / 'tests'), '-d', str(testclasses), *map(str, sources)], check=True)
+        for name, marker in checks.items():
+            for trace in ([False, True] if name.endswith("VehicleTraceChecks") else [False]):
+                with tempfile.TemporaryDirectory(prefix='pz-java-native-') as cache:
+                    cold_fonts = name == 'zombie.core.fonts.FontColdChecks'
+                    testpath = [str(testclasses), classpath] if cold_fonts else [str(testclasses), str(jar), str(fontjar), classpath]
+                    log = log_path(name, trace)
+                    try:
+                        with log.open('w') as output:
+                            result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=output, stderr=subprocess.STDOUT, timeout=args.test_timeout)
+                    except subprocess.TimeoutExpired as error:
+                        print(log.read_text(errors='replace'))
+                        raise RuntimeError(f'{name} timed out after {args.test_timeout} seconds; output saved to {log}') from error
+                output = log.read_text(errors='replace')
+                print(output)
+                result.check_returncode()
+                if marker not in output: raise RuntimeError(name + ' regression did not complete')
+    if destination.exists():
+        destination.rename(previous)
+    try:
+        mod.rename(destination)
+    except OSError:
+        if previous.exists():
+            try:
+                previous.rename(destination)
+            except OSError as error:
+                raise OSError(f'Previous Java mod is preserved at {previous}; restore failed') from error
+        raise
+    promoted = True
+finally:
+    if promoted or not previous.exists():
+        shutil.rmtree(temporary)
+print(destination / '42/media/java/PZToolkitJavaPatches.jar')
