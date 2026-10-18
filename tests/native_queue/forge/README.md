@@ -14,7 +14,7 @@ No action duration, recipe callback, network ID or completion result is replaced
 
 ## Run
 
-Create a JSON config with `mp_host: true` and explicit `mod_sources` for the Toolkit and Java mod roots. Pin a pre-fix Java mod for the baseline, then the candidate in another config; keep Toolkit, Workshop files and fixture bytes unchanged. Example from PowerShell, with local paths supplied in variables:
+Create a JSON config with `mp_host: true`, `preload_toolkit_fonts: true` and explicit `mod_sources` for the Toolkit and Java mod roots. Pin a pre-fix Java mod for the baseline, then the candidate in another config; keep Toolkit, Workshop files and fixture bytes unchanged. Keep the output run directory on the same drive as the game so the early-font JAR can use a game-relative path. Example from PowerShell, with local paths supplied in variables:
 
 ```powershell
 py -3 tools/check_action_queue.py run $Output --suite forge `

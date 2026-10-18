@@ -1,6 +1,6 @@
 # Crafting on the Primitive Forge
 
-- [ ] Investigate the seven client font-loading errors remaining in both full forge Host runs; do not declare the entire set runtime-clean based on the functional forge fix. The Forge Simple Blade stall itself was reproduced in a separate Windows Host world with 48 mods after removing an earlier object on the square: 0.1.22 stalls at 100%, while 0.1.23 passes all three cases (manual control, ordinary forge, shifted index) with one result, exact consumption and idle action/UI. Reports `forge-baseline-05` and `forge-candidate-01` retain a separate runtime verdict; this does not verify Mac, WAN or two clients. See the [test setup](tests/native_queue/forge/README.md).
+- [ ] On the next full Forge Windows Host check, enable `preload_toolkit_fonts: true`, keep the game and isolated snapshot on the same drive, and retain the exact font messages and early-phase activation line. The runner now passes the selected font bootstrap through a game-relative JAR path; the historical seven errors remain unverified because their raw Windows artifacts are not available locally. Preserve the recorded functional forge result and separate runtime verdict; do not reclassify or rewrite historical reports.
 
 # Faster animation development
 

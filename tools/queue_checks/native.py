@@ -44,7 +44,7 @@ def _metadata(path):
             if "=" in line and not line.lstrip().startswith("#") for key, value in [line.split("=", 1)]}
 
 
-def font_preload(cache, selection):
+def font_preload(cache, selection, game=None):
     """Explicit local-JAR opt-in; ordinary approvals do not grant signed early loading."""
     enabled = selection.get('options', {}).get('preload_toolkit_fonts', False)
     if type(enabled) is not bool:
@@ -60,13 +60,18 @@ def font_preload(cache, selection):
             'PZToolkitJavaPatches', 'net.alexredby.pztoolkitjavapatches', 'media/java/PZToolkitJavaPatches.jar'):
         raise ValueError('Font preload requires the selected early-font bootstrap metadata')
     jar = layer / 'media/bootstrap/PZToolkitFonts.jar'
-    if any(char in str(jar) for char in (',', ':', ';', '\n', '\r')):
+    # ZombieBuddy splits at the first colon; Windows drive letters need a game-relative path.
+    try:
+        jar_argument = os.path.relpath(jar, game) if game is not None else str(jar)
+    except ValueError as error:
+        raise ValueError('Font preload requires the game and snapshot on the same drive') from error
+    if any(char in jar_argument for char in (',', ':', ';', '\n', '\r')):
         raise ValueError('Font preload path contains loader separators')
     with zipfile.ZipFile(jar) as archive:
         manifest = archive.read('META-INF/MANIFEST.MF').decode('utf-8')
         if not re.search(r'^ZB-Preload: true\r?$', manifest, re.M):
             raise ValueError('Font preload requires ZB-Preload manifest')
-    return ',patches_jar=' + str(jar) + ':' + package
+    return ',patches_jar=' + jar_argument + ':' + package
 
 
 def _approvals(cache, identifiers):
@@ -330,7 +335,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         _json(cache / "zombie-buddy/mod_approvals.json", {"formatVersion": 2, "mods": approvals})
         runtime["roles"][role] = {"cache": str(cache), "language": language}
         if role != "server":
-            font_preload(cache, selection)
+            font_preload(cache, selection, game if os.name == 'nt' else None)
             shutil.copy2(support / "ToolkitSmokeLauncher.java", cache / "classes")
             subprocess.run([str(jdk_binary(jdk, 'javac')), "-cp", str(game / "projectzomboid.jar"),
                             str(cache / "classes/ToolkitSmokeLauncher.java")], check=True, capture_output=True, text=True, timeout=60,

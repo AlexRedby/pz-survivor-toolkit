@@ -14,6 +14,13 @@ from . import adapters, admission, coop
 from .report import read_json, verify_manifest, write_json
 
 
+def loader_agent(game, cache, selection):
+    from .native import font_preload
+    return ('-javaagent:' + str(Path(game) / 'ZombieBuddy.jar') + '=config_dir='
+            + str(Path(cache) / 'zombie-buddy') + ',policy=deny-new,verbosity=1'
+            + font_preload(cache, selection, game))
+
+
 def run(root, resource_wait=300):
     from .runner import _verify_live_inputs
     root = Path(root).resolve()
@@ -77,7 +84,7 @@ def run(root, resource_wait=300):
             raise ctypes.WinError(ctypes.get_last_error())
         game, config = Path(runtime['game']), runtime['roles']['client1']
         cache = Path(config['cache'])
-        agent = '-javaagent:' + str(game / 'ZombieBuddy.jar') + '=config_dir=' + str(cache / 'zombie-buddy') + ',policy=deny-new,verbosity=1'
+        agent = loader_agent(game, cache, selection)
         command = [runtime['java'], '-Djava.awt.headless=true', '--enable-native-access=ALL-UNNAMED',
                    '--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED', '-Dzomboid.steam=0',
                    '-Djava.library.path=win64;.', '-Xmx' + str(budget['heap_mib']) + 'm', '-XX:+UseZGC',

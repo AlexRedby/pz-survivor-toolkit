@@ -1,6 +1,7 @@
 """Snapshot preparation checks without Steam, Java compilation, or a game launch."""
 import sys
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -168,8 +169,24 @@ class NativeSnapshotTests(unittest.TestCase):
         jar.parent.mkdir(parents=True)
         with zipfile.ZipFile(jar, 'w') as archive:
             archive.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\r\nZB-Preload: true\r\n\r\n')
-        self.assertEqual(native.font_preload(cache, selection),
-                         ',patches_jar=' + str(jar) + ':net.alexredby.pztoolkitbootstrap')
+        game_argument = self.game if os.name == 'nt' else None
+        jar_argument = os.path.relpath(jar, self.game) if game_argument is not None else str(jar)
+        self.assertEqual(native.font_preload(cache, selection, game_argument),
+                         ',patches_jar=' + jar_argument + ':net.alexredby.pztoolkitbootstrap')
+        relative = os.path.relpath(jar, self.game)
+        expected = ',patches_jar=' + relative + ':net.alexredby.pztoolkitbootstrap'
+        self.assertEqual(native.font_preload(cache, selection, self.game), expected)
+        from queue_checks import windows, coop
+        agent = windows.loader_agent(self.game, cache, selection)
+        self.assertTrue(agent.endswith(expected))
+        self.assertEqual(agent.count('-javaagent:'), 1)
+        self.assertEqual(agent.split(',patches_jar=')[1].split(':'),
+                         [relative, 'net.alexredby.pztoolkitbootstrap'])
+        self.assertIn('"' + agent + '"', coop.loader_options(agent))
+        self.assertNotIn('patches_jar=', windows.loader_agent(self.game, cache, dict(selection, options={})))
+        with patch.object(native.os.path, 'relpath', side_effect=ValueError('different drives')):
+            with self.assertRaisesRegex(ValueError, 'same drive'):
+                native.font_preload(cache, selection, self.game)
         self.write(layer / 'media/java/PZToolkitJavaPatches.jar', 'ordinary mod jar')
         approvals = native._approvals(cache, ['PZToolkitJavaPatches'])
         self.assertEqual([row['jar_hash'] for row in approvals], [native.sha256(layer / 'media/java/PZToolkitJavaPatches.jar')])
@@ -181,12 +198,12 @@ class NativeSnapshotTests(unittest.TestCase):
             native.font_preload(cache, dict(selection, mods=['ZombieBuddy']))
         self.write(layer / 'mod.info', metadata.replace('pztoolkitjavapatches', 'wrongpackage'))
         with self.assertRaisesRegex(ValueError, 'metadata'):
-            native.font_preload(cache, selection)
+            native.font_preload(cache, selection, game_argument)
         self.write(layer / 'mod.info', metadata)
         with zipfile.ZipFile(jar, 'w') as archive:
             archive.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\n')
         with self.assertRaisesRegex(ValueError, 'manifest'):
-            native.font_preload(cache, selection)
+            native.font_preload(cache, selection, game_argument)
 
     def test_fresh_snapshot_pins_sources_configs_mods_and_compiler_output(self):
         output = self.prepare()

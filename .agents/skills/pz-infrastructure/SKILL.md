@@ -29,6 +29,8 @@ Study player reports when necessary; check explicit bug and compatibility report
 
 ## Autonomy
 
+Keep reliability work proportionate to a personal mod made for fun. Fix concrete gameplay and development problems; exclude power-loss and hardware-failure scenarios from design, testing and acceptance unless the user explicitly requests them. Do not add recurring disclaimers about those excluded scenarios.
+
 - Independently improve the project's technical structure, including structural rework, documentation, tools and checks, while preserving agreed gameplay behavior. Fix bugs with clear, already established expected results. The size of a technical change does not itself require separate permission; the general agreement boundaries in `AGENTS.md` still apply.
 - Agree on new third-party mods and replacements for existing ones as functionality changes. Reflecting the user's already agreed decision to disable a mod in the configuration is not a new choice of mod set.
 
