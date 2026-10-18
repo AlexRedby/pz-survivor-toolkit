@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from queue_checks import runner, admission
+from queue_checks import runner, admission, coop
 
 
 class Process:
@@ -89,6 +89,9 @@ class NativeRunnerTests(unittest.TestCase):
     def invoke(self, collisions="", sleep=None, settings=True):
         if settings:
             self.seal_settings(add_only=True)
+        def kill_group(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError
         with patch.object(runner.sys, "platform", "darwin"), patch.object(runner, "LOCK", self.root / "lock"), \
              patch.object(runner, "verify_manifest", side_effect=lambda *args: self.manifest_errors), \
              patch.object(admission, "STATE", self.root / "admission-state"), \
@@ -96,7 +99,7 @@ class NativeRunnerTests(unittest.TestCase):
                  processes=[{'pid': int(line.split()[0]), 'rss': 0, 'cpu': 0, 'game': True, 'command': line}
                             for line in collisions.splitlines() if line] or self.snapshot['processes'])), \
              patch.object(runner.subprocess, "Popen", side_effect=self.popen), \
-             patch.object(runner.os, "killpg") as kill, patch.object(runner.signal, "signal", side_effect=self.signal), \
+             patch.object(runner.os, "killpg", side_effect=kill_group) as kill, patch.object(runner.signal, "signal", side_effect=self.signal), \
              patch.object(runner.time, "sleep", side_effect=sleep):
             result = runner.run(self.root, resource_wait=0)
             return result, kill.call_args_list
@@ -107,6 +110,69 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertIn("-novoip", self.commands[1])
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
+
+    def prepare_host(self, proof='[QUEUE_TEST] HOST_CHILD pid=555 parent=101\n'):
+        self.selection.update(kind='mp', clients=1, ports=[], mods=['ZombieBuddy'], options={'mp_host': True})
+        self.runtime.update(server_name='owned')
+        server = self.root / 'server'
+        (server / 'Server').mkdir(parents=True)
+        (server / 'options.ini').write_text('voiceEnable=false\n')
+        (server / 'Server/owned.ini').write_text('VoiceEnable=false\n')
+        (server / 'Server/owned_SandboxVars.lua').write_text('SandboxVars={}\n')
+        self.runtime['roles']['server'] = {'cache': str(server)}
+        coop.stage(self.root, self.runtime)
+        for name, value in [('selection', self.selection), ('runtime', self.runtime)]:
+            (self.root / (name + '.json')).write_text(json.dumps(value))
+        self.content += proof
+        (self.root / 'client1/coop-console.txt').write_text('[QUEUE_TEST] SERVER_READY\n')
+
+    def test_host_launches_owner_once_inherits_loader_and_records_native_child(self):
+        self.prepare_host()
+        environments = []
+        popen = self.popen
+        def launch(command, **kwargs):
+            if 'env' in kwargs:
+                environments.append(kwargs['env'])
+            return popen(command, **kwargs)
+        self.popen = launch
+        result, kills = self.invoke()
+        self.assertEqual('completed', result['status'])
+        self.assertEqual(2, len(self.commands))  # display guard + one real Host owner
+        command = self.commands[-1]
+        self.assertNotIn('zombie.network.GameServer', command)
+        self.assertIn('ToolkitSmokeLauncher', command)
+        self.assertIn('-novoip', command)
+        self.assertFalse(any(arg.startswith('-javaagent:') for arg in command))
+        self.assertEqual(1, environments[0]['JDK_JAVA_OPTIONS'].count('-javaagent:'))
+        self.assertIn(str(self.root / 'client1/zombie-buddy'), environments[0]['JDK_JAVA_OPTIONS'])
+        self.assertEqual({'pid': 555, 'parent_role': 'client1', 'cache': str((self.root / 'client1').resolve())}, result['processes']['server'])
+        self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
+        self.assertEqual('[QUEUE_TEST] SERVER_READY\n', (self.root / 'server-launch.log').read_text())
+
+    def test_host_rejects_unproven_or_duplicated_child_and_still_stops_only_its_group(self):
+        self.prepare_host('[QUEUE_TEST] HOST_CHILD pid=999 parent=666\n')
+        result, kills = self.invoke()
+        self.assertEqual('failed', result['status'])
+        self.assertIn('prove one native child', result['error'])
+        self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
+
+    def test_owned_host_group_is_stopped_even_if_parent_already_exited(self):
+        process = Process(456)
+        process.returncode = 1
+        def kill_group(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError
+        with patch.object(runner.os, 'killpg', side_effect=kill_group) as kill:
+            runner.stop(process, owned_host_group=True)
+        self.assertEqual([(456, signal.SIGTERM), (456, 0)], [call.args for call in kill.call_args_list])
+
+    def test_host_escalates_only_its_original_group_when_child_outlives_owner(self):
+        process = Process(456)
+        process.returncode = 1
+        with patch.object(runner.os, 'killpg') as kill, patch.object(runner.time, 'monotonic', side_effect=[0, 5]):
+            runner.stop(process, owned_host_group=True)
+        self.assertEqual([(456, signal.SIGTERM), (456, 0), (456, signal.SIGKILL)],
+                         [call.args for call in kill.call_args_list])
 
     def test_low_disk_or_failed_disk_sampling_never_launches(self):
         for error in (None, OSError('disk sampling failed')):

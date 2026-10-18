@@ -561,8 +561,15 @@
       "cases": []
     },
     "fire": {
-      "status": "not-migrated",
-      "cases": []
+      "status": "ready",
+      "clients": 1,
+      "default_mods": ["PZSurvivorToolkit", "ZombieBuddy", "PZToolkitJavaPatches"],
+      "cases": [
+        {"id": "fuel", "producer": "fixture", "capability": "effect",
+         "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "missing-target-after-expansion", "producer": "fixture", "capability": "effect",
+         "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]}
+      ]
     },
     "farming": {
       "status": "not-migrated",

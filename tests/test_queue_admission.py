@@ -323,6 +323,10 @@ class AdmissionTests(unittest.TestCase):
         cache = str(self.directory / 'smoke -candidate/client1')
         process = {'pid': 1, 'game': True, 'command': 'java ToolkitSmokeLauncher -cachedir=' + cache}
         self.assertEqual(admission.owned({'caches': [cache]}, {'processes': [process]}), [process])
+        process['command'] += ' -useTimeStampedLogFileNames=1 -debugLogFile=server'
+        self.assertEqual(admission.owned({'caches': [cache]}, {'processes': [process]}), [process])
+        process['command'] = 'java zombie.network.GameServer -coop -cachedir=' + cache + '-foreign -useTimeStampedLogFileNames=1 -debugLogFile=server'
+        self.assertEqual(admission.owned({'caches': [cache]}, {'processes': [process]}), [])
 
     def test_registry_location_does_not_depend_on_tmpdir(self):
         import os

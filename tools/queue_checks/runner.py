@@ -8,15 +8,15 @@ import sys
 import time
 
 from .report import events, read_json, verify_manifest, write_json
-from . import adapters, admission, pack, worlds
+from . import adapters, admission, pack, worlds, coop
 from .native import font_preload
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
 
 
-def stop(process):
-    if process.poll() is not None:
+def stop(process, owned_host_group=False):
+    if process.poll() is not None and not owned_host_group:
         return
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -30,6 +30,21 @@ def stop(process):
         except ProcessLookupError:
             pass
         process.wait(timeout=10)
+    if owned_host_group:
+        # The client may exit before a TERM-resistant CoopServer in its original group.
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                break
+            if time.monotonic() >= deadline:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                break
+            time.sleep(0.1)
 
 
 def _verify_initial_settings(root, selection, runtime):
@@ -44,6 +59,8 @@ def _verify_initial_settings(root, selection, runtime):
         if not isinstance(name, str) or not re.fullmatch('[A-Za-z0-9_.-]+', name) or name in ('.', '..'):
             raise ValueError('Invalid prepared server name')
         required.update('server/Server/' + name + suffix for suffix in ('.ini', '_SandboxVars.lua'))
+        if coop.enabled(selection):
+            required.update('client1/Server/' + name + suffix for suffix in ('.ini', '_SandboxVars.lua'))
     if not isinstance(expected, dict) or not required <= expected.keys():
         raise ValueError('Prepared initial settings are missing or invalid')
     for name, text in expected.items():
@@ -51,7 +68,8 @@ def _verify_initial_settings(root, selection, runtime):
             raise ValueError('Invalid prepared initial settings entry')
         path = Path(name)
         if path.is_absolute() or '..' in path.parts or path.as_posix() != name or not (
-                name in required or selection['kind'] == 'mp' and len(path.parts) == 3 and path.parts[:2] == ('server', 'Server')):
+                name in required or selection['kind'] == 'mp' and len(path.parts) == 3 and path.parts[:2] in (
+                    [('server', 'Server'), ('client1', 'Server')] if coop.enabled(selection) else [('server', 'Server')])):
             raise ValueError('Prepared initial settings path escapes owned settings: ' + name)
         if any((root / Path(*path.parts[:index])).is_symlink() for index in range(1, len(path.parts) + 1)):
             raise ValueError('Prepared initial settings cannot contain symlinks: ' + name)
@@ -77,6 +95,7 @@ def run(root, resource_wait=300):
         raise ValueError("Native GUI launch currently supports macOS; reports/matrix work on any platform")
     root = Path(root).resolve()
     selection, runtime = read_json(root / "selection.json"), read_json(root / "runtime.json")
+    hosted = coop.enabled(selection)
     adapter = adapters.get(selection['suite'])
     changed = verify_manifest(root, "source-manifest.json", True) + verify_manifest(root, "snapshot-hashes.json")
     if changed:
@@ -98,6 +117,8 @@ def run(root, resource_wait=300):
                 "-Djava.library.path=.", "-Xmx" + str(resources["budget"]["heap_mib"]) + "m", "-XX:+UseZGC", "-XX:-OmitStackTraceInFastThrow"]
 
         def text(role):
+            if hosted and role == 'server':
+                coop.mirror_logs(root)
             path = root / (role + "-launch.log")
             return path.read_text(errors="replace") if path.is_file() else ""
 
@@ -106,6 +127,9 @@ def run(root, resource_wait=300):
             cache = Path(config["cache"])
             if not re.search(r"^voiceEnable=false$", (cache / "options.ini").read_text(), re.M):
                 raise ValueError("VOIP must be disabled before launch: " + role)
+            if hosted and role == 'client1' and not re.search(r'^VoiceEnable=false$',
+                    (cache / 'Server' / (runtime['server_name'] + '.ini')).read_text(), re.M):
+                raise ValueError('Host server VOIP must be disabled')
             loader = []
             if "ZombieBuddy" in selection["mods"]:
                 loader = ["-javaagent:" + str(game / "ZombieBuddy.jar") + "=config_dir=" + str(cache / "zombie-buddy") + ",policy=deny-new,verbosity=1" + (font_preload(cache, selection) if role != "server" else "")]
@@ -117,11 +141,15 @@ def run(root, resource_wait=300):
             else:
                 arguments = ["-XstartOnFirstThread", "-cp", str(config["classes"]) + os.pathsep + "projectzomboid.jar", "ToolkitSmokeLauncher"]
             command = base + loader + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
+            if hosted and role == 'client1':
+                command = base + ['-Dtoolkit.test.hostCache=' + str(cache)] + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
             if role != "server":
                 command = ["launchctl", "asuser", str(os.getuid())] + command
             stream = (root / (role + "-launch.log")).open("w")
             streams.append(stream)
             environment = {key: value for key, value in os.environ.items() if key not in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")}
+            if hosted and role == 'client1' and loader:
+                environment['JDK_JAVA_OPTIONS'] = coop.loader_options(loader[0])
             extra_env = config.get('env', {})
             if set(extra_env) - {'PZ_CART_RUNTIME_FILE', 'PZ_CART_COMMAND_FILE'} or any(not isinstance(value, str) or not Path(value).is_absolute() for value in extra_env.values()):
                 raise ValueError('Invalid fixture-owned client environment')
@@ -160,20 +188,25 @@ def run(root, resource_wait=300):
                 signal.signal(sig, interrupted)
             guard = subprocess.Popen(["/usr/bin/caffeinate", "-diu", "-w", str(os.getpid())])
             if selection["kind"] == "mp":
-                launch("server")
-                deadline = time.monotonic() + 120
-                while runtime.get('fixture', {}).get('server_ready', '[QUEUE_TEST] SERVER_READY') not in text("server"):
-                    if processes["server"].poll() is not None or time.monotonic() >= deadline:
+                launch('client1' if hosted else 'server')
+                deadline = time.monotonic() + (180 if hosted else 120)
+                while (runtime.get('fixture', {}).get('server_ready', '[QUEUE_TEST] SERVER_READY') not in text("server")
+                       or hosted and '[QUEUE_TEST] HOST_CHILD ' not in text('client1')):
+                    if processes['client1' if hosted else 'server'].poll() is not None or time.monotonic() >= deadline:
                         raise RuntimeError("Server readiness failed")
                     time.sleep(1)
+                if hosted:
+                    execution['processes']['server'] = {'pid': coop.child(text('client1'), processes['client1'].pid),
+                                                        'parent_role': 'client1', 'cache': str(root / 'client1')}
             clients = adapters.roles(selection, False)
             for index, role in enumerate(clients):
                 if index:
                     time.sleep(runtime.get('fixture', {}).get('client_launch_stagger_seconds', 0))
-                launch(role)
+                if role not in processes:
+                    launch(role)
             deadline = time.monotonic() + selection["timeout_seconds"]
             while time.monotonic() < deadline:
-                current = {role: text(role) for role in processes}
+                current = {role: text(role) for role in adapters.roles(selection)}
                 # A writer may be halfway through its final JSON line; final audit remains strict.
                 records = {role: events(current[role] if current[role].endswith("\n") else current[role].rsplit("\n", 1)[0] if "\n" in current[role] else "") for role in clients}
                 for role in clients:
@@ -236,7 +269,7 @@ def run(root, resource_wait=300):
                         except (AttributeError, BrokenPipeError, OSError, subprocess.TimeoutExpired):
                             pass
                     try:
-                        stop(process)
+                        stop(process, owned_host_group=hosted and role == 'client1')
                     except (OSError, subprocess.SubprocessError) as error:
                         execution.setdefault('cleanup_errors', []).append(role + ': ' + str(error))
                     execution["processes"][role]["exit_code"] = process.returncode
@@ -245,6 +278,17 @@ def run(root, resource_wait=300):
                         stream.close()
                     except OSError as error:
                         execution.setdefault('cleanup_errors', []).append('launch log: ' + str(error))
+                if hosted:
+                    try:
+                        coop.mirror_logs(root)
+                        remaining = admission.owned({'caches': [str(root / 'client1')]}, admission.host.sample())
+                        execution['host_cleanup'] = {'remaining_pids': [row['pid'] for row in remaining]}
+                        if remaining:
+                            execution.setdefault('cleanup_errors', []).append('Owned Host processes survived group cleanup')
+                    except OSError as error:
+                        execution.setdefault('cleanup_errors', []).append('Host log capture: ' + str(error))
+                    except RuntimeError as error:
+                        execution.setdefault('cleanup_errors', []).append('Host cleanup audit: ' + str(error))
                 if guard is not None:
                     try:
                         guard.terminate(); guard.wait(timeout=5)

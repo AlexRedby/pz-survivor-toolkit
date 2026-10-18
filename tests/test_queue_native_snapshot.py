@@ -78,6 +78,24 @@ class NativeSnapshotTests(unittest.TestCase):
         ports.assert_not_called()
         self.compile_mock.assert_not_called()
 
+    def test_host_prepares_and_seals_the_actual_shared_server_settings(self):
+        shutil.copytree(ROOT / 'tests/native_queue/startup', self.project / 'tests/native_queue/startup')
+        root = self.prepare(suite='startup', kind='mp', clients=1, cases=['loaded'], options={'mp_host': True})
+        selected = report.read_json(root / 'selection.json')
+        runtime = report.read_json(root / 'runtime.json')
+        self.assertEqual(str(root / 'client1'), runtime['host_cache'])
+        for name in ('queue-smoke.ini', 'queue-smoke_SandboxVars.lua'):
+            self.assertEqual((root / 'server/Server' / name).read_bytes(), (root / 'client1/Server' / name).read_bytes())
+        runner._verify_initial_settings(root, selected, runtime)
+        actual = root / 'client1/Server/queue-smoke.ini'
+        actual.write_text(actual.read_text().replace('VoiceEnable=false', 'VoiceEnable=true'))
+        with self.assertRaisesRegex(ValueError, 'changed before launch'):
+            runner._verify_initial_settings(root, selected, runtime)
+
+    def test_host_rejects_suites_without_the_common_coop_bootstrap(self):
+        with self.assertRaisesRegex(ValueError, 'common startup bootstrap'):
+            self.prepare(kind='mp', clients=2, languages=['EN', 'RU'], options={'mp_host': True})
+
     def test_disk_estimate_counts_each_role_and_sparse_file_logical_size(self):
         large = self.project / 'Toolkit/42/sparse.dat'
         with large.open('wb') as stream:

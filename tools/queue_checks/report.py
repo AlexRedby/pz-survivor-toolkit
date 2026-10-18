@@ -145,7 +145,9 @@ def events(text):
 
 def log_paths(root, role):
     paths = [root / (role + "-launch.log"), root / (role + "-probes.log"), root / role / "console.txt"]
-    paths += sorted((root / role / "Logs").glob("*DebugLog*.txt"))
+    # Host's server startup archives the owner's earlier client log in the shared cache.
+    paths += [path for path in sorted((root / role / "Logs").rglob("*DebugLog*.txt"))
+              if role != 'client1' or not path.name.endswith('DebugLog-server.txt')]
     return [path for path in paths if path.is_file()]
 
 
@@ -311,13 +313,14 @@ def diagnostic_windows(logs):
             'interpretation': 'File-local marker placement only, not case verdicts or causes. Buckets are not additive when unmarked mirrors remain unassigned.'}
 
 
-def audit_logs(root, roles, background=False, native_game_sha256=None):
+def audit_logs(root, roles, background=False, native_game_sha256=None, hosted=False):
     result = {}
     for role in roles:
         merged, details, microphone, logs = Counter(), {}, [], []
         paths = log_paths(root, role)
         for path in paths:
-            findings, mic = audit_log(path, root / role, background, native_game_sha256)
+            cache = root / ('client1' if hosted and role == 'server' else role)
+            findings, mic = audit_log(path, cache, background, native_game_sha256)
             logs.append((path, findings))
             current = Counter(row["fingerprint"] for row in findings)
             merged |= current
@@ -445,7 +448,8 @@ def build_report(root, catalog, control=None):
     result, coverage = functional(root, selection, catalog)
     roles = adapters.roles(selection)
     audits = audit_logs(root, roles, background_profile(root, selection, not provenance_errors),
-                        verified_game_sha256(root, not provenance_errors))
+                        verified_game_sha256(root, not provenance_errors),
+                        selection.get('options', {}).get('mp_host') is True)
     try:
         execution = read_json(root / "execution.json")
     except (OSError, ValueError):

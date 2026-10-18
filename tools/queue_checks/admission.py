@@ -185,9 +185,10 @@ def owned(record, snapshot):
     for process in snapshot['processes']:
         if not process['game']:
             continue
-        # Our launcher appends cachedir last; paths may themselves contain spaces and dashes.
+        # Only strip the two logging arguments native CoopMaster appends, preserving spaces/dashes in paths.
         match = re.search(r'(?:^|\s)-cachedir=(.*)$', process['command'])
-        if match and Path(match[1].strip()).resolve() in caches:
+        value = re.sub(r'\s+-useTimeStampedLogFileNames=[01]\s+-debugLogFile=\S*$', '', match[1]) if match else None
+        if value is not None and Path(value.strip()).resolve() in caches:
             result.append(process)
     return result
 

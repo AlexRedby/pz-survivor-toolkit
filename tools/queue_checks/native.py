@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 import zipfile
-from . import adapters, worlds, pack, admission, report
+from . import adapters, worlds, pack, admission, report, coop
 
 
 VERSION = re.compile(r"\d+(?:\.\d+)*")
@@ -123,6 +123,7 @@ def _locations(project, workshop, identifiers, overrides=None):
 
 
 def _validate(selection):
+    coop.enabled(selection)
     suite = selection.get("suite")
     if type(selection.get("schema_version")) is not int or selection["schema_version"] != 1 or not isinstance(suite, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", suite):
         raise ValueError("Expected schema_version=1 and a valid suite name")
@@ -242,6 +243,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             if not asset.is_relative_to(game):
                 raise ValueError('Game input escapes installed game: ' + relative)
             sources.append(asset)
+    if coop.enabled(selection) and project / 'tests/native_queue/startup/client/ZZStartup.lua' not in sources:
+        raise ValueError('Host requires a suite using the common startup bootstrap')
     if selection.get('config_source'):
         sources.append(Path(selection['config_source']))
     if "ZombieBuddy" in selection["mods"]:
@@ -306,7 +309,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         shutil.copy2(support / "QueueEnergyPlacement.lua", lua / "shared")
         language = selection["languages"][-1] if role == "client2" else selection["languages"][0]
         # Shared Lua must be byte-identical for native MP checksums; role/language live in cache/Lua.
-        config = dict(selection, port=selection["ports"][0])
+        config = dict(selection, port=selection["ports"][0], resources=dict(admission.DEFAULTS, **selection.get('resources', {})))
         (lua / "shared/QueueTestSelection.lua").write_text("QueueTestSelection=" + _lua(config) + "\nreturn QueueTestSelection\n", encoding="utf-8")
         for name, value in {"smoke-user": role, "queue-mode": selection["mode"], "queue-scenario": selection["suite"],
                             "queue-health-kind": selection["kind"], "queue-health-language": language,
@@ -387,6 +390,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         path = output / 'server/Server/queue-smoke.ini'
         text = re.sub(r'^Mods=.*$', 'Mods=' + ';'.join(active), path.read_text(), flags=re.M)
         path.write_text(text)
+    if coop.enabled(selection):
+        coop.stage(output, runtime)
     _json(output / "selection.json", selection)
     if locked:
         pack.validate(locked, project, game, selection['mods'])
