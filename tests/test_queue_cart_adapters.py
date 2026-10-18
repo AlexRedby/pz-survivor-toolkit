@@ -144,8 +144,8 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path'])
-        for case, count in [('stop', 24), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path'])
+        for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -153,13 +153,14 @@ class CartAdapterTests(unittest.TestCase):
                 self.selection['cases'] = [case]
                 self.stage()
                 text = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
-                source='collision' if case in ('collision','footprint') else 'interaction' if case in ('interruption','interruption-matrix','wheel','repeat') else case
+                source='stop' if case=='stop-timing' else 'collision' if case in ('collision','footprint') else 'interaction' if case in ('interruption','interruption-matrix','wheel','repeat') else case
                 self.assertIn((ROOT / f'tests/native_queue/contributions/wooden_cart_motion/scenario-{source}.lua').read_text(), text)
                 if case in ('collision','footprint'): self.assertIn('["footprint"]=true',text)
                 if case == 'wheel': self.assertIn('["wheelCycle"]=true',text)
                 if case in ('interruption', 'interruption-matrix'): self.assertIn('["interruptions"]=true',text)
                 if case == 'interruption-matrix': self.assertIn('["interruptionMatrix"]=true',text)
                 if case == 'repeat': self.assertIn('["rapidRepeats"]=true',text)
+                if case == 'stop-timing': self.assertIn('["stopTiming"]=true',text)
                 self.assertIn('["size"]=96',text)
                 self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 3)
                 self.assertTrue(carts.complete(self.selection, 'client1', f'[WOOD_BANK] ALL_COMPLETE cases={count}\n'))
@@ -339,7 +340,7 @@ class CartAdapterTests(unittest.TestCase):
             body=text[start:text.index(marker,start)+len(marker)]
             flags=dict(disposable=True,footprint=bank in ('collision','footprint'),
                        wheelCycle=bank=='wheel',interruptions=bank in ('interruption','interruption-matrix'),
-                       interruptionMatrix=bank=='interruption-matrix',rapidRepeats=bank=='repeat')
+                       interruptionMatrix=bank=='interruption-matrix',rapidRepeats=bank=='repeat',stopTiming=bank=='stop-timing')
             from queue_checks.native import _lua
             for chosen in (None,[full[-1],full[0]] if count>1 else [full[0]]):
                 if chosen: flags['scenes']=chosen

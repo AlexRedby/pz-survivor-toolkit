@@ -28,15 +28,21 @@ end
 local kind='SaucedWheelbarrow.WheelbarrowWood'
 -- At this side heading A/Left is straight; W/Forward and S/Backward request opposite 90-degree turns.
 local cases={}
-for _,female in ipairs({false,true}) do
+for _,female in ipairs(config.stopTiming and {false} or {false,true}) do
  for _,full in ipairs({false,true}) do
-  for _,spec in ipairs({'run-stop','sprint-stop','short-release','run-resume-reverse','sprint-resume-turn','arc-stop'}) do
+  for _,spec in ipairs(config.stopTiming and {'run-stop','sprint-stop'} or {'run-stop','sprint-stop','short-release','run-resume-reverse','sprint-resume-turn','arc-stop'}) do
    local steps
    if spec=='run-stop' or spec=='sprint-stop' then
     local gait=spec=='run-stop' and 1 or 2
-    -- The fourth field delays this event until the next game tick, even after a slow frame.
-    steps={{1000,gait,2},{2500,0,0},{4000,gait,2},{5500,0,2},{5500,0,0,true},
-     {7000,gait,2},{8500,gait,0},{8500,0,0,true}}
+    if config.stopTiming then
+     -- Leave enough time for the full Sprint stop and its final hand-clearance return.
+     steps={{1000,gait,2},{2500,0,0},{6000,gait,2},{7500,0,2},{7600,0,0},
+      {11000,gait,2},{12500,0,2},{12800,0,0}}
+    else
+     -- The fourth field delays this event until the next game tick, even after a slow frame.
+     steps={{1000,gait,2},{2500,0,0},{4000,gait,2},{5500,0,2},{5500,0,0,true},
+      {7000,gait,2},{8500,gait,0},{8500,0,0,true}}
+    end
    elseif spec=='short-release' then steps={{1000,2,2},{1250,0,0},{4000,1,2},{4250,0,0},{6500,2,2},{7000,0,0}}
    elseif spec=='run-resume-reverse' then steps={{1000,1,2},{4000,0,0},{4150,1,2},{7000,0,0},{7150,0,3},{10000,0,0}}
    elseif spec=='sprint-resume-turn' then steps={{1000,2,2},{4000,0,0},{4150,2,1},{8500,0,0}}
@@ -46,7 +52,7 @@ for _,female in ipairs({false,true}) do
   end
  end
 end
-assert(#cases==24)
+assert(#cases==(config.stopTiming and 4 or 24))
 cases=CartLabSelectScenes(cases)
 local phase,since,stage,taken=0,0,0,{}
 local tickFrame,stageFrame=0,0
@@ -161,7 +167,7 @@ local function tick()
    ..' keyMove='..tostring(held('Forward') or held('Left') or held('Right') or held('Backward')))
  end
 
- if elapsed>=12000 then assert(toolkitVideoStop(),'Video stop rejected');mode='finish' end
+ if elapsed>=(config.stopTiming and 16000 or 12000) then assert(toolkitVideoStop(),'Video stop rejected');mode='finish' end
 end
 WoodPrototypeTick=function()
  local ok,err=pcall(tick)

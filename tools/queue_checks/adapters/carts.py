@@ -20,6 +20,7 @@ SP = 'wooden_cart_motion'
 MP = 'wooden_cart_multiplayer'
 SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.lua', 20),
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
+            'stop-timing': ('scenario-stop.lua', 4),
             'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
             'collision': ('scenario-collision.lua', 20), 'footprint': ('scenario-collision.lua', 20),
             'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
@@ -43,6 +44,8 @@ SCENE_SPECS = {
 def scene_names(case):
     if case == 'manual':
         return []
+    if case == 'stop-timing':
+        return ['male-' + load + '-' + spec for load in ('empty', 'full') for spec in ('run-stop', 'sprint-stop')]
     if case == 'repeat':
         return [sex + '-' + load + '-' + spec for sex in ('male', 'female')
                 for load in ('empty', 'full') for spec in ('complete-chain', 'pickup-restart', 'drop-restart')]
@@ -241,6 +244,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             if selection['cases'][0] == 'interruption-matrix': motion['interruptionMatrix']=True
             if selection['cases'][0] == 'repeat': motion['rapidRepeats']=True
             if selection['cases'][0] == 'wheel': motion['wheelCycle']=True
+            if selection['cases'][0] == 'stop-timing': motion['stopTiming']=True
             runtime_source = 'CartMotionConfig=' + _lua(motion) + '\n(function()\n' + (sp / 'scene-selection.lua').read_text() + '\nend)()\nif not CartAdapterBootstrapped then\nCartAdapterBootstrapped=true\n'
             runtime_source += '(function()\n' + (sp / 'test-area.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'obstacles.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'bootstrap.lua').read_text() + '\nend)()'
             runtime_source += '\nend\n' if manual else '\nelse\n(function()\n' + (sp / SP_CASES[selection['cases'][0]][0]).read_text() + '\nend)()\nend\n'
@@ -364,7 +368,7 @@ def _debug_coverage(cache, text, selection):
     if [row[0] for row in clips] != selected_scenes(selection):
         raise ValueError('Selected cart scene receipts differ from the snapshot')
     bank = selection['cases'][0]
-    seconds = {'interaction': 16, 'wheel': 30, 'interruption': 20, 'interruption-matrix': 20, 'repeat': 20}.get(bank, 12)
+    seconds = {'interaction': 16, 'wheel': 30, 'interruption': 20, 'interruption-matrix': 20, 'repeat': 20, 'stop-timing': 16}.get(bank, 12)
     probes = {kind: [json.loads(line) for line in (cache / file).read_text().splitlines()]
               for kind, file in (('body', 'body-clearance.jsonl'), ('grip', 'wood-grip-poses.jsonl'))}
     result = []
@@ -519,11 +523,13 @@ def verify(root, selection, catalog):
                 motion = _load(intake / 'analyze-reverse.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reverse-motion.json', json.dumps(motion, indent=2, allow_nan=False))
-            elif case in ('stop', 'stationary', 'maneuvers', 'collision', 'footprint', 'path'):
+            elif case in ('stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'path'):
                 analyzer='footprint' if case=='collision' else case
                 evidence['analyzers'][case] = _run([sys.executable, str(intake / ('analyze-' + analyzer + '.py')),
                     '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / (case + '-motion.json'))], analysis, case)
                 evidence['motion'] = _json(analysis / (case + '-motion.json'))
+                if case == 'stop-timing' and not evidence['motion'].get('timingVerified'):
+                    raise ValueError('Stop timing capture did not verify its measurement windows')
                 if case == 'path' and not all(evidence['motion'].get(key) for key in ('motionPass', 'footprintVerified')):
                     raise ValueError('Native path/footprint verification failed: ' + str(evidence['motion'].get('failures')))
             elif case == 'reversal':
