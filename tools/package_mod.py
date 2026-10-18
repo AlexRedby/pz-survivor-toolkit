@@ -29,7 +29,9 @@ def validate(mod_root: Path = MOD_ROOT) -> list[str]:
         return errors
     if not mod_root.is_dir():
         return [f"missing mod directory: {mod_root}"]
-    for required in (mod_root / "common", mod_root / "42"):
+    required_directories = [mod_root / layer / "media" / name
+                            for layer in ("common", "42") for name in ("AnimSets", "actiongroups")]
+    for required in (mod_root / "common", mod_root / "42", *required_directories):
         if not required.is_dir():
             errors.append(f"required directory is missing or not a directory: {required.relative_to(ROOT)}")
     for required in (mod_info, bootstrap):
@@ -72,12 +74,14 @@ def package(output: Path, mod_root: Path = MOD_ROOT) -> None:
     with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as staging:
         temporary = Path(staging) / output.name
         with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr(f"{mod_root.name}/common/", b"")
             for path in sorted(mod_root.rglob("*")):
-                if not path.is_file() or path.name == ".gitkeep":
+                if path.name == ".gitkeep":
                     continue
                 archive_name = Path(mod_root.name) / path.relative_to(mod_root)
-                archive.write(path, archive_name.as_posix())
+                if path.is_dir():
+                    archive.writestr(archive_name.as_posix() + "/", b"")
+                elif path.is_file():
+                    archive.write(path, archive_name.as_posix())
         temporary.replace(output)
 
 

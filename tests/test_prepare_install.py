@@ -109,6 +109,55 @@ class PrepareInstall(unittest.TestCase):
                          ["PZToolkitFonts.jar", "PZToolkitJavaPatches.jar"])
         self.assertFalse(any(path.suffix in (".class", ".log", ".zip") for path in paths))
 
+    def test_prepared_and_archived_animation_directories_match_without_changing_sources(self):
+        mod = self.root / 'PZSurvivorToolkit'
+        directories = [Path(layer) / 'media' / name for layer in ('common', '42')
+                       for name in ('AnimSets', 'actiongroups')]
+        before = {str(path.relative_to(mod)): path.read_bytes() for path in mod.rglob('*') if path.is_file()}
+        prepare_install.prepare(self.root)
+        for relative in directories:
+            self.assertTrue((self.output / 'mods/PZSurvivorToolkit' / relative).is_dir(), str(relative))
+        archive = self.root / 'toolkit.zip'
+        package_mod.package(archive, mod)
+        extracted = self.root / 'extracted'
+        with zipfile.ZipFile(archive) as bundle:
+            for relative in directories:
+                self.assertTrue(bundle.getinfo('PZSurvivorToolkit/' + relative.as_posix() + '/').is_dir())
+            self.assertFalse(any(Path(name).name == '.gitkeep' for name in bundle.namelist()))
+            bundle.extractall(extracted)
+        for relative in directories:
+            self.assertTrue((extracted / 'PZSurvivorToolkit' / relative).is_dir(), str(relative))
+        self.assertFalse(list(extracted.rglob('.gitkeep')))
+        self.assertEqual(before, {str(path.relative_to(mod)): path.read_bytes()
+                                  for path in mod.rglob('*') if path.is_file()})
+
+    def test_missing_required_empty_animation_directory_rejects_before_build(self):
+        mod = self.root / 'PZSurvivorToolkit'
+        missing = mod / 'common/media/actiongroups'
+        shutil.rmtree(missing)
+        errors = package_mod.validate(mod)
+        self.assertTrue(any('common/media/actiongroups' in error for error in errors), errors)
+        with self.assertRaisesRegex(ValueError, 'common/media/actiongroups'):
+            prepare_install.prepare(self.root)
+        self.build.assert_not_called()
+        self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
+        self.assertEqual(list((self.root / 'dist').iterdir()), [self.output])
+
+    def test_invalid_selected_mod_ids_reject_before_build_without_changing_output(self):
+        mods = 'ZombieBuddy;' + ';'.join(prepare_install.MOD_IDS)
+        for invalid in (mods + ';ZombieBuddy', mods + ';', ';' + mods,
+                        mods.replace(';', ';;', 1), mods + ';../OtherMod', mods + ';.',
+                        mods.replace('PZSurvivorToolkit', ' PZSurvivorToolkit'),
+                        mods.replace('PZSurvivorToolkit', 'PZSurvivorToolkit ')):
+            with self.subTest(mods=invalid):
+                (self.root / prepare_install.INI_NAME).write_text('Mods=' + invalid + '\n')
+                with self.assertRaises(ValueError):
+                    prepare_install.prepare(self.root)
+                self.build.assert_not_called()
+                self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
+                self.assertEqual(list(self.output.rglob('*')), [self.sentinel])
+                self.assertEqual(list((self.root / 'dist').iterdir()), [self.output])
+
     def test_relative_inputs_are_resolved_from_caller_before_build_changes_cwd(self):
         caller = self.root / 'build caller'
         caller.mkdir()

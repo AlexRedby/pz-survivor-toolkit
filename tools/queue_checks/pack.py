@@ -2,18 +2,17 @@
 from pathlib import Path
 
 from . import report
+from .mod_selection import mod_ids
 
 
 def create(project, output, game, workshop=(), overrides=None):
-    from .native import _locations, _metadata, hashes, sha256, VERSION, MOD_ID
+    from .native import _locations, _metadata, hashes, sha256, VERSION
     project, output, game = Path(project), Path(output), Path(game)
     if output.exists():
         raise FileExistsError('Fresh pack lock output required')
     ini = project / 'SurvivorQoL-selected.ini'
     settings = _metadata(ini)
-    mods = settings['Mods'].split(';')
-    if any(not MOD_ID.fullmatch(id) or id in ('.', '..') for id in mods) or len(mods) != len(set(mods)):
-        raise ValueError('Selected pack contains invalid or duplicate Mod IDs')
+    mods = mod_ids(settings.get('Mods', ''))
     locations = _locations(project, list(map(Path, workshop)), mods, overrides)
     if any(output.resolve().is_relative_to(root) for root in locations.values()):
         raise ValueError('Pack lock output must be outside selected mod sources')
@@ -54,7 +53,7 @@ def validate(path, project, game, mods):
     if sha256(Path(project) / 'SurvivorQoL-selected.ini') != value.get('selected_ini_sha256'):
         raise ValueError('Selected INI differs from pack lock; regenerate the lock explicitly')
     settings = _metadata(Path(project) / 'SurvivorQoL-selected.ini')
-    if value.get('selected_settings') != settings or identifiers != settings.get('Mods', '').split(';'):
+    if value.get('selected_settings') != settings or identifiers != mod_ids(settings.get('Mods', '')):
         raise ValueError('Pack lock fields differ from the actual selected INI')
     if sha256(Path(game) / 'projectzomboid.jar') != value.get('game_sha256'):
         raise ValueError('Game build differs from pack lock')

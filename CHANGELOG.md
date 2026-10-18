@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.91
+
+- **Fixed:** Prepared mods and developer ZIPs retain the common/version animation and action-group directories required by native Host loading, avoiding missing-directory errors that the test snapshots previously masked.
+
 ### 0.1.90
 
 - **Changed:** Generator repair chains use shared native completion ownership while preserving exact repair effects, continuation guards and the unsupported-engine fallback.

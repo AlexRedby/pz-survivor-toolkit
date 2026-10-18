@@ -9,10 +9,10 @@ import shutil
 import subprocess
 import zipfile
 from . import adapters, worlds, pack, admission, report, coop
+from .mod_selection import MOD_ID
 
 
 VERSION = re.compile(r"\d+(?:\.\d+)*")
-MOD_ID = re.compile(r"[A-Za-z0-9_.-]+")
 
 
 def jdk_binary(jdk, name):

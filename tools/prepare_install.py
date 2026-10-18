@@ -12,8 +12,10 @@ import tempfile
 
 try:
     from .package_mod import ROOT, validate, validate_no_symlinks
+    from .queue_checks.mod_selection import mod_ids
 except ImportError:
     from package_mod import ROOT, validate, validate_no_symlinks
+    from queue_checks.mod_selection import mod_ids
 
 
 MOD_IDS = ("PZSurvivorToolkit", "PZToolkitJavaPatches")
@@ -49,7 +51,7 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
         if errors:
             raise ValueError("; ".join(errors))
     ini = metadata(root / INI_NAME)
-    ordered = [name.strip() for name in ini.get("Mods", "").split(";")]
+    ordered = mod_ids(ini.get("Mods", ""))
     selected = set(ordered)
     missing = set(MOD_IDS) - selected
     if missing:

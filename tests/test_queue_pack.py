@@ -41,6 +41,14 @@ class PackLockTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.create()
 
+    def test_invalid_selected_ids_are_rejected_before_resolving_sources(self):
+        for value in ('First;First', 'First;;Second', 'First;', 'First;../Second', 'First; Second', ''):
+            with self.subTest(value=value):
+                self.ini.write_text('Mods=' + value + '\n')
+                with self.assertRaisesRegex(ValueError, 'invalid or duplicate Mod IDs'):
+                    self.create()
+                self.assertFalse(self.output.exists())
+
     def test_missing_mod_blocks_lock_without_output(self):
         self.ini.write_text('Mods=Missing\n')
         with self.assertRaisesRegex(ValueError, 'Missing'):
