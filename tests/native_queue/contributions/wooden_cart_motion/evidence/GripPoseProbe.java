@@ -109,7 +109,7 @@ public final class GripPoseProbe {
                 .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
                 .type(named("net.alexredby.pztoolkitjavapatches.CartGrip"))
                 .transform((builder,description,loader,module,protection)->builder.visit(
-                    Advice.to(GripAdvice.class).on(named("grip").and(takesArguments(6))))
+                    Advice.to(GripAdvice.class).on(named("grip").and(takesArguments(7))))
                     .visit(Advice.to(ReachAdvice.class).on(named("reach").and(takesArguments(7)))))
                 .installOn(instrumentation);installed=true;
         }

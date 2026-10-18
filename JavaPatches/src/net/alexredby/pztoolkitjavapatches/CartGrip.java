@@ -5,6 +5,7 @@ import java.util.WeakHashMap;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import zombie.characters.IsoPlayer;
 import zombie.core.math.PZMath;
 import zombie.core.skinnedmodel.ModelManager;
 import zombie.core.skinnedmodel.animation.AnimationClip;
@@ -57,8 +58,14 @@ public final class CartGrip {
     }
 
     static Matrix4f[] livePoses(SkinningData actor, SkinningData body, FloatBuffer palette, Matrix4f delta, boolean full) {
+        return livePoses(actor,body,palette,delta,full,(float)Math.abs(Math.atan2(delta.m01(),delta.m00())));
+    }
+
+    static Matrix4f[] livePoses(SkinningData actor, SkinningData body, FloatBuffer palette, Matrix4f delta,
+        boolean full, float pressure) {
         var state=matrices.get();
-        if(actor==null || actor.numBones()>state.poses.length || body==null || palette==null || !delta.isFinite()) return null;
+        if(actor==null || actor.numBones()>state.poses.length || body==null || palette==null || !delta.isFinite()
+            || !Float.isFinite(pressure) || pressure<0) return null;
         var spine=actor.getBone("Bip01_Spine");
         if(spine==null) return null;
         int position=palette.position();
@@ -90,7 +97,8 @@ public final class CartGrip {
         // Bend above the pelvis around the already banked chest; both native leg chains stay untouched.
         base=state.poses[chest.index];
         state.adjustment.translation(base.m30(),base.m31(),base.m32())
-            .rotateX(-(float)Math.toRadians(14*CartSteeringMath.woodenTurnAmount(lean)+6*extra))
+            .rotateX(-(float)Math.toRadians(14*CartSteeringMath.woodenTurnAmount(pressure)
+                +6*CartSteeringMath.woodenBankExtra(pressure)))
             .translate(-base.m30(),-base.m31(),-base.m32());
         for(int i=0;i<actor.numBones();i++) if(descendant(actor.getBoneAt(i),chest))
             state.adjustment.mul(state.poses[i],state.poses[i]);
@@ -339,6 +347,12 @@ public final class CartGrip {
     }
 
     static boolean target(String model, boolean left, boolean female, Matrix4f delta, Matrix4f cart, Matrix4f out) {
+        return target(model,left,female,delta,cart,out,(float)Math.abs(Math.atan2(delta.m01(),delta.m00())));
+    }
+
+    static boolean target(String model, boolean left, boolean female, Matrix4f delta, Matrix4f cart, Matrix4f out,
+        float pressure) {
+        if(!Float.isFinite(pressure) || pressure<0) return false;
         var point=new Vector3f();
         if(!handle(model,left,point)) return false;
         cart.transformPosition(point);
@@ -354,8 +368,7 @@ public final class CartGrip {
             // Diagonal underhand grip: shaft across curled fingers, palm inward/up, wrist above the handle.
             var x=down.mul(.9961947f,new Vector3f()).fma(.08715574f,inward);
             var z=inward.mul(.9961947f,new Vector3f()).fma(-.08715574f,down);
-            float beta=(float)Math.toRadians(25+10*CartSteeringMath.woodenTurnAmount(
-                (float)Math.atan2(delta.m01(),delta.m00())));
+            float beta=(float)Math.toRadians(25+10*CartSteeringMath.woodenTurnAmount(pressure));
             x.mul(wood?(float)Math.cos(beta):.5735200f).fma(wood?-(float)Math.sin(beta):-.8191916f,axis).normalize();
             var y=z.cross(x,new Vector3f()).normalize();z=x.cross(y,new Vector3f()).normalize();
             out.m00(x.x).m01(x.y).m02(x.z).m10(y.x).m11(y.y).m12(y.z).m20(z.x).m21(z.y).m22(z.z);
@@ -370,9 +383,14 @@ public final class CartGrip {
     }
 
     static boolean grip(Matrix4f[] poses, SkinningData actor, String model, boolean female, Matrix4f delta, Matrix4f cart) {
+        return grip(poses,actor,model,female,delta,cart,(float)Math.abs(Math.atan2(delta.m01(),delta.m00())));
+    }
+
+    static boolean grip(Matrix4f[] poses, SkinningData actor, String model, boolean female, Matrix4f delta, Matrix4f cart,
+        float pressure) {
         for(String side:new String[]{"L","R"}) {
             var target=matrices.get().target;
-            if(!target(model,"L".equals(side),female,delta,cart,target)
+            if(!target(model,"L".equals(side),female,delta,cart,target,pressure)
                 || !reach(poses,actor,"Bip01_"+side+"_Hand",target,model.startsWith("Wheelbarrow")?delta:null,
                     "WheelbarrowWood".equals(model))) return false;
             closeFingers(poses,actor,side,grasp(female,model),model.startsWith("Wheelbarrow"));
@@ -420,9 +438,11 @@ public final class CartGrip {
                 || index>=bodySkin.boneOffset.size() || bodySkin.boneOffset.get(index)==null) return false;
         }
         var actor=owner.animPlayer.getSkinningData();
+        float pressure=(float)Math.abs(Math.atan2(delta.m01(),delta.m00()));
+        if(slot.character instanceof IsoPlayer player) pressure=Math.max(pressure,(float)CartSteeringHooks.clearanceLean(player));
         // Retain the wooden cart gait's spine/clavicle motion; IK absorbs arm swing at the fixed handles.
-        var poses="WheelbarrowWood".equals(model)?livePoses(actor,bodySkin,body.matrixPalette,delta):poses(clip,actor,delta);
-        if(poses==null || !grip(poses,actor,model,slot.character.isFemale(),delta,cart)) return false;
+        var poses="WheelbarrowWood".equals(model)?livePoses(actor,bodySkin,body.matrixPalette,delta,false,pressure):poses(clip,actor,delta);
+        if(poses==null || !grip(poses,actor,model,slot.character.isFemale(),delta,cart,pressure)) return false;
         if("WheelbarrowWood".equals(model)) {
             float runWeight=CartLegPace.runningWeight(slot.character);
             if(runWeight>0) {

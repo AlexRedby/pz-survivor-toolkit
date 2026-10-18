@@ -18,7 +18,7 @@ public final class CartSteeringMath {
     }
 
     static final class Bank {
-        double angle, velocity;
+        double angle, velocity, pressure, pressureVelocity;
 
         double update(double target, double seconds) {
             if (!(seconds > 0)) return angle;
@@ -29,6 +29,12 @@ public final class CartSteeringMath {
             double decay = Math.exp(-frequency * seconds);
             angle = target + (offset + rate * seconds) * decay;
             velocity = (velocity - frequency * rate * seconds) * decay;
+            // Retain clearance through a bank reversal without rectifying raw coordinate noise.
+            double magnitude = Math.abs(angle);
+            offset = pressure - magnitude;
+            rate = pressureVelocity + frequency * offset;
+            pressure = magnitude + (offset + rate * seconds) * decay;
+            pressureVelocity = (pressureVelocity - frequency * rate * seconds) * decay;
             return angle;
         }
     }

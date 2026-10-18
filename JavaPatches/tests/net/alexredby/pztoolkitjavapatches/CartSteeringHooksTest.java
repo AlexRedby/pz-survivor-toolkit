@@ -209,6 +209,27 @@ public final class CartSteeringHooksTest {
         }
     }
 
+    private static void slalomClearance(Unsafe unsafe, Map<?,?> states) throws Exception {
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
+        type(cart,"SaucedWheelbarrow.WheelbarrowWood");
+        CartSteeringHooks.input(player,new IsoPlayer.InputState());
+        Object state=states.get(player),bank=field(state,"bank").get(state);
+        double pressure=Math.toRadians(7),before=CartSteeringHooks.wheelPhase(player);
+        field(bank,"pressure").setDouble(bank,pressure);
+        check(CartSteeringHooks.lean(player)==0 && CartSteeringHooks.clearanceLean(player)==pressure,
+            "neutral slalom bank must retain independent handle clearance");
+        double travel=CartSteeringMath.woodenAxle((float)pressure,0)-CartSteeringMath.woodenAxle(0,0);
+        check(Math.abs(CartSteeringHooks.wheelPhase(player)-CartWheelSpin.advance(before,travel))<1e-6,
+            "wheel roll must follow retained cart clearance through neutral bank");
+        field(state,"lean").setDouble(state,-pressure/2);
+        check(CartSteeringHooks.lean(player)<0 && CartSteeringHooks.clearanceLean(player)==pressure,
+            "opposite bank must not change the retained pressure into a signed offset");
+        CartSteeringHooks.reset(player);
+        check(CartSteeringHooks.clearanceLean(player)==0,"reset must retire slalom clearance");
+    }
+
     private static void brakeControls(Unsafe unsafe, Map<?,?> states) throws Exception {
         var player=(Player)unsafe.allocateInstance(Player.class);
         var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
@@ -905,6 +926,7 @@ public final class CartSteeringHooksTest {
         stationaryCadence(unsafe,states);
         brakeControls(unsafe,states);
         adjacentBrakeRelease(unsafe,states);
+        slalomClearance(unsafe,states);
         wovenPathControls(unsafe,states);
         System.out.println("CART_STEERING_HOOKS_PASS (combat, local, path, scope, ownership, reset, native direction transitions)");
     }

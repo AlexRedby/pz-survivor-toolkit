@@ -18,7 +18,15 @@ public final class ClearanceProbeCheck {
     }
     private static final class Player extends zombie.characters.IsoPlayer {
         InventoryItem primary,secondary;
+        zombie.core.skinnedmodel.advancedanimation.AnimationVariableSource variables;
         Player(){super(null,null,0,0,0);}
+        @Override public zombie.core.skinnedmodel.advancedanimation.AnimationVariableSource getGameVariablesInternal(){
+            if(variables==null)variables=new zombie.core.skinnedmodel.advancedanimation.AnimationVariableSource();
+            return variables;
+        }
+        @Override public zombie.core.skinnedmodel.advancedanimation.IAnimationVariableSlot setVariable(String name,boolean value){
+            return getGameVariablesInternal().setVariable(name,value);
+        }
         @Override public InventoryItem getPrimaryHandItem(){return primary;}
         @Override public InventoryItem getSecondaryHandItem(){return secondary;}
         @Override public java.util.Stack<zombie.characters.CharacterTimedActions.BaseAction> getCharacterActions(){return new java.util.Stack<>();}
@@ -91,6 +99,7 @@ public final class ClearanceProbeCheck {
     }
     private static void firstPickupStopRender(Path directory) throws Exception {
         var actor=allocate(Player.class);var otherActor=allocate(Player.class);var cart=allocate(Cart.class);
+        actor.setVariable("ToolkitWoodCartClipPilot",false);
         var world=allocate(WorldItem.class);cart.world=world;world.item=cart;
         var action=allocate(LuaTimedActionNew.class);action.chr=actor;
         var table=new se.krka.kahlua.j2se.KahluaTableImpl(new java.util.HashMap<>());

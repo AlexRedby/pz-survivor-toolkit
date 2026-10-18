@@ -145,15 +145,16 @@ public final class CartGripTest {
                 for(int j=0;j<16;j++) values[j]=Float.parseFloat(cells[1+i*16+j]);
                 nativePoses[i]=new Matrix4f().set(values);
             }
-            for(int tick=-84;tick<=84;tick++) {
+            for(int tick=-84;tick<=84;tick++) for(int sample=0;sample<3;sample++) {
                 float bank=(float)Math.toRadians(tick/12.0);
+                float pressure=Math.abs(bank)+sample*((float)Math.toRadians(7)-Math.abs(bank))/2;
                 var cart=new Matrix4f().set(new float[]{76.5f,-4.1037783e-5f,-9.11952e-6f,0f,2.8023098e-5f,30.694286f,70.07218f,0f,
                     -2.4333809e-5f,-70.07218f,30.694283f,0f,-.0060535767f,.16740987f,-.41188842f,1f});
                 var delta=new Matrix4f();CartGrounding.lowerHandles(cart,"WheelbarrowWood");
-                if(!CartGrounding.alignWood(cart,bank,0,delta)) throw new AssertionError("captured wood grounding rejected");
+                if(!CartGrounding.alignWood(cart,bank,pressure,0,delta)) throw new AssertionError("captured wood grounding rejected");
                 var palette=FloatBuffer.allocate(names.length*16);
                 for(var pose:nativePoses) PZMath.convertMatrix(new Matrix4f(pose).transpose(),new org.lwjgl.util.vector.Matrix4f()).store(palette);
-                var poses=CartGrip.livePoses(actor,actor,palette,delta);
+                var poses=CartGrip.livePoses(actor,actor,palette,delta,false,pressure);
                 if(poses==null) throw new AssertionError("captured wood torso rejected");
                 var before=java.util.Arrays.stream(poses).limit(names.length).map(Matrix4f::new).toArray(Matrix4f[]::new);
                 if(!poses[0].equals(nativePoses[0],.000001f)) throw new AssertionError("captured native hip anchor changed");
@@ -162,12 +163,12 @@ public final class CartGripTest {
                     float old=nativePoses[parent].getTranslation(new Vector3f()).distance(nativePoses[i].getTranslation(new Vector3f()));
                     float now=poses[parent].getTranslation(new Vector3f()).distance(poses[i].getTranslation(new Vector3f()));
                     if(Math.abs(old-now)>.00001f) throw new AssertionError("captured torso link stretched: "+names[i]);
-                    if(tick==0 && !poses[i].equals(nativePoses[i],.000001f))
+                    if(tick==0 && sample==0 && !poses[i].equals(nativePoses[i],.000001f))
                         throw new AssertionError("straight wooden pose changed the native gait: "+names[i]);
                 }
-                if(!CartGrip.grip(poses,actor,"WheelbarrowWood",female,delta,cart))
-                    throw new AssertionError("captured native wood grip unreachable: frame="+frame+" bank="+bank);
-                if(tick==0) {
+                if(!CartGrip.grip(poses,actor,"WheelbarrowWood",female,delta,cart,pressure))
+                    throw new AssertionError("captured native wood grip unreachable: frame="+frame+" bank="+bank+" pressure="+pressure);
+                if(tick==0 && sample==0) {
                     var contact=java.util.Arrays.stream(poses).limit(names.length).map(Matrix4f::new).toArray(Matrix4f[]::new);
                     for(float amount:new float[]{0,.5f,1}) {
                         var released=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
@@ -195,8 +196,8 @@ public final class CartGripTest {
                     float length=before[upper].getTranslation(new Vector3f()).distance(before[forearm].getTranslation(new Vector3f()))
                         +before[forearm].getTranslation(new Vector3f()).distance(before[hand].getTranslation(new Vector3f()));
                     float reserve=length-shoulder.distance(wrist);
-                    if(reserve<(Math.abs(bank)<=Math.toRadians(3)?.004f:.0025f)) throw new AssertionError("captured native wood grip has insufficient reach reserve: frame="
-                        +frame+" bank="+bank+" reserve="+reserve);
+                    if(reserve<(pressure<=Math.toRadians(3)?.004f:.0025f)) throw new AssertionError("captured native wood grip has insufficient reach reserve: frame="
+                        +frame+" bank="+bank+" pressure="+pressure+" reserve="+reserve);
                     var shape=CartGrip.grasp(female,"WheelbarrowWood");
                     var actual=poses[hand].transformPosition(new Vector3f(shape.palmX(),0,shape.palmDepth()));
                     var expected=new Vector3f();CartGrip.handle("WheelbarrowWood",side==0,expected);cart.transformPosition(expected);
@@ -216,19 +217,19 @@ public final class CartGripTest {
                     float roll=(float)Math.toDegrees(Math.acos(Math.max(-1,Math.min(1,forearmPalm.dot(handPalm)))));
                     float abduction=(float)Math.toDegrees(Math.atan2(Math.abs(elbow.x-shoulder.x),shoulder.y-elbow.y));
                     float forward=(float)Math.toDegrees(Math.atan2(elbow.z-wrist.z,elbow.y-wrist.y));
-                    // Actual native gait includes the turn's chest bend, while the arm links and palm contact stay exact.
-                    if((Math.abs(bank)<=Math.toRadians(3) && (bend>33 || abduction>30 || forward>40))
+                    // On a bank reversal, forward handle pressure can outlast the actual roll; retain contact and native link lengths.
+                    if((pressure<=Math.toRadians(3) && (bend>33 || abduction>30 || forward>40))
                         || bend>50 || roll>10 || abduction>55 || elbow.y>shoulder.y-.085f || forward<0 || forward>50)
-                        throw new AssertionError("unnatural captured wood arm: frame="+frame+" bank="+bank+" bend="+bend
+                        throw new AssertionError("unnatural captured wood arm: frame="+frame+" bank="+bank+" pressure="+pressure+" bend="+bend
                             +" roll="+roll+" abduction="+abduction+" forward="+forward);
                     var shaft=new Vector3f(side==0?.13444413f:-.13444413f,.98614604f,-.09716362f);
                     cart.transformDirection(shaft).normalize();
                     float shaftAngle=(float)Math.toDegrees(Math.acos(Math.abs(handAxis.dot(shaft))));
-                    float t=(float)Math.sin(Math.min(1,Math.abs(bank)/Math.toRadians(2.5))*Math.PI/2);
+                    float t=CartSteeringMath.woodenTurnAmount(pressure);
                     var palm=poses[hand].transformDirection(new Vector3f(0,0,1)).normalize();
                     var unbankedPalm=new Matrix4f(delta).invert().transformDirection(palm).normalize();
                     if(Math.abs(shaftAngle-(65-10*t))>1 || unbankedPalm.x*(side==0?-1:1)<.9f || unbankedPalm.y<.02f)
-                        throw new AssertionError("wooden shaft/grip: frame="+frame+" bank="+bank+" shaft="+shaftAngle+" expected="+(65-10*t)+" palm="+palm);
+                        throw new AssertionError("wooden shaft/grip: frame="+frame+" bank="+bank+" pressure="+pressure+" shaft="+shaftAngle+" expected="+(65-10*t)+" palm="+palm);
                 }
                 if(!poses[0].equals(before[0])) throw new AssertionError("captured native wood hip anchor changed by IK");
             }
@@ -266,9 +267,11 @@ public final class CartGripTest {
         for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
         var actor=skeleton(names,List.of(-1,0,1,1,2,4,5,3,7,8,0,10,11,0,13,14),offsets);
         int frames=0;
-        for(String line:captures.strip().split("\\n")) {
+        for(String line:captures.strip().split("\\n")) for(int sample=0;sample<3;sample++) {
             var cells=line.split(",");String label=cells[0];boolean female=cells[1].equals("1");
             float gaitShift=Float.parseFloat(cells[2]);
+            float bank=(float)Math.atan2(Float.parseFloat(cells[4]),Float.parseFloat(cells[3]));
+            float pressure=Math.abs(bank)+sample*((float)Math.toRadians(7)-Math.abs(bank))/2;
             var matrices=new Matrix4f[names.length+2];
             for(int i=0;i<matrices.length;i++) {
                 var values=new float[16];
@@ -276,11 +279,17 @@ public final class CartGripTest {
                 matrices[i]=new Matrix4f().set(values);
             }
             var delta=matrices[0];var cart=matrices[1];
-            // Keep each captured bank/pitch/floor transform; only add its native gait clearance shift.
-            cart.m32(cart.m32()+gaitShift);
+            // Keep each captured bank/pitch/floor transform while retaining the larger forward clearance through a reversal.
+            cart.m32(cart.m32()+gaitShift+CartSteeringMath.woodenShift(pressure,0)-CartSteeringMath.woodenShift(bank,0));
             var poses=java.util.Arrays.copyOfRange(matrices,2,matrices.length);
+            var pivot=poses[1].getTranslation(new Vector3f());
+            float bendChange=14*(CartSteeringMath.woodenTurnAmount(pressure)-CartSteeringMath.woodenTurnAmount(bank))
+                +6*(CartSteeringMath.woodenBankExtra(pressure)-CartSteeringMath.woodenBankExtra(bank));
+            var change=new Matrix4f().translation(pivot).rotateX(-(float)Math.toRadians(bendChange))
+                .translate(-pivot.x,-pivot.y,-pivot.z);
+            for(int i=1;i<10;i++) change.mul(poses[i],poses[i]);
             var before=java.util.Arrays.stream(poses).map(Matrix4f::new).toArray(Matrix4f[]::new);
-            if(!CartGrip.grip(poses,actor,"WheelbarrowWood",female,delta,cart))
+            if(!CartGrip.grip(poses,actor,"WheelbarrowWood",female,delta,cart,pressure))
                 throw new AssertionError("native wooden Run grip unreachable: "+label);
             for(int side=0;side<2;side++) {
                 int upper=side==0?4:7,forearm=upper+1,hand=upper+2;
@@ -312,12 +321,14 @@ public final class CartGripTest {
                 float roll=(float)Math.toDegrees(Math.acos(Math.max(-1,Math.min(1,forearmPalm.dot(handPalm)))));
                 // Run keeps its native forward torso gait; its measured arm posture differs from the walking grip.
                 boolean sprint=label.contains("-sprint-");
-                if(bend>(sprint?47:43) || roll>10 || abduction>(sprint?41:39) || forward< -3 || forward>(sprint?56:55))
+                // Held pressure can outlast the roll during an S-turn; the arms must reach without stretching or losing contact.
+                if(bend>(sprint?47:sample==0?43:46) || roll>10 || abduction>(sprint || sample>0?41:39)
+                    || forward< -3 || forward>(sample>0?57:sprint?56:55))
                     throw new AssertionError("unnatural native Run arm: "+label+" bend="+bend+" abduction="+abduction+" forward="+forward);
             }
             for(int i:new int[]{0,10,11,12,13,14,15}) if(!poses[i].equals(before[i]))
                 throw new AssertionError("native Run hip/leg pose changed: "+label+" bone="+names[i]);
-            frames++;
+            if(sample==0) frames++;
         }
         if(frames!=18) throw new AssertionError("missing native Run/Sprint/transition fixtures");
     }

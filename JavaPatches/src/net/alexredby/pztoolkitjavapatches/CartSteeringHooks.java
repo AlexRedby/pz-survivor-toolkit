@@ -144,10 +144,16 @@ public final class CartSteeringHooks {
         return state!=null && enabled(player) && wheelbarrow(player) ? state.lean : 0;
     }
 
+    public static double clearanceLean(IsoPlayer player) {
+        State state=states.get(player);
+        return state!=null && enabled(player) && wooden(player)
+            ? Math.max(Math.abs(state.lean),state.bank.pressure):0;
+    }
+
     public static double wheelPhase(IsoPlayer player) {
         State state=states.get(player);
         return state!=null && enabled(player) && wooden(player)
-            ? state.path?CartWheelSpin.itemPhase(state.cart):CartWheelSpin.advance(state.wheelOrigin+state.wheelPhase,CartSteeringMath.woodenAxle((float)state.lean,CartLegPace.woodenGaitShift(player))
+            ? state.path?CartWheelSpin.itemPhase(state.cart):CartWheelSpin.advance(state.wheelOrigin+state.wheelPhase,CartSteeringMath.woodenAxle((float)clearanceLean(player),CartLegPace.woodenGaitShift(player))
                 -CartSteeringMath.woodenAxle(0,0)) : Double.NaN;
     }
 
@@ -179,7 +185,7 @@ public final class CartSteeringHooks {
     private static double axle(IsoPlayer player) {
         // Actual grounded wheel vertices; Model.vectorToWorldCoords scales model Z by -1.5.
         return switch(player.getPrimaryHandItem().getFullType()) {
-            case "SaucedWheelbarrow.WheelbarrowWood" -> CartSteeringMath.woodenAxle((float)lean(player),CartLegPace.woodenGaitShift(player));
+            case "SaucedWheelbarrow.WheelbarrowWood" -> CartSteeringMath.woodenAxle((float)clearanceLean(player),CartLegPace.woodenGaitShift(player));
             case "SaucedWheelbarrow.WheelbarrowMetal" -> 1.1691522;
             default -> 0;
         };

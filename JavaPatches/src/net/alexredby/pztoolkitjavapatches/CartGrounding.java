@@ -152,9 +152,14 @@ public final class CartGrounding {
     }
 
     static boolean alignWood(Matrix4f transform, float lean, float gaitShift, Matrix4f delta) {
-        if(!Float.isFinite(lean) || !Float.isFinite(gaitShift) || gaitShift<-.24f || gaitShift>0) return false;
+        return alignWood(transform,lean,Math.abs(lean),gaitShift,delta);
+    }
+
+    static boolean alignWood(Matrix4f transform, float lean, float pressure, float gaitShift, Matrix4f delta) {
+        if(!Float.isFinite(lean) || !Float.isFinite(pressure) || pressure<Math.abs(lean)
+            || !Float.isFinite(gaitShift) || gaitShift<-.24f || gaitShift>0) return false;
         // The running torso moves forward; follow its native blend without lifting the handles.
-        transform.m32(transform.m32()+CartSteeringMath.woodenShift(lean,gaitShift));
+        transform.m32(transform.m32()+CartSteeringMath.woodenShift(pressure,gaitShift));
         float height=transform.m31();
         if(!ground(transform,woodenLowest(transform))) return false;
         delta.translation(0,transform.m31()-height,0);
@@ -186,7 +191,7 @@ public final class CartGrounding {
             if(rigid) lowerHandles(transform,name);
             float lean=(float)CartSteeringHooks.lean(player);
             if(rigid
-                && ("WheelbarrowWood".equals(name)?alignWood(transform,lean,CartLegPace.woodenGaitShift(player),state.delta)
+                && ("WheelbarrowWood".equals(name)?alignWood(transform,lean,(float)CartSteeringHooks.clearanceLean(player),CartLegPace.woodenGaitShift(player),state.delta)
                     :align(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,
                         contact(instance.modelScript.getName()),lean,state.delta))) {
                 // A failed arm solve must not replace the grounded cart with the moving hand attachment.

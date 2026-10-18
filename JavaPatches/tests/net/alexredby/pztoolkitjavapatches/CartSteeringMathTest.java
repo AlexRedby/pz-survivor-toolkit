@@ -127,6 +127,31 @@ public final class CartSteeringMathTest {
     }
 
     private static void woodenTransitions() {
+        for(int fps:new int[]{30,60,144}) {
+            var bank=new CartSteeringMath.Bank();
+            double dt=1.0/fps,cap=Math.toRadians(7);
+            for(int frame=0;frame<fps*2;frame++) {
+                bank.update(cap,dt);
+                close(Math.max(bank.pressure,Math.abs(bank.angle)),bank.angle,"single-sided bank must preserve the accepted pose");
+            }
+            double minimum=cap;
+            for(int frame=0;frame<fps*3;frame++) {
+                bank.update((frame/(fps/3))%2==0?-cap:cap,dt);
+                check(bank.pressure>=0 && bank.pressure<=cap+1e-12,
+                    "slalom pressure must retain the clearance envelope without exceeding seven degrees");
+                if(Math.abs(bank.angle)<Math.toRadians(1)) minimum=Math.min(minimum,bank.pressure);
+            }
+            check(minimum>Math.toRadians(3.5),"changing bank must not retract the handles through neutral");
+            for(int frame=0;frame<fps;frame++) bank.update(0,dt);
+            check(bank.pressure<.00035,"straight input must release slalom pressure promptly");
+            double pressure=bank.pressure;
+            bank.update(cap,0);
+            close(bank.pressure,pressure,"pause cannot change clearance pressure");
+            bank=new CartSteeringMath.Bank();
+            for(int frame=0;frame<fps*2;frame++) bank.update(Math.toRadians(frame%2==0?1:-1),dt);
+            check(Math.max(bank.pressure,Math.abs(bank.angle))<Math.toRadians(.01),
+                "alternating coordinate noise must not accumulate clearance pressure");
+        }
         for(int sign:new int[]{-1,1}) {
             close(CartSteeringMath.woodenBankExtra((float)Math.toRadians(sign*3)),0,"small bank preserves the accepted arm pose");
             check(Math.abs(CartSteeringMath.woodenBankExtra((float)Math.toRadians(sign*5))-.5)<1e-6,"extra arm compensation reaches its midpoint smoothly");

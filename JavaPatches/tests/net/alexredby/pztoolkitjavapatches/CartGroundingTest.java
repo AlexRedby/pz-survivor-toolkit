@@ -272,6 +272,24 @@ public final class CartGroundingTest {
   if(!CartGrounding.alignWood(straight,0,0,new Matrix4f())) throw new AssertionError("straight wooden grounding rejected");
   Matrix4f expectedStraight=new Matrix4f(wooden);expectedStraight.m31(straight.m31());
   if(!straight.equals(expectedStraight)) throw new AssertionError("zero bank changed the wooden baseline pose");
+  for(int degree=-7;degree<=7;degree++) {
+   float lean=(float)Math.toRadians(degree),pressure=(float)Math.toRadians(7);
+   var retained=new Matrix4f(wooden);var delta=new Matrix4f();
+   if(!CartGrounding.alignWood(retained,lean,pressure,-.12f,delta))
+    throw new AssertionError("slalom clearance rejected");
+   var center=retained.transformPosition(new Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z));
+   if(Math.abs(-1.5*center.z-CartSteeringMath.woodenAxle(pressure,-.12f))>.00001)
+    throw new AssertionError("slalom wheel must use retained clearance, not instantaneous bank");
+   if(Math.abs(CartGrounding.woodenLowest(retained)-.008f)>.00001)
+    throw new AssertionError("retaining slalom clearance lifted the wheel");
+   for(boolean left:new boolean[]{true,false}) {
+    var handle=new Vector3f();CartGrip.handle("WheelbarrowWood",left,handle);
+    var point=delta.transformPosition(wooden.transformPosition(new Vector3f(handle)));
+    point.z+=CartSteeringMath.woodenShift(pressure,-.12f);
+    if(point.distance(retained.transformPosition(handle))>.00001)
+     throw new AssertionError("slalom body and handle transforms disagree");
+   }
+  }
   float straightHandleY=0;
   for(boolean left:new boolean[]{true,false}) {
    var handle=new Vector3f();CartGrip.handle("WheelbarrowWood",left,handle);

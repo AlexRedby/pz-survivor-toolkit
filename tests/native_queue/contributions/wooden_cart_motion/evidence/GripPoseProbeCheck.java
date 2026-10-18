@@ -8,10 +8,13 @@ import static net.bytebuddy.matcher.ElementMatchers.*;
 public final class GripPoseProbeCheck {
     public static void main(String[] args) throws Exception {
         if(new net.bytebuddy.description.type.TypeDescription.ForLoadedType(Class.forName("net.alexredby.pztoolkitjavapatches.CartGrip"))
+            .getDeclaredMethods().filter(named("grip").and(takesArguments(7))).size()!=1)
+            throw new AssertionError("pressure-aware grip diagnostic target changed");
+        if(new net.bytebuddy.description.type.TypeDescription.ForLoadedType(Class.forName("net.alexredby.pztoolkitjavapatches.CartGrip"))
             .getDeclaredMethods().filter(named("reach").and(takesArguments(7))).size()!=1)
             throw new AssertionError("weighted reach diagnostic target changed");
         var transformed=new ByteBuddy().redefine(Class.forName("net.alexredby.pztoolkitjavapatches.CartGrip"))
-            .visit(Advice.to(GripPoseProbe.GripAdvice.class).on(named("grip").and(takesArguments(6))))
+            .visit(Advice.to(GripPoseProbe.GripAdvice.class).on(named("grip").and(takesArguments(7))))
             .visit(Advice.to(GripPoseProbe.ReachAdvice.class).on(named("reach").and(takesArguments(7)))).make();
         if(transformed.getBytes().length==0)throw new AssertionError("empty instrumentation");
         var text=new StringWriter();var writer=new BufferedWriter(text);
