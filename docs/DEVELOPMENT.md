@@ -23,7 +23,11 @@ List Lua tests with `.venv/bin/python tools/run_tests.py --list`. Select one or 
 
 The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`. VHS menu, sorting, drop validation and live toggle checks run by default; add `--tv-source /path/to/RWMMergedTV.lua --native-radio-root /path/to/media/lua/client` to also exercise the native media actions and drag parser.
 
-Independent medicine checks can use the installed framework with `--medicine-framework-source /path/to/MF_ISMoodle.lua`. Use `--native-inventory-context-menu /path/to/ISInventoryPaneContextMenu.lua` for actual transfer callbacks and the sibling native text-box constructor/callback. `--mpff-source /path/to/MPFastForward/media/lua` and `--bc-filter-source /path/to/CategoryFilters.lua` exercise the upstream modules and early compatibility gates; without these paths, those source checks report SKIP.
+Independent medicine checks can use the installed framework with `--medicine-framework-source /path/to/MF_ISMoodle.lua`.
+
+The read-only Java global `toolkitMedicineCooldown(character)` returns the native food-sickness treatment cooldown, or `nil` for unsupported bytecode, unavailable data or multiplayer clients. `MedicineEffects.capture` sends this as `LemonGrassCooldown` (`false` when unavailable); the old `LemonGrass` estimate is never displayed as exact. Use `python3 JavaPatches/build.py --test MedicineCooldownChecks` for native field, loader exposure and Kahlua checks.
+
+Use `--native-inventory-context-menu /path/to/ISInventoryPaneContextMenu.lua` for actual transfer callbacks and the sibling native text-box constructor/callback. `--mpff-source /path/to/MPFastForward/media/lua` and `--bc-filter-source /path/to/CategoryFilters.lua` exercise the upstream modules and early compatibility gates; without these paths, those source checks report SKIP.
 
 Vehicle ground-placement regressions run by default. Add `--native-uninstall /path/to/media/lua/shared/Vehicles/TimedActions/ISUninstallVehiclePart.lua` to exercise the installed game's actual removal completion, including failure, callbacks and its existing ground fallback.
 
