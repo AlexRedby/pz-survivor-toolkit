@@ -58,6 +58,22 @@ class BuildChecks(unittest.TestCase):
     def java_calls(self):
         return [call for call in self.run.call_args_list if Path(call.args[0][0]).name == 'java']
 
+    def test_relative_game_and_jdk_remain_valid_after_regression_changes_cwd(self):
+        previous = Path.cwd()
+        try:
+            os.chdir(self.root)
+            self.run_build('--game', 'game', '--jdk', 'jdk', '--test', 'MediaChecks')
+        finally:
+            os.chdir(previous)
+        call = self.java_calls()[0]
+        command = call.args[0]
+        self.assertEqual(self.root / 'jdk/bin/java', Path(command[0]))
+        self.assertEqual(self.game, call.kwargs['cwd'])
+        self.assertIn('-javaagent:' + str(self.game / 'ZombieBuddy.jar') + '=', command[1])
+        classpath = command[command.index('-cp') + 1].split(os.pathsep)
+        self.assertIn(str(self.game / 'projectzomboid.jar'), classpath)
+        self.assertIn(str(self.game / 'ZombieBuddy.jar'), classpath)
+
     def test_named_selection_overrides_groups_and_deduplicates(self):
         self.run_build('--check', '--check-video', '--test', 'MediaChecks', '--test', 'AnimalChecks', '--test', 'MediaChecks')
         calls = self.java_calls()

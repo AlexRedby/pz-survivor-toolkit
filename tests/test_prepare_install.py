@@ -1,5 +1,6 @@
 """The prepared set is complete, isolated and replaced only after success."""
 
+import os
 import shutil
 from pathlib import Path
 import re
@@ -19,7 +20,7 @@ class PrepareInstall(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         for name in prepare_install.MOD_IDS[:1]:
             shutil.copytree(ROOT / name, self.root / name)
         self.patch = self.root / "JavaPatches/build/PZToolkitJavaPatches"
@@ -107,6 +108,21 @@ class PrepareInstall(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in paths if path.suffix == ".jar"),
                          ["PZToolkitFonts.jar", "PZToolkitJavaPatches.jar"])
         self.assertFalse(any(path.suffix in (".class", ".log", ".zip") for path in paths))
+
+    def test_relative_inputs_are_resolved_from_caller_before_build_changes_cwd(self):
+        caller = self.root / 'build caller'
+        caller.mkdir()
+        previous = Path.cwd()
+        try:
+            os.chdir(caller)
+            result = prepare_install.prepare(Path('..'), Path('game folder'), Path('jdk folder'))
+        finally:
+            os.chdir(previous)
+        self.assertEqual(self.output.resolve(), result)
+        self.build.assert_called_once_with(
+            [sys.executable, str(self.root.resolve() / 'JavaPatches/build.py'),
+             '--game', str(caller.resolve() / 'game folder'), '--jdk', str(caller.resolve() / 'jdk folder')],
+            cwd=self.root.resolve(), check=True)
 
     def test_shipped_guides_only_link_to_shipped_files_or_external_sources(self):
         for name in ("MOD_INSTALL.md", "JavaPatches/README.md"):

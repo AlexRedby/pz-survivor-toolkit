@@ -57,6 +57,7 @@ else:
     selected = [name for name in CHECKS if (args.check_video if name.endswith('.VideoChecks') else args.check)]
 if args.game is None:
     parser.error('Pass --game with the folder containing projectzomboid.jar and ZombieBuddy.jar')
+args.game = args.game.resolve()
 if not (args.game / 'projectzomboid.jar').is_file():
     parser.error(f'projectzomboid.jar not found in "{args.game}". Pass --game with the actual game Java folder.')
 if not (args.game / 'ZombieBuddy.jar').is_file():
@@ -66,6 +67,7 @@ if args.jdk is None:
     elif Path('/usr/libexec/java_home').exists(): args.jdk = Path(subprocess.check_output(['/usr/libexec/java_home'], text=True).strip())
     elif shutil.which('javac'): args.jdk = Path(shutil.which('javac')).resolve().parents[1]
     else: parser.error('JDK 25 or newer is required; pass --jdk or set JAVA_HOME')
+args.jdk = args.jdk.resolve()
 javac = str(args.jdk / 'bin/javac')
 try:
     compiler = subprocess.run([javac, '-version'], check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

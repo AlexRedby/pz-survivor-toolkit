@@ -29,6 +29,7 @@ def metadata(path: Path) -> dict[str, str]:
 
 def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None,
             check: bool = False) -> Path:
+    root = root.resolve()
     dist = root / "dist"
     output = dist / "SurvivorQoL"
     if dist.is_symlink() or output.is_symlink() or (output.exists() and not output.is_dir()):
@@ -50,7 +51,7 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
     command = [sys.executable, str(root / "JavaPatches/build.py")]
     for option, value in (("--game", game), ("--jdk", jdk)):
         if value is not None:
-            command.extend((option, str(value)))
+            command.extend((option, str(value.resolve())))
     if check:
         command.append("--check")
     subprocess.run(command, cwd=root, check=True)

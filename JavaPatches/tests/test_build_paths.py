@@ -18,7 +18,7 @@ class BuildPaths(unittest.TestCase):
     def setUp(self):
         self.cache = tempfile.TemporaryDirectory()
         self.addCleanup(self.cache.cleanup)
-        self.root = Path(self.cache.name)
+        self.root = Path(self.cache.name).resolve()
         self.script = self.root / 'build.py'
         shutil.copyfile(BUILD, self.script)
         self.sentinel = self.root / 'build/classes/keep.txt'
