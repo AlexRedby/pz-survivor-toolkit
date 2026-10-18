@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.78
+
+- **Fixed:** Bulk clothing cutting includes belts, eligible holsters and empty bandoliers through the native recipe, including mixed selections with clothing. Native tools, outputs and protected-item checks are preserved.
+
 ### 0.1.77
 
 - **Fixed:** Clicking inventory items during transfers follows the pressed item across row changes and stack sorting instead of selecting the replacement row on mouse release. Rapid clicks on different items no longer trigger a double-click action after a transfer.
