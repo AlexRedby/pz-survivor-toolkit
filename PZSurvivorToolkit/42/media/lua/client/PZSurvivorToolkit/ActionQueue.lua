@@ -174,12 +174,14 @@ ISTimedActionQueue.onCompleted = function(queue, action)
     end
     local generators = Toolkit.ActionQueueGenerators
     local fire = Toolkit.ActionQueueFire
+    local Craft = Toolkit.ActionQueueCraft
     if Toolkit.Settings.actionQueue() and live(queue) and queue.current == action and queue.queue[1] == action
         and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false) then
         local pending = queue.queue[2]
         -- Skip audited unavailable targets before native validation/start can discard the independent tail.
         while pending and not pending.action and ((generators and generators.canSkip and generators.canSkip(pending))
-            or (fire and fire.canSkip and fire.canSkip(pending))) do
+            or (fire and fire.canSkip and fire.canSkip(pending))
+            or (Craft and Craft.canSkip and Craft.canSkip(pending))) do
             local token = pending.toolkitQueueOperation
             if token and token == action.toolkitQueueOperation then
                 local reason = Policy.cancelOperationReason(queue, pending)

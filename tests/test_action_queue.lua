@@ -599,7 +599,8 @@ for _, module in ipairs({'ActionQueueGenerators', 'ActionQueueFire'}) do
         p = player(); a,b,c = book(p),book(p),book(p)
         operations.run(function() q=ISTimedActionQueue.add(a); ISTimedActionQueue.add(b) end)
         ISTimedActionQueue.add(c); frame(p)
-        PZSurvivorToolkit[module] = {canSkip = function(action) return allowed and action == a end}
+        PZSurvivorToolkit[module] = {canSkip = function(action) return allowed and action == a end,
+            supports = function() return false end}
         a:forceStop(); frame(p)
         assert(a.toolkitQueueOperation.toolkitCancelled)
         assert(not p.actions[a.action] and not q.toolkitGroupCancel)
@@ -609,6 +610,26 @@ for _, module in ipairs({'ActionQueueGenerators', 'ActionQueueFire'}) do
     enabled = true
     PZSurvivorToolkit[module] = previous
 end
+
+-- Lost pre-start manual craft work is removed before native start can reset its independent tail.
+do
+    local previous=PZSurvivorToolkit.ActionQueueCraft
+    for _,scenario in ipairs({{true,true},{false,true},{true,false}}) do
+        local missing=scenario[1];enabled=scenario[2]
+        p=player();a,b,c=book(p),book(p),leaf(p,'independent craft tail')
+        operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b) end)
+        ISTimedActionQueue.add(c);frame(p)
+        PZSurvivorToolkit.ActionQueueCraft={supports=function() return false end,collectItems=function() end,
+            canSkip=function(action) return missing and action==b end}
+        a.action.done=true;frame(p)
+        local skipped=missing and enabled
+        assert(q.current==(skipped and c or b) and (not enabled or not c.toolkitQueueOperation.toolkitCancelled))
+        assert((b.action==nil)==skipped,'skipped manual craft never enters native start')
+        assert((a.toolkitQueueOperation.toolkitCancelled==true)==(skipped or not enabled))
+    end
+    enabled=true;PZSurvivorToolkit.ActionQueueCraft=previous
+end
+
 -- The view keeps real action identities across refreshes, hide/show and player replacement.
 local ui, refresh, playerCount = {}, nil, 1
 local widget = {derive = derive}

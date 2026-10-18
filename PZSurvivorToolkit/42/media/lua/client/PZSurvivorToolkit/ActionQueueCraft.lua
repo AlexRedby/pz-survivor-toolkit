@@ -204,6 +204,18 @@ function Craft.repairInputs(action)
     if ok then return result end
 end
 
+-- Loaded script lines include overrides; never execute recipe callbacks to discover effects.
+local function recipeCallbacksSafe(recipe)
+    local lines = recipe:getScriptLines()
+    if lines:size() <= 0 then return false end
+    for i = 0, lines:size() - 1 do
+        for key in lines:get(i):lower():gmatch("([%w_]+)%s*[:=]") do
+            if key:sub(1, 2) == "on" or key:sub(1, 3) == "lua" then return false end
+        end
+    end
+    return true
+end
+
 function Craft.futureResources(action)
     if not Craft.supports(action) then return end
     local Food = PZSurvivorToolkit.BulkFood
@@ -224,15 +236,7 @@ function Craft.futureResources(action)
             if type(owner.returnToContainer) ~= "table" then return end
             for _, item in ipairs(owner.returnToContainer) do if not instanceof(item, "InventoryItem") then return end end
         end
-        -- Loaded script lines include overrides; never execute recipe callbacks to discover effects.
-        local lines = recipe:getScriptLines()
-        if lines:size() <= 0 then return end
-        for i = 0, lines:size() - 1 do
-            local line = lines:get(i):lower()
-            for key in line:gmatch("([%w_]+)%s*[:=]") do
-                if key:sub(1, 2) == "on" or key:sub(1, 3) == "lua" then return end
-            end
-        end
+        if not recipeCallbacksSafe(recipe) then return end
         local function addType(types, name)
             if type(name) ~= "string" or not name:match("^[%w_]+%.[%w_]+$") then return false end
             types[name] = true
@@ -294,6 +298,61 @@ function Craft.futureResources(action)
         return result
     end)
     if ok then return complete end
+end
+
+function Craft.canSkip(action)
+    if not Craft.supports(action) or getmetatable(action) ~= ISHandcraftAction or action.force
+        or action.action or action.craftStarted ~= false or type(action.manualInputs) ~= "table" then return false end
+    local ok, missing = pcall(function()
+        -- Before native allocation, missing pinned IDs can be rejected without consuming or breaking any item.
+        if not recipeCallbacksSafe(action.craftRecipe) then return false end
+        local root = action.character:getInventory()
+        if not instanceof(root, "ItemContainer") or not instanceof(action.containers, "List")
+            or action.containers:size() == 0 then return false end
+        local containers = {root}
+        for i = 0, action.containers:size() - 1 do
+            local container = action.containers:get(i)
+            if not instanceof(container, "ItemContainer") then return false end
+            containers[#containers + 1] = container
+        end
+        local inputs, indices, ids = action.craftRecipe:getInputs(), {}, {}
+        if inputs:size() == 0 then return false end
+        for i = 0, inputs:size() - 1 do
+            local input = inputs:get(i)
+            if not instanceof(input, "InputScript") or input:getResourceType() ~= ResourceType.Item
+                or input:isAcceptsAnyItem() or input:getConsumeFromItemScript() then return false end
+            local index = action.craftRecipe:getIndexForIO(input)
+            local selected, amount = action.manualInputs[index], input:getIntAmount()
+            if type(index) ~= "number" or index < 0 or index % 1 ~= 0
+                or action.craftRecipe:getIOForIndex(index) ~= input or indices[index]
+                or input:isVariableAmount() or amount <= 0 or not instanceof(selected, "List")
+                or selected:size() ~= amount then return false end
+            indices[index] = true
+            for j = 0, selected:size() - 1 do
+                local item = selected:get(j)
+                if not instanceof(item, "InventoryItem") then return false end
+                local id = item:getID()
+                if type(id) ~= "number" or id % 1 ~= 0 then return false end
+                ids[#ids + 1] = id
+            end
+        end
+        for index in pairs(action.manualInputs) do if not indices[index] then return false end end
+        local missing = false
+        for _, id in ipairs(ids) do
+            local found = false
+            for _, container in ipairs(containers) do
+                -- MP can replace item objects; native container lookups also search carried bags.
+                local item = container:getItemById(id)
+                if item then
+                    if not instanceof(item, "InventoryItem") or item:getID() ~= id then return false end
+                    found = true
+                end
+            end
+            if not found then missing = true end
+        end
+        return missing
+    end)
+    return ok and missing == true
 end
 
 function Craft.collectItems(action, items)

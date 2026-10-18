@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.70
+
+- **Fixed:** Before a queued manual craft starts, a missing selected input cancels only its operation and preserves safe tool returns and independent follow-up work. Started crafts and unknown callbacks keep their existing safeguards.
+
 ### 0.1.69
 
 - **Fixed:** Queue reset and clear revoke pending callbacks through the shared native cancellation boundary, including after Quartermaster reloads its saved reset wrapper. Clearing only a command's generated actions preserves its parent and valid continuations.

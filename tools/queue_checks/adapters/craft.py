@@ -1,24 +1,29 @@
 """Native craft with exact borrowed tools and late return ordering; no UI substitution."""
+import json
 from pathlib import Path
 import re
 import shutil
 
+CASES = ['borrowed-tools', 'cancel-pickup', 'missing-input']
 MODS = ['PZSurvivorToolkit', 'ZombieBuddy', 'PZToolkitJavaPatches']
 
 
 def definitions():
     return {'craft': {'status': 'ready', 'clients': 1, 'default_mods': MODS,
-                      'cases': [{'id': 'borrowed-tools', 'producer': 'fixture', 'capability': 'effect',
-                                 'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['native', 'toolkit']}]}}
+                      'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
+                                 'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['native', 'toolkit']}
+                                for case in CASES]}}
 
 
 def validate(selection):
-    if (selection.get('cases') != ['borrowed-tools'] or selection.get('kind') not in ('sp', 'mp')
+    cases = selection.get('cases')
+    if (not isinstance(cases, list) or not cases or cases != [case for case in CASES if case in cases]
+            or selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
             or type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
             or not set(MODS) <= set(selection.get('mods', []))
             or selection.get('options', {}).get('world_template')):
-        raise ValueError('Craft requires borrowed-tools, fresh SP/MP, one EN client, Toolkit and Java patches')
+        raise ValueError('Craft requires ordered registered cases, fresh SP/MP, one EN client, Toolkit and Java patches')
 
 
 def sources(project, selection):
@@ -47,46 +52,202 @@ def complete(selection, role, text):
     return role == 'client1' and len(re.findall(r'\[CRAFT_QUEUE_TEST\] COMPLETE(?:\s|$)', text)) == 1
 
 
+AUTHORITY = 'consumed=1 outputs=1 toolsReturned=2 tailRead=true'
+RECEIPT_KEYS = ('materialId', 'bookId', 'materialPresent', 'materialCondition', 'materialUses',
+                'removed', 'consumed', 'outputs', 'toolsReturned', 'resources', 'tailRead')
+
+
+def _same(actual, expected):
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return actual.keys() == expected.keys() and all(_same(actual[key], value) for key, value in expected.items())
+    if isinstance(expected, list):
+        return len(actual) == len(expected) and all(_same(left, right) for left, right in zip(actual, expected))
+    return actual == expected
+
+
+def _matches(actual, expected):
+    return all(_same(actual.get(key), value) for key, value in expected.items())
+
+
+def _ids(value, count=None):
+    return (type(value) is list and (count is None or len(value) == count)
+            and all(type(item) is int for item in value) and len(set(value)) == len(value))
+
+
+def _authority(text):
+    result = []
+    pattern = re.compile(r'\[CRAFT_QUEUE_TEST\] (PREPARED|REMOVED|ABORT_AUTHORITY|AUTHORITY)(?:\s|$)(.*)')
+    for line in text.splitlines():
+        match = pattern.search(line)
+        if not match:
+            continue
+        kind, payload = match.groups()
+        value = payload.strip() if kind == 'AUTHORITY' else json.loads(payload)
+        if kind != 'AUTHORITY' and type(value) is not dict:
+            raise ValueError('Invalid craft authoritative envelope')
+        result.append((kind, value))
+    return result
+
+
+def _prepared_valid(prep, case):
+    if (not _ids(prep.get('tools'), 2) or not _ids(prep.get('bags'), 2)
+            or not _matches(prep, {'case': case}) or type(prep.get('toolMeta')) is not list
+            or len(prep['toolMeta']) != 2):
+        return False
+    ids = prep['tools'] + prep['bags'] + [prep.get('material'), prep.get('book')]
+    if case == 'missing-input':
+        ids.append(prep.get('blocker'))
+    elif prep.get('blocker') is not None:
+        return False
+    if not _ids(ids) or any(type(prep.get(key)) is not int or prep[key] < 0 for key in
+                            ('outputs', 'materialCondition', 'materialUses')):
+        return False
+    for index, kind in enumerate(('Base.Hammer', 'Base.Saw')):
+        meta = prep['toolMeta'][index]
+        if (type(meta) is not dict or set(meta) != {'id', 'kind', 'condition', 'uses'}
+                or not _matches(meta, {'id': prep['tools'][index], 'kind': kind})
+                or any(type(meta.get(key)) is not int or meta[key] < 0 for key in ('condition', 'uses'))):
+            return False
+    return True
+
+
+def _abort(case, enabled, row, prep, receipt, removal):
+    issues = []
+    missing = case == 'missing-input'
+    expected = dict(consumed=0, outputs=0, removed=int(missing), materialPresent=not missing,
+                    pickupProgress=True, craftProgress=False, interrupted=True, missingObserved=missing,
+                    nativeDuration=150, authorityVerified=True, manualInputs=True, localDeferrals=0)
+    if enabled:
+        expected.update(tailRead=True, tailProgress=True, returnsBeforeRead=True, tokenCancelled=True,
+                        toolsReturned=2, status='passed', reason=None)
+    if not _matches(row, expected):
+        issues.append('Craft abort native effect/progress differs: ' + case)
+    for key in ('tailRead', 'tailProgress', 'returnsBeforeRead', 'tokenCancelled'):
+        if type(row.get(key)) is not bool:
+            issues.append('Craft abort observation must be boolean: ' + case + '/' + key)
+    if row.get('tailRead') is not row.get('tailProgress') or (row.get('returnsBeforeRead') is True
+                                                           and row.get('tailRead') is not True):
+        issues.append('Craft abort reader/order evidence differs: ' + case)
+    reason = ('native-independent-tail-not-preserved' if row.get('tailRead') is False else
+              'native-returns-not-before-tail' if row.get('returnsBeforeRead') is False else None)
+    if not enabled and not _matches(row, {'status': 'failed' if reason else 'passed', 'reason': reason}):
+        issues.append('Craft observed native abort status differs: ' + case)
+    if not _prepared_valid(prep, case):
+        issues.append('Craft abort preparation identity/metadata differs: ' + case)
+        return issues, reason if not enabled else None
+    if (not _same(row.get('toolIds'), prep['tools']) or not _ids(row.get('pickupIds'), 2)
+            or row.get('pickupIds') != sorted(prep['tools']) or not _ids(row.get('returnIds'))
+            or row.get('returnIds') != sorted(row.get('returnIds', []))
+            or not set(row.get('returnIds', [])) <= set(prep['tools'])
+            or (enabled or row.get('returnsBeforeRead') is True) and row.get('returnIds') != sorted(prep['tools'])):
+        issues.append('Craft abort exact pickup/return IDs differ: ' + case)
+    fields = dict(materialId=prep['material'], bookId=prep['book'], materialCondition=prep['materialCondition'],
+                  materialUses=prep['materialUses'], materialPresent=not missing, removed=int(missing), consumed=0, outputs=0)
+    if not _matches(row, fields):
+        issues.append('Craft abort material/reader identity differs: ' + case)
+    resources = row.get('resources')
+    returned = 0
+    if type(resources) is not list or len(resources) != 2:
+        issues.append('Craft abort resource envelope differs: ' + case)
+    else:
+        for index, resource in enumerate(resources):
+            meta = prep['toolMeta'][index]
+            if (type(resource) is not dict or set(resource) != set(meta) | {'sourceCount', 'rootCount'}
+                    or not _matches(resource, meta)
+                    or any(type(resource.get(key)) is not int or resource[key] not in (0, 1)
+                           for key in ('sourceCount', 'rootCount'))
+                    or resource.get('sourceCount', 0) + resource.get('rootCount', 0) != 1
+                    or (enabled or row.get('returnsBeforeRead') is True) and resource.get('sourceCount') != 1):
+                issues.append('Craft abort exact tool conservation/endpoint differs: ' + case)
+            elif type(resource['sourceCount']) is int:
+                returned += resource['sourceCount']
+        if not _matches(row, {'toolsReturned': returned}):
+            issues.append('Craft abort returned-tool count differs: ' + case)
+    if (set(receipt) != set(RECEIPT_KEYS) | {'case'} or not _matches(receipt, {'case': case})
+            or not _matches(row, {key: receipt.get(key) for key in RECEIPT_KEYS})):
+        issues.append('Craft abort authority differs from client: ' + case)
+    if missing and (set(removal) != {'case', 'materialId', 'removed', 'condition', 'uses'} or not _matches(removal,
+            dict(case=case, materialId=prep['material'], removed=1,
+                 condition=prep['materialCondition'], uses=prep['materialUses']))):
+        issues.append('Craft exact removed input differs: ' + case)
+    return issues, reason if not enabled else None
+
+
 def verify(root, selection, catalog):
     from ..report import events
     root = Path(root)
     text = (root / 'client1-launch.log').read_text(errors='replace')
-    records = events(text)
-    issues = []
-    enabled = selection['mode'] == 'toolkit'
-    if [row['event'] for row in records] != ['setup', 'case', 'complete']:
+    authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
+    records, raw = events(text), _authority(authority)
+    cases, enabled = selection['cases'], selection['mode'] == 'toolkit'
+    issues, outcomes, failures = [], [], {}
+    results = [row for row in records if row['event'] == 'case']
+    if [row['event'] for row in records] != ['setup'] + ['case'] * len(cases) + ['complete']:
         issues.append('Missing, duplicated or reordered craft events')
     for row in records:
-        if any(row.get(key) != value for key, value in {
-                'suite': 'craft', 'kind': selection['kind'], 'mode': selection['mode'], 'actor': 'client1'}.items()):
+        if not _matches(row, dict(suite='craft', kind=selection['kind'], mode=selection['mode'], actor='client1')):
             issues.append('Craft event context differs')
-    expected = {'setup': {'cases': ['borrowed-tools'], 'expected': 1, 'queueEnabled': enabled, 'nativeDurations': True},
-                'case': {'id': 'borrowed-tools', 'status': 'passed', 'consumed': 1, 'outputs': 1, 'toolsReturned': 2,
-                         'tailRead': True, 'returnsBeforeRead': enabled, 'sharedPerform': enabled,
-                         'sharedComplete': enabled and selection['kind'] == 'sp', 'localDeferrals': 0,
-                         'nativeDuration': 150, 'authorityVerified': True},
-                'complete': {'cases': ['borrowed-tools'], 'expected': 1, 'performed': 1, 'failed': 0, 'skipped': 0}}
-    for row in records:
-        if row['event'] not in expected or any(type(row.get(key)) is not type(value) or row.get(key) != value
-                                              for key, value in expected[row['event']].items()):
-            issues.append('Craft ' + row['event'] + ' evidence differs')
-        if row['event'] == 'case':
-            ids = row.get('toolIds')
-            order = row.get('returnOrder')
-            if (not isinstance(ids, list) or len(ids) != 2 or any(type(id) is not int for id in ids)
-                    or len(set(ids)) != 2 or not isinstance(order, list)
-                    or any(type(id) is not int for id in order) or order != ids):
+    if [row.get('id') for row in results] != cases:
+        issues.append('Craft case selection or order differs')
+    for event, expected in [('setup', dict(cases=cases, expected=len(cases), queueEnabled=enabled, nativeDurations=True)),
+                            ('complete', dict(cases=cases, expected=len(cases), performed=len(cases),
+                                              failed=sum(row.get('status') == 'failed' for row in results), skipped=0))]:
+        matches = [row for row in records if row['event'] == event]
+        if len(matches) != 1 or not _matches(matches[0], expected):
+            issues.append('Craft ' + event + ' evidence differs')
+    has_abort = any(case != 'borrowed-tools' for case in cases)
+    expected_raw = []
+    for case in cases:
+        if has_abort or any(kind == 'PREPARED' for kind, _ in raw):
+            expected_raw.append(('PREPARED', case))
+        if case == 'missing-input':
+            expected_raw.append(('REMOVED', case))
+        expected_raw.append(('AUTHORITY' if case == 'borrowed-tools' else 'ABORT_AUTHORITY', case))
+    if [(kind, 'borrowed-tools' if kind == 'AUTHORITY' else row.get('case')) for kind, row in raw] != expected_raw:
+        issues.append('Missing, duplicated or reordered authoritative craft receipt')
+    prepared_ids = []
+    for kind, prep in raw:
+        if kind == 'PREPARED' and _prepared_valid(prep, prep.get('case')):
+            prepared_ids += prep['tools'] + prep['bags'] + [prep['material'], prep['book']]
+            if prep.get('blocker') is not None:
+                prepared_ids.append(prep['blocker'])
+    if not _ids(prepared_ids):
+        issues.append('Craft prepared item identities overlap between cases')
+    for case in cases:
+        row = next((row for row in results if row.get('id') == case), {})
+        prep = next((row for kind, row in raw if kind == 'PREPARED' and row.get('case') == case), {})
+        if case == 'borrowed-tools':
+            expected = dict(status='passed', consumed=1, outputs=1, toolsReturned=2, tailRead=True,
+                            returnsBeforeRead=enabled, sharedPerform=enabled, sharedComplete=enabled and selection['kind'] == 'sp',
+                            localDeferrals=0, nativeDuration=150, authorityVerified=True)
+            if not _matches(row, expected):
+                issues.append('Craft case evidence differs')
+            if not _ids(row.get('toolIds'), 2) or not _same(row.get('returnOrder'), row.get('toolIds')):
                 issues.append('Craft exact tool IDs or native return order differ')
-    authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
-    marker = '[CRAFT_QUEUE_TEST] AUTHORITY consumed=1 outputs=1 toolsReturned=2 tailRead=true'
-    if len(re.findall(re.escape(marker) + r'(?:\s|$)', authority)) != 1:
-        issues.append('Missing or duplicate authoritative craft receipt')
+            if (sum(kind == 'AUTHORITY' and value == AUTHORITY for kind, value in raw) != 1
+                    or prep and (not _prepared_valid(prep, case) or not _same(row.get('toolIds'), prep['tools']))):
+                issues.append('Missing or duplicate authoritative craft receipt')
+            outcome = {key: row.get(key) for key in ('consumed', 'outputs', 'toolsReturned', 'tailRead',
+                       'returnsBeforeRead', 'localDeferrals', 'nativeDuration', 'authorityVerified')} if row else {}
+        else:
+            receipt = next((row for kind, row in raw if kind == 'ABORT_AUTHORITY' and row.get('case') == case), {})
+            removal = next((row for kind, row in raw if kind == 'REMOVED' and row.get('case') == case), {})
+            case_issues, failure = _abort(case, enabled, row, prep, receipt, removal)
+            issues.extend(case_issues)
+            if failure:
+                failures[case] = failure
+            outcome = {key: row.get(key) for key in RECEIPT_KEYS + ('pickupIds', 'returnIds', 'craftProgress',
+                       'tailProgress', 'returnsBeforeRead', 'tokenCancelled', 'authorityVerified')}
+        outcomes.append(dict(actor='client1', case=case, outcome=outcome))
     if '[QUEUE_TEST] FAIL ' in text or '[QUEUE_TEST] FAIL ' in authority:
         issues.append('Native craft fixture failed')
-    cases = [row for row in records if row['event'] == 'case']
-    outcome = {key: cases[0].get(key) for key in ('consumed', 'outputs', 'toolsReturned', 'tailRead',
-               'returnsBeforeRead', 'localDeferrals', 'nativeDuration', 'authorityVerified')} if len(cases) == 1 else {}
-    return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'borrowed-tools',
-             'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues), 'outcome': outcome}],
-            'evidence': {'limits': ['Native recipe/transfer/read actions; late returns are injected at base.perform callback timing.',
-                                    'No physical crafting UI, WAN or two-client contention coverage.']}}
+    for outcome in outcomes:
+        reasons = issues + ([failures[outcome['case']]] if outcome['case'] in failures else [])
+        outcome.update(status='failed' if reasons else 'passed', reason='; '.join(reasons))
+    issues.extend(failures.values())
+    return {'issues': issues, 'outcomes': outcomes, 'evidence': {'limits': [
+        'Borrowed-tools late returns are a synthetic base.perform stress case; abort cases use native manual craft/transfer/read methods.',
+        'Native abort controls retain observed failures; shared runtime error auditing is unchanged.',
+        'No physical crafting UI, WAN or two-client contention coverage.']}}

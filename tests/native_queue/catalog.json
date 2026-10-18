@@ -549,7 +549,9 @@
           "kinds": ["sp", "mp"],
           "languages": ["EN"],
           "modes": ["native", "toolkit"]
-        }
+        },
+        {"id":"cancel-pickup", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"missing-input", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]}
       ]
     },
     "world": {
