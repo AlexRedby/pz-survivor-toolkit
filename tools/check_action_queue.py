@@ -143,6 +143,10 @@ def batch(args, catalog):
             if not isinstance(plan.get('options', {}), dict) or not isinstance(job.get('options', {}), dict):
                 raise ValueError('Batch options must contain JSON objects')
             options = dict(plan.get('options', {}), **job.get('options', {}))
+            for key in ('control_job', 'seed_job'):
+                if job.get(key) and job[key] not in completed:
+                    raise ValueError('Dependency has no completed report: ' + job[key])
+            control = completed[job['control_job']] if job.get('control_job') else None
             if job.get('seed_job'):
                 options['seed_run'] = str(completed[job['seed_job']])
             mods = job.get('mods', plan.get('mods'))
@@ -158,15 +162,16 @@ def batch(args, catalog):
             native.prepare(ROOT, output, Path(plan['game']), Path(plan['jdk']), selected, [Path(p) for p in plan.get('workshop', [])])
             execution = runner.run(output, resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
             interrupted = execution.get('interrupted', False)
-            control = completed[job['control_job']] if job.get('control_job') else None
             value = save_report(output, catalog, control)
             reports.append(value)
             completed[job['id']] = output.resolve()
             item.update(status=value['status'], functional=value['functional']['status'], runtime=value['runtime']['status'])
             print(report.summary(value), flush=True)
-        except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
-            item.update(status='blocked' if not (output / 'execution.json').exists() else 'failed', error=str(error))
-            print(item['status'].upper() + ' ' + job['id'] + ': ' + str(error), flush=True)
+        except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+            interrupted = interrupted or isinstance(error, KeyboardInterrupt)
+            item.update(status='blocked' if not (output / 'execution.json').exists() else 'failed',
+                        error='Batch job interrupted' if isinstance(error, KeyboardInterrupt) else str(error))
+            print(item['status'].upper() + ' ' + job['id'] + ': ' + item['error'], flush=True)
         results.append(item)
         overall = 'failed' if any(row['status'] in ('failed', 'blocked') for row in results) else 'needs-review' if any(row['status'] == 'needs-review' for row in results) else 'passed'
         report.write_json(args.output / 'batch-report.json', {'status': overall, 'jobs': results, 'remaining': identifiers[len(results):]})

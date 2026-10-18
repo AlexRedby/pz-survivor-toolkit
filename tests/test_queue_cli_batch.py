@@ -83,12 +83,61 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(self.invoke(), 0)
         self.assertEqual(self.calls[1][1]['options']['seed_run'], str((self.args.output / 'seed').resolve()))
 
+    def test_missing_dependency_blocks_before_preparation_and_propagates_to_dependents(self):
+        self.write_plan([{'id': 'blocked', 'suite': 'startup'},
+                         {'id': 'candidate', 'suite': 'startup', 'control_job': 'blocked'},
+                         {'id': 'reload', 'suite': 'startup', 'seed_job': 'candidate'},
+                         {'id': 'independent', 'suite': 'startup'}])
+        self.assertEqual(1, self.invoke())
+        self.assertEqual(['blocked', 'independent'], [name for name, _ in self.calls])
+        result = json.loads((self.args.output / 'batch-report.json').read_text())
+        self.assertEqual(['blocked', 'blocked', 'blocked', 'passed'], [row['status'] for row in result['jobs']])
+        for row, dependency in zip(result['jobs'][1:3], ('blocked', 'candidate')):
+            self.assertIn('Dependency has no completed report: ' + dependency, row['error'])
+            self.assertFalse(Path(row['run']).exists())
+        self.assertEqual([], result['remaining'])
+
+    def test_existing_failed_or_review_control_remains_available_for_comparison(self):
+        self.write_plan([{'id': 'control', 'suite': 'startup'},
+                         {'id': 'candidate', 'suite': 'startup', 'control_job': 'control'}])
+        for status in ('failed', 'needs-review'):
+            with self.subTest(status=status):
+                self.args.output = self.root / status
+                controls = []
+                def save(output, catalog, control=None):
+                    controls.append(control)
+                    return {'status': status if output.name == 'control' else 'passed',
+                            'functional': {'status': 'passed'}, 'runtime': {'status': 'clean'}}
+                self.report = save
+                self.assertEqual(1 if status == 'failed' else 2, self.invoke())
+                self.assertEqual([None, (self.args.output / 'control').resolve()], controls)
+
     def test_interruption_preserves_unrun_jobs_and_stops_batch(self):
         self.write_plan([{'id': name, 'suite': 'video-recording'} for name in ('interrupt', 'not-run')])
         self.assertEqual(self.invoke(), 130)
         result = json.loads((self.args.output / 'batch-report.json').read_text())
         self.assertEqual(result['remaining'], ['not-run'])
         self.assertEqual(len(self.calls), 1)
+
+    def test_interrupt_during_prepare_admission_or_report_keeps_batch_state(self):
+        self.write_plan([{'id': 'current', 'suite': 'startup'}, {'id': 'not-run', 'suite': 'startup'}])
+        original_prepare, original_run, original_report = self.prepare, self.run_job, self.report
+        for stage in ('prepare', 'run_job', 'report'):
+            with self.subTest(stage=stage):
+                self.args.output = self.root / stage
+                self.calls = []
+                self.prepare, self.run_job, self.report = original_prepare, original_run, original_report
+                def interrupt(*args, **kwargs):
+                    raise KeyboardInterrupt()
+                setattr(self, stage, interrupt)
+                self.assertEqual(130, self.invoke())
+                result = json.loads((self.args.output / 'batch-report.json').read_text())
+                self.assertEqual('failed', result['status'])
+                self.assertEqual(['not-run'], result['remaining'])
+                self.assertEqual(1, len(result['jobs']))
+                self.assertEqual('failed' if stage == 'report' else 'blocked', result['jobs'][0]['status'])
+                self.assertEqual('Batch job interrupted', result['jobs'][0]['error'])
+                self.assertFalse((self.args.output / 'not-run').exists())
 
     def test_budget_and_wait_are_passed_per_job_and_ports_default_to_auto(self):
         self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk',
