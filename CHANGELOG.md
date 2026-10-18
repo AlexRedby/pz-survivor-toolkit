@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.77
+
+- **Fixed:** Clicking inventory items during transfers follows the pressed item across row changes and stack sorting instead of selecting the replacement row on mouse release. Rapid clicks on different items no longer trigger a double-click action after a transfer.
+
 ### 0.1.76
 
 - **Maintenance:** TV videos retain the original mod's catalog and initialization. Removed the duplicate Lua video list and macOS path-depth search; path correction now runs before native video caching.
