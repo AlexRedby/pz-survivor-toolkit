@@ -30,6 +30,7 @@ EXTRA_TESTS = (
     'test_auto_drink.lua',
     'test_cci_compat.lua',
     'test_item_details.lua',
+    'test_clothing_repair_menu.lua',
     'test_tv_videos.lua',
     'test_vhs_ownership.lua',
     'test_vehicle_ground.lua',
@@ -64,7 +65,7 @@ def main() -> None:
     parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
     parser.add_argument("--quartermaster-source", type=Path, help="Quartermaster media/lua root for native integration checks")
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
-    parser.add_argument("--native-inventory-context-menu", type=Path, help="vanilla inventory transfer callbacks")
+    parser.add_argument("--native-inventory-context-menu", type=Path, help="vanilla inventory callbacks and sibling garment inspection UI")
     parser.add_argument("--native-action-root", type=Path, help="vanilla media/lua for queue/base/read contracts")
     parser.add_argument("--wishlist-game-root", type=Path, help="game Java directory for native wishlist menu callbacks")
     parser.add_argument("--wishlist-workshop-root", type=Path, help="Workshop content/108600 for wishlist UI source checks")
@@ -227,6 +228,13 @@ def main() -> None:
         if args.cci_source:
             lua.globals().CCISource = args.cci_source.read_text(encoding="utf-8")
         lua.execute((ROOT / "tests/test_cci_compat.lua").read_text(encoding="utf-8"))
+
+    if should_run('test_clothing_repair_menu.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        if args.native_inventory_context_menu:
+            lua.globals().NativeGarmentSource = (args.native_inventory_context_menu.parent / "ISGarmentUI.lua").read_text(encoding="utf-8")
+        lua.execute((ROOT / "tests/test_clothing_repair_menu.lua").read_text(encoding="utf-8"))
 
     if should_run('test_item_details.lua'):
         lua = LuaRuntime(unpack_returned_tuples=True)
