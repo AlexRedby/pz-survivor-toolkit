@@ -7,7 +7,6 @@
 
 # Оставшиеся проверки тегов
 
-- [ ] Проверить глобальные preset-правила Quartermaster после полного перезапуска на актуальной версии Toolkit; существующая native-проверка правил контейнеров и локальных фильтров не покрывает preset store, для которого пока есть Lua/native-source тесты.
 - [ ] Сравнить native/toolkit загрузку одного saved full49 мира для четырёх IsoMetaGrid.load invalid room metaID в map_meta.bin (cell25,33); отделить ошибку нативной загрузки/модпака от тегов до объявления чистого runtime.
 
 # Совместимость Quartermaster
