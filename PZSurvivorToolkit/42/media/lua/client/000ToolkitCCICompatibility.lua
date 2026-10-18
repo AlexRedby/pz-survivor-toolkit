@@ -9,6 +9,8 @@ if PZAPI.ModOptions:getOptions("ContainerCapacityIndicator") then
     return
 end
 
+local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
+
 -- Capture CCI's private overlays once, independently of the active UI class.
 local paneClass, pageClass = ISInventoryPane, ISInventoryPage
 local details, icons, addButton = paneClass.renderdetails, paneClass.rendericons, pageClass.addContainerButton
@@ -121,15 +123,11 @@ local function installPage(class)
 end
 
 local function installClasses()
-    installPane(_G.CleanUI_Clean_ISInventoryPane, true)
-    installPane(_G.CleanUI_Vanilla_ISInventoryPane, false)
-    installPane(ISInventoryPane, ISInventoryPane ~= _G.CleanUI_Vanilla_ISInventoryPane)
+    InventoryClasses.panes(installPane, true)
     installPage(_G.CleanUI_Clean_ISInventoryPage)
     installPage(_G.CleanUI_Vanilla_ISInventoryPage)
     installPage(ISInventoryPage)
 end
 installClasses()
-if type(CleanUI_RegisterInventoryUiToggleCallback) == "function" then
-    CleanUI_RegisterInventoryUiToggleCallback(installClasses)
-end
+InventoryClasses.onToggle(installClasses)
 print("[PZSurvivorToolkit] CleanUI / CCI compatibility loaded")

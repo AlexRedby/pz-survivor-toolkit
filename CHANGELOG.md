@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.74
+
+- **Maintenance:** Inventory adapters share class discovery and CleanUI toggle subscriptions while preserving each adapter's installation order, native fallback and existing hooks.
+
 ### 0.1.73
 
 - **Added:** Authored wooden-wheelbarrow pickup and setdown clips, including the SaucedCarts setdown hotkey, cancellation recovery and exact world/held-item handoffs.

@@ -1,3 +1,4 @@
+local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 require "ISUI/ISInventoryPane"
 require "ISUI/ISToolTip"
 local Tags = require "PZSurvivorToolkit/ItemTags"
@@ -183,16 +184,12 @@ local function install(class)
 end
 
 function InventoryTags.install()
-    install(ISInventoryPane)
-    install(CleanUI_Clean_ISInventoryPane)
-    install(CleanUI_Vanilla_ISInventoryPane)
+    InventoryClasses.panes(install)
 end
 
 Events.OnGameStart.Add(function()
     InventoryTags.install()
-    if CleanUI_RegisterInventoryUiToggleCallback then
-        CleanUI_RegisterInventoryUiToggleCallback(InventoryTags.install)
-    end
+    InventoryClasses.onToggle(InventoryTags.install)
 end)
 
 return InventoryTags

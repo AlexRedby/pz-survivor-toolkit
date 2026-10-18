@@ -8,6 +8,26 @@ except ImportError:
 
 
 INTEGRATIONS = {
+    'CleanUI': {
+        'owners': ['client/PZSurvivorToolkit/InventoryClasses.lua', 'client/PZSurvivorToolkit/InventoryFilter.lua',
+                   'client/PZSurvivorToolkit/InventoryLayout.lua', 'client/PZSurvivorToolkit/InventoryInteraction.lua',
+                   'client/PZSurvivorToolkit/InventoryTags.lua'],
+        'option': 'cleanui_inventory_pane', 'root': 'media/lua/client/ISUI', 'argument': 'ISInventoryPane.lua',
+        'tests': {name: ['ISInventoryPane.lua'] for name in (
+            'test_inventory_tags.lua', 'test_inventory_filter.lua', 'test_inventory_layout.lua',
+            'test_inventory_interaction.lua')},
+    },
+    'ContainerCapacityIndicator': {
+        'owners': ['client/PZSurvivorToolkit/InventoryClasses.lua', 'client/000ToolkitCCICompatibility.lua'],
+        'option': 'cci_source', 'root': 'media/lua/client', 'argument': 'ContainerCapacityIndicator.lua',
+        'tests': {'test_cci_compat.lua': ['ContainerCapacityIndicator.lua']},
+    },
+    'BravoItemDetails': {
+        'owners': ['client/PZSurvivorToolkit/InventoryClasses.lua', 'client/000ToolkitItemDetailsCompatibility.lua'],
+        'option': 'item_details_source', 'root': 'media/lua/client',
+        'tests': {'test_item_details.lua': ['BravoItemDetails.lua', 'BravoItemDetailsConfig.lua',
+                                          'BravoItemDetailsSorter.lua']},
+    },
     'Navigator': {
         'owners': ['client/PZSurvivorToolkit/Navigator.lua'],
         'option': 'navigator_source', 'root': 'media/lua/client/NavigatorRadio',
@@ -80,7 +100,9 @@ def configure(args, project, requested):
         print('Upstream ' + id + ' -> ' + ', '.join(spec['owners']) + ' -> '
               + ', '.join(test for test in spec['tests'] if test in checks))
     for test, option, relative in (('test_tv_controls.lua', 'native_radio_root', 'media/lua/client'),
-                                    ('test_quartermaster_craft_ui.lua', 'native_action_root', 'media/lua')):
+                                    ('test_quartermaster_craft_ui.lua', 'native_action_root', 'media/lua'),
+                                    *[(test, 'native_inventory_pane', 'media/lua/client/ISUI/ISInventoryPane.lua')
+                                      for test in INTEGRATIONS['CleanUI']['tests']]):
         if test in checks:
             value = args.game.resolve() / relative
             previous = getattr(args, option)

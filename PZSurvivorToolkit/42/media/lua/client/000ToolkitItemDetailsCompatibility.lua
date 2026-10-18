@@ -7,6 +7,8 @@ if PZAPI.ModOptions:getOptions("BravoItemDetails") then
     return
 end
 
+local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
+
 local config = require "BravoItemDetailsConfig"
 local numericOption = PZAPI.ModOptions:getOptions("BravoItemDetails").dict.showNumeric
 -- Mod Options formats tooltip text; the upstream literal percent needs escaping.
@@ -143,12 +145,8 @@ local function install(class)
 end
 
 local function installClasses()
-    install(_G.CleanUI_Clean_ISInventoryPane)
-    install(_G.CleanUI_Vanilla_ISInventoryPane)
-    install(ISInventoryPane)
+    InventoryClasses.panes(install, true)
 end
 installClasses()
-if type(CleanUI_RegisterInventoryUiToggleCallback) == "function" then
-    CleanUI_RegisterInventoryUiToggleCallback(installClasses)
-end
+InventoryClasses.onToggle(installClasses)
 print("[PZSurvivorToolkit] Item Details compatibility loaded")

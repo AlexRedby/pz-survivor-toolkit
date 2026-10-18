@@ -99,6 +99,9 @@ end
 ]]
 local cciLoads = 0
 require = function(name)
+    if name == "PZSurvivorToolkit/InventoryClasses" then
+        return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
+    end
     if name == 'ContainerCapacityIndicator' then
         cciLoads = cciLoads + 1
         assert(loadstring(source))()

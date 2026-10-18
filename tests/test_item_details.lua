@@ -109,6 +109,9 @@ local function run(initialEnhanced, lateVanilla)
     end
     local loaded = {}
     require = function(name)
+        if name == "PZSurvivorToolkit/InventoryClasses" then
+            return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
+        end
         if loaded[name] then return loaded[name] end
         if name=='BravoItemDetailsConfig' then loaded[name]=loadConfig()
         elseif name=='BravoItemDetailsSorter' then sorter=loadSorter(); loaded[name]=sorter

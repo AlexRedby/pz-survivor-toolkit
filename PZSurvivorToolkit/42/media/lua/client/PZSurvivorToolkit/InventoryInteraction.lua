@@ -1,3 +1,4 @@
+local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 require "ISUI/ISInventoryPane"
 
 local patched = {}
@@ -39,11 +40,7 @@ local function install(class)
 end
 
 local function installClasses()
-    install(ISInventoryPane)
-    install(CleanUI_Clean_ISInventoryPane)
-    install(CleanUI_Vanilla_ISInventoryPane)
+    InventoryClasses.panes(install)
 end
 Events.OnGameStart.Add(installClasses)
-if CleanUI_RegisterInventoryUiToggleCallback then
-    CleanUI_RegisterInventoryUiToggleCallback(installClasses)
-end
+InventoryClasses.onToggle(installClasses)

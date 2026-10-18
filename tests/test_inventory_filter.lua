@@ -1,5 +1,8 @@
 local pickerOptions, presetMenuOptions
 require = function(name)
+    if name == "PZSurvivorToolkit/InventoryClasses" then
+        return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
+    end
     if name == "PZSurvivorToolkit/TagFilterPresetsMenu" then return {add=function(_,options) presetMenuOptions=options end} end
     if name == "PZSurvivorToolkit/TagRulePicker" then return {open=function(options) pickerOptions=options end} end
     if name == "PZSurvivorToolkit/TagVisuals" then
@@ -347,6 +350,10 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
         local starts={}
         env.Events={OnGameStart={Add=function(fn) starts[#starts+1]=fn end}}
         env.require=function(name)
+            if name=='PZSurvivorToolkit/InventoryClasses' then
+                local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))
+                setfenv(chunk,env);return chunk()
+            end
             if name=='BravoItemDetailsConfig' then
                 env.PZAPI.ModOptions.getOptions=function() return {dict={showNumeric={}}} end
                 return config

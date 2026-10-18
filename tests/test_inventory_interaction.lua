@@ -1,4 +1,7 @@
 require = function(name)
+    if name == "PZSurvivorToolkit/InventoryClasses" then
+        return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
+    end
     if name == "PZSurvivorToolkit/TagVisuals" then
         return {get=function() return {r=0.4,g=0.8,b=0.3,texture={}} end}
     end
