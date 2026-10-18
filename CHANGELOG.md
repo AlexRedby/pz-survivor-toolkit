@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.69
+
+- **Fixed:** Queue reset and clear revoke pending callbacks through the shared native cancellation boundary, including after Quartermaster reloads its saved reset wrapper. Clearing only a command's generated actions preserves its parent and valid continuations.
+
 ### 0.1.68
 
 - **Fixed:** A completed multiplayer fire ignition waits for its correlated server outcome before cancellation cleanup, preserving the original fuel container and queued follow-up actions.

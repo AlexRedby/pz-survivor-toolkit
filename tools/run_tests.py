@@ -228,7 +228,7 @@ def main() -> None:
             lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
         if name in ("test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_dispatch.lua", "test_action_queue_compat.lua", "test_action_queue_tidy_intent.lua", "test_action_queue_manifest.lua", "test_action_queue_health.lua", "test_action_queue_fire.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua") and args.wishlist_workshop_root:
             lua.globals().NativeWishlistWorkshopRoot = str(args.wishlist_workshop_root)
-        if name in ("test_action_queue_fire.lua", "test_action_queue_manifest.lua") and args.quartermaster_source:
+        if name in ("test_action_queue.lua", "test_action_queue_fire.lua", "test_action_queue_manifest.lua") and args.quartermaster_source:
             lua.globals().NativeQuartermasterLuaRoot = str(args.quartermaster_source)
         if args.project_cook_picker:
             lua.globals().ProjectCookPickerSourcePath = str(args.project_cook_picker)

@@ -32,6 +32,15 @@ local function load(path) assert(loadfile(NativeActionRoot .. '/' .. path))() en
 load('shared/TimedActions/ISBaseTimedAction.lua')
 load('client/TimedActions/ISTimedActionQueue.lua')
 load('client/TimedActions/ISQueueActionsAction.lua')
+local nativeResetQueue = ISTimedActionQueue.resetQueue
+local function reloadQuartermaster()
+    assert(loadfile(NativeQuartermasterLuaRoot .. '/client/LootSorter_WalkAction.lua'))()
+end
+if NativeQuartermasterLuaRoot then
+    load('client/TimedActions/WalkToTimedAction.lua')
+    LootSorter = {isDebug = function() return false end, addOrReplaceHandler = function() end}
+    reloadQuartermaster()
+end
 load('shared/TimedActions/ISReadABook.lua')
 load('shared/Moveables/ISMoveablesAction.lua')
 load('shared/Vehicles/TimedActions/ISRemoveBurntVehicle.lua')
@@ -155,6 +164,57 @@ assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivo
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local api = PZSurvivorToolkit.ActionQueue
+if NativeQuartermasterLuaRoot then
+    for reload = 0, 3 do
+        if reload == 3 then
+            ISTimedActionQueue.resetQueue = nativeResetQueue
+            LootSorter._vanillaResetQueue = nil
+        end
+        if reload > 0 then reloadQuartermaster() end
+        for _, method in ipairs({'resetQueue', 'clearQueue'}) do
+            local p = player()
+            local action = book(p)
+            local q = ISTimedActionQueue.add(action)
+            local token = action.toolkitQueueOperation
+            local resumed = false
+            local pending = operations.attachContinuation(token, p)
+            local generation = q.toolkitOperationGeneration or 0
+            local cancellations = 0
+            action.forceCancel = function()
+                assert(token.toolkitCancelled and q.toolkitOperationGeneration == generation + 1,
+                    'native cancellation ran before Toolkit invalidation')
+                cancellations = cancellations + 1
+            end
+            q.toolkitCancel, q.toolkitResume, q.toolkitGroupCancel = action, action, {}
+            q[method](q)
+            assert((q.toolkitOperationGeneration or 0) == generation + 1 and token.toolkitCancelled,
+                'Quartermaster reload ' .. reload .. ' bypassed operation invalidation')
+            operations.runContinuation(pending, function() resumed = true end)
+            assert(not resumed and #q.queue == 0 and cancellations == 1
+                and q.current == (method == 'clearQueue' and action or nil)
+                and not q.toolkitCancel and not q.toolkitResume and not q.toolkitGroupCancel,
+                'reset allowed a canceled continuation to refill the queue')
+        end
+    end
+end
+do
+    local p = player()
+    local parent, child, tail = book(p), book(p), book(p)
+    local q = ISTimedActionQueue.add(parent)
+    ISTimedActionQueue.add(child); ISTimedActionQueue.add(tail)
+    parent._isAddingActions, parent._numAddedActions = true, 1
+    child.toolkitQueueOperation = parent.toolkitQueueOperation
+    local pending = operations.attachContinuation(parent.toolkitQueueOperation, p)
+    local generation, canceled = q.toolkitOperationGeneration or 0, 0
+    child.forceCancel = function() canceled = canceled + 1 end
+    q:clearQueue()
+    assert(#q.queue == 2 and q.queue[1] == parent and q.queue[2] == tail and canceled == 1
+        and parent._numAddedActions == 0 and not parent.toolkitQueueOperation.toolkitCancelled
+        and (q.toolkitOperationGeneration or 0) == generation, 'expansion clear invalidated its parent or unrelated tail')
+    local resumed = false
+    operations.runContinuation(pending, function() resumed = true end)
+    assert(resumed, 'expansion clear revoked a valid continuation')
+end
 do
     local idlePlayer=player()
     local idleQueue=ISTimedActionQueue.getTimedActionQueue(idlePlayer)

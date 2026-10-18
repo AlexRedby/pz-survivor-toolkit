@@ -299,28 +299,16 @@ Policy.replaceStop(stop, ISBaseTimedAction.stop)
 if Toolkit.ActionQueueCompat then Toolkit.ActionQueueCompat.adoptStop(stop, ISBaseTimedAction.stop) end
 if Operations.adoptCommandLifecycle then Operations.adoptCommandLifecycle("stop", stop, ISBaseTimedAction.stop) end
 
-local reset = ISTimedActionQueue.resetQueue
-ISTimedActionQueue.resetQueue = function(queue)
+-- Native reset/clear delegate here even when another mod retains an earlier reset wrapper.
+local cancelQueue = ISTimedActionQueue.cancelQueue
+ISTimedActionQueue.cancelQueue = function(queue)
     Toolkit.ActionQueueLifecycle.reset(queue)
     Toolkit.ActionQueueAcknowledgements.reset(queue)
     if Operations.invalidateQueue then Operations.invalidateQueue(queue) end
     if Toolkit.ActionQueueCraft and Toolkit.ActionQueueCraft.cancelQueue then Toolkit.ActionQueueCraft.cancelQueue(queue) end
     clearStop(queue)
     queue.toolkitGroupCancel = nil
-    return reset(queue)
-end
-
-local clear = ISTimedActionQueue.clearQueue
-ISTimedActionQueue.clearQueue = function(queue)
-    if not queue:isCurrentActionAddingOtherActions() then
-        Toolkit.ActionQueueLifecycle.reset(queue)
-        Toolkit.ActionQueueAcknowledgements.reset(queue)
-        if Operations.invalidateQueue then Operations.invalidateQueue(queue) end
-        if Toolkit.ActionQueueCraft and Toolkit.ActionQueueCraft.cancelQueue then Toolkit.ActionQueueCraft.cancelQueue(queue) end
-        clearStop(queue)
-        queue.toolkitGroupCancel = nil
-    end
-    return clear(queue)
+    return cancelQueue(queue)
 end
 
 local tick = ISTimedActionQueue.tick
