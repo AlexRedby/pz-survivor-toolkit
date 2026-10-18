@@ -48,16 +48,33 @@ class AnalyzerEvidenceTests(unittest.TestCase):
             for row in rows:
                 writer.writerow({'event': 'grounding', **row})
 
-    def analyze(self, profile, output, log=None):
+    def analyze(self, profile, output, log=None, stop_timing=False):
         command = [sys.executable, str(HERE / 'analyze-native.py'), '--profile', str(profile), '--output', str(output)]
         if log is not None:
             command += ['--log', str(log)]
+        if stop_timing: command.append("--stop-timing")
         return subprocess.run(command, capture_output=True, text=True)
 
     def test_complete_finite_evidence_passes(self):
         with tempfile.TemporaryDirectory() as temp:
             result = self.analyze(*self.fixture(Path(temp)))
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_timing_bank_includes_third_stop_geometry_and_grip(self):
+        for kind in ('grip','body','pants'):
+            with self.subTest(kind=kind),tempfile.TemporaryDirectory() as temp:
+                profile,output=self.fixture(Path(temp))
+                if kind=='grip':
+                    with (profile/'wood-grip-poses.jsonl').open('a') as stream:
+                        stream.write(json.dumps({'wallTimeMillis':114000,'result':False})+'\n')
+                else:
+                    path=output/('hip-triangle-frames.json' if kind=='body' else 'pants-triangle-frames.json')
+                    rows=json.loads(path.read_text());rows.append({'time':114000,'L':1,'R':0});path.write_text(json.dumps(rows))
+                result=self.analyze(profile,output,stop_timing=True)
+                self.assertNotEqual(result.returncode,0,result.stdout)
+                report=json.loads((output/'native-metrics.json').read_text())
+                self.assertEqual(report['measurementEndAfterCaseMs'],15800)
+                self.assertFalse(report['checks'][kind])
 
     def test_explicit_stdout_overrides_rotated_console_without_rewriting_it(self):
         with tempfile.TemporaryDirectory() as temp:

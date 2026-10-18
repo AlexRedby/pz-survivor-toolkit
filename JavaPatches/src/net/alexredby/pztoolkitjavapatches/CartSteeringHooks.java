@@ -19,12 +19,13 @@ public final class CartSteeringHooks {
         final CartLegPace.Ramp pace = new CartLegPace.Ramp();
         final CartSteeringMath.Reversal reversal = new CartSteeringMath.Reversal();
         double brakeTarget, actualDistance, fastPoseTail, nativeSpeed, brakeLimit, brakeWait, brakePace, fastReleaseWait;
+        double fastPace, brakeDuration=1;
         zombie.inventory.InventoryItem cart;
         float startX, startY;
         boolean wheelRendered, stationary, stationaryRoot, cartBlocked, recovering, path;
         double footprintFront=CartFootprint.WALK_FRONT;
         boolean moving, pending, sprintMomentum, sprintRequested, hasInput, wantsMove, braking, brakeSeen, fastMoving;
-        boolean sprintMoving;
+        boolean sprintMoving, momentumSprint;
         final CartSteeringMath.Step requested = new CartSteeringMath.Step();
         final Vector2 result = new Vector2();
         final Vector2 input = new Vector2();
@@ -98,12 +99,17 @@ public final class CartSteeringHooks {
             if(state.wantsMove) {
                 state.braking=false;
                 player.setVariable("ToolkitCartWoodBrake",false);
-            } else if(wasMoving && state.fastMoving
+                player.setVariable("ToolkitCartBrakeSprint",false);
+            } else if(wasMoving && (state.fastMoving || state.sprintMomentum)
                 && state.reversal.direction>0 && !state.reversal.active && state.actualDistance>1e-6
                 && Double.isFinite(state.nativeSpeed) && state.nativeSpeed>0) {
                 state.braking=true;state.brakeSeen=false;state.brakeWait=0;
                 state.brakeLimit=state.nativeSpeed;
                 state.brakePace=state.pace.speed;
+                double remaining=state.fastMoving || state.fastPace<=0 ? 1
+                    : Math.max(0,Math.min(1,state.pace.speed/state.fastPace));
+                state.brakeDuration=.65+.35*remaining;
+                player.setVariable("ToolkitCartBrakeSprint",state.fastMoving?state.sprintMoving:state.momentumSprint);
                 player.setVariable("ToolkitCartWoodBrake",true);
             }
             int intent=state.wantsMove?CartSteeringMath.directionIntent(state.heading,desired,state.reversal.requested):0;
@@ -228,7 +234,6 @@ public final class CartSteeringHooks {
             // Seed a resumed Sprint from the coasting speed without changing the stop's cadence.
             if(state.braking && state.brakeLimit>0)
                 state.pace.reset(state.brakePace*Math.max(0,Math.min(1,distance/(dt*state.brakeLimit))));
-            else state.nativeSpeed=distance/dt;
         }
         state.load = load(player);
         if(state.stationaryRoot) {
@@ -415,7 +420,7 @@ public final class CartSteeringHooks {
             state.brakeWait+=dt;
             if(stop!=null && !state.brakeSeen) {
                 // A loaded cart takes slightly longer to settle, with the same authored foot sequence.
-                stop.setSpeedDelta((float)(1/(1+.12*state.load)));
+                stop.setSpeedDelta((float)(1/(state.brakeDuration*(1+.12*state.load))));
                 state.brakeSeen=true;
             }
             if(blocked || state.brakeSeen && stop==null || !state.brakeSeen && state.brakeWait>.3) {
@@ -430,6 +435,11 @@ public final class CartSteeringHooks {
         // The native start/stop pose can outlive the last running track; release its clearance gradually.
         if(wooden(player)) state.fastPoseTail=player.isRunning() || player.isSprinting() || stop!=null?.4:Math.max(0,state.fastPoseTail-dt);
         state.actualDistance=Math.hypot(actualX,actualY);
+        if(dt>0 && !state.braking) {
+            // Native applies slowdown after this hook's budget; do not count it twice in the stop cap.
+            double factor=1-player.getSlowFactor();
+            state.nativeSpeed=factor>0?state.actualDistance/(dt*factor):0;
+        }
         double travel=actualX*Math.cos(state.heading)+actualY*Math.sin(state.heading);
         double bank=state.stationaryRoot ? 0 : wooden(player) ? CartSteeringMath.rollingLean(acceptedTurn,travel,dt)
             : wheelbarrow(player) && dt>0 ? Math.max(-.10,Math.min(.10,Math.signum(travel)*acceptedTurn/dt*.065)) : 0;
@@ -492,7 +502,12 @@ public final class CartSteeringHooks {
         } else if(Float.isFinite(target)) {
             if(blocked) state.pace.reset(0);
             // Native uses Run for the first Sprint frame, before isSprinting becomes true.
-            if(player.isSprinting() || sprintRequested && state.moving) state.sprintMomentum=true;
+            if(state.fastMoving || sprintRequested && state.moving) {
+                if(player.isRunning() && !sprintRequested && !state.sprintMomentum && CartLegPace.brakeTrack(player)==null)
+                    state.pace.reset(target);
+                state.sprintMomentum=true;
+                state.momentumSprint=player.isSprinting() || sprintRequested;
+            }
             if(state.reversal.active) {
                 state.sprintMomentum=false;
                 double speed=state.pace.update(state.reversal.braking?0:target,dt,state.load);
@@ -505,9 +520,10 @@ public final class CartSteeringHooks {
                 if(state.reversal.braking) state.reversal.stopped(dt,speed==0,state.actualDistance<1e-6);
                 else if(state.pace.settled(target)) state.reversal.active=false;
             } else if(state.sprintMomentum) {
-                double speed=state.pace.update(target,dt,state.load);
+                double speed=state.pace.update(target,dt,state.load,true);
                 CartLegPace.applySpeed(player,(float)speed,stepX,stepY);
-                if(!player.isSprinting() && state.pace.settled(target)) state.sprintMomentum=false;
+                if(state.fastMoving) state.fastPace=speed;
+                else if(speed<=target*1.02) state.sprintMomentum=false;
             } else {
                 state.pace.reset(target);
                 CartLegPace.apply(player,CartLegPace.scale(player,stepX,stepY));
@@ -531,6 +547,7 @@ public final class CartSteeringHooks {
         CartLegPace.cancelBrake(player,true);
         states.remove(player);
         player.setVariable("ToolkitCartWoodBrake",false);
+        player.setVariable("ToolkitCartBrakeSprint",false);
         player.clearVariable("ToolkitCartLegPace");
         player.setVariable("ToolkitCartPivot",false);
         player.setVariable("ToolkitCartStepX", 0.0f);

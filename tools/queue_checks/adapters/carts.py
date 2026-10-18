@@ -407,11 +407,12 @@ def _coverage(cache, text, count, metrics):
     rows = metrics['cases']
     if len(rows) != count or {row['case'] for row in rows} != {name for name, _ in completed}:
         raise ValueError('Native metrics do not cover every completed cart case')
+    end_ms=metrics.get('measurementEndAfterCaseMs',11800)
     for name, start in completed:
         start = int(start)
         for kind, samples in (('body', body), ('grip', grip)):
-            times = sorted(set(row['wallTimeMillis'] for row in samples if start + 800 < row['wallTimeMillis'] < start + 11800))
-            if len(times) < 5 or times[0] > start + 1500 or times[-1] < start + 11100 or max(b-a for a, b in zip(times, times[1:])) > 1000:
+            times = sorted(set(row['wallTimeMillis'] for row in samples if start + 800 < row['wallTimeMillis'] < start + end_ms))
+            if len(times) < 5 or times[0] > start + 1500 or times[-1] < start + end_ms - 700 or max(b-a for a, b in zip(times, times[1:])) > 1000:
                 raise ValueError('Incomplete ' + kind + ' probe window for ' + name)
         row = next(row for row in rows if row['case'] == name)
         if row['gripSamples'] <= 0 or row['wheelFloorMaxError'] is None or any(row.get(kind, {}).get('samples', 0) <= 0 for kind in ('body', 'pants')):
@@ -464,7 +465,7 @@ def verify(root, selection, catalog):
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
             if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat'):
-                commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if debug or case != 'sprint' else [])))
+                commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if debug or case != 'sprint' else []) + (['--stop-timing'] if case == 'stop-timing' else [])))
             evidence['analyzers'] = {name: _run(command, analysis, name) for name, command in commands}
             if debug:
                 if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat'):
@@ -530,6 +531,8 @@ def verify(root, selection, catalog):
                 evidence['motion'] = _json(analysis / (case + '-motion.json'))
                 if case == 'stop-timing' and not evidence['motion'].get('timingVerified'):
                     raise ValueError('Stop timing capture did not verify its measurement windows')
+                if case == 'stop-timing' and not evidence['motion'].get('residualBrakingVerified'):
+                    raise ValueError('Native residual-speed stop transitions were not verified')
                 if case == 'path' and not all(evidence['motion'].get(key) for key in ('motionPass', 'footprintVerified')):
                     raise ValueError('Native path/footprint verification failed: ' + str(evidence['motion'].get('failures')))
             elif case == 'reversal':

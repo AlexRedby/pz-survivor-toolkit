@@ -30,7 +30,8 @@ def evidence():
             fast = any(begin <= t < end for begin,end in ((1000,2500),(6000,7575),(11000,12575)))
             run, sprint = str(fast and gait==1).lower(), str(fast and gait==2).lower()
             clip = 'Bob_SprintToStop2h_Heavy' if gait==2 else 'Bob_RunToStop2H_Heavy'
-            tracks = f'{clip}@1/{(t-2500)/1000}/1/true;' if 2500<=t<4200 else ''
+            stop_start = next((begin for begin in (2500,7600,12800) if begin<=t<begin+1700),None)
+            tracks = f'{clip}@1/{(t-stop_start)/1000}/1/true;' if stop_start is not None else ''
             lines.append(f'[WOOD_BANK_SAMPLE] case={name} wall={start+t} elapsed={t} x={x} y=0 pace=1 speed=.8 run={run} sprint={sprint} item=SaucedWheelbarrow.WheelbarrowWood cartMotion=true native=tracks:{tracks},bones:')
             offset = .4+max(0,4000-t)*.00001 if 2500<=t<4000 else .4
             wheel.append(dict(event='grounding', time=(start+t)/1000, wallTimeMillis=start+t, playerX=x,playerY=0,wheelX=x+offset,wheelY=0,phase=0,lean=0))
@@ -64,9 +65,20 @@ class StopTimingAnalyzerTest(unittest.TestCase):
         self.assertTrue(walk100['observedWalkBeforeDirection'])
         self.assertFalse(walk100['nativeBeforeDirection']['run'])
         self.assertTrue(direct['heavyTrack']['behaviorMatchesExpectation'])
-        self.assertEqual(walk100['heavyTrack']['observedNames'],[])
+        self.assertEqual(walk100['heavyTrack']['observedNames'],['Bob_RunToStop2H_Heavy'])
+        self.assertTrue(report['residualBrakingVerified'])
         self.assertTrue(direct['wheelRelativeSettling']['observed'])
         self.assertNotIn('pass',direct['wheelRelativeSettling'])
+
+    def test_missing_heavy_after_walk_fails_residual_braking_gate(self):
+        lines = []
+        for line in self.text.splitlines():
+            if '[WOOD_BANK_SAMPLE]' in line and any(f'elapsed={t} ' in line for t in range(7600,9300,25)):
+                line = line.split('native=')[0]+'native=tracks:,bones:'
+            lines.append(line)
+        report = self.analyze('\n'.join(lines))
+        self.assertTrue(report['timingVerified'])
+        self.assertFalse(report['residualBrakingVerified'])
 
     def test_native_planted_track_can_have_zero_rate_and_rewound_clock(self):
         report = self.analyze(self.text.replace('native=tracks:', 'native=tracks:Bob_Idle@.2/-.1/0/true;'))
@@ -83,6 +95,7 @@ class StopTimingAnalyzerTest(unittest.TestCase):
         report = self.analyze(self.text.replace('Bob_RunToStop2H_Heavy','Bob_SprintToStop2h_Heavy'))
         run = next(case for case in report['cases'] if case['case']=='male-empty-run-stop')
         self.assertFalse(run['stops'][0]['heavyTrack']['behaviorMatchesExpectation'])
+        self.assertFalse(report['residualBrakingVerified'])
         self.assertTrue(report['timingVerified'])
 
     def test_rejects_missing_keys_order_collapsed_frames_and_wrong_delay(self):

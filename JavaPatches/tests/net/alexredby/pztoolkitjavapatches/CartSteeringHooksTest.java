@@ -37,10 +37,11 @@ public final class CartSteeringHooksTest {
     // Skip world/renderer constructors, as the existing NativeChecks fixture does.
     private static final class Player extends IsoPlayer {
         int blocked;
-        boolean pivot, woodBrake, moving, run, sprint, pathActive, npc;
+        boolean pivot, woodBrake, brakeSprint, moving, run, sprint, pathActive, npc;
         zombie.pathfind.PathFindBehavior2 nativePath;
         zombie.ai.astar.AStarPathFinderResult finder;
-        float walkSpeed;
+        float walkSpeed, slowFactor;
+        @Override public float getSlowFactor() { return slowFactor; }
         float stepX, stepY, legPace;
         float actualX, actualY, inputX, inputY;
         ItemContainer inventory;
@@ -74,7 +75,7 @@ public final class CartSteeringHooksTest {
         @Override public zombie.ai.astar.AStarPathFinderResult getFinder() { return finder; }
         @Override public boolean getVariableBoolean(String name) {
             return switch(name) {case "ToolkitCartMotion"->blocked!=10;case "ToolkitCartPivot"->pivot;
-                case "ToolkitCartWoodBrake"->woodBrake;default->false;};
+                case "ToolkitCartWoodBrake"->woodBrake;case "ToolkitCartBrakeSprint"->brakeSprint;default->false;};
         }
         @Override public InventoryItem getPrimaryHandItem() { return primary; }
         @Override public InventoryItem getSecondaryHandItem() { return secondary; }
@@ -90,6 +91,7 @@ public final class CartSteeringHooksTest {
         @Override public IAnimationVariableSlot setVariable(String name, boolean value) {
             if (name.equals("ToolkitCartPivot")) pivot = value;
             if (name.equals("ToolkitCartWoodBrake")) woodBrake = value;
+            if (name.equals("ToolkitCartBrakeSprint")) brakeSprint = value;
             return null;
         }
         @Override public IAnimationVariableSlot setVariable(String name, float value) {
@@ -207,6 +209,102 @@ public final class CartSteeringHooksTest {
         } finally {
             CartSteeringHooks.reset(player);time.fpsMultiplier=oldFps;
         }
+    }
+
+    private static void residualBrake(Unsafe unsafe, Map<?,?> states) throws Exception {
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
+        type(cart,"SaucedWheelbarrow.WheelbarrowWood");player.walkSpeed=.8f;
+        var input=new IsoPlayer.InputState();
+        var time=GameTime.getInstance();float oldFps=time.fpsMultiplier;
+        try {
+            for(int fps:new int[]{30,60,144}) for(boolean sprint:new boolean[]{false,true})
+                for(double load:new double[]{0,1}) for(double lead:new double[]{.1,.3}) {
+                    time.fpsMultiplier=60f/fps;double dt=time.getRealworldSecondsSinceLastUpdate();
+                    CartSteeringHooks.reset(player);player.animator=null;
+                    player.actualX=player.actualY=0;player.inputX=player.inputY=.5f;player.moving=true;
+                    input.setRunning(!sprint);input.sprinting=sprint;CartSteeringHooks.input(player,input);
+                    player.run=!sprint;player.sprint=sprint;
+                    accept(player,CartSteeringHooks.movement(player,(float)(.8*dt),0));
+                    Object state=states.get(player);
+                    var pace=(CartLegPace.Ramp)field(state,"pace").get(state);pace.reset(.8);
+                    for(double elapsed=0;elapsed<lead;elapsed+=dt) pace.update(.3,dt,load,true);
+                    // A finalized native Walk node must retain the measured residual, without fast input injection.
+                    field(state,"fastMoving").setBoolean(state,false);
+                    field(state,"sprintMomentum").setBoolean(state,true);
+                    field(state,"momentumSprint").setBoolean(state,sprint);
+                    field(state,"fastPace").setDouble(state,.8);
+                    field(state,"nativeSpeed").setDouble(state,pace.speed);
+                    field(state,"actualDistance").setDouble(state,pace.speed*dt);
+                    field(state,"load").setDouble(state,load);
+                    double speed=pace.speed;
+                    releaseAfterNativeGaitReset(player,input);
+                    check(player.woodBrake && player.brakeSprint==sprint,
+                        "brief finalized Walk must select the residual fast stop: "+fps+"/"+sprint+"/"+lead);
+                    check(Math.abs(field(state,"brakeLimit").getDouble(state)-speed)<1e-7,
+                        "braking must start from remaining speed, not the old fast speed");
+                    var idle=brakeAnimation(player);player.moving=false;
+                    CartSteeringHooks.heading(player);
+                    double duration=.65+.35*speed/.8;
+                    check(Math.abs(idle.getTransitionInTrack().getSpeedDelta()-1/duration)<1e-6,
+                        "lower residual speed must shorten the authored stop without restarting full-speed inertia");
+                    var step=CartSteeringHooks.movement(player,1,0);
+                    check(Math.abs(step.getLength()-speed*dt)<1e-7,"stop root cannot accelerate the remaining motion");
+                    CartSteeringHooks.reset(player);
+                    check(!player.brakeSprint && !player.woodBrake,"reset must retire both stop selectors");
+                }
+        } finally { CartSteeringHooks.reset(player);time.fpsMultiplier=oldFps; }
+    }
+
+    private static void residualBrakeEdges(Unsafe unsafe, Map<?,?> states) throws Exception {
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
+        type(cart,"SaucedWheelbarrow.WheelbarrowWood");player.walkSpeed=.8f;
+        var input=new IsoPlayer.InputState();
+        double dt=GameTime.getInstance().getRealworldSecondsSinceLastUpdate();
+        for(float slowdown:new float[]{0,.5f,.9f}) {
+            CartSteeringHooks.reset(player);player.slowFactor=slowdown;
+            player.inputX=player.inputY=.5f;player.moving=true;input.setRunning(true);input.sprinting=false;
+            CartSteeringHooks.input(player,input);player.run=true;
+            Vector2 step=CartSteeringHooks.movement(player,(float)(.8*dt),0);
+            step.scale(1-slowdown);accept(player,step);
+            releaseAfterNativeGaitReset(player,input);player.moving=false;
+            step=CartSteeringHooks.movement(player,1,0);step.scale(1-slowdown);
+            check(Math.abs(step.getLength()-.8*dt*(1-slowdown))<1e-7,
+                "native slowdown must not be applied twice by the release cap: "+slowdown);
+        }
+        CartSteeringHooks.reset(player);player.slowFactor=0;player.actualX=player.actualY=0;
+        player.inputX=player.inputY=.5f;player.moving=true;input.setRunning(true);CartSteeringHooks.input(player,input);
+        player.run=true;accept(player,CartSteeringHooks.movement(player,(float)(.8*dt),0));
+        Object state=states.get(player);var pace=(CartLegPace.Ramp)field(state,"pace").get(state);pace.reset(.8);
+        releaseAfterNativeGaitReset(player,input);player.moving=false;
+        brakeAnimation(player);CartSteeringHooks.heading(player);
+        var clips=new HashMap<String,AnimationClip>();
+        for(String name:new String[]{"Bob_Idle","Bob_Walk","Bob_Run"}) {
+            var start=new Keyframe();var end=new Keyframe();start.boneName=end.boneName="Translation_Data";
+            start.position=new Vector3f();end.position=new Vector3f(0,0,name.equals("Bob_Idle")?0:-1);end.time=1;
+            clips.put(name,new AnimationClip(1,List.of(start,end),name,true));
+        }
+        var node=new AnimNode();node.name="ToolkitCartPivotRun";node.deferredBoneName="Translation_Data";node.deferredBoneAxis=BoneAxis.Y;
+        for(float[] xy:new float[][]{{0,0},{0,1},{1,0}}) {
+            var blend=new Anim2DBlend();blend.animName=xy[0]==0 && xy[1]==0?"Bob_Idle":"Bob_Run";
+            blend.posX=xy[0];blend.posY=xy[1];node.blends2d.add(blend);
+        }
+        var triangle=new Anim2DBlendTriangle();triangle.node1=node.blends2d.get(0);triangle.node2=node.blends2d.get(1);triangle.node3=node.blends2d.get(2);
+        node.blendTris.add(triangle);node.blend2dPicker=new Anim2DBlendPicker();node.blend2dPicker.SetPickTriangles(node.blendTris);
+        player.animator.animSet=new AnimationSet();var run=new AnimState();run.nodes.add(node);player.animator.animSet.states.put("run",run);
+        var mesh=(ModelMesh)unsafe.allocateInstance(ModelMesh.class);mesh.skinningData=new SkinningData(clips,List.of(),List.of(),List.of(),List.of(),new HashMap<>());
+        var model=ModelManager.class.getDeclaredField("animModel");model.setAccessible(true);Object previous=model.get(ModelManager.instance);
+        try {
+            model.set(ModelManager.instance,mesh);
+            pace.reset(.2);player.inputX=player.inputY=.5f;player.moving=true;input.setRunning(true);
+            CartSteeringHooks.input(player,input);player.run=true;
+            accept(player,CartSteeringHooks.movement(player,(float)(.2*dt),0));
+            check(Float.isFinite(CartLegPace.targetSpeed(player,player.stepX,player.stepY)),"Run resume must use calibrated native clips");
+            check(pace.speed>.2 && pace.speed<.5,"Run resume must accelerate from remaining stop speed through heading");
+        } finally { CartSteeringHooks.reset(player);model.set(ModelManager.instance,previous); }
     }
 
     private static void slalomClearance(Unsafe unsafe, Map<?,?> states) throws Exception {
@@ -925,6 +1023,8 @@ public final class CartSteeringHooksTest {
         stationaryControls(unsafe,states);
         stationaryCadence(unsafe,states);
         brakeControls(unsafe,states);
+        residualBrake(unsafe,states);
+        residualBrakeEdges(unsafe,states);
         adjacentBrakeRelease(unsafe,states);
         slalomClearance(unsafe,states);
         wovenPathControls(unsafe,states);

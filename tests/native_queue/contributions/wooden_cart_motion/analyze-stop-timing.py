@@ -184,12 +184,12 @@ def analyze(profile, text, selected_cases=None):
                             nativeWalkSpeed=row['speed'], legPace=row['pace'])
             heavy = [(row, track) for row in tracks for track in row['heavy']]
             names = sorted({track['name'] for _, track in heavy})
-            heavy_report = dict(expectedName=expected if route == 'direct' else None, observedNames=names,
+            heavy_report = dict(expectedName=expected, observedNames=names,
                                 firstAfterDirectionReleaseMs=heavy[0][0]['wall']-direction if heavy else None,
                                 lastAfterDirectionReleaseMs=heavy[-1][0]['wall']-direction if heavy else None,
                                 maxWeight=max((track['weight'] for _, track in heavy), default=0),
                                 rates=sorted({track['rate'] for _, track in heavy}),
-                                behaviorMatchesExpectation=names == [expected] if route == 'direct' else not names)
+                                behaviorMatchesExpectation=names == [expected])
             stops.append(dict(route=route, modifierLeadMs=direction-modifier, fromModifierRelease=from_modifier,
                               fromDirectionRelease=from_direction, heavyTrack=heavy_report,
                               wheelRelativeSettling=pose_settling(recorded, rest, modifier, direction),
@@ -197,6 +197,8 @@ def analyze(profile, text, selected_cases=None):
                               nativeLeadSamples=[gait_receipt(row) for row in lead], observedWalkBeforeDirection=bool(walk)))
         results.append(dict(case=name, samples=len(scene), cadenceMs=cadence(scene), stops=stops))
     return dict(timingVerified=True, timingVerificationScope='selectedCases only', captureValid=True,
+                residualBrakingVerified=all(stop['heavyTrack']['behaviorMatchesExpectation']
+                                           for case in results for stop in case['stops']),
                 selectedCases=selected, partialCoverage=len(selected) < len(CASES), cases=results,
                 evidenceInputs=dict(groundingCsv=str((profile/'wood-wheel-native.csv').resolve()), groundingCompression='none'),
                 measurementStartAfterCaseMs=800,

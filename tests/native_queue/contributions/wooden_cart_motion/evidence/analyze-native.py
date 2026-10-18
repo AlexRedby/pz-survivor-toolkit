@@ -8,7 +8,9 @@ parser.add_argument('--profile',type=Path,required=True,help='Owned capture/prof
 parser.add_argument('--log',type=Path,help='Full native stdout; defaults to profile/console.txt')
 parser.add_argument('--output',type=Path,required=True,help='Result directory; may already contain the two mesh intersection JSON files')
 parser.add_argument('--partial',action='store_true')
+parser.add_argument('--stop-timing',action='store_true',help='Cover all three stops in the 16-second timing bank')
 args=parser.parse_args()
+end_ms=15800 if args.stop_timing else 11800
 ROOT=args.profile
 HERE=args.output
 HERE.mkdir(parents=True,exist_ok=True)
@@ -70,7 +72,7 @@ def label(name,wall):
 
 def window(wall):
  for name,start in cases.items():
-  if start+800<wall<start+11800:return name,start
+  if start+800<wall<start+end_ms:return name,start
  return None
 
 def wheel_lowest(row):
@@ -94,17 +96,17 @@ for kind,file in [('body','hip-triangle-frames.json'),('pants','pants-triangle-f
  if (HERE/file).exists():
   mesh[kind]=json.loads((HERE/file).read_text())
   assert all(all(math.isfinite(row[key]) for key in ['time','L','R']) and row['L']>=0 and row['R']>=0 for row in mesh[kind]), 'Invalid mesh intersection measurement'
-summary={'complete':complete,'completedScenes':len(re.findall(r'\[WOOD_BANK\] COMPLETE ',log)),'validatedCartCases':len(cases),'cases':[],'gripSamples':len(grip),'gripFailures':len(failures),'meshSamples':len(body)}
+summary={'measurementEndAfterCaseMs':end_ms,'complete':complete,'completedScenes':len(re.findall(r'\[WOOD_BANK\] COMPLETE ',log)),'validatedCartCases':len(cases),'cases':[],'gripSamples':len(grip),'gripFailures':len(failures),'meshSamples':len(body)}
 for name,start in cases.items():
  g=[r for r in grip if r['case']==name];f=[r for r in g if not r['result']]
  row={'case':name,'gripSamples':len(g),'gripFailures':len(f),'failureStages':dict(Counter(r['stage']for r in f)),
       'failureGaits':dict(Counter(r['gait']for r in f)),'failureElapsedRange':([min(r['elapsed']for r in f),max(r['elapsed']for r in f)]if f else [])}
  for kind,rows in mesh.items():
-  frames=[r for r in rows if start+800<r['time']<start+11800]
+  frames=[r for r in rows if start+800<r['time']<start+end_ms]
   row[kind]={'samples':len(frames),'shaftIntersections':{s:sum(r[s]>0 for r in frames)for s in 'LR'},
    'intersectionStages':dict(Counter(stage(r['time']-start,name)for r in frames if r['L']or r['R'])),
    'intersectionGaits':dict(Counter(label(name,r['time'])for r in frames if r['L']or r['R']))}
- cart=[r for r in body if start+800<r['wallTimeMillis']<start+11800]
+ cart=[r for r in body if start+800<r['wallTimeMillis']<start+end_ms]
  row['wheelFloorMaxError']=max((abs(wheel_lowest(r)-.008)for r in cart),default=None)
  feet=[r for r in cart if start+2300<r['wallTimeMillis']<start+2900]
  row['steadyFastFootSamples']=len(feet)

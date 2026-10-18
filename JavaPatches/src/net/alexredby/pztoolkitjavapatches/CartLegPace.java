@@ -30,12 +30,17 @@ public final class CartLegPace {
         }
 
         double update(double target, double seconds, double load) {
+            return update(target, seconds, load, false);
+        }
+
+        double update(double target, double seconds, double load, boolean coasting) {
             if (!Double.isFinite(speed) || !Double.isFinite(velocity)) reset(target);
             if (!Double.isFinite(target) || target < 0 || !Double.isFinite(seconds) || seconds <= 0)
                 return speed;
             double dt = Math.min(.1, seconds);
             load = Double.isFinite(load) ? Math.max(0, Math.min(1, load)) : 0;
-            double frequency = 1 / (target > speed ? .13 + .09 * load : .04 + .02 * load);
+            double frequency = 1 / (target > speed ? .13 + .09 * load
+                : coasting ? .22 + .16 * load : .04 + .02 * load);
             double previous = speed, offset = speed - target;
             double rate = velocity + frequency * offset, decay = Math.exp(-frequency * dt);
             speed = target + (offset + rate * dt) * decay;

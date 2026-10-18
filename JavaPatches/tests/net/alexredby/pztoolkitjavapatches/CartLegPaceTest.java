@@ -273,6 +273,46 @@ public final class CartLegPaceTest {
         if (!ramp.settled(0) || ramp.settled(Double.NaN)) throw new AssertionError("invalid settled state");
     }
 
+    private static void coastingChecks() {
+        for (double seconds : new double[]{.1, .3}) {
+            double emptyResidual = 0;
+            double reference = 0;
+            for (double load : new double[]{0, 1}) {
+                for (int fps : new int[]{30, 60, 120}) {
+                    var coast = new CartLegPace.Ramp(); coast.reset(4);
+                    var reverse = new CartLegPace.Ramp(); reverse.reset(4);
+                    double previous = coast.speed;
+                    for (int frame = 0; frame < Math.round(seconds * fps); frame++) {
+                        coast.update(1, 1.0 / fps, load, true);
+                        reverse.update(1, 1.0 / fps, load);
+                        if (!(coast.speed <= previous && coast.speed >= 1))
+                            throw new AssertionError("Walk coast must decelerate without undershooting");
+                        previous = coast.speed;
+                    }
+                    if (!(coast.speed > 1.02 && coast.speed > reverse.speed))
+                        throw new AssertionError("brief Walk must retain fast momentum without slowing reversal: "
+                            + seconds + "/" + load + "/" + fps);
+                    if (fps == 30) reference = coast.speed;
+                    else if (Math.abs(coast.speed - reference) > 1e-10)
+                        throw new AssertionError("Walk coasting depends on frame rate: " + fps);
+                    if (load == 0) emptyResidual = coast.speed;
+                    else if (!(coast.speed > emptyResidual))
+                        throw new AssertionError("cargo must retain more speed after brief Walk");
+                }
+            }
+        }
+        var coast = new CartLegPace.Ramp(); coast.reset(4);
+        for (int frame = 0; frame < 600; frame++) coast.update(1, 1.0 / 60, 1, true);
+        if (!coast.settled(1)) throw new AssertionError("continued Walk must retire fast momentum");
+        for (int frame = 0; frame < 6; frame++) coast.update(4, 1.0 / 60, 1, true);
+        if (!(coast.speed > 1 && coast.speed < 4))
+            throw new AssertionError("fast restart must accelerate from retained Walk speed");
+        double previous = coast.speed;
+        coast.update(1, 1.0 / 60, 1, true);
+        if (!(coast.speed <= previous && coast.speed >= 1))
+            throw new AssertionError("releasing a fast restart must brake immediately");
+    }
+
     private static void speedChecks(AnimNode source, AnimationClip walk, AnimationClip run, AnimationClip sprint) {
         close(CartLegPace.targetSpeed(source, walk, run, .3f, 1, 1.04f),
             1.04 * (walk.getTotalTranslation("Translation_Data", BoneAxis.Y, new Vector2()).getLength() / walk.getDuration() * .7
@@ -404,6 +444,7 @@ public final class CartLegPaceTest {
     public static void main(String[] args) throws Exception {
         nativePelvisBinding();
         brakeTracks();
+        coastingChecks();
         AnimNode node = node();
         Map<String, AnimationClip> clips = new HashMap<>();
         clips.put("idle", clip("idle", 1, 0, 0, "Translation_Data"));

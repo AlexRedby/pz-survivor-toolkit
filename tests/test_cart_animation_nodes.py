@@ -133,16 +133,16 @@ class CartAnimationNodes(unittest.TestCase):
                               for triangle in node.findall("m_2DBlendTri")],
                              [("1", "4", "2"), ("1", "3", "4"), ("1", "5", "3"), ("1", "2", "5")])
             transitions = node.findall("m_Transitions")
-            if mode == "Walk":
-                self.assertFalse(transitions)
-            else:
-                self.assertEqual(len(transitions), 1)
-                stop = transitions[0]
+            self.assertEqual(len(transitions), 2 if mode == "Walk" else 1)
+            for index, stop in enumerate(transitions):
                 self.assertEqual(stop.findtext("m_Target"), "ToolkitCartIdle")
+                sprint_stop = mode == "Sprint" or mode == "Walk" and index == 1
                 self.assertEqual(stop.findtext("m_AnimName"),
-                                 "Bob_RunToStop2H_Heavy" if mode == "Run" else "Bob_SprintToStop2h_Heavy")
-                self.assertEqual(conditions(stop), {("ToolkitCartWoodBrake", "BOOL", "true"),
-                                                    ("isMoving", "BOOL", "false")})
+                                 "Bob_SprintToStop2h_Heavy" if sprint_stop else "Bob_RunToStop2H_Heavy")
+                expected = {("ToolkitCartWoodBrake", "BOOL", "true"), ("isMoving", "BOOL", "false")}
+                if mode == "Walk":
+                    expected.add(("ToolkitCartBrakeSprint", "BOOL", str(sprint_stop).lower()))
+                self.assertEqual(conditions(stop), expected)
                 # The transition must not inherit Idle's .48 cadence or a cart FBX root axis.
                 self.assertEqual(float(stop.findtext("m_speedScale")), 1)
                 self.assertIsNone(stop.find("m_SpeedScale"))
