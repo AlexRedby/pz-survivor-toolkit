@@ -127,6 +127,11 @@ public final class Main {
             "ccf99cd2b176b079da51f31a74ae9408b45255a328f6d1ab6fe536600226cdee")
         && supports("zombie/iso/IsoMetaGrid.class",
             "cdd50bb0a393c766d25c9dcbc5f7e929d7e10a6b9c9b95e22c3bae94b3b5b1f9");
+    public static final boolean BASEMENT_HALL_SUPPORTED = BASEMENT_ROOMS_SUPPORTED
+        && supports("zombie/buildingRooms/BREBuilding.class", "77d5710d7b102532e080c556a87439d3d827cf4c8a05fc5cd7e37c90175c83de")
+        && supports("zombie/iso/areas/isoregion/metagrid/WorldRegionToMetaGrid.class", "635174f093618dac7ec320b3884780b847d1332d03b3c07b3221f2b899728b20")
+        && supports("zombie/iso/LightingJNI.class", "3938fd1336a64403ae52a3a1552fcdff3a3c54f1a0360c6ee35512c2f9b7e5e7")
+        && supports("zombie/iso/fboRenderChunk/FBORenderCell.class", "d5c46201d60cff36397ee46c56b53dbaee6e26e8733836f27bf56ad871eedf94");
     public static final boolean MANNEQUIN_SUPPORTED = supports("zombie/Lua/LuaManager.class",
             "dcaad0082ca27a15550c7d0a6e14b3aeb71f634a14f32123dec620df180c646d")
         && supports("zombie/Lua/LuaManager$GlobalObject.class",
@@ -190,6 +195,7 @@ public final class Main {
             zombie.scripting.entity.components.crafting.CraftRecipe.class.getName();
         }
         if (BASEMENT_ROOMS_SUPPORTED) zombie.basements.Basements.class.getName();
+        if (BASEMENT_HALL_SUPPORTED) zombie.iso.RoomDef.class.getName();
         if (MANNEQUIN_SUPPORTED) {
             zombie.Lua.LuaManager.class.getName();
             zombie.iso.IsoMetaGrid.class.getName();
@@ -199,7 +205,8 @@ public final class Main {
             + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
             + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", medicalVisuals=" + MEDICAL_VISUALS_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
-            + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED + ", basementRooms=" + BASEMENT_ROOMS_SUPPORTED + ", mannequin=" + MANNEQUIN_SUPPORTED
+            + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED + ", basementRooms=" + BASEMENT_ROOMS_SUPPORTED
+            + ", basementHall=" + BASEMENT_HALL_SUPPORTED + ", mannequin=" + MANNEQUIN_SUPPORTED
             + ", itemTransactions=" + QueueManagers.ITEM_SUPPORTED + ", actionManager=" + QueueManagers.ACTION_SUPPORTED
             + ", actionCompletion=" + COMPLETION_SUPPORTED + ", actionAcknowledgements=" + ActionAcknowledgements.SUPPORTED);
     }
@@ -304,6 +311,7 @@ public final class Main {
         public static void enter(@Patch.Argument(0) zombie.iso.BuildingDef incoming,
                                  @Patch.Argument(1) zombie.iso.BuildingDef receiving,
                                  @Patch.Local("toolkitPreviousBuildingID") BasementRoomLookup.State previous) {
+            BasementHallKey.beforeMerge(incoming, receiving, Main.BASEMENT_HALL_SUPPORTED);
             previous = BasementRoomLookup.beforeMerge(receiving, Main.BASEMENT_ROOMS_SUPPORTED);
         }
 
@@ -312,6 +320,15 @@ public final class Main {
                                 @Patch.Argument(1) zombie.iso.BuildingDef receiving,
                                 @Patch.Local("toolkitPreviousBuildingID") BasementRoomLookup.State previous) {
             BasementRoomLookup.repair(receiving, previous, Main.BASEMENT_ROOMS_SUPPORTED);
+        }
+    }
+
+    @Patch(className="zombie.iso.RoomDef", methodName="calculateMetaID", strictMatch=true)
+    public static class NativeBasementHallKey {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.iso.RoomDef room, @Patch.Argument(0) int cellX,
+                                @Patch.Argument(1) int cellY, @Patch.Return(readOnly=false) long result) {
+            result = BasementHallKey.calculated(room, cellX, cellY, result, Main.BASEMENT_HALL_SUPPORTED);
         }
     }
 

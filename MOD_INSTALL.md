@@ -2,7 +2,9 @@
 
 For the Steam edition of Project Zomboid **B42.21**. The server and all players must use the same game build and identical local mod files.
 
-The [server INI](SurvivorQoL-selected.ini) defines the required set. Install Toolkit 0.1.67 and Java Patches 0.1.17 from the [repository components](README.md#components). Wishlist is part of Toolkit; its lists and Options > Mods > Survivor Wishlist settings remain available. Java Patches are experimental and target B42.21 only. Feature switches remain per-player; the action queue is enabled on fresh profiles and preserves existing preferences. See [features and limitations](docs/FEATURES.md).
+The [server INI](SurvivorQoL-selected.ini) defines the required set. Install Toolkit 0.1.67 and Java Patches 0.1.18 from the [repository components](README.md#components). Wishlist is part of Toolkit; its lists and Options > Mods > Survivor Wishlist settings remain available. Java Patches are experimental and target B42.21 only. Feature switches remain per-player; the action queue is enabled on fresh profiles and preserves existing preferences. See [features and limitations](docs/FEATURES.md).
+
+Java Patches 0.1.18 gives one stock corridor a distinct persistent room key. After saving with this correction, loading without the patch (including an unsupported game update) loses that corridor's saved explored, lighting, spawning and roof flags. Keep save backups and the matching patch; see [the save dependency](JavaPatches/README.md#map-data-and-cross-cell-basement-rooms).
 
 ## Prepare once
 

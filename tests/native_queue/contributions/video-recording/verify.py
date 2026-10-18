@@ -41,7 +41,9 @@ def validate_metadata(record, metadata):
     frames, duration = int(video['nb_read_frames']), float(video['duration'])
     if frames != record['frames'] or frames < 3 or record['captured'] < 1:
         raise ValueError('Frame count differs from recorder status or capture is empty')
-    if abs(duration - frames/30) > 0.00001 or abs(duration - record['seconds']) > 0.00001:
+    # MP4's 1000 Hz movie clock quantizes duration; ffprobe prints six decimal places.
+    duration_tolerance = 0.001001
+    if abs(duration - frames/30) > duration_tolerance or abs(duration - record['seconds']) > duration_tolerance:
         raise ValueError('Encoded duration differs from frame count/status')
     if record['elapsed_ms'] < 3500 or abs(duration - record['elapsed_ms']/1000) > 2/30:
         raise ValueError('Encoded duration does not preserve the test interval')

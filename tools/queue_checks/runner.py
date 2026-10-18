@@ -151,7 +151,12 @@ def run(root, resource_wait=300):
             if hosted and role == 'client1' and loader:
                 environment['JDK_JAVA_OPTIONS'] = coop.loader_options(loader[0])
             extra_env = config.get('env', {})
-            if set(extra_env) - {'PZ_CART_RUNTIME_FILE', 'PZ_CART_COMMAND_FILE'} or any(not isinstance(value, str) or not Path(value).is_absolute() for value in extra_env.values()):
+            allowed_env = {'PZ_CART_RUNTIME_FILE', 'PZ_CART_COMMAND_FILE'}
+            if selection['suite'] == 'basement-hall' and selection['kind'] == 'sp' and role == 'client1':
+                allowed_env.add('PZ_BASEMENT_HALL_CACHE')
+            if (set(extra_env) - allowed_env
+                    or any(not isinstance(value, str) or not Path(value).is_absolute() for value in extra_env.values())
+                    or 'PZ_BASEMENT_HALL_CACHE' in extra_env and extra_env['PZ_BASEMENT_HALL_CACHE'] != str(cache)):
                 raise ValueError('Invalid fixture-owned client environment')
             environment.update(extra_env)
             process = subprocess.Popen(command, cwd=game, env=environment, stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.PIPE, text=True, start_new_session=True)
