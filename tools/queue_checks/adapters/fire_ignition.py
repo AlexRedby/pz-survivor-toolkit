@@ -1,12 +1,17 @@
 """Exact native ignition trials; expected vanilla queue failures remain per case."""
 import math
 
-CASES = ['literature', 'petrol', 'last-match', 'bbq-fuel', 'bbq-literature', 'bbq-petrol', 'kindle-retry']
+CASES = ['literature', 'petrol', 'last-match', 'bbq-fuel', 'bbq-literature', 'bbq-petrol', 'bbq-kindle',
+         'fireplace-fuel', 'fireplace-literature', 'fireplace-petrol', 'fireplace-kindle', 'kindle-retry']
 ACTIONS = {'literature': ('ISLightFromLiterature', 100), 'petrol': ('ISLightFromPetrol', 20),
            'last-match': ('ISLightFromPetrol', 20), 'kindle-retry': ('ISLightFromKindle', 1500),
            'bbq-fuel': ('ISBBQAddFuel', 100), 'bbq-literature': ('ISBBQLightFromLiterature', 100),
-           'bbq-petrol': ('ISBBQLightFromPetrol', 20)}
+           'bbq-petrol': ('ISBBQLightFromPetrol', 20), 'bbq-kindle': ('ISBBQLightFromKindle', 1500),
+           'fireplace-fuel': ('ISBBQAddFuel', 100), 'fireplace-literature': ('ISBBQLightFromLiterature', 100),
+           'fireplace-petrol': ('ISBBQLightFromPetrol', 20), 'fireplace-kindle': ('ISBBQLightFromKindle', 1500)}
 RESOURCE_FIELDS = {'role', 'id', 'kind', 'sourceCount', 'rootCount', 'condition', 'uses', 'amount', 'consumed'}
+PETROL_CASES = ('petrol', 'last-match', 'bbq-petrol', 'fireplace-petrol')
+TIDY_FIELDS = {'id', 'sessionId', 'nativeTransfer', 'fromRoot', 'toSource', 'groupCleanup', 'progress', 'tailRead', 'tokenCancelled'}
 
 
 def _number(value):
@@ -37,26 +42,35 @@ def _same_resources(left, right):
 
 def _profile(case, roles):
     # kind, initial uses, amount, use debit, fluid debit, consumed, optional, return, source
-    if case == 'bbq-fuel':
+    if case in ('bbq-fuel', 'fireplace-fuel'):
         return {'fuel': ('Base.Log', 0, 0, 0, 0, True, False, False, 'crate')}
-    if case == 'kindle-retry':
+    if case in ('kindle-retry', 'bbq-kindle', 'fireplace-kindle'):
         result = {'plank': ('Base.PercedWood', 0, 0, 0, 0, False, False, True, 'crate'),
                   'stick': ('Base.WoodenStick2', 0, 0, 0, 0, False, True, True, 'crate')}
+        if case != 'kindle-retry':
+            return result
         reserves = [role for role in roles if role.startswith('reserve')]
         if reserves != ['reserve' + str(i) for i in range(1, len(reserves) + 1)] or not 1 <= len(reserves) <= 3:
             return {}
         result.update({role: ('Base.WoodenStick2', 0, 0, 0, 0, False, True, False, 'root') for role in reserves})
         return result
-    last = case in ('last-match', 'bbq-petrol')
+    last = case in ('last-match', 'bbq-petrol', 'fireplace-petrol')
     result = {'starter': ('Base.Matches', 1 if last else 2, 0, 1, 0, last, False, True, 'crate')}
-    if case in ('literature', 'bbq-literature'):
+    if case in ('literature', 'bbq-literature', 'fireplace-literature'):
         result['tinder'] = ('Base.SheetPaper2', 0, 0, 0, 0, True, False, False, 'crate')
     else:
         result['petrol'] = ('Base.PetrolCan', 0, 2, 0, 0.1, False, False, False, 'crate')
     return result
 
 
-def _resources(case, prepared, received, enabled):
+def _tidy_ids(case, prepared, ids):
+    if not _ids(ids) or len(ids) > 1:
+        return False
+    petrol = [row.get('id') for row in prepared if isinstance(row, dict) and row.get('role') == 'petrol'] if isinstance(prepared, list) else []
+    return not ids or case in PETROL_CASES and ids == petrol
+
+
+def _resources(case, prepared, received, enabled, tidy_return_ids):
     issues = []
     if not isinstance(prepared, list) or not isinstance(received, list):
         return ['Ignition resources must be arrays']
@@ -95,8 +109,9 @@ def _resources(case, prepared, received, enabled):
         if (not _close(actual.get('uses'), uses - debit) or not _close(actual.get('amount'), amount - fluid_debit)):
             issues.append('Ignition resource use/fluid debit differs: ' + role)
         if not gone:
-            must_source = enabled and returned
-            must_root = source == 'root' or role == 'petrol'
+            tidy_return = role == 'petrol' and spec.get('id') in tidy_return_ids
+            must_source = enabled and returned or tidy_return
+            must_root = source == 'root' or role == 'petrol' and not tidy_return
             if must_source and (actual['sourceCount'], actual['rootCount']) != (1, 0):
                 issues.append('Ignition borrowed resource was not returned: ' + role)
             if must_root and (actual['sourceCount'], actual['rootCount']) != (0, 1):
@@ -125,11 +140,22 @@ def verify_case(case, selection, result, preparedList, receiptsList):
         return ['Ignition trials are missing, duplicated or out of order'], outcome, None
     enabled = selection.get('mode') == 'toolkit'
     action, duration = ACTIONS[case]
+    target_kind = 'fireplace' if case.startswith('fireplace-') else 'bbq' if case.startswith('bbq-') else 'campfire'
+    if result.get('targetKind') != target_kind:
+        issues.append('Ignition client target kind differs')
     if result.get('id') != case or result.get('actionType') != action or type(result.get('nativeDuration')) is not int or result['nativeDuration'] != duration:
         issues.append('Ignition action type/duration differs')
     if type(result.get('attempts')) is not int or result['attempts'] < (2 if case == 'kindle-retry' else 1):
         issues.append('Ignition native attempt count does not prove the case')
-    if type(result.get('tokenCancelled')) is not bool or enabled and result.get('tokenCancelled') is not False:
+    if type(result.get('petrolBeforeTail')) is not bool or enabled and case in PETROL_CASES and result.get('petrolBeforeTail') is not True:
+        issues.append('Ignition retained petrol before reader proof differs')
+    final = receipts[-1]
+    final_resources = final.get('resources')
+    kindle_stop = (selection.get('kind') == 'sp' and case in ('bbq-kindle', 'fireplace-kindle')
+                   and (final.get('lit') is True or isinstance(final_resources, list)
+                        and any(isinstance(row, dict) and row.get('role') == 'stick' and row.get('consumed') is True
+                                for row in final_resources)))
+    if type(result.get('tokenCancelled')) is not bool or enabled and result.get('tokenCancelled') is not False and not kindle_stop:
         issues.append('Completed ignition operation was cancelled')
     for key in ('expanded', 'actionProgress', 'pickupProgress', 'tailProgress', 'returnedBeforeTail', 'retryBeforeReturns'):
         if type(result.get(key)) is not bool:
@@ -138,6 +164,8 @@ def verify_case(case, selection, result, preparedList, receiptsList):
               or enabled and case == 'kindle-retry' and key == 'retryBeforeReturns') and not result[key]:
             issues.append('Ignition native progress/order missing: ' + key)
     for spec, receipt in zip(prepared, receipts):
+        if spec.get('targetKind') != target_kind or receipt.get('targetKind') != target_kind:
+            issues.append('Ignition authoritative target kind differs')
         if (spec.get('actionType') != action or type(spec.get('nativeDuration')) is not int or spec['nativeDuration'] != duration
                 or type(spec.get('book')) is not int or type(receipt.get('bookId')) is not int or receipt['bookId'] != spec['book']):
             issues.append('Ignition authoritative action/reader identity differs')
@@ -149,13 +177,17 @@ def verify_case(case, selection, result, preparedList, receiptsList):
                 and spec['crateIndex'] >= spec['objectIndex']):
             issues.append('Ignition source must precede the target on the same square')
         resources = spec.get('resources')
-        issues.extend(_resources(case, resources, receipt.get('resources'), enabled))
+        tidy_ids = receipt.get('tidyReturnIds')
+        if not _tidy_ids(case, resources, tidy_ids):
+            issues.append('Ignition authoritative Tidy return IDs differ')
+            tidy_ids = []
+        issues.extend(_resources(case, resources, receipt.get('resources'), enabled, tidy_ids))
         if isinstance(resources, list) and any(isinstance(row, dict) and row.get('id') == spec.get('book') for row in resources):
             issues.append('Ignition reader and resource IDs overlap')
         initial, expected_fuel = spec.get('initialFuel'), spec.get('expectedFuel')
         if (not _number(initial) or initial < 0 or not _number(expected_fuel) or expected_fuel <= 0
-                or case in ('petrol', 'last-match', 'bbq-petrol', 'kindle-retry') and not _close(initial, expected_fuel)
-                or case in ('literature', 'bbq-literature', 'bbq-fuel') and _number(initial) and _number(expected_fuel) and expected_fuel <= initial):
+                or case in ('petrol', 'last-match', 'bbq-petrol', 'fireplace-petrol', 'kindle-retry', 'bbq-kindle', 'fireplace-kindle') and not _close(initial, expected_fuel)
+                or case in ('literature', 'bbq-literature', 'fireplace-literature', 'bbq-fuel', 'fireplace-fuel') and _number(initial) and _number(expected_fuel) and expected_fuel <= initial):
             issues.append('Ignition prepared fuel effect differs')
         exhausted = case == 'kindle-retry' and receipt.get('lit') is False
         if exhausted:
@@ -167,7 +199,11 @@ def verify_case(case, selection, result, preparedList, receiptsList):
                 issues.append('Unlit Kindle trial did not consume every optional stick')
             if not _close(receipt.get('effectFuel'), initial) or not _close(receipt.get('fuel'), initial):
                 issues.append('Exhausted Kindle trial changed the initial fuel')
-        lit = case != 'bbq-fuel' and not exhausted
+        # Native BBQ Kindle may finish its duration without lighting or breaking the stick.
+        unlit_kindle = case in ('bbq-kindle', 'fireplace-kindle') and receipt.get('lit') is False
+        if unlit_kindle and (not _close(receipt.get('effectFuel'), initial) or not _close(receipt.get('fuel'), initial)):
+            issues.append('Unlit Kindle trial changed the initial fuel')
+        lit = case not in ('bbq-fuel', 'fireplace-fuel') and not exhausted and not unlit_kindle
         if type(receipt.get('lit')) is not bool or receipt['lit'] != lit or not _close(receipt.get('effectFuel'), expected_fuel):
             issues.append('Ignition authoritative lit/first fuel effect differs')
         final_fuel = receipt.get('fuel')
@@ -177,13 +213,35 @@ def verify_case(case, selection, result, preparedList, receiptsList):
         if type(receipt.get('tailRead')) is not bool or enabled and receipt.get('tailRead') is not True:
             issues.append('Ignition authoritative reading proof differs')
     final, final_spec = receipts[-1], prepared[-1]
+    tidy_ids = result.get('tidyReturnIds')
+    if not _tidy_ids(case, final_spec.get('resources'), tidy_ids) or tidy_ids != final.get('tidyReturnIds'):
+        issues.append('Ignition client Tidy return IDs differ from final receipt')
+        tidy_ids = []
+    tidy_returns = result.get('tidyReturns')
+    if (not isinstance(tidy_returns, list) or len(tidy_returns) > 1
+            or any(not isinstance(row, dict) for row in tidy_returns)):
+        issues.append('Ignition Tidy return proofs must be an array of at most one record')
+        tidy_returns = []
+    proof_ids = [row.get('id') for row in tidy_returns]
+    if not _ids(proof_ids) or proof_ids != tidy_ids:
+        issues.append('Ignition Tidy return proof IDs differ')
+    if tidy_returns and (not isinstance(selection.get('mods'), list) or 'P4TidyUpMeister' not in selection['mods']):
+        issues.append('Ignition Tidy return requires the selected P4 mod')
+    for proof in tidy_returns:
+        if (set(proof) != TIDY_FIELDS or type(proof.get('sessionId')) is not int or proof['sessionId'] <= 0
+                or any(proof.get(key) is not True for key in ('nativeTransfer', 'fromRoot', 'toSource', 'progress'))
+                or proof.get('groupCleanup') is not False
+                or type(proof.get('tailRead')) is not bool or proof['tailRead'] != final.get('tailRead')
+                or type(proof.get('tokenCancelled')) is not bool or proof['tokenCancelled'] != result.get('tokenCancelled')
+                or enabled and (proof.get('tailRead') is not True or proof.get('tokenCancelled') is not False)):
+            issues.append('Ignition exact native Tidy return provenance differs')
     for key in ('bookId', 'lit', 'tailRead'):
         if type(result.get(key)) is not type(final.get(key)) or result.get(key) != final.get(key):
             issues.append('Ignition client differs from authoritative receipt: ' + key)
     for key in ('effectFuel', 'fuel'):
         if not _close(result.get(key), final.get(key)):
             issues.append('Ignition client differs from authoritative receipt: ' + key)
-    issues.extend(_resources(case, final_spec.get('resources'), result.get('resources'), enabled))
+    issues.extend(_resources(case, final_spec.get('resources'), result.get('resources'), enabled, tidy_ids))
     if not _same_resources(result.get('resources'), final.get('resources')):
         issues.append('Ignition client resources differ from the final receipt')
     specs = final_spec.get('resources', [])
@@ -204,6 +262,7 @@ def verify_case(case, selection, result, preparedList, receiptsList):
         elif case == 'kindle-retry' and result.get('retryBeforeReturns') is False: reason = 'native-retry-not-before-returns'
     if result.get('status') != ('failed' if reason else 'passed') or result.get('reason') != reason:
         issues.append('Ignition declared status/reason differs from observed outcome')
-    outcome['outcome'] = {key: result.get(key) for key in ('trial', 'actionType', 'nativeDuration', 'attempts', 'bookId', 'resources',
-                          'lit', 'effectFuel', 'fuel', 'tailRead', 'returnedBeforeTail', 'retryBeforeReturns', 'pickupIds', 'returnIds', 'tokenCancelled')}
+    outcome['outcome'] = {key: result.get(key) for key in ('trial', 'targetKind', 'actionType', 'nativeDuration', 'attempts', 'bookId', 'resources',
+                          'lit', 'effectFuel', 'fuel', 'tailRead', 'returnedBeforeTail', 'retryBeforeReturns', 'pickupIds', 'returnIds',
+                          'tokenCancelled', 'petrolBeforeTail', 'tidyReturnIds', 'tidyReturns')}
     return issues, outcome, reason

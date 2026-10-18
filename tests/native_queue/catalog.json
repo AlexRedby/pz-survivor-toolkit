@@ -575,6 +575,11 @@
         {"id": "bbq-fuel", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
         {"id": "bbq-literature", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
         {"id": "bbq-petrol", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "bbq-kindle", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "fireplace-fuel", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "fireplace-literature", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "fireplace-petrol", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "fireplace-kindle", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
         {"id": "kindle-retry", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]}
       ]
     },

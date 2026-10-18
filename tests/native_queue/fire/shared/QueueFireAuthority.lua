@@ -59,8 +59,8 @@ function Authority.invalidate(player,case)
  print('[FIRE_TEST] REMOVED '..JSON.encode({case=case,logId=state.ids.log,fuel=0}))
  return {case=case,ok=true}
 end
-function Authority.verify(player,case)
- if Ignition.cases[case] then return Ignition.verify(player,case) end
+function Authority.verify(player,case,tidyReturnIds)
+ if Ignition.cases[case] then return Ignition.verify(player,case,tidyReturnIds) end
  local state=assert(sessions[player:getUsername()])
  assert(state.ids.case==case,'out-of-order fire verification')
  local missing=case=='missing-target-after-expansion'

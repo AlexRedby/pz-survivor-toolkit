@@ -12,41 +12,45 @@ from queue_checks.adapters import fire, fire_ignition as ignition
 
 class FireIgnitionVerifierTests(unittest.TestCase):
     def setUp(self):
-        self.selection = {'kind': 'sp', 'mode': 'toolkit'}
+        self.selection = {'kind': 'sp', 'mode': 'toolkit', 'mods': ['P4TidyUpMeister']}
 
     def evidence(self, case='literature', trials=1):
         classes = {'literature': ('ISLightFromLiterature', 100), 'petrol': ('ISLightFromPetrol', 20),
                    'last-match': ('ISLightFromPetrol', 20), 'kindle-retry': ('ISLightFromKindle', 1500),
                    'bbq-fuel': ('ISBBQAddFuel', 100), 'bbq-literature': ('ISBBQLightFromLiterature', 100),
-                   'bbq-petrol': ('ISBBQLightFromPetrol', 20)}
+                   'bbq-petrol': ('ISBBQLightFromPetrol', 20), 'bbq-kindle': ('ISBBQLightFromKindle', 1500),
+                   'fireplace-fuel': ('ISBBQAddFuel', 100), 'fireplace-literature': ('ISBBQLightFromLiterature', 100),
+                   'fireplace-petrol': ('ISBBQLightFromPetrol', 20), 'fireplace-kindle': ('ISBBQLightFromKindle', 1500)}
         action, duration = classes[case]
         def resource(role, kind, uses=0, amount=0, debit=0, fluid=0, consumed=False, optional=False,
                      returned=False, source='crate'):
             return dict(role=role, kind=kind, condition=100, initialUses=uses, initialAmount=amount,
                         expectedUse=debit, expectedAmountDelta=fluid, consumed=consumed,
                         optionalConsume=optional, returnToSource=returned, source=source)
-        if case == 'bbq-fuel':
+        if case in ('bbq-fuel', 'fireplace-fuel'):
             resources = [resource('fuel', 'Base.Log', consumed=True)]
-        elif case == 'kindle-retry':
+        elif case in ('kindle-retry', 'bbq-kindle', 'fireplace-kindle'):
             resources = [resource('plank', 'Base.PercedWood', returned=True),
-                         resource('stick', 'Base.WoodenStick2', optional=True, returned=True),
-                         resource('reserve1', 'Base.WoodenStick2', optional=True, source='root')]
-        elif case in ('literature', 'bbq-literature'):
+                         resource('stick', 'Base.WoodenStick2', optional=True, returned=True)]
+            if case == 'kindle-retry':
+                resources.append(resource('reserve1', 'Base.WoodenStick2', optional=True, source='root'))
+        elif case in ('literature', 'bbq-literature', 'fireplace-literature'):
             resources = [resource('tinder', 'Base.SheetPaper2', consumed=True),
                          resource('starter', 'Base.Matches', uses=2, debit=1, returned=True)]
         else:
-            last = case in ('last-match', 'bbq-petrol')
+            last = case in ('last-match', 'bbq-petrol', 'fireplace-petrol')
             resources = [resource('starter', 'Base.Matches', uses=1 if last else 2, debit=1,
                                   consumed=last, returned=True),
                          resource('petrol', 'Base.PetrolCan', amount=2, fluid=0.1)]
         prepared, receipts = [], []
-        lit = case != 'bbq-fuel'
+        lit = case not in ('bbq-fuel', 'fireplace-fuel')
+        target = 'fireplace' if case.startswith('fireplace-') else 'bbq' if case.startswith('bbq-') else 'campfire'
         for trial in range(1, trials + 1):
             specs = copy.deepcopy(resources)
             for n, row in enumerate(specs): row['id'] = trial * 100 + n
             initial = 360 if lit else 0
-            effect = initial + (1.5 if case == 'literature' else 1 if case == 'bbq-literature' else 360 if not lit else 0)
-            prep = dict(case=case, trial=trial, book=trial * 100 + 90, actionType=action, nativeDuration=duration,
+            effect = initial + (1.5 if case == 'literature' else 1 if case in ('bbq-literature', 'fireplace-literature') else 360 if not lit else 0)
+            prep = dict(case=case, trial=trial, targetKind=target, book=trial * 100 + 90, actionType=action, nativeDuration=duration,
                         x=20, y=30, z=0, objectIndex=2, crateX=20, crateY=30, crateZ=0, crateIndex=1,
                         initialFuel=initial, expectedFuel=effect, resources=specs)
             actual = []
@@ -57,12 +61,13 @@ class FireIgnitionVerifierTests(unittest.TestCase):
                     sourceCount=int(returned), rootCount=int(not gone and not returned), condition=100,
                     uses=spec['initialUses'] - spec['expectedUse'], amount=spec['initialAmount'] - spec['expectedAmountDelta'],
                     consumed=gone))
-            receipt = dict(case=case, trial=trial, bookId=prep['book'], resources=actual,
-                           lit=lit, effectFuel=effect, fuel=effect - 1 if lit else effect, tailRead=True)
+            receipt = dict(case=case, trial=trial, targetKind=target, bookId=prep['book'], resources=actual,
+                           lit=lit, effectFuel=effect, fuel=effect - 1 if lit else effect, tailRead=True, tidyReturnIds=[])
             prepared.append(prep); receipts.append(receipt)
         result = dict(receipts[-1], id=case, actionType=action, nativeDuration=duration,
                       attempts=2 if case == 'kindle-retry' else 1, expanded=True, actionProgress=True, tokenCancelled=False,
                       pickupProgress=True, tailProgress=True, returnedBeforeTail=True,
+                      petrolBeforeTail=True, tidyReturns=[],
                       retryBeforeReturns=case == 'kindle-retry', status='passed', reason=None,
                       pickupIds=[row['id'] for row in prepared[-1]['resources'] if row['source'] == 'crate'],
                       returnIds=[row['id'] for row in receipts[-1]['resources'] if row['sourceCount']])
@@ -84,8 +89,10 @@ class FireIgnitionVerifierTests(unittest.TestCase):
                         self.assertIsNone(reason)
                         self.assertEqual(outcome['actor'], 'client1')
                         self.assertEqual(outcome['case'], case)
-                        self.assertEqual(outcome['outcome']['nativeDuration'], 1500 if case == 'kindle-retry' else 20 if case in
-                                         ('petrol', 'last-match', 'bbq-petrol') else 100)
+                        self.assertEqual(outcome['outcome']['targetKind'], self.evidence(case)[0]['targetKind'])
+                        self.assertEqual(outcome['outcome']['nativeDuration'], 1500 if case in
+                                         ('kindle-retry', 'bbq-kindle', 'fireplace-kindle') else 20 if case in
+                                         ('petrol', 'last-match', 'bbq-petrol', 'fireplace-petrol') else 100)
 
     def test_native_real_failures_have_ordered_per_case_reasons(self):
         self.selection['mode'] = 'native'
@@ -213,6 +220,184 @@ class FireIgnitionVerifierTests(unittest.TestCase):
         evidence[0].update(tailRead=False, tailProgress=False, status='failed', reason='native-independent-tail-not-preserved')
         evidence[2][0]['tailRead'] = False
         self.assertEqual(self.verify(evidence)[::2], ([], 'native-independent-tail-not-preserved'))
+
+    def single_kindling(self, case, lit=False, broken=False, cancelled=False):
+        evidence = self.evidence(case)
+        result, prepared, receipts = evidence
+        if broken:
+            receipts[0]['resources'][1].update(sourceCount=0, rootCount=0, consumed=True)
+        initial = prepared[0]['initialFuel']
+        receipts[0].update(lit=lit, effectFuel=initial, fuel=initial - 1 if lit else initial)
+        result.update(receipts[0], tokenCancelled=cancelled,
+                      returnIds=[row['id'] for row in receipts[0]['resources'] if row['sourceCount']])
+        result['resources'] = copy.deepcopy(receipts[0]['resources'])
+        result.pop('case')
+        return evidence
+
+    def test_single_kindle_accepts_native_terminal_outcomes_without_claiming_ignition(self):
+        for case in ('bbq-kindle', 'fireplace-kindle'):
+            for kind in ('sp', 'mp'):
+                for mode in ('native', 'toolkit'):
+                    self.selection.update(kind=kind, mode=mode)
+                    for lit, broken in ((True, False), (False, True), (False, False)):
+                        with self.subTest(case=case, kind=kind, mode=mode, lit=lit, broken=broken):
+                            issues, outcome, reason = self.verify(self.single_kindling(case, lit, broken))
+                            self.assertEqual(issues, [])
+                            self.assertIsNone(reason)
+                            self.assertIs(outcome['outcome']['lit'], lit)
+                            self.assertEqual(outcome['outcome']['attempts'], 1)
+                            self.assertEqual(outcome['outcome']['targetKind'], case.split('-')[0])
+
+    def test_single_kindle_native_sp_stop_is_allowed_only_after_lighting_or_breakage(self):
+        for case in ('bbq-kindle', 'fireplace-kindle'):
+            for kind in ('sp', 'mp'):
+                self.selection['kind'] = kind
+                for lit, broken in ((True, False), (False, True), (False, False)):
+                    evidence = self.single_kindling(case, lit, broken, cancelled=True)
+                    with self.subTest(case=case, kind=kind, lit=lit, broken=broken):
+                        self.assertEqual(not self.verify(evidence)[0], kind == 'sp' and (lit or broken))
+            self.selection['kind'] = 'sp'
+            for value in (1, 'true', None):
+                evidence = self.single_kindling(case, lit=True)
+                evidence[0]['tokenCancelled'] = value
+                with self.subTest(case=case, cancelled=value): self.assertTrue(self.verify(evidence)[0])
+        for case in ('literature', 'petrol', 'kindle-retry', 'fireplace-literature', 'fireplace-petrol'):
+            evidence = self.evidence(case);evidence[0]['tokenCancelled'] = True
+            with self.subTest(case=case): self.assertTrue(self.verify(evidence)[0])
+
+    def test_single_kindle_keeps_exact_fuel_resources_returns_and_tail_requirements(self):
+        for case in ('bbq-kindle', 'fireplace-kindle'):
+            for change in ('effect', 'fuel', 'expected', 'plank', 'stick', 'return', 'tail', 'trial', 'attempts', 'reserve'):
+                evidence = self.single_kindling(case)
+                result, prepared, receipts = evidence
+                if change in ('effect', 'fuel'):
+                    key = 'effectFuel' if change == 'effect' else 'fuel'
+                    result[key] = receipts[0][key] = 359
+                elif change == 'expected': prepared[0]['expectedFuel'] = 359
+                elif change in ('plank', 'stick'):
+                    for rows in (result['resources'], receipts[0]['resources']):
+                        rows[0 if change == 'plank' else 1]['condition'] = 99
+                elif change == 'return': result['returnIds'] = []
+                elif change == 'tail': result['tailRead'] = receipts[0]['tailRead'] = False
+                elif change == 'trial': result['trial'] = 2
+                elif change == 'attempts': result['attempts'] = 0
+                else:
+                    reserve = copy.deepcopy(prepared[0]['resources'][1])
+                    reserve.update(role='reserve1', id=102, source='root', returnToSource=False)
+                    prepared[0]['resources'].append(reserve)
+                with self.subTest(case=case, change=change): self.assertTrue(self.verify(evidence)[0])
+
+    def test_target_kind_is_checked_against_case_in_all_envelopes(self):
+        for case in ignition.CASES:
+            for envelope in range(3):
+                for value in (None, 'oven', 'bbq' if not case.startswith('bbq-') else 'fireplace'):
+                    evidence = self.evidence(case)
+                    row = evidence[0] if envelope == 0 else evidence[envelope][0]
+                    if value is None: row.pop('targetKind')
+                    else: row['targetKind'] = value
+                    with self.subTest(case=case, envelope=envelope, value=value): self.assertTrue(self.verify(evidence)[0])
+            evidence = self.evidence(case)
+            for row in (evidence[0], evidence[1][0], evidence[2][0]): row['targetKind'] = 'oven'
+            with self.subTest(case=case, consistent_forgery=True): self.assertTrue(self.verify(evidence)[0])
+
+    def tidy_petrol(self, case='fireplace-petrol'):
+        result, prepared, receipts = self.evidence(case)
+        petrol = next(row for row in receipts[0]['resources'] if row['role'] == 'petrol')
+        petrol.update(sourceCount=1, rootCount=0)
+        receipts[0]['tidyReturnIds'] = [petrol['id']]
+        result.update(resources=copy.deepcopy(receipts[0]['resources']), tidyReturnIds=[petrol['id']],
+                      tidyReturns=[dict(id=petrol['id'], sessionId=7, nativeTransfer=True, fromRoot=True,
+                                        toSource=True, groupCleanup=False, progress=True, tailRead=True, tokenCancelled=False)])
+        return result, prepared, receipts
+
+    def test_post_reader_p4_restore_keeps_exact_effects_in_both_modes_and_transports(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode)
+                for case in ('petrol', 'last-match', 'bbq-petrol', 'fireplace-petrol'):
+                    with self.subTest(kind=kind, mode=mode, case=case):
+                        evidence = self.tidy_petrol(case)
+                        issues, outcome, reason = self.verify(evidence)
+                        self.assertEqual(issues, [])
+                        self.assertIsNone(reason)
+                        self.assertEqual(outcome['outcome']['tidyReturnIds'], evidence[0]['tidyReturnIds'])
+                        self.assertEqual(outcome['outcome']['tidyReturns'], evidence[0]['tidyReturns'])
+                        self.assertNotIn(evidence[0]['tidyReturnIds'][0], outcome['outcome']['returnIds'])
+
+    def test_p4_restore_cannot_replace_native_return_or_resource_delta_evidence(self):
+        for change in ('native-return', 'debit', 'condition', 'root', 'authority-root', 'duplicate-location', 'consumed'):
+            evidence = self.tidy_petrol()
+            result, _, receipts = evidence
+            if change == 'native-return': result['returnIds'].append(result['tidyReturnIds'][0])
+            else:
+                rows = [result['resources'][1], receipts[0]['resources'][1]]
+                if change == 'authority-root': rows = [receipts[0]['resources'][1]]
+                for row in rows:
+                    if change == 'debit': row['amount'] = 1.8
+                    elif change == 'condition': row['condition'] = 99
+                    elif change in ('root', 'authority-root'): row.update(sourceCount=0, rootCount=1)
+                    elif change == 'duplicate-location': row['rootCount'] = 1
+                    else: row.update(sourceCount=0, consumed=True)
+            with self.subTest(change=change): self.assertTrue(self.verify(evidence)[0])
+
+    def test_p4_restore_provenance_types_session_timing_and_selected_mod_are_strict(self):
+        for key, value in (('id', True), ('id', [101]), ('id', 999), ('sessionId', True), ('sessionId', 0),
+                           ('sessionId', -1), ('sessionId', 7.0), ('nativeTransfer', 1), ('nativeTransfer', False),
+                           ('fromRoot', False), ('toSource', False), ('groupCleanup', True), ('groupCleanup', 0),
+                           ('progress', False), ('tailRead', False), ('tailRead', 1),
+                           ('tokenCancelled', True), ('tokenCancelled', 0)):
+            evidence = self.tidy_petrol();evidence[0]['tidyReturns'][0][key] = value
+            with self.subTest(key=key, value=value): self.assertTrue(self.verify(evidence)[0])
+        for change in ('missing-proof', 'proof-type', 'proof-row', 'duplicate-proof', 'extra-field', 'missing-field', 'no-mod', 'early-tail'):
+            evidence = self.tidy_petrol()
+            if change == 'missing-proof': evidence[0].pop('tidyReturns')
+            elif change == 'proof-type': evidence[0]['tidyReturns'] = {}
+            elif change == 'proof-row': evidence[0]['tidyReturns'] = [None]
+            elif change == 'duplicate-proof': evidence[0]['tidyReturns'] *= 2
+            elif change == 'extra-field': evidence[0]['tidyReturns'][0]['extra'] = True
+            elif change == 'missing-field': evidence[0]['tidyReturns'][0].pop('progress')
+            elif change == 'early-tail': evidence[0]['petrolBeforeTail'] = False
+            else: self.selection['mods'] = []
+            with self.subTest(change=change): self.assertTrue(self.verify(evidence)[0])
+            self.selection['mods'] = ['P4TidyUpMeister']
+
+    def test_p4_return_ids_are_required_unique_and_limited_to_that_trials_petrol(self):
+        for envelope in (0, 2):
+            for value in (None, {}, [True], [101, 101], [999], [100], []):
+                evidence = self.tidy_petrol()
+                row = evidence[0] if envelope == 0 else evidence[2][0]
+                if value is None: row.pop('tidyReturnIds')
+                else: row['tidyReturnIds'] = value
+                with self.subTest(envelope=envelope, value=value): self.assertTrue(self.verify(evidence)[0])
+        for case in ('literature', 'bbq-fuel', 'fireplace-literature', 'fireplace-kindle', 'kindle-retry'):
+            evidence = self.evidence(case)
+            item_id = evidence[1][0]['resources'][0]['id']
+            evidence[0]['tidyReturnIds'] = evidence[2][0]['tidyReturnIds'] = [item_id]
+            with self.subTest(case=case): self.assertTrue(self.verify(evidence)[0])
+        evidence = self.evidence('fireplace-petrol')
+        for row in (evidence[0]['resources'][1], evidence[2][0]['resources'][1]): row.update(sourceCount=1, rootCount=0)
+        self.assertTrue(self.verify(evidence)[0])
+        for case in ('literature', 'fireplace-petrol'):
+            for value in (None, 1, 'true'):
+                evidence = self.evidence(case)
+                if value is None: evidence[0].pop('petrolBeforeTail')
+                else: evidence[0]['petrolBeforeTail'] = value
+                with self.subTest(case=case, petrol_before_tail=value): self.assertTrue(self.verify(evidence)[0])
+
+    def test_native_failed_tail_can_still_prove_p4_settlement_without_becoming_a_pass(self):
+        self.selection.update(kind='mp', mode='native')
+        evidence = self.tidy_petrol()
+        result, _, receipts = evidence
+        result.update(tailRead=False, tailProgress=False, petrolBeforeTail=False, tokenCancelled=True,
+                      status='failed', reason='native-independent-tail-not-preserved')
+        receipts[0]['tailRead'] = False
+        result['tidyReturns'][0].update(tailRead=False, tokenCancelled=True)
+        issues, outcome, reason = self.verify(evidence)
+        self.assertEqual(issues, [])
+        self.assertEqual(reason, 'native-independent-tail-not-preserved')
+        self.assertFalse(outcome['outcome']['tailRead'])
+        for row in (result['resources'][1], receipts[0]['resources'][1]): row.update(sourceCount=0, rootCount=1)
+        self.assertTrue(self.verify(evidence)[0])
 
     def test_client_cannot_change_last_receipt_or_claim_a_false_status(self):
         for key, value in (('bookId', True), ('lit', False), ('tailRead', False), ('effectFuel', 999),

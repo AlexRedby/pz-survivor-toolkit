@@ -27,6 +27,7 @@ local function container()
   function item:setAlreadyReadPages(pages)self.read=pages end
   function item:getAlreadyReadPages()return self.read end
   function item:getFullType()return self.kind end
+  function item:getFluidContainer()return nil end
   self.items[#self.items+1]=item;return item
  end
  function value:setType()end
@@ -159,3 +160,38 @@ for _,kind in ipairs({'sp','mp'}) do
  assert(result.consumed==1 and result.fuel==120 and result.tailRead==(kind=='sp'),'native MP reading observation changed')
 end
 print('native Fire authority fixture tests passed')
+
+-- MP complete runs after OnTick; next-frame object processing may already burn one unit.
+local early,tick
+Events={OnTick={Add=function(callback)tick=callback end},OnTickEvenPaused={Add=function(callback)early=callback end}}
+isClient=function()return false end
+getSprite=function(name)return name end
+local sq=square(2,2,0)
+sq.AddTileObject=sq.AddSpecialObject
+IsoThumpable.new=function(...)
+ local object=newObject(...)
+ object.transmitCompleteItemToClients=function()end
+ return object
+end
+local barbecue
+IsoBarbecue={new=function(_,square)
+ barbecue={class='IsoBarbecue',square=square,fuel=0,on=false,getObjectIndex=objectIndex}
+ function barbecue:getSquare()return self.square end
+ function barbecue:getFuelAmount()return self.fuel end
+ function barbecue:setFuelAmount(value)self.fuel=value end
+ function barbecue:isLit()return self.on end
+ function barbecue:isPropaneBBQ()return false end
+ function barbecue:transmitCompleteItemToClients()end
+ return barbecue
+end}
+modules['Camping/ISCampingMenu']=true
+local Ignition=assert(loadfile(root..'/tests/native_queue/fire/shared/QueueFireIgnition.lua'))()
+ids=Ignition.prepare(player,'bbq-kindle')
+tick();barbecue.on=true
+if early then early()end
+barbecue.fuel=359;tick()
+item(ids):setAlreadyReadPages(20)
+local observed,problem=Ignition.verify(player,'bbq-kindle')
+assert(observed,problem)
+assert(observed.effectFuel==360 and observed.fuel==359,'native fuel effect was sampled after burning')
+print('Fire ignition observation precedes next-frame native fuel burn.')

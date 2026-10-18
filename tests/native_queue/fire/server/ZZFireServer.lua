@@ -14,7 +14,7 @@ Events.OnClientCommand.Add(function(module,command,player,args)
    if not player:getSquare() then waiting={player=player,case=args.case}
    else player:setGhostMode(true);reply(player,'Prepared',Authority.prepare(player,args.case)) end
   elseif command=='Invalidate' then reply(player,'Invalidated',Authority.invalidate(player,args.case))
-  else assert(command=='Verify' and not pending,'unexpected fire request');pending={player=player,case=args.case,since=getTimestampMs()} end
+  else assert(command=='Verify' and not pending,'unexpected fire request');pending={player=player,case=args.case,tidyReturnIds=args.tidyReturnIds,since=getTimestampMs()} end
  end)
  if not ok then failed(player,problem) end
 end)
@@ -25,7 +25,7 @@ Events.OnTick.Add(function()
   if not ok then failed(request.player,problem) end
  end
  if not pending then return end
- local ok,result,problem=pcall(Authority.verify,pending.player,pending.case)
+ local ok,result,problem=pcall(Authority.verify,pending.player,pending.case,pending.tidyReturnIds)
  if not ok then failed(pending.player,result);pending=nil
  elseif result then reply(pending.player,'Verified',result);pending=nil
  elseif getTimestampMs()-pending.since>20000 then failed(pending.player,problem);pending=nil end
