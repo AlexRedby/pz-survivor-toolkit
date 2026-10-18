@@ -243,6 +243,30 @@ class QueueReportTests(unittest.TestCase):
                     self.assertIn(result['execution_issues'][0], report.summary(result))
                     self.assertEqual(execution, report.read_json(root / 'execution.json'))
 
+    def test_abnormal_exit_cannot_pass_after_successful_fixture_completion(self):
+        for kind in ('sp', 'mp'):
+            root = self.fixture(kind, kind=kind)
+            execution = report.read_json(root / 'execution.json')
+            for role in execution['processes']:
+                for code in (1, 139, -11, -6):
+                    with self.subTest(kind=kind, role=role, code=code):
+                        altered = copy.deepcopy(execution)
+                        altered['processes'][role]['exit_code'] = code
+                        report.write_json(root / 'execution.json', altered)
+                        result = report.build_report(root, self.catalog)
+                        self.assertEqual(result['functional']['status'], 'passed')
+                        self.assertEqual(result['status'], 'failed')
+                        self.assertTrue(any('unexpected process exit code' in issue for issue in result['execution_issues']))
+                        cells = [r for r in report.matrix(self.catalog, [result])['rows'] if r.get('kind') == kind and r['mode'] == 'toolkit']
+                        self.assertEqual(cells[0]['status'], 'failed')
+            for code in (0, -15, -9, 143, 137):
+                with self.subTest(kind=kind, normal_exit=code):
+                    altered = copy.deepcopy(execution)
+                    for process in altered['processes'].values():
+                        process['exit_code'] = code
+                    report.write_json(root / 'execution.json', altered)
+                    self.assertEqual(report.build_report(root, self.catalog)['status'], 'passed')
+
     def test_host_server_requires_owned_parent_cache_and_empty_cleanup_audit(self):
         root = self.fixture(kind='mp')
         selection = report.read_json(root / 'selection.json')
@@ -311,7 +335,9 @@ class QueueReportTests(unittest.TestCase):
         current = report.build_report(self.fixture("toolkit"), self.catalog)
         control = report.build_report(self.fixture("native", mode="native"), self.catalog)
         self.assertTrue(report.compare(current, control)["compatible"])
-        changes = [("settings_fingerprint", "b" * 64), ("execution", {"status": "failed"}),
+        crashed = copy.deepcopy(control["execution"])
+        crashed["processes"]["client1"]["exit_code"] = 1
+        changes = [("settings_fingerprint", "b" * 64), ("execution", {"status": "failed"}), ("execution", crashed),
                    ("provenance", {"verified": False}), ("functional", {"status": "failed"})]
         for key, value in changes:
             altered = dict(control, **{key: value})

@@ -232,6 +232,58 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(['blocked'] * len(jobs) + ['passed'], [job['status'] for job in result['jobs']])
         self.assertEqual([], result['remaining'])
 
+    def test_job_source_overrides_merge_by_mod_id_without_mutating_plan(self):
+        plan = {'game': '/game', 'jdk': '/jdk',
+                'options': {'mod_sources': {'PZSurvivorToolkit': '/frozen/toolkit-a',
+                                            'PZToolkitJavaPatches': '/frozen/java-a'},
+                            'ffmpeg': '/tools/plan-ffmpeg', 'retained': True},
+                'jobs': [{'id': 'toolkit', 'suite': 'startup',
+                          'options': {'mod_sources': {'PZSurvivorToolkit': '/frozen/toolkit-b'},
+                                      'ffmpeg': '/tools/job-ffmpeg'}},
+                         {'id': 'java', 'suite': 'startup',
+                          'options': {'mod_sources': {'PZToolkitJavaPatches': '/frozen/java-b'}}}]}
+        original = json.dumps(plan, sort_keys=True)
+        with patch.object(cli.report, 'read_json', return_value=plan):
+            self.assertEqual(0, self.invoke())
+        toolkit, java = [selection['options'] for _, selection in self.calls]
+        self.assertEqual(toolkit['mod_sources'], {'PZSurvivorToolkit': '/frozen/toolkit-b',
+                                                  'PZToolkitJavaPatches': '/frozen/java-a'})
+        self.assertEqual(java['mod_sources'], {'PZSurvivorToolkit': '/frozen/toolkit-a',
+                                               'PZToolkitJavaPatches': '/frozen/java-b'})
+        self.assertEqual(toolkit['ffmpeg'], '/tools/job-ffmpeg')
+        self.assertEqual(java['ffmpeg'], '/tools/plan-ffmpeg')
+        self.assertTrue(toolkit['retained'] and java['retained'])
+        self.assertEqual(json.dumps(plan, sort_keys=True), original)
+
+    def test_job_source_map_cannot_hide_invalid_plan_map_or_stop_later_reports(self):
+        for index, invalid in enumerate((None, [], 'bad')):
+            with self.subTest(plan_sources=invalid):
+                self.args.output = self.root / ('invalid-sources-' + str(index))
+                self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk',
+                    'options': {'mod_sources': invalid},
+                    'jobs': [{'id': 'first', 'suite': 'startup',
+                              'options': {'mod_sources': {'PZSurvivorToolkit': '/frozen/toolkit'}}},
+                             {'id': 'clear', 'suite': 'startup', 'options': {'mod_sources': {}}},
+                             {'id': 'later', 'suite': 'startup'}]}))
+                self.assertEqual(1, self.invoke())
+                self.assertEqual([], self.calls)
+                result = json.loads((self.args.output / 'batch-report.json').read_text())
+                self.assertEqual(['blocked'] * 3, [job['status'] for job in result['jobs']])
+                self.assertTrue(all('mod_sources' in job['error'] for job in result['jobs']))
+                self.assertEqual([], result['remaining'])
+
+    def test_explicit_empty_job_sources_clear_plan_pins_for_native_vanilla(self):
+        self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk',
+            'options': {'mod_sources': {'PZSurvivorToolkit': '/frozen/toolkit'}, 'retained': True},
+            'jobs': [{'id': 'vanilla', 'suite': 'startup', 'mode': 'native', 'mods': 'vanilla',
+                      'options': {'mod_sources': {}}}]}))
+        self.assertEqual(0, self.invoke())
+        selected = self.calls[0][1]
+        self.assertEqual([], selected['mods'])
+        self.assertEqual({}, selected['options']['mod_sources'])
+        self.assertTrue(selected['options']['retained'])
+        cli.native._validate(selected)
+
     def test_invalid_plan_options_are_reported_for_every_unrun_job(self):
         for index, value in enumerate((None, [], 'bad')):
             with self.subTest(value=value):

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-from .report import events, read_json, verify_manifest, write_json
+from .report import events, execution_issues, read_json, verify_manifest, write_json
 from . import adapters, admission, pack, worlds, coop
 from .native import font_preload
 
@@ -114,7 +114,7 @@ def run(root, resource_wait=300):
             raise ValueError('Inputs changed while waiting for resources:\n' + '\n'.join(changed))
         input_guards = _verify_live_inputs(root, selection, runtime)
         processes, streams, displayed = {}, [], set()
-        execution = {"status": "running", "processes": {}, "peer_disconnected": False, 'attachments': [],
+        execution = {"status": "running", "platform": "darwin", "processes": {}, "peer_disconnected": False, 'attachments': [],
                      'resources': resources, 'input_guards': input_guards}
         game = Path(runtime["game"])
         base = [runtime["java"], "-Djava.awt.headless=true", "--enable-native-access=ALL-UNNAMED",
@@ -316,6 +316,10 @@ def run(root, resource_wait=300):
                         execution.setdefault('cleanup_errors', []).append('display guard: ' + str(error))
                 if execution.get('cleanup_errors'):
                     execution.update(status='failed', error='; '.join([execution.get('error', ''), *execution['cleanup_errors']]))
+                if execution['status'] == 'completed':
+                    issues = execution_issues(root, selection, execution)
+                    if issues:
+                        execution.update(status='failed', error='; '.join(issues))
                 write_json(root / "execution.json", execution)
             finally:
                 for sig, handler in previous.items():

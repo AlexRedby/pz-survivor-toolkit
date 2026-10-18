@@ -462,6 +462,9 @@ def execution_issues(root, selection, execution):
                 issues.append('server: Host execution requires the owned client1 parent/cache')
         elif type(process.get('exit_code')) is not int:
             issues.append(role + ': execution requires an integer exit code after stopping')
+        elif execution.get('platform') != 'win32' and process['exit_code'] not in (0, -15, -9, 143, 137):
+            # macOS JVMs may return 128+signal for the runner's TERM/KILL cleanup.
+            issues.append(role + ': unexpected process exit code ' + str(process['exit_code']))
     if hosted:
         cleanup = execution.get('host_cleanup')
         if not isinstance(cleanup, dict) or cleanup.get('remaining_pids') != []:

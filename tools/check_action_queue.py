@@ -144,9 +144,17 @@ def batch(args, catalog):
         try:
             if 'cases' in job:
                 raise ValueError("Batch jobs use 'case' with comma-separated IDs; 'cases' would be ignored")
-            if not isinstance(plan.get('options', {}), dict) or not isinstance(job.get('options', {}), dict):
+            plan_options, job_options = plan.get('options', {}), job.get('options', {})
+            if not isinstance(plan_options, dict) or not isinstance(job_options, dict):
                 raise ValueError('Batch options must contain JSON objects')
-            options = dict(plan.get('options', {}), **job.get('options', {}))
+            plan_sources, job_sources = plan_options.get('mod_sources', {}), job_options.get('mod_sources', {})
+            if not isinstance(plan_sources, dict) or not isinstance(job_sources, dict):
+                raise ValueError('options.mod_sources must contain a JSON object')
+            options = dict(plan_options, **job_options)
+            if 'mod_sources' in plan_options or 'mod_sources' in job_options:
+                # An explicit empty job map opts out of plan pins for another mod selection.
+                options['mod_sources'] = ({} if 'mod_sources' in job_options and not job_sources
+                                          else {**plan_sources, **job_sources})
             for key in ('control_job', 'seed_job'):
                 if job.get(key) and job[key] not in completed:
                     raise ValueError('Dependency has no completed report: ' + job[key])

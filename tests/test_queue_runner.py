@@ -111,6 +111,20 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
 
+    def test_crash_after_completion_marker_is_failed_after_cleanup(self):
+        original_popen = self.popen
+        def crash(command, **kwargs):
+            process = original_popen(command, **kwargs)
+            if 'stdout' in kwargs:
+                process.returncode = -11
+            return process
+        with patch.object(self, 'popen', side_effect=crash):
+            result, kills = self.invoke()
+        self.assertEqual(result['status'], 'failed')
+        self.assertIn('unexpected process exit code -11', result['error'])
+        self.assertEqual(result['processes']['client1']['exit_code'], -11)
+        self.assertFalse(kills)
+
     def test_manual_session_waits_for_user_exit_and_releases_without_killing_game(self):
         self.runtime['fixture'] = {'manual': True}
         (self.root / 'runtime.json').write_text(json.dumps(self.runtime))
