@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import locale
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,6 +35,8 @@ def main() -> None:
     parser.add_argument("--saucedcarts-source", type=Path, help="SaucedCarts shared module directory for server hook checks")
     parser.add_argument("--wheelbarrow-source", type=Path, help="SaucedWheelbarrow registration init.lua for spawn checks")
     args = parser.parse_args()
+    # Lua 5.1 character classes inspect bytes; host UTF-8 locales can misclassify them.
+    locale.setlocale(locale.LC_CTYPE, "C")
     try:
         from lupa.lua51 import LuaRuntime
     except ImportError as error:
@@ -155,7 +158,7 @@ def main() -> None:
         lua.globals().NativeDropBoxSource = (args.native_radio_root / "RadioCom/ISUIRadio/ISItemDropBox.lua").read_text(encoding="utf-8")
     lua.execute((ROOT / "tests/test_tv_controls.lua").read_text(encoding="utf-8"))
 
-    for name in ("test_animal_info.lua", "test_action_queue_animals.lua", "test_ui_style.lua", "test_sidebar_tools.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_food.lua", "test_packaged_food.lua", "test_food_cart_compat.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_lifecycle.lua", "test_queue_equipment_floor.lua", "test_queue_equipment_bulk.lua", "test_queue_equipment_authority.lua", "test_queue_equipment_slots.lua", "test_queue_equipment_postprocess.lua", "test_action_queue_acknowledgements.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_dismantle.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_hygiene.lua", "test_action_queue_compat.lua", "test_action_queue_tidy_intent.lua", "test_action_queue_manifest.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua", "test_action_queue_carts.lua", "test_action_queue_fire.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua", "test_context_menu_profile.lua", "test_context_menu_editor.lua"):
+    for name in ("test_animal_info.lua", "test_action_queue_animals.lua", "test_ui_style.lua", "test_sidebar_tools.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_food.lua", "test_packaged_food.lua", "test_food_cart_compat.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_lifecycle.lua", "test_queue_equipment_floor.lua", "test_queue_equipment_bulk.lua", "test_queue_craft_fixture.lua", "test_queue_equipment_authority.lua", "test_queue_equipment_slots.lua", "test_queue_equipment_postprocess.lua", "test_action_queue_acknowledgements.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_dismantle.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_hygiene.lua", "test_action_queue_compat.lua", "test_action_queue_tidy_intent.lua", "test_action_queue_manifest.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua", "test_action_queue_carts.lua", "test_action_queue_fire.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua", "test_context_menu_profile.lua", "test_context_menu_editor.lua"):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
         if args.saucedcarts_source:

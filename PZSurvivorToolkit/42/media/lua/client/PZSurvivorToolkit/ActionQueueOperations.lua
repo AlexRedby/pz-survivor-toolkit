@@ -217,6 +217,10 @@ function Operations.perform(action, callback, ...)
     if (Settings and not Settings.actionQueue()) or (not producer and (not Craft or not Craft.supports(action))) then
         return callback(action, ...)
     end
+    local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
+    if not producer and lifecycle and lifecycle.current(action.character) == action then
+        return callback(action, ...)
+    end
     local previous = completionScope
     local pending = {action = action, acceptsChild = producer and producer.acceptsChild}
     completionScope = pending
@@ -288,12 +292,17 @@ ISTimedActionQueue.add = function(action)
         and not current._isAddingActions
     local accepted, placement
     if sameOperation and completionScope and completionScope.acceptsChild then accepted, placement = completionScope.acceptsChild(current, action) end
-    if sameOperation and nativeParent and not completionScope then accepted, placement = true, "before-returns" end
-    if sameOperation and (nativeReturn(action) or accepted) then
+    -- Craft OnCreate may add unrelated mod actions; only audited returns inherit placement.
+    if sameOperation and nativeParent and not completionScope
+        and current.Type ~= "ISCraftAction" and current.Type ~= "ISHandcraftAction" then
+        accepted, placement = true, "before-returns"
+    end
+    local returning = sameOperation and nativeReturn(action)
+    if sameOperation and (returning or accepted) then
         local last = 1
         while queue.queue[last + 1] and queue.queue[last + 1].toolkitQueueOperation == current.toolkitQueueOperation do
             -- A native retry still needs the tools that the following return would remove.
-            if accepted and placement == "before-returns" and nativeReturn(queue.queue[last + 1]) then break end
+            if accepted and not returning and placement == "before-returns" and nativeReturn(queue.queue[last + 1]) then break end
             last = last + 1
         end
         local result = add(action)

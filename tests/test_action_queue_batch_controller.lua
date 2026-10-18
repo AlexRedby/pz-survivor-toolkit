@@ -195,6 +195,161 @@ end)
 assert(q.current == unrelated and q.queue[2] == extra and q.queue[3] == foreignReturn,
     'arbitrary SP recipe additions and foreign return callbacks keep the native tail ordering')
 
+local Lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
+local originalClient, originalActions = isClient, player.getCharacterActions
+for _, client in ipairs({false, true}) do
+    reset()
+    isClient = function() return client end
+    local current = ISHandcraftAction:new(player, audited.craftRecipe, {})
+    Operations.run(function() ISTimedActionQueue.add(current) end)
+    local reader = book(); ISTimedActionQueue.add(reader)
+    local present, completions = true, 0
+    player.getCharacterActions = function()
+        return {contains = function(_, action) return present and action == current.action end}
+    end
+    local onCompleted = q.onCompleted
+    q.onCompleted = function(queue, action)
+        completions = completions + 1
+        return onCompleted(queue, action)
+    end
+    local returns, added, foreign = {}, nil, nil
+    local function addChildren()
+        added = ISBaseTimedAction:new(player); ISTimedActionQueue.add(added)
+        foreign = ISInventoryTransferUtil.newInventoryTransferAction(player, material, inventory, cupboard)
+        foreign:setAllowMissingItems(true); foreign.onCompleteFunc = function() end
+        ISTimedActionQueue.add(foreign)
+        for i = 1, 2 do
+            returns[i] = ISInventoryTransferUtil.newInventoryTransferAction(player, material, inventory, cupboard)
+            returns[i]:setAllowMissingItems(true); ISTimedActionQueue.add(returns[i])
+        end
+        assert(q.queue[1] == current and q.queue[2] == returns[1] and q.queue[3] == returns[2]
+            and q.queue[4] == reader and q.queue[5] == added and q.queue[6] == foreign,
+            'native completion preserves return FIFO and arbitrary OnCreate/foreign-return append order')
+    end
+    assert(Lifecycle.begin(current, 'perform'))
+    Operations.perform(current, function(action)
+        assert(not Operations.deferCompletion(q, action), 'shared craft completion must bypass local deferral')
+        q:onCompleted(action)
+        if client then addChildren() end
+    end)
+    assert(completions == 1 and q.current == current and #started == 1,
+        'shared craft completion must not replay or start children inside perform')
+    Lifecycle.finish(current, 'perform', true)
+    assert(Lifecycle.flush(q) == 'waiting')
+    if not client then
+        assert(Lifecycle.begin(current, 'complete'))
+        addChildren()
+        Lifecycle.finish(current, 'complete', true)
+        assert(Lifecycle.flush(q) == 'waiting', 'SP craft still waits for native action removal')
+    end
+    present = false
+    assert(Lifecycle.flush(q) == 'completed' and completions == 2 and q.current == returns[1]
+        and #started == 2 and q.queue[2] == returns[2] and q.queue[3] == reader
+        and q.queue[4] == added and q.queue[5] == foreign,
+        'only shared lifecycle releases native returns ahead of independent reading')
+    q.onCompleted = onCompleted
+end
+isClient, player.getCharacterActions = originalClient, originalActions
+
+-- Shared completion retains the narrower child permissions of registered producers.
+local producer
+Operations.registerProducer('batch-controller-lifecycle', function(action) return action == producer end,
+    function(_, child) return child.toolkitFixtureAccepted == true, 'before-returns' end)
+reset()
+producer = ISBaseTimedAction:new(player)
+Operations.run(function() ISTimedActionQueue.add(producer) end)
+local returned = ISInventoryTransferUtil.newInventoryTransferAction(player, material, inventory, cupboard)
+returned:setAllowMissingItems(true)
+Operations.runWith(producer.toolkitQueueOperation, ISTimedActionQueue.add, returned)
+local reader, accepted, rejected = book(), ISBaseTimedAction:new(player), ISBaseTimedAction:new(player)
+accepted.toolkitFixtureAccepted = true
+ISTimedActionQueue.add(reader)
+local present = true
+player.getCharacterActions = function()
+    return {contains = function(_, action) return present and action == producer.action end}
+end
+assert(Lifecycle.begin(producer, 'perform'))
+Operations.perform(producer, function(action)
+    q:onCompleted(action)
+    ISTimedActionQueue.add(rejected); ISTimedActionQueue.add(accepted)
+end)
+assert(q.current == producer and #started == 1 and q.queue[2] == accepted and q.queue[3] == returned
+    and q.queue[4] == reader and q.queue[5] == rejected,
+    'shared native ownership must preserve registered acceptsChild filtering and return placement')
+Lifecycle.finish(producer, 'perform', true)
+present = false
+assert(Lifecycle.flush(q) == 'completed' and q.current == accepted and #started == 2)
+player.getCharacterActions = originalActions
+
+-- Generic native children precede borrowed-tool returns without reversing the returns themselves.
+do
+    reset()
+    local current, reader = ISBaseTimedAction:new(player), book()
+    Operations.run(function() ISTimedActionQueue.add(current) end)
+    ISTimedActionQueue.add(reader)
+    local present = true
+    player.getCharacterActions = function()
+        return {contains = function(_, action) return present and action == current.action end}
+    end
+    assert(Lifecycle.begin(current, 'perform'))
+    q:onCompleted(current)
+    local returns = {}
+    for i = 1, 2 do
+        returns[i] = ISInventoryTransferUtil.newInventoryTransferAction(player, material, inventory, cupboard)
+        returns[i]:setAllowMissingItems(true); ISTimedActionQueue.add(returns[i])
+    end
+    local retry = ISBaseTimedAction:new(player); ISTimedActionQueue.add(retry)
+    assert(q.current == current and #started == 1 and q.queue[2] == retry
+        and q.queue[3] == returns[1] and q.queue[4] == returns[2] and q.queue[5] == reader,
+        'generic shared children retain return FIFO while inserting retries before both returns')
+    Lifecycle.finish(current, 'perform', true)
+    present = false
+    assert(Lifecycle.flush(q) == 'completed' and q.current == retry and #started == 2)
+    player.getCharacterActions = originalActions
+end
+
+-- Real legacy Craft All callbacks keep their lazy continuation under shared completion ownership.
+do
+    reset()
+    local current, returned, reader = legacy(), nil, book()
+    Operations.run(function()
+        ISTimedActionQueue.add(current)
+        returned = ISInventoryTransferUtil.newInventoryTransferAction(player, material, inventory, cupboard)
+        returned:setAllowMissingItems(true); ISTimedActionQueue.add(returned)
+    end)
+    ISTimedActionQueue.add(reader)
+    local present, completions, scopes = true, 0, 0
+    player.getCharacterActions = function()
+        return {contains = function(_, action) return present and action == current.action end}
+    end
+    local onCompleted, runWith = q.onCompleted, Operations.runWith
+    q.onCompleted = function(queue, action)
+        completions = completions + 1
+        return onCompleted(queue, action)
+    end
+    Operations.runWith = function(...)
+        scopes = scopes + 1
+        return runWith(...)
+    end
+    assert(Lifecycle.begin(current, 'perform'))
+    current:perform()
+    Operations.runWith = runWith
+    assert(scopes == 1, 'shared legacy perform adds no local scope beyond its native continuation')
+    assert(q.current == current and #started == 1 and completions == 1 and #q.queue == 6
+        and q.queue[2].Type == 'ISInventoryTransferAction' and q.queue[3].Type == 'ISCraftAction'
+        and q.queue[4] == returned and q.queue[5].Type == 'ISInventoryTransferAction' and q.queue[6] == reader,
+        'legacy shared perform retains pickup/craft and both returns before the independent reader')
+    Lifecycle.finish(current, 'perform', true)
+    assert(Lifecycle.flush(q) == 'waiting' and #started == 1)
+    present = false
+    assert(Lifecycle.flush(q) == 'completed' and completions == 2 and #started == 2
+        and q.current == q.queue[1] and q.queue[2].Type == 'ISCraftAction'
+        and q.queue[3] == returned and q.queue[5] == reader,
+        'legacy shared completion advances only after native removal')
+    assert(Batch.progress(q, q.queue[2]).completed == 1, 'legacy shared completion counts its batch once')
+    q.onCompleted, player.getCharacterActions = onCompleted, originalActions
+end
+
 local ownerStops = 0
 local nativeOwner = setmetatable({player = player, craftTimes = 2,
     logic = {class = 'HandcraftLogic', getPlayer = function() return player end,

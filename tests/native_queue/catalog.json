@@ -538,8 +538,19 @@
       "cases": []
     },
     "craft": {
-      "status": "not-migrated",
-      "cases": []
+      "status": "ready",
+      "clients": 1,
+      "default_mods": ["PZSurvivorToolkit", "ZombieBuddy", "PZToolkitJavaPatches"],
+      "cases": [
+        {
+          "id": "borrowed-tools",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": ["sp", "mp"],
+          "languages": ["EN"],
+          "modes": ["native", "toolkit"]
+        }
+      ]
     },
     "world": {
       "status": "not-migrated",
