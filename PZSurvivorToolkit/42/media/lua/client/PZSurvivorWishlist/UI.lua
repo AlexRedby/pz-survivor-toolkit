@@ -172,10 +172,15 @@ function Window:refresh()
     if list then
         local rows, counts = {}, W.Client.carried(self.playerNum)
         for fullType, value in pairs(list.entries) do
-            local name, script = UI.itemName(fullType)
+            local name, script = UI.itemName(value.vehicleTypes and value.vehicleTypes[1] or fullType)
+            if value.vehicleTypes then
+                local class = getText("IGUI_VehicleType_" .. value.vehicleClass)
+                if not name:find(class, 1, true) then name = name .. " (" .. class .. ")" end
+            end
             rows[#rows + 1] = { fullType = fullType, name = name, script = script, amount = value.amount,
                 done = value.done, amountText = value.done and text("Completed") or tostring(value.amount),
-                detail = text("Carried", counts[fullType] or 0) .. "  |  " .. fullType }
+                detail = text("Carried", W.Client.carriedCount(counts, fullType, value)) .. "  |  "
+                    .. (value.vehicleTypes and text("VehicleVariants") or fullType) }
         end
         table.sort(rows, function(a, b)
             if a.done ~= b.done then return not a.done end
@@ -308,18 +313,28 @@ function Catalog:prerender()
     ISCollapsableWindow.prerender(self)
     local n = tonumber(self.quantity:getInternalText())
     local valid = n and n == math.floor(n) and n >= 1 and n <= 9999
-    self.addButton:setEnable(selectedRow(self.list) ~= nil and valid == true)
     local state = W.Client.state(self.playerNum)
+    local row, list = selectedRow(self.list), W.Client.getList(self.playerNum, self.listId)
+    local removing = row and list and list.entries[row.fullType] ~= nil
+    self.actionType, self.removing = row and row.fullType, removing
+    self.addButton:setTitle(text(removing and "RemoveFrom" or "AddTo", list and list.owner or self.listId))
+    self.quantity:setEditable(not removing)
+    self.addButton:setEnable(row ~= nil and list ~= nil and not state.pending and (removing or valid == true))
     local status = state.error and text("Error_" .. state.error)
         or (state.pending and text("Saving") or text("CatalogCount", #self.list.items))
     self:drawText(UI.fit(status, self.width - 20), 10, self.addButton:getBottom() + 7, 0.7, 0.7, 0.7, 1, FONT)
 end
 
 function Catalog:add()
-    local row = selectedRow(self.list)
-    if not row then return end
-    W.Client.edit(self.playerNum, "addMany", { listId = self.listId,
-        entries = { { fullType = row.fullType, amount = tonumber(self.quantity:getInternalText()) } } })
+    local row, list = selectedRow(self.list), W.Client.getList(self.playerNum, self.listId)
+    if not row or not list or W.Client.state(self.playerNum).pending then return end
+    if self.actionType ~= row.fullType or self.removing ~= (list.entries[row.fullType] ~= nil) then return end
+    if self.removing then
+        W.Client.edit(self.playerNum, "remove", { listId = self.listId, fullType = row.fullType })
+    else
+        W.Client.edit(self.playerNum, "addMany", { listId = self.listId,
+            entries = { { fullType = row.fullType, amount = tonumber(self.quantity:getInternalText()) } } })
+    end
 end
 
 function Sharing:initialise()

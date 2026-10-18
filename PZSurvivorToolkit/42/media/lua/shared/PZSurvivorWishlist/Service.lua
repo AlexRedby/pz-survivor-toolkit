@@ -33,13 +33,13 @@ local function parse(reader)
     if not header or #header > 128 then return {error = "storage_invalid"} end
     local values = columns(header)
     if values[1] ~= "PZSW" or #values ~= 3 then return {error = "storage_invalid"} end
-    if values[2] ~= "1" then return {error = "storage_version"} end
+    if values[2] ~= "1" and values[2] ~= "2" then return {error = "storage_version"} end
     local generation = tonumber(values[3])
     if not generation or generation < 1 or generation > 2147483646 or generation ~= math.floor(generation) then return {error = "storage_invalid"} end
     local store, list, lines, hash = {version = 1, lists = {}}, nil, 0, checksum(0, header)
     while true do
         local line = reader:readLine()
-        if not line or #line > 512 then return {error = "storage_invalid"} end
+        if not line or #line > 4608 then return {error = "storage_invalid"} end
         local fields = columns(line)
         if fields[1] == "END" then
             if #fields ~= 3 or tonumber(fields[2]) ~= generation or tonumber(fields[3]) ~= hash
@@ -56,9 +56,14 @@ local function parse(reader)
             store.lists[fields[2]] = list
         elseif fields[1] == "M" and #fields == 2 and list and not list.members[fields[2]] then
             list.members[fields[2]] = true
-        elseif fields[1] == "E" and #fields == 4 and list and not list.entries[fields[2]]
-            and (fields[4] == "0" or fields[4] == "1") then
-            list.entries[fields[2]] = {amount = tonumber(fields[3]), done = fields[4] == "1"}
+        elseif ((fields[1] == "E" and #fields == 4) or (fields[1] == "V" and #fields >= 6 and #fields <= 37))
+            and list and not list.entries[fields[2]] and (fields[4] == "0" or fields[4] == "1") then
+            local variants
+            if fields[1] == "V" then
+                variants = {}
+                for i = 6, #fields do variants[#variants + 1] = fields[i] end
+            end
+            list.entries[fields[2]] = {amount = tonumber(fields[3]), done = fields[4] == "1", vehicleTypes = variants, vehicleClass = variants and tonumber(fields[5]) or nil}
         else
             return {error = "storage_invalid"}
         end
@@ -109,12 +114,14 @@ local function write(ctx, store)
             hash = checksum(hash or 0, value)
             writer:write(value .. "\n")
         end
-        line("PZSW\t1\t" .. generation)
+        line("PZSW\t2\t" .. generation)
         for id, list in pairs(store.lists) do
             line("L\t" .. id .. "\t" .. list.revision .. "\t" .. (list.faction or ""))
             for username in pairs(list.members) do line("M\t" .. username) end
             for fullType, entry in pairs(list.entries) do
-                line("E\t" .. fullType .. "\t" .. entry.amount .. "\t" .. (entry.done and "1" or "0"))
+                local prefix = entry.vehicleTypes and "V" or "E"
+                local variants = entry.vehicleTypes and ("\t" .. entry.vehicleClass .. "\t" .. table.concat(entry.vehicleTypes, "\t")) or ""
+                line(prefix .. "\t" .. fullType .. "\t" .. entry.amount .. "\t" .. (entry.done and "1" or "0") .. variants)
             end
         end
         writer:write("END\t" .. generation .. "\t" .. hash .. "\n")

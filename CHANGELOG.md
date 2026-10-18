@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.82
+
+- **Added:** Wishlist requests for compatible vehicle parts from the mechanics window. All compatible variants of the requested vehicle class are highlighted in inventories and mechanics, with combined carried counts.
+- **Changed:** Item context menus and the catalog switch between adding and removing requests. Compatible vehicle groups have their own removal actions, preserving separate exact-item requests and the selected list.
+
 ### 0.1.81
 
 - **Fixed:** Better Generator Info queue integration accepts its reviewed source in the game as well as the test runtime. Source checks now share UTF16 normalization, bounded reads and reader cleanup across compatibility, fire, generator and medical adapters; changed or unverified sources remain protected.

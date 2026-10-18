@@ -16,16 +16,35 @@ end
 function Client.state(playerNum)
     playerNum = playerNum or 0
     if not states[playerNum] then
-        states[playerNum] = { lists = {}, selectedId = nil, queue = {}, generation = 0 }
+        states[playerNum] = { lists = {}, selectedId = nil, queue = {}, generation = 0, wanted = {} }
     end
     return states[playerNum]
 end
 
-function Client.selected(playerNum)
-    local state = Client.state(playerNum)
-    for _, list in ipairs(state.lists) do
-        if list.id == state.selectedId then return list end
+function Client.getList(playerNum, listId)
+    for _, list in ipairs(Client.state(playerNum).lists) do
+        if list.id == listId then return list end
     end
+end
+
+function Client.selected(playerNum)
+    return Client.getList(playerNum, Client.state(playerNum).selectedId)
+end
+
+-- Removal targets entries in one displayed list, including completed requests.
+function Client.entryKeys(list, fullType)
+    local keys = {}
+    if not list then return keys end
+    for key, entry in pairs(list.entries) do
+        if entry.vehicleTypes then
+            for _, variant in ipairs(entry.vehicleTypes) do
+                if variant == fullType then keys[#keys + 1] = key; break end
+            end
+        end
+    end
+    table.sort(keys)
+    if list.entries[fullType] then table.insert(keys, 1, fullType) end
+    return keys
 end
 
 function Client.select(playerNum, id)
@@ -42,11 +61,7 @@ end
 
 -- Membership is supplied only by the server; highlights never scan containers.
 function Client.isWanted(playerNum, fullType)
-    for _, list in ipairs(Client.state(playerNum).lists) do
-        local entry = list.entries[fullType]
-        if entry and not entry.done then return true end
-    end
-    return false
+    return Client.state(playerNum).wanted[fullType] == true
 end
 
 local function send(playerNum, args)
@@ -83,7 +98,15 @@ function Client.receive(playerNum, payload)
     if type(payload) ~= "table" or type(payload.lists) ~= "table" then return end
     local state = Client.state(playerNum)
     local previousError = state.error
-    state.lists = payload.lists
+    state.lists, state.wanted = payload.lists, {}
+    for _, list in ipairs(state.lists) do
+        for fullType, entry in pairs(list.entries) do
+            if not entry.done then
+                if not entry.vehicleTypes then state.wanted[fullType] = true end
+                for _, variant in ipairs(entry.vehicleTypes or {}) do state.wanted[variant] = true end
+            end
+        end
+    end
     state.generation = state.generation + 1
     local player = getSpecificPlayer(playerNum)
     state.username = player and W.Service.username(player)
@@ -154,6 +177,13 @@ function Client.carried(playerNum)
     end
     if player then count(player:getInventory()) end
     return result
+end
+
+function Client.carriedCount(counts, fullType, entry)
+    if not entry.vehicleTypes then return counts[fullType] or 0 end
+    local total = 0
+    for _, variant in ipairs(entry.vehicleTypes) do total = total + (counts[variant] or 0) end
+    return total
 end
 
 Events.OnServerCommand.Add(function(module, command, args)
