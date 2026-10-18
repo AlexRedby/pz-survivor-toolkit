@@ -1,4 +1,5 @@
 local Fixture={}
+local function active(case)return case=='cancel-craft' or case=='late-input'end
 local function count(container,kind)
  local total=0
  for i=0,container:getItems():size()-1 do
@@ -32,6 +33,17 @@ function Fixture.prepare(player,case)
  state.book:setAlreadyReadPages(state.book:getNumberOfPages()-1)
  player:setAlreadyReadPages(state.book:getFullType(),state.book:getNumberOfPages()-1)
  state.outputs=count(inventory,'Base.WoodenStick2')
+ if active(state.case)then
+  state.outputBaseline={};state.sparePlanks={}
+  for i=0,inventory:getItems():size()-1 do
+   local item=inventory:getItems():get(i)
+   if item:getFullType()=='Base.WoodenStick2' then state.outputBaseline[item:getID()]=true end
+   if item:getFullType()=='Base.Plank'and item:getID()~=state.material:getID()then
+    state.sparePlanks[#state.sparePlanks+1]={id=item:getID(),condition=item:getCondition(),uses=uses(item)}
+   end
+  end
+  table.sort(state.sparePlanks,function(a,b)return a.id<b.id end)
+ end
  if case=='missing-input' then
   state.blocker=assert(inventory:AddItem('Base.BookCooking1'))
   state.blocker:setAlreadyReadPages(state.blocker:getNumberOfPages()-1)
@@ -48,6 +60,11 @@ function Fixture.descriptor(state)
  local result={case=state.case,bags={},tools={},material=state.material:getID(),book=state.book:getID(),outputs=state.outputs,
   toolMeta=state.toolMeta,materialCondition=state.materialCondition,materialUses=state.materialUses,
   blocker=state.blocker and state.blocker:getID()}
+ if active(state.case)then
+  result.sparePlanks=state.sparePlanks
+  result.outputBaseline={};for id in pairs(state.outputBaseline)do result.outputBaseline[#result.outputBaseline+1]=id end
+  table.sort(result.outputBaseline);result.playerId=isServer()and state.player:getOnlineID()or -1
+ end
  for i=1,2 do result.bags[i]=state.bags[i]:getID();result.tools[i]=state.tools[i]:getID() end
  return result
 end
@@ -55,6 +72,10 @@ function Fixture.resolve(player,ids)
  local inventory=player:getInventory()
  local state={case=ids.case,player=player,root=inventory,bags={},tools={},outputs=ids.outputs,toolMeta=ids.toolMeta,
   materialCondition=ids.materialCondition,materialUses=ids.materialUses}
+ if active(ids.case)then
+  state.sparePlanks=ids.sparePlanks
+  state.outputBaseline={};for _,id in ipairs(ids.outputBaseline)do state.outputBaseline[id]=true end
+ end
  for i=1,2 do
   state.bags[i]=inventory:getItemById(ids.bags[i])
   if not state.bags[i] then return end
@@ -68,7 +89,7 @@ function Fixture.resolve(player,ids)
  return state
 end
 function Fixture.removeInput(state)
- assert(state.case=='missing-input' and not state.removed,'unexpected craft input removal')
+ assert((state.case=='missing-input'or state.case=='late-input')and not state.removed,'unexpected craft input removal')
  local item=assert(state.root:getItemById(state.material:getID()),'craft input already missing')
  assert(item:getContainer()==state.root and item:getFullType()=='Base.Plank'
   and item:getCondition()==state.materialCondition and uses(item)==state.materialUses,'craft input changed before removal')
@@ -80,13 +101,37 @@ end
 function Fixture.verify(state,enabled)
  local player,inventory=state.player,state.player:getInventory()
  if state.case and state.case~='borrowed-tools' then
-  local missing=state.case=='missing-input'
+  local missing=state.case=='missing-input'or state.case=='late-input'
   local material=inventory:getItemById(state.material:getID())
   local materialCount=identityCount(inventory,state.material:getID())
   if missing and (not state.removed or materialCount~=0) or not missing and (materialCount~=1 or not material
    or material:getFullType()~='Base.Plank' or material:getContainer()~=inventory
    or material:getCondition()~=state.materialCondition or uses(material)~=state.materialUses) then return nil,'abort material state differs' end
-  if count(inventory,'Base.WoodenStick2')~=state.outputs then return nil,'aborted craft produced output' end
+  local outputIds,outputPlankCounts,accounted={},{},0
+  if active(state.case)then
+   for id in pairs(state.outputBaseline)do
+    local item=inventory:getItemById(id)
+    if not item or item:getContainer()~=inventory or item:getFullType()~='Base.WoodenStick2'
+     or identityCount(inventory,id)~=1 then return nil,'active craft baseline output lost or duplicated' end
+   end
+   for _,expected in ipairs(state.sparePlanks)do
+    local item=inventory:getItemById(expected.id)
+    if not item or item:getContainer()~=inventory or item:getFullType()~='Base.Plank'
+     or identityCount(inventory,expected.id)~=1 or item:getCondition()~=expected.condition
+     or uses(item)~=expected.uses then return nil,'active craft substituted or changed a spare input' end
+   end
+   for i=0,inventory:getItems():size()-1 do
+    local item=inventory:getItems():get(i)
+    if item:getFullType()=='Base.WoodenStick2'and not state.outputBaseline[item:getID()]then outputIds[#outputIds+1]=item:getID()end
+   end
+   table.sort(outputIds)
+   if count(inventory,'Base.WoodenStick2')~=state.outputs+#outputIds then return nil,'active craft baseline output changed' end
+   for _,id in ipairs(outputIds)do
+    local item=inventory:getItemById(id)
+    local amount=item:getModData()['Base.Plank']or 0
+    outputPlankCounts[#outputPlankCounts+1]=amount;accounted=accounted+amount
+   end
+  elseif count(inventory,'Base.WoodenStick2')~=state.outputs then return nil,'aborted craft produced output' end
   local resources,returned={},0
   for i,expected in ipairs(state.toolMeta) do
    local bag=inventory:getItemById(state.bags[i]:getID())
@@ -107,9 +152,14 @@ function Fixture.verify(state,enabled)
    or identityCount(inventory,book:getID())~=1 then return nil,'abort reader identity lost' end
   local read=book:getAlreadyReadPages()==book:getNumberOfPages()
   if enabled and not read then return nil,'abort independent reader unfinished' end
-  return {case=state.case,materialId=state.material:getID(),bookId=book:getID(),materialPresent=material~=nil,
+  local result={case=state.case,materialId=state.material:getID(),bookId=book:getID(),materialPresent=material~=nil,
    materialCondition=state.materialCondition,materialUses=state.materialUses,removed=missing and 1 or 0,consumed=0,
    outputs=0,toolsReturned=returned,resources=resources,tailRead=read}
+  if active(state.case)then
+   result.consumed=nil;result.outputs=#outputIds;result.outputIds=outputIds
+   result.outputPlankCounts=outputPlankCounts;result.accountedPlanks=accounted;result.sparePlanks=state.sparePlanks
+  end
+  return result
  end
  if inventory:getItemById(state.material:getID()) then return nil,'consumed plank still exists' end
  if count(inventory,'Base.WoodenStick2')~=state.outputs+1 then return nil,'craft output differs' end

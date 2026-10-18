@@ -14,8 +14,10 @@ local returns,returnOrder,boundaries,pickups,picked,returned={},{},{},{},{},{}
 local injected,progress,tailProgress,returnsBeforeRead=false,false,false,false
 local localDeferrals,idle=0,0
 local interrupted,removal,missingObserved=false,nil,false
+local outcomeTrace,interruptionProgress={},nil
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function case()return config.cases[step]end
+local function active()return case()=='cancel-craft'or case()=='late-input'end
 local function sorted(set)local result={};for id in pairs(set)do result[#result+1]=id end;table.sort(result);return result end
 local function emit(value)
  value.suite='craft';value.kind=config.kind;value.mode=config.mode;value.actor='client1';JSON.emit(value)
@@ -68,10 +70,17 @@ local function request(command)
  else
   receipt=assert(Fixture.verify(state,enabled))
   if case()=='borrowed-tools' then print('[CRAFT_QUEUE_TEST] AUTHORITY consumed=1 outputs=1 toolsReturned=2 tailRead=true')
+  elseif active()then print('[CRAFT_QUEUE_TEST] ACTIVE_AUTHORITY '..JSON.encode(receipt))
   else print('[CRAFT_QUEUE_TEST] ABORT_AUTHORITY '..JSON.encode(receipt))end
  end
 end
 Events.OnServerCommand.Add(function(module,command,value)
+ if module=='PZSurvivorToolkitActions'and command=='State'and active()and current
+  and value.player==ids.playerId and value.transaction==current.toolkitNativeTransaction
+  and value.kind==current.toolkitNativeKind then
+  local row={protocol=value.protocol,player=value.player,transaction=value.transaction,kind=value.kind,token=value.token,state=value.state}
+  outcomeTrace[#outcomeTrace+1]=row;print('[CRAFT_QUEUE_TEST] OUTCOME '..JSON.encode(row));return
+ end
  if module~='CraftQueueTest' then return end
  assert(value.ok~=false,value.error)
  if command=='Prepared' then ids=value elseif command=='Verified' then receipt=value elseif command=='Removed' then removal=value end
@@ -155,11 +164,17 @@ local function finishCase()
  else
   local reason=not receipt.tailRead and 'native-independent-tail-not-preserved'
    or not returnsBeforeRead and 'native-returns-not-before-tail' or nil
+  if active()then
+   local expected=case()=='late-input'and 1 or 0
+   if receipt.outputs~=expected or receipt.accountedPlanks~=expected then reason='native-craft-effect-differs'end
+  end
   local value={event='case',id=case(),status=reason and 'failed' or 'passed',reason=reason,
    toolIds=ids.tools,pickupIds=sorted(picked),returnIds=sorted(returned),pickupProgress=true,craftProgress=progress,
    tailProgress=tailProgress,returnsBeforeRead=returnsBeforeRead,interrupted=interrupted,
    missingObserved=missingObserved,tokenCancelled=current.toolkitQueueOperation and current.toolkitQueueOperation.toolkitCancelled==true or false,
    nativeDuration=150,authorityVerified=true,manualInputs=true,localDeferrals=localDeferrals}
+  if active()then value.playerId=ids.playerId;value.outcomeTrace=outcomeTrace;value.interruptionProgress=interruptionProgress
+   value.sharedPerform=boundaries.perform==true;value.sharedComplete=boundaries.complete==true end
   for key,result in pairs(receipt)do if key~='case' then value[key]=result end end
   if reason then failed=failed+1 end;emit(value)
  end
@@ -171,7 +186,7 @@ local function finishCase()
  ids,state,current,tail,receipt,blocker=nil,nil,nil,nil,nil,nil
  returns,returnOrder,boundaries,pickups,picked,returned={},{},{},{},{},{}
  injected,progress,tailProgress,returnsBeforeRead,interrupted,removal,missingObserved=false,false,false,false,false,nil,false
- localDeferrals,idle=0,0
+ localDeferrals,idle=0,0;outcomeTrace,interruptionProgress={},nil
 end
 Events.OnTick.Add(function()
  if not started or done or not isIngameState() then return end
@@ -195,6 +210,20 @@ Events.OnTick.Add(function()
   if phase=='running' then
    local q=queue();transfers(q.current)
    if q.current==current and current:isStarted()and current:getJobDelta()>0 then progress=true end
+   if active()and not interrupted and q.current==current and current.craftStarted==true
+    and current:isStarted()and current:getJobDelta()>0 then
+    local ack=config.kind=='mp'and Toolkit.ActionQueueAcknowledgements.capture(current)
+    if config.kind=='sp'or ack and Toolkit.ActionQueueAcknowledgements.state(current,ack)=='started'then
+     interruptionProgress=current:getJobDelta();assert(interruptionProgress<=0.25,'active craft stage too late')
+     interrupted=true
+     if case()=='cancel-craft'then
+      if enabled then local allowed,reason=Toolkit.ActionQueue.cancelOperation(q,current);assert(allowed,reason)
+      else current:forceStop()end
+     else request('RemoveInput')end
+     print('[CRAFT_QUEUE_TEST] INTERRUPTED '..JSON.encode({case=case(),duringCraft=true,progress=interruptionProgress}))
+    end
+   end
+   if case()=='late-input'and removal and not state.root:getItemById(ids.material)then missingObserved=true end
    if case()=='cancel-pickup' and not interrupted and q.current==pickups[2] and picked[ids.tools[2]] then
     local first=state.root:getItemById(ids.tools[1])
     assert(first and first:getContainer()==state.root and not current:isStarted(),'cancel stage differs')
@@ -230,11 +259,15 @@ Events.OnTick.Add(function()
     assert(#returnOrder==2 and returnOrder[1]==ids.tools[1]and returnOrder[2]==ids.tools[2],'native tool returns lost or reordered')
     assert((boundaries.perform==true)==enabled and(boundaries.complete==true)==(enabled and config.kind=='sp'),'native craft phases differ')
    else
-    assert(interrupted and not progress and picked[ids.tools[1]]and picked[ids.tools[2]],'abort pickup/progress evidence differs')
-    if case()=='missing-input'then assert(missingObserved and removal.materialId==ids.material,'missing exact input was not observed')end
+    assert(interrupted and progress==active()and picked[ids.tools[1]]and picked[ids.tools[2]],'abort pickup/progress evidence differs')
+    if case()=='missing-input'or case()=='late-input'then assert(missingObserved and removal.materialId==ids.material,'missing exact input was not observed')end
     if enabled then assert(tailProgress and returnsBeforeRead,'abort lost independent reader')end
    end
    assert(localDeferrals==0,'shared craft still used local completion deferral')
+   if active()and config.kind=='mp'then
+    if #outcomeTrace<2 then return end
+    assert(#outcomeTrace==2 and outcomeTrace[1].state=='started','active outcome trace differs')
+   end
    request('Verify');phase='receipt';return
   end
   if phase=='receipt' and receipt then finishCase()end

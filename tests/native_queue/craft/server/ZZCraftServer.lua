@@ -42,6 +42,7 @@ Events.OnTick.Add(function()
  if not ok then fail(pending.player,result);pending=nil
  elseif result then
   if session.case=='borrowed-tools' then print('[CRAFT_QUEUE_TEST] AUTHORITY consumed=1 outputs=1 toolsReturned=2 tailRead=true')
+  elseif session.case=='cancel-craft'or session.case=='late-input'then print('[CRAFT_QUEUE_TEST] ACTIVE_AUTHORITY '..JSON.encode(result))
   else print('[CRAFT_QUEUE_TEST] ABORT_AUTHORITY '..JSON.encode(result)) end
   reply(pending.player,'Verified',result);pending=nil;session=nil;step=step+1
  elseif getTimestampMs()-pending.since>20000 then fail(pending.player,problem);pending=nil end

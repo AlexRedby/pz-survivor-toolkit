@@ -1,10 +1,13 @@
 """Native craft with exact borrowed tools and late return ordering; no UI substitution."""
 import json
+import math
 from pathlib import Path
 import re
 import shutil
 
-CASES = ['borrowed-tools', 'cancel-pickup', 'missing-input']
+PRESTART_CASES = ['borrowed-tools', 'cancel-pickup', 'missing-input']
+ACTIVE_CASES = ['cancel-craft', 'late-input']
+CASES = PRESTART_CASES + ACTIVE_CASES
 MODS = ['PZSurvivorToolkit', 'ZombieBuddy', 'PZToolkitJavaPatches']
 
 
@@ -78,7 +81,7 @@ def _ids(value, count=None):
 
 def _authority(text):
     result = []
-    pattern = re.compile(r'\[CRAFT_QUEUE_TEST\] (PREPARED|REMOVED|ABORT_AUTHORITY|AUTHORITY)(?:\s|$)(.*)')
+    pattern = re.compile(r'\[CRAFT_QUEUE_TEST\] (PREPARED|REMOVED|ABORT_AUTHORITY|ACTIVE_AUTHORITY|AUTHORITY)(?:\s|$)(.*)')
     for line in text.splitlines():
         match = pattern.search(line)
         if not match:
@@ -175,6 +178,126 @@ def _abort(case, enabled, row, prep, receipt, removal):
     return issues, reason if not enabled else None
 
 
+ACTIVE_RECEIPT_KEYS = tuple(key for key in RECEIPT_KEYS if key != 'consumed') + (
+    'outputIds', 'outputPlankCounts', 'accountedPlanks', 'sparePlanks')
+STATE_KEYS = {'protocol', 'player', 'transaction', 'kind', 'token', 'state'}
+
+
+def _outcome_records(text):
+    result = []
+    for line in text.splitlines():
+        marker = '[CRAFT_QUEUE_TEST] OUTCOME '
+        if marker in line:
+            value = json.loads(line.split(marker, 1)[1])
+            if type(value) is not dict:
+                raise ValueError('Invalid craft native State envelope')
+            result.append(value)
+    return result
+
+
+def _active(case, selection, row, prep, receipt, removal):
+    issues = []
+    enabled, late = selection['mode'] == 'toolkit', case == 'late-input'
+    expected = dict(outputs=int(late), accountedPlanks=int(late), outputPlankCounts=[1] if late else [],
+                    removed=int(late), materialPresent=not late, pickupProgress=True, craftProgress=True,
+                    interrupted=True, missingObserved=late, nativeDuration=150, authorityVerified=True,
+                    manualInputs=True, localDeferrals=0, sharedPerform=enabled and late,
+                    sharedComplete=enabled and late and selection['kind'] == 'sp')
+    if enabled:
+        expected.update(tailRead=True, tailProgress=True, returnsBeforeRead=True,
+                        tokenCancelled=not late, toolsReturned=2, status='passed', reason=None)
+    if not _matches(row, expected) or 'consumed' in row:
+        issues.append('Craft active effect/accounting/progress differs: ' + case)
+    progress = row.get('interruptionProgress')
+    if type(progress) not in (int, float) or not math.isfinite(progress) or not 0 < progress <= .25:
+        issues.append('Craft intervention missed native active progress window: ' + case)
+    for key in ('tailRead', 'tailProgress', 'returnsBeforeRead', 'tokenCancelled'):
+        if type(row.get(key)) is not bool:
+            issues.append('Craft active observation must be boolean: ' + case + '/' + key)
+    if row.get('tailRead') is not row.get('tailProgress') or (row.get('returnsBeforeRead') is True
+                                                           and row.get('tailRead') is not True):
+        issues.append('Craft active reader/order evidence differs: ' + case)
+    reason = ('native-independent-tail-not-preserved' if row.get('tailRead') is False else
+              'native-returns-not-before-tail' if row.get('returnsBeforeRead') is False else None)
+    if not _matches(row, dict(outputs=int(late), accountedPlanks=int(late))):
+        reason = 'native-craft-effect-differs'
+    if not enabled and not _matches(row, {'status': 'failed' if reason else 'passed', 'reason': reason}):
+        issues.append('Craft observed native active status differs: ' + case)
+    if (not _prepared_valid(prep, case) or not _ids(prep.get('outputBaseline'))
+            or prep['outputBaseline'] != sorted(prep['outputBaseline']) or len(prep['outputBaseline']) != prep['outputs']
+            or type(prep.get('playerId')) is not int or (prep['playerId'] < 0 if selection['kind'] == 'mp' else prep['playerId'] != -1)):
+        issues.append('Craft active preparation identity/baseline differs: ' + case)
+        return issues, reason if not enabled else None
+    spares = prep.get('sparePlanks')
+    spare_ids = []
+    if type(spares) is list:
+        for spare in spares:
+            if (type(spare) is not dict or set(spare) != {'id', 'condition', 'uses'}
+                    or type(spare.get('id')) is not int
+                    or any(type(spare.get(key)) is not int or spare[key] < 0 for key in ('condition', 'uses'))):
+                issues.append('Craft active spare Plank metadata differs: ' + case)
+                break
+            spare_ids.append(spare['id'])
+    if (type(spares) is not list or len(spare_ids) != len(spares) or spare_ids != sorted(spare_ids)
+            or not _ids(spare_ids + prep['outputBaseline'] + prep['tools'] + prep['bags']
+                        + [prep['material'], prep['book']]) or not _same(row.get('sparePlanks'), spares)):
+        issues.append('Craft active exact spare Plank conservation differs: ' + case)
+    if (not _same(row.get('toolIds'), prep['tools']) or not _ids(row.get('pickupIds'), 2)
+            or row.get('pickupIds') != sorted(prep['tools']) or not _ids(row.get('returnIds'))
+            or row['returnIds'] != sorted(row['returnIds']) or not set(row['returnIds']) <= set(prep['tools'])
+            or (enabled or row.get('returnsBeforeRead') is True) and row['returnIds'] != sorted(prep['tools'])):
+        issues.append('Craft active exact pickup/return IDs differ: ' + case)
+    if not _matches(row, dict(materialId=prep['material'], bookId=prep['book'], playerId=prep['playerId'],
+                             materialCondition=prep['materialCondition'], materialUses=prep['materialUses'])):
+        issues.append('Craft active material/reader/actor identity differs: ' + case)
+    if (not _ids(row.get('outputIds'), int(late)) or row['outputIds'] != sorted(row['outputIds'])
+            or not _ids(prep['outputBaseline'] + prep['tools'] + prep['bags'] + [prep['material'], prep['book']]
+                        + spare_ids + row.get('outputIds', []))):
+        issues.append('Craft active output IDs are not new unique native outputs: ' + case)
+    resources, returned = row.get('resources'), 0
+    if type(resources) is not list or len(resources) != 2:
+        issues.append('Craft active resource envelope differs: ' + case)
+    else:
+        for index, resource in enumerate(resources):
+            meta = prep['toolMeta'][index]
+            if (type(resource) is not dict or set(resource) != set(meta) | {'sourceCount', 'rootCount'}
+                    or not _matches(resource, meta)
+                    or any(type(resource.get(key)) is not int or resource[key] not in (0, 1)
+                           for key in ('sourceCount', 'rootCount'))
+                    or resource.get('sourceCount', 0) + resource.get('rootCount', 0) != 1
+                    or (enabled or row.get('returnsBeforeRead') is True) and resource.get('sourceCount') != 1):
+                issues.append('Craft active exact tool conservation/endpoint differs: ' + case)
+            else:
+                returned += resource['sourceCount']
+        if not _matches(row, {'toolsReturned': returned}):
+            issues.append('Craft active returned-tool count differs: ' + case)
+    if (set(receipt) != set(ACTIVE_RECEIPT_KEYS) | {'case'} or not _matches(receipt, {'case': case})
+            or not _matches(row, {key: receipt.get(key) for key in ACTIVE_RECEIPT_KEYS})):
+        issues.append('Craft active authority differs from client: ' + case)
+    if late and (set(removal) != {'case', 'materialId', 'removed', 'condition', 'uses'} or not _matches(removal,
+            dict(case=case, materialId=prep['material'], removed=1,
+                 condition=prep['materialCondition'], uses=prep['materialUses']))):
+        issues.append('Craft active exact removed input differs: ' + case)
+    trace = row.get('outcomeTrace')
+    if selection['kind'] == 'sp':
+        if not _same(trace, []):
+            issues.append('SP craft cannot claim a remote native State receipt: ' + case)
+    elif type(trace) is not list or len(trace) != 2:
+        issues.append('Craft active native State lifecycle missing/duplicated: ' + case)
+    else:
+        for entry, state in zip(trace, ('started', 'completed' if late else 'canceled')):
+            if (type(entry) is not dict or set(entry) != STATE_KEYS
+                    or not _matches(entry, dict(protocol=1, player=prep['playerId'], kind='ISHandcraftAction', state=state))
+                    or type(entry.get('transaction')) is not int or not -128 <= entry['transaction'] <= 127
+                    or entry['transaction'] == 0 or type(entry.get('token')) is not str
+                    or not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', entry['token'])):
+                issues.append('Craft active native State identity/order differs: ' + case)
+        if (all(type(entry) is dict for entry in trace)
+                and any(not _same(trace[0].get(key), trace[1].get(key)) for key in STATE_KEYS - {'state'})):
+            issues.append('Craft active terminal State does not match its started transaction/token: ' + case)
+    return issues, reason if not enabled else None
+
+
 def verify(root, selection, catalog):
     from ..report import events
     root = Path(root)
@@ -202,9 +325,10 @@ def verify(root, selection, catalog):
     for case in cases:
         if has_abort or any(kind == 'PREPARED' for kind, _ in raw):
             expected_raw.append(('PREPARED', case))
-        if case == 'missing-input':
+        if case in ('missing-input', 'late-input'):
             expected_raw.append(('REMOVED', case))
-        expected_raw.append(('AUTHORITY' if case == 'borrowed-tools' else 'ABORT_AUTHORITY', case))
+        marker = 'AUTHORITY' if case == 'borrowed-tools' else 'ACTIVE_AUTHORITY' if case in ACTIVE_CASES else 'ABORT_AUTHORITY'
+        expected_raw.append((marker, case))
     if [(kind, 'borrowed-tools' if kind == 'AUTHORITY' else row.get('case')) for kind, row in raw] != expected_raw:
         issues.append('Missing, duplicated or reordered authoritative craft receipt')
     prepared_ids = []
@@ -231,6 +355,15 @@ def verify(root, selection, catalog):
                 issues.append('Missing or duplicate authoritative craft receipt')
             outcome = {key: row.get(key) for key in ('consumed', 'outputs', 'toolsReturned', 'tailRead',
                        'returnsBeforeRead', 'localDeferrals', 'nativeDuration', 'authorityVerified')} if row else {}
+        elif case in ACTIVE_CASES:
+            receipt = next((row for kind, row in raw if kind == 'ACTIVE_AUTHORITY' and row.get('case') == case), {})
+            removal = next((row for kind, row in raw if kind == 'REMOVED' and row.get('case') == case), {})
+            case_issues, failure = _active(case, selection, row, prep, receipt, removal)
+            issues.extend(case_issues)
+            if failure:
+                failures[case] = failure
+            outcome = {key: row.get(key) for key in ACTIVE_RECEIPT_KEYS + ('pickupIds', 'returnIds', 'craftProgress',
+                       'tailProgress', 'returnsBeforeRead', 'tokenCancelled', 'interruptionProgress', 'outcomeTrace', 'playerId')}
         else:
             receipt = next((row for kind, row in raw if kind == 'ABORT_AUTHORITY' and row.get('case') == case), {})
             removal = next((row for kind, row in raw if kind == 'REMOVED' and row.get('case') == case), {})
@@ -241,6 +374,16 @@ def verify(root, selection, catalog):
             outcome = {key: row.get(key) for key in RECEIPT_KEYS + ('pickupIds', 'returnIds', 'craftProgress',
                        'tailProgress', 'returnsBeforeRead', 'tokenCancelled', 'authorityVerified')}
         outcomes.append(dict(actor='client1', case=case, outcome=outcome))
+    traces = [row.get('outcomeTrace') for row in results if row.get('id') in ACTIVE_CASES]
+    if any(type(trace) is not list for trace in traces):
+        issues.append('Craft active native State trace envelope differs')
+    else:
+        flattened = [entry for trace in traces for entry in trace]
+        if not _same(_outcome_records(text), flattened):
+            issues.append('Craft active raw State receipts differ from case trace')
+        starts = [entry.get('token') for entry in flattened if type(entry) is dict and entry.get('state') == 'started']
+        if any(type(token) is not str for token in starts) or len(set(starts)) != len(starts):
+            issues.append('Craft active started State token reused between cases')
     if '[QUEUE_TEST] FAIL ' in text or '[QUEUE_TEST] FAIL ' in authority:
         issues.append('Native craft fixture failed')
     for outcome in outcomes:
@@ -249,5 +392,6 @@ def verify(root, selection, catalog):
     issues.extend(failures.values())
     return {'issues': issues, 'outcomes': outcomes, 'evidence': {'limits': [
         'Borrowed-tools late returns are a synthetic base.perform stress case; abort cases use native manual craft/transfer/read methods.',
-        'Native abort controls retain observed failures; shared runtime error auditing is unchanged.',
+        'Native abort controls retain observed failures; active output accounting is not proof of physical detached-input consumption.',
+        'Active MP State traces must match real incoming started/terminal receipts; shared runtime error auditing is unchanged.',
         'No physical crafting UI, WAN or two-client contention coverage.']}}

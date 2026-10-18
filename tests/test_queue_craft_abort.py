@@ -16,7 +16,7 @@ class CraftAbortAdapterTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.selection = dict(suite='craft', cases=list(craft.CASES), kind='sp', mode='toolkit',
+        self.selection = dict(suite='craft', cases=list(craft.PRESTART_CASES), kind='sp', mode='toolkit',
                               languages=['EN'], mods=list(craft.MODS), clients=1, options={})
 
     def evidence(self):
@@ -85,7 +85,7 @@ class CraftAbortAdapterTests(unittest.TestCase):
 
     def test_registered_ordered_subsets_and_old_positive_are_supported(self):
         self.assertEqual([case['id'] for case in craft.definitions()['craft']['cases']], craft.CASES)
-        for cases in ([case] for case in craft.CASES):
+        for cases in ([case] for case in craft.PRESTART_CASES):
             self.selection['cases'] = cases
             craft.validate(self.selection)
             self.assertEqual(self.verify()['issues'], [])

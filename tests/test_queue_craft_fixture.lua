@@ -107,3 +107,25 @@ for _,book in ipairs({prepared.book,prepared.blocker})do
   'authority must seed both book and character pages before native Host duration/startPage reconstruction')
 end
 print('Craft preparation: authority seeds the independent reader and blocker at their final native page.')
+
+-- Native output accounting must stay distinct from the explicit authority input removal.
+state.case='cancel-craft';state.removed=nil;state.outputs=2;state.outputBaseline={[22]=true,[24]=true};state.sparePlanks={}
+item(root,20,'Base.Plank')
+local active=assert(Fixture.verify(state,true))
+assert(active.consumed==nil and active.outputs==0 and active.accountedPlanks==0 and #active.outputIds==0)
+state.case='late-input'
+Fixture.removeInput(state)
+active=assert(Fixture.verify(state,true))
+assert(active.removed==1 and active.outputs==0 and active.accountedPlanks==0,'no output must not invent native accounting')
+local created=item(root,25,'Base.WoodenStick2');created.getModData=function()return {['Base.Plank']=1}end
+active=assert(Fixture.verify(state,true))
+assert(active.removed==1 and active.consumed==nil and active.outputs==1 and active.accountedPlanks==1
+ and active.outputIds[1]==25 and active.outputPlankCounts[1]==1,'retain exact new output and native accounting separately')
+local spare=item(root,26,'Base.Plank');state.sparePlanks={{id=26,condition=10,uses=0}}
+assert(Fixture.verify(state,true))
+root:Remove(spare)
+assert(not Fixture.verify(state,true),'a recipe cannot silently consume a spare instead of the removed pinned item')
+state.sparePlanks={}
+root:Remove(output)
+assert(not Fixture.verify(state,true),'losing an older baseline output cannot be hidden by a new output')
+print('Craft active authority: exact new output IDs, native accounting and explicit removal stay distinct.')
