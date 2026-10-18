@@ -142,9 +142,15 @@ def batch(args, catalog):
         interrupted = False
         print('START ' + job['id'], flush=True)
         try:
+            if 'cases' in job:
+                raise ValueError("Batch jobs use 'case' with comma-separated IDs; 'cases' would be ignored")
             if not isinstance(plan.get('options', {}), dict) or not isinstance(job.get('options', {}), dict):
                 raise ValueError('Batch options must contain JSON objects')
             options = dict(plan.get('options', {}), **job.get('options', {}))
+            for key in ('control_job', 'seed_job'):
+                if job.get(key) and job[key] not in completed:
+                    raise ValueError('Dependency has no completed report: ' + job[key])
+            control = completed[job['control_job']] if job.get('control_job') else None
             if job.get('seed_job'):
                 options['seed_run'] = str(completed[job['seed_job']])
             mods = job.get('mods', plan.get('mods'))
@@ -160,15 +166,16 @@ def batch(args, catalog):
             native.prepare(ROOT, output, Path(plan['game']), Path(plan['jdk']), selected, [Path(p) for p in plan.get('workshop', [])])
             execution = runner.run(output, resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
             interrupted = execution.get('interrupted', False)
-            control = completed[job['control_job']] if job.get('control_job') else None
             value = save_report(output, catalog, control)
             reports.append(value)
             completed[job['id']] = output.resolve()
             item.update(status=value['status'], functional=value['functional']['status'], runtime=value['runtime']['status'])
             print(report.summary(value), flush=True)
-        except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
-            item.update(status='blocked' if not (output / 'execution.json').exists() else 'failed', error=str(error))
-            print(item['status'].upper() + ' ' + job['id'] + ': ' + str(error), flush=True)
+        except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+            interrupted = interrupted or isinstance(error, KeyboardInterrupt)
+            item.update(status='blocked' if not (output / 'execution.json').exists() else 'failed',
+                        error='Batch job interrupted' if isinstance(error, KeyboardInterrupt) else str(error))
+            print(item['status'].upper() + ' ' + job['id'] + ': ' + item['error'], flush=True)
         results.append(item)
         overall = 'failed' if any(row['status'] in ('failed', 'blocked') for row in results) else 'needs-review' if any(row['status'] == 'needs-review' for row in results) else 'passed'
         report.write_json(args.output / 'batch-report.json', {'status': overall, 'jobs': results, 'remaining': identifiers[len(results):]})
@@ -181,6 +188,8 @@ def batch(args, catalog):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    command = commands.add_parser('status', help='Show native stand owners, FIFO waiters and blocking reasons without launching the game')
+    command.add_argument('--json', action='store_true', help='Print the machine-readable admission snapshot')
     for name in ("prepare", "run"):
         command = commands.add_parser(name)
         command.add_argument("output", type=Path, help="Fresh isolated output directory")
@@ -233,6 +242,29 @@ def main(argv=None):
     command.add_argument('output', type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.command == 'status':
+            value = admission.status(legacy_lock=runner.LOCK)
+            if args.json:
+                print(json.dumps(value, indent=2))
+            else:
+                print('Running: ' + str(len(value['running'])))
+                for item in value['running']:
+                    print('  %s | PID %s%s | %s/%s/%s | %s | game PIDs %s' % (
+                        item['root'], item.get('pid', '?'), ' (owner exited)' if not item['owner_alive'] else '', item.get('suite') or '?',
+                        item.get('kind') or '?', item.get('mode') or '?',
+                        'exclusive' if item['budget']['exclusive'] else 'shared',
+                        ','.join(str(p['pid']) for p in item['processes']) or 'none'))
+                print('Waiting: ' + str(len(value['waiting'])))
+                for item in value['waiting']:
+                    print('  #%s %s | PID %s | %.0fs | %s | %s' % (
+                        item['position'], item['root'], item['pid'], item['wait_seconds'],
+                        'exclusive' if item['exclusive'] else 'shared', item['reason']))
+                print('Prepared port reservations: ' + str(len(value['prepared'])))
+                lock = value['legacy_lock']
+                print('Legacy lock: ' + ('exclusive' if lock['exclusive'] else 'shared/busy' if lock['busy'] else 'free'))
+                for limit in value['limits']:
+                    print('Note: ' + limit)
+            return 0
         catalog = report.read_json(CATALOG)
         catalog['suites'].update(adapters.definitions())
         if args.command == 'lock-pack':

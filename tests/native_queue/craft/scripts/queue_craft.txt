@@ -1,0 +1,20 @@
+module Base
+{
+    craftRecipe QueueBorrowedTools
+    {
+        time = 30,
+        timedAction = SawLogs,
+        Tags = InHandCraft,
+        category = Carpentry,
+        inputs
+        {
+            item 1 [Base.Plank],
+            item 1 [Base.Hammer] mode:keep,
+            item 1 [Base.Saw] mode:keep,
+        }
+        outputs
+        {
+            item 1 Base.WoodenStick2,
+        }
+    }
+}

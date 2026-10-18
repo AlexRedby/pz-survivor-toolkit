@@ -1,6 +1,7 @@
 """Batch sequencing and failure reporting without native processes."""
 import argparse
 import importlib.util
+import io
 import json
 from pathlib import Path
 import sys
@@ -60,6 +61,15 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(tags['languages'], ['RU'])
         self.assertEqual(tags['cases'], ['scenes'])
 
+    def test_misspelled_cases_never_silently_runs_only_the_default_case(self):
+        self.write_plan([{'id': 'typo', 'suite': 'engine', 'cases': ['repair', 'cancel']},
+                         {'id': 'selected', 'suite': 'engine', 'case': 'missing-target,late-continuation'}])
+        self.assertEqual(self.invoke(), 1)
+        self.assertEqual([name for name, _ in self.calls], ['selected'])
+        self.assertEqual(self.calls[0][1]['cases'], ['missing-target', 'late-continuation'])
+        result = json.loads((self.args.output / 'batch-report.json').read_text())
+        self.assertIn("use 'case'", result['jobs'][0]['error'])
+
     def test_blocked_job_does_not_hide_remaining_jobs(self):
         self.write_plan([{'id': name, 'suite': 'video-recording'} for name in ('blocked', 'next')])
         self.assertEqual(self.invoke(), 1)
@@ -73,12 +83,61 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(self.invoke(), 0)
         self.assertEqual(self.calls[1][1]['options']['seed_run'], str((self.args.output / 'seed').resolve()))
 
+    def test_missing_dependency_blocks_before_preparation_and_propagates_to_dependents(self):
+        self.write_plan([{'id': 'blocked', 'suite': 'startup'},
+                         {'id': 'candidate', 'suite': 'startup', 'control_job': 'blocked'},
+                         {'id': 'reload', 'suite': 'startup', 'seed_job': 'candidate'},
+                         {'id': 'independent', 'suite': 'startup'}])
+        self.assertEqual(1, self.invoke())
+        self.assertEqual(['blocked', 'independent'], [name for name, _ in self.calls])
+        result = json.loads((self.args.output / 'batch-report.json').read_text())
+        self.assertEqual(['blocked', 'blocked', 'blocked', 'passed'], [row['status'] for row in result['jobs']])
+        for row, dependency in zip(result['jobs'][1:3], ('blocked', 'candidate')):
+            self.assertIn('Dependency has no completed report: ' + dependency, row['error'])
+            self.assertFalse(Path(row['run']).exists())
+        self.assertEqual([], result['remaining'])
+
+    def test_existing_failed_or_review_control_remains_available_for_comparison(self):
+        self.write_plan([{'id': 'control', 'suite': 'startup'},
+                         {'id': 'candidate', 'suite': 'startup', 'control_job': 'control'}])
+        for status in ('failed', 'needs-review'):
+            with self.subTest(status=status):
+                self.args.output = self.root / status
+                controls = []
+                def save(output, catalog, control=None):
+                    controls.append(control)
+                    return {'status': status if output.name == 'control' else 'passed',
+                            'functional': {'status': 'passed'}, 'runtime': {'status': 'clean'}}
+                self.report = save
+                self.assertEqual(1 if status == 'failed' else 2, self.invoke())
+                self.assertEqual([None, (self.args.output / 'control').resolve()], controls)
+
     def test_interruption_preserves_unrun_jobs_and_stops_batch(self):
         self.write_plan([{'id': name, 'suite': 'video-recording'} for name in ('interrupt', 'not-run')])
         self.assertEqual(self.invoke(), 130)
         result = json.loads((self.args.output / 'batch-report.json').read_text())
         self.assertEqual(result['remaining'], ['not-run'])
         self.assertEqual(len(self.calls), 1)
+
+    def test_interrupt_during_prepare_admission_or_report_keeps_batch_state(self):
+        self.write_plan([{'id': 'current', 'suite': 'startup'}, {'id': 'not-run', 'suite': 'startup'}])
+        original_prepare, original_run, original_report = self.prepare, self.run_job, self.report
+        for stage in ('prepare', 'run_job', 'report'):
+            with self.subTest(stage=stage):
+                self.args.output = self.root / stage
+                self.calls = []
+                self.prepare, self.run_job, self.report = original_prepare, original_run, original_report
+                def interrupt(*args, **kwargs):
+                    raise KeyboardInterrupt()
+                setattr(self, stage, interrupt)
+                self.assertEqual(130, self.invoke())
+                result = json.loads((self.args.output / 'batch-report.json').read_text())
+                self.assertEqual('failed', result['status'])
+                self.assertEqual(['not-run'], result['remaining'])
+                self.assertEqual(1, len(result['jobs']))
+                self.assertEqual('failed' if stage == 'report' else 'blocked', result['jobs'][0]['status'])
+                self.assertEqual('Batch job interrupted', result['jobs'][0]['error'])
+                self.assertFalse((self.args.output / 'not-run').exists())
 
     def test_budget_and_wait_are_passed_per_job_and_ports_default_to_auto(self):
         self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk',
@@ -234,6 +293,53 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(['wishlist-control', 'wishlist'], [job['id'] for job in cli.selected_jobs(plan, sets=['wishlist'])])
         self.assertEqual(['tags-control', 'tags', 'video-control', 'video'],
                          [job['id'] for job in cli.selected_jobs(plan, sets=['tags', 'video'])])
+
+
+class StatusTests(unittest.TestCase):
+    def setUp(self):
+        self.value = {'schema_version': 1,
+            'running': [{'root': '/old/run', 'pid': 10, 'owner_alive': False, 'budget': {'exclusive': False},
+                         'processes': [{'pid': 11}]}],
+            'waiting': [{'root': '/new/run', 'pid': 12, 'position': 1, 'wait_seconds': 5,
+                         'exclusive': True, 'reason': 'Legacy or exclusive native run is using the desktop'}],
+            'prepared': [{'root': '/prepared', 'ports': [24000, 24001]}],
+            'legacy_lock': {'path': '/lock', 'busy': True, 'exclusive': False},
+            'limits': ['FIFO applies to updated runners only.']}
+
+    def invoke(self, arguments):
+        output = io.StringIO()
+        with patch.object(cli.admission, 'status', return_value=self.value) as status, \
+             patch.object(cli.report, 'read_json', side_effect=AssertionError('Status must not read catalog')), \
+             patch.object(cli.runner, 'run', side_effect=AssertionError('Status must not launch')), \
+             patch('sys.stdout', output):
+            result = cli.main(arguments)
+        status.assert_called_once_with(legacy_lock=cli.runner.LOCK)
+        self.assertEqual(result, 0)
+        return output.getvalue()
+
+    def test_json_status_preserves_machine_readable_snapshot_without_launching(self):
+        self.assertEqual(json.loads(self.invoke(['status', '--json'])), self.value)
+
+    def test_text_status_shows_owners_fifo_position_reason_and_legacy_limits(self):
+        value = self.invoke(['status'])
+        for expected in ('Running: 1', '/old/run | PID 10 (owner exited)', 'game PIDs 11', 'Waiting: 1',
+                         '#1 /new/run | PID 12', '5s | exclusive', self.value['waiting'][0]['reason'],
+                         'Prepared port reservations: 1', 'Legacy lock: shared/busy', self.value['limits'][0]):
+            self.assertIn(expected, value)
+
+    def test_empty_status_and_legacy_exclusive_status(self):
+        self.value.update(running=[], waiting=[], prepared=[])
+        self.value['legacy_lock'].update(busy=False, exclusive=False)
+        self.assertIn('Legacy lock: free', self.invoke(['status']))
+        self.value['legacy_lock'].update(busy=True, exclusive=True)
+        self.assertIn('Legacy lock: exclusive', self.invoke(['status']))
+
+    def test_status_error_is_clear_and_does_not_claim_free_stand(self):
+        error = io.StringIO()
+        with patch.object(cli.admission, 'status', side_effect=RuntimeError('Cannot sample host resources')), \
+             patch('sys.stderr', error):
+            self.assertEqual(cli.main(['status', '--json']), 1)
+        self.assertIn('ERROR: Cannot sample host resources', error.getvalue())
 
 
 if __name__ == '__main__':

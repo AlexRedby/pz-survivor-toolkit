@@ -391,7 +391,7 @@ getPlayerInventory=function()return page end;getPlayerLoot=function()return page
 getActivatedMods=function()return{contains=function()return false end}end
 PZSurvivorWishlist={Client={state=function()return state end},UI={windows={}}}
 PZAPI={ModOptions={getOptions=function()return{getOption=function()return option end}end}}
-local lines={'client1','visual,standalone','host','12345','password','PZSurvivorWishlist'}
+local lines={'client1','visual,standalone','host','12345','password','PZSurvivorToolkit'}
 getFileReader=function()local i=0;return{readLine=function()i=i+1;return lines[i]end,close=function()end}end
 local events=setmetatable({},{__index=function(t,k)local e={Add=function()end};t[k]=e;return e end})
 QueueWishlistSession={case='visual',events=events};dofile(arg[3]);local ctx=QueueWishlistSession
@@ -489,7 +489,7 @@ print('PASS real server visual empty-list/owner/storage/faction reset guards wit
             lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
             code = r'''local hooks={};Events=setmetatable({},{__index=function(t,k)
  local e={Add=function(fn)hooks[k]=hooks[k]or{};table.insert(hooks[k],fn)end};t[k]=e;return e end})
-local lines={'client1','visual,standalone','host','12345','password','PZSurvivorWishlist'}
+local lines={'client1','visual,standalone','host','12345','password','PZSurvivorToolkit'}
 getFileReader=function()local i=0;return{readLine=function()i=i+1;return lines[i]end,close=function()end}end
 assert(loadfile(arg[1]))();assert(#hooks.OnGameStart==1 and #hooks.OnTick==1 and #hooks.OnServerCommand==1)
 assert(loadfile(arg[2]))
@@ -587,12 +587,11 @@ print('PASS grouped Wishlist generated Lua and single bootstrap')
         with self.assertRaisesRegex(ValueError, "seed_run"):
             adapter.validate(selection("shared-wishlist", "reload"))
         with self.assertRaisesRegex(ValueError, "integration missing"):
-            adapter.validate(dict(selection("shared-wishlist", "full"), mods=["PZSurvivorToolkit", "PZSurvivorWishlist"]))
+            adapter.validate(dict(selection("shared-wishlist", "full"), mods=["PZSurvivorToolkit"]))
         for case in ("standalone", "visual", "reload"):
             spec = next(row for row in adapter.definitions()["shared-wishlist"]["cases"] if row["id"] == case)
-            self.assertEqual(["toolkit"], spec["modes"])
-            self.assertIn("no Toolkit queue", spec["control_reason"])
-            with self.assertRaisesRegex(ValueError, "no Toolkit queue"):
+            self.assertEqual(["toolkit", "native"], spec["modes"])
+            if case != "reload":
                 adapter.validate(dict(selection("shared-wishlist", case), mode="native"))
 
     def test_staging_does_not_write_bytecode_into_preserved_sources(self):

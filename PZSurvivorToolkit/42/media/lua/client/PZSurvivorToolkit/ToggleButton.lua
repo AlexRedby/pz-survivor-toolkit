@@ -51,7 +51,7 @@ local function tools(_, button)
     local num = player:getPlayerNum()
     local menu = ISContextMenu.get(num, button:getAbsoluteX()+button:getWidth(), button:getAbsoluteY())
     local wishlist = PZSurvivorWishlist
-    if getActivatedMods():contains("PZSurvivorWishlist") and wishlist and wishlist.UI then
+    if wishlist and wishlist.UI then
         menu:addOption(getText("UI_PZSW_Open"), num, wishlist.UI.toggle)
     end
     if Toolkit.ContextMenus and Toolkit.Settings.contextMenus() then

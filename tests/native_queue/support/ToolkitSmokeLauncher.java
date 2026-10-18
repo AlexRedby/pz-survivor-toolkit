@@ -22,11 +22,40 @@ public class ToolkitSmokeLauncher {
         var mode = GLFW.glfwGetVideoMode(monitor);
         if (mode == null) throw new IllegalStateException("The primary display has no video mode; native fixture cannot start.");
         System.out.println("[QUEUE_TEST] DISPLAY_READY " + mode.width() + "x" + mode.height());
+        var hostChild = new java.util.concurrent.atomic.AtomicReference<ProcessHandle>();
+        var shuttingDown = new java.util.concurrent.atomic.AtomicBoolean();
+        if (System.getProperty("toolkit.test.hostCache") != null) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                shuttingDown.set(true);
+                var child = hostChild.get();
+                if (child == null || !child.isAlive()) return;
+                child.destroy();
+                try { child.onExit().get(5, java.util.concurrent.TimeUnit.SECONDS); }
+                catch (Exception error) { child.destroyForcibly(); }
+            }, "toolkit-owned-host-shutdown"));
+        }
         Thread helper = new Thread(() -> {
             try {
                 boolean checkedVoice = false;
                 while (true) {
                     Thread.sleep(1000);
+                    String hostCache = System.getProperty("toolkit.test.hostCache");
+                    if (hostCache != null) {
+                        if (hostChild.get() == null) {
+                            try (var children = ProcessHandle.current().children()) {
+                                children.filter(child -> {
+                                    var arguments = java.util.Arrays.asList(child.info().arguments().orElse(new String[0]));
+                                    return arguments.contains("zombie.network.GameServer") && arguments.contains("-coop")
+                                        && arguments.contains("-cachedir=" + hostCache);
+                                }).forEach(child -> {
+                                    if (!hostChild.compareAndSet(null, child)) throw new IllegalStateException("Multiple Host children");
+                                    System.out.println("[QUEUE_TEST] HOST_CHILD pid=" + child.pid() + " parent=" + ProcessHandle.current().pid());
+                                });
+                            }
+                        } else if (!shuttingDown.get() && !hostChild.get().isAlive()) {
+                            throw new IllegalStateException("Host child exited before its owner");
+                        }
+                    }
                     var state = GameWindow.states == null ? null : GameWindow.states.current;
                     if (state instanceof TermsOfServiceState terms) {
                         terms.fromLua0("exit");

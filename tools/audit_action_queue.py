@@ -38,7 +38,7 @@ def source_roots(project, native, workshop, ini, version):
     if native and native.is_dir():
         roots.append(("native", native))
     settings = metadata(ini) if ini else {}
-    selected = [x for x in settings.get("Mods", "PZSurvivorToolkit;PZSurvivorWishlist").split(";") if x]
+    selected = [x for x in settings.get("Mods", "PZSurvivorToolkit").split(";") if x]
     ids = [x for x in settings.get("WorkshopItems", "").split(";") if x]
     for mod in selected:
         local = project / ("JavaPatches/build/PZToolkitJavaPatches" if mod == "PZToolkitJavaPatches" else mod)

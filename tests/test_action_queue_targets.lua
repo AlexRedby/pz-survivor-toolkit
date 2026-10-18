@@ -13,6 +13,7 @@ local function derive(self, name)
 end
 ISBaseObject = {derive = derive}
 Events = {OnTick = {Add = function() end}}
+Events.OnServerCommand = {Add = function() end}
 for _, name in ipairs({'ClimbThroughWindowState', 'ClimbOverFenceState', 'ClimbOverWallState',
     'ClimbSheetRopeState', 'ClimbDownSheetRopeState', 'CloseWindowState', 'OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
@@ -21,6 +22,7 @@ instanceof = function(value, name) return type(value) == 'table' and value.class
 local function load(path) assert(loadfile(NativeActionRoot .. '/' .. path))() end
 load('shared/TimedActions/ISBaseTimedAction.lua')
 load('client/TimedActions/ISTimedActionQueue.lua')
+load('client/TimedActions/ISQueueActionsAction.lua')
 ISInventoryPage = {}
 load('client/TimedActions/ISInventoryTransferAction.lua')
 load('shared/TimedActions/ISActivateGenerator.lua')
@@ -43,6 +45,8 @@ assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivo
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLabels.lua'))()
 if not PZSurvivorToolkit.ActionQueueDefinitions then assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))() end
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePolicy.lua'))()
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local api, operations = PZSurvivorToolkit.ActionQueue, PZSurvivorToolkit.ActionQueueOperations
 local function target()

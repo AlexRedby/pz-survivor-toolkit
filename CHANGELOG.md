@@ -10,12 +10,44 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.72
+
+- **Fixed:** Automatic batch crafting keeps automatic material selection without the B42.21 Java queued-item accounting exceptions. Manual selection and native multiplayer constructor fields are preserved.
+
+### 0.1.71
+
+- **Fixed:** Native crafting UI actions remain supported when Quartermaster or P4 wraps layout and craft-button entry points. Neat accepts only the two source-verified Quartermaster UI wrappers; completion, cancellation and their helpers retain identity guards.
+- **Fixed:** Project Cook batch crafting releases its per-action busy counter after every completed craft, so its window becomes available again when the batch ends.
+
+### 0.1.70
+
+- **Fixed:** Before a queued manual craft starts, a missing selected input cancels only its operation and preserves safe tool returns and independent follow-up work. Started crafts and unknown callbacks keep their existing safeguards.
+
+### 0.1.69
+
+- **Fixed:** Queue reset and clear revoke pending callbacks through the shared native cancellation boundary, including after Quartermaster reloads its saved reset wrapper. Clearing only a command's generated actions preserves its parent and valid continuations.
+
+### 0.1.68
+
+- **Fixed:** A completed multiplayer fire ignition waits for its correlated server outcome before cancellation cleanup, preserving the original fuel container and queued follow-up actions.
+
+### 0.1.67
+
+- **Fixed:** Queue behavior lookup evaluates only handlers registered for an action's type; an unrelated handler failure no longer disables other families. Matching errors and ambiguous contracts still deny control.
+- **Changed:** Move, cancellation and priority checks share lazy analysis within one decision and refresh resources and helper validation on the next decision.
+
+### 0.1.65
+
+- **Changed:** Wishlist is included in Toolkit, with one ground-item scanner and sidebar entry. Existing lists and settings retain their identifiers and format. Remove the old Wishlist mod folder and Mod ID when updating; keep its saved data.
+
+
 ### 0.1.61
 
 - **Changed:** Added cargo-dependent cart acceleration/steering, distinct shopping-cart and wheelbarrow turns, and rolling wheel contact.
 - **Changed:** Refined the wooden wheelbarrow's anchored grip, natural Walk/Run/Sprint legs, 7-degree turn lean, backward steps and forward/reverse transitions.
 - **Fixed:** Smoothed heavy-item braking and the final return to the standing grip, preserving immediate input interruption and hand contact.
 - **Note:** Remote cart-pose reconstruction, stationary turns and natural pickup/put-down remain unfinished; these local animation changes do not establish multiplayer equivalence.
+
 ### 0.1.58
 
 - **Fixed:** Preserve the verified SP transfer chain when Quartermaster Manifest and SaucedCarts are both enabled.

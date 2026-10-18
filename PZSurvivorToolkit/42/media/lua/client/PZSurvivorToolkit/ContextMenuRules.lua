@@ -37,16 +37,16 @@ register("electronics", "ISInventoryPaneContextMenu", [[
 register("electronics", "ISRadioAndTvMenu", "openRadioPanel openTvPanel")
 register("transfer", "ISInventoryPaneContextMenu", [[
     onDropItems onGrabItems onGrabOneItems onGrabHalfItems onMoveItemsTo onPutItems
-    equipHeavyItem grabCorpseItem onDumpContents
+    equipHeavyItem grabCorpseItem onDumpContents onConsolidate onConsolidateAll
 ]])
 register("transfer", "ISInventoryPage", "transferAll lootAll removeAll")
 register("transfer", "ISFluidContainerMenu", "showInfo transferFluids emptyFluidContainer")
 register("world", "ISInventoryPaneContextMenu", [[
-    onPlaceItemOnGround onPlaceTrap onFavorite onWanted onUnwanted onNoRecipes onRenameBag onRenameFood
+    onPlaceItemOnGround onPlaceTrap onFavorite onWanted onUnwanted onNoRecipes onRenameBag onRenameFood onRenameMap
 ]])
 register("world", "ISMoveableContextMenu", "openMovableCursor")
 register("research", "ISInventoryPaneContextMenu", [[
-    onResearchRecipe onLiteratureItems onMediaText onWriteSomething onCheckMap onRenameMap onInspectTrack
+    onResearchRecipe onLiteratureItems onMediaText onWriteSomething onCheckMap onInspectTrack
 ]])
 register("farming", "ISInventoryPaneContextMenu", "showGrowingSeasons")
 
@@ -140,6 +140,34 @@ local electronicRecipes = {
     DismantleElectronics = true, DismantleMiscElectronics = true, DismantleElectronicsDevice = true,
     DismantlePowerBar = true, DismantleImprovisedLighter = true, RemoveBattery = true,
 }
+local function sourceEndsWith(option, suffix)
+    if not getFilenameOfClosure or type(option.onSelect) ~= "function" then return false end
+    local ok, source = pcall(getFilenameOfClosure, option.onSelect)
+    return ok and type(source) == "string" and source:gsub("\\", "/"):sub(-#suffix) == suffix
+end
+function Rules.cartCorpseRole(option)
+    if type(option) ~= "table" or not SaucedCarts or not getText then return nil end
+    local role
+    if sourceEndsWith(option, "/SaucedCarts/ContextMenu.lua") then role = "root"
+    elseif sourceEndsWith(option, "/SaucedCarts/ContextMenu/CartSubmenu.lua") then role = "nested"
+    else return nil end
+    local player, cart = option.target, option.param1
+    if (type(player) ~= "table" and type(player) ~= "userdata") or not player.getPlayerNum or not player.getInventory
+        or type(SaucedCarts.isCart) ~= "function" then return nil end
+    local playerOK, playerNum = pcall(function() return player:getPlayerNum() end)
+    if not playerOK or type(playerNum) ~= "number" then return nil end
+    local ok, isCart = pcall(SaucedCarts.isCart, cart)
+    if not ok or isCart ~= true then return nil end
+    local label = getText("UI_SaucedCarts_LoadCorpse")
+    if role == "root" then
+        if type(SaucedCarts.getCartDisplayName) ~= "function" then return nil end
+        local named, name = pcall(SaucedCarts.getCartDisplayName, cart)
+        if not named or type(name) ~= "string" or name == "" then return nil end
+        label = getText("UI_SaucedCarts_LoadCorpseInto", name)
+    end
+    if option.name == label then return role end
+end
+
 local healthHandlers = {}
 for name in ([[HApplyBandage HRemoveBandage HApplyComfrey HApplyGarlic HApplyPlantain HDisinfect
     HStitch HRemoveStitch HRemoveGlass HSplint HRemoveSplint HRemoveBullet HCleanBurn]]):gmatch("%S+") do
@@ -160,11 +188,16 @@ function Rules.classify(option)
     end
 
     local callback = option.onSelect or option.toolkitOriginalOnSelect
-    local target, recipe, fourth = option.target, option.param1, option.param4
-    -- addGetUpOption stores the real callback/target/first argument in param1/2/3.
+    local target, offset = option.target, 0
+    -- Native wrappers preserve the action arguments after their callback/target slots.
     if callback and ISContextMenu and callback == ISContextMenu.onGetUpAndThen then
-        callback, target, recipe, fourth = option.param1, option.param2, option.param3, option.param6
+        callback, target, offset = option.param1, option.param2, 2
     end
+    if callback and ISTimedActionQueue and callback == ISTimedActionQueue.queueActions then
+        callback, offset = option["param" .. (offset + 1)], offset + 1
+    end
+    if (option.onSelect or option.toolkitOriginalOnSelect) and not callback then return nil end
+    local recipe, fourth = option["param" .. (offset + 1)], option["param" .. (offset + 4)]
     if callback then
         for _, rule in ipairs(callbacks) do
             local owner = _G
@@ -173,6 +206,11 @@ function Rules.classify(option)
                 for _, method in ipairs(rule.methods) do
                     if callback == owner[method] then
                         local key, category = "callback:" .. rule.owner .. "." .. method, rule.category
+                        if rule.owner == "ISEntityUI" and recipe == nil and option["param" .. (offset + 2)] == "*"
+                            and option["param" .. (offset + 3)] == false and fourth == nil then
+                            local filter = option["param" .. (offset + 5)]
+                            if type(filter) == "string" and filter:match("^![^%.%s!]+%.[^%.%s!]+$") then category = "world" end
+                        end
                         if rule.owner == "ISInventoryPaneContextMenu" and method == "onFix" and fourth then
                             category, key = "vehicle", key .. ":vehiclePart"
                         end
@@ -196,6 +234,19 @@ function Rules.classify(option)
             and callback == target.onMenuOptionSelected then
             return "medical", "medical:" .. target.Type
         end
+        local corpseRole = Rules.cartCorpseRole(option)
+        if corpseRole then
+            return "world", corpseRole == "root" and "mod:SaucedCarts.loadCorpseRoot" or "mod:SaucedCarts.loadCorpseNested"
+        end
+        if sourceEndsWith(option, "/BetterContainers/Categorize.lua") then
+            return "world", "mod:BetterContainers.category"
+        end
+        if sourceEndsWith(option, "/BetterContainers/Upgrades/PinnedItems.lua") then
+            return "world", "mod:BetterContainers.pin"
+        end
+        if sourceEndsWith(option, "/PZSurvivorWishlist/Inventory.lua") then
+            return "world", "mod:PZSurvivorWishlist.addWanted"
+        end
         return nil
     end
     local name = option.name or option.text
@@ -205,6 +256,119 @@ function Rules.classify(option)
         if translated ~= rule.key and name == translated then return rule.category, "text:" .. rule.key end
     end
     return nil
+end
+
+function Rules.isRecipeSearch(menu, option)
+    if option.onSelect or not option.subOption or not NC_InventorySearch then return false end
+    local child = menu:getSubMenu(option.subOption)
+    if not child or #child.options == 0 then return false end
+    for _, row in ipairs(child.options) do
+        if row.isDefaultOption or not row.onSelect or (row.onSelect ~= NC_InventorySearch.searchAsInput
+            and row.onSelect ~= NC_InventorySearch.searchAsOutput) then return false end
+    end
+    return true
+end
+
+function Rules.isBuildingSearch(menu, option)
+    if option.onSelect or not option.subOption or not NB_InventoryBuildSearch then return false end
+    local child = menu:getSubMenu(option.subOption)
+    if not child or #child.options == 0 then return false end
+    for _, row in ipairs(child.options) do
+        if row.isDefaultOption or not row.onSelect or (row.onSelect ~= NB_InventoryBuildSearch.openExact
+            and row.onSelect ~= NB_InventoryBuildSearch.openByDisplayName) then return false end
+    end
+    return true
+end
+
+function Rules.isMore(menu, option)
+    if option.onSelect or option.name ~= getText("ContextMenu_More") or not option.subOption then return false end
+    local child = menu:getSubMenu(option.subOption)
+    if not child or #child.options == 0 then return false end
+    for _, row in ipairs(child.options) do
+        if not row.isDefaultOption and Rules.classify(row) ~= "world"
+            and not Rules.isRecipeSearch(child, row) and not Rules.isBuildingSearch(child, row) then return false end
+    end
+    return true
+end
+
+function Rules.isRecipeSelector(menu, option)
+    local child = option.subOption and menu:getSubMenu(option.subOption)
+    if not child or #child.options == 0 or not ISInventoryPaneContextMenu then return false end
+    for _, row in ipairs(child.options) do
+        if row.isDefaultOption or not row.onSelect or (row.onSelect ~= ISInventoryPaneContextMenu.onAddItemInEvoRecipe
+            and row.onSelect ~= ISInventoryPaneContextMenu.OnCraft and row.onSelect ~= ISInventoryPaneContextMenu.OnNewCraft) then return false end
+    end
+    return true
+end
+
+function Rules.defaults(menu, options, context, visible)
+    local defaults = {}
+    if menu.parent or (context and context ~= "inventory" and context ~= "loot") then return defaults end
+    local cook, input, fluid
+    local buildingExact = {}
+    for _, option in ipairs(options) do
+        local _, key = Rules.classify(option)
+        if key == "mod:BetterContainers.category" and PZSurvivorToolkit.Settings.itemTags
+            and PZSurvivorToolkit.Settings.itemTags() then defaults[option] = "hidden" end
+        if Rules.isRecipeSearch(menu, option) then defaults[option] = "world" end
+        if Rules.isBuildingSearch(menu, option) then
+            defaults[option] = "world"
+            if visible(option) then
+                for _, row in ipairs(menu:getSubMenu(option.subOption).options) do
+                    if row.onSelect == NB_InventoryBuildSearch.openExact and visible(row) then
+                        buildingExact[#buildingExact + 1] = row
+                    end
+                end
+            end
+        end
+        if PJCK_CookingUI and option.onSelect and option.onSelect == PJCK_CookingUI.OnOpenPanel and visible(option) then cook = option end
+        if Rules.classify(option) == "transfer" and not option.onSelect and option.name == getText("ContextMenu_Fluid") then
+            defaults[option], fluid = "root", true
+        end
+        local child = option.subOption and menu:getSubMenu(option.subOption)
+        if child and NC_InventorySearch and visible(option) then
+            for _, row in ipairs(child.options) do
+                if row.onSelect and row.onSelect == NC_InventorySearch.searchAsInput and visible(row) then input = row end
+            end
+        end
+    end
+    for _, option in ipairs(options) do
+        if ISEntityUI and option.onSelect and option.onSelect == ISEntityUI.OpenBuildWindow
+            and option.param1 == nil and option.param2 == "*" and option.param3 == false and option.param4 == nil then
+            for _, row in ipairs(buildingExact) do
+                local fullType = row.target and row.target.getFullType and row.target:getFullType()
+                if row.param1 == menu.player and type(row.param1) == "number" and type(fullType) == "string"
+                    and option.target == getSpecificPlayer(row.param1)
+                    and option.param5 == "!" .. fullType then defaults[option] = "hidden"; break end
+            end
+        end
+        if input and ISEntityUI and option.onSelect == ISEntityUI.OpenHandcraftWindow and input.target
+            and input.target.getFullType and option.param5 == "!" .. input.target:getFullType() then defaults[option] = "hidden" end
+        if cook or fluid then
+            if option.onSelect and (option.onSelect == ISInventoryPaneContextMenu.onDropItems or option.onSelect == ISInventoryPaneContextMenu.onPlaceItemOnGround) then
+                defaults[option] = "root"
+            end
+        end
+        if cook and Rules.isRecipeSelector(menu, option) then
+            local covered = true
+            for _, row in ipairs(menu:getSubMenu(option.subOption).options) do
+                -- Project Cook's ingredient and seasoning lists accept Food only.
+                if row.onSelect ~= ISInventoryPaneContextMenu.onAddItemInEvoRecipe or row.param1 ~= cook.param1
+                    or not instanceof(row.param2, "Food") then covered = false; break end
+            end
+            if covered then defaults[option] = "hidden" end
+        end
+        if context == "inventory" and option.name == "Distribute Loot" and sourceEndsWith(option, "/LootSorter_ContextMenu.lua") then
+            local player = getSpecificPlayer(menu.player)
+            local page = getPlayerInventory(menu.player)
+            local controls = page and page.controlsUI
+            local handler = controls and controls.handlers and controls.handlers[ISInventoryWindowControlHandler_LootSorterDistribute]
+            if handler and handler.control and player and player:getJoypadBind() == -1 and page:getIsVisible() and controls:getIsVisible()
+                and handler.control:getIsVisible()
+                and handler.container == page.inventoryPane.inventory then defaults[option] = "hidden" end
+        end
+    end
+    return defaults
 end
 
 -- Curated defaults by purpose, not measured player click frequency.
@@ -264,6 +428,22 @@ function Rules.priority(category, key, context)
         or key == "callback:ISInventoryPaneContextMenu.OnNewCraft:RipDenimClothing"
         or key == "callback:PZSurvivorToolkit.BulkClothing.queue" then weight = 25 end
     return weight * 100 + ranks[category]
+end
+
+function Rules.canGroupAutomatically(menu, option, category, key, context)
+    if option.subOption then
+        return category == "world" and (Rules.isRecipeSearch(menu, option) or Rules.isBuildingSearch(menu, option))
+    end
+    local hand = key == "callback:ISInventoryPaneContextMenu.OnPrimaryWeapon"
+        or key == "callback:ISInventoryPaneContextMenu.OnSecondWeapon"
+        or key == "callback:ISInventoryPaneContextMenu.OnTwoHandsEquip"
+    if category == "equipment" then return hand end
+    local method = key and key:match("^callback:[^:]+%.([^%.:]+)")
+    if methodRanks[method] == 10 or method == "onDropItems" or method == "onPlaceItemOnGround"
+        or key == "callback:PZSurvivorToolkit.BulkFood.queue" or key == "callback:PZSurvivorToolkit.BulkFood.queueOne" then return false end
+    if context == "world" and (method == "onWalkTo" or method == "onSitOnGround" or method == "onRest"
+        or method == "onSleep" or method == "onOpenCloseCurtain") then return false end
+    return true
 end
 
 return Rules

@@ -640,7 +640,9 @@ Definitions.registerBehavior("toolkit.fire-unequip", {
             hands = action.character, preparation = true, preparationFinish = true, cancelWaiting = false, interrupt = "finish-step"}
     end,
 })
-Definitions.registerBehavior("toolkit.fire", {types = names, matches = function(action) return Fire.isDeferredAction(action) or Fire.supports(action) end,
+local behaviorTypes = {"ISQueueActionsAction"}
+for _, name in ipairs(names) do behaviorTypes[#behaviorTypes + 1] = name end
+Definitions.registerBehavior("toolkit.fire", {types = behaviorTypes, matches = function(action) return Fire.isDeferredAction(action) or Fire.supports(action) end,
     inspect = Fire.inspect})
 
 -- The native campfire retry belongs before this operation's returns and later user requests.

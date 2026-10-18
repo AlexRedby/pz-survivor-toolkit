@@ -1,14 +1,21 @@
 require "PZSurvivorToolkit/ActionQueueOperations"
+require "PZSurvivorToolkit/ActionQueueLifecycle"
 require "PZSurvivorToolkit/ActionQueueDefinitions"
+require "ISUI/ISXuiSkin"
 
 local Toolkit = PZSurvivorToolkit
 local Operations = Toolkit.ActionQueueOperations
+local TidyIntent = require "PZSurvivorToolkit/ActionQueueTidyIntent"
 local Compat = {}
 Toolkit.ActionQueueCompat = Compat
 local records = {}
 local classes, installed, sessions = {}, {}, {}
 local owners = {}
 local craftOwners = {}
+local nativeXuiMethods = ISXuiSkinFunctions and {
+    xuiRecalculateLayout = ISXuiSkinFunctions.xuiRecalculateLayout,
+    xuiRootElement = ISXuiSkinFunctions.xuiRootElement,
+} or {}
 local ready = {}
 local sourceScope
 local worldGeneration = 0
@@ -177,12 +184,34 @@ local function prepareQuartermasterContainers()
             local previous = ISInventoryPaneContextMenu.getContainers
             local valid = LootSorter == owner and owner.DBG == debug and not owner._craftHooksAdded and not owner._getContainersWrapped
             local queue, busy, clock = ISTimedActionQueue, ISTimedActionQueue.isPlayerDoingAction, getTimestampMs
+            local neat = craftOwners.NC_CraftActionPanel
+            local neatUnchanged = neat and NC_CraftActionPanel == neat.class
+            if neatUnchanged then
+                for method, expected in pairs(neat.methods) do
+                    if neat.class[method] ~= expected then neatUnchanged = false; break end
+                end
+            end
             local results = pack(pcall(callback, ...))
             local replacement = ISInventoryPaneContextMenu.getContainers
             if results[1] and valid and owner._craftHooksAdded and owner._getContainersWrapped and replacement ~= previous
                 and quartermasterClosure(replacement, "LootSorter_CraftMenu.lua") then
                 quartermasterContainers = {previous = previous, replacement = replacement, owner = owner, debug = debug,
                     queue = queue, busy = busy, clock = clock}
+                if neatUnchanged and NC_CraftActionPanel == neat.class then
+                    for method, expected in pairs(neat.methods) do
+                        local current = neat.class[method]
+                        if method == "prerender" or method == "onCraftButtonClick" then
+                            if current == expected or not quartermasterClosure(current, "LootSorter_CraftMenu.lua") then
+                                neatUnchanged = false; break
+                            end
+                        elseif current ~= expected then neatUnchanged = false; break end
+                    end
+                    if neatUnchanged then
+                        -- This pinned installer only wraps Neat's UI entry/render methods; keep every callback/helper baseline.
+                        neat.methods.prerender = neat.class.prerender
+                        neat.methods.onCraftButtonClick = neat.class.onCraftButtonClick
+                    end
+                end
             end
             if not results[1] then error(results[2], 0) end
             return unpack(results, 2, results.n)
@@ -522,20 +551,20 @@ local function loadSource(id, module, eventName)
                     if record then
                         if not Toolkit.Settings.actionQueue() then
                             sessions[character] = nil
-                            return callback(...)
+                            return TidyIntent.update(character, callback, ...)
                         end
                         -- Shared native equipment and ambiguous returns outlive cancellation of any one task.
                         if record.mixed and not record.restoreToken then record.restoreToken = {} end
                         local context = {id = id, token = record.restoreToken or record.token, character = character, queue = record.queue,
                             generation = record.generation, tidySession = record, sharedCleanup = record.mixed}
-                        local results = pack(scoped(context, callback, ...))
+                        local results = pack(scoped(context, function(...) return TidyIntent.update(character, callback, ...) end, ...))
                         if #record.queue.queue == 0 and not character:hasTimedActions() then
                             record.idleTicks = (record.idleTicks or 0) + 1
                         else record.idleTicks = 0 end
                         if record.restored or record.idleTicks >= 2 then sessions[character] = nil end
                         return unpack(results, 1, results.n)
                     end
-                    return callback(...)
+                    return TidyIntent.update(character, callback, ...)
                 end
                 return scoped({id = id}, callback, ...)
             end)
@@ -670,6 +699,19 @@ function Compat.install()
             installed[owner[1]] = true
             if not _G[owner[2]] and verified(owner[1]) and pcall(require, owner[3]) then
                 local class = _G[owner[2]]
+                if class and owner[1] == "Project_Cook" then
+                    local complete, methods = class.onHandcraftActionComplete
+                    class.onHandcraftActionComplete = function(self, ...)
+                        local quantity = self.craftTimes
+                        local balance = Toolkit.Settings.actionQueue() and type(quantity) == "number" and quantity > 1
+                            and classUnchanged(class, methods) and instanceUnchanged(self, class)
+                        local result = complete(self, ...)
+                        -- Project Cook starts every craft but only stops the last one in a batch.
+                        if balance then self.logic:stopCraftAction() end
+                        return result
+                    end
+                    methods = snapshot(class)
+                end
                 if class then craftOwners[owner[2]] = {class = class, methods = snapshot(class)}; ready[owner[1]] = true end
                 if owner[1] == "Project_Cook" and not PJCK_EvoPanel then
                     ready.Project_Cook = false
@@ -751,6 +793,12 @@ function Compat.install()
             if not ok then classes[id] = {} end
         end
     end
+    if ready.P4TidyUpMeister and transferSourceSafe then
+        local previous=ISInventoryTransferAction.checkQueueList
+        TidyIntent.observeTransfers()
+        local policy=Toolkit.ActionQueuePolicy
+        if policy and policy.adoptTransferQueueObserver then policy.adoptTransferQueueObserver(previous,ISInventoryTransferAction.checkQueueList) end
+    end
     for id, sourceClasses in pairs(classes) do
         if ready[id] then
             for _, name in ipairs(names) do
@@ -764,6 +812,56 @@ function Compat.install()
             if target then owners[id][#owners[id] + 1] = {target = target, methods = snapshot(target)} end
         end
     end
+    if ready.P4TidyUpMeister then
+        local owner=P4TidyUpMeister
+        local actionPolicy,wornPolicy=owner.registerActionPolicy,owner.registerWornItemReplacement
+        local carts=ready.SaucedCartsTransfers and Toolkit.ActionQueueCarts
+        local transfer=carts and carts.isTransferConstructor
+        local unequip=carts and carts.isUnequipConstructor
+        local nonCart=carts and carts.isNonCartUnequip
+        local function intentUnchanged(target,class,methods)
+            if classUnchanged(target,methods) then return true end
+            if not carts or Toolkit.ActionQueueCarts~=carts or carts.isTransferConstructor~=transfer
+                or carts.isUnequipConstructor~=unequip or carts.isNonCartUnequip~=nonCart then return false end
+            local allowed
+            if class==ISInventoryTransferAction and transfer(methods.new) and transfer(class.new) then
+                allowed={new=true,perform=true,transferItem=true}
+            elseif class==ISUnequipAction and unequip(methods.new) and unequip(class.new) then
+                if target~=class and not nonCart(target) then return false end
+                allowed={new=true,complete=true}
+            else return false end
+            for name in pairs(allowed) do if target[name]~=class[name] then return false end end
+            -- Reuse the existing source-pinned late Cart hooks without accepting other method changes.
+            for name,method in pairs(methods) do if not allowed[name] and target[name]~=method then return false end end
+            for _,name in ipairs(lifecycle) do if not allowed[name] and target[name]~=methods[name] then return false end end
+            return true
+        end
+        local stickSource=getActivatedMods and getActivatedMods():contains('organizedCategories_core')
+            and verified('organizedCategories_core',{{'client/organizedCategories_itemStick.lua',2877670095}})
+        TidyIntent.install(function(action)
+            if P4TidyUpMeister~=owner or owner.registerActionPolicy~=actionPolicy or owner.registerWornItemReplacement~=wornPolicy then return false end
+            for class,methods in pairs(classes.P4TidyUpMeister) do if not intentUnchanged(class,class,methods) then return false end end
+            if not action then return true end
+            local baseline=classes.P4TidyUpMeister[getmetatable(action)]
+            if not baseline then return false end
+            local record=records[action]
+            if not record and (action.onStartFunc or action.onCompleteFunc or action.onCancelFunc
+                or action.retriggerLastAction or action.onFailFunc or action.additionalTest) then return false end
+            return record and matches(action,record) or not record and intentUnchanged(action,getmetatable(action),baseline)
+        end,function(menu,name)
+            return stickSource and menu==ISInventoryPaneContextMenu and menu['_ocStick_'..name]==menu[name]
+                and quartermasterClosure(menu[name],'organizedCategories_itemStick.lua')
+        end)
+    end
+end
+
+-- Early compatibility entrypoints can precede ActionQueue's shared native stop wrapper.
+function Compat.adoptStop(previous,replacement)
+    if ISBaseTimedAction.stop~=replacement then return false end
+    for _,registry in pairs(classes) do
+        for _,methods in pairs(registry) do if methods.stop==previous then methods.stop=replacement end end
+    end
+    return true
 end
 
 -- Server Lua is not resolvable during the client load pass; the early SP server bridge calls this.
@@ -801,7 +899,8 @@ function Compat.isCraftOwner(name, target, action)
     if not owner or not target then return false end
     for method, callback in pairs(owner.methods) do if target[method] ~= callback then return false end end
     for method, callback in pairs(target) do
-        if type(callback) == "function" and callback ~= owner.methods[method] then return false end
+        if type(callback) == "function" and callback ~= owner.methods[method]
+            and callback ~= nativeXuiMethods[method] then return false end
     end
     return owner and getmetatable(target) == owner.class and classUnchanged(owner.class, owner.methods)
         and action.onStartFunc == owner.methods.onHandcraftActionStart
@@ -864,7 +963,9 @@ ISTimedActionQueue.addToQueue = function(queue, action)
     return unpack(results, 1, results.n)
 end
 
-Toolkit.ActionQueueDefinitions.registerBehavior("compat.selected-chains", {matches = matches, inspect = inspect})
+local behaviorTypes = {"WMI_WaitForInvUpdate", "PJCK_SequenceWaitAction"}
+for _, name in ipairs(names) do behaviorTypes[#behaviorTypes + 1] = name end
+Toolkit.ActionQueueDefinitions.registerBehavior("compat.selected-chains", {types = behaviorTypes, matches = matches, inspect = inspect})
 Operations.registerProducer("compat.selected-chains", matches, function(parent, child)
     return matches(child) and child.toolkitQueueOperation == parent.toolkitQueueOperation
 end)

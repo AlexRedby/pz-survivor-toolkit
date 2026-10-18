@@ -68,7 +68,7 @@ for _, withToolkit in ipairs({false, true}) do
     local applications = 0
     PZSurvivorToolkit = withToolkit and {UIStyle = {button = function(b) applications = applications + 1; return style.button(b) end}} or nil
     PZSurvivorWishlist = {Client = {sync = function() end, selected = function() end}, Settings = {craftingEnabled = function() return true end}}
-    local UI = dofile(ProjectRoot .. "/PZSurvivorWishlist/42/media/lua/client/PZSurvivorWishlist/UI.lua")
+    local UI = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/UI.lua")
     local window = UI.open(0)
     assert(#created == 5 and window.shareButton.target == window)
     verifyCreated()
@@ -80,7 +80,7 @@ for _, withToolkit in ipairs({false, true}) do
     end, prerender = function() end}
     ISBuildRecipePanel = {}
     ISWidgetInput = {}
-    local crafting = dofile(ProjectRoot .. "/PZSurvivorWishlist/42/media/lua/client/PZSurvivorWishlist/Crafting.lua")
+    local crafting = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/Crafting.lua")
     crafting.install()
     local panel = {player = {}, logic = {getRecipe = function() return {} end}}
     ISCraftRecipePanel.createDynamicChildren(panel)

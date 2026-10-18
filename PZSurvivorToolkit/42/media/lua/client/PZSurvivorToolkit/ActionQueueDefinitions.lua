@@ -1,4 +1,4 @@
-local Definitions = {entries = {}, types = {}, behaviorOrder = {}}
+local Definitions = {entries = {}, types = {}, behaviorTypes = {}}
 PZSurvivorToolkit.ActionQueueDefinitions = Definitions
 
 function Definitions.register(id, descriptor)
@@ -15,6 +15,12 @@ function Definitions.register(id, descriptor)
     if descriptor.behavior then
         assert(type(descriptor.behavior.matches) == "function" and type(descriptor.behavior.inspect) == "function",
             "behavior needs matches and inspect: " .. id)
+        local kinds, seen = descriptor.behavior.types, {}
+        assert(type(kinds) == "table" and #kinds > 0, "behavior needs explicit types: " .. id)
+        for _, kind in ipairs(kinds) do
+            assert(type(kind) == "string" and kind ~= "" and not seen[kind], "invalid behavior type: " .. id)
+            seen[kind] = true
+        end
     end
     if descriptor.presentation then
         for _, kind in ipairs(descriptor.types or {}) do
@@ -23,7 +29,11 @@ function Definitions.register(id, descriptor)
         end
     end
     if descriptor.behavior and not entry.behavior then
-        Definitions.behaviorOrder[#Definitions.behaviorOrder + 1] = id
+        for _, kind in ipairs(descriptor.behavior.types) do
+            local candidates = Definitions.behaviorTypes[kind] or {}
+            candidates[#candidates + 1] = id
+            Definitions.behaviorTypes[kind] = candidates
+        end
     end
     entry.presentation = descriptor.presentation or entry.presentation
     entry.behavior = descriptor.behavior or entry.behavior
@@ -51,7 +61,8 @@ end
 
 function Definitions.behavior(action)
     local found, foundId
-    for _, id in ipairs(Definitions.behaviorOrder) do
+    local candidates = action and Definitions.behaviorTypes[action.Type]
+    for _, id in ipairs(candidates or {}) do
         local behavior = Definitions.entries[id].behavior
         local ok, matches = pcall(behavior.matches, action)
         if not ok then return nil end

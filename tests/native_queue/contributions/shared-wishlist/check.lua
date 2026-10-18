@@ -6,7 +6,7 @@ for _,case in ipairs({{'full',false,33},{'standalone',true,26},{'reload',false,5
  getActivatedMods=function()return {contains=function()return not case[2]end}end
  getFileReader=function(name)
   assert(name=='wishlist-fixture.txt')
-  local lines={'client1',case[1],'configured-host','12345','runtime-only','PZSurvivorWishlist'};local i=0
+  local lines={'client1',case[1],'configured-host','12345','runtime-only','PZSurvivorToolkit'};local i=0
   return {readLine=function()i=i+1;return lines[i]end,close=function()end}
  end
  assert(loadfile(root..'/client/ZZWishlist.lua'))()

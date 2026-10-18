@@ -5,11 +5,12 @@ import signal
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from queue_checks import runner, admission
+from queue_checks import runner, admission, coop
 
 
 class Process:
@@ -34,6 +35,9 @@ class NativeRunnerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        disk = patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=100 * 1024**3))
+        disk.start()
+        self.addCleanup(disk.stop)
         self.root = Path(self.temp.name)
         (self.root / "client1").mkdir()
         (self.root / "client1/options.ini").write_text("voiceEnable=false\n")
@@ -85,6 +89,9 @@ class NativeRunnerTests(unittest.TestCase):
     def invoke(self, collisions="", sleep=None, settings=True):
         if settings:
             self.seal_settings(add_only=True)
+        def kill_group(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError
         with patch.object(runner.sys, "platform", "darwin"), patch.object(runner, "LOCK", self.root / "lock"), \
              patch.object(runner, "verify_manifest", side_effect=lambda *args: self.manifest_errors), \
              patch.object(admission, "STATE", self.root / "admission-state"), \
@@ -92,7 +99,7 @@ class NativeRunnerTests(unittest.TestCase):
                  processes=[{'pid': int(line.split()[0]), 'rss': 0, 'cpu': 0, 'game': True, 'command': line}
                             for line in collisions.splitlines() if line] or self.snapshot['processes'])), \
              patch.object(runner.subprocess, "Popen", side_effect=self.popen), \
-             patch.object(runner.os, "killpg") as kill, patch.object(runner.signal, "signal", side_effect=self.signal), \
+             patch.object(runner.os, "killpg", side_effect=kill_group) as kill, patch.object(runner.signal, "signal", side_effect=self.signal), \
              patch.object(runner.time, "sleep", side_effect=sleep):
             result = runner.run(self.root, resource_wait=0)
             return result, kill.call_args_list
@@ -156,6 +163,121 @@ class NativeRunnerTests(unittest.TestCase):
         result, _ = self.invoke()
         self.assertIn('Invalid fixture-owned client environment', result['error'])
         self.assertFalse(result['processes'])
+
+    def test_basement_hall_cache_environment_requires_exact_suite_and_owned_role_cache(self):
+        self.selection.update(mode='toolkit', languages=['EN'],
+                              mods=['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit'],
+                              options={'ffmpeg': sys.executable, 'ffprobe': sys.executable})
+        original_popen = self.popen
+        environments = []
+        def launch(command, **kwargs):
+            if 'env' in kwargs:
+                environments.append(kwargs['env'])
+            return original_popen(command, **kwargs)
+        self.popen = launch
+        base = self.root
+        for index, (suite, target, valid) in enumerate([('basement-hall', 'owned', True), ('health', 'owned', False),
+                                                       ('basement-hall', 'other', False),
+                                                       ('basement-hall', 'relative', False)]):
+            self.root = base / str(index)
+            (self.root / 'client1').mkdir(parents=True)
+            (self.root / 'client1/options.ini').write_text('voiceEnable=false\n')
+            cache = str(self.root / 'client1')
+            value = cache if target == 'owned' else 'client1' if target == 'relative' else str(self.root / 'other')
+            self.runtime['roles']['client1']['cache'] = cache
+            with self.subTest(suite=suite, value=value):
+                self.selection.update(suite=suite, cases=['fresh'])
+                self.runtime['roles']['client1']['env'] = {'PZ_BASEMENT_HALL_CACHE': value}
+                for name, data in [('selection', self.selection), ('runtime', self.runtime)]:
+                    (self.root / (name + '.json')).write_text(json.dumps(data))
+                self.seal_settings()
+                self.content = '[BASEMENT_HALL] COMPLETE case=fresh\n'
+                result, _ = self.invoke()
+                self.assertEqual('completed' if valid else 'failed', result['status'])
+                if valid:
+                    self.assertEqual(cache, environments[-1]['PZ_BASEMENT_HALL_CACHE'])
+                else:
+                    self.assertEqual({}, result['processes'])
+                    self.assertIn('Invalid fixture-owned client environment', result['error'])
+
+    def prepare_host(self, proof='[QUEUE_TEST] HOST_CHILD pid=555 parent=101\n'):
+        self.selection.update(kind='mp', clients=1, ports=[], mods=['ZombieBuddy'], options={'mp_host': True})
+        self.runtime.update(server_name='owned')
+        server = self.root / 'server'
+        (server / 'Server').mkdir(parents=True)
+        (server / 'options.ini').write_text('voiceEnable=false\n')
+        (server / 'Server/owned.ini').write_text('VoiceEnable=false\n')
+        (server / 'Server/owned_SandboxVars.lua').write_text('SandboxVars={}\n')
+        self.runtime['roles']['server'] = {'cache': str(server)}
+        coop.stage(self.root, self.runtime)
+        for name, value in [('selection', self.selection), ('runtime', self.runtime)]:
+            (self.root / (name + '.json')).write_text(json.dumps(value))
+        self.content += proof
+        (self.root / 'client1/coop-console.txt').write_text('[QUEUE_TEST] SERVER_READY\n')
+
+    def test_host_launches_owner_once_inherits_loader_and_records_native_child(self):
+        self.prepare_host()
+        environments = []
+        popen = self.popen
+        def launch(command, **kwargs):
+            if 'env' in kwargs:
+                environments.append(kwargs['env'])
+            return popen(command, **kwargs)
+        self.popen = launch
+        result, kills = self.invoke()
+        self.assertEqual('completed', result['status'])
+        self.assertEqual(2, len(self.commands))  # display guard + one real Host owner
+        command = self.commands[-1]
+        self.assertNotIn('zombie.network.GameServer', command)
+        self.assertIn('ToolkitSmokeLauncher', command)
+        self.assertIn('-novoip', command)
+        self.assertFalse(any(arg.startswith('-javaagent:') for arg in command))
+        self.assertEqual(1, environments[0]['JDK_JAVA_OPTIONS'].count('-javaagent:'))
+        self.assertIn(str(self.root / 'client1/zombie-buddy'), environments[0]['JDK_JAVA_OPTIONS'])
+        self.assertEqual({'pid': 555, 'parent_role': 'client1', 'cache': str((self.root / 'client1').resolve())}, result['processes']['server'])
+        self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
+        self.assertEqual('[QUEUE_TEST] SERVER_READY\n', (self.root / 'server-launch.log').read_text())
+
+    def test_host_rejects_unproven_or_duplicated_child_and_still_stops_only_its_group(self):
+        self.prepare_host('[QUEUE_TEST] HOST_CHILD pid=999 parent=666\n')
+        result, kills = self.invoke()
+        self.assertEqual('failed', result['status'])
+        self.assertIn('prove one native child', result['error'])
+        self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
+
+    def test_owned_host_group_is_stopped_even_if_parent_already_exited(self):
+        process = Process(456)
+        process.returncode = 1
+        def kill_group(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError
+        with patch.object(runner.os, 'killpg', side_effect=kill_group) as kill:
+            runner.stop(process, owned_host_group=True)
+        self.assertEqual([(456, signal.SIGTERM), (456, 0)], [call.args for call in kill.call_args_list])
+
+    def test_host_escalates_only_its_original_group_when_child_outlives_owner(self):
+        process = Process(456)
+        process.returncode = 1
+        with patch.object(runner.os, 'killpg') as kill, patch.object(runner.time, 'monotonic', side_effect=[0, 5]):
+            runner.stop(process, owned_host_group=True)
+        self.assertEqual([(456, signal.SIGTERM), (456, 0), (456, signal.SIGKILL)],
+                         [call.args for call in kill.call_args_list])
+
+    def test_low_disk_or_failed_disk_sampling_never_launches(self):
+        for error in (None, OSError('disk sampling failed')):
+            with self.subTest(error=error), patch.object(admission.shutil, 'disk_usage',
+                    return_value=SimpleNamespace(free=1), side_effect=error):
+                with self.assertRaisesRegex((RuntimeError, OSError), 'disk'):
+                    self.invoke()
+            self.assertEqual(self.commands, [])
+            self.assertFalse((self.root / 'execution.json').exists())
+
+    def test_disk_budget_is_recorded_with_execution(self):
+        result, _ = self.invoke()
+        disk = result['resources']['disk']
+        self.assertEqual(disk['runtime_bytes'], admission.DISK_PER_ROLE)
+        self.assertEqual(disk['copy_bytes'], 0)
+        self.assertEqual(disk['required_bytes'], admission.DISK_PER_ROLE + admission.DISK_MARGIN)
 
     def test_explicit_font_preload_extends_single_client_agent(self):
         self.selection['mods'] = ['ZombieBuddy', 'PZToolkitJavaPatches']

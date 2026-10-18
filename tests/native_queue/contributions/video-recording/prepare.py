@@ -61,7 +61,7 @@ def prepare(args):
     (fixture/'42/mod.info').write_text('name=Video Fixture\nid=VideoFixture\nversionMin=42.21\nversionMax=42.21\n')
     lua = fixture/'42/media/lua/client'
     shutil.copyfile(HERE/'VideoFixture.lua', lua/'ZZVideoFixture.lua')
-    config = {'output': str(profile/'videos'), 'outside': str(profile.parent), 'ffmpeg': str(ffmpeg)}
+    config = {'output': str(profile/'videos'), 'ffmpeg': str(ffmpeg)}
     (lua/'ToolkitVideoConfig.lua').write_text('return {\n' + ''.join(
         f'    {key} = {json.dumps(value, ensure_ascii=False)},\n' for key, value in config.items()) + '}\n', encoding='utf-8')
     (profile/'mods/default.txt').write_text('VERSION = 1,\nmods\n{\n mod = ZombieBuddy,\n mod = PZToolkitJavaPatches,\n mod = VideoFixture,\n}\nmaps\n{\n}\n')

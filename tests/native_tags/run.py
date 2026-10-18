@@ -53,14 +53,17 @@ def main():
     if seed:
         assert not output.is_relative_to(seed['output'].resolve()), 'Restart output must be outside seed'
     protected = [args.game, args.jdk, *args.workshop, ROOT / 'PZSurvivorToolkit',
-                 ROOT / 'PZSurvivorWishlist', ROOT / 'tools', ROOT / 'tests']
+                 ROOT / 'tools', ROOT / 'tests']
     if any(output.is_relative_to(path.resolve()) for path in protected):
         raise ValueError('Output must be outside game, JDK, mod sources and test sources')
     output.mkdir(parents=True, exist_ok=False)
     source = output / 'source'
     source.mkdir()
-    parts = ['PZSurvivorToolkit', 'PZSurvivorWishlist', 'tools', 'tests/native_queue']
+    parts = ['PZSurvivorToolkit', 'tools', 'tests/native_queue']
     if args.source_ref:
+        # Baselines before the merge kept Wishlist in a separate source tree.
+        if subprocess.check_output(['git', 'ls-tree', '--name-only', args.source_ref, 'PZSurvivorWishlist'], cwd=ROOT).strip():
+            parts.append('PZSurvivorWishlist')
         archive = subprocess.check_output(['git', 'archive', '--format=tar', args.source_ref, *parts,
                                            'SurvivorQoL-selected.ini'], cwd=ROOT)
         with tarfile.open(fileobj=io.BytesIO(archive)) as files:
@@ -79,7 +82,7 @@ def main():
                     if line.startswith('Mods='))
         identifiers = line[5:].split(';')
     for identifier in identifiers:
-        if identifier in ('PZSurvivorToolkit', 'PZSurvivorWishlist'):
+        if identifier == 'PZSurvivorToolkit' or (identifier == 'PZSurvivorWishlist' and (source / identifier).is_dir()):
             continue
         if identifier == 'PZToolkitJavaPatches':
             candidate = ROOT / 'JavaPatches/build/PZToolkitJavaPatches'

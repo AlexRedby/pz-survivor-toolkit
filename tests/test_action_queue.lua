@@ -17,6 +17,7 @@ end
 ISBaseObject = {derive = derive}
 table.wipe = function(t) for k in pairs(t) do t[k] = nil end end
 Events = {OnTick = {Add = function() end}}
+Events.OnServerCommand = {Add = function() end}
 for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
@@ -31,6 +32,15 @@ local function load(path) assert(loadfile(NativeActionRoot .. '/' .. path))() en
 load('shared/TimedActions/ISBaseTimedAction.lua')
 load('client/TimedActions/ISTimedActionQueue.lua')
 load('client/TimedActions/ISQueueActionsAction.lua')
+local nativeResetQueue = ISTimedActionQueue.resetQueue
+local function reloadQuartermaster()
+    assert(loadfile(NativeQuartermasterLuaRoot .. '/client/LootSorter_WalkAction.lua'))()
+end
+if NativeQuartermasterLuaRoot then
+    load('client/TimedActions/WalkToTimedAction.lua')
+    LootSorter = {isDebug = function() return false end, addOrReplaceHandler = function() end}
+    reloadQuartermaster()
+end
 load('shared/TimedActions/ISReadABook.lua')
 load('shared/Moveables/ISMoveablesAction.lua')
 load('shared/Vehicles/TimedActions/ISRemoveBurntVehicle.lua')
@@ -154,8 +164,61 @@ end
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/BulkActions.lua'))()
 if not PZSurvivorToolkit.ActionQueueDefinitions then assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))() end
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePolicy.lua'))()
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local api = PZSurvivorToolkit.ActionQueue
+if NativeQuartermasterLuaRoot then
+    for reload = 0, 3 do
+        if reload == 3 then
+            ISTimedActionQueue.resetQueue = nativeResetQueue
+            LootSorter._vanillaResetQueue = nil
+        end
+        if reload > 0 then reloadQuartermaster() end
+        for _, method in ipairs({'resetQueue', 'clearQueue'}) do
+            local p = player()
+            local action = book(p)
+            local q = ISTimedActionQueue.add(action)
+            local token = action.toolkitQueueOperation
+            local resumed = false
+            local pending = operations.attachContinuation(token, p)
+            local generation = q.toolkitOperationGeneration or 0
+            local cancellations = 0
+            action.forceCancel = function()
+                assert(token.toolkitCancelled and q.toolkitOperationGeneration == generation + 1,
+                    'native cancellation ran before Toolkit invalidation')
+                cancellations = cancellations + 1
+            end
+            q.toolkitCancel, q.toolkitResume, q.toolkitGroupCancel = action, action, {}
+            q[method](q)
+            assert((q.toolkitOperationGeneration or 0) == generation + 1 and token.toolkitCancelled,
+                'Quartermaster reload ' .. reload .. ' bypassed operation invalidation')
+            operations.runContinuation(pending, function() resumed = true end)
+            assert(not resumed and #q.queue == 0 and cancellations == 1
+                and q.current == (method == 'clearQueue' and action or nil)
+                and not q.toolkitCancel and not q.toolkitResume and not q.toolkitGroupCancel,
+                'reset allowed a canceled continuation to refill the queue')
+        end
+    end
+end
+do
+    local p = player()
+    local parent, child, tail = book(p), book(p), book(p)
+    local q = ISTimedActionQueue.add(parent)
+    ISTimedActionQueue.add(child); ISTimedActionQueue.add(tail)
+    parent._isAddingActions, parent._numAddedActions = true, 1
+    child.toolkitQueueOperation = parent.toolkitQueueOperation
+    local pending = operations.attachContinuation(parent.toolkitQueueOperation, p)
+    local generation, canceled = q.toolkitOperationGeneration or 0, 0
+    child.forceCancel = function() canceled = canceled + 1 end
+    q:clearQueue()
+    assert(#q.queue == 2 and q.queue[1] == parent and q.queue[2] == tail and canceled == 1
+        and parent._numAddedActions == 0 and not parent.toolkitQueueOperation.toolkitCancelled
+        and (q.toolkitOperationGeneration or 0) == generation, 'expansion clear invalidated its parent or unrelated tail')
+    local resumed = false
+    operations.runContinuation(pending, function() resumed = true end)
+    assert(resumed, 'expansion clear revoked a valid continuation')
+end
 do
     local idlePlayer=player()
     local idleQueue=ISTimedActionQueue.getTimedActionQueue(idlePlayer)
@@ -196,6 +259,7 @@ local function fixtureResources(action)
     return result
 end
 PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('fixture.lifecycle', {
+    types = {'ToolkitTestLeaf', 'ISInventoryTransferAction', 'ISEquipWeaponAction', 'ISWalkToTimedAction', 'ISMoveablesAction', 'ISRemoveBurntVehicle'},
     matches = function(action)
         if action.onStartFunc or action.onCompleteFunc or action.onCancelFunc or action.Type == 'ISQueueActionsAction' then return false end
         if action.fixtureScrap then return true end
@@ -539,7 +603,8 @@ for _, module in ipairs({'ActionQueueGenerators', 'ActionQueueFire'}) do
         p = player(); a,b,c = book(p),book(p),book(p)
         operations.run(function() q=ISTimedActionQueue.add(a); ISTimedActionQueue.add(b) end)
         ISTimedActionQueue.add(c); frame(p)
-        PZSurvivorToolkit[module] = {canSkip = function(action) return allowed and action == a end}
+        PZSurvivorToolkit[module] = {canSkip = function(action) return allowed and action == a end,
+            supports = function() return false end}
         a:forceStop(); frame(p)
         assert(a.toolkitQueueOperation.toolkitCancelled)
         assert(not p.actions[a.action] and not q.toolkitGroupCancel)
@@ -549,6 +614,26 @@ for _, module in ipairs({'ActionQueueGenerators', 'ActionQueueFire'}) do
     enabled = true
     PZSurvivorToolkit[module] = previous
 end
+
+-- Lost pre-start manual craft work is removed before native start can reset its independent tail.
+do
+    local previous=PZSurvivorToolkit.ActionQueueCraft
+    for _,scenario in ipairs({{true,true},{false,true},{true,false}}) do
+        local missing=scenario[1];enabled=scenario[2]
+        p=player();a,b,c=book(p),book(p),leaf(p,'independent craft tail')
+        operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b) end)
+        ISTimedActionQueue.add(c);frame(p)
+        PZSurvivorToolkit.ActionQueueCraft={supports=function() return false end,collectItems=function() end,
+            canSkip=function(action) return missing and action==b end}
+        a.action.done=true;frame(p)
+        local skipped=missing and enabled
+        assert(q.current==(skipped and c or b) and (not enabled or not c.toolkitQueueOperation.toolkitCancelled))
+        assert((b.action==nil)==skipped,'skipped manual craft never enters native start')
+        assert((a.toolkitQueueOperation.toolkitCancelled==true)==(skipped or not enabled))
+    end
+    enabled=true;PZSurvivorToolkit.ActionQueueCraft=previous
+end
+
 -- The view keeps real action identities across refreshes, hide/show and player replacement.
 local ui, refresh, playerCount = {}, nil, 1
 local widget = {derive = derive}
@@ -943,7 +1028,7 @@ for _, state in ipairs({'canceled', 'completed'}) do
         q=ISTimedActionQueue.add(a);frame(p);b=book(p);c=leaf(p,'mp-tail')
         ISTimedActionQueue.add(b);ISTimedActionQueue.add(c)
         local before=resumedCalls
-        assert(api.move(q,b,a) and q.toolkitBuildWait)
+        assert(api.move(q,b,a) and q.toolkitOutcomeWait)
         if first=='terminal' then
             a.ack.state=state;q:tick()
             assert(q.current==a and resumedCalls==before, 'terminal must wait Java removal')
@@ -953,7 +1038,7 @@ for _, state in ipairs({'canceled', 'completed'}) do
             a.ack.state=state
         end
         frame(p)
-        assert(q.current==b and not q.toolkitBuildWait and not q.toolkitCancel)
+        assert(q.current==b and not q.toolkitOutcomeWait and not q.toolkitCancel)
         if state=='canceled' then
             assert(resumedCalls==before+1 and q.queue[2].Type=='ISQueueActionsAction' and q.queue[3]==c)
         else
@@ -968,7 +1053,7 @@ q=ISTimedActionQueue.add(a);frame(p);b=book(p);ISTimedActionQueue.add(b)
 local before=resumedCalls
 assert(api.move(q,b,a));a.ack.state='completed';a.action.completing=true
 q:onCompleted(a)
-assert(q.current==a and q.toolkitBuildWait.localCompleted, 'perform cannot start urgent work before Java removes current')
+assert(q.current==a and q.toolkitOutcomeWait.localCompleted, 'perform cannot start urgent work before Java removes current')
 frame(p)
 assert(q.current==b and resumedCalls==before and #q.queue==1)
 -- Lost terminal, explicit clear, movement and death fail closed without replay or an indefinite wait.
@@ -976,14 +1061,14 @@ for _, mode in ipairs({'timeout','clear','move','dead','respawn'}) do
     p=player();a=build(p);a.mpBuild=true;a.ack={state='started'}
     q=ISTimedActionQueue.add(a);frame(p);b=book(p);ISTimedActionQueue.add(b)
     before=resumedCalls;assert(api.move(q,b,a));frame(p)
-    assert(q.current==a and q.toolkitBuildWait)
+    assert(q.current==a and q.toolkitOutcomeWait)
     if mode=='timeout' then acknowledgementClock=acknowledgementClock+30000
     elseif mode=='clear' then ISTimedActionQueue.clear(p)
     elseif mode=='move' then p.moving=true
     elseif mode=='dead' then p.dead=true
     elseif mode=='respawn' then activePlayer=player() end
     q:tick()
-    assert(resumedCalls==before and not q.toolkitBuildWait and not q.toolkitCancel)
+    assert(resumedCalls==before and not q.toolkitOutcomeWait and not q.toolkitCancel)
     if mode=='timeout' or mode=='clear' or mode=='move' then assert(#q.queue==0) end
 end
 -- Unknown callbacks and untracked build transactions retain native protection.
@@ -1122,6 +1207,66 @@ local function borrowed(item, container)
     item.getContainer=function(self) return self.container end
     item.getIsCraftingConsumed=function(self) return self.consumed==true end
     return item
+end
+-- Skip audited unavailable successors before native validation/start, preserving cleanup and independent work.
+for _,family in ipairs({'ActionQueueGenerators','ActionQueueFire'}) do
+    local previous=PZSurvivorToolkit[family]
+    for _,sameOperation in ipairs({false,true}) do
+        p=player()
+        local blocker,missing,linked,ending=book(p),leaf(p,'unavailable successor'),leaf(p,'linked successor'),leaf(p,'independent tail')
+        local bag=sourceContainer()
+        local item=borrowed(book(p).item,sameOperation and p.inventory or bag)
+        local originalReturn=transfer(p,item,p.inventory,bag);originalReturn.allowMissingItems=true
+        missing.isValidStart=function() return family=='ActionQueueFire' end
+        missing.isValid=function() error('an unavailable successor must never reach native validation') end
+        if not sameOperation then q=ISTimedActionQueue.add(blocker) end
+        operations.run(function()
+            if sameOperation then q=ISTimedActionQueue.add(blocker) end
+            ISTimedActionQueue.add(missing);ISTimedActionQueue.addAfter(missing,linked);ISTimedActionQueue.add(originalReturn)
+        end)
+        ISTimedActionQueue.add(ending);frame(p)
+        local token=missing.toolkitQueueOperation
+        if sameOperation then token.toolkitPickups={[item]=bag} end
+        PZSurvivorToolkit[family]={canSkip=function(action) return action==missing end}
+        blocker.action.forceStop=function() error('completion must not stop its already-finished owner') end
+        blocker.action.done=true;frame(p)
+        assert(token.toolkitCancelled and not missing.action and not linked.action and not originalReturn.action
+            and not blocker.action.stopping and not ending.toolkitQueueOperation.toolkitCancelled,
+            'an audited unavailable successor must drop its linked operation without stopping the finished owner or independent tail')
+        if sameOperation then
+            local cleanup=q.current
+            assert(#q.queue==2 and cleanup~=originalReturn and cleanup.Type=='ISInventoryTransferAction'
+                and cleanup.item==item and cleanup.destContainer==bag and cleanup.allowMissingItems
+                and q.queue[2]==ending and not ending.action,
+                'same-operation completion must rebuild exactly one borrowed-item return before the independent tail')
+            cleanup.action.done=true;frame(p)
+            assert(item.container==bag and q.current==ending,'borrowed cleanup must finish before the independent tail starts')
+        else
+            assert(#q.queue==1 and q.current==ending and item.container==bag,
+                'a separate unavailable operation must not discard the independent native tail')
+        end
+    end
+    for _,mode in ipairs({'unknown','disabled','allocated','unknown-child'}) do
+        p=player()
+        local blocker,missing,ending=book(p),leaf(p,'protected invalid successor'),leaf(p,'native reset tail')
+        missing.isValidStart=function() return false end
+        operations.run(function()
+            q=ISTimedActionQueue.add(blocker);ISTimedActionQueue.add(missing)
+            if mode=='unknown-child' then
+                local child=leaf(p,'foreign linked child');child.onCompleteFunc=function() error('foreign callback must not run') end
+                ISTimedActionQueue.addAfter(missing,child)
+            end
+        end)
+        ISTimedActionQueue.add(ending);frame(p)
+        if mode=='allocated' then missing.action=LuaTimedActionNew.new(missing) end
+        enabled=mode~='disabled'
+        PZSurvivorToolkit[family]={canSkip=function(action) return mode~='unknown' and action==missing end}
+        blocker.action.done=true;frame(p)
+        assert(#q.queue==0 and q.current==nil and not ending.action,
+            mode..' invalid successor must retain native reset semantics')
+        enabled=true
+    end
+    PZSurvivorToolkit[family]=previous
 end
 p=player();a,b,d=book(p),book(p),book(p)
 local bag=sourceContainer();borrowed(a.item,bag)
@@ -1276,3 +1421,149 @@ d.owner={getID=owner.getID}
 assert(not api.cancelOperationReason(q,b) and not api.moveReason(q,b,d,true), 'different UI owners stay independent')
 PZSurvivorToolkit.ActionQueueCraft=previousCraft
 print('Stable item IDs: stale pickup replacement, deduplicated native returns, absent/consumed/nested items, same-ID dependencies and UI-owner identities passed.')
+
+-- Standard native actions use the same outcome gate as custom build synchronization.
+local realAcknowledgements = PZSurvivorToolkit.ActionQueueAcknowledgements
+for _, outcome in ipairs({'canceled', 'completed', 'rejected'}) do
+    p=player();a=book(p);b=leaf(p,'urgent-native-outcome');c=book(p)
+    q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c);frame(p)
+    local receipt={state='started'}
+    PZSurvivorToolkit.ActionQueueAcknowledgements={
+        capture=function(action) if action==a then return receipt end end,
+        state=function(action, record) if action==a and record==receipt then return record.state end end,
+        reset=function() end,
+    }
+    assert(api.move(q,b,a) and q.toolkitOutcomeWait.generic)
+    frame(p)
+    assert(q.current==a and q.toolkitCancelStopped and not p.actions[a.action],
+        'local stop/removal must still wait for the standard server outcome')
+    receipt.state=outcome
+    q:tick()
+    assert(q.current==b and not q.toolkitOutcomeWait and not q.toolkitCancel)
+    assert(#q.queue==(outcome=='canceled' and 3 or 2), 'only confirmed cancellation may replay reading')
+    if outcome=='canceled' then
+        assert(q.queue[2]~=a and q.queue[2].Type=='ISReadABook' and q.queue[2].item==a.item and q.queue[3]==c)
+    else assert(q.queue[2]==c, 'completed/rejected effect was replayed') end
+end
+PZSurvivorToolkit.ActionQueueAcknowledgements=realAcknowledgements
+print('Generic native outcomes: local stop/removal waits for receipt; only canceled resumes, completed/rejected preserve independent tail without replay.')
+
+-- A replicated BBQ effect can invalidate native isValid() before local completion/Done arrives.
+do
+    load('shared/TimedActions/ISBBQLightFromPetrol.lua')
+    local previousFire, previousClient = PZSurvivorToolkit.ActionQueueFire, isClient
+    local previousEvent = Events.OnServerCommand.Add
+    local receive
+    Events.OnServerCommand.Add=function(callback) receive=callback end
+    assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
+    Events.OnServerCommand.Add=previousEvent
+    isClient=function() return true end
+    local oldGlobals, oldChange=ZomboidGlobals, IsoObjectChange
+    ZomboidGlobals, IsoObjectChange={LightFromPetrolAmount=.1}, {STATE='state'}
+    local serial=0
+    local function setup(uses, supported)
+        serial=serial+1
+        local character=player()
+        function character:getOnlineID() return 100 end
+        function character:stopOrTriggerSound() end
+        function character.inventory:contains(item) return item:getContainer()==self end
+        local source=sourceContainer()
+        local petrol, matches=borrowed(book(character).item,character.inventory),borrowed(book(character).item,character.inventory)
+        local fluid={amount=2,getAmount=function(self) return self.amount end,
+            adjustAmount=function(self,value) self.amount=value end}
+        petrol.getFluidContainer=function() return fluid end
+        petrol.getCurrentUsesFloat=function() return fluid.amount end
+        matches.uses=uses
+        matches.getCurrentUsesFloat=function(self) return self.uses end
+        matches.UseAndSync=function(self) self.uses=self.uses-1;if self.uses==0 then self.container=nil end end
+        local bbq={lit=false,gone=false,getObjectIndex=function(self) return self.gone and -1 or 1 end,
+            isLit=function(self) return self.lit end,hasFuel=function() return true end,
+            turnOn=function(self) self.lit=true end,sendObjectChange=function() end}
+        local ignition=ISBBQLightFromPetrol:new(character,bbq,matches,petrol)
+        ignition.ignoreHandsWounds=true
+        local originalReturn=transfer(character,matches,character.inventory,source)
+        originalReturn.allowMissingItems=true
+        local queue
+        operations.run(function() queue=ISTimedActionQueue.add(ignition);ISTimedActionQueue.add(originalReturn) end)
+        local token=ignition.toolkitQueueOperation
+        token.toolkitPickups={[petrol]=source,[matches]=source}
+        local reader=book(character);ISTimedActionQueue.add(reader)
+        -- The native action is already started; its real isValid/complete/stop callbacks are exercised below.
+        ignition.action.started=true
+        ignition.toolkitNativeTransaction,ignition.toolkitNativeKind=serial,'ISBBQLightFromPetrol'
+        local args={protocol=1,player=100,transaction=serial,kind=ignition.toolkitNativeKind,
+            token=string.format('00000000-0000-0000-0000-%012x',serial),state='started'}
+        local function receipt(state) args.state=state;receive('PZSurvivorToolkitActions','State',args) end
+        if supported~=false then receipt('started') end
+        PZSurvivorToolkit.ActionQueueFire={
+            canSkip=function(action) return action==ignition and not action.onCompleteFunc and not action:isValid() end,
+            skipUnavailableReturns=function(q,current)
+                if current==ignition and q.queue[2]==originalReturn and not character.inventory:contains(matches) then
+                    table.remove(q.queue,2)
+                end
+            end,
+        }
+        assert(ignition:isValid())
+        return character,queue,ignition,originalReturn,reader,token,source,petrol,matches,fluid,bbq,receipt
+    end
+    for _,scenario in ipairs({'completed-last-use','completed-return','canceled','rejected','unsupported','stale','token-changed','timeout','disabled','moving','unknown-callback'}) do
+        local character,queue,ignition,originalReturn,reader,token,source,petrol,matches,fluid,bbq,receipt=
+            setup(scenario=='completed-return' and 2 or 1,scenario~='unsupported')
+        local completed=scenario=='completed-last-use' or scenario=='completed-return'
+        if completed then assert(ignition:complete());assert(bbq.lit and fluid.amount==1.9)
+        else bbq.gone=true end
+        assert(not ignition:isValid(),'real native BBQ validity must reject the replicated effect/removed target')
+        if scenario=='disabled' then enabled=false
+        elseif scenario=='moving' then character.moving=true
+        elseif scenario=='unknown-callback' then ignition.onCompleteFunc=function() end end
+        -- Native Java stop calls Lua before removing the action from characterActions.
+        ignition:stop()
+        if scenario=='disabled' or scenario=='moving' or scenario=='unknown-callback' then
+            assert(#queue.queue==0,'unaudited/disabled/moving stops retain native reset')
+        elseif scenario=='unsupported' then
+            assert(token.toolkitCancelled and queue.toolkitGroupCancel,'no receipt retains conservative group cleanup')
+        else
+            assert(queue.toolkitOutcomeWait and not token.toolkitCancelled and not queue.toolkitGroupCancel,
+                'correlated stop must wait before canceling a possibly completed Fire operation')
+            if scenario=='completed-return' then receipt('completed') end
+            queue:tick()
+            assert(queue.current==ignition and not originalReturn.action and not reader.action,
+                'terminal ACK alone must not cross the native removal boundary')
+        end
+        character.actions[ignition.action]=nil
+        if scenario=='stale' then queue.toolkitOperationGeneration=(queue.toolkitOperationGeneration or 0)+1
+        elseif scenario=='token-changed' then ignition.toolkitQueueOperation={}
+        elseif scenario=='timeout' then acknowledgementClock=acknowledgementClock+30000
+        elseif scenario~='unsupported' and scenario~='disabled' and scenario~='moving' and scenario~='unknown-callback' then
+            receipt(completed and 'completed' or scenario)
+        end
+        queue:tick()
+        if completed then
+            assert(not token.toolkitCancelled and petrol.container==character.inventory and fluid.amount==1.9,
+                'completed server effect must keep spent petrol carried without group rollback')
+            if scenario=='completed-return' then
+                assert(queue.current==originalReturn and originalReturn.toolkitQueueOperation==token,
+                    'completed ACK must preserve the original native return and operation token')
+                originalReturn.action.done=true;frame(character)
+                assert(matches.container==source)
+            end
+            assert(queue.current==reader and not queue.toolkitOutcomeWait and not queue.toolkitGroupCancel)
+            frame(character);reader.action.done=true;frame(character)
+            assert(#queue.queue==0,'independent reading must finish after completed Fire effects and native returns')
+        elseif scenario=='canceled' or scenario=='rejected' or scenario=='unsupported' then
+            assert(token.toolkitCancelled and not originalReturn.action and not reader.action)
+            while queue.current~=reader do
+                local cleanup=queue.current
+                assert(cleanup and cleanup.toolkitQueueReturn and cleanup.destContainer==source)
+                cleanup.action.done=true;frame(character)
+            end
+            assert(petrol.container==source and matches.container==source and fluid.amount==2,
+                'canceled/rejected effects retain exact borrowed cleanup before the independent reader')
+        else assert(#queue.queue==0 and not queue.toolkitOutcomeWait,'stale/unsupported ownership must not replay work') end
+        enabled=true
+    end
+    PZSurvivorToolkit.ActionQueueFire=previousFire
+    PZSurvivorToolkit.ActionQueueAcknowledgements=realAcknowledgements
+    isClient,ZomboidGlobals,IsoObjectChange=previousClient,oldGlobals,oldChange
+end
+print('Native BBQ stop race: correlated completed/canceled/rejected outcomes, native removal, exact returns, independent reading and conservative abort guards passed.')

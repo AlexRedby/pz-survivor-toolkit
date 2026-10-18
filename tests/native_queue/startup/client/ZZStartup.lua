@@ -1,10 +1,36 @@
 local config=require 'QueueTestSelection'
 local entered,starting,connecting,advanced,started,done=false,false,false,false,false,false
+local host=config.kind=='mp' and config.options and config.options.mp_host
+local hostOwner=false
+if host then
+ Events.OnCoopServerMessage.Add(function(tag,cookie,payload)
+  if not hostOwner then return end
+  if tag=='login-attempt' and (payload=='client1' or payload=='client2') then
+   CoopServer:sendMessage('approve-login-attempt',payload)
+  end
+  if tag~='status' or payload~='UI_ServerStatus_Started' or connecting then return end
+  connecting=true
+  CoopServer:sendMessage('set-host-user','client1')
+  local address=CoopServer:getAddress()
+  serverConnect('client1',CoopServer:getAdminPassword(),address,address,tostring(CoopServer:getPort()),'','queue-smoke',false,true,1,'')
+ end)
+end
 Events.OnMainMenuEnter.Add(function()
  entered=true
  if config.kind~='mp' or connecting or isClient() then return end
+ local reader=assert(getFileReader('smoke-user.txt',false));local user=reader:readLine();reader:close()
+ if host and user=='client1' then
+  if hostOwner then return end
+  hostOwner=true
+  assert(not getSteamModeActive(),'Host fixture requires -nosteam')
+  CoopConnection.servername,CoopConnection.username,CoopConnection.serverPassword='queue-smoke','client1',''
+  CoopConnection.memory=config.resources.heap_mib
+  print('[QUEUE_TEST] HOST_REQUEST name=queue-smoke')
+  CoopServer:launch('queue-smoke','client1',config.resources.heap_mib)
+  return
+ end
  connecting=true
- local connection=config.options and config.options.startup_connection or {username='client1',password='smoke-local-only'}
+ local connection=config.options and config.options.startup_connection or {username=user,password='smoke-local-only'}
  ConnectToServer.instance:connect(MainScreen.instance,'Native startup test',connection.username,connection.password,'127.0.0.1','',tostring(config.port),'',false,true,1)
 end)
 Events.OnPreUIDraw.Add(function()

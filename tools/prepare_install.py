@@ -11,13 +11,22 @@ import sys
 import tempfile
 
 try:
-    from .package_mod import ROOT, validate
+    from .package_mod import ROOT, validate, validate_no_symlinks
 except ImportError:
-    from package_mod import ROOT, validate
+    from package_mod import ROOT, validate, validate_no_symlinks
 
 
-MOD_IDS = ("PZSurvivorToolkit", "PZSurvivorWishlist", "PZToolkitJavaPatches")
+MOD_IDS = ("PZSurvivorToolkit", "PZToolkitJavaPatches")
 INI_NAME = "SurvivorQoL-selected.ini"
+LOAD_ORDER = (
+    ("ZombieBuddy", "PZToolkitJavaPatches"),
+    ("PZSurvivorToolkit", "ContainerCapacityIndicator"),
+    ("PZSurvivorToolkit", "BravoItemDetails"),
+    ("PZSurvivorToolkit", "EURY_CONTAINERS"),
+    ("PZSurvivorToolkit", "MPFastForward"),
+    ("RealisticDash", "Navigator"),
+    ("Quartermaster", "organizedCategories_core"),
+)
 
 
 def metadata(path: Path) -> dict[str, str]:
@@ -29,20 +38,26 @@ def metadata(path: Path) -> dict[str, str]:
 
 def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None,
             check: bool = False) -> Path:
+    root = root.resolve()
     dist = root / "dist"
     output = dist / "SurvivorQoL"
     if dist.is_symlink() or output.is_symlink() or (output.exists() and not output.is_dir()):
         raise ValueError(f"Prepared output must be a regular directory: {output}")
 
-    for name in MOD_IDS[:2]:
+    for name in MOD_IDS[:1]:
         errors = validate(root / name)
         if errors:
             raise ValueError("; ".join(errors))
     ini = metadata(root / INI_NAME)
-    selected = {name.strip() for name in ini.get("Mods", "").split(";")}
+    ordered = [name.strip() for name in ini.get("Mods", "").split(";")]
+    selected = set(ordered)
     missing = set(MOD_IDS) - selected
     if missing:
         raise ValueError("INI is missing required local mod IDs: " + ", ".join(sorted(missing)))
+    edges = LOAD_ORDER + ((("CleanUI", "PZSurvivorToolkit"),) if "ContainerCapacityIndicator" in selected else ())
+    for before, after in edges:
+        if before in selected and after in selected and ordered.index(before) > ordered.index(after):
+            raise ValueError(f"INI load order requires {before} before {after}")
     workshop = ini.get("WorkshopItems", "").split(";")
     if any(item and (not item.isascii() or not item.isdigit()) for item in workshop):
         raise ValueError("WorkshopItems must contain only numeric Workshop IDs; local mods have none")
@@ -50,14 +65,17 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
     command = [sys.executable, str(root / "JavaPatches/build.py")]
     for option, value in (("--game", game), ("--jdk", jdk)):
         if value is not None:
-            command.extend((option, str(value)))
+            command.extend((option, str(value.resolve())))
     if check:
         command.append("--check")
     subprocess.run(command, cwd=root, check=True)
 
-    patch = root / "JavaPatches/build" / MOD_IDS[2]
+    patch = root / "JavaPatches/build" / MOD_IDS[1]
+    errors = validate_no_symlinks(patch)
+    if errors:
+        raise ValueError("; ".join(errors))
     info = metadata(patch / "42/mod.info")
-    if info.get("id") != MOD_IDS[2] or not (patch / "common").is_dir():
+    if info.get("id") != MOD_IDS[1] or not (patch / "common").is_dir():
         raise ValueError("Generated Java patch mod has an invalid ID or missing common directory")
     jar_name = info.get("javaJarFile", "")
     jar = patch / "42" / jar_name
@@ -71,7 +89,7 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
     try:
         staging = temporary / "prepared"
         for name in MOD_IDS:
-            source = patch if name == MOD_IDS[2] else root / name
+            source = patch if name == MOD_IDS[1] else root / name
             shutil.copytree(source, staging / "mods" / name)
         (staging / "Server").mkdir()
         shutil.copy2(root / INI_NAME, staging / "Server" / INI_NAME)
@@ -79,13 +97,16 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
             shutil.copy2(root / "JavaPatches" / launcher, staging / launcher)
         guide = (root / "MOD_INSTALL.md").read_text(encoding="utf-8")
         guide = guide.replace("](" + INI_NAME + ")", "](Server/" + INI_NAME + ")")
-        guide = guide.replace("](README.md", "](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/README.md")
+        for name in ("README.md", "CHANGELOG.md"):
+            guide = guide.replace("](" + name, "](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/" + name)
         guide = guide.replace("](docs/", "](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/docs/")
         (staging / "MOD_INSTALL.md").write_text(guide, encoding="utf-8")
         (staging / "JavaPatches").mkdir()
         java_guide = (root / "JavaPatches/README.md").read_text(encoding="utf-8")
         for folder in ("docs", "tests"):
             java_guide = java_guide.replace("](../" + folder + "/", "](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/" + folder + "/")
+        for source, target in (("build.py", "JavaPatches/build.py"), ("../CHANGELOG.md", "CHANGELOG.md")):
+            java_guide = java_guide.replace("](" + source, "](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/" + target)
         (staging / "JavaPatches/README.md").write_text(java_guide, encoding="utf-8")
 
         if output.exists():

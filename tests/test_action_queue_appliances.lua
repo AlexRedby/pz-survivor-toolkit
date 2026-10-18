@@ -93,7 +93,9 @@ ISWalkToTimedAction = ISBaseTimedAction:derive('ISWalkToTimedAction')
 function ISWalkToTimedAction:new(character, destination)
     local action = ISBaseTimedAction.new(self, character); action.square = destination; return action
 end
-local function project(name) assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
+local function project(name)
+    if name == 'ActionQueue' then project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
+ assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
 project('ActionQueueOperations'); project('ActionQueueDefinitions'); project('ActionQueueLabels'); project('ActionQueuePolicy'); project('ActionQueue'); project('ActionQueueWorld')
 local api, world = PZSurvivorToolkit.ActionQueue, PZSurvivorToolkit.ActionQueueWorld
 local toggleTypes = {Stove = 'PZSurvivorToolkitSetStoveState', ClothingWasher = 'ISToggleClothingWasher',

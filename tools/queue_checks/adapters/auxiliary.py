@@ -131,7 +131,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             client = helper / 'media/lua/client'
             client.mkdir(parents=True)
             shutil.copy2(intake / 'VideoFixture.lua', client / 'ZZVideoFixture.lua')
-            config = {'output': str(cache / 'videos'), 'outside': str(output.parent), 'ffmpeg': str(_path(selection, 'ffmpeg', True))}
+            config = {'output': str(cache / 'videos'), 'ffmpeg': str(_path(selection, 'ffmpeg', True))}
             _write(client / 'ToolkitVideoConfig.lua', 'return {' + ','.join(key + '=' + json.dumps(value, ensure_ascii=False) for key, value in config.items()) + '}\n')
     elif suite == 'item-tags':
         fixture['mods'] = ['QuartermasterScreens']

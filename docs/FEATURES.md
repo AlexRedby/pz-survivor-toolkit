@@ -18,7 +18,7 @@
 ## Controls
 
 - Click the **flashlight icon** beside the left sidebar Inventory button to toggle highlighting. A warm tint and checkmark indicate ON; a grey icon indicates OFF. Hover for the state and current shortcut.
-- The adjacent **tools icon** opens Wishlist (when enabled), context menu rules and Toolkit settings. Settings open scrolled to the Toolkit section. Window buttons retain their text with a shared muted warm style.
+- The adjacent **tools icon** opens Wishlist, context menu rules and Toolkit settings. Settings open scrolled to the Toolkit section. Window buttons retain their text with a shared muted warm style.
 - **F8** is the default optional shortcut. Change it using **Options > Mods > PZ Survivor Toolkit > Toggle key**.
 - **Options > Mods > PZ Survivor Toolkit** provides the highlight switch, colour picker, toggle key binding and radius (5, 10, 15 or 20 tiles).
 - **Show highlight button in sidebar** independently hides or restores the sidebar button; the shortcut and highlight setting still work while it is hidden.
@@ -80,14 +80,14 @@ The window hides and releases its displayed rows when the queue empties, the pla
 
 ## Survivor Wishlist
 
-The separate `PZSurvivorWishlist` folder contains an independent wishlist mod, required and already enabled in the selected INI after the crafting/UI mods. The preparation command includes it for the server and every client. It needs neither Shopping List nor WANTED.
+Survivor Wishlist is included in Toolkit and needs neither Shopping List nor WANTED. Its `PZSurvivorWishlist` namespace, storage, RPCs and **Options > Mods > Survivor Wishlist** settings section remain unchanged.
 
-- Press **K** or choose **Open wishlist** from the sidebar Toolkit tools icon. With Wishlist alone, its tools icon opens the list directly. Search the catalog by item name or full type; a sample or recipe is not required. Set the desired quantity and add the item.
+- Press **K** or choose **Open wishlist** from the sidebar Toolkit tools icon. Search the catalog by item name or full type; a sample or recipe is not required. Set the desired quantity and add the item.
 - Native inventory context menus and the native, Neat Crafting, Neat Building and Project Cook crafting windows can add wanted items. Crafting offers results and missing ingredients; choose one alternative when a recipe accepts different items. Fluids and partial uses are not treated as exact piece counts: these entries ask for one suitable container/item and say to check its contents or remaining uses.
 - **Sharing** grants editing to named server usernames (including offline players), your current faction, or both. Everyone with access edits the same list; only its owner changes access. The list selector chooses where additions go. All unfinished goals in your accessible lists are highlighted. Concurrent changes against an old revision are rejected with a prompt to review the refreshed list.
 - Quantities are shared goals. **Carried by you** counts only your own inventory and carried bags. Mark completed goals manually, so one player's inventory does not silently complete a group objective.
-- Highlights apply to visible inventory rows and loose wanted objects currently in your character's field of view, on the same floor and within 15 tiles. Containers, corpses and contents of bags on the ground are never scanned or outlined. CleanUI's two inventory modes and Better Containers' combined item view are supported. With Toolkit installed, wishlist colours take priority on wanted ground items.
-- **Options > Mods > Survivor Wishlist** separately controls inventory highlights, ground highlights and crafting controls, plus colour and hotkey. Use the native window close button or Escape to close its windows.
+- Highlights apply to visible inventory rows and loose wanted objects currently in your character's field of view, on the same floor and within 15 tiles. Containers, corpses and contents of bags on the ground are never scanned or outlined. CleanUI's two inventory modes and Better Containers' combined item view are supported. The shared world scanner keeps the normal highlight colour/radius separate from Wishlist's colour and fixed 15-tile radius; wanted items use the Wishlist colour.
+- **Options > Mods > Survivor Wishlist** controls inventory highlights, ground highlights and crafting controls, plus Wishlist colour and hotkey. Use the native window close button or Escape to close its windows.
 
 Native single-player Wishlist UI, storage and lifecycle have not been validated end to end.
 

@@ -50,7 +50,7 @@ For a human visual check, play either captured file with `ffplay -an -autoexit /
 
 Verification checks recorder success and the voice-disabled marker, dimensions, frame rate, frame count, duration, absent audio, and a full decode. It extracts first, middle, and last PNGs under `profile/verification/`. Keep generated profiles, logs, videos, and extracted images outside this contribution.
 
-The fixture rejects output outside its profile and duplicate starts/stops. Frame readback uses the actual GLFW framebuffer size, which can differ from the requested window size on scaled or Retina displays. Synchronous GL readback can reduce game FPS; queued frames preserve elapsed time by holding the previous image. The recorder caps output at 4K, fails and finalizes on resize, and has a 15-second FFmpeg timeout.
+The live fixture checks successful captures, duplicate starts/stops and a recording restart. Invalid output paths are tested through the public `VideoRecording.start` API in headless `VideoChecks`, including relative paths, the profile root and symlink escapes, with no capture files or encoder created on rejection. Keeping expected error diagnostics out of the positive live scenario lets the common runtime audit remain strict. Frame readback uses the actual GLFW framebuffer size, which can differ from the requested window size on scaled or Retina displays. Synchronous GL readback can reduce game FPS; queued frames preserve elapsed time by holding the previous image. The recorder caps output at 4K, fails and finalizes on resize, and has a 15-second FFmpeg timeout.
 
 Run the no-game tests from the repository root:
 

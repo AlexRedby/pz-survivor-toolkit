@@ -94,6 +94,47 @@ class StartupTests(unittest.TestCase):
         path.write_text('[STARTUP_TEST] SERVER_READY\n')
         self.assertEqual([], self.verify(self.logs())['issues'])
 
+    def test_host_bootstrap_launches_coop_once_and_waits_for_native_status(self):
+        lua = shutil.which('lua5.4') or shutil.which('lua') or shutil.which('luajit')
+        if not lua:
+            self.skipTest('Lua interpreter unavailable')
+        code = r'''
+local source=arg[1]
+local handlers={}
+Events=setmetatable({},{__index=function(self,key)
+ local event={Add=function(fn)handlers[key]=fn end};rawset(self,key,event);return event
+end})
+package.loaded.QueueTestSelection={kind='mp',mode='toolkit',port=17463,options={mp_host=true},resources={heap_mib=2048}}
+function isClient()return false end
+function isIngameState()return false end
+function getSteamModeActive()return false end
+function getFileReader()return {readLine=function()return 'client1'end,close=function()end}end
+CoopConnection={}
+local launched,connected,approved=0,0,0
+CoopServer={launch=function(self,name,user,memory)
+ assert(name=='queue-smoke' and user=='client1' and memory==2048);launched=launched+1
+end,sendMessage=function(self,tag,user)
+ if tag=='approve-login-attempt'then assert(user=='client2');approved=approved+1 end
+end,getAddress=function()return '127.0.0.1'end,getPort=function()return 17463 end,
+getAdminPassword=function()return 'native-generated-password'end}
+function serverConnect(user,password,address,unused,port,serverPassword,name)
+ assert(user=='client1' and password=='native-generated-password' and port=='17463' and name=='queue-smoke')
+ connected=connected+1
+end
+ConnectToServer={instance={connect=function()error('Host owner must connect through its CoopServer')end}}
+dofile(source)
+handlers.OnMainMenuEnter();handlers.OnMainMenuEnter();assert(launched==1 and connected==0)
+handlers.OnCoopServerMessage('status',nil,'UI_ServerStatus_Initialising');assert(connected==0)
+handlers.OnCoopServerMessage('login-attempt',nil,'foreign');assert(approved==0)
+handlers.OnCoopServerMessage('login-attempt',nil,'client2');assert(approved==1)
+handlers.OnCoopServerMessage('status',nil,'UI_ServerStatus_Started')
+handlers.OnCoopServerMessage('status',nil,'UI_ServerStatus_Started')
+handlers.OnMainMenuEnter();assert(connected==1 and launched==1)
+'''
+        result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/startup/client/ZZStartup.lua')],
+                                input=code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
     def test_actual_bootstrap_waits_for_game_start_tick_square_and_connection(self):
         lua = shutil.which('lua5.4') or shutil.which('lua') or shutil.which('luajit')
         if not lua:
@@ -106,6 +147,11 @@ for index,kind in ipairs({'sp','mp','mp'})do
   local event={Add=function(fn)handlers[key]=fn end};rawset(self,key,event);return event
  end})
  local connection=index==3 and {username='animal-fixture',password='isolated-native-only'} or nil
+ local role=index==2 and 'client2' or 'client1'
+ function getFileReader(name,create)
+  assert(name=='smoke-user.txt'and create==false)
+  return {readLine=function()return role end,close=function()end}
+ end
  package.loaded.QueueTestSelection={kind=kind,mode='native',port=17463,options={startup_connection=connection}}
  local ingame,connected,player=false,false,nil
  function isClient()return connected end
@@ -117,7 +163,7 @@ for index,kind in ipairs({'sp','mp','mp'})do
   charCreationMain={onOptionMouseDown=function()nexts=nexts+1 end},setDefaultSandboxVars=function()end}}
  MapSpawnSelect={instance={getIsVisible=function()return false end,useDefaultSpawnRegion=function()end,setVisible=function()end}}
  ConnectToServer={instance={connect=function(self,screen,name,user,password,host,unused,port)
-  assert(user==(connection and connection.username or 'client1')and port=='17463')
+  assert(user==(connection and connection.username or role)and port=='17463')
   assert(password==(connection and connection.password or 'smoke-local-only'),'explicit credentials must reach native connect')
   connects=connects+1
  end}}

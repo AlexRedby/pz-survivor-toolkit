@@ -1,10 +1,10 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` **0.1.20** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
+`PZToolkitJavaPatches` is an experimental Java mod for **B42.21 only**. Its version is set in the [build definition](build.py); recorded changes are in the [changelog](../CHANGELOG.md#toolkit-java-patches). It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
 
 ## Prepare and install
 
-Use the [combined installation guide](../MOD_INSTALL.md#prepare-once) to build and distribute the three repository mods. The selected INI already includes this patch. [Java-only builds and tests](../docs/DEVELOPMENT.md#java-development) are documented separately.
+Use the [combined installation guide](../MOD_INSTALL.md#prepare-once) to build and distribute the two repository mods. The selected INI already includes this patch. [Java-only builds and tests](../docs/DEVELOPMENT.md#java-development) are documented separately.
 
 ## Server loader
 
@@ -12,7 +12,7 @@ Host starts a separate Java process. Loading ZombieBuddy only in the client does
 
 ### Host: save approvals first
 
-1. Complete the [client loader setup](../MOD_INSTALL.md#zombiebuddy-loader) and install all three prepared local mod folders. Subscribe to [Peek a View](https://steamcommunity.com/workshop/filedetails/?id=3710281407) and [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436) as well as ZombieBuddy so all selected Java mods are available before the first Host launch.
+1. Complete the [client loader setup](../MOD_INSTALL.md#zombiebuddy-loader) and install both prepared local mod folders. Subscribe to [Peek a View](https://steamcommunity.com/workshop/filedetails/?id=3710281407) and [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436) as well as ZombieBuddy so all selected Java mods are available before the first Host launch.
 2. In the client's **Mods** menu enable **ZombieBuddy**, **Peek a View**, **MP Vanilla Animal Trailer Sync Fix** and **Toolkit Java Patches (Experimental)**. Restart when asked, then approve **PeekAView**, **PZToolkitJavaPatches** and **AnimalTrailerSyncMPFix** when prompted, choosing to **save each decision**. Do this before opening Host, and repeat when a changed JAR prompts again.
 3. Close the game, leave Steam running, and launch using the appropriate command below. Then choose the configured profile in **Host**.
 
@@ -38,7 +38,7 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 
 ### Dedicated server
 
-1. Put the platform's ZombieBuddy loader files in the server installation following the [official guide](https://github.com/zed-0xff/ZombieBuddy/blob/master/doc/Installation.md). Keep all three local mods and the selected INI in the server account's Zomboid directory.
+1. Put the platform's ZombieBuddy loader files in the server installation following the [official guide](https://github.com/zed-0xff/ZombieBuddy/blob/master/doc/Installation.md). Keep both local mods and the selected INI in the server account's Zomboid directory.
 2. Add one loader argument to the server's JVM options, before `zombie.network.GameServer`: `-javaagent:"/full/path/ZombieBuddy.jar"` on macOS/Linux, or `-agentpath:"D:\path\zbNative.dll"` on Windows. Keep the existing server arguments. If your launcher uses a JSON `vmArgs` array, add it there using valid JSON escaping. Do not add a second loader if it is already configured.
 3. Run the first start interactively under the **account that will run the server**. ZombieBuddy's dedicated-server default uses console prompts: answer `y` to allow the **PZToolkitJavaPatches** JAR, then `y` to save. Review the selected **AnimalTrailerSyncMPFix** and other Java mod prompts too. Start it as a service only after approvals are saved; repeat interactively when a changed JAR needs approval.
 4. Check the server log before using it for play.
@@ -57,6 +57,16 @@ Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.2
 The selected Workshop `AnimalTrailerSyncMPFix` supplies a separate trailer timer fix; check `[AnimalTrailerSyncMPFix] ACTIVE` in the server log too (verified v1.3). See its [scope and installation](../MOD_INSTALL.md#animal-trailer-fix).
 
 These appear at the default log verbosity. Missing output, `false` values, or target-class/transformation errors mean setup is incomplete or needs investigation. The client also shows **ZombieBuddy ... loaded** in the upper-left corner. A client message alone does not confirm server activation.
+
+## Shared action lifecycle and outcomes
+
+Version 0.1.17 restricts incoming item-transfer cancellation to transactions owned by its connection, and prevents an absent action from being reported as completed. These corrections preserve native packet validation and effect execution.
+
+With Toolkit 0.1.60's queue enabled, the common native completion boundary holds queue advancement until the whole `perform` callback, SP `complete` effects and Java action removal have finished. Callback errors and explicit `complete=false` fail closed. Native actions still execute through `ISTimedActionQueue`; resource contracts and required cleanup remain in place. Generator repairs use this common boundary when active and retain their earlier fallback for clients without a supported Java patch.
+
+Native timed actions and builds receive owner/type/transaction-correlated start and terminal receipts on native ordered channel 1. Each server action instance has a UUID token. Supported selective interruption waits for both local removal and the authoritative outcome; only `canceled` permits replay. A missing result times out after 30 seconds without replay. Existing build acknowledgements and family workarounds remain available until their live SP/MP replacement gates pass. Custom mod commands and item transfers do not gain new interruption permissions from this protocol.
+
+Verify `itemTransactions=true`, `actionManager=true`, `actionCompletion=true` and `actionAcknowledgements=true` in the activation line, plus actual `TransactionManager`, `ItemTransactionPacket`, `ActionManager` and `LuaTimedActionNew` transformations. Install and approve the same rebuilt JAR in clients and the server. The reproducible gameplay gate is `tools/check_action_queue.py run <fresh-output> --suite engine --kind sp|mp --mode toolkit --cases repair,cancel --game <game-java-directory> --jdk <jdk-25-directory> --workshop <workshop-content-108600>`; it checks real generator repair/cancellation, exact scrap IDs and an independent native reading tail.
 
 ## Build cancellation
 
@@ -132,7 +142,9 @@ Version 0.1.12 repairs the missing destination room lookup after native basement
 
 The exact shipped Mannequin zone at13583,1299,0 is missing its `properties` table. The patch adds an empty table after a fresh native Lua load, guarded by exact map/handler hashes, active stock map directories, target class hashes and the original row shape. It preserves sprite-derived appearance and random clothing; it does not guess a special outfit. Only the identified no-override zone receives lowest priority so overlapping custom zones registered before or after it keep their existing effect. Changed data and unrelated missing-properties diagnostics remain native.
 
-Known upstream issue, intentionally accepted for **B42.21.0 build4a0e9546ec**: `Basements.mergeRoomsOntoMetaCell` reports `duplicate RoomDef.metaID for room at 10707,9484,0`. The stock hall and basement-access definitions share a persistent ID. This issue is out of scope by explicit project decision: do not restore a fix, add reproduction tests, or reopen investigation of this diagnostic. Version 0.1.14 removes the experimental room-state implementation and its tests. Native room construction, identities and metadata loading/saving are left to the game.
+Version 0.1.18 separates the persistent keys of the exact stock hall and its basement-access overlay at `10707,9484,0`. Both native room objects, runtime IDs, geometry, ordering, building owner and spawn receipts remain native. Before the verified merge, only the original hall receives key `0x505A0000000C00D3`; the access hall keeps `786643`. Exact engine bytecode, active stock map, lot-header/access-file hashes, room identity and unoccupied-key guards restrict the correction. Only source-verified room objects are admitted. An admitted object keeps its saved key through native recalculation and editing; unrelated new/custom objects retain native calculation. Recalculation of an admitted room refuses an occupied destination key before the native caller can overwrite another room. Check `basementHall=true` and `Basement hall key separated` after a cold start with the rebuilt JAR approved on clients and server.
+
+**Save dependency, explicitly accepted by the user:** old duplicate-key records load through the ordinary loader with exactly the previous native result: both target the access hall and the last wins. Previously lost state is not recovered. Future native saves store two different keys. Disabling the patch or failing its guards after an update causes the native loader to skip the original hall's new key and lose that room's saved flags; an unpatched save then drops that record. This is not a downgrade-safe transition. No converter, custom trailer or restoration of the removed0.1.13 persistence machinery is included. Keep existing save backups.
 
 The common runner retains the raw diagnostic and counts it as a known background issue only for the verified native B42.21 JAR and this exact message/origin. It does not fail a run by itself. Other coordinates, origins, builds, exceptions and unrelated diagnostics retain normal auditing. The temporary 0.1.13 implementation wrote an optional trailer that the ordinary native reader already ignores; no conversion or automatic restoration of saved files is performed. Keep any existing backups as historical data.
 

@@ -1,7 +1,0 @@
-name=Survivor Wishlist
-id=PZSurvivorWishlist
-author=AlexRedby
-modversion=0.1.0
-category=features
-description=Personal and shared wishlists with a searchable item catalog and crafting integration.<LINE>Highlights wanted item rows and visible loose items on the ground. No container radar.<LINE>Share with named players or your faction. Server and clients need this mod.<LINE>Open with K or the sidebar tools icon; with Toolkit, choose Open wishlist. Independent switches in Options > Mods > Survivor Wishlist.<LINE>Source: https://github.com/AlexRedby/pz-survivor-toolkit
-versionMin=42.21

@@ -5,18 +5,28 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import tempfile
 import zipfile
 
 
 ROOT = Path(__file__).resolve().parent.parent
 MOD_ROOT = ROOT / "PZSurvivorToolkit"
-MOD_NAMES = {"PZSurvivorToolkit": "PZ Survivor Toolkit", "PZSurvivorWishlist": "Survivor Wishlist"}
+MOD_NAMES = {"PZSurvivorToolkit": "PZ Survivor Toolkit"}
+
+
+def validate_no_symlinks(mod_root: Path) -> list[str]:
+    if mod_root.is_symlink():
+        return [f"symbolic link in mod source: {mod_root}"]
+    return [f"symbolic link in mod source: {path}" for path in sorted(mod_root.rglob("*"))
+            if path.is_symlink()]
 
 
 def validate(mod_root: Path = MOD_ROOT) -> list[str]:
     mod_info = mod_root / "42/mod.info"
     bootstrap = mod_root / "42/media/lua/shared" / (mod_root.name + ".lua")
-    errors: list[str] = []
+    errors = validate_no_symlinks(mod_root)
+    if errors:
+        return errors
     if not mod_root.is_dir():
         return [f"missing mod directory: {mod_root}"]
     for required in (mod_root / "common", mod_root / "42"):
@@ -38,8 +48,6 @@ def validate(mod_root: Path = MOD_ROOT) -> list[str]:
             errors.append(f"mod.info must declare id={mod_root.name}")
         for key in ("icon", "poster"):
             name = metadata.get(key, "")
-            if not name and mod_root.name == "PZSurvivorWishlist":
-                continue
             candidates = [mod_root / folder / name for folder in ("42", "common")]
             if not name or not any(path.is_file() and path.resolve().is_relative_to(mod_root.resolve())
                                    for path in candidates):
@@ -53,14 +61,24 @@ def validate(mod_root: Path = MOD_ROOT) -> list[str]:
 
 
 def package(output: Path, mod_root: Path = MOD_ROOT) -> None:
+    errors = validate(mod_root)
+    if errors:
+        raise ValueError("; ".join(errors))
+    if output.is_symlink() or (output.exists() and not output.is_file()):
+        raise ValueError(f"archive output must be a regular file: {output}")
+    if output.resolve().is_relative_to(mod_root.resolve()):
+        raise ValueError(f"archive output must be outside the mod source: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(f"{mod_root.name}/common/", b"")
-        for path in sorted(mod_root.rglob("*")):
-            if not path.is_file() or path.name == ".gitkeep":
-                continue
-            archive_name = Path(mod_root.name) / path.relative_to(mod_root)
-            archive.write(path, archive_name.as_posix())
+    with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as staging:
+        temporary = Path(staging) / output.name
+        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(f"{mod_root.name}/common/", b"")
+            for path in sorted(mod_root.rglob("*")):
+                if not path.is_file() or path.name == ".gitkeep":
+                    continue
+                archive_name = Path(mod_root.name) / path.relative_to(mod_root)
+                archive.write(path, archive_name.as_posix())
+        temporary.replace(output)
 
 
 def main() -> int:
@@ -82,7 +100,11 @@ def main() -> int:
     print("OK: mod structure is valid")
     if not args.check:
         output = args.output or ROOT / "dist" / (args.mod + ".zip")
-        package(output, mod_root)
+        try:
+            package(output, mod_root)
+        except (OSError, ValueError) as error:
+            print(f"ERROR: {error}")
+            return 1
         print(f"OK: wrote {output}")
     return 0
 

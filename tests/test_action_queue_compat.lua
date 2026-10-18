@@ -48,6 +48,7 @@ ISLogSystem = {logAction = function() end}
 DebugType = {Action = {warn = function() end}}
 luautils = {getCorrectSquareForWall=function(_, square) return square end,
     haveToBeTransfered = function(character, item) return item:getContainer() ~= character:getInventory() end}
+assert(loadstring(read(NativeActionRoot .. '/client/ISUI/ISXuiSkin.lua')))()
 assert(loadstring(read(NativeActionRoot .. '/shared/TimedActions/ISBaseTimedAction.lua')))()
 assert(loadstring(read(NativeActionRoot .. '/client/TimedActions/ISTimedActionQueue.lua')))()
 assert(loadstring(read(NativeActionRoot .. '/client/TimedActions/ISQueueActionsAction.lua')))()
@@ -119,6 +120,35 @@ ISInventoryPaneContextMenu = {getContainers = function() return list({}) end,
     transferIfNeeded = function(character, item)
         if item:getContainer() ~= character:getInventory() then ISTimedActionQueue.add(ISInventoryTransferAction:new(character,item,item:getContainer(),character:getInventory())) end
     end}
+-- UI producers use native queue APIs; their engine effects are applied below.
+ISInventoryPaneContextMenu.onGrabItems=function(items,playerNum)
+    local player=getSpecificPlayer(playerNum)
+    for _,item in ipairs(items) do ISInventoryPaneContextMenu.transferIfNeeded(player,item) end
+end
+ISEquipWeaponAction.new=function(self,player,item,time,primary,twoHands)
+    local action=ISBaseTimedAction.new(self,player)
+    action.item,action.primary,action.twoHands=item,primary,twoHands
+    return action
+end
+ISEquipWeaponAction.complete=function(action)
+    if action.twoHands then action.character.primary,action.character.secondary=action.item,action.item
+    elseif action.primary then action.character.primary=action.item
+    else action.character.secondary=action.item end
+    return true
+end
+ISUnequipAction.complete=function(action)
+    if action.character.primary==action.item then action.character.primary=nil end
+    if action.character.secondary==action.item then action.character.secondary=nil end
+    return true
+end
+ISInventoryPaneContextMenu.equipWeapon=function(item,primary,twoHands,playerNum)
+    local player=getSpecificPlayer(playerNum)
+    ISInventoryPaneContextMenu.transferIfNeeded(player,item)
+    ISTimedActionQueue.add(ISEquipWeaponAction:new(player,item,50,primary,twoHands))
+end
+ISInventoryPaneContextMenu.OnPrimaryWeapon=function(items,playerNum)
+    ISInventoryPaneContextMenu.equipWeapon(items[1],true,false,playerNum)
+end
 local menu = {options = {}}
 ISContextMenu = {addOption = function(self, name, target, callback, ...)
     local option = {name = name, target = target, callback = callback, args = {...}}
@@ -226,6 +256,10 @@ require = function(module)
     elseif module == 'Project_Cook/PJCK_FrozenCooking' or module == 'Project_Cook/PJCK_EvolvedSpiceGuard' then id, branch = 'Project_Cook', 'shared/'
     elseif module:match('^ISUI/WMI_') and module ~= 'ISUI/WMI_Compat_TABAS' then id, branch = 'WashFix', 'client/'
     elseif module == 'TimedActions/WMI_PatchWashClothing' then id, branch = 'WashFix', 'shared/'
+    elseif module == 'PZSurvivorToolkit/ActionQueueTidyIntent' then return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'))()
+    elseif module == 'PZSurvivorToolkit/ActionQueueLifecycle' then
+        if PZSurvivorToolkit.ActionQueueLifecycle then return PZSurvivorToolkit.ActionQueueLifecycle end
+        return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
     elseif module == 'P4TidyUpMeister' then id, branch = 'P4TidyUpMeister', 'client/'
     elseif module == 'MPFastForward_ReadFix' then id, branch = 'MPFastForward', 'server/'
     elseif module:match('^BetterContainers/') then id,branch='EURY_CONTAINERS','client/'
@@ -248,6 +282,8 @@ fixturePolicy.resumableWorld=function() return false end
 fixturePolicy.replaceStop=function() end
 fixturePolicy.inspect=definitions.inspect
 PZSurvivorToolkit.ActionQueueLabels={label=function() end}
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local compatSource = read(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua')
 local compat = assert(loadstring((compatSource:gsub('\nreturn Compat', '\nCompat.fixtureRegistries = {records, sessions}\nreturn Compat'))))()
@@ -258,6 +294,7 @@ assert(transferHelperAdopted,'verified Tidy load hands the exact native wrapper 
 assert(transferItemGuard and transferItemGuard() and adoptedTransferItem==ISTransferAction.transferItem,
     'actual pinned Tidy source adopts its once-captured native delegate wrapper')
 assert(TidyFixture.ISTransferAction_transferItem==nativeTransferItem,'actual source saves the captured helper as its private delegate')
+assert(PZSurvivorToolkit.ActionQueueLifecycle,'early Compat load must install Lifecycle before P4 method snapshots')
 local tidyPublic=P4TidyUpMeister
 P4TidyUpMeister={registerActionPolicy=tidyPublic.registerActionPolicy,registerWornItemReplacement=tidyPublic.registerWornItemReplacement}
 assert(not transferItemGuard(),'late public owner replacement invalidates adopted helper identity')
@@ -293,7 +330,7 @@ local player = {class = 'IsoPlayer', getInventory = function() return inventory 
     isPlayerMoving=function() return false end, pressedMovement=function() return false end,
     hasTimedActions = function() return false end, getModData = function() return {P4TidyUpMeister = {doNotReequip = doNotReequip}} end,
     getWornItems = function() return list({}) end, getPrimaryHandItem = function(self) return self.primary end,
-    getSecondaryHandItem = function() end, isEquipped = function() return false end, setIsFarming = function() end,
+    getSecondaryHandItem = function(self) return self.secondary end, isEquipped = function() return false end, setIsFarming = function() end,
     isTimedActionInstant = function() return false end, hasTrait = function() return false end}
 player.getPerkLevel=function() return 0 end
 player.getX=function() return 0 end; player.getY=function() return 0 end
@@ -495,6 +532,81 @@ local owner = setmetatable({}, PJCK_CraftActionPanel)
 local callbackAction = {onStartFunc=owner.onHandcraftActionStart,onCompleteFunc=owner.onHandcraftActionComplete,onCancelFunc=owner.onHandcraftActionCancelled}
 assert(compat.isCraftOwner('PJCK_CraftActionPanel',owner,callbackAction))
 owner.startHandcraft=function() end; assert(not compat.isCraftOwner('PJCK_CraftActionPanel',owner,callbackAction),'unknown owner instance helpers fail closed')
+do
+    local control=setmetatable({},NC_CraftActionPanel)
+    ISXuiSkin.RegisterXuiSkinFunctions(control,false)
+    local callbacks={onStartFunc=control.onHandcraftActionStart,onCompleteFunc=control.onHandcraftActionComplete,
+        onCancelFunc=control.onHandcraftActionCancelled}
+    assert(compat.isCraftOwner('NC_CraftActionPanel',control,callbacks),
+        'actual native Xui instance functions do not replace verified Neat callbacks')
+    for _,name in ipairs({'xuiRecalculateLayout','xuiRootElement'})do
+        local original=rawget(control,name)
+        assert(type(original)=='function'and original==ISXuiSkinFunctions[name],
+            'native RegisterXuiSkinFunctions must attach each exact instance method')
+        local foreign=function()error('foreign Xui helper must not run')end
+        control[name]=foreign
+        assert(not compat.isCraftOwner('NC_CraftActionPanel',control,callbacks),'unknown Xui instance pointer remains protected: '..name)
+        ISXuiSkinFunctions[name]=foreign
+        assert(not compat.isCraftOwner('NC_CraftActionPanel',control,callbacks),'late Xui registry changes cannot establish a baseline: '..name)
+        ISXuiSkinFunctions[name],control[name]=original,original
+    end
+    control.unknownNativeUIHelper=function()error('unknown instance function must not run')end
+    assert(not compat.isCraftOwner('NC_CraftActionPanel',control,callbacks),'extra arbitrary instance functions remain protected')
+    control.unknownNativeUIHelper=nil
+    assert(compat.isCraftOwner('NC_CraftActionPanel',control,callbacks),'restoring native instance pointers restores the verified owner')
+end
+-- Java HandcraftLogic counts each start and decrements one reference per ordinary stop.
+local function projectCookOwner(craftTimes)
+    local logic={references=0,starts=0,stops=0,refills=0,sorts=0}
+    function logic:startCraftAction()
+        self.starts=self.starts+1;self.references=self.references+1
+    end
+    function logic:stopCraftAction(all)
+        self.stops=self.stops+1;self.references=math.max(0,self.references-1)
+        if all then self.references=0 end
+    end
+    function logic:autoPopulateInputs()self.refills=self.refills+1 end
+    function logic:sortRecipeList()self.sorts=self.sorts+1 end
+    local control=setmetatable({player=player,logic=logic,craftTimes=craftTimes,returnToContainer={},refreshes=0,
+        quantityInput={setText=function(self,value)self.text=value end}},PJCK_CraftActionPanel)
+    control.HandCraftPanel={updateContainers=function()control.refreshes=control.refreshes+1 end}
+    local callbacks={onStartFunc=control.onHandcraftActionStart,onCompleteFunc=control.onHandcraftActionComplete,
+        onCancelFunc=control.onHandcraftActionCancelled}
+    assert(compat.isCraftOwner('PJCK_CraftActionPanel',control,callbacks),'actual verified Project Cook callbacks own the fixture')
+    return control,logic
+end
+local previousEnabled=enabled
+for _,queueEnabled in ipairs({false,true}) do
+    enabled=queueEnabled
+    for _,quantity in ipairs({1,2}) do
+        local control,logic=projectCookOwner(quantity)
+        for i=1,quantity do
+            control:onHandcraftActionStart({})
+            control:onHandcraftActionComplete()
+        end
+        local expectedReferences=quantity==2 and not queueEnabled and 1 or 0
+        local expectedStops=quantity==2 and queueEnabled and 2 or 1
+        assert(logic.references==expectedReferences and logic.stops==expectedStops,
+            'Project Cook refcount queue='..tostring(queueEnabled)..' quantity='..quantity
+            ..' references='..logic.references..' stops='..logic.stops..' expected='..expectedReferences..'/'..expectedStops)
+        assert(logic.starts==quantity and logic.refills==quantity and logic.sorts==quantity and control.refreshes==quantity,
+            'actual Project Cook completion and FrozenCooking helpers still run once per craft')
+        assert(control.craftTimes==nil and control.quantityInput.text=='1' and control.currentCraftQuantity==1,
+            'actual Project Cook completion restores single-craft UI state')
+    end
+    local control,logic=projectCookOwner(2)
+    control:onHandcraftActionStart({});control:onHandcraftActionCancelled()
+    assert(logic.references==0 and logic.stops==1 and control.craftTimes==nil,'Project Cook cancellation retains its native stop')
+    control:onHandcraftActionComplete()
+    assert(logic.references==0 and logic.stops==2,'native stop completion after cancellation gets no extra batch balance')
+end
+enabled=true
+local changedCook,changedLogic=projectCookOwner(2)
+changedCook.startHandcraft=function() end
+changedCook:onHandcraftActionStart({});changedCook:onHandcraftActionComplete()
+assert(changedLogic.references==1 and changedLogic.stops==0,
+    'a modified Project Cook instance helper keeps native completion without extra balancing')
+enabled=previousEnabled
 reset()
 local panel = setmetatable({player=player,baseItem=item(inventory,12),preCookItems={},inputGroupCache={Ingredient={}}},PJCK_EvoPanel)
 local recipe = {getMaxItems=function() return 6 end}
@@ -580,7 +692,7 @@ for _,class in ipairs({ISInventoryTransferAction,ISReadABook}) do
         fixtureContractMethods[class][name]=class[name]
     end
 end
-definitions.registerBehavior('fixture.native-tidy-inputs',{matches=function(action)
+definitions.registerBehavior('fixture.native-tidy-inputs',{types={'ISInventoryTransferAction','ISReadABook'},matches=function(action)
     local class=getmetatable(action); local methods=fixtureContractMethods[class]
     if not methods or action.perform~=methods.perform then return false end
     for name,callback in pairs(methods) do if class[name]~=callback then return false end end
@@ -717,6 +829,73 @@ assert(floorRestores==2,'actual installed Tidy builds MP floor cleanup without t
 while queue.queue[1] do queue.queue[1]:perform() end
 isClient=nativeClient; tickTidy(); tickTidy()
 assert(TidyFixture.restoring[player]==nil and TidyFixture.restoreFloor[player]==nil)
+-- Match the early-Compat / later-ActionQueue startup order, including inherited P4 stop methods.
+local previousStop=ISBaseTimedAction.stop
+ISBaseTimedAction.stop=function(...) return previousStop(...) end
+assert(compat.adoptStop(previousStop,ISBaseTimedAction.stop))
+-- Exercise the installed, unmodified P4 session builder, including its stale hand baseline.
+local intent=PZSurvivorToolkit.ActionQueueTidyIntent
+for _,queueEnabled in ipairs({false,true}) do
+    reset();enabled=queueEnabled;doNotReequip=false;player.primary,player.secondary=nil,nil
+    local kept,borrowed=item(tidyBag,71),item(tidyBag,72)
+    ISInventoryPaneContextMenu.onGrabItems({kept},0)
+    local manualPickup=queue.queue[1]
+    local borrowedPickup=ISInventoryTransferAction:new(player,borrowed,tidyBag,inventory)
+    ISTimedActionQueue.add(borrowedPickup);ISTimedActionQueue.add(ISReadABook:new(player,borrowed))
+    inventory.values={kept,borrowed}
+    while queue.queue[1] do
+        local action=queue.queue[1]
+        if action==manualPickup then intent.begin(action,'perform') end
+        action:perform()
+        if action==manualPickup then intent.finish(action,'perform',true) end
+    end
+    tickTidy();tickTidy()
+    assert(not findReturn(kept) and findReturn(borrowed),
+        'real P4 keeps confirmed manual pickup and returns only the borrowed item with queue '..tostring(queueEnabled))
+    while queue.queue[1] do queue.queue[1]:perform() end
+    tickTidy();tickTidy()
+    reset();enabled=queueEnabled;doNotReequip=false
+    local original,manual,tool=item(inventory,81),item(inventory,82),item(inventory,83)
+    inventory.values={original,manual,tool};player.primary,player.secondary=original,nil
+    ISInventoryPaneContextMenu.OnPrimaryWeapon({manual},0)
+    local manualEquip=queue.queue[1]
+    ISTimedActionQueue.add(ISEquipWeaponAction:new(player,tool,50,true,false))
+    P4TidyUpMeister.registerActionPolicy('ISReadABook',{restoreHands=true})
+    ISTimedActionQueue.add(ISReadABook:new(player,tool))
+    while queue.queue[1] do
+        local action=queue.queue[1]
+        if action==manualEquip then intent.begin(action,'complete') end
+        if action.complete then action:complete() end
+        if action==manualEquip then intent.finish(action,'complete',true) end
+        action:perform()
+    end
+    assert(player.primary==tool and TidyFixture.sessions[player].primaryItem==original,
+        'automatic tool prep changes hands after P4 captured the older baseline')
+    tickTidy();tickTidy()
+    while queue.queue[1] do
+        local action=queue.queue[1];if action.complete then action:complete() end;action:perform()
+    end
+    assert(player.primary==manual,'real P4 restores the explicit primary instead of its older baseline')
+    tickTidy();tickTidy()
+end
+player.getTimedActionToRetrigger=function() end
+player.setTimedActionToRetrigger=function() end
+for index,field in ipairs({'onStartFunc','onCompleteFunc','onCancelFunc','retriggerLastAction','onFailFunc','additionalTest'}) do
+    reset();enabled=false;doNotReequip=false;player.primary,player.secondary=nil,nil
+    local kept=item(tidyBag,90+index)
+    ISInventoryPaneContextMenu.onGrabItems({kept},0)
+    local action=queue.queue[1]
+    action[field]=field=='retriggerLastAction' and true or function() end
+    action.onCompleteArgs={}
+    ISTimedActionQueue.add(ISReadABook:new(player,kept));inventory.values={kept}
+    intent.begin(action,'perform');action:perform();intent.finish(action,'perform',true)
+    while queue.queue[1] do queue.queue[1]:perform() end
+    tickTidy();tickTidy()
+    assert(findReturn(kept),'unknown late '..field..' must leave real P4 return unchanged')
+    while queue.queue[1] do queue.queue[1]:perform() end
+    tickTidy();tickTidy()
+end
+reset()
 -- A changed source and an unknown preloaded owner cannot obtain a private baseline.
 local oldOperations,oldDefinitions,oldCompat=PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat
 local oldAdd,oldMods,oldReader,oldClass=ISTimedActionQueue.add,getActivatedMods,getModFileReader,NC_CraftActionPanel
@@ -736,4 +915,86 @@ refused=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZS
 assert(not refused.isInstalled('Neat_Crafting'),'preloaded owner is never adopted by first capture')
 PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat=oldOperations,oldDefinitions,oldCompat
 ISTimedActionQueue.add,getActivatedMods,getModFileReader=oldAdd,oldMods,oldReader
+if NativeQuartermasterLuaRoot then
+    local menuSource=read(NativeQuartermasterLuaRoot..'/client/LootSorter_CraftMenu.lua')
+    local debugSource=read(NativeQuartermasterLuaRoot..'/shared/LootSorter_Debug.lua')
+    local neatSource=read(NativeWishlistWorkshopRoot..'/'..paths.Neat_Crafting..'/media/lua/client/Neat_Crafting/NC_CraftActionPanel.lua')
+    local previousRequire,previousEvents,previousOrigin=require,Events,getFilenameOfClosure
+    local previousGetter=ISInventoryPaneContextMenu.getContainers
+    local previousDebug,previousLootSorter=isDebugEnabled,LootSorter
+    local previousNeat=NC_CraftActionPanel
+    local function quartermasterNeat(change)
+        local starts={}
+        Events={OnTick={Add=function() end},OnGameStart={Add=function(callback)starts[#starts+1]=callback end}}
+        getActivatedMods=function()return {contains=function(_,id)return id=='Neat_Crafting'or id=='Quartermaster'end}end
+        getModFileReader=function(id,path,...)
+            if id~='Quartermaster'then return oldReader(id,path,...)end
+            local source=path=='media/lua/client/LootSorter_CraftMenu.lua'and menuSource or debugSource
+            if change=='changed-source'then source=source..'\n-- changed source'end
+            local cursor=1
+            return {close=function()end,readLine=function()
+                if cursor>#source then return end
+                local boundary=source:find('\n',cursor,true)or #source+1
+                local line=source:sub(cursor,boundary-1);cursor=boundary+1;return line
+            end}
+        end
+        getFilenameOfClosure=function(callback)
+            local origin=debug.getinfo(callback,'S').source:gsub('^@','')
+            if change=='bad-provenance'and origin=='LootSorter_CraftMenu.lua'and NC_CraftActionPanel
+                and(callback==NC_CraftActionPanel.prerender or callback==NC_CraftActionPanel.onCraftButtonClick)then
+                return 'unknown-wrapper.lua'
+            end
+            return origin
+        end
+        require=function(module)
+            if module=='Neat_Crafting/NC_CraftActionPanel'then return assert(loadstring(neatSource,'@NC_CraftActionPanel.lua'))()end
+            if module=='LootSorter_CraftMenu'then return assert(loadstring(menuSource,'@LootSorter_CraftMenu.lua'))()end
+            return previousRequire(module)
+        end
+        isDebugEnabled=function()return false end
+        LootSorter=nil;assert(loadstring(debugSource,'@LootSorter_Debug.lua'))()
+        ISInventoryPaneContextMenu.getContainers=previousGetter
+        NC_CraftActionPanel=nil
+        if change=='preloaded'then require('Neat_Crafting/NC_CraftActionPanel')end
+        PZSurvivorToolkit.ActionQueueOperations={registerProducer=function()end}
+        PZSurvivorToolkit.ActionQueueDefinitions={registerBehavior=function()end}
+        local selected=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'))()
+        local class=assert(NC_CraftActionPanel)
+        if #starts==0 then require('LootSorter_CraftMenu')end -- An unverified auto-loaded module still installs its native hooks.
+        if change=='early-callback'then class.onHandcraftActionComplete=function()end
+        elseif change=='early-helper'then class.refreshAfterCraftBatch=function()end end
+        local before={}
+        for name,callback in pairs(class)do before[name]=callback end
+        for _,callback in ipairs(starts)do callback()end
+        assert(class.prerender~=before.prerender and class.onCraftButtonClick~=before.onCraftButtonClick,
+            'actual Quartermaster installer must replace both Neat UI methods')
+        if not change then
+            for name,callback in pairs(before)do
+                assert(name=='prerender'or name=='onCraftButtonClick'or class[name]==callback,
+                    'actual Quartermaster installer changed a Neat callback/helper: '..name)
+            end
+        end
+        if change=='late-callback'then class.onHandcraftActionComplete=function()end
+        elseif change=='late-helper'then class.refreshAfterCraftBatch=function()end end
+        local target=setmetatable({},class)
+        ISXuiSkin.RegisterXuiSkinFunctions(target,false)
+        local action={onStartFunc=target.onHandcraftActionStart,onCompleteFunc=target.onHandcraftActionComplete,
+            onCancelFunc=target.onHandcraftActionCancelled}
+        assert(selected.isCraftOwner('NC_CraftActionPanel',target,action)==(change==nil),
+            'Quartermaster Neat hook adoption must retain early source/callback/helper/provenance guards: '..tostring(change))
+        if not change then
+            target.onCraftButtonClick=function()end
+            assert(not selected.isCraftOwner('NC_CraftActionPanel',target,action),'unknown Neat instance UI wrapper remains protected')
+        end
+    end
+    quartermasterNeat()
+    for _,change in ipairs({'early-callback','early-helper','late-callback','late-helper','bad-provenance','changed-source','preloaded'})do
+        quartermasterNeat(change)
+    end
+    require,Events,getFilenameOfClosure=previousRequire,previousEvents,previousOrigin
+    isDebugEnabled,LootSorter,NC_CraftActionPanel=previousDebug,previousLootSorter,previousNeat
+    ISInventoryPaneContextMenu.getContainers=previousGetter
+    PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat=oldOperations,oldDefinitions,oldCompat
+    ISTimedActionQueue.add,getActivatedMods,getModFileReader=oldAdd,oldMods,oldReader
+end
 print('Selected mod chain actual-source checks passed.')

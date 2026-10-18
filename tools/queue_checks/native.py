@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 import zipfile
-from . import adapters, worlds, pack, admission
+from . import adapters, worlds, pack, admission, report, coop
 
 
 VERSION = re.compile(r"\d+(?:\.\d+)*")
@@ -24,8 +24,11 @@ def sha256(path):
 
 
 def hashes(root):
-    return {path.relative_to(root).as_posix(): sha256(path)
-            for path in sorted(root.rglob("*")) if path.is_file()}
+    paths = sorted(root.rglob("*"))
+    for path in [root, *paths]:
+        if path.is_symlink():
+            raise ValueError('Hashed input symlinks are unsupported: ' + str(path))
+    return {path.relative_to(root).as_posix(): sha256(path) for path in paths if path.is_file()}
 
 
 def _json(path, value):
@@ -123,6 +126,7 @@ def _locations(project, workshop, identifiers, overrides=None):
 
 
 def _validate(selection):
+    coop.enabled(selection)
     suite = selection.get("suite")
     if type(selection.get("schema_version")) is not int or selection["schema_version"] != 1 or not isinstance(suite, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", suite):
         raise ValueError("Expected schema_version=1 and a valid suite name")
@@ -242,6 +246,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             if not asset.is_relative_to(game):
                 raise ValueError('Game input escapes installed game: ' + relative)
             sources.append(asset)
+    if coop.enabled(selection) and project / 'tests/native_queue/startup/client/ZZStartup.lua' not in sources:
+        raise ValueError('Host requires a suite using the common startup bootstrap')
     if selection.get('config_source'):
         sources.append(Path(selection['config_source']))
     if "ZombieBuddy" in selection["mods"]:
@@ -250,21 +256,30 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         sources += [template / 'world.json', *[template / 'state' / name for name in world['files']]]
     if locked:
         sources += [Path(locked), project / 'SurvivorQoL-selected.ini']
-    # Pin the native Lua inputs too; a game update must invalidate a prepared run.
-    if (game / "media/lua").is_dir():
-        sources += sorted((game / "media/lua").rglob("*.lua"))
+    # File membership matters too: newly added Lua/scripts are live game inputs.
+    game_input_manifest = report.game_inputs(game)
+    sources += [game / tree / name for tree, files in game_input_manifest['trees'].items() for name in files]
     source_manifest = {str(path): sha256(path) for path in sources}
     manifest = [{"id": identifier, "source": str(source), "files": hashes(source)}
                 for identifier, source in locations.items()]
     for row in manifest:
         source_manifest.update({str(Path(row["source"]) / relative): digest for relative, digest in row["files"].items()})
     roles = adapters.roles(selection)
+    # copytree materializes logical file sizes, including sparse files; allow allocation/metadata overhead.
+    def copy_size(paths):
+        return sum(((path.stat().st_size + 4095) // 4096 + 1) * 4096 for path in paths)
+
+    mod_bytes = sum(copy_size(Path(row['source']) / name for name in row['files']) for row in manifest)
+    fixture_bytes = copy_size(path for path in sources if path.is_relative_to(project) and path.is_file())
+    world_bytes = copy_size(template / 'state' / name for name in world['files']) if world else 0
+    admission.require_disk(output, len(roles), len(roles) * (mod_bytes + fixture_bytes) + world_bytes)
     runtime = {"project": str(project), "game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
                "java": str(jdk / "bin/java"), "server_name": "queue-smoke", "roles": {}}
     output.mkdir(parents=True)
     if selection.get('ports_auto'):
         selection = dict(selection, ports=admission.allocate_ports(output, selection) if selection['kind'] == 'mp' else [17343, 17344])
-    for role in roles:
+    for index, role in enumerate(roles):
+        admission.require_disk(output, len(roles), (len(roles) - index) * (mod_bytes + fixture_bytes) + world_bytes)
         cache = output / role
         for directory in ("mods", "Lua", "classes", "zombie-buddy"):
             (cache / directory).mkdir(parents=True)
@@ -297,7 +312,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         shutil.copy2(support / "QueueEnergyPlacement.lua", lua / "shared")
         language = selection["languages"][-1] if role == "client2" else selection["languages"][0]
         # Shared Lua must be byte-identical for native MP checksums; role/language live in cache/Lua.
-        config = dict(selection, port=selection["ports"][0])
+        config = dict(selection, port=selection["ports"][0], resources=dict(admission.DEFAULTS, **selection.get('resources', {})))
         (lua / "shared/QueueTestSelection.lua").write_text("QueueTestSelection=" + _lua(config) + "\nreturn QueueTestSelection\n", encoding="utf-8")
         for name, value in {"smoke-user": role, "queue-mode": selection["mode"], "queue-scenario": selection["suite"],
                             "queue-health-kind": selection["kind"], "queue-health-language": language,
@@ -341,6 +356,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         worlds.restore(template, world, output, runtime)
     if adapter:
         adapter.stage(project, output, game, jdk, selection, locations, runtime)
+    admission.require_disk(output, len(roles))
     for role in roles:
         path = output / role / 'options.ini'
         settings = path.read_text()
@@ -377,11 +393,14 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         path = output / 'server/Server/queue-smoke.ini'
         text = re.sub(r'^Mods=.*$', 'Mods=' + ';'.join(active), path.read_text(), flags=re.M)
         path.write_text(text)
+    if coop.enabled(selection):
+        coop.stage(output, runtime)
     _json(output / "selection.json", selection)
     if locked:
         pack.validate(locked, project, game, selection['mods'])
     _json(output / "manifest.json", manifest)
     _json(output / "source-manifest.json", source_manifest)
+    _json(output / 'game-inputs.json', game_input_manifest)
     _json(output / "runtime.json", runtime)
     initial_settings = {path.relative_to(output).as_posix(): path.read_text(encoding="utf-8")
                         for role in roles for path in [output / role / "options.ini", *sorted((output / role / "Server").glob("*"))]
@@ -389,7 +408,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     _json(output / "initial-settings.json", initial_settings)
     comparison = {"selection": {key: value for key, value in selection.items() if key != "mode"},
                   "mods": {row["id"]: row["files"] for row in manifest}, "sources": source_manifest,
-                  "settings": initial_settings}
+                  "settings": initial_settings, "game_inputs": game_input_manifest}
     if selection.get('config_source'):
         config_path = selection['config_source']
         comparison['selection'] = dict(comparison['selection'], config_source='<suite-config>')
@@ -401,6 +420,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
                                   for name, text in initial_settings.items()}
     fingerprint = hashlib.sha256(json.dumps(comparison, sort_keys=True).replace(str(output), '<run>').encode()).hexdigest()
     _json(output / "settings-fingerprint.json", {"sha256": fingerprint, "inputs": comparison})
+    if report.game_inputs(game) != game_input_manifest:
+        raise RuntimeError('Native Lua/script inputs changed while preparing snapshot')
     for path, digest in source_manifest.items():
         if sha256(Path(path)) != digest:
             raise RuntimeError("Source changed while preparing snapshot: " + path)

@@ -75,7 +75,9 @@ luautils = {walkAdj = function(character)
     ISTimedActionQueue.clear(character)
     return true
 end}
-local function project(name) assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
+local function project(name)
+    if name == 'ActionQueue' then project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
+ assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
 project('ActionQueueOperations'); project('ActionQueueDefinitions'); project('ActionQueueLabels'); project('ActionQueuePolicy'); project('ActionQueue'); project('ActionQueueWorld'); install()
 local operations, api = PZSurvivorToolkit.ActionQueueOperations, PZSurvivorToolkit.ActionQueue
 local q = ISTimedActionQueue.getTimedActionQueue(player)
@@ -84,6 +86,7 @@ local completed = {}
 function leaf:isValid() return true end
 function leaf:perform() completed[#completed + 1] = self.name; ISBaseTimedAction.perform(self) end
 PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('priority.fixture', {
+    types = {leaf.Type},
     matches = function(action) return getmetatable(action) == leaf end,
     inspect = function() return {items = {}, targets = {}, cancelWaiting = true, interrupt = 'finish-step'} end,
 })

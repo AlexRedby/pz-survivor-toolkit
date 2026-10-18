@@ -16,12 +16,12 @@ def prepare(cache, user, mode, host, port, password, mods):
         raise ValueError("Unsupported fixture actor or mode")
     if not 1 <= port <= 65534:
         raise ValueError("Port must leave room for the server's adjacent UDP port")
-    if not mods or len(mods) != len(set(mods)) or "PZSurvivorWishlist" not in mods:
-        raise ValueError("Supply unique product mod IDs including PZSurvivorWishlist")
+    if not mods or len(mods) != len(set(mods)) or "PZSurvivorToolkit" not in mods:
+        raise ValueError("Supply unique product mod IDs including PZSurvivorToolkit")
     if any(not re.fullmatch(r"[A-Za-z0-9_.-]+", mod) for mod in mods):
         raise ValueError("Invalid mod ID")
-    if any(case in ("standalone", "visual") for case in selected) and mods != ["PZSurvivorWishlist"]:
-        raise ValueError("Standalone/visual modes require only PZSurvivorWishlist")
+    if any(case in ("standalone", "visual") for case in selected) and mods != ["PZSurvivorToolkit"]:
+        raise ValueError("Standalone/visual modes require only PZSurvivorToolkit")
     if "full" in selected and "PZSurvivorToolkit" not in mods:
         raise ValueError("Full mode requires PZSurvivorToolkit plus the declared integrations")
     selected = [case for case in ("visual", "standalone", "full", "reload") if case in selected]
@@ -107,7 +107,7 @@ def main():
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--password-env", required=True, help="Name of an environment variable; never pass the password in argv")
-    parser.add_argument("--mods", nargs="+", default=["PZSurvivorWishlist"])
+    parser.add_argument("--mods", nargs="+", default=["PZSurvivorToolkit"])
     args = parser.parse_args()
     if args.password_env not in os.environ:
         parser.error("Password environment variable is missing")

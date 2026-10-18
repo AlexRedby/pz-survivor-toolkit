@@ -1,4 +1,4 @@
-local base = ProjectRoot .. "/PZSurvivorWishlist/42/media/lua/"
+local base = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/"
 -- PZ's Kahlua provides pairs(), but not the standard Lua next() global.
 next = nil
 PZSurvivorWishlist = {}

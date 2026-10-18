@@ -77,6 +77,19 @@ class FixtureChecks(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'failed'):
             verify.parse_results(text.replace('state=completed', 'state=failed', 1))
 
+    def test_mp4_duration_quantization_preserves_exact_frames_and_interval(self):
+        record = dict(frames=320, seconds=320/30, captured=206, dropped=5,
+                      width=1728, height=990, elapsed_ms=10667)
+        video = dict(codec_type='video', codec_name='h264', width=1728, height=990,
+                     r_frame_rate='30/1', avg_frame_rate='30/1', nb_read_frames='320', duration='10.666016')
+        verify.validate_metadata(record, {'streams': [video]})
+        for change in ({'duration': '10.633333'}, {'duration': '10.668'}, {'nb_read_frames': '319'}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                verify.validate_metadata(record, {'streams': [dict(video, **change)]})
+        for change in ({'seconds': 319/30}, {'elapsed_ms': 11000}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                verify.validate_metadata(dict(record, **change), {'streams': [video]})
+
 
 if __name__ == '__main__':
     unittest.main()

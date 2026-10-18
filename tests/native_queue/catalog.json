@@ -538,8 +538,37 @@
       "cases": []
     },
     "craft": {
-      "status": "not-migrated",
-      "cases": []
+      "status": "ready",
+      "clients": 1,
+      "default_mods": ["PZSurvivorToolkit", "ZombieBuddy", "PZToolkitJavaPatches"],
+      "cases": [
+        {
+          "id": "borrowed-tools",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": ["sp", "mp"],
+          "languages": ["EN"],
+          "modes": ["native", "toolkit"]
+        },
+        {"id":"cancel-pickup", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"missing-input", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"cancel-craft", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"late-input", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]}
+      ]
+    },
+    "craft-ui": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": ["PZSurvivorToolkit", "ZombieBuddy", "PZToolkitJavaPatches", "NeatUI_Framework", "Neat_Crafting", "Project_Cook"],
+      "cases": [
+        {"id":"context", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"vanilla-batch", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"vanilla-auto", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"neat-batch", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"neat-auto", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"cook-batch", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"cook-auto", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]}
+      ]
     },
     "world": {
       "status": "not-migrated",
@@ -550,8 +579,27 @@
       "cases": []
     },
     "fire": {
-      "status": "not-migrated",
-      "cases": []
+      "status": "ready",
+      "clients": 1,
+      "default_mods": ["PZSurvivorToolkit", "ZombieBuddy", "PZToolkitJavaPatches"],
+      "cases": [
+        {"id": "fuel", "producer": "fixture", "capability": "effect",
+         "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "missing-target-after-expansion", "producer": "fixture", "capability": "effect",
+         "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "literature", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "petrol", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "last-match", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "bbq-fuel", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "bbq-literature", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "bbq-petrol", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "bbq-kindle", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "fireplace-fuel", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "fireplace-literature", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "fireplace-petrol", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "fireplace-kindle", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "kindle-retry", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]}
+      ]
     },
     "farming": {
       "status": "not-migrated",
@@ -572,6 +620,258 @@
     "literature": {
       "status": "not-migrated",
       "cases": []
+    },
+    "engine-peers": {
+      "status": "ready",
+      "clients": 2,
+      "default_mods": ["PZSurvivorToolkit", "ZombieBuddy", "PZToolkitJavaPatches"],
+      "cases": [
+        {
+          "id": "peer-cancel",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": ["mp"],
+          "languages": ["EN", "RU"],
+          "modes": ["toolkit"]
+        }
+      ]
+    },
+    "engine": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "PZSurvivorToolkit",
+        "ZombieBuddy",
+        "PZToolkitJavaPatches"
+      ],
+      "cases": [
+        {
+          "id": "repair",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "cancel",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "missing-target",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "late-continuation",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        }
+      ]
+    },
+    "equipment": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "PZSurvivorToolkit"
+      ],
+      "cases": [
+        {
+          "id": "hands-chain",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "waiting-cancel",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "bag-capacity",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "clothing-chain",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "hotbar-chain",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "floor-pickup",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "bulk-pickup",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "bulk-waiting-cancel",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "bulk-mixed",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        }
+      ]
     }
   }
 }

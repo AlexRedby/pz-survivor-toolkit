@@ -1,4 +1,4 @@
-local base = ProjectRoot .. "/PZSurvivorWishlist/42/media/lua/client/PZSurvivorWishlist/"
+local base = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/"
 local function event()
     local callbacks = {}
     return { Add = function(fn) callbacks[#callbacks + 1] = fn end,

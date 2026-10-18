@@ -19,9 +19,19 @@ class NativeSnapshotTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
+        disk = patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=100 * 1024**3))
+        disk.start()
+        self.addCleanup(disk.stop)
         self.root = Path(self.directory.name).resolve()
+        state = patch.object(admission, 'STATE', self.root / 'admission-state')
+        state.start()
+        self.addCleanup(state.stop)
+        sample = patch.object(admission.host, 'sample', return_value={'processes': []})
+        sample.start()
+        self.addCleanup(sample.stop)
         self.project, self.game, self.jdk = [self.root / name for name in ("project", "game", "jdk")]
-        for relative in ("projectzomboid.jar", "media/lua/shared/native.lua"):
+        for relative in ("projectzomboid.jar", "media/lua/shared/native.lua", "media/scripts/items.txt",
+                         "media/lua/shared/Translate/EN/Fixture_EN.txt"):
             self.write(self.game / relative, "native input")
         for relative in ("bin/java", "bin/javac"):
             self.write(self.jdk / relative, "fake Java executable")
@@ -57,6 +67,89 @@ class NativeSnapshotTests(unittest.TestCase):
     def prepare(self, name="run", **changes):
         selection = dict(self.selection, **changes)
         return native.prepare(self.project, self.root / name, self.game, self.jdk, selection)
+
+    def test_disk_shortage_refuses_before_profile_copy_compile_or_port_reservation(self):
+        with patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=1)), \
+             patch.object(native.shutil, 'copytree') as copy, patch.object(admission, 'allocate_ports') as ports:
+            with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
+                self.prepare(ports_auto=True)
+        self.assertFalse((self.root / 'run').exists())
+        copy.assert_not_called()
+        ports.assert_not_called()
+        self.compile_mock.assert_not_called()
+
+    def test_source_links_fail_before_snapshot_copy_and_compilation(self):
+        outside = self.root / 'external'
+        self.write(outside / 'linked.lua', 'external source')
+        for target in (outside, outside / 'linked.lua', outside / 'missing'):
+            with self.subTest(target=target):
+                link = self.project / 'Toolkit/42/linked'
+                link.symlink_to(target, target_is_directory=target == outside)
+                try:
+                    with patch.object(native.shutil, 'copytree') as copy:
+                        with self.assertRaisesRegex(ValueError, 'symlinks are unsupported'):
+                            self.prepare()
+                    copy.assert_not_called()
+                    self.compile_mock.assert_not_called()
+                    self.assertFalse((self.root / 'run').exists())
+                finally:
+                    link.unlink()
+        root_link = self.root / 'linked-mod'
+        root_link.symlink_to(self.project / 'Toolkit', target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'symlinks are unsupported'):
+            native.hashes(root_link)
+        self.assertEqual((outside / 'linked.lua').read_text(), 'external source')
+
+    def test_host_prepares_and_seals_the_actual_shared_server_settings(self):
+        shutil.copytree(ROOT / 'tests/native_queue/startup', self.project / 'tests/native_queue/startup')
+        root = self.prepare(suite='startup', kind='mp', clients=1, cases=['loaded'], options={'mp_host': True})
+        selected = report.read_json(root / 'selection.json')
+        runtime = report.read_json(root / 'runtime.json')
+        self.assertEqual(str(root / 'client1'), runtime['host_cache'])
+        for name in ('queue-smoke.ini', 'queue-smoke_SandboxVars.lua'):
+            self.assertEqual((root / 'server/Server' / name).read_bytes(), (root / 'client1/Server' / name).read_bytes())
+        runner._verify_initial_settings(root, selected, runtime)
+        actual = root / 'client1/Server/queue-smoke.ini'
+        actual.write_text(actual.read_text().replace('VoiceEnable=false', 'VoiceEnable=true'))
+        with self.assertRaisesRegex(ValueError, 'changed before launch'):
+            runner._verify_initial_settings(root, selected, runtime)
+
+    def test_host_rejects_suites_without_the_common_coop_bootstrap(self):
+        with self.assertRaisesRegex(ValueError, 'common startup bootstrap'):
+            self.prepare(kind='mp', clients=2, languages=['EN', 'RU'], options={'mp_host': True})
+
+    def test_disk_estimate_counts_each_role_and_sparse_file_logical_size(self):
+        large = self.project / 'Toolkit/42/sparse.dat'
+        with large.open('wb') as stream:
+            stream.truncate(8 * 1024**2)
+        with patch.object(admission, 'require_disk', wraps=admission.require_disk) as check, \
+             patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=1)):
+            with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
+                self.prepare(kind='mp', clients=2, languages=['EN', 'RU'])
+        args = check.call_args_list[0].args
+        self.assertEqual(args[1], 3)
+        self.assertGreater(args[2], 3 * 8 * 1024**2)
+        self.assertFalse((self.root / 'run').exists())
+
+    def test_disk_is_rechecked_before_next_role(self):
+        with patch.object(admission.shutil, 'disk_usage', side_effect=[SimpleNamespace(free=100 * 1024**3),
+                 SimpleNamespace(free=100 * 1024**3), SimpleNamespace(free=1)]):
+            with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
+                self.prepare(kind='mp', clients=2, languages=['EN', 'RU'])
+        self.assertTrue((self.root / 'run/server').is_dir())
+        self.assertFalse((self.root / 'run/client1').exists())
+        self.compile_mock.assert_not_called()
+
+    def test_disk_is_rechecked_after_fixture_staging(self):
+        def stage(project, output, game, jdk, selection, locations, runtime):
+            admission.shutil.disk_usage.return_value = SimpleNamespace(free=1)
+        adapter = SimpleNamespace(__file__=__file__, validate=lambda _: None, sources=lambda *_: [],
+                                  definitions=lambda: {'health': {}}, stage=stage)
+        with patch.object(native.adapters, 'get', return_value=adapter):
+            with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
+                self.prepare()
+        self.assertEqual(self.compile_mock.call_count, 1)
+        self.assertFalse((self.root / 'run/selection.json').exists())
 
     def test_font_preload_is_explicit_and_uses_only_selected_snapshot_jar(self):
         cache = self.root / 'owned client'
@@ -97,11 +190,13 @@ class NativeSnapshotTests(unittest.TestCase):
         original = self.project / "Toolkit/42/media/lua/shared/test.lua"
         self.assertEqual(source[str(original)], native.sha256(original))
         self.assertIn(str(self.game / "media/lua/shared/native.lua"), source)
+        self.assertIn(str(self.game / 'media/scripts/items.txt'), source)
+        self.assertIn(str(self.game / 'media/lua/shared/Translate/EN/Fixture_EN.txt'), source)
         self.assertIn(str(self.project / "tools/queue_checks/report.py"), source)
         self.assertIn(str(self.project / "tools/check_action_queue.py"), source)
         self.assertIn(str(self.project / "tests/native_queue/catalog.json"), source)
         snapshot = json.loads((output / "snapshot-hashes.json").read_text())
-        for relative in ("selection.json", "runtime.json", "initial-settings.json", "client1/classes/ToolkitSmokeLauncher.class",
+        for relative in ("selection.json", "runtime.json", "initial-settings.json", "game-inputs.json", "client1/classes/ToolkitSmokeLauncher.class",
                          "client1/Lua/queue-expected-mods.txt", "client1/mods/ActionQueueTest/42/media/lua/shared/QueueTestSelection.lua"):
             self.assertEqual(snapshot[relative], native.sha256(output / relative))
         copied = output / "client1/mods/PZSurvivorToolkit/42/media/lua/shared/test.lua"
@@ -113,6 +208,54 @@ class NativeSnapshotTests(unittest.TestCase):
         self.write(original, "changed after preparation")
         self.assertNotEqual(source[str(original)], native.sha256(original))
         self.assertNotEqual(copied.read_bytes(), original.read_bytes())
+
+    def test_live_game_tree_membership_and_contents_are_checked(self):
+        output = self.prepare()
+        self.assertEqual([], report.verify_manifest(output, 'source-manifest.json', True))
+        self.assertEqual([], report.verify_manifest(output, 'snapshot-hashes.json'))
+        added = self.game / 'media/lua/shared/added.lua'
+        script = self.game / 'media/scripts/items.txt'
+        original = script.read_bytes()
+        for change, expected in (('add', 'Added native game input'), ('change', 'Changed native game input'),
+                                 ('remove', 'Missing native game input')):
+            if change == 'add': added.write_text('return true\n')
+            elif change == 'change': script.write_text('changed recipe\n')
+            else: script.unlink()
+            with self.subTest(change=change):
+                self.assertTrue(any(expected in issue for issue in
+                                    report.verify_manifest(output, 'source-manifest.json', True)))
+                with patch.object(runner.sys, 'platform', 'darwin'), patch.object(runner.subprocess, 'Popen') as launch:
+                    with self.assertRaisesRegex(ValueError, expected):
+                        runner.run(output, resource_wait=0)
+                    launch.assert_not_called()
+            if added.exists(): added.unlink()
+            script.write_bytes(original)
+        self.assertEqual([], report.verify_manifest(output, 'source-manifest.json', True))
+
+    def test_native_input_drift_during_prepare_prevents_sealing(self):
+        script = self.game / 'media/scripts/items.txt'
+        original = script.read_bytes()
+        for change in ('add', 'change', 'remove'):
+            def drift(command, **kwargs):
+                self.compile(command, **kwargs)
+                if change == 'add': self.write(self.game / 'media/lua/shared/added.lua', 'return true\n')
+                elif change == 'change': script.write_text('changed recipe\n')
+                else: script.unlink()
+            self.compile_mock.side_effect = drift
+            with self.subTest(change=change), self.assertRaisesRegex(RuntimeError, 'Native Lua/script inputs changed'):
+                self.prepare(change)
+            self.assertFalse((self.root / change / 'snapshot-hashes.json').exists())
+            added = self.game / 'media/lua/shared/added.lua'
+            if added.exists(): added.unlink()
+            script.write_bytes(original)
+
+    def test_native_input_directory_symlinks_are_rejected(self):
+        outside = self.root / 'outside'; outside.mkdir()
+        self.write(outside / 'script.lua', 'return true\n')
+        (self.game / 'media/lua/linked').symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'input symlinks are unsupported'):
+            self.prepare()
+        self.assertFalse((self.root / 'run').exists())
 
     def test_source_overrides_reject_invalid_types_and_relative_paths(self):
         for sources in ([], False, {'PZSurvivorToolkit': None}, {'PZSurvivorToolkit': []},

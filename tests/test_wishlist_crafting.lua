@@ -1,4 +1,4 @@
-local path = ProjectRoot .. "/PZSurvivorWishlist/42/media/lua/client/PZSurvivorWishlist/Crafting.lua"
+local path = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/Crafting.lua"
 local tests = 0
 local function check(value, message) assert(value, message); tests = tests + 1 end
 local function list(values)

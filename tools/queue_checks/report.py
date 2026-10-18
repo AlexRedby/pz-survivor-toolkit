@@ -25,6 +25,7 @@ RUNTIME_FAILURE = re.compile(
     r"|database (?:disk image is malformed|is locked|is corrupt)|checksum mismatch", re.I)
 BACKGROUND_GAME_SHA256 = "e1a69eb743ede60b213a0fe7f8b83d4fcab773036d256cc4543a336f3b058a33"
 KNOWN_ROOM_GAME_SHA256 = BACKGROUND_GAME_SHA256  # Native B42.21.0 revision 4a0e9546ec only.
+GAME_INPUT_TREES = ('media/lua', 'media/scripts')
 THUMP_TILES = ({"fencing_01_" + str(i) for i in
                 (1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 24, 25, 26, 27, 28, 32, 33, 34, 35, 36,
                  40, 41, 42, 56, 57, 58, 59, 60, 64, 65, 66, 67, 68, 72, 73, 75)} |
@@ -37,6 +38,46 @@ def read_json(path):
 
 def write_json(path, value):
     Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def game_inputs(game):
+    """Seal live Lua/script trees; binary and other asset trees are outside this scope."""
+    game = Path(game).resolve()
+    trees = {}
+    for tree in GAME_INPUT_TREES:
+        root, files = game / tree, {}
+        for path in [game / 'media', root, *sorted(root.rglob('*'))]:
+            if path.is_symlink():
+                raise ValueError('Native game input symlinks are unsupported: ' + str(path))
+            if path.is_file():
+                files[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+        trees[tree] = files
+    return {'game': str(game), 'trees': trees}
+
+
+def verify_game_inputs(root):
+    try:
+        expected = read_json(root / 'game-inputs.json')
+        game = read_json(root / 'runtime.json')['game']
+        if (not isinstance(game, str) or not Path(game).is_absolute() or not isinstance(expected, dict)
+                or expected.get('game') != game or not isinstance(expected.get('trees'), dict)
+                or set(expected['trees']) != set(GAME_INPUT_TREES)
+                or any(not isinstance(files, dict) for files in expected['trees'].values())):
+            return ['Invalid native game input seal; prepare a fresh snapshot']
+        actual = game_inputs(game)
+        errors = []
+        for tree in GAME_INPUT_TREES:
+            before, after = expected['trees'][tree], actual['trees'][tree]
+            for name in sorted(before.keys() | after.keys()):
+                if name not in before:
+                    errors.append('Added native game input: ' + tree + '/' + name)
+                elif name not in after:
+                    errors.append('Missing native game input: ' + tree + '/' + name)
+                elif before[name] != after[name]:
+                    errors.append('Changed native game input: ' + tree + '/' + name)
+        return errors
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return ['Cannot verify native Lua/script inputs; prepare a fresh snapshot: ' + str(error)]
 
 
 def verify_manifest(root, filename, absolute=False):
@@ -61,8 +102,10 @@ def verify_manifest(root, filename, absolute=False):
             errors.append("Missing input: " + str(path))
         elif hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             errors.append("Changed input: " + str(path))
+    if filename == 'source-manifest.json' and absolute:
+        errors += verify_game_inputs(root)
     if filename == "snapshot-hashes.json" and not absolute:
-        required = {"selection.json", "runtime.json", "settings-fingerprint.json", "source-manifest.json", "manifest.json", "initial-settings.json"}
+        required = {"selection.json", "runtime.json", "settings-fingerprint.json", "source-manifest.json", "manifest.json", "initial-settings.json", "game-inputs.json"}
         missing = required - manifest.keys()
         if missing:
             errors.append("Snapshot metadata missing: " + ", ".join(sorted(missing)))
@@ -102,7 +145,9 @@ def events(text):
 
 def log_paths(root, role):
     paths = [root / (role + "-launch.log"), root / (role + "-probes.log"), root / role / "console.txt"]
-    paths += sorted((root / role / "Logs").glob("*DebugLog*.txt"))
+    # Host's server startup archives the owner's earlier client log in the shared cache.
+    paths += [path for path in sorted((root / role / "Logs").rglob("*DebugLog*.txt"))
+              if role != 'client1' or not path.name.endswith('DebugLog-server.txt')]
     return [path for path in paths if path.is_file()]
 
 
@@ -268,13 +313,14 @@ def diagnostic_windows(logs):
             'interpretation': 'File-local marker placement only, not case verdicts or causes. Buckets are not additive when unmarked mirrors remain unassigned.'}
 
 
-def audit_logs(root, roles, background=False, native_game_sha256=None):
+def audit_logs(root, roles, background=False, native_game_sha256=None, hosted=False):
     result = {}
     for role in roles:
         merged, details, microphone, logs = Counter(), {}, [], []
         paths = log_paths(root, role)
         for path in paths:
-            findings, mic = audit_log(path, root / role, background, native_game_sha256)
+            cache = root / ('client1' if hosted and role == 'server' else role)
+            findings, mic = audit_log(path, cache, background, native_game_sha256)
             logs.append((path, findings))
             current = Counter(row["fingerprint"] for row in findings)
             merged |= current
@@ -374,7 +420,7 @@ def compare(current, control):
     if current.get("settings_fingerprint") != control.get("settings_fingerprint") or not current.get("settings_fingerprint"):
         reasons.append("Game, source, mods, cases or settings differ")
     for label, report in (("toolkit", current), ("control", control)):
-        if report["functional"]["status"] != "passed" or not report["provenance"]["verified"] or report.get("execution", {}).get("status") != "completed":
+        if report["functional"]["status"] != "passed" or not report["provenance"]["verified"] or execution_issues(report.get('run'), report['selection'], report.get('execution')):
             reasons.append(label + " run lacks verified functional completion")
         expected_roles = set(adapters.roles(report['selection']))
         if set(report["runtime"]["roles"]) != expected_roles or report["runtime"]["microphone"] or any(not audit.get("available") for audit in report["runtime"]["roles"].values()):
@@ -395,6 +441,34 @@ def compare(current, control):
             "interpretation": "Matching errors reproduce without queue; comparison never clears failures or unclassified errors."}
 
 
+def execution_issues(root, selection, execution):
+    if not isinstance(root, (str, Path)) or not Path(root).is_absolute():
+        return ['Execution requires an absolute owned run path']
+    root = Path(root)
+    if not isinstance(execution, dict):
+        return ['Execution record is missing or invalid']
+    issues = [] if execution.get('status') == 'completed' else ['Execution is not completed']
+    processes = execution.get('processes')
+    roles = adapters.roles(selection)
+    if not isinstance(processes, dict) or set(processes) != set(roles):
+        return issues + ['Execution requires process records for exactly the selected roles']
+    hosted = selection['kind'] == 'mp' and selection.get('options', {}).get('mp_host') is True
+    for role, process in processes.items():
+        if not isinstance(process, dict) or type(process.get('pid')) is not int or process['pid'] <= 0:
+            issues.append(role + ': execution requires a positive integer PID')
+            continue
+        if hosted and role == 'server':
+            if process.get('parent_role') != 'client1' or process.get('cache') != str(root / 'client1'):
+                issues.append('server: Host execution requires the owned client1 parent/cache')
+        elif type(process.get('exit_code')) is not int:
+            issues.append(role + ': execution requires an integer exit code after stopping')
+    if hosted:
+        cleanup = execution.get('host_cleanup')
+        if not isinstance(cleanup, dict) or cleanup.get('remaining_pids') != []:
+            issues.append('Host execution requires a completed cleanup audit with no remaining PIDs')
+    return issues
+
+
 def build_report(root, catalog, control=None):
     root = Path(root).resolve()
     selection = read_json(root / "selection.json")
@@ -402,30 +476,34 @@ def build_report(root, catalog, control=None):
     result, coverage = functional(root, selection, catalog)
     roles = adapters.roles(selection)
     audits = audit_logs(root, roles, background_profile(root, selection, not provenance_errors),
-                        verified_game_sha256(root, not provenance_errors))
+                        verified_game_sha256(root, not provenance_errors),
+                        selection.get('options', {}).get('mp_host') is True)
     try:
         execution = read_json(root / "execution.json")
     except (OSError, ValueError):
         execution = {"status": "missing"}
     if not isinstance(execution, dict):
         execution = {"status": "invalid"}
+    execution_errors = execution_issues(root, selection, execution)
     microphone = any(row["microphone"] for row in audits.values())
     counts = {severity + "_count": sum(row[severity + "_count"] for row in audits.values())
               for severity in ("fatal", "unclassified", "background")}
     runtime_status = "failed" if counts["fatal_count"] else "unclassified-errors" if counts["unclassified_count"] else "background-only" if counts["background_count"] else "clean"
     fingerprint = read_json(root / "settings-fingerprint.json")["sha256"]
     report = {"schema_version": 1, "run": str(root), "selection": selection,
-              "settings_fingerprint": fingerprint, "provenance": {"verified": not provenance_errors, "issues": provenance_errors},
-              "functional": result, "coverage": coverage, "execution": execution,
+              "settings_fingerprint": fingerprint, "provenance": {"verified": not provenance_errors, "issues": provenance_errors,
+                  'game_input_trees': list(GAME_INPUT_TREES) if not provenance_errors else []},
+              "functional": result, "coverage": coverage, "execution": execution, "execution_issues": execution_errors,
               "runtime": dict(counts, status="unavailable" if any(not row["available"] for row in audits.values()) else runtime_status, roles=audits, microphone=microphone),
-              "limits": ["Callback-driven native fixture; physical UI, WAN and long sessions are separate coverage."]}
+              "limits": ["Callback-driven native fixture; physical UI, WAN and long sessions are separate coverage.",
+                         "Native tree seal scope: media/lua and media/scripts; other asset/binary trees are outside this seal."]}
     if control is not None:
         report["comparison"] = compare(report, control)
         if report["comparison"]["compatible"] and not counts["fatal_count"] and counts["unclassified_count"]:
             new = any(issue["severity"] == "unclassified" and issue["fingerprint"] in report["comparison"]["errors"][role]["only_toolkit"]
                       for role, audit in audits.items() for issue in audit["issues"])
             report["runtime"]["status"] = "new-errors" if new else "unclassified-errors"
-    failed = counts["fatal_count"] or result["status"] not in ('passed', 'captured') or provenance_errors or microphone or execution.get("status") != "completed" or any(not row["available"] for row in audits.values())
+    failed = counts["fatal_count"] or result["status"] not in ('passed', 'captured') or provenance_errors or microphone or execution_errors or any(not row["available"] for row in audits.values())
     if failed:
         report["status"] = "failed"
     elif control is not None and not report["comparison"]["compatible"]:
@@ -456,7 +534,7 @@ def matrix(catalog, reports=()):
                     if full:
                         relevant = full
                     matches = [row for _, values in relevant for row in values]
-                    invalid = any(report.get("status") == "failed" or report["functional"]["status"] not in ('passed', 'captured') or not report["provenance"]["verified"] or report.get("execution", {}).get("status") != "completed" for report, _ in relevant)
+                    invalid = any(report.get("status") == "failed" or report["functional"]["status"] not in ('passed', 'captured') or not report["provenance"]["verified"] or execution_issues(report.get('run'), report['selection'], report.get('execution')) for report, _ in relevant)
                     incomplete = any({row["actor"] for row in values} != expected_actors or len(values) != len(expected_actors)
                                      or any((row.get('outcome') or {}).get('partialCoverage') is True for row in values)
                                      for _, values in relevant)
@@ -469,8 +547,10 @@ def matrix(catalog, reports=()):
 
 
 def summary(report):
-    lines = ["Overall: " + report["status"], "Execution: " + report["execution"]["status"], "Functional: " + report["functional"]["status"], "Runtime: " + report["runtime"]["status"],
+    lines = ["Overall: " + report["status"], "Execution: " + str(report["execution"].get("status", "invalid")), "Functional: " + report["functional"]["status"], "Runtime: " + report["runtime"]["status"],
              "Sources/snapshot: " + ("verified" if report["provenance"]["verified"] else "CHANGED")]
+    trees = report['provenance'].get('game_input_trees')
+    lines.append('Live game trees: ' + ('unsealed (legacy report)' if trees is None else ', '.join(trees) if trees else 'NOT VERIFIED'))
     for role, counts in report["functional"]["clients"].items():
         lines.append(role + ": " + ", ".join(str(counts.get(status, 0)) + " " + status for status in ("passed", "skipped", "failed", 'captured') if status != 'captured' or counts.get(status)))
     for role, audit in report["runtime"]["roles"].items():
@@ -483,7 +563,7 @@ def summary(report):
             for case in windows['cases']:
                 lines.append(role + ' ' + case['case'] + ' epoch=' + str(case['epoch']) + ' diagnostic errors: run=' +
                              str(case['run']['error_count']) + ', cleanup=' + str(case['cleanup']['error_count']))
-    lines.extend(report["functional"]["issues"] + report["provenance"]["issues"])
+    lines.extend(report["functional"]["issues"] + report["provenance"]["issues"] + report.get('execution_issues', []))
     if report["execution"].get("error"):
         lines.append(report["execution"]["error"])
     if "comparison" in report:

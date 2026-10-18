@@ -50,6 +50,18 @@ local player = {getInventory = function() return {} end, isTimedActionInstant = 
     hasTrait = function() return false end, isWearingAwkwardGloves = function() return false end}
 local recipe = {class = 'CraftRecipe', getTimedActionScript = function() return nil end,
     isCanWalk = function() return false end, getTime = function() return 10 end}
+local automaticInputs = ISHandcraftAction:new(player, recipe, list(material), target, tool, false, list(material), target, 0.5, 0.25)
+assert(automaticInputs.manualInputs == nil, 'native automatic false sentinel must become absent for Java queued-item accounting')
+assert(automaticInputs.character == player and automaticInputs.craftRecipe == recipe and automaticInputs.isoObject == target
+    and automaticInputs.craftBench == tool and automaticInputs.recipeItem == target
+    and automaticInputs.variableInputRatio == 0.5 and automaticInputs.eatPercentage == 0.25,
+    'normalizing automatic inputs preserves native constructor arguments and fields')
+local manualSelection = {[0] = list(material)}
+local manualInputs = ISHandcraftAction:new(player, recipe, {}, nil, nil, manualSelection)
+assert(manualInputs.manualInputs == manualSelection, 'manual selected lists retain identity')
+assert(ISHandcraftAction:new(player, recipe, {}, nil, nil, nil).manualInputs == nil, 'absent inputs remain absent')
+local customCraft = ISHandcraftAction:derive('CustomCraft')
+assert(customCraft:new(player, recipe, {}, nil, nil, false).manualInputs == false, 'unknown derived constructors retain native behavior')
 local fixing = {getRequiredItems = function() return list(material, tool) end,
     getFixers = function() return list({}) end}
 FixingManager = {getFixes = function() return list(fixing) end}
@@ -87,6 +99,30 @@ local panel = owner(ISWidgetHandCraftControl)
 local a, b = withOwner(handcraft(), panel), withOwner(handcraft(), panel)
 a.toolkitQueueOperation = {}; b.toolkitQueueOperation = a.toolkitQueueOperation
 assert(craft.supports(a) and craft.callbacksSafe(a))
+-- Late UI entry/layout wrappers do not alter the native callbacks of an already built action.
+for _, name in ipairs({'createChildren', 'calculateLayout', 'prerender', 'onButtonClick', 'startHandcraft'}) do
+    local original, calls = ISWidgetHandCraftControl[name], 0
+    local wrapper = function(...) calls = calls + 1; return original(...) end
+    ISWidgetHandCraftControl[name] = wrapper
+    assert(craft.supports(a) and craft.callbacksSafe(a), 'native class UI wrapper closed callback permission: ' .. name)
+    ISWidgetHandCraftControl[name] = original
+    panel[name] = wrapper
+    assert(craft.supports(a) and craft.callbacksSafe(a), 'native instance UI wrapper closed callback permission: ' .. name)
+    panel[name] = nil
+    assert(calls == 0, 'checking callback permission must not run UI entry/layout wrappers')
+end
+for _, name in ipairs({'setCraftQuantity', 'sanitizeCraftQuantity', 'triggerEvent',
+        'onHandcraftActionStart', 'onHandcraftActionComplete', 'onHandcraftActionCancelled'}) do
+    local original, calls = ISWidgetHandCraftControl[name], 0
+    local replacement = function() calls = calls + 1 end
+    ISWidgetHandCraftControl[name] = replacement
+    assert(not craft.supports(a) and not craft.callbacksSafe(a), 'changed native class callback dependency was trusted: ' .. name)
+    ISWidgetHandCraftControl[name] = original
+    panel[name] = replacement
+    assert(not craft.supports(a) and not craft.callbacksSafe(a), 'changed native instance callback dependency was trusted: ' .. name)
+    panel[name] = nil
+    assert(calls == 0 and craft.supports(a), 'callback dependency check ran replacement or failed to restore native owner')
+end
 panel.triggerEvent = function() error('unknown native owner event helper') end
 assert(not craft.supports(a), 'native owner helper overrides also close callback permission')
 panel.triggerEvent = nil
@@ -186,4 +222,104 @@ if NativeNeatCraftingSource or NativeWishlistWorkshopRoot then
     assert(not craft.supports(withOwner(handcraft(), neat)))
     NC_CraftActionPanel.onHandcraftActionCancelled = old
 end
+
+-- Missing manual inputs are pure ID checks over native containers, never recipe predicates.
+do
+    ResourceType, ItemType = {Item='Item'}, {CONTAINER='Container'}
+    local function script(kind)
+        return {class='Item',getFullName=function() return kind end,isItemType=function() return false end,
+            getReplaceOnUse=function() end,getReplaceOnDeplete=function() end,
+            getOnBreak=function() return kind=='Base.Plank' and 'OnBreak.Plank' end}
+    end
+    local function container()
+        return {class='ItemContainer',items={},getItemById=function(self,id) return self.items[id] end}
+    end
+    local root,bag,floor=container(),container(),container()
+    local function supply(id)
+        return {class='InventoryItem',getID=function() return id end}
+    end
+    local material,tool=supply(101),supply(202)
+    local input={class='InputScript',getResourceType=function() return ResourceType.Item end,
+        isAcceptsAnyItem=function() return false end,getConsumeFromItemScript=function() end,
+        getPossibleInputItems=function() return list(script('Base.Plank')) end,
+        getCreateToItemScript=function() end,isReplace=function() return false end,
+        getIntAmount=function() return 1 end,isVariableAmount=function() return false end}
+    local kept={};for key,value in pairs(input) do kept[key]=value end
+    local output={class='OutputScript',getResourceType=function() return ResourceType.Item end,
+        getCreateToItemScript=function() end,getPossibleResultItems=function() return list(script('Base.WoodenStick2')) end}
+    local manualRecipe={class='CraftRecipe',getTimedActionScript=function() end,
+        isCanWalk=function() return false end,getTime=function() return 30 end,
+        getScriptLines=function() return list('craftRecipe QueueManual { inputs { item 1 Base.Plank, } }') end,
+        getInputs=function() return list(input,kept) end,getOutputs=function() return list(output) end,
+        getIndexForIO=function(_,value) return value==input and 0 or 2 end,
+        getIOForIndex=function(_,index) return index==0 and input or index==2 and kept end}
+    local actor=setmetatable({getInventory=function() return root end},{__index=player})
+    local function manual()
+        return ISHandcraftAction:new(actor,manualRecipe,list(root,bag,floor),nil,nil,
+            {[0]=list(material),[2]=list(tool)},list(material,tool))
+    end
+    root.items[101],bag.items[202]=material,tool
+    assert(not craft.canSkip(manual()),'available exact input in a native bag is not lost')
+    root.items[101]=nil
+    assert(not craft.futureResources(manual()),'native OnBreak still prevents resource prediction')
+    assert(craft.canSkip(manual()),'lost pinned material must skip only its pre-native craft operation')
+    local replacement=supply(101);root.items[101]=replacement
+    assert(not craft.canSkip(manual()),'MP replacement object with the same ID remains available')
+    root.items[101]=nil;floor.items[101]=replacement
+    assert(not craft.canSkip(manual()),'available exact floor input is not lost')
+    floor.items[101]=nil
+    local candidate=manual();candidate.action={isStarted=function() return true end}
+    assert(not craft.canSkip(candidate),'allocated native actions retain their native/server stop behavior')
+    candidate=manual();candidate.craftStarted=true
+    assert(not craft.canSkip(candidate),'started craft cannot be skipped from its stale inputs')
+    candidate=manual();candidate.craftStarted=nil
+    assert(not craft.canSkip(candidate),'unknown craft-start state cannot grant preservation')
+    candidate=manual();candidate.manualInputs=false
+    assert(not craft.canSkip(candidate),'automatic selection has no pinned input contract')
+    assert(not craft.canSkip(fix),'repair actions keep their native selection behavior')
+    candidate=manual();candidate.force=true
+    assert(not craft.canSkip(candidate),'forced native crafting retains native behavior')
+    local calls=0
+    candidate=manual();candidate.onCompleteFunc=function() calls=calls+1 end
+    assert(not craft.canSkip(candidate) and calls==0,'foreign callbacks are neither trusted nor executed')
+    candidate=manual();candidate.manualInputs[99]=list(material)
+    assert(not craft.canSkip(candidate),'extra unknown IO selection closes the contract')
+    candidate=manual();candidate.manualInputs[2]=nil
+    assert(not craft.canSkip(candidate),'partial manual IO selection closes the contract')
+    candidate=manual();candidate.manualInputs[2]=list()
+    assert(not craft.canSkip(candidate),'empty manual IO selection closes the contract')
+    candidate=manual();candidate.manualInputs={}
+    assert(not craft.canSkip(candidate),'empty manual selection closes the contract')
+    candidate=manual();candidate.manualInputs[2]=list({})
+    assert(not craft.canSkip(candidate),'non-item manual entries close the contract')
+    candidate=manual();candidate.manualInputs[2]=list(supply('unknown'))
+    assert(not craft.canSkip(candidate),'non-native IDs close the contract')
+    candidate=manual();candidate.manualInputs[2]={size=function() calls=calls+1;return 1 end}
+    assert(not craft.canSkip(candidate) and calls==0,'foreign list getters are never inspected')
+    candidate=manual();candidate.containers=list(root,{getItemById=function() calls=calls+1 end})
+    assert(not craft.canSkip(candidate) and calls==0,'foreign container getters are never inspected')
+    candidate=manual();candidate.containers={size=function() calls=calls+1;return 1 end}
+    assert(not craft.canSkip(candidate) and calls==0,'foreign container-list getters are never inspected')
+    candidate=manual();candidate.containers=list()
+    assert(not craft.canSkip(candidate),'empty declared-container list closes the contract')
+    local amount=input.getIntAmount
+    for _,value in ipairs({0,2}) do
+        input.getIntAmount=function() return value end
+        assert(not craft.canSkip(manual()),'optional or incomplete input selection closes the contract')
+    end
+    input.getIntAmount=amount
+    input.isVariableAmount=function() return true end
+    assert(not craft.canSkip(manual()),'variable input selection closes the contract')
+    input.isVariableAmount=function() return false end
+    local io=manualRecipe.getIOForIndex;manualRecipe.getIOForIndex=function() return kept end
+    assert(not craft.canSkip(manual()),'mismatched IO index closes the contract')
+    manualRecipe.getIOForIndex=io
+    local lines=manualRecipe.getScriptLines
+    manualRecipe.getScriptLines=function() return list('OnCreate = UnknownCallback') end
+    assert(not craft.canSkip(manual()),'recipe callbacks close the existing safe recipe contract')
+    manualRecipe.getScriptLines=lines
+    candidate=manual();candidate.logic={canPerformCurrentRecipe=function() calls=calls+1;error('must not execute') end}
+    assert(craft.canSkip(candidate) and calls==0,'missing-input inspection does not execute recipe logic')
+end
+
 print('Craft/repair native identities, callback ownership, waiting UI cleanup and input dependencies passed.')

@@ -1,6 +1,6 @@
 -- Sidebar contract doubles; native rendering is covered separately.
 local toolkit = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/"
-local wishlist = ProjectRoot .. "/PZSurvivorWishlist/42/media/lua/client/PZSurvivorWishlist/"
+local wishlist = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/"
 local count = 0
 local function equal(actual, expected, message)
     assert(actual == expected, (message or "values differ") .. ": " .. tostring(actual) .. " ~= " .. tostring(expected))
@@ -14,7 +14,8 @@ local function setup()
     local function event()
         local handlers = {}
         return {Add = function(fn) handlers[#handlers+1] = fn end,
-            fire = function(...) for _, fn in ipairs(handlers) do fn(...) end end}
+            fire = function(...) for _, fn in ipairs(handlers) do fn(...) end end,
+            count = function() return #handlers end}
     end
     Events = {OnTickEvenPaused = event(), OnGameStart = event(), OnKeyPressed = event(), OnMainMenuEnter = event()}
     w.player = {getPlayerNum = function() return 2 end, isDead = function() return w.dead == true end}
@@ -259,12 +260,12 @@ test("tools hub remains with highlight hidden and opens optional tools and setti
     equal(w.optionsScroll, -1140, "settings must reveal the Toolkit controls")
     w.optionY=30; w.menu.options[2].callback(w.menu.options[2].target)
     equal(w.optionsScroll, 0, "settings near the top must not scroll past the start")
-    w.mods.PZSurvivorWishlist=true
-    side.toolkitToolsButton:click(); equal(#w.menu.options, 2, "active mod without its UI is unavailable")
+    side.toolkitToolsButton:click(); equal(#w.menu.options, 2, "Wishlist UI is unavailable before initialization")
     w:loadWishlist(); side.toolkitToolsButton:click()
     equal(#w.menu.options, 3); equal(w.menu.options[1].name, "UI_PZSW_Open")
     w.menu.options[1].callback(w.menu.options[1].target); equal(w.wishlistPlayer, 2)
-    w.mods.PZSurvivorWishlist=false; side.toolkitToolsButton:click(); equal(#w.menu.options, 2)
+    side.toolkitToolsButton:click(); equal(#w.menu.options, 3, "Wishlist availability must not depend on a separate mod ID")
+    PZSurvivorWishlist=nil; side.toolkitToolsButton:click(); equal(#w.menu.options, 2)
     w.context=false; side.toolkitToolsButton:click(); equal(#w.menu.options, 1)
     w.context=true; PZSurvivorToolkit.ContextMenus=nil; side.toolkitToolsButton:click(); equal(#w.menu.options, 1)
     local last=w.menu; w.dead=true; w:tick(); equal(side.toolkitToolsButton.enable, false)
@@ -272,45 +273,14 @@ test("tools hub remains with highlight hidden and opens optional tools and setti
     w.player=nil; side.toolkitToolsButton:click(); equal(w.menu, last)
 end)
 
-test("Wishlist stays standalone without widening the sidebar and cleans up its owner", function()
+test("Wishlist hotkey works without registering a separate sidebar callback", function()
     local w=setup(); w:loadWishlist()
     local side=w.data.equipped
-    w:tick(); equal(side.pzswButton, nil, "Toolkit hub owns the Wishlist entry")
-    w.mods.PZSurvivorToolkit=false; PZSurvivorToolkit=nil
-    w:tick()
-    local button=side.pzswButton
-    assert(button.initialised and button.instantiated)
-    equal(button.title, ""); equal(button.image, "media/ui/Entity/Icon_Tools_48x48.png")
-    equal(button.x, 64); equal(button.y, 82); equal(button.width, 24); equal(button.height, 24)
-    equal(button.parent, nil); equal(w.ui[button.id], button)
-    equal(side.width, 48); equal(side.height, 980); equal(#side.children, 4)
-    equal(button.imageWidth, 20); equal(button.imageHeight, 20)
-    equal(button.backgroundColor.a, 0); equal(button.isBaseBackgroundVisible, false); equal(button.isBorderVisible, false)
-    equal(button.tooltip, "UI_PZSW_Open")
-    button:click(); equal(w.wishlistPlayer, 2)
-    w:tick(20); equal(#w.added, 1)
-    side.x, side.y=40, 680; w:tick()
-    equal(button.x, 94); equal(button.y, 690, "standalone icon must fit its player viewport")
-    local removedTooltip=false
-    button.tooltipUI={visible=true, removeFromUIManager=function() removedTooltip=true end,
-        setVisible=function(self, value) self.visible=value end, getIsVisible=function(self) return self.visible end}
-    side.visible=false; w:tick(); equal(button.visible, false)
-    assert(removedTooltip); equal(button.tooltipUI.visible, false)
-    side.visible=true; w:tick(); equal(button.visible, true)
-    removedTooltip=false
-    w.data.equipped=w:sidebar(); w:tick()
-    equal(w.ui[button.id], nil); equal(side.pzswButton, nil)
-    assert(removedTooltip)
-    local replacement=w.data.equipped.pzswButton
-    assert(replacement and replacement~=button)
-    w.mods.PZSurvivorToolkit=true; w:tick()
-    equal(w.ui[replacement.id], nil); equal(w.data.equipped.pzswButton, nil)
-    w.mods.PZSurvivorToolkit=false; w:tick()
-    replacement=w.data.equipped.pzswButton
-    w.player=nil; w:tick(); equal(w.ui[replacement.id], nil)
-    w.player=w.data.equipped.chr; w:tick()
-    replacement=w.data.equipped.pzswButton
-    Events.OnMainMenuEnter.fire(); equal(w.ui[replacement.id], nil); equal(w.data.equipped.pzswButton, nil)
+    equal(side.pzswButton, nil)
+    equal(Events.OnTickEvenPaused:count(), 0)
+    equal(Events.OnGameStart:count(), 0)
+    equal(Events.OnMainMenuEnter:count(), 0)
+    equal(Events.OnKeyPressed:count(), 1)
     w.wishlistPlayer=nil; Events.OnKeyPressed.fire(67); equal(w.wishlistPlayer, 0)
     w.wishlistPlayer=nil; w.typing=true; Events.OnKeyPressed.fire(67); equal(w.wishlistPlayer, nil)
     w.typing=false; w.optionsVisible=true; Events.OnKeyPressed.fire(67); equal(w.wishlistPlayer, nil)

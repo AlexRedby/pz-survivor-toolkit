@@ -217,6 +217,10 @@ function Operations.perform(action, callback, ...)
     if (Settings and not Settings.actionQueue()) or (not producer and (not Craft or not Craft.supports(action))) then
         return callback(action, ...)
     end
+    local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
+    if not producer and lifecycle and lifecycle.current(action.character) == action then
+        return callback(action, ...)
+    end
     local previous = completionScope
     local pending = {action = action, acceptsChild = producer and producer.acceptsChild}
     completionScope = pending
@@ -238,6 +242,9 @@ local function stamp(action, token)
             token = current.toolkitQueueOperation
             action.toolkitBatchIteration = current.toolkitBatchIteration
         end
+        local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
+        local completing = lifecycle and lifecycle.current(action.character)
+        if completing and not scope then token = token or completing.toolkitQueueOperation end
         action.toolkitQueueOperation = token or scope or {}
     end
     if not action.ignoreAction and PZSurvivorToolkit.ActionQueueBatch then
@@ -276,18 +283,26 @@ local add = ISTimedActionQueue.add
 ISTimedActionQueue.add = function(action)
     if continuationScope and not continuationValid(continuationScope) then return end
     stamp(action)
-    local current = completionScope and completionScope.action
+    local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
+    local nativeParent = lifecycle and lifecycle.current(action.character)
+    local current = completionScope and completionScope.action or nativeParent
     local queue = current and ISTimedActionQueue.queues[current.character]
     local sameOperation = queue and queue.queue[1] == current and action.character == current.character
         and action.toolkitQueueOperation == current.toolkitQueueOperation
         and not current._isAddingActions
     local accepted, placement
-    if sameOperation and completionScope.acceptsChild then accepted, placement = completionScope.acceptsChild(current, action) end
-    if sameOperation and (nativeReturn(action) or accepted) then
+    if sameOperation and completionScope and completionScope.acceptsChild then accepted, placement = completionScope.acceptsChild(current, action) end
+    -- Craft OnCreate may add unrelated mod actions; only audited returns inherit placement.
+    if sameOperation and nativeParent and not completionScope
+        and current.Type ~= "ISCraftAction" and current.Type ~= "ISHandcraftAction" then
+        accepted, placement = true, "before-returns"
+    end
+    local returning = sameOperation and nativeReturn(action)
+    if sameOperation and (returning or accepted) then
         local last = 1
         while queue.queue[last + 1] and queue.queue[last + 1].toolkitQueueOperation == current.toolkitQueueOperation do
             -- A native retry still needs the tools that the following return would remove.
-            if accepted and placement == "before-returns" and nativeReturn(queue.queue[last + 1]) then break end
+            if accepted and not returning and placement == "before-returns" and nativeReturn(queue.queue[last + 1]) then break end
             last = last + 1
         end
         local result = add(action)
