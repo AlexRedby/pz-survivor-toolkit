@@ -82,13 +82,16 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
             shutil.copy2(root / "JavaPatches" / launcher, staging / launcher)
         guide = (root / "MOD_INSTALL.md").read_text(encoding="utf-8")
         guide = guide.replace("](" + INI_NAME + ")", "](Server/" + INI_NAME + ")")
-        guide = guide.replace("](README.md", "](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/README.md")
+        for name in ("README.md", "CHANGELOG.md"):
+            guide = guide.replace("](" + name, "](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/" + name)
         guide = guide.replace("](docs/", "](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/docs/")
         (staging / "MOD_INSTALL.md").write_text(guide, encoding="utf-8")
         (staging / "JavaPatches").mkdir()
         java_guide = (root / "JavaPatches/README.md").read_text(encoding="utf-8")
         for folder in ("docs", "tests"):
             java_guide = java_guide.replace("](../" + folder + "/", "](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/" + folder + "/")
+        for source, target in (("build.py", "JavaPatches/build.py"), ("../CHANGELOG.md", "CHANGELOG.md")):
+            java_guide = java_guide.replace("](" + source, "](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/" + target)
         (staging / "JavaPatches/README.md").write_text(java_guide, encoding="utf-8")
 
         if output.exists():

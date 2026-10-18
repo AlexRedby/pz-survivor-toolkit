@@ -13,6 +13,7 @@ python3 -m venv .venv
 .venv/bin/python -m pip install lupa
 .venv/bin/python tools/run_tests.py --test test_tv_controls
 python3 tools/package_mod.py --check
+python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip
 python3 -m unittest discover -s tests -p 'test_prepare_install.py'
 python3 -m unittest discover -s JavaPatches/tests
 python3 tools/prepare_install.py --check
@@ -28,7 +29,7 @@ Vehicle ground-placement regressions run by default. Add `--native-uninstall /pa
 
 Action queue checks require `--native-action-root /path/to/media/lua`. Wishlist crafting checks can additionally inspect native menu callbacks and installed adapters with `--wishlist-game-root /path/to/game/Java-directory --wishlist-workshop-root /path/to/steamapps/workshop/content/108600`.
 
-For a developer-only archive of the Toolkit Lua mod, run `python3 tools/package_mod.py --check`. Wishlist Lua sources are part of the Toolkit tree and are included automatically. Use `tools/prepare_install.py` to prepare both local folders, including the Java mod; it creates no archive.
+`python3 tools/package_mod.py --check` validates the Toolkit mod structure without creating an archive. To create a developer-only archive, run `python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip`; Wishlist Lua sources are included automatically. Use `tools/prepare_install.py` to prepare both local folders, including the Java mod; it creates no archive.
 
 To run the same checks against your installed game's native Mod Options implementation:
 
@@ -73,9 +74,7 @@ The shared `PZSurvivorToolkit/ItemTags` API exposes `forItem`, `forScriptItem`, 
 
 Audit known category IDs with `python3 tools/check_tag_categories.py --schema PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/ItemTagSchema.lua --oc-root /path/to/organizedCategories_core --mod-root /path/to/selected-mod-sources --game /path/to/game-Java`. The checker compares exact IDs and reports unresolved dynamic writers. Run `python3 -m unittest discover -s tests -p test_tag_category_checker.py` for parser and CLI checks.
 
-Use the [native tag checks](../tests/native_tags/README.md) for reconnect and cold-restart scenarios. Native cold-restart coverage for Quartermaster's global preset-rule store remains pending; preserve that distinction from container rules and local named filters. Automated callback and persistence checks do not establish physical mouse/controller input or WAN behavior.
-
-`IsoMetaGrid.load` invalid-room-metaID errors during saved-world loading remain unresolved; compare native and Toolkit loads of the same saved world before attributing them to tags or the mod set. The next steps are in [TODO.md](../TODO.md). Passing tag assertions alone does not establish an error-free game runtime.
+Use the [native tag checks](../tests/native_tags/README.md) for reconnect and cold-restart scenarios. Quartermaster's global preset-rule store has native single-player `seed` and separate-process `reload` coverage; see the [runner guidance](../tests/native_queue/README.md#files-and-contributions) for its cases and evidence requirements. This coverage is distinct from container rules and local named filters. Automated callback and persistence checks do not establish physical mouse/controller input or WAN behavior.
 
 ## Wishlist storage
 

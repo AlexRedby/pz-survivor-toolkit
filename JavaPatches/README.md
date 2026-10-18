@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-`PZToolkitJavaPatches` **0.1.18** is an experimental Java mod for **B42.21 only**. It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
+`PZToolkitJavaPatches` is an experimental Java mod for **B42.21 only**. Its version is set in the [build definition](build.py); recorded changes are in the [changelog](../CHANGELOG.md#toolkit-java-patches). It requires **ZombieBuddy 2.3.4+** in every client and the server. Target-bytecode guards disable unsupported patches; the vehicle fix covers the reproduced authority handoff race, not every cause of vehicle desync.
 
 ## Prepare and install
 
@@ -12,7 +12,7 @@ Host starts a separate Java process. Loading ZombieBuddy only in the client does
 
 ### Host: save approvals first
 
-1. Complete the [client loader setup](../MOD_INSTALL.md#zombiebuddy-loader) and install all three prepared local mod folders. Subscribe to [Peek a View](https://steamcommunity.com/workshop/filedetails/?id=3710281407) and [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436) as well as ZombieBuddy so all selected Java mods are available before the first Host launch.
+1. Complete the [client loader setup](../MOD_INSTALL.md#zombiebuddy-loader) and install both prepared local mod folders. Subscribe to [Peek a View](https://steamcommunity.com/workshop/filedetails/?id=3710281407) and [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436) as well as ZombieBuddy so all selected Java mods are available before the first Host launch.
 2. In the client's **Mods** menu enable **ZombieBuddy**, **Peek a View**, **MP Vanilla Animal Trailer Sync Fix** and **Toolkit Java Patches (Experimental)**. Restart when asked, then approve **PeekAView**, **PZToolkitJavaPatches** and **AnimalTrailerSyncMPFix** when prompted, choosing to **save each decision**. Do this before opening Host, and repeat when a changed JAR prompts again.
 3. Close the game, leave Steam running, and launch using the appropriate command below. Then choose the configured profile in **Host**.
 

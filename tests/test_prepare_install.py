@@ -2,6 +2,7 @@
 
 import shutil
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -41,11 +42,12 @@ class PrepareInstall(unittest.TestCase):
         (self.root / "MOD_INSTALL.md").write_text(
             "[INI](SurvivorQoL-selected.ini) [features](README.md#controls) "
             "[loader](JavaPatches/README.md#server-loader) "
-            "[controls](docs/FEATURES.md#controls)\n", encoding="utf-8")
+            "[controls](docs/FEATURES.md#controls) [changes](CHANGELOG.md)\n", encoding="utf-8")
         (self.root / "JavaPatches/README.md").write_text(
             "[install](../MOD_INSTALL.md#prepare-once) "
             "[regressions](../docs/DEVELOPMENT.md#java-development) "
-            "[fixture](../tests/native_queue/contributions/video-recording/README.md)\n",
+            "[fixture](../tests/native_queue/contributions/video-recording/README.md) "
+            "[version](build.py) [changes](../CHANGELOG.md#toolkit-java-patches)\n",
             encoding="utf-8")
         (self.root / "JavaPatches/start-host.ps1").write_text("# Windows launcher\n")
         command = self.root / "JavaPatches/start-host.command"
@@ -85,11 +87,14 @@ class PrepareInstall(unittest.TestCase):
                          "[INI](Server/SurvivorQoL-selected.ini) "
                          "[features](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/README.md#controls) "
                          "[loader](JavaPatches/README.md#server-loader) "
-                         "[controls](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/docs/FEATURES.md#controls)\n")
+                         "[controls](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/docs/FEATURES.md#controls) "
+                         "[changes](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/CHANGELOG.md)\n")
         self.assertEqual((result / "JavaPatches/README.md").read_text(encoding="utf-8"),
                          "[install](../MOD_INSTALL.md#prepare-once) "
                          "[regressions](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/docs/DEVELOPMENT.md#java-development) "
-                         "[fixture](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/tests/native_queue/contributions/video-recording/README.md)\n")
+                         "[fixture](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/tests/native_queue/contributions/video-recording/README.md) "
+                         "[version](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/JavaPatches/build.py) "
+                         "[changes](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/CHANGELOG.md#toolkit-java-patches)\n")
         self.assertFalse(self.sentinel.exists())
 
     def test_default_build_arguments_and_no_build_or_third_party_artifact_spill(self):
@@ -102,6 +107,18 @@ class PrepareInstall(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in paths if path.suffix == ".jar"),
                          ["PZToolkitFonts.jar", "PZToolkitJavaPatches.jar"])
         self.assertFalse(any(path.suffix in (".class", ".log", ".zip") for path in paths))
+
+    def test_shipped_guides_only_link_to_shipped_files_or_external_sources(self):
+        for name in ("MOD_INSTALL.md", "JavaPatches/README.md"):
+            shutil.copyfile(ROOT / name, self.root / name)
+        prepare_install.prepare(self.root)
+        for name in ("MOD_INSTALL.md", "JavaPatches/README.md"):
+            guide = self.output / name
+            for target in re.findall(r'\]\(([^)]+)\)', guide.read_text(encoding="utf-8")):
+                if target.startswith(("https://", "#")):
+                    continue
+                with self.subTest(guide=name, target=target):
+                    self.assertTrue((guide.parent / target.split("#", 1)[0]).is_file(), target)
 
     def test_build_failure_preserves_previous_set_even_with_existing_patch(self):
         self.build.side_effect = subprocess.CalledProcessError(1, ["build.py"])
@@ -175,6 +192,74 @@ class PrepareInstall(unittest.TestCase):
                 finally:
                     source.unlink()
                     original.rename(source)
+
+    def test_archive_failure_preserves_previous_output_and_removes_staging(self):
+        mod = self.root / "PZSurvivorToolkit"
+        output = self.root / "archives/previous.zip"
+        output.parent.mkdir()
+        output.write_bytes(b"previous archive")
+        close = zipfile.ZipFile.close
+
+        def fail_close(archive):
+            active = archive.fp is not None
+            close(archive)
+            if active:
+                raise OSError("close failed")
+
+        for existing in (True, False):
+            if not existing:
+                output.unlink()
+            for failure in (patch.object(zipfile.ZipFile, "write", side_effect=OSError("write failed")),
+                            patch.object(zipfile.ZipFile, "close", fail_close),
+                            patch.object(Path, "replace", side_effect=OSError("replace failed"))):
+                with self.subTest(existing=existing, failure=failure), failure:
+                    with self.assertRaises(OSError):
+                        package_mod.package(output, mod)
+                    self.assertEqual(output.exists(), existing)
+                    if existing:
+                        self.assertEqual(output.read_bytes(), b"previous archive")
+                    self.assertEqual(list(output.parent.iterdir()), [output] if existing else [])
+        package_mod.package(output, mod)
+        with zipfile.ZipFile(output) as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertEqual(archive.read("PZSurvivorToolkit/42/mod.info"), (mod / "42/mod.info").read_bytes())
+        self.assertEqual(list(output.parent.iterdir()), [output])
+
+    def test_archive_refuses_output_links_and_source_paths_before_writing(self):
+        mod = self.root / "PZSurvivorToolkit"
+        output = self.root / "archive.zip"
+        sentinel = self.root / "outside.zip"
+        sentinel.write_bytes(b"outside sentinel")
+        for target in (sentinel, self.root / "missing.zip"):
+            with self.subTest(target=target):
+                output.symlink_to(target)
+                try:
+                    with self.assertRaisesRegex(ValueError, "regular file"):
+                        package_mod.package(output, mod)
+                    self.assertTrue(output.is_symlink())
+                    self.assertEqual(sentinel.read_bytes(), b"outside sentinel")
+                    self.assertFalse((self.root / "missing.zip").exists())
+                finally:
+                    output.unlink()
+        info = mod / "42/mod.info"
+        before = info.read_bytes()
+        for destination in (info, mod / "archive.zip", mod / "new/sub/archive.zip"):
+            with self.subTest(destination=destination):
+                with self.assertRaisesRegex(ValueError, "outside the mod source"):
+                    package_mod.package(destination, mod)
+                self.assertEqual(info.read_bytes(), before)
+                self.assertFalse((mod / "new").exists())
+                self.assertFalse((mod / "archive.zip").exists())
+
+    def test_archive_cli_reports_output_failure_without_success_message(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        output = StringIO()
+        with patch.object(sys, "argv", ["package_mod.py", "--output", str(self.root / "archive.zip")]), \
+                patch.object(package_mod, "package", side_effect=OSError("archive write failed")), redirect_stdout(output):
+            self.assertEqual(package_mod.main(), 1)
+        self.assertIn("ERROR: archive write failed", output.getvalue())
+        self.assertNotIn("OK: wrote", output.getvalue())
 
     def test_ini_requires_every_local_mod_without_local_workshop_entries(self):
         for invalid in (
