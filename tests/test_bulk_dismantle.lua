@@ -388,4 +388,58 @@ cotton.favorite,clothingEnabled,queued=nil,false,{}
 assert(clothing.queue(player,selected)==nil and #queued==0)
 local disabledClothes=newMenu();local anchor=ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(cotton,disabledClothes,list({rip}),1)
 fill(1,disabledClothes,{cotton,denim});assert(anchor.onSelect and not anchor.subOption)
-print('Batch clothing checks passed: normal consumption, cotton/denim/leather, exact selection, tools, protection, menu and toggle.')
+-- Belts use their own native non-destroy recipe and must join the same batch.
+clothingEnabled, queued = true, {}
+local beltInput = fabricInput({belt=true})
+local cutBelt = recipe('CutUpBelt', {keep, beltInput})
+local belt, secondBelt = item(41,bag,false), item(42,root,false)
+belt.script.fabric, secondBelt.script.fabric = 'belt','belt'
+root.items[42] = secondBelt
+local fabricLogic = HandcraftLogic.new
+HandcraftLogic.new = function(...)
+    local logic = fabricLogic(...)
+    function logic:setManualInputsFor(input, values)
+        assert((input==cottonInput or input==cutInput or input==beltInput) and values:size()==1)
+        self.target=values:get(0);return not rejectPin
+    end
+    function logic:getRecipeData()
+        return {getAllInputItems=function() return list(self.recipe==rip and {self.target} or {self.target,tool}) end,
+            getAllPutBackInputItems=function() return list(self.recipe==rip and {} or {tool}) end}
+    end
+    return logic
+end
+CraftRecipeManager.getUniqueRecipeItems = function()
+    return list({recipe('UnrelatedNormalCraft',{beltInput}),rip,cut,cutBelt})
+end
+local beltEntries=clothing.entries(player,{{items={belt,belt,secondBelt}}})
+assert(#beltEntries==2 and beltEntries[1].recipe==cutBelt and beltEntries[2].recipe==cutBelt,
+    'selected belts must bind the native CutUpBelt recipe once per exact ID')
+assert(clothing.queue(player,beltEntries)==2)
+local beltCuts, beltTransfers = {},0
+for _,action in ipairs(queued) do
+    if action.transfer==tool then beltTransfers=beltTransfers+1 end
+    if not action.transfer then beltCuts[#beltCuts+1]=action end
+end
+assert(#beltCuts==2 and beltCuts[1].target==belt and beltCuts[2].target==secondBelt)
+assert(beltTransfers==1 and #returned==1 and returned[1]==tool, 'belt cutting returns only the borrowed cutter')
+assert(not beltCuts[1]:isValidStart())
+belt.container,root.items[41]=root,belt;assert(beltCuts[1]:isValidStart())
+for _,flag in ipairs({'favorite','worn'}) do
+    belt[flag]=true
+    assert(#clothing.entries(player,{belt})==0 and not beltCuts[1]:isValidStart())
+    belt[flag]=nil
+end
+root.items[41]=nil;assert(not beltCuts[1]:isValidStart(), 'lost belt cannot be replaced by another belt')
+root.items[41]=belt
+missingTool=true;assert(#clothing.entries(player,{belt,secondBelt})==0);missingTool=false
+local beltsMenu=newMenu()
+local nativeBelt=ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(belt,beltsMenu,list({cutBelt}),1)
+fill(1,beltsMenu,{belt,secondBelt});fill(1,beltsMenu,{belt,secondBelt})
+assert(#beltsMenu.options==1 and #nativeBelt.subOption.options==2 and nativeBelt.toolkitBulkRecipe=='CutUpBelt')
+assert(nativeBelt.subOption.options[1].param1==cutBelt and nativeBelt.subOption.options[2].onSelect==clothing.queue)
+local mixedClothes=newMenu();fill(1,mixedClothes,{cotton,denim,leather,belt,secondBelt})
+assert(#mixedClothes.options==1 and #mixedClothes.options[1].subOption.options[2].param1==5,
+    'one batch must cover selected cotton, denim, leather and belts')
+clothingEnabled,queued=false,{}
+assert(clothing.queue(player,beltEntries)==nil and #queued==0)
+print('Batch clothing checks passed: cotton/denim/leather/belts, exact selection, tools, protection, mixed menus and toggle.')

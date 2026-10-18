@@ -109,6 +109,11 @@ expect({onSelect = PZSurvivorToolkit.BulkClothing.queue}, 'craft',
 expect({toolkitBulkRecipe = 'RipClothing', toolkitOriginalOnSelect = ISInventoryPaneContextMenu.OnNewCraft,
     param1 = {getName = function() return 'RipClothing' end}}, 'craft',
     'callback:ISInventoryPaneContextMenu.OnNewCraft:RipClothing')
+expect({toolkitBulkRecipe = 'CutUpBelt', toolkitOriginalOnSelect = ISInventoryPaneContextMenu.OnNewCraft,
+    param1 = {getName = function() return 'CutUpBelt' end}}, 'craft',
+    'callback:ISInventoryPaneContextMenu.OnNewCraft:CutUpBelt')
+assert(Rules.priority('craft', 'callback:ISInventoryPaneContextMenu.OnNewCraft:CutUpBelt', 'inventory')
+    == Rules.priority('craft', 'callback:ISInventoryPaneContextMenu.OnNewCraft:RipClothing', 'inventory'))
 
 local handler = {Type = 'HRemoveBandage', panel = setmetatable({}, ISHealthPanel), onMenuOptionSelected = noop}
 expect({target = handler, onSelect = noop}, 'medical', 'medical:HRemoveBandage')

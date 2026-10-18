@@ -426,6 +426,7 @@ function Rules.priority(category, key, context)
     if category == "transfer" and context == "loot" and weight < 60 then weight = math.min(weight, 20) end
     if key == "callback:ISInventoryPaneContextMenu.OnNewCraft:RipClothing"
         or key == "callback:ISInventoryPaneContextMenu.OnNewCraft:RipDenimClothing"
+        or key == "callback:ISInventoryPaneContextMenu.OnNewCraft:CutUpBelt"
         or key == "callback:PZSurvivorToolkit.BulkClothing.queue" then weight = 25 end
     return weight * 100 + ranks[category]
 end
