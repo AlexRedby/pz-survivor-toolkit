@@ -6,18 +6,20 @@ Run commands below from the repository root.
 
 ## Checks and packaging
 
-Behavioural checks run with Lua 5.1 through Lupa. They use world/UI doubles; they are not visual in-game tests.
+Behavioural checks run with Lua 5.1 through Lupa. They use world/UI doubles; they are not visual in-game tests. Choose checks related to the change; the commands below are independent examples, not a mandatory full checklist.
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install lupa
-.venv/bin/python tools/run_tests.py
+.venv/bin/python tools/run_tests.py --test test_tv_controls
 python3 tools/package_mod.py --check
 python3 tools/package_mod.py --mod PZSurvivorWishlist --check
 python3 -m unittest discover -s tests -p 'test_prepare_install.py'
 python3 -m unittest discover -s JavaPatches/tests
 python3 tools/prepare_install.py --check
 ```
+
+List Lua tests with `.venv/bin/python tools/run_tests.py --list`. Select one or several with repeatable `--test NAME` (relative to `tests/`, with or without `.lua`). For example, `--test test_tv_controls --test test_vhs_ownership` runs only those tests and their associated variants, without scanning all mod files. Omit `--test` for the existing full Lua checks, including the syntax scan. Explicitly selecting the conditional Quartermaster craft UI or native tag transfer/placement checks requires their source-path options. Other checks retain their existing source-dependent SKIP behavior; a skipped integration check does not validate that integration.
 
 The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`. VHS menu, sorting, drop validation and live toggle checks run by default; add `--tv-source /path/to/RWMMergedTV.lua --native-radio-root /path/to/media/lua/client` to also exercise the native media actions and drag parser.
 
@@ -72,14 +74,9 @@ The shared `PZSurvivorToolkit/ItemTags` API exposes `forItem`, `forScriptItem`, 
 
 Audit known category IDs with `python3 tools/check_tag_categories.py --schema PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/ItemTagSchema.lua --oc-root /path/to/organizedCategories_core --mod-root /path/to/selected-mod-sources --game /path/to/game-Java`. The checker compares exact IDs and reports unresolved dynamic writers. Run `python3 -m unittest discover -s tests -p test_tag_category_checker.py` for parser and CLI checks.
 
-Toolkit 0.1.56 passed all 20 native B42.21 macOS localhost cases per EN/RU client with 49 selected Mod IDs and Java Patches 0.1.6. The native catalog validated 75 planting types, 55 full packets and 55 empty packets with exact category projection. Actual tag-row selection saved stable rules in both languages; exact server receipts proved five seed transfers, food-without-seed routing, original food restoration and reconnect with unchanged item/container IDs and rule revision. The comparable main `60ff4dc` control passed 16 cases/client using the same native framework and other 48 mod sources. All logged finding fingerprints and occurrence counts matched the control (server 52, EN 23, RU 19); these inherited engine/mod-pack findings remain, so this is a functional pass with no runtime regression, not a clean runtime claim. The 92-file Toolkit ZIP matches the tested product bytes. Physical input, Windows Host/WAN and a 0.1.56 full server restart remain unverified.
+Use the [native tag checks](../tests/native_tags/README.md) for reconnect and cold-restart scenarios. Native cold-restart coverage for Quartermaster's global preset-rule store remains pending; preserve that distinction from container rules and local named filters. Automated callback and persistence checks do not establish physical mouse/controller input or WAN behavior.
 
-Toolkit 0.1.55 passed 16 native B42.21 macOS localhost checks per EN/RU client with all 49 selected Mod IDs loaded. Checks covered all 209 tag icons and 107 native texture references, the FurnitureDoor alias and saved exact-category filters, combined filters and previews, named filter save/apply/delete, actual Quartermaster saves, stale writes, peer replication, live toggles, native sorting and simultaneous client reconnect with unchanged crate/bag/item IDs and rule revisions. Separate server receipts confirmed exact item locations before and after reconnect; a four-case 0.1.54 control also reconnected both clients. Source hashes matched and all three native catalog pages were inspected. No new Lua/Java error fingerprints appeared relative to the control; additional native animation warnings occurred during server loading. The source audit found no missing mappings among 274 organizedCategories translation IDs and 352 category IDs in the installed game/selected mod sources. This validates the sealed 0.1.55 tag product files committed in `7755743`, tested before merging unrelated main changes; it does not validate every feature of the loaded mods. Base tag display/selection was also checked in native single-player on 0.1.53; new SP rule persistence is covered by Lua/native-source checks. Physical mouse/controller input, Windows Host, WAN and a full server restart were not part of this tag run. See [native tag checks](../tests/native_tags/README.md) for the reproducible fixture.
-
-
-A subsequent native check tested the committed main product files at `d631db8` with the locked 49-Mod-ID selection, including Toolkit Java Patches 0.1.6. Both EN/RU clients passed the 16-case seed run, followed by two cold-restart cases in entirely new server/client processes using copied saved profiles. Both servers saved and exited with code 0. Container tag rules, revision 1, manual designations, local named filters and all original bag/item IDs survived. A native pickup and Quartermaster re-sort produced three ordered authoritative item-location receipts per actor. Source/snapshot hashes and the 638 copied persistence inputs matched. This covers container rules and local filters; it does not add native cold-restart coverage for Quartermaster's global preset-rule store.
-
-The restarted server emitted four `IsoMetaGrid.load` invalid-room-metaID diagnostics while reading `map_meta.bin`; clients had no new error fingerprints relative to the matching seed. These world-loading errors remain separate from the passing tag assertions and prevent describing the complete runtime as clean. Their relationship to the selected mods has not been established. Windows Host, physical input and WAN remain unverified.
+`IsoMetaGrid.load` invalid-room-metaID errors during saved-world loading remain unresolved; compare native and Toolkit loads of the same saved world before attributing them to tags or the mod set. The next steps are in [TODO.md](../TODO.md). Passing tag assertions alone does not establish an error-free game runtime.
 
 ## Wishlist storage
 
@@ -88,6 +85,8 @@ See [server setup](../MOD_INSTALL.md#server) for storage location and backup/res
 ## Java development
 
 For Java-only development, `python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts `--game` for the directory containing both game/loader JARs, `--jdk` for JDK 25+, and `--check` for native Java regressions. The checks compare original and patched engine vehicle interpolation, vehicle ownership recovery (native collision race, validated driver/towing guards and idempotency), bounded opt-in vehicle tracing, media restart, build cancellation/completion behavior, animal location/identity/capacity reconciliation, equipment acknowledgements, hutch unloading and native string-property startup fallback (cold loader entry, IDs, values, storage and unrelated diagnostics), plus native fluid-container token normalization, fence-validation timing and early font-page loading; there is no separate zombie-speed regression in this command. Generated output is ignored by Git.
+
+For one Java regression, use `python3 JavaPatches/build.py --test MediaChecks`; repeat `--test` to select more. When present, `--test` overrides the `--check`/`--check-video` groups; without it, those flags retain their existing behavior. `--help` lists the available test names. Each Java regression has a 120-second timeout; change it with a positive integer `--test-timeout SECONDS`. A timed-out test fails and retains its output in the reported `JavaPatches/build/<check-name>.log`. The limit applies to each test invocation, not to compilation.
 
 ## Java patch boundaries
 

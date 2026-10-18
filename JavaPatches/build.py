@@ -3,6 +3,40 @@ import argparse, os, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+CHECKS = {'zombie.vehicles.NativeChecks': 'NATIVE_CHECKS_PASS',
+          'zombie.vehicles.VehicleOwnershipChecks': 'VEHICLE_OWNERSHIP_CHECKS_PASS',
+          'zombie.vehicles.VehicleTraceChecks': 'VEHICLE_TRACE_CHECKS_PASS',
+          'zombie.radio.devices.MediaChecks': 'MEDIA_CHECKS_PASS',
+          'zombie.core.BuildChecks': 'BUILD_CHECKS_PASS',
+          'zombie.core.QueueManagerChecks': 'QUEUE_MANAGER_CHECKS_PASS',
+          'zombie.core.ActionAcknowledgementChecks': 'ACTION_ACKNOWLEDGEMENT_CHECKS_PASS',
+          'zombie.characters.CharacterTimedActions.ActionCompletionChecks': 'ACTION_COMPLETION_CHECKS_PASS',
+          'zombie.characters.AnimalChecks': 'ANIMAL_CHECKS_PASS',
+          'zombie.network.packets.EquipmentChecks': 'EQUIPMENT_CHECKS_PASS',
+          'zombie.network.packets.MedicalBodyDamageChecks': 'MEDICAL_BODY_DAMAGE_CHECKS_PASS',
+          'zombie.characters.MedicalVisualChecks': 'MEDICAL_VISUAL_CHECKS_PASS',
+          'zombie.core.MedicalTimedActionChecks': 'MEDICAL_TIMED_ACTION_CHECKS_PASS',
+          'zombie.iso.objects.HutchChecks': 'HUTCH_CHECKS_PASS',
+          'zombie.core.PropertyChecks': 'PROPERTY_CHECKS_PASS',
+          'zombie.core.PropertyColdChecks': 'PROPERTY_COLD_CHECKS_PASS',
+          'zombie.scripting.entity.components.fluids.FluidChecks': 'FLUID_CHECKS_PASS',
+          'zombie.scripting.entity.components.fluids.FluidColdChecks': 'FLUID_COLD_CHECKS_PASS',
+          'zombie.scripting.entity.components.crafting.PianoChecks': 'PIANO_CHECKS_PASS',
+          'zombie.iso.FencePropertyChecks': 'FENCE_PROPERTY_CHECKS_PASS',
+          'zombie.basements.BasementRoomLookupChecks': 'BASEMENT_ROOM_LOOKUP_CHECKS_PASS',
+          'zombie.iso.MannequinZoneChecks': 'MANNEQUIN_ZONE_CHECKS_PASS',
+          'zombie.iso.FenceChecks': 'FENCE_CHECKS_PASS',
+          'zombie.core.fonts.FontChecks': 'FONT_CHECKS_PASS',
+          'zombie.core.fonts.FontColdChecks': 'FONT_COLD_CHECKS_PASS'}
+CHECKS['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
+TEST_NAMES = {name.rsplit('.', 1)[-1]: name for name in CHECKS}
+
+def positive_timeout(value):
+    seconds = int(value)
+    if seconds <= 0:
+        raise argparse.ArgumentTypeError('must be a positive number of seconds')
+    return seconds
+
 parser = argparse.ArgumentParser()
 game_defaults = {
     'darwin': Path.home() / 'Library/Application Support/Steam/steamapps/common/ProjectZomboid/Project Zomboid.app/Contents/Java',
@@ -13,7 +47,13 @@ parser.add_argument('--game', type=Path, default=game_defaults.get(sys.platform)
 parser.add_argument('--jdk', type=Path)
 parser.add_argument('--check', action='store_true', help='Run original-engine versus woven-patch regression')
 parser.add_argument('--check-video', action='store_true', help='Run headless video timeline/FFmpeg regression (PZ_TEST_FFMPEG selects executable)')
+parser.add_argument('--test', action='append', choices=TEST_NAMES, default=[], metavar='NAME', help='Run only selected regressions; repeat for multiple. Names: ' + ', '.join(TEST_NAMES))
+parser.add_argument('--test-timeout', type=positive_timeout, default=120, metavar='SECONDS', help='Timeout for each Java regression invocation (default: 120 seconds)')
 args = parser.parse_args()
+if args.test:
+    selected = [TEST_NAMES[name] for name in args.test]
+else:
+    selected = [name for name in CHECKS if (args.check_video if name.endswith('.VideoChecks') else args.check)]
 if args.game is None:
     parser.error('Pass --game with the folder containing projectzomboid.jar and ZombieBuddy.jar')
 if not (args.game / 'projectzomboid.jar').is_file():
@@ -55,45 +95,25 @@ for base in [mod/'common/media', mod/'42/media']:
     for name in ['AnimSets', 'actiongroups']: (base/name).mkdir(parents=True, exist_ok=True)
 print(jar)
 
-if args.check or args.check_video:
+if selected:
     testclasses = ROOT / 'build/test-classes'
     testclasses.mkdir(exist_ok=True)
-    checks = {'zombie.vehicles.NativeChecks': 'NATIVE_CHECKS_PASS',
-              'zombie.vehicles.VehicleOwnershipChecks': 'VEHICLE_OWNERSHIP_CHECKS_PASS',
-              'zombie.vehicles.VehicleTraceChecks': 'VEHICLE_TRACE_CHECKS_PASS',
-              'zombie.radio.devices.MediaChecks': 'MEDIA_CHECKS_PASS',
-              'zombie.core.BuildChecks': 'BUILD_CHECKS_PASS',
-              'zombie.core.QueueManagerChecks': 'QUEUE_MANAGER_CHECKS_PASS',
-              'zombie.core.ActionAcknowledgementChecks': 'ACTION_ACKNOWLEDGEMENT_CHECKS_PASS',
-              'zombie.characters.CharacterTimedActions.ActionCompletionChecks': 'ACTION_COMPLETION_CHECKS_PASS',
-              'zombie.characters.AnimalChecks': 'ANIMAL_CHECKS_PASS',
-              'zombie.network.packets.EquipmentChecks': 'EQUIPMENT_CHECKS_PASS',
-              'zombie.network.packets.MedicalBodyDamageChecks': 'MEDICAL_BODY_DAMAGE_CHECKS_PASS',
-              'zombie.characters.MedicalVisualChecks': 'MEDICAL_VISUAL_CHECKS_PASS',
-              'zombie.core.MedicalTimedActionChecks': 'MEDICAL_TIMED_ACTION_CHECKS_PASS',
-              'zombie.iso.objects.HutchChecks': 'HUTCH_CHECKS_PASS',
-              'zombie.core.PropertyChecks': 'PROPERTY_CHECKS_PASS',
-              'zombie.core.PropertyColdChecks': 'PROPERTY_COLD_CHECKS_PASS',
-              'zombie.scripting.entity.components.fluids.FluidChecks': 'FLUID_CHECKS_PASS',
-              'zombie.scripting.entity.components.fluids.FluidColdChecks': 'FLUID_COLD_CHECKS_PASS',
-              'zombie.scripting.entity.components.crafting.PianoChecks': 'PIANO_CHECKS_PASS',
-              'zombie.iso.FencePropertyChecks': 'FENCE_PROPERTY_CHECKS_PASS',
-              'zombie.basements.BasementRoomLookupChecks': 'BASEMENT_ROOM_LOOKUP_CHECKS_PASS',
-              'zombie.iso.MannequinZoneChecks': 'MANNEQUIN_ZONE_CHECKS_PASS',
-              'zombie.iso.FenceChecks': 'FENCE_CHECKS_PASS',
-              'zombie.core.fonts.FontChecks': 'FONT_CHECKS_PASS',
-              'zombie.core.fonts.FontColdChecks': 'FONT_COLD_CHECKS_PASS'} if args.check else {}
-    if args.check_video:
-        checks['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
+    checks = {name: CHECKS[name] for name in selected}
     sources = [ROOT / 'tests' / (name.replace('.', '/') + '.java') for name in checks]
-    subprocess.run([javac, '--release', '17', '-cp', os.pathsep.join([classpath, str(jar), str(fontjar)]), '-d', str(testclasses), *map(str, sources)], check=True)
+    subprocess.run([javac, '--release', '17', '-cp', os.pathsep.join([classpath, str(jar), str(fontjar)]), '-sourcepath', str(ROOT / 'tests'), '-d', str(testclasses), *map(str, sources)], check=True)
     for name, marker in checks.items():
         for trace in ([False, True] if name.endswith("VehicleTraceChecks") else [False]):
             with tempfile.TemporaryDirectory(prefix='pz-java-native-') as cache:
                 cold_fonts = name == 'zombie.core.fonts.FontColdChecks'
                 testpath = [str(testclasses), classpath] if cold_fonts else [str(testclasses), str(jar), str(fontjar), classpath]
-                result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            (ROOT / 'build' / (name.rsplit('.', 1)[-1] + ('-trace' if trace else '') + '.log')).write_text(result.stdout)
-            print(result.stdout)
+                log = ROOT / 'build' / (name.rsplit('.', 1)[-1] + ('-trace' if trace else '') + '.log')
+                try:
+                    with log.open('w') as output:
+                        result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=output, stderr=subprocess.STDOUT, timeout=args.test_timeout)
+                except subprocess.TimeoutExpired as error:
+                    print(log.read_text(errors='replace'))
+                    raise RuntimeError(f'{name} timed out after {args.test_timeout} seconds; output saved to {log}') from error
+            output = log.read_text(errors='replace')
+            print(output)
             result.check_returncode()
-            if marker not in result.stdout: raise RuntimeError(name + ' regression did not complete')
+            if marker not in output: raise RuntimeError(name + ' regression did not complete')

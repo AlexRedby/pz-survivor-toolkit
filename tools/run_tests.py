@@ -8,9 +8,32 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+TAG_TESTS = ("test_item_tags.lua", "test_tag_visuals.lua", "test_inventory_tags.lua", "test_quartermaster_tags.lua", "test_tag_rule_picker.lua", "test_quartermaster_tag_rules.lua", "test_quartermaster_item_routing.lua", "test_tag_filter_presets.lua", "test_tag_filter_presets_menu.lua", "native_tags/check_reconnect.lua", "native_tags/check_sort_receipts.lua", "native_tags/check_barrier.lua")
+ACTION_TESTS = ("test_animal_info.lua", "test_action_queue_animals.lua", "test_ui_style.lua", "test_sidebar_tools.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_food.lua", "test_packaged_food.lua", "test_food_cart_compat.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_lifecycle.lua", "test_queue_equipment_floor.lua", "test_queue_equipment_bulk.lua", "test_queue_craft_fixture.lua", "test_queue_equipment_authority.lua", "test_queue_equipment_slots.lua", "test_queue_equipment_postprocess.lua", "test_action_queue_acknowledgements.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_dismantle.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_hygiene.lua", "test_action_queue_compat.lua", "test_action_queue_tidy_intent.lua", "test_action_queue_manifest.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua", "test_action_queue_carts.lua", "test_action_queue_fire.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua", "test_context_menu_profile.lua", "test_context_menu_editor.lua")
+EXTRA_TESTS = (
+    'test_quartermaster_craft_ui.lua',
+    'test_highlighter.lua',
+    'test_saucedcarts_compat.lua',
+    'test_cart_spawns.lua',
+    'test_cart_hands.lua',
+    'test_cart_motion.lua',
+    'test_auto_drink.lua',
+    'test_cci_compat.lua',
+    'test_item_details.lua',
+    'test_tv_videos.lua',
+    'test_vhs_ownership.lua',
+    'test_vehicle_ground.lua',
+    'test_tv_controls.lua',
+    'native_tags/check_transfer_source.lua',
+    'native_tags/check_placement.lua',
+)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--test", action="append", default=[], metavar="NAME",
+                        help="run only this test relative to tests/ (optional .lua suffix); repeatable")
+    parser.add_argument("--list", action="store_true", help="list available test names without running checks")
     parser.add_argument("--native-mod-options", type=Path,
                         help="test against an extracted vanilla PZAPI/ModOptions.lua")
     parser.add_argument("--cci-source", type=Path, help="test against ContainerCapacityIndicator.lua")
@@ -35,28 +58,49 @@ def main() -> None:
     parser.add_argument("--saucedcarts-source", type=Path, help="SaucedCarts shared module directory for server hook checks")
     parser.add_argument("--wheelbarrow-source", type=Path, help="SaucedWheelbarrow registration init.lua for spawn checks")
     args = parser.parse_args()
+    available = set(TAG_TESTS) | set(ACTION_TESTS) | set(EXTRA_TESTS)
+    available.update(path.name for path in (ROOT / "tests").glob("test_wishlist_*.lua"))
+    requested = {name if name.endswith(".lua") else name + ".lua" for name in args.test}
+    unknown = requested - available
+    if unknown:
+        parser.error("unknown tests: " + ", ".join(sorted(unknown)) + "; see --list")
+    if args.list:
+        print("\n".join(sorted(available)))
+        return
+    if "test_quartermaster_craft_ui.lua" in requested and not (args.quartermaster_source and args.native_action_root):
+        parser.error("test_quartermaster_craft_ui requires --quartermaster-source and --native-action-root")
+    if requested.intersection({"native_tags/check_transfer_source.lua", "native_tags/check_placement.lua"}) and not args.native_action_root:
+        parser.error("selected native tag checks require --native-action-root")
+
+    def should_run(name):
+        return not requested or name in requested
+
     # Lua 5.1 character classes inspect bytes; host UTF-8 locales can misclassify them.
     locale.setlocale(locale.LC_CTYPE, "C")
     try:
         from lupa.lua51 import LuaRuntime
     except ImportError as error:
         raise SystemExit("Install the test dependency with: python3 -m pip install lupa") from error
-    if args.quartermaster_source and args.native_action_root:
+    if should_run("test_quartermaster_craft_ui.lua") and args.quartermaster_source and args.native_action_root:
         check = LuaRuntime(unpack_returned_tuples=True)
         check.globals().ProjectRoot = str(ROOT)
         check.globals().NativePZLuaRoot = str(args.native_action_root)
         check.globals().NativeQuartermasterLuaRoot = str(args.quartermaster_source)
         check.execute((ROOT / 'tests/test_quartermaster_craft_ui.lua').read_text(encoding='utf-8'))
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.globals().ProjectRoot = str(ROOT)
-    if args.native_mod_options:
-        lua.globals().NativeModOptionsSource = args.native_mod_options.read_text(encoding="utf-8")
-    for path in sorted((ROOT / "PZSurvivorToolkit").rglob("*.lua")):
-        lua.execute("assert(loadstring(...))", path.read_text(encoding="utf-8"))
-    for path in sorted((ROOT / "PZSurvivorWishlist").rglob("*.lua")):
-        lua.execute("assert(loadstring(...))", path.read_text(encoding="utf-8"))
-    print("All mod files compile as Lua 5.1.", flush=True)
-    for name in ("test_item_tags.lua", "test_tag_visuals.lua", "test_inventory_tags.lua", "test_quartermaster_tags.lua", "test_tag_rule_picker.lua", "test_quartermaster_tag_rules.lua", "test_quartermaster_item_routing.lua", "test_tag_filter_presets.lua", "test_tag_filter_presets_menu.lua", "native_tags/check_reconnect.lua", "native_tags/check_sort_receipts.lua", "native_tags/check_barrier.lua"):
+    if should_run("test_highlighter.lua"):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        if args.native_mod_options:
+            lua.globals().NativeModOptionsSource = args.native_mod_options.read_text(encoding="utf-8")
+        if not requested:
+            for path in sorted((ROOT / "PZSurvivorToolkit").rglob("*.lua")):
+                lua.execute("assert(loadstring(...))", path.read_text(encoding="utf-8"))
+            for path in sorted((ROOT / "PZSurvivorWishlist").rglob("*.lua")):
+                lua.execute("assert(loadstring(...))", path.read_text(encoding="utf-8"))
+            print("All mod files compile as Lua 5.1.", flush=True)
+    for name in TAG_TESTS:
+        if not should_run(name):
+            continue
         check = LuaRuntime(unpack_returned_tuples=True)
         check.globals().ProjectRoot = str(ROOT)
         if args.native_inventory_pane:
@@ -69,96 +113,113 @@ def main() -> None:
             check.globals().NativeTextBoxSource = (args.native_action_root / "client/ISUI/ISTextBox.lua").read_text(encoding="utf-8")
             check.globals().NativeModalDialogSource = (args.native_action_root / "client/ISUI/ISModalDialog.lua").read_text(encoding="utf-8")
         check.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
-    check = LuaRuntime(unpack_returned_tuples=True)
-    check.globals().ProjectRoot = str(ROOT)
-    check.globals().BaselineTagReconnect = True
-    check.execute((ROOT / "tests/native_tags/check_reconnect.lua").read_text(encoding="utf-8"))
-    check = LuaRuntime(unpack_returned_tuples=True)
-    check.globals().ProjectRoot = str(ROOT)
-    check.globals().RestartTagReconnect = True
-    check.execute((ROOT / "tests/native_tags/check_reconnect.lua").read_text(encoding="utf-8"))
-    check = LuaRuntime(unpack_returned_tuples=True)
-    check.globals().ProjectRoot = str(ROOT)
-    check.globals().PlantingTagReconnect = True
-    check.execute((ROOT / "tests/native_tags/check_reconnect.lua").read_text(encoding="utf-8"))
+    if should_run("native_tags/check_reconnect.lua"):
+        check = LuaRuntime(unpack_returned_tuples=True)
+        check.globals().ProjectRoot = str(ROOT)
+        check.globals().BaselineTagReconnect = True
+        check.execute((ROOT / "tests/native_tags/check_reconnect.lua").read_text(encoding="utf-8"))
+        check = LuaRuntime(unpack_returned_tuples=True)
+        check.globals().ProjectRoot = str(ROOT)
+        check.globals().RestartTagReconnect = True
+        check.execute((ROOT / "tests/native_tags/check_reconnect.lua").read_text(encoding="utf-8"))
+        check = LuaRuntime(unpack_returned_tuples=True)
+        check.globals().ProjectRoot = str(ROOT)
+        check.globals().PlantingTagReconnect = True
+        check.execute((ROOT / "tests/native_tags/check_reconnect.lua").read_text(encoding="utf-8"))
     if args.native_action_root:
         for name in ("check_transfer_source.lua", "check_placement.lua"):
+            if not should_run("native_tags/" + name):
+                continue
             check = LuaRuntime(unpack_returned_tuples=True)
             check.globals().ProjectRoot = str(ROOT)
             check.globals().NativePZLuaRoot = str(args.native_action_root)
             check.execute((ROOT / "tests/native_tags" / name).read_text(encoding="utf-8"))
-    lua.execute((ROOT / "tests/test_highlighter.lua").read_text(encoding="utf-8"))
+    if should_run("test_highlighter.lua"):
+        lua.execute((ROOT / "tests/test_highlighter.lua").read_text(encoding="utf-8"))
 
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.globals().ProjectRoot = str(ROOT)
-    if args.saucedcarts_source:
-        lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
-    lua.execute((ROOT / "tests/test_saucedcarts_compat.lua").read_text(encoding="utf-8"))
+    if should_run('test_saucedcarts_compat.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        if args.saucedcarts_source:
+            lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
+        lua.execute((ROOT / "tests/test_saucedcarts_compat.lua").read_text(encoding="utf-8"))
 
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.globals().ProjectRoot = str(ROOT)
-    if args.saucedcarts_source:
-        lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
-    if args.wheelbarrow_source:
-        lua.globals().WheelbarrowSource = str(args.wheelbarrow_source)
-    lua.execute((ROOT / "tests/test_cart_spawns.lua").read_text(encoding="utf-8"))
+    if should_run('test_cart_spawns.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        if args.saucedcarts_source:
+            lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
+        if args.wheelbarrow_source:
+            lua.globals().WheelbarrowSource = str(args.wheelbarrow_source)
+        lua.execute((ROOT / "tests/test_cart_spawns.lua").read_text(encoding="utf-8"))
 
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.globals().ProjectRoot = str(ROOT)
-    lua.execute((ROOT / "tests/test_cart_hands.lua").read_text(encoding="utf-8"))
+    if should_run('test_cart_hands.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        lua.execute((ROOT / "tests/test_cart_hands.lua").read_text(encoding="utf-8"))
 
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.globals().ProjectRoot = str(ROOT)
-    lua.execute((ROOT / "tests/test_cart_motion.lua").read_text(encoding="utf-8"))
+    if should_run('test_cart_motion.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        lua.execute((ROOT / "tests/test_cart_motion.lua").read_text(encoding="utf-8"))
 
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.globals().ProjectRoot = str(ROOT)
-    lua.execute((ROOT / "tests/test_auto_drink.lua").read_text(encoding="utf-8"))
+    if should_run('test_auto_drink.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        lua.execute((ROOT / "tests/test_auto_drink.lua").read_text(encoding="utf-8"))
 
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.globals().ProjectRoot = str(ROOT)
-    if args.cci_source:
-        lua.globals().CCISource = args.cci_source.read_text(encoding="utf-8")
-    lua.execute((ROOT / "tests/test_cci_compat.lua").read_text(encoding="utf-8"))
+    if should_run('test_cci_compat.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        if args.cci_source:
+            lua.globals().CCISource = args.cci_source.read_text(encoding="utf-8")
+        lua.execute((ROOT / "tests/test_cci_compat.lua").read_text(encoding="utf-8"))
 
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.globals().ProjectRoot = str(ROOT)
-    if args.item_details_source:
-        for name, filename in (("ItemDetailsSource", "BravoItemDetails.lua"),
-                               ("ItemDetailsConfigSource", "BravoItemDetailsConfig.lua"),
-                               ("ItemDetailsSorterSource", "BravoItemDetailsSorter.lua")):
-            lua.globals()[name] = (args.item_details_source / filename).read_text(encoding="utf-8")
-    lua.execute((ROOT / "tests/test_item_details.lua").read_text(encoding="utf-8"))
+    if should_run('test_item_details.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        if args.item_details_source:
+            for name, filename in (("ItemDetailsSource", "BravoItemDetails.lua"),
+                                   ("ItemDetailsConfigSource", "BravoItemDetailsConfig.lua"),
+                                   ("ItemDetailsSorterSource", "BravoItemDetailsSorter.lua")):
+                lua.globals()[name] = (args.item_details_source / filename).read_text(encoding="utf-8")
+        lua.execute((ROOT / "tests/test_item_details.lua").read_text(encoding="utf-8"))
 
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.globals().ProjectRoot = str(ROOT)
-    if args.tv_source:
-        lua.globals().TVSource = args.tv_source.read_text(encoding="utf-8")
-    lua.execute((ROOT / "tests/test_tv_videos.lua").read_text(encoding="utf-8"))
+    if should_run('test_tv_videos.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        if args.tv_source:
+            lua.globals().TVSource = args.tv_source.read_text(encoding="utf-8")
+        lua.execute((ROOT / "tests/test_tv_videos.lua").read_text(encoding="utf-8"))
 
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.globals().ProjectRoot = str(ROOT)
-    lua.execute((ROOT / "tests/test_vhs_ownership.lua").read_text(encoding="utf-8"))
+    if should_run('test_vhs_ownership.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        lua.execute((ROOT / "tests/test_vhs_ownership.lua").read_text(encoding="utf-8"))
 
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.globals().ProjectRoot = str(ROOT)
-    if args.native_uninstall:
-        lua.globals().NativeUninstallSource = args.native_uninstall.read_text(encoding="utf-8")
-    if args.native_vehicles:
-        lua.globals().NativeVehicleItemsSource = args.native_vehicles.read_text(encoding="utf-8")
-    lua.execute((ROOT / "tests/test_vehicle_ground.lua").read_text(encoding="utf-8"))
+    if should_run('test_vehicle_ground.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        if args.native_uninstall:
+            lua.globals().NativeUninstallSource = args.native_uninstall.read_text(encoding="utf-8")
+        if args.native_vehicles:
+            lua.globals().NativeVehicleItemsSource = args.native_vehicles.read_text(encoding="utf-8")
+        lua.execute((ROOT / "tests/test_vehicle_ground.lua").read_text(encoding="utf-8"))
 
-    lua = LuaRuntime(unpack_returned_tuples=True)
-    lua.globals().ProjectRoot = str(ROOT)
-    if args.tv_source:
-        lua.globals().TVSource = args.tv_source.read_text(encoding="utf-8")
-        lua.globals().NativeTVWindowSource = (args.tv_source.parent.parent / "ISRadioWindow.lua").read_text(encoding="utf-8")
-    if args.native_radio_root:
-        lua.globals().NativeMediaSource = (args.native_radio_root / "RadioCom/RadioWindowModules/RWMMedia.lua").read_text(encoding="utf-8")
-        lua.globals().NativeDropBoxSource = (args.native_radio_root / "RadioCom/ISUIRadio/ISItemDropBox.lua").read_text(encoding="utf-8")
-    lua.execute((ROOT / "tests/test_tv_controls.lua").read_text(encoding="utf-8"))
+    if should_run('test_tv_controls.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        if args.tv_source:
+            lua.globals().TVSource = args.tv_source.read_text(encoding="utf-8")
+            lua.globals().NativeTVWindowSource = (args.tv_source.parent.parent / "ISRadioWindow.lua").read_text(encoding="utf-8")
+        if args.native_radio_root:
+            lua.globals().NativeMediaSource = (args.native_radio_root / "RadioCom/RadioWindowModules/RWMMedia.lua").read_text(encoding="utf-8")
+            lua.globals().NativeDropBoxSource = (args.native_radio_root / "RadioCom/ISUIRadio/ISItemDropBox.lua").read_text(encoding="utf-8")
+        lua.execute((ROOT / "tests/test_tv_controls.lua").read_text(encoding="utf-8"))
 
-    for name in ("test_animal_info.lua", "test_action_queue_animals.lua", "test_ui_style.lua", "test_sidebar_tools.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_food.lua", "test_packaged_food.lua", "test_food_cart_compat.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_lifecycle.lua", "test_queue_equipment_floor.lua", "test_queue_equipment_bulk.lua", "test_queue_craft_fixture.lua", "test_queue_equipment_authority.lua", "test_queue_equipment_slots.lua", "test_queue_equipment_postprocess.lua", "test_action_queue_acknowledgements.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_dismantle.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_hygiene.lua", "test_action_queue_compat.lua", "test_action_queue_tidy_intent.lua", "test_action_queue_manifest.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua", "test_action_queue_carts.lua", "test_action_queue_fire.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua", "test_context_menu_profile.lua", "test_context_menu_editor.lua"):
+    for name in ACTION_TESTS:
+        if not should_run(name):
+            continue
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
         if args.saucedcarts_source:
@@ -220,6 +281,8 @@ def main() -> None:
                 variant.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
 
     for path in sorted((ROOT / "tests").glob("test_wishlist_*.lua")):
+        if not should_run(path.name):
+            continue
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
         if args.wishlist_game_root:
