@@ -24,8 +24,11 @@ def sha256(path):
 
 
 def hashes(root):
-    return {path.relative_to(root).as_posix(): sha256(path)
-            for path in sorted(root.rglob("*")) if path.is_file()}
+    paths = sorted(root.rglob("*"))
+    for path in [root, *paths]:
+        if path.is_symlink():
+            raise ValueError('Hashed input symlinks are unsupported: ' + str(path))
+    return {path.relative_to(root).as_posix(): sha256(path) for path in paths if path.is_file()}
 
 
 def _json(path, value):

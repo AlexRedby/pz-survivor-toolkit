@@ -15,6 +15,8 @@ def create(project, output, game, workshop=(), overrides=None):
     if any(not MOD_ID.fullmatch(id) or id in ('.', '..') for id in mods) or len(mods) != len(set(mods)):
         raise ValueError('Selected pack contains invalid or duplicate Mod IDs')
     locations = _locations(project, list(map(Path, workshop)), mods, overrides)
+    if any(output.resolve().is_relative_to(root) for root in locations.values()):
+        raise ValueError('Pack lock output must be outside selected mod sources')
     rows = []
     for id, root in locations.items():
         layers = [(tuple(map(int, p.name.split('.'))), p) for p in root.iterdir()

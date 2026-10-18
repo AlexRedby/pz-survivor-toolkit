@@ -47,6 +47,39 @@ class PackLockTests(unittest.TestCase):
             self.create()
         self.assertFalse(self.output.exists())
 
+    def test_lock_output_cannot_mutate_its_selected_source(self):
+        alias = self.root / 'source-alias'
+        alias.symlink_to(self.root / 'First', target_is_directory=True)
+        for destination in (self.root / 'First/pack.json', alias / 'nested/pack.json'):
+            with self.subTest(destination=destination):
+                self.output = destination
+                with self.assertRaisesRegex(ValueError, 'outside selected mod sources'):
+                    self.create()
+                self.assertFalse(destination.exists())
+                self.assertFalse((self.root / 'First/nested').exists())
+        self.assertEqual((self.root / 'First/42/source.lua').read_text(), 'return true\n')
+
+    def test_linked_inputs_are_rejected_when_creating_and_validating_locks(self):
+        outside = self.root / 'external'
+        outside.mkdir()
+        (outside / 'source.lua').write_text('external content')
+        self.create()
+        for target in (outside, outside / 'source.lua', outside / 'missing'):
+            with self.subTest(target=target):
+                link = self.root / 'First/42/linked'
+                link.symlink_to(target, target_is_directory=target == outside)
+                try:
+                    with self.assertRaisesRegex(ValueError, 'symlinks are unsupported'):
+                        self.validate()
+                    fresh = self.root / 'fresh-lock.json'
+                    with self.assertRaisesRegex(ValueError, 'symlinks are unsupported'):
+                        pack.create(self.root, fresh, self.game)
+                    self.assertFalse(fresh.exists())
+                finally:
+                    link.unlink()
+        self.assertEqual((outside / 'source.lua').read_text(), 'external content')
+        self.validate()
+
     def test_common_only_b42_metadata_precedes_root_b41_id_and_version(self):
         root = self.root / 'First'
         shutil.rmtree(root / '42')

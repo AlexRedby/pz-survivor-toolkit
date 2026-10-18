@@ -78,6 +78,28 @@ class NativeSnapshotTests(unittest.TestCase):
         ports.assert_not_called()
         self.compile_mock.assert_not_called()
 
+    def test_source_links_fail_before_snapshot_copy_and_compilation(self):
+        outside = self.root / 'external'
+        self.write(outside / 'linked.lua', 'external source')
+        for target in (outside, outside / 'linked.lua', outside / 'missing'):
+            with self.subTest(target=target):
+                link = self.project / 'Toolkit/42/linked'
+                link.symlink_to(target, target_is_directory=target == outside)
+                try:
+                    with patch.object(native.shutil, 'copytree') as copy:
+                        with self.assertRaisesRegex(ValueError, 'symlinks are unsupported'):
+                            self.prepare()
+                    copy.assert_not_called()
+                    self.compile_mock.assert_not_called()
+                    self.assertFalse((self.root / 'run').exists())
+                finally:
+                    link.unlink()
+        root_link = self.root / 'linked-mod'
+        root_link.symlink_to(self.project / 'Toolkit', target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'symlinks are unsupported'):
+            native.hashes(root_link)
+        self.assertEqual((outside / 'linked.lua').read_text(), 'external source')
+
     def test_host_prepares_and_seals_the_actual_shared_server_settings(self):
         shutil.copytree(ROOT / 'tests/native_queue/startup', self.project / 'tests/native_queue/startup')
         root = self.prepare(suite='startup', kind='mp', clients=1, cases=['loaded'], options={'mp_host': True})
