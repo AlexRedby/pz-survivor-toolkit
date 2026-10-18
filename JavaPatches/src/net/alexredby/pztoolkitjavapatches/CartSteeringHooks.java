@@ -297,8 +297,7 @@ public final class CartSteeringHooks {
                     Math.max(-guideCap,guideBase-6*dt*dt),Math.min(guideCap,guideBase+6*dt*dt));
                 if(slide==null) state.result.scale((float)fraction);
                 else {
-                    double nx=slide.x()==0?Math.signum(state.result.x):0;
-                    double ny=slide.y()==0?Math.signum(state.result.y):0;
+                    double nx=slide.normalX(),ny=slide.normalY();
                     if(state.wantsMove && !state.braking && !state.stationaryRoot && !state.reversal.active
                         && state.reversal.direction>0 && CartFootprint.pressingWall(state.target,slide.target(),nx,ny)) {
                         state.wallHeading=slide.target();state.wallNormalX=nx;state.wallNormalY=ny;

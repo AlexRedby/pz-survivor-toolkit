@@ -269,6 +269,106 @@ public final class Main {
         return out.append(" clear=").append(clear.invoke(null,world.invoke(null,player),player.getX(),player.getY(),heading.getDouble(state),front.getDouble(state))).toString();
     }
 
+    private static zombie.vehicles.BaseVehicle fixtureVehicle;
+    private static float[] fixtureHull;
+    private static float fixtureZ;
+
+    private static void vehicleGuard() {
+        if (!"true".equals(System.getenv("PZ_CART_TEST_PAD"))
+            || !"CartTestArea".equals(zombie.iso.IsoWorld.instance.getWorld())
+            || zombie.network.GameClient.client || zombie.network.GameServer.server)
+            throw new IllegalStateException("Disposable single-player CartTestArea pad required");
+    }
+
+    @LuaMethod(name="cartLabVehicleCreate", global=true)
+    public static zombie.vehicles.BaseVehicle vehicleCreate(double x,double y,int z,double yaw) {
+        vehicleGuard();
+        if (fixtureVehicle!=null || !Double.isFinite(x+y+yaw) || z<=0)
+            throw new IllegalArgumentException("Empty fixture slot and finite upper-pad pose required");
+        var cell=zombie.iso.IsoWorld.instance.currentCell;
+        var square=cell.getGridSquare((int)Math.floor(x),(int)Math.floor(y),z);
+        if (square==null || square.getFloor()==null || !square.TreatAsSolidFloor())
+            throw new IllegalStateException("Loaded fixture floor required");
+        var vehicle=new zombie.vehicles.BaseVehicle(cell);
+        // addToWorld randomly scatters car keys; this fixture owns only the collision body.
+        vehicle.keySpawned=1;
+        fixtureVehicle=vehicle;
+        try {
+            vehicle.setScriptName("Base.CarNormal");vehicle.setScript();
+            if(vehicle.getScript()==null) throw new IllegalStateException("Native CarNormal script missing");
+            vehicle.setX((float)x);vehicle.setY((float)y);vehicle.setZ(z);
+            vehicle.savedRot.setAngleAxis((float)yaw,0,1,0);
+            vehicle.jniTransform.setRotation(vehicle.savedRot);
+            vehicle.setSquare(square);vehicle.chunk=square.getChunk();
+            vehicle.chunk.vehicles.add(vehicle);vehicle.addToWorld();
+            vehicle.setPhysicsActive(false);
+            vehicle.polyDirty=true;fixtureZ=vehicle.getZ();fixtureHull=vehicleHull(vehicle);
+            vehicleState();
+            return vehicle;
+        } catch(RuntimeException failure) {
+            vehicleRemove();throw failure;
+        }
+    }
+
+    private static float[] vehicleHull(zombie.vehicles.BaseVehicle vehicle) {
+        var p=vehicle.getPoly();
+        return new float[]{p.x1,p.y1,p.x2,p.y2,p.x3,p.y3,p.x4,p.y4};
+    }
+
+    private static zombie.vehicles.BaseVehicle checkedVehicle() {
+        vehicleGuard();var v=fixtureVehicle;
+        if(v==null || !v.addedToWorld || v.getId()<0 || !v.isStatic || v.isActive || v.isPhysicsActive()
+            || v.getZ()!=fixtureZ || v.getPoly().z!=fixtureZ || v.chunk==null || !v.chunk.vehicles.contains(v))
+            throw new IllegalStateException("Owned static native vehicle identity/level changed");
+        float[] hull=vehicleHull(v);
+        for(int i=0;i<hull.length;i++)
+            if(!Float.isFinite(hull[i]) || Math.abs(hull[i]-fixtureHull[i])>.002)
+                throw new IllegalStateException("Owned native vehicle hull moved");
+        return v;
+    }
+
+    @LuaMethod(name="cartLabVehicleCheck", global=true)
+    public static boolean vehicleCheck() { checkedVehicle();return true; }
+
+    @LuaMethod(name="cartLabVehicleState", global=true)
+    public static String vehicleState() {
+        var v=checkedVehicle();float[] hull=vehicleHull(v);
+        var p=IsoPlayer.getInstance();var map=zombie.pathfind.PolygonalMap2.instance;
+        float cx=0,cy=0;for(int i=0;i<8;i+=2){cx+=hull[i]/4;cy+=hull[i+1]/4;}
+        var out=new StringBuilder("id=").append(v.getId()).append(" z=").append(v.getZ())
+            .append(" static=").append(v.isStatic).append(" active=").append(v.isActive)
+            .append(" bodyBlocked=").append(!map.canStandAt(cx,cy,(int)fixtureZ,p,false,false))
+            .append(" crossBlocked=").append(map.lineClearCollide(cx-8,cy,cx+8,cy,(int)fixtureZ,p,zombie.pathfind.PolygonalMap2.LCC_ZERO))
+            .append(" hull=");
+        for(int i=0;i<8;i++){if(i>0)out.append(',');out.append(hull[i]);}
+        return out.toString();
+    }
+
+    @LuaMethod(name="cartLabVehicleSquareAllowed", global=true)
+    public static boolean vehicleSquareAllowed(int x,int y,int z) {
+        vehicleGuard();if(fixtureVehicle==null) return false;
+        checkedVehicle();boolean owned=false;
+        var cell=zombie.iso.IsoWorld.instance.currentCell;
+        // The native square query searches neighbouring chunks; inspect the same owners, including pending adds.
+        var seen=new java.util.HashSet<zombie.vehicles.BaseVehicle>(cell.getVehicles());
+        seen.addAll(cell.addVehicles);
+        for(int cx=x-16;cx<=x+16;cx+=8) for(int cy=y-16;cy<=y+16;cy+=8) {
+            var chunk=cell.getChunkForGridSquare(cx,cy,0);if(chunk!=null) seen.addAll(chunk.vehicles);
+        }
+        for(var v:seen) if(v.isIntersectingSquare(x,y,z)) {
+            if(v!=fixtureVehicle) return false;owned=true;
+        }
+        return owned;
+    }
+
+    @LuaMethod(name="cartLabVehicleRemove", global=true)
+    public static void vehicleRemove() {
+        vehicleGuard();var v=fixtureVehicle;if(v==null)return;
+        if(v.addedToWorld)v.permanentlyRemove();
+        if(v.chunk!=null)v.chunk.vehicles.remove(v);
+        fixtureVehicle=null;fixtureHull=null;
+    }
+
     @LuaMethod(name="cartLabDrive", global=true)
     public static void drive(int value) {
         if (value < -1 || value > 8) throw new IllegalArgumentException("drive must be -1..8");

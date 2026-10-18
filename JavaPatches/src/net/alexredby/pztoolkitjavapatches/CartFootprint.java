@@ -2,6 +2,9 @@ package net.alexredby.pztoolkitjavapatches;
 
 import zombie.characters.IsoPlayer;
 import zombie.pathfind.PolygonalMap2;
+import zombie.pathfind.VehiclePoly;
+import java.awt.geom.Line2D;
+import java.util.ArrayList;
 
 /** Conservative wooden-cart envelope; the native world remains the obstacle oracle. */
 final class CartFootprint {
@@ -11,23 +14,56 @@ final class CartFootprint {
     private static final double RAIL=.04, NOSE_INSET=.28, TAPER=.30;
 
     @FunctionalInterface
-    interface Query { boolean blocked(double x1,double y1,double x2,double y2); }
+    interface Query {
+        boolean blocked(double x1,double y1,double x2,double y2);
+        default double tangent(int axis) { return axis<2?axis*Math.PI/2:Double.NaN; }
+    }
 
     static Query world(IsoPlayer player) {
-        return (x1,y1,x2,y2)-> {
-            var map=PolygonalMap2.instance;
-            int z=(int)Math.floor(player.getZ());
-            // The line query checks only its destination. Validate the rear cap as well.
-            if(!map.canStandAt((float)x1,(float)y1,z,player,false,false)) return true;
-            if(x1==x2 && y1==y2) return false;
-            // Short overloads ignore doors; the explicit zero mask includes them.
-            return map.lineClearCollide((float)x1,(float)y1,(float)x2,(float)y2,z,player,PolygonalMap2.LCC_ZERO);
+        int z=(int)Math.floor(player.getZ());
+        var vehicles=new ArrayList<VehiclePoly>();
+        for(var vehicle:player.getCell().getVehicles())
+            if(vehicle.addedToWorld && vehicle.getScript()!=null && Math.floor(vehicle.getZ())==z)
+                vehicles.add(vehicle.getPoly());
+        return new Query() {
+            private VehiclePoly contact;
+            public double tangent(int axis) {
+                if(axis<2) return Query.super.tangent(axis);
+                if(contact==null) return Double.NaN;
+                return axis==2?Math.atan2(contact.y2-contact.y1,contact.x2-contact.x1)
+                    :Math.atan2(contact.y3-contact.y2,contact.x3-contact.x2);
+            }
+            public boolean blocked(double x1,double y1,double x2,double y2) {
+                // Native vehicle queries use .15 rather than the wall query's .3 radius.
+                for(var poly:vehicles) if(vehicleBlocked(poly,x1,y1,x2,y2)) {contact=poly;return true;}
+                var map=PolygonalMap2.instance;
+                // The line query checks only its destination. Validate the rear cap as well.
+                if(!map.canStandAt((float)x1,(float)y1,z,player,false,false)) return true;
+                if(x1==x2 && y1==y2) return false;
+                // Short overloads ignore doors; the explicit zero mask includes them.
+                return map.lineClearCollide((float)x1,(float)y1,(float)x2,(float)y2,z,player,PolygonalMap2.LCC_ZERO);
+            }
         };
+    }
+
+    static boolean vehicleBlocked(VehiclePoly p,double x1,double y1,double x2,double y2) {
+        if(Math.max(x1,x2)+.3<Math.min(Math.min(p.x1,p.x2),Math.min(p.x3,p.x4))
+            || Math.min(x1,x2)-.3>Math.max(Math.max(p.x1,p.x2),Math.max(p.x3,p.x4))
+            || Math.max(y1,y2)+.3<Math.min(Math.min(p.y1,p.y2),Math.min(p.y3,p.y4))
+            || Math.min(y1,y2)-.3>Math.max(Math.max(p.y1,p.y2),Math.max(p.y3,p.y4))) return false;
+        return p.containsPoint((float)x1,(float)y1) || p.containsPoint((float)x2,(float)y2)
+            || near(x1,y1,x2,y2,p.x1,p.y1,p.x2,p.y2) || near(x1,y1,x2,y2,p.x2,p.y2,p.x3,p.y3)
+            || near(x1,y1,x2,y2,p.x3,p.y3,p.x4,p.y4) || near(x1,y1,x2,y2,p.x4,p.y4,p.x1,p.y1);
+    }
+
+    private static boolean near(double ax,double ay,double bx,double by,double cx,double cy,double dx,double dy) {
+        return Line2D.linesIntersect(ax,ay,bx,by,cx,cy,dx,dy)
+            || Line2D.ptSegDistSq(ax,ay,bx,by,cx,cy)<=.09 || Line2D.ptSegDistSq(ax,ay,bx,by,dx,dy)<=.09
+            || Line2D.ptSegDistSq(cx,cy,dx,dy,ax,ay)<=.09 || Line2D.ptSegDistSq(cx,cy,dx,dy,bx,by)<=.09;
     }
 
     static boolean clear(Query query,double x,double y,double heading,double front) {
         double cos=Math.cos(heading),sin=Math.sin(heading),length=front-NOSE_INSET;
-        // shortcut: calibrated tile walls/doors; the native vehicle sweep has a narrower side margin.
         for(int side=-1;side<=1;side+=2) {
             double rearX=x-sin*side*RAIL,rearY=y+cos*side*RAIL;
             double shoulderX=rearX+cos*(length-TAPER),shoulderY=rearY+sin*(length-TAPER);
@@ -101,18 +137,33 @@ final class CartFootprint {
             && rigidLimit(query,x,y,heading,normalX*.25,normalY*.25,heading,front)<1;
     }
 
-    record Slide(double x,double y,double turn,double target) {}
+    record Slide(double x,double y,double turn,double target,double normalX,double normalY) {}
 
-    /** Deflect along a clear tile axis and face along it, within the existing turn-rate budget. */
+    /** Deflect along a clear wall/vehicle edge, within the existing turn-rate budget. */
     static Slide slide(Query query,double x,double y,double heading,double dx,double dy,
                        double front,double fraction,double minTurn,double maxTurn) {
-        if(dx==0 || dy==0 || fraction>=1 || !Double.isFinite(dx+dy+minTurn+maxTurn) || minTurn>maxTurn) return null;
+        if(fraction>=1 || !Double.isFinite(dx+dy+minTurn+maxTurn) || minTurn>maxTurn) return null;
         double best=(dx*dx+dy*dy)*fraction;
         Slide result=null;
-        for(int axis=0;axis<2;axis++) {
-            double sx=axis==0?dx:0,sy=axis==1?dy:0;
+        double vehicleAxis0=query.tangent(2),vehicleAxis1=query.tangent(3);
+        for(int axis=0;axis<4;axis++) {
+            double angle=axis<2?query.tangent(axis):axis==2?vehicleAxis0:vehicleAxis1;
+            if(!Double.isFinite(angle)) continue;
+            double tx=axis==0?1:axis==1?0:Math.cos(angle),ty=axis==0?0:axis==1?1:Math.sin(angle);
+            double along=dx*tx+dy*ty,normal=-dx*ty+dy*tx;
+            if(Math.abs(along)<1e-12 || Math.abs(normal)<1e-12) continue;
+            double sx=tx*along,sy=ty*along;
+            double nx=-ty*Math.signum(normal),ny=tx*Math.signum(normal);
             double target=Math.atan2(sy,sx);
             if(dx*Math.cos(heading)+dy*Math.sin(heading)<0) target+=Math.PI;
+            sx=(float)(x+sx)-x;sy=(float)(y+sy)-y;
+            // Nearest rounding otherwise creeps a diagonal tangent into the hull each frame.
+            if(sx*nx+sy*ny>1e-12) {
+                double outwardX=Math.nextAfter((float)(x+sx),nx>0?Double.NEGATIVE_INFINITY:Double.POSITIVE_INFINITY)-x;
+                double outwardY=Math.nextAfter((float)(y+sy),ny>0?Double.NEGATIVE_INFINITY:Double.POSITIVE_INFINITY)-y;
+                if(Math.abs((outwardX-sx)*nx)>=Math.abs((outwardY-sy)*ny)) sx=outwardX;
+                else sy=outwardY;
+            }
             double turn=Math.max(minTurn,Math.min(maxTurn,CartSteeringMath.wrap(target-heading)));
             double allowed=rigidLimit(query,x,y,heading,sx,sy,heading+turn,front);
             double acceptedTurn=turn*allowed;
@@ -121,8 +172,11 @@ final class CartFootprint {
                 allowed=rigidLimit(query,x,y,heading,sx,sy,heading,front);acceptedTurn=0;
             }
             sx=(float)(x+sx*allowed)-x;sy=(float)(y+sy*allowed)-y;
+            if(rigidLimit(query,x,y,heading,sx,sy,heading+acceptedTurn,front)<1) continue;
             double progress=sx*dx+sy*dy;
-            if(progress>best+1e-12) {best=progress;result=new Slide(sx,sy,acceptedTurn,target);}
+            if(progress>best+1e-12) {
+                best=progress;result=new Slide(sx,sy,acceptedTurn,target,nx,ny);
+            }
         }
         return result;
     }

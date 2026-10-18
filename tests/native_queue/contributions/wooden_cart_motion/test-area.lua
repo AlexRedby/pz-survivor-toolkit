@@ -14,10 +14,15 @@ CartTestArea = {
     x=supplied.x, y=supplied.y, z=supplied.z,
     minX=supplied.minX, minY=supplied.minY, size=supplied.size, margin=supplied.margin,
     floorSprite=supplied.floorSprite,
-    obstacles={}, obstacleEdges={},
+    obstacles={}, obstacleEdges={}, vehicles={},
     sandbox={Zombies=6, EnableVehicles=false, VehicleStoryChance=1, ZoneStoryChance=1, SurvivorHouseChance=1},
 }
 local area = CartTestArea
+
+function area.hasVehicles()
+    for _ in pairs(area.vehicles) do return true end
+    return false
+end
 
 local function edge(x, y, dx, dy)
     return area.obstacleEdges[x..','..y..','..dx..','..dy] == true
@@ -71,7 +76,11 @@ local function checkSquare(square, player, x, y, building, releasedItem)
             local owned = area.obstacles and area.obstacles[object]
             if not owned or owned.x ~= x or owned.y ~= y or owned.z ~= area.z
                 or object:getSquare() ~= square or object:getSpriteName() ~= owned.sprite then
-                fail('unexpected tile object'..releaseDetails, x, y, area.z)
+                local name = object.getObjectName and object:getObjectName() or tostring(object)
+                local sprite = object.getSpriteName and object:getSpriteName() or nil
+                local item = instanceof and instanceof(object,'IsoWorldInventoryObject') and object:getItem()
+                fail('unexpected tile object '..tostring(name)..' sprite='..tostring(sprite)
+                    ..' item='..(item and item:getFullType() or '-')..releaseDetails, x, y, area.z)
             end
         end
     end
@@ -88,10 +97,13 @@ local function checkSquare(square, player, x, y, building, releasedItem)
     end
     local moving = square:getMovingObjects()
     for i = 0, moving:size() - 1 do
-        if moving:get(i) ~= player then fail('unexpected actor', x, y, area.z) end
+        if moving:get(i) ~= player and not area.vehicles[moving:get(i)] then fail('unexpected actor', x, y, area.z) end
     end
-    if square:isVehicleIntersecting() then fail('vehicle intersects pad', x, y, area.z) end
-    if not building and not square:isFree(false) then fail('blocked square', x, y, area.z) end
+    local vehicle = square:isVehicleIntersecting()
+    local ownedVehicle = vehicle and area.hasVehicles() and cartLabVehicleSquareAllowed
+        and cartLabVehicleSquareAllowed(x,y,area.z)
+    if vehicle and not ownedVehicle then fail('vehicle intersects pad', x, y, area.z) end
+    if not building and not ownedVehicle and not square:isFree(false) then fail('blocked square', x, y, area.z) end
 end
 
 function area.contains(x, y, z)

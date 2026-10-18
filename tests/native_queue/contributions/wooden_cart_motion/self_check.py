@@ -31,6 +31,7 @@ def check_manifest():
         "interruption_analyzer": "analyze-interruption.py", "repeat_analyzer": "analyze-repeat.py", "wheel_cycle_analyzer": "analyze-wheel-cycle.py",
         "path_scenario": "scenario-path.lua", "path_analyzer": "analyze-path.py",
         "scene_selection": "scene-selection.lua",
+        "vehicles": "vehicles.lua", "vehicle_scenario": "scenario-vehicles.lua", "vehicle_analyzer": "analyze-vehicles.py",
     }
     for name in manifest["sources"].values():
         assert (HERE / name).is_file(), name
@@ -48,7 +49,7 @@ def check_manifest():
     assert set(manifest["criteria"]) == {"completion", "grip", "geometry", "native_pose", "floor", "gait", "diagnostics"}
     allowed = {"Main.java", "KahluaChecks.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py", "obstacles.lua", "scenario-collision.lua", "analyze-collision.py", "analyze-footprint.py"}
     allowed |= {"scenario-interaction.lua", "analyze-interaction.py", "analyze-interruption.py", "analyze-repeat.py",
-                "analyze-wheel-cycle.py", "scenario-path.lua", "analyze-path.py", "scene-selection.lua", "analyze-impact.py", "analyze-stop-timing.py"}
+                "analyze-wheel-cycle.py", "scenario-path.lua", "analyze-path.py", "scene-selection.lua", "analyze-impact.py", "analyze-stop-timing.py", "vehicles.lua", "scenario-vehicles.lua", "analyze-vehicles.py"}
     assert {p.name for p in HERE.iterdir() if p.is_file()} == allowed
     for path in HERE.rglob("*"):
         if path.is_file():
@@ -57,7 +58,7 @@ def check_manifest():
         text = (HERE / name).read_text()
         assert not re.search(r"/(?:Users|home|private/tmp|opt/homebrew)/", text), name
         assert all(line.rstrip() == line for line in text.splitlines()), name
-    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua", "scenario-reversal.lua", "scenario-stop.lua", "scenario-stationary.lua", "scenario-maneuvers.lua", "obstacles.lua", "scenario-collision.lua", "scenario-interaction.lua", "scenario-path.lua", "scene-selection.lua"):
+    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua", "scenario-reversal.lua", "scenario-stop.lua", "scenario-stationary.lua", "scenario-maneuvers.lua", "obstacles.lua", "scenario-collision.lua", "scenario-interaction.lua", "scenario-path.lua", "scene-selection.lua", "vehicles.lua", "scenario-vehicles.lua"):
         first = next(line for line in (HERE / name).read_text().splitlines() if line.strip() and not line.startswith("--"))
         assert first.startswith("local config=assert(CartMotionConfig,"), name
     assert manifest['reverse_scenario']['case_count'] == 20
@@ -73,6 +74,13 @@ def check_manifest():
     assert manifest['footprint_scenario']['native_bare_controls'] == ['wall','corner','passage','wall-slide-left','wall-slide-right']
     assert manifest['footprint_scenario']['case_count'] == 24
     assert manifest['footprint_scenario']['required_candidate_versions']['PZToolkitJavaPatches']=='>=0.1.20'
+    assert manifest['vehicle_scenario']['case_count']==12
+    vehicles=runpy.run_path(str(HERE/'analyze-vehicles.py'))
+    assert len(vehicles['EXPECTED'])==12 and len(vehicles['CONTROLS'])==4
+    for empty in ('','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=12'):
+        try: vehicles['parse'](empty)
+        except AssertionError: pass
+        else: raise AssertionError('Empty vehicle evidence must fail')
     stationary = runpy.run_path(str(HERE/'analyze-stationary.py'))
     assert len(stationary['STEPS']) == 5
     for empty in ('', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=20'):
@@ -156,7 +164,7 @@ def check_reverse_analyzer(analyzer):
 def check_lua(executable):
     if not executable:
         return "SKIPPED (supply --lua or install Lua/LuaJIT)"
-    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua", "scenario-reversal.lua", "scenario-stop.lua", "scenario-stationary.lua", "scenario-maneuvers.lua", "obstacles.lua", "scenario-collision.lua", "scenario-interaction.lua", "scenario-path.lua", "scene-selection.lua"):
+    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua", "scenario-reversal.lua", "scenario-stop.lua", "scenario-stationary.lua", "scenario-maneuvers.lua", "obstacles.lua", "scenario-collision.lua", "scenario-interaction.lua", "scenario-path.lua", "scene-selection.lua", "vehicles.lua", "scenario-vehicles.lua"):
         path = json.dumps(str(HERE / name), ensure_ascii=False)
         # loadfile parses without executing game APIs; missing config must fail first.
         code = f"assert(loadfile({path})); local ok,err=pcall(dofile,{path}); assert(not ok and tostring(err):find('CartMotionConfig',1,true),tostring(err))"

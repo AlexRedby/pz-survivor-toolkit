@@ -34,7 +34,10 @@
     "wheel_cycle_analyzer": "analyze-wheel-cycle.py",
     "path_scenario": "scenario-path.lua",
     "path_analyzer": "analyze-path.py",
-    "scene_selection": "scene-selection.lua"
+    "scene_selection": "scene-selection.lua",
+    "vehicles": "vehicles.lua",
+    "vehicle_scenario": "scenario-vehicles.lua",
+    "vehicle_analyzer": "analyze-vehicles.py"
   },
   "origin": {
     "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",
@@ -354,9 +357,18 @@
   },
   "footprint_scenario": {
     "case_count": 24,
-    "native_bare_controls": ["wall", "corner", "passage", "wall-slide-left", "wall-slide-right"],
+    "native_bare_controls": [
+      "wall",
+      "corner",
+      "passage",
+      "wall-slide-left",
+      "wall-slide-right"
+    ],
     "scenario": "scenario-collision.lua with config.footprint=true",
-    "required_candidate_versions": {"PZSurvivorToolkit": ">=0.1.61", "PZToolkitJavaPatches": ">=0.1.20"},
+    "required_candidate_versions": {
+      "PZSurvivorToolkit": ">=0.1.61",
+      "PZToolkitJavaPatches": ">=0.1.20"
+    },
     "scope": "Native tile-wall/door guard for the original wooden mesh, both body models and loads; includes wall sliding in both directions against bare Walk controls, initial-overlap reverse and stopped gait promotion. Full vehicle clearance and MP authority are separate coverage."
   },
   "collision_scenario": {
@@ -389,5 +401,37 @@
       "PZSurvivorToolkit": ">=0.1.61",
       "PZToolkitJavaPatches": ">=0.1.19"
     }
+  },
+  "vehicle_scenario": {
+    "case_count": 12,
+    "native_bare_controls": [
+      "yaw0-slide-left",
+      "yaw0-slide-right",
+      "yaw45-slide-left",
+      "yaw45-slide-right"
+    ],
+    "scenario": "scenario-vehicles.lua with config.vehicles=true",
+    "axes": {
+      "sex": [
+        "male"
+      ],
+      "cargo": [
+        "empty",
+        "full"
+      ],
+      "yaw_degrees": [
+        0,
+        45
+      ],
+      "spec": [
+        "front",
+        "slide-left",
+        "slide-right"
+      ]
+    },
+    "sample_interval_ms": 25,
+    "record_seconds_per_case": 12,
+    "full_slide_record_seconds": 15,
+    "scope": "Owned real native static CarNormal on disposable upper pad, native body/cross query receipts, stable identity/hull/level, rendered wooden mesh and analytical continuous wheel support, contact tangent progress, finite-end release, reverse escape and final settle. Moving vehicles, other car scripts and multiplayer are separate coverage."
   }
 }

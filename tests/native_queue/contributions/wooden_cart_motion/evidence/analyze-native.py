@@ -9,8 +9,11 @@ parser.add_argument('--log',type=Path,help='Full native stdout; defaults to prof
 parser.add_argument('--output',type=Path,required=True,help='Result directory; may already contain the two mesh intersection JSON files')
 parser.add_argument('--partial',action='store_true')
 parser.add_argument('--stop-timing',action='store_true',help='Cover all three stops in the 16-second timing bank')
+parser.add_argument('--vehicles',action='store_true',help='Include the extended full-load vehicle slide and release')
 args=parser.parse_args()
 end_ms=15800 if args.stop_timing else 11800
+def measurement_end(name):
+ return 14800 if args.vehicles and '-full-vehicle-' in name and '-slide-' in name else end_ms
 ROOT=args.profile
 HERE=args.output
 HERE.mkdir(parents=True,exist_ok=True)
@@ -25,6 +28,13 @@ if not args.partial:
 assert len(cases)==16 or args.partial
 
 def stage(elapsed,name=''):
+ if args.vehicles:
+  extra=measurement_end(name)-11800
+  if elapsed<1000:return 'idle'
+  if elapsed<8500+extra:return 'vehicle-forward'
+  if elapsed<9300+extra:return 'release'
+  if elapsed<11000+extra:return 'vehicle-reverse'
+  return 'release'
  spec=name.split('-')[2] if name else 'comparison'
  if spec=='direct':
   if elapsed<1000:return 'idle'
@@ -72,7 +82,7 @@ def label(name,wall):
 
 def window(wall):
  for name,start in cases.items():
-  if start+800<wall<start+end_ms:return name,start
+  if start+800<wall<start+measurement_end(name):return name,start
  return None
 
 def wheel_lowest(row):
@@ -99,14 +109,14 @@ for kind,file in [('body','hip-triangle-frames.json'),('pants','pants-triangle-f
 summary={'measurementEndAfterCaseMs':end_ms,'complete':complete,'completedScenes':len(re.findall(r'\[WOOD_BANK\] COMPLETE ',log)),'validatedCartCases':len(cases),'cases':[],'gripSamples':len(grip),'gripFailures':len(failures),'meshSamples':len(body)}
 for name,start in cases.items():
  g=[r for r in grip if r['case']==name];f=[r for r in g if not r['result']]
- row={'case':name,'gripSamples':len(g),'gripFailures':len(f),'failureStages':dict(Counter(r['stage']for r in f)),
+ row={'case':name,'measurementEndAfterCaseMs':measurement_end(name),'gripSamples':len(g),'gripFailures':len(f),'failureStages':dict(Counter(r['stage']for r in f)),
       'failureGaits':dict(Counter(r['gait']for r in f)),'failureElapsedRange':([min(r['elapsed']for r in f),max(r['elapsed']for r in f)]if f else [])}
  for kind,rows in mesh.items():
-  frames=[r for r in rows if start+800<r['time']<start+end_ms]
+  frames=[r for r in rows if start+800<r['time']<start+measurement_end(name)]
   row[kind]={'samples':len(frames),'shaftIntersections':{s:sum(r[s]>0 for r in frames)for s in 'LR'},
    'intersectionStages':dict(Counter(stage(r['time']-start,name)for r in frames if r['L']or r['R'])),
    'intersectionGaits':dict(Counter(label(name,r['time'])for r in frames if r['L']or r['R']))}
- cart=[r for r in body if start+800<r['wallTimeMillis']<start+end_ms]
+ cart=[r for r in body if start+800<r['wallTimeMillis']<start+measurement_end(name)]
  row['wheelFloorMaxError']=max((abs(wheel_lowest(r)-.008)for r in cart),default=None)
  feet=[r for r in cart if start+2300<r['wallTimeMillis']<start+2900]
  row['steadyFastFootSamples']=len(feet)

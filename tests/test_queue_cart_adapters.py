@@ -109,6 +109,24 @@ class CartAdapterTests(unittest.TestCase):
         self.assertFalse(carts.complete(self.selection, 'client1', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=0\n'))
         self.assertFalse(carts.complete(self.selection, 'client1', '[WOOD_PROTOTYPE] BOOTSTRAP_READY\n'))
 
+    def test_vehicle_bank_stages_only_owned_vehicle_fixture_and_exact_scenes(self):
+        self.selection['cases'] = ['vehicles']
+        self.stage()
+        runtime = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+        self.assertIn('["vehicles"]=true', runtime)
+        self.assertIn((ROOT / 'tests/native_queue/contributions/wooden_cart_motion/vehicles.lua').read_text(), runtime)
+        self.assertIn((ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-vehicles.lua').read_text(), runtime)
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if lua:
+            path = self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']
+            subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(path) + '))'], check=True, capture_output=True)
+        names = carts.scene_names('vehicles')
+        self.assertEqual(len(names), 12)
+        self.assertEqual(len(set(names)), 12)
+        self.assertIn('male-full-vehicle-yaw45-slide-right', names)
+        self.assertTrue(carts.complete(self.selection, 'client1', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=12\n'))
+        self.assertFalse(carts.complete(self.selection, 'client1', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=8\n'))
+
     def test_manual_sp_rejects_automatic_scene_selection(self):
         self.selection['cases'] = ['manual']
         self.options['cart_scenes'] = ['male-full-corner']
@@ -144,7 +162,7 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path'])
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path'])
         for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
@@ -339,7 +357,7 @@ class CartAdapterTests(unittest.TestCase):
             start=text.index('local cases=')
             marker='cases=CartLabSelectScenes(cases)'
             body=text[start:text.index(marker,start)+len(marker)]
-            flags=dict(disposable=True,footprint=bank in ('collision','footprint'),
+            flags=dict(disposable=True,footprint=bank in ('collision','footprint'),vehicles=bank=='vehicles',
                        wheelCycle=bank=='wheel',interruptions=bank in ('interruption','interruption-matrix'),
                        interruptionMatrix=bank=='interruption-matrix',rapidRepeats=bank=='repeat',stopTiming=bank=='stop-timing',impact=bank=='impact')
             from queue_checks.native import _lua
@@ -518,6 +536,45 @@ class CartAdapterTests(unittest.TestCase):
         (cache / 'wood-grip-poses.jsonl').write_text('\n'.join(map(json.dumps, samples[22:])))
         with self.assertRaisesRegex(ValueError, 'probe window'):
             carts._coverage(cache, text, 20, metrics)
+
+    def test_vehicle_native_metrics_include_late_grip_and_clothing_failures(self):
+        cache = self.output / 'client1'
+        names = ('male-full-vehicle-yaw0-slide-left', 'male-full-vehicle-yaw0-front')
+        log = self.output / 'client1-launch.log'
+        log.write_text('[WOOD_BANK] RUN_STARTED\n' + ''.join(
+            f'[WOOD_BANK] CASE {name} attempt=0 wall={start}\n[WOOD_BANK] COMPLETE {name} wall={start}\n'
+            for name, start in zip(names, (100000,130000))))
+        matrix = [0.] * 16; matrix[13] = .008
+        (cache / 'body-clearance.jsonl').write_text('\n'.join(json.dumps(dict(wallTimeMillis=at,cart=matrix)) for at in (113000,143000)))
+        (cache / 'wood-grip-poses.jsonl').write_text('\n'.join(json.dumps(dict(wallTimeMillis=at,result=False)) for at in (113000,143000)))
+        columns = ['spineRootOrientationMaxDelta','spineRootDx','spineRootDy','spineRootDz','maxLegMatrixDelta',
+                   'leftArmLengthBefore','leftArmLengthAfter','rightArmLengthBefore','rightArmLengthAfter','contactLocalY']
+        (cache / 'wood-wheel-native.csv').write_text('event,'+','.join(columns)+'\ngrounding,'+','.join('0' for _ in columns)+'\n')
+        script = ROOT / 'tests/native_queue/contributions/wooden_cart_motion/evidence/analyze-native.py'
+        for extended in (False,True):
+            output = self.root / ('extended' if extended else 'legacy'); output.mkdir()
+            for kind in ('hip','pants'):
+                (output / (kind+'-triangle-frames.json')).write_text(json.dumps([
+                    dict(time=at,L=int(kind=='pants'),R=0) for at in (113000,143000)]))
+            subprocess.run([sys.executable,str(script),'--profile',str(cache),'--log',str(log),'--output',str(output),'--partial']
+                           + (['--vehicles'] if extended else []),check=True,capture_output=True)
+            metrics = json.loads((output / 'native-metrics.json').read_text())
+            slide, front = metrics['cases']
+            self.assertEqual(slide['measurementEndAfterCaseMs'],14800 if extended else 11800)
+            self.assertEqual(slide['gripFailures'],int(extended))
+            self.assertEqual(slide['failureStages'],{'vehicle-reverse':1} if extended else {})
+            self.assertEqual(slide['pants']['shaftIntersections']['L'],int(extended))
+            self.assertEqual(front['measurementEndAfterCaseMs'],11800)
+            self.assertEqual(front['gripSamples'],0)
+
+    def test_probe_coverage_rejects_truncated_extended_vehicle_tail(self):
+        text, _, metrics = self.coverage_fixture(1)
+        metrics['cases'][0]['measurementEndAfterCaseMs'] = 14800
+        with self.assertRaisesRegex(ValueError,'probe window'):
+            carts._coverage(self.output / 'client1',text,1,metrics)
+        metrics['cases'][0]['measurementEndAfterCaseMs'] = 0
+        with self.assertRaisesRegex(ValueError,'Invalid native measurement window'):
+            carts._coverage(self.output / 'client1',text,1,metrics)
 
     def test_stop_coverage_rejects_wrong_count_case_and_duplicate_completion(self):
         text, _, metrics = self.coverage_fixture(24)
@@ -700,6 +757,32 @@ class CartAdapterTests(unittest.TestCase):
         self.assertIn('Incomplete grip window', result['issues'])
         self.assertTrue(result['evidence']['motion']['motionPass'])
         self.assertTrue((Path(result['evidence']['analysis']) / 'footprint-motion.json').is_file())
+
+    def test_native_vehicles_require_motion_and_mesh_proof_independently(self):
+        self.selection['cases'] = ['vehicles']
+        fixture = carts._load(ROOT / 'tests/test_cart_vehicle_analyzer.py')
+        text, _ = fixture.fixture(self.output / 'client1')
+        _, _, metrics = self.coverage_fixture(12, text)
+        log = self.output / 'client1-launch.log'; log.write_text(text)
+        (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
+        for failed in (None, 'motionPass', 'footprintPass'):
+            def run(command, directory, name):
+                if name == 'native':
+                    (directory / 'native-metrics.json').write_text(json.dumps(metrics))
+                if name == 'vehicles':
+                    self.assertTrue(command[1].endswith('analyze-vehicles.py'))
+                    self.assertEqual(command[command.index('--log')+1], str(log))
+                    report = dict(motionPass=failed!='motionPass', footprintPass=failed!='footprintPass',
+                                  motionFailures=['motion'] if failed=='motionPass' else [],
+                                  footprintFailures=['mesh'] if failed=='footprintPass' else [])
+                    (directory / 'vehicles-motion.json').write_text(json.dumps(report))
+                return {'exit_code': int(name=='vehicles' and failed is not None)}
+            with self.subTest(failed=failed), patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
+                result = carts.verify(self.output, self.selection, {})
+            self.assertEqual(result['outcomes'][0]['status'], 'failed' if failed else 'captured')
+            self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+            if failed:
+                self.assertIn('motion' if failed=='motionPass' else 'mesh', str(result['issues']))
 
     def test_native_path_requires_route_and_footprint_proof(self):
         self.selection['cases'] = ['path']

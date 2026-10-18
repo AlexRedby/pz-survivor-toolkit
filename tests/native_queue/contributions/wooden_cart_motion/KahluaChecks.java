@@ -61,9 +61,11 @@ public final class KahluaChecks {
                 return frame.push(frame.getThread().call(closure,new Object[0]));
             } catch(java.io.IOException error) {throw new RuntimeException(error);}
         });
-        try(var reader=Files.newBufferedReader(Path.of(args[0],"tests/test_cart_obstacles.lua"))) {
-            result=thread.pcall(LuaCompiler.loadis(reader,"test_cart_obstacles.lua",environment),new Object[0]);
-            if(!Boolean.TRUE.equals(result[0])) throw new AssertionError(Arrays.toString(result));
+        for(String test:new String[]{"test_cart_obstacles.lua","test_cart_vehicle_guards.lua"}) {
+            try(var reader=Files.newBufferedReader(Path.of(args[0],"tests",test))) {
+                result=thread.pcall(LuaCompiler.loadis(reader,test,environment),new Object[0]);
+                if(!Boolean.TRUE.equals(result[0])) throw new AssertionError(Arrays.toString(result));
+            }
         }
         System.out.println("KAH_LUA_CART_OBSTACLES_PASS (stock game VM, stub world, no native launch)");
     }

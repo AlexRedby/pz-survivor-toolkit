@@ -135,7 +135,9 @@ def slot_matches(frame, rows, times):
                for r in brackets(rows, times, frame['wall']))
 
 
-def native_updates(profile, starts):
+def native_updates(profile, starts, durations=None):
+    durations = {name: 12000 for name in starts} if durations is None else durations
+    assert durations.keys() == starts.keys() and all(type(v) is int and v >= 12000 for v in durations.values()), 'Invalid native grounding durations'
     cases = {name: [] for name in starts}
     required = {'event', 'type', 'sequence', 'time', 'wallTimeMillis', 'dt', 'playerX', 'playerY', 'actorHeading'}
     with (profile/'wood-wheel-native.csv').open() as source:
@@ -148,7 +150,7 @@ def native_updates(profile, starts):
             assert all(math.isfinite(v) for v in row.values()), 'Nonfinite native grounding budget'
             assert 0 <= row['dt'] <= .1 and row['sequence'] > 0 and row['sequence'] % 1 == 0, 'Invalid native grounding budget'
             for name, start in starts.items():
-                if start <= row['wallTimeMillis'] < start+12000:
+                if start <= row['wallTimeMillis'] < start+durations[name]:
                     assert raw['type'] == 'SaucedWheelbarrow.WheelbarrowWood', 'Wrong native grounding cart'
                     cases[name].append(dict(wall=row['wallTimeMillis'], elapsed=row['wallTimeMillis']-start,
                         x=row['playerX'], y=row['playerY'], heading=row['actorHeading'], dt=row['dt'],
@@ -158,7 +160,7 @@ def native_updates(profile, starts):
     for name, rows in cases.items():
         # Millisecond clocks may tie; the native sequence and monotonic high-resolution clock may not.
         assert len(rows) >= 80, 'Insufficient native grounding samples: '+name
-        assert rows[0]['elapsed'] <= 200 and rows[-1]['elapsed'] >= 11800, 'Incomplete native grounding sample edges: '+name
+        assert rows[0]['elapsed'] <= 200 and rows[-1]['elapsed'] >= durations[name]-200, 'Incomplete native grounding sample edges: '+name
         assert all(b['sequence'] > a['sequence'] and b['time'] > a['time'] and 0 <= b['wall']-a['wall'] <= 500
                    for a, b in zip(rows, rows[1:])), 'Incomplete or non-monotonic native grounding window: '+name
         for a, b in zip(rows, rows[1:]):

@@ -1,8 +1,73 @@
 package net.alexredby.pztoolkitjavapatches;
 
+import zombie.pathfind.VehiclePoly;
+
 public final class CartFootprintTest {
     private static void check(boolean value,String message) {
         if(!value) throw new AssertionError(message);
+    }
+
+    private static VehiclePoly hull(double angle,double length,double offset) {
+        var p=new VehiclePoly();double tx=Math.cos(angle),ty=Math.sin(angle),nx=ty,ny=-tx;
+        p.x1=(float)(-tx*length+nx*offset);p.y1=(float)(-ty*length+ny*offset);
+        p.x2=(float)(tx*length+nx*offset);p.y2=(float)(ty*length+ny*offset);
+        p.x3=(float)(tx*length+nx*(offset+2));p.y3=(float)(ty*length+ny*(offset+2));
+        p.x4=(float)(-tx*length+nx*(offset+2));p.y4=(float)(-ty*length+ny*(offset+2));
+        p.borders[0].set(p.x1,p.y1);p.borders[1].set(p.x2,p.y2);
+        p.borders[2].set(p.x3,p.y3);p.borders[3].set(p.x4,p.y4);
+        return p;
+    }
+
+    private static void vehicleChecks(double axle) {
+        var p=hull(0,2,0);
+        check(CartFootprint.vehicleBlocked(p,0,-1,0,-1),"stationary point inside a vehicle must collide");
+        check(CartFootprint.vehicleBlocked(p,-1,-1,1,-1),"segment wholly inside a hull must collide");
+        check(CartFootprint.vehicleBlocked(p,0,1,0,-3),"crossing a vehicle with both endpoints outside must collide");
+        check(CartFootprint.vehicleBlocked(p,-3,.299,3,.299),"vehicle edge needs the full .3 rail radius");
+        check(!CartFootprint.vehicleBlocked(p,-3,.301,3,.301),"vehicle clearance must not inflate beyond .3");
+        check(!CartFootprint.vehicleBlocked(p,2.25,.25,2.25,.25),"vehicle corner uses a round cap, not an oversized box");
+        check(CartFootprint.vehicleBlocked(p,2.2,.2,2.2,.2),"stationary point near a hull corner must collide");
+        for(double angle:new double[]{Math.PI/6,Math.PI/4,-Math.PI/4}) for(double origin:new double[]{0,8192,10825.5,16384}) {
+            var poly=hull(angle,50,0);
+            poly.x1+=origin;poly.x2+=origin;poly.x3+=origin;poly.x4+=origin;
+            poly.y1+=origin;poly.y2+=origin;poly.y3+=origin;poly.y4+=origin;
+            poly.borders[0].set(poly.x1,poly.y1);poly.borders[1].set(poly.x2,poly.y2);
+            poly.borders[2].set(poly.x3,poly.y3);poly.borders[3].set(poly.x4,poly.y4);
+            CartFootprint.Query vehicle=new CartFootprint.Query() {
+                public boolean blocked(double x1,double y1,double x2,double y2) {
+                    return CartFootprint.vehicleBlocked(poly,x1,y1,x2,y2);
+                }
+                public double tangent(int axis) {return axis<2?CartFootprint.Query.super.tangent(axis):angle+(axis-2)*Math.PI/2;}
+            };
+            double nx=Math.sin(angle),ny=-Math.cos(angle),x=(float)(origin-.345*nx),y=(float)(origin-.345*ny),heading=angle;
+            boolean slid=false;
+            for(int step=0;step<120;step++) {
+                double dx=.08*Math.signum(nx),dy=0;
+                double fraction=CartFootprint.limit(vehicle,x,y,heading,dx,dy,axle,CartFootprint.FAST_FRONT);
+                var slide=CartFootprint.slide(vehicle,x,y,heading,dx,dy,CartFootprint.FAST_FRONT,fraction,-.025,.025);
+                if(slide==null) {
+                    dx=(float)(x+dx*fraction)-x;dy=(float)(y+dy*fraction)-y;
+                    double allowed=CartFootprint.limit(vehicle,x,y,heading,dx,dy,axle,CartFootprint.FAST_FRONT);
+                    dx=(float)(x+dx*allowed)-x;dy=(float)(y+dy*allowed)-y;
+                    double turn=CartSteeringMath.acceptedTurn(heading,axle,dx,dy);
+                    check(Math.hypot(dx,dy)>0 && CartFootprint.rigidLimit(vehicle,x,y,heading,dx,dy,heading+turn,CartFootprint.FAST_FRONT)==1,
+                        "the preferred rolling fallback must still make safe representable progress");
+                    x+=dx;y+=dy;heading=CartSteeringMath.wrap(heading+turn);continue;
+                }
+                slid=true;
+                check(Math.abs(CartSteeringMath.wrap(slide.target()-angle))<1e-12,
+                    "world-coordinate rounding must not change the retained hull tangent");
+                check(Math.abs(slide.normalX()-nx)<1e-6 && Math.abs(slide.normalY()-ny)<1e-6,
+                    "the contact guide must retain the real vehicle normal, not a tile axis");
+                check(Math.abs(slide.x()*nx+slide.y()*ny)<Math.max(1e-5,2*Math.ulp((float)x)),"vehicle slide must reject inward travel within world precision");
+                check(CartFootprint.rigidLimit(vehicle,x,y,heading,slide.x(),slide.y(),heading+slide.turn(),CartFootprint.FAST_FRONT)==1,
+                    "every committed vehicle slide must pass the float-rounded swept envelope: angle="+angle+" step="+step+" x="+x+" y="+y+" heading="+heading+" slide="+slide);
+                x+=slide.x();y+=slide.y();heading=CartSteeringMath.wrap(heading+slide.turn());
+            }
+            check(slid,"axis-aligned input must exercise sliding along every tested vehicle yaw and world origin");
+            check(CartFootprint.followWall(vehicle,x,y,heading,0,angle,nx,ny,CartFootprint.FAST_FRONT)==(nx>0),
+                "vehicle guidance must retain only input pressing into the contacted side");
+        }
     }
 
     private static void blockedProbeChecks(double axle) {
@@ -176,6 +241,7 @@ public final class CartFootprintTest {
         for(double target:new double[]{Math.PI*3/4,-Math.PI/4,Math.PI/2})
             check(!CartFootprint.followWall(eastWall,parallelX,0,Math.PI/2,target,Math.PI/2,1,0,front),
                 "away, opposite and wall-parallel input must release the contact-only guide");
-        System.out.println("CART_FOOTPRINT_PASS (native budget, wall/door contact, brace probes, passage, swept turn, slide, promotion, rear caps)");
+        vehicleChecks(axle);
+        System.out.println("CART_FOOTPRINT_PASS (native budget, wall/door/vehicle contact, brace probes, passage, swept turn, slide, promotion, rear caps)");
     }
 }
