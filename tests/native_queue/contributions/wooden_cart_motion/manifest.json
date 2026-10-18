@@ -595,5 +595,59 @@
     "purpose": "Accepted manual recovery gate for tight wall clearance; no automatic reverse or gameplay steering change.",
     "scope": "Male-only empty/full Walk wall slides, explicit straight reverse then reverse arc, stop, gentle forward 45-degree exit and optional perpendicular turn at 21000 ms. Requires native backward gait and negative direction, measured reverse arc clearance, forward native Walk and outward heading/displacement, whole wooden mesh and continuous wheel support clearance, native update budgets and final settle. female models, faster gaits, body/grip/clothing, visual quality and multiplayer authority are separate gates.",
     "manual_forward_turn_allowance_ms": 3500
+  },
+  "wall_fast_manual_exit_scenario": {
+    "case_count": 16,
+    "native_bare_controls": [
+      "wall",
+      "corner",
+      "passage",
+      "wall-slide-left",
+      "wall-slide-right"
+    ],
+    "scenario": "scenario-collision.lua with config.footprint=true, config.wallExit=true and config.wallManualExit=true and config.wallFastManualExit=true",
+    "analyzer": "analyze-footprint.py --wall-fast-manual-exit",
+    "axes": {
+      "sex": [
+        "male"
+      ],
+      "cargo": [
+        "empty",
+        "full"
+      ],
+      "gait": [
+        "run",
+        "sprint"
+      ],
+      "spec": [
+        "wall-slide",
+        "wall-slide-right"
+      ],
+      "outward_angle_degrees": [
+        45,
+        90
+      ]
+    },
+    "record_seconds_per_case": 29,
+    "sample_interval_ms": 25,
+    "input_schedule_ms": {
+      "slide": 1000,
+      "manual_reverse_straight": 9500,
+      "manual_reverse_arc": 12000,
+      "manual_reverse_stop": 15500,
+      "manual_forward_outward": 16000,
+      "manual_out90_after_gentle_out45": 21000,
+      "release": 26000
+    },
+    "required_candidate_versions": {
+      "PZSurvivorToolkit": ">=0.1.61",
+      "PZToolkitJavaPatches": ">=0.1.20"
+    },
+    "purpose": "Separate manual recovery gate after Run/Sprint tight wall contact; no automatic reverse or gameplay steering change.",
+    "scope": "Male-only empty/full Run/Sprint wall slides, switch to Walk with explicit straight reverse at 9500 ms, then reverse arc, stop, gentle forward 45-degree exit and optional perpendicular turn at 21000 ms. Requires actual selected native fast gait during approach and steady contact, native backward Walk and negative direction, measured reverse arc clearance, forward native Walk and outward heading/displacement, whole wooden mesh and continuous wheel support clearance, native update budgets and final settle. Female models, body/grip/clothing, visual quality and multiplayer authority are separate gates. Its scene wall has 81 owned W segments from gapY-40 through gapY+40; native bare controls retain reach 24. Exact actual count/extent receipts and actor/whole-mesh bounds must remain inside the finite wall span.",
+    "manual_forward_turn_allowance_ms": 3500,
+    "wall_reach_tiles": 40,
+    "owned_wall_segments": 81,
+    "finite_wall_span_verified": true
   }
 }

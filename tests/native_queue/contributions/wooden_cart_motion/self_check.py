@@ -113,6 +113,22 @@ def check_manifest():
         try: footprint['selected'](empty,wall_manual_exit=True)
         except AssertionError: pass
         else: raise AssertionError('Empty manual wall exit evidence must fail')
+    fast_manual_exit=manifest['wall_fast_manual_exit_scenario']
+    assert fast_manual_exit['case_count']==16 and fast_manual_exit['record_seconds_per_case']==29
+    assert fast_manual_exit['native_bare_controls']==manual_exit['native_bare_controls']
+    assert fast_manual_exit['axes']==dict(manual_exit['axes'],gait=['run','sprint'])
+    assert fast_manual_exit['analyzer']=='analyze-footprint.py --wall-fast-manual-exit'
+    assert fast_manual_exit['input_schedule_ms']==manual_exit['input_schedule_ms']
+    assert fast_manual_exit['wall_reach_tiles']==40 and fast_manual_exit['owned_wall_segments']==81 and fast_manual_exit['finite_wall_span_verified'] is True
+    assert len(footprint['WALL_FAST_MANUAL_EXIT_EXPECTED'])==16
+    for name in footprint['WALL_FAST_MANUAL_EXIT_EXPECTED']:
+        planned=footprint['steps'](name,wall_fast_manual_exit=True)
+        walk=footprint['steps'](name.replace('-run-','-walk-').replace('-sprint-','-walk-'),wall_manual_exit=True)
+        assert planned[0]==(1000,1 if '-run-' in name else 2,walk[0][2]) and planned[1:]==walk[1:]
+    for empty in ('','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=16'):
+        try: footprint['selected'](empty,wall_fast_manual_exit=True)
+        except AssertionError: pass
+        else: raise AssertionError('Empty fast manual wall exit evidence must fail')
     assert manifest['brace_scenario']['case_count']==8 and manifest['brace_scenario']['record_seconds_per_case']==18 and manifest['brace_scenario']['release_wall_segments']==3
     brace=runpy.run_path(str(HERE/'analyze-brace.py'))
     assert len(brace['EXPECTED'])==8 and brace['DURATION']==18000

@@ -26,7 +26,8 @@ def lerp(t, knots):
     return knots[-1][1]
 
 
-def fixture(profile, slide_stop=5800, fast_slide=False, wall_exit=False, wall_manual_exit=False):
+def fixture(profile, slide_stop=5800, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_fast_manual_exit=False):
+    wall_manual_exit=wall_manual_exit or wall_fast_manual_exit
     wall_exit=wall_exit or wall_manual_exit
     duration=29000 if wall_manual_exit else 12000
     directory = profile;directory.mkdir(exist_ok=True)
@@ -50,14 +51,14 @@ def fixture(profile, slide_stop=5800, fast_slide=False, wall_exit=False, wall_ma
             extra=' run=false sprint=false bare=true tracks=Bob_Walk=1@1;' if slide else ''
             lines.append(f'[CART_COLLISION_CONTROL_SAMPLE] spec={control} wall={start+t} elapsed={t} x={x} y={y} heading=3.14159 drive={drive}{extra}')
         lines.append(f'[CART_COLLISION_CONTROL] COMPLETE spec={control} wall={start+control_duration} x={x} y={y}')
-    expected = analyzer.WALL_MANUAL_EXIT_EXPECTED if wall_manual_exit else analyzer.WALL_EXIT_EXPECTED if wall_exit else analyzer.FAST_SLIDE_EXPECTED if fast_slide else analyzer.EXPECTED
+    expected = analyzer.WALL_FAST_MANUAL_EXIT_EXPECTED if wall_fast_manual_exit else analyzer.WALL_MANUAL_EXIT_EXPECTED if wall_manual_exit else analyzer.WALL_EXIT_EXPECTED if wall_exit else analyzer.FAST_SLIDE_EXPECTED if fast_slide else analyzer.EXPECTED
     for i, name in enumerate(sorted(expected)):
         scene, start = name.split('-', 2)[2], 100000+i*(duration+3000)
         if fast_slide or wall_exit: _, scene = scene.split('-', 1)
         if wall_exit: scene, _ = scene.rsplit('-out', 1)
         if wall_manual_exit:scene=scene.removesuffix('-manual')
         initial = (2.8, 10.5) if wall_exit else (1.3, 10.82) if scene=='corner-pivot' else (1.8, 10.5) if scene in ('passage', 'door-open') else (.65, 10.5) if scene=='overlap' else (1.4, 10.5) if scene=='gait-contact' else (3.5, 10.5)
-        lines.extend([f'[CART_COLLISION_LAYOUT] case={name} wallX=0 southY=12 gapY=10 startX={initial[0]} startY={initial[1]} baselineX=.3 baselineY=11.7',
+        lines.extend([f'[CART_COLLISION_LAYOUT] case={name} wallX=0 southY=12 gapY=10 startX={initial[0]} startY={initial[1]} baselineX=.3 baselineY=11.7'+(' ownedWalls=81 wallMinY=-30 wallMaxY=50' if wall_fast_manual_exit else ''),
                       f'[WOOD_BANK] CASE {name} attempt=0 wall={start}'])
         events = [(at, g, (1 if scene=='corner-pivot' else 3 if scene=='wall-slide' else 4 if scene=='wall-slide-right' else 7) if d is None else d) for at, g, d in analyzer.steps(name, fast_slide, wall_exit, wall_manual_exit)]
         previous, phase = initial, 0.
@@ -770,6 +771,122 @@ class WallManualExitTests(unittest.TestCase):
             with self.assertRaises(AssertionError):analyzer.analyze(self.log,self.root,wall_manual_exit=True,**flags)
         result=subprocess.run([sys.executable,str(SCRIPT),'--profile',str(self.root),'--output',str(self.root/'out.json'),'--wall-manual-exit','--wall-exit'],capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0);self.assertIn('not allowed with argument',result.stderr)
+
+
+class WallFastManualExitTests(unittest.TestCase):
+    duration=29000
+    mutate_frames=FootprintTests.mutate_frames
+    mutate_updates=FootprintTests.mutate_updates
+    mutate_samples=FastSlideTests.mutate_samples
+
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+        self.log,sha=fixture(self.root,wall_fast_manual_exit=True)
+        self.hash_patch=patch.object(analyzer,'MESH_SHA',sha);self.hash_patch.start();self.addCleanup(self.hash_patch.stop)
+
+    def report(self,log=None):
+        return analyzer.analyze(self.log if log is None else log,self.root,wall_fast_manual_exit=True)
+
+    def test_exact_fast_manual_matrix_switches_to_walk_for_reverse_and_departure(self):
+        report=self.report()
+        self.assertTrue(report['motionPass'],report['motionFailures'])
+        self.assertTrue(report['footprintPass'],report['footprintFailures'])
+        self.assertEqual((report['caseCount'],report['controlCount']),(16,5))
+        self.assertEqual({c['case'] for c in report['cases']},analyzer.WALL_FAST_MANUAL_EXIT_EXPECTED)
+        for case in report['cases']:
+            name=case['case']
+            planned=analyzer.steps(name,wall_fast_manual_exit=True)
+            walk=analyzer.steps(name.replace('-run-','-walk-').replace('-sprint-','-walk-'),wall_manual_exit=True)
+            self.assertEqual(planned[0][1],1 if '-run-' in name else 2)
+            self.assertEqual(planned[1:],walk[1:])
+            self.assertEqual(case['slideComparison']['requestedGait'],'Run' if '-run-' in name else 'Sprint')
+            self.assertGreaterEqual(case['slideComparison']['cart']['durationMs'],500)
+            self.assertGreater(case['manualComparison']['reverseArcOutwardDisplacement'],.15)
+            self.assertGreater(case['exitComparison']['minClearance'],.35)
+
+    def test_requested_fast_gait_needs_flags_progress_and_positive_native_clip_speed(self):
+        for gait in ('run','sprint'):
+            name=f'male-full-{gait}-wall-slide-right-manual-out45'
+            for start,stop,reason in ((1100,3000,'native requested fast gait does not progress'),
+                                      (8500,9300,'native requested fast gait does not progress at wall contact')):
+                for alter in (lambda line:line.replace(gait+'=true',gait+'=false'),
+                              lambda line:line.replace('Bob_'+gait.title()+'@','Bob_Walk@'),
+                              lambda line:re.sub('Bob_'+gait.title()+r'@1/[^/]+/', 'Bob_'+gait.title()+'@1/0/',line),
+                              lambda line:re.sub('Bob_'+gait.title()+r'@1/([^/]+)/1;',r'Bob_'+gait.title()+r'@1/\1/0;',line)):
+                    with self.subTest(gait=gait,start=start):
+                        self.assertIn((name,reason),self.report(self.mutate_samples(name,start,stop,alter))['motionFailures'])
+
+    def test_fast_gait_during_reverse_cannot_pass_after_requested_walk_transition(self):
+        name='male-empty-sprint-wall-slide-manual-out90'
+        for start,stop in ((10600,11900),(12300,15400)):
+            for alter in (lambda line:line.replace('sprint=false','sprint=true'),
+                          lambda line:line.replace('Bob_WalkBwdNoAim1Hand@','Bob_Sprint@')):
+                with self.subTest(start=start):
+                    failures=self.report(self.mutate_samples(name,start,stop,alter))['motionFailures']
+                    self.assertIn((name,'manual reverse gait does not progress through straight and arc stages'),failures)
+
+    def test_departure_requires_walk_even_after_native_fast_approach(self):
+        for gait in ('run','sprint'):
+            name=f'male-full-{gait}-wall-slide-right-manual-out45'
+            for alter in (lambda line:line.replace(gait+'=false',gait+'=true'),
+                          lambda line:line.replace('Bob_Walk@','Bob_'+gait.title()+'@')):
+                with self.subTest(gait=gait):
+                    self.assertIn((name,'native requested gait does not continue during wall exit'),
+                                  self.report(self.mutate_samples(name,19500,25800,alter))['motionFailures'])
+
+    def test_wrong_bank_and_missing_cases_fail_closed(self):
+        for flags in (dict(wall_manual_exit=True),dict(wall_exit=True),dict(fast_slide=True)):
+            with self.assertRaises(AssertionError):analyzer.analyze(self.log,self.root,**flags)
+        name='male-full-run-wall-slide-manual-out45'
+        with self.assertRaisesRegex(AssertionError,'Missing, duplicate or unexpected footprint cases'):
+            self.report('\n'.join(line for line in self.log.splitlines() if name not in line))
+        for bank in (dict(wall_manual_exit=True),dict(fast_slide=True)):
+            log,_=fixture(self.root,**bank)
+            with self.assertRaises(AssertionError):self.report(log)
+
+    def test_mesh_native_budget_coverage_and_steady_contact_remain_strict(self):
+        name='male-empty-run-wall-slide-manual-out90'
+        log=self.mutate_samples(name,8500,9300,lambda line:re.sub(r' y=[^ ]+',' y=13.5',line))
+        self.mutate_frames(name,lambda row,t:row.__setitem__('slotY',13.5) if 8500<=t<9300 else None)
+        self.assertIn((name,'wall slide has no accepted tangential movement at contact'),self.report(log)['motionFailures'])
+        fixture(self.root,wall_fast_manual_exit=True)
+        gap='\n'.join(line for line in self.log.splitlines() if not (f'case={name} ' in line and 'elapsed=' in line and 22000<=int(re.search(r'elapsed=(\d+)',line)[1])<23000))
+        with self.assertRaises(AssertionError):self.report(gap)
+        self.mutate_frames(name,lambda row,t:row['cart'].__setitem__(12,-3.) if t==12500 else None)
+        self.assertIn((name,'wooden mesh enters closed wall'),self.report()['footprintFailures'])
+        self.mutate_updates(name,lambda row,t:row.__setitem__('playerX',float(row['playerX'])+3) if t==12500 else None)
+        self.assertIn((name,'position jumps outside native update budget'),self.report()['motionFailures'])
+
+    def test_fast_manual_wall_requires_actual_count_and_extent_receipts(self):
+        for old,new in ((' ownedWalls=81 wallMinY=-30 wallMaxY=50',''),('ownedWalls=81','ownedWalls=49'),
+                        ('wallMinY=-30','wallMinY=-14'),('wallMaxY=50','wallMaxY=34')):
+            with self.subTest(new=new),self.assertRaisesRegex(AssertionError,'footprint layout|fast manual wall layout'):
+                self.report(self.log.replace(old,new))
+
+    def test_finite_wall_endpoint_cannot_be_used_as_a_wall_slide_or_escape(self):
+        name='male-empty-sprint-wall-slide-manual-out45'
+        for t in (9000,14000,23000):
+            fixture(self.root,wall_fast_manual_exit=True)
+            def beyond(row,at):
+                if at==t:
+                    row['cart'][12]=-100*math.sin(row['slotAngle']);row['cart'][14]=100*math.cos(row['slotAngle'])
+            self.mutate_frames(name,beyond)
+            with self.subTest(elapsed=t):
+                self.assertIn((name,'wooden mesh and wheel leave finite wall span'),self.report()['footprintFailures'])
+        fixture(self.root,wall_fast_manual_exit=True)
+        log=self.mutate_samples(name,9000,9100,lambda line:re.sub(r' y=[^ ]+',' y=52',line))
+        self.mutate_frames(name,lambda row,at:row.__setitem__('slotY',52.) if at==9000 else None)
+        self.assertIn((name,'actor leaves finite wall span'),self.report(log)['motionFailures'])
+
+    def test_fast_manual_bank_is_mutually_exclusive_in_python_and_cli(self):
+        for flags,option in ((dict(wall_manual_exit=True),'--wall-manual-exit'),
+                             (dict(wall_exit=True),'--wall-exit'),(dict(fast_slide=True),'--fast-slide')):
+            with self.subTest(option=option):
+                with self.assertRaises(AssertionError):analyzer.analyze(self.log,self.root,wall_fast_manual_exit=True,**flags)
+                result=subprocess.run([sys.executable,str(SCRIPT),'--profile',str(self.root),'--output',str(self.root/'out.json'),
+                                       '--wall-fast-manual-exit',option],capture_output=True,text=True)
+                self.assertNotEqual(result.returncode,0);self.assertIn('not allowed with argument',result.stderr)
 
 
 if __name__=='__main__': unittest.main()

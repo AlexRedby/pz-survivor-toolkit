@@ -26,16 +26,19 @@ WALL_EXIT_EXPECTED = {f'male-{cargo}-{gait}-{spec}-out{angle}' for cargo in ('em
                       for gait in ('walk', 'run', 'sprint') for spec in ('wall-slide', 'wall-slide-right') for angle in (45, 90)}
 WALL_MANUAL_EXIT_EXPECTED = {f'male-{cargo}-walk-{spec}-manual-out{angle}' for cargo in ('empty','full')
                              for spec in ('wall-slide','wall-slide-right') for angle in (45,90)}
+WALL_FAST_MANUAL_EXIT_EXPECTED = {f'male-{cargo}-{gait}-{spec}-manual-out{angle}' for cargo in ('empty','full')
+                                  for gait in ('run','sprint') for spec in ('wall-slide','wall-slide-right') for angle in (45,90)}
 ANGLES = {1: -3*math.pi/4, 2: 3*math.pi/4, 3: -math.pi/4, 4: math.pi/4,
           5: math.pi, 6: math.pi/2, 7: 0., 8: -math.pi/2}
 
 
-def steps(name, fast_slide=False, wall_exit=False, wall_manual_exit=False):
+def steps(name, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_fast_manual_exit=False):
     spec = name.split('-', 2)[2]
-    if wall_manual_exit:
-        spec, angle = spec.removeprefix('walk-').rsplit('-manual-out',1)
+    if wall_manual_exit or wall_fast_manual_exit:
+        gait, spec = spec.split('-',1)
+        spec, angle = spec.rsplit('-manual-out',1)
         right=spec.endswith('right')
-        return [(1000,0,1 if right else 2),(9500,0,6 if right else 8),(12000,0,4 if right else 3),
+        return [(1000,('walk','run','sprint').index(gait),1 if right else 2),(9500,0,6 if right else 8),(12000,0,4 if right else 3),
                 (15500,0,0),(16000,0,3 if right else 4)]+([(21000,0,7)] if angle=='90' else [])+[(26000,0,0)]
     if wall_exit:
         gait, spec = spec.split('-', 1)
@@ -60,10 +63,10 @@ def steps(name, fast_slide=False, wall_exit=False, wall_manual_exit=False):
     return result
 
 
-def selected(log, fast_slide=False, wall_exit=False, wall_manual_exit=False):
-    assert sum((fast_slide,wall_exit,wall_manual_exit)) <= 1, 'Footprint banks are mutually exclusive'
-    duration=29000 if wall_manual_exit else 12000
-    expected = WALL_MANUAL_EXIT_EXPECTED if wall_manual_exit else WALL_EXIT_EXPECTED if wall_exit else FAST_SLIDE_EXPECTED if fast_slide else EXPECTED
+def selected(log, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_fast_manual_exit=False):
+    assert sum((fast_slide,wall_exit,wall_manual_exit,wall_fast_manual_exit)) <= 1, 'Footprint banks are mutually exclusive'
+    duration=29000 if wall_manual_exit or wall_fast_manual_exit else 12000
+    expected = WALL_FAST_MANUAL_EXIT_EXPECTED if wall_fast_manual_exit else WALL_MANUAL_EXIT_EXPECTED if wall_manual_exit else WALL_EXIT_EXPECTED if wall_exit else FAST_SLIDE_EXPECTED if fast_slide else EXPECTED
     assert re.search(r'\[WOOD_BANK\] ALL_COMPLETE cases='+str(len(expected))+r'(?:\s|$)', log), 'Capture incomplete'
     assert '[WOOD_BANK] FAIL' not in log, 'Scenario failed'
     complete = re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)', log)
@@ -73,6 +76,8 @@ def selected(log, fast_slide=False, wall_exit=False, wall_manual_exit=False):
     assert all(attempts.count((n, str(t))) == 1 for n, t in starts.items()), 'Missing or duplicate selected footprint attempt'
     cases = {n: dict(rows=[], events=[], states=[]) for n in starts}
     available, active = {}, None
+    layout_keys=('wallX','southY','gapY','startX','startY','baselineX','baselineY')
+    if wall_fast_manual_exit:layout_keys+=('ownedWalls','wallMinY','wallMaxY')
     for line in log.splitlines():
         if '[CART_COLLISION_LAYOUT] ' in line:
             raw = fields(line.split('[CART_COLLISION_LAYOUT] ', 1)[1])
@@ -83,7 +88,10 @@ def selected(log, fast_slide=False, wall_exit=False, wall_manual_exit=False):
             if active:
                 assert active in available, 'Missing footprint layout'
                 cases[active]['layout'] = collision.numeric_fields(' '.join(f'{k}={v}' for k, v in available[active].items()),
-                    ('wallX', 'southY', 'gapY', 'startX', 'startY', 'baselineX', 'baselineY'), 'footprint layout')
+                    layout_keys, 'footprint layout')
+                if wall_fast_manual_exit:
+                    layout=cases[active]['layout']
+                    assert (layout['ownedWalls'],layout['wallMinY'],layout['wallMaxY'])==(81,layout['gapY']-40,layout['gapY']+40), 'Incomplete fast manual wall layout'
         if active is None:
             continue
         event = re.search(r'\[WOOD_RAMP_EVENT\] case=(\S+) elapsed=(\d+) gait=(\d+) drive=(\d+)', line)
@@ -200,12 +208,13 @@ def native_updates(profile, starts, durations=None):
     return cases, failures
 
 
-def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=False):
+def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_fast_manual_exit=False):
     assert '[WOOD_BANK] RUN_STARTED' in text, 'Missing footprint run boundary'
     log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[1]
     native, control_failures = collision.controls(log, wall_offset=3)
-    starts, cases = selected(log, fast_slide, wall_exit, wall_manual_exit)
-    duration=29000 if wall_manual_exit else 12000
+    starts, cases = selected(log, fast_slide, wall_exit, wall_manual_exit, wall_fast_manual_exit)
+    duration=29000 if wall_manual_exit or wall_fast_manual_exit else 12000
+    wall_manual_exit=wall_manual_exit or wall_fast_manual_exit
     wall_exit=wall_exit or wall_manual_exit
     assert max(c['end']['wall'] for c in native.values()) < min(starts.values()), 'Native controls must precede footprint scenes'
     vertices, sha = mesh(profile)
@@ -264,6 +273,11 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
             collection = footprint_failures if body else motion_failures
             if (name, reason) not in collection:
                 collection.append((name, reason))
+        if wall_fast_manual_exit:
+            if any(not layout['wallMinY'] <= r['y'] <= layout['wallMaxY']+1 for r in rows):
+                fail('actor leaves finite wall span')
+            if any(f['minY'] < layout['wallMinY'] or f['maxY'] > layout['wallMaxY']+1 for f in measured):
+                fail('wooden mesh and wheel leave finite wall span',True)
         def window(a, b):
             return [r for r in rows if a <= r['elapsed'] < b]
         def quiet(selected, reason):
@@ -355,6 +369,7 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
                 fail('native requested fast gait does not progress at wall contact')
         exit_comparison = None
         if wall_exit:
+            departure_gait='Walk' if wall_manual_exit else desired_gait
             forward_event=events[4] if wall_manual_exit else events[1]
             before=min(rows,key=lambda r:abs(r['elapsed']-forward_event[0]))
             departure = window(forward_event[0]+(3500 if wall_manual_exit else 700), events[-1][0]-200)
@@ -375,9 +390,9 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
                 if len(moving_window) < 2 or moving_window[-1]['x']-moving_window[0]['x'] <= .005:
                     fail('wall exit freezes instead of continuing outward')
             actual_exit = [r for r in departure if r['direction'] > 0 and r['actualDistance'] > 1e-6
-                           and r['run'] == (desired_gait == 'Run') and r['sprint'] == (desired_gait == 'Sprint')
-                           and any(c['name'] == 'Bob_'+desired_gait and c['weight'] > .1 and c['speed'] > 0 for c in r['clips'])]
-            if (not progressing(actual_exit, {'Bob_'+desired_gait}) or len(actual_exit) < 2
+                           and r['run'] == (departure_gait == 'Run') and r['sprint'] == (departure_gait == 'Sprint')
+                           and any(c['name'] == 'Bob_'+departure_gait and c['weight'] > .1 and c['speed'] > 0 for c in r['clips'])]
+            if (not progressing(actual_exit, {'Bob_'+departure_gait}) or len(actual_exit) < 2
                 or actual_exit[0]['wall']-departure[0]['wall'] > 500 or departure[-1]['wall']-actual_exit[-1]['wall'] > 500
                 or any(b['wall']-a['wall'] > 500 for a,b in zip(actual_exit,actual_exit[1:]))):
                 fail('native requested gait does not continue during wall exit')
@@ -460,12 +475,13 @@ def main():
     bank.add_argument('--fast-slide', action='store_true', help='Require the separate 16-case native Run/Sprint slide bank')
     bank.add_argument('--wall-exit', action='store_true', help='Require 24 male Walk/Run/Sprint outward wall exits')
     bank.add_argument('--wall-manual-exit', action='store_true', help='Require 8 male Walk manual reverse-arc wall exits')
+    bank.add_argument('--wall-fast-manual-exit', action='store_true', help='Require 16 male Run/Sprint approaches followed by manual Walk reverse-arc exits')
     parser.add_argument('--log', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     assert args.profile.is_dir(), 'Capture profile is missing'
     assert not args.output.exists(), 'Refuse to overwrite an existing report'
-    result = analyze((args.log or args.profile/'native-launch.log').read_text(errors='replace'), args.profile, args.fast_slide, args.wall_exit, args.wall_manual_exit)
+    result = analyze((args.log or args.profile/'native-launch.log').read_text(errors='replace'), args.profile, args.fast_slide, args.wall_exit, args.wall_manual_exit, args.wall_fast_manual_exit)
     with args.output.open('x') as target:
         json.dump(result, target, indent=2, allow_nan=False);target.write('\n')
     print(json.dumps(result, indent=2, allow_nan=False))

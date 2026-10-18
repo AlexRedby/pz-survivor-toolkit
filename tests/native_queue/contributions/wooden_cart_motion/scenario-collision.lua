@@ -11,6 +11,8 @@ local brace=config.brace==true
 local fastSlide=config.fastSlide==true
 local wallExit=config.wallExit==true
 local wallManualExit=config.wallManualExit==true
+local wallFastManualExit=config.wallFastManualExit==true
+assert(not wallFastManualExit or wallManualExit,'Fast manual wall exit requires manual wall exit mode')
 assert(not wallManualExit or wallExit,'Manual wall exit requires wall exit mode')
 assert(not wallExit or footprint and not fastSlide and not brace and not config.impact,'Wall exit bank requires footprint without fast slide, brace or impact')
 assert(not fastSlide or footprint and not brace and not config.impact,'Fast slide bank requires footprint without brace or impact')
@@ -83,17 +85,17 @@ if fastSlide then
 end
 if wallExit then
  cases={}
- for _,full in ipairs({false,true}) do for gaitIndex,gait in ipairs(wallManualExit and {'walk'} or {'walk','run','sprint'}) do
+ for _,full in ipairs({false,true}) do for gaitIndex,gait in ipairs(wallFastManualExit and {'run','sprint'} or wallManualExit and {'walk'} or {'walk','run','sprint'}) do
   for _,right in ipairs({false,true}) do for _,angle in ipairs({45,90}) do
    local spec=right and 'wall-slide-right' or 'wall-slide'
    cases[#cases+1]={female=false,full=full,spec=spec,startYaw=right and math.pi/2 or 0,
-    steps=wallManualExit and {{1000,0,right and 1 or 2},{9500,0,right and 6 or 8},{12000,0,right and 4 or 3},{15500,0,0},{16000,0,right and 3 or 4},{26000,0,0}}
+    steps=wallManualExit and {{1000,wallFastManualExit and (gait=='run' and 1 or 2) or 0,right and 1 or 2},{9500,0,right and 6 or 8},{12000,0,right and 4 or 3},{15500,0,0},{16000,0,right and 3 or 4},{26000,0,0}}
      or {{1000,gaitIndex-1,right and 1 or 2},{5500,gaitIndex-1,angle==90 and 7 or right and 3 or 4},{10000,0,0}},
     name='male-'..(full and 'full-' or 'empty-')..gait..'-'..spec..(wallManualExit and '-manual' or '')..'-out'..angle}
    if wallManualExit and angle==90 then table.insert(cases[#cases].steps,6,{21000,0,7}) end
   end end
  end end
- assert(#cases==(wallManualExit and 8 or 24))
+ assert(#cases==(wallFastManualExit and 16 or wallManualExit and 8 or 24))
 end
 if config.impact then
  cases={}
@@ -204,7 +206,7 @@ local function nextCase()
 end
 local function layout(kind,shortWall)
  local walls={}
- local reach=shortWall and 1 or 24
+ local reach=shortWall and 1 or wallFastManualExit and mode=='layout' and 40 or 24
  for y=gapY-reach,gapY+reach do
   if (kind~='passage' and kind~='door-closed' and kind~='door-open') or y~=gapY then walls[#walls+1]={x=wallX,y=y,axis='W'} end
  end
@@ -215,6 +217,15 @@ local function layout(kind,shortWall)
   walls[#walls+1]={x=wallX,y=gapY,axis='W',kind='door',open=kind=='door-open'}
  end
  CartTestArea.clearObstacles(p);CartTestArea.setObstacles(p,walls)
+ if wallFastManualExit and mode=='layout' then
+  local count,minY,maxY=0,math.huge,-math.huge
+  for _,wall in pairs(CartTestArea.obstacles) do
+   assert(wall.x==wallX and wall.axis=='W' and wall.kind=='wall' and wall.z==CartTestArea.z,'Fast manual wall layout changed')
+   count=count+1;minY=math.min(minY,wall.y);maxY=math.max(maxY,wall.y)
+  end
+  assert(count==81 and minY==gapY-40 and maxY==gapY+40,'Incomplete fast manual wall')
+  return count,minY,maxY
+ end
 end
 local function nextControl()
  cartLabDrive(0);cartLabGait(0);controlIndex=controlIndex+1
@@ -241,14 +252,15 @@ local function tick()
   if not ready then assert(now-since<6000,'Pad did not reload: '..tostring(why));return end
   local kind=mode=='control-layout' and controls[controlIndex] or c.spec=='corner-pivot' and 'corner'
    or (c.spec=='passage' or c.spec=='door-closed' or c.spec=='door-open') and c.spec or 'wall'
-  layout(kind,brace and mode~='control-layout' and c.spec=='wall-release')
+  local ownedWalls,wallMinY,wallMaxY=layout(kind,brace and mode~='control-layout' and c.spec=='wall-release')
   if mode=='control-layout' then
    pose(config.impact and wallX+3.5 or CartTestArea.x,CartTestArea.y,controlHeading(kind))
    mode='control-settle'
   else
    poseCase()
    print('[CART_COLLISION_LAYOUT] case='..c.name..' wallX='..wallX..' southY='..southY..' gapY='..gapY..' startX='..p:getX()..' startY='..p:getY()..' baselineX='..controlResults.corner.x..' baselineY='..controlResults.corner.y
-    ..(brace and (' ownedWalls='..(c.spec=='wall-release' and 3 or 49)) or ''))
+    ..(brace and (' ownedWalls='..(c.spec=='wall-release' and 3 or 49)) or '')
+    ..(wallFastManualExit and (' ownedWalls='..ownedWalls..' wallMinY='..wallMinY..' wallMaxY='..wallMaxY) or ''))
    mode='settle'
   end
   since=getTimestampMs()+800;return
