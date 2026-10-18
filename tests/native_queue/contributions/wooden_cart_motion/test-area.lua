@@ -37,7 +37,7 @@ local function contains(objects, object)
     return false
 end
 
-local function checkSquare(square, player, x, y, building)
+local function checkSquare(square, player, x, y, building, releasedItem)
     if not square then
         if building then return end
         fail('square not loaded', x, y, area.z)
@@ -46,13 +46,32 @@ local function checkSquare(square, player, x, y, building)
     if floor and floor:getSpriteName() ~= area.floorSprite then fail('unexpected floor', x, y, area.z) end
     if not building and (not floor or not square:TreatAsSolidFloor()) then fail('missing solid floor', x, y, area.z) end
     local objects = square:getObjects()
+    local worldObjects = square:getWorldObjects()
+    local released = releasedItem and releasedItem:getWorldItem()
+    -- The loot UI temporarily owns ground items in its exact virtual floor container.
+    local floorContainer = player and ISInventoryPage and ISInventoryPage.floorContainer
+        and ISInventoryPage.floorContainer[player:getPlayerNum()+1]
+    local releaseDetails = releasedItem and ' tracked='..tostring(releasedItem:getID())..' world='..tostring(released) or ''
+    if released and (released:getSquare() ~= square or released:getItem() ~= releasedItem
+        or not contains(objects, released) or not contains(worldObjects, released)
+        or releasedItem:getContainer() ~= nil and releasedItem:getContainer() ~= floorContainer
+        or player:getInventory():contains(releasedItem)
+        or player:getPrimaryHandItem() == releasedItem or player:getSecondaryHandItem() == releasedItem) then
+        releaseDetails = releaseDetails..' square='..tostring(released:getSquare()==square)
+            ..' item='..tostring(released:getItem()==releasedItem)..' objects='..tostring(contains(objects,released))
+            ..' world='..tostring(contains(worldObjects,released))..' owner='..tostring(releasedItem:getContainer())
+            ..' inventory='..tostring(player:getInventory():contains(releasedItem))
+            ..' primary='..tostring(player:getPrimaryHandItem()==releasedItem)
+            ..' secondary='..tostring(player:getSecondaryHandItem()==releasedItem)
+        released = nil
+    end
     for i = 0, objects:size() - 1 do
         local object = objects:get(i)
-        if object ~= floor then
+        if object ~= floor and object ~= released then
             local owned = area.obstacles and area.obstacles[object]
             if not owned or owned.x ~= x or owned.y ~= y or owned.z ~= area.z
                 or object:getSquare() ~= square or object:getSpriteName() ~= owned.sprite then
-                fail('unexpected tile object', x, y, area.z)
+                fail('unexpected tile object'..releaseDetails, x, y, area.z)
             end
         end
     end
@@ -64,7 +83,7 @@ local function checkSquare(square, player, x, y, building)
             fail('unexpected special object', x, y, area.z)
         end
     end
-    if square:getWorldObjects():size() > 0 or square:getStaticMovingObjects():size() > 0 then
+    if worldObjects:size() ~= (released and 1 or 0) or square:getStaticMovingObjects():size() > 0 then
         fail('ground item or corpse', x, y, area.z)
     end
     local moving = square:getMovingObjects()
@@ -80,10 +99,10 @@ function area.contains(x, y, z)
         and y >= area.minY + area.margin and y < area.minY + area.size - area.margin
 end
 
-function area.checkPosition(player)
+function area.checkPosition(player, releasedItem)
     local x, y, z = player:getX(), player:getY(), player:getZ()
     if not area.contains(x, y, z) then fail('outside safe pad bounds', x, y, z) end
-    checkSquare(getCell():getGridSquare(math.floor(x), math.floor(y), area.z), player, math.floor(x), math.floor(y))
+    checkSquare(getCell():getGridSquare(math.floor(x), math.floor(y), area.z), player, math.floor(x), math.floor(y), false, releasedItem)
     return true
 end
 

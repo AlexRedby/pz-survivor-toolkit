@@ -72,8 +72,8 @@ public final class Main {
     }
 
     @LuaMethod(name="cartLabSafety", global=true)
-    public static String safety() throws Exception {
-        var p=IsoPlayer.getInstance();var item=p.getPrimaryHandItem();
+    public static String safety(zombie.inventory.InventoryItem item,double centerX,double centerY) throws Exception {
+        var p=IsoPlayer.getInstance();
         var hooks=Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks");
         var states=hooks.getDeclaredField("states");states.setAccessible(true);
         Object state=((java.util.Map<?,?>)states.get(null)).get(p);
@@ -81,6 +81,24 @@ public final class Main {
         if(state!=null) {var field=state.getClass().getDeclaredField("brace");field.setAccessible(true);brace=field.getDouble(state);}
         var phase=Class.forName("net.alexredby.pztoolkitjavapatches.CartWheelSpin").getDeclaredMethod("itemPhase",zombie.inventory.InventoryItem.class);
         phase.setAccessible(true);
+        int inventoryCount=0,worldCount=0,woodCount=0;
+        for(var entry:p.getInventory().getItems())if(entry.getID()==item.getID())inventoryCount++;
+        var world=item.getWorldItem();boolean worldExact=false;
+        for(int x=(int)Math.floor(centerX)-6;x<=(int)Math.floor(centerX)+6;x++)
+            for(int y=(int)Math.floor(centerY)-6;y<=(int)Math.floor(centerY)+6;y++) {
+                var square=zombie.iso.IsoWorld.instance.currentCell.getGridSquare(x,y,(int)p.getZ());
+                if(square==null)throw new IllegalStateException("Impact observation pad unloaded");
+                for(var candidate:square.getWorldObjects()) {
+                    var entry=candidate.getItem();
+                    if(entry!=null && "SaucedWheelbarrow.WheelbarrowWood".equals(entry.getFullType()))woodCount++;
+                    if(entry!=null && entry.getID()==item.getID())worldCount++;
+                    if(candidate==world && entry==item)worldExact=true;
+                }
+            }
+        var cart=(zombie.inventory.types.InventoryContainer)item;
+        var ids=new java.util.ArrayList<String>();
+        for(var child:cart.getInventory().getItems())ids.add(Integer.toString(child.getID()));
+        java.util.Collections.sort(ids);
         return "state="+p.getCurrentState().getClass().getSimpleName()+" action="+p.getActionStateName()
             +" enabled="+hooks.getMethod("enabled",IsoPlayer.class).invoke(null,p)
             +" steering="+((java.util.Map<?,?>)states.get(null)).containsKey(p)
@@ -88,10 +106,16 @@ public final class Main {
             +" ragdoll="+p.isRagdollSimulationActive()+" ignore="+p.getIgnoreMovement()
             +" pivot="+p.getVariableBoolean("ToolkitCartPivot")+" brake="+p.getVariableBoolean("ToolkitCartWoodBrake")
             +" stepX="+p.getVariableFloat("ToolkitCartStepX",0)+" stepY="+p.getVariableFloat("ToolkitCartStepY",0)
-            +" pace="+p.getVariableFloat("ToolkitCartLegPace",0)
-            +" brace="+brace
-            +" id="+(item==null?-1:item.getID())+" secondary="+(p.getSecondaryHandItem()==null?-1:p.getSecondaryHandItem().getID())
-            +" cargo="+(item instanceof zombie.inventory.types.InventoryContainer cart?cart.getInventory().getCapacityWeight():-1)
+            +" pace="+p.getVariableFloat("ToolkitCartLegPace",0)+" brace="+brace
+            +" id="+item.getID()+" primary="+(p.getPrimaryHandItem()==null?-1:p.getPrimaryHandItem().getID())
+            +" secondary="+(p.getSecondaryHandItem()==null?-1:p.getSecondaryHandItem().getID())
+            +" cargo="+cart.getInventory().getCapacityWeight()+" cargoIds="+(ids.isEmpty()?"empty":String.join(",",ids))
+            +" inventoryCount="+inventoryCount+" inInventory="+(item.getContainer()==p.getInventory())
+            +" worldCount="+worldCount+" woodCount="+woodCount+" worldExact="+worldExact
+            +" worldId="+(world==null?-1:world.getItem().getID())
+            +" worldPersistent="+(world!=null && world.isIgnoreRemoveSandbox())
+            +" worldX="+(world==null?0:world.getWorldPosX())+" worldY="+(world==null?0:world.getWorldPosY())
+            +" worldZ="+(world==null?0:world.getWorldPosZ())+" rotation="+item.getWorldZRotation()
             +" itemPhase="+phase.invoke(null,item);
     }
 

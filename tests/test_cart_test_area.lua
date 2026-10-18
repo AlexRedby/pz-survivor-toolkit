@@ -45,6 +45,7 @@ local player = {x = area.x, y = area.y, z = area.z}
 function player:getX() return self.x end
 function player:getY() return self.y end
 function player:getZ() return self.z end
+function player:getPlayerNum() return 0 end
 local function rejects(fn, reason)
     local ok, err = pcall(fn)
     assert(not ok and tostring(err):find(reason, 1, true), tostring(err))
@@ -79,4 +80,41 @@ here.edge = false; player.x = area.minX + 1.9
 rejects(function() area.checkPosition(player) end, 'outside safe pad bounds')
 player.x = area.x; player.z = 0
 rejects(function() area.checkPosition(player) end, 'outside safe pad bounds')
+player.z = area.z
+local item, dropped = {}, {}
+function item:getID() return 123 end
+function item:getWorldItem() return dropped end
+function item:getContainer() return self.container end
+function dropped:getItem() return item end
+function dropped:getSquare() return here end
+function player:getInventory() return {contains=function() return self.inventoryContains == true end} end
+function player:getPrimaryHandItem() return self.primary end
+function player:getSecondaryHandItem() return self.secondary end
+here.objects[2] = dropped;here.world[1] = dropped
+rejects(function() area.checkPosition(player) end, 'unexpected tile object')
+assert(area.checkPosition(player,item), 'exact released fixture item was rejected')
+for _, field in ipairs({'primary','secondary','inventoryContains'}) do
+ player[field] = field == 'inventoryContains' and true or item
+ rejects(function() area.checkPosition(player,item) end, 'unexpected tile object')
+ player[field] = nil
+end
+item.container = {};rejects(function() area.checkPosition(player,item) end, 'unexpected tile object');item.container = nil
+local floorContainer = {}
+ISInventoryPage = {floorContainer={[1]=floorContainer}}
+item.container = floorContainer
+assert(area.checkPosition(player,item), 'native loot UI virtual floor ownership rejected')
+item.container = {};rejects(function() area.checkPosition(player,item) end, 'unexpected tile object')
+item.container = nil
+here.world[2] = dropped
+rejects(function() area.checkPosition(player,item) end, 'ground item or corpse')
+here.world[2] = nil;here.objects[3] = {}
+rejects(function() area.checkPosition(player,item) end, 'unexpected tile object')
+here.objects[3] = nil;here.world[1] = {}
+rejects(function() area.checkPosition(player,item) end, 'unexpected tile object')
+here.world[1] = dropped
+function dropped:getItem() return {} end
+rejects(function() area.checkPosition(player,item) end, 'unexpected tile object')
+function dropped:getItem() return item end
+function dropped:getSquare() return {} end
+rejects(function() area.checkPosition(player,item) end, 'unexpected tile object')
 print('PASS cart test area: save/load preflight, complete flat pad, holes, objects, vehicles, actors, edges, bounds')

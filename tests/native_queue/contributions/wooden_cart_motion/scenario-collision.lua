@@ -64,7 +64,7 @@ if config.impact then
  for _,female in ipairs({false,true}) do for _,full in ipairs({false,true}) do
   for _,spec in ipairs({'sprint-wall','native-impact'}) do
    cases[#cases+1]={female=female,full=full,spec=spec,startYaw=math.pi/4,
-    steps={{1000,2,5},{6000,0,0},{7000,0,7},{9500,0,0}},
+    steps={{1000,2,5},{6000,0,0},{7000,0,7},{spec=='native-impact' and 8000 or 9500,0,0}},
     name=(female and 'female-' or 'male-')..(full and 'full-' or 'empty-')..spec}
   end
  end end
@@ -122,6 +122,16 @@ local function reverseDrive()
  return best
 end
 local function nextCase()
+ local previous=cases[phase]
+ if config.impact and previous and previous.item then
+  local item=previous.item;local world=item:getWorldItem()
+  if world then
+   assert(world:getItem()==item and not p:getInventory():contains(item),'Invalid owned impact cart cleanup')
+   local square=world:getSquare()
+   square:transmitRemoveItemFromSquare(world);square:removeWorldObject(world);item:setWorldItem(nil)
+   p:getInventory():AddItem(item);p:setPrimaryHandItem(item);p:setSecondaryHandItem(item);SaucedCarts.applyCartPose(p)
+  end
+ end
  sprinting(0)
  cartLabDrive(0);cartLabGait(0);phase=phase+1;stage=0;taken={};attempt=0
  if phase>#cases then
@@ -135,7 +145,9 @@ local function nextCase()
  -- Use native Sprint eligibility with the same controlled skill per variant.
  sprinting(10)
  if p:isFemale()~=c.female then p:setFemale(c.female);p:getDescriptor():setFemale(c.female);p:resetModel() end
- wood(c.full or false);if c.bare then CartLabKey(Keyboard.KEY_F7) end;pose();p:getStats():reset(CharacterStat.ENDURANCE)
+ wood(c.full or false);if c.bare then CartLabKey(Keyboard.KEY_F7) end
+ if config.impact then c.item=p:getPrimaryHandItem() end
+ pose();p:getStats():reset(CharacterStat.ENDURANCE)
  mode='layout';since=getTimestampMs()+1800
 end
 local function layout(kind)
@@ -168,8 +180,8 @@ local function tick()
  if ISChat and ISChat.instance then ISChat.instance:setVisible(false) end
  getCore():setAutoZoom(0,false)
  if getCore():getZoom(0)>.251 then getCore():doZoomScroll(0,-1) end
- CartTestArea.checkPosition(p)
  local now=getTimestampMs();local c=cases[phase]
+ CartTestArea.checkPosition(p,config.impact and c and c.item or nil)
  if mode=='control-layout' or mode=='layout' then
   if now<since then return end
   local ready,why=pcall(CartTestArea.check,p)
@@ -251,7 +263,7 @@ local function tick()
   sampleSince=now
   if config.impact then
    print('[CART_IMPACT_SAMPLE] case='..c.name..' wall='..now..' elapsed='..elapsed
-    ..' x='..p:getX()..' y='..p:getY()..' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' '..cartLabSafety())
+    ..' x='..p:getX()..' y='..p:getY()..' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' '..cartLabSafety(c.item,CartTestArea.x,CartTestArea.y))
   else
    print('[WOOD_BANK_SAMPLE] case='..c.name..' wall='..now..' elapsed='..elapsed..' x='..p:getX()..' y='..p:getY()
    ..' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' skill='..p:getPerkLevel(Perks.Sprinting)..' speed='..p:getVariableFloat('WalkSpeed',0)
@@ -265,6 +277,8 @@ local function tick()
    taken.impact=true
    print('[CART_IMPACT_EVENT] case='..c.name..' wall='..now..' elapsed='..elapsed..' source=native-action-event')
    cartLabWallEvent()
+   cartLabDrive(0);cartLabGait(0)
+   print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait=0 drive=0')
   end
  end
  while stage<#c.steps and elapsed>=c.steps[stage+1][1] do

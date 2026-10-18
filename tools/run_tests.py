@@ -111,6 +111,11 @@ def main() -> None:
     if args.native_action_root:
         lua.globals().NativeActionRoot = str(args.native_action_root)
     lua.execute((ROOT / "tests/test_cart_transitions.lua").read_text(encoding="utf-8"))
+    check = LuaRuntime(unpack_returned_tuples=True)
+    check.globals().ProjectRoot = str(ROOT)
+    if args.saucedcarts_source:
+        check.globals().SaucedCartsSource = str(args.saucedcarts_source)
+    check.execute((ROOT / "tests/test_cart_impact_release.lua").read_text(encoding="utf-8"))
 
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.globals().ProjectRoot = str(ROOT)
