@@ -1,6 +1,7 @@
 require "PZSurvivorToolkit/ActionQueueOperations"
 require "PZSurvivorToolkit/ActionQueueLifecycle"
 require "PZSurvivorToolkit/ActionQueueDefinitions"
+require "ISUI/ISXuiSkin"
 
 local Toolkit = PZSurvivorToolkit
 local Operations = Toolkit.ActionQueueOperations
@@ -11,6 +12,10 @@ local records = {}
 local classes, installed, sessions = {}, {}, {}
 local owners = {}
 local craftOwners = {}
+local nativeXuiMethods = ISXuiSkinFunctions and {
+    xuiRecalculateLayout = ISXuiSkinFunctions.xuiRecalculateLayout,
+    xuiRootElement = ISXuiSkinFunctions.xuiRootElement,
+} or {}
 local ready = {}
 local sourceScope
 local worldGeneration = 0
@@ -179,12 +184,34 @@ local function prepareQuartermasterContainers()
             local previous = ISInventoryPaneContextMenu.getContainers
             local valid = LootSorter == owner and owner.DBG == debug and not owner._craftHooksAdded and not owner._getContainersWrapped
             local queue, busy, clock = ISTimedActionQueue, ISTimedActionQueue.isPlayerDoingAction, getTimestampMs
+            local neat = craftOwners.NC_CraftActionPanel
+            local neatUnchanged = neat and NC_CraftActionPanel == neat.class
+            if neatUnchanged then
+                for method, expected in pairs(neat.methods) do
+                    if neat.class[method] ~= expected then neatUnchanged = false; break end
+                end
+            end
             local results = pack(pcall(callback, ...))
             local replacement = ISInventoryPaneContextMenu.getContainers
             if results[1] and valid and owner._craftHooksAdded and owner._getContainersWrapped and replacement ~= previous
                 and quartermasterClosure(replacement, "LootSorter_CraftMenu.lua") then
                 quartermasterContainers = {previous = previous, replacement = replacement, owner = owner, debug = debug,
                     queue = queue, busy = busy, clock = clock}
+                if neatUnchanged and NC_CraftActionPanel == neat.class then
+                    for method, expected in pairs(neat.methods) do
+                        local current = neat.class[method]
+                        if method == "prerender" or method == "onCraftButtonClick" then
+                            if current == expected or not quartermasterClosure(current, "LootSorter_CraftMenu.lua") then
+                                neatUnchanged = false; break
+                            end
+                        elseif current ~= expected then neatUnchanged = false; break end
+                    end
+                    if neatUnchanged then
+                        -- This pinned installer only wraps Neat's UI entry/render methods; keep every callback/helper baseline.
+                        neat.methods.prerender = neat.class.prerender
+                        neat.methods.onCraftButtonClick = neat.class.onCraftButtonClick
+                    end
+                end
             end
             if not results[1] then error(results[2], 0) end
             return unpack(results, 2, results.n)
@@ -672,6 +699,19 @@ function Compat.install()
             installed[owner[1]] = true
             if not _G[owner[2]] and verified(owner[1]) and pcall(require, owner[3]) then
                 local class = _G[owner[2]]
+                if class and owner[1] == "Project_Cook" then
+                    local complete, methods = class.onHandcraftActionComplete
+                    class.onHandcraftActionComplete = function(self, ...)
+                        local quantity = self.craftTimes
+                        local balance = Toolkit.Settings.actionQueue() and type(quantity) == "number" and quantity > 1
+                            and classUnchanged(class, methods) and instanceUnchanged(self, class)
+                        local result = complete(self, ...)
+                        -- Project Cook starts every craft but only stops the last one in a batch.
+                        if balance then self.logic:stopCraftAction() end
+                        return result
+                    end
+                    methods = snapshot(class)
+                end
                 if class then craftOwners[owner[2]] = {class = class, methods = snapshot(class)}; ready[owner[1]] = true end
                 if owner[1] == "Project_Cook" and not PJCK_EvoPanel then
                     ready.Project_Cook = false
@@ -859,7 +899,8 @@ function Compat.isCraftOwner(name, target, action)
     if not owner or not target then return false end
     for method, callback in pairs(owner.methods) do if target[method] ~= callback then return false end end
     for method, callback in pairs(target) do
-        if type(callback) == "function" and callback ~= owner.methods[method] then return false end
+        if type(callback) == "function" and callback ~= owner.methods[method]
+            and callback ~= nativeXuiMethods[method] then return false end
     end
     return owner and getmetatable(target) == owner.class and classUnchanged(owner.class, owner.methods)
         and action.onStartFunc == owner.methods.onHandcraftActionStart

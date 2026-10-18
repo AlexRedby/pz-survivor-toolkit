@@ -87,6 +87,30 @@ local panel = owner(ISWidgetHandCraftControl)
 local a, b = withOwner(handcraft(), panel), withOwner(handcraft(), panel)
 a.toolkitQueueOperation = {}; b.toolkitQueueOperation = a.toolkitQueueOperation
 assert(craft.supports(a) and craft.callbacksSafe(a))
+-- Late UI entry/layout wrappers do not alter the native callbacks of an already built action.
+for _, name in ipairs({'createChildren', 'calculateLayout', 'prerender', 'onButtonClick', 'startHandcraft'}) do
+    local original, calls = ISWidgetHandCraftControl[name], 0
+    local wrapper = function(...) calls = calls + 1; return original(...) end
+    ISWidgetHandCraftControl[name] = wrapper
+    assert(craft.supports(a) and craft.callbacksSafe(a), 'native class UI wrapper closed callback permission: ' .. name)
+    ISWidgetHandCraftControl[name] = original
+    panel[name] = wrapper
+    assert(craft.supports(a) and craft.callbacksSafe(a), 'native instance UI wrapper closed callback permission: ' .. name)
+    panel[name] = nil
+    assert(calls == 0, 'checking callback permission must not run UI entry/layout wrappers')
+end
+for _, name in ipairs({'setCraftQuantity', 'sanitizeCraftQuantity', 'triggerEvent',
+        'onHandcraftActionStart', 'onHandcraftActionComplete', 'onHandcraftActionCancelled'}) do
+    local original, calls = ISWidgetHandCraftControl[name], 0
+    local replacement = function() calls = calls + 1 end
+    ISWidgetHandCraftControl[name] = replacement
+    assert(not craft.supports(a) and not craft.callbacksSafe(a), 'changed native class callback dependency was trusted: ' .. name)
+    ISWidgetHandCraftControl[name] = original
+    panel[name] = replacement
+    assert(not craft.supports(a) and not craft.callbacksSafe(a), 'changed native instance callback dependency was trusted: ' .. name)
+    panel[name] = nil
+    assert(calls == 0 and craft.supports(a), 'callback dependency check ran replacement or failed to restore native owner')
+end
 panel.triggerEvent = function() error('unknown native owner event helper') end
 assert(not craft.supports(a), 'native owner helper overrides also close callback permission')
 panel.triggerEvent = nil

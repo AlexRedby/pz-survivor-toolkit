@@ -57,7 +57,15 @@ local function ownerClass(name)
         local class = _G[name]
         if class then
             local methods = {}
-            for method, callback in pairs(class) do if type(callback) == "function" then methods[method] = callback end end
+            if name == "ISWidgetHandCraftControl" then
+                -- Native completion calls only these helpers; UI/producer wrappers do not change its effects.
+                for _, method in ipairs({"onHandcraftActionStart", "onHandcraftActionComplete",
+                    "onHandcraftActionCancelled", "setCraftQuantity", "sanitizeCraftQuantity"}) do
+                    methods[method] = class[method]
+                end
+            else
+                for method, callback in pairs(class) do if type(callback) == "function" then methods[method] = callback end end
+            end
             owners[name] = {class = class, start = class.onHandcraftActionStart,
                 complete = class.onHandcraftActionComplete, cancel = class.onHandcraftActionCancelled,
                 methods = methods, trigger = class.triggerEvent}

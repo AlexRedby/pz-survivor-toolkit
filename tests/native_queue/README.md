@@ -139,6 +139,12 @@ Matrix cells describe functional coverage; consult the same run's separate runti
 
 Cart suites report `captured` only after complete motion/render/identity and artifact coverage. Measurements and failed geometry/native/motion diagnostics remain in `functional.evidence`; `captured` is never an animation-equivalence PASS and keeps the overall result in review. Read-only probes attach only to this invocation's owned client Popen objects, after readiness; all executable probe inputs are frozen under client classes. Missing attachment, body/mesh data or render windows fails the capture.
 
+### Craft UI callbacks
+
+Use `--suite craft-ui --cases context,vanilla-batch,neat-batch,cook-batch` for an ordered subset in one fresh SP/Host session. The context case selects the real menu option; batch cases use actual vanilla, Neat and Project Cook controls and their button dispatch. Batch cases pin explicit material selections and execute two native crafts with unchanged durations. The fixture dispatches the installed completion/cancellation callbacks without replacing them. Automatic batch selection is a separate scope: B42.21 can pass `manualInputs=false` into a Java path expecting a table.
+
+The fixture equips its tool bags with native actions and verifies they appear in the real UI source list. Authority receipts check consumed IDs, new outputs, exact tools and endpoints, and an independent reader. Client telemetry separately checks unchanged callbacks, real craft progress, shared completion ownership, return order and the owner's final busy/batch state. An output alone does not prove that the owner is idle. Native control failures remain visible. This is programmatic UI dispatch, not physical mouse or controller coverage; cancellation, input loss and unknown callbacks remain separate gates before removing the family fallback.
+
 ## Result and isolation
 
 New preparations also seal the full file lists and hashes under the live game's `media/lua` and `media/scripts` trees in `game-inputs.json`. Added, removed or changed files invalidate preparation, launch and reports. This guard covers Lua, translations and script inputs; it does not seal every native library or asset directory. Older prepared runs without this seal require fresh preparation.

@@ -37,6 +37,10 @@ def sources(project, selection):
 
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
+    stage_common(project, output, game, jdk, selection, locations, runtime)
+
+
+def stage_common(project, output, game, jdk, selection, locations, runtime):
     root = Path(project) / 'tests/native_queue'
     for role in runtime['roles'].values():
         media = Path(role['cache']) / 'mods/ActionQueueTest/42/media'

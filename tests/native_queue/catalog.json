@@ -556,6 +556,17 @@
         {"id":"late-input", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]}
       ]
     },
+    "craft-ui": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": ["PZSurvivorToolkit", "ZombieBuddy", "PZToolkitJavaPatches", "NeatUI_Framework", "Neat_Crafting", "Project_Cook"],
+      "cases": [
+        {"id":"context", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"vanilla-batch", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"neat-batch", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"cook-batch", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]}
+      ]
+    },
     "world": {
       "status": "not-migrated",
       "cases": []

@@ -1,0 +1,226 @@
+require 'PZSurvivorToolkit/ActionQueuePanel'
+require 'ISUI/Crafting/ISHandcraftWindow'
+require 'Neat_Crafting/NC_CraftActionPanel'
+require 'Project_Cook/PJCK_Window'
+local Fixture=require 'QueueCraftUIFixture'
+local config=require 'QueueTestSelection'
+local JSON=require 'QueueHealthEvents'
+local Toolkit=PZSurvivorToolkit
+local enabled=config.mode=='toolkit'
+local step,failed,phase,since,idle=1,0,'prepare',0,0
+local started,done=false,false
+local ids,state,authorityState,authority,window,owner,logic,tail,actions
+local progress,picked,returned,boundaries={},{},{},{perform=0,complete=0}
+local callbacks,callbackClass,returnsBeforeRead,localDeferrals
+local function case()return config.cases[step]end
+local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
+local function sorted(set)local out={};for id in pairs(set)do out[#out+1]=id end;table.sort(out);return out end
+local function refreshSources(player)
+ getPlayerInventory(player:getPlayerNum()):refreshBackpacks();getPlayerLoot(player:getPlayerNum()):refreshBackpacks()
+ local containers=ISInventoryPaneContextMenu.getContainers(player)
+ for _,id in ipairs(ids.bags)do
+  local bag=assert(state.root:getItemById(id));local found=false
+  for i=0,containers:size()-1 do if containers:get(i)==bag:getItemContainer()then found=true end end
+  assert(found,'UI did not expose an equipped exact tool source')
+ end
+ state.containers=containers
+end
+local function emit(value)
+ value.suite='craft-ui';value.kind=config.kind;value.mode=config.mode;value.actor='client1';JSON.emit(value)
+end
+local function request(command)
+ if isClient()then sendClientCommand('CraftUITest',command,{case=case()})
+ elseif command=='Prepare'then
+  authorityState=Fixture.prepare(getPlayer(),case());ids=Fixture.descriptor(authorityState)
+  print('[CRAFT_UI_TEST] PREPARED '..JSON.encode(ids))
+ else
+  authority=assert(Fixture.verify(authorityState));print('[CRAFT_UI_TEST] VERIFIED '..JSON.encode(authority))
+ end
+end
+Events.OnServerCommand.Add(function(module,command,value)
+ if module~='CraftUITest'then return end
+ assert(command~='Failed',value.error)
+ if command=='Prepared'then ids=value elseif command=='Verified'then authority=value end
+end)
+local begin=Toolkit.ActionQueueLifecycle.begin
+Toolkit.ActionQueueLifecycle.begin=function(action,nativePhase)
+ local active=begin(action,nativePhase)
+ for _,expected in ipairs(actions or {})do
+  if action==expected and active and Toolkit.ActionQueueLifecycle.current(action.character)==action
+   and boundaries[nativePhase]~=nil then boundaries[nativePhase]=boundaries[nativePhase]+1 end
+ end
+ return active
+end
+local defer=Toolkit.ActionQueueOperations.deferCompletion
+Toolkit.ActionQueueOperations.deferCompletion=function(q,action)
+ local result=defer(q,action)
+ for _,expected in ipairs(actions or {})do if action==expected and result then localDeferrals=localDeferrals+1 end end
+ return result
+end
+local function openUI(player,recipe)
+ if case()=='vanilla-batch'then
+  window=ISXuiSkin.build(XuiManager.GetDefaultSkin(),'HandcraftWindow',ISHandcraftWindow,20,20,900,600,player,nil,'InHandCraft')
+  window:initialise();window:instantiate();window:addToUIManager()
+  local panel=assert(window.handCraftPanel);logic=panel.logic;owner=assert(panel.recipePanel.craftControl)
+  assert(getmetatable(owner)==ISWidgetHandCraftControl,'vanilla control replaced')
+  callbackClass='ISWidgetHandCraftControl'
+ elseif case()=='neat-batch'then
+  ISEntityUI.OpenHandcraftWindow(player,nil,'InHandCraft',true,recipe)
+  window=assert(ISEntityUI.GetWindowInstance(player:getPlayerNum(),'HandcraftWindow'))
+  local panel=assert(window.HandCraftPanel or window.handCraftPanel)
+  logic=panel.logic;owner=assert(panel.craftActionPanel)
+  assert(getmetatable(owner)==NC_CraftActionPanel,'Neat control replaced');callbackClass='NC_CraftActionPanel'
+ else
+  window=PJCK_Window:new(20,20,900,600,player);window:initialise();window:instantiate();window:addToUIManager()
+  window:switchToPanel('craft')
+  local panel=assert(window.HandCraftPanel);logic=panel.logic;owner=assert(panel.craftActionPanel)
+  assert(getmetatable(owner)==PJCK_CraftActionPanel,'Project Cook control replaced');callbackClass='PJCK_CraftActionPanel'
+ end
+ logic:setContainers(state.containers);logic:setRecipe(recipe);logic:setManualSelectInputs(true);logic:clearManualInputs()
+ for index=0,recipe:getInputs():size()-1 do
+  local input=recipe:getInputs():get(index);local items=ArrayList.new()
+  if index==0 then for _,id in ipairs(ids.materials)do items:add(assert(state.root:getItemById(id)))end
+  else items:add(assert(state.root:getItemById(ids.toolMeta[index].id)))end
+  assert(logic:setManualInputsFor(input,items),'UI explicit input selection rejected')
+ end
+end
+local function snapshotCallbacks()
+ callbacks={}
+ for i,action in ipairs(actions)do
+  assert(action:getDuration()==150 and not action.character:isTimedActionInstant(),'UI native duration changed')
+  assert(Toolkit.ActionQueueCraft.supports(action),'UI craft callback owner unsupported: '..case())
+  callbacks[i]={action.onStartFunc,action.onStartTarget,action.onCompleteFunc,action.onCompleteTarget,
+   action.onCancelFunc,action.onCancelTarget}
+  if case()=='context'then
+   logic=action.onCompleteTarget;assert(action.onCompleteFunc==ISInventoryPaneContextMenu.OnNewCraftComplete,'context callback replaced')
+  else
+   assert(action.onStartTarget==owner and action.onCompleteTarget==owner and action.onCancelTarget==owner,'UI callback target differs')
+  end
+ end
+end
+local function enqueue(player)
+ local recipe=assert(getScriptManager():getCraftRecipe('QueueBorrowedTools'))
+ if case()=='context'then
+  callbackClass='context'
+  local menu=ISContextMenu.get(player:getPlayerNum(),20,20)
+  menu:addOption(recipe:getTranslationName(),state.root:getItemById(ids.materials[1]),
+   ISInventoryPaneContextMenu.OnNewCraft,recipe,player:getPlayerNum(),false)
+  menu.mouseOver=1;menu:onJoypadDown(Joypad.AButton)
+ else
+  if not window then openUI(player,recipe);return false end
+  logic:canPerformCurrentRecipe()
+  if not logic:canPerformCurrentRecipe()then return false end
+  assert(logic:getPossibleCraftCount(true)>=2,'UI batch has insufficient real inputs')
+  if case()=='vanilla-batch'then
+   owner:setCraftQuantity(2);if not owner.buttonCraft.enable then return false end;owner.buttonCraft:forceClick()
+  else
+   owner.quantityInput:setText('2');if not owner.craftButton.enable then return false end;owner.craftButton:forceClick()
+  end
+ end
+ actions={}
+ for _,action in ipairs(queue().queue)do
+  if action.Type=='ISHandcraftAction'and action.craftRecipe==recipe then actions[#actions+1]=action end
+ end
+ assert(#actions==#ids.materials,'UI did not enqueue requested craft count: '..case()..' '..#actions)
+ snapshotCallbacks()
+ local book=state.book
+ book:setAlreadyReadPages(book:getNumberOfPages()-1);player:setAlreadyReadPages(book:getFullType(),book:getNumberOfPages()-1)
+ tail=ISReadABook:new(player,book)
+ assert(tail.minutesPerPage==2.0 and tail.maxTime>1,'UI reader duration changed')
+ ISTimedActionQueue.add(tail)
+ if enabled then
+  for _,action in ipairs(actions)do assert(action.toolkitQueueOperation==actions[1].toolkitQueueOperation,'UI batch split into different operations')end
+  assert(tail.toolkitQueueOperation~=actions[1].toolkitQueueOperation,'UI reader not independent')
+ end
+ return true
+end
+local function observe()
+ local current=queue().current
+ for i,action in ipairs(actions)do if current==action and action:isStarted()and action:getJobDelta()>0 then progress[i]=true end end
+ if current and current.Type=='ISInventoryTransferAction'and current:isStarted()and current:getJobDelta()>0 then
+  local items=current.queueList and current.queueList[1]and current.queueList[1].items or {current.item}
+  for _,item in ipairs(items)do for _,meta in ipairs(ids.toolMeta)do
+   if item:getID()==meta.id then
+    if current.destContainer==state.root then picked[meta.id]=true end
+    if current.srcContainer==state.root then returned[meta.id]=true end
+   end
+  end end
+ end
+ if current==tail and tail:isStarted()and tail:getJobDelta()>0 and returnsBeforeRead==nil then
+  returnsBeforeRead=true
+  for i,meta in ipairs(ids.toolMeta)do
+   local bag=state.root:getItemById(ids.bags[i]);local tool=bag and bag:getItemContainer():getItemById(meta.id)
+   if not tool then returnsBeforeRead=false end
+  end
+ end
+end
+local function finish()
+ local unchanged,safe=true,true
+ for i,action in ipairs(actions)do
+  local now={action.onStartFunc,action.onStartTarget,action.onCompleteFunc,action.onCompleteTarget,action.onCancelFunc,action.onCancelTarget}
+  for n=1,6 do if now[n]~=callbacks[i][n]then unchanged=false end end
+  safe=safe and Toolkit.ActionQueueCraft.callbacksSafe(action)
+ end
+ local ownerIdle=not logic:isCraftActionInProgress();local remaining=owner and owner.craftTimes or 0
+ local reason=(not ownerIdle or remaining>0)and 'owner-still-busy'or not authority.tailRead and 'native-independent-tail-not-preserved'
+  or not returnsBeforeRead and 'native-returns-not-before-tail'or nil
+ local value={event='case',id=case(),status=reason and 'failed'or 'passed',reason=reason,
+  requested=#ids.materials,actions=#actions,progressIds=sorted(progress),callbackClass=callbackClass,
+  callbacksUnchanged=unchanged,callbackSafe=safe,nativeDuration=150,localDeferrals=localDeferrals,
+  sharedPerformCount=boundaries.perform,sharedCompleteCount=boundaries.complete,
+  ownerIdle=ownerIdle,remaining=remaining,pickupIds=sorted(picked),returnIds=sorted(returned),returnsBeforeRead=returnsBeforeRead==true}
+ for key,entry in pairs(authority)do if key~='case'then value[key]=entry end end
+ if reason then failed=failed+1 end;emit(value)
+ if window then window:setVisible(false);window:removeFromUIManager()end
+ if step==#config.cases then
+  emit({event='complete',cases=config.cases,expected=#config.cases,performed=#config.cases,failed=failed,skipped=0})
+  print('[CRAFT_UI_TEST] COMPLETE');done=true;return
+ end
+ step=step+1;phase='prepare';since=getTimestampMs()
+ ids,state,authorityState,authority,window,owner,logic,tail,actions=nil,nil,nil,nil,nil,nil,nil,nil,nil
+ progress,picked,returned,boundaries={},{},{},{perform=0,complete=0}
+ returnsBeforeRead,localDeferrals,idle=nil,0,0
+end
+Events.OnPlayerUpdate.Add(function(player)
+ if started and player==getPlayer()then idle=#queue().queue==0 and not player:hasTimedActions()and idle+1 or 0 end
+end)
+Events.OnGameStart.Add(function()
+ started=true;since=getTimestampMs();localDeferrals=0;getCore():setOptionPauseOnFocusloss(false)
+ if not isClient()then getPlayer():setGhostMode(true)end
+ if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
+end)
+Events.OnTick.Add(function()
+ if not started or done or not isIngameState()then return end
+ local ok,problem=pcall(function()
+  assert(getTimestampMs()-since<180000,'UI craft deadline: '..phase)
+  local player=getPlayer()
+  if not player or player:isDead()or not player:getSquare()then return end
+  if config.kind=='mp'and(not isClient()or player:getOnlineID()<0)then return end
+  if phase=='prepare'then
+   assert(Toolkit.Settings.actionQueue()==enabled,'UI queue option differs')
+   if step==1 then emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=enabled,nativeDurations=true})end
+   request('Prepare');phase='ready';return
+  end
+  if phase=='ready'then
+   if not ids then return end
+   state=state or Fixture.resolve(player,ids)
+   if not state or not state.containers then return end
+   ISInventoryPaneContextMenu.onWearItems({state.root:getItemById(ids.bags[1])},player:getPlayerNum())
+   ISInventoryPaneContextMenu.OnSecondWeapon({state.root:getItemById(ids.bags[2])},player:getPlayerNum())
+   phase='equip';return
+  end
+  if phase=='equip'then
+   if #queue().queue>0 or player:hasTimedActions()or idle<10 then return end
+   refreshSources(player);phase='ui';return
+  end
+  if phase=='ui'then
+   if not enqueue(player)then return end
+   phase='running';since=getTimestampMs();return
+  end
+  if phase=='running'then
+   observe()
+   if idle>=10 and #queue().queue==0 and not player:hasTimedActions()then request('Verify');phase='receipt'end
+  elseif phase=='receipt'and authority then finish()end
+ end)
+ if not ok then print('[QUEUE_TEST] FAIL craft UI '..tostring(problem));done=true end
+end)

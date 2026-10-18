@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.71
+
+- **Fixed:** Native crafting UI actions remain supported when Quartermaster or P4 wraps layout and craft-button entry points. Neat accepts only the two source-verified Quartermaster UI wrappers; completion, cancellation and their helpers retain identity guards.
+- **Fixed:** Project Cook batch crafting releases its per-action busy counter after every completed craft, so its window becomes available again when the batch ends.
+
 ### 0.1.70
 
 - **Fixed:** Before a queued manual craft starts, a missing selected input cancels only its operation and preserves safe tool returns and independent follow-up work. Started crafts and unknown callbacks keep their existing safeguards.
