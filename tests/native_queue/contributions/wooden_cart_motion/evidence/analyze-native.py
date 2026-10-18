@@ -8,10 +8,12 @@ parser.add_argument('--profile',type=Path,required=True,help='Owned capture/prof
 parser.add_argument('--log',type=Path,help='Full native stdout; defaults to profile/console.txt')
 parser.add_argument('--output',type=Path,required=True,help='Result directory; may already contain the two mesh intersection JSON files')
 parser.add_argument('--partial',action='store_true')
-parser.add_argument('--stop-timing',action='store_true',help='Cover all three stops in the 16-second timing bank')
-parser.add_argument('--vehicles',action='store_true',help='Include the extended full-load vehicle slide and release')
+timing=parser.add_mutually_exclusive_group()
+timing.add_argument('--stop-timing',action='store_true',help='Cover all three stops in the 16-second timing bank')
+timing.add_argument('--vehicles',action='store_true',help='Include the extended full-load vehicle slide and release')
+timing.add_argument('--brace',action='store_true',help='Cover the complete 18-second blocked-stance bank')
 args=parser.parse_args()
-end_ms=15800 if args.stop_timing else 11800
+end_ms=17800 if args.brace else 15800 if args.stop_timing else 11800
 def measurement_end(name):
  return 14800 if args.vehicles and '-full-vehicle-' in name and '-slide-' in name else end_ms
 ROOT=args.profile
@@ -28,6 +30,15 @@ if not args.partial:
 assert len(cases)==16 or args.partial
 
 def stage(elapsed,name=''):
+ if args.brace:
+  if elapsed<1000:return 'idle'
+  if name.endswith('wall-release'):
+   return 'wall-contact' if elapsed<8000 else 'wall-cleared' if elapsed<14000 else 'release'
+  if elapsed<6500:return 'wall-contact'
+  if elapsed<7500:return 'release'
+  if elapsed<10000:return 'reverse'
+  if elapsed<10800:return 'release'
+  return 'forward-restart' if elapsed<15500 else 'release'
  if args.vehicles:
   extra=measurement_end(name)-11800
   if elapsed<1000:return 'idle'

@@ -269,6 +269,29 @@ public final class Main {
         return out.append(" clear=").append(clear.invoke(null,world.invoke(null,player),player.getX(),player.getY(),heading.getDouble(state),front.getDouble(state))).toString();
     }
 
+    @LuaMethod(name="cartLabBrace", global=true)
+    public static String brace(double wallX,double y) throws Exception {
+        vehicleGuard();
+        var player=IsoPlayer.getInstance();int z=(int)Math.floor(player.getZ());
+        float x=(float)wallX,fy=(float)y;
+        if(!Float.isFinite(x+fy) || z<=0 || Math.abs(x-player.getX())>16 || Math.abs(fy-player.getY())>16)
+            throw new IllegalArgumentException("Loaded local upper-pad wall query required");
+        var cell=player.getCell();
+        if(cell.getGridSquare((int)Math.floor(x-.5),(int)Math.floor(fy),z)==null
+            || cell.getGridSquare((int)Math.floor(x+.5),(int)Math.floor(fy),z)==null)
+            throw new IllegalStateException("Wall query squares must remain loaded");
+        var hooks=Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks");
+        var states=hooks.getDeclaredField("states");states.setAccessible(true);
+        Object state=((java.util.Map<?,?>)states.get(null)).get(player);
+        if(state==null) throw new IllegalStateException("Cart state required");
+        var amount=state.getClass().getDeclaredField("brace");amount.setAccessible(true);
+        var intent=state.getClass().getDeclaredField("wantsMove");intent.setAccessible(true);
+        double value=amount.getDouble(state);
+        if(!Double.isFinite(value) || value<0 || value>1) throw new IllegalStateException("Invalid brace amount");
+        boolean blocked=zombie.pathfind.PolygonalMap2.instance.lineClearCollide(x+.5f,fy,x-.5f,fy,z,null,zombie.pathfind.PolygonalMap2.LCC_ZERO);
+        return "brace="+value+" nativeBlocked="+blocked+" wantsMove="+intent.getBoolean(state);
+    }
+
     private static zombie.vehicles.BaseVehicle fixtureVehicle;
     private static float[] fixtureHull;
     private static float fixtureZ;

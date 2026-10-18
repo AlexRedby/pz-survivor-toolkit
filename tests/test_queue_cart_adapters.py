@@ -162,8 +162,8 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path'])
-        for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path'])
+        for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -171,7 +171,7 @@ class CartAdapterTests(unittest.TestCase):
                 self.selection['cases'] = [case]
                 self.stage()
                 text = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
-                source='stop' if case=='stop-timing' else 'collision' if case in ('collision','footprint','impact') else 'interaction' if case in ('interruption','interruption-matrix','wheel','repeat') else case
+                source='stop' if case=='stop-timing' else 'collision' if case in ('collision','footprint','impact','brace') else 'interaction' if case in ('interruption','interruption-matrix','wheel','repeat') else case
                 self.assertIn((ROOT / f'tests/native_queue/contributions/wooden_cart_motion/scenario-{source}.lua').read_text(), text)
                 if case in ('collision','footprint'): self.assertIn('["footprint"]=true',text)
                 if case == 'impact': self.assertIn('["impact"]=true',text)
@@ -357,13 +357,13 @@ class CartAdapterTests(unittest.TestCase):
             start=text.index('local cases=')
             marker='cases=CartLabSelectScenes(cases)'
             body=text[start:text.index(marker,start)+len(marker)]
-            flags=dict(disposable=True,footprint=bank in ('collision','footprint'),vehicles=bank=='vehicles',
+            flags=dict(disposable=True,footprint=bank in ('collision','footprint','brace'),vehicles=bank=='vehicles',brace=bank=='brace',
                        wheelCycle=bank=='wheel',interruptions=bank in ('interruption','interruption-matrix'),
                        interruptionMatrix=bank=='interruption-matrix',rapidRepeats=bank=='repeat',stopTiming=bank=='stop-timing',impact=bank=='impact')
             from queue_checks.native import _lua
             for chosen in (None,[full[-1],full[0]] if count>1 else [full[0]]):
                 if chosen: flags['scenes']=chosen
-                code='CartMotionConfig='+_lua(flags)+';local config=CartMotionConfig;local footprint=config.footprint==true;dofile('+json.dumps(str(intake/'scene-selection.lua'))+');'+body+';for _,c in ipairs(cases) do print(c.name) end'
+                code='CartMotionConfig='+_lua(flags)+';local config=CartMotionConfig;local footprint=config.footprint==true;local brace=config.brace==true;dofile('+json.dumps(str(intake/'scene-selection.lua'))+');'+body+';for _,c in ipairs(cases) do print(c.name) end'
                 result=subprocess.run([lua,'-e',code],check=True,text=True,capture_output=True)
                 self.assertEqual(result.stdout.splitlines(),[n for n in full if chosen is None or n in chosen],bank)
 
@@ -508,7 +508,7 @@ class CartAdapterTests(unittest.TestCase):
             self.assertTrue(result['issues'])
             self.assertTrue(all(row['status'] == 'failed' for row in result['outcomes']))
 
-    def coverage_fixture(self, count=20, text=None):
+    def coverage_fixture(self, count=20, text=None, end_ms=11800):
         cache = self.output / 'client1'
         if text is None:
             text = '[WOOD_BANK] RUN_STARTED\n' + ''.join(
@@ -516,8 +516,10 @@ class CartAdapterTests(unittest.TestCase):
         samples, metrics = [], {'cases': []}
         for name, start in re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)', text):
             start = int(start)
-            samples += [{'wallTimeMillis': start + elapsed} for elapsed in range(900, 11600, 500)]
-            metrics['cases'].append(dict(case=name, gripSamples=22, wheelFloorMaxError=.1, body={'samples':22}, pants={'samples':22}))
+            times=range(900,end_ms-200,500)
+            samples += [{'wallTimeMillis': start + elapsed} for elapsed in times]
+            metrics['cases'].append(dict(case=name, measurementEndAfterCaseMs=end_ms, gripSamples=len(times),
+                                        wheelFloorMaxError=.1, body={'samples':len(times)}, pants={'samples':len(times)}))
         for name in ('body-clearance.jsonl', 'wood-grip-poses.jsonl'):
             (cache / name).write_text('\n'.join(map(json.dumps, samples)))
         native = b'actual native test bytes'
@@ -567,11 +569,33 @@ class CartAdapterTests(unittest.TestCase):
             self.assertEqual(front['measurementEndAfterCaseMs'],11800)
             self.assertEqual(front['gripSamples'],0)
 
+        log.write_text(log.read_text().replace(names[0],'male-full-wall-release').replace(names[1],'female-full-wall-restart'))
+        times=(117000,147000)
+        (cache / 'body-clearance.jsonl').write_text('\n'.join(json.dumps(dict(wallTimeMillis=at,cart=matrix)) for at in times))
+        (cache / 'wood-grip-poses.jsonl').write_text('\n'.join(json.dumps(dict(wallTimeMillis=at,result=False)) for at in times))
+        output=self.root / 'brace';output.mkdir()
+        for kind in ('hip','pants'):
+            (output / (kind+'-triangle-frames.json')).write_text(json.dumps([
+                dict(time=at,L=int(kind=='pants'),R=0) for at in times]))
+        command=[sys.executable,str(script),'--profile',str(cache),'--log',str(log),'--output',str(output),'--partial','--brace']
+        subprocess.run(command,check=True,capture_output=True)
+        metrics=json.loads((output / 'native-metrics.json').read_text())
+        self.assertEqual(metrics['gripFailures'],2)
+        for row in metrics['cases']:
+            self.assertEqual(row['measurementEndAfterCaseMs'],17800)
+            self.assertEqual(row['gripFailures'],1)
+            self.assertEqual(row['failureStages'],{'release':1})
+            self.assertEqual(row['pants']['shaftIntersections']['L'],1)
+        invalid=subprocess.run(command+['--vehicles'],capture_output=True)
+        self.assertNotEqual(invalid.returncode,0)
+        self.assertIn(b'not allowed with argument',invalid.stderr)
+
     def test_probe_coverage_rejects_truncated_extended_vehicle_tail(self):
         text, _, metrics = self.coverage_fixture(1)
-        metrics['cases'][0]['measurementEndAfterCaseMs'] = 14800
-        with self.assertRaisesRegex(ValueError,'probe window'):
-            carts._coverage(self.output / 'client1',text,1,metrics)
+        for end in (14800,17800):
+            metrics['cases'][0]['measurementEndAfterCaseMs'] = end
+            with self.subTest(end=end),self.assertRaisesRegex(ValueError,'probe window'):
+                carts._coverage(self.output / 'client1',text,1,metrics)
         metrics['cases'][0]['measurementEndAfterCaseMs'] = 0
         with self.assertRaisesRegex(ValueError,'Invalid native measurement window'):
             carts._coverage(self.output / 'client1',text,1,metrics)
@@ -758,31 +782,33 @@ class CartAdapterTests(unittest.TestCase):
         self.assertTrue(result['evidence']['motion']['motionPass'])
         self.assertTrue((Path(result['evidence']['analysis']) / 'footprint-motion.json').is_file())
 
-    def test_native_vehicles_require_motion_and_mesh_proof_independently(self):
-        self.selection['cases'] = ['vehicles']
-        fixture = carts._load(ROOT / 'tests/test_cart_vehicle_analyzer.py')
-        text, _ = fixture.fixture(self.output / 'client1')
-        _, _, metrics = self.coverage_fixture(12, text)
-        log = self.output / 'client1-launch.log'; log.write_text(text)
-        (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
-        for failed in (None, 'motionPass', 'footprintPass'):
-            def run(command, directory, name):
-                if name == 'native':
-                    (directory / 'native-metrics.json').write_text(json.dumps(metrics))
-                if name == 'vehicles':
-                    self.assertTrue(command[1].endswith('analyze-vehicles.py'))
-                    self.assertEqual(command[command.index('--log')+1], str(log))
-                    report = dict(motionPass=failed!='motionPass', footprintPass=failed!='footprintPass',
-                                  motionFailures=['motion'] if failed=='motionPass' else [],
-                                  footprintFailures=['mesh'] if failed=='footprintPass' else [])
-                    (directory / 'vehicles-motion.json').write_text(json.dumps(report))
-                return {'exit_code': int(name=='vehicles' and failed is not None)}
-            with self.subTest(failed=failed), patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
-                result = carts.verify(self.output, self.selection, {})
-            self.assertEqual(result['outcomes'][0]['status'], 'failed' if failed else 'captured')
-            self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
-            if failed:
-                self.assertIn('motion' if failed=='motionPass' else 'mesh', str(result['issues']))
+    def test_native_vehicles_and_brace_require_motion_and_mesh_proof_independently(self):
+        for bank,source,count,end in (('vehicles','vehicle',12,11800),('brace','brace',8,17800)):
+            self.selection['cases'] = [bank]
+            fixture = carts._load(ROOT / ('tests/test_cart_'+source+'_analyzer.py'))
+            text, _ = fixture.fixture(self.output / 'client1')
+            _, _, metrics = self.coverage_fixture(count, text, end)
+            log = self.output / 'client1-launch.log'; log.write_text(text)
+            (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
+            for failed in (None, 'motionPass', 'footprintPass'):
+                def run(command, directory, name):
+                    if name == 'native':
+                        self.assertIn('--'+bank,command)
+                        (directory / 'native-metrics.json').write_text(json.dumps(metrics))
+                    if name == bank:
+                        self.assertTrue(command[1].endswith('analyze-'+bank+'.py'))
+                        self.assertEqual(command[command.index('--log')+1], str(log))
+                        report = dict(motionPass=failed!='motionPass', footprintPass=failed!='footprintPass',
+                                      motionFailures=['motion'] if failed=='motionPass' else [],
+                                      footprintFailures=['mesh'] if failed=='footprintPass' else [])
+                        (directory / (bank+'-motion.json')).write_text(json.dumps(report))
+                    return {'exit_code': int(name==bank and failed is not None)}
+                with self.subTest(bank=bank,failed=failed), patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):
+                    result = carts.verify(self.output, self.selection, {})
+                self.assertEqual(result['outcomes'][0]['status'], 'failed' if failed else 'captured')
+                self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+                if failed:
+                    self.assertIn('motion' if failed=='motionPass' else 'mesh', str(result['issues']))
 
     def test_native_path_requires_route_and_footprint_proof(self):
         self.selection['cases'] = ['path']

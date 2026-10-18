@@ -7,11 +7,14 @@ local function absolutePath(name)
 end
 local videoRoot,ffmpeg=absolutePath('videoRoot'),absolutePath('ffmpeg')
 local footprint=config.footprint==true
+local brace=config.brace==true
+assert(not brace or footprint and not config.impact,'Brace bank requires footprint without impact')
 assert(getWorld():getWorld()=='CartTestArea' and not isClient() and not isServer(),'Disposable single-player CartTestArea save required')
 local p=assert(getPlayer(),'Live actor required')
 assert(not p:isDead() and CartTestArea and CartTestArea.ready,'Wait for BOOTSTRAP_READY')
 assert(CartLabKey and CartLabHUD and cartLabDrive and cartLabGait and cartLabBank and cartLabRamp and cartLabTracks and cartLabReversal and cartLabStationary and cartLabPoseHeading and cartLabHeading and cartLabWheelPhase and CartTestArea.setObstacles and toolkitVideoStart and toolkitVideoStatus and toolkitVideoStop,'CartLab/video bridge missing')
 assert(not footprint or cartLabFootprint,'Footprint diagnostics missing')
+assert(not brace or cartLabBrace,'Brace/native wall diagnostics missing')
 if WoodPrototypeTick then Events.OnTick.Remove(WoodPrototypeTick) end
 cartLabDrive(0);cartLabGait(0);setGameSpeed(1)
 p:setFemale(false);p:getDescriptor():setFemale(false)
@@ -70,6 +73,17 @@ if config.impact then
   end
  end end
 end
+if brace then
+ cases={}
+ for _,female in ipairs({false,true}) do for _,full in ipairs({false,true}) do
+  for _,spec in ipairs({'wall-release','wall-restart'}) do
+   cases[#cases+1]={female=female,full=full,spec=spec,startYaw=math.pi/4,
+    steps=spec=='wall-release' and {{1000,0,5},{14000,0,0}}
+     or {{1000,0,5},{6500,0,0},{7500,0,7},{10000,0,0},{10800,0,5},{15500,0,0}},
+    name=(female and 'female-' or 'male-')..(full and 'full-' or 'empty-')..spec}
+  end
+ end end
+end
 cases=CartLabSelectScenes(cases)
 local phase,since,stage,taken=0,0,0,{}
 local mode,attempt,videoSince='layout',0,0
@@ -108,7 +122,8 @@ local function sprinting(level)
 end
 local function poseCase()
  local c=cases[phase]
- if footprint then
+ if brace then pose(wallX+1.8,CartTestArea.y,math.pi)
+ elseif footprint then
   if c.spec=='corner-pivot' then pose(wallX+1.3,southY-1.18)
   elseif c.spec=='passage' or c.spec=='door-open' then pose(wallX+1.8,CartTestArea.y)
   elseif c.spec=='overlap' then pose(wallX+.65,CartTestArea.y)
@@ -154,9 +169,10 @@ local function nextCase()
  pose();p:getStats():reset(CharacterStat.ENDURANCE)
  mode='layout';since=getTimestampMs()+1800
 end
-local function layout(kind)
+local function layout(kind,shortWall)
  local walls={}
- for y=gapY-24,gapY+24 do
+ local reach=shortWall and 1 or 24
+ for y=gapY-reach,gapY+reach do
   if (kind~='passage' and kind~='door-closed' and kind~='door-open') or y~=gapY then walls[#walls+1]={x=wallX,y=y,axis='W'} end
  end
  if kind=='corner' then
@@ -192,13 +208,14 @@ local function tick()
   if not ready then assert(now-since<6000,'Pad did not reload: '..tostring(why));return end
   local kind=mode=='control-layout' and controls[controlIndex] or c.spec=='corner-pivot' and 'corner'
    or (c.spec=='passage' or c.spec=='door-closed' or c.spec=='door-open') and c.spec or 'wall'
-  layout(kind)
+  layout(kind,brace and mode~='control-layout' and c.spec=='wall-release')
   if mode=='control-layout' then
    pose(config.impact and wallX+3.5 or CartTestArea.x,CartTestArea.y,controlHeading(kind))
    mode='control-settle'
   else
    poseCase()
-   print('[CART_COLLISION_LAYOUT] case='..c.name..' wallX='..wallX..' southY='..southY..' gapY='..gapY..' startX='..p:getX()..' startY='..p:getY()..' baselineX='..controlResults.corner.x..' baselineY='..controlResults.corner.y)
+   print('[CART_COLLISION_LAYOUT] case='..c.name..' wallX='..wallX..' southY='..southY..' gapY='..gapY..' startX='..p:getX()..' startY='..p:getY()..' baselineX='..controlResults.corner.x..' baselineY='..controlResults.corner.y
+    ..(brace and (' ownedWalls='..(c.spec=='wall-release' and 3 or 49)) or ''))
    mode='settle'
   end
   since=getTimestampMs()+800;return
@@ -239,7 +256,9 @@ local function tick()
  end
  if mode=='settle' then
   if now<since then return end
+  local checkStarted=brace and getTimestampMs()
   local ready,why=pcall(CartTestArea.check,p)
+  if brace then print('[CART_BRACE_GUARD_COST] case='..c.name..' phase=settle millis='..(getTimestampMs()-checkStarted)) end
   if not ready then
    assert(now-since<6000,'Pad did not reload: '..tostring(why))
    return
@@ -278,6 +297,28 @@ local function tick()
     ..' drive='..tostring(c.steps[stage] and c.steps[stage][3] or 0)..' requestedGait='..tostring(c.steps[stage] and c.steps[stage][2] or 0)..' stepX='..p:getVariableFloat('ToolkitCartStepX',0)..' stepY='..p:getVariableFloat('ToolkitCartStepY',0)..' pace='..p:getVariableFloat('ToolkitCartLegPace',0)..' wheelPhase='..cartLabWheelPhase()..' bank='..cartLabBank()..' reversal='..cartLabReversal()..' ramp='..cartLabRamp()..' stationary='..cartLabStationary()..' tracks='..cartLabTracks())
   end
   if footprint then print('[CART_FOOTPRINT_STATE] case='..c.name..' wall='..now..' elapsed='..elapsed..' '..cartLabFootprint()) end
+  if brace then print('[CART_BRACE_SAMPLE] case='..c.name..' wall='..now..' elapsed='..elapsed..' '..cartLabBrace(wallX,CartTestArea.y)) end
+ end
+ if brace and c.spec=='wall-release' and elapsed>=8000 then
+  if not taken.remove then
+   assert(stage==1 and c.steps[stage][3]==5,'Wall removal must retain forward input')
+   local count=0;for _ in pairs(CartTestArea.obstacles) do count=count+1 end
+   assert(count==3,'Unexpected owned wall count before removal')
+   local state=cartLabBrace(wallX,CartTestArea.y)
+   assert(state:match('nativeBlocked=true'),'Native wall missing before guarded removal')
+   print('[CART_BRACE_REMOVE] case='..c.name..' phase=before wall='..now..' elapsed='..elapsed..' owned='..count..' drive=5 '..state)
+   CartTestArea.clearObstacles(p)
+   for _ in pairs(CartTestArea.obstacles) do error('Owned wall survived removal') end
+   taken.remove=now
+  end
+  if not taken.clear then
+   local state=cartLabBrace(wallX,CartTestArea.y)
+   if state:match('nativeBlocked=false') then
+    local observed=getTimestampMs()
+    print('[CART_BRACE_REMOVE] case='..c.name..' phase=after wall='..observed..' elapsed='..(observed-since)..' owned=0 drive=5 '..state)
+    taken.clear=true
+   else assert(now-taken.remove<=1000,'Native wall removal did not become query-clear') end
+  end
  end
  if config.impact and c.spec=='native-impact' and elapsed>=2000 and not taken.impact then
   assert(elapsed<2500,'Native Sprint did not become ready for wall event')
@@ -291,13 +332,14 @@ local function tick()
  end
  while stage<#c.steps and elapsed>=c.steps[stage+1][1] do
   stage=stage+1;local step=c.steps[stage]
-  if footprint and stage==#c.steps-1 then step[3]=reverseDrive() end
+  if footprint and (not brace and stage==#c.steps-1 or brace and c.spec=='wall-restart' and stage==3) then step[3]=reverseDrive() end
   if step[2]~=nil then cartLabGait(step[2]) end
   cartLabDrive(step[3])
   print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait='..tostring(step[2])..' drive='..step[3])
  end
 
- if elapsed>=12000 then
+ if elapsed>=(brace and 18000 or 12000) then
+  assert(not brace or c.spec~='wall-release' or taken.clear,'Missing guarded native wall removal')
   assert(not config.impact or c.spec~='native-impact' or taken.impact,'Missing native wall event')
   assert(toolkitVideoStop(),'Video stop rejected');mode='finish'
  end

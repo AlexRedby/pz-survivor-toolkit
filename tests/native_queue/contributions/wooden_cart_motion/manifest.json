@@ -37,7 +37,8 @@
     "scene_selection": "scene-selection.lua",
     "vehicles": "vehicles.lua",
     "vehicle_scenario": "scenario-vehicles.lua",
-    "vehicle_analyzer": "analyze-vehicles.py"
+    "vehicle_analyzer": "analyze-vehicles.py",
+    "brace_analyzer": "analyze-brace.py"
   },
   "origin": {
     "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",
@@ -433,5 +434,34 @@
     "record_seconds_per_case": 12,
     "full_slide_record_seconds": 15,
     "scope": "Owned real native static CarNormal on disposable upper pad, native body/cross query receipts, stable identity/hull/level, rendered wooden mesh and analytical continuous wheel support, contact tangent progress, finite-end release, reverse escape and final settle. Moving vehicles, other car scripts and multiplayer are separate coverage."
+  },
+  "brace_scenario": {
+    "case_count": 8,
+    "native_bare_controls": [
+      "wall",
+      "corner",
+      "passage",
+      "wall-slide-left",
+      "wall-slide-right"
+    ],
+    "scenario": "scenario-collision.lua with config.footprint=true and config.brace=true",
+    "axes": {
+      "sex": [
+        "male",
+        "female"
+      ],
+      "cargo": [
+        "empty",
+        "full"
+      ],
+      "spec": [
+        "wall-release",
+        "wall-restart"
+      ]
+    },
+    "record_seconds_per_case": 18,
+    "sample_interval_ms": 25,
+    "scope": "Blocked Walk with rendered feet/toes compared to pre-input standing baseline, guarded owned-wall removal while forward stays held and native line query before/after, reverse/forward recontact and final settle; real mesh and continuous wheel support through standing wall. Native capture pending; grip/body/clothing and manual visual quality are separate gates.",
+    "release_wall_segments": 3
   }
 }

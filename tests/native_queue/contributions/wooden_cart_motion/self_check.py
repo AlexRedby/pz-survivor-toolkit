@@ -32,6 +32,7 @@ def check_manifest():
         "path_scenario": "scenario-path.lua", "path_analyzer": "analyze-path.py",
         "scene_selection": "scene-selection.lua",
         "vehicles": "vehicles.lua", "vehicle_scenario": "scenario-vehicles.lua", "vehicle_analyzer": "analyze-vehicles.py",
+        "brace_analyzer": "analyze-brace.py",
     }
     for name in manifest["sources"].values():
         assert (HERE / name).is_file(), name
@@ -49,7 +50,7 @@ def check_manifest():
     assert set(manifest["criteria"]) == {"completion", "grip", "geometry", "native_pose", "floor", "gait", "diagnostics"}
     allowed = {"Main.java", "KahluaChecks.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py", "obstacles.lua", "scenario-collision.lua", "analyze-collision.py", "analyze-footprint.py"}
     allowed |= {"scenario-interaction.lua", "analyze-interaction.py", "analyze-interruption.py", "analyze-repeat.py",
-                "analyze-wheel-cycle.py", "scenario-path.lua", "analyze-path.py", "scene-selection.lua", "analyze-impact.py", "analyze-stop-timing.py", "vehicles.lua", "scenario-vehicles.lua", "analyze-vehicles.py"}
+                "analyze-wheel-cycle.py", "scenario-path.lua", "analyze-path.py", "scene-selection.lua", "analyze-impact.py", "analyze-stop-timing.py", "vehicles.lua", "scenario-vehicles.lua", "analyze-vehicles.py", "analyze-brace.py"}
     assert {p.name for p in HERE.iterdir() if p.is_file()} == allowed
     for path in HERE.rglob("*"):
         if path.is_file():
@@ -74,6 +75,13 @@ def check_manifest():
     assert manifest['footprint_scenario']['native_bare_controls'] == ['wall','corner','passage','wall-slide-left','wall-slide-right']
     assert manifest['footprint_scenario']['case_count'] == 24
     assert manifest['footprint_scenario']['required_candidate_versions']['PZToolkitJavaPatches']=='>=0.1.20'
+    assert manifest['brace_scenario']['case_count']==8 and manifest['brace_scenario']['record_seconds_per_case']==18 and manifest['brace_scenario']['release_wall_segments']==3
+    brace=runpy.run_path(str(HERE/'analyze-brace.py'))
+    assert len(brace['EXPECTED'])==8 and brace['DURATION']==18000
+    for empty in ('','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=8'):
+        try: brace['parse'](empty)
+        except AssertionError: pass
+        else: raise AssertionError('Empty brace evidence must fail')
     assert manifest['vehicle_scenario']['case_count']==12
     vehicles=runpy.run_path(str(HERE/'analyze-vehicles.py'))
     assert len(vehicles['EXPECTED'])==12 and len(vehicles['CONTROLS'])==4
