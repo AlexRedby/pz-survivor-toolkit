@@ -10,6 +10,12 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.73
+
+- **Added:** Authored wooden-wheelbarrow pickup and setdown clips, including the SaucedCarts setdown hotkey, cancellation recovery and exact world/held-item handoffs.
+- **Fixed:** Brief transitions from Run/Sprint to walking retain cart momentum for smooth, cargo-dependent braking.
+- **Changed:** Consolidated the cart integration with the current queue and shared Wishlist changes; remote cart-pose reconstruction and the remaining visual cases stay open.
+
 ### 0.1.72
 
 - **Fixed:** Automatic batch crafting keeps automatic material selection without the B42.21 Java queued-item accounting exceptions. Manual selection and native multiplayer constructor fields are preserved.
@@ -332,6 +338,13 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.22
+
+- **Added:** Wooden-wheelbarrow footprints respect walls, doors and vehicle hulls while allowing wall sliding. Tight contact requires a manual reverse manoeuvre before turning out.
+- **Fixed:** Preserved full native lateral strides and anchored grip during stationary turns, smoothed bank reversals and improved handle clearance during side steps.
+- **Fixed:** Preserved wheel rotation and floor contact across pickup, setdown and cancellation; native wall-impact recovery releases the cart through SaucedCarts.
+- **Note:** These cart changes are client-local; multiplayer visual reconstruction and the remaining body/clothing contacts are not declared complete.
 
 ### 0.1.19
 
