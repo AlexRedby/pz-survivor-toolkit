@@ -159,6 +159,55 @@ class LuaRunner(unittest.TestCase):
                          {"ProjectRoot": str(self.root), "NativePZLuaRoot": "/native",
                           "NativeQuartermasterLuaRoot": "/mod"})])
 
+    def test_game_supplies_selected_native_sources_and_preserves_explicit_overrides(self):
+        game = self.root / 'game'
+        native = game / 'media/lua'
+        native.mkdir(parents=True)
+        (game / 'projectzomboid.jar').write_bytes(b'game')
+        sources = {
+            'client/ISUI/ISInventoryPane.lua': 'game inventory',
+            'shared/Vehicles/TimedActions/ISUninstallVehiclePart.lua': 'game uninstall',
+            'server/Vehicles/Vehicles.lua': 'game vehicle items',
+            'client/RadioCom/RadioWindowModules/RWMMedia.lua': 'game media',
+            'client/RadioCom/ISUIRadio/ISItemDropBox.lua': 'game dropbox',
+        }
+        for relative, content in sources.items():
+            path = native / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        override = self.root / 'candidate-pane.lua'
+        override.write_text('candidate inventory')
+        self.invoke('--game', str(game), '--native-inventory-pane', str(override),
+                    '--test', 'test_inventory_tags', '--test', 'test_vehicle_ground',
+                    '--test', 'test_tv_controls', '--test', 'test_wishlist_model',
+                    '--test', 'native_tags/check_placement')
+        selected = dict(self.executions)
+        self.assertEqual(set(selected), {'test_inventory_tags.lua', 'test_vehicle_ground.lua',
+                                        'test_tv_controls.lua', 'test_wishlist_model.lua',
+                                        'native_tags/check_placement.lua'})
+        self.assertEqual(selected['test_inventory_tags.lua']['NativeInventoryPaneSource'], 'candidate inventory')
+        self.assertEqual(selected['test_vehicle_ground.lua']['NativeUninstallSource'], 'game uninstall')
+        self.assertEqual(selected['test_vehicle_ground.lua']['NativeVehicleItemsSource'], 'game vehicle items')
+        self.assertEqual(selected['test_tv_controls.lua']['NativeMediaSource'], 'game media')
+        self.assertEqual(selected['test_tv_controls.lua']['NativeDropBoxSource'], 'game dropbox')
+        self.assertEqual(selected['test_wishlist_model.lua']['NativeWishlistGameRoot'], str(game.resolve()))
+        self.assertEqual(selected['native_tags/check_placement.lua']['NativePZLuaRoot'], str(native.resolve()))
+
+    def test_game_reads_only_selected_inputs_and_missing_required_sources_fail(self):
+        game = self.root / 'game'
+        game.mkdir()
+        with self.assertRaises(SystemExit) as failure:
+            self.invoke('--game', str(game), '--test', 'test_ui_style')
+        self.assertEqual(failure.exception.code, 2)
+        self.assertEqual(self.executions, [])
+        (game / 'projectzomboid.jar').write_bytes(b'game')
+        self.invoke('--game', str(game), '--test', 'test_ui_style')
+        self.assertEqual([source for source, _ in self.executions], ['test_ui_style.lua'])
+        self.executions.clear()
+        with self.assertRaises(FileNotFoundError):
+            self.invoke('--game', str(game), '--test', 'test_inventory_tags')
+        self.assertEqual(self.executions, [])
+
     def test_invalid_or_unconfigured_selection_fails_before_execution(self):
         for arguments in (("--test", "test_tv_controls", "--test", "missing"),
                           ("--test", "native_tags/check_placement"),

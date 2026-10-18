@@ -19,9 +19,11 @@ python3 -m unittest discover -s JavaPatches/tests
 python3 tools/prepare_install.py --check
 ```
 
-List Lua tests with `.venv/bin/python tools/run_tests.py --list`. Select one or several with repeatable `--test NAME` (relative to `tests/`, with or without `.lua`). For example, `--test test_tv_controls --test test_vhs_ownership` runs only those tests and their associated variants, without scanning all mod files. Omit `--test` for the existing full Lua checks, including the syntax scan. Explicitly selecting the conditional Quartermaster craft UI or native tag transfer/placement checks requires their source-path options. Other checks retain their existing source-dependent SKIP behavior; a skipped integration check does not validate that integration.
+List Lua tests with `.venv/bin/python tools/run_tests.py --list`. Select one or several with repeatable `--test NAME` (relative to `tests/`, with or without `.lua`). For example, `--test test_tv_controls --test test_vhs_ownership` runs only those tests and their associated variants, without scanning all mod files. Omit `--test` for the existing full Lua checks, including the syntax scan. Explicitly selecting the conditional Quartermaster craft UI or native tag transfer/placement checks requires native sources through `--game` or `--native-action-root`; Quartermaster also requires `--quartermaster-source` or its locked integration. Other checks retain their existing source-dependent SKIP behavior; a skipped integration check does not validate that integration.
 
-The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`. VHS menu, sorting, drop validation and live toggle checks run by default; add `--tv-source /path/to/RWMMergedTV.lua --native-radio-root /path/to/media/lua/client` to also exercise the native media actions and drag parser.
+Add `--game "$PZ_GAME"` (the directory containing `projectzomboid.jar`) to supply native Lua inputs from one installation. For example, `.venv/bin/python tools/run_tests.py --game "$PZ_GAME" --test test_inventory_tags --test test_vehicle_ground` reads the selected tests' native inventory and vehicle sources. This also supplies Mod Options, radio, action and Wishlist paths when their checks are selected. Individual source-path options override these defaults; locked integration checks retain their source-consistency requirements. Only selected tests read their inputs, and a missing required file fails instead of silently skipping it. Third-party source paths remain explicit or come from `--pack-lock`.
+
+The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`. VHS menu, sorting, drop validation and live toggle checks run by default; add `--tv-source /path/to/RWMMergedTV.lua --game "$PZ_GAME"` to also exercise the upstream window and native media actions and drag parser.
 
 The TV video source check runs the upstream catalog and original initialization without a separate video list. `python3 JavaPatches/build.py --test TVVideoPathChecks` checks the macOS path correction before native cache lookup, including failed-cache precedence and close/eviction keys; it does not decode video or prove GPU playback.
 
@@ -29,18 +31,18 @@ Independent medicine checks can use the installed framework with `--medicine-fra
 
 The read-only Java global `toolkitMedicineCooldown(character)` returns the native food-sickness treatment cooldown, or `nil` for unsupported bytecode, unavailable data or multiplayer clients. `MedicineEffects.capture` sends this as `LemonGrassCooldown` (`false` when unavailable); the old `LemonGrass` estimate is never displayed as exact. Use `python3 JavaPatches/build.py --test MedicineCooldownChecks` for native field, loader exposure and Kahlua checks.
 
-Use `--native-inventory-context-menu /path/to/ISInventoryPaneContextMenu.lua` for actual transfer callbacks and the sibling native text-box constructor/callback. `--mpff-source /path/to/MPFastForward/media/lua` and `--bc-filter-source /path/to/CategoryFilters.lua` exercise the upstream modules and early compatibility gates; without these paths, those source checks report SKIP.
+`--mpff-source /path/to/MPFastForward/media/lua` and `--bc-filter-source /path/to/CategoryFilters.lua` exercise the upstream modules and early compatibility gates; without these paths, those source checks report SKIP.
 
-Vehicle ground-placement regressions run by default. Add `--native-uninstall /path/to/media/lua/shared/Vehicles/TimedActions/ISUninstallVehiclePart.lua` to exercise the installed game's actual removal completion, including failure, callbacks and its existing ground fallback.
+With `--game`, vehicle ground-placement regressions exercise the installed game's removal completion and item collection, including failure, callbacks and its existing ground fallback. Quantity-transfer checks use the actual inventory callbacks and sibling text-box constructor/callback.
 
-Action queue checks require `--native-action-root /path/to/media/lua`. Wishlist crafting checks can additionally inspect native menu callbacks and installed adapters with `--wishlist-game-root /path/to/game/Java-directory --wishlist-workshop-root /path/to/steamapps/workshop/content/108600`.
+Action queue and native Wishlist menu checks use `--game`. Add `--wishlist-workshop-root /path/to/steamapps/workshop/content/108600` for the Wishlist checks against installed adapters.
 
 `python3 tools/package_mod.py --check` validates the Toolkit mod structure without creating an archive. To create a developer-only archive, run `python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip`; Wishlist Lua sources are included automatically. Use `tools/prepare_install.py` to prepare both local folders, including the Java mod; it creates no archive.
 
 To run the same checks against your installed game's native Mod Options implementation:
 
 ```sh
-.venv/bin/python tools/run_tests.py --native-mod-options /path/to/media/lua/client/PZAPI/ModOptions.lua
+.venv/bin/python tools/run_tests.py --game "$PZ_GAME" --test test_highlighter
 ```
 
 
@@ -64,7 +66,7 @@ Use the checks below for the affected behavior. A fixture's assertions describe 
 
 ## Action queue adapters
 
-Queue regression checks use the installed game's Lua queue, base action, reading action and list geometry with simulated Java/UI lifecycle. Run them with `--native-action-root /path/to/media/lua`; the default test command skips those native-source checks without that path.
+Queue regression checks use the installed game's Lua queue, base action, reading action and list geometry with simulated Java/UI lifecycle. Run them with `--game "$PZ_GAME"`; without it or an explicit `--native-action-root`, those native-source checks are skipped.
 
 For development, `ActionQueueDefinitions.lua` owns presentation entries; changing an icon or title does not grant queue permissions. Family adapters register a separate behavior with explicit nonempty `types` and `matches`/`inspect`. The type list routes candidates; it never grants permissions without a successful matcher. Include deferred command and private wait types explicitly. Matcher errors or ambiguity reject the applicable type; unrelated families are not consulted. `ActionQueuePolicy.lua` returns read-only decisions with a reason, blocker and resource; it never calls action validity callbacks. Each decision owns a lazy context for contracts and operation items, including rejected contracts; never retain or reuse that context between decisions. Direct `Policy.inspect` calls remain fresh. Use `items` for directly used item IDs and `containerOwners` for bag references through `Policy.addContainerResources`; references conflict with bag changes, not with other references. Use `dynamicInputsByType` for native moduleless item selectors, alongside full-type `dynamicInputs` where applicable. Keep future selections and unknown effects explicit, and test both a shared and an independent target before allowing edits. `ActionQueueOperations.command`/`enqueue` reuse native deferred actions. Asynchronous adapters must capture `attachContinuation(token, character)` before waiting, then use `runContinuation(handle, callback, ...)` or `finishContinuation(handle)`; `runWith` intentionally remains available for required native cleanup after cancellation. `ActionQueueCompat.lua` contains source-pinned mod adapters and native completion boundaries. Health private-handler support is pinned to the reviewed B42.21 source and remains closed when that source or its hooks differ.
 

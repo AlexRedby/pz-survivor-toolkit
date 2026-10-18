@@ -40,6 +40,26 @@ EXTRA_TESTS = (
 )
 
 
+def configure_game_sources(args):
+    if not args.game:
+        return
+    game = args.game.resolve()
+    if not (game / 'projectzomboid.jar').is_file():
+        raise ValueError('--game must contain projectzomboid.jar: ' + str(game))
+    for option, relative in {
+        'native_mod_options': 'media/lua/client/PZAPI/ModOptions.lua',
+        'native_inventory_pane': 'media/lua/client/ISUI/ISInventoryPane.lua',
+        'native_inventory_context_menu': 'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua',
+        'native_radio_root': 'media/lua/client',
+        'native_uninstall': 'media/lua/shared/Vehicles/TimedActions/ISUninstallVehiclePart.lua',
+        'native_vehicles': 'media/lua/server/Vehicles/Vehicles.lua',
+        'native_action_root': 'media/lua',
+        'wishlist_game_root': '.',
+    }.items():
+        if getattr(args, option) is None:
+            setattr(args, option, game / relative)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test", action="append", default=[], metavar="NAME",
@@ -49,7 +69,8 @@ def main() -> None:
                         help='run this integration against its locked upstream sources; repeatable')
     parser.add_argument('--list-integrations', action='store_true', help='show upstream inputs, Toolkit owners and focused checks')
     parser.add_argument('--pack-lock', type=Path, help='validated selected-pack lock supplying integration source paths')
-    parser.add_argument('--game', type=Path, help='game Java directory matching --pack-lock')
+    parser.add_argument('--game', type=Path,
+                        help='directory containing projectzomboid.jar; supplies native Lua paths, and must match --pack-lock when used')
     parser.add_argument("--native-mod-options", type=Path,
                         help="test against an extracted vanilla PZAPI/ModOptions.lua")
     parser.add_argument("--cci-source", type=Path, help="test against ContainerCapacityIndicator.lua")
@@ -90,6 +111,10 @@ def main() -> None:
             mod_integrations.configure(args, ROOT, requested)
         except (OSError, ValueError, KeyError) as error:
             parser.error(str(error))
+    try:
+        configure_game_sources(args)
+    except ValueError as error:
+        parser.error(str(error))
     if "test_quartermaster_craft_ui.lua" in requested and not (args.quartermaster_source and args.native_action_root):
         parser.error("test_quartermaster_craft_ui requires --quartermaster-source and --native-action-root")
     if requested.intersection({"native_tags/check_transfer_source.lua", "native_tags/check_placement.lua"}) and not args.native_action_root:

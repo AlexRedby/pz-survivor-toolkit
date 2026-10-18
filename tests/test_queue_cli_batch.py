@@ -319,6 +319,48 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(self.invoke(), 0)
         self.assertEqual([name for name, _ in self.calls], ['control', 'seed', 'reload'])
 
+    def test_dry_run_matches_execution_selection_without_preparing_or_writing(self):
+        self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk',
+            'resources': {'heap_mib': 1024}, 'resource_wait': 15,
+            'options': {'mod_sources': {'PZSurvivorToolkit': '/candidate', 'PZToolkitJavaPatches': '/java'}},
+            'sets': {'wishlist': ['reload']},
+            'jobs': [{'id': 'control', 'suite': 'shared-wishlist', 'mode': 'native'},
+                     {'id': 'seed', 'suite': 'shared-wishlist', 'case': 'standalone', 'control_job': 'control'},
+                     {'id': 'reload', 'suite': 'shared-wishlist', 'case': 'reload', 'seed_job': 'seed',
+                      'options': {'mod_sources': {'PZSurvivorToolkit': '/updated'}},
+                      'resources': {'native_mib': 512}},
+                     {'id': 'unrelated', 'suite': 'startup'}]}))
+        original = self.plan.read_bytes()
+        output = io.StringIO()
+        with patch.object(cli.native, 'prepare') as prepare, patch.object(cli.runner, 'run') as run, \
+                patch.object(cli.report, 'write_json') as write, patch('sys.stdout', output):
+            self.assertEqual(0, cli.main(['batch', str(self.plan), str(self.args.output),
+                                         '--set', 'wishlist', '--dry-run']))
+        prepare.assert_not_called()
+        run.assert_not_called()
+        write.assert_not_called()
+        self.assertFalse(self.args.output.exists())
+        self.assertEqual(self.plan.read_bytes(), original)
+        preview = json.loads(output.getvalue())
+        self.assertEqual(preview['status'], 'planned')
+        self.assertEqual([job['id'] for job in preview['jobs']], ['control', 'seed', 'reload'])
+        self.assertEqual(preview['jobs'][1]['control'], str((self.args.output / 'control').resolve()))
+        self.assertEqual(preview['jobs'][2]['selection']['options']['mod_sources'],
+                         {'PZSurvivorToolkit': '/updated', 'PZToolkitJavaPatches': '/java'})
+        self.assertEqual(preview['jobs'][2]['resource_wait'], 15)
+        self.args.sets = ['wishlist']
+        self.assertEqual(0, self.invoke())
+        self.assertEqual([job['selection'] for job in preview['jobs']], [value for _, value in self.calls])
+
+    def test_dry_run_rejects_bad_cases_before_any_output_or_launch(self):
+        self.write_plan([{'id': 'bad-case', 'suite': 'startup', 'case': 'nonexistent'}])
+        with patch.object(cli.native, 'prepare') as prepare, patch.object(cli.runner, 'run') as run, \
+                patch('sys.stderr', io.StringIO()):
+            self.assertEqual(1, cli.main(['batch', str(self.plan), str(self.args.output), '--dry-run']))
+        prepare.assert_not_called()
+        run.assert_not_called()
+        self.assertFalse(self.args.output.exists())
+
     def test_disabled_dependency_unknown_selection_and_cycle_fail_before_preparation(self):
         plan = {'jobs': [{'id': 'control'}, {'id': 'candidate', 'control_job': 'control'}]}
         for kwargs in ({'only': 'unknown'}, {'only': 'candidate', 'skip': 'control'}, {'sets': ['unknown']}):

@@ -128,12 +128,52 @@ def selected_jobs(plan, only=None, sets=(), skip=None):
     return selected
 
 
+def batch_selection(plan, job, catalog, config, runs):
+    if 'cases' in job:
+        raise ValueError("Batch jobs use 'case' with comma-separated IDs; 'cases' would be ignored")
+    plan_options, job_options = plan.get('options', {}), job.get('options', {})
+    if not isinstance(plan_options, dict) or not isinstance(job_options, dict):
+        raise ValueError('Batch options must contain JSON objects')
+    plan_sources, job_sources = plan_options.get('mod_sources', {}), job_options.get('mod_sources', {})
+    if not isinstance(plan_sources, dict) or not isinstance(job_sources, dict):
+        raise ValueError('options.mod_sources must contain a JSON object')
+    options = dict(plan_options, **job_options)
+    if 'mod_sources' in plan_options or 'mod_sources' in job_options:
+        # An explicit empty job map opts out of plan pins for another mod selection.
+        options['mod_sources'] = ({} if 'mod_sources' in job_options and not job_sources
+                                  else {**plan_sources, **job_sources})
+    if job.get('seed_job'):
+        options['seed_run'] = str(runs[job['seed_job']])
+    mods = job.get('mods', plan.get('mods'))
+    if mods is not None and mods not in ('selected', 'vanilla') and (not isinstance(mods, list) or not mods or any(not isinstance(id, str) for id in mods)):
+        raise ValueError('Batch mods must be a nonempty list of Mod IDs, selected or vanilla')
+    if not isinstance(plan.get('resources', {}), dict) or not isinstance(job.get('resources', {}), dict):
+        raise ValueError('Batch resources must be objects')
+    namespace = argparse.Namespace(suite=job['suite'], cases=job.get('case'), mode=job.get('mode', 'toolkit'),
+        kind=job.get('kind'), language=job.get('language'), mods=mods if isinstance(mods, str) else ','.join(mods) if mods else None,
+        config=config, mod_source=[], timeout=job.get('timeout', 900), ports=job.get('ports'),
+        resources=dict(plan.get('resources', {}), **job.get('resources', {})))
+    return selection(namespace, catalog, options)
+
+
 def batch(args, catalog):
     plan = report.read_json(args.plan)
     jobs = selected_jobs(plan, getattr(args, 'jobs', None), getattr(args, 'sets', ()), getattr(args, 'skip_jobs', None))
     identifiers = [job['id'] for job in jobs]
     if args.output.exists():
         raise FileExistsError('Fresh batch output directory required')
+    if getattr(args, 'dry_run', False):
+        runs, rows = {}, []
+        for job in jobs:
+            selected = batch_selection(plan, job, catalog, args.plan, runs)
+            output = (args.output / job['id']).resolve()
+            rows.append({'id': job['id'], 'run': str(output), 'selection': selected,
+                         'control': str(runs[job['control_job']]) if job.get('control_job') else None,
+                         'resource_wait': job.get('resource_wait', plan.get('resource_wait', 300))})
+            runs[job['id']] = output
+        print(json.dumps({'status': 'planned', 'game': plan['game'], 'jdk': plan['jdk'],
+                          'workshop': plan.get('workshop', []), 'jobs': rows}, indent=2))
+        return 0
     args.output.mkdir(parents=True)
     results, reports, completed = [], [], {}
     for job in jobs:
@@ -142,35 +182,11 @@ def batch(args, catalog):
         interrupted = False
         print('START ' + job['id'], flush=True)
         try:
-            if 'cases' in job:
-                raise ValueError("Batch jobs use 'case' with comma-separated IDs; 'cases' would be ignored")
-            plan_options, job_options = plan.get('options', {}), job.get('options', {})
-            if not isinstance(plan_options, dict) or not isinstance(job_options, dict):
-                raise ValueError('Batch options must contain JSON objects')
-            plan_sources, job_sources = plan_options.get('mod_sources', {}), job_options.get('mod_sources', {})
-            if not isinstance(plan_sources, dict) or not isinstance(job_sources, dict):
-                raise ValueError('options.mod_sources must contain a JSON object')
-            options = dict(plan_options, **job_options)
-            if 'mod_sources' in plan_options or 'mod_sources' in job_options:
-                # An explicit empty job map opts out of plan pins for another mod selection.
-                options['mod_sources'] = ({} if 'mod_sources' in job_options and not job_sources
-                                          else {**plan_sources, **job_sources})
             for key in ('control_job', 'seed_job'):
                 if job.get(key) and job[key] not in completed:
                     raise ValueError('Dependency has no completed report: ' + job[key])
             control = completed[job['control_job']] if job.get('control_job') else None
-            if job.get('seed_job'):
-                options['seed_run'] = str(completed[job['seed_job']])
-            mods = job.get('mods', plan.get('mods'))
-            if mods is not None and mods not in ('selected', 'vanilla') and (not isinstance(mods, list) or not mods or any(not isinstance(id, str) for id in mods)):
-                raise ValueError('Batch mods must be a nonempty list of Mod IDs, selected or vanilla')
-            if not isinstance(plan.get('resources', {}), dict) or not isinstance(job.get('resources', {}), dict):
-                raise ValueError('Batch resources must be objects')
-            namespace = argparse.Namespace(suite=job['suite'], cases=job.get('case'), mode=job.get('mode', 'toolkit'),
-                kind=job.get('kind'), language=job.get('language'), mods=mods if isinstance(mods, str) else ','.join(mods) if mods else None,
-                config=args.plan, mod_source=[], timeout=job.get('timeout', 900), ports=job.get('ports'),
-                resources=dict(plan.get('resources', {}), **job.get('resources', {})))
-            selected = selection(namespace, catalog, options)
+            selected = batch_selection(plan, job, catalog, args.plan, completed)
             native.prepare(ROOT, output, Path(plan['game']), Path(plan['jdk']), selected, [Path(p) for p in plan.get('workshop', [])])
             execution = runner.run(output, resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
             interrupted = execution.get('interrupted', False)
@@ -240,6 +256,7 @@ def main(argv=None):
     command.add_argument('--jobs', help='Run only these comma-separated job IDs and their control/seed dependencies')
     command.add_argument('--set', dest='sets', action='append', default=[], help='Run a named set from the plan; repeatable')
     command.add_argument('--skip-jobs', help='Disable comma-separated jobs; required dependencies cannot be disabled')
+    command.add_argument('--dry-run', action='store_true', help='Print resolved job selections as JSON without preparing profiles or launching games')
     command = commands.add_parser('lock-pack', help='Resolve and hash the actual SurvivorQoL-selected.ini pack without launching the game')
     command.add_argument('output', type=Path)
     command.add_argument('--game', type=Path, required=True)

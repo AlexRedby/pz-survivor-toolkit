@@ -102,7 +102,10 @@ For feature development, select only the relevant jobs or a named plan set:
 ```sh
 python3 tools/check_action_queue.py batch /path/to/plan.json /tmp/craft-fresh --set craft
 python3 tools/check_action_queue.py batch /path/to/plan.json /tmp/targeted-fresh --jobs wishlist,tags
+python3 tools/check_action_queue.py batch /path/to/plan.json /tmp/craft-fresh --set craft --dry-run
 ```
+
+`--dry-run` prints JSON with the selected jobs in execution order, their control/seed paths and effective scenarios, mods, options and resources. It uses the same selection as execution and creates no output directories, profiles or processes. It validates the selection, not installed sources or runtime readiness; automatic ports are assigned during preparation. Remove `--dry-run` to execute that selection.
 
 Plans define `sets` as names mapped to job ID lists. Required `control_job` and `seed_job` dependencies are included automatically, in plan order. `--skip-jobs` disables jobs, but disabling a required dependency is an error before preparation. Unselected jobs are not prepared and their fixtures are not installed. [The pack plan example](plans/pack-regression.example.json) includes targeted sets and a separate `full` set; replace its local paths before use. The full set is explicit regression scope, not evidence that every loaded mod has behavioral coverage.
 
