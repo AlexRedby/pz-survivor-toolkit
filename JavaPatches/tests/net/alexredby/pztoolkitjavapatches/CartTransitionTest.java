@@ -33,6 +33,7 @@ public final class CartTransitionTest {
         IsoGridSquare square;
         java.util.Map<String,Float> variables;
         java.util.Stack<BaseAction> actions;
+        zombie.ai.StateMachine machine;
         int protection,modelResets,handWrites,clipPilotWrites;
         boolean performing,otherFloor,clipPilot,clipPilotAbsent;
         java.util.Map<String,Boolean> booleanVariables;
@@ -60,6 +61,10 @@ public final class CartTransitionTest {
         @Override public boolean isGrappling(){return protection==8;}
         @Override public boolean isBeingGrappled(){return protection==9;}
         @Override public boolean isRagdollSimulationActive(){return protection==10;}
+        @Override public zombie.ai.StateMachine getStateMachine(){
+            if(machine==null) machine=new zombie.ai.StateMachine(this);
+            return machine;
+        }
         @Override public zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator getAdvancedAnimator(){return null;}
         @Override public boolean containsVariable(String name){
             if("ToolkitWoodCartClipPilot".equals(name)) return !clipPilotAbsent;
@@ -746,6 +751,31 @@ public final class CartTransitionTest {
             } finally {CartTransition.end(player);}
         }
     }
+    private static void collisionInterruptions() throws Exception {
+        for(boolean pickup:new boolean[]{true,false}) {
+            var fixture=recovery(pickup);var player=fixture.player;
+            var current=zombie.ai.StateMachine.class.getDeclaredField("currentState");current.setAccessible(true);
+            try {
+                current.set(player.getStateMachine(),zombie.ai.states.CollideWithWallState.instance());
+                check(!CartTransition.cancel(player,fixture.cart,pickup,null),"native wall collision accepted recovery");
+                current.set(player.getStateMachine(),null);
+                check(CartTransition.cancel(player,fixture.cart,pickup,null),"ordinary recovery refused after collision exit");
+                current.set(player.getStateMachine(),zombie.ai.states.CollideWithWallState.instance());
+                var slot=new zombie.core.skinnedmodel.model.ModelSlotRenderData();slot.character=player;
+                check(!CartTransition.render(slot),"transition render retained native wall collision ownership");
+                recovered(fixture);
+                check(cancelled(player)==null && player.overridePrimaryHandModel==null
+                    && !CartTransition.hidden(fixture.cart) && !CartTransition.suppressHeldModel(player),
+                    "native collision retained a recovery snapshot, visual lease or suppression");
+                current.set(player.getStateMachine(),null);
+                check(CartTransition.update(player,fixture.cart,pickup,.3),"native collision exit prevented a fresh ordinary action");
+                check(CartTransition.cancel(player,fixture.cart,pickup,null)==false,
+                    "fresh unrendered action inherited the cancelled pose capture");
+                check(player.handWrites==0 && player.primary==(pickup?null:fixture.cart)
+                    && player.secondary==(pickup?null:fixture.cart),"collision recovery changed native hand ownership");
+            } finally {current.set(player.getStateMachine(),null);CartTransition.end(player);}
+        }
+    }
     private static void recoveryInterruptions() throws Exception {
         for(boolean pickup:new boolean[]{true,false}) for(int protection=1;protection<=10;protection++) {
             var fixture=recovery(pickup);var player=fixture.player;
@@ -885,7 +915,7 @@ public final class CartTransitionTest {
         var cart=allocate(Cart.class);cart.kind="SaucedWheelbarrow.WheelbarrowWood";
         check(Boolean.FALSE.equals(atlas.invoke(null,cart,null,0f,0f,0f,0f,0f,false)),
             "wooden cart atlas must defer to the same renderer as FBO without accessing a scene");
-        bridge();geometry();groundPasses();recoveryLifecycle();authoredClipDefault();authoredClockAndRecovery();authoredRestartHandoff();authoredRestartRefusals();authoredRestartRecancellation();authoredPendingHandoff();authoredPendingDeadline();authoredPendingRefusals();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();recoveryLeaseIdentity();recoveryModelScope();
+        bridge();geometry();groundPasses();recoveryLifecycle();authoredClipDefault();authoredClockAndRecovery();authoredRestartHandoff();authoredRestartRefusals();authoredRestartRecancellation();authoredPendingHandoff();authoredPendingDeadline();authoredPendingRefusals();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();collisionInterruptions();recoveryLeaseIdentity();recoveryModelScope();
         System.out.println("CART_TRANSITION_PASS (scoped exact-owner validation, native yaw geometry, model/depth/sprite/picker/outline suppression and cleanup)");
     }
 }

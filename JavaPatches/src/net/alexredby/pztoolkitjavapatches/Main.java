@@ -572,6 +572,10 @@ public final class Main {
         public static void enter(@Patch.This zombie.characters.IsoGameCharacter character) {
             if(Main.CART_SUPPORTED) CartSteeringHooks.heading(character);
         }
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.characters.IsoGameCharacter character) {
+            if(Main.CART_SUPPORTED) CartSteeringHooks.finish(character);
+        }
     }
 
     @Patch(className="zombie.core.skinnedmodel.ModelManager", methodName="DoCharacterModelEquipped", warmUp=true, strictMatch=true)

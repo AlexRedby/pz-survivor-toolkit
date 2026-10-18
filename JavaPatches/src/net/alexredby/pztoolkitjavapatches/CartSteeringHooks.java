@@ -2,6 +2,7 @@ package net.alexredby.pztoolkitjavapatches;
 
 import java.util.WeakHashMap;
 import zombie.GameTime;
+import zombie.ai.states.CollideWithWallState;
 import zombie.characters.IsoGameCharacter;
 import zombie.characters.IsoPlayer;
 import zombie.inventory.ItemContainer;
@@ -47,6 +48,7 @@ public final class CartSteeringHooks {
                 && !player.isDead() && !player.hasHitReaction() && !player.isKnockedDown()
                 && !player.isGettingUp() && !player.isGrappling() && !player.isBeingGrappled()
                 && !player.isRagdollSimulationActive()
+                && !player.isCurrentState(CollideWithWallState.instance())
                 && supportedCart(player)
                 && (!pathMode(player) || wooden(player))
                 && player.getPrimaryHandItem() instanceof InventoryContainer;
@@ -567,6 +569,11 @@ public final class CartSteeringHooks {
         // Scoped cart AnimNodes own maxTorsoTwist; native animation rewrites it.
         player.setTargetAndCurrentDirection((float) Math.cos(state.heading),
                                             (float) Math.sin(state.heading));
+    }
+
+    /** Native animation updates can enter a protected state after the heading entry hook. */
+    public static void finish(IsoGameCharacter character) {
+        if(character instanceof IsoPlayer player && states.containsKey(player) && !enabled(player)) reset(player);
     }
 
     /** Death/menu cleanup discards pending state and releases only our own variables. */

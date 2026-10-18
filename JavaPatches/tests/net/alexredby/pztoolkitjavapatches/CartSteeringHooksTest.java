@@ -40,6 +40,8 @@ public final class CartSteeringHooksTest {
         boolean pivot, woodBrake, brakeSprint, moving, run, sprint, pathActive, npc;
         zombie.pathfind.PathFindBehavior2 nativePath;
         zombie.ai.astar.AStarPathFinderResult finder;
+        zombie.ai.StateMachine machine;
+        Runnable animationUpdate;
         float walkSpeed, slowFactor;
         @Override public float getSlowFactor() { return slowFactor; }
         float stepX, stepY, legPace;
@@ -65,7 +67,16 @@ public final class CartSteeringHooksTest {
         @Override public boolean isDead() { return blocked == 1; }
         @Override public boolean hasHitReaction() { return blocked == 2; }
         @Override public boolean isKnockedDown() { return blocked == 3; }
-        @Override public boolean isGettingUp() { return blocked == 4; }
+        @Override public boolean isGettingUp() { return blocked == 4 || super.isGettingUp(); }
+        @Override public zombie.ai.StateMachine getStateMachine() {
+            if(machine==null) machine=new zombie.ai.StateMachine(this);
+            return machine;
+        }
+        @Override public boolean isAnimationUpdatingThisFrame() {
+            if(animationUpdate!=null) animationUpdate.run();
+            return false;
+        }
+        @Override public void setCurrentSquareFromPosition() {}
         @Override public boolean isGrappling() { return blocked == 5; }
         @Override public boolean isBeingGrappled() { return blocked == 6; }
         @Override public boolean isRagdollSimulationActive() { return blocked == 7; }
@@ -587,6 +598,56 @@ public final class CartSteeringHooksTest {
             && !states.containsKey(player),"woven path advice must leave remote native failure/state untouched");
     }
 
+    private static void wovenProtectedControls(Unsafe unsafe,Map<?,?> states) throws Exception {
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
+        type(cart,"SaucedWheelbarrow.WheelbarrowWood");player.walkSpeed=.8f;player.reqMovement=new Vector2();
+        CartWheelSpin.record(cart,0,0,0,new org.joml.Matrix4f().scale(76.5f),.7);
+        var heading=zombie.characters.IsoGameCharacter.class.getDeclaredMethod("postUpdateAnimating");
+        heading.setAccessible(true);heading.invoke(player);
+        Object previous=states.get(player);
+        check(previous!=null && player.pivot,"woven heading must acquire the held cart before impact");
+        field(previous,"brace").setDouble(previous,1);
+        player.stepX=player.stepY=.5f;player.legPace=1;player.woodBrake=player.brakeSprint=true;
+        var current=field(player.getStateMachine(),"currentState");
+        player.animationUpdate=()-> {
+            try {current.set(player.getStateMachine(),zombie.ai.states.CollideWithWallState.instance());}
+            catch(IllegalAccessException error) {throw new AssertionError(error);}
+        };
+        heading.invoke(player);player.animationUpdate=null;
+        check(!states.containsKey(player) && !player.pivot && player.stepX==0 && player.stepY==0
+            && player.legPace==0 && !player.woodBrake && !player.brakeSprint,
+            "woven exit must clear cart variables when native animation enters collision after the entry hook");
+        for(var state:List.of(zombie.ai.states.CollideWithWallState.instance(),zombie.ai.states.PlayerGetUpState.instance())) {
+            current.set(player.getStateMachine(),state);
+            check(!CartSteeringHooks.enabled(player),"native collision/getup states must retain animation ownership");
+            check(!player.hasHitReaction() && !player.isKnockedDown() && !player.isRagdollSimulationActive(),
+                "collision/getup regression must exercise the explicit native state guards");
+            player.setNextX(0);player.setNextY(0);player.moveUnmodded(.02f,-.01f);
+            check(player.reqMovement.x==.02f && player.reqMovement.y==-.01f
+                && player.getNextX()==.02f && player.getNextY()==-.01f,
+                "woven movement must preserve the native collision/getup root vector");
+            heading.invoke(player);
+            check(!states.containsKey(player) && !player.pivot && player.stepX==0 && player.stepY==0
+                && player.legPace==0 && !player.woodBrake && !player.brakeSprint,
+                "woven heading must release cart steering and brake variables during native recovery");
+            check(Double.isNaN(CartSteeringHooks.wheelPhase(player)),"native recovery must suspend held wheel preparation");
+        }
+        current.set(player.getStateMachine(),null);heading.invoke(player);
+        Object resumed=states.get(player);
+        check(CartSteeringHooks.enabled(player) && resumed!=null && resumed!=previous && player.pivot
+            && field(resumed,"brace").getDouble(resumed)==0 && !field(resumed,"pending").getBoolean(resumed),
+            "native recovery exit must acquire fresh steering without the old brace or pending step");
+        check(Math.abs(CartSteeringHooks.wheelPhase(player)-.7)<1e-6,
+            "native recovery must retain the same cart item's recorded wheel phase");
+        CartSteeringHooks.finish(player);
+        check(states.get(player)==resumed,"eligible frame exit must preserve the existing cart state");
+        CartSteeringHooks.reset(player);
+        player.stepX=.25f;CartSteeringHooks.finish(player);
+        check(player.stepX==.25f && !states.containsKey(player),"unowned frame exit must not clear presentation variables");
+    }
+
     private static void direction(Player player,double heading) {
         player.inputX=(float)((Math.cos(heading)-Math.sin(heading))/2);
         player.inputY=(float)((Math.cos(heading)+Math.sin(heading))/2);
@@ -1050,6 +1111,7 @@ public final class CartSteeringHooksTest {
         adjacentBrakeRelease(unsafe,states);
         slalomClearance(unsafe,states);
         wovenPathControls(unsafe,states);
+        wovenProtectedControls(unsafe,states);
         System.out.println("CART_STEERING_HOOKS_PASS (combat, local, path, scope, ownership, reset, native direction transitions)");
     }
 }

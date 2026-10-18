@@ -8,6 +8,7 @@ import org.joml.Vector3f;
 import se.krka.kahlua.integration.annotations.LuaMethod;
 import se.krka.kahlua.vm.KahluaTable;
 import zombie.Lua.LuaManager;
+import zombie.ai.states.CollideWithWallState;
 import zombie.characters.IsoPlayer;
 import zombie.characters.CharacterTimedActions.BaseAction;
 import zombie.characters.CharacterTimedActions.LuaTimedActionNew;
@@ -202,6 +203,7 @@ public final class CartTransition {
     private static boolean protectedState(IsoPlayer player) {
         return !player.isLocalPlayer() || player.isDead() || player.isAiming() || player.hasHitReaction()
             || player.isKnockedDown() || player.isGettingUp() || player.getVehicle()!=null
+            || player.isCurrentState(CollideWithWallState.instance())
             || player.isGrappling() || player.isBeingGrappled() || player.isRagdollSimulationActive();
     }
 

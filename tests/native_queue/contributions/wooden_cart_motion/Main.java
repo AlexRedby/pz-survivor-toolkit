@@ -71,6 +71,38 @@ public final class Main {
         return ((Number) hooks.getMethod("lean", IsoPlayer.class).invoke(null, IsoPlayer.getInstance())).doubleValue();
     }
 
+    @LuaMethod(name="cartLabSafety", global=true)
+    public static String safety() throws Exception {
+        var p=IsoPlayer.getInstance();var item=p.getPrimaryHandItem();
+        var hooks=Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks");
+        var states=hooks.getDeclaredField("states");states.setAccessible(true);
+        Object state=((java.util.Map<?,?>)states.get(null)).get(p);
+        double brace=0;
+        if(state!=null) {var field=state.getClass().getDeclaredField("brace");field.setAccessible(true);brace=field.getDouble(state);}
+        var phase=Class.forName("net.alexredby.pztoolkitjavapatches.CartWheelSpin").getDeclaredMethod("itemPhase",zombie.inventory.InventoryItem.class);
+        phase.setAccessible(true);
+        return "state="+p.getCurrentState().getClass().getSimpleName()+" action="+p.getActionStateName()
+            +" enabled="+hooks.getMethod("enabled",IsoPlayer.class).invoke(null,p)
+            +" steering="+((java.util.Map<?,?>)states.get(null)).containsKey(p)
+            +" hit="+p.hasHitReaction()+" knocked="+p.isKnockedDown()+" getup="+p.isGettingUp()
+            +" ragdoll="+p.isRagdollSimulationActive()+" ignore="+p.getIgnoreMovement()
+            +" pivot="+p.getVariableBoolean("ToolkitCartPivot")+" brake="+p.getVariableBoolean("ToolkitCartWoodBrake")
+            +" stepX="+p.getVariableFloat("ToolkitCartStepX",0)+" stepY="+p.getVariableFloat("ToolkitCartStepY",0)
+            +" pace="+p.getVariableFloat("ToolkitCartLegPace",0)
+            +" brace="+brace
+            +" id="+(item==null?-1:item.getID())+" secondary="+(p.getSecondaryHandItem()==null?-1:p.getSecondaryHandItem().getID())
+            +" cargo="+(item instanceof zombie.inventory.types.InventoryContainer cart?cart.getInventory().getCapacityWeight():-1)
+            +" itemPhase="+phase.invoke(null,item);
+    }
+
+    @LuaMethod(name="cartLabWallEvent", global=true)
+    public static void wallEvent() {
+        var p=IsoPlayer.getInstance();
+        if(!p.isSprinting() || !"sprint".equals(p.getActionStateName()))
+            throw new IllegalStateException("Native wall event requires an actual Sprint state");
+        p.getActionContext().reportEvent("collideWithWall");
+    }
+
     @LuaMethod(name="cartLabRamp", global=true)
     public static String ramp() throws Exception {
         var hooks = Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks");

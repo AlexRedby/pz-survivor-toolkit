@@ -28,6 +28,7 @@ public final class CartGroundingTest {
  private static final class Player extends IsoPlayer {
   InventoryItem cart;
   ItemContainer inventory;
+  zombie.ai.StateMachine machine;
   Player() {super(null,null,0,0,0);}
   @Override public boolean isLocalPlayer() {return true;}
   @Override public boolean isNpc() {return false;}
@@ -39,6 +40,10 @@ public final class CartGroundingTest {
   @Override public boolean isGrappling() {return false;}
   @Override public boolean isBeingGrappled() {return false;}
   @Override public boolean isRagdollSimulationActive() {return false;}
+  @Override public zombie.ai.StateMachine getStateMachine() {
+   if(machine==null) machine=new zombie.ai.StateMachine(this);
+   return machine;
+  }
   @Override public boolean hasPath() {return false;}
   @Override public InventoryItem getPrimaryHandItem() {return cart;}
   @Override public InventoryItem getSecondaryHandItem() {return cart;}

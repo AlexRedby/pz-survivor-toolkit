@@ -23,6 +23,7 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'stop-timing': ('scenario-stop.lua', 4),
             'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
             'collision': ('scenario-collision.lua', 20), 'footprint': ('scenario-collision.lua', 20),
+            'impact': ('scenario-collision.lua', 8),
             'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
             'repeat': ('scenario-interaction.lua', 12), 'manual': ('bootstrap.lua', 0),
@@ -37,6 +38,7 @@ SCENE_SPECS = {
     'maneuvers': ('idle-swap-left', 'idle-swap-right', 'moving-swap-left', 'moving-swap-right',
                   'reverse-rest', 'reverse-moving', 'uturn-left', 'uturn-right'),
     'footprint': ('wall-block', 'wall-slide', 'corner-pivot', 'passage'),
+    'impact': ('sprint-wall', 'native-impact'),
     'path': ('straight', 'corner', 'door-open', 'door-closed', 'overlap', 'cancel'),
 }
 
@@ -240,6 +242,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             if 'cart_scenes' in selection.get('options', {}):
                 motion['scenes'] = selected_scenes(selection)
             if selection['cases'][0] in ('collision','footprint'): motion['footprint']=True
+            if selection['cases'][0] == 'impact': motion['impact']=True
             if selection['cases'][0] in ('interruption', 'interruption-matrix'): motion['interruptions']=True
             if selection['cases'][0] == 'interruption-matrix': motion['interruptionMatrix']=True
             if selection['cases'][0] == 'repeat': motion['rapidRepeats']=True
@@ -464,9 +467,20 @@ def verify(root, selection, catalog):
                 ('body', [sys.executable, str(ev / 'check-hip-actual.py'), '--game-java-dir', str(game), '--mesh', str(_path(selection, 'mesh_fbx')), '--mesh-vbo', str(cache / 'WheelbarrowWood.bin'), '--capture', str(cache / 'body-clearance.jsonl'), '--output', str(analysis)]),
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
-            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat'):
+            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat', 'impact'):
                 commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if debug or case != 'sprint' else []) + (['--stop-timing'] if case == 'stop-timing' else [])))
             evidence['analyzers'] = {name: _run(command, analysis, name) for name, command in commands}
+            if case == 'impact':
+                impact = _load(intake / 'analyze-impact.py').analyze(cache, texts['client1'], selected_scenes(selection))
+                _write(analysis / 'impact.json', json.dumps(impact, indent=2, allow_nan=False))
+                if not impact['functionalPass']:
+                    raise ValueError('Native impact recovery failed: ' + str(impact['failures']))
+                evidence.update(impact=impact, analysis=str(analysis), evidenceComplete=True)
+                return {'issues': [], 'evidence': evidence, 'outcomes': [
+                    {'actor': 'client1', 'case': case, 'status': 'captured',
+                     'reason': 'Guarded Sprint contact and explicitly injected native collision event; visual review remains separate',
+                     'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
+                                 'partialCoverage': debug, 'nativeRecoveryVerified': True}}]}
             if debug:
                 if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat'):
                     _coverage(cache, texts['client1'], len(selected_scenes(selection)), _json(analysis / 'native-metrics.json'))

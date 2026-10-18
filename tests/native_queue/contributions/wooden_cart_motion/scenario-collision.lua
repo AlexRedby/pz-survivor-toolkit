@@ -59,10 +59,20 @@ if footprint then
  end
 end
 assert(#cases==(footprint and 20 or 16))
+if config.impact then
+ cases={}
+ for _,female in ipairs({false,true}) do for _,full in ipairs({false,true}) do
+  for _,spec in ipairs({'sprint-wall','native-impact'}) do
+   cases[#cases+1]={female=female,full=full,spec=spec,startYaw=math.pi/4,
+    steps={{1000,2,5},{6000,0,0},{7000,0,7},{9500,0,0}},
+    name=(female and 'female-' or 'male-')..(full and 'full-' or 'empty-')..spec}
+  end
+ end end
+end
 cases=CartLabSelectScenes(cases)
 local phase,since,stage,taken=0,0,0,{}
 local mode,attempt,videoSince='layout',0,0
-local wallX,southY,gapY=math.floor(CartTestArea.x)-(footprint and 3 or 1),math.floor(CartTestArea.y)+2,math.floor(CartTestArea.y)
+local wallX,southY,gapY=math.floor(CartTestArea.x)-(config.impact and 6 or footprint and 3 or 1),math.floor(CartTestArea.y)+2,math.floor(CartTestArea.y)
 local controls,controlIndex,controlResults={'wall','corner','passage'},0,{}
 local controlStart,controlSample=0,0
 local sampleSince=0
@@ -168,7 +178,7 @@ local function tick()
    or (c.spec=='passage' or c.spec=='door-closed' or c.spec=='door-open') and c.spec or 'wall'
   layout(kind)
   if mode=='control-layout' then
-   pose(CartTestArea.x,CartTestArea.y,kind=='corner' and math.pi*.75 or math.pi)
+   pose(config.impact and wallX+3.5 or CartTestArea.x,CartTestArea.y,kind=='corner' and math.pi*.75 or math.pi)
    mode='control-settle'
   else
    poseCase()
@@ -239,10 +249,23 @@ local function tick()
  local elapsed=now-since
  if now-sampleSince>=25 then
   sampleSince=now
-  print('[WOOD_BANK_SAMPLE] case='..c.name..' wall='..now..' elapsed='..elapsed..' x='..p:getX()..' y='..p:getY()
+  if config.impact then
+   print('[CART_IMPACT_SAMPLE] case='..c.name..' wall='..now..' elapsed='..elapsed
+    ..' x='..p:getX()..' y='..p:getY()..' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' '..cartLabSafety())
+  else
+   print('[WOOD_BANK_SAMPLE] case='..c.name..' wall='..now..' elapsed='..elapsed..' x='..p:getX()..' y='..p:getY()
    ..' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' skill='..p:getPerkLevel(Perks.Sprinting)..' speed='..p:getVariableFloat('WalkSpeed',0)
-   ..' drive='..tostring(c.steps[stage] and c.steps[stage][3] or 0)..' requestedGait='..tostring(c.steps[stage] and c.steps[stage][2] or 0)..' stepX='..p:getVariableFloat('ToolkitCartStepX',0)..' stepY='..p:getVariableFloat('ToolkitCartStepY',0)..' pace='..p:getVariableFloat('ToolkitCartLegPace',0)..' wheelPhase='..cartLabWheelPhase()..' bank='..cartLabBank()..' reversal='..cartLabReversal()..' ramp='..cartLabRamp()..' stationary='..cartLabStationary()..' tracks='..cartLabTracks())
+    ..' drive='..tostring(c.steps[stage] and c.steps[stage][3] or 0)..' requestedGait='..tostring(c.steps[stage] and c.steps[stage][2] or 0)..' stepX='..p:getVariableFloat('ToolkitCartStepX',0)..' stepY='..p:getVariableFloat('ToolkitCartStepY',0)..' pace='..p:getVariableFloat('ToolkitCartLegPace',0)..' wheelPhase='..cartLabWheelPhase()..' bank='..cartLabBank()..' reversal='..cartLabReversal()..' ramp='..cartLabRamp()..' stationary='..cartLabStationary()..' tracks='..cartLabTracks())
+  end
   if footprint then print('[CART_FOOTPRINT_STATE] case='..c.name..' wall='..now..' elapsed='..elapsed..' '..cartLabFootprint()) end
+ end
+ if config.impact and c.spec=='native-impact' and elapsed>=2000 and not taken.impact then
+  assert(elapsed<2500,'Native Sprint did not become ready for wall event')
+  if p:isSprinting() and p:getActionStateName()=='sprint' then
+   taken.impact=true
+   print('[CART_IMPACT_EVENT] case='..c.name..' wall='..now..' elapsed='..elapsed..' source=native-action-event')
+   cartLabWallEvent()
+  end
  end
  while stage<#c.steps and elapsed>=c.steps[stage+1][1] do
   stage=stage+1;local step=c.steps[stage]
@@ -252,7 +275,10 @@ local function tick()
   print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait='..tostring(step[2])..' drive='..step[3])
  end
 
- if elapsed>=12000 then assert(toolkitVideoStop(),'Video stop rejected');mode='finish' end
+ if elapsed>=12000 then
+  assert(not config.impact or c.spec~='native-impact' or taken.impact,'Missing native wall event')
+  assert(toolkitVideoStop(),'Video stop rejected');mode='finish'
+ end
 end
 WoodPrototypeTick=function()
  local ok,err=pcall(tick)

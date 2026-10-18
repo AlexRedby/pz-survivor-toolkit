@@ -26,7 +26,7 @@ def check_manifest():
         "reversal_analyzer": "analyze-reversal.py", "stationary_scenario": "scenario-stationary.lua", "stationary_analyzer": "analyze-stationary.py",
         "maneuvers_scenario": "scenario-maneuvers.lua", "maneuvers_analyzer": "analyze-maneuvers.py",
         "obstacles": "obstacles.lua", "collision_scenario": "scenario-collision.lua", "collision_analyzer": "analyze-collision.py",
-        "footprint_analyzer": "analyze-footprint.py",
+        "footprint_analyzer": "analyze-footprint.py", "impact_analyzer": "analyze-impact.py",
         "interaction_scenario": "scenario-interaction.lua", "interaction_analyzer": "analyze-interaction.py",
         "interruption_analyzer": "analyze-interruption.py", "repeat_analyzer": "analyze-repeat.py", "wheel_cycle_analyzer": "analyze-wheel-cycle.py",
         "path_scenario": "scenario-path.lua", "path_analyzer": "analyze-path.py",
@@ -48,7 +48,7 @@ def check_manifest():
     assert set(manifest["criteria"]) == {"completion", "grip", "geometry", "native_pose", "floor", "gait", "diagnostics"}
     allowed = {"Main.java", "KahluaChecks.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py", "obstacles.lua", "scenario-collision.lua", "analyze-collision.py", "analyze-footprint.py"}
     allowed |= {"scenario-interaction.lua", "analyze-interaction.py", "analyze-interruption.py", "analyze-repeat.py",
-                "analyze-wheel-cycle.py", "scenario-path.lua", "analyze-path.py", "scene-selection.lua"}
+                "analyze-wheel-cycle.py", "scenario-path.lua", "analyze-path.py", "scene-selection.lua", "analyze-impact.py", "analyze-stop-timing.py"}
     assert {p.name for p in HERE.iterdir() if p.is_file()} == allowed
     for path in HERE.rglob("*"):
         if path.is_file():

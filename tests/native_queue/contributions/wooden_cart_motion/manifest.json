@@ -26,6 +26,7 @@
     "collision_analyzer": "analyze-collision.py",
     "kahlua_checks": "KahluaChecks.java",
     "footprint_analyzer": "analyze-footprint.py",
+    "impact_analyzer": "analyze-impact.py",
     "interaction_scenario": "scenario-interaction.lua",
     "interaction_analyzer": "analyze-interaction.py",
     "interruption_analyzer": "analyze-interruption.py",
