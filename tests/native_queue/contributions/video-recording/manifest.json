@@ -35,7 +35,7 @@
       "captures": 2,
       "target_recording_seconds": 3.5,
       "checks": [
-        "reject output outside profile",
+        "restart completed recording",
         "reject duplicate start",
         "reject duplicate stop"
       ]

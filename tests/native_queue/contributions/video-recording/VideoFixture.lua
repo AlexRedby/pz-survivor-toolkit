@@ -6,8 +6,6 @@ Events.OnPreUIDraw.Add(function()
     if not entered or starting or isIngameState() then return end
     starting = true
     assert(toolkitVideoStatus().state == 'idle')
-    assert(not toolkitVideoStart(config.outside, config.ffmpeg))
-    assert(toolkitVideoStatus().state == 'failed' and toolkitVideoStatus().error ~= '')
     getCore():setOptionPauseOnFocusloss(false)
     getCore():setOptionVoiceEnable(false)
     getWorld():setGameMode('Sandbox')

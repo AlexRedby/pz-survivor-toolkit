@@ -7,10 +7,12 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
+import zombie.ZomboidFileSystem;
 
-/** Headless timeline and real encoder checks; no GL context or game profile. */
+/** Headless public path guards, timeline and real encoder checks; no GL context. */
 public final class VideoChecks {
     static void require(boolean condition, String message) {
         if (!condition) throw new AssertionError(message);
@@ -66,6 +68,34 @@ public final class VideoChecks {
         throw new AssertionError("Cannot find " + name + " on PATH; set PZ_TEST_FFMPEG");
     }
 
+    static void refused(Path output, String executable, String reason) throws Exception {
+        require(!VideoRecording.start(output.toString(), executable), "unsafe start accepted: " + output);
+        var status = VideoRecording.status();
+        require("failed".equals(status.rawget("state")) && status.rawget("error").toString().contains(reason),
+            "wrong rejection: " + status.rawget("error"));
+        Field current = VideoRecording.class.getDeclaredField("current");
+        current.setAccessible(true);
+        Object failed = current.get(null);
+        require(field(failed, "file").get(failed) == null && field(failed, "worker").get(failed) == null
+            && field(failed, "process").get(failed) == null, "rejected start created a capture or encoder");
+    }
+
+    static void pathGuards(Path directory, String executable) throws Exception {
+        Path profile = Files.createDirectory(directory.resolve("profile"));
+        Path outside = Files.createDirectory(directory.resolve("outside"));
+        ZomboidFileSystem.instance.setCacheDir(profile.toString());
+        refused(outside.resolve("videos"), executable, "absolute subdirectory");
+        refused(profile, executable, "absolute subdirectory");
+        refused(Path.of("").toRealPath().relativize(profile.resolve("relative-videos")), executable, "absolute subdirectory");
+        refused(profile.resolve("../outside/videos"), executable, "absolute subdirectory");
+        Files.createSymbolicLink(profile.resolve("escape"), outside);
+        refused(profile.resolve("escape/videos"), executable, "through symlink");
+        require(!Files.exists(outside.resolve("videos")), "rejection wrote outside the profile");
+        try (var files = Files.walk(directory)) {
+            require(files.noneMatch(Files::isRegularFile), "rejected starts created files");
+        }
+    }
+
     @SuppressWarnings("unchecked")
     public static void main(String[] args) throws Exception {
         require(VideoRecording.slot(-1) == 0 && VideoRecording.frameCount(-1) == 0, "negative elapsed time");
@@ -81,8 +111,9 @@ public final class VideoChecks {
         String ffprobe = Path.of(ffmpeg).resolveSibling("ffprobe" + suffix).toString();
         require(Files.isExecutable(Path.of(ffmpeg)) && Files.isExecutable(Path.of(ffprobe)),
             "set PZ_TEST_FFMPEG to an installed FFmpeg executable with sibling ffprobe");
-        Path directory = Files.createTempDirectory("pz-video-checks-");
+        Path directory = Files.createTempDirectory("pz-video-checks-").toRealPath();
         try {
+            pathGuards(directory, ffmpeg);
             Object guarded = session(directory, ffmpeg);
             var capture = guarded.getClass().getDeclaredMethod("capture", int.class, int.class, long.class);
             capture.setAccessible(true);
@@ -167,10 +198,9 @@ public final class VideoChecks {
             require(((BlockingQueue<?>)field(failed, "ready").get(failed)).isEmpty(), "failed session cleanup");
             System.out.println("VIDEO_CHECKS_PASS");
         } finally {
-            try (var files = Files.list(directory)) {
-                for (Path file : files.toList()) Files.deleteIfExists(file);
+            try (var files = Files.walk(directory)) {
+                for (Path file : files.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(file);
             }
-            Files.delete(directory);
         }
     }
 }
