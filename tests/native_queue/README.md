@@ -155,6 +155,12 @@ The `vanilla-missing-batch-pool`, `neat-missing-batch-pool` and `cook-missing-ba
 
 Between grouped cases, the fixture waits for the real UI owner to finish, unequips its two source bags through native actions, and removes only the previous authority-verified fixture items after validating every ID, endpoint and metadata field. Baseline outputs and unrelated items survive. The client observes all removed IDs absent before preparing the next case, preventing accumulated fixture weight from dropping later outputs at the player's feet.
 
+### Drinking after a backpack transfer
+
+Use `--suite fluid --cases fluid-bag,fluid-root,fluid-bag-favorite,fluid-root-favorite` for ordinary and favorite plastic water bottles, or select an ordered subset. Each case starts with an idle queue, an equipped backpack and one litre of pure water, selects Half from the actual Drink Smart submenu, and waits for an independent native reading action and any P4 returns. Native constructor duration remains 460; the game may adjust it normally. Autodrink is disabled to distinguish explicit drinking from automatic hydration.
+
+SP checks local effects; Host checks server receipts against client pickup/drinking progress. Exact bottle/bag/book IDs, uniqueness, favorite state, endpoints and reading must agree. The measured amount is retained without rounding. The volume check allows at most 10 mL beyond the requested half because native server drinking events can observe progress above 1 before completion; it rejects absent consumption and larger deviations. This is a transfer/continuation regression, not exact portion-metering or physical mouse coverage. Grouped cases remove only the preceding verified fixture items after native bag unequip, preserving unrelated inventory.
+
 ## Result and isolation
 
 New preparations also seal the full file lists and hashes under the live game's `media/lua` and `media/scripts` trees in `game-inputs.json`. Added, removed or changed files invalidate preparation, launch and reports. This guard covers Lua, translations and script inputs; it does not seal every native library or asset directory. Older prepared runs without this seal require fresh preparation.
