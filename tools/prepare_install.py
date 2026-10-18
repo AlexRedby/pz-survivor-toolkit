@@ -18,6 +18,15 @@ except ImportError:
 
 MOD_IDS = ("PZSurvivorToolkit", "PZToolkitJavaPatches")
 INI_NAME = "SurvivorQoL-selected.ini"
+LOAD_ORDER = (
+    ("ZombieBuddy", "PZToolkitJavaPatches"),
+    ("PZSurvivorToolkit", "ContainerCapacityIndicator"),
+    ("PZSurvivorToolkit", "BravoItemDetails"),
+    ("PZSurvivorToolkit", "EURY_CONTAINERS"),
+    ("PZSurvivorToolkit", "MPFastForward"),
+    ("RealisticDash", "Navigator"),
+    ("Quartermaster", "organizedCategories_core"),
+)
 
 
 def metadata(path: Path) -> dict[str, str]:
@@ -40,10 +49,15 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
         if errors:
             raise ValueError("; ".join(errors))
     ini = metadata(root / INI_NAME)
-    selected = {name.strip() for name in ini.get("Mods", "").split(";")}
+    ordered = [name.strip() for name in ini.get("Mods", "").split(";")]
+    selected = set(ordered)
     missing = set(MOD_IDS) - selected
     if missing:
         raise ValueError("INI is missing required local mod IDs: " + ", ".join(sorted(missing)))
+    edges = LOAD_ORDER + ((("CleanUI", "PZSurvivorToolkit"),) if "ContainerCapacityIndicator" in selected else ())
+    for before, after in edges:
+        if before in selected and after in selected and ordered.index(before) > ordered.index(after):
+            raise ValueError(f"INI load order requires {before} before {after}")
     workshop = ini.get("WorkshopItems", "").split(";")
     if any(item and (not item.isascii() or not item.isdigit()) for item in workshop):
         raise ValueError("WorkshopItems must contain only numeric Workshop IDs; local mods have none")

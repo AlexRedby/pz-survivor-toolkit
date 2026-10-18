@@ -296,6 +296,38 @@ class PrepareInstall(unittest.TestCase):
         self.build.assert_not_called()
         self.assertTrue(self.sentinel.is_file())
 
+    def test_adapter_order_is_checked_before_build_and_preserves_previous_set(self):
+        for before, after in (('CleanUI', 'PZSurvivorToolkit'),
+                              ('PZSurvivorToolkit', 'ContainerCapacityIndicator'),
+                              ('PZSurvivorToolkit', 'BravoItemDetails'),
+                              ('PZSurvivorToolkit', 'EURY_CONTAINERS'),
+                              ('PZSurvivorToolkit', 'MPFastForward'),
+                              ('ZombieBuddy', 'PZToolkitJavaPatches'),
+                              ('RealisticDash', 'Navigator'),
+                              ('Quartermaster', 'organizedCategories_core')):
+            with self.subTest(before=before, after=after):
+                ordered = list(dict.fromkeys([after, before, *prepare_install.MOD_IDS]))
+                if before == 'CleanUI':
+                    ordered.append('ContainerCapacityIndicator')
+                (self.root / prepare_install.INI_NAME).write_text('Mods=' + ';'.join(ordered) + '\n')
+                with self.assertRaisesRegex(ValueError, f'load order requires {before} before {after}'):
+                    prepare_install.prepare(self.root)
+                self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
+        self.build.assert_not_called()
+
+    def test_absent_optional_mods_and_unrelated_order_remain_allowed(self):
+        for mods in (list(reversed(prepare_install.MOD_IDS)),
+                     ['PZSurvivorToolkit', 'CleanUI', 'PZToolkitJavaPatches']):
+            with self.subTest(mods=mods):
+                (self.root / prepare_install.INI_NAME).write_text('Mods=' + ';'.join(mods) + '\n')
+                prepare_install.prepare(self.root)
+        self.assertEqual(2, self.build.call_count)
+
+    def test_current_selected_mod_order_is_accepted(self):
+        shutil.copyfile(ROOT / prepare_install.INI_NAME, self.root / prepare_install.INI_NAME)
+        prepare_install.prepare(self.root)
+        self.build.assert_called_once()
+
     def test_rerun_removes_stale_prepared_files_and_preserves_other_dist_outputs(self):
         sibling = self.root / "dist/unrelated.zip"
         sibling.write_bytes(b"unrelated output")
