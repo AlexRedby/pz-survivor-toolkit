@@ -126,6 +126,16 @@ public final class CartLegPace {
         }
     }
 
+    static float brace(IsoPlayer player,float target,float stepX,float stepY,double amount,boolean blocked) {
+        float radius=(float)(1-amount*amount*(3-2*amount));
+        stepX*=radius;stepY*=radius;
+        player.setVariable("ToolkitCartStepX",stepX);
+        player.setVariable("ToolkitCartStepY",stepY);
+        float speed=blocked?0:target*radius;
+        applySpeed(player,speed,stepX,stepY);
+        return speed;
+    }
+
     static void applySpeedTracks(Iterable<LiveAnimNode> nodes, float speed, String currentGait, float currentPace, float stepY) {
         for (var node : nodes) {
             String name = node.getName();

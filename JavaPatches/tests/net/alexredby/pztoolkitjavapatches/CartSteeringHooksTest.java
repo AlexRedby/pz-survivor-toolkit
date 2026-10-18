@@ -304,6 +304,28 @@ public final class CartSteeringHooksTest {
             accept(player,CartSteeringHooks.movement(player,(float)(.2*dt),0));
             check(Float.isFinite(CartLegPace.targetSpeed(player,player.stepX,player.stepY)),"Run resume must use calibrated native clips");
             check(pace.speed>.2 && pace.speed<.5,"Run resume must accelerate from remaining stop speed through heading");
+            var walkNode=new AnimNode();walkNode.name="ToolkitCartPivotWalk";
+            walkNode.deferredBoneName=node.deferredBoneName;walkNode.deferredBoneAxis=node.deferredBoneAxis;
+            walkNode.blends2d.addAll(node.blends2d);walkNode.blendTris.addAll(node.blendTris);walkNode.blend2dPicker=node.blend2dPicker;
+            var movement=new AnimState();movement.nodes.add(walkNode);player.animator.animSet.states.put("movement",movement);
+            for(boolean fast:new boolean[]{false,true}) {
+                field(state,"brace").setDouble(state,1);pace.reset(0);player.moving=false;player.stepY=0;
+                double wheel=CartSteeringHooks.wheelPhase(player);
+                input.setRunning(fast);CartSteeringHooks.input(player,input);player.run=fast;CartSteeringHooks.heading(player);
+                check(player.stepY>0 && player.stepY<.2 && pace.speed>0,
+                    "cleared obstruction must restore a native root budget even before accepted movement");
+                check(CartSteeringHooks.wheelPhase(player)==wheel,"query-only brace release must not spin the wheel");
+                double previousSpeed=pace.speed;
+                for(int frame=0;frame<90;frame++) {
+                    input.setRunning(fast);CartSteeringHooks.input(player,input);player.run=fast;player.moving=true;
+                    accept(player,CartSteeringHooks.movement(player,(float)(pace.speed*player.stepY*dt),0));
+                    check(pace.speed>=previousSpeed-1e-7 && pace.speed-previousSpeed<.15,
+                        "Walk/Run restart must retain its acceleration ramp when brace reaches zero: "+fast);
+                    previousSpeed=pace.speed;
+                }
+                check(field(state,"brace").getDouble(state)==0 && Math.abs(player.stepY-(fast?1:.8))<1e-5,
+                    "clear travel must leave bracing and recover a full stride");
+            }
         } finally { CartSteeringHooks.reset(player);model.set(ModelManager.instance,previous); }
     }
 

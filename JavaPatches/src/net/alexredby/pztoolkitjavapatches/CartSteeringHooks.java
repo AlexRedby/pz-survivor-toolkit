@@ -19,7 +19,7 @@ public final class CartSteeringHooks {
         final CartLegPace.Ramp pace = new CartLegPace.Ramp();
         final CartSteeringMath.Reversal reversal = new CartSteeringMath.Reversal();
         double brakeTarget, actualDistance, fastPoseTail, nativeSpeed, brakeLimit, brakeWait, brakePace, fastReleaseWait;
-        double fastPace, brakeDuration=1;
+        double fastPace, brakeDuration=1, brace;
         zombie.inventory.InventoryItem cart;
         float startX, startY;
         boolean wheelRendered, stationary, stationaryRoot, cartBlocked, recovering, path;
@@ -27,6 +27,7 @@ public final class CartSteeringHooks {
         boolean moving, pending, sprintMomentum, sprintRequested, hasInput, wantsMove, braking, brakeSeen, fastMoving;
         boolean sprintMoving, momentumSprint;
         final CartSteeringMath.Step requested = new CartSteeringMath.Step();
+        final CartSteeringMath.Step braceProbe = new CartSteeringMath.Step();
         final Vector2 result = new Vector2();
         final Vector2 input = new Vector2();
     }
@@ -208,6 +209,15 @@ public final class CartSteeringHooks {
     static boolean blockedStep(CartSteeringMath.Step requested, float x, float y, double fraction) {
         // The first slow steps can round to zero in the world's float coordinates.
         return Math.hypot(requested.x(),requested.y())>2*Math.max(Math.ulp(x),Math.ulp(y)) && fraction<1e-6;
+    }
+
+    static boolean blockedProbe(CartFootprint.Query query,float x,float y,double heading,
+                                double dx,double dy,double axle,double front) {
+        if(!Double.isFinite(dx+dy+heading)) return true;
+        if(!CartFootprint.clear(query,x,y,heading,front))
+            return dx*Math.cos(heading)+dy*Math.sin(heading)>=0;
+        double distance=Math.hypot(dx,dy)*CartFootprint.limit(query,x,y,heading,dx,dy,axle,front);
+        return distance<=Math.max(1e-6,2*Math.max(Math.ulp(x),Math.ulp(y)));
     }
 
     /**
@@ -450,10 +460,22 @@ public final class CartSteeringHooks {
         state.moving = player.isJustMoved();
         if(!wooden(player) || !state.hasInput && !state.stationaryRoot) state.target = state.moving ? desired : state.heading;
         state.hasInput=false;
+        boolean hardStop=false;
+        if(wooden(player) && state.wantsMove && !state.stationaryRoot && !state.reversal.active
+            && !state.braking && state.actualDistance<1e-6 && (blocked || state.brace>0)
+            && player.getCurrentSquare()!=null) {
+            // Query the intended step even at zero root speed; this never moves the player or wheel.
+            CartSteeringMath.woodenStep(state.heading,state.target,.03,1.0/60,state.load,axle(player),
+                state.turnRate,state.reversal.direction<0,state.braceProbe);
+            hardStop=blockedProbe(CartFootprint.world(player),player.getX(),player.getY(),state.heading,
+                state.braceProbe.x(),state.braceProbe.y(),axle(player),state.footprintFront);
+        }
+        state.brace=Math.max(0,Math.min(1,state.brace+(hardStop?dt:-dt)/.16));
+        boolean bracePose=state.brace>0 && state.wantsMove && !state.stationaryRoot && !state.reversal.active;
         double length = Math.hypot(actualX, actualY);
         if(state.stationary && Math.abs(CartSteeringMath.wrap(state.target-state.heading))<Math.toRadians(.5))
             state.stationary=state.stationaryRoot=false;
-        if (state.moving && length < 1e-6) {
+        if ((state.moving || bracePose) && length < 1e-6) {
             // Idle/blocked clips need intent to generate their first root-motion budget.
             if(wooden(player)) CartSteeringMath.woodenStep(state.heading,state.reversal.braking?state.brakeTarget:state.target,0.03,1.0/60,
                                   state.load,axle(player),state.turnRate,state.reversal.direction<0,state.requested);
@@ -468,7 +490,7 @@ public final class CartSteeringHooks {
                 1,dt,state.load,axle(player),state.stationaryRate,state.requested);
             player.setVariable("ToolkitCartStepX",state.moving && state.stationary?(float)(-Math.signum(state.requested.turn())):0);
             player.setVariable("ToolkitCartStepY",0.0f);
-        } else if (!state.moving || length < 1e-6) {
+        } else if ((!state.moving && !bracePose) || length < 1e-6) {
             player.setVariable("ToolkitCartStepX", 0.0f);
             player.setVariable("ToolkitCartStepY", 0.0f);
         } else {
@@ -499,6 +521,11 @@ public final class CartSteeringHooks {
         } else if(state.braking) {
             // The authored stop owns deceleration; freezing its outgoing gait would break the blend.
             state.sprintMomentum=false;
+        } else if(bracePose && Float.isFinite(target)) {
+            state.sprintMomentum=!hardStop;
+            if(hardStop) state.pace.reset(0);
+            else target=(float)state.pace.update(target,dt,state.load,true);
+            CartLegPace.brace(player,target,stepX,stepY,state.brace,hardStop);
         } else if(Float.isFinite(target)) {
             if(blocked) state.pace.reset(0);
             // Native uses Run for the first Sprint frame, before isSprinting becomes true.
@@ -523,7 +550,7 @@ public final class CartSteeringHooks {
                 double speed=state.pace.update(target,dt,state.load,true);
                 CartLegPace.applySpeed(player,(float)speed,stepX,stepY);
                 if(state.fastMoving) state.fastPace=speed;
-                else if(speed<=target*1.02) state.sprintMomentum=false;
+                else if(Math.abs(speed-target)<=Math.max(1e-3,target*.02)) state.sprintMomentum=false;
             } else {
                 state.pace.reset(target);
                 CartLegPace.apply(player,CartLegPace.scale(player,stepX,stepY));

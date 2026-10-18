@@ -5,9 +5,47 @@ public final class CartFootprintTest {
         if(!value) throw new AssertionError(message);
     }
 
+    private static void blockedProbeChecks(double axle) {
+        float x=10825.5f,y=10142.5f;
+        double front=CartFootprint.WALK_FRONT,nose=x+front-.21;
+        boolean[] closed={true};
+        int[] queries={0};
+        CartFootprint.Query contact=(x1,y1,x2,y2)-> {
+            queries[0]++;
+            return closed[0] && Math.max(x1,x2)>=nose+.0003;
+        };
+        check(CartFootprint.clear(contact,x,y,0,front),"contact probe starts with a clear cart footprint");
+        check(CartSteeringHooks.blockedProbe(contact,x,y,0,.03,0,axle,front),
+            "less than two world-coordinate ULPs of permitted travel is a hard stop");
+        check(CartSteeringHooks.blockedProbe(contact,x,y,0,.03,0,axle,front)
+            && CartFootprint.clear(contact,x,y,0,front) && queries[0]>0,
+            "repeated queries must retain the contact position without moving the cart");
+        closed[0]=false;
+        check(!CartSteeringHooks.blockedProbe(contact,x,y,0,.03,0,axle,front),
+            "opening the obstacle must release the brace without an existing root budget");
+        closed[0]=true;
+        check(!CartSteeringHooks.blockedProbe(contact,x,y,0,-.03,0,axle,front),
+            "a cart at wall contact can reverse away immediately");
+        CartFootprint.Query partial=(x1,y1,x2,y2)->Math.max(x1,x2)>=nose+.012;
+        double fraction=CartFootprint.limit(partial,x,y,0,.03,0,axle,front);
+        check(fraction>0 && fraction<1 && !CartSteeringHooks.blockedProbe(partial,x,y,0,.03,0,axle,front),
+            "partial representable travel must not settle a moving cart into idle");
+        CartFootprint.Query parallel=(x1,y1,x2,y2)->Math.max(x1,x2)>=x+.121;
+        check(!CartSteeringHooks.blockedProbe(parallel,x,y,Math.PI/2,0,.03,axle,front),
+            "clear travel parallel to the wall must retain its native slide");
+        CartFootprint.Query overlap=(x1,y1,x2,y2)->Math.max(x1,x2)>=nose-.01;
+        check(!CartFootprint.clear(overlap,x,y,0,front),"escape probe starts in an overlapped footprint");
+        check(CartSteeringHooks.blockedProbe(overlap,x,y,0,.03,0,axle,front)
+            && CartSteeringHooks.blockedProbe(overlap,x,y,0,0,.03,axle,front),
+            "an overlapped nose must not push forward or sweep sideways");
+        check(!CartSteeringHooks.blockedProbe(overlap,x,y,0,-.03,0,axle,front),
+            "an overlapped cart retains its existing backward escape");
+    }
+
     public static void main(String[] args) {
         CartFootprint.Query empty=(x1,y1,x2,y2)->false;
         double axle=CartSteeringMath.woodenAxle(0,0);
+        blockedProbeChecks(axle);
         for(double heading:new double[]{0,.3,Math.PI/2,Math.PI,-Math.PI/2}) {
             for(double dx:new double[]{-.2,0,.2}) for(double dy:new double[]{-.2,0,.2})
                 check(CartFootprint.limit(empty,10825.5,10142.5,heading,dx,dy,axle,1.62)==1,
@@ -80,6 +118,6 @@ public final class CartFootprintTest {
         check(rigidSlide>0 && rigidSlide<1,"actual native slide still needs a footprint translation sweep");
         for(double bad:new double[]{Double.NaN,Double.POSITIVE_INFINITY})
             check(CartFootprint.rigidLimit(empty,0,0,0,0,0,bad,1.26)==0,"invalid native yaw fails closed");
-        System.out.println("CART_FOOTPRINT_PASS (native budget, wall/door contact, passage, swept turn, slide, promotion, rear caps)");
+        System.out.println("CART_FOOTPRINT_PASS (native budget, wall/door contact, brace probes, passage, swept turn, slide, promotion, rear caps)");
     }
 }

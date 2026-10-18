@@ -6,6 +6,7 @@ import java.util.Map;
 import org.lwjgl.util.vector.Vector3f;
 import sun.misc.Unsafe;
 import zombie.characters.IsoPlayer;
+import zombie.core.skinnedmodel.ModelManager;
 import zombie.core.skinnedmodel.advancedanimation.AnimNode;
 import zombie.core.skinnedmodel.advancedanimation.Anim2DBlend;
 import zombie.core.skinnedmodel.advancedanimation.Anim2DBlendPicker;
@@ -21,17 +22,25 @@ import zombie.core.skinnedmodel.animation.AnimationTrack;
 import zombie.core.skinnedmodel.animation.BoneAxis;
 import zombie.core.skinnedmodel.animation.Keyframe;
 import zombie.core.skinnedmodel.model.SkinningData;
+import zombie.core.skinnedmodel.model.ModelMesh;
 import zombie.iso.Vector2;
 
 public final class CartLegPaceTest {
     private static final class Player extends IsoPlayer {
         AnimationPlayer animation;
         AdvancedAnimator animator;
-        boolean loaded,run;
+        boolean loaded,run,sprint;
+        float stepX,stepY,pace;
+        @Override public zombie.core.skinnedmodel.advancedanimation.IAnimationVariableSlot setVariable(String name,float value) {
+            if(name.equals("ToolkitCartStepX")) stepX=value;
+            if(name.equals("ToolkitCartStepY")) stepY=value;
+            if(name.equals("ToolkitCartLegPace")) pace=value;
+            return null;
+        }
         Player() {super(null,null,0,0,0);}
         @Override public boolean hasAnimationPlayer() {return loaded;}
         @Override public boolean isRunning() {return run;}
-        @Override public boolean isSprinting() {return false;}
+        @Override public boolean isSprinting() {return sprint;}
         @Override public AnimationPlayer getAnimationPlayer() {return animation;}
         @Override public AdvancedAnimator getAdvancedAnimator() {return animator;}
     }
@@ -216,6 +225,59 @@ public final class CartLegPaceTest {
             layer.getLiveAnimNodes().clear();
             multi.reset();
         }
+    }
+
+    private static void bracingChecks() throws Exception {
+        var unsafeField=Unsafe.class.getDeclaredField("theUnsafe");unsafeField.setAccessible(true);
+        var unsafe=(Unsafe)unsafeField.get(null);
+        var model=ModelManager.class.getDeclaredField("animModel");model.setAccessible(true);
+        Object previous=model.get(ModelManager.instance);
+        var apply=AnimLayer.class.getDeclaredMethod("applyBlendField",LiveAnimNode.class,float.class,float.class,float.class);
+        apply.setAccessible(true);
+        try {
+            for(String mode:new String[]{"Walk","Run","Sprint"}) for(float phase:new float[]{.1f,.35f,.6f}) {
+                var player=(Player)unsafe.allocateInstance(Player.class);player.run=mode.equals("Run");player.sprint=mode.equals("Sprint");
+                var source=node();source.name="ToolkitCartPivot"+mode;source.deferredBoneName="Translation_Data";source.deferredBoneAxis=BoneAxis.Y;
+                player.animator=new AdvancedAnimator();player.animator.animSet=new zombie.core.skinnedmodel.advancedanimation.AnimationSet();
+                var state=new zombie.core.skinnedmodel.advancedanimation.AnimState();state.nodes.add(source);
+                player.animator.animSet.states.put(mode.equals("Walk")?"movement":mode.toLowerCase(),state);
+                var layer=AnimLayer.alloc(player,player.animator);
+                var root=AdvancedAnimator.class.getDeclaredField("rootLayer");root.setAccessible(true);root.set(player.animator,layer);
+                var live=LiveAnimNode.alloc(layer,source);live.setActive(true);layer.getLiveAnimNodes().add(live);
+                var clips=new HashMap<String,AnimationClip>();
+                for(var blend:source.blends2d) {
+                    var c=clip(blend.animName,1,blend.posX*2,blend.posY*2,"Translation_Data");clips.put(c.name,c);
+                    var track=AnimationTrack.alloc();track.startClip(c,true,0);track.advance(phase);live.addMainTrack(track);
+                }
+                var mesh=(ModelMesh)unsafe.allocateInstance(ModelMesh.class);
+                mesh.skinningData=new SkinningData(clips,List.of(),List.of(),List.of(),List.of(),new HashMap<>());model.set(ModelManager.instance,mesh);
+                float previousIdle=-1;
+                for(double amount:new double[]{0,.25,.5,.75,1}) {
+                    close(CartLegPace.brace(player,2,0,1,amount,true),0,"obstructed stance must not request root movement");
+                    apply.invoke(layer,live,1f,player.stepX,player.stepY);
+                    float idle=live.getMainAnimationTrackAt(0).getBlendFieldWeight();
+                    if(idle<previousIdle) throw new AssertionError("brace did not settle monotonically into native Idle");
+                    previousIdle=idle;
+                    for(var track:live.getMainAnimationTracks()) {
+                        close(track.getSpeedDelta(),0,"blocked root must remain frozen while field plants the feet");
+                        close(track.getCurrentTimeValue(),phase,"planting must not seek the gait phase");
+                    }
+                }
+                close(previousIdle,1,"fully obstructed stance uses only the existing planted Idle clip");
+                for(double amount:new double[]{1,.75,.5,.25,0}) {
+                    float speed=CartLegPace.brace(player,2,0,1,amount,false);
+                    apply.invoke(layer,live,1f,player.stepX,player.stepY);
+                    double rootSpeed=0;
+                    for(var track:live.getMainAnimationTracks())
+                        rootSpeed+=track.getClip().getTotalTranslation("Translation_Data",BoneAxis.Y,new Vector2()).getLength()
+                            *track.getBlendFieldWeight()*track.getSpeedDelta();
+                    close((float)rootSpeed,speed,"restart must grow the native budget instead of compensating the fade away");
+                    if(amount==1) close(speed,0,"fully braced endpoint has no latent root budget");
+                    else if(!(speed>0)) throw new AssertionError("cleared obstruction must restart without accepted-motion dependency");
+                }
+                close(player.stepY,1,"clear stance must restore the full forward gait");
+            }
+        } finally {model.set(ModelManager.instance,previous);}
     }
 
     private static void rampChecks() {
@@ -443,6 +505,7 @@ public final class CartLegPaceTest {
 
     public static void main(String[] args) throws Exception {
         nativePelvisBinding();
+        bracingChecks();
         brakeTracks();
         coastingChecks();
         AnimNode node = node();
