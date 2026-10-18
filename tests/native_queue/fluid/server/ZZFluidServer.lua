@@ -15,6 +15,16 @@ Events.OnClientCommand.Add(function(module,command,player,args)
  if not ok then print('[QUEUE_TEST] FAIL fluid server '..tostring(problem));sendServerCommand(player,module,'Failed',{error=tostring(problem)})end
 end)
 Events.OnTick.Add(function()
+ if state then
+  state.debited=state.debited or {}
+  for index,ids in ipairs(state.ids.bottles)do
+   local bottle=state.player:getInventory():getItemById(ids.id)
+   if bottle and not state.debited[index]and bottle:getFluidContainer():getAmount()<ids.amount-.0001 then
+    state.debited[index]=true
+    print('[FLUID_TEST] TRACE '..JSON.encode({event='server-debit',case=state.case,id=ids.id,amount=bottle:getFluidContainer():getAmount()}))
+   end
+  end
+ end
  if not pending then return end
  local ok,value,reason=pcall(Fixture.verify,state)
  if ok and value then

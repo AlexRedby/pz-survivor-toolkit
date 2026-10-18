@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.87
+
+- **Fixed:** Fullness no longer silently cancels water drinking after a backpack transfer. Empty containers remain invalid; nutritious drinks keep their native fullness restriction. Applies in single-player and Host, with or without the Toolkit queue.
+
 ### 0.1.86
 
 - **Fixed:** Wishlist and named inventory tag filters refuse writes when the game cannot open/read/close their existing stores. Fresh empty slots initialize safely and failed loads retry without caching an empty replacement; Wishlist directory creation never truncates an existing slot.

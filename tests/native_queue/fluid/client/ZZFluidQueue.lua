@@ -1,6 +1,5 @@
 require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'TimedActions/ISDrinkFluidAction'
-require 'TimedActions/ISReadABook'
 require 'TimedActions/ISWearClothing'
 require 'TimedActions/ISUnequipAction'
 local Fixture=require 'QueueFluidFixture'
@@ -8,14 +7,19 @@ local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local started,done=false,false
 local step,failed,phase,since,idle=1,0,'prepare',0,0
-local ids,state,authorityState,receipt,drink,pickup,tail
-local previousAuthority,previousBag
-local pickupObserved,drinkProgress,tailProgress=false,false,false
-local nativeDuration
+local ids,state,authorityState,receipt,spec
+local previousAuthority,previousBag,lastCurrent
+local commands,observations={},{}
 local function case()return config.cases[step]end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function emit(row)
  row.suite,row.kind,row.mode,row.actor='fluid',config.kind,config.mode,'client1';JSON.emit(row)
+end
+local function trace(event,value)
+ local row={}
+ for key,item in pairs(value or {})do row[key]=item end
+ row.case=case();row.event=event
+ print('[FLUID_TEST] TRACE '..JSON.encode(row))
 end
 local function request(command)
  if isClient()then sendClientCommand('FluidTest',command,{case=case()});return end
@@ -28,6 +32,10 @@ local function request(command)
  end
 end
 Events.OnServerCommand.Add(function(module,command,value)
+ if module=='PZSurvivorToolkitActions'and command=='State'and phase=='running'then
+  trace('native-state',{kind=value.kind,state=value.state,transaction=value.transaction,player=value.player,token=value.token})
+  return
+ end
  if module~='FluidTest'then return end
  assert(command~='Failed',value.error)
  if command=='Prepared'then ids=value elseif command=='Verified'then receipt=value end
@@ -37,53 +45,65 @@ Events.OnGameStart.Add(function()
  getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false)
  getPlayer():setAutoDrink(false);getPlayer():setGhostMode(true)
 end)
-local function enqueue(player)
- local add=ISTimedActionQueue.add
+local function enqueue(player,target)
+ local bottle=assert(player:getInventory():getItemById(ids.bottles[target].id))
+ local command={id=bottle:getID(),menu=spec.menu,pickupObserved=false,drinkProgress=false,menuDispatched=false,
+  dispatchThirst=player:getStats():get(CharacterStat.THIRST),foodLevel=player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)}
+ local observed={};local add=ISTimedActionQueue.add
  ISTimedActionQueue.add=function(action)
-  if action.Type=='ISInventoryTransferAction'and action.item:getID()==ids.bottleId
-   and action.destContainer==player:getInventory()then assert(not pickup,'duplicate bottle pickup');pickup=action end
+  if action.Type=='ISInventoryTransferAction'and action.item:getID()==command.id
+   and action.destContainer==player:getInventory()then assert(not observed.pickup,'duplicate bottle pickup');observed.pickup=action end
   if action.Type=='ISDrinkFluidAction'then
-   assert(not drink,'duplicate drink');drink=action;nativeDuration=action.maxTime
+   assert(not observed.drink,'duplicate drink');observed.drink=action;command.nativeDuration=action.maxTime
   end
   return add(action)
  end
  local ok,problem=pcall(function()
-  local menu=ISContextMenu.get(player:getPlayerNum(),20,20)
-  ISInventoryPaneContextMenu.doDrinkFluidMenu(player,state.bottle,menu)
+  SandboxVars.DrinkSmart=SandboxVars.DrinkSmart or {}
+  SandboxVars.DrinkSmart.AddSipOption=spec.menu=='sip'
+  SandboxVars.DrinkSmart.AllowWaterDrinkLowThirst=spec.menu=='smart'
+  local menu=assert(ISInventoryPaneContextMenu.createMenu(player:getPlayerNum(),true,{bottle},20,20),'inventory menu missing')
+  local label=spec.menu=='smart'and ('0% '..getText('Tooltip_food_Thirst'))
+   or spec.menu=='sip'and getText('ContextMenu_DrinkSmart_Sip')
+   or getText('ContextMenu_Eat_'..(spec.menu=='all'and 'All'or spec.menu=='quarter'and 'Quarter'or 'Half'))
   for _,option in ipairs(menu.options)do
    if option.subOption then
     local submenu=menu:getSubMenu(option.subOption)
     menu:displaySubMenu(submenu,option)
     for index,portion in ipairs(submenu.options)do
-     if portion.onSelect==ISInventoryPaneContextMenu.onDrinkFluid and portion.target==state.bottle and portion.param1==.5 then
+     local matches=spec.menu=='smart'and portion.name:sub(1,#label)==label or portion.name==label
+     if matches and portion.onSelect==ISInventoryPaneContextMenu.onDrinkFluid and portion.target==bottle then
+      command.portion=portion.param1;command.menuDispatched=true
       submenu.mouseOver=index;submenu:onJoypadDown(Joypad.AButton)
       return
      end
     end
    end
   end
-  error('native half-portion menu missing')
+  error('drink menu option missing: '..label)
  end)
  ISTimedActionQueue.add=add
- assert(ok,problem);assert(drink and drink.item:getID()==ids.bottleId,'native drink action missing')
- assert((pickup~=nil)==(ids.source=='bag'),'native pickup presence differs')
- state.book:setAlreadyReadPages(state.book:getNumberOfPages()-1)
- player:setAlreadyReadPages(state.book:getFullType(),state.book:getNumberOfPages()-1)
- tail=ISReadABook:new(player,state.book);add(tail)
- print('[FLUID_TEST] DISPATCH '..JSON.encode({case=case(),actionType=drink.Type,nativeDuration=nativeDuration,
-  bottleId=drink.item:getID(),pickup=pickup~=nil}))
+ assert(ok,problem);assert(observed.drink and observed.drink.item:getID()==command.id,'native drink action missing')
+ assert((observed.pickup~=nil)==(ids.bottles[target].source=='bag'),'native pickup presence differs')
+ commands[#commands+1]=command;observations[#observations+1]=observed
+ trace('dispatch',command)
 end
 local function finish()
- local expected=ids.amount*.5
  local reason
- if receipt.amount<expected-.01 or receipt.amount>expected+.0001 then reason='portion-consumption-differs'
- elseif receipt.thirst>=ids.thirst-.00001 then reason='thirst-not-reduced'
- elseif not drinkProgress then reason='drink-not-started'
- elseif not receipt.tailRead or not tailProgress then reason='independent-reader-not-completed'
- elseif ids.source=='bag'and not pickupObserved then reason='pickup-not-observed'end
- local row={event='case',id=case(),status=reason and 'failed'or 'passed',reason=reason,
-  pickupObserved=pickupObserved,drinkProgress=drinkProgress,tailRead=receipt.tailRead,
-  actionType=drink.Type,nativeDuration=nativeDuration,menuDispatched=true,portion=.5}
+ for index,bottle in ipairs(receipt.bottles)do
+  local portion=0
+  for _,command in ipairs(commands)do if command.id==bottle.id then
+   portion=command.portion
+   if not command.drinkProgress then reason='drink-not-started'end
+   if ids.bottles[index].source=='bag'and not command.pickupObserved then reason='pickup-not-observed'end
+  end end
+  local expected=ids.bottles[index].amount*(1-portion)
+  if bottle.amount<math.max(0,expected-(portion>0 and .01 or .0001))or bottle.amount>expected+.0001 then
+   reason='portion-consumption-differs'
+  end
+ end
+ if receipt.thirst>=ids.thirst-.00001 then reason='thirst-not-reduced'end
+ local row={event='case',id=case(),status=reason and 'failed'or 'passed',reason=reason,commands=commands}
  for key,value in pairs(receipt)do row[key]=value end
  emit(row);if reason then failed=failed+1 end
  step=step+1
@@ -92,8 +112,8 @@ local function finish()
   print('[FLUID_TEST] COMPLETE');done=true;return
  end
  previousAuthority=authorityState;previousBag=state.bag
- ids,state,authorityState,receipt,drink,pickup,tail=nil,nil,nil,nil,nil,nil,nil
- pickupObserved,drinkProgress,tailProgress=false,false,false
+ ids,state,authorityState,receipt,lastCurrent=nil,nil,nil,nil,nil
+ commands,observations={},{}
  ISTimedActionQueue.add(ISUnequipAction:new(getPlayer(),previousBag,50))
  phase='unequipped';since=getTimestampMs()
 end
@@ -109,28 +129,44 @@ Events.OnTick.Add(function()
   end
   if phase=='prepare'then
    if step==1 then emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=config.mode=='toolkit',nativeDurations=true})end
-   phase='prepared';request('Prepare');return
+   spec=Fixture.scenario(case());phase='prepared';request('Prepare');return
   elseif phase=='prepared'and ids then
    state=Fixture.resolve(player,ids);if not state then return end
    player:getStats():set(CharacterStat.THIRST,ids.thirst)
+   player:getBodyDamage():setHealthFromFoodTimer(ids.foodTimer);player:getMoodles():Update()
    if isClient()then syncPlayerStats(player,SyncPlayerStatsPacket.getBitMaskForStat(CharacterStat.THIRST))end
    ISTimedActionQueue.add(ISWearClothing:new(player,state.bag,50))
    phase='equipped';return
   elseif phase=='equipped'then
    if idle<10 then return end
-   assert(player:isEquipped(state.bag),'fixture backpack not equipped')
-   enqueue(player);phase='running';since=getTimestampMs();return
+   assert(player:getClothingItem_Back()==state.bag,'fixture military backpack not on back')
+   assert(player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)==ids.foodLevel,'fixture fullness differs')
+   enqueue(player,spec.targets[1]);if #spec.targets==2 and not spec.serial then enqueue(player,spec.targets[2])end
+   phase='running';since=getTimestampMs();return
   elseif phase=='running'then
    local current=queue().queue[1]
-   if pickup and current==pickup and pickup:isStarted()and pickup:getJobDelta()>0 then pickupObserved=true end
-   if current==drink and drink:isStarted()and drink:getJobDelta()>0 then
-    drinkProgress=true
-    local bottle=assert(player:getInventory():getItemById(ids.bottleId))
-    assert(bottle:getContainer()==player:getInventory(),'drink started outside root')
-    assert(bottle:isFavorite()==ids.favorite,'drink bottle lost favorite flag')
+   if current~=lastCurrent then
+    trace('queue-current',{actionType=current and current.Type or 'idle',itemId=current and current.item and current.item:getID()})
+    lastCurrent=current
    end
-   if current==tail and player:isReading()and tail:isStarted()and tail:getJobDelta()>0 then tailProgress=true end
-   if idle>=10 then phase='receipt';request('Verify')end
+   for index,observed in ipairs(observations)do
+    local command=commands[index]
+    if observed.pickup and current==observed.pickup and current:isStarted()and current:getJobDelta()>0 then
+     if not command.pickupObserved then trace('pickup-progress',{id=command.id})end
+     command.pickupObserved=true
+    end
+    if current==observed.drink and current:isStarted()and current:getJobDelta()>0 then
+     if not command.drinkProgress then trace('drink-progress',{id=command.id,amount=current.item:getFluidContainer():getAmount()})end
+     command.drinkProgress=true
+     local bottle=assert(player:getInventory():getItemById(command.id))
+     assert(bottle:getContainer()==player:getInventory(),'drink started outside root')
+     assert(bottle:isFavorite()==spec.favorite,'drink bottle lost favorite flag')
+    end
+   end
+   if idle>=10 then
+    if spec.serial and #commands<#spec.targets then enqueue(player,spec.targets[#commands+1]);idle=0
+    else phase='receipt';request('Verify')end
+   end
   elseif phase=='receipt'and receipt then finish()end
  end)
  if not ok then print('[QUEUE_TEST] FAIL fluid client '..tostring(problem));done=true end

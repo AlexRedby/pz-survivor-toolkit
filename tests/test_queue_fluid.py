@@ -1,4 +1,4 @@
-"""Fluid receipts cannot pass from progress alone or client-only Host claims."""
+"""Fluid evidence must identify both bottles and every real menu command."""
 import copy
 import json
 from pathlib import Path
@@ -28,15 +28,29 @@ class FluidAdapterTests(unittest.TestCase):
         raw = []
         for index, case in enumerate(cases):
             base, bag = 100 + index * 10, case.startswith('fluid-bag')
-            prep = dict(case=case, bottleId=base, bagId=base + 1, bookId=base + 2,
-                        amount=1.0, thirst=.6, source='bag' if bag else 'root', favorite=case.endswith('-favorite'))
-            receipt = dict(prep, amount=.5, thirst=.5,
-                           bottleCount=1, tailRead=True)
+            favorite = case.endswith('-favorite')
+            full = '-full-' in case
+            thirst = .04 if '-smart-low-' in case else .2 if '-smart-' in case else .8
+            menu, portion = 'half', .5
+            if '-all-' in case: menu, portion = 'all', 1
+            elif '-quarter-' in case: menu, portion = 'quarter', .25
+            elif '-smart-' in case: menu, portion = 'smart', thirst / .5
+            elif '-sip-' in case: menu, portion = 'sip', .01
+            targets = [0, 1] if '-pair-' in case else [1] if '-second-' in case else [0]
+            prep = dict(case=case, bagId=base, bagType='Base.Bag_ALICEpack_Army', thirst=thirst,
+                        foodTimer=4000 if full else 0, foodLevel=3 if full else 0,
+                        bottles=[dict(id=base + n + 1, amount=1.0, favorite=favorite,
+                                      source='bag' if bag else 'root', thirstChange=-.5) for n in range(2)])
+            receipt = dict(case=case, bagId=base, bagType=prep['bagType'], thirst=max(0, thirst - .5 * portion * len(targets)), foodLevel=prep['foodLevel'],
+                           bottles=[dict(id=bottle['id'], amount=1.0 - portion if n in targets else 1.0,
+                                         favorite=favorite, source=bottle['source'], count=1)
+                                    for n, bottle in enumerate(prep['bottles'])])
             raw += [('PREPARED', prep), ('VERIFIED', receipt)]
-            rows.append(dict(event='case', id=case, status='passed', reason=None,
-                             **{key: value for key, value in receipt.items() if key != 'case'},
-                             pickupObserved=bag, drinkProgress=True, nativeDuration=460, menuDispatched=True, portion=.5,
-                             actionType='ISDrinkFluidAction'))
+            commands = [dict(id=prep['bottles'][n]['id'], menu=menu, portion=portion,
+                             pickupObserved=bag, drinkProgress=True, nativeDuration=460, menuDispatched=True,
+                             dispatchThirst=thirst, foodLevel=prep['foodLevel']) for n in targets]
+            rows.append(dict(event='case', id=case, status='passed', reason=None, commands=commands,
+                             **copy.deepcopy({key: value for key, value in receipt.items() if key != 'case'})))
         rows.append(dict(event='complete', cases=cases, expected=len(cases), performed=len(cases), failed=0, skipped=0))
         return ([dict(row, suite='fluid', kind=self.selection['kind'], mode=self.selection['mode'], actor='client1')
                  for row in rows], raw)
@@ -47,14 +61,17 @@ class FluidAdapterTests(unittest.TestCase):
         authority = '\n'.join('[FLUID_TEST] ' + name + ' ' + json.dumps(value) for name, value in raw)
         if self.selection['kind'] == 'mp':
             (self.root / 'server-launch.log').write_text('' if wrong_authority else authority)
-            if wrong_authority:
-                client += '\n' + authority
-        else:
-            client += '\n' + authority
+            if wrong_authority: client += '\n' + authority
+        else: client += '\n' + authority
         (self.root / 'client1-launch.log').write_text(client)
         return fluid.verify(self.root, self.selection, {})
 
-    def test_real_effect_receipts_pass_sp_host_native_and_toolkit(self):
+    def single(self, case='fluid-bag-favorite'):
+        self.selection['cases'] = [case]
+        return self.evidence()
+
+    def test_matrix_accepts_sp_host_native_and_toolkit(self):
+        self.assertEqual(14, len(fluid.CASES))
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
                 self.selection.update(kind=kind, mode=mode)
@@ -83,13 +100,12 @@ class FluidAdapterTests(unittest.TestCase):
             path = project / 'tests/native_queue' / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture')
-        self.assertCountEqual([project / 'tests/native_queue' / name for name in paths],
-                              fluid.sources(project, self.selection))
+        self.assertCountEqual([project / 'tests/native_queue' / name for name in paths], fluid.sources(project, self.selection))
         with patch.object(fluid.craft, 'stage_common') as common:
             fluid.stage(project, self.root, 'game', 'jdk', self.selection, {}, {})
             common.assert_called_once_with(project, self.root, 'game', 'jdk', self.selection, {}, {})
 
-    def test_marker_event_context_counts_and_order_are_strict(self):
+    def test_events_markers_context_and_counts_are_strict(self):
         for marker in ('', '[FLUID_TEST] COMPLETE_PENDING', '[FLUID_TEST] COMPLETE\n[FLUID_TEST] COMPLETE'):
             self.assertTrue(self.verify(marker=marker)['issues'])
         self.assertFalse(fluid.complete(self.selection, 'server', '[FLUID_TEST] COMPLETE'))
@@ -103,11 +119,9 @@ class FluidAdapterTests(unittest.TestCase):
             elif change == 'count': rows[-1]['performed'] = True
             elif change == 'mode': rows[0]['queueEnabled'] = False
             else: rows[1]['status'] = 'failed'
-            with self.subTest(change=change):
-                self.assertTrue(self.verify((rows, raw))['issues'])
+            with self.subTest(change=change): self.assertTrue(self.verify((rows, raw))['issues'])
         self.assertTrue(self.verify(extra='[QUEUE_TEST] FAIL fluid')['issues'])
-        with self.assertRaises(ValueError):
-            self.verify(extra='[QUEUE_CHECK] []')
+        with self.assertRaises(ValueError): self.verify(extra='[QUEUE_CHECK] []')
 
     def test_authority_is_exact_ordered_unique_and_server_owned_in_host(self):
         for kind in ('sp', 'mp'):
@@ -119,65 +133,121 @@ class FluidAdapterTests(unittest.TestCase):
                 elif change == 'order': raw[0], raw[1] = raw[1], raw[0]
                 elif change == 'unknown': raw[-1] = ('OTHER', raw[-1][1])
                 elif change == 'extra': raw[-1][1]['extra'] = 1
-                elif change == 'missing-field': del raw[-1][1]['bottleCount']
-                elif change == 'disagree': rows[-2]['amount'] = .87
-                else: raw[-2][1]['bookId'] = raw[0][1]['bookId']
-                with self.subTest(kind=kind, change=change):
-                    self.assertTrue(self.verify((rows, raw))['issues'])
+                elif change == 'missing-field': del raw[-1][1]['bottles'][0]['count']
+                elif change == 'disagree': rows[-2]['bottles'][0]['amount'] = .87
+                else: raw[-2][1]['bottles'][0]['id'] = raw[0][1]['bottles'][0]['id']
+                with self.subTest(kind=kind, change=change): self.assertTrue(self.verify((rows, raw))['issues'])
         self.assertTrue(self.verify(wrong_authority=True)['issues'])
-        with self.assertRaises(ValueError):
-            fluid._authority('[FLUID_TEST] PREPARED []')
+        with self.assertRaises(ValueError): fluid._authority('[FLUID_TEST] PREPARED []')
 
-    def test_progress_alone_cannot_substitute_exact_effects_and_conservation(self):
-        for key, value in [('amount', .99), ('amount', True), ('amount', float('nan')),
-                           ('thirst', .6), ('thirst', -.1), ('thirst', float('inf')),
-                           ('bottleCount', 2), ('bottleCount', True), ('tailRead', False),
-                           ('source', 'floor'), ('bottleId', 999), ('bookId', True)]:
-            rows, raw = self.evidence()
-            rows[1][key] = value
-            raw[1][1][key] = value
-            with self.subTest(key=key, value=value):
-                self.assertTrue(self.verify((rows, raw))['issues'])
-        for key, value in [('pickupObserved', False), ('pickupObserved', 1), ('drinkProgress', False),
-                           ('actionType', 'ISDrinkFromBottle'), ('nativeDuration', 1), ('nativeDuration', 2),
-                           ('nativeDuration', 460.0), ('nativeDuration', True)]:
-            rows, raw = self.evidence()
-            rows[1][key] = value
-            with self.subTest(key=key, value=value):
-                self.assertTrue(self.verify((rows, raw))['issues'])
-        rows, raw = self.evidence()
-        rows[2]['source'] = raw[3][1]['source'] = 'bag'
+    def test_two_bottle_identity_favorite_and_preparation_are_strict(self):
+        for change in ('missing', 'lost', 'mislabelled', 'bool', 'id', 'same-id', 'bag', 'initial-volume', 'initial-thirst', 'thirst-change'):
+            rows, raw = self.single()
+            if change == 'missing': del raw[0][1]['bottles'][0]['favorite']
+            elif change == 'lost': rows[1]['bottles'][0]['favorite'] = raw[1][1]['bottles'][0]['favorite'] = False
+            elif change == 'mislabelled': raw[0][1]['bottles'][1]['favorite'] = False
+            elif change == 'bool': raw[0][1]['bottles'][0]['favorite'] = 1
+            elif change == 'id': rows[1]['bottles'][0]['id'] = raw[1][1]['bottles'][0]['id'] = 999
+            elif change == 'same-id': raw[0][1]['bottles'][1]['id'] = raw[0][1]['bagId']
+            elif change == 'bag': rows[1]['bagType'] = raw[1][1]['bagType'] = 'Base.Bag_Schoolbag'
+            elif change == 'initial-volume': raw[0][1]['bottles'][0]['amount'] = .5
+            elif change == 'initial-thirst': raw[0][1]['thirst'] = .1
+            else: raw[0][1]['bottles'][0]['thirstChange'] = 0
+            with self.subTest(change=change): self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_selected_and_unselected_bottles_have_distinct_effect_contracts(self):
+        for key, value, index in [('amount', .99, 0), ('amount', True, 0), ('amount', float('nan'), 0),
+                                  ('amount', .99, 1), ('source', 'root', 1), ('source', 'floor', 0),
+                                  ('count', 2, 0), ('count', True, 1)]:
+            rows, raw = self.single()
+            rows[1]['bottles'][index][key] = raw[1][1]['bottles'][index][key] = value
+            with self.subTest(key=key, value=value, index=index): self.assertTrue(self.verify((rows, raw))['issues'])
+        for thirst in (.8, -.1, float('inf'), True):
+            rows, raw = self.single()
+            rows[1]['thirst'] = raw[1][1]['thirst'] = thirst
+            with self.subTest(thirst=thirst): self.assertTrue(self.verify((rows, raw))['issues'])
+        rows, raw = self.single('fluid-root-favorite')
+        rows[1]['bottles'][0]['source'] = raw[1][1]['bottles'][0]['source'] = 'bag'
         self.assertTrue(self.verify((rows, raw))['issues'])
-        rows, raw = self.evidence()
-        rows[1]['source'] = raw[1][1]['source'] = 'root'
-        self.assertEqual([], self.verify((rows, raw))['issues'], 'P4 may return a bag bottle or leave it in root')
+        rows, raw = self.single()
+        rows[1]['bottles'][0]['source'] = raw[1][1]['bottles'][0]['source'] = 'root'
+        self.assertEqual([], self.verify((rows, raw))['issues'])
 
-    def test_favorite_must_be_present_and_retained_for_the_selected_case(self):
-        for change in ('missing-prepared', 'missing-verified', 'lost', 'mislabelled', 'not-bool', 'client-only'):
-            rows, raw = self.evidence()
-            if change == 'missing-prepared': del raw[4][1]['favorite']
-            elif change == 'missing-verified': del raw[5][1]['favorite']
-            elif change == 'lost': rows[3]['favorite'] = raw[5][1]['favorite'] = False
-            elif change == 'mislabelled': rows[1]['favorite'] = raw[0][1]['favorite'] = raw[1][1]['favorite'] = True
-            elif change == 'not-bool': rows[3]['favorite'] = raw[4][1]['favorite'] = raw[5][1]['favorite'] = 1
-            else: rows[3]['favorite'] = False
-            with self.subTest(change=change):
-                self.assertTrue(self.verify((rows, raw))['issues'])
+    def test_commands_must_prove_exact_target_order_menu_and_native_progress(self):
+        for key, value in [('id', 102), ('menu', 'all'), ('portion', .25), ('portion', True),
+                           ('pickupObserved', False), ('drinkProgress', False), ('menuDispatched', 1),
+                           ('nativeDuration', 2), ('nativeDuration', 460.0)]:
+            rows, raw = self.single()
+            rows[1]['commands'][0][key] = value
+            with self.subTest(key=key, value=value): self.assertTrue(self.verify((rows, raw))['issues'])
+        for case in ('fluid-bag-pair-queued-favorite', 'fluid-bag-pair-serial-favorite'):
+            for change in ('missing', 'order', 'stopped', 'duplicate-target'):
+                rows, raw = self.single(case)
+                commands = rows[1]['commands']
+                if change == 'missing': commands.pop()
+                elif change == 'order': commands.reverse()
+                elif change == 'stopped': commands[1]['drinkProgress'] = False
+                else: commands[1]['id'] = commands[0]['id']
+                with self.subTest(case=case, change=change): self.assertTrue(self.verify((rows, raw))['issues'])
+        rows, raw = self.single('fluid-bag-second-favorite')
+        rows[1]['commands'][0]['id'] = raw[0][1]['bottles'][0]['id']
+        self.assertTrue(self.verify((rows, raw))['issues'])
+        for case in ('fluid-bag-smart-favorite', 'fluid-bag-smart-low-favorite'):
+            rows, raw = self.single(case)
+            rows[1]['commands'][0]['portion'] = .5
+            with self.subTest(case=case): self.assertTrue(self.verify((rows, raw))['issues'])
 
     def test_native_volume_overshoot_is_narrow_and_preserves_raw_measurements(self):
         self.selection['kind'] = 'mp'
         for amount in (.497, .4971739, .4985328, .499891, .49, .5001):
-            rows, raw = self.evidence()
-            rows[1]['amount'] = raw[1][1]['amount'] = amount
+            rows, raw = self.single()
+            rows[1]['bottles'][0]['amount'] = raw[1][1]['bottles'][0]['amount'] = amount
             with self.subTest(amount=amount):
                 result = self.verify((rows, raw))
                 self.assertEqual([], result['issues'])
-                self.assertEqual(amount, result['outcomes'][0]['outcome']['amount'])
+                self.assertEqual(amount, result['outcomes'][0]['outcome']['bottles'][0]['amount'])
         for amount in (.48999, .50011, .75, 1.0, 0.0):
-            rows, raw = self.evidence()
-            rows[1]['amount'] = raw[1][1]['amount'] = amount
-            with self.subTest(amount=amount):
-                self.assertTrue(self.verify((rows, raw))['issues'])
+            rows, raw = self.single()
+            rows[1]['bottles'][0]['amount'] = raw[1][1]['bottles'][0]['amount'] = amount
+            with self.subTest(amount=amount): self.assertTrue(self.verify((rows, raw))['issues'])
+        rows, raw = self.single('fluid-bag-all-favorite')
+        rows[1]['bottles'][0]['amount'] = raw[1][1]['bottles'][0]['amount'] = -.001
+        self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_smart_fraction_uses_bounded_actual_dispatch_thirst(self):
+        for case in ('fluid-bag-smart-favorite', 'fluid-bag-smart-low-favorite'):
+            rows, raw = self.single(case)
+            command = rows[1]['commands'][0]
+            command['dispatchThirst'] += .00011511445
+            command['portion'] = command['dispatchThirst'] / abs(raw[0][1]['bottles'][0]['thirstChange'])
+            rows[1]['bottles'][0]['amount'] = raw[1][1]['bottles'][0]['amount'] = 1 - command['portion']
+            with self.subTest(case=case): self.assertEqual([], self.verify((rows, raw))['issues'])
+            command['portion'] = .5
+            rows[1]['bottles'][0]['amount'] = raw[1][1]['bottles'][0]['amount'] = .5
+            self.assertTrue(self.verify((rows, raw))['issues'], 'matching water loss cannot legitimize a forged menu fraction')
+        for thirst in (.19, .211, -1, 2, True, float('nan')):
+            rows, raw = self.single('fluid-bag-smart-favorite')
+            rows[1]['commands'][0]['dispatchThirst'] = thirst
+            with self.subTest(thirst=thirst): self.assertTrue(self.verify((rows, raw))['issues'])
+        rows, raw = self.single()
+        rows[1]['commands'][0]['dispatchThirst'] = True
+        self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_fullness_requires_authority_metadata_and_actual_dispatch_moodle(self):
+        for case in ('fluid-bag-full-favorite', 'fluid-root-full-favorite'):
+            for change in ('timer-missing', 'timer-wrong', 'timer-bool', 'prepared-level', 'verified-level',
+                           'dispatch-missing', 'dispatch-level', 'dispatch-bool', 'not-started'):
+                rows, raw = self.single(case)
+                if change == 'timer-missing': del raw[0][1]['foodTimer']
+                elif change == 'timer-wrong': raw[0][1]['foodTimer'] = 1600
+                elif change == 'timer-bool': raw[0][1]['foodTimer'] = True
+                elif change == 'prepared-level': raw[0][1]['foodLevel'] = 0
+                elif change == 'verified-level': rows[1]['foodLevel'] = raw[1][1]['foodLevel'] = 0
+                elif change == 'dispatch-missing': del rows[1]['commands'][0]['foodLevel']
+                elif change == 'dispatch-level': rows[1]['commands'][0]['foodLevel'] = 0
+                elif change == 'dispatch-bool': rows[1]['commands'][0]['foodLevel'] = True
+                else: rows[1]['commands'][0]['drinkProgress'] = False
+                with self.subTest(case=case, change=change): self.assertTrue(self.verify((rows, raw))['issues'])
 
 
 if __name__ == '__main__':
