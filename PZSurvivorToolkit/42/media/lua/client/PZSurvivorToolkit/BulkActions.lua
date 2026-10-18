@@ -54,9 +54,13 @@ function Actions.selectedItems(rows)
 end
 
 function Actions.guardTransfer(transfer)
-    -- Keep this guard when an ordinary pickup is already queued.
-    transfer:setOnComplete(function() end)
-    transfer.toolkitQueueSafeOnComplete = transfer.onCompleteFunc
+    local guard = transfer.toolkitTransferGuard
+    -- Prevent native merging from discarding the guard; keep an existing owner's callback.
+    if not transfer.onCompleteFunc then
+        transfer:setOnComplete(function() end)
+        transfer.toolkitQueueSafeOnComplete = transfer.onCompleteFunc
+    end
+    if guard and guard.marker == transferGuard and transfer.stop == guard.stop then return transfer end
     local stop = transfer.stop
     local guardedStop = function(self)
         -- B42 cancellation uses a client-local ID without an owner on the server.

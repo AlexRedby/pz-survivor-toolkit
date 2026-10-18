@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.79
+
+- **Fixed:** Shared transfer guards preserve existing completion callbacks and their arguments. Reapplying the guard retains native stop provenance without granting unknown callbacks queue permissions.
+- **Maintenance:** Removed adapters and checks for the excluded Proximity Inventory and Manage Containers mods. Current Better Containers and Quartermaster checks no longer require the old Proximity Inventory Workshop installation.
+
 ### 0.1.78
 
 - **Fixed:** Bulk clothing cutting includes belts, eligible holsters and empty bandoliers through the native recipe, including mixed selections with clothing. Native tools, outputs and protected-item checks are preserved.

@@ -189,27 +189,6 @@ if NativeWishlistWorkshopRoot then
     player.getTimedActionToRetrigger=function(self) return self.retrigger end
     player.setTimedActionToRetrigger=function(self, value) self.retrigger=value end
 end
-local proximityFixture
-if NativeWishlistWorkshopRoot then
-    local proxRoot=NativeWishlistWorkshopRoot .. '/2847184718/mods/ProximityInventory/common/'
-    local module={itemContainer={[0]=container()}}
-    _G.TestProximity=module
-    local source=read(proxRoot .. 'media/lua/client/ProximityInventory/ProximityInventory.lua')
-    local getter=assert(source:match('(function ProximityInventory.GetItemContainer.-\nend)')):gsub('ProximityInventory','TestProximity')
-    assert(loadstring(getter,'@' .. proxRoot .. 'media/lua/client/ProximityInventory/ProximityInventory.lua'))()
-    proximityFixture=module
-    require=function(name) if name=='ProximityInventory/ProximityInventory' then return module end end
-    assert(loadstring(read(proxRoot .. 'media/lua/client/ProximityInventory/CraftingFix.lua'),'@' .. proxRoot .. 'media/lua/client/ProximityInventory/CraftingFix.lua'))()
-    getModFileReader=function(mod,path)
-        assert(mod=='ProximityInventory')
-        local content,index=read(proxRoot .. path),1
-        return {readLine=function()
-            if index>#content then return end
-            local stop=content:find('\n',index) or #content+1
-            local line=content:sub(index,stop-1);index=stop+1;return line
-        end,close=function() end}
-    end
-end
 local bcControls,bcProximity
 if NativeWishlistWorkshopRoot then
     local bcRoot=NativeWishlistWorkshopRoot .. '/3586216562/mods/BetterContainers/42.20/'
@@ -275,7 +254,7 @@ if NativeQuartermasterLuaRoot then
     local functions=assert(source:find('-- getModFileReader resolves',last,true))
     local stop=assert(source:find('local function snapshot(class)',functions,true))
     -- Execute the production observer and checksum code without unrelated mod adapter fixtures.
-    local compat=assert(loadstring('local Compat={}\n'..source:sub(first,last-1)..source:sub(functions,stop-1)
+    local compat=assert(loadstring('local Compat,craftOwners={},{}\n'..source:sub(first,last-1)..source:sub(functions,stop-1)
         ..'\nprepareQuartermasterContainers()\nreturn Compat'))()
     PZSurvivorToolkit.ActionQueueCompat=compat
     -- The normal client loader still runs the file when early observation was refused.
@@ -401,14 +380,6 @@ local function pickups()
             action.srcContainer.items[action.item.id]=nil;inventory.items[action.item.id]=action.item;action.item.source=inventory
         end
     end
-end
-if proximityFixture then
-    reset();local source=container();local aggregate=container();local log=item('Log',source)
-    aggregate.items[log.id]=log;proximityFixture.itemContainer[0]=aggregate;containers=list({inventory,source,aggregate})
-    ISCampingMenu.onAddAllFuel(player,target(),ISBBQAddFuel,20)
-    local request=q.queue[2];assert(api.isDeferredAction(request) and #request.args[1].items==1 and request.args[1].items[1].source==source)
-    local getter=proximityFixture.GetItemContainer;proximityFixture.GetItemContainer=function() return source end
-    assert(not api.isDeferredAction(request));proximityFixture.GetItemContainer=getter
 end
 if cleanUIPath then
     reset();local source=container();containers=list({inventory,source});local log=item('Log',source)

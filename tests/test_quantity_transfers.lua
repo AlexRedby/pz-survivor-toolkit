@@ -129,6 +129,31 @@ assert(#selection.items==4,'mixed groups/header duplicates must yield exact uniq
 assert(Q.transfer(selection,'3')==3 and #queued==3 and queued[1].item==a and queued[3].item==c,
     'one common budget across both stacks, using native callbacks')
 local allocator=ISInventoryTransferUtil.newInventoryTransferAction
+local originalStop = queued[1].toolkitTransferGuard.original
+local guardedStop, completion = queued[1].stop, queued[1].onCompleteFunc
+PZSurvivorToolkit.BulkActions.guardTransfer(queued[1])
+assert(queued[1].stop == guardedStop and queued[1].onCompleteFunc == completion
+    and PZSurvivorToolkit.BulkActions.isGuardedTransfer(queued[1], originalStop),
+    'repeated guards must preserve native stop provenance and their anti-merge callback')
+queued[1].onCompleteFunc = nil
+PZSurvivorToolkit.BulkActions.guardTransfer(queued[1])
+assert(queued[1].onCompleteFunc and queued[1].stop == guardedStop
+    and PZSurvivorToolkit.BulkActions.isGuardedTransfer(queued[1], originalStop),
+    'restoring a missing anti-merge callback must not add another stop wrapper')
+local foreignComplete, foreignArgs = function() return 'foreign complete' end, {'foreign argument'}
+ISInventoryTransferUtil.newInventoryTransferAction = function(...)
+    local transfer = allocator(...)
+    transfer.onCompleteFunc, transfer.onCompleteArgs = foreignComplete, foreignArgs
+    return transfer
+end
+queued = {}
+assert(Q.transfer(selection,'1') == 1)
+assert(queued[1].onCompleteFunc == foreignComplete and queued[1].onCompleteArgs == foreignArgs,
+    'quantity transfers must retain a preexisting completion callback and its arguments')
+assert(queued[1].toolkitQueueSafeOnComplete == nil,
+    'a foreign callback must not gain Toolkit completion permissions')
+ISInventoryTransferUtil.newInventoryTransferAction = allocator
+queued = {}; Q.transfer(selection,'3')
 assert(queued[1].onCompleteFunc and queued[2].onCompleteFunc, 'own transfers need the existing rejection guard')
 local plain=allocator(player,a,a.source,inv)
 assert(not plain.onCompleteFunc, 'ordinary allocator calls must remain unchanged')

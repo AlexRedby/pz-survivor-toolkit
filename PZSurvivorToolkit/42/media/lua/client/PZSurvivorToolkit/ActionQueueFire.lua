@@ -141,16 +141,7 @@ local getContainers = ISInventoryPaneContextMenu.getContainers
 local initialGetContainers = getContainers
 local transferIfNeeded = ISInventoryPaneContextMenu.transferIfNeeded
 local returnItem = ISCraftingUI.ReturnItemToContainer
-local proximity, proximityGetter
 local containerSourceSafe = nativeClosure(getContainers, "ISInventoryPaneContextMenu.lua")
-if not containerSourceSafe and nativeClosure(getContainers, "CraftingFix.lua")
-    and sourceMatches("client/ProximityInventory/CraftingFix.lua", 2752217643, "ProximityInventory")
-    and sourceMatches("client/ProximityInventory/ProximityInventory.lua", 3363253772, "ProximityInventory") then
-    local loaded, module = pcall(require, "ProximityInventory/ProximityInventory")
-    if loaded and type(module) == "table" and nativeClosure(module.GetItemContainer, "ProximityInventory.lua") then
-        proximity, proximityGetter, containerSourceSafe = module, module.GetItemContainer, true
-    end
-end
 trusted = trusted and containerSourceSafe
     and nativeClosure(transferIfNeeded, "ISInventoryPaneContextMenu.lua") and nativeClosure(returnItem, "ISCraftingUI.lua")
 local cleanUIHelpers = {}
@@ -243,7 +234,6 @@ function Fire.matchesContainerGetter(callback)
     observeQuartermasterGetter()
     return containerSourceSafe and containerGetters[callback] == true
         and ISInventoryPaneContextMenu.getContainers == getContainers
-        and (not proximity or proximity.GetItemContainer == proximityGetter)
         and (not containerFilterUnchanged or containerFilterUnchanged())
 end
 
@@ -262,7 +252,6 @@ local function helpersSafe()
         and not (verifiedCartConstructor(transferConstructor) and verifiedCartConstructor(ISInventoryTransferAction.new)) then return false end
     for name, callback in pairs(cleanUIHelpers) do if ISInventoryPaneContextMenu[name] ~= callback then return false end end
     for name, callback in pairs(bindings) do if ISCampingMenu[name] ~= callback then return false end end
-    if proximity and proximity.GetItemContainer ~= proximityGetter then return false end
     if CCampfireGlobalObject ~= campfireClass then return false end
     for name, callback in pairs(campfireMethods) do if campfireClass[name] ~= callback then return false end end
     for name, callback in pairs(transferHelpers) do if ISInventoryTransferUtil[name] ~= callback then return false end end
