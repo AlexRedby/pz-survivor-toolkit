@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.83
+
+- **Fixed:** Quartermaster waits for both its presets and Toolkit tag rules before multiplayer sorting, and requests both again through its existing gather retry when either is missing. Disabling tags retains native readiness.
+- **Fixed:** Failed single-player tag-rule reads no longer publish an empty cache or allow linked native preset changes before loading succeeds. Readers/writers close on exceptions; serialization finishes before opening the existing file for overwrite.
+
 ### 0.1.82
 
 - **Added:** Wishlist requests for compatible vehicle parts from the mechanics window. All compatible variants of the requested vehicle class are highlighted in inventories and mechanics, with combined carried counts.

@@ -62,6 +62,8 @@ INTEGRATIONS = {
         'tests': {'test_quartermaster_tags.lua': ['client/LootSorter_Picker.lua'],
                   'test_quartermaster_tag_rules.lua': ['shared/LootSorter_Presets.lua', 'shared/LootSorter_Util.lua',
                                                       'shared/LootSorter_Plan.lua', 'client/LootSorter_Core.lua'],
+                  'test_quartermaster_sync.lua': ['shared/LootSorter_Util.lua', 'shared/LootSorter_Presets.lua',
+                                                   'client/LootSorter_PresetSync.lua', 'client/LootSorter_Core.lua'],
                   'test_quartermaster_item_routing.lua': ['shared/LootSorter_Plan.lua'],
                   'test_quartermaster_craft_ui.lua': ['client/LootSorter_CraftMenu.lua']},
     },

@@ -34,7 +34,8 @@ class ModIntegrations(unittest.TestCase):
         self.write(self.tv.parent.parent / 'ISRadioWindow.lua', 'upstream window')
         self.qm = self.root / 'Quartermaster/42/media/lua'
         for name in ('client/LootSorter_Picker.lua', 'client/LootSorter_Core.lua', 'client/LootSorter_CraftMenu.lua',
-                     'shared/LootSorter_Debug.lua', 'shared/LootSorter_Plan.lua', 'shared/LootSorter_Presets.lua',
+                     'client/LootSorter_PresetSync.lua', 'shared/LootSorter_Debug.lua', 'shared/LootSorter_Plan.lua',
+                     'shared/LootSorter_Presets.lua',
                      'shared/LootSorter_Util.lua'):
             self.write(self.qm / name, name)
         self.lock = self.root / 'pack.json'
@@ -93,7 +94,8 @@ class ModIntegrations(unittest.TestCase):
         self.assertEqual(self.qm, args.quartermaster_source)
         self.assertEqual(self.game / 'media/lua', args.native_action_root)
         self.assertEqual({'test_ui_style.lua', 'test_quartermaster_tags.lua', 'test_quartermaster_tag_rules.lua',
-                          'test_quartermaster_item_routing.lua', 'test_quartermaster_craft_ui.lua'}, requested)
+                          'test_quartermaster_item_routing.lua', 'test_quartermaster_sync.lua',
+                          'test_quartermaster_craft_ui.lua'}, requested)
 
     def test_source_and_game_drift_are_rejected(self):
         self.lock_sources()
