@@ -201,24 +201,29 @@ function Operations.deferCompletion(queue, action)
     end
 end
 
-function Operations.registerProducer(id, supports, acceptsChild)
+-- Shared completion is enabled per producer after its native SP/Host child-order gates.
+function Operations.registerProducer(id, supports, acceptsChild, sharedLifecycle)
     assert(type(id) == "string" and type(supports) == "function" and type(acceptsChild) == "function")
     assert(not producers[id], "duplicate action producer: " .. id)
-    producers[id] = {supports = supports, acceptsChild = acceptsChild}
+    assert(sharedLifecycle == nil or type(sharedLifecycle) == "boolean")
+    producers[id] = {supports = supports, acceptsChild = acceptsChild, sharedLifecycle = sharedLifecycle == true}
+end
+
+local function producerFor(action)
+    for _, producer in pairs(producers) do
+        if producer.supports(action) then return producer end
+    end
 end
 
 function Operations.perform(action, callback, ...)
     local Craft = PZSurvivorToolkit.ActionQueueCraft
     local Settings = PZSurvivorToolkit.Settings
-    local producer
-    for _, candidate in pairs(producers) do
-        if candidate.supports(action) then producer = candidate; break end
-    end
+    local producer = producerFor(action)
     if (Settings and not Settings.actionQueue()) or (not producer and (not Craft or not Craft.supports(action))) then
         return callback(action, ...)
     end
     local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
-    if not producer and lifecycle and lifecycle.current(action.character) == action then
+    if (not producer or producer.sharedLifecycle) and lifecycle and lifecycle.current(action.character) == action then
         return callback(action, ...)
     end
     local previous = completionScope
@@ -293,9 +298,13 @@ ISTimedActionQueue.add = function(action)
     local accepted, placement
     if sameOperation and completionScope and completionScope.acceptsChild then accepted, placement = completionScope.acceptsChild(current, action) end
     -- Craft OnCreate may add unrelated mod actions; only audited returns inherit placement.
-    if sameOperation and nativeParent and not completionScope
-        and current.Type ~= "ISCraftAction" and current.Type ~= "ISHandcraftAction" then
-        accepted, placement = true, "before-returns"
+    if sameOperation and nativeParent and not completionScope then
+        local producer = producerFor(current)
+        if producer and producer.sharedLifecycle then
+            accepted, placement = producer.acceptsChild(current, action)
+        elseif current.Type ~= "ISCraftAction" and current.Type ~= "ISHandcraftAction" then
+            accepted, placement = true, "before-returns"
+        end
     end
     local returning = sameOperation and nativeReturn(action)
     if sameOperation and (returning or accepted) then

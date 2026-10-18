@@ -313,4 +313,76 @@ assert(operations.adoptReturnMethods(original, replacement, unchangedHelpers))
 retryBeforeReturn(false, true)
 helpersSafe = false; retryBeforeReturn(false, false)
 helpersSafe = true; retryBeforeReturn(false, true)
+-- Migrated producers use the native boundary, while child contracts still register retries.
+local client=false
+isClient=function()return client end
+PZSurvivorToolkit.Settings={actionQueue=function()return true end}
+local Lifecycle=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
+local legacyCompleted=q.onCompleted
+q.onCompleted=function(queue,a)
+    if Lifecycle.deferCompletion(queue,a) then return end
+    return legacyCompleted(queue,a)
+end
+local present={}
+player.getCharacterActions=function()return {contains=function(_,a)return present[a]==true end}end
+local childChecks=0
+operations.registerProducer('shared-retry',function(a)return a.Type=='SharedRetryProducer'end,function(parent,child)
+    childChecks=childChecks+1
+    if child.Type~='SharedRetryChild' then return false end
+    child.registeredParent=parent
+    return true,'before-returns'
+end,true)
+assert(not pcall(operations.registerProducer,'invalid-shared',function()end,function()end,'true'))
+for _,mp in ipairs({false,true})do
+    client=mp;reset()
+    local parent,retry,unrelated,unknown=action('SharedRetryProducer'),action('SharedRetryChild'),action('Tail'),action('ForeignChild')
+    ISTimedActionQueue.add(parent)
+    present[parent.action]=true
+    local restore=setmetatable(action('ISInventoryTransferAction'),ISInventoryTransferAction)
+    restore.isValidStart=nil
+    restore.allowMissingItems,restore.srcContainer,restore.destContainer=true,player.inventory,{}
+    operations.runWith(parent.toolkitQueueOperation,ISTimedActionQueue.add,restore)
+    ISTimedActionQueue.add(unrelated)
+    assert(Lifecycle.begin(parent,'perform'))
+    local count=select('#',operations.perform(parent,function(a)
+        assert(not operations.deferCompletion(q,a),'migrated producer acquired the legacy completion interceptor')
+        q:onCompleted(a)
+        assert(q.current==parent,'native producer lost its parent during perform')
+        ISTimedActionQueue.add(retry)
+        ISTimedActionQueue.add(unknown)
+        assert(retry.registeredParent==parent and unknown.registeredParent==nil,'producer child contract was bypassed')
+        assert(retry.toolkitQueueOperation==parent.toolkitQueueOperation)
+        assert(q.queue[2]==retry and q.queue[3]==restore and q.queue[4]==unrelated and q.queue[5]==unknown,
+            'audited retry must precede returns; unknown child must preserve native order')
+        return 1,nil,3
+    end))
+    assert(count==3)
+    Lifecycle.finish(parent,'perform',true)
+    if not mp then
+        assert(Lifecycle.begin(parent,'complete')and q.current==parent,'SP complete lost its native parent')
+        Lifecycle.finish(parent,'complete',true)
+    end
+    assert(Lifecycle.flush(q)=='waiting','producer advanced before native removal')
+    present[parent.action]=nil
+    assert(Lifecycle.flush(q)=='completed'and q.current==retry)
+    assert(Lifecycle.flush(q)==nil,'producer completion replayed')
+end
+assert(childChecks==4,'each native child must pass the opted producer contract once')
+-- Unsupported/absent native hooks retain the same family completion fallback.
+reset()
+local parent,retry,unrelated=action('SharedRetryProducer'),action('SharedRetryChild'),action('Tail')
+ISTimedActionQueue.add(parent);ISTimedActionQueue.add(unrelated)
+operations.perform(parent,function(a)
+    q:onCompleted(a)
+    assert(q.current==parent,'unsupported engine lost producer completion protection')
+    ISTimedActionQueue.add(retry)
+end)
+assert(q.current==retry and q.queue[2]==unrelated and retry.registeredParent==parent)
+-- Other registered families are not migrated just because a common boundary exists.
+reset();parent=action('AuditedProducer');ISTimedActionQueue.add(parent)
+assert(Lifecycle.begin(parent,'perform'))
+operations.perform(parent,function(a)
+    assert(operations.deferCompletion(q,a),'unmigrated producer lost its family fallback')
+end)
+Lifecycle.finish(parent,'perform',true);Lifecycle.reset(q)
 print('Action operation grouping native-contract checks passed.')

@@ -151,9 +151,9 @@ function Test.verify(player,case,tidyReturnIds)
   resources[#resources+1]={role=entry.role,id=entry.id,kind=entry.kind,sourceCount=sc,rootCount=rc,
    condition=item and item:getCondition() or entry.condition,uses=item and uses(item) or 0,amount=item and amount(item) or 0,consumed=consumed}
  end
- -- BBQ Kindle also ends on its native duration without ignition or a broken stick.
+ -- Native controls must report cancelled attempts even with unused reserve sticks.
  local unlitKindle=state.spec.mode=='kindle' and not lit(state) and fuel(state)==state.ids.initialFuel
-  and (not state.spec.retry or exhausted)
+  and (not enabled or not state.spec.retry or exhausted)
  if unlitKindle then state.effectFuel=state.ids.initialFuel end
  if (lit(state)~=wantedLit and not unlitKindle) or state.effectFuel~=state.ids.expectedFuel then
   return nil,'native ignition/fuel effect differs lit='..tostring(lit(state))..' effectFuel='..tostring(state.effectFuel)

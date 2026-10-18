@@ -72,6 +72,9 @@ class FireIgnitionVerifierTests(unittest.TestCase):
                       pickupIds=[row['id'] for row in prepared[-1]['resources'] if row['source'] == 'crate'],
                       returnIds=[row['id'] for row in receipts[-1]['resources'] if row['sourceCount']])
         del result['case']
+        if case == 'kindle-retry':
+            count = result['attempts'] if self.selection['mode'] == 'toolkit' else 0
+            result['nativeCompletion'] = dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0, flush=count)
         return copy.deepcopy((result, prepared, receipts))
 
     def verify(self, evidence, case=None):
@@ -114,6 +117,40 @@ class FireIgnitionVerifierTests(unittest.TestCase):
         evidence[2][0]['tailRead'] = False
         evidence[0].update(status='failed', reason='native-independent-tail-not-preserved')
         self.assertEqual(self.verify(evidence)[::2], ([], 'native-independent-tail-not-preserved'))
+
+    def test_kindle_completion_requires_exact_typed_phase_counts_in_sp_and_host(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode)
+                evidence = self.evidence('kindle-retry', 2)
+                expected = evidence[0]['nativeCompletion']
+                self.assertEqual(self.verify(evidence)[1]['outcome']['nativeCompletion'], expected)
+                for phase in ('perform', 'complete', 'flush'):
+                    for value in (True, 2.0, '2', None, -1, expected[phase] + 1):
+                        mutated = copy.deepcopy(evidence)
+                        mutated[0]['nativeCompletion'][phase] = value
+                        with self.subTest(kind=kind, mode=mode, phase=phase, value=value):
+                            self.assertIn('Ignition native Kindle completion phases differ', self.verify(mutated)[0])
+                    mutated = copy.deepcopy(evidence)
+                    del mutated[0]['nativeCompletion'][phase]
+                    self.assertTrue(self.verify(mutated)[0])
+                for value in (None, [], True, dict(expected, stop=0)):
+                    mutated = copy.deepcopy(evidence)
+                    mutated[0]['nativeCompletion'] = value
+                    self.assertTrue(self.verify(mutated)[0])
+                mutated = copy.deepcopy(evidence)
+                del mutated[0]['nativeCompletion']
+                self.assertTrue(self.verify(mutated)[0])
+
+    def test_kindle_completion_cannot_swap_sp_and_client_phases_or_claim_an_unflushed_attempt(self):
+        for kind, phases in (('sp', dict(perform=2, complete=0, flush=2)),
+                             ('mp', dict(perform=2, complete=2, flush=2)),
+                             ('sp', dict(perform=2, complete=2, flush=1)),
+                             ('mp', dict(perform=1, complete=0, flush=2))):
+            self.selection['kind'] = kind
+            evidence = self.evidence('kindle-retry')
+            evidence[0]['nativeCompletion'] = phases
+            with self.subTest(kind=kind, phases=phases): self.assertTrue(self.verify(evidence)[0])
 
     def test_native_conserved_root_endpoint_and_return_subset_are_observable(self):
         self.selection['mode'] = 'native'
@@ -220,6 +257,35 @@ class FireIgnitionVerifierTests(unittest.TestCase):
         evidence[0].update(tailRead=False, tailProgress=False, status='failed', reason='native-independent-tail-not-preserved')
         evidence[2][0]['tailRead'] = False
         self.assertEqual(self.verify(evidence)[::2], ([], 'native-independent-tail-not-preserved'))
+
+    def test_native_unfinished_unlit_retry_preserves_failed_control_and_exact_fuel(self):
+        self.selection.update(mode='native', kind='mp')
+        evidence = self.exhausted_kindling()
+        result, _, receipts = evidence
+        for rows in (result['resources'], receipts[0]['resources']):
+            rows[-1].update(consumed=False, rootCount=1)
+        result.update(tokenCancelled=True, retryBeforeReturns=False,
+                      status='failed', reason='native-retry-not-before-returns')
+        issues, outcome, reason = self.verify(evidence)
+        self.assertEqual(issues, [])
+        self.assertEqual(reason, 'native-retry-not-before-returns')
+        self.assertFalse(outcome['outcome']['lit'])
+        self.assertFalse(outcome['outcome']['resources'][-1]['consumed'])
+        self.assertTrue(outcome['outcome']['tokenCancelled'])
+        for key in ('effectFuel', 'fuel'):
+            mutated = copy.deepcopy(evidence)
+            mutated[0][key] = mutated[2][0][key] = 359
+            with self.subTest(key=key): self.assertTrue(self.verify(mutated)[0])
+        mutated = copy.deepcopy(evidence)
+        mutated[0].update(retryBeforeReturns=True, status='passed', reason=None)
+        self.assertIn('Unfinished native Kindle trial lacks a functional failure', self.verify(mutated)[0])
+        mutated = copy.deepcopy(evidence)
+        mutated[2][0]['resources'][-1]['rootCount'] = 0
+        self.assertTrue(self.verify(mutated)[0])
+        self.selection['mode'] = 'toolkit'
+        evidence[0].update(nativeCompletion=dict(perform=2, complete=0, flush=2),
+                           tokenCancelled=False, retryBeforeReturns=True, status='passed', reason=None)
+        self.assertIn('Unlit Kindle trial did not consume every optional stick', self.verify(evidence)[0])
 
     def single_kindling(self, case, lit=False, broken=False, cancelled=False):
         evidence = self.evidence(case)

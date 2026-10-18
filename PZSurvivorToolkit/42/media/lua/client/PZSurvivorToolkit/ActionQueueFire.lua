@@ -602,10 +602,12 @@ ISLightFromKindle.perform = function(action, ...)
     return Operations.perform(action, perform, ...)
 end
 classes[ISLightFromKindle].methods.perform = ISLightFromKindle.perform
-Operations.registerProducer("toolkit.fire", Fire.supports, function(parent, child)
+Operations.registerProducer("toolkit.fire", function(action)
+    return getmetatable(action) == ISLightFromKindle and Fire.supports(action)
+end, function(parent, child)
     if getmetatable(child) ~= ISLightFromKindle or child.character ~= parent.character or child.campfire ~= parent.campfire
         or child.plank ~= parent.plank or child.onStartFunc or child.onCompleteFunc or child.onCancelFunc then return false end
     records[child] = actionRecord(child, records[parent].saved, ISLightFromKindle, parent.character)
     return Fire.supports(child), "before-returns"
-end)
+end, true)
 return Fire

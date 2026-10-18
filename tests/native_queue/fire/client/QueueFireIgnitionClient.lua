@@ -10,6 +10,59 @@ local priorTailFailure=false
 local enabled=selection.mode=='toolkit'
 local hasP4=false
 for _,mod in ipairs(selection.mods) do if mod=='P4TidyUpMeister' then hasP4=true end end
+local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+local begin,finish,flush=lifecycle.begin,lifecycle.finish,lifecycle.flush
+local function observed(action)
+ return state and state.case=='kindle-retry' and action and action.Type=='ISLightFromKindle'
+end
+lifecycle.begin=function(action,phase)
+ local active=begin(action,phase)
+ if not observed(action) then return active end
+ assert(active==enabled,'wrong native Kindle completion boundary mode')
+ if not active then return active end
+ local queue=ISTimedActionQueue.queues[action.character]
+ assert(action.character==getPlayer() and queue and queue.current==action and queue.queue[1]==action
+  and lifecycle.current(action.character)==action and action.action,'native Kindle completion ownership missing')
+ local record=state.completionActions[action]
+ if phase=='perform' then
+  assert(not record,'duplicate native Kindle perform boundary')
+  record={native=action.action};state.completionActions[action]=record
+ else
+  assert(phase=='complete' and selection.kind=='sp' and record and record.perform=='finished',
+   'native Kindle complete preceded perform or ran on the client')
+ end
+ assert(record.native==action.action and not record[phase],'duplicate or replaced native Kindle completion phase')
+ record[phase]='begun'
+ return active
+end
+lifecycle.finish=function(action,phase,succeeded)
+ finish(action,phase,succeeded)
+ if not observed(action) or not enabled then return end
+ local record=state.completionActions[action]
+ assert(record and record[phase]=='begun' and succeeded,'native Kindle completion phase did not finish once')
+ record[phase]='finished';state.nativeCompletion[phase]=state.nativeCompletion[phase]+1
+end
+lifecycle.flush=function(queue)
+ local action=queue.current
+ local record=observed(action) and state.completionActions[action]
+ local absent=record and not queue.character:getCharacterActions():contains(record.native)
+ local tailStarted=record and state.tail:isStarted()
+ local outcome,finished=flush(queue)
+ if record and outcome=='completed' then
+  assert(finished==action and not record.flushed and absent and record.perform=='finished'
+   and (selection.kind=='mp' or record.complete=='finished'),'native Kindle flushed before completion/removal or twice')
+  assert(not tailStarted,'independent reader started before native Kindle completion')
+  record.flushed=true;state.nativeCompletion.flush=state.nativeCompletion.flush+1
+ end
+ return outcome,finished
+end
+local function completionSettled()
+ if state.case~='kindle-retry' then return end
+ local count=enabled and state.attempts or 0
+ assert(state.nativeCompletion.perform==count and state.nativeCompletion.complete==(selection.kind=='sp' and count or 0)
+  and state.nativeCompletion.flush==count,'native Kindle completion counts differ from real attempts')
+ for _,record in pairs(state.completionActions) do assert(record.flushed,'native Kindle completion did not settle before reader') end
+end
 function Client.response(command,value)
  if not state then return end
  assert(value.ok~=false,value.error)
@@ -24,6 +77,7 @@ end
 local function change(phase)state.phase=phase;state.since=getTimestampMs()end
 local function reset(case)
  state={case=case,since=getTimestampMs(),phase='prepare',pickup={},returns={},actions={},attempts=0,
+  completionActions={},nativeCompletion={perform=0,complete=0,flush=0},
   expanded=false,actionProgress=false,tailProgress=false,returnedBeforeTail=false,retryBeforeReturns=true,tidyReturns={},petrolBeforeTail=false}
 end
 local function locate(player)
@@ -157,6 +211,7 @@ function Client.tick(player,case)
   if current then recordTransfer(current,player) end
   observeTidy(player,q)
   if current==state.tail and state.tail:isStarted() and state.tail:getJobDelta()>0 then
+   completionSettled()
    if not state.tailProgress then
     for _,entry in ipairs(state.ids.resources) do if entry.role=='petrol' then
      state.petrolBeforeTail=player:getInventory():getItemById(entry.id)~=nil
@@ -183,6 +238,7 @@ function Client.tick(player,case)
   end
   if #q.queue>0 or player:hasTimedActions() then return end
   assert(state.expanded and state.actionProgress,'native ignition action progress absent')
+  completionSettled()
   for _,entry in ipairs(state.ids.resources) do
    if entry.source=='crate' then assert(state.pickup[entry.id],'native ignition pickup evidence absent '..entry.role) end
   end
@@ -234,6 +290,7 @@ function Client.tick(player,case)
    returnedBeforeTail=state.returnedBeforeTail,retryBeforeReturns=state.retryBeforeReturns,
    tokenCancelled=state.first.toolkitQueueOperation and state.first.toolkitQueueOperation.toolkitCancelled==true or false,
    tidyReturns={},petrolBeforeTail=state.petrolBeforeTail}
+  if case=='kindle-retry' then result.nativeCompletion=state.nativeCompletion end
   for _,id in ipairs(sorted(state.tidyReturns)) do result.tidyReturns[#result.tidyReturns+1]=state.tidyReturns[id] end
   for key,value in pairs(receipt) do if key~='case' then result[key]=value end end
   state=nil;priorTailFailure=false;return result

@@ -195,3 +195,107 @@ local observed,problem=Ignition.verify(player,'bbq-kindle')
 assert(observed,problem)
 assert(observed.effectFuel==360 and observed.fuel==359,'native fuel effect was sampled after burning')
 print('Fire ignition observation precedes next-frame native fuel burn.')
+
+-- Report actual failed controls without weakening Toolkit ignition/resource gates.
+function SCampfireSystem.instance:addCampfire(sq)
+ local iso={square=sq,getObjectIndex=objectIndex};sq:AddSpecialObject(iso)
+ local target={fuelAmt=0,isLit=false,square=sq,iso=iso}
+ function target:getIsoObject()return self.iso end
+ function target:addFuel(value)self.fuelAmt=self.fuelAmt+value end
+ targets[sq]=target;return target
+end
+function player.inventory:Remove(item)
+ for i,value in ipairs(self.items) do if value==item then table.remove(self.items,i);return end end
+end
+sendRemoveItemFromContainer=function()end
+selection.mode='toolkit'
+ids=Ignition.prepare(player,'kindle-retry')
+item(ids):setAlreadyReadPages(20)
+assert(not Ignition.verify(player,ids.case),'Toolkit unlit retry with unused sticks must fail')
+selection.mode='native'
+target=targets[square(ids.x,ids.y,ids.z)];target.fuelAmt=359
+assert(not Ignition.verify(player,ids.case),'failed native retry must not hide changed fuel')
+target.fuelAmt=360
+local reserve=player.inventory:getItemById(ids.resources[3].id);reserve.condition=99
+assert(not Ignition.verify(player,ids.case),'failed native retry must not hide changed resource condition')
+reserve.condition=100
+observed,problem=Ignition.verify(player,ids.case)
+assert(observed,problem)
+assert(not observed.lit and observed.effectFuel==360 and observed.fuel==360
+ and not observed.resources[3].consumed,'failed native retry receipt fabricated ignition or resource consumption')
+
+-- Exercise the real passive observer without installing any hooks into product actions.
+do
+ local function observer(mode,kind)
+  local enabled=mode=='toolkit'
+  local config={mode=mode,kind=kind,mods={}}
+  local actor={}
+  local contains,tailStarted=false,false
+  local queue={character=actor}
+  function actor:getCharacterActions()return {contains=function()return contains end}end
+  local lifecycle={begin=function()return enabled end,finish=function()end,
+   flush=function(current)return 'completed',current.current end,
+   current=function()return queue.current end}
+  PZSurvivorToolkit={ActionQueueLifecycle=lifecycle}
+  ISTimedActionQueue={queues={[actor]=queue}}
+  getPlayer=function()return actor end
+  getTimestampMs=function()return 0 end
+  require=function(name)
+   if name=='QueueTestSelection' then return config end
+   if name=='QueueFireIgnition' or name=='QueueHealthEvents' or name=='QueueFireTidy' then return {} end
+   return true
+  end
+  local file=assert(io.open(root..'/tests/native_queue/fire/client/QueueFireIgnitionClient.lua'))
+  local source=file:read('*a');file:close()
+  source=source:gsub('\nreturn Client','\nClient.fixtureReset=reset;Client.fixtureState=function()return state end;Client.fixtureSettled=completionSettled\nreturn Client')
+  local client=assert(loadstring(source))()
+  client.fixtureReset('kindle-retry')
+  local state=client.fixtureState()
+  state.tail={isStarted=function()return tailStarted end}
+  local function action()
+   local value={Type='ISLightFromKindle',character=actor,action={}}
+   queue.current=value;queue.queue={value,state.tail};return value
+  end
+  return lifecycle,client,state,action,function(value)contains=value end,function(value)tailStarted=value end
+ end
+ for _,mode in ipairs({'native','toolkit'}) do for _,kind in ipairs({'sp','mp'}) do
+  local lifecycle,client,state,action=observer(mode,kind)
+  for iteration=1,2 do
+   local parent=action()
+   assert(lifecycle.begin(parent,'perform')==(mode=='toolkit'))
+   lifecycle.finish(parent,'perform',true)
+   if kind=='sp' then
+    assert(lifecycle.begin(parent,'complete')==(mode=='toolkit'))
+    lifecycle.finish(parent,'complete',true)
+   end
+   lifecycle.flush(ISTimedActionQueue.queues[parent.character])
+  end
+  state.attempts=2;client.fixtureSettled()
+  local count=mode=='toolkit' and 2 or 0
+  assert(state.nativeCompletion.perform==count and state.nativeCompletion.complete==(kind=='sp' and count or 0)
+   and state.nativeCompletion.flush==count,'observer phase counters do not describe the real SP/Host mode')
+  client.fixtureReset('kindle-retry');state=client.fixtureState()
+  assert(state.nativeCompletion.perform==0 and state.nativeCompletion.complete==0 and state.nativeCompletion.flush==0
+   and next(state.completionActions)==nil,'a new RNG trial retained the preceding completion counters')
+ end end
+ for _,fault in ipairs({'complete-first','duplicate-perform','duplicate-finish','wrong-owner','native-present','missing-complete','duplicate-flush','early-tail','unflushed-tail'}) do
+  local lifecycle,client,state,action,contains,tailStarted=observer('toolkit','sp')
+  local parent=action();state.attempts=1
+  local ok=pcall(function()
+   if fault=='complete-first' then lifecycle.begin(parent,'complete');return end
+   if fault=='wrong-owner' then ISTimedActionQueue.queues[parent.character].current={};lifecycle.begin(parent,'perform');return end
+   lifecycle.begin(parent,'perform')
+   if fault=='duplicate-perform' then lifecycle.begin(parent,'perform');return end
+   lifecycle.finish(parent,'perform',true)
+   if fault=='duplicate-finish' then lifecycle.finish(parent,'perform',true);return end
+   if fault~='missing-complete' then lifecycle.begin(parent,'complete');lifecycle.finish(parent,'complete',true) end
+   if fault=='native-present' then contains(true) end
+   if fault=='early-tail' then tailStarted(true) end
+   if fault=='unflushed-tail' then client.fixtureSettled();return end
+   lifecycle.flush(ISTimedActionQueue.queues[parent.character])
+   if fault=='duplicate-flush' then lifecycle.flush(ISTimedActionQueue.queues[parent.character]) end
+  end)
+  assert(not ok,'native Kindle observer accepted '..fault)
+ end
+ print('Fire Kindle observer checks passed: phase ownership, exact counts, native removal, tail ordering and trial reset.')
+end

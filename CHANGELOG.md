@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.89
+
+- **Changed:** Campfire kindling retries use the shared native completion boundary while retaining exact child validation and retry-before-tool-return ordering. Unsupported engines keep the existing completion fallback.
+
 ### 0.1.88
 
 - **Fixed:** Context-menu preferences use alternating checked snapshots with readback verification, retain the legacy INI for import and refuse stale writes. Failed loads cannot overwrite saved settings; failed preference edits roll back without reporting success. Reopening the editor retries in the same profile object, and storage failure leaves ordinary menus usable.

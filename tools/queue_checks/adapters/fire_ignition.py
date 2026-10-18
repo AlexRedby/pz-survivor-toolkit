@@ -147,6 +147,13 @@ def verify_case(case, selection, result, preparedList, receiptsList):
         issues.append('Ignition action type/duration differs')
     if type(result.get('attempts')) is not int or result['attempts'] < (2 if case == 'kindle-retry' else 1):
         issues.append('Ignition native attempt count does not prove the case')
+    if case == 'kindle-retry':
+        completion = result.get('nativeCompletion')
+        count = result.get('attempts') if enabled else 0
+        expected = {'perform': count, 'complete': count if selection.get('kind') == 'sp' else 0, 'flush': count}
+        if (not isinstance(completion, dict) or set(completion) != set(expected)
+                or any(type(completion.get(key)) is not int or completion[key] != value for key, value in expected.items())):
+            issues.append('Ignition native Kindle completion phases differ')
     if type(result.get('petrolBeforeTail')) is not bool or enabled and case in PETROL_CASES and result.get('petrolBeforeTail') is not True:
         issues.append('Ignition retained petrol before reader proof differs')
     final = receipts[-1]
@@ -163,6 +170,7 @@ def verify_case(case, selection, result, preparedList, receiptsList):
         elif (key in ('expanded', 'actionProgress', 'pickupProgress') or enabled and key in ('tailProgress', 'returnedBeforeTail')
               or enabled and case == 'kindle-retry' and key == 'retryBeforeReturns') and not result[key]:
             issues.append('Ignition native progress/order missing: ' + key)
+    unfinished_native_retry = False
     for spec, receipt in zip(prepared, receipts):
         if spec.get('targetKind') != target_kind or receipt.get('targetKind') != target_kind:
             issues.append('Ignition authoritative target kind differs')
@@ -196,9 +204,12 @@ def verify_case(case, selection, result, preparedList, receiptsList):
             if (not optional or not isinstance(actual_resources, list)
                     or any(not any(isinstance(actual, dict) and actual.get('id') == row.get('id')
                                    and actual.get('consumed') is True for actual in actual_resources) for row in optional)):
-                issues.append('Unlit Kindle trial did not consume every optional stick')
+                if enabled:
+                    issues.append('Unlit Kindle trial did not consume every optional stick')
+                else:
+                    unfinished_native_retry = True
             if not _close(receipt.get('effectFuel'), initial) or not _close(receipt.get('fuel'), initial):
-                issues.append('Exhausted Kindle trial changed the initial fuel')
+                issues.append('Unlit Kindle trial changed the initial fuel')
         # Native BBQ Kindle may finish its duration without lighting or breaking the stick.
         unlit_kindle = case in ('bbq-kindle', 'fireplace-kindle') and receipt.get('lit') is False
         if unlit_kindle and (not _close(receipt.get('effectFuel'), initial) or not _close(receipt.get('fuel'), initial)):
@@ -260,9 +271,13 @@ def verify_case(case, selection, result, preparedList, receiptsList):
         if any(row.get('tailRead') is False for row in receipts): reason = 'native-independent-tail-not-preserved'
         elif result.get('returnedBeforeTail') is False: reason = 'native-returns-not-before-tail'
         elif case == 'kindle-retry' and result.get('retryBeforeReturns') is False: reason = 'native-retry-not-before-returns'
+        if unfinished_native_retry and reason is None:
+            issues.append('Unfinished native Kindle trial lacks a functional failure')
     if result.get('status') != ('failed' if reason else 'passed') or result.get('reason') != reason:
         issues.append('Ignition declared status/reason differs from observed outcome')
     outcome['outcome'] = {key: result.get(key) for key in ('trial', 'targetKind', 'actionType', 'nativeDuration', 'attempts', 'bookId', 'resources',
                           'lit', 'effectFuel', 'fuel', 'tailRead', 'returnedBeforeTail', 'retryBeforeReturns', 'pickupIds', 'returnIds',
                           'tokenCancelled', 'petrolBeforeTail', 'tidyReturnIds', 'tidyReturns')}
+    if case == 'kindle-retry':
+        outcome['outcome']['nativeCompletion'] = result.get('nativeCompletion')
     return issues, outcome, reason
