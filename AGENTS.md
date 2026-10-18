@@ -20,7 +20,7 @@ Do not automatically install completed changes into the user's local game. Code 
 
 - Only the current Build 42 version the user plays is supported; older versions do not need support. Moving to another major game branch has not been separately agreed.
 - Modes: single-player and Host from the game menu. A separate dedicated server is not a required target environment.
-- Players use Windows and macOS. In-game checks are allowed on both platforms, including isolated Windows environments launched independently by the agent (explicit user permission for the current task and future work). State the platform actually tested; do not present verification on one platform as verification on the other.
+- Players use Windows and macOS, but agent verification on macOS is sufficient for this project. Do not pursue Windows test environments or maintain an active Windows verification requirement; whoever runs the project on Windows checks it there. State the platform actually tested; do not present verification on one platform as verification on the other.
 - Run in-game checks with separate test settings and saves, without changing the user's current settings or saves.
 
 ## Proportionate checks

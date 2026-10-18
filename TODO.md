@@ -1,7 +1,3 @@
-# Crafting on the Primitive Forge
-
-- [ ] On the next full Forge Windows Host check, enable `preload_toolkit_fonts: true`, keep the game and isolated snapshot on the same drive, and retain the exact font messages and early-phase activation line. The runner now passes the selected font bootstrap through a game-relative JAR path; the historical seven errors remain unverified because their raw Windows artifacts are not available locally. Preserve the recorded functional forge result and separate runtime verdict; do not reclassify or rewrite historical reports.
-
 # Faster animation development
 
 - [ ] Pass the expected scenes and time windows of the selected bank to the shared cart analyzer instead of sprint16/`--partial`; retain separate checks for movement, grip, body/clothing and runtime. Check missing scenes, incorrect phases and same-tick receipts with negative tests.
