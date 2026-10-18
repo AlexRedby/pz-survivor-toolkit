@@ -29,7 +29,7 @@ class QueueReportTests(unittest.TestCase):
 
     def freeze(self, root):
         paths = [path for path in root.iterdir() if path.is_file() and path.name in
-                 ("selection.json", "runtime.json", "settings-fingerprint.json", "source-manifest.json", "manifest.json", "initial-settings.json")]
+                 ("selection.json", "runtime.json", "settings-fingerprint.json", "source-manifest.json", "manifest.json", "initial-settings.json", "game-inputs.json")]
         for role in ("server", "client1", "client2"):
             for sub in ("mods", "classes", "Lua"):
                 paths += [path for path in (root / role / sub).rglob("*") if path.is_file()]
@@ -42,7 +42,8 @@ class QueueReportTests(unittest.TestCase):
                      "mods": ["PZSurvivorToolkit"], "languages": ["EN"] if kind == "sp" else ["EN", "RU"], "expected_checks": 3}
         report.write_json(root / "selection.json", selection)
         report.write_json(root / "source-manifest.json", {str(self.source): self.digest(self.source)})
-        report.write_json(root / "runtime.json", {"kind": kind})
+        report.write_json(root / "runtime.json", {"kind": kind, 'game': str(self.base / 'game')})
+        report.write_json(root / 'game-inputs.json', report.game_inputs(self.base / 'game'))
         report.write_json(root / "settings-fingerprint.json", {"sha256": "a" * 64})
         report.write_json(root / "manifest.json", {"mods": []})
         report.write_json(root / "initial-settings.json", {"voiceEnable": False})
@@ -97,6 +98,24 @@ class QueueReportTests(unittest.TestCase):
                 self.assertEqual(result["status"], "passed", result)
                 self.assertEqual(len(result["coverage"]), 1 if kind == "sp" else 2)
                 self.assertIn("Execution: completed", report.summary(result))
+                self.assertEqual(['media/lua', 'media/scripts'], result['provenance']['game_input_trees'])
+                del result['provenance']['game_input_trees']
+                self.assertIn('Live game trees: unsealed (legacy report)', report.summary(result))
+
+    def test_missing_native_input_seal_or_added_input_cannot_pass_report(self):
+        for change in ('legacy', 'added'):
+            root = self.fixture(change)
+            if change == 'legacy':
+                (root / 'game-inputs.json').unlink()
+                self.freeze(root)
+            else:
+                script = self.base / 'game/media/scripts/added.txt'
+                script.parent.mkdir(parents=True)
+                script.write_text('module Changed {}\n')
+            with self.subTest(change=change):
+                result = report.build_report(root, self.catalog)
+                self.assertEqual('failed', result['status'])
+                self.assertFalse(result['provenance']['verified'])
 
     def test_setup_identity_settings_and_case_list_are_required(self):
         changes = [{"actor": "client2"}, {"suite": "wrong"}, {"mode": "native"}, {"kind": "mp"},

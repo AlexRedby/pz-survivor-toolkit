@@ -8,6 +8,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
+from queue_checks.report import game_inputs
+
 spec = importlib.util.spec_from_file_location('tag_restart', ROOT / 'tests/native_tags/run.py')
 tags = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tags)
@@ -96,7 +98,9 @@ class RestartSeed(unittest.TestCase):
                          tagRules=True, cases=tags.CASES, mods=['PZSurvivorToolkit'], ports=[17493,17494], languages=['EN','RU'])
         (self.run/'server/Server/queue-smoke.ini').write_text('DefaultPort=17493\nUDPPort=17494\nMods=PZSurvivorToolkit;ActionQueueTest\n')
         tags.write_json(self.run / 'selection.json', selection)
-        tags.write_json(self.run / 'runtime.json', dict(server_name='queue-smoke'))
+        game = self.root / 'game'; game.mkdir()
+        tags.write_json(self.run / 'runtime.json', dict(server_name='queue-smoke', game=str(game)))
+        tags.write_json(self.run / 'game-inputs.json', game_inputs(game))
         tags.write_json(self.run / 'manifest.json', [dict(id='PZSurvivorToolkit', files={'product.lua':'hash'})])
         source = self.output / 'source/product.lua'
         source.parent.mkdir(parents=True);source.write_text('source')

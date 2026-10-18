@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 import zipfile
-from . import adapters, worlds, pack, admission
+from . import adapters, worlds, pack, admission, report
 
 
 VERSION = re.compile(r"\d+(?:\.\d+)*")
@@ -250,9 +250,9 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         sources += [template / 'world.json', *[template / 'state' / name for name in world['files']]]
     if locked:
         sources += [Path(locked), project / 'SurvivorQoL-selected.ini']
-    # Pin the native Lua inputs too; a game update must invalidate a prepared run.
-    if (game / "media/lua").is_dir():
-        sources += sorted((game / "media/lua").rglob("*.lua"))
+    # File membership matters too: newly added Lua/scripts are live game inputs.
+    game_input_manifest = report.game_inputs(game)
+    sources += [game / tree / name for tree, files in game_input_manifest['trees'].items() for name in files]
     source_manifest = {str(path): sha256(path) for path in sources}
     manifest = [{"id": identifier, "source": str(source), "files": hashes(source)}
                 for identifier, source in locations.items()]
@@ -392,6 +392,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         pack.validate(locked, project, game, selection['mods'])
     _json(output / "manifest.json", manifest)
     _json(output / "source-manifest.json", source_manifest)
+    _json(output / 'game-inputs.json', game_input_manifest)
     _json(output / "runtime.json", runtime)
     initial_settings = {path.relative_to(output).as_posix(): path.read_text(encoding="utf-8")
                         for role in roles for path in [output / role / "options.ini", *sorted((output / role / "Server").glob("*"))]
@@ -399,7 +400,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     _json(output / "initial-settings.json", initial_settings)
     comparison = {"selection": {key: value for key, value in selection.items() if key != "mode"},
                   "mods": {row["id"]: row["files"] for row in manifest}, "sources": source_manifest,
-                  "settings": initial_settings}
+                  "settings": initial_settings, "game_inputs": game_input_manifest}
     if selection.get('config_source'):
         config_path = selection['config_source']
         comparison['selection'] = dict(comparison['selection'], config_source='<suite-config>')
@@ -411,6 +412,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
                                   for name, text in initial_settings.items()}
     fingerprint = hashlib.sha256(json.dumps(comparison, sort_keys=True).replace(str(output), '<run>').encode()).hexdigest()
     _json(output / "settings-fingerprint.json", {"sha256": fingerprint, "inputs": comparison})
+    if report.game_inputs(game) != game_input_manifest:
+        raise RuntimeError('Native Lua/script inputs changed while preparing snapshot')
     for path, digest in source_manifest.items():
         if sha256(Path(path)) != digest:
             raise RuntimeError("Source changed while preparing snapshot: " + path)

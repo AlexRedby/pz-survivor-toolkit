@@ -32,7 +32,7 @@ class WorldTemplateTests(unittest.TestCase):
             (path / 'frozen.txt').write_text('frozen fixture')
         for name, value in [('selection', self.selection), ('runtime', self.runtime),
                             ('settings-fingerprint', {}), ('source-manifest', {str(self.game / 'projectzomboid.jar'): native.sha256(self.game / 'projectzomboid.jar')}),
-                            ('manifest', {}), ('initial-settings', {})]:
+                            ('manifest', {}), ('initial-settings', {}), ('game-inputs', report.game_inputs(self.game))]:
             report.write_json(self.run / (name + '.json'), value)
         report.write_json(self.run / 'snapshot-hashes.json', native.hashes(self.run))
         self.execution = {'status': 'completed', 'processes': {'client1': {'pid': 999999, 'exit_code': -15}}}

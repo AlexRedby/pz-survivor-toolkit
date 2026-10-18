@@ -30,7 +30,8 @@ class NativeSnapshotTests(unittest.TestCase):
         sample.start()
         self.addCleanup(sample.stop)
         self.project, self.game, self.jdk = [self.root / name for name in ("project", "game", "jdk")]
-        for relative in ("projectzomboid.jar", "media/lua/shared/native.lua"):
+        for relative in ("projectzomboid.jar", "media/lua/shared/native.lua", "media/scripts/items.txt",
+                         "media/lua/shared/Translate/EN/Fixture_EN.txt"):
             self.write(self.game / relative, "native input")
         for relative in ("bin/java", "bin/javac"):
             self.write(self.jdk / relative, "fake Java executable")
@@ -149,11 +150,13 @@ class NativeSnapshotTests(unittest.TestCase):
         original = self.project / "Toolkit/42/media/lua/shared/test.lua"
         self.assertEqual(source[str(original)], native.sha256(original))
         self.assertIn(str(self.game / "media/lua/shared/native.lua"), source)
+        self.assertIn(str(self.game / 'media/scripts/items.txt'), source)
+        self.assertIn(str(self.game / 'media/lua/shared/Translate/EN/Fixture_EN.txt'), source)
         self.assertIn(str(self.project / "tools/queue_checks/report.py"), source)
         self.assertIn(str(self.project / "tools/check_action_queue.py"), source)
         self.assertIn(str(self.project / "tests/native_queue/catalog.json"), source)
         snapshot = json.loads((output / "snapshot-hashes.json").read_text())
-        for relative in ("selection.json", "runtime.json", "initial-settings.json", "client1/classes/ToolkitSmokeLauncher.class",
+        for relative in ("selection.json", "runtime.json", "initial-settings.json", "game-inputs.json", "client1/classes/ToolkitSmokeLauncher.class",
                          "client1/Lua/queue-expected-mods.txt", "client1/mods/ActionQueueTest/42/media/lua/shared/QueueTestSelection.lua"):
             self.assertEqual(snapshot[relative], native.sha256(output / relative))
         copied = output / "client1/mods/PZSurvivorToolkit/42/media/lua/shared/test.lua"
@@ -165,6 +168,54 @@ class NativeSnapshotTests(unittest.TestCase):
         self.write(original, "changed after preparation")
         self.assertNotEqual(source[str(original)], native.sha256(original))
         self.assertNotEqual(copied.read_bytes(), original.read_bytes())
+
+    def test_live_game_tree_membership_and_contents_are_checked(self):
+        output = self.prepare()
+        self.assertEqual([], report.verify_manifest(output, 'source-manifest.json', True))
+        self.assertEqual([], report.verify_manifest(output, 'snapshot-hashes.json'))
+        added = self.game / 'media/lua/shared/added.lua'
+        script = self.game / 'media/scripts/items.txt'
+        original = script.read_bytes()
+        for change, expected in (('add', 'Added native game input'), ('change', 'Changed native game input'),
+                                 ('remove', 'Missing native game input')):
+            if change == 'add': added.write_text('return true\n')
+            elif change == 'change': script.write_text('changed recipe\n')
+            else: script.unlink()
+            with self.subTest(change=change):
+                self.assertTrue(any(expected in issue for issue in
+                                    report.verify_manifest(output, 'source-manifest.json', True)))
+                with patch.object(runner.sys, 'platform', 'darwin'), patch.object(runner.subprocess, 'Popen') as launch:
+                    with self.assertRaisesRegex(ValueError, expected):
+                        runner.run(output, resource_wait=0)
+                    launch.assert_not_called()
+            if added.exists(): added.unlink()
+            script.write_bytes(original)
+        self.assertEqual([], report.verify_manifest(output, 'source-manifest.json', True))
+
+    def test_native_input_drift_during_prepare_prevents_sealing(self):
+        script = self.game / 'media/scripts/items.txt'
+        original = script.read_bytes()
+        for change in ('add', 'change', 'remove'):
+            def drift(command, **kwargs):
+                self.compile(command, **kwargs)
+                if change == 'add': self.write(self.game / 'media/lua/shared/added.lua', 'return true\n')
+                elif change == 'change': script.write_text('changed recipe\n')
+                else: script.unlink()
+            self.compile_mock.side_effect = drift
+            with self.subTest(change=change), self.assertRaisesRegex(RuntimeError, 'Native Lua/script inputs changed'):
+                self.prepare(change)
+            self.assertFalse((self.root / change / 'snapshot-hashes.json').exists())
+            added = self.game / 'media/lua/shared/added.lua'
+            if added.exists(): added.unlink()
+            script.write_bytes(original)
+
+    def test_native_input_directory_symlinks_are_rejected(self):
+        outside = self.root / 'outside'; outside.mkdir()
+        self.write(outside / 'script.lua', 'return true\n')
+        (self.game / 'media/lua/linked').symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'input symlinks are unsupported'):
+            self.prepare()
+        self.assertFalse((self.root / 'run').exists())
 
     def test_source_overrides_reject_invalid_types_and_relative_paths(self):
         for sources in ([], False, {'PZSurvivorToolkit': None}, {'PZSurvivorToolkit': []},

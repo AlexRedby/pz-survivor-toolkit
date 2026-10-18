@@ -25,6 +25,7 @@ RUNTIME_FAILURE = re.compile(
     r"|database (?:disk image is malformed|is locked|is corrupt)|checksum mismatch", re.I)
 BACKGROUND_GAME_SHA256 = "e1a69eb743ede60b213a0fe7f8b83d4fcab773036d256cc4543a336f3b058a33"
 KNOWN_ROOM_GAME_SHA256 = BACKGROUND_GAME_SHA256  # Native B42.21.0 revision 4a0e9546ec only.
+GAME_INPUT_TREES = ('media/lua', 'media/scripts')
 THUMP_TILES = ({"fencing_01_" + str(i) for i in
                 (1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 24, 25, 26, 27, 28, 32, 33, 34, 35, 36,
                  40, 41, 42, 56, 57, 58, 59, 60, 64, 65, 66, 67, 68, 72, 73, 75)} |
@@ -37,6 +38,46 @@ def read_json(path):
 
 def write_json(path, value):
     Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def game_inputs(game):
+    """Seal live Lua/script trees; binary and other asset trees are outside this scope."""
+    game = Path(game).resolve()
+    trees = {}
+    for tree in GAME_INPUT_TREES:
+        root, files = game / tree, {}
+        for path in [game / 'media', root, *sorted(root.rglob('*'))]:
+            if path.is_symlink():
+                raise ValueError('Native game input symlinks are unsupported: ' + str(path))
+            if path.is_file():
+                files[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+        trees[tree] = files
+    return {'game': str(game), 'trees': trees}
+
+
+def verify_game_inputs(root):
+    try:
+        expected = read_json(root / 'game-inputs.json')
+        game = read_json(root / 'runtime.json')['game']
+        if (not isinstance(game, str) or not Path(game).is_absolute() or not isinstance(expected, dict)
+                or expected.get('game') != game or not isinstance(expected.get('trees'), dict)
+                or set(expected['trees']) != set(GAME_INPUT_TREES)
+                or any(not isinstance(files, dict) for files in expected['trees'].values())):
+            return ['Invalid native game input seal; prepare a fresh snapshot']
+        actual = game_inputs(game)
+        errors = []
+        for tree in GAME_INPUT_TREES:
+            before, after = expected['trees'][tree], actual['trees'][tree]
+            for name in sorted(before.keys() | after.keys()):
+                if name not in before:
+                    errors.append('Added native game input: ' + tree + '/' + name)
+                elif name not in after:
+                    errors.append('Missing native game input: ' + tree + '/' + name)
+                elif before[name] != after[name]:
+                    errors.append('Changed native game input: ' + tree + '/' + name)
+        return errors
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return ['Cannot verify native Lua/script inputs; prepare a fresh snapshot: ' + str(error)]
 
 
 def verify_manifest(root, filename, absolute=False):
@@ -61,8 +102,10 @@ def verify_manifest(root, filename, absolute=False):
             errors.append("Missing input: " + str(path))
         elif hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             errors.append("Changed input: " + str(path))
+    if filename == 'source-manifest.json' and absolute:
+        errors += verify_game_inputs(root)
     if filename == "snapshot-hashes.json" and not absolute:
-        required = {"selection.json", "runtime.json", "settings-fingerprint.json", "source-manifest.json", "manifest.json", "initial-settings.json"}
+        required = {"selection.json", "runtime.json", "settings-fingerprint.json", "source-manifest.json", "manifest.json", "initial-settings.json", "game-inputs.json"}
         missing = required - manifest.keys()
         if missing:
             errors.append("Snapshot metadata missing: " + ", ".join(sorted(missing)))
@@ -415,10 +458,12 @@ def build_report(root, catalog, control=None):
     runtime_status = "failed" if counts["fatal_count"] else "unclassified-errors" if counts["unclassified_count"] else "background-only" if counts["background_count"] else "clean"
     fingerprint = read_json(root / "settings-fingerprint.json")["sha256"]
     report = {"schema_version": 1, "run": str(root), "selection": selection,
-              "settings_fingerprint": fingerprint, "provenance": {"verified": not provenance_errors, "issues": provenance_errors},
+              "settings_fingerprint": fingerprint, "provenance": {"verified": not provenance_errors, "issues": provenance_errors,
+                  'game_input_trees': list(GAME_INPUT_TREES) if not provenance_errors else []},
               "functional": result, "coverage": coverage, "execution": execution,
               "runtime": dict(counts, status="unavailable" if any(not row["available"] for row in audits.values()) else runtime_status, roles=audits, microphone=microphone),
-              "limits": ["Callback-driven native fixture; physical UI, WAN and long sessions are separate coverage."]}
+              "limits": ["Callback-driven native fixture; physical UI, WAN and long sessions are separate coverage.",
+                         "Native tree seal scope: media/lua and media/scripts; other asset/binary trees are outside this seal."]}
     if control is not None:
         report["comparison"] = compare(report, control)
         if report["comparison"]["compatible"] and not counts["fatal_count"] and counts["unclassified_count"]:
@@ -465,6 +510,8 @@ def matrix(catalog, reports=()):
 def summary(report):
     lines = ["Overall: " + report["status"], "Execution: " + report["execution"]["status"], "Functional: " + report["functional"]["status"], "Runtime: " + report["runtime"]["status"],
              "Sources/snapshot: " + ("verified" if report["provenance"]["verified"] else "CHANGED")]
+    trees = report['provenance'].get('game_input_trees')
+    lines.append('Live game trees: ' + ('unsealed (legacy report)' if trees is None else ', '.join(trees) if trees else 'NOT VERIFIED'))
     for role, counts in report["functional"]["clients"].items():
         lines.append(role + ": " + ", ".join(str(counts.get(status, 0)) + " " + status for status in ("passed", "skipped", "failed", 'captured') if status != 'captured' or counts.get(status)))
     for role, audit in report["runtime"]["roles"].items():
