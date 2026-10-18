@@ -568,7 +568,14 @@
         {"id": "fuel", "producer": "fixture", "capability": "effect",
          "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
         {"id": "missing-target-after-expansion", "producer": "fixture", "capability": "effect",
-         "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]}
+         "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "literature", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "petrol", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "last-match", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "bbq-fuel", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "bbq-literature", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "bbq-petrol", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]},
+        {"id": "kindle-retry", "producer": "fixture", "capability": "effect", "kinds": ["sp", "mp"], "languages": ["EN"], "modes": ["native", "toolkit"]}
       ]
     },
     "farming": {

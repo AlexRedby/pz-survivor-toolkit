@@ -1362,3 +1362,123 @@ for _, outcome in ipairs({'canceled', 'completed', 'rejected'}) do
 end
 PZSurvivorToolkit.ActionQueueAcknowledgements=realAcknowledgements
 print('Generic native outcomes: local stop/removal waits for receipt; only canceled resumes, completed/rejected preserve independent tail without replay.')
+
+-- A replicated BBQ effect can invalidate native isValid() before local completion/Done arrives.
+do
+    load('shared/TimedActions/ISBBQLightFromPetrol.lua')
+    local previousFire, previousClient = PZSurvivorToolkit.ActionQueueFire, isClient
+    local previousEvent = Events.OnServerCommand.Add
+    local receive
+    Events.OnServerCommand.Add=function(callback) receive=callback end
+    assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
+    Events.OnServerCommand.Add=previousEvent
+    isClient=function() return true end
+    local oldGlobals, oldChange=ZomboidGlobals, IsoObjectChange
+    ZomboidGlobals, IsoObjectChange={LightFromPetrolAmount=.1}, {STATE='state'}
+    local serial=0
+    local function setup(uses, supported)
+        serial=serial+1
+        local character=player()
+        function character:getOnlineID() return 100 end
+        function character:stopOrTriggerSound() end
+        function character.inventory:contains(item) return item:getContainer()==self end
+        local source=sourceContainer()
+        local petrol, matches=borrowed(book(character).item,character.inventory),borrowed(book(character).item,character.inventory)
+        local fluid={amount=2,getAmount=function(self) return self.amount end,
+            adjustAmount=function(self,value) self.amount=value end}
+        petrol.getFluidContainer=function() return fluid end
+        petrol.getCurrentUsesFloat=function() return fluid.amount end
+        matches.uses=uses
+        matches.getCurrentUsesFloat=function(self) return self.uses end
+        matches.UseAndSync=function(self) self.uses=self.uses-1;if self.uses==0 then self.container=nil end end
+        local bbq={lit=false,gone=false,getObjectIndex=function(self) return self.gone and -1 or 1 end,
+            isLit=function(self) return self.lit end,hasFuel=function() return true end,
+            turnOn=function(self) self.lit=true end,sendObjectChange=function() end}
+        local ignition=ISBBQLightFromPetrol:new(character,bbq,matches,petrol)
+        ignition.ignoreHandsWounds=true
+        local originalReturn=transfer(character,matches,character.inventory,source)
+        originalReturn.allowMissingItems=true
+        local queue
+        operations.run(function() queue=ISTimedActionQueue.add(ignition);ISTimedActionQueue.add(originalReturn) end)
+        local token=ignition.toolkitQueueOperation
+        token.toolkitPickups={[petrol]=source,[matches]=source}
+        local reader=book(character);ISTimedActionQueue.add(reader)
+        -- The native action is already started; its real isValid/complete/stop callbacks are exercised below.
+        ignition.action.started=true
+        ignition.toolkitNativeTransaction,ignition.toolkitNativeKind=serial,'ISBBQLightFromPetrol'
+        local args={protocol=1,player=100,transaction=serial,kind=ignition.toolkitNativeKind,
+            token=string.format('00000000-0000-0000-0000-%012x',serial),state='started'}
+        local function receipt(state) args.state=state;receive('PZSurvivorToolkitActions','State',args) end
+        if supported~=false then receipt('started') end
+        PZSurvivorToolkit.ActionQueueFire={
+            canSkip=function(action) return action==ignition and not action.onCompleteFunc and not action:isValid() end,
+            skipUnavailableReturns=function(q,current)
+                if current==ignition and q.queue[2]==originalReturn and not character.inventory:contains(matches) then
+                    table.remove(q.queue,2)
+                end
+            end,
+        }
+        assert(ignition:isValid())
+        return character,queue,ignition,originalReturn,reader,token,source,petrol,matches,fluid,bbq,receipt
+    end
+    for _,scenario in ipairs({'completed-last-use','completed-return','canceled','rejected','unsupported','stale','token-changed','timeout','disabled','moving','unknown-callback'}) do
+        local character,queue,ignition,originalReturn,reader,token,source,petrol,matches,fluid,bbq,receipt=
+            setup(scenario=='completed-return' and 2 or 1,scenario~='unsupported')
+        local completed=scenario=='completed-last-use' or scenario=='completed-return'
+        if completed then assert(ignition:complete());assert(bbq.lit and fluid.amount==1.9)
+        else bbq.gone=true end
+        assert(not ignition:isValid(),'real native BBQ validity must reject the replicated effect/removed target')
+        if scenario=='disabled' then enabled=false
+        elseif scenario=='moving' then character.moving=true
+        elseif scenario=='unknown-callback' then ignition.onCompleteFunc=function() end end
+        -- Native Java stop calls Lua before removing the action from characterActions.
+        ignition:stop()
+        if scenario=='disabled' or scenario=='moving' or scenario=='unknown-callback' then
+            assert(#queue.queue==0,'unaudited/disabled/moving stops retain native reset')
+        elseif scenario=='unsupported' then
+            assert(token.toolkitCancelled and queue.toolkitGroupCancel,'no receipt retains conservative group cleanup')
+        else
+            assert(queue.toolkitOutcomeWait and not token.toolkitCancelled and not queue.toolkitGroupCancel,
+                'correlated stop must wait before canceling a possibly completed Fire operation')
+            if scenario=='completed-return' then receipt('completed') end
+            queue:tick()
+            assert(queue.current==ignition and not originalReturn.action and not reader.action,
+                'terminal ACK alone must not cross the native removal boundary')
+        end
+        character.actions[ignition.action]=nil
+        if scenario=='stale' then queue.toolkitOperationGeneration=(queue.toolkitOperationGeneration or 0)+1
+        elseif scenario=='token-changed' then ignition.toolkitQueueOperation={}
+        elseif scenario=='timeout' then acknowledgementClock=acknowledgementClock+30000
+        elseif scenario~='unsupported' and scenario~='disabled' and scenario~='moving' and scenario~='unknown-callback' then
+            receipt(completed and 'completed' or scenario)
+        end
+        queue:tick()
+        if completed then
+            assert(not token.toolkitCancelled and petrol.container==character.inventory and fluid.amount==1.9,
+                'completed server effect must keep spent petrol carried without group rollback')
+            if scenario=='completed-return' then
+                assert(queue.current==originalReturn and originalReturn.toolkitQueueOperation==token,
+                    'completed ACK must preserve the original native return and operation token')
+                originalReturn.action.done=true;frame(character)
+                assert(matches.container==source)
+            end
+            assert(queue.current==reader and not queue.toolkitOutcomeWait and not queue.toolkitGroupCancel)
+            frame(character);reader.action.done=true;frame(character)
+            assert(#queue.queue==0,'independent reading must finish after completed Fire effects and native returns')
+        elseif scenario=='canceled' or scenario=='rejected' or scenario=='unsupported' then
+            assert(token.toolkitCancelled and not originalReturn.action and not reader.action)
+            while queue.current~=reader do
+                local cleanup=queue.current
+                assert(cleanup and cleanup.toolkitQueueReturn and cleanup.destContainer==source)
+                cleanup.action.done=true;frame(character)
+            end
+            assert(petrol.container==source and matches.container==source and fluid.amount==2,
+                'canceled/rejected effects retain exact borrowed cleanup before the independent reader')
+        else assert(#queue.queue==0 and not queue.toolkitOutcomeWait,'stale/unsupported ownership must not replay work') end
+        enabled=true
+    end
+    PZSurvivorToolkit.ActionQueueFire=previousFire
+    PZSurvivorToolkit.ActionQueueAcknowledgements=realAcknowledgements
+    isClient,ZomboidGlobals,IsoObjectChange=previousClient,oldGlobals,oldChange
+end
+print('Native BBQ stop race: correlated completed/canceled/rejected outcomes, native removal, exact returns, independent reading and conservative abort guards passed.')

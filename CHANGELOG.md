@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.68
+
+- **Fixed:** A completed multiplayer fire ignition waits for its correlated server outcome before cancellation cleanup, preserving the original fuel container and queued follow-up actions.
+
 ### 0.1.67
 
 - **Fixed:** Queue behavior lookup evaluates only handlers registered for an action's type; an unrelated handler failure no longer disables other families. Matching errors and ambiguous contracts still deny control.

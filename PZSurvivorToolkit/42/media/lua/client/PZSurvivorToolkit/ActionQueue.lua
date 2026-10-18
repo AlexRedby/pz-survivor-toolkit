@@ -261,11 +261,20 @@ ISBaseTimedAction.stop = function(action)
         if Toolkit.BulkFood and Toolkit.BulkFood.missing(action) then queue.toolkitCancel = action end
         if Policy.hygieneUnavailable(action) then queue.toolkitCancel = action end
         local generators, fire, health = Toolkit.ActionQueueGenerators, Toolkit.ActionQueueFire, Toolkit.ActionQueueHealth
+        local fireUnavailable = fire and fire.canSkip and fire.canSkip(action)
         if (generators and generators.canSkip and generators.canSkip(action))
-            or (fire and fire.canSkip and fire.canSkip(action))
+            or fireUnavailable
             or (health and health.canPreserveStop and health.canPreserveStop(action)) then
-            Operations.invalidate(action.toolkitQueueOperation)
-            queue.toolkitGroupCancel = {action = action, token = action.toolkitQueueOperation}
+            local request = {action = action, token = action.toolkitQueueOperation}
+            local receipt = fireUnavailable and Toolkit.ActionQueueAcknowledgements.capture(action)
+            if receipt then
+                -- Replicated ignition/consumption can invalidate native BBQ before its completed receipt arrives.
+                queue.toolkitOutcomeWait = {acknowledgement = receipt, generic = true,
+                    deadline = getTimestampMs() + 30000, operation = request}
+            else
+                Operations.invalidate(request.token)
+                queue.toolkitGroupCancel = request
+            end
             queue.toolkitCancel = action
         end
     end
@@ -273,7 +282,8 @@ ISBaseTimedAction.stop = function(action)
         and (not queue.toolkitResume or (Toolkit.Settings.actionQueue()
             and not (action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled)))
         and not action.character:isPlayerMoving() and not action.character:pressedMovement(false) then
-        if Batch and not queue.toolkitGroupCancel and not queue.toolkitResume then Batch.discard(action) end
+        if Batch and not queue.toolkitGroupCancel and not queue.toolkitResume
+            and not (queue.toolkitOutcomeWait and queue.toolkitOutcomeWait.operation) then Batch.discard(action) end
         if queue.toolkitGroupCancel and craft(action) then Toolkit.ActionQueueCraft.nativeStopped(action) end
         queue.toolkitCancelStopped = true
         action.character:setIsFarming(false)
@@ -341,7 +351,9 @@ ISTimedActionQueue.tick = function(queue)
             local state = wait.generic and Toolkit.ActionQueueAcknowledgements.state(action, wait.acknowledgement)
                 or not wait.generic and Toolkit.ActionQueueWorld.buildState(action, wait.acknowledgement)
             if queue.character:isPlayerMoving() or queue.character:pressedMovement(false)
-                or getTimestampMs() >= wait.deadline or not state then
+                or getTimestampMs() >= wait.deadline or not state
+                or (wait.operation and (wait.operation.action ~= action or wait.operation.token ~= action.toolkitQueueOperation
+                    or (type(wait.operation.token) == "table" and wait.operation.token.toolkitCancelled))) then
                 if getTimestampMs() >= wait.deadline then
                     print("[PZSurvivorToolkit] Action interruption timed out; cleared queue without replay.")
                 end
@@ -351,6 +363,10 @@ ISTimedActionQueue.tick = function(queue)
             end
             if queue.character:getCharacterActions():contains(action.action)
                 or state == "started" or not (queue.toolkitCancelStopped or wait.localCompleted) then return end
+            if wait.operation and state ~= "completed" then
+                Operations.invalidate(wait.operation.token)
+                queue.toolkitGroupCancel = wait.operation
+            end
             local resumeAfter = queue.toolkitResume
             clearStop(queue)
             local index = resumeAfter and queue:indexOf(resumeAfter)

@@ -4,8 +4,10 @@ import math
 from pathlib import Path
 import re
 import shutil
+from . import fire_ignition as ignition
 
-CASES = ['fuel', 'missing-target-after-expansion']
+FUEL_CASES = ['fuel', 'missing-target-after-expansion']
+CASES = FUEL_CASES + ignition.CASES
 MODS = ['PZSurvivorToolkit', 'ZombieBuddy', 'PZToolkitJavaPatches']
 
 
@@ -23,12 +25,14 @@ def validate(selection):
             or selection.get('languages') != ['EN'] or type(selection.get('clients', 1)) is not int
             or selection.get('clients', 1) != 1 or not set(MODS) <= set(selection.get('mods', []))
             or selection.get('options', {}).get('world_template')):
-        raise ValueError('Fire requires ordered fuel/missing-target-after-expansion, fresh SP/MP, one EN client and Java patches')
+        raise ValueError('Fire requires ordered registered cases, fresh SP/MP, one EN client and Java patches')
+    if selection['mode'] == 'native' and 'missing-target-after-expansion' in cases and any(case not in FUEL_CASES for case in cases):
+        raise ValueError('Native missing-target-after-expansion is terminal; run ignition controls in a separate fresh session')
 
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted((root / 'fire').rglob('*.lua')), root / 'health/shared/QueueHealthEvents.lua',
+    return [Path(__file__).with_name('fire_ignition.py'), *sorted((root / 'fire').rglob('*.lua')), root / 'health/shared/QueueHealthEvents.lua',
             *sorted((root / 'startup').rglob('*.lua'))]
 
 
@@ -91,13 +95,24 @@ def verify(root, selection, catalog):
         if len(matches) != 1 or any(type(matches[0].get(key)) is not type(value) or matches[0].get(key) != value
                                     for key, value in expected.items()):
             issues.append('Fire ' + event + ' evidence differs')
-    if [row.get('id') for row in results] != cases or [row.get('case') for row in prepared] != cases or [row.get('case') for row in receipts] != cases:
+    if [row.get('id') for row in results] != cases or list(dict.fromkeys(row.get('case') for row in prepared)) != cases or list(dict.fromkeys(row.get('case') for row in receipts)) != cases:
         issues.append('Fire case/authoritative receipt selection or order differs')
     expected_removed = [case for case in cases if case == 'missing-target-after-expansion']
     if [row.get('case') for row in removals] != expected_removed:
         issues.append('Missing or duplicate authoritative Fire removal')
     for case in cases:
+        if case in ignition.CASES:
+            result = next((row for row in results if row.get('id') == case), {})
+            case_issues, outcome, failure = ignition.verify_case(case, selection, result,
+                [row for row in prepared if row.get('case') == case], [row for row in receipts if row.get('case') == case])
+            issues.extend(case_issues)
+            outcomes.append(outcome)
+            if failure:
+                case_failures[case] = failure
+            continue
         missing = case == 'missing-target-after-expansion'
+        if sum(row.get('case') == case for row in prepared) != 1 or sum(row.get('case') == case for row in receipts) != 1:
+            issues.append('Duplicate or missing authoritative Fire fuel receipt: ' + case)
         result = next((row for row in results if row.get('id') == case), {})
         prep = next((row for row in prepared if row.get('case') == case), {})
         receipt = next((row for row in receipts if row.get('case') == case), {})
@@ -159,6 +174,6 @@ def verify(root, selection, catalog):
         outcome.update(status='failed' if case_issues else 'passed', reason='; '.join(case_issues))
     issues.extend(case_failures.values())
     return {'issues': issues, 'outcomes': outcomes, 'evidence': {'limits': [
-        'Fresh world, one actor, actual campfire/menu/world-crate/transfer/read actions and native durations.',
+        'Fresh world, one actor, actual campfire/charcoal BBQ/menu/world-crate/transfer/read actions and native durations.',
         'Missing-target native control intentionally remains red; common runtime log auditing is unchanged.',
         'SP/MP and Host results require real calibration; no physical menu input, WAN or peer contention coverage.']}}

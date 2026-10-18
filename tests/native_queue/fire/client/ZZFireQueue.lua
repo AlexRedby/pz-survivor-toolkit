@@ -4,11 +4,14 @@ require 'Camping/TimedActions/ISAddFuelAction'
 require 'TimedActions/ISReadABook'
 local config=require 'QueueTestSelection'
 local Authority=require 'QueueFireAuthority'
+local Ignition=require 'QueueFireIgnition'
+local IgnitionClient=require 'QueueFireIgnitionClient'
 local JSON=require 'QueueHealthEvents'
 local enabled=config.mode=='toolkit'
 local nativeMP=config.kind=='mp' and not enabled
 local failedCases=0
 local started,done,step,phase,since=false,false,1,'prepare',0
+local setupSent=false
 local ids,source,log,book,target,fuel,pickup,tail,receipt,invalidated
 local pickupProgress,fuelProgress,tailProgress,returnProgress,expanded,removalRequested,removedBeforeFuel
 local removalTime,pickupDuration
@@ -17,6 +20,19 @@ local returnDiagnosed=false
 local function queue() return ISTimedActionQueue.getTimedActionQueue(getPlayer()) end
 local function emit(value)
  value.suite='fire';value.kind=config.kind;value.mode=config.mode;value.actor='client1';JSON.emit(value)
+end
+local function finish(result)
+ emit(result)
+ if result.status=='failed' then failedCases=failedCases+1 end
+ if step==#config.cases then
+  emit({event='complete',cases=config.cases,expected=#config.cases,performed=#config.cases,failed=failedCases,skipped=0})
+  done=true;print('[FIRE_TEST] COMPLETE');return
+ end
+ step=step+1;phase='prepare';since=getTimestampMs()
+ ids,source,log,book,target,fuel,pickup,tail,receipt,invalidated=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
+ pickupProgress,fuelProgress,tailProgress,returnProgress,expanded,removalRequested,removedBeforeFuel=false,false,false,false,false,false,false
+ progressDiagnosed,pickupRootObserved=false,false
+ returnDiagnosed=false
 end
 local function send(command)
  local case=config.cases[step]
@@ -35,6 +51,7 @@ local function crate()
 end
 Events.OnServerCommand.Add(function(module,command,value)
  if module~='FireQueueTest' then return end
+ IgnitionClient.response(command,value)
  assert(value.ok~=false,value.error)
  if command=='Prepared' then ids=value elseif command=='Invalidated' then invalidated=value elseif command=='Verified' then receipt=value end
 end)
@@ -46,15 +63,23 @@ end)
 Events.OnTick.Add(function()
  if not started or done or not isIngameState() then return end
  local ok,problem=pcall(function()
-  assert(getTimestampMs()-since<180000,'fire stage deadline '..phase)
   local player=getPlayer()
   if not player or player:isDead() or not player:getSquare() then return end
   if config.kind=='mp' and (not isClient() or player:getOnlineID()<0) then return end
   local case=config.cases[step]
+  if not setupSent then
+   setupSent=true;emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=enabled,nativeDurations=true})
+  end
+  if Ignition.cases[case] then
+   assert(PZSurvivorToolkit.Settings.actionQueue()==enabled,'wrong ignition queue option')
+   local result=IgnitionClient.tick(player,case)
+   if result then finish(result) end
+   return
+  end
+  assert(getTimestampMs()-since<180000,'fire stage deadline '..phase)
   local missing=case=='missing-target-after-expansion'
   if phase=='prepare' then
    assert(PZSurvivorToolkit.Settings.actionQueue()==enabled,'wrong fire queue option')
-   if step==1 then emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=enabled,nativeDurations=true}) end
    send('Prepare');phase='ready';return
   end
   if phase=='ready' then
@@ -173,23 +198,13 @@ Events.OnTick.Add(function()
    end
    assert(receipt.case==case and receipt.logId==ids.log and receipt.bookId==ids.book,'authority identity differs')
    local failed=not enabled and (missing or not receipt.tailRead)
-   if failed then failedCases=failedCases+1 end
-   emit({event='case',id=case,status=failed and 'failed' or 'passed',
+   finish({event='case',id=case,status=failed and 'failed' or 'passed',
     reason=failed and (missing and 'native-missing-target' or 'native-independent-tail-not-preserved') or nil,
     logId=ids.log,bookId=ids.book,condition=receipt.condition,fuelAmount=ids.fuelAmount,
     consumed=receipt.consumed,sourceCount=receipt.sourceCount,rootCount=receipt.rootCount,fuel=receipt.fuel,
     removed=receipt.removed,unspent=receipt.unspent,tailRead=receipt.tailRead,expanded=true,pickupProgress=true,
     fuelProgress=fuelProgress,tailProgress=tailProgress,returnProgress=returnProgress,
     removedDuringPickup=missing and removedBeforeFuel or false,pickupDuration=pickupDuration,nativeDuration=100,authorityVerified=true})
-   if step==#config.cases then
-    emit({event='complete',cases=config.cases,expected=#config.cases,performed=#config.cases,failed=failedCases,skipped=0})
-    done=true;print('[FIRE_TEST] COMPLETE');return
-   end
-   step=step+1;phase='prepare';since=getTimestampMs()
-   ids,source,log,book,target,fuel,pickup,tail,receipt,invalidated=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
-   pickupProgress,fuelProgress,tailProgress,returnProgress,expanded,removalRequested,removedBeforeFuel=false,false,false,false,false,false,false
-   progressDiagnosed,pickupRootObserved=false,false
-   returnDiagnosed=false
   end
  end)
  if not ok then done=true;emit({event='error',message=tostring(problem)});print('[QUEUE_TEST] FAIL fire '..tostring(problem)) end

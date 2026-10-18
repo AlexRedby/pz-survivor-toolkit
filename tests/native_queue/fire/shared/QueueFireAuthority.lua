@@ -1,5 +1,6 @@
 local Authority,sessions={},{}
 local selection=require 'QueueTestSelection'
+local Ignition=require 'QueueFireIgnition'
 local JSON=require 'QueueHealthEvents'
 local function exact(container,id)
  local item=container:getItemById(id)
@@ -15,6 +16,7 @@ local function count(container,id)
  return total
 end
 function Authority.prepare(player,case)
+ if Ignition.cases[case] then return Ignition.prepare(player,case) end
  assert(not sessions[player:getUsername()],'duplicate fire preparation')
  assert(case=='fuel' or case=='missing-target-after-expansion','unknown fire case')
  require 'Camping/SCampfireSystem'
@@ -58,6 +60,7 @@ function Authority.invalidate(player,case)
  return {case=case,ok=true}
 end
 function Authority.verify(player,case)
+ if Ignition.cases[case] then return Ignition.verify(player,case) end
  local state=assert(sessions[player:getUsername()])
  assert(state.ids.case==case,'out-of-order fire verification')
  local missing=case=='missing-target-after-expansion'

@@ -16,7 +16,7 @@ class FireAdapterTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.selection = dict(suite='fire', cases=list(fire.CASES), kind='sp', mode='toolkit',
+        self.selection = dict(suite='fire', cases=list(fire.FUEL_CASES), kind='sp', mode='toolkit',
                               languages=['EN'], mods=list(fire.MODS), clients=1, options={})
 
     def evidence(self):
@@ -63,12 +63,23 @@ class FireAdapterTests(unittest.TestCase):
     def test_toolkit_sp_mp_and_native_fuel_success(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
-                self.selection.update(kind=kind, mode=mode, cases=['fuel'] if mode == 'native' else list(fire.CASES))
+                self.selection.update(kind=kind, mode=mode, cases=['fuel'] if mode == 'native' else list(fire.FUEL_CASES))
                 with self.subTest(kind=kind, mode=mode):
                     fire.validate(self.selection)
                     result = self.verify()
                     self.assertEqual(result['issues'], [])
                     self.assertTrue(all(row['status'] == 'passed' for row in result['outcomes']))
+
+    def test_native_terminal_failure_cannot_contaminate_following_ignition(self):
+        for cases in (['missing-target-after-expansion'], list(fire.FUEL_CASES),
+                      list(fire.ignition.CASES), ['fuel'] + list(fire.ignition.CASES)):
+            fire.validate(dict(self.selection, mode='native', cases=cases))
+        for case in fire.ignition.CASES:
+            with self.subTest(case=case), self.assertRaisesRegex(ValueError, 'terminal'):
+                fire.validate(dict(self.selection, mode='native', cases=['missing-target-after-expansion', case]))
+        with self.assertRaisesRegex(ValueError, 'terminal'):
+            fire.validate(dict(self.selection, mode='native', cases=list(fire.CASES)))
+        fire.validate(dict(self.selection, mode='toolkit', cases=list(fire.CASES)))
 
     def test_native_missing_outcome_is_recorded_but_never_a_runtime_pass(self):
         for kind in ('sp', 'mp'):
@@ -207,6 +218,7 @@ class FireAdapterTests(unittest.TestCase):
         paths = fire.sources(ROOT, self.selection)
         self.assertTrue(set((ROOT / 'tests/native_queue/fire').rglob('*.lua')) <= set(paths))
         self.assertIn(ROOT / 'tests/native_queue/health/shared/QueueHealthEvents.lua', paths)
+        self.assertIn(ROOT / 'tools/queue_checks/adapters/fire_ignition.py', paths)
         self.assertTrue(fire.complete(self.selection, 'client1', '[FIRE_TEST] COMPLETE\n'))
         for text in ('[FIRE_TEST] COMPLETE_PENDING', '[FIRE_TEST] COMPLETE\n[FIRE_TEST] COMPLETE'):
             self.assertFalse(fire.complete(self.selection, 'client1', text))

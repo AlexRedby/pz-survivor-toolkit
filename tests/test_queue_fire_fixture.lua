@@ -1,7 +1,7 @@
 -- Authority must distinguish exact returned fuel, consumption and duplicated IDs.
 local root=ProjectRoot or '.'
 local selection={mode='toolkit'}
-local modules={QueueTestSelection=selection,QueueHealthEvents={encode=function()return '{}' end},['Camping/SCampfireSystem']=true}
+local modules={QueueFireIgnition={cases={}},QueueTestSelection=selection,QueueHealthEvents={encode=function()return '{}' end},['Camping/SCampfireSystem']=true}
 local nativeRequire=require
 require=function(name)if modules[name]~=nil then return modules[name] end;return nativeRequire(name)end
 local nextID,removed,packets=10,{},0
