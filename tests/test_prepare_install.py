@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -115,9 +116,65 @@ class PrepareInstall(unittest.TestCase):
             prepare_install.prepare(self.root)
         self.assertEqual(self.sentinel.read_text(), "previous prepared set")
         self.jar.symlink_to(self.sentinel)
-        with self.assertRaisesRegex(ValueError, "javaJarFile"):
+        with self.assertRaisesRegex(ValueError, "symbolic link in mod source"):
             prepare_install.prepare(self.root)
         self.assertEqual(self.sentinel.read_text(), "previous prepared set")
+
+    def test_source_links_are_rejected_before_replacing_prepared_set(self):
+        outside = self.root / "external"
+        outside.mkdir()
+        sentinel = outside / "private.txt"
+        sentinel.write_text("synthetic external sentinel")
+        for source in (self.root / "PZSurvivorToolkit", self.patch):
+            for target in (sentinel, outside, outside / "missing"):
+                with self.subTest(source=source, target=target):
+                    link = source / "42/external"
+                    link.symlink_to(target, target_is_directory=target == outside)
+                    self.build.reset_mock()
+                    try:
+                        with self.assertRaisesRegex(ValueError, "symbolic link in mod source"):
+                            prepare_install.prepare(self.root)
+                        if source != self.patch:
+                            self.build.assert_not_called()
+                        self.assertEqual(self.sentinel.read_text(), "previous prepared set")
+                        self.assertEqual(list((self.root / "dist").iterdir()), [self.output])
+                        self.assertEqual(sentinel.read_text(), "synthetic external sentinel")
+                    finally:
+                        link.unlink()
+
+    def test_packaging_rejects_source_links_without_overwriting_archive(self):
+        mod = self.root / "PZSurvivorToolkit"
+        output = self.root / "previous.zip"
+        output.write_bytes(b"previous archive")
+        for target in (self.sentinel, self.output, self.root / "missing"):
+            with self.subTest(target=target):
+                link = mod / "42/external"
+                link.symlink_to(target, target_is_directory=target == self.output)
+                try:
+                    self.assertTrue(package_mod.validate(mod))
+                    with self.assertRaisesRegex(ValueError, "symbolic link in mod source"):
+                        package_mod.package(output, mod)
+                    self.assertEqual(output.read_bytes(), b"previous archive")
+                finally:
+                    link.unlink()
+        package_mod.package(output, mod)
+        with zipfile.ZipFile(output) as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertEqual(archive.read("PZSurvivorToolkit/42/mod.info"), (mod / "42/mod.info").read_bytes())
+
+    def test_symlink_mod_roots_are_rejected(self):
+        for source in (self.root / "PZSurvivorToolkit", self.patch):
+            with self.subTest(source=source):
+                original = source.with_name(source.name + "-original")
+                source.rename(original)
+                source.symlink_to(original, target_is_directory=True)
+                try:
+                    with self.assertRaisesRegex(ValueError, "symbolic link in mod source"):
+                        prepare_install.prepare(self.root)
+                    self.assertEqual(self.sentinel.read_text(), "previous prepared set")
+                finally:
+                    source.unlink()
+                    original.rename(source)
 
     def test_ini_requires_every_local_mod_without_local_workshop_entries(self):
         for invalid in (

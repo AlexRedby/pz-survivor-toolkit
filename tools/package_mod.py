@@ -13,10 +13,19 @@ MOD_ROOT = ROOT / "PZSurvivorToolkit"
 MOD_NAMES = {"PZSurvivorToolkit": "PZ Survivor Toolkit"}
 
 
+def validate_no_symlinks(mod_root: Path) -> list[str]:
+    if mod_root.is_symlink():
+        return [f"symbolic link in mod source: {mod_root}"]
+    return [f"symbolic link in mod source: {path}" for path in sorted(mod_root.rglob("*"))
+            if path.is_symlink()]
+
+
 def validate(mod_root: Path = MOD_ROOT) -> list[str]:
     mod_info = mod_root / "42/mod.info"
     bootstrap = mod_root / "42/media/lua/shared" / (mod_root.name + ".lua")
-    errors: list[str] = []
+    errors = validate_no_symlinks(mod_root)
+    if errors:
+        return errors
     if not mod_root.is_dir():
         return [f"missing mod directory: {mod_root}"]
     for required in (mod_root / "common", mod_root / "42"):
@@ -51,6 +60,9 @@ def validate(mod_root: Path = MOD_ROOT) -> list[str]:
 
 
 def package(output: Path, mod_root: Path = MOD_ROOT) -> None:
+    errors = validate(mod_root)
+    if errors:
+        raise ValueError("; ".join(errors))
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(f"{mod_root.name}/common/", b"")

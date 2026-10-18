@@ -11,9 +11,9 @@ import sys
 import tempfile
 
 try:
-    from .package_mod import ROOT, validate
+    from .package_mod import ROOT, validate, validate_no_symlinks
 except ImportError:
-    from package_mod import ROOT, validate
+    from package_mod import ROOT, validate, validate_no_symlinks
 
 
 MOD_IDS = ("PZSurvivorToolkit", "PZToolkitJavaPatches")
@@ -56,6 +56,9 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
     subprocess.run(command, cwd=root, check=True)
 
     patch = root / "JavaPatches/build" / MOD_IDS[1]
+    errors = validate_no_symlinks(patch)
+    if errors:
+        raise ValueError("; ".join(errors))
     info = metadata(patch / "42/mod.info")
     if info.get("id") != MOD_IDS[1] or not (patch / "common").is_dir():
         raise ValueError("Generated Java patch mod has an invalid ID or missing common directory")
