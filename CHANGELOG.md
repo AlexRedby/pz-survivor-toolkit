@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.81
+
+- **Fixed:** Better Generator Info queue integration accepts its reviewed source in the game as well as the test runtime. Source checks now share UTF16 normalization, bounded reads and reader cleanup across compatibility, fire, generator and medical adapters; changed or unverified sources remain protected.
+
 ### 0.1.80
 
 - **Fixed:** Verified native crafting UI batches skip an exhausted pool of selected one-use items before the next craft starts, preserving tool cleanup and independent queued actions. A sufficient remaining pool continues normally.

@@ -19,6 +19,9 @@ local function setup(mode)
     local loaded = {}
     require = function(name)
         if loaded[name] then return loaded[name] end
+        if name == 'PZSurvivorToolkit/SourceProof' then
+            return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/SourceProof.lua'))()
+        end
         if name == 'SaucedCarts/Core' then loaded[name] = assert(loadstring(coreSource))()
         elseif name == 'SaucedCarts/ConsumeWithCart' then loaded[name] = assert(loadstring(consumeSource))()
         else return true end

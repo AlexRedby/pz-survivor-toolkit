@@ -114,52 +114,17 @@ if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
 end) end
 
 -- getModFileReader resolves the selected B42 version, then common; no Workshop path is assumed.
--- Kahlua strings use UTF16; development Lua uses UTF8. Hash the same normalized source in both.
-local utf8Strings = string.byte("洗") == 230
-local function sourceHash(reader)
-    local a, b = 1, 0
-    local function add(value) a = (a + value) % 65521; b = (b + a) % 65521 end
-    local line = reader:readLine()
-    while line do
-        local i = 1
-        while i <= #line do
-            local value = string.byte(line, i)
-            if utf8Strings and value >= 192 then
-                local count = value < 224 and 2 or value < 240 and 3 or 4
-                value = value % (2 ^ (7 - count))
-                for offset = 1, count - 1 do value = value * 64 + string.byte(line, i + offset) % 64 end
-                i = i + count - 1
-                if value > 65535 then
-                    value = value - 65536
-                    add(55296 + math.floor(value / 1024)); value = 56320 + value % 1024
-                end
-            end
-            add(value); i = i + 1
-        end
-        add(10); line = reader:readLine()
-    end
-    return b * 65536 + a
-end
-
+local Proof = require "PZSurvivorToolkit/SourceProof"
 local function verified(id, files)
-    if not getModFileReader then return false end
     for _, file in ipairs(files or sourceFiles[id]) do
-        local ok, reader = pcall(getModFileReader, id, "media/lua/" .. file[1], false)
-        if not ok or not reader then return false end
-        local hashed, checksum = pcall(sourceHash, reader)
-        local closed = pcall(function() reader:close() end)
-        if not hashed or not closed or checksum ~= file[2] then return false end
+        if not Proof.matches("media/lua/" .. file[1], file[2], id, true) then return false end
     end
     return true
 end
 Compat.verifySources = verified
 
 local quartermasterContainers
-local function quartermasterClosure(callback, filename)
-    if type(callback) ~= "function" or type(getFilenameOfClosure) ~= "function" then return false end
-    local ok, source = pcall(getFilenameOfClosure, callback)
-    return ok and type(source) == "string" and source:gsub("\\", "/"):match("([^/]+)$") == filename
-end
+local quartermasterClosure = Proof.closure
 function Compat.matchesQuartermasterContainerGetter(previous, replacement)
     local saved = quartermasterContainers
     if not saved or saved.previous ~= previous or saved.replacement ~= replacement or LootSorter ~= saved.owner

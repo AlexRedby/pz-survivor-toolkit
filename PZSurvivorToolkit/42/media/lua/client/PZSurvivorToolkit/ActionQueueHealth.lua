@@ -26,33 +26,13 @@ local panelHelpers = {}
 local containersHelper
 local containerAdapter, containerGuard
 local playerLookup = getPlayerByOnlineID
+local Proof = require "PZSurvivorToolkit/SourceProof"
 local function nativeClosure(callback, filename)
-    if type(getFilenameOfClosure) ~= "function" then return false end
-    local ok, source = pcall(getFilenameOfClosure, callback)
-    return ok and type(source) == "string" and source:gsub("\\", "/"):match("([^/]+)$") == (filename or "ISHealthPanel.lua")
+    return Proof.closure(callback, filename or "ISHealthPanel.lua")
 end
 local function nativeSource(path, expected, mod)
-    local input = mod and getModFileReader or getGameFilesInput
-    if type(input) ~= "function" then return false end
-    local ok, reader
-    if mod then ok, reader = pcall(input, mod, path, false)
-    else ok, reader = pcall(input, path or "media/lua/client/XpSystem/ISUI/ISHealthPanel.lua") end
-    if not ok or not reader then return false end
-    local valid, hash = pcall(function()
-        local value, bytes = 5381, 0
-        while true do
-            local line = reader:readLine()
-            if not line then break end
-            bytes = bytes + #line + 1
-            if bytes > 300000 then return end
-            for i = 1, #line do value = (value * 33 + string.byte(line, i)) % 4294967296 end
-            value = (value * 33 + 10) % 4294967296
-        end
-        return value
-    end)
-    pcall(function() reader:close() end)
-    -- shortcut: private handlers require this reviewed B42.21 source; re-audit the adapter when the source changes.
-    return valid and hash == (expected or 3948596941)
+    return Proof.matches(path or "media/lua/client/XpSystem/ISUI/ISHealthPanel.lua",
+        expected or 3948596941, mod, false, 300000)
 end
 local kinds = {HApplyBandage = 1, HDisinfect = 1, HStitch = 2, HSplint = 2, HRemoveGlass = 1,
     HRemoveBullet = 1, HCleanBurn = 1, HRemoveBandage = 0, HRemoveStitch = 0, HRemoveSplint = 0,

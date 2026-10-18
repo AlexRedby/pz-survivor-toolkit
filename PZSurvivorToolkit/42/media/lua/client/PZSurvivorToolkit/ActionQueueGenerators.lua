@@ -58,31 +58,11 @@ local kinds = {onInfoGenerator = "ISGeneratorInfoAction", onPlugGenerator = "ISP
     onTakeGenerator = "ISTakeGenerator", doAddFuelGenerator = "ISAddFuel"}
 local hashes = {ISGeneratorInfoAction = 2497952627, ISPlugGenerator = 4207143728,
     ISActivateGenerator = 844646271, ISFixGenerator = 2090470527, ISAddFuel = 1340790859, ISTakeGenerator = 2180174053}
+local Proof = require "PZSurvivorToolkit/SourceProof"
 local function sourceMatches(path, expected)
-    if type(getGameFilesInput) ~= "function" then return false end
-    local ok, reader = pcall(getGameFilesInput, "media/lua/" .. path)
-    if not ok or not reader then return false end
-    local valid, hash = pcall(function()
-        local value, bytes = 5381, 0
-        while true do
-            local line = reader:readLine()
-            if not line then break end
-            bytes = bytes + #line + 1
-            if bytes > 2000000 then return end
-            for i = 1, #line do value = (value * 33 + string.byte(line, i)) % 4294967296 end
-            value = (value * 33 + 10) % 4294967296
-        end
-        return value
-    end)
-    pcall(function() reader:close() end)
-    -- shortcut: permissions require the reviewed B42.21 Lua; re-audit when native source changes.
-    return valid and hash == expected
+    return Proof.matches("media/lua/" .. path, expected)
 end
-local function nativeClosure(callback, filename)
-    if type(callback) ~= "function" or type(getFilenameOfClosure) ~= "function" then return false end
-    local ok, source = pcall(getFilenameOfClosure, callback)
-    return ok and type(source) == "string" and source:gsub("\\", "/"):match("([^/]+)$") == filename
-end
+local nativeClosure = Proof.closure
 function Generators.prepareOverlay()
     Overlay.prepare(sourceMatches, nativeClosure)
 end

@@ -3,7 +3,8 @@ import argparse, os, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-CHECKS = {'zombie.vehicles.NativeChecks': 'NATIVE_CHECKS_PASS',
+CHECKS = {'net.alexredby.pztoolkitjavapatches.SourceProofChecks': 'SOURCE_PROOF_CHECKS_PASS',
+          'zombie.vehicles.NativeChecks': 'NATIVE_CHECKS_PASS',
           'zombie.vehicles.VehicleOwnershipChecks': 'VEHICLE_OWNERSHIP_CHECKS_PASS',
           'zombie.vehicles.VehicleTraceChecks': 'VEHICLE_TRACE_CHECKS_PASS',
           'zombie.radio.devices.MediaChecks': 'MEDIA_CHECKS_PASS',
@@ -149,7 +150,7 @@ try:
                     log = log_path(name, trace)
                     try:
                         with log.open('w') as output:
-                            result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=output, stderr=subprocess.STDOUT, timeout=args.test_timeout)
+                            result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.project=' + str(ROOT.parent), '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=output, stderr=subprocess.STDOUT, timeout=args.test_timeout)
                     except subprocess.TimeoutExpired as error:
                         print(log.read_text(errors='replace'))
                         raise RuntimeError(f'{name} timed out after {args.test_timeout} seconds; output saved to {log}') from error

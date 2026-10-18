@@ -31,7 +31,7 @@ function Overlay.prepare(sourceMatches, nativeClosure)
     require "PZSurvivorToolkit/ActionQueueCompat"
     local Compat = PZSurvivorToolkit.ActionQueueCompat
     if not Compat or not Compat.verifySources or not Compat.verifySources("BetterGeneratorInfo", files) then return false end
-    if not sourceMatches("client/BGI/BGI_PowerRange.lua", 4234097835) then return false end
+    if not sourceMatches("client/BGI/BGI_PowerRange.lua", 1926030886) then return false end
     for _, module in ipairs({"TimedActions/ISPlugGenerator", "TimedActions/ISActivateGenerator",
         "ISUI/ISWorldObjectContextMenu", "ISUI/ISGeneratorInfoWindow"}) do
         if not pcall(require, module) then return false end
