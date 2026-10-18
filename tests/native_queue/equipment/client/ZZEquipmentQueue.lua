@@ -9,6 +9,7 @@ local Postprocess=require 'QueueEquipmentPostprocess'
 local Bulk=require 'QueueEquipmentBulk'
 local JSON=require 'QueueHealthEvents'
 local Toolkit=PZSurvivorToolkit
+local Completion=require('QueueEquipmentCompletion').observe(Toolkit,Selection)
 local API,Policy,Ops=Toolkit.ActionQueue,Toolkit.ActionQueuePolicy,Toolkit.ActionQueueOperations
 local native=Selection.mode=='native'
 local option=assert(PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'))
@@ -188,7 +189,7 @@ Events.OnTick.Add(function()
    if not empty() or getPlayer():isPlayerMoving() or (Selection.kind=='sp' and getPlayer():tooDarkToRead()) then return end
    if Selection.kind=='mp' then
     sendClientCommand('EquipmentQueueTest','Prepare',{case=Selection.cases[index]});phase='ready'
-   else state=Fixture.prepare(getPlayer(),Selection.cases[index]);enqueue();phase='controls' end
+   else state=Fixture.prepare(getPlayer(),Selection.cases[index]);Completion.watch(state);enqueue();phase='controls' end
   elseif phase=='ready' then
    if not ids or not Fixture.available(getPlayer(),ids) then return end
    assert(ids.case==Selection.cases[index],'wrong authoritative fixture case')
@@ -200,7 +201,7 @@ Events.OnTick.Add(function()
   elseif phase=='positioned' then
    local player=getPlayer()
    if not player:getCurrentSquare() or player:isPlayerMoving() or player:tooDarkToRead() then return end
-   state=Fixture.prepare(player,Selection.cases[index],ids);enqueue();phase='controls'
+   state=Fixture.prepare(player,Selection.cases[index],ids);Completion.watch(state);enqueue();phase='controls'
   elseif phase=='controls' then
    if queue():indexOf(state.frontAction)==-1 then
     print('[EQUIPMENT_TEST] FRONT_MISSING case='..state.id..' moving='..tostring(getPlayer():isPlayerMoving())..' dark='..tostring(getPlayer():tooDarkToRead())
@@ -249,6 +250,7 @@ Events.OnTick.Add(function()
    outcome.tailCompleted=state.tail:getAlreadyReadPages()==state.tail:getNumberOfPages()
     and getPlayer():getAlreadyReadPages(state.tail:getFullType())==state.tail:getNumberOfPages()
    outcome.postprocessingVerified=passed
+   outcome.tidyCompletion=Completion.settled()
    if Bulk.isCase(state.id) then outcome.borrowedReturned=state.id=='bulk-mixed' and passed and tidy or false end
    outcome.finalPrimary=getPlayer():getPrimaryHandItem() and getPlayer():getPrimaryHandItem():getID() or false
    outcome.finalSecondary=getPlayer():getSecondaryHandItem() and getPlayer():getSecondaryHandItem():getID() or false

@@ -11,6 +11,7 @@ CART_CASE = 'cart-pickup'
 CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', 'SaucedWheelbarrow.WheelbarrowMetal']
 CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
 RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0}
+TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed'}
 
 
 def definitions():
@@ -149,6 +150,18 @@ def verify(root, selection, catalog):
                 issues.append('Unexpected native equipment terminal states: ' + str(row.get('id')))
         if row.get('status') != 'passed' or any(result.get(key) is not value for key, value in required.items()):
             issues.append('Equipment effects/guards not verified: ' + str(row.get('id')))
+        if 'P4TidyUpMeister' in selection['mods']:
+            completion = result.get('tidyCompletion')
+            valid = (isinstance(completion, dict) and set(completion) == {'perform', 'complete', 'flush', 'legacy'}
+                     and all(type(value) is int and value >= 0 for value in completion.values()))
+            if valid:
+                count = completion['perform']
+                valid = (completion['flush'] == count and completion['legacy'] == 0
+                         and completion['complete'] == (count if selection['kind'] == 'sp' else 0)
+                         and (selection['mode'] != 'native' or count == 0)
+                         and (selection['mode'] != 'toolkit' or row.get('id') not in TIDY_RETURN_CASES or count > 0))
+            if not valid:
+                issues.append('Tidy native completion evidence missing or inconsistent: ' + str(row.get('id')))
         outcomes.append({'actor': 'client1', 'case': row.get('id'), 'status': row.get('status'),
                          'reason': row.get('reason'), 'outcome': result})
     ends = [row for row in records if row['event'] == 'complete']

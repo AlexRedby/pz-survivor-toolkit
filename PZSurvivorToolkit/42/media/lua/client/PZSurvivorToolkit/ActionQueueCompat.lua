@@ -26,6 +26,7 @@ local containerTransferPerform
 local containerHelpersUnchanged
 local manifestTransferPerform, manifestHelpersUnchanged
 local washWalkHelper
+local tidyClassUnchanged
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform",
     "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceStop", "forceCancel"}
 local sourceFiles = {
@@ -199,6 +200,11 @@ local function classUnchanged(class, methods)
     return true
 end
 
+local function sourceClassUnchanged(id, class, methods)
+    return classUnchanged(class, methods) or id == "P4TidyUpMeister" and class == ISInventoryTransferAction
+        and tidyClassUnchanged and tidyClassUnchanged(class, class, methods)
+end
+
 local function live(record)
     local character, queue, token = record.character, record.queue, record.token
     if not token or token.toolkitCancelled or not Toolkit.Settings.actionQueue()
@@ -242,7 +248,7 @@ local function matches(action, record)
     record = record or records[action]
     if not record or record.opaque or getmetatable(action) ~= record.class or action.Type ~= record.class.Type
         or action.character ~= record.character or action.toolkitQueueOperation ~= record.token
-        or not classUnchanged(record.class, record.baseline) or not ownerUnchanged(record.id)
+        or not sourceClassUnchanged(record.id, record.class, record.baseline) or not ownerUnchanged(record.id)
         or (record.owner and not instanceUnchanged(record.owner, PJCK_EvoPanel))
         or (record.class == ISInventoryTransferAction and containerHelpersUnchanged and not containerHelpersUnchanged()) then return false end
     local policy = Toolkit.ActionQueuePolicy
@@ -303,7 +309,7 @@ local function adopt(action)
     if not context then return end
     local class = getmetatable(action)
     local baseline = classes[context.id] and classes[context.id][class]
-    if not baseline or not classUnchanged(class, baseline) or action.onStartFunc or action.onCancelFunc
+    if not baseline or not sourceClassUnchanged(context.id, class, baseline) or action.onStartFunc or action.onCancelFunc
         or action.retriggerLastAction or action.onFailFunc or action.additionalTest then return end
     context = tidyRestoreContext(context, action)
     if context.id == "P4TidyUpMeister" and not live(context) then return false end
@@ -784,7 +790,7 @@ function Compat.install()
         local transfer=carts and carts.isTransferConstructor
         local unequip=carts and carts.isUnequipConstructor
         local nonCart=carts and carts.isNonCartUnequip
-        local function intentUnchanged(target,class,methods)
+        tidyClassUnchanged = function(target,class,methods)
             if classUnchanged(target,methods) then return true end
             if not carts or Toolkit.ActionQueueCarts~=carts or carts.isTransferConstructor~=transfer
                 or carts.isUnequipConstructor~=unequip or carts.isNonCartUnequip~=nonCart then return false end
@@ -805,14 +811,14 @@ function Compat.install()
             and verified('organizedCategories_core',{{'client/organizedCategories_itemStick.lua',2877670095}})
         TidyIntent.install(function(action)
             if P4TidyUpMeister~=owner or owner.registerActionPolicy~=actionPolicy or owner.registerWornItemReplacement~=wornPolicy then return false end
-            for class,methods in pairs(classes.P4TidyUpMeister) do if not intentUnchanged(class,class,methods) then return false end end
+            for class,methods in pairs(classes.P4TidyUpMeister) do if not tidyClassUnchanged(class,class,methods) then return false end end
             if not action then return true end
             local baseline=classes.P4TidyUpMeister[getmetatable(action)]
             if not baseline then return false end
             local record=records[action]
             if not record and (action.onStartFunc or action.onCompleteFunc or action.onCancelFunc
                 or action.retriggerLastAction or action.onFailFunc or action.additionalTest) then return false end
-            return record and matches(action,record) or not record and intentUnchanged(action,getmetatable(action),baseline)
+            return record and matches(action,record) or not record and tidyClassUnchanged(action,getmetatable(action),baseline)
         end,function(menu,name)
             return stickSource and menu==ISInventoryPaneContextMenu and menu['_ocStick_'..name]==menu[name]
                 and quartermasterClosure(menu[name],'organizedCategories_itemStick.lua')
@@ -930,10 +936,21 @@ end
 
 local behaviorTypes = {"WMI_WaitForInvUpdate", "PJCK_SequenceWaitAction"}
 for _, name in ipairs(names) do behaviorTypes[#behaviorTypes + 1] = name end
-Toolkit.ActionQueueDefinitions.registerBehavior("compat.selected-chains", {types = behaviorTypes, matches = matches, inspect = inspect})
-Operations.registerProducer("compat.selected-chains", matches, function(parent, child)
+local function tidyTransfer(action)
+    local record = records[action]
+    return record and record.id == "P4TidyUpMeister" and record.class == ISInventoryTransferAction
+end
+local function matchesTidyTransfer(action) return tidyTransfer(action) and matches(action) end
+local function matchesSelectedChain(action) return not tidyTransfer(action) and matches(action) end
+local function acceptsChild(parent, child)
     return matches(child) and child.toolkitQueueOperation == parent.toolkitQueueOperation
-end)
+end
+Toolkit.ActionQueueDefinitions.registerBehavior("compat.selected-chains",
+    {types = behaviorTypes, matches = matchesSelectedChain, inspect = inspect})
+Operations.registerProducer("compat.selected-chains", matchesSelectedChain, acceptsChild)
+Toolkit.ActionQueueDefinitions.registerBehavior("compat.tidy-transfers",
+    {types = {"ISInventoryTransferAction"}, matches = matchesTidyTransfer, inspect = inspect})
+Operations.registerProducer("compat.tidy-transfers", matchesTidyTransfer, acceptsChild, true)
 prepareQuartermasterContainers()
 Compat.install()
 return Compat

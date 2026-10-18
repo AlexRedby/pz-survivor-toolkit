@@ -2,6 +2,8 @@
 import copy
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -26,6 +28,10 @@ class EquipmentTests(unittest.TestCase):
         for case in cases:
             result = dict(inventoryPreserved=True, frontCompleted=True, tailCompleted=True,
                           equipmentMatches=True, nativeDurations=True, postprocessingVerified=True, policyChecked=enabled)
+            if 'P4TidyUpMeister' in self.selection['mods']:
+                count = int(enabled and case in equipment.TIDY_RETURN_CASES)
+                result['tidyCompletion'] = dict(perform=count, complete=count if self.selection['kind'] == 'sp' else 0,
+                                               flush=count, legacy=0)
             if case == 'hands-chain':
                 result.update(activeProgress=True, activeProtected=enabled)
             if case == 'waiting-cancel':
@@ -198,6 +204,106 @@ class EquipmentTests(unittest.TestCase):
         sources = equipment.sources(ROOT, self.selection)
         self.assertTrue(any('equipment' in path.parts for path in sources))
         self.assertTrue(all('equipment' in path.parts or path.name in ('QueueHealthEvents.lua', 'ZZStartup.lua') for path in sources))
+
+    def test_tidy_shared_completion_requires_real_returns_and_exact_phase_counts(self):
+        self.selection['mods'].append('P4TidyUpMeister')
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('toolkit', 'native'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for key in ('perform', 'complete', 'flush', 'legacy'):
+                    for value in (None, True, -1, '1', 1.0):
+                        rows = self.records()
+                        rows[1]['outcome']['tidyCompletion'][key] = value
+                        with self.subTest(kind=kind, mode=mode, key=key, value=value):
+                            self.assertTrue(self.verify(self.logs(rows))['issues'])
+                for value in (None, {}, [], dict(perform=0, complete=0, flush=0, legacy=0, extra=0)):
+                    rows = self.records()
+                    rows[1]['outcome']['tidyCompletion'] = value
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                rows = self.records()
+                del rows[1]['outcome']['tidyCompletion']
+                self.assertTrue(self.verify(self.logs(rows))['issues'])
+                for key in ('complete', 'flush', 'legacy'):
+                    rows = self.records()
+                    rows[1]['outcome']['tidyCompletion'][key] += 1
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                for case in equipment.TIDY_RETURN_CASES:
+                    rows = self.records()
+                    target = next(row for row in rows if row.get('id') == case)['outcome']
+                    count = 0 if mode == 'toolkit' else 1
+                    target['tidyCompletion'] = dict(perform=count, complete=count if kind == 'sp' else 0, flush=count, legacy=0)
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+
+    def test_tidy_observer_rejects_wrong_identity_ownership_early_flush_and_legacy_scope(self):
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if not lua:
+            self.skipTest('Lua interpreter unavailable')
+        script = r'''
+local root=arg[1]
+local function run(kind,mode,fault)
+ local enabled=mode=='toolkit'
+ local item={getID=function()return 7 end,getFullType=function()return 'Base.Nails'end}
+ local inventory,source={},{}
+ local present=true
+ local player={getCharacterActions=function()return {contains=function()return present end}end}
+ local action={character=player,item=item,srcContainer=inventory,destContainer=source,action={},toolkitQueueOperation={}}
+ local queue={character=player,current=action,queue={action},onCompleted=function(self,a)
+  assert(self.current==a);self.current=nil;self.queue={}
+ end}
+ ISTimedActionQueue={queues={[player]=queue}}
+ ISQueueActionsAction={start=function()end}
+ isClient=function()return kind=='mp'end
+ require=function()end
+ PZSurvivorToolkit={Settings={actionQueue=function()return enabled end}}
+ local lifecycle=dofile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua')
+ local toolkit=PZSurvivorToolkit
+ ISInventoryTransferAction={}
+ local operations=dofile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua')
+ operations.registerProducer('fixture.tidy',function(a)return a==action end,function()return false end,fault~='legacy')
+ toolkit.ActionQueueDefinitions={inspect=function()if enabled then return {},'compat.tidy-transfers'end end}
+ if fault=='early-flush' then lifecycle.flush=function()return 'completed',action end end
+ local observer=dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentCompletion.lua').observe(toolkit,{kind=kind,mode=mode})
+ observer.watch({root=inventory,source=source,baseline={[7]=item}})
+ if not enabled then
+  lifecycle.begin(action,'perform');lifecycle.finish(action,'perform',true)
+  local counts=observer.settled();assert(counts.perform==0 and counts.complete==0 and counts.flush==0);return
+ end
+ assert(lifecycle.begin(action,'perform'))
+ if fault=='duplicate-perform' then lifecycle.begin(action,'perform');return end
+ toolkit.ActionQueueOperations.perform(action,function(parent)
+  assert(parent==action and lifecycle.current(player)==action)
+  assert(lifecycle.deferCompletion(queue,action))
+ end)
+ if fault=='id' then action.item={getID=function()return 8 end,getFullType=item.getFullType}
+ elseif fault=='endpoint' then action.destContainer={}
+ elseif fault=='token' then action.toolkitQueueOperation={}
+ elseif fault=='handle' then action.action={}
+ elseif fault=='parent' then queue.current=nil end
+ lifecycle.finish(action,'perform',fault~='failed')
+ if kind=='sp' or fault=='host-complete' then
+  lifecycle.begin(action,'complete');lifecycle.finish(action,'complete',true)
+ end
+ if fault=='unflushed' then observer.settled();return end
+ if fault~='early-flush' then assert(lifecycle.flush(queue)=='waiting');present=false end
+ assert(lifecycle.flush(queue)=='completed')
+ assert(lifecycle.flush(queue)==nil)
+ local counts=observer.settled()
+ assert(counts.perform==1 and counts.complete==(kind=='sp' and 1 or 0) and counts.flush==1 and counts.legacy==0)
+end
+for _,kind in ipairs({'sp','mp'})do
+ for _,mode in ipairs({'native','toolkit'})do run(kind,mode)end
+ for _,fault in ipairs({'id','endpoint','token','handle','parent','failed','duplicate-perform','legacy','early-flush','unflushed'})do
+  local ok=pcall(run,kind,'toolkit',fault);assert(not ok,'observer accepted '..kind..' '..fault)
+ end
+end
+assert(not pcall(run,'mp','toolkit','host-complete'))
+'''
+        target = self.root / 'completion-check.lua'
+        target.write_text(script)
+        result = subprocess.run([lua, str(target), str(ROOT)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == '__main__':

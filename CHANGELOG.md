@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.93
+
+- **Changed:** Audited TidyUpMeister inventory returns retain their queue contracts after approved late transfer hooks and use shared native completion ownership, preserving exact destinations, explicit pickup/equipment intent and the unsupported-engine fallback.
+
 ### 0.1.92
 
 - **Changed:** Audited medical expansion uses shared native completion ownership, retaining exact child treatment/resource proofs, bare-hands ordering and the unsupported-engine fallback.

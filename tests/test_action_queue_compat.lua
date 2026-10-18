@@ -287,6 +287,24 @@ assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivo
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local compatSource = read(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua')
+-- Stub only the separately tested Carts hook proof; P4 adoption/matching and its source callbacks stay real.
+local priorCarts=PZSurvivorToolkit.ActionQueueCarts
+local lateCartProof={enabled=true,constructors={}}
+function lateCartProof.isTransferConstructor(callback)
+    local latest=lateCartProof.latest
+    return lateCartProof.enabled and lateCartProof.constructors[callback]==true and latest
+        and ISInventoryTransferAction.new==latest.new and ISInventoryTransferAction.perform==latest.perform
+        and ISInventoryTransferAction.transferItem==latest.transferItem
+end
+lateCartProof.isUnequipConstructor=function()return false end
+lateCartProof.isNonCartUnequip=function()return true end
+lateCartProof.isReturn=function()return false end
+lateCartProof.isTransfer=function()return false end
+PZSurvivorToolkit.ActionQueueCarts=lateCartProof
+local proofSeams
+compatSource,proofSeams=compatSource:gsub('local carts=ready%.SaucedCartsTransfers and Toolkit%.ActionQueueCarts',
+    'local carts=Toolkit.ActionQueueCarts')
+assert(proofSeams==1,'late-hook fixture must replace only the Carts proof capture')
 local compat = assert(loadstring((compatSource:gsub('\nreturn Compat', '\nCompat.fixtureRegistries = {records, sessions}\nreturn Compat'))))()
 assert(not compat.isInstalled('MPFastForward'),'server wrapper waits for the server loading boundary')
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/server/000_PZSurvivorToolkitReadCompat.lua'))()
@@ -744,6 +762,149 @@ local function tidyTasks(shared, insertion)
 end
 local function findReturn(value)
     for _,action in ipairs(queue.queue) do if action.Type=='ISInventoryTransferAction' and action.item==value then return action end end
+end
+-- The native boundary owns only audited Tidy transfers, including completion after cancellation.
+do
+    local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+    local client,actions,completed=isClient,player.getCharacterActions,queue.onCompleted
+    local callbacks=0
+    queue.onCompleted=function(self,action)
+        if lifecycle.current(player)==action then
+            assert(not operations.deferCompletion(self,action),'Tidy return acquired the legacy completion scope')
+            callbacks=callbacks+1
+        end
+        return completed(self,action)
+    end
+    for _,mp in ipairs({false,true}) do
+        for _,cancelled in ipairs({false,true}) do
+            local first,second,token=tidyTasks()
+            tickTidy();tickTidy()
+            local action,following=findReturn(first),findReturn(second)
+            local contract,id=definitions.inspect(action)
+            assert(contract and id=='compat.tidy-transfers' and action.srcContainer==inventory
+                and action.destContainer==tidyBag and action.toolkitQueueOperation==token,
+                'exact mixed-session return did not select its own completion producer')
+            local removed=false;action.action={};queue.current=action
+            player.getCharacterActions=function()return list(removed and {} or {action.action})end
+            isClient=function()return mp end
+            assert(lifecycle.begin(action,'perform'))
+            if cancelled then operations.invalidate(token) end
+            action:perform();lifecycle.finish(action,'perform',true)
+            assert(first.container==tidyBag and second.container==inventory and queue.current==action
+                and queue.queue[2]==following,'native return effect or independent return order changed')
+            assert(lifecycle.flush(queue)=='waiting','Tidy return advanced before native removal')
+            if not mp then
+                assert(lifecycle.begin(action,'complete'));action:complete();lifecycle.finish(action,'complete',true)
+                assert(lifecycle.flush(queue)=='waiting','Tidy SP return ignored native removal')
+            end
+            removed=true
+            assert(lifecycle.flush(queue)=='completed' and queue.current==following
+                and lifecycle.flush(queue)==nil,'Tidy return advanced twice or lost the next operation')
+            following:perform();tickTidy();tickTidy()
+            assert(second.container==tidyBag and TidyFixture.restoring[player]==nil,
+                'fallback return or native mixed-session cleanup failed')
+            isClient=client
+        end
+    end
+    assert(callbacks==4,'Tidy completion scope checks missed a native path')
+    queue.onCompleted=completed;player.getCharacterActions=actions;isClient=client
+    reset();local transfer=wash(item(bag,141))
+    assert(select(2,definitions.inspect(transfer))=='compat.selected-chains',
+        'unmigrated Wash transfer escaped its existing completion producer')
+end
+-- The actual P4 source may restore ordinary items after approved hooks changed the shared transfer class.
+do
+    local methods={new=ISInventoryTransferAction.new,perform=ISInventoryTransferAction.perform,
+        transferItem=ISInventoryTransferAction.transferItem,start=ISInventoryTransferAction.start}
+    local proof=lateCartProof.isTransferConstructor
+    local wrapped={new=function(...)return methods.new(...)end,perform=function(...)return methods.perform(...)end,
+        transferItem=function(...)return methods.transferItem(...)end}
+    lateCartProof.constructors[methods.new],lateCartProof.constructors[wrapped.new]=true,true
+    lateCartProof.latest=wrapped
+    local function install()
+        PZSurvivorToolkit.ActionQueueCarts=lateCartProof;lateCartProof.enabled=true;lateCartProof.isTransferConstructor=proof
+        for name,method in pairs(wrapped)do ISInventoryTransferAction[name]=method end
+        ISInventoryTransferAction.start=methods.start
+    end
+    local function restores()
+        local first,second,token=tidyTasks();tickTidy();tickTidy()
+        local action=findReturn(first)
+        assert(action and action.srcContainer==inventory and action.destContainer==tidyBag,
+            'late-hook fixture must use an actual ordinary P4 source return')
+        return first,second,token,action,findReturn(second)
+    end
+    local function drain()
+        while queue.queue[1]do queue.queue[1]:perform()end
+        tickTidy();tickTidy()
+    end
+    local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+    local client,actions,completed=isClient,player.getCharacterActions,queue.onCompleted
+    for _,mp in ipairs({false,true})do
+        install()
+        local first,second,token,action,following=restores()
+        assert(select(2,definitions.inspect(action))=='compat.tidy-transfers',
+            'approved late hooks must retain the real P4 transfer contract')
+        token=action.toolkitQueueOperation
+        local removed,callbacks=false,0
+        action.action={};queue.current=action
+        player.getCharacterActions=function()return list(removed and {}or{action.action})end
+        isClient=function()return mp end
+        queue.onCompleted=function(self,current)
+            if current==action and lifecycle.current(player)==action then
+                assert(not operations.deferCompletion(self,current),'approved late P4 return acquired legacy scope')
+                callbacks=callbacks+1
+            end
+            return completed(self,current)
+        end
+        assert(lifecycle.begin(action,'perform'));action:perform();lifecycle.finish(action,'perform',true)
+        assert(callbacks==1,'approved late return missed the shared onCompleted scope')
+        assert(first.container==tidyBag and second.container==inventory,'approved late return changed exact effects')
+        assert(queue.current==action and action.toolkitQueueOperation==token and queue.queue[2]==following,
+            'approved late return lost ownership or order')
+        if not mp then
+            assert(lifecycle.begin(action,'complete'));action:complete();lifecycle.finish(action,'complete',true)
+        end
+        assert(lifecycle.flush(queue)=='waiting');removed=true
+        assert(lifecycle.flush(queue)=='completed'and queue.current==following and lifecycle.flush(queue)==nil)
+        queue.onCompleted=completed;player.getCharacterActions=actions;isClient=client;drain()
+        assert(second.container==tidyBag and TidyFixture.restoring[player]==nil)
+    end
+    for _,change in ipairs({'revoked','new','perform','api','owner','class','instance','endpoint'})do
+        install()
+        local _,_,_,action=restores()
+        assert(definitions.inspect(action),'late-hook positive control missing before '..change)
+        if change=='revoked'then lateCartProof.enabled=false
+        elseif change=='new'then ISInventoryTransferAction.new=function(...)return wrapped.new(...)end
+        elseif change=='perform'then ISInventoryTransferAction.perform=function(...)return wrapped.perform(...)end
+        elseif change=='api'then lateCartProof.isTransferConstructor=function()return true end
+        elseif change=='owner'then PZSurvivorToolkit.ActionQueueCarts={}
+        elseif change=='class'then ISInventoryTransferAction.start=function()end
+        elseif change=='instance'then action.start=function()end
+        elseif change=='endpoint'then action.destContainer=inventory end
+        assert(not definitions.inspect(action),'late-hook proof accepted changed '..change)
+        if change=='instance'then action.start=nil end
+        if change=='endpoint'then action.destContainer=tidyBag end
+        install();drain()
+    end
+    for _,change in ipairs({'revoked','new','perform','api','class'})do
+        install();local first=tidyTasks()
+        if change=='revoked'then lateCartProof.enabled=false
+        elseif change=='new'then ISInventoryTransferAction.new=function(...)return wrapped.new(...)end
+        elseif change=='perform'then ISInventoryTransferAction.perform=function(...)return wrapped.perform(...)end
+        elseif change=='api'then lateCartProof.isTransferConstructor=function()return true end
+        elseif change=='class'then ISInventoryTransferAction.start=function()end end
+        tickTidy();tickTidy()
+        local action=assert(findReturn(first),'unapproved hooks must preserve native P4 restore')
+        assert(not definitions.inspect(action)and action.perform==ISInventoryTransferAction.perform,
+            'unapproved late hooks gained adoption: '..change)
+        install();drain()
+    end
+    install();reset()
+    local transfer=wash(item(bag,142))
+    assert(not definitions.inspect(transfer),'P4 late-hook exception must not grant Wash transfer rights')
+    drain()
+    for name,method in pairs(methods)do ISInventoryTransferAction[name]=method end
+    PZSurvivorToolkit.ActionQueueCarts=priorCarts
 end
 local firstItem,secondItem,firstToken,secondToken,nativeSession=tidyTasks()
 tickTidy(); tickTidy()
