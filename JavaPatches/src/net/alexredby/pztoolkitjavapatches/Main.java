@@ -227,6 +227,15 @@ public final class Main {
         }
     }
 
+    @Patch(className="zombie.core.textures.VideoTexture", methodName="getOrCreate", strictMatch=true)
+    public static class TVVideoPath {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(value=0, readOnly=false) String filename,
+                @Patch.Argument(1) int width, @Patch.Argument(2) int height, @Patch.Argument(3) boolean async) {
+            filename = TVVideoPaths.redirect(filename, TVVideoPaths.SUPPORTED);
+        }
+    }
+
     public static void main(String[] args) throws ClassNotFoundException {
         // Resolve before advice installation; resolving inside another transformer can miss these targets.
         if (PROPERTY_SUPPORTED) IsoPropertyType.values();

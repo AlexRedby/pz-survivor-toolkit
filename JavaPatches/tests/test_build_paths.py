@@ -105,7 +105,7 @@ class BuildPaths(unittest.TestCase):
                 metadata = (self.root / 'build/PZToolkitJavaPatches/42/mod.info').read_text()
                 self.assertIn('name=Toolkit Java Patches (Experimental)\n', metadata)
                 self.assertIn('id=PZToolkitJavaPatches\n', metadata)
-                self.assertIn('version=0.1.23\n', metadata)
+                self.assertIn('version=0.1.24\n', metadata)
                 self.assertIn('javaPkgName=net.alexredby.pztoolkitjavapatches\n', metadata)
                 self.assertIn('javaJarFile=media/java/PZToolkitJavaPatches.jar\n', metadata)
                 self.assertNotIn('javaPreload=true\n', metadata)

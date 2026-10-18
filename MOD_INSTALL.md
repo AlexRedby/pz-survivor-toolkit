@@ -90,7 +90,7 @@ If an animal is still stuck, preserve the save and collect server/client logs ar
 
 The INI includes the main `TVRadio_ReInvented` mod. Toolkit fixes device recognition on EN/RU clients and the native macOS video path; do not enable the separate `TVRadioReinventedFix4220`.
 
-- **macOS:** install the complete TV mod, including `.bik` files in `42/media/videos/`. Toolkit resolves files from its active directory, so no separate `Project Zomboid.app/workshop` symlink is needed.
+- **macOS:** install the complete TV mod, including `.bik` files in `42/media/videos/`. A matching Toolkit Java Patches build resolves requests from the active mod directory before native caching, so no separate `Project Zomboid.app/workshop` symlink is needed.
 - **Linux/SteamOS:** the former external fix describes a `steamapps/common/workshop` link in its [path instructions](https://steamcommunity.com/sharedfiles/filedetails/?id=3796050675). Toolkit's automatic path fix targets macOS; playback on Linux/SteamOS and Windows/Proton was not verified in that scenario.
 
 ## Player controls

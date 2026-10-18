@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.76
+
+- **Maintenance:** TV videos retain the original mod's catalog and initialization. Removed the duplicate Lua video list and macOS path-depth search; path correction now runs before native video caching.
+
 ### 0.1.75
 
 - **Changed:** Lemongrass displays the native cooldown instead of estimating its maximum duration. Removed the separate Lua countdown and food-action hooks; unsupported readings hide only this indicator.
@@ -346,6 +350,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.24
+
+- **Fixed:** Resolve recognized TV & Radio ReInvented video paths from the active mod directory on macOS, preserving native cache keys, dimensions and synchronous/asynchronous loading.
 
 ### 0.1.23
 

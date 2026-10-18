@@ -23,6 +23,8 @@ List Lua tests with `.venv/bin/python tools/run_tests.py --list`. Select one or 
 
 The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`. VHS menu, sorting, drop validation and live toggle checks run by default; add `--tv-source /path/to/RWMMergedTV.lua --native-radio-root /path/to/media/lua/client` to also exercise the native media actions and drag parser.
 
+The TV video source check runs the upstream catalog and original initialization without a separate video list. `python3 JavaPatches/build.py --test TVVideoPathChecks` checks the macOS path correction before native cache lookup, including failed-cache precedence and close/eviction keys; it does not decode video or prove GPU playback.
+
 Independent medicine checks can use the installed framework with `--medicine-framework-source /path/to/MF_ISMoodle.lua`.
 
 The read-only Java global `toolkitMedicineCooldown(character)` returns the native food-sickness treatment cooldown, or `nil` for unsupported bytecode, unavailable data or multiplayer clients. `MedicineEffects.capture` sends this as `LemonGrassCooldown` (`false` when unavailable); the old `LemonGrass` estimate is never displayed as exact. Use `python3 JavaPatches/build.py --test MedicineCooldownChecks` for native field, loader exposure and Kahlua checks.

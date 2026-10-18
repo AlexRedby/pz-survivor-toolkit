@@ -1,68 +1,35 @@
-local adapter = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/TVVideos.lua"
-local boot, mac, directory, exists, calls = nil, true, "/Users/test/mods/TVRadio Reinvented/42", true, {}
-local original = function() end
-local active = true
-getActivatedMods = function() return {contains = function(_, id) return active and id == "TVRadio_ReInvented" end} end
-isSystemMacOS = function() return mac end
-getModInfoByID = function(id)
-    assert(id == "TVRadio_ReInvented")
-    return directory and {getVersionDir = function() return directory end} or nil
+-- The upstream catalog stays upstream; verify its calls still match the native path adapter.
+if not TVSource then
+    print("SKIP TV video source contract requires actual RWMMergedTV source")
+    return
 end
-Events = {OnGameBoot = {Add = function(fn) boot = fn end}}
-local probes = 0
-fileExists = function(path)
-    probes = probes + 1
-    return exists and path == "media/videos/" .. string.rep("../", 13) .. directory:sub(2) .. "/media/videos/TV_Static.bik"
-end
+local prefix = "../../../../workshop/content/108600/3420581050/mods/TVRadio Reinvented/42/media/videos/"
+local start, calls = nil, {}
+require = function(name) assert(name == "RadioCom/RadioWindowModules/RWMPanel") end
+RWMPanel = {derive = function() return {} end}
+Events = {OnGameStart = {Add = function(fn) assert(not start); start = fn end}}
+UIFont = {Large = 1}
+getTextManager = function() return {getFontHeight = function() return 14 end} end
 VideoTexture = {getOrCreate = function(path, width, height, async)
+    assert(path:sub(1, #prefix) == prefix, "upstream video path changed; review the native adapter")
+    local filename = path:sub(#prefix + 1)
+    assert(filename:match("^[A-Za-z0-9_-]+%.bik$"), "upstream video filename requires native adapter review")
     assert(width == 160 and height == 120 and async == false)
-    calls[#calls + 1] = path
-    return path
+    local texture = {path = path}
+    calls[#calls + 1] = texture
+    return texture
 end}
-
--- Toolkit may load before the third-party class exists.
-RWMMergedTV = nil
-dofile(adapter)
-boot()
-assert(probes == 0)
-RWMMergedTV = {getAllVideos = original}
--- Installed-but-disabled mod, even if its class or metadata is available.
-active = false
-boot()
-assert(RWMMergedTV.getAllVideos == original and probes == 0)
-active = true
-mac = false
-boot()
-assert(RWMMergedTV.getAllVideos == original and probes == 0)
-mac, directory = true, nil
-boot()
-assert(RWMMergedTV.getAllVideos == original)
-directory = "relative/mod/42"
-boot()
-assert(RWMMergedTV.getAllVideos == original and probes == 0)
-directory, exists = "/Users/test/mods/TVRadio Reinvented/42", false
-boot()
-assert(RWMMergedTV.getAllVideos == original and probes == 64)
-
-exists, probes = true, 0
-boot()
-assert(RWMMergedTV.getAllVideos ~= original and probes == 13 and #calls == 0)
-RWMMergedTV.getAllVideos()
-assert(#calls == 16)
-for _, path in ipairs(calls) do
-    assert(path:sub(1, #string.rep("../", 13)) == string.rep("../", 13))
-    assert(path:find("Users/test/mods/TVRadio Reinvented/42/media/videos/", 1, true))
-end
-assert(RWMMergedTV.videos["TV_203_W.bik"] and RWMMergedTV.videos["TV_Static.bik"])
-local count = 0
-for _ in pairs(RWMMergedTV.videos) do count = count + 1 end
-assert(count == 16)
-if TVSource then
-    local upstreamCount = 0
-    for filename in TVSource:gmatch('%["([^"]+%.bik)"%]%s*=') do
-        upstreamCount = upstreamCount + 1
-        assert(RWMMergedTV.videos[filename], "macOS loader omitted upstream video " .. filename)
+assert(loadstring(TVSource))()
+assert(type(start) == "function", "upstream video initialization was not registered")
+for pass = 1, 2 do
+    calls = {}
+    start()
+    local count, seen = 0, {}
+    for filename, texture in pairs(RWMMergedTV.videos) do
+        assert(texture.path == prefix .. filename, "catalog key and requested file differ")
+        assert(not seen[texture], "catalog reuses a different video's texture")
+        seen[texture], count = true, count + 1
     end
-    assert(upstreamCount == count, "upstream video inventory changed; update the macOS loader")
+    assert(count > 0 and count == #calls, "upstream did not publish every requested video")
 end
-print("TV macOS video path checks passed.")
+print("Actual upstream TV catalog and original initialization checks passed.")
