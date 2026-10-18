@@ -31,12 +31,13 @@ local kind='SaucedWheelbarrow.WheelbarrowWood'
 local cases={}
 for _,female in ipairs({false,true}) do
  for _,full in ipairs({false,true}) do
-  for _,spec in ipairs({'wall-block','wall-slide','corner-pivot','passage'}) do
+  for _,spec in ipairs(footprint and {'wall-block','wall-slide','wall-slide-right','corner-pivot','passage'} or {'wall-block','wall-slide','corner-pivot','passage'}) do
    local steps,yaw
    if spec=='wall-block' then
     steps={{1000,1,5},{6000,0,0},{7000,0,7},{9500,0,0}};yaw=math.pi/4
-   elseif spec=='wall-slide' then
-    steps={{1000,1,2},{6000,0,0},{7000,0,7},{9500,0,0}};yaw=0
+   elseif spec=='wall-slide' or spec=='wall-slide-right' then
+    local right=spec=='wall-slide-right'
+    steps={{1000,1,right and 1 or 2},{6000,0,0},{7000,0,7},{9500,0,0}};yaw=right and math.pi/2 or 0
    elseif spec=='corner-pivot' then
     steps={{1000,2,3},{4000,0,0},{5000,0,1},{8500,0,0}};yaw=-math.pi/2
    else
@@ -58,7 +59,7 @@ if footprint then
   cases[#cases+1]={female=false,full=false,spec=spec,steps=steps,startYaw=math.pi/4,name='male-empty-'..spec}
  end
 end
-assert(#cases==(footprint and 20 or 16))
+assert(#cases==(footprint and 24 or 16))
 if config.impact then
  cases={}
  for _,female in ipairs({false,true}) do for _,full in ipairs({false,true}) do
@@ -74,6 +75,9 @@ local phase,since,stage,taken=0,0,0,{}
 local mode,attempt,videoSince='layout',0,0
 local wallX,southY,gapY=math.floor(CartTestArea.x)-(config.impact and 6 or footprint and 3 or 1),math.floor(CartTestArea.y)+2,math.floor(CartTestArea.y)
 local controls,controlIndex,controlResults={'wall','corner','passage'},0,{}
+if footprint and not config.impact then controls[#controls+1]='wall-slide-left';controls[#controls+1]='wall-slide-right' end
+local function controlDrive(spec) return (spec=='corner' or spec=='wall-slide-left') and 2 or spec=='wall-slide-right' and 1 or 5 end
+local function controlHeading(spec) return spec=='wall-slide-right' and -math.pi*.75 or (spec=='corner' or spec=='wall-slide-left') and math.pi*.75 or math.pi end
 local controlStart,controlSample=0,0
 local sampleSince=0
 local function wood(full)
@@ -166,7 +170,7 @@ end
 local function nextControl()
  cartLabDrive(0);cartLabGait(0);controlIndex=controlIndex+1
  if controlIndex>#controls then nextCase();return end
- pose(CartTestArea.x,CartTestArea.y,controls[controlIndex]=='corner' and math.pi*.75 or math.pi)
+ pose(CartTestArea.x,CartTestArea.y,controlHeading(controls[controlIndex]))
  mode='control-layout';since=getTimestampMs()+1800
 end
 CartLabHUD.prerender=function(self)
@@ -190,7 +194,7 @@ local function tick()
    or (c.spec=='passage' or c.spec=='door-closed' or c.spec=='door-open') and c.spec or 'wall'
   layout(kind)
   if mode=='control-layout' then
-   pose(config.impact and wallX+3.5 or CartTestArea.x,CartTestArea.y,kind=='corner' and math.pi*.75 or math.pi)
+   pose(config.impact and wallX+3.5 or CartTestArea.x,CartTestArea.y,controlHeading(kind))
    mode='control-settle'
   else
    poseCase()
@@ -204,23 +208,27 @@ local function tick()
   CartTestArea.check(p);now=getTimestampMs();controlStart=now;controlSample=0;mode='control-drive'
   local spec=controls[controlIndex]
   print('[CART_COLLISION_CONTROL] START spec='..spec..' wall='..now..' x='..p:getX()..' y='..p:getY()..' wallX='..wallX..' southY='..southY..' gapY='..gapY)
-  cartLabDrive(spec=='corner' and 2 or 5);return
+  cartLabDrive(controlDrive(spec));return
  end
  if mode=='control-drive' then
   local spec=controls[controlIndex]
   if now-controlSample>=25 then
    controlSample=now
-   print('[CART_COLLISION_CONTROL_SAMPLE] spec='..spec..' wall='..now..' elapsed='..(now-controlStart)..' x='..p:getX()..' y='..p:getY()..' heading='..cartLabHeading()..' drive='..(spec=='corner' and 2 or 5))
+   print('[CART_COLLISION_CONTROL_SAMPLE] spec='..spec..' wall='..now..' elapsed='..(now-controlStart)..' x='..p:getX()..' y='..p:getY()..' heading='..cartLabHeading()..' drive='..controlDrive(spec)
+    ..(spec:find('wall-slide',1,true) and (' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' bare='..tostring(not p:getPrimaryHandItem() and not p:getSecondaryHandItem())..' tracks='..cartLabTracks()) or ''))
   end
-  if now-controlStart>=4000 then
+  if now-controlStart>=(spec:find('wall-slide',1,true) and 6000 or 4000) then
    local x,y=p:getX(),p:getY()
    assert(not p:getVariableBoolean('ToolkitCartPivot'),'Bare control retained cart steering')
    if spec=='passage' then
     assert(x<wallX-.2 and math.abs(y-CartTestArea.y)<.03,'Native passage control did not cross the gap')
    else
-    assert(x>=wallX+.1 and x<=wallX+.5,'Native wall control did not reach its collision boundary')
+    assert(x>=wallX+(spec:find('wall-slide',1,true) and -.002 or .1) and x<=wallX+.5,'Native wall control did not reach its collision boundary')
     if spec=='corner' then
      assert(y>=southY-.5 and y<=southY-.1,'Native corner control did not reach both walls')
+    elseif spec:find('wall-slide',1,true) then
+     assert((spec=='wall-slide-right' and -1 or 1)*(y-CartTestArea.y)>.15,'Native Walk did not slide along the wall')
+     assert(not p:isRunning() and not p:isSprinting(),'Bare slide must use native Walk')
     else assert(math.abs(y-CartTestArea.y)<.03,'Native wall control drifted along the wall') end
    end
    controlResults[spec]={x=x,y=y}

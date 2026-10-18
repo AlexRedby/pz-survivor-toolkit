@@ -7,7 +7,7 @@ public final class CartFootprintTest {
 
     private static void blockedProbeChecks(double axle) {
         float x=10825.5f,y=10142.5f;
-        double front=CartFootprint.WALK_FRONT,nose=x+front-.21;
+        double front=CartFootprint.WALK_FRONT,nose=x+front-.28;
         boolean[] closed={true};
         int[] queries={0};
         CartFootprint.Query contact=(x1,y1,x2,y2)-> {
@@ -30,7 +30,7 @@ public final class CartFootprintTest {
         double fraction=CartFootprint.limit(partial,x,y,0,.03,0,axle,front);
         check(fraction>0 && fraction<1 && !CartSteeringHooks.blockedProbe(partial,x,y,0,.03,0,axle,front),
             "partial representable travel must not settle a moving cart into idle");
-        CartFootprint.Query parallel=(x1,y1,x2,y2)->Math.max(x1,x2)>=x+.121;
+        CartFootprint.Query parallel=(x1,y1,x2,y2)->Math.max(x1,x2)>=x+.041;
         check(!CartSteeringHooks.blockedProbe(parallel,x,y,Math.PI/2,0,.03,axle,front),
             "clear travel parallel to the wall must retain its native slide");
         CartFootprint.Query overlap=(x1,y1,x2,y2)->Math.max(x1,x2)>=nose-.01;
@@ -55,7 +55,7 @@ public final class CartFootprintTest {
         for(double front:new double[]{CartFootprint.WALK_FRONT,CartFootprint.FAST_FRONT}) {
             double allowed=CartFootprint.limit(eastWall,0,0,0,1.5,0,axle,front);
             check(allowed>0 && allowed<1,"frontal wall must shorten a crossing step");
-            check(1.5*allowed+front+.09<2 && 1.5*allowed+front+.09>1.99,
+            check(1.5*allowed+front+.02<2 && 1.5*allowed+front+.02>1.99,
                 "clip must stop at the checked front cap rather than freeze early");
             check(CartFootprint.clear(eastWall,1.5*allowed,0,0,front),"clipped footprint remains clear");
             check(CartFootprint.limit(eastWall,1.5*allowed,0,0,-.1,0,axle,front)==1,
@@ -69,21 +69,21 @@ public final class CartFootprintTest {
             "the conservative footprint still fits a centered one-tile passage");
         check(!CartFootprint.clear(passage,0,0,Math.PI/4,1.62),
             "a diagonal cart must not fit through a narrower opening");
-        CartFootprint.Query sideWall=(x1,y1,x2,y2)->Math.max(y1,y2)+.3>=.46;
+        CartFootprint.Query sideWall=(x1,y1,x2,y2)->Math.max(y1,y2)+.3>=.345;
         var pivot=CartSteeringMath.stationaryStep(0,Math.PI/2,.5,.1,0,axle,1.6,new CartSteeringMath.Step());
-        double turn=CartFootprint.limit(sideWall,0,0,0,pivot.x(),pivot.y(),axle,1.62);
-        check(turn<1,"sideways nose sweep must clip a turn into the wall");
-        double h=CartSteeringMath.acceptedTurn(0,axle,pivot.x()*turn,pivot.y()*turn);
-        check(CartFootprint.clear(sideWall,pivot.x()*turn,pivot.y()*turn,h,1.62),
+        double turnFraction=CartFootprint.limit(sideWall,0,0,0,pivot.x(),pivot.y(),axle,1.62);
+        check(turnFraction<1,"sideways nose sweep must clip a turn into the wall");
+        double h=CartSteeringMath.acceptedTurn(0,axle,pivot.x()*turnFraction,pivot.y()*turnFraction);
+        check(CartFootprint.clear(sideWall,pivot.x()*turnFraction,pivot.y()*turnFraction,h,1.62),
             "accepted clipped turn remains inside the clear envelope");
-        double slide=CartFootprint.limit(eastWall,.648,0,0,0,-.1,axle,1.26);
-        check(slide<1,"native wall sliding must recheck the resulting rolling yaw");
+        double slideFraction=CartFootprint.limit(eastWall,1.65,0,Math.PI/2,.1,0,axle,1.26);
+        check(slideFraction<1,"native wall sliding must recheck the resulting rolling yaw");
         boolean[] closed={true};
         CartFootprint.Query door=(x1,y1,x2,y2)->closed[0] && eastWall.blocked(x1,y1,x2,y2);
         check(CartFootprint.limit(door,0,0,0,1.5,0,axle,1.26)<1,"closed door blocks the cart");
         closed[0]=false;
         check(CartFootprint.limit(door,0,0,0,1.5,0,axle,1.26)==1,"opening the same door releases the cart");
-        CartFootprint.Query rearOnly=(x1,y1,x2,y2)->Math.abs(y1)>.1;
+        CartFootprint.Query rearOnly=(x1,y1,x2,y2)->Math.abs(y1)>.03;
         check(!CartFootprint.clear(rearOnly,0,0,0,1.26),"both rail starts must participate in validation");
         check(CartFootprint.limit(eastWall,1,0,0,.1,0,axle,1.26)==0,
             "ordinary forward clipping must not waive an existing overlap");
@@ -118,6 +118,64 @@ public final class CartFootprintTest {
         check(rigidSlide>0 && rigidSlide<1,"actual native slide still needs a footprint translation sweep");
         for(double bad:new double[]{Double.NaN,Double.POSITIVE_INFINITY})
             check(CartFootprint.rigidLimit(empty,0,0,0,0,0,bad,1.26)==0,"invalid native yaw fails closed");
+        for(double sign:new double[]{-1,1}) for(double front:new double[]{CartFootprint.WALK_FRONT,CartFootprint.FAST_FRONT}) {
+            double x=(float)(2-front-.022),dx=.08,dy=.04*sign;
+            double fraction=CartFootprint.limit(eastWall,x,0,0,dx,dy,axle,front);
+            var slide=CartFootprint.slide(eastWall,x,0,0,dx,dy,front,fraction,-.025,.025);
+            check(slide!=null && slide.x()==0 && Math.abs(slide.y()-dy)<1e-8,
+                "wall contact must preserve the full available tangent: "+sign+"/"+front+" fraction="+fraction+" slide="+slide);
+            check(slide.turn()*sign>0 && Math.abs(slide.turn())<=.025,
+                "contact should guide the cart toward the wall tangent within its turn-rate budget");
+            check(CartFootprint.rigidLimit(eastWall,x,0,0,slide.x(),slide.y(),slide.turn(),front)==1,
+                "the deflected translation and yaw must retain a fully swept clear envelope");
+            CartFootprint.Query corner=(x1,y1,x2,y2)->eastWall.blocked(x1,y1,x2,y2)
+                || Math.max(y1*sign,y2*sign)+.3>=.342;
+            var blocked=CartFootprint.slide(corner,x,0,0,dx,dy,front,0,-.025,.025);
+            check(blocked==null || Math.abs(blocked.y())<Math.abs(dy),"a second wall must stop the tangent too");
+            check(CartFootprint.slide(empty,x,0,0,dx,dy,front,1,-.025,.025)==null,
+                "unobstructed rolling must retain its original path and yaw");
+            check(CartFootprint.slide(eastWall,x,0,0,dx,0,front,0,-.025,.025)==null,
+                "head-on intent must not invent a sideways escape");
+        }
+        // Repeat at native world precision: each wall-guided step must commit its checked float XY and yaw.
+        for(double sign:new double[]{-1,1}) {
+            double x=10826,y=10142.5,heading=sign*.6;
+            CartFootprint.Query wall=(x1,y1,x2,y2)->Math.max(x1,x2)+.3>=10828;
+            boolean slid=false;
+            for(int step=0;step<240;step++) {
+                double dx=.04,dy=.02*sign;
+                double fraction=CartFootprint.limit(wall,x,y,heading,dx,dy,axle,1.62);
+                var slide=CartFootprint.slide(wall,x,y,heading,dx,dy,1.62,fraction,-.025,.025);
+                double turn;
+                if(slide==null) {
+                    dx=(float)(x+dx*fraction)-x;dy=(float)(y+dy*fraction)-y;
+                    turn=CartSteeringMath.acceptedTurn(heading,axle,dx,dy);
+                } else {dx=slide.x();dy=slide.y();turn=slide.turn();slid=true;}
+                check(CartFootprint.rigidLimit(wall,x,y,heading,dx,dy,heading+turn,1.62)==1,
+                    "repeated rounded wall slides must retain a fully checked sweep");
+                x+=dx;y+=dy;heading=CartSteeringMath.wrap(heading+turn);
+            }
+            check(slid,"native-coordinate contact must actually exercise the deflection path");
+        }
+        double heading=Math.PI/4,dt=1.0/60,previousRate=-.5,front=CartFootprint.FAST_FRONT;
+        double wallX=Math.cos(heading)*(front-.28)+.301;
+        CartFootprint.Query closeWall=(x1,y1,x2,y2)->Math.max(x1,x2)+.3>=wallX;
+        var approach=CartSteeringMath.woodenStep(heading,0,.02,dt,0,axle,previousRate,new CartSteeringMath.Step());
+        double fraction=CartFootprint.limit(closeWall,0,0,heading,approach.x(),approach.y(),axle,front);
+        var redirected=CartFootprint.slide(closeWall,0,0,heading,approach.x(),approach.y(),front,fraction,
+            (previousRate-6*dt)*dt,(previousRate+6*dt)*dt);
+        check(redirected==null || redirected.turn()==0 || Math.abs(redirected.turn()/dt-previousRate)<=6*dt+1e-9,
+            "wall guidance must brake an incoming turn before reversing its angular velocity");
+        check(redirected==null || CartFootprint.rigidLimit(closeWall,0,0,heading,redirected.x(),redirected.y(),
+            heading+redirected.turn(),front)==1,"angular braking must not bypass the swept tangent checks");
+        double parallelX=(float)1.65;
+        check(CartFootprint.followWall(eastWall,parallelX,0,Math.PI/2,Math.PI/4,Math.PI/2,1,0,front),
+            "diagonal pressure into a nearby wall must retain the contact tangent");
+        check(!CartFootprint.followWall(empty,parallelX,0,Math.PI/2,Math.PI/4,Math.PI/2,1,0,front),
+            "a wall guide must end when the obstacle ends");
+        for(double target:new double[]{Math.PI*3/4,-Math.PI/4,Math.PI/2})
+            check(!CartFootprint.followWall(eastWall,parallelX,0,Math.PI/2,target,Math.PI/2,1,0,front),
+                "away, opposite and wall-parallel input must release the contact-only guide");
         System.out.println("CART_FOOTPRINT_PASS (native budget, wall/door contact, brace probes, passage, swept turn, slide, promotion, rear caps)");
     }
 }

@@ -7,7 +7,8 @@ import zombie.pathfind.PolygonalMap2;
 final class CartFootprint {
     // shortcut: original wooden mesh/rigs and +/-7deg bank; recalibrate if the mesh or authored pose changes.
     static final double WALK_FRONT=1.26, FAST_FRONT=1.62;
-    private static final double RAIL=.12, NOSE_INSET=.21;
+    // Native wall queries already add radius .3; only the tilted body needs extra width.
+    private static final double RAIL=.04, NOSE_INSET=.28, TAPER=.30;
 
     @FunctionalInterface
     interface Query { boolean blocked(double x1,double y1,double x2,double y2); }
@@ -29,7 +30,9 @@ final class CartFootprint {
         // shortcut: calibrated tile walls/doors; the native vehicle sweep has a narrower side margin.
         for(int side=-1;side<=1;side+=2) {
             double rearX=x-sin*side*RAIL,rearY=y+cos*side*RAIL;
-            if(query.blocked(rearX,rearY,rearX+cos*length,rearY+sin*length)) return false;
+            double shoulderX=rearX+cos*(length-TAPER),shoulderY=rearY+sin*(length-TAPER);
+            if(query.blocked(rearX,rearY,shoulderX,shoulderY)
+                || query.blocked(shoulderX,shoulderY,x+cos*length,y+sin*length)) return false;
         }
         return true;
     }
@@ -42,8 +45,8 @@ final class CartFootprint {
         double a=heading+(rolling?CartSteeringMath.acceptedTurn(heading,axle,ax-x,ay-y):turn*from);
         double b=heading+(rolling?CartSteeringMath.acceptedTurn(heading,axle,bx-x,by-y):turn*to);
         if(!clear(query,bx,by,b,front)) return false;
-        for(int side=-1;side<=1;side+=2) for(int end=0;end<=1;end++) {
-            double length=end*(front-NOSE_INSET),offset=side*RAIL;
+        for(int side=-1;side<=1;side+=2) for(int end=0;end<=2;end++) {
+            double length=end==0?0:front-NOSE_INSET-(end==1?TAPER:0),offset=end==2?0:side*RAIL;
             double x1=ax+Math.cos(a)*length-Math.sin(a)*offset;
             double y1=ay+Math.sin(a)*length+Math.cos(a)*offset;
             double x2=bx+Math.cos(b)*length-Math.sin(b)*offset;
@@ -86,6 +89,42 @@ final class CartFootprint {
             previous=next;
         }
         return 1;
+    }
+
+    static boolean pressingWall(double target,double tangent,double normalX,double normalY) {
+        return Math.cos(target)*normalX+Math.sin(target)*normalY>.05 && Math.cos(target-tangent)>.1;
+    }
+
+    static boolean followWall(Query query,double x,double y,double heading,double target,
+                              double tangent,double normalX,double normalY,double front) {
+        return pressingWall(target,tangent,normalX,normalY)
+            && rigidLimit(query,x,y,heading,normalX*.25,normalY*.25,heading,front)<1;
+    }
+
+    record Slide(double x,double y,double turn,double target) {}
+
+    /** Deflect along a clear tile axis and face along it, within the existing turn-rate budget. */
+    static Slide slide(Query query,double x,double y,double heading,double dx,double dy,
+                       double front,double fraction,double minTurn,double maxTurn) {
+        if(dx==0 || dy==0 || fraction>=1 || !Double.isFinite(dx+dy+minTurn+maxTurn) || minTurn>maxTurn) return null;
+        double best=(dx*dx+dy*dy)*fraction;
+        Slide result=null;
+        for(int axis=0;axis<2;axis++) {
+            double sx=axis==0?dx:0,sy=axis==1?dy:0;
+            double target=Math.atan2(sy,sx);
+            if(dx*Math.cos(heading)+dy*Math.sin(heading)<0) target+=Math.PI;
+            double turn=Math.max(minTurn,Math.min(maxTurn,CartSteeringMath.wrap(target-heading)));
+            double allowed=rigidLimit(query,x,y,heading,sx,sy,heading+turn,front);
+            double acceptedTurn=turn*allowed;
+            if(acceptedTurn<minTurn || acceptedTurn>maxTurn) {
+                // Contact can stop angular motion while the clear tangent keeps moving.
+                allowed=rigidLimit(query,x,y,heading,sx,sy,heading,front);acceptedTurn=0;
+            }
+            sx=(float)(x+sx*allowed)-x;sy=(float)(y+sy*allowed)-y;
+            double progress=sx*dx+sy*dy;
+            if(progress>best+1e-12) {best=progress;result=new Slide(sx,sy,acceptedTurn,target);}
+        }
+        return result;
     }
 
     private CartFootprint() {}

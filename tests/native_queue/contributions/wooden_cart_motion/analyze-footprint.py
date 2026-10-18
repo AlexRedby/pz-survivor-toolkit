@@ -18,7 +18,7 @@ MESH_SHA = '0f99448cda120bad9f324f38bdbf994f8788ab6731473533475fb6eaf3f4c948'
 CENTER = np.array([-6.642862e-6, -.0041269097, -.0010569958])
 RADIUS, HALF_AXLE = .001062454, .00024333253
 SPECIAL = ('door-closed', 'door-open', 'overlap', 'gait-contact')
-EXPECTED = {f'{sex}-{cargo}-{spec}' for sex in ('male', 'female') for cargo in ('empty', 'full') for spec in collision.SPECS}
+EXPECTED = {f'{sex}-{cargo}-{spec}' for sex in ('male', 'female') for cargo in ('empty', 'full') for spec in (*collision.SPECS, 'wall-slide-right')}
 EXPECTED.update('male-empty-' + spec for spec in SPECIAL)
 ANGLES = {1: -3*math.pi/4, 2: 3*math.pi/4, 3: -math.pi/4, 4: math.pi/4,
           5: math.pi, 6: math.pi/2, 7: 0., 8: -math.pi/2}
@@ -33,16 +33,17 @@ def steps(name):
         return [(1000, 0, 5), (3000, 0, 0), (4000, 0, None), (9000, 0, 0)]
     if spec == 'gait-contact':
         return [(1000, 0, 5), (3500, 1, 5), (6500, 0, 0), (7500, 0, None), (10000, 0, 0)]
-    result = list(collision.STEPS['wall-block' if spec == 'door-closed' else spec])
+    result = list(collision.STEPS['wall-slide' if spec == 'wall-slide-right' else 'wall-block' if spec == 'door-closed' else spec])
+    if spec == 'wall-slide-right': result[0] = (1000, 1, 1)
     result[2] = (result[2][0], 0, None)
     return result
 
 
 def selected(log):
-    assert re.search(r'\[WOOD_BANK\] ALL_COMPLETE cases=20(?:\s|$)', log), 'Capture incomplete'
+    assert re.search(r'\[WOOD_BANK\] ALL_COMPLETE cases=24(?:\s|$)', log), 'Capture incomplete'
     assert '[WOOD_BANK] FAIL' not in log, 'Scenario failed'
     complete = re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)', log)
-    assert len(complete) == 20 and {n for n, _ in complete} == EXPECTED, 'Missing, duplicate or unexpected footprint cases'
+    assert len(complete) == 24 and {n for n, _ in complete} == EXPECTED, 'Missing, duplicate or unexpected footprint cases'
     starts = {n: int(t) for n, t in complete}
     attempts = re.findall(r'\[WOOD_BANK\] CASE (\S+) attempt=\d+ wall=(\d+)', log)
     assert all(attempts.count((n, str(t))) == 1 for n, t in starts.items()), 'Missing or duplicate selected footprint attempt'
@@ -235,7 +236,7 @@ def analyze(text, profile):
             assert len(selected) >= 2, 'Insufficient '+reason+' samples'
             if collision.spread(selected) > .015 or collision.angle_drift(selected, 'heading') > math.radians(1) or collision.wheel_roll_error(selected) > .01:
                 fail(reason)
-        initial_heading = collision.HEADINGS.get(spec, math.pi)
+        initial_heading = -3*math.pi/4 if spec == 'wall-slide-right' else collision.HEADINGS.get(spec, math.pi)
         if abs(wrap(rows[0]['heading']-initial_heading)) > math.radians(4):
             fail('wrong initial footprint heading')
         quiet_run, yaw = [], 0.
@@ -256,7 +257,7 @@ def analyze(text, profile):
         if not progressing(reverse, {'Bob_WalkBwdNoAim1Hand'}): fail('native reverse gait does not progress')
         if any((r['stationaryRoot'] or r['requested'] < 0 or r['direction'] < 0) and (r['run'] or r['sprint']) for r in rows):
             fail('fast gait during stationary or reverse motion')
-        if spec in ('wall-block', 'wall-slide', 'door-closed'):
+        if spec in ('wall-block', 'wall-slide', 'wall-slide-right', 'door-closed'):
             approach = window(1100, events[1][0])
             if not any(r['run'] and r['actualDistance'] > 1e-6 for r in approach) or not progressing(approach, {'Bob_Run'}):
                 fail('native requested fast gait does not progress')
@@ -264,10 +265,10 @@ def analyze(text, profile):
             if min(r['x'] for r in window(1200, events[1][0])) >= wx-.2: fail('opening never crossed west')
             if max(r['x'] for r in reverse) <= wx+.2: fail('opening never crossed east')
         else:
-            if spec != 'corner-pivot' and not any(s['blocked'] for s in states): fail('obstacle guard never reports rejection')
+            if spec not in ('corner-pivot', 'gait-contact') and not any(s['blocked'] for s in states): fail('obstacle guard never reports rejection')
             reverse_travel = sum((b['x']-a['x'])*math.cos(before['heading']+math.pi)+(b['y']-a['y'])*math.sin(before['heading']+math.pi) for a, b in zip(reverse, reverse[1:]))
             if reverse_travel < .2: fail('reverse does not escape obstacle')
-        if spec in ('wall-block', 'wall-slide', 'door-closed'):
+        if spec in ('wall-block', 'door-closed'):
             quiet(window(4500, 5800), 'wall contact does not remain quiet')
             if min(f['minX'] for f in measured if 4500 <= f['elapsed'] < 5800) > wx+.65:
                 fail('wooden mesh never approaches obstacle contact', True)
@@ -279,17 +280,38 @@ def analyze(text, profile):
                 and abs(wrap(r['target']-r['heading'])) >= math.radians(20) for r in contact)
             if not unresolved and not any(s['blocked'] for s in states if 3000 <= s['elapsed'] < 3800):
                 fail('corner contact not demonstrated under held input')
-        if spec == 'wall-slide':
+        slide_comparison = None
+        if spec in ('wall-slide', 'wall-slide-right'):
+            direction = -1 if spec.endswith('right') else 1
             approach = window(1000, 5800)
-            if approach[0]['x']-min(r['x'] for r in approach) < .15 or max(r['y'] for r in approach)-approach[0]['y'] < .15:
+            if approach[0]['x']-min(r['x'] for r in approach) < .15 or direction*(approach[-1]['y']-approach[0]['y']) < .15:
                 fail('wall slide has no accepted diagonal approach')
+            # Compare measured motion after mesh contact, with the bare Walk control in the same direction.
+            frame_times = [f['wall'] for f in measured]
+            contact = [r for r in window(4500, 5800) if any(f['minX'] <= wx+.65
+                for f in brackets(measured, frame_times, r['wall']))]
+            metrics = collision.slide_metrics(contact, direction)
+            bare = native['wall-slide-right' if direction < 0 else 'wall-slide-left']['slide']
+            slide_comparison = dict(cart=metrics, bareWalk=bare, requestedGait='Run')
+            if metrics['durationMs'] < 500 or metrics['tangent'] < .15 or metrics['normal'] > .15 or any(b['wall']-a['wall'] > 500 for a,b in zip(contact,contact[1:])):
+                fail('wall slide has no accepted tangential movement at contact')
+            if not any(s['blocked'] for s in states if contact and contact[0]['wall'] <= s['wall'] <= contact[-1]['wall']):
+                fail('wall slide contact never reports normal rejection')
+            if not progressing(contact, {'Bob_Run'}): fail('native requested fast gait does not progress at wall contact')
         if spec == 'overlap':
             quiet(window(1200, 2800), 'initial overlap accepts forward movement')
             if collision.angle_drift(window(0, events[-1][0]), 'heading') > math.radians(1): fail('overlap escape adds yaw')
             if not any(s['blocked'] for s in states if 1200 <= s['elapsed'] < 2800): fail('overlap forward request never reports rejection')
             if not any(s['recovering'] for s in states if reverse_event[0] <= s['elapsed'] < events[-1][0]): fail('overlap recovery never engages')
-        if spec == 'gait-contact' and not any(s['blocked'] for s in states if 3700 <= s['elapsed'] < 6300):
-            fail('gait promotion at contact never reports rejection')
+        if spec == 'gait-contact':
+            promotion = window(3700, 6300)
+            quiet(promotion, 'gait promotion at contact moves actor or wheel')
+            if (not any(r['requestedGait'] == 1 for r in promotion)
+                or any(r['run'] or r['sprint'] or r['drive'] != 5 or r['requested'] < 0 or r['direction'] < 0
+                       or r['stationary'] or r['stationaryRoot'] for r in promotion)
+                or progressing(promotion, {'Bob_Run', 'Bob_Sprint'})
+                or any(s['front'] != 1.26 or not s['clear'] or s['recovering'] for s in states if 3700 <= s['elapsed'] < 6300)):
+                fail('gait promotion at contact was not denied')
         quiet(window(max(11500, events[-1][0]+1250), 12000), 'final release does not settle')
         if any(r['stationary'] or r['braking'] or r['run'] or r['sprint'] for r in window(11500, 12000)): fail('final release does not settle')
         for frame in measured:
@@ -308,7 +330,7 @@ def analyze(text, profile):
             escape = [f for f in measured if reverse_event[0] <= f['elapsed'] < events[-1][0]]
             if any(b['minX'] < a['minX']-.01 for a, b in zip(escape, escape[1:])): fail('overlap recovery increases penetration', True)
         summaries.append(dict(case=name, samples=len(rows), frames=len(measured), nativeUpdates=len(native_rows), minX=min(f['minX'] for f in measured), maxY=max(f['maxY'] for f in measured),
-                              initialOverlap=spec=='overlap'))
+                              initialOverlap=spec=='overlap', slideComparison=slide_comparison))
     return dict(complete=True, caseCount=len(cases), controlCount=len(native), meshSha256=sha, cases=summaries,
                 motionPass=not motion_failures, footprintPass=not footprint_failures, motionFailures=motion_failures, footprintFailures=footprint_failures,
                 limit='Sampled held wooden mesh and continuous wheel-cylinder support against tile wall/door fixture planes; no separate collision body or vehicle-hull clearance claim. Initial overlap is an explicit recovery case, not an initial-clearance PASS. Motion between captured frames, body/grip/clothing, visual review, runtime errors and multiplayer authority remain separate gates.')

@@ -70,7 +70,8 @@ def check_manifest():
     assert manifest['maneuvers_scenario']['axes']['spec'] == ['idle-swap-left','idle-swap-right','moving-swap-left','moving-swap-right','reverse-rest','reverse-moving','uturn-left','uturn-right']
     assert manifest['collision_scenario']['case_count'] == 16
     assert manifest['collision_scenario']['native_bare_controls'] == ['wall','corner','passage']
-    assert manifest['footprint_scenario']['case_count'] == 20
+    assert manifest['footprint_scenario']['native_bare_controls'] == ['wall','corner','passage','wall-slide-left','wall-slide-right']
+    assert manifest['footprint_scenario']['case_count'] == 24
     assert manifest['footprint_scenario']['required_candidate_versions']['PZToolkitJavaPatches']=='>=0.1.20'
     stationary = runpy.run_path(str(HERE/'analyze-stationary.py'))
     assert len(stationary['STEPS']) == 5

@@ -22,7 +22,7 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
             'stop-timing': ('scenario-stop.lua', 4),
             'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
-            'collision': ('scenario-collision.lua', 20), 'footprint': ('scenario-collision.lua', 20),
+            'collision': ('scenario-collision.lua', 24), 'footprint': ('scenario-collision.lua', 24),
             'impact': ('scenario-collision.lua', 8),
             'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
@@ -37,7 +37,7 @@ SCENE_SPECS = {
     'stationary': ('left', 'right', 'cancel-restart', 'run-exit', 'sprint-sequence'),
     'maneuvers': ('idle-swap-left', 'idle-swap-right', 'moving-swap-left', 'moving-swap-right',
                   'reverse-rest', 'reverse-moving', 'uturn-left', 'uturn-right'),
-    'footprint': ('wall-block', 'wall-slide', 'corner-pivot', 'passage'),
+    'footprint': ('wall-block', 'wall-slide', 'wall-slide-right', 'corner-pivot', 'passage'),
     'impact': ('sprint-wall', 'native-impact'),
     'path': ('straight', 'corner', 'door-open', 'door-closed', 'overlap', 'cancel'),
 }

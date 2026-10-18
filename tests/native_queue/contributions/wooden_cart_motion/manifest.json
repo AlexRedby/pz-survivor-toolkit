@@ -353,10 +353,11 @@
     "live_verification": "pending; motion and complete capture are separate from grip/geometry/visual quality"
   },
   "footprint_scenario": {
-    "case_count": 20,
+    "case_count": 24,
+    "native_bare_controls": ["wall", "corner", "passage", "wall-slide-left", "wall-slide-right"],
     "scenario": "scenario-collision.lua with config.footprint=true",
     "required_candidate_versions": {"PZSurvivorToolkit": ">=0.1.61", "PZToolkitJavaPatches": ">=0.1.20"},
-    "scope": "Native tile-wall/door guard for the original wooden mesh, both body models and loads; includes initial-overlap reverse and stopped gait promotion. Full vehicle clearance and MP authority are separate coverage."
+    "scope": "Native tile-wall/door guard for the original wooden mesh, both body models and loads; includes wall sliding in both directions against bare Walk controls, initial-overlap reverse and stopped gait promotion. Full vehicle clearance and MP authority are separate coverage."
   },
   "collision_scenario": {
     "case_count": 16,

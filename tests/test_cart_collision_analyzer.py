@@ -115,6 +115,26 @@ class CollisionAnalyzerTests(unittest.TestCase):
             lines.append(line)
         self.assertTrue(analyzer.analyze('\n'.join(lines))['motionPass'])
 
+    def test_moving_control_endpoint_uses_elapsed_native_movement_budget(self):
+        lines=[]
+        for line in self.log.splitlines():
+            if '[CART_COLLISION_CONTROL] COMPLETE spec=passage ' in line:
+                raw=analyzer.fields(line.split(' COMPLETE ',1)[1])
+                lines.append(f'[CART_COLLISION_CONTROL_SAMPLE] spec=passage wall={int(raw["wall"])-16} elapsed=3984 x={float(raw["x"])+.025390625} y={raw["y"]} heading=3.14 drive=5')
+            lines.append(line)
+        log='\n'.join(lines)
+        self.assertEqual(analyzer.controls(log)[1], [])
+        # The same 16 ms budget must still reject a larger endpoint jump.
+        outside='\n'.join(re.sub(r' x=[^ ]+', ' x=10822.65', line) if '[CART_COLLISION_CONTROL] COMPLETE spec=passage ' in line else line for line in lines)
+        with self.assertRaisesRegex(AssertionError, 'endpoint disagrees'):
+            analyzer.controls(outside)
+        stale='\n'.join(line.replace('wall=33984 elapsed=3984','wall=34001 elapsed=4001') if '[CART_COLLISION_CONTROL_SAMPLE] spec=passage ' in line and 'elapsed=3984 ' in line else line for line in lines)
+        with self.assertRaisesRegex(AssertionError, 'completion time'):
+            analyzer.controls(stale)
+        simultaneous='\n'.join(line.replace('wall=33984 elapsed=3984','wall=34000 elapsed=4000') if '[CART_COLLISION_CONTROL_SAMPLE] spec=passage ' in line and 'elapsed=3984 ' in line else line for line in lines)
+        with self.assertRaisesRegex(AssertionError, 'endpoint disagrees'):
+            analyzer.controls(simultaneous)
+
     def test_strict_finite_header_and_diagnostic_boundaries(self):
         for bad in (self.log.replace('wheelPhase=0.0 ', 'wheelPhase=nan ', 1),
                     self.log.replace('wheelPhase=0.0 ', '', 1),

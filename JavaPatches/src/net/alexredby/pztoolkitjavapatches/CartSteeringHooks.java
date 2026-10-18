@@ -25,6 +25,8 @@ public final class CartSteeringHooks {
         float startX, startY;
         boolean wheelRendered, stationary, stationaryRoot, cartBlocked, recovering, path;
         double footprintFront=CartFootprint.WALK_FRONT;
+        double slideTurn=Double.NaN;
+        double wallHeading=Double.NaN, wallNormalX, wallNormalY;
         boolean moving, pending, sprintMomentum, sprintRequested, hasInput, wantsMove, braking, brakeSeen, fastMoving;
         boolean sprintMoving, momentumSprint;
         final CartSteeringMath.Step requested = new CartSteeringMath.Step();
@@ -218,7 +220,9 @@ public final class CartSteeringHooks {
         if(!Double.isFinite(dx+dy+heading)) return true;
         if(!CartFootprint.clear(query,x,y,heading,front))
             return dx*Math.cos(heading)+dy*Math.sin(heading)>=0;
-        double distance=Math.hypot(dx,dy)*CartFootprint.limit(query,x,y,heading,dx,dy,axle,front);
+        double fraction=CartFootprint.limit(query,x,y,heading,dx,dy,axle,front);
+        var slide=CartFootprint.slide(query,x,y,heading,dx,dy,front,fraction,-.04,.04);
+        double distance=slide==null?Math.hypot(dx,dy)*fraction:Math.hypot(slide.x(),slide.y());
         return distance<=Math.max(1e-6,2*Math.max(Math.ulp(x),Math.ulp(y)));
     }
 
@@ -248,13 +252,24 @@ public final class CartSteeringHooks {
                 state.pace.reset(state.brakePace*Math.max(0,Math.min(1,distance/(dt*state.brakeLimit))));
         }
         state.load = load(player);
+        CartFootprint.Query query=wooden(player) && player.getCurrentSquare()!=null?CartFootprint.world(player):null;
+        if(query!=null) state.footprintFront=player.isRunning() || player.isSprinting() || state.fastPoseTail>0
+            || CartLegPace.woodenGaitShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
+        boolean footprintClear=query!=null && CartFootprint.clear(query,state.startX,state.startY,state.heading,state.footprintFront);
+        boolean guided=Double.isFinite(state.wallHeading) && state.wantsMove && !state.braking
+            && !state.stationaryRoot && !state.reversal.active && state.reversal.direction>0 && footprintClear
+            && CartFootprint.followWall(query,state.startX,state.startY,state.heading,state.target,state.wallHeading,
+                state.wallNormalX,state.wallNormalY,state.footprintFront);
+        if(!guided) state.wallHeading=Double.NaN;
+        double rollingTarget=guided?state.wallHeading:state.reversal.braking?state.brakeTarget
+            :state.wantsMove?state.target:state.heading+(state.reversal.direction<0?Math.PI:0);
         if(state.stationaryRoot) {
             CartSteeringMath.stationaryStep(state.heading,state.stationary?state.target:state.heading,
                 distance,dt,state.load,axle(player),state.stationaryRate,state.requested);
             // Retain planned cadence across sub-ULP coordinates; only accepted movement changes heading.
             state.stationaryRate=dt>0?state.requested.turn()/dt:0;
         } else if(wooden(player)) CartSteeringMath.woodenStep(state.heading,
-                state.reversal.braking?state.brakeTarget:state.wantsMove?state.target:state.heading+(state.reversal.direction<0?Math.PI:0), distance,
+                rollingTarget, distance,
                 GameTime.getInstance().getRealworldSecondsSinceLastUpdate(),state.load,axle(player),
                 state.turnRate,state.reversal.direction<0,state.requested);
         else CartSteeringMath.step(state.heading,
@@ -263,12 +278,10 @@ public final class CartSteeringHooks {
                 52, state.requested);
         state.pending = true;
         state.result.set((float)state.requested.x(),(float)state.requested.y());
-        state.cartBlocked=state.recovering=false;
-        if(wooden(player) && player.getCurrentSquare()!=null) {
-            state.footprintFront=player.isRunning() || player.isSprinting() || state.fastPoseTail>0
-                || CartLegPace.woodenGaitShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
-            var query=CartFootprint.world(player);
-            if(!CartFootprint.clear(query,state.startX,state.startY,state.heading,state.footprintFront)) {
+        state.cartBlocked=guided;state.recovering=false;
+        state.slideTurn=Double.NaN;
+        if(query!=null) {
+            if(!footprintClear) {
                 // An equipped/door-overlapped cart may back out, without sweeping its nose sideways.
                 state.recovering=true;
                 double reverse=Math.min(0,state.result.x*Math.cos(state.heading)+state.result.y*Math.sin(state.heading));
@@ -277,13 +290,29 @@ public final class CartSteeringHooks {
             } else {
                 double fraction=CartFootprint.limit(query,state.startX,state.startY,state.heading,
                     state.result.x,state.result.y,axle(player),state.footprintFront);
-                state.result.scale((float)fraction);state.cartBlocked=fraction<1;
+                double guideCap=Math.min((1.6-.3*state.load)*dt,distance/axle(player));
+                double guideBase=Math.max(-guideCap,Math.min(guideCap,state.turnRate*dt));
+                var slide=CartFootprint.slide(query,state.startX,state.startY,state.heading,
+                    state.result.x,state.result.y,state.footprintFront,fraction,
+                    Math.max(-guideCap,guideBase-6*dt*dt),Math.min(guideCap,guideBase+6*dt*dt));
+                if(slide==null) state.result.scale((float)fraction);
+                else {
+                    double nx=slide.x()==0?Math.signum(state.result.x):0;
+                    double ny=slide.y()==0?Math.signum(state.result.y):0;
+                    if(state.wantsMove && !state.braking && !state.stationaryRoot && !state.reversal.active
+                        && state.reversal.direction>0 && CartFootprint.pressingWall(state.target,slide.target(),nx,ny)) {
+                        state.wallHeading=slide.target();state.wallNormalX=nx;state.wallNormalY=ny;
+                    }
+                    state.result.set((float)slide.x(),(float)slide.y());state.slideTurn=slide.turn();
+                }
+                state.cartBlocked|=fraction<1;
             }
         }
         return state.result;
     }
 
     private static Vector2 pathMovement(IsoPlayer player,State state,float x,float y) {
+        state.wallHeading=Double.NaN;
         Vector2 facing=player.getAnimForwardDirection(state.input);
         state.heading=Math.atan2(facing.y,facing.x);
         state.pending=true;state.result.set(x,y);
@@ -400,9 +429,17 @@ public final class CartSteeringHooks {
         if (state.pending) {
             actualX = player.getX() - state.startX;
             actualY = player.getY() - state.startY;
+            double slideTurn=state.slideTurn;
+            if(Double.isFinite(slideTurn)) {
+                double planned=state.result.x*state.result.x+state.result.y*state.result.y;
+                slideTurn*=planned>0?Math.max(0,Math.min(1,(actualX*state.result.x+actualY*state.result.y)/planned)):0;
+            }
             if(wooden(player) && !state.recovering && player.getCurrentSquare()!=null) {
-                double allowed=CartFootprint.limit(CartFootprint.world(player),state.startX,state.startY,state.heading,
-                    actualX,actualY,axle(player),state.footprintFront);
+                var query=CartFootprint.world(player);
+                double allowed=Double.isFinite(slideTurn)
+                    ?CartFootprint.rigidLimit(query,state.startX,state.startY,state.heading,actualX,actualY,
+                        state.heading+slideTurn,state.footprintFront)
+                    :CartFootprint.limit(query,state.startX,state.startY,state.heading,actualX,actualY,axle(player),state.footprintFront);
                 if(allowed<1) {
                     player.setX((float)(state.startX+actualX*allowed));player.setY((float)(state.startY+actualY*allowed));
                     player.setNextX(player.getX());player.setNextY(player.getY());
@@ -410,11 +447,13 @@ public final class CartSteeringHooks {
                     actualX=player.getX()-state.startX;actualY=player.getY()-state.startY;
                     state.cartBlocked=true;
                 }
+                slideTurn*=allowed;
             }
             fraction = CartSteeringMath.acceptedFraction(state.requested,
                     actualX, actualY);
-            blocked=state.cartBlocked || blockedStep(state.requested,state.startX,state.startY,fraction);
-            double turn = state.recovering?0:wheelbarrow(player)
+            blocked=state.cartBlocked && actualX==0 && actualY==0
+                || blockedStep(state.requested,state.startX,state.startY,fraction);
+            double turn = state.recovering?0:Double.isFinite(slideTurn)?slideTurn:wheelbarrow(player)
                 ? CartSteeringMath.acceptedTurn(state.heading,axle(player),actualX,actualY)
                 : state.requested.turn() * fraction;
             if(wooden(player)) {
@@ -505,6 +544,11 @@ public final class CartSteeringHooks {
         }
         float stepX=player.getVariableFloat("ToolkitCartStepX",0),stepY=player.getVariableFloat("ToolkitCartStepY",0);
         float target=wooden(player)?CartLegPace.targetSpeed(player,stepX,stepY):Float.NaN;
+        // Drop inward input through native cadence once, preserving full strides and the movement budget.
+        float wallScale=Double.isFinite(state.wallHeading) && state.wantsMove && !state.reversal.active
+            && !state.stationaryRoot && CartFootprint.pressingWall(state.target,state.wallHeading,state.wallNormalX,state.wallNormalY)
+            ?(float)Math.max(0,Math.cos(state.target-state.wallHeading)):1;
+        target*=wallScale;
         if(state.stationaryRoot) {
             // Cargo slows the full stride's cadence instead of reducing its spatial amplitude.
             target*=Math.max(0,Math.min(1,player.getVariableFloat("WalkSpeed",.8f)));
@@ -555,7 +599,8 @@ public final class CartSteeringHooks {
                 else if(Math.abs(speed-target)<=Math.max(1e-3,target*.02)) state.sprintMomentum=false;
             } else {
                 state.pace.reset(target);
-                CartLegPace.apply(player,CartLegPace.scale(player,stepX,stepY));
+                if(wallScale<1) CartLegPace.applySpeed(player,target,stepX,stepY);
+                else CartLegPace.apply(player,CartLegPace.scale(player,stepX,stepY));
             }
         } else {
             state.sprintMomentum=false;

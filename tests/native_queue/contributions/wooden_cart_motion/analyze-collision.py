@@ -77,13 +77,25 @@ def coverage(rows, start, duration, label, minimum):
     return gaps
 
 
+def slide_metrics(rows, direction):
+    if len(rows) < 2:
+        return dict(samples=len(rows), durationMs=0, tangent=0, normal=0, tangentPerSecond=0)
+    duration = rows[-1]['wall']-rows[0]['wall']
+    tangent = direction*(rows[-1]['y']-rows[0]['y'])
+    return dict(samples=len(rows), durationMs=duration, tangent=tangent,
+                normal=max(r['x'] for r in rows)-min(r['x'] for r in rows),
+                tangentPerSecond=tangent/(duration/1000) if duration else 0)
+
+
 def controls(log, wall_offset=1):
     result, active = {}, None
+    expected = {'wall', 'corner', 'passage'}
+    if wall_offset == 3: expected.update(('wall-slide-left', 'wall-slide-right'))
     for line in log.splitlines():
         if '[CART_COLLISION_CONTROL] START ' in line:
             raw = fields(line.split('[CART_COLLISION_CONTROL] START ', 1)[1])
             name = raw.pop('spec', None)
-            assert name in ('wall', 'corner', 'passage') and name not in result and active is None, 'Unexpected or duplicate native control'
+            assert name in expected and name not in result and active is None, 'Unexpected or duplicate native control'
             row = numeric_fields(' '.join(f'{k}={v}' for k, v in raw.items()), ('wall', 'x', 'y', 'wallX', 'southY', 'gapY'), 'control start')
             result[name] = dict(start=row, rows=[])
             active = name
@@ -91,8 +103,17 @@ def controls(log, wall_offset=1):
             raw = fields(line.split('[CART_COLLISION_CONTROL_SAMPLE] ', 1)[1])
             name = raw.pop('spec', None)
             assert name == active and active is not None, 'Control sample outside its attempt'
+            slide = name.startswith('wall-slide-')
+            if slide:
+                assert raw.pop('run', None) == 'false' and raw.pop('sprint', None) == 'false' and raw.pop('bare', None) == 'true', 'Native slide must be bare Walk'
+                tracks = raw.pop('tracks', '')
+                assert tracks and all(re.fullmatch(r'[^=;]+=[^@;]+@[^;]+', t) for t in tracks.split(';') if t), 'Invalid native Walk tracks'
+                parsed = [(n, float(speed), float(weight)) for n, speed, weight in re.findall(r'([^=;]+)=([^@;]+)@([^;]+);', tracks)]
+                assert parsed and all(math.isfinite(speed+weight) for _, speed, weight in parsed), 'Nonfinite native Walk tracks'
+                walking = any(n == 'Bob_Walk' and speed > 0 and weight > .1 for n, speed, weight in parsed)
             row = numeric_fields(' '.join(f'{k}={v}' for k, v in raw.items()), ('wall', 'elapsed', 'x', 'y', 'heading', 'drive'), 'control sample')
-            assert row['drive'] == (2 if name == 'corner' else 5), 'Wrong native control input'
+            assert row['drive'] == (2 if name in ('corner', 'wall-slide-left') else 1 if name == 'wall-slide-right' else 5), 'Wrong native control input'
+            if slide: row['walking'] = walking
             result[name]['rows'].append(row)
         elif '[CART_COLLISION_CONTROL] COMPLETE ' in line:
             raw = fields(line.split('[CART_COLLISION_CONTROL] COMPLETE ', 1)[1])
@@ -100,19 +121,21 @@ def controls(log, wall_offset=1):
             assert name == active and active is not None, 'Native control completion without start'
             result[name]['end'] = numeric_fields(' '.join(f'{k}={v}' for k, v in raw.items()), ('wall', 'x', 'y'), 'control completion')
             active = None
-    assert set(result) == {'wall', 'corner', 'passage'} and active is None and all('end' in c for c in result.values()), 'Missing native collision controls'
+    assert set(result) == expected and active is None and all('end' in c for c in result.values()), 'Missing native collision controls'
     failures = []
     geometry = result['wall']['start']
     for name, control in result.items():
         start, rows, end = control['start'], control['rows'], control['end']
-        coverage([r for r in rows if r['elapsed'] < 4000], start['wall'], 4000, 'native control ' + name, 40)
-        assert 4000 <= end['wall'] - start['wall'] <= 4500 and end['wall'] >= rows[-1]['wall'], 'Invalid native control completion time'
+        slide = name.startswith('wall-slide-')
+        duration = 6000 if slide else 4000
+        coverage([r for r in rows if r['elapsed'] < duration], start['wall'], duration, 'native control ' + name, 40)
+        assert duration <= end['wall'] - start['wall'] <= duration+500 and end['wall'] >= rows[-1]['wall'], 'Invalid native control completion time'
         assert all(0 <= r['elapsed'] <= end['wall'] - start['wall'] and abs(r['wall'] - start['wall'] - r['elapsed']) <= 5 for r in rows), 'Native control clocks disagree'
         assert all(b['wall'] > a['wall'] for a, b in zip(rows, rows[1:])), 'Non-monotonic native control samples'
         assert all(start[k] == geometry[k] for k in ('x', 'y', 'wallX', 'southY', 'gapY')), 'Native controls disagree on geometry'
         assert start['wallX'] == math.floor(start['x']) - wall_offset and start['southY'] == math.floor(start['y']) + 2 and start['gapY'] == math.floor(start['y']), 'Invalid native control geometry'
         assert math.dist((start['x'], start['y']), (rows[0]['x'], rows[0]['y'])) <= 8 * rows[0]['elapsed'] / 1000 + .02, 'Native control starts after movement'
-        assert math.dist((end['x'], end['y']), (rows[-1]['x'], rows[-1]['y'])) <= .025, 'Native control endpoint disagrees with samples'
+        assert math.dist((end['x'], end['y']), (rows[-1]['x'], rows[-1]['y'])) <= 8*(end['wall']-rows[-1]['wall'])/1000+.002, 'Native control endpoint disagrees with samples'
         def fail(reason):
             failures.append(('control-' + name, reason))
         if any(math.dist((a['x'], a['y']), (b['x'], b['y'])) > 8 * (b['wall'] - a['wall']) / 1000 + .02 for a, b in zip(rows, rows[1:])):
@@ -130,6 +153,16 @@ def controls(log, wall_offset=1):
         if name == 'corner':
             if not start['southY'] - .5 <= end['y'] <= start['southY'] - .1:
                 fail('native control does not reach corner contact')
+        elif slide:
+            # Diagonal contact can sit closer to the wall than the frontal control.
+            contact = [r for r in rows if duration-1300 <= r['elapsed'] < duration
+                       and r['x'] <= min(start['wallX']+.5, end['x']+.05)]
+            metrics = slide_metrics(contact, -1 if name.endswith('right') else 1)
+            control['slide'] = metrics
+            if metrics['durationMs'] < 500 or metrics['tangent'] < .15 or metrics['normal'] > .15 or any(b['wall']-a['wall'] > 500 for a,b in zip(contact,contact[1:])):
+                fail('native Walk has no sustained wall slide at contact')
+            if not contact or sum(r['walking'] for r in contact) < .8*len(contact): fail('native Walk animation absent at wall contact')
+            if not start['wallX']-.002 <= end['x'] <= start['wallX']+.5: fail('native slide does not reach wall contact')
         else:
             if any(abs(r['y'] - start['y']) > .025 for r in rows):
                 fail('straight native control leaves its lane')

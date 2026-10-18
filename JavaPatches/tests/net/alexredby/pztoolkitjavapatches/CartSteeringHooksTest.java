@@ -315,6 +315,28 @@ public final class CartSteeringHooksTest {
             accept(player,CartSteeringHooks.movement(player,(float)(.2*dt),0));
             check(Float.isFinite(CartLegPace.targetSpeed(player,player.stepX,player.stepY)),"Run resume must use calibrated native clips");
             check(pace.speed>.2 && pace.speed<.5,"Run resume must accelerate from remaining stop speed through heading");
+            pace.reset(.8);
+            Vector2 partial=CartSteeringHooks.movement(player,.04f,0);
+            field(state,"cartBlocked").setBoolean(state,true);partial.scale(.5f);
+            accept(player,partial);
+            check(pace.speed>.75,"partial wall contact must preserve the moving gait rather than reset its pace every frame");
+            float contactStartX=player.actualX,contactStartY=player.actualY;
+            player.actualX=10825.5f;player.actualY=10142.5f;pace.reset(.8);
+            partial=CartSteeringHooks.movement(player,.04f,0);
+            field(state,"cartBlocked").setBoolean(state,true);partial.set(Math.ulp(player.actualX),0);
+            accept(player,partial);
+            check(pace.speed>.75,"one representable world-coordinate step is movement, not a hard collision stop");
+            player.actualX=contactStartX;player.actualY=contactStartY;
+            float referenceSpeed=CartLegPace.targetSpeed(player,player.stepX,player.stepY);
+            field(state,"wallHeading").setDouble(state,0);field(state,"wallNormalY").setDouble(state,1);
+            field(state,"target").setDouble(state,Math.PI/4);pace.reset(referenceSpeed*Math.sqrt(.5));
+            for(int frame=0;frame<4;frame++) {
+                field(state,"hasInput").setBoolean(state,true);
+                CartSteeringHooks.heading(player);
+                check(Math.abs(pace.speed-referenceSpeed*Math.sqrt(.5))<1e-6,
+                    "wall guidance must remove inward speed through cadence exactly once");
+            }
+            field(state,"wallHeading").setDouble(state,Double.NaN);field(state,"target").setDouble(state,0);
             var walkNode=new AnimNode();walkNode.name="ToolkitCartPivotWalk";
             walkNode.deferredBoneName=node.deferredBoneName;walkNode.deferredBoneAxis=node.deferredBoneAxis;
             walkNode.blends2d.addAll(node.blends2d);walkNode.blendTris.addAll(node.blendTris);walkNode.blend2dPicker=node.blend2dPicker;

@@ -145,7 +145,7 @@ class CartAdapterTests(unittest.TestCase):
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
                          ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path'])
-        for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 20), ('footprint', 20), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
+        for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -672,7 +672,7 @@ class CartAdapterTests(unittest.TestCase):
                 self.assertTrue(command[1].endswith('analyze-footprint.py'))
                 self.assertEqual(command[command.index('--log') + 1], str(log))
                 self.assertEqual(command[command.index('--profile') + 1], str(self.output / 'client1'))
-                report = dict(motionPass=not bad, footprintPass=not bad, controlCount=3)
+                report = dict(motionPass=not bad, footprintPass=not bad, controlCount=5)
                 (directory / (name + '-motion.json')).write_text(json.dumps(report))
                 return {'exit_code': int(bad)}
             if name == 'native':
