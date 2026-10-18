@@ -1122,6 +1122,65 @@ local function borrowed(item, container)
     item.getIsCraftingConsumed=function(self) return self.consumed==true end
     return item
 end
+-- Native completion validates its successor before any tick/start/stop hook can skip it.
+do
+    local generators=PZSurvivorToolkit.ActionQueueGenerators
+    for _,sameOperation in ipairs({false,true}) do
+        p=player()
+        local blocker,missing,linked,ending=book(p),leaf(p,'unavailable repair'),leaf(p,'linked repair'),leaf(p,'independent tail')
+        local bag=sourceContainer()
+        local item=borrowed(book(p).item,sameOperation and p.inventory or bag)
+        local originalReturn=transfer(p,item,p.inventory,bag);originalReturn.allowMissingItems=true
+        missing.isValidStart=function() return false end
+        if not sameOperation then q=ISTimedActionQueue.add(blocker) end
+        operations.run(function()
+            if sameOperation then q=ISTimedActionQueue.add(blocker) end
+            ISTimedActionQueue.add(missing);ISTimedActionQueue.addAfter(missing,linked);ISTimedActionQueue.add(originalReturn)
+        end)
+        ISTimedActionQueue.add(ending);frame(p)
+        local token=missing.toolkitQueueOperation
+        if sameOperation then token.toolkitPickups={[item]=bag} end
+        PZSurvivorToolkit.ActionQueueGenerators={canSkip=function(action) return action==missing end}
+        blocker.action.forceStop=function() error('completion must not stop its already-finished owner') end
+        blocker.action.done=true;frame(p)
+        assert(token.toolkitCancelled and not missing.action and not linked.action and not originalReturn.action
+            and not blocker.action.stopping and not ending.toolkitQueueOperation.toolkitCancelled,
+            'an audited unavailable successor must drop its linked operation without stopping the finished owner or independent tail')
+        if sameOperation then
+            local cleanup=q.current
+            assert(#q.queue==2 and cleanup~=originalReturn and cleanup.Type=='ISInventoryTransferAction'
+                and cleanup.item==item and cleanup.destContainer==bag and cleanup.allowMissingItems
+                and q.queue[2]==ending and not ending.action,
+                'same-operation completion must rebuild exactly one borrowed-item return before the independent tail')
+            cleanup.action.done=true;frame(p)
+            assert(item.container==bag and q.current==ending,'borrowed cleanup must finish before the independent tail starts')
+        else
+            assert(#q.queue==1 and q.current==ending and item.container==bag,
+                'a separate unavailable operation must not discard the independent native tail')
+        end
+    end
+    for _,mode in ipairs({'unknown','disabled','allocated','unknown-child'}) do
+        p=player()
+        local blocker,missing,ending=book(p),leaf(p,'protected invalid successor'),leaf(p,'native reset tail')
+        missing.isValidStart=function() return false end
+        operations.run(function()
+            q=ISTimedActionQueue.add(blocker);ISTimedActionQueue.add(missing)
+            if mode=='unknown-child' then
+                local child=leaf(p,'foreign linked child');child.onCompleteFunc=function() error('foreign callback must not run') end
+                ISTimedActionQueue.addAfter(missing,child)
+            end
+        end)
+        ISTimedActionQueue.add(ending);frame(p)
+        if mode=='allocated' then missing.action=LuaTimedActionNew.new(missing) end
+        enabled=mode~='disabled'
+        PZSurvivorToolkit.ActionQueueGenerators={canSkip=function(action) return mode~='unknown' and action==missing end}
+        blocker.action.done=true;frame(p)
+        assert(#q.queue==0 and q.current==nil and not ending.action,
+            mode..' invalid successor must retain native reset semantics')
+        enabled=true
+    end
+    PZSurvivorToolkit.ActionQueueGenerators=generators
+end
 p=player();a,b,d=book(p),book(p),book(p)
 local bag=sourceContainer();borrowed(a.item,bag)
 pickup=transfer(p,a.item,bag,p.inventory)

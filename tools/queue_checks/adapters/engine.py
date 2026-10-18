@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import zipfile
 
-CASES = ['repair', 'cancel']
+CASES = ['repair', 'cancel', 'missing-target', 'late-continuation']
 PEER_CASES = ['peer-cancel']
 MODS = ['PZSurvivorToolkit', 'ZombieBuddy', 'PZToolkitJavaPatches']
 
@@ -14,7 +14,7 @@ MODS = ['PZSurvivorToolkit', 'ZombieBuddy', 'PZToolkitJavaPatches']
 def definitions():
     return {'engine': {'status': 'ready', 'clients': 1, 'default_mods': MODS,
                        'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
-                                  'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['toolkit']}
+                                  'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['toolkit', 'native']}
                                  for case in CASES]},
             'engine-peers': {'status': 'ready', 'clients': 2, 'default_mods': MODS,
                              'cases': [{'id': 'peer-cancel', 'producer': 'fixture', 'capability': 'effect',
@@ -23,11 +23,13 @@ def definitions():
 
 def validate(selection):
     peers = selection.get('suite') == 'engine-peers'
-    if (selection.get('cases') != (PEER_CASES if peers else CASES)
+    cases = selection.get('cases', [])
+    if ((cases != PEER_CASES if peers else not cases or len(cases) != len(set(cases)) or any(case not in CASES for case in cases))
             or selection.get('kind') not in (('mp',) if peers else ('sp', 'mp'))
-            or selection.get('mode') != 'toolkit' or selection.get('languages') != (['EN', 'RU'] if peers else ['EN'])
+            or selection.get('mode') not in (('toolkit',) if peers else ('toolkit', 'native'))
+            or selection.get('languages') != (['EN', 'RU'] if peers else ['EN'])
             or type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != (2 if peers else 1)):
-        raise ValueError('Engine requires EN/SP or MP repair/cancel; engine-peers requires two EN/RU MP clients and peer-cancel')
+        raise ValueError('Engine requires selected EN SP/MP cases; engine-peers requires two EN/RU toolkit MP clients and peer-cancel')
     if not set(MODS) <= set(selection.get('mods', [])):
         raise ValueError('Engine requires toolkit, ZombieBuddy, and PZToolkitJavaPatches')
     if selection.get('options', {}).get('world_template'):
@@ -92,6 +94,7 @@ def verify(root, selection, catalog):
     root = Path(root)
     issues, outcomes = [], []
     peers = selection.get('suite') == 'engine-peers'
+    enabled = selection['mode'] == 'toolkit'
     actors = ['client1', 'client2'] if peers else ['client1']
     first_captures, tokens, targets = {}, [], set()
     try:
@@ -108,7 +111,7 @@ def verify(root, selection, catalog):
                 else:
                     targets.add(target[0][:3])
             complete_marker = '[ENGINE_TEST] COMPLETE cases=' + str(len(selection['cases']))
-            for marker in ['[QUEUE_TEST] PREFLIGHT_COMPLETE mods=' + str(len(selection['mods'])) + ' mode=toolkit',
+            for marker in ['[QUEUE_TEST] PREFLIGHT_COMPLETE mods=' + str(len(selection['mods'])) + ' mode=' + selection['mode'],
                            '[QUEUE_TEST] ' + ('NATIVE_CONNECTED' if selection['kind'] == 'mp' else 'TRUE_SP'), complete_marker]:
                 if len(re.findall(re.escape(marker) + r'(?:\s|$)', client)) != 1:
                     issues.append(actor + ': missing or duplicate native engine readiness: ' + marker)
@@ -116,19 +119,24 @@ def verify(root, selection, catalog):
             if peers:
                 scenarios = [('peer-cancel', 94, 2)] if actor == 'client1' else [('peer-cancel', 100, 0)]
             else:
-                scenarios = [('repair', 100, 0), ('cancel', 94, 2)]
+                scenarios = [(case, 98 if not enabled and selection['kind'] == 'sp' else 100,
+                              1 if not enabled and selection['kind'] == 'sp' else 0) if case == 'repair'
+                             else (case, 94, 2) for case in selection['cases']]
             for case, condition, scraps in scenarios:
-                receipts = (1 if scraps else 2) if selection['kind'] == 'mp' else 0
+                receipts = (0 if case == 'missing-target' else 1 if scraps else 2) if enabled and selection['kind'] == 'mp' else 0
+                read_pattern = 'true' if enabled or case == 'repair' and selection['kind'] == 'sp' else '(?:true|false)' if case == 'repair' else 'false'
                 marker = (f'[ENGINE_TEST] PASS case={case} condition={condition} scraps={scraps}'
-                          f' tailRead=true boundary=true progress=true receipts={receipts}')
-                matches = list(re.finditer(re.escape(marker) + r'(?:\s|$)', client))
+                          f' tailRead=')
+                matches = list(re.finditer(re.escape(marker) + '(' + read_pattern + ')'
+                               + re.escape(f' boundary={str(enabled).lower()} progress=true receipts={receipts}') + r'(?:\s|$)', client))
+                read = matches[0].group(1) if len(matches) == 1 else 'unknown'
                 if len(matches) != 1:
                     issues.append(actor + ': missing or duplicate exact engine outcome: ' + case)
                 else:
                     positions.append(matches[0].start())
                 for pattern, source in [
                     (f'[ENGINE_TEST] PREPARED case={case} condition=94 scraps=2 electricity=0 nativeGenerator=true', authority),
-                    (f'[ENGINE_TEST] AUTHORITY case={case} condition={condition} scraps={scraps} tailRead=true', authority),
+                    (f'[ENGINE_TEST] AUTHORITY case={case} condition={condition} scraps={scraps} tailRead={read}', authority),
                     (f'[ENGINE_TEST] ENQUEUED case={case} repairDuration=150 tailPages=1 nativeDurations=true', client),
                 ]:
                     if len(re.findall(re.escape(pattern) + r'(?:\s|$)', source)) != 1:
@@ -144,9 +152,18 @@ def verify(root, selection, catalog):
                         first_captures[actor] = correlated[0]
                     tokens.extend(captures)
                 cancel_marker = f'[ENGINE_TEST] CANCEL_REQUEST case={case} progress=true'
-                if len(re.findall(re.escape(cancel_marker) + r'(?:\s|$)', client)) != (1 if scraps else 0):
+                if len(re.findall(re.escape(cancel_marker) + r'(?:\s|$)', client)) != (1 if case in ('cancel', 'late-continuation') or peers and actor == 'client1' else 0):
                     issues.append(actor + ': unexpected or missing cancellation after native progress')
-                outcomes.append({'actor': actor, 'case': case, 'outcome': {'condition': condition, 'scraps': scraps, 'tailRead': True}})
+                if case == 'missing-target':
+                    for proof, text in [(f'[ENGINE_TEST] TARGET_REMOVED case={case} beforeRepair=true', authority),
+                                        (f'[ENGINE_TEST] MISSING_TARGET case={case} beforeStart=true blockerProgress=true', client)]:
+                        if len(re.findall(re.escape(proof) + r'(?:\s|$)', text)) != 1:
+                            issues.append(actor + ': missing/duplicate disappearance before repair')
+                if case == 'late-continuation':
+                    proof = f'[ENGINE_TEST] LATE_CALLBACK case={case} parentRetired=true repeats=2 unchanged=true'
+                    if len(re.findall(re.escape(proof) + r'(?:\s|$)', client)) != 1:
+                        issues.append(actor + ': missing/duplicate retired-parent callback proof')
+                outcomes.append({'actor': actor, 'case': case, 'outcome': {'condition': condition, 'scraps': scraps, 'tailRead': read == 'true'}})
             if positions != sorted(positions) or positions and positions[-1] > client.find(complete_marker):
                 issues.append(actor + ': engine cases completed out of order')
             if '[QUEUE_TEST] FAIL ' in client:

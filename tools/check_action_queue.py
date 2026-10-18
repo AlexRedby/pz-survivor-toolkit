@@ -138,6 +138,8 @@ def batch(args, catalog):
         interrupted = False
         print('START ' + job['id'], flush=True)
         try:
+            if 'cases' in job:
+                raise ValueError("Batch jobs use 'case' with comma-separated IDs; 'cases' would be ignored")
             if not isinstance(plan.get('options', {}), dict) or not isinstance(job.get('options', {}), dict):
                 raise ValueError('Batch options must contain JSON objects')
             options = dict(plan.get('options', {}), **job.get('options', {}))

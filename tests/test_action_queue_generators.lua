@@ -722,6 +722,7 @@ if SaucedCartsSource then
 else
     ISUnequipAction.new=function() error('repair called an unrelated unequip constructor') end
 end
+local nativeGeneratorComplete=ISFixGenerator.complete
 f.project('ActionQueueOperations');f.project('ActionQueueDefinitions');policy=f.project('ActionQueuePolicy')
 adapter=f.project('ActionQueueGenerators');adapter.install()
 inv.items={scrap1,scrap2};g.activated=false;g.condition=92
@@ -770,6 +771,11 @@ ISUnequipAction.new=unequipConstructor
 -- The supported Java boundary replaces only SP's per-generator advancement interception.
 do
     local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+    local protected,localCompleteCalls=pcall,0
+    pcall=function(callback,...)
+        if callback==nativeGeneratorComplete then localCompleteCalls=localCompleteCalls+1 end
+        return protected(callback,...)
+    end
     local bookTail=head()
     bookTail.item.getNumberOfPages=function() return 100 end
     bookTail.item.getAlreadyReadPages=function() return 99 end
@@ -814,5 +820,27 @@ do
     assert(g.condition==100 and not inv:contains(scrap1) and not inv:contains(scrap2)
         and inv:contains(bookTail.item) and currentQueue.current==bookTail and #currentQueue.queue==1,
         'native completion bypass changed exact repair consumption or the independent reading tail')
+    assert(localCompleteCalls==0,'shared native completion still entered the local protected completion layer')
+    -- Native false/error results still settle a pending SP fallback, but direct calls need no local protection.
+    local getScrap=inv.getFirstTypeRecurse
+    for _,fallback in ipairs({false,true}) do
+        for _,fails in ipairs({false,true}) do
+            local parent=ISFixGenerator:new(p,g);parent.toolkitQueueOperation={}
+            local ending=head();local currentQueue=f.queue(parent,ending);parent:begin()
+            if fallback then parent:perform();assert(adapter.fixtureRegistries[3][parent]==currentQueue) end
+            inv.getFirstTypeRecurse=function()
+                if fails then error('fixture generator completion failed',0) end
+            end
+            local before=localCompleteCalls
+            local ok,result=protected(function() return parent:complete() end)
+            assert(ok==not fails and (fails and tostring(result):find('fixture generator completion failed',1,true) or not fails and result==false),
+                'native completion false/error result was lost')
+            assert(localCompleteCalls-before==(fallback and 1 or 0)
+                and adapter.fixtureRegistries[3][parent]==nil and currentQueue.current==(fallback and ending or parent),
+                'completion protection or settlement escaped its pending SP fallback')
+            inv.getFirstTypeRecurse=getScrap
+        end
+    end
+    pcall=protected
 end
 print('Generator native contracts passed: native callbacks/completions, resource/power edges, cancellation guards, recursive SP/MP repair and source/helper trust.')

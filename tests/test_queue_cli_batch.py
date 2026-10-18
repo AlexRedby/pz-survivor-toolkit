@@ -61,6 +61,15 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(tags['languages'], ['RU'])
         self.assertEqual(tags['cases'], ['scenes'])
 
+    def test_misspelled_cases_never_silently_runs_only_the_default_case(self):
+        self.write_plan([{'id': 'typo', 'suite': 'engine', 'cases': ['repair', 'cancel']},
+                         {'id': 'selected', 'suite': 'engine', 'case': 'missing-target,late-continuation'}])
+        self.assertEqual(self.invoke(), 1)
+        self.assertEqual([name for name, _ in self.calls], ['selected'])
+        self.assertEqual(self.calls[0][1]['cases'], ['missing-target', 'late-continuation'])
+        result = json.loads((self.args.output / 'batch-report.json').read_text())
+        self.assertIn("use 'case'", result['jobs'][0]['error'])
+
     def test_blocked_job_does_not_hide_remaining_jobs(self):
         self.write_plan([{'id': name, 'suite': 'video-recording'} for name in ('blocked', 'next')])
         self.assertEqual(self.invoke(), 1)

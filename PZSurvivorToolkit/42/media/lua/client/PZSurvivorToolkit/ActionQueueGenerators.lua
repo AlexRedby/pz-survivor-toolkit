@@ -408,6 +408,7 @@ function Generators.install()
         classes.ISFixGenerator.methods.perform = ISFixGenerator.perform
         local complete = ISFixGenerator.complete
         ISFixGenerator.complete = function(action, ...)
+            if not pendingPerform[action] then return complete(action, ...) end
             local ok, result = pcall(complete, action, ...)
             local queue = pendingPerform[action]
             if queue then

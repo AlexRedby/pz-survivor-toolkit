@@ -1,0 +1,94 @@
+local root=assert(ProjectRoot)
+local config,inventory,player,generator,squares,sequence
+Perks={Electricity='Electricity'}
+local function list(values)
+ return {size=function() return #values end,get=function(_,i) return values[i+1] end}
+end
+local function seed(kind)
+ sequence=sequence+1
+ local item={id=sequence,kind=kind,read=0,pages=10}
+ function item:getID() return self.id end
+ function item:getFullType() return self.kind end
+ function item:setCondition(value) self.condition=value end
+ function item:setAlreadyReadPages(value) self.read=value end
+ function item:getAlreadyReadPages() return self.read end
+ function item:getNumberOfPages() return self.pages end
+ return item
+end
+local function fixture(mode,kind,cases)
+ config={mode=mode,kind=kind,cases=cases};sequence=0;squares={}
+ inventory={values={}}
+ function inventory:getItems() return list(self.values) end
+ function inventory:AddItem(kind) local item=seed(kind);self.values[#self.values+1]=item;return item end
+ function inventory:getItemById(id) for _,item in ipairs(self.values) do if item.id==id then return item end end end
+ function inventory:Remove(item) for i,value in ipairs(self.values) do if value==item then table.remove(self.values,i);return end end end
+ player={pages={},getUsername=function() return 'client1' end,getPerkLevel=function() return 0 end,
+  getInventory=function() return inventory end,setAlreadyReadPages=function(self,kind,pages) self.pages[kind]=pages end}
+ local function square(x,y,z)
+  local key=x..','..y..','..z
+  if squares[key] then return squares[key] end
+  local s={x=x,y=y,z=z,objects={}}
+  function s:isFree() return true end
+  function s:getRoom() end
+  function s:getSpecialObjects() return list(self.objects) end
+  function s:getObjects() return list({1}) end
+  function s:getX() return x end;function s:getY() return y end;function s:getZ() return z end
+  function s:transmitRemoveItemFromSquare(object) assert(self.objects[1]==object);self.objects={};object.removed=true end
+  squares[key]=s;return s
+ end
+ getCell=function() return {getGridSquare=function(_,x,y,z) return square(x,y,z) end} end
+ require=function(name)
+  if name=='QueueTestSelection' then return config end
+  assert(name=='QueueEnergyPlacement',name)
+  return function() return square(0,0,0) end
+ end
+ instanceItem=seed
+ isServer=function() return kind=='mp' end
+ sendAddItemToContainer=function() end;sendRemoveItemFromContainer=function() end
+ IsoGenerator={new=function(_,_,s)
+  local g={condition=94,square=s}
+  function g:getObjectIndex() return self.removed and -1 or 1 end
+  function g:getSquare() return not self.removed and self.square or nil end
+  function g:getX() return s.x end;function g:getY() return s.y end;function g:getZ() return s.z end
+  function g:setCondition(value) self.condition=value end
+  function g:getCondition() return self.condition end
+  s.objects[1]=g;generator=g;return g
+ end}
+ return assert(loadfile(root..'/tests/native_queue/engine/shared/QueueEngineAuthority.lua'))()
+end
+local function read(ids) local book=assert(inventory:getItemById(ids.tail));book.read=book.pages end
+local authority=fixture('native','sp',{'repair'})
+local unrelated=inventory:AddItem('Base.Apple')
+local ids=authority.prepare(player,'repair')
+inventory:Remove(inventory:getItemById(ids.scraps[2]));generator.condition=98;read(ids)
+assert(not pcall(authority.verify,player,'repair'),'same scrap count hid consumption of the wrong exact item')
+
+authority=fixture('native','sp',{'repair'})
+unrelated=inventory:AddItem('Base.Apple');ids=authority.prepare(player,'repair')
+inventory:Remove(inventory:getItemById(ids.scraps[1]));generator.condition=98;read(ids)
+local result=authority.verify(player,'repair')
+assert(result.scraps==1 and result.condition==98 and result.tailRead)
+assert(inventory:getItemById(unrelated.id)==unrelated and not inventory:getItemById(ids.scraps[2]),'cleanup removed unrelated inventory or retained fixture scrap')
+
+authority=fixture('toolkit','mp',{'missing-target','late-continuation'})
+ids=authority.prepare(player,'missing-target')
+assert(ids.blocker and inventory:getItemById(ids.blocker),'missing-target requires a real blocking reader')
+local blockingBook=inventory:getItemById(ids.blocker)
+assert(blockingBook.read==blockingBook.pages-1 and player.pages[blockingBook.kind]==blockingBook.pages-1,
+ 'server and client must start the native blocker on the same last unread page')
+authority.invalidate(player,'missing-target')
+assert(generator:getObjectIndex()==-1 and not pcall(authority.invalidate,player,'missing-target'),'duplicate target removal passed')
+local retired=generator
+assert(authority.prepare(player,'missing-target')==ids and generator==retired,'duplicate prepare resurrected a removed pending target')
+assert(not pcall(authority.verify,player,'missing-target'),'unread Toolkit tail passed authority verification')
+read(ids);assert(authority.verify(player,'missing-target').tailRead)
+local removed=generator
+ids=authority.prepare(player,'late-continuation')
+assert(generator~=removed and generator.square==removed.square,'next case did not recreate only the removed owned generator')
+read(ids);result=authority.verify(player,'late-continuation')
+assert(result.condition==94 and result.scraps==2 and result.tailRead)
+
+authority=fixture('native','mp',{'cancel'})
+ids=authority.prepare(player,'cancel');result=authority.verify(player,'cancel')
+assert(not result.tailRead and result.scraps==2,'native cancellation control hid its unread tail')
+print('Engine authority fixture checks passed: exact identities, owned cleanup, removed target, recreation and native tail loss.')

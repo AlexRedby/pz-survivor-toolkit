@@ -72,14 +72,68 @@ class EngineAdapterTests(unittest.TestCase):
         self.assertEqual(runtime['fixture']['sandbox']['MinutesPerPage'], 2.0)
         self.assertIn(ROOT / 'tests/native_queue/engine/shared/QueueEngineAuthority.lua', engine.sources(ROOT, self.selection))
 
-    def test_rejects_unsupported_kind_mods_world_or_partial_case_list(self):
+    def test_accepts_selected_cases_and_rejects_unsupported_inputs(self):
         engine.validate(self.selection)
-        for key, value in [('cases', ['repair']), ('mode', 'native'), ('clients', True),
+        for mode in ('native', 'toolkit'):
+            for cases in (['repair'], ['missing-target', 'late-continuation']):
+                engine.validate(dict(self.selection, mode=mode, cases=cases))
+        for key, value in [('cases', []), ('cases', ['repair', 'repair']), ('cases', ['unknown']), ('mode', 'unknown'), ('clients', True),
                            ('mods', ['PZSurvivorToolkit']), ('options', {'world_template': '/tmp/old'})]:
             with self.subTest(key=key):
                 selection = dict(self.selection, **{key: value})
                 with self.assertRaises(ValueError):
                     engine.validate(selection)
+
+    def target_fixture(self, mode='toolkit', mp=False):
+        self.selection.update(cases=['missing-target', 'late-continuation'], mode=mode, kind='mp' if mp else 'sp')
+        enabled = mode == 'toolkit'
+        read = str(enabled).lower()
+        client = ('[QUEUE_TEST] ' + ('NATIVE_CONNECTED' if mp else 'TRUE_SP') + '\n'
+                  f'[QUEUE_TEST] PREFLIGHT_COMPLETE mods=3 mode={mode}\n')
+        authority = '[STARTUP_TEST] SERVER_READY\n' if mp else ''
+        for case in self.selection['cases']:
+            authority += f'[ENGINE_TEST] PREPARED case={case} condition=94 scraps=2 electricity=0 nativeGenerator=true\n'
+            authority += f'[ENGINE_TEST] AUTHORITY case={case} condition=94 scraps=2 tailRead={read}\n'
+            client += f'[ENGINE_TEST] ENQUEUED case={case} repairDuration=150 tailPages=1 nativeDurations=true\n'
+            receipts = 1 if enabled and mp and case == 'late-continuation' else 0
+            if receipts:
+                client += f'[ENGINE_TEST] CAPTURE case={case} kind=ISFixGenerator token=00000000-0000-0000-0000-000000000001\n'
+            if case == 'missing-target':
+                authority += f'[ENGINE_TEST] TARGET_REMOVED case={case} beforeRepair=true\n'
+                client += f'[ENGINE_TEST] MISSING_TARGET case={case} beforeStart=true blockerProgress=true\n'
+            else:
+                client += f'[ENGINE_TEST] CANCEL_REQUEST case={case} progress=true\n'
+                client += f'[ENGINE_TEST] LATE_CALLBACK case={case} parentRetired=true repeats=2 unchanged=true\n'
+            client += f'[ENGINE_TEST] PASS case={case} condition=94 scraps=2 tailRead={read} boundary={read} progress=true receipts={receipts}\n'
+        client += '[ENGINE_TEST] COMPLETE cases=2\n'
+        (self.root / 'client1-launch.log').write_text(client + ('' if mp else authority))
+        if mp:
+            (self.root / 'server-launch.log').write_text(authority)
+
+    def test_target_and_late_callback_controls_require_independent_authority_proofs(self):
+        for mode in ('native', 'toolkit'):
+            for mp in (False, True):
+                with self.subTest(mode=mode, mp=mp):
+                    self.target_fixture(mode, mp)
+                    result = engine.verify(self.root, self.selection, {})
+                    self.assertFalse(result['issues'], result)
+                    self.assertEqual([row['outcome']['tailRead'] for row in result['outcomes']], [mode == 'toolkit'] * 2)
+        for original, replacement in [('beforeRepair=true', 'beforeRepair=false'),
+                                       ('beforeStart=true', 'beforeStart=false'),
+                                       ('parentRetired=true', 'parentRetired=false'),
+                                       ('repeats=2', 'repeats=1'), ('unchanged=true', 'unchanged=false'),
+                                       ('condition=94 scraps=2', 'condition=98 scraps=1'),
+                                       ('tailRead=true', 'tailRead=false')]:
+            with self.subTest(original=original):
+                self.target_fixture()
+                path = self.root / 'client1-launch.log'
+                path.write_text(path.read_text().replace(original, replacement))
+                self.assertTrue(engine.verify(self.root, self.selection, {})['issues'])
+        self.target_fixture()
+        path = self.root / 'client1-launch.log'
+        proof = next(line for line in path.read_text().splitlines() if 'LATE_CALLBACK' in line)
+        path.write_text(path.read_text() + proof + '\n')
+        self.assertTrue(engine.verify(self.root, self.selection, {})['issues'])
 
     def peer_fixture(self):
         self.selection.update(suite='engine-peers', kind='mp', clients=2, languages=['EN', 'RU'], cases=['peer-cancel'])

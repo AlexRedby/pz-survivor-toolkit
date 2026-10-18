@@ -41,12 +41,13 @@ local function execute(module,command,player,args)
             end
             return
         end
+        if command=='Invalidate' then return Authority.invalidate(player,args.case) end
         assert(command=='Verify','unknown engine command')
         if selection.suite=='engine-peers' then assert(released,'peer verification preceded collision') end
         return Authority.verify(player,args.case)
     end)
     if not ok then result={case=args.case,ok=false,error=tostring(result)};print('[QUEUE_TEST] FAIL engine server '..result.error) end
-    if result then sendServerCommand(player,module,command=='Prepare' and 'Prepared' or 'Verified',result) end
+    if result then sendServerCommand(player,module,command=='Prepare' and 'Prepared' or command=='Invalidate' and 'Invalidated' or 'Verified',result) end
 end
 Events.OnClientCommand.Add(function(module,command,player,args)
     if module~='EngineQueueTest' then return end

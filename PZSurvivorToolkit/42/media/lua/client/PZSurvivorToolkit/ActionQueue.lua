@@ -172,6 +172,24 @@ ISTimedActionQueue.onCompleted = function(queue, action)
         end
         Policy.skipUnavailableHygiene(queue)
     end
+    local generators = Toolkit.ActionQueueGenerators
+    if Toolkit.Settings.actionQueue() and live(queue) and queue.current == action and queue.queue[1] == action
+        and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false) then
+        local pending = queue.queue[2]
+        -- Native onCompleted checks isValidStart before begin/stop can preserve the independent tail.
+        while pending and not pending.action and generators and generators.canSkip and generators.canSkip(pending) do
+            local token = pending.toolkitQueueOperation
+            if token and token == action.toolkitQueueOperation then
+                local reason = Policy.cancelOperationReason(queue, pending)
+                if reason and reason ~= "starting" then break end
+                Operations.invalidate(token)
+                if Batch then Batch.cancel(pending) end
+                finishGroup(queue, {action = action, token = token})
+            elseif not Queue.cancelOperation(queue, pending) then break end
+            if queue.queue[2] == pending then break end
+            pending = queue.queue[2]
+        end
+    end
     return completed(queue, action)
 end
 
