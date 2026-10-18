@@ -6,9 +6,10 @@ import re
 from . import craft
 
 
-CASES = ['context', 'vanilla-batch', 'neat-batch', 'cook-batch']
-COUNTS = dict(zip(CASES, (1, 2, 2, 2)))
-OWNERS = dict(zip(CASES, ('context', 'ISWidgetHandCraftControl', 'NC_CraftActionPanel', 'PJCK_CraftActionPanel')))
+CASES = ['context', 'vanilla-batch', 'vanilla-auto', 'neat-batch', 'neat-auto', 'cook-batch', 'cook-auto']
+COUNTS = {case: 1 if case == 'context' else 2 for case in CASES}
+OWNERS = {case: ('context' if case == 'context' else 'ISWidgetHandCraftControl' if case.startswith('vanilla-')
+                 else 'NC_CraftActionPanel' if case.startswith('neat-') else 'PJCK_CraftActionPanel') for case in CASES}
 MODS = craft.MODS + ['NeatUI_Framework', 'Neat_Crafting', 'Project_Cook']
 RECEIPT_KEYS = {'materialIds', 'consumed', 'outputIds', 'outputs', 'resources', 'toolsReturned', 'bookId', 'tailRead'}
 
@@ -82,6 +83,8 @@ def _case(selection, case, row, prep, receipt):
                     callbackClass=OWNERS[case], callbacksUnchanged=True, callbackSafe=True,
                     nativeDuration=150, localDeferrals=0, sharedPerformCount=count if enabled else 0,
                     sharedCompleteCount=count if enabled and selection['kind'] == 'sp' else 0)
+    if case.endswith('-auto'):
+        expected.update(manualSelect=False, manualInputTypes=['nil'] * count)
     if not craft._matches(row, expected):
         issues.append('Craft UI native callbacks/progress/completion phases differ: ' + case)
     if (type(row.get('ownerIdle')) is not bool or type(row.get('remaining')) is not int or row['remaining'] < 0
@@ -101,10 +104,12 @@ def _case(selection, case, row, prep, receipt):
         issues.append('Craft UI preparation identity/metadata differs: ' + case)
         return issues, reason
     tools = [meta['id'] for meta in prep['toolMeta']]
+    if case.endswith('-auto') and not craft._same(row.get('automaticToolIds'), [sorted(tools)] * count):
+        issues.append('Craft UI automatic selected tool identities differ: ' + case)
     for key in ('pickupIds', 'returnIds'):
         ids = row.get(key)
         if (not craft._ids(ids) or ids != sorted(ids) or not set(ids) <= set(tools)
-                or case in ('context', 'vanilla-batch') and ids != sorted(tools)):
+                or (case == 'context' or case.startswith('vanilla-')) and ids != sorted(tools)):
             issues.append('Craft UI exact observed tool transfers differ: ' + case + '/' + key)
     if (set(receipt) != RECEIPT_KEYS | {'case'} or not craft._matches(receipt, {'case': case})
             or not craft._matches(row, {key: receipt.get(key) for key in RECEIPT_KEYS})):
@@ -182,7 +187,7 @@ def verify(root, selection, catalog):
         outcomes.append(dict(actor='client1', case=case, outcome={key: row.get(key) for key in RECEIPT_KEYS | {
             'requested', 'actions', 'progressIds', 'callbackClass', 'callbacksUnchanged', 'callbackSafe',
             'nativeDuration', 'localDeferrals', 'sharedPerformCount', 'sharedCompleteCount', 'ownerIdle',
-            'remaining', 'pickupIds', 'returnIds', 'returnsBeforeRead'}}))
+            'remaining', 'pickupIds', 'returnIds', 'returnsBeforeRead', 'manualSelect', 'manualInputTypes', 'automaticToolIds'}}))
     if not craft._ids(identities + output_ids):
         issues.append('Craft UI prepared/output identities overlap between cases')
     if '[QUEUE_TEST] FAIL ' in text or '[QUEUE_TEST] FAIL ' in authority:

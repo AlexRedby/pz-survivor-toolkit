@@ -50,6 +50,18 @@ local player = {getInventory = function() return {} end, isTimedActionInstant = 
     hasTrait = function() return false end, isWearingAwkwardGloves = function() return false end}
 local recipe = {class = 'CraftRecipe', getTimedActionScript = function() return nil end,
     isCanWalk = function() return false end, getTime = function() return 10 end}
+local automaticInputs = ISHandcraftAction:new(player, recipe, list(material), target, tool, false, list(material), target, 0.5, 0.25)
+assert(automaticInputs.manualInputs == nil, 'native automatic false sentinel must become absent for Java queued-item accounting')
+assert(automaticInputs.character == player and automaticInputs.craftRecipe == recipe and automaticInputs.isoObject == target
+    and automaticInputs.craftBench == tool and automaticInputs.recipeItem == target
+    and automaticInputs.variableInputRatio == 0.5 and automaticInputs.eatPercentage == 0.25,
+    'normalizing automatic inputs preserves native constructor arguments and fields')
+local manualSelection = {[0] = list(material)}
+local manualInputs = ISHandcraftAction:new(player, recipe, {}, nil, nil, manualSelection)
+assert(manualInputs.manualInputs == manualSelection, 'manual selected lists retain identity')
+assert(ISHandcraftAction:new(player, recipe, {}, nil, nil, nil).manualInputs == nil, 'absent inputs remain absent')
+local customCraft = ISHandcraftAction:derive('CustomCraft')
+assert(customCraft:new(player, recipe, {}, nil, nil, false).manualInputs == false, 'unknown derived constructors retain native behavior')
 local fixing = {getRequiredItems = function() return list(material, tool) end,
     getFixers = function() return list({}) end}
 FixingManager = {getFixes = function() return list(fixing) end}

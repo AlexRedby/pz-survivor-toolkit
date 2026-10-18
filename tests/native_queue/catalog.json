@@ -563,8 +563,11 @@
       "cases": [
         {"id":"context", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
         {"id":"vanilla-batch", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"vanilla-auto", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
         {"id":"neat-batch", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
-        {"id":"cook-batch", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]}
+        {"id":"neat-auto", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"cook-batch", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"cook-auto", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]}
       ]
     },
     "world": {

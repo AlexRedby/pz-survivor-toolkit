@@ -13,6 +13,7 @@ local ids,state,authorityState,authority,window,owner,logic,tail,actions
 local progress,picked,returned,boundaries={},{},{},{perform=0,complete=0}
 local callbacks,callbackClass,returnsBeforeRead,localDeferrals
 local function case()return config.cases[step]end
+local function automatic()return case():sub(-5)=='-auto'end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function sorted(set)local out={};for id in pairs(set)do out[#out+1]=id end;table.sort(out);return out end
 local function refreshSources(player)
@@ -58,13 +59,13 @@ Toolkit.ActionQueueOperations.deferCompletion=function(q,action)
  return result
 end
 local function openUI(player,recipe)
- if case()=='vanilla-batch'then
+ if case():match('^vanilla%-')then
   window=ISXuiSkin.build(XuiManager.GetDefaultSkin(),'HandcraftWindow',ISHandcraftWindow,20,20,900,600,player,nil,'InHandCraft')
   window:initialise();window:instantiate();window:addToUIManager()
   local panel=assert(window.handCraftPanel);logic=panel.logic;owner=assert(panel.recipePanel.craftControl)
   assert(getmetatable(owner)==ISWidgetHandCraftControl,'vanilla control replaced')
   callbackClass='ISWidgetHandCraftControl'
- elseif case()=='neat-batch'then
+ elseif case():match('^neat%-')then
   ISEntityUI.OpenHandcraftWindow(player,nil,'InHandCraft',true,recipe)
   window=assert(ISEntityUI.GetWindowInstance(player:getPlayerNum(),'HandcraftWindow'))
   local panel=assert(window.HandCraftPanel or window.handCraftPanel)
@@ -76,7 +77,8 @@ local function openUI(player,recipe)
   local panel=assert(window.HandCraftPanel);logic=panel.logic;owner=assert(panel.craftActionPanel)
   assert(getmetatable(owner)==PJCK_CraftActionPanel,'Project Cook control replaced');callbackClass='PJCK_CraftActionPanel'
  end
- logic:setContainers(state.containers);logic:setRecipe(recipe);logic:setManualSelectInputs(true);logic:clearManualInputs()
+ logic:setContainers(state.containers);logic:setRecipe(recipe);logic:setManualSelectInputs(not automatic());logic:clearManualInputs()
+ if automatic()then return end
  for index=0,recipe:getInputs():size()-1 do
   local input=recipe:getInputs():get(index);local items=ArrayList.new()
   if index==0 then for _,id in ipairs(ids.materials)do items:add(assert(state.root:getItemById(id)))end
@@ -111,7 +113,7 @@ local function enqueue(player)
   logic:canPerformCurrentRecipe()
   if not logic:canPerformCurrentRecipe()then return false end
   assert(logic:getPossibleCraftCount(true)>=2,'UI batch has insufficient real inputs')
-  if case()=='vanilla-batch'then
+  if case():match('^vanilla%-')then
    owner:setCraftQuantity(2);if not owner.buttonCraft.enable then return false end;owner.buttonCraft:forceClick()
   else
    owner.quantityInput:setText('2');if not owner.craftButton.enable then return false end;owner.craftButton:forceClick()
@@ -123,6 +125,10 @@ local function enqueue(player)
  end
  assert(#actions==#ids.materials,'UI did not enqueue requested craft count: '..case()..' '..#actions)
  snapshotCallbacks()
+ if automatic()then
+  assert(not logic:isManualSelectInputs(),'automatic UI switched to manual selection')
+  for _,action in ipairs(actions)do assert(not action.manualInputs,'automatic action has pinned manual inputs')end
+ end
  local book=state.book
  book:setAlreadyReadPages(book:getNumberOfPages()-1);player:setAlreadyReadPages(book:getFullType(),book:getNumberOfPages()-1)
  tail=ISReadABook:new(player,book)
@@ -169,6 +175,19 @@ local function finish()
   callbacksUnchanged=unchanged,callbackSafe=safe,nativeDuration=150,localDeferrals=localDeferrals,
   sharedPerformCount=boundaries.perform,sharedCompleteCount=boundaries.complete,
   ownerIdle=ownerIdle,remaining=remaining,pickupIds=sorted(picked),returnIds=sorted(returned),returnsBeforeRead=returnsBeforeRead==true}
+ if automatic()then
+  value.manualSelect=owner.logic:isManualSelectInputs();value.manualInputTypes={};value.automaticToolIds={}
+  for _,action in ipairs(actions)do
+   value.manualInputTypes[#value.manualInputTypes+1]=type(action.manualInputs)
+   local tools={}
+   assert(action.items,'automatic craft has no native input allocation')
+   for i=0,action.items:size()-1 do
+    local item=action.items:get(i)
+    if item:getFullType()=='Base.Hammer'or item:getFullType()=='Base.Saw'then tools[item:getID()]=true end
+   end
+   value.automaticToolIds[#value.automaticToolIds+1]=sorted(tools)
+  end
+ end
  for key,entry in pairs(authority)do if key~='case'then value[key]=entry end end
  if reason then failed=failed+1 end;emit(value)
  if window then window:setVisible(false);window:removeFromUIManager()end

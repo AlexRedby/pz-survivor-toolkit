@@ -6,6 +6,15 @@ require "Entity/ISUI/CraftRecipe/ISWidgetHandCraftControl"
 
 local Craft = {}
 PZSurvivorToolkit.ActionQueueCraft = Craft
+local nativeHandcraftNew = ISHandcraftAction.new
+-- NetTimedAction serializes this constructor by its exact parameter names.
+function ISHandcraftAction:new(character, craftRecipe, containers, isoObject, craftBench, manualInputs, items, recipeItem, variableInputRatio, eatPercentage)
+    local action = nativeHandcraftNew(self, character, craftRecipe, containers, isoObject, craftBench,
+        manualInputs, items, recipeItem, variableInputRatio, eatPercentage)
+    -- Java queued-item accounting accepts an absent selection, but casts a false sentinel to a table.
+    if getmetatable(action) == ISHandcraftAction and action.manualInputs == false then action.manualInputs = nil end
+    return action
+end
 local contextComplete = ISInventoryPaneContextMenu and ISInventoryPaneContextMenu.OnNewCraftComplete
 local legacyComplete = ISInventoryPaneContextMenu and ISInventoryPaneContextMenu.OnCraftComplete
 if legacyComplete then

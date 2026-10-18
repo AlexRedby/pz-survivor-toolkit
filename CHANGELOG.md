@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.72
+
+- **Fixed:** Automatic batch crafting keeps automatic material selection without the B42.21 Java queued-item accounting exceptions. Manual selection and native multiplayer constructor fields are preserved.
+
 ### 0.1.71
 
 - **Fixed:** Native crafting UI actions remain supported when Quartermaster or P4 wraps layout and craft-button entry points. Neat accepts only the two source-verified Quartermaster UI wrappers; completion, cancellation and their helpers retain identity guards.

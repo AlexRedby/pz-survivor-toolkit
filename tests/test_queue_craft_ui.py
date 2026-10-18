@@ -35,7 +35,7 @@ class CraftUIAdapterTests(unittest.TestCase):
                            resources=[dict(meta, sourceCount=1, rootCount=0) for meta in prep['toolMeta']],
                            toolsReturned=2, bookId=prep['book'], tailRead=True)
             raw += [('PREPARED', prep), ('VERIFIED', receipt)]
-            transfers = [meta['id'] for meta in prep['toolMeta']] if case in ('context', 'vanilla-batch') else []
+            transfers = [meta['id'] for meta in prep['toolMeta']] if case == 'context' or case.startswith('vanilla-') else []
             row = dict(event='case', id=case, status='passed', reason=None, requested=count, actions=count,
                        progressIds=list(range(1, count + 1)), callbackClass=craft_ui.OWNERS[case],
                        callbacksUnchanged=True, callbackSafe=True, nativeDuration=150, localDeferrals=0,
@@ -43,6 +43,9 @@ class CraftUIAdapterTests(unittest.TestCase):
                        sharedCompleteCount=count if enabled and self.selection['kind'] == 'sp' else 0,
                        ownerIdle=True, remaining=0, pickupIds=transfers.copy(), returnIds=transfers.copy(),
                        returnsBeforeRead=True)
+            if case.endswith('-auto'):
+                row.update(manualSelect=False, manualInputTypes=['nil'] * count,
+                           automaticToolIds=[[meta['id'] for meta in prep['toolMeta']]] * count)
             row.update({key: copy.deepcopy(value) for key, value in receipt.items() if key != 'case'})
             rows.append(row)
         rows.append(dict(event='complete', cases=cases, expected=len(cases), performed=len(cases), failed=0, skipped=0))
@@ -72,8 +75,18 @@ class CraftUIAdapterTests(unittest.TestCase):
                     self.assertEqual([], result['issues'])
                     self.assertEqual(craft_ui.CASES, [row['case'] for row in result['outcomes']])
                     self.assertTrue(all(row['status'] == 'passed' for row in result['outcomes']))
-                    self.assertEqual([1, 2, 2, 2], [row['outcome']['consumed'] for row in result['outcomes']])
+                    self.assertEqual([craft_ui.COUNTS[case] for case in craft_ui.CASES],
+                                     [row['outcome']['consumed'] for row in result['outcomes']])
                     self.assertTrue(result['evidence']['limits'])
+
+    def test_automatic_mode_requires_absent_manual_inputs(self):
+        for key, value in [('manualSelect', True), ('manualSelect', 0), ('manualInputTypes', ['boolean', 'boolean']),
+                           ('manualInputTypes', ['table', 'nil']), ('manualInputTypes', ['nil']),
+                           ('automaticToolIds', []), ('automaticToolIds', [[320, 321], [999, 321]])]:
+            rows, raw = self.evidence()
+            next(row for row in rows if row.get('id') == 'vanilla-auto')[key] = value
+            with self.subTest(key=key, value=value):
+                self.assertTrue(self.verify((rows, raw))['issues'])
 
     def test_selection_and_registration_are_exact(self):
         self.assertEqual(craft_ui.MODS, craft_ui.definitions()['craft-ui']['default_mods'])
@@ -208,9 +221,11 @@ class CraftUIAdapterTests(unittest.TestCase):
                 with self.subTest(key=key, value=value):
                     self.assertTrue(self.verify(evidence)['issues'])
         evidence = self.evidence()
-        evidence[0][3].update(pickupIds=[320], returnIds=[320])
+        neat = next(row for row in evidence[0] if row.get('id') == 'neat-batch')
+        tool = neat['resources'][0]['id']
+        neat.update(pickupIds=[tool], returnIds=[tool])
         self.assertEqual([], self.verify(evidence)['issues'])
-        evidence[0][3]['returnIds'] = [999]
+        neat['returnIds'] = [999]
         self.assertTrue(self.verify(evidence)['issues'])
 
     def test_native_failures_keep_observed_precedence_without_waiving_resources(self):
