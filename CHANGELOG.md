@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.86
+
+- **Fixed:** Wishlist and named inventory tag filters refuse writes when the game cannot open/read/close their existing stores. Fresh empty slots initialize safely and failed loads retry without caching an empty replacement; Wishlist directory creation never truncates an existing slot.
+
 ### 0.1.85
 
 - **Fixed:** Single-player Quartermaster presets and Toolkit tag rules save as one verified snapshot, alternating between two files. Interrupted or short writes retain the previous coherent pair; failed verification forces a fresh read before another save. Existing global files import automatically and remain untouched.

@@ -55,8 +55,10 @@ local function parse(reader)
         if bytes > MAX_BYTES then return end
         return value
     end
-    local header = line()
-    if not header then return nil, "Corrupt" end
+    local header = reader:readLine()
+    if header == nil then return nil, "Missing" end
+    if type(header) ~= "string" or #header > MAX_LINE then return nil, "Corrupt" end
+    bytes = #header + 1
     local version = header:match("^" .. MAGIC .. "|([^|]+)")
     if version and version ~= VERSION then return nil, "Version" end
     if #header > 100 then return nil, "Corrupt" end
@@ -82,10 +84,10 @@ local function parse(reader)
     return {generation = generation, entries = entries}
 end
 
-local function readSlot(index, exists)
-    local ok, reader = pcall(getFileReader, files[index], false)
-    if not ok then return nil, "ReadFailed" end
-    if not reader then return nil, exists and "ReadFailed" or "Missing" end
+local function readSlot(index)
+    -- Create only if absent: native nil readers then always mean I/O failure.
+    local ok, reader = pcall(getFileReader, files[index], true)
+    if not ok or not reader then return nil, "ReadFailed" end
     local parsed, value, err = pcall(parse, reader)
     local closed = pcall(function() reader:close() end)
     if not parsed or not closed then return nil, "ReadFailed" end
@@ -108,17 +110,8 @@ local function serialize(entries, generation)
 end
 
 local function load()
-    -- getFileReader also returns nil for IO failure; distinguish it from an absent slot.
-    local ok, present = pcall(function()
-        local names = listFilesInZomboidLuaDirectory("")
-        if not names then error("directory unavailable") end
-        local result = {}
-        for index = 0, names:size() - 1 do result[names:get(index)] = true end
-        return result
-    end)
-    if not ok then return nil, "ReadFailed" end
-    local a, aerr = readSlot(1, present[files[1]])
-    local b, berr = readSlot(2, present[files[2]])
+    local a, aerr = readSlot(1)
+    local b, berr = readSlot(2)
     if aerr == "Version" or berr == "Version" then return nil, "Version" end
     if aerr == "ReadFailed" or berr == "ReadFailed" then return nil, "ReadFailed" end
     if not a and not b then
@@ -143,7 +136,7 @@ local function write(current)
     local written = pcall(function() writer:write(text) end)
     local closed = pcall(function() writer:close() end)
     if not written or not closed then return nil, "WriteFailed" end
-    local saved = readSlot(target, true)
+    local saved = readSlot(target)
     if not saved or saved.generation ~= generation or serialize(saved.entries, generation) ~= text then return nil, "WriteFailed" end
     return true
 end

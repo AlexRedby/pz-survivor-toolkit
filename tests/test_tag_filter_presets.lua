@@ -5,18 +5,20 @@ require = function(module)
     return loaded[module]
 end
 local a, b = 'PZSurvivorToolkit_TagFilters_a.txt', 'PZSurvivorToolkit_TagFilters_b.txt'
-local disk, faults, writes, reads = {}, {}, 0, 0
+local disk, faults, writes, reads, enumerations = {}, {}, 0, 0, 0
 listFilesInZomboidLuaDirectory = function(path)
     assert(path == '')
-    if faults.directory then error('directory unavailable') end
-    local names = {}; for file in pairs(disk) do names[#names + 1] = file end
+    enumerations = enumerations + 1
+    local names = {}
+    if not faults.directory then for file in pairs(disk) do names[#names + 1] = file end end
     return {size = function() return #names end, get = function(_, index) return names[index + 1] end}
 end
 getFileReader = function(path, create)
-    assert(create == false); reads = reads + 1
+    assert(create == true); reads = reads + 1
     local fault = faults[path] or {}
     if fault.readerThrows then error('reader unavailable') end
-    if fault.readerNil then return end
+    if fault.readerNil or faults.directory then return end
+    if disk[path] == nil then disk[path] = '' end
     local text = disk[path]
     if text == nil then return end
     if fault.readback and fault.written then text = text:match('^[^\n]*\n') end
@@ -24,6 +26,7 @@ getFileReader = function(path, create)
     return {readLine = function()
         lines = lines + 1
         if fault.readThrows and lines >= fault.readThrows then error('read failed') end
+        if fault.readInvalid then return false end
         if position > #text then return end
         local newline = text:find('\n', position, true)
         local line = text:sub(position, newline and newline - 1 or #text)
@@ -51,9 +54,11 @@ local function errorIs(expected, fn, ...)
     assert(value == nil and err == expected, 'expected ' .. expected .. ', got ' .. tostring(value) .. '/' .. tostring(err))
 end
 local function reset() disk, faults, writes = {}, {}, 0; Presets = reopen() end
-assert(#Presets.list() == 0 and writes == 0, 'empty list created files')
+assert(#Presets.list() == 0 and writes == 0 and disk[a] == '' and disk[b] == '', 'empty list wrote a snapshot')
+assert(#Presets.list() == 0 and #reopen().list() == 0 and writes == 0,
+    'new empty slots blocked repeated reads or cold reopen')
 assert(Presets.save('  Food  ', rule))
-assert(disk[a] and not disk[b], 'first save did not select first slot')
+assert(disk[a] ~= '' and disk[b] == '', 'first save did not select first slot')
 rule.include[1] = 'electrical'
 local entries = reopen().list()
 assert(#entries == 1 and entries[1].name == 'Food' and entries[1].rule.include[1] == 'food', 'input alias or reopen failed')
@@ -108,26 +113,44 @@ assert(#reopen().list() == 2, 'corrupt slot was not repairable')
 disk[a], disk[b] = disk[b], 'truncated old write'
 assert(#reopen().list() == 2 and Presets.save('other-slot', {include = {'food'}}), 'reverse-slot recovery failed')
 
-for _, fault in ipairs({{writerNil = true}, {writerThrows = true}, {prefix = 12}, {prefix = 12, writeThrows = true},
+for _, fault in ipairs({{writerNil = true}, {writerThrows = true}, {prefix = 0}, {prefix = 12}, {prefix = 12, writeThrows = true},
     {prefix = 12, writeCloseThrows = true}, {readback = true}}) do
     original = stable(); faults[b] = fault
     errorIs('WriteFailed', Presets.save, 'replacement', {include = {'electrical'}})
     assert(disk[a] == original, 'failed write modified previous valid slot')
     faults = {}
-    if fault.prefix or not disk[b] then
+    if fault.prefix or disk[b] == '' then
         assert(reopen().list()[1].name == 'original', 'partial failed write lost old preset')
     end
 end
-for _, fault in ipairs({{readerNil = true}, {readerThrows = true}, {readThrows = 2}, {readCloseThrows = true}}) do
+for _, fault in ipairs({{readerNil = true}, {readerThrows = true}, {readThrows = 1}, {readThrows = 2},
+    {readInvalid = true}, {readCloseThrows = true}}) do
     original = stable(); faults[a] = fault
     errorIs('ReadFailed', Presets.list)
     errorIs('ReadFailed', Presets.save, 'new', {include = {'food'}})
     errorIs('ReadFailed', Presets.remove, 'original')
-    assert(disk[a] == original and not disk[b], 'read error permitted write')
+    assert(disk[a] == original and disk[b] == '' and writes == 1, 'read error permitted write')
+end
+for _, fault in ipairs({{readerNil = true}, {readThrows = 1}, {readCloseThrows = true}}) do
+    original = stable(); faults[b] = fault
+    errorIs('ReadFailed', Presets.list)
+    errorIs('ReadFailed', Presets.save, 'new', {include = {'food'}})
+    assert(disk[a] == original and disk[b] == '' and writes == 1, 'failed empty-slot read permitted write')
 end
 original = stable(); faults.directory = true
+errorIs('ReadFailed', Presets.list)
 errorIs('ReadFailed', Presets.save, 'new', {include = {'food'}})
-assert(disk[a] == original and not disk[b])
+errorIs('ReadFailed', Presets.remove, 'original')
+assert(disk[a] == original and disk[b] == '' and writes == 1,
+    'native nil readers plus an empty inaccessible directory enumeration permitted overwrite')
+assert(enumerations == 0, 'store still depends on ambiguous directory enumeration')
+faults = {}
+assert(reopen().list()[1].name == 'original', 'transient directory failure replaced readable data')
+
+reset(); disk[a], disk[b] = '', ''
+assert(#Presets.list() == 0 and #reopen().list() == 0 and writes == 0, 'zero-length slots are not uninitialized')
+assert(Presets.save('initialized', {include = {'food'}}) and #reopen().list() == 1,
+    'uninitialized slots cannot create a valid store')
 
 for _, unknown in ipairs({'2', '100', 'future'}) do
     original = stable(); disk[b] = 'PZST_TAG_FILTERS|' .. unknown .. '|2|0\nEND|2|0\n'
@@ -142,7 +165,7 @@ errorIs('Version', Presets.save, 'new', {include = {'food'}})
 assert(disk[a] == original and disk[b]:find('changed|shape', 1, true), 'future header shape overwritten')
 
 for _, malformed in ipairs({
-    '', 'not a preset file', 'PZST_TAG_FILTERS|1|1|33\nEND|1|33\n',
+    '\n', 'not a preset file', 'PZST_TAG_FILTERS|1|1|33\nEND|1|33\n',
     'PZST_TAG_FILTERS|1|0|0\nEND|0|0\n',
     'PZST_TAG_FILTERS|1|1|1\nP|Bad%ZZ|all|food|\nEND|1|1\n',
     'PZST_TAG_FILTERS|1|1|1\nP|Bad%0Aname|all|food|\nEND|1|1\n',
@@ -156,7 +179,7 @@ for _, malformed in ipairs({
     reset(); disk[a] = malformed
     errorIs('ReadFailed', Presets.list)
     errorIs('ReadFailed', Presets.save, 'new', {include = {'food'}})
-    assert(disk[a] == malformed and not disk[b], 'unrecoverable corrupt file overwritten')
+    assert(disk[a] == malformed and disk[b] == '' and writes == 0, 'unrecoverable corrupt file overwritten')
 end
 reset(); disk[a] = 'PZST_TAG_FILTERS|1|2147483647|0\nEND|2147483647|0\n'
 errorIs('Limit', Presets.save, 'new', {include = {'food'}})

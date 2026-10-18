@@ -228,23 +228,42 @@ isServer = function() return server end
 isClient = function() return client end
 ModData = {getOrCreate = function() error("Private wishlist must never enter globally requestable ModData") end}
 local world, files, paths, writeFailure, readFailure = "/Saves/Sandbox/sp-test", {}, {}, nil, false
+local directories, bootstrapFailure, opened, closed, bootstrapOpens = {}, nil, 0, 0, 0
+cacheFileExists = function(path) return directories[path] == true end
 getCurrentSaveName = function() return world end
 getFileReader = function(path, create)
-    assert(create == false)
-    if readFailure then error("disk read failed") end
-    if files[path] == nil then return nil end
+    assert(create == true)
+    if readFailure == "nil" then return nil end
+    if readFailure == true then error("disk read failed") end
+    assert(directories[path:match("^(.*[/])")], "native reader cannot create parent directories")
+    if files[path] == nil then files[path] = "" end
+    opened = opened + 1
     local position, contents = 1, files[path]
     return {readLine = function()
+        if readFailure == "read" then error("disk read failed") end
         if position > #contents then return nil end
         local finish = contents:find("\n", position, true)
         local line = contents:sub(position, finish and finish - 1 or #contents)
         position = finish and finish + 1 or #contents + 1
         return line
-    end, close = function() end}
+    end, close = function()
+        closed = closed + 1
+        if readFailure == "close" then error("disk close failed") end
+    end}
 end
 getFileWriter = function(path, create, append)
-    assert(create == true and append == false and not path:find("..", 1, true))
+    assert(create == true and not path:find("..", 1, true))
     for component in path:gmatch("[^/]+") do assert(#component <= 80) end
+    if append then
+        bootstrapOpens = bootstrapOpens + 1
+        if bootstrapFailure == "nil" then return nil end
+        if bootstrapFailure == "throw" then error("directory unavailable") end
+        directories[path:match("^(.*[/])")] = true
+        files[path] = files[path] or ""
+        return {write = function() error("bootstrap must not write") end, close = function()
+            if bootstrapFailure == "close" then error("bootstrap close failed") end
+        end}
+    end
     paths[#paths + 1] = path
     files[path] = ""
     local writes = 0
@@ -371,6 +390,63 @@ check("unknown journal version is retained and read failures block writes", func
     world, readFailure = "/Saves/Sandbox/read-failure", true
     assert(Service.snapshot(p).error == "storage_read" and #paths == count)
     readFailure = false
+end)
+check("nil/read/close failures retain existing slots and never publish an empty cache", function()
+    world = "/Saves/Sandbox/read-retry"
+    local p = player("")
+    assert(not Service.snapshot(p).error)
+    assert(not Service.request(p, {action = "add", listId = "local", revision = 0,
+        fullType = "Base.Hammer", amount = 6}).error)
+    local baseline = {}
+    for path, bytes in pairs(files) do baseline[path] = bytes end
+    local count, bootstraps = #paths, bootstrapOpens
+    for _, fault in ipairs({"nil", true, "read", "close"}) do
+        resets[#resets]()
+        readFailure = fault
+        assert(Service.snapshot(p).error == "storage_read")
+        assert(Service.request(p, {action = "add", listId = "local", revision = 0,
+            fullType = "Base.Nails", amount = 1}).error == "storage_read")
+        assert(#paths == count and bootstrapOpens == bootstraps, "read failure opened a writer")
+        for path, bytes in pairs(baseline) do assert(files[path] == bytes, "read failure changed disk") end
+        readFailure = false
+        local list = Service.snapshot(p).lists[1]
+        assert(list.entries['Base.Hammer'].amount == 6 and list.revision == 1, "failed load cached an empty store")
+        assert(#paths == count)
+    end
+    assert(opened == closed, "reader leaked on failure")
+end)
+check("empty new slots retry after failed bootstrap/read without truncating data", function()
+    local p = player("")
+    for _, fault in ipairs({"nil", "throw", "close"}) do
+        world = "/Saves/Sandbox/bootstrap-" .. fault
+        local count = #paths
+        bootstrapFailure = fault
+        assert(Service.snapshot(p).error == "storage_read" and #paths == count)
+        bootstrapFailure = nil
+        assert(Service.snapshot(p).lists[1].revision == 0)
+        resets[#resets]()
+        assert(Service.snapshot(p).lists[1].revision == 0)
+    end
+    world, readFailure = "/Saves/Sandbox/new-slots-read-retry", "nil"
+    local count = #paths
+    assert(Service.snapshot(p).error == "storage_read" and #paths == count)
+    readFailure = false
+    assert(Service.snapshot(p).lists[1].revision == 0)
+    resets[#resets]()
+    assert(Service.snapshot(p).lists[1].revision == 0)
+    assert(opened == closed)
+end)
+check("nonempty invalid slots block initialization while empty slots remain uninitialized", function()
+    world = "/Saves/Sandbox/corrupt-slots"
+    local p = player("")
+    assert(not Service.snapshot(p).error)
+    local path, count = paths[#paths], #paths
+    files[path] = "not a wishlist snapshot\n"
+    resets[#resets]()
+    assert(Service.snapshot(p).error == "storage_invalid" and #paths == count)
+    assert(files[path] == "not a wishlist snapshot\n")
+    files[path] = ""
+    assert(Service.snapshot(p).lists[1].revision == 0)
 end)
 local function event()
     local result = {}

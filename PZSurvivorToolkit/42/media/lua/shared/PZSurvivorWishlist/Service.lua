@@ -30,7 +30,8 @@ local function columns(line)
 end
 local function parse(reader)
     local header = reader:readLine()
-    if not header or #header > 128 then return {error = "storage_invalid"} end
+    if header == nil then return {missing = true} end
+    if #header > 128 then return {error = "storage_invalid"} end
     local values = columns(header)
     if values[1] ~= "PZSW" or #values ~= 3 then return {error = "storage_invalid"} end
     if values[2] ~= "1" and values[2] ~= "2" then return {error = "storage_version"} end
@@ -72,8 +73,9 @@ end
 local function read(path)
     local reader
     local ok, value = pcall(function()
-        reader = getFileReader(path, false)
-        return reader and parse(reader) or {missing = true}
+        -- Create only missing empty slots; nil then means an I/O failure, never an empty store.
+        reader = getFileReader(path, true)
+        return reader and parse(reader) or {error = "storage_read"}
     end)
     if reader then
         local closed = pcall(function() reader:close() end)
@@ -90,6 +92,14 @@ local function loadContext()
     local parts = {"PZSurvivorWishlist"}
     for i = 1, #encoded, 80 do parts[#parts + 1] = encoded:sub(i, i + 79) end
     local prefix = table.concat(parts, "/") .. "/"
+    local ready = pcall(function()
+        if cacheFileExists(prefix) then return end
+        -- Native readers cannot mkdir; append-only open creates parents without truncating any slot.
+        local bootstrap = getFileWriter(prefix .. "a.txt", true, true)
+        if not bootstrap then error("Cannot create wishlist directory") end
+        bootstrap:close()
+    end)
+    if not ready then return {error = "storage_read"} end
     local a, b = read(prefix .. "a.txt"), read(prefix .. "b.txt")
     if a.error == "storage_version" or b.error == "storage_version" then return {error = "storage_version"} end
     if a.error == "storage_read" or b.error == "storage_read" then return {error = "storage_read"} end
