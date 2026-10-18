@@ -38,9 +38,13 @@ class LuaRunner(unittest.TestCase):
     def invoke(self, *arguments):
         executions = self.executions
 
+        class Globals(SimpleNamespace):
+            def __setitem__(self, key, value):
+                setattr(self, key, value)
+
         class Runtime:
             def __init__(self, **kwargs):
-                self.variables = SimpleNamespace()
+                self.variables = Globals()
 
             def globals(self):
                 return self.variables
@@ -82,6 +86,67 @@ class LuaRunner(unittest.TestCase):
         self.assertEqual(self.executions, [("test_tv_controls.lua",
                          {"ProjectRoot": str(self.root), "TVSource": "upstream TV",
                           "NativeTVWindowSource": "native window"})])
+
+    def test_unrelated_source_paths_do_not_block_any_test_group(self):
+        options = ("--medicine-framework-source", "--mpff-source", "--bc-filter-source",
+                   "--native-inventory-context-menu", "--navigator-source", "--cleanui-inventory-pane",
+                   "--native-inventory-pane", "--proximity-source", "--native-action-root")
+        arguments = [value for option in options for value in (option, "/nonexistent/unrelated")]
+        for name in ("test_ui_style", "test_item_tags", "test_tv_controls", "test_wishlist_model"):
+            self.executions.clear()
+            with self.subTest(name=name):
+                self.invoke("--test", name, *arguments)
+                self.assertEqual([source for source, _ in self.executions], [name + ".lua"])
+
+    def test_source_consumers_keep_their_inputs_and_missing_inputs_fail(self):
+        source = self.root / "source"
+        inputs = {
+            "pane.lua": "inventory pane", "clean.lua": "CleanUI pane", "context.lua": "native transfers",
+            "ISTextBox.lua": "text box", "client/ISUI/ISTextBox.lua": "native text box",
+            "client/ISUI/ISModalDialog.lua": "native modal", "medicine.lua": "moodles", "bc.lua": "BC filters",
+            "shared/MPFastForward_Config.lua": "MPFF config", "server/MPFastForward_Server.lua": "MPFF server",
+            "MonitorConfig.lua": "navigator config", "MonitorRender.lua": "navigator render",
+            "NavigatorMonitorDrag.lua": "navigator drag", "proximity.lua": "proximity",
+            "ISInventoryPage.lua": "inventory page",
+        }
+        for name, value in inputs.items():
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(value)
+        cases = [
+            (("test_inventory_tags", "test_inventory_filter", "test_inventory_layout", "test_inventory_interaction"),
+             "--native-inventory-pane", source / "pane.lua", {"NativeInventoryPaneSource": "inventory pane"}),
+            (("test_inventory_tags", "test_inventory_filter", "test_inventory_layout", "test_inventory_interaction"),
+             "--cleanui-inventory-pane", source / "clean.lua", {"CleanUIInventoryPaneSource": "CleanUI pane"}),
+            (("test_action_queue_operations",), "--native-inventory-context-menu", source / "context.lua",
+             {"NativeInventoryContextMenuSource": "native transfers"}),
+            (("test_quantity_transfers",), "--native-inventory-context-menu", source / "context.lua",
+             {"NativeInventoryContextMenuSource": "native transfers", "NativeTextBoxSource": "text box"}),
+            (("test_tag_filter_presets_menu",), "--native-action-root", source,
+             {"NativeTextBoxSource": "native text box", "NativeModalDialogSource": "native modal"}),
+            (("test_medicine_moodles",), "--medicine-framework-source", source / "medicine.lua", {"NativeMedicineFrameworkSource": "moodles"}),
+            (("test_bc_filter_compat",), "--bc-filter-source", source / "bc.lua", {"NativeBCFilterSource": "BC filters"}),
+            (("test_mpff_compat",), "--mpff-source", source,
+             {"NativeMPFFConfigSource": "MPFF config", "NativeMPFFServerSource": "MPFF server"}),
+            (("test_navigator",), "--navigator-source", source,
+             {"NativeNavigatorConfig": "navigator config", "NativeNavigatorRender": "navigator render", "NativeNavigatorDrag": "navigator drag"}),
+            (("test_proximity_selection",), "--proximity-source", source / "proximity.lua",
+             {"ProximityInventorySource": "proximity", "ProximityInventoryPageSource": "inventory page"}),
+        ]
+        for names, option, path, expected in cases:
+            for name in names:
+                self.executions.clear()
+                with self.subTest(name=name, option=option):
+                    self.invoke("--test", name, option, str(path))
+                    variables = self.executions[0][1]
+                    self.assertEqual({key: variables.get(key) for key in expected}, expected)
+                    self.executions.clear()
+                    with self.assertRaises(FileNotFoundError):
+                        self.invoke("--test", name, option, "/nonexistent/required")
+                    self.assertEqual(self.executions, [])
+
+        (source / "ISTextBox.lua").unlink()
+        self.invoke("--test", "test_action_queue_operations", "--native-inventory-context-menu", str(source / "context.lua"))
 
     def test_selection_retains_reconnect_variants_and_native_setup(self):
         self.invoke("--test", "native_tags/check_reconnect")

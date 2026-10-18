@@ -101,13 +101,13 @@ def main() -> None:
             continue
         check = LuaRuntime(unpack_returned_tuples=True)
         check.globals().ProjectRoot = str(ROOT)
-        if args.native_inventory_pane:
+        if name == "test_inventory_tags.lua" and args.native_inventory_pane:
             check.globals().NativeInventoryPaneSource = args.native_inventory_pane.read_text(encoding="utf-8")
-        if args.cleanui_inventory_pane:
+        if name == "test_inventory_tags.lua" and args.cleanui_inventory_pane:
             check.globals().CleanUIInventoryPaneSource = args.cleanui_inventory_pane.read_text(encoding="utf-8")
         if args.quartermaster_source:
             check.globals().NativeQuartermasterLuaRoot = str(args.quartermaster_source)
-        if args.native_action_root:
+        if name == "test_tag_filter_presets_menu.lua" and args.native_action_root:
             check.globals().NativeTextBoxSource = (args.native_action_root / "client/ISUI/ISTextBox.lua").read_text(encoding="utf-8")
             check.globals().NativeModalDialogSource = (args.native_action_root / "client/ISUI/ISModalDialog.lua").read_text(encoding="utf-8")
         check.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
@@ -224,13 +224,11 @@ def main() -> None:
             lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
         if args.native_action_root:
             lua.globals().NativeActionRoot = str(args.native_action_root)
-        if name == "test_food_cart_compat.lua" and args.saucedcarts_source:
-            lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
         if name in ("test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_dispatch.lua", "test_action_queue_compat.lua", "test_action_queue_tidy_intent.lua", "test_action_queue_manifest.lua", "test_action_queue_health.lua", "test_action_queue_fire.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua") and args.wishlist_workshop_root:
             lua.globals().NativeWishlistWorkshopRoot = str(args.wishlist_workshop_root)
         if name in ("test_action_queue.lua", "test_action_queue_fire.lua", "test_action_queue_manifest.lua") and args.quartermaster_source:
             lua.globals().NativeQuartermasterLuaRoot = str(args.quartermaster_source)
-        if args.project_cook_picker:
+        if name == "test_action_queue_dispatch.lua" and args.project_cook_picker:
             lua.globals().ProjectCookPickerSourcePath = str(args.project_cook_picker)
         if name == "test_action_queue_labels.lua":
             translations = {}
@@ -242,25 +240,26 @@ def main() -> None:
                 values.update(json.loads((ROOT / "PZSurvivorToolkit/42/media/lua/shared/Translate" / language / "UI.json").read_text(encoding="utf-8")))
                 translations[language] = values
             lua.globals().ActionQueueTranslations = lua.table_from(translations, recursive=True)
-        if args.medicine_framework_source:
+        if name == "test_medicine_moodles.lua" and args.medicine_framework_source:
             lua.globals().NativeMedicineFrameworkSource = args.medicine_framework_source.read_text(encoding="utf-8")
-        if args.mpff_source:
+        if name == "test_mpff_compat.lua" and args.mpff_source:
             lua.globals().NativeMPFFConfigSource = (args.mpff_source / "shared/MPFastForward_Config.lua").read_text(encoding="utf-8")
             lua.globals().NativeMPFFServerSource = (args.mpff_source / "server/MPFastForward_Server.lua").read_text(encoding="utf-8")
-        if args.bc_filter_source:
+        if name == "test_bc_filter_compat.lua" and args.bc_filter_source:
             lua.globals().NativeBCFilterSource = args.bc_filter_source.read_text(encoding="utf-8")
-        if args.native_inventory_context_menu:
+        if name in ("test_action_queue_operations.lua", "test_quantity_transfers.lua") and args.native_inventory_context_menu:
             lua.globals().NativeInventoryContextMenuSource = args.native_inventory_context_menu.read_text(encoding="utf-8")
-            lua.globals().NativeTextBoxSource = (args.native_inventory_context_menu.parent / "ISTextBox.lua").read_text(encoding="utf-8")
-        if args.navigator_source:
+            if name == "test_quantity_transfers.lua":
+                lua.globals().NativeTextBoxSource = (args.native_inventory_context_menu.parent / "ISTextBox.lua").read_text(encoding="utf-8")
+        if name == "test_navigator.lua" and args.navigator_source:
             for suffix in ("Config", "Render", "Drag"):
                 source_name = "NavigatorMonitorDrag" if suffix == "Drag" else "Monitor" + suffix
                 lua.globals()["NativeNavigator" + suffix] = (args.navigator_source / (source_name + ".lua")).read_text(encoding="utf-8")
-        if args.cleanui_inventory_pane:
+        if name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua") and args.cleanui_inventory_pane:
             lua.globals().CleanUIInventoryPaneSource = args.cleanui_inventory_pane.read_text(encoding="utf-8")
-        if args.native_inventory_pane:
+        if name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua") and args.native_inventory_pane:
             lua.globals().NativeInventoryPaneSource = args.native_inventory_pane.read_text(encoding="utf-8")
-        if args.proximity_source:
+        if name == "test_proximity_selection.lua" and args.proximity_source:
             lua.globals().ProximityInventorySource = args.proximity_source.read_text(encoding="utf-8")
             lua.globals().ProximityInventoryPageSource = (args.proximity_source.parent / "ISInventoryPage.lua").read_text(encoding="utf-8")
         lua.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))

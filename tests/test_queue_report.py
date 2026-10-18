@@ -77,7 +77,8 @@ class QueueReportTests(unittest.TestCase):
             (root / (role + "-launch.log")).write_text(text, encoding="utf-8")
         if kind == "mp":
             (root / "server-launch.log").write_text("[QUEUE_TEST] SERVER_READY\n" + "".join(receipts), encoding="utf-8")
-        report.write_json(root / "execution.json", {"status": "completed", "processes": {role: {} for role in roles}})
+        report.write_json(root / "execution.json", {"status": "completed", "processes": {
+            role: {'pid': 1000 + index, 'exit_code': -15} for index, role in enumerate(roles)}})
         self.freeze(root)
         return root
 
@@ -215,6 +216,74 @@ class QueueReportTests(unittest.TestCase):
         (root / "execution.json").unlink()
         self.assertEqual(report.build_report(root, self.catalog)["status"], "failed")
 
+    def test_completed_execution_requires_all_stopped_direct_process_records(self):
+        for kind in ('sp', 'mp'):
+            root = self.fixture(kind, kind=kind)
+            valid = report.read_json(root / 'execution.json')
+            invalid = [None, [], {}, {'processes': valid['processes']}, dict(valid, status=None), dict(valid, status=True),
+                       {'status': 'completed'}, dict(valid, processes=None),
+                       dict(valid, processes=[]), dict(valid, processes={}),
+                       dict(valid, processes=dict(valid['processes'], unexpected={'pid': 2000, 'exit_code': 0}))]
+            for role in valid['processes']:
+                missing = copy.deepcopy(valid)
+                del missing['processes'][role]
+                invalid.append(missing)
+                for process in (None, [], {}, {'pid': None, 'exit_code': 0}, {'pid': True, 'exit_code': 0},
+                                {'pid': 0, 'exit_code': 0}, {'pid': -1, 'exit_code': 0}, {'pid': 1000},
+                                {'pid': 1000, 'exit_code': None}, {'pid': 1000, 'exit_code': False}):
+                    altered = copy.deepcopy(valid)
+                    altered['processes'][role] = process
+                    invalid.append(altered)
+            for execution in invalid:
+                with self.subTest(kind=kind, execution=execution):
+                    report.write_json(root / 'execution.json', execution)
+                    result = report.build_report(root, self.catalog)
+                    self.assertEqual('failed', result['status'])
+                    self.assertTrue(result['execution_issues'])
+                    self.assertIn(result['execution_issues'][0], report.summary(result))
+                    self.assertEqual(execution, report.read_json(root / 'execution.json'))
+
+    def test_host_server_requires_owned_parent_cache_and_empty_cleanup_audit(self):
+        root = self.fixture(kind='mp')
+        selection = report.read_json(root / 'selection.json')
+        selection['options'] = {'mp_host': True}
+        report.write_json(root / 'selection.json', selection)
+        self.freeze(root)
+        valid = report.read_json(root / 'execution.json')
+        valid['processes']['server'] = {'pid': 2000, 'parent_role': 'client1', 'cache': str(root / 'client1')}
+        valid['host_cleanup'] = {'remaining_pids': []}
+        report.write_json(root / 'execution.json', valid)
+        result = report.build_report(root, self.catalog)
+        self.assertEqual('passed', result['status'], result)
+        self.assertEqual(valid, result['execution'])
+        self.assertEqual('passed', next(row for row in report.matrix(self.catalog, [result])['rows']
+                                       if row.get('kind') == 'mp' and row.get('mode') == 'toolkit')['status'])
+        invalid = []
+        missing = copy.deepcopy(valid)
+        del missing['host_cleanup']
+        invalid.append(missing)
+        for cleanup in (None, [], {}, {'remaining_pids': None}, {'remaining_pids': False}, {'remaining_pids': [2000]}):
+            invalid.append(dict(valid, host_cleanup=cleanup))
+        for changes in ({'parent_role': None}, {'parent_role': 'client2'}, {'cache': None},
+                        {'cache': str(self.base / 'unowned-cache')}, {'pid': True}):
+            altered = copy.deepcopy(valid)
+            altered['processes']['server'].update(changes)
+            invalid.append(altered)
+        altered = copy.deepcopy(valid)
+        del altered['processes']['client1']['exit_code']
+        invalid.append(altered)
+        for execution in invalid:
+            with self.subTest(execution=execution):
+                report.write_json(root / 'execution.json', execution)
+                result = report.build_report(root, self.catalog)
+                self.assertEqual('failed', result['status'])
+                self.assertTrue(result['execution_issues'])
+        selection['options']['mp_host'] = False
+        report.write_json(root / 'selection.json', selection)
+        report.write_json(root / 'execution.json', valid)
+        self.freeze(root)
+        self.assertEqual('failed', report.build_report(root, self.catalog)['status'])
+
     def test_audit_keeps_preamble_errors_and_deduplicates_mirrors_with_counts(self):
         root = self.fixture()
         path = root / "client1-launch.log"
@@ -254,6 +323,38 @@ class QueueReportTests(unittest.TestCase):
         altered = copy.deepcopy(control)
         altered["coverage"][0]["status"] = "skipped"
         self.assertFalse(report.compare(current, altered)["compatible"])
+
+    def test_control_with_missing_stopped_process_evidence_cannot_be_accepted(self):
+        root = self.fixture('toolkit')
+        native = self.fixture('native', mode='native')
+        report.write_json(native / 'execution.json', {'status': 'completed'})
+        control = report.build_report(native, self.catalog)
+        result = report.build_report(root, self.catalog, control)
+        self.assertEqual('failed', control['status'])
+        self.assertEqual('needs-review', result['status'])
+        self.assertFalse(result['comparison']['compatible'])
+
+    def test_cached_reports_revalidate_execution_without_derived_issues(self):
+        current = report.build_report(self.fixture('toolkit'), self.catalog)
+        control = report.build_report(self.fixture('native', mode='native'), self.catalog)
+        for value in (current, control):
+            del value['execution_issues']
+            value['status'] = 'needs-review'
+        def cell(value):
+            return next(row for row in report.matrix(self.catalog, [value])['rows']
+                        if row.get('kind') == 'sp' and row.get('mode') == value['selection']['mode'])
+        self.assertEqual('passed', cell(current)['status'])
+        self.assertTrue(report.compare(current, control)['compatible'])
+        for key, value in (('execution', {'status': 'completed'}), ('execution', None),
+                           ('run', None), ('run', 'relative/run')):
+            with self.subTest(key=key, value=value):
+                cached = copy.deepcopy(control)
+                cached['status'] = 'passed'
+                cached[key] = value
+                self.assertEqual('failed', cell(cached)['status'])
+                self.assertFalse(report.compare(current, cached)['compatible'])
+                cached['selection']['mode'] = 'toolkit'
+                self.assertFalse(report.compare(cached, control)['compatible'])
 
     def test_shared_unknown_errors_stay_in_review_and_new_errors_are_identified(self):
         toolkit = self.fixture("toolkit")

@@ -420,7 +420,7 @@ def compare(current, control):
     if current.get("settings_fingerprint") != control.get("settings_fingerprint") or not current.get("settings_fingerprint"):
         reasons.append("Game, source, mods, cases or settings differ")
     for label, report in (("toolkit", current), ("control", control)):
-        if report["functional"]["status"] != "passed" or not report["provenance"]["verified"] or report.get("execution", {}).get("status") != "completed":
+        if report["functional"]["status"] != "passed" or not report["provenance"]["verified"] or execution_issues(report.get('run'), report['selection'], report.get('execution')):
             reasons.append(label + " run lacks verified functional completion")
         expected_roles = set(adapters.roles(report['selection']))
         if set(report["runtime"]["roles"]) != expected_roles or report["runtime"]["microphone"] or any(not audit.get("available") for audit in report["runtime"]["roles"].values()):
@@ -441,6 +441,34 @@ def compare(current, control):
             "interpretation": "Matching errors reproduce without queue; comparison never clears failures or unclassified errors."}
 
 
+def execution_issues(root, selection, execution):
+    if not isinstance(root, (str, Path)) or not Path(root).is_absolute():
+        return ['Execution requires an absolute owned run path']
+    root = Path(root)
+    if not isinstance(execution, dict):
+        return ['Execution record is missing or invalid']
+    issues = [] if execution.get('status') == 'completed' else ['Execution is not completed']
+    processes = execution.get('processes')
+    roles = adapters.roles(selection)
+    if not isinstance(processes, dict) or set(processes) != set(roles):
+        return issues + ['Execution requires process records for exactly the selected roles']
+    hosted = selection['kind'] == 'mp' and selection.get('options', {}).get('mp_host') is True
+    for role, process in processes.items():
+        if not isinstance(process, dict) or type(process.get('pid')) is not int or process['pid'] <= 0:
+            issues.append(role + ': execution requires a positive integer PID')
+            continue
+        if hosted and role == 'server':
+            if process.get('parent_role') != 'client1' or process.get('cache') != str(root / 'client1'):
+                issues.append('server: Host execution requires the owned client1 parent/cache')
+        elif type(process.get('exit_code')) is not int:
+            issues.append(role + ': execution requires an integer exit code after stopping')
+    if hosted:
+        cleanup = execution.get('host_cleanup')
+        if not isinstance(cleanup, dict) or cleanup.get('remaining_pids') != []:
+            issues.append('Host execution requires a completed cleanup audit with no remaining PIDs')
+    return issues
+
+
 def build_report(root, catalog, control=None):
     root = Path(root).resolve()
     selection = read_json(root / "selection.json")
@@ -456,6 +484,7 @@ def build_report(root, catalog, control=None):
         execution = {"status": "missing"}
     if not isinstance(execution, dict):
         execution = {"status": "invalid"}
+    execution_errors = execution_issues(root, selection, execution)
     microphone = any(row["microphone"] for row in audits.values())
     counts = {severity + "_count": sum(row[severity + "_count"] for row in audits.values())
               for severity in ("fatal", "unclassified", "background")}
@@ -464,7 +493,7 @@ def build_report(root, catalog, control=None):
     report = {"schema_version": 1, "run": str(root), "selection": selection,
               "settings_fingerprint": fingerprint, "provenance": {"verified": not provenance_errors, "issues": provenance_errors,
                   'game_input_trees': list(GAME_INPUT_TREES) if not provenance_errors else []},
-              "functional": result, "coverage": coverage, "execution": execution,
+              "functional": result, "coverage": coverage, "execution": execution, "execution_issues": execution_errors,
               "runtime": dict(counts, status="unavailable" if any(not row["available"] for row in audits.values()) else runtime_status, roles=audits, microphone=microphone),
               "limits": ["Callback-driven native fixture; physical UI, WAN and long sessions are separate coverage.",
                          "Native tree seal scope: media/lua and media/scripts; other asset/binary trees are outside this seal."]}
@@ -474,7 +503,7 @@ def build_report(root, catalog, control=None):
             new = any(issue["severity"] == "unclassified" and issue["fingerprint"] in report["comparison"]["errors"][role]["only_toolkit"]
                       for role, audit in audits.items() for issue in audit["issues"])
             report["runtime"]["status"] = "new-errors" if new else "unclassified-errors"
-    failed = counts["fatal_count"] or result["status"] not in ('passed', 'captured') or provenance_errors or microphone or execution.get("status") != "completed" or any(not row["available"] for row in audits.values())
+    failed = counts["fatal_count"] or result["status"] not in ('passed', 'captured') or provenance_errors or microphone or execution_errors or any(not row["available"] for row in audits.values())
     if failed:
         report["status"] = "failed"
     elif control is not None and not report["comparison"]["compatible"]:
@@ -501,7 +530,7 @@ def matrix(catalog, reports=()):
                     relevant = [(report, [row for row in report["coverage"] if row["suite"] == suite and row["case"] == case["id"] and row["kind"] == kind and row["mode"] == mode]) for report in reports]
                     relevant = [(report, matches) for report, matches in relevant if matches]
                     matches = [row for _, values in relevant for row in values]
-                    invalid = any(report.get("status") == "failed" or report["functional"]["status"] not in ('passed', 'captured') or not report["provenance"]["verified"] or report.get("execution", {}).get("status") != "completed" for report, _ in relevant)
+                    invalid = any(report.get("status") == "failed" or report["functional"]["status"] not in ('passed', 'captured') or not report["provenance"]["verified"] or execution_issues(report.get('run'), report['selection'], report.get('execution')) for report, _ in relevant)
                     incomplete = any({row["actor"] for row in values} != expected_actors or len(values) != len(expected_actors) for _, values in relevant)
                     rows.append({"suite": suite, "case": case["id"], "producer": case["producer"], "capability": case["capability"],
                                  "kind": kind, "mode": mode, "status": "not-run" if not matches else "failed" if invalid or any(row["status"] == "failed" for row in matches) else "partial" if incomplete else "skipped" if all(row["status"] == "skipped" for row in matches) else "partial" if any(row["status"] == "skipped" for row in matches) else "passed",
@@ -512,7 +541,7 @@ def matrix(catalog, reports=()):
 
 
 def summary(report):
-    lines = ["Overall: " + report["status"], "Execution: " + report["execution"]["status"], "Functional: " + report["functional"]["status"], "Runtime: " + report["runtime"]["status"],
+    lines = ["Overall: " + report["status"], "Execution: " + str(report["execution"].get("status", "invalid")), "Functional: " + report["functional"]["status"], "Runtime: " + report["runtime"]["status"],
              "Sources/snapshot: " + ("verified" if report["provenance"]["verified"] else "CHANGED")]
     trees = report['provenance'].get('game_input_trees')
     lines.append('Live game trees: ' + ('unsealed (legacy report)' if trees is None else ', '.join(trees) if trees else 'NOT VERIFIED'))
@@ -528,7 +557,7 @@ def summary(report):
             for case in windows['cases']:
                 lines.append(role + ' ' + case['case'] + ' epoch=' + str(case['epoch']) + ' diagnostic errors: run=' +
                              str(case['run']['error_count']) + ', cleanup=' + str(case['cleanup']['error_count']))
-    lines.extend(report["functional"]["issues"] + report["provenance"]["issues"])
+    lines.extend(report["functional"]["issues"] + report["provenance"]["issues"] + report.get('execution_issues', []))
     if report["execution"].get("error"):
         lines.append(report["execution"]["error"])
     if "comparison" in report:
