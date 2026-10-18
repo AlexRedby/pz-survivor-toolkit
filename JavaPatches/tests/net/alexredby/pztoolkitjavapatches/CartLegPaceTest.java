@@ -72,6 +72,25 @@ public final class CartLegPaceTest {
         close(CartLegPace.woodenGaitShift(player),-.06594764,"native pelvis movement updates clearance independently of gait");
         player.run=false;
         close(CartLegPace.woodenGaitShift(player),0,"ordinary Walk retains native cart position despite pelvis sway");
+        player.animator=new AdvancedAnimator();
+        var layer=AnimLayer.alloc(player,player.animator);
+        var root=AdvancedAnimator.class.getDeclaredField("rootLayer");root.setAccessible(true);root.set(player.animator,layer);
+        var side=live("ToolkitCartPivotWalk",true,clip("Bob_StrafeNoAim_Left",1,0,0,"Translation_Data"));
+        layer.getLiveAnimNodes().add(side);
+        side.getMainAnimationTrackAt(0).setBlendWeight(.347241f);
+        pose.m03=-.02f;pose.m23=-.005f;
+        close(CartLegPace.woodenGaitShift(player),-.085,"incoming Strafe keeps the measured thigh clear before full blend");
+        close(CartLegPace.woodenFastShift(player),0,"a side-only clearance cannot promote the walking footprint to Run");
+        side.getMainAnimationTrackAt(0).setBlendWeight(1);
+        pose.m03=-.000058505f;pose.m23=.008871079f;
+        close(CartLegPace.woodenGaitShift(player),-.085,"Strafe clearance survives the neutral Spine phase with protruding thigh");
+        player.run=true;pose.m03=.03f;pose.m23=.014f;
+        close(CartLegPace.woodenGaitShift(player),CartLegPace.woodenBodyShift(0,pose.m03,pose.m23),
+            "Strafe overlap cannot reduce the existing fast-pose clothing clearance");
+        player.run=false;
+        side.setActive(false);side.getMainAnimationTrackAt(0).setBlendWeight(.1f);
+        close(CartLegPace.woodenGaitShift(player),-.0425,"outgoing Strafe keeps clearance through the native fade");
+        player.animator=null;
         player.run=true;
         player.loaded=false;
         close(CartLegPace.woodenGaitShift(player),0,"unavailable animation player keeps gait fallback");
@@ -89,6 +108,33 @@ public final class CartLegPaceTest {
             transforms.set(animation,unloaded);
             close(CartLegPace.woodenGaitShift(player),0,"unavailable native model pose keeps gait fallback");
         }
+    }
+
+    private static void sideClearance() {
+        var left=live("ToolkitCartPivotWalk",true,clip("Bob_StrafeNoAim_Left",1,0,0,"Translation_Data"));
+        var right=live("ToolkitCartPivotWalk",false,clip("Bob_StrafeNoAim_Right",1,0,0,"Translation_Data"));
+        var other=live("defaultWalk",true,clip("Bob_StrafeNoAim_Left",1,0,0,"Translation_Data"));
+        var forward=live("ToolkitCartPivotWalk",true,clip("Bob_Walk",1,0,0,"Translation_Data"));
+        close(CartLegPace.woodenSideShift(List.of(other,forward)),0,"ordinary clips retain their calibrated cart position");
+        for(var side:List.of(left,right)) {
+            side.getMainAnimationTrackAt(0).setBlendWeight(.1f);
+            close(CartLegPace.woodenSideShift(List.of(side,other,forward)),-.0425,"both native Strafe directions include fade-out");
+        }
+        close(CartLegPace.woodenSideShift(List.of(left,right)),-.085,"a mirrored handoff retains clearance without doubling it");
+        for(float invalid:new float[]{Float.NaN,Float.POSITIVE_INFINITY,-.2f}) {
+            left.getMainAnimationTrackAt(0).setBlendWeight(invalid);
+            close(CartLegPace.woodenSideShift(List.of(left)),0,"invalid Strafe weights are ignored");
+        }
+        close(CartLegPace.releaseSideShift(0,-.085f,1./60),-.085,"clearance is acquired before the native thigh can hit a shaft");
+        float current=-.085f;
+        for(int tick=0;tick<70;tick++) {
+            float next=CartLegPace.releaseSideShift(current,0,1./60);
+            if(next<current || next-current>.010) throw new AssertionError("Strafe clearance snapped during release");
+            current=next;
+        }
+        close(current,0,"ordinary walking regains its exact calibrated position after release");
+        close(CartLegPace.releaseSideShift(-.03f,-.085f,0),-.085,"zero dt cannot postpone required clearance");
+        close(CartLegPace.releaseSideShift(-.03f,0,Double.NaN),-.03,"invalid dt cannot snap the retained clearance");
     }
 
     private static void close(float actual, double expected, String message) {
@@ -505,6 +551,7 @@ public final class CartLegPaceTest {
 
     public static void main(String[] args) throws Exception {
         nativePelvisBinding();
+        sideClearance();
         bracingChecks();
         brakeTracks();
         coastingChecks();

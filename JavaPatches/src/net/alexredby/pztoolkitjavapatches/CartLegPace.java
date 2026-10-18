@@ -211,6 +211,13 @@ public final class CartLegPace {
     /** Model-Z grip clearance follows each native gait, including outgoing tracks. */
     public static float woodenGaitShift(IsoPlayer player) {
         if (player == null) return 0;
+        float side=Math.min(woodenSideShift(player),CartSteeringHooks.sideClearance(player));
+        // Bank and Strafe provide the same shaft clearance; do not stack their advances.
+        side=Math.min(0,side-CartSteeringMath.woodenShift((float)CartSteeringHooks.clearanceLean(player),0));
+        return Math.min(woodenFastShift(player),side);
+    }
+
+    static float woodenFastShift(IsoPlayer player) {
         var animator = player.getAdvancedAnimator();
         float gait=animator == null || animator.getRootLayer() == null ? 0
             : woodenGaitShift(animator.getRootLayer().getLiveAnimNodes());
@@ -224,6 +231,31 @@ public final class CartLegPace {
         var pose=animation.getModelTransformAt(spine);
         // AnimationPlayer stores the model pose transposed, as in the native render palette.
         return pose==null?gait:gait+weight*(woodenBodyShift(gait,pose.m03,pose.m23)-gait);
+    }
+
+    static float woodenSideShift(IsoPlayer player) {
+        var animator=player.getAdvancedAnimator();
+        return animator==null || animator.getRootLayer()==null?0
+            : woodenSideShift(animator.getRootLayer().getLiveAnimNodes());
+    }
+
+    static float woodenSideShift(Iterable<LiveAnimNode> nodes) {
+        double weight=0;
+        for(var node:nodes) if("ToolkitCartPivotWalk".equals(node.getName()))
+            for(var track:node.getMainAnimationTracks()) {
+                if(!"Bob_StrafeNoAim_Left".equals(track.getName()) && !"Bob_StrafeNoAim_Right".equals(track.getName())) continue;
+                float blend=track.getBlendWeight();
+                if(Float.isFinite(blend) && blend>0) weight+=blend;
+            }
+        float t=(float)Math.min(1,weight/.2);
+        // shortcut: B42 Strafe/backward blend needs 8.5 cm of shaft clearance; recalibrate for another rig/clip.
+        return -.085f*t*t*(3-2*t);
+    }
+
+    static float releaseSideShift(float current,float target,double seconds) {
+        if(!Double.isFinite(seconds) || seconds<=0) return Math.min(current,target);
+        float released=current*(float)Math.exp(-Math.min(.1,seconds)/.15);
+        return Math.min(target,released<-.0001f?released:0);
     }
 
     static float woodenBodyShift(float gait, float x, float z) {

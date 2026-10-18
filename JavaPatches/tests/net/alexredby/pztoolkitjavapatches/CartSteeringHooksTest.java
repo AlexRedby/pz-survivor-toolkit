@@ -1124,6 +1124,13 @@ public final class CartSteeringHooksTest {
         player.run=true;CartSteeringHooks.heading(player);CartSteeringHooks.reset(player);
         check(CartSteeringHooks.fastPoseWeight(player)==0,"reset must release delayed pose clearance");
         player.run=false;
+        CartSteeringHooks.heading(player);
+        var side=field(states.get(player),"sideClearance");side.setFloat(states.get(player),-.06f);
+        CartSteeringHooks.heading(player);
+        float sideFade=CartSteeringHooks.sideClearance(player);
+        check(sideFade>-.06 && sideFade<0,"native heading must release side clearance gradually once per update");
+        CartSteeringHooks.reset(player);
+        check(CartSteeringHooks.sideClearance(player)==0,"reset cannot leak side clearance into the next cart");
         pathControls(unsafe,states);
         stationaryControls(unsafe,states);
         stationaryCadence(unsafe,states);

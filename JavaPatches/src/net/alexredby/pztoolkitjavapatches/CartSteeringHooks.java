@@ -21,6 +21,7 @@ public final class CartSteeringHooks {
         final CartSteeringMath.Reversal reversal = new CartSteeringMath.Reversal();
         double brakeTarget, actualDistance, fastPoseTail, nativeSpeed, brakeLimit, brakeWait, brakePace, fastReleaseWait;
         double fastPace, brakeDuration=1, brace;
+        float sideClearance;
         zombie.inventory.InventoryItem cart;
         float startX, startY;
         boolean wheelRendered, stationary, stationaryRoot, cartBlocked, recovering, path;
@@ -150,6 +151,16 @@ public final class CartSteeringHooks {
         return t*t*(3-2*t);
     }
 
+    static float sideClearance(IsoPlayer player) {
+        State state=states.get(player);
+        return state==null?0:state.sideClearance;
+    }
+
+    private static double footprintFront(IsoPlayer player,State state) {
+        return player.isRunning() || player.isSprinting() || state.fastPoseTail>0
+            || CartLegPace.woodenFastShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
+    }
+
     public static double lean(IsoPlayer player) {
         State state=states.get(player);
         return state!=null && enabled(player) && wheelbarrow(player) ? state.lean : 0;
@@ -253,8 +264,7 @@ public final class CartSteeringHooks {
         }
         state.load = load(player);
         CartFootprint.Query query=wooden(player) && player.getCurrentSquare()!=null?CartFootprint.world(player):null;
-        if(query!=null) state.footprintFront=player.isRunning() || player.isSprinting() || state.fastPoseTail>0
-            || CartLegPace.woodenGaitShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
+        if(query!=null) state.footprintFront=footprintFront(player,state);
         boolean footprintClear=query!=null && CartFootprint.clear(query,state.startX,state.startY,state.heading,state.footprintFront);
         boolean guided=Double.isFinite(state.wallHeading) && state.wantsMove && !state.braking
             && !state.stationaryRoot && !state.reversal.active && state.reversal.direction>0 && footprintClear
@@ -315,8 +325,7 @@ public final class CartSteeringHooks {
         Vector2 facing=player.getAnimForwardDirection(state.input);
         state.heading=Math.atan2(facing.y,facing.x);
         state.pending=true;state.result.set(x,y);
-        state.footprintFront=player.isRunning() || player.isSprinting() || state.fastPoseTail>0
-            || CartLegPace.woodenGaitShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
+        state.footprintFront=footprintFront(player,state);
         state.cartBlocked=state.recovering=false;
         if(player.getCurrentSquare()!=null) {
             var query=CartFootprint.world(player);
@@ -349,8 +358,7 @@ public final class CartSteeringHooks {
             zombie.pathfind.PathFindBehavior2.BehaviorResult result) {
         if(!(character instanceof IsoPlayer player) || !enabled(player) || !pathMode(player)) return result;
         State state=state(player);
-        state.footprintFront=player.isRunning() || player.isSprinting() || state.fastPoseTail>0
-            || CartLegPace.woodenGaitShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
+        state.footprintFront=footprintFront(player,state);
         boolean blocked=state.cartBlocked;
         if(result==zombie.pathfind.PathFindBehavior2.BehaviorResult.Succeeded && player.getCurrentSquare()!=null) {
             Vector2 facing=player.getAnimForwardDirection(state.input);
@@ -372,10 +380,10 @@ public final class CartSteeringHooks {
         double heading=state.pending?state.heading:Math.atan2(facing.y,facing.x);
         double target=Math.atan2(player.getForwardDirectionY(),player.getForwardDirectionX());
         double dt=Math.max(0,Math.min(.1,GameTime.getInstance().getRealworldSecondsSinceLastUpdate()));
+        state.sideClearance=CartLegPace.releaseSideShift(state.sideClearance,CartLegPace.woodenSideShift(player),dt);
         state.fastPoseTail=player.isRunning() || player.isSprinting() || CartLegPace.brakeTrack(player)!=null
             ?.4:Math.max(0,state.fastPoseTail-dt);
-        state.footprintFront=player.isRunning() || player.isSprinting() || state.fastPoseTail>0
-            || CartLegPace.woodenGaitShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
+        state.footprintFront=footprintFront(player,state);
         if(player.getCurrentSquare()!=null) {
             var query=CartFootprint.world(player);
             if(state.pending && !state.recovering) {
@@ -465,6 +473,7 @@ public final class CartSteeringHooks {
             state.pending = false;
         }
         double dt=Math.max(0,Math.min(.1,GameTime.getInstance().getRealworldSecondsSinceLastUpdate()));
+        if(wooden(player)) state.sideClearance=CartLegPace.releaseSideShift(state.sideClearance,CartLegPace.woodenSideShift(player),dt);
         var stop=wooden(player)?CartLegPace.brakeTrack(player):null;
         if(state.braking) {
             state.brakeWait+=dt;
