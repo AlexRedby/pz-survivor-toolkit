@@ -17,7 +17,7 @@ class CraftUIAdapterTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.selection = dict(suite='craft-ui', cases=list(craft_ui.CASES), kind='sp', mode='toolkit',
+        self.selection = dict(suite='craft-ui', cases=list(craft_ui.SUCCESS_CASES), kind='sp', mode='toolkit',
                               languages=['EN'], mods=list(craft_ui.MODS), clients=1, options={})
 
     def evidence(self):
@@ -35,7 +35,7 @@ class CraftUIAdapterTests(unittest.TestCase):
                            resources=[dict(meta, sourceCount=1, rootCount=0) for meta in prep['toolMeta']],
                            toolsReturned=2, bookId=prep['book'], tailRead=True)
             raw += [('PREPARED', prep), ('VERIFIED', receipt)]
-            transfers = [meta['id'] for meta in prep['toolMeta']] if case == 'context' or case.startswith('vanilla-') else []
+            transfers = [meta['id'] for meta in prep['toolMeta']] if case.startswith('context') or case.startswith('vanilla-') else []
             row = dict(event='case', id=case, status='passed', reason=None, requested=count, actions=count,
                        progressIds=list(range(1, count + 1)), callbackClass=craft_ui.OWNERS[case],
                        callbacksUnchanged=True, callbackSafe=True, nativeDuration=150, localDeferrals=0,
@@ -46,6 +46,32 @@ class CraftUIAdapterTests(unittest.TestCase):
             if case.endswith('-auto'):
                 row.update(manualSelect=False, manualInputTypes=['nil'] * count,
                            automaticToolIds=[[meta['id'] for meta in prep['toolMeta']]] * count)
+            if case in craft_ui.FAILURE_CASES:
+                prep.update(materialMeta=[dict(id=id, kind='Base.Plank', condition=10, uses=0) for id in prep['materials']],
+                            sparePlanks=[dict(id=9000 + index, kind='Base.Plank', condition=10, uses=0)],
+                            playerId=3 if self.selection['kind'] == 'mp' else 0)
+                receipt.update(consumed=0, outputs=0, outputIds=[],
+                               materialStates=[dict(meta, state='surviving') for meta in prep['materialMeta']],
+                               sparePlanks=copy.deepcopy(prep['sparePlanks']))
+                trace = [dict(protocol=1, player=3, transaction=index + 1, kind='ISHandcraftAction',
+                              token=f'12345678-1234-1234-1234-{index + 1:012x}', state=state)
+                         for state in ('started', 'canceled')] if self.selection['kind'] == 'mp' else []
+                row.update(progressIds=[1], sharedPerformCount=0, sharedCompleteCount=0,
+                           interrupted=True, interruptionProgress=.1, outcomeTrace=trace, playerId=prep['playerId'],
+                           tailProgress=True, tokenCancelled=enabled)
+            if case in craft_ui.POOL_CASES:
+                introduced = dict(id=9500 + index, kind='Base.Plank', condition=10, uses=0)
+                receipt.update(introducedSpare=introduced, outputs=1, outputIds=[5000 + index * 10], outputPlankCounts=[1],
+                               materialStates=[dict(meta, state='removed') for meta in prep['materialMeta']],
+                               spentMaterials=[], survivingMaterials=[], removedMaterials=copy.deepcopy(prep['materialMeta']))
+                raw.insert(len(raw) - 1, ('REMOVED', dict(case=case, removedMaterials=copy.deepcopy(prep['materialMeta']), introducedSpare=copy.deepcopy(introduced))))
+                if trace:
+                    trace[1]['state'] = 'completed'
+                row.update(sharedPerformCount=int(enabled), sharedCompleteCount=int(enabled and self.selection['kind'] == 'sp'),
+                           manualMaterialIds=[prep['materials'].copy()] * 2,
+                           manualMaterialIdsAfterRemoval=[prep['materials'].copy()] * 2,
+                           poolPhaseProof=dict(secondAllocatedAtRequest=False, secondAllocatedAtRemoval=False,
+                                               observedBeforeSecondAllocation=True), secondAllocated=False, secondStarted=False)
             row.update({key: copy.deepcopy(value) for key, value in receipt.items() if key != 'case'})
             rows.append(row)
         rows.append(dict(event='complete', cases=cases, expected=len(cases), performed=len(cases), failed=0, skipped=0))
@@ -55,6 +81,9 @@ class CraftUIAdapterTests(unittest.TestCase):
     def verify(self, evidence=None, marker='[CRAFT_UI_TEST] COMPLETE', extra='', wrong_authority=False):
         rows, raw = self.evidence() if evidence is None else evidence
         text = '\n'.join('[QUEUE_CHECK] ' + json.dumps(row) for row in rows) + '\n' + marker + '\n' + extra
+        text += '\n' + '\n'.join('[CRAFT_UI_TEST] OUTCOME ' + json.dumps(dict(case=row['id'], receipt=entry))
+                                 for row in rows if row.get('id') in craft_ui.FAILURE_CASES
+                                 for entry in row.get('outcomeTrace', []))
         authority = '\n'.join('[CRAFT_UI_TEST] ' + name + ' ' + json.dumps(value) for name, value in raw)
         if self.selection['kind'] == 'mp':
             (self.root / 'server-launch.log').write_text('' if wrong_authority else authority)
@@ -73,9 +102,9 @@ class CraftUIAdapterTests(unittest.TestCase):
                     craft_ui.validate(self.selection)
                     result = self.verify()
                     self.assertEqual([], result['issues'])
-                    self.assertEqual(craft_ui.CASES, [row['case'] for row in result['outcomes']])
+                    self.assertEqual(craft_ui.SUCCESS_CASES, [row['case'] for row in result['outcomes']])
                     self.assertTrue(all(row['status'] == 'passed' for row in result['outcomes']))
-                    self.assertEqual([craft_ui.COUNTS[case] for case in craft_ui.CASES],
+                    self.assertEqual([craft_ui.COUNTS[case] for case in craft_ui.SUCCESS_CASES],
                                      [row['outcome']['consumed'] for row in result['outcomes']])
                     self.assertTrue(result['evidence']['limits'])
 
@@ -252,6 +281,181 @@ class CraftUIAdapterTests(unittest.TestCase):
                 for record in (row, evidence[1][1][1]):
                     record['resources'][0]['id'] = 999
                 self.assertIn('Craft UI exact tool conservation/endpoint differs: context', self.verify(evidence)['issues'])
+
+    def test_active_cancellation_requires_real_early_progress_state_and_exact_materials(self):
+        self.selection['cases'] = list(craft_ui.CANCEL_CASES)
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode)
+                with self.subTest(kind=kind, mode=mode):
+                    self.assertEqual([], self.verify()['issues'])
+        self.selection.update(kind='mp', mode='toolkit')
+        for key, value in [('interruptionProgress', 0), ('interruptionProgress', .251),
+                           ('interruptionProgress', True), ('interruptionProgress', float('inf')),
+                           ('interrupted', False), ('progressIds', [1, 2]), ('tailProgress', False),
+                           ('tokenCancelled', False), ('outcomeTrace', []), ('playerId', -1)]:
+            evidence = self.evidence()
+            evidence[0][1][key] = value
+            with self.subTest(key=key, value=value):
+                self.assertTrue(self.verify(evidence)['issues'])
+        for key, value in [('consumed', 1), ('outputs', 1), ('materialStates', []), ('sparePlanks', [])]:
+            rows, raw = self.evidence()
+            rows[1][key] = copy.deepcopy(value); raw[1][1][key] = value
+            with self.subTest(authority_key=key):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+        for key, value in [('condition', 9), ('kind', 'Base.Log'), ('uses', True), ('id', 999)]:
+            rows, raw = self.evidence()
+            rows[1]['materialStates'][0][key] = value; raw[1][1]['materialStates'][0][key] = value
+            with self.subTest(material_key=key):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+        rows, raw = self.evidence()
+        rows[1]['outcomeTrace'][1]['token'] = '00000000-0000-0000-0000-000000000000'
+        self.assertTrue(self.verify((rows, raw))['issues'])
+        self.assertTrue(self.verify(extra='[CRAFT_UI_TEST] OUTCOME {}')['issues'])
+
+    def test_cancellation_native_tail_failure_keeps_tool_conservation_and_neat_stays_in_bags(self):
+        self.selection.update(cases=list(craft_ui.CANCEL_CASES), mode='native')
+        rows, raw = self.evidence()
+        row = rows[1]
+        row.update(status='failed', reason='native-independent-tail-not-preserved', tailRead=False,
+                   tailProgress=False, returnsBeforeRead=False, returnIds=[], toolsReturned=0)
+        raw[1][1].update(tailRead=False, toolsReturned=0)
+        for record in (row, raw[1][1]):
+            for resource in record['resources']:
+                resource.update(sourceCount=0, rootCount=1)
+        rows[-1]['failed'] = 1
+        for cancelled in (False, True):
+            row['tokenCancelled'] = cancelled
+            self.assertEqual(['native-independent-tail-not-preserved'], self.verify((rows, raw))['issues'])
+        row['tokenCancelled'] = 1
+        self.assertTrue(self.verify((rows, raw))['issues'])
+        row['tokenCancelled'] = True
+        for target in (rows[3], raw[5][1]):
+            target['resources'][0].update(sourceCount=0, rootCount=1)
+            target['toolsReturned'] = 1
+        self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_pool_receipts_preserve_removed_identity_and_prestart_proof(self):
+        self.selection['cases'] = list(craft_ui.POOL_CASES)
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            self.assertEqual([], self.verify()['issues'])
+        for key, value in [('manualMaterialIds', [[100], [101]]), ('manualMaterialIds', [[100, 101], [100, 999]]),
+                           ('poolPhaseProof', {}), ('secondAllocated', True), ('secondStarted', True),
+                           ('progressIds', [1, 2]), ('consumed', 1), ('spentMaterials', [{'id': 100}]),
+                           ('survivingMaterials', [{'id': 100}]), ('removedMaterials', []), ('outputPlankCounts', [True])]:
+            rows, raw = self.evidence()
+            rows[1][key] = copy.deepcopy(value)
+            if key in craft_ui.POOL_RECEIPT_KEYS or key == 'consumed':
+                raw[2][1][key] = copy.deepcopy(value)
+            with self.subTest(key=key, value=value):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+        for phase in ('secondAllocatedAtRequest', 'secondAllocatedAtRemoval', 'observedBeforeSecondAllocation'):
+            rows, raw = self.evidence()
+            rows[1]['poolPhaseProof'][phase] = phase != 'observedBeforeSecondAllocation'
+            with self.subTest(phase=phase):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+        for change in ('missing', 'duplicate', 'late', 'wrong-id', 'wrong-metadata'):
+            rows, raw = self.evidence()
+            if change == 'missing': raw.pop(1)
+            elif change == 'duplicate': raw.insert(1, copy.deepcopy(raw[1]))
+            elif change == 'late': raw[1], raw[2] = raw[2], raw[1]
+            elif change == 'wrong-id': raw[1][1]['removedMaterials'][0]['id'] = 999
+            else: raw[1][1]['removedMaterials'][0]['condition'] = 9
+            with self.subTest(removal=change):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_previous_owned_outputs_cannot_reappear_as_later_baseline(self):
+        self.selection['cases'] = ['context', 'vanilla-batch']
+        rows, raw = self.evidence()
+        self.assertEqual([], self.verify((rows, raw))['issues'])
+        raw[2][1]['baselineOutputIds'].append(raw[1][1]['outputIds'][0])
+        self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_cancel_then_pool_does_not_retain_owned_materials_as_spares(self):
+        self.selection['cases'] = ['vanilla-cancel-active', 'vanilla-missing-batch-pool']
+        rows, raw = self.evidence()
+        # The unrelated pre-existing spare/baseline persist; canceled owned Planks do not.
+        unrelated = copy.deepcopy(raw[0][1]['sparePlanks'])
+        for target in (raw[2][1], raw[4][1], rows[2]):
+            target['sparePlanks'] = copy.deepcopy(unrelated)
+        self.assertEqual([], self.verify((rows, raw))['issues'])
+        for meta in raw[0][1]['materialMeta']:
+            bad_rows, bad_raw = copy.deepcopy((rows, raw))
+            for target in (bad_raw[2][1], bad_raw[4][1], bad_rows[2]):
+                target['sparePlanks'].append(copy.deepcopy(meta))
+                target['sparePlanks'].sort(key=lambda entry: entry['id'])
+            self.assertTrue(self.verify((bad_rows, bad_raw))['issues'])
+        # Previous cancellation receipts still prove survival, before fixture cleanup.
+        self.assertEqual(['surviving', 'surviving'], [entry['state'] for entry in raw[1][1]['materialStates']])
+        self.assertEqual([800], raw[2][1]['baselineOutputIds'])
+
+    def test_pool_probe_is_nonvacuous_with_no_preexisting_spares(self):
+        self.selection['cases'] = list(craft_ui.POOL_CASES)
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode)
+                rows, raw = self.evidence()
+                for row in rows[1:-1]:
+                    row['sparePlanks'] = []
+                for marker, value in raw:
+                    if marker in ('PREPARED', 'VERIFIED'):
+                        value['sparePlanks'] = []
+                with self.subTest(kind=kind, mode=mode):
+                    self.assertEqual([], self.verify((rows, raw))['issues'])
+                    del rows[1]['introducedSpare']
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_introduced_pool_spare_is_exact_distinct_and_removed_before_next_case(self):
+        self.selection['cases'] = list(craft_ui.POOL_CASES)
+        for change in ('missing', 'metadata', 'bool-id', 'selected-id', 'spare-id', 'output-id',
+                       'after-pool-expanded', 'after-pool-missing', 'next-prep-retains', 'cross-case-reused'):
+            rows, raw = self.evidence()
+            row, removal, receipt = rows[1], raw[1][1], raw[2][1]
+            if change == 'missing':
+                del removal['introducedSpare']
+            elif change == 'metadata':
+                row['introducedSpare']['condition'] = receipt['introducedSpare']['condition'] = 9
+            elif change in ('bool-id', 'selected-id', 'spare-id', 'output-id'):
+                value = {'bool-id': True, 'selected-id': 100, 'spare-id': 9000, 'output-id': 5000}[change]
+                for target in (row, removal, receipt):
+                    target['introducedSpare']['id'] = value
+            elif change == 'after-pool-expanded':
+                row['manualMaterialIdsAfterRemoval'][0].append(removal['introducedSpare']['id'])
+            elif change == 'after-pool-missing':
+                del row['manualMaterialIdsAfterRemoval']
+            elif change == 'next-prep-retains':
+                raw[3][1]['sparePlanks'].append(copy.deepcopy(removal['introducedSpare']))
+                rows[2]['sparePlanks'] = raw[5][1]['sparePlanks'] = copy.deepcopy(raw[3][1]['sparePlanks'])
+            else:
+                for target in (rows[2], raw[4][1], raw[5][1]):
+                    target['introducedSpare'] = copy.deepcopy(removal['introducedSpare'])
+            with self.subTest(change=change):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_pool_native_actual_extra_output_or_second_start_is_failure_never_a_toolkit_waiver(self):
+        self.selection.update(cases=list(craft_ui.POOL_CASES), mode='native')
+        for outputs, allocated, started, reason in [
+                (0, False, False, 'native-retained-input-effect-differs'),
+                (2, False, False, 'native-retained-input-effect-differs'),
+                (1, True, False, 'native-second-craft-allocated'),
+                (2, True, True, 'native-second-craft-allocated')]:
+            rows, raw = self.evidence()
+            rows[1].update(status='failed', reason=reason, secondAllocated=allocated, secondStarted=started,
+                           progressIds=[1, 2] if started else [1])
+            for target in (rows[1], raw[2][1]):
+                target.update(outputs=outputs, outputIds=list(range(5000, 5000 + outputs)), outputPlankCounts=[1] * outputs)
+            rows[-1]['failed'] = 1
+            with self.subTest(outputs=outputs, allocated=allocated, started=started):
+                self.assertEqual([reason], self.verify((rows, raw))['issues'])
+                self.selection['mode'] = 'toolkit'
+                for row in rows:
+                    row['mode'] = 'toolkit'
+                rows[0]['queueEnabled'] = True
+                for row in rows[1:-1]:
+                    row.update(tokenCancelled=True, sharedPerformCount=1, sharedCompleteCount=1)
+                self.assertTrue(self.verify((rows, raw))['issues'])
+                self.selection['mode'] = 'native'
 
 
 if __name__ == '__main__':

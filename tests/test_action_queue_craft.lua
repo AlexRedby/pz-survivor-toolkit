@@ -235,8 +235,12 @@ do
         return {class='ItemContainer',items={},getItemById=function(self,id) return self.items[id] end}
     end
     local root,bag,floor=container(),container(),container()
+    local plainScript={class='Item',isItemType=function() return false end,
+        getReplaceOnUse=function() end,getReplaceOnDeplete=function() end,getOnBreak=function() end}
     local function supply(id)
-        return {class='InventoryItem',getID=function() return id end}
+        return {class='InventoryItem',uses=1,script=plainScript,kind=id==202 and 'Base.Hammer' or 'Base.Plank',
+            getID=function() return id end,getFullType=function(self) return self.kind end,
+            getScriptItem=function(self) return self.script end,getCurrentUses=function(self) return self.uses end}
     end
     local material,tool=supply(101),supply(202)
     local input={class='InputScript',getResourceType=function() return ResourceType.Item end,
@@ -320,6 +324,121 @@ do
     manualRecipe.getScriptLines=lines
     candidate=manual();candidate.logic={canPerformCurrentRecipe=function() calls=calls+1;error('must not execute') end}
     assert(craft.canSkip(candidate) and calls==0,'missing-input inspection does not execute recipe logic')
+
+    -- Native batch actions share the whole input pool after earlier members were consumed.
+    ItemType.DRAINABLE,ItemType.FOOD='Drainable','Food'
+    input.getRelativeScale=function() return 1 end;kept.getRelativeScale=input.getRelativeScale
+    InputFlag={MayDegradeHeavy='MayDegradeHeavy',MayDegrade='MayDegrade',MayDegradeLight='MayDegradeLight',
+        MayDegradeVeryLight='MayDegradeVeryLight',SharpnessCheck='SharpnessCheck'}
+    input.isKeep=function() return false end;kept.isKeep=function() return true end
+    input.hasFlag=function() return false end;kept.hasFlag=input.hasFlag
+    manualRecipe.isSmithing=function() return false end
+    input.getAmount=function() return input:getIntAmount() end;kept.getAmount=function() return kept:getIntAmount() end
+    local second,third=supply(102),supply(103)
+    local ownerLogic={class='HandcraftLogic',getPlayer=function() return actor end,
+        stopCraftAction=function() calls=calls+1;error('inspection must not cancel the owner') end}
+    local function pooled(class,...)
+        local action=manual();action.manualInputs[0]=list(...)
+        return withOwner(action,setmetatable({player=actor,logic=ownerLogic,craftTimes=1},class))
+    end
+    local ownerClasses={ISWidgetHandCraftControl}
+    if NC_CraftActionPanel then ownerClasses[#ownerClasses+1]=NC_CraftActionPanel end
+    for _,class in ipairs(ownerClasses) do
+        root.items[101],root.items[102],root.items[103]=material,second,third
+        local pool=pooled(class,material,second);local selected=pool.manualInputs[0]
+        assert(not craft.canSkip(pool),'a verified UI pool with enough items must run normally')
+        root.items[101]=nil
+        assert(not craft.canSkip(pool),'one consumed pool member cannot abort the remaining craft')
+        assert(pool.manualInputs[0]==selected and selected:size()==2 and selected:get(0)==material,
+            'pool inspection must not reserve, split or rewrite native selections')
+        root.items[102]=nil
+        assert(craft.canSkip(pool),'an exhausted verified UI pool skips before native allocation')
+        material.uses,second.uses=0,0
+        assert(craft.canSkip(pool),'stale use counts of missing retained objects cannot invalidate physical absence')
+        material.uses,second.uses=1,1
+        root.items[102]=supply(102)
+        assert(not craft.canSkip(pool),'same-ID MP replacement remains available in a pool')
+        input.getIntAmount=function() return 2 end
+        assert(not craft.canSkip(pooled(class,material,second,third)),'two of three selected IDs satisfy an amount of two')
+        root.items[103]=nil
+        assert(craft.canSkip(pooled(class,material,second,third)),'one remaining selected ID cannot satisfy an amount of two')
+        bag.items[102]=root.items[102]
+        assert(craft.canSkip(pooled(class,material,second,third)),'an ID visible in root and bag is counted only once')
+        bag.items[102]=nil;floor.items[103]=supply(103)
+        assert(not craft.canSkip(pooled(class,material,second,third)),'a second exact ID on the floor satisfies the pool')
+        floor.items[103]=nil;root.items[102]=nil;input.getIntAmount=amount
+        assert(not craft.canSkip(pooled(class,material,material)),'duplicate IDs do not prove a valid native input pool')
+        assert(not craft.canSkip(pooled(class,material,supply(101))),'replacement proxies cannot duplicate a selected ID')
+        candidate=pooled(class,material,second);candidate.action={}
+        assert(not craft.canSkip(candidate),'allocated pooled actions retain the native lifecycle')
+        candidate=pooled(class,material,second);candidate.craftStarted=true
+        assert(not craft.canSkip(candidate),'a started pool cannot be skipped from stale selections')
+        candidate=pooled(class,material,second);candidate.force=true
+        assert(not craft.canSkip(candidate),'force does not opt into pooled skipping')
+        candidate=pooled(class,material,second);candidate.manualInputs[2]=list()
+        assert(not craft.canSkip(candidate),'empty keep selections do not become missing pool requirements')
+        candidate=pooled(class,material,second);candidate.manualInputs[99]=list(tool)
+        assert(not craft.canSkip(candidate),'unknown IO keys close pooled preservation')
+        candidate=pooled(class,material,second);candidate.onCompleteFunc=function() calls=calls+1 end
+        assert(not craft.canSkip(candidate),'foreign owner callbacks cannot opt into pooled skipping')
+        root.items[102]=second;second.uses=2;input.getIntAmount=function() return 2 end
+        assert(not craft.canSkip(pooled(class,material,second,third)),'one multi-use item cannot be undercounted as one pool unit')
+        second.uses=1;input.getRelativeScale=function() return 0.5 end
+        assert(not craft.canSkip(pooled(class,material,second,third)),'a physically present scaled item cannot be undercounted as one pool unit')
+        input.getRelativeScale=kept.getRelativeScale
+        local unsupported=supply(102);unsupported.uses=2;root.items[102]=unsupported
+        assert(not craft.canSkip(pooled(class,material,second,third)),'MP replacement use counts are checked on the live object')
+        unsupported.uses=1;unsupported.kind='Base.Saw'
+        assert(not craft.canSkip(pooled(class,material,second,third)),'same-ID replacement of another item type closes pooled preservation')
+        unsupported.kind=second.kind;unsupported.script={class='Item',getOnBreak=function() return 'UnknownEffect' end}
+        assert(not craft.canSkip(pooled(class,material,second,third)),'same-ID replacement with unsupported script metadata closes pooled preservation')
+        input.getIntAmount=amount;root.items[102]=nil
+        input.getAmount=function() return 1.5 end
+        assert(not craft.canSkip(pooled(class,material,second)),'fractional input amounts are not fixed item counts')
+        input.getAmount=function() return input:getIntAmount() end
+        for _,kind in ipairs({ItemType.DRAINABLE,ItemType.FOOD,ItemType.CONTAINER}) do
+            plainScript.isItemType=function(_,value) return value==kind end
+            assert(not craft.canSkip(pooled(class,material,second)),'partial or container inputs stay native')
+        end
+        plainScript.isItemType=function() return false end
+        for _,method in ipairs({'getReplaceOnUse','getReplaceOnDeplete'}) do
+            local previous=plainScript[method];plainScript[method]=function() return 'UnknownEffect' end
+            assert(not craft.canSkip(pooled(class,material,second)),'replacement/break inputs stay native')
+            plainScript[method]=previous
+        end
+        local onBreak=plainScript.getOnBreak;plainScript.getOnBreak=function() return 'UnknownBreakCallback' end
+        assert(craft.canSkip(pooled(class,material,second)),
+            'ordinary one-use consumption and nondegrading kept tools do not invoke break callbacks')
+        for _,flag in pairs(InputFlag) do
+            kept.hasFlag=function(_,value) return value==flag end
+            assert(not craft.canSkip(pooled(class,material,second)),
+                'a degrading kept tool with a break callback stays native')
+        end
+        kept.hasFlag=input.hasFlag;manualRecipe.isSmithing=function() return true end
+        assert(not craft.canSkip(pooled(class,material,second)),'smithing break callbacks stay native')
+        manualRecipe.isSmithing=function() return false end;plainScript.getOnBreak=onBreak
+        local create=input.getCreateToItemScript;input.getCreateToItemScript=function() return {} end
+        assert(not craft.canSkip(pooled(class,material,second)),'create-to-item inputs stay native')
+        input.getCreateToItemScript=create;input.isReplace=function() return true end
+        assert(not craft.canSkip(pooled(class,material,second)),'replace inputs stay native')
+        input.isReplace=function() return false end;input.isVariableAmount=function() return true end
+        assert(not craft.canSkip(pooled(class,material,second)),'variable amounts remain outside pooled preservation')
+        input.isVariableAmount=function() return false end
+        manualRecipe.getScriptLines=function() return list('OnCreate = UnknownCallback') end
+        assert(not craft.canSkip(pooled(class,material,second)),'recipe callbacks still close pooled preservation')
+        manualRecipe.getScriptLines=lines
+        bag.items[202]=supply(999)
+        assert(not craft.canSkip(pooled(class,material,second)),'an exhausted material pool cannot hide a later invalid tool lookup')
+        bag.items[202]=tool
+    end
+    candidate=manual();candidate.manualInputs[0]=list(material,second)
+    assert(not craft.canSkip(candidate),'ownerless actions retain the exact-selection contract')
+    candidate:setOnComplete(ISInventoryPaneContextMenu.OnNewCraftComplete,ownerLogic)
+    assert(craft.supports(candidate) and not craft.canSkip(candidate),'context logic retains its exact-selection contract')
+    input.getIntAmount=function() return 2 end;candidate.manualInputs[0]=list(material,material)
+    assert(craft.canSkip(candidate),'the legacy exact-list context predicate remains unchanged')
+    input.getIntAmount=amount
+    assert(calls==0,'pooled inspection never executes native UI cleanup or recipe callbacks')
 end
 
 print('Craft/repair native identities, callback ownership, waiting UI cleanup and input dependencies passed.')

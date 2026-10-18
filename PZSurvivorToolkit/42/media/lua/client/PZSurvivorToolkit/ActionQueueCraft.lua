@@ -332,7 +332,8 @@ function Craft.canSkip(action)
             if not instanceof(container, "ItemContainer") then return false end
             containers[#containers + 1] = container
         end
-        local inputs, indices, ids = action.craftRecipe:getInputs(), {}, {}
+        local inputs, indices, selections = action.craftRecipe:getInputs(), {}, {}
+        local pooled, duplicate = false, false
         if inputs:size() == 0 then return false end
         for i = 0, inputs:size() - 1 do
             local input = inputs:get(i)
@@ -343,29 +344,63 @@ function Craft.canSkip(action)
             if type(index) ~= "number" or index < 0 or index % 1 ~= 0
                 or action.craftRecipe:getIOForIndex(index) ~= input or indices[index]
                 or input:isVariableAmount() or amount <= 0 or not instanceof(selected, "List")
-                or selected:size() ~= amount then return false end
+                or selected:size() < amount then return false end
+            pooled = pooled or selected:size() > amount
             indices[index] = true
+            local selection = {input = input, amount = amount, ids = {}, items = selected}
+            selections[#selections + 1] = selection
+            local seen = {}
             for j = 0, selected:size() - 1 do
                 local item = selected:get(j)
                 if not instanceof(item, "InventoryItem") then return false end
                 local id = item:getID()
                 if type(id) ~= "number" or id % 1 ~= 0 then return false end
-                ids[#ids + 1] = id
+                duplicate = duplicate or seen[id] == true
+                seen[id] = true; selection.ids[#selection.ids + 1] = id
             end
         end
         for index in pairs(action.manualInputs) do if not indices[index] then return false end end
-        local missing = false
-        for _, id in ipairs(ids) do
-            local found = false
-            for _, container in ipairs(containers) do
-                -- MP can replace item objects; native container lookups also search carried bags.
-                local item = container:getItemById(id)
-                if item then
-                    if not instanceof(item, "InventoryItem") or item:getID() ~= id then return false end
-                    found = true
+        if pooled then
+            local _, owner, cancel = callbackOwner(action)
+            if not owner or cancel == "logic" or duplicate then return false end
+            for _, selection in ipairs(selections) do
+                local input = selection.input
+                if input:getAmount() ~= selection.amount or input:getCreateToItemScript() or input:isReplace() then return false end
+                for i = 0, selection.items:size() - 1 do
+                    local item = selection.items:get(i)
+                    local script = item:getScriptItem()
+                    if not instanceof(script, "Item") or script:isItemType(ItemType.DRAINABLE)
+                        or script:isItemType(ItemType.FOOD) or script:isItemType(ItemType.CONTAINER)
+                        or script:getReplaceOnUse() or script:getReplaceOnDeplete()
+                        or input:getRelativeScale(item:getFullType()) ~= 1 then return false end
+                    -- Native use/removal does not invoke OnBreak; only degrading kept tools can reach it.
+                    if script:getOnBreak() and input:isKeep() and (action.craftRecipe:isSmithing()
+                        or input:hasFlag(InputFlag.MayDegradeHeavy) or input:hasFlag(InputFlag.MayDegrade)
+                        or input:hasFlag(InputFlag.MayDegradeLight) or input:hasFlag(InputFlag.MayDegradeVeryLight)
+                        or input:hasFlag(InputFlag.SharpnessCheck)) then return false end
                 end
             end
-            if not found then missing = true end
+        end
+        local missing = false
+        for _, selection in ipairs(selections) do
+            local available = 0
+            for index, id in ipairs(selection.ids) do
+                local found = false
+                for _, container in ipairs(containers) do
+                    -- MP can replace item objects; native container lookups also search carried bags.
+                    local item = container:getItemById(id)
+                    if item then
+                        if not instanceof(item, "InventoryItem") or item:getID() ~= id then return false end
+                        -- Unflagged ordinary inputs count uses, so only one unscaled live use proves one item.
+                        if pooled and (item:getCurrentUses() ~= 1
+                            or item:getFullType() ~= selection.items:get(index - 1):getFullType()
+                            or item:getScriptItem() ~= selection.items:get(index - 1):getScriptItem()) then return false end
+                        found = true
+                    end
+                end
+                if found then available = available + 1 end
+            end
+            if available < selection.amount then missing = true end
         end
         return missing
     end)

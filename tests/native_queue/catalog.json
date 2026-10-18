@@ -567,7 +567,14 @@
         {"id":"neat-batch", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
         {"id":"neat-auto", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
         {"id":"cook-batch", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
-        {"id":"cook-auto", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]}
+        {"id":"cook-auto", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"context-cancel-active", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"vanilla-cancel-active", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"neat-cancel-active", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"cook-cancel-active", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"vanilla-missing-batch-pool", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"neat-missing-batch-pool", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]},
+        {"id":"cook-missing-batch-pool", "producer":"fixture", "capability":"effect", "kinds":["sp","mp"], "languages":["EN"], "modes":["native","toolkit"]}
       ]
     },
     "world": {
