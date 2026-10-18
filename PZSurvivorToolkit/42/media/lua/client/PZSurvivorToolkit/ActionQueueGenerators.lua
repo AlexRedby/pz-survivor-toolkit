@@ -406,7 +406,7 @@ function Generators.install()
         end, function(parent, child)
             return child.character == parent.character and child.generator == parent.generator
                 and child.Type == "ISFixGenerator" and Policy.inspect(child) ~= nil
-        end)
+        end, true)
     end
     if trusted or basicTrusted then
         for name in pairs(classes) do

@@ -18,22 +18,27 @@ class EngineAdapterTests(unittest.TestCase):
         self.selection = dict(suite='engine', cases=['repair', 'cancel'], kind='sp', mode='toolkit',
                               languages=['EN'], mods=list(engine.MODS), clients=1, options={})
 
-    def fixture(self, mp=False):
-        self.selection['kind'] = 'mp' if mp else 'sp'
+    def fixture(self, mp=False, mode='toolkit'):
+        self.selection.update(kind='mp' if mp else 'sp', mode=mode)
+        enabled = mode == 'toolkit'
         client = ('[QUEUE_TEST] ' + ('NATIVE_CONNECTED' if mp else 'TRUE_SP') + '\n'
-                  '[QUEUE_TEST] PREFLIGHT_COMPLETE mods=3 mode=toolkit\n')
+                  f'[QUEUE_TEST] PREFLIGHT_COMPLETE mods=3 mode={mode}\n')
         authority = '[STARTUP_TEST] SERVER_READY\n' if mp else ''
-        for case, condition, scraps, receipts in [('repair', 100, 0, 2), ('cancel', 94, 2, 1)]:
+        for case, condition, scraps, receipts in [('repair', 98 if not enabled and not mp else 100,
+                                                 1 if not enabled and not mp else 0, 2), ('cancel', 94, 2, 1)]:
+            read = str(enabled or case == 'repair').lower()
             authority += f'[ENGINE_TEST] PREPARED case={case} condition=94 scraps=2 electricity=0 nativeGenerator=true\n'
-            authority += f'[ENGINE_TEST] AUTHORITY case={case} condition={condition} scraps={scraps} tailRead=true\n'
+            authority += f'[ENGINE_TEST] AUTHORITY case={case} condition={condition} scraps={scraps} tailRead={read}\n'
             client += f'[ENGINE_TEST] ENQUEUED case={case} repairDuration=150 tailPages=1 nativeDurations=true\n'
-            if mp:
+            if mp and enabled:
                 for index in range(receipts):
                     client += f'[ENGINE_TEST] CAPTURE case={case} kind=ISFixGenerator token=00000000-0000-0000-0000-00000000000{index}\n'
             if case == 'cancel':
                 client += '[ENGINE_TEST] CANCEL_REQUEST case=cancel progress=true\n'
+            count = 2 if enabled and case == 'repair' else 0
+            client += f'[ENGINE_TEST] PHASES case={case} perform={count} complete={count if not mp else 0} flush={count}\n'
             client += (f'[ENGINE_TEST] PASS case={case} condition={condition} scraps={scraps}'
-                       f' tailRead=true boundary=true progress=true receipts={receipts if mp else 0}\n')
+                       f' tailRead={read} boundary={str(enabled).lower()} progress=true receipts={receipts if mp and enabled else 0}\n')
         client += '[ENGINE_TEST] COMPLETE cases=2\n'
         (self.root / 'client1-launch.log').write_text(client + ('' if mp else authority))
         if mp:
@@ -58,6 +63,42 @@ class EngineAdapterTests(unittest.TestCase):
         self.assertTrue(engine.verify(self.root, self.selection, {})['issues'])
         path.write_text(text.replace(capture + '\n', ''))
         self.assertTrue(engine.verify(self.root, self.selection, {})['issues'])
+
+    def test_completion_phases_preserve_calibrated_host_and_zero_native_boundaries(self):
+        for mp in (False, True):
+            for mode in ('native', 'toolkit'):
+                with self.subTest(mp=mp, mode=mode):
+                    self.fixture(mp, mode)
+                    result = engine.verify(self.root, self.selection, {})
+                    self.assertEqual(result['issues'], [])
+                    count = 2 if mode == 'toolkit' else 0
+                    self.assertEqual(result['outcomes'][0]['outcome']['nativeCompletion'],
+                                     dict(perform=count, complete=count if not mp else 0, flush=count))
+        self.fixture(True)
+        path = self.root / 'client1-launch.log'
+        path.write_text(path.read_text().replace('perform=2 complete=0 flush=2', 'perform=1 complete=0 flush=1'))
+        self.assertEqual(engine.verify(self.root, self.selection, {})['issues'], [])
+
+    def test_completion_phases_reject_missing_duplicate_malformed_and_unsettled_evidence(self):
+        for mp in (False, True):
+            original = f'[ENGINE_TEST] PHASES case=repair perform=2 complete={0 if mp else 2} flush=2'
+            mutations = ['', original + '\n' + original, original.replace('perform=2', 'perform=true'),
+                         original.replace('perform=2', 'perform=2.0'), original.replace('perform=2', 'perform=-1'),
+                         original.replace('perform=2', 'perform=3'), original.replace(' flush=2', ''),
+                         original.replace('flush=2', 'flush=1'), original.replace('complete=0', 'complete=2') if mp
+                         else original.replace('complete=2', 'complete=0')]
+            for replacement in mutations:
+                with self.subTest(mp=mp, replacement=replacement):
+                    self.fixture(mp)
+                    path = self.root / 'client1-launch.log'
+                    path.write_text(path.read_text().replace(original, replacement))
+                    self.assertTrue(engine.verify(self.root, self.selection, {})['issues'])
+        for mode in ('native', 'toolkit'):
+            self.fixture(True, mode)
+            path = self.root / 'client1-launch.log'
+            path.write_text(path.read_text().replace('case=cancel perform=0 complete=0 flush=0',
+                                                    'case=cancel perform=1 complete=0 flush=1'))
+            self.assertTrue(engine.verify(self.root, self.selection, {})['issues'])
 
     def test_stage_reuses_existing_native_startup_and_preserves_shared_checksum(self):
         runtime = {'roles': {role: {'cache': str(self.root / role)} for role in ['server', 'client1']}}
@@ -104,6 +145,7 @@ class EngineAdapterTests(unittest.TestCase):
             else:
                 client += f'[ENGINE_TEST] CANCEL_REQUEST case={case} progress=true\n'
                 client += f'[ENGINE_TEST] LATE_CALLBACK case={case} parentRetired=true repeats=2 unchanged=true\n'
+            client += f'[ENGINE_TEST] PHASES case={case} perform=0 complete=0 flush=0\n'
             client += f'[ENGINE_TEST] PASS case={case} condition=94 scraps=2 tailRead={read} boundary={read} progress=true receipts={receipts}\n'
         client += '[ENGINE_TEST] COMPLETE cases=2\n'
         (self.root / 'client1-launch.log').write_text(client + ('' if mp else authority))
@@ -151,6 +193,8 @@ class EngineAdapterTests(unittest.TestCase):
                 client += '[ENGINE_TEST] CANCEL_REQUEST case=peer-cancel progress=true\n'
             else:
                 client += f'[ENGINE_TEST] CAPTURE case=peer-cancel kind=ISFixGenerator token={tokens[2]} transaction=8 player={owner}\n'
+            count = 2 if actor == 'client2' else 0
+            client += f'[ENGINE_TEST] PHASES case=peer-cancel perform={count} complete=0 flush={count}\n'
             client += f'[ENGINE_TEST] PASS case=peer-cancel condition={condition} scraps={scraps} tailRead=true boundary=true progress=true receipts={receipts}\n'
             client += '[ENGINE_TEST] COMPLETE cases=1\n'
             (self.root / (actor + '-launch.log')).write_text(client)

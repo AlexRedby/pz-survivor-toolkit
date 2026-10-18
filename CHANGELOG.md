@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.90
+
+- **Changed:** Generator repair chains use shared native completion ownership while preserving exact repair effects, continuation guards and the unsupported-engine fallback.
+
 ### 0.1.89
 
 - **Changed:** Campfire kindling retries use the shared native completion boundary while retaining exact child validation and retry-before-tool-return ordering. Unsupported engines keep the existing completion fallback.

@@ -10,18 +10,59 @@ local enabled=config.mode=='toolkit'
 local go,released,announced=false,false,false
 local ids,receipt,current,tail,emptyCommand,done,started,step,since,phase=nil,nil,nil,nil,nil,false,false,1,0,'prepare'
 local repairs,completes,progress,tailProgress,records,seen,boundaries=0,0,false,false,{},{},{}
+local flushes,completionActions=0,{}
 local blocker,invalidated,removalRequested,lateChecked
-local begin=Toolkit.ActionQueueLifecycle.begin
-Toolkit.ActionQueueLifecycle.begin=function(action, nativePhase)
+local lifecycle=Toolkit.ActionQueueLifecycle
+local begin,finish,flush=lifecycle.begin,lifecycle.finish,lifecycle.flush
+lifecycle.begin=function(action, nativePhase)
     local active=begin(action,nativePhase)
+    if action.Type=='ISFixGenerator' then assert(active==enabled,'wrong native repair boundary mode') end
     if active and (action.Type=='ISFixGenerator' or action.Type=='ISReadABook' or action==emptyCommand) then
-        assert(Toolkit.ActionQueueLifecycle.current(action.character)==action,'native completion ownership missing')
+        assert(lifecycle.current(action.character)==action,'native completion ownership missing')
         boundaries[action]=true
         if action.Type=='ISFixGenerator' then
-            if nativePhase=='perform' then repairs=repairs+1 else completes=completes+1 end
+            local queue=ISTimedActionQueue.queues[action.character]
+            assert(action.character==getPlayer() and queue and queue.current==action and queue.queue[1]==action
+                and action.action,'native repair completion owner differs')
+            local record=completionActions[action]
+            if nativePhase=='perform' then
+                assert(not record,'duplicate native repair perform boundary')
+                record={native=action.action};completionActions[action]=record
+            else
+                assert(nativePhase=='complete' and config.kind=='sp' and record and record.perform=='finished',
+                    'native repair complete preceded perform or ran on the client')
+            end
+            assert(record.native==action.action and not record[nativePhase],'duplicate or replaced native repair phase')
+            record[nativePhase]='begun'
         end
     end
     return active
+end
+lifecycle.finish=function(action,nativePhase,succeeded)
+    finish(action,nativePhase,succeeded)
+    if not enabled or action.Type~='ISFixGenerator' then return end
+    local record=completionActions[action]
+    assert(record and record[nativePhase]=='begun' and succeeded,'native repair phase did not finish once')
+    record[nativePhase]='finished'
+    if nativePhase=='perform' then repairs=repairs+1 else completes=completes+1 end
+end
+lifecycle.flush=function(queue)
+    local action=queue.current
+    local record=completionActions[action]
+    local absent=record and not queue.character:getCharacterActions():contains(record.native)
+    local tailStarted=record and tail and tail:isStarted()
+    local outcome,finished=flush(queue)
+    if record and outcome=='completed' then
+        assert(finished==action and not record.flushed and absent and record.perform=='finished'
+            and (config.kind=='mp' or record.complete=='finished'),'native repair flushed before completion/removal or twice')
+        assert(not tailStarted,'independent reader started before native repair completion')
+        record.flushed=true;flushes=flushes+1
+    end
+    return outcome,finished
+end
+local function completionSettled()
+    assert(flushes==repairs and completes==(config.kind=='sp' and repairs or 0),'native repair completion phases differ')
+    for _,record in pairs(completionActions) do assert(record.flushed,'native repair did not settle before reader') end
 end
 local function queue() return ISTimedActionQueue.getTimedActionQueue(getPlayer()) end
 local function send(command, case)
@@ -60,7 +101,9 @@ Events.OnTick.Add(function()
         if not player or player:isDead() or not player:getSquare() then return end
         if config.kind=='mp' and (not isClient() or player:getOnlineID()<0) then return end
         local cancels=Authority.cancels(case,player)
-        if tail and queue().current==tail and tail:isStarted() and tail:getJobDelta()>0 then tailProgress=true end
+        if tail and queue().current==tail and tail:isStarted() and tail:getJobDelta()>0 then
+            completionSettled();tailProgress=true
+        end
         if phase=='prepare' then
             assert(Toolkit.Settings.actionQueue()==enabled,'wrong engine queue mode')
             send('Prepare',case);phase='ready';return
@@ -170,11 +213,12 @@ Events.OnTick.Add(function()
             assert(repairs==expected or enabled and config.kind=='mp' and not cancels and case~='missing-target' and repairs==1,
                 'native repair perform count '..repairs)
             assert(completes==(config.kind=='sp' and expected or 0),'native complete phase count '..completes)
+            completionSettled()
             if enabled and config.kind=='mp' then
                 assert(#records==(case=='missing-target' and 0 or cancels and 1 or 2),'missing captured native acknowledgements')
                 for _,record in ipairs(records) do assert(record.state==(cancels and 'canceled' or 'completed'),'wrong authoritative action outcome '..record.state) end
             end
-            print('[ENGINE_TEST] PHASES case='..case..' perform='..repairs..' complete='..completes)
+            print('[ENGINE_TEST] PHASES case='..case..' perform='..repairs..' complete='..completes..' flush='..flushes)
             send('Verify',case);phase='receipt';return
         end
         if phase=='receipt' then
@@ -186,6 +230,7 @@ Events.OnTick.Add(function()
             if step>#config.cases then done=true;print('[ENGINE_TEST] COMPLETE cases='..#config.cases);return end
             ids,receipt,current,tail=nil,nil,nil,nil
             repairs,completes,progress,tailProgress,records,seen,boundaries=0,0,false,false,{},{},{}
+            flushes,completionActions=0,{}
             blocker,invalidated,removalRequested,lateChecked,emptyCommand=nil,nil,nil,nil,nil
             phase='prepare';since=getTimestampMs()
         end

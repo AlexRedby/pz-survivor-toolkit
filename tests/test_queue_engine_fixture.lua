@@ -92,3 +92,72 @@ authority=fixture('native','mp',{'cancel'})
 ids=authority.prepare(player,'cancel');result=authority.verify(player,'cancel')
 assert(not result.tailRead and result.scraps==2,'native cancellation control hid its unread tail')
 print('Engine authority fixture checks passed: exact identities, owned cleanup, removed target, recreation and native tail loss.')
+
+-- Exercise the real client observer; native callbacks and queue ownership remain explicit.
+do
+ local function observer(mode,kind)
+  local enabled=mode=='toolkit'
+  local actor,queue={},{}
+  local present,tailStarted=false,false
+  queue.character=actor
+  function actor:getCharacterActions()return {contains=function()return present end}end
+  local lifecycle={begin=function()return enabled end,finish=function()end,
+   flush=function(current)return 'completed',current.current end,current=function()return queue.current end}
+  PZSurvivorToolkit={ActionQueueLifecycle=lifecycle}
+  ISTimedActionQueue={queues={[actor]=queue}}
+  getPlayer=function()return actor end
+  Events={OnTick={Add=function()end},OnServerCommand={Add=function()end},OnGameStart={Add=function()end}}
+  require=function(name)
+   if name=='QueueTestSelection' then return {mode=mode,kind=kind,suite='engine'} end
+   if name=='QueueEngineAuthority' then return {} end
+   return true
+  end
+  local file=assert(io.open(root..'/tests/native_queue/engine/client/ZZEngine.lua'))
+  local source=file:read('*a');file:close()
+  local client=assert(loadstring(source..'\nreturn {settled=completionSettled,setTail=function(value)tail=value end,counts=function()return repairs,completes,flushes end}'))()
+  client.setTail({isStarted=function()return tailStarted end})
+  local function action()
+   local value={Type='ISFixGenerator',character=actor,action={}}
+   queue.current=value;queue.queue={value};return value
+  end
+  return lifecycle,client,action,function(value)present=value end,function(value)tailStarted=value end
+ end
+ for _,mode in ipairs({'native','toolkit'}) do for _,kind in ipairs({'sp','mp'}) do
+  local lifecycle,client,action=observer(mode,kind)
+  for iteration=1,2 do
+   local parent=action()
+   assert(lifecycle.begin(parent,'perform')==(mode=='toolkit'))
+   lifecycle.finish(parent,'perform',true)
+   if kind=='sp' then lifecycle.begin(parent,'complete');lifecycle.finish(parent,'complete',true) end
+   lifecycle.flush(ISTimedActionQueue.queues[parent.character])
+  end
+  client.settled()
+  local perform,complete,flush=client.counts()
+  local count=mode=='toolkit' and 2 or 0
+  assert(perform==count and complete==(kind=='sp' and count or 0) and flush==count,
+   'observer counters do not describe real SP/Host/native phases')
+ end end
+ for _,fault in ipairs({'complete-first','duplicate-perform','duplicate-finish','failed-finish','wrong-owner',
+                       'replaced-native','native-present','missing-complete','duplicate-flush','early-tail','unflushed-tail','client-complete'}) do
+  local kind=fault=='client-complete' and 'mp' or 'sp'
+  local lifecycle,client,action,present,tailStarted=observer('toolkit',kind)
+  local parent=action()
+  local ok=pcall(function()
+   if fault=='complete-first' then lifecycle.begin(parent,'complete');return end
+   if fault=='wrong-owner' then ISTimedActionQueue.queues[parent.character].current={};lifecycle.begin(parent,'perform');return end
+   lifecycle.begin(parent,'perform')
+   if fault=='duplicate-perform' then lifecycle.begin(parent,'perform');return end
+   lifecycle.finish(parent,'perform',fault~='failed-finish')
+   if fault=='duplicate-finish' then lifecycle.finish(parent,'perform',true);return end
+   if fault=='replaced-native' then parent.action={} end
+   if fault~='missing-complete' then lifecycle.begin(parent,'complete');lifecycle.finish(parent,'complete',true) end
+   if fault=='native-present' then present(true) end
+   if fault=='early-tail' then tailStarted(true) end
+   if fault=='unflushed-tail' then client.settled();return end
+   lifecycle.flush(ISTimedActionQueue.queues[parent.character])
+   if fault=='duplicate-flush' then lifecycle.flush(ISTimedActionQueue.queues[parent.character]) end
+  end)
+  assert(not ok,'native generator observer accepted '..fault)
+ end
+ print('Engine completion observer checks passed: exact native phases, owner, removal, flush and independent tail.')
+end

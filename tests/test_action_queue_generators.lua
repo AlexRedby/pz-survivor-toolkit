@@ -769,7 +769,7 @@ scopedChild:stop();q:tick()
 assert(g.condition==96 and repairXp==committedXP and inv:contains(scrap2) and not inv:contains(scrap1)
     and q.current==repairTail and #q.queue==1,'second scoped repair cancellation changed committed effects, unused scrap or reading tail')
 ISUnequipAction.new=unequipConstructor
--- The supported Java boundary replaces only SP's per-generator advancement interception.
+-- Supported native completion must replace both family and Operations completion scopes.
 do
     local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
     local protected,localCompleteCalls=pcall,0
@@ -784,6 +784,14 @@ do
     local parent=ISFixGenerator:new(p,g);parent.toolkitQueueOperation={}
     local currentQueue=f.queue(parent,bookTail);parent:begin();adapter.prune()
     assert(next(adapter.fixtureRegistries[3])==nil,'native-boundary regression requires an empty fallback registry')
+    local stopSound,sharedPerforms=p.stopOrTriggerSound,0
+    p.stopOrTriggerSound=function(...)
+        local active=currentQueue.current
+        assert(lifecycle.current(p)==active and not PZSurvivorToolkit.ActionQueueOperations.deferCompletion(currentQueue,active),
+            'migrated repair acquired the legacy Operations completion scope')
+        sharedPerforms=sharedPerforms+1
+        return stopSound(...)
+    end
     for iteration=1,2 do
         local repairing=currentQueue.current
         assert(repairing.Type=='ISFixGenerator' and repairing.toolkitQueueOperation==parent.toolkitQueueOperation,
@@ -822,6 +830,25 @@ do
         and inv:contains(bookTail.item) and currentQueue.current==bookTail and #currentQueue.queue==1,
         'native completion bypass changed exact repair consumption or the independent reading tail')
     assert(localCompleteCalls==0,'shared native completion still entered the local protected completion layer')
+    -- The Host client adds its continuation in perform; complete/effects stay server-owned.
+    client=true;g.condition=92;inv.items={scrap1,scrap2,bookTail.item}
+    parent=ISFixGenerator:new(p,g);parent.toolkitQueueOperation={}
+    currentQueue=f.queue(parent,bookTail);parent:begin()
+    local condition,removals,xp=g.condition,removedScraps,repairXp
+    assert(lifecycle.begin(parent,'perform'))
+    parent:perform();lifecycle.finish(parent,'perform',true)
+    local child=currentQueue.queue[2]
+    assert(child.Type=='ISFixGenerator' and child.generator==g and policy.inspect(child)
+        and child.toolkitQueueOperation==parent.toolkitQueueOperation and currentQueue.queue[3]==bookTail,
+        'Host native repair continuation lost its contract or independent tail')
+    assert(g.condition==condition and removedScraps==removals and repairXp==xp
+        and next(adapter.fixtureRegistries[3])==nil,'Host client applied server effects or used SP fallback')
+    assert(lifecycle.flush(currentQueue)=='waiting','Host client advanced before native removal')
+    parent.action.fixtureStopped=true
+    assert(lifecycle.flush(currentQueue)=='completed' and currentQueue.current==child
+        and lifecycle.flush(currentQueue)==nil,'Host completion needed a client complete phase or replayed advancement')
+    assert(sharedPerforms==3,'native repair perform checks did not run for both SP steps and Host')
+    p.stopOrTriggerSound=stopSound;client=false
     -- Native false/error results still settle a pending SP fallback, but direct calls need no local protection.
     local getScrap=inv.getFirstTypeRecurse
     for _,fallback in ipairs({false,true}) do

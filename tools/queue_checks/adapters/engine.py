@@ -134,6 +134,16 @@ def verify(root, selection, catalog):
                     issues.append(actor + ': missing or duplicate exact engine outcome: ' + case)
                 else:
                     positions.append(matches[0].start())
+                phases = re.findall(r'\[ENGINE_TEST\] PHASES case=' + case
+                                    + r' perform=(\d+) complete=(\d+) flush=(\d+)(?:\s|$)', client)
+                allowed_perform = (1, 2) if enabled and selection['kind'] == 'mp' and scraps == 0 else (2,) if enabled and scraps == 0 else (0,)
+                if len(phases) != 1:
+                    issues.append(actor + ': missing or duplicate native completion phases: ' + case)
+                else:
+                    perform, completed, flushed = map(int, phases[0])
+                    if (perform not in allowed_perform or completed != (perform if selection['kind'] == 'sp' else 0)
+                            or flushed != perform):
+                        issues.append(actor + ': native completion phases differ: ' + case)
                 for pattern, source in [
                     (f'[ENGINE_TEST] PREPARED case={case} condition=94 scraps=2 electricity=0 nativeGenerator=true', authority),
                     (f'[ENGINE_TEST] AUTHORITY case={case} condition={condition} scraps={scraps} tailRead={read}', authority),
@@ -163,7 +173,8 @@ def verify(root, selection, catalog):
                     proof = f'[ENGINE_TEST] LATE_CALLBACK case={case} parentRetired=true repeats=2 unchanged=true'
                     if len(re.findall(re.escape(proof) + r'(?:\s|$)', client)) != 1:
                         issues.append(actor + ': missing/duplicate retired-parent callback proof')
-                outcomes.append({'actor': actor, 'case': case, 'outcome': {'condition': condition, 'scraps': scraps, 'tailRead': read == 'true'}})
+                outcomes.append({'actor': actor, 'case': case, 'outcome': {'condition': condition, 'scraps': scraps, 'tailRead': read == 'true',
+                                 'nativeCompletion': dict(zip(('perform', 'complete', 'flush'), map(int, phases[0]))) if len(phases) == 1 else None}})
             if positions != sorted(positions) or positions and positions[-1] > client.find(complete_marker):
                 issues.append(actor + ': engine cases completed out of order')
             if '[QUEUE_TEST] FAIL ' in client:
