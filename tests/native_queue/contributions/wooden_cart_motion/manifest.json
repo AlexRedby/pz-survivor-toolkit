@@ -498,5 +498,51 @@
     "sample_interval_ms": 25,
     "scope": "Blocked Walk with rendered feet/toes compared to pre-input standing baseline, guarded owned-wall removal while forward stays held and native line query before/after, reverse/forward recontact and final settle; real mesh and continuous wheel support through standing wall. Native capture pending; grip/body/clothing and manual visual quality are separate gates.",
     "release_wall_segments": 3
+  },
+  "wall_exit_scenario": {
+    "case_count": 24,
+    "native_bare_controls": [
+      "wall",
+      "corner",
+      "passage",
+      "wall-slide-left",
+      "wall-slide-right"
+    ],
+    "scenario": "scenario-collision.lua with config.footprint=true and config.wallExit=true",
+    "analyzer": "analyze-footprint.py --wall-exit",
+    "axes": {
+      "sex": [
+        "male"
+      ],
+      "cargo": [
+        "empty",
+        "full"
+      ],
+      "gait": [
+        "walk",
+        "run",
+        "sprint"
+      ],
+      "spec": [
+        "wall-slide",
+        "wall-slide-right"
+      ],
+      "outward_angle_degrees": [
+        45,
+        90
+      ]
+    },
+    "record_seconds_per_case": 12,
+    "sample_interval_ms": 25,
+    "input_schedule_ms": {
+      "slide": 1000,
+      "outward_same_gait": 5500,
+      "release": 10000
+    },
+    "required_candidate_versions": {
+      "PZSurvivorToolkit": ">=0.1.61",
+      "PZToolkitJavaPatches": ">=0.1.20"
+    },
+    "scope": "Male-only Walk/Run/Sprint wall exits with empty/full carts, mirrored sustained wall sliding, then 45/90-degree outward steering without stopping or reversing; native gait/clip progression, prior mesh contact and normal rejection, outward heading/displacement, complete wooden mesh and continuous wheel support clearance, native update budgets and final settle. Female models, body/grip/clothing, manual visual quality and multiplayer authority are separate gates."
   }
 }

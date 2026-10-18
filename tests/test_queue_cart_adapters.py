@@ -162,8 +162,8 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path'])
-        for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path'])
+        for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -171,10 +171,11 @@ class CartAdapterTests(unittest.TestCase):
                 self.selection['cases'] = [case]
                 self.stage()
                 text = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
-                source='stop' if case=='stop-timing' else 'collision' if case in ('collision','footprint','impact','brace','fast-slide') else 'interaction' if case in ('interruption','interruption-matrix','wheel','repeat') else case
+                source='stop' if case=='stop-timing' else 'collision' if case in ('collision','footprint','impact','brace','fast-slide','wall-exit') else 'interaction' if case in ('interruption','interruption-matrix','wheel','repeat') else case
                 self.assertIn((ROOT / f'tests/native_queue/contributions/wooden_cart_motion/scenario-{source}.lua').read_text(), text)
-                if case in ('collision','footprint','brace','fast-slide'): self.assertIn('["footprint"]=true',text)
+                if case in ('collision','footprint','brace','fast-slide','wall-exit'): self.assertIn('["footprint"]=true',text)
                 if case == 'fast-slide': self.assertIn('["fastSlide"]=true',text)
+                if case == 'wall-exit': self.assertIn('["wallExit"]=true',text)
                 if case == 'impact': self.assertIn('["impact"]=true',text)
                 if case == 'wheel': self.assertIn('["wheelCycle"]=true',text)
                 if case in ('interruption', 'interruption-matrix'): self.assertIn('["interruptions"]=true',text)
@@ -358,13 +359,13 @@ class CartAdapterTests(unittest.TestCase):
             start=text.index('local cases=')
             marker='cases=CartLabSelectScenes(cases)'
             body=text[start:text.index(marker,start)+len(marker)]
-            flags=dict(disposable=True,footprint=bank in ('collision','footprint','brace','fast-slide'),vehicles=bank=='vehicles',brace=bank=='brace',fastSlide=bank=='fast-slide',
+            flags=dict(disposable=True,footprint=bank in ('collision','footprint','brace','fast-slide','wall-exit'),vehicles=bank=='vehicles',brace=bank=='brace',fastSlide=bank=='fast-slide',wallExit=bank=='wall-exit',
                        wheelCycle=bank=='wheel',interruptions=bank in ('interruption','interruption-matrix'),
                        interruptionMatrix=bank=='interruption-matrix',rapidRepeats=bank=='repeat',stopTiming=bank=='stop-timing',impact=bank=='impact')
             from queue_checks.native import _lua
             for chosen in (None,[full[-1],full[0]] if count>1 else [full[0]]):
                 if chosen: flags['scenes']=chosen
-                code='CartMotionConfig='+_lua(flags)+';local config=CartMotionConfig;local footprint=config.footprint==true;local brace=config.brace==true;local fastSlide=config.fastSlide==true;dofile('+json.dumps(str(intake/'scene-selection.lua'))+');'+body+';for _,c in ipairs(cases) do print(c.name) end'
+                code='CartMotionConfig='+_lua(flags)+';local config=CartMotionConfig;local footprint=config.footprint==true;local brace=config.brace==true;local fastSlide=config.fastSlide==true;local wallExit=config.wallExit==true;dofile('+json.dumps(str(intake/'scene-selection.lua'))+');'+body+';for _,c in ipairs(cases) do print(c.name) end'
                 result=subprocess.run([lua,'-e',code],check=True,text=True,capture_output=True)
                 self.assertEqual(result.stdout.splitlines(),[n for n in full if chosen is None or n in chosen],bank)
 
@@ -591,7 +592,7 @@ class CartAdapterTests(unittest.TestCase):
         self.assertNotEqual(invalid.returncode,0)
         self.assertIn(b'not allowed with argument',invalid.stderr)
 
-    def test_fast_slide_native_metrics_label_contact_and_reverse_failures(self):
+    def test_slide_and_exit_native_metrics_label_contact_and_later_failures(self):
         cache=self.output / 'client1'
         names=('male-full-sprint-wall-slide','female-empty-run-wall-slide-right')
         log=self.output / 'client1-launch.log'
@@ -618,6 +619,22 @@ class CartAdapterTests(unittest.TestCase):
             self.assertEqual(row['measurementEndAfterCaseMs'],11800)
             self.assertEqual(row['pants']['shaftIntersections']['L'],1)
         invalid=subprocess.run(command+['--brace'],capture_output=True)
+        self.assertNotEqual(invalid.returncode,0)
+        self.assertIn(b'not allowed with argument',invalid.stderr)
+
+        log.write_text(log.read_text().replace(names[0],names[0]+'-out90').replace(names[1],'male-empty-run-wall-slide-right-out45'))
+        output=self.root / 'wall-exit';output.mkdir()
+        for kind in ('hip','pants'):
+            (output / (kind+'-triangle-frames.json')).write_text(json.dumps([dict(time=t,L=1,R=0)for t in times]))
+        exit_command=[sys.executable,str(script),'--profile',str(cache),'--log',str(log),'--output',str(output),'--partial','--wall-exit']
+        subprocess.run(exit_command,check=True,capture_output=True)
+        metrics=json.loads((output / 'native-metrics.json').read_text())
+        self.assertEqual(metrics['gripFailures'],2)
+        self.assertEqual([r['failureStages']for r in metrics['cases']],[{'wall-slide':1},{'turn-out':1}])
+        for row in metrics['cases']:
+            self.assertEqual(row['measurementEndAfterCaseMs'],11800)
+            self.assertEqual(row['pants']['shaftIntersections']['L'],1)
+        invalid=subprocess.run(exit_command+['--fast-slide'],capture_output=True)
         self.assertNotEqual(invalid.returncode,0)
         self.assertIn(b'not allowed with argument',invalid.stderr)
 
@@ -814,10 +831,10 @@ class CartAdapterTests(unittest.TestCase):
         self.assertTrue((Path(result['evidence']['analysis']) / 'footprint-motion.json').is_file())
 
     def test_native_obstacle_banks_require_motion_and_mesh_proof_independently(self):
-        for bank,source,count,end in (('vehicles','vehicle',12,11800),('brace','brace',8,17800),('fast-slide','footprint',16,11800)):
+        for bank,source,count,end in (('vehicles','vehicle',12,11800),('brace','brace',8,17800),('fast-slide','footprint',16,11800),('wall-exit','footprint',24,11800)):
             self.selection['cases'] = [bank]
             fixture = carts._load(ROOT / ('tests/test_cart_'+source+'_analyzer.py'))
-            text, _ = fixture.fixture(self.output / 'client1',**({'fast_slide':True} if bank=='fast-slide' else {}))
+            text, _ = fixture.fixture(self.output / 'client1',**({'fast_slide':True} if bank=='fast-slide' else {'wall_exit':True} if bank=='wall-exit' else {}))
             _, _, metrics = self.coverage_fixture(count, text, end)
             log = self.output / 'client1-launch.log'; log.write_text(text)
             (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
@@ -827,9 +844,9 @@ class CartAdapterTests(unittest.TestCase):
                         self.assertIn('--'+bank,command)
                         (directory / 'native-metrics.json').write_text(json.dumps(metrics))
                     if name == bank:
-                        self.assertTrue(command[1].endswith('analyze-'+('footprint' if bank=='fast-slide' else bank)+'.py'))
+                        self.assertTrue(command[1].endswith('analyze-'+('footprint' if bank in ('fast-slide','wall-exit') else bank)+'.py'))
                         self.assertEqual(command[command.index('--log')+1], str(log))
-                        if bank=='fast-slide':self.assertIn('--fast-slide',command)
+                        if bank in ('fast-slide','wall-exit'):self.assertIn('--'+bank,command)
                         report = dict(motionPass=failed!='motionPass', footprintPass=failed!='footprintPass',
                                       motionFailures=['motion'] if failed=='motionPass' else [],
                                       footprintFailures=['mesh'] if failed=='footprintPass' else [])

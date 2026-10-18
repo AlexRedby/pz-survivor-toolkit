@@ -13,6 +13,7 @@ timing.add_argument('--stop-timing',action='store_true',help='Cover all three st
 timing.add_argument('--vehicles',action='store_true',help='Include the extended full-load vehicle slide and release')
 timing.add_argument('--brace',action='store_true',help='Cover the complete 18-second blocked-stance bank')
 timing.add_argument('--fast-slide',action='store_true',help='Label Run/Sprint wall sliding, release and reverse phases')
+timing.add_argument('--wall-exit',action='store_true',help='Label sustained wall sliding and uninterrupted outward turn')
 args=parser.parse_args()
 end_ms=17800 if args.brace else 15800 if args.stop_timing else 11800
 def measurement_end(name):
@@ -31,6 +32,10 @@ if not args.partial:
 assert len(cases)==16 or args.partial
 
 def stage(elapsed,name=''):
+ if args.wall_exit:
+  if elapsed<1000:return 'idle'
+  if elapsed<5500:return 'wall-slide'
+  return 'turn-out' if elapsed<10000 else 'release'
  if args.fast_slide:
   if elapsed<1000:return 'idle'
   if elapsed<6000:return 'wall-slide'

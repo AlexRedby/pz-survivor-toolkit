@@ -9,6 +9,8 @@ local videoRoot,ffmpeg=absolutePath('videoRoot'),absolutePath('ffmpeg')
 local footprint=config.footprint==true
 local brace=config.brace==true
 local fastSlide=config.fastSlide==true
+local wallExit=config.wallExit==true
+assert(not wallExit or footprint and not fastSlide and not brace and not config.impact,'Wall exit bank requires footprint without fast slide, brace or impact')
 assert(not fastSlide or footprint and not brace and not config.impact,'Fast slide bank requires footprint without brace or impact')
 assert(not brace or footprint and not config.impact,'Brace bank requires footprint without impact')
 assert(getWorld():getWorld()=='CartTestArea' and not isClient() and not isServer(),'Disposable single-player CartTestArea save required')
@@ -77,6 +79,18 @@ if fastSlide then
  end end
  assert(#cases==16)
 end
+if wallExit then
+ cases={}
+ for _,full in ipairs({false,true}) do for gaitIndex,gait in ipairs({'walk','run','sprint'}) do
+  for _,right in ipairs({false,true}) do for _,angle in ipairs({45,90}) do
+   local spec=right and 'wall-slide-right' or 'wall-slide'
+   cases[#cases+1]={female=false,full=full,spec=spec,startYaw=right and math.pi/2 or 0,
+    steps={{1000,gaitIndex-1,right and 1 or 2},{5500,gaitIndex-1,angle==90 and 7 or right and 3 or 4},{10000,0,0}},
+    name='male-'..(full and 'full-' or 'empty-')..gait..'-'..spec..'-out'..angle}
+  end end
+ end end
+ assert(#cases==24)
+end
 if config.impact then
  cases={}
  for _,female in ipairs({false,true}) do for _,full in ipairs({false,true}) do
@@ -136,7 +150,8 @@ local function sprinting(level)
 end
 local function poseCase()
  local c=cases[phase]
- if brace then pose(wallX+1.8,CartTestArea.y,math.pi)
+ if wallExit then pose(wallX+2.8,CartTestArea.y)
+ elseif brace then pose(wallX+1.8,CartTestArea.y,math.pi)
  elseif footprint then
   if c.spec=='corner-pivot' then pose(wallX+1.3,southY-1.18)
   elseif c.spec=='passage' or c.spec=='door-open' then pose(wallX+1.8,CartTestArea.y)
@@ -346,7 +361,7 @@ local function tick()
  end
  while stage<#c.steps and elapsed>=c.steps[stage+1][1] do
   stage=stage+1;local step=c.steps[stage]
-  if footprint and (not brace and stage==#c.steps-1 or brace and c.spec=='wall-restart' and stage==3) then step[3]=reverseDrive() end
+  if footprint and not wallExit and (not brace and stage==#c.steps-1 or brace and c.spec=='wall-restart' and stage==3) then step[3]=reverseDrive() end
   if step[2]~=nil then cartLabGait(step[2]) end
   cartLabDrive(step[3])
   print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait='..tostring(step[2])..' drive='..step[3])
