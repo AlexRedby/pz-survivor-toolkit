@@ -47,7 +47,8 @@ class ModIntegrations(unittest.TestCase):
         args = SimpleNamespace(integration=list(integrations), pack_lock=self.lock, game=self.game,
                                navigator_source=None, tv_source=None, quartermaster_source=None,
                                native_radio_root=None, native_action_root=None, native_inventory_pane=None,
-                               cleanui_inventory_pane=None, cci_source=None, item_details_source=None)
+                               cleanui_inventory_pane=None, cci_source=None, item_details_source=None,
+                               mpff_source=None, bc_filter_source=None)
         for key, value in overrides.items():
             setattr(args, key, value)
         requested = set(requested)
@@ -165,3 +166,27 @@ class ModIntegrations(unittest.TestCase):
                     self.assertEqual(self.game / 'media/lua/client/ISUI/ISInventoryPane.lua', args.native_inventory_pane)
                 else:
                     self.assertIsNone(args.native_inventory_pane)
+
+    def test_speed_and_container_profiles_use_exact_inputs_without_other_checks(self):
+        self.write(self.root / 'MPFastForward/42/mod.info', 'id=MPFastForward\n')
+        mpff = self.root / 'MPFastForward/42/media/lua'
+        for name in ('shared/MPFastForward_Config.lua', 'server/MPFastForward_Server.lua'):
+            self.write(mpff / name, name)
+        self.write(self.root / 'BetterContainers/42.20/mod.info', 'id=EURY_CONTAINERS\n')
+        filters = self.root / 'BetterContainers/42.20/media/lua/client/BetterContainers/Categorize/CategoryFilters.lua'
+        self.write(filters, 'category filters')
+        ini = self.root / 'SurvivorQoL-selected.ini'
+        ini.write_text(ini.read_text().strip() + ';MPFastForward;EURY_CONTAINERS\n')
+        self.lock_sources()
+        for id, option, source, check in (
+                ('MPFastForward', 'mpff_source', mpff, 'test_mpff_compat.lua'),
+                ('EURY_CONTAINERS', 'bc_filter_source', filters, 'test_bc_filter_compat.lua')):
+            for named in (False, True):
+                with self.subTest(id=id, named=named):
+                    args, requested = (self.configure(requested=[check]) if named else self.configure([id]))
+                    self.assertEqual(source, getattr(args, option))
+                    self.assertEqual({check}, requested)
+                    for other in ('navigator_source', 'tv_source', 'quartermaster_source', 'native_radio_root',
+                                  'native_action_root', 'native_inventory_pane', 'mpff_source', 'bc_filter_source'):
+                        if other != option:
+                            self.assertIsNone(getattr(args, other))

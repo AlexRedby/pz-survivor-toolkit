@@ -41,6 +41,17 @@ INTEGRATIONS = {
         'tests': {'test_tv_controls.lua': ['RadioWindowModules/RWMMergedTV.lua', 'ISRadioWindow.lua'],
                   'test_tv_videos.lua': ['RadioWindowModules/RWMMergedTV.lua']},
     },
+    'MPFastForward': {
+        'owners': ['server/000ToolkitMPFFCompatibility.lua'],
+        'option': 'mpff_source', 'root': 'media/lua',
+        'tests': {'test_mpff_compat.lua': ['shared/MPFastForward_Config.lua', 'server/MPFastForward_Server.lua']},
+    },
+    'EURY_CONTAINERS': {
+        'owners': ['client/000ToolkitBCCompatibility.lua'],
+        'option': 'bc_filter_source', 'root': 'media/lua/client/BetterContainers/Categorize',
+        'argument': 'CategoryFilters.lua',
+        'tests': {'test_bc_filter_compat.lua': ['CategoryFilters.lua']},
+    },
     'Quartermaster': {
         'owners': ['client/PZSurvivorToolkit/QuartermasterTags.lua',
                    'shared/PZSurvivorToolkit/QuartermasterTagRules.lua',
