@@ -186,6 +186,21 @@ if campfireClass then
 end
 
 local containerFilterUnchanged
+local containerGetters = {[initialGetContainers] = true}
+local containerCompat = Toolkit.ActionQueueCompat
+local quartermasterGetter = containerCompat and containerCompat.matchesQuartermasterContainerGetter
+local function observeQuartermasterGetter()
+    local current = ISInventoryPaneContextMenu.getContainers
+    if current == getContainers or not containerSourceSafe or type(quartermasterGetter) ~= "function"
+        or Toolkit.ActionQueueCompat ~= containerCompat or containerCompat.matchesQuartermasterContainerGetter ~= quartermasterGetter
+        or containerFilterUnchanged and not containerFilterUnchanged() or not quartermasterGetter(getContainers, current) then return end
+    local previous, previousGuard = getContainers, containerFilterUnchanged
+    getContainers, containerGetters[current] = current, true
+    containerFilterUnchanged = function()
+        return (not previousGuard or previousGuard()) and Toolkit.ActionQueueCompat == containerCompat
+            and containerCompat.matchesQuartermasterContainerGetter == quartermasterGetter and quartermasterGetter(previous, current)
+    end
+end
 -- Observe BC's native install instead of recapturing an arbitrary later container getter.
 if getActivatedMods and getActivatedMods():contains("EURY_CONTAINERS")
     and sourceMatches("client/BetterContainers/Proximity.lua", 330528904, "EURY_CONTAINERS")
@@ -204,13 +219,19 @@ if getActivatedMods and getActivatedMods():contains("EURY_CONTAINERS")
         end
         install = function(...)
             local predecessor = ISInventoryPaneContextMenu.getContainers
+            observeQuartermasterGetter()
+            local previousGuard = containerFilterUnchanged
             local verified = controls._installed == false and predecessor == getContainers and ownersUnchanged()
+                and (not previousGuard or previousGuard())
             local result = nativeInstall(...)
             local replacement = ISInventoryPaneContextMenu.getContainers
             if verified and controls._installed == true and ownersUnchanged()
                 and nativeClosure(replacement, "Proximity_ISLootWindowContainerControls.lua") then
                 getContainers = replacement
-                containerFilterUnchanged = function() return controls._installed == true and ownersUnchanged() end
+                containerGetters[replacement] = true
+                containerFilterUnchanged = function()
+                    return (not previousGuard or previousGuard()) and controls._installed == true and ownersUnchanged()
+                end
             end
             return result
         end
@@ -219,7 +240,8 @@ if getActivatedMods and getActivatedMods():contains("EURY_CONTAINERS")
 end
 
 function Fire.matchesContainerGetter(callback)
-    return containerSourceSafe and (callback == initialGetContainers or callback == getContainers)
+    observeQuartermasterGetter()
+    return containerSourceSafe and containerGetters[callback] == true
         and ISInventoryPaneContextMenu.getContainers == getContainers
         and (not proximity or proximity.GetItemContainer == proximityGetter)
         and (not containerFilterUnchanged or containerFilterUnchanged())
@@ -233,6 +255,7 @@ local function unchanged(class)
     return true
 end
 local function helpersSafe()
+    observeQuartermasterGetter()
     if not trusted or luautils.haveToBeTransfered ~= transferPredicate or luautils.walkToContainer ~= transferWalk then return false end
     if containerFilterUnchanged and not containerFilterUnchanged() then return false end
     if (transferCart or ISInventoryTransferAction.new ~= transferConstructor)

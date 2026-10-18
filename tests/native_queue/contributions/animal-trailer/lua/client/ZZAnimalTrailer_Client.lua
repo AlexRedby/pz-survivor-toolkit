@@ -3,12 +3,12 @@ local cfg=assert(AnimalTrailerFixtureConfig, "missing generated fixture configur
 local function whereabouts(p,ids)
  local items=p:getInventory():getItems();local inv={}
  for i=0,items:size()-1 do local item=items:get(i);if instanceof(item,'AnimalInventoryItem') then local a=item:getAnimal();inv[#inv+1]=item:getID()..'/'..tostring(a and a:getAnimalID()) end end
- local live,world={},{};local sq=p:getSquare()
- for x=sq:getX()-5,sq:getX()+5 do for y=sq:getY()-5,sq:getY()+5 do local square=getSquare(x,y,0);if square then
+ local live,world={},{};local sq=p:getSquare();local scanned=0
+ for x=sq:getX()-5,sq:getX()+5 do for y=sq:getY()-5,sq:getY()+5 do local square=getSquare(x,y,0);if square then scanned=scanned+1
   local animals=square:getAnimals();for i=0,animals:size()-1 do local a=animals:get(i);live[#live+1]=a:getAnimalID() end
   local objects=square:getWorldObjects();for i=0,objects:size()-1 do local item=objects:get(i):getItem();if item and instanceof(item,'AnimalInventoryItem') then local a=item:getAnimal();world[#world+1]=item:getID()..'/'..tostring(a and a:getAnimalID()) end end
  end end end
- return 'inventory='..table.concat(inv,',')..' groundAlive='..table.concat(live,',')..' groundItems='..table.concat(world,',')
+ return 'inventory='..table.concat(inv,',')..' groundAlive='..table.concat(live,',')..' groundItems='..table.concat(world,',')..' handsEmpty='..tostring(not p:getPrimaryHandItem() and not p:getSecondaryHandItem())..' scannedSquares='..scanned..' primaryID='..(p:getPrimaryHandItem() and p:getPrimaryHandItem():getID() or -1)..' secondaryID='..(p:getSecondaryHandItem() and p:getSecondaryHandItem():getID() or -1)
 end
 require 'TimedActions/Animals/ISRemoveAnimalFromTrailer'
 require 'ISUI/ISVehicleAnimalUI'

@@ -1,7 +1,7 @@
 -- Exact food selection and native eating chains; Java animation/network state is represented explicitly.
 require = function() end
-local fill, enabled, fullness, dead, serverCommand = nil, true, 0, false, nil
-local onGameStart, onTick = {}, {}
+local fill, enabled, fullness, dead = nil, true, 0, false
+local onGameStart, onTick, serverCommands = {}, {}, {}
 local function derive(self, name)
     local class = {Type = name, derive = derive}; class.__index = class
     return setmetatable(class, {__index = self})
@@ -10,7 +10,7 @@ ISBaseObject = {derive = derive}
 PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
 Events = {OnTick = {Add = function(fn) onTick[#onTick + 1] = fn end}, OnGameStart = {Add = function(fn) onGameStart[#onGameStart + 1] = fn end},
     OnFillInventoryObjectContextMenu = {Add = function(fn) fill = fn end},
-    OnServerCommand = {Add = function(fn) serverCommand = fn end}}
+    OnServerCommand = {Add = function(fn) serverCommands[#serverCommands + 1] = fn end}}
 instanceof = function(value, name)
     return type(value) == 'table' and (value.class == name or name == 'InventoryItem' and value.class == 'Food')
 end
@@ -382,6 +382,8 @@ if NativeActionRoot then
     project('ActionQueueLabels')
     local Policy = project('ActionQueuePolicy'); Policy.installContracts()
     for _, callback in ipairs(onGameStart) do callback() end
+    project('ActionQueueLifecycle')
+    project('ActionQueueAcknowledgements')
     local Controller = project('ActionQueue')
     local function book()
         local value = ISBaseTimedAction.new(ISReadABook, player); value.item = unselected; return value
@@ -695,7 +697,7 @@ if NativeActionRoot then
         local args = {sourceID = source.id, outputID = output.id, outputType = output:getFullType(),
             recipe = 'OpenCannedFood', onlineID = 17}
         for key, value in pairs(changes or {}) do args[key] = value end
-        serverCommand('PZSurvivorToolkitFood', 'Opened', args)
+        for _, callback in ipairs(serverCommands) do callback('PZSurvivorToolkitFood', 'Opened', args) end
     end
     local function finishWait(wait)
         assert(q.current == wait and wait:waitToStart(), 'first completion boundary must wait one native tick')

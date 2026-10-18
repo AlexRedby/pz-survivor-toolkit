@@ -7,6 +7,8 @@ local ANY = "__PZST_ANY__"
 local byCategories = setmetatable({}, {__mode = "k"})
 local resolvedRules = setmetatable({}, {__mode = "k"})
 local gatheringPlayer
+local registryBinding
+local ruleActive, normalizeRule, registryCell = Tags.ruleActive, Tags.normalizeRule, getCell
 local REVISIONS = FIELD .. "Revisions"
 
 local function copy(rule)
@@ -117,6 +119,7 @@ function Rules.indexSquare(square, player)
         end
     end
 end
+local indexSquare = Rules.indexSquare
 
 function Rules.installShared()
     if not LootSorter or LootSorter.pzstTagRuleResolver or not LootSorter.resolveEffective
@@ -236,6 +239,8 @@ function Rules.installClient()
         end
         return result
     end
+    registryBinding = {owner = LootSorter, previous = registry, replacement = LootSorter.getRegistry,
+        parse = LootSorter.parseCoordKey}
     LootSorter.findDesignatedOnSquare = function(square, ...)
         local manifest = LootSorter._manifestWin
         local player = gatheringPlayer or getSpecificPlayer(manifest and manifest.playerNum or 0)
@@ -284,6 +289,15 @@ function Rules.installClient()
             return text
         end
     end
+end
+
+function Rules.matchesRegistryGetter(previous, replacement)
+    local saved = registryBinding
+    return saved ~= nil and saved.previous == previous and saved.replacement == replacement
+        and LootSorter == saved.owner and saved.owner.getRegistry == replacement
+        and PZSurvivorToolkit.QuartermasterTagRules == Rules and PZSurvivorToolkit.ItemTags == Tags
+        and Rules.indexSquare == indexSquare and saved.owner.parseCoordKey == saved.parse and getCell == registryCell
+        and Tags.ruleActive == ruleActive and Tags.normalizeRule == normalizeRule and gatheringPlayer == nil
 end
 
 Rules.FIELD, Rules.STORE, Rules.REVISIONS = FIELD, STORE, REVISIONS

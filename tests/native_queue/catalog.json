@@ -322,6 +322,78 @@
           ]
         },
         {
+          "id": "splintDrop",
+          "producer": "drop",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "readySplintDrop",
+          "producer": "drop",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "miniBandage",
+          "producer": "mini-menu",
+          "capability": "effect",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "miniDisinfect",
+          "producer": "mini-menu",
+          "capability": "effect",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "miniWaitingCancel",
+          "producer": "mini-menu",
+          "capability": "cancel",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "miniWaitingMove",
+          "producer": "mini-menu",
+          "capability": "reorder",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
           "id": "remoteMove",
           "producer": "menu",
           "capability": "remote",
@@ -353,6 +425,102 @@
           "modes": [
             "toolkit",
             "native"
+          ]
+        },
+        {
+          "id": "inventoryBandage",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "inventoryBag",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "inventoryWaitingCancel",
+          "producer": "inventory",
+          "capability": "pending-cancel",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "inventoryWaitingMove",
+          "producer": "inventory",
+          "capability": "move",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "miniReplace",
+          "producer": "mini-menu",
+          "capability": "effect",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "miniReplaceBag",
+          "producer": "mini-menu",
+          "capability": "effect",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit",
+            "native"
+          ]
+        },
+        {
+          "id": "miniReplaceStopRemove",
+          "producer": "mini-menu",
+          "capability": "active-cancel",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "miniReplaceStopApply",
+          "producer": "mini-menu",
+          "capability": "active-cancel",
+          "kinds": [
+            "sp"
+          ],
+          "modes": [
+            "toolkit"
           ]
         }
       ]
@@ -404,6 +572,224 @@
     "literature": {
       "status": "not-migrated",
       "cases": []
+    },
+    "engine-peers": {
+      "status": "ready",
+      "clients": 2,
+      "default_mods": ["PZSurvivorToolkit", "ZombieBuddy", "PZToolkitJavaPatches"],
+      "cases": [
+        {
+          "id": "peer-cancel",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": ["mp"],
+          "languages": ["EN", "RU"],
+          "modes": ["toolkit"]
+        }
+      ]
+    },
+    "engine": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "PZSurvivorToolkit",
+        "ZombieBuddy",
+        "PZToolkitJavaPatches"
+      ],
+      "cases": [
+        {
+          "id": "repair",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        },
+        {
+          "id": "cancel",
+          "producer": "fixture",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN"
+          ],
+          "modes": [
+            "toolkit"
+          ]
+        }
+      ]
+    },
+    "equipment": {
+      "status": "ready",
+      "clients": 1,
+      "default_mods": [
+        "PZSurvivorToolkit"
+      ],
+      "cases": [
+        {
+          "id": "hands-chain",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "waiting-cancel",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "bag-capacity",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "clothing-chain",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "hotbar-chain",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "floor-pickup",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "bulk-pickup",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "bulk-waiting-cancel",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        },
+        {
+          "id": "bulk-mixed",
+          "producer": "inventory",
+          "capability": "effect",
+          "kinds": [
+            "sp",
+            "mp"
+          ],
+          "languages": [
+            "EN",
+            "RU"
+          ],
+          "modes": [
+            "native",
+            "toolkit"
+          ]
+        }
+      ]
     }
   }
 }

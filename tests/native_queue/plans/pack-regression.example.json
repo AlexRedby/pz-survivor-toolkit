@@ -9,6 +9,9 @@
     "ffprobe": "/path/to/ffprobe"
   },
   "sets": {
+    "startup": [
+      "startup"
+    ],
     "craft": [
       "craft"
     ],
@@ -29,10 +32,22 @@
       "wishlist",
       "tags",
       "video",
-      "animals"
+      "animals",
+      "equipment",
+      "equipment-mp"
+    ],
+    "equipment": [
+      "equipment",
+      "equipment-mp"
     ]
   },
   "jobs": [
+    {
+      "id": "startup",
+      "suite": "startup",
+      "kind": "mp",
+      "case": "loaded"
+    },
     {
       "id": "craft",
       "suite": "crafting-plans",
@@ -81,6 +96,36 @@
       "suite": "animal-trailer",
       "case": "timer-shared,combined-shared",
       "control_job": "animals-control"
+    },
+    {
+      "id": "equipment-control",
+      "suite": "equipment",
+      "kind": "sp",
+      "mode": "native",
+      "case": "hands-chain,waiting-cancel,bag-capacity,clothing-chain,hotbar-chain,floor-pickup"
+    },
+    {
+      "id": "equipment",
+      "suite": "equipment",
+      "kind": "sp",
+      "mode": "toolkit",
+      "case": "hands-chain,waiting-cancel,bag-capacity,clothing-chain,hotbar-chain,floor-pickup",
+      "control_job": "equipment-control"
+    },
+    {
+      "id": "equipment-mp-control",
+      "suite": "equipment",
+      "kind": "mp",
+      "mode": "native",
+      "case": "hands-chain,waiting-cancel,bag-capacity,clothing-chain,hotbar-chain,floor-pickup"
+    },
+    {
+      "id": "equipment-mp",
+      "suite": "equipment",
+      "kind": "mp",
+      "mode": "toolkit",
+      "case": "hands-chain,waiting-cancel,bag-capacity,clothing-chain,hotbar-chain,floor-pickup",
+      "control_job": "equipment-mp-control"
     }
   ]
 }

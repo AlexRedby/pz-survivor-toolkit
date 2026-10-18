@@ -1,6 +1,7 @@
 """Batch sequencing and failure reporting without native processes."""
 import argparse
 import importlib.util
+import io
 import json
 from pathlib import Path
 import sys
@@ -121,6 +122,58 @@ class BatchTests(unittest.TestCase):
         prepare.assert_not_called()
         self.assertFalse(output.exists())
 
+    def test_vanilla_selection_is_explicit_and_only_for_native_startup(self):
+        command = ['prepare', str(self.root / 'vanilla'), '--game', '/game', '--jdk', '/jdk',
+                   '--suite', 'startup', '--mode', 'native', '--mods', 'vanilla']
+        with patch.object(cli.native, 'prepare') as prepare:
+            self.assertEqual(0, cli.main(command))
+        selected = prepare.call_args.args[4]
+        self.assertEqual([], selected['mods'])
+        cli.native._validate(selected)
+        for changes in ({'mode': 'toolkit'}, {'suite': 'health'}, {'mods': None}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                cli.native._validate(dict(selected, **changes))
+        with patch.object(cli.native, 'prepare') as prepare:
+            self.assertEqual(1, cli.main(command + ['--mode', 'toolkit']))
+        prepare.assert_not_called()
+
+    def test_batch_vanilla_and_empty_mods_do_not_fall_back_to_suite_defaults(self):
+        self.write_plan([{'id': 'vanilla', 'suite': 'startup', 'mode': 'native', 'mods': 'vanilla'},
+                         {'id': 'empty', 'suite': 'startup', 'mode': 'native', 'mods': []},
+                         {'id': 'wrong-suite', 'suite': 'video-recording', 'mode': 'native', 'mods': 'vanilla'}])
+        self.assertEqual(1, self.invoke())
+        self.assertEqual(['vanilla'], [name for name, _ in self.calls])
+        self.assertEqual([], self.calls[0][1]['mods'])
+        cli.native._validate(self.calls[0][1])
+
+    def test_invalid_job_inputs_preserve_batch_report_and_later_jobs(self):
+        jobs = [{'id': 'bad-options-' + str(i), 'suite': 'startup', 'options': value}
+                for i, value in enumerate((None, [], 'bad'))]
+        jobs += [{'id': 'bad-case-' + str(i), 'suite': 'startup', 'case': value}
+                 for i, value in enumerate(([], ['loaded'], False, 0, ''))]
+        jobs += [{'id': 'bad-sources-' + str(i), 'suite': 'startup', 'options': {'mod_sources': value}}
+                 for i, value in enumerate((None, [], 'bad'))]
+        self.write_plan(jobs + [{'id': 'valid', 'suite': 'startup'}])
+        self.assertEqual(1, self.invoke())
+        self.assertEqual(['valid'], [name for name, _ in self.calls])
+        result = json.loads((self.args.output / 'batch-report.json').read_text())
+        self.assertEqual(['blocked'] * len(jobs) + ['passed'], [job['status'] for job in result['jobs']])
+        self.assertEqual([], result['remaining'])
+
+    def test_invalid_plan_options_are_reported_for_every_unrun_job(self):
+        for index, value in enumerate((None, [], 'bad')):
+            with self.subTest(value=value):
+                self.write_plan([{'id': 'first', 'suite': 'startup'}, {'id': 'second', 'suite': 'startup'}])
+                plan = json.loads(self.plan.read_text())
+                plan['options'] = value
+                self.plan.write_text(json.dumps(plan))
+                self.args.output = self.root / ('bad-plan-' + str(index))
+                self.assertEqual(1, self.invoke())
+                self.assertEqual([], self.calls)
+                result = json.loads((self.args.output / 'batch-report.json').read_text())
+                self.assertEqual(['blocked', 'blocked'], [job['status'] for job in result['jobs']])
+                self.assertEqual([], result['remaining'])
+
     def test_explicit_empty_jobs_never_broadens_to_the_full_plan(self):
         self.write_plan([{'id': 'wanted', 'suite': 'item-tags'}, {'id': 'unrelated', 'suite': 'video-recording'}])
         self.args.jobs = ''
@@ -168,6 +221,53 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(['wishlist-control', 'wishlist'], [job['id'] for job in cli.selected_jobs(plan, sets=['wishlist'])])
         self.assertEqual(['tags-control', 'tags', 'video-control', 'video'],
                          [job['id'] for job in cli.selected_jobs(plan, sets=['tags', 'video'])])
+
+
+class StatusTests(unittest.TestCase):
+    def setUp(self):
+        self.value = {'schema_version': 1,
+            'running': [{'root': '/old/run', 'pid': 10, 'owner_alive': False, 'budget': {'exclusive': False},
+                         'processes': [{'pid': 11}]}],
+            'waiting': [{'root': '/new/run', 'pid': 12, 'position': 1, 'wait_seconds': 5,
+                         'exclusive': True, 'reason': 'Legacy or exclusive native run is using the desktop'}],
+            'prepared': [{'root': '/prepared', 'ports': [24000, 24001]}],
+            'legacy_lock': {'path': '/lock', 'busy': True, 'exclusive': False},
+            'limits': ['FIFO applies to updated runners only.']}
+
+    def invoke(self, arguments):
+        output = io.StringIO()
+        with patch.object(cli.admission, 'status', return_value=self.value) as status, \
+             patch.object(cli.report, 'read_json', side_effect=AssertionError('Status must not read catalog')), \
+             patch.object(cli.runner, 'run', side_effect=AssertionError('Status must not launch')), \
+             patch('sys.stdout', output):
+            result = cli.main(arguments)
+        status.assert_called_once_with(legacy_lock=cli.runner.LOCK)
+        self.assertEqual(result, 0)
+        return output.getvalue()
+
+    def test_json_status_preserves_machine_readable_snapshot_without_launching(self):
+        self.assertEqual(json.loads(self.invoke(['status', '--json'])), self.value)
+
+    def test_text_status_shows_owners_fifo_position_reason_and_legacy_limits(self):
+        value = self.invoke(['status'])
+        for expected in ('Running: 1', '/old/run | PID 10 (owner exited)', 'game PIDs 11', 'Waiting: 1',
+                         '#1 /new/run | PID 12', '5s | exclusive', self.value['waiting'][0]['reason'],
+                         'Prepared port reservations: 1', 'Legacy lock: shared/busy', self.value['limits'][0]):
+            self.assertIn(expected, value)
+
+    def test_empty_status_and_legacy_exclusive_status(self):
+        self.value.update(running=[], waiting=[], prepared=[])
+        self.value['legacy_lock'].update(busy=False, exclusive=False)
+        self.assertIn('Legacy lock: free', self.invoke(['status']))
+        self.value['legacy_lock'].update(busy=True, exclusive=True)
+        self.assertIn('Legacy lock: exclusive', self.invoke(['status']))
+
+    def test_status_error_is_clear_and_does_not_claim_free_stand(self):
+        error = io.StringIO()
+        with patch.object(cli.admission, 'status', side_effect=RuntimeError('Cannot sample host resources')), \
+             patch('sys.stderr', error):
+            self.assertEqual(cli.main(['status', '--json']), 1)
+        self.assertIn('ERROR: Cannot sample host resources', error.getvalue())
 
 
 if __name__ == '__main__':

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -26,6 +27,7 @@ admission.STATE = directory / 'state'
 admission.LEGACY_LOCK = directory / 'legacy.lock'
 snapshot = json.loads((directory / 'snapshot.json').read_text())
 admission.host.sample = lambda: snapshot
+admission.shutil.disk_usage = lambda path: type('Disk', (), {'free': 100 * 1024**3})()
 selection = {'kind': 'sp', 'clients': 1, 'resources': {'heap_mib': 1, 'native_mib': 1, 'cpu_per_instance': .25}}
 (root / 'ready').touch()
 deadline = time.monotonic() + 10
@@ -65,6 +67,7 @@ class AdmissionTests(unittest.TestCase):
         patch.object(admission, 'STATE', self.state).start()
         patch.object(admission, 'LEGACY_LOCK', self.legacy).start()
         self.sample = patch.object(admission.host, 'sample', return_value=snapshot()).start()
+        patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=100 * GIB)).start()
 
     def run_config(self, name, kind='sp', ports=None, exclusive=False):
         root = self.directory / name
@@ -78,6 +81,52 @@ class AdmissionTests(unittest.TestCase):
 
     def records(self):
         return [json.loads(path.read_text()) for path in self.state.glob('*.json')]
+
+    def test_disk_reserves_live_peer_space_on_same_filesystem(self):
+        first = self.run_config('disk-first')
+        second = self.run_config('disk-second')
+        with patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(
+                free=admission.DISK_MARGIN + admission.DISK_PER_ROLE)):
+            with admission.acquire(*first, wait=0):
+                with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
+                    admission.require_disk(second[0], 1, copy_bytes=128)
+                with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
+                    with admission.acquire(*second, wait=0):
+                        self.fail('Second run used its peer disk reserve')
+            with admission.acquire(*second, wait=0) as details:
+                self.assertEqual(details['disk']['peer_reserved_bytes'], 0)
+
+    def test_snapshot_disk_check_works_without_native_posix_launch_support(self):
+        with patch.object(admission, 'fcntl', None):
+            details = admission.require_disk(self.directory / 'future-run', 1, copy_bytes=321)
+        self.assertEqual(details['copy_bytes'], 321)
+        self.assertFalse(self.state.exists())
+
+    def test_prepare_reconciles_crashed_run_disk_reservation(self):
+        old = self.run_config('crashed-run')
+        admission._directory()
+        admission._save({'root': str(old[0]), 'phase': 'running', 'ports': [], 'pid': 999999999,
+                        'caches': [str(old[0] / 'client1')], 'budget': admission.budget(old[1])})
+        with patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(
+                free=admission.DISK_MARGIN + admission.DISK_PER_ROLE)):
+            details = admission.require_disk(self.directory / 'new-run', 1)
+        self.assertEqual(details['peer_reserved_bytes'], 0)
+        self.assertEqual(self.records(), [])
+
+    def test_disk_reserve_ignores_other_filesystems_and_prepared_ports(self):
+        root = self.directory / 'new' / 'nested'
+        records = [{'root': '/other-device', 'phase': 'running', 'caches': ['one', 'two']},
+                   {'root': '/missing-prepared', 'phase': 'prepared', 'caches': []}]
+        real_stat = Path.stat
+        def stat(path, *args, **kwargs):
+            if str(path) == '/other-device':
+                return type('Device', (), {'st_dev': -1})()
+            return real_stat(path, *args, **kwargs)
+        with patch.object(Path, 'stat', stat):
+            permitted, details = admission.disk_capacity(root, 2, records, copy_bytes=123)
+        self.assertTrue(permitted)
+        self.assertEqual(details['peer_reserved_bytes'], 0)
+        self.assertEqual(details['required_bytes'], admission.DISK_MARGIN + 2 * admission.DISK_PER_ROLE + 123)
 
     def free_ports(self):
         with ExitStack() as stack:
@@ -133,7 +182,7 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(1, sum(row.get('admitted', False) for row in results), results)
         errors = [row['error'] for row in results if 'error' in row]
         self.assertEqual(1, len(errors), results)
-        self.assertIn('Insufficient resources', errors[0])
+        self.assertRegex(errors[0], 'Insufficient resources|FIFO: waiting behind')
 
     def test_capacity_does_not_double_count_owned_rss_or_cpu(self):
         record = {'phase': 'running', 'caches': ['/run/client1'],
@@ -319,6 +368,112 @@ assert report.matrix({'suites': {}})['rows'] == []
             with admission.acquire(*self.run_config('wait'), wait=1):
                 self.assertEqual(1, len(self.records()))
         self.assertEqual(1, sleep.call_count)
+
+    def test_waiting_status_and_interrupt_release_locks_but_keep_prepared_ports(self):
+        config = self.run_config('interrupted', 'mp')
+        config[1]['ports'] = admission.allocate_ports(config[0], config[1])
+        self.sample.return_value = snapshot(available=0)
+
+        def interrupt(_):
+            value = admission.status()
+            self.assertEqual(len(value['waiting']), 1)
+            row = value['waiting'][0]
+            self.assertEqual((row['root'], row['position']), (str(config[0].resolve()), 1))
+            self.assertIn('Insufficient resources', row['reason'])
+            self.assertEqual(value['legacy_lock']['busy'], False)
+            self.assertEqual(value['prepared'][0]['ports'], config[1]['ports'])
+            raise KeyboardInterrupt()
+
+        with patch.object(admission.time, 'sleep', side_effect=interrupt), self.assertRaises(KeyboardInterrupt):
+            with admission.acquire(*config, wait=10):
+                self.fail('Unavailable host admitted')
+        value = admission.status()
+        self.assertEqual(value['waiting'], [])
+        self.assertEqual(len(value['prepared']), 1)
+        self.assertFalse(admission._held(config[0].resolve()))
+        self.sample.return_value = snapshot()
+        with admission.acquire(*config, wait=0):
+            self.assertEqual(admission.status()['waiting'], [])
+
+    def test_timeout_removes_waiter_without_host_sampling_or_lock_leak(self):
+        with self.legacy.open('a+') as legacy:
+            fcntl.flock(legacy, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            config = self.run_config('timeout')
+            with self.assertRaisesRegex(RuntimeError, 'resource wait expired'):
+                with admission.acquire(*config, wait=0):
+                    self.fail('Legacy owner bypassed')
+            self.sample.assert_not_called()
+            value = admission.status()
+            self.assertEqual(value['waiting'], [])
+            self.assertEqual(value['running'], [])
+            self.assertTrue(value['legacy_lock']['busy'])
+            self.assertTrue(value['legacy_lock']['exclusive'])
+            self.assertFalse(admission._held(config[0].resolve()))
+            # Status probes must neither release nor steal another owner's lock.
+            with self.legacy.open('a+') as probe, self.assertRaises(BlockingIOError):
+                fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
+
+    def test_status_keeps_old_running_schema_and_surviving_orphan_game(self):
+        config = self.run_config('old-owner')
+        with admission.acquire(*config, wait=0):
+            path = next(self.state.glob('*.json'))
+            record = json.loads(path.read_text())
+            for key in ('suite', 'kind', 'mode', 'cases', 'started_at'):
+                record.pop(key)
+            path.write_text(json.dumps(record))
+            value = admission.status()
+            self.assertTrue(value['running'][0]['owner_alive'])
+            self.assertTrue(value['legacy_lock']['busy'])
+            self.assertFalse(value['legacy_lock']['exclusive'])
+            self.sample.return_value = snapshot(processes=[
+                {'pid': 88888, 'rss': 0, 'cpu': 0, 'game': True,
+                 'command': 'java ToolkitSmokeLauncher -cachedir=' + str(config[0] / 'client1')}])
+        value = admission.status()
+        self.assertEqual(value['running'][0]['processes'][0]['pid'], 88888)
+        self.assertFalse(value['running'][0]['owner_alive'])
+        self.assertFalse(value['legacy_lock']['busy'])
+        self.sample.return_value = snapshot()
+        self.assertEqual(admission.status()['running'], [])
+
+    def test_corrupt_waiter_and_unsafe_waiter_directory_fail_closed(self):
+        admission.status()
+        path = self.state / 'waiters' / 'bad.json'
+        path.write_text('{}')
+        with self.assertRaisesRegex(RuntimeError, 'Invalid native admission waiter'):
+            admission.status()
+        path.unlink()
+        path.parent.chmod(0o777)
+        with self.assertRaisesRegex(RuntimeError, 'mode 0700'):
+            admission.status()
+
+    def test_status_shows_orphan_discovered_after_initial_sample(self):
+        config = self.run_config('status-crash-window')
+        self.sample.side_effect = [snapshot(), RuntimeError('cleanup unavailable')]
+        with self.assertRaisesRegex(RuntimeError, 'cleanup unavailable'):
+            with admission.acquire(*config, wait=0):
+                pass
+        live = snapshot(processes=[{'pid': 98765, 'rss': 0, 'cpu': 0, 'game': True,
+            'command': 'java ToolkitSmokeLauncher -cachedir=' + str(config[0] / 'client1')}])
+        self.sample.side_effect = [snapshot(), live, live]
+        row = admission.status()['running'][0]
+        self.assertFalse(row['owner_alive'])
+        self.assertEqual([process['pid'] for process in row['processes']], [98765])
+
+    def test_running_record_write_failure_is_reported_and_drops_waiter(self):
+        original = admission._save
+
+        def save(record, directory=None):
+            if record.get('phase') == 'running':
+                raise OSError('record write failed')
+            return original(record, directory)
+
+        with patch.object(admission, '_save', side_effect=save), self.assertRaisesRegex(OSError, 'record write failed'):
+            with admission.acquire(*self.run_config('write-failed'), wait=10):
+                self.fail('Unrecorded profile admitted')
+        value = admission.status()
+        self.assertEqual(value['waiting'], [])
+        self.assertEqual(value['running'], [])
+        self.assertFalse(value['legacy_lock']['busy'])
 
     def test_invalid_resource_budgets_and_wait_are_rejected(self):
         for resources in ({'heap_mib': 0}, {'heap_mib': True}, {'native_mib': -1},

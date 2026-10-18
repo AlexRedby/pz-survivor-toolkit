@@ -439,6 +439,15 @@ function Policy.adoptEatStart(previous, replacement, helpersUnchanged)
     return true
 end
 
+function Policy.adoptTransferQueueObserver(previous,replacement)
+    local snapshot=snapshots[ISInventoryTransferAction]
+    local intent=Toolkit.ActionQueueTidyIntent
+    if not snapshot or snapshot.helpers.checkQueueList~=previous or ISInventoryTransferAction.checkQueueList~=replacement
+        or not intent or not intent.isQueueObserver(previous,replacement) then return false end
+    snapshot.helpers.checkQueueList=replacement
+    return true
+end
+
 function Policy.adoptTransferFloorHelper(previous, replacement)
     local snapshot = snapshots[ISInventoryTransferAction]
     if not snapshot or snapshot.helpers.getNotFullFloorSquare ~= previous
@@ -744,7 +753,13 @@ local function transferCapacityConflict(queue, a, b, last, check)
         return action.Type == "ISInventoryTransferAction"
             or (action.Type == "ISCartTransferAction" and carts and type(carts.isTransfer) == "function" and carts.isTransfer(action))
     end
-    if not transfer(a) or not transfer(b) then return end
+    local aTransfer, bTransfer = transfer(a), transfer(b)
+    if (aTransfer and not bTransfer) or (bTransfer and not aTransfer) then
+        local equipment = inspect(aTransfer and b or a)
+        -- Hand/slot changes can alter carried weight or move heavy items out of external containers.
+        if equipment and equipment.hands == queue.character then return queue.character:getInventory() end
+    end
+    if not aTransfer or not bTransfer then return end
     if check.done then return check.blocker end
     local shared
     for _, left in pairs({a.srcContainer, a.destContainer}) do

@@ -119,6 +119,23 @@ class QueueReportTests(unittest.TestCase):
             path.write_text(invalid)
             self.assertEqual(report.build_report(root, self.catalog)["functional"]["status"], "failed")
 
+    def test_inventory_treatment_requires_exact_self_patient_receipt(self):
+        self.catalog["suites"]["health"]["cases"][0]["producer"] = "inventory"
+        for mode in ("native", "toolkit"):
+            root = self.fixture(mode, kind="mp", mode=mode)
+            path = root / "server-launch.log"
+            receipts = ["[QUEUE_TEST] HEALTH_AUTH_RECEIPT " + role
+                        + " phase=bandageApply ok=true patient=" + role + " error=nil\n"
+                        for role in ("client1", "client2")]
+            valid = "[QUEUE_TEST] SERVER_READY\n" + "".join(receipts)
+            path.write_text(valid)
+            self.assertEqual(report.build_report(root, self.catalog)["functional"]["status"], "passed")
+            for invalid in (valid.replace("patient=client1", "patient=client2"),
+                            valid.replace("error=nil", "error=unexpected"), valid + receipts[0]):
+                with self.subTest(mode=mode, receipt=invalid):
+                    path.write_text(invalid)
+                    self.assertEqual(report.build_report(root, self.catalog)["functional"]["status"], "failed")
+
     def test_native_only_skip_is_honest_but_not_a_supported_capability(self):
         self.catalog["suites"]["health"]["cases"][0]["modes"] = ["toolkit"]
         root = self.fixture(mode="native", status="skipped")
@@ -344,6 +361,85 @@ class QueueReportTests(unittest.TestCase):
                 value = report.build_report(root, self.catalog)
             self.assertEqual(value["status"], "needs-review")
             self.assertEqual(value["runtime"]["unclassified_count"], 1)
+
+    @staticmethod
+    def known_room_message():
+        return ('ERROR: General f:0 at Basements.mergeRoomsOntoMetaCell > '
+                'duplicate RoomDef.metaID for room at 10707,9484,0\n')
+
+    def test_known_room_log_policy_keeps_uncapped_mirror_counts_visible_in_any_phase(self):
+        root = self.fixture()
+        message = self.known_room_message()
+        path = root / 'client1-launch.log'
+        text = (message * 20 + 'LOG: Lua > [STARTUP_TEST] SERVER_READY\n' + message * 20
+                + 'LOG: Lua > [QUEUE_SESSION] BEGIN case=loaded epoch=1 actor=client1\n' + message * 20)
+        path.write_text(text)
+        logs = root / 'client1/Logs'; logs.mkdir()
+        (logs / 'DebugLog.txt').write_text(('[17-10-26 11:22:33.444] ' + message.rstrip('\n') + '..\n') * 3)
+        value = report.audit_logs(root, ['client1'], native_game_sha256=report.KNOWN_ROOM_GAME_SHA256)['client1']
+        self.assertEqual(value['error_count'], 60)
+        self.assertEqual(value['background_count'], 60)
+        self.assertEqual(value['unclassified_count'], 0)
+        self.assertEqual(len(value['issues']), 1)
+        self.assertEqual(value['issues'][0]['background_rule'], 'known-upstream-b42.21-room-metaid')
+        self.assertIsNone(value['issues'][0]['background_limit'])
+        self.assertIn('duplicate RoomDef.metaID for room at 10707,9484,0', value['issues'][0]['message'])
+        self.assertEqual(path.read_text(), text)
+        for role in ('server', 'client1', 'client2'):
+            with self.subTest(role=role):
+                rows, _ = report.audit_log(path, root / role, native_game_sha256=report.KNOWN_ROOM_GAME_SHA256)
+                self.assertTrue(all(row['severity'] == 'background' for row in rows))
+
+    def test_known_room_log_policy_rejects_other_versions_origins_and_attached_diagnostics(self):
+        path = self.base / 'known-errors.log'
+        message = self.known_room_message()
+        changed = [(message, None, 'unclassified'), (message, '0' * 64, 'unclassified'),
+                   (message.replace('10707,9484,0', '10708,9484,0'), report.KNOWN_ROOM_GAME_SHA256, 'unclassified'),
+                   (message.replace('Basements.mergeRoomsOntoMetaCell', 'OtherMod.mergeRoomsOntoMetaCell'), report.KNOWN_ROOM_GAME_SHA256, 'unclassified'),
+                   (message.replace(' > ', ' > changed '), report.KNOWN_ROOM_GAME_SHA256, 'unclassified'),
+                   (message + '\tat zombie.example.Foo.bar(Foo.java:1)\n', report.KNOWN_ROOM_GAME_SHA256, 'unclassified'),
+                   (message + 'java.lang.RuntimeException: attached\n', report.KNOWN_ROOM_GAME_SHA256, 'fatal'),
+                   (message + 'OutOfMemoryError\n', report.KNOWN_ROOM_GAME_SHA256, 'fatal')]
+        for text, game_hash, severity in changed:
+            with self.subTest(text=text, game_hash=game_hash):
+                path.write_text(text)
+                rows, _ = report.audit_log(path, self.base, background=True, native_game_sha256=game_hash)
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]['severity'], severity)
+                self.assertIsNone(rows[0]['background_rule'])
+
+    def test_known_room_log_policy_requires_verified_actual_game_and_snapshot_without_suite_restriction(self):
+        game = self.base / 'game'; game.mkdir()
+        jar = game / 'projectzomboid.jar'; jar.write_bytes(b'known engine log-policy fixture')
+        expected = self.digest(jar)
+        with patch.object(report, 'KNOWN_ROOM_GAME_SHA256', expected):
+            for kind in ('sp', 'mp'):
+                root = self.fixture(kind, kind)
+                report.write_json(root / 'runtime.json', {'game': str(game)})
+                report.write_json(root / 'source-manifest.json', {str(jar): expected})
+                self.freeze(root)
+                path = root / 'client1-launch.log'
+                original = path.read_text(); path.write_text(original + self.known_room_message() * 5)
+                self.assertEqual(report.verified_game_sha256(root, True), expected)
+                self.assertIsNone(report.verified_game_sha256(root, False))
+                result = report.build_report(root, self.catalog)
+                self.assertEqual(result['status'], 'passed', result)
+                self.assertEqual(result['runtime']['background_count'], 5)
+                self.assertFalse(report.background_profile(root, report.read_json(root / 'selection.json'), True))
+                (root / 'settings-fingerprint.json').write_text('{"sha256":"changed"}')
+                result = report.build_report(root, self.catalog)
+                self.assertFalse(result['provenance']['verified'])
+                self.assertEqual(result['runtime']['unclassified_count'], 5)
+            root = self.fixture('wrong-engine')
+            jar.write_bytes(b'changed engine version')
+            report.write_json(root / 'runtime.json', {'game': str(game)})
+            report.write_json(root / 'source-manifest.json', {str(jar): self.digest(jar)})
+            self.freeze(root)
+            path = root / 'client1-launch.log'; path.write_text(path.read_text() + self.known_room_message())
+            result = report.build_report(root, self.catalog)
+            self.assertTrue(result['provenance']['verified'])
+            self.assertEqual(result['status'], 'needs-review')
+            self.assertEqual(result['runtime']['unclassified_count'], 1)
 
     def test_error_like_setting_names_are_not_exceptions_and_indented_errors_are_audited(self):
         root = self.fixture()

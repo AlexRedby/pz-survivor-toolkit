@@ -41,6 +41,14 @@ def verify(server, client, scenario='combined', timer='shared', hands='held'):
     require('CLIENT INGAME 42.21.0' in client, 'Wrong engine build')
     require('KahluaException' not in server + client, 'Lua runtime exception')
     require('CLIENT WEAPON_NATIVE_EQUIP' in client, 'Missing native weapon case')
+    retained_items = {}
+    if hands == 'missing':
+        weapon_ids = re.findall(r'SERVER WEAPON_CREATED id=(\d+)\b', server)
+        require(len(weapon_ids) == 1 and re.findall(r'CLIENT WEAPON_NATIVE_EQUIP id=(\d+)\b', client) == weapon_ids,
+                'Missing, duplicate or mismatched native weapon receipts')
+        for side, text in [('CLIENT', client), ('SERVER', server)]:
+            require(re.findall(side + r' WHERE index=(\d+)\b', text) == ['1', '2', '3'],
+                    'Missing, duplicate or unordered inventory/ground audit: ' + side)
     for i, (_, animal, _) in enumerate(seeded):
         c, s = after[i], server_after[i]
         require(c[:2] == s[:2] == (str(i + 1), str(2 - i)) and c[4] == '0', 'Trailer count or queue mismatch')
@@ -50,20 +58,34 @@ def verify(server, client, scenario='combined', timer='shared', hands='held'):
             require(c[2:4] == s[2:4] == ('nil', 'nil'), 'Empty-hands control did not reproduce')
         item_ids = []
         for side, text in [('CLIENT', client), ('SERVER', server)]:
-            match = re.search(side + r' WHERE index=' + str(i + 1) + r' inventory=(\S*) groundAlive=(\S*) groundItems=(\S*)', text)
+            match = re.search(side + r' WHERE index=' + str(i + 1) + r' inventory=(\S*) groundAlive=(\S*) groundItems=(\S*)(?: handsEmpty=(\w+) scannedSquares=(\d+)(?=\s|$))?(?: primaryID=(-?\d+) secondaryID=(-?\d+)(?=\s|$))?', text)
             require(match is not None, 'Missing inventory/ground audit')
             items = [entry.split('/')[0] for entry in match[1].split(',') if entry.endswith('/' + animal)]
             require(len(items) == 1, 'Animal absent from inventory or duplicated')
             item_ids.append(items[0])
             if hands == 'missing':
-                require(animal not in match[2].split(',') and not any(entry.endswith('/' + animal) for entry in match[3].split(',')), 'Target animal also on the ground')
+                require(match[5] == '121', 'Missing complete local ground scan proof')
+                require(match[4] == ('true' if i == 0 else 'false')
+                        and match[6] == '-1' and match[7] == ('-1' if i == 0 else weapon_ids[0]),
+                        'Unexpected missing-control hand IDs or empty-hands diagnostic')
+                for _, granted, _ in seeded[:i + 1]:
+                    retained = [entry.split('/')[0] for entry in match[1].split(',') if entry.endswith('/' + granted)]
+                    require(len(retained) == 1, 'Granted animal absent from inventory or duplicated')
+                    require(retained[0] == retained_items.setdefault(granted, retained[0]), 'Retained inventory item ID changed')
+                for _, target, _ in seeded:
+                    require(target not in match[2].split(',') and not any(entry.endswith('/' + target) for entry in match[3].split(',')), 'Seeded animal also on the ground')
         require(item_ids[0] == item_ids[1], 'Client/server inventory item ID differs')
+    if hands == 'missing':
+        require(weapon_ids[0] not in retained_items.values(), 'Weapon ID matches a granted animal item')
     if hands == 'held':
         drops = re.findall(r'CLIENT DROP_VERIFIED index=(\d+) found=(\w+) handsEmpty=(\w+) clientTrailer=(\d+)', client)
         require(drops == [(str(i + 1), 'true', 'true', str(2 - i)) for i in range(3)], 'Need three exact native live drops and final empty trailer')
         require(re.findall(r'SERVER DROP index=(\d+) found=true handsEmpty=true', server) == ['1', '2', '3'], 'Server live drops not confirmed')
     if scenario in ('equipment', 'combined'):
         require(len(re.findall(r'CLIENT ORDER_STATUS[^\n]*releases=1\b', client)) == 3 and len(re.findall(r'RELEASE_AFTER item=\d+ inventoryHas=true', client)) == 3, 'Delivery-order probe did not release all grants before assertions')
+        if hands == 'missing':
+            require(re.findall(r'RELEASE_AFTER item=(\d+) inventoryHas=true', client) == [retained_items[x[1]] for x in seeded],
+                    'Released grant item IDs differ from audited animals')
     if scenario == 'ghost':
         require(len(re.findall('CLIENT REPLAY PASS stale trailer snapshot reproduced; woven authoritative item snapshot repaired; hands, identities, neighbors and capacity preserved', client)) == 1, 'Missing decoder replay and repair proof')
     if scenario in ('timer', 'combined'):

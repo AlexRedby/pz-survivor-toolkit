@@ -84,6 +84,7 @@ local radioKeys = {
 }
 local medicalKeys = {
     HApplyBandage = "ContextMenu_Apply_Bandage", HRemoveBandage = "ContextMenu_Remove_Bandage",
+    HReplaceBandage = "UI_MHP_ReplaceBandage",
     HDisinfect = "ContextMenu_Disinfect", HStitch = "ContextMenu_Stitch", HRemoveStitch = "ContextMenu_Remove_Stitch",
     HSplint = "ContextMenu_Splint", HRemoveSplint = "ContextMenu_Remove_Splint",
     HRemoveGlass = "ContextMenu_Remove_Glass", HRemoveBullet = "ContextMenu_Remove_Bullet", HCleanBurn = "ContextMenu_Clean_Burn",
@@ -108,6 +109,9 @@ local function title(action)
     end
     if action.toolkitWorldOperation == "wreck" then
         return getText("ContextMenu_RemoveBurntVehicle"), "ContextMenu_RemoveBurntVehicle"
+    end
+    if action.toolkitWorldOperation == "butcher" then
+        return getText("UI_PZSurvivorToolkit_queue_native_ISButcherAnimal"), "UI_PZSurvivorToolkit_queue_native_ISButcherAnimal"
     end
     if action.toolkitWorldOperation == "fuel" then
         local key = action.toolkitFuelTake and "ContextMenu_VehicleSiphonGas" or "ContextMenu_VehicleAddGas"
@@ -507,7 +511,9 @@ end
 local function target(action, presentation)
     if action.Type == "HealthPanelAction" and type(action.handler) == "table" then
         local panel = action.handler.panel
-        local patient, body = name(type(panel) == "table" and panel.character), name(action.handler.bodyPart)
+        local health = PZSurvivorToolkit.ActionQueueHealth
+        local actor = health and health.patient and health.patient(action) or type(panel) == "table" and panel.character
+        local patient, body = name(actor), name(action.handler.bodyPart)
         if patient and body then return patient .. " / " .. body end
         return patient or body
     end
@@ -526,6 +532,7 @@ local function target(action, presentation)
     end
     if action.toolkitWorldOperation == "appliance" or action.toolkitWorldOperation == "generator"
         or action.toolkitWorldOperation == "fire" then return name(action.toolkitWorldTarget) end
+    if action.toolkitWorldOperation == "butcher" then return name(action.body) end
     if action.Type == "ISDeviceBatteryAction" or action.Type == "ISDeviceMediaAction" then
         local device = instance(action.deviceData, "DeviceData") and action.deviceData:getParent()
         return name(device)

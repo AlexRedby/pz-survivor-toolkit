@@ -17,6 +17,7 @@ end
 ISBaseObject = {derive = derive}
 table.wipe = function(t) for k in pairs(t) do t[k] = nil end end
 Events = {OnTick = {Add = function() end}}
+Events.OnServerCommand = {Add = function() end}
 for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
@@ -150,6 +151,8 @@ end
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/BulkActions.lua'))()
 if not PZSurvivorToolkit.ActionQueueDefinitions then assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))() end
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePolicy.lua'))()
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
+assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local api = PZSurvivorToolkit.ActionQueue
 do
@@ -939,7 +942,7 @@ for _, state in ipairs({'canceled', 'completed'}) do
         q=ISTimedActionQueue.add(a);frame(p);b=book(p);c=leaf(p,'mp-tail')
         ISTimedActionQueue.add(b);ISTimedActionQueue.add(c)
         local before=resumedCalls
-        assert(api.move(q,b,a) and q.toolkitBuildWait)
+        assert(api.move(q,b,a) and q.toolkitOutcomeWait)
         if first=='terminal' then
             a.ack.state=state;q:tick()
             assert(q.current==a and resumedCalls==before, 'terminal must wait Java removal')
@@ -949,7 +952,7 @@ for _, state in ipairs({'canceled', 'completed'}) do
             a.ack.state=state
         end
         frame(p)
-        assert(q.current==b and not q.toolkitBuildWait and not q.toolkitCancel)
+        assert(q.current==b and not q.toolkitOutcomeWait and not q.toolkitCancel)
         if state=='canceled' then
             assert(resumedCalls==before+1 and q.queue[2].Type=='ISQueueActionsAction' and q.queue[3]==c)
         else
@@ -964,7 +967,7 @@ q=ISTimedActionQueue.add(a);frame(p);b=book(p);ISTimedActionQueue.add(b)
 local before=resumedCalls
 assert(api.move(q,b,a));a.ack.state='completed';a.action.completing=true
 q:onCompleted(a)
-assert(q.current==a and q.toolkitBuildWait.localCompleted, 'perform cannot start urgent work before Java removes current')
+assert(q.current==a and q.toolkitOutcomeWait.localCompleted, 'perform cannot start urgent work before Java removes current')
 frame(p)
 assert(q.current==b and resumedCalls==before and #q.queue==1)
 -- Lost terminal, explicit clear, movement and death fail closed without replay or an indefinite wait.
@@ -972,14 +975,14 @@ for _, mode in ipairs({'timeout','clear','move','dead','respawn'}) do
     p=player();a=build(p);a.mpBuild=true;a.ack={state='started'}
     q=ISTimedActionQueue.add(a);frame(p);b=book(p);ISTimedActionQueue.add(b)
     before=resumedCalls;assert(api.move(q,b,a));frame(p)
-    assert(q.current==a and q.toolkitBuildWait)
+    assert(q.current==a and q.toolkitOutcomeWait)
     if mode=='timeout' then acknowledgementClock=acknowledgementClock+30000
     elseif mode=='clear' then ISTimedActionQueue.clear(p)
     elseif mode=='move' then p.moving=true
     elseif mode=='dead' then p.dead=true
     elseif mode=='respawn' then activePlayer=player() end
     q:tick()
-    assert(resumedCalls==before and not q.toolkitBuildWait and not q.toolkitCancel)
+    assert(resumedCalls==before and not q.toolkitOutcomeWait and not q.toolkitCancel)
     if mode=='timeout' or mode=='clear' or mode=='move' then assert(#q.queue==0) end
 end
 -- Unknown callbacks and untracked build transactions retain native protection.
@@ -1272,3 +1275,29 @@ d.owner={getID=owner.getID}
 assert(not api.cancelOperationReason(q,b) and not api.moveReason(q,b,d,true), 'different UI owners stay independent')
 PZSurvivorToolkit.ActionQueueCraft=previousCraft
 print('Stable item IDs: stale pickup replacement, deduplicated native returns, absent/consumed/nested items, same-ID dependencies and UI-owner identities passed.')
+
+-- Standard native actions use the same outcome gate as custom build synchronization.
+local realAcknowledgements = PZSurvivorToolkit.ActionQueueAcknowledgements
+for _, outcome in ipairs({'canceled', 'completed', 'rejected'}) do
+    p=player();a=book(p);b=leaf(p,'urgent-native-outcome');c=book(p)
+    q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c);frame(p)
+    local receipt={state='started'}
+    PZSurvivorToolkit.ActionQueueAcknowledgements={
+        capture=function(action) if action==a then return receipt end end,
+        state=function(action, record) if action==a and record==receipt then return record.state end end,
+        reset=function() end,
+    }
+    assert(api.move(q,b,a) and q.toolkitOutcomeWait.generic)
+    frame(p)
+    assert(q.current==a and q.toolkitCancelStopped and not p.actions[a.action],
+        'local stop/removal must still wait for the standard server outcome')
+    receipt.state=outcome
+    q:tick()
+    assert(q.current==b and not q.toolkitOutcomeWait and not q.toolkitCancel)
+    assert(#q.queue==(outcome=='canceled' and 3 or 2), 'only confirmed cancellation may replay reading')
+    if outcome=='canceled' then
+        assert(q.queue[2]~=a and q.queue[2].Type=='ISReadABook' and q.queue[2].item==a.item and q.queue[3]==c)
+    else assert(q.queue[2]==c, 'completed/rejected effect was replayed') end
+end
+PZSurvivorToolkit.ActionQueueAcknowledgements=realAcknowledgements
+print('Generic native outcomes: local stop/removal waits for receipt; only canceled resumes, completed/rejected preserve independent tail without replay.')

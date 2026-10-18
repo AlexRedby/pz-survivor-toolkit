@@ -395,7 +395,7 @@ def verify(output):
     baseline, cases = not selection['tagRules'], selection['cases']
     restart = selection.get('tagRestart')
     sys.path.insert(0, str(output / 'source/tools'))
-    from queue_checks.report import audit_logs, events, verify_manifest
+    from queue_checks.report import audit_logs, events, verify_manifest, verified_game_sha256
     receipts = []
     server_text = (prepared / 'server-launch.log').read_text(errors='replace')
     if selection.get('placementBarrier'):
@@ -442,11 +442,12 @@ def verify(output):
             assert len(screenshots) >= (1 if baseline else 6), (role, screenshots)
     provenance = verify_manifest(prepared, 'source-manifest.json', True) + verify_manifest(prepared, 'snapshot-hashes.json')
     assert not provenance, provenance
-    audits = audit_logs(prepared, ['server', 'client1', 'client2'])
+    audits = audit_logs(prepared, ['server', 'client1', 'client2'],
+                        native_game_sha256=verified_game_sha256(prepared, True))
     assert not any(value['microphone'] for value in audits.values()), 'Microphone capture detected'
     result = dict(functional='passed', cases_per_client=len(cases), receipts=receipts,
                   runtime=audits, provenance_verified=True,
-                  runtime_needs_review=any(value['error_count'] for value in audits.values()))
+                  runtime_needs_review=any(value['fatal_count'] or value['unclassified_count'] for value in audits.values()))
     if selection.get('plantingTags'):
         result['planting_receipts'] = rows(server_text, '[TAG_PLANTING_RECEIPT] ')
     (output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')

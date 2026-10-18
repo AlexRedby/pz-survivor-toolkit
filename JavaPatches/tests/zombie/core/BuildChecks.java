@@ -43,6 +43,7 @@ public final class BuildChecks {
             ByteBufferReader reader = new ByteBufferReader(bytes);
             reader.getByte(); reader.getShort();
             String module = reader.getUTF(), command = reader.getUTF();
+            if (module.equals("PZSurvivorToolkitActions")) return;
             if (!module.equals("PZSurvivorToolkitBuild") || !command.equals("State"))
                 throw new AssertionError("unexpected command " + module + "/" + command);
             if (!reader.getBoolean()) throw new AssertionError("missing payload");

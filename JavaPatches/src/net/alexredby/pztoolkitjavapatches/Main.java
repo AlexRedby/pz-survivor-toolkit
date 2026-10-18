@@ -22,6 +22,8 @@ import zombie.network.GameServer;
 import zombie.network.packets.character.ZombiePacket;
 import zombie.network.packets.character.AnimalPacket;
 import zombie.radio.devices.DeviceData;
+import zombie.scripting.ScriptParser;
+import zombie.scripting.entity.components.fluids.FluidContainerScript;
 import zombie.vehicles.VehicleInterpolation;
 
 public final class Main {
@@ -39,6 +41,8 @@ public final class Main {
     // Fail closed after an engine update. Hash original class resources, not transformed bytecode.
     public static final boolean ZOMBIE_SUPPORTED = supports("zombie/characters/NetworkZombieAI.class",
         "87e4f6e43d16dec23f685b4ebad68eb12eaea15ed87dce3fc3c3394f96cd1e3d");
+    public static final boolean VEHICLE_OWNERSHIP_SUPPORTED = supports("zombie/vehicles/BaseVehicle.class",
+        "e7ade19e1e6f66450bef2bd37e52b2afccc7377c4e4571d0fa39435ecdb55661");
     public static final boolean VEHICLE_SUPPORTED = supports("zombie/vehicles/VehicleInterpolation.class",
         "e5096d41b4b94c3eb040c119c1ca35b014bbfe3c742401002b88103a650add56");
     public static final boolean ANIMAL_SUPPORTED = supports("zombie/characters/NetworkPlayerAI.class",
@@ -57,6 +61,96 @@ public final class Main {
         "7e7deb55cc8a949a4cab6cf93e0cabef01090229154203730f758526c948ebd3")
         && supports("zombie/core/TilePropertyAliasMap.class",
             "05124f3536bc2026fb29d5f7369dc0d809d1a725477d4733a1e0e827911a0a80");
+    public static final boolean FLUID_SUPPORTED = supports("zombie/scripting/entity/components/fluids/FluidContainerScript.class",
+        "d3a4191471515e9ec18f29e153559369d13dd448d02747370546f1af75ac5595")
+        && supports("zombie/scripting/ScriptParser$Block.class",
+            "14a54eee1c27b98431913e8daa28f2dcae58d8fedb9e3b0ed8b6426f717062d2")
+        && supports("zombie/scripting/ScriptParser$Value.class",
+            "5cf9e1fa32ef946ac194fd8cf2bf7f95da9eda67076eccd3dfc321b31e14a637");
+    public static final boolean FENCE_SUPPORTED = supports("zombie/iso/BrokenFences.class",
+        "4368bbe6d2ec26198062bced328c3fef349e6be8e0f7184cbb9086de4cccc015")
+        && supports("zombie/Lua/Event.class",
+            "cf4b0ba953b8f965fbcacb73ebb5d1a173dc3ed140656e15b90ad932eff0e952")
+        && supports("zombie/Lua/LuaEventManager.class",
+            "9706f17e9b5e095a0e24230dc944de5d552fa62c997214636c4deb4957cf354b")
+        && supports("zombie/iso/IsoWorld.class",
+            "5b7406a70f33578a47ff417b0b6aa7a2b7a5bebfa00487a60935303f5747fb71")
+        && supports("zombie/iso/sprite/IsoSpriteManager.class",
+            "2b2a7b9de0ebd5fb4e346a998a1618503422ddffb8098caa365e8b626054e14a")
+        && supports("zombie/entity/components/spriteconfig/SpriteConfigManager.class",
+            "ef52c9f6406c594784183ac8598db2bf3d4a8db7933981956e1d79d7b40ba10e")
+        && supports("zombie/core/properties/PropertyContainer.class",
+            "bc236f8e9e4e0da8a86b0d1fd19ad8d44a040fe4f67d1baac77401b3b148bd77")
+        && supports("zombie/audio/parameters/ParameterFenceTypeLow$FenceType.class",
+            "8b69bc70ce19066b64ec887a049320046c2659b4727dd51d4038e4e756bcfd09");
+    public static final boolean MEDICAL_BODY_DAMAGE_SUPPORTED = supports("zombie/network/packets/BodyDamageUpdatePacket.class",
+            "2e37ca1add6b8696464285bd498e7c97cd9712c9094c51d1d57daac688145c8c")
+        && supports("zombie/network/fields/character/PlayerID.class",
+            "d40d1b745a70ad3bf562c15765b9f46a117ecb48aeeabf05597ce646a73e0b56")
+        && supports("zombie/network/packets/BodyDamageUpdatePacket$Type.class",
+            "e7694d5cfa682aa1fb60cdc85fdbb231bd87f758ce82ef0dc3dd0ccdead52c6c");
+    public static final boolean MEDICAL_VISUALS_SUPPORTED = supports("zombie/characters/IsoGameCharacter$Bandages.class",
+            "bb87836b717355811e6f699377896918b9d4f4d050a5ad7bc1f1a35a70ebdedd")
+        && supports("zombie/characters/IsoGameCharacter.class",
+            "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b")
+        && supports("zombie/characters/WornItems/WornItems.class",
+            "3a01a9b5b7e13d0902fcac9342ac0b42e5c2e87284d88ce9a6a01f45294409c1")
+        && supports("zombie/network/packets/SyncClothingPacket.class",
+            "09e83606c9de4555802b2171e26df4739a78c787afeb8b2907d46c19be311dff");
+    public static final boolean MEDICAL_TIMED_ACTION_SUPPORTED = supports("zombie/network/PZNetKahluaTableImpl.class",
+            "201f0e59502fc5a106f8c9021e0b0d13a30dcb8d0beb9e8934cec390231ddba6")
+        && supports("zombie/core/NetTimedAction.class",
+            "d4a3046eeaec409977a756c6ea80b0676229274684012ad51210559ebfcb1090")
+        && supports("zombie/network/packets/NetTimedActionPacket.class",
+            "ce367190ce6158eb88809f3215ebc471e6161896d9d526eb9ef0e73d58de847b")
+        && supports("zombie/core/Action.class",
+            "4a2fe6aaf0cf73235279946e930b40489ec44859aff64cc19d97976bcc75610d")
+        && supports("zombie/network/fields/character/PlayerID.class",
+            "d40d1b745a70ad3bf562c15765b9f46a117ecb48aeeabf05597ce646a73e0b56")
+        && supports("zombie/network/ZomboidNetData.class",
+            "9b81b4f1e3ce8e338f2b8bb838c797353d0b2841396d01325c968051e168419e")
+        && supports("zombie/network/fields/IDShort.class",
+            "852188ce7dceb2a40c32ae233d6fcdbdec3cc74dd45d9d5151334308f514cdcd")
+        && supports("zombie/core/network/ByteBufferReader.class",
+            "1c2731f2a49b57d2ad895069d499705f8492e3cb6ac275a8f1163b4940e370ff");
+    public static final boolean BASEMENT_ROOMS_SUPPORTED = supports("zombie/basements/Basements.class",
+            "769908ad1fdab2fb667d41943fde29e91b2148d365e5993117601c07c854380c")
+        && supports("zombie/iso/BuildingID.class",
+            "cfb8cb7815a84b5b6b4dc9743df585bb8d14959acd7c23850a9ec62a084c3ed1")
+        && supports("zombie/iso/RoomID.class",
+            "d3d5bb425c94b2b6b5f03cd1d47fc82c079984563d4a9e6857c64b3809a2d52d")
+        && supports("zombie/iso/BuildingDef.class",
+            "b1374ab72a3b7668afb554c22e9a4374841613f028712f3f98bf7a461d10faf1")
+        && supports("zombie/iso/RoomDef.class",
+            "7cf340ad83010a27bb41a7b576d934c795b3a855118fc683ae80dfa02d8be989")
+        && supports("zombie/iso/IsoMetaCell.class",
+            "ccf99cd2b176b079da51f31a74ae9408b45255a328f6d1ab6fe536600226cdee")
+        && supports("zombie/iso/IsoMetaGrid.class",
+            "cdd50bb0a393c766d25c9dcbc5f7e929d7e10a6b9c9b95e22c3bae94b3b5b1f9");
+    public static final boolean MANNEQUIN_SUPPORTED = supports("zombie/Lua/LuaManager.class",
+            "dcaad0082ca27a15550c7d0a6e14b3aeb71f634a14f32123dec620df180c646d")
+        && supports("zombie/Lua/LuaManager$GlobalObject.class",
+            "80ecbd3bd702db2f992db6cba7cb09c32d775fa6f2a3297e0460874ff5ba20c7")
+        && supports("zombie/iso/IsoMetaGrid.class",
+            "cdd50bb0a393c766d25c9dcbc5f7e929d7e10a6b9c9b95e22c3bae94b3b5b1f9")
+        && supports("zombie/iso/zones/Zone.class",
+            "41faa20ceed9764ba0aa32d8fa81f0329d40a1f5da575beb65601e077346e91c")
+        && supports("zombie/iso/objects/IsoMannequin.class",
+            "158b696a5ff5ee99e7c60cbd17d7055b6d7c9afbc5c1595e34f2fbcb4feef5e1")
+        && supports("zombie/iso/objects/IsoMannequin$MannequinZone.class",
+            "34d053c48f0522dbeb73f69daa45683c0feb1ff2181b83ef6d8dcfd53aa3848d");
+    public static final boolean PIANO_SUPPORTED = supports("zombie/scripting/entity/GameEntityScript.class",
+            "2863b3af3a0dcef1163268da1469aaba2104a90c2def4f625811e8364cecab29")
+        && supports("zombie/scripting/entity/components/crafting/CraftRecipeComponentScript.class",
+            "aa63d944d55d20277de6d28b032367c4badf39161efc04bbae4a003306675258")
+        && supports("zombie/scripting/entity/components/crafting/CraftRecipe.class",
+            "a5c076d53e68f5cdfcc5bc17239aee1fb2072766471c29070ca84b30bd63c5de")
+        && supports("zombie/scripting/entity/components/spriteconfig/SpriteConfigScript.class",
+            "f80f3e287cf1945ca220b4c8daf5c67daa35f26906c9f72bbde8f99b88b8eb02")
+        && supports("zombie/scripting/ScriptParser.class",
+            "5f33328e2551fd40797697c15a9381b770fb547ac027f199e7dfc9172ac78f87")
+        && supports("zombie/core/textures/Texture.class",
+            "2f4fba9ad6c33a9ba0763a68d16164833a682f7645e61a061f70bfdca33c1f8f");
     public static final boolean MEDIA_SUPPORTED = supports("zombie/radio/devices/DeviceData.class",
         "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102");
     public static final boolean BUILD_SUPPORTED = supports("zombie/core/BuildAction.class",
@@ -70,6 +164,12 @@ public final class Main {
         && supports("zombie/network/packets/GeneralActionPacket.class",
             "398a8729da87a4c222f17473cc46c9b5cb7fd9b3f74492d283765619c1d57c8a");
 
+    public static final boolean COMPLETION_SUPPORTED = supports("zombie/characters/CharacterTimedActions/LuaTimedActionNew.class",
+        "f10236f1e8be9d0822dc144ebe61c42fa1d0e8ded3279c7aa6dd0ffb7291feb0")
+        && supports("zombie/characters/CharacterTimedActions/BaseAction.class", "ce23d4ebefaf3f35b15d24e5139a1d5a9e3bdc97d176d20307dafdaf8c3b3392")
+        && supports("zombie/characters/IsoGameCharacter.class", "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b")
+        && supports("se/krka/kahlua/integration/LuaCaller.class", "0443930027e8f312ae9cb192c628f4b6c10743204597c508f8693cfd7bd79d0b");
+
     public static boolean supports(String resource, String expected) {
         try (var stream = Main.class.getClassLoader().getResourceAsStream(resource)) {
             return stream != null && expected.equals(HexFormat.of().formatHex(
@@ -81,12 +181,256 @@ public final class Main {
     }
 
     public static void main(String[] args) {
-        // Resolve before the loader installs advice; resolving inside another transformer can miss this enum.
+        // Resolve before advice installation; resolving inside another transformer can miss these targets.
         if (PROPERTY_SUPPORTED) IsoPropertyType.values();
+        if (FLUID_SUPPORTED) FluidContainerScript.class.getName();
+        if (PIANO_SUPPORTED) {
+            zombie.scripting.entity.GameEntityScript.class.getName();
+            zombie.scripting.entity.components.crafting.CraftRecipeComponentScript.class.getName();
+            zombie.scripting.entity.components.crafting.CraftRecipe.class.getName();
+        }
+        if (BASEMENT_ROOMS_SUPPORTED) zombie.basements.Basements.class.getName();
+        if (MANNEQUIN_SUPPORTED) {
+            zombie.Lua.LuaManager.class.getName();
+            zombie.iso.IsoMetaGrid.class.getName();
+        }
+        boolean fences = FenceValidation.install(FENCE_SUPPORTED);
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
-            + ", vehicle=" + VEHICLE_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
+            + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
-            + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED);
+            + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", medicalVisuals=" + MEDICAL_VISUALS_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + PROPERTY_SUPPORTED + ", fluids=" + FLUID_SUPPORTED
+            + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED + ", basementRooms=" + BASEMENT_ROOMS_SUPPORTED + ", mannequin=" + MANNEQUIN_SUPPORTED
+            + ", itemTransactions=" + QueueManagers.ITEM_SUPPORTED + ", actionManager=" + QueueManagers.ACTION_SUPPORTED
+            + ", actionCompletion=" + COMPLETION_SUPPORTED + ", actionAcknowledgements=" + ActionAcknowledgements.SUPPORTED);
+    }
+
+    @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="perform", warmUp=true, strictMatch=true)
+    public static class ActionPerformed {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,
+                @Patch.Local("toolkitCompletion") ActionCompletion.Scope scope) {
+            scope = ActionCompletion.begin(action, "perform", Main.COMPLETION_SUPPORTED);
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Local("toolkitCompletion") ActionCompletion.Scope scope, @Patch.Thrown Throwable failure) {
+            ActionCompletion.end(scope, failure);
+        }
+    }
+
+    @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="complete", warmUp=true, strictMatch=true)
+    public static class ActionCompleted {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,
+                @Patch.Local("toolkitCompletion") ActionCompletion.Scope scope) {
+            scope = ActionCompletion.begin(action, "complete", Main.COMPLETION_SUPPORTED);
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Local("toolkitCompletion") ActionCompletion.Scope scope, @Patch.Thrown Throwable failure) {
+            ActionCompletion.end(scope, failure);
+        }
+    }
+
+    @Patch(className="se.krka.kahlua.integration.LuaCaller", methodName="pcall", warmUp=true, strictMatch=true)
+    public static class ActionCallbackResult {
+        @Patch.OnExit
+        public static void exit(@Patch.Argument(1) Object callback, @Patch.Argument(2) Object action, @Patch.Return Object[] result) {
+            ActionCompletion.observe(callback, action, result);
+        }
+    }
+
+    @Patch(className="zombie.characters.IsoGameCharacter$Bandages", methodName="removeBandageModel", warmUp=true, strictMatch=true)
+    public static class NativeMedicalVisualRemoval {
+        @Patch.OnEnter
+        public static void enter(@Patch.This Object models, @Patch.Argument(0) zombie.characters.IsoGameCharacter player,
+                                 @Patch.Argument(1) String type,
+                                 @Patch.Local("toolkitRemovedVisual") zombie.inventory.InventoryItem removed) {
+            removed = MedicalVisuals.before(models, player, type, Main.MEDICAL_VISUALS_SUPPORTED);
+        }
+        @Patch.OnExit
+        public static void exit(@Patch.Argument(0) zombie.characters.IsoGameCharacter player, @Patch.Argument(1) String type,
+                                @Patch.Local("toolkitRemovedVisual") zombie.inventory.InventoryItem removed) {
+            MedicalVisuals.after(player, removed);
+        }
+    }
+
+    @Patch(className="zombie.network.packets.BodyDamageUpdatePacket", methodName="processClient", warmUp=true, strictMatch=true)
+    public static class NativeMedicalBodyDamage {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.network.packets.BodyDamageUpdatePacket packet,
+                                    @Patch.Argument(0) zombie.core.raknet.UdpConnection connection) {
+            return MedicalBodyDamage.skip(packet, Main.MEDICAL_BODY_DAMAGE_SUPPORTED);
+        }
+    }
+
+    @Patch(className="zombie.core.NetTimedAction", methodName="parse", warmUp=true, strictMatch=true)
+    public static class NativeMedicalTimedAction {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.core.NetTimedAction packet, @Patch.Argument(0) ByteBufferReader reader,
+                                 @Patch.Argument(1) IConnection connection,
+                                 @Patch.Local("medicalScope") MedicalTimedActions.Scope scope) {
+            scope = MedicalTimedActions.begin(packet, reader, Main.MEDICAL_TIMED_ACTION_SUPPORTED);
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Local("medicalScope") MedicalTimedActions.Scope scope,
+                                @Patch.Thrown(readOnly=false) Throwable failure) {
+            if (MedicalTimedActions.end(scope, failure)) failure = null;
+        }
+    }
+    @Patch(className="zombie.network.PZNetKahluaTableImpl", methodName="load", warmUp=true, strictMatch=true)
+    public static class NativeMedicalArguments {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.network.PZNetKahluaTableImpl table, @Patch.Argument(0) ByteBufferReader reader,
+                                 @Patch.Argument(1) IConnection connection,
+                                 @Patch.Local("medicalArguments") MedicalTimedActions.Arguments arguments) {
+            arguments = MedicalTimedActions.beginArguments(table, reader);
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Local("medicalArguments") MedicalTimedActions.Arguments arguments) {
+            MedicalTimedActions.endArguments(arguments);
+        }
+    }
+    @Patch(className="zombie.network.PZNetKahluaTableImpl", methodName="load", warmUp=true, strictMatch=true)
+    public static class NativeMedicalBodyPart {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.network.PZNetKahluaTableImpl table, @Patch.Argument(0) ByteBufferReader reader,
+                                 @Patch.Argument(1) IConnection connection, @Patch.Argument(2) byte type) {
+            MedicalTimedActions.beforeValue(table, reader, connection, type);
+        }
+    }
+
+    @Patch(className="zombie.basements.Basements", methodName="mergeBuildings", strictMatch=true)
+    public static class NativeBasementRoomLookup {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) zombie.iso.BuildingDef incoming,
+                                 @Patch.Argument(1) zombie.iso.BuildingDef receiving,
+                                 @Patch.Local("toolkitPreviousBuildingID") BasementRoomLookup.State previous) {
+            previous = BasementRoomLookup.beforeMerge(receiving, Main.BASEMENT_ROOMS_SUPPORTED);
+        }
+
+        @Patch.OnExit
+        public static void exit(@Patch.Argument(0) zombie.iso.BuildingDef incoming,
+                                @Patch.Argument(1) zombie.iso.BuildingDef receiving,
+                                @Patch.Local("toolkitPreviousBuildingID") BasementRoomLookup.State previous) {
+            BasementRoomLookup.repair(receiving, previous, Main.BASEMENT_ROOMS_SUPPORTED);
+        }
+    }
+
+    @Patch(className="zombie.Lua.LuaManager", methodName="RunLua", strictMatch=true)
+    public static class NativeMannequinZoneData {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) String file, @Patch.Argument(1) boolean rewrite,
+                                 @Patch.Local("toolkitPreviousObjects") Object previous) {
+            if (Main.MANNEQUIN_SUPPORTED && "media/maps/Muldraugh, KY/objects.lua".equals(file)
+                && zombie.Lua.LuaManager.env != null) previous = zombie.Lua.LuaManager.env.rawget("objects");
+        }
+
+        @Patch.OnExit
+        public static void exit(@Patch.Argument(0) String file, @Patch.Argument(1) boolean rewrite,
+                                @Patch.Local("toolkitPreviousObjects") Object previous) {
+            MannequinZoneData.loaded(file, previous, Main.MANNEQUIN_SUPPORTED);
+        }
+    }
+
+    @Patch(className="zombie.iso.IsoMetaGrid", methodName="registerMannequinZone", strictMatch=true)
+    public static class NativeMannequinZonePriority {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.iso.IsoMetaGrid grid,
+                                @Patch.Argument(0) String name, @Patch.Argument(1) String type,
+                                @Patch.Argument(2) int x, @Patch.Argument(3) int y, @Patch.Argument(4) int z,
+                                @Patch.Argument(5) int width, @Patch.Argument(6) int height,
+                                @Patch.Argument(7) se.krka.kahlua.vm.KahluaTable properties,
+                                @Patch.Return zombie.iso.zones.Zone zone) {
+            MannequinZoneData.registered(grid, properties, zone);
+        }
+    }
+
+    @Patch(className="zombie.scripting.entity.GameEntityScript", methodName="Load", strictMatch=true)
+    public static class NativePianoDefinition {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.scripting.entity.GameEntityScript entity,
+                                @Patch.Argument(0) String name, @Patch.Argument(1) String body) throws Exception {
+            PianoIcon.loaded(entity, body, Main.PIANO_SUPPORTED);
+        }
+    }
+
+    @Patch(className="zombie.scripting.entity.components.crafting.CraftRecipeComponentScript", methodName="getIconTexture", strictMatch=true)
+    public static class NativePianoIcon {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This zombie.scripting.entity.components.crafting.CraftRecipeComponentScript component,
+                                    @Patch.Local("toolkitPianoIcon") zombie.core.textures.Texture texture,
+                                    @Patch.Local("toolkitPianoHandled") boolean handled) throws Exception {
+            handled = PianoIcon.headless(component, Main.PIANO_SUPPORTED);
+            if (!handled) texture = PianoIcon.resolve(component, Main.PIANO_SUPPORTED);
+            handled = handled || texture != null;
+            return handled;
+        }
+
+        @Patch.OnExit
+        public static void exit(@Patch.Local("toolkitPianoIcon") zombie.core.textures.Texture texture,
+                                @Patch.Local("toolkitPianoHandled") boolean handled,
+                                @Patch.Return(readOnly=false) zombie.core.textures.Texture result) {
+            if (handled) result = texture;
+        }
+    }
+
+    @Patch(className="zombie.scripting.entity.components.crafting.CraftRecipe", methodName="OnScriptsLoaded", strictMatch=true)
+    public static class NativePianoIconLifecycle {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.scripting.entity.components.crafting.CraftRecipe recipe,
+                                 @Patch.Argument(0) zombie.scripting.ScriptLoadMode mode,
+                                 @Patch.Local("toolkitPianoTexture") zombie.core.textures.Texture texture) throws Exception {
+            texture = PianoIcon.beginScripts(recipe, Main.PIANO_SUPPORTED);
+        }
+
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.This zombie.scripting.entity.components.crafting.CraftRecipe recipe,
+                                @Patch.Local("toolkitPianoTexture") zombie.core.textures.Texture texture) throws Exception {
+            PianoIcon.endScripts(recipe, texture);
+        }
+    }
+
+    @Patch(className="zombie.Lua.LuaEventManager", methodName="triggerEvent", strictMatch=true)
+    public static class FenceTileDefinitionsDispatch {
+        @Patch.OnExit
+        public static void exit(@Patch.Argument(0) String event, @Patch.Argument(1) Object manager) {
+            // Empty events bypass Event.trigger; queued callbacks complete through its separate advice.
+            if (Main.FENCE_SUPPORTED && "OnLoadedTileDefinitions".equals(event)
+                && manager == zombie.iso.sprite.IsoSpriteManager.instance
+                && zombie.Lua.LuaManager.env != null && zombie.Lua.LuaManager.thread != null
+                && zombie.Lua.LuaManager.thread.debugOwnerThread == Thread.currentThread())
+                FenceValidation.tilesLoaded();
+        }
+    }
+
+    @Patch(className="zombie.Lua.Event", methodName="trigger", strictMatch=true)
+    public static class FenceTileDefinitions {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.Lua.Event event,
+                                @Patch.Argument(0) se.krka.kahlua.vm.KahluaTable env,
+                                @Patch.Argument(1) se.krka.kahlua.integration.LuaCaller caller,
+                                @Patch.Argument(2) Object[] args) {
+            if (Main.FENCE_SUPPORTED && "OnLoadedTileDefinitions".equals(event.name)
+                && args != null && args.length == 1 && args[0] == zombie.iso.sprite.IsoSpriteManager.instance)
+                FenceValidation.tilesLoaded();
+        }
+    }
+
+    @Patch(className="zombie.scripting.entity.components.fluids.FluidContainerScript", methodName="load", warmUp=true, strictMatch=true)
+    public static class NativeFluidName {
+        public static void normalize(ScriptParser.Block block, boolean supported) {
+            if (!supported || block == null) return;
+            var value = block.getValue("ContainerName");
+            if (value == null) return;
+            String name = value.getValue().trim();
+            // Preserve the native parser's result for two malformed shipped tokens.
+            if (name.equals("Large Bucket")) block.setValue("ContainerName", "LargeBucket");
+            else if (name.equals("Fuel Pump")) block.setValue("ContainerName", "FuelPump");
+        }
+
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) ScriptParser.Block block) {
+            normalize(block, Main.FLUID_SUPPORTED);
+        }
     }
 
     @Patch(className="zombie.core.properties.IsoPropertyType", methodName="lookupOrDefaultStr", warmUp=true, strictMatch=true)
@@ -227,6 +571,14 @@ public final class Main {
                 // Sender and initial-spawn decoder use thousandths; update decoder omitted the scale.
                 ai.zombie.setSpeedMod(packet.speedMod / 1000.0f);
             }
+        }
+    }
+
+    @Patch(className="zombie.vehicles.BaseVehicle", methodName="update", warmUp=true)
+    public static class VehicleOwnershipRepair {
+        @Patch.OnExit(suppress=Throwable.class)
+        public static void exit(@Patch.This zombie.vehicles.BaseVehicle car) {
+            VehicleOwnership.reconcile(car, Main.VEHICLE_OWNERSHIP_SUPPORTED);
         }
     }
 

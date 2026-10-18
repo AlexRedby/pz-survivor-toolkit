@@ -114,7 +114,7 @@ function Authority.prepare(player,phase)
  local current=assert(states[key(player)]);local spec=assert(Cases[current.verified+1]);assert(spec.id==phase and not current.pending,'duplicate/out-of-order prepare')
  assert(not Selection.skipReason(spec,key(player)),'case must be skipped explicitly')
  local session=assert(Authority.session(player));assert(session.active,'inactive doctor preparation')
- local patient=isServer() and assert(online(session.patient),'actual connected patient required') or player
+ local patient=not spec.inventory and isServer() and assert(online(session.patient),'actual connected patient required') or player
  position(player,origin.x,origin.y,origin.z);position(patient,origin.x+(patient~=player and 1 or 0),origin.y,origin.z)
  local old=inventory(player)
  for id,item in pairs(old) do
@@ -129,7 +129,8 @@ function Authority.prepare(player,phase)
   removeFixtureVisuals(patient,body);patient:getBodyDamage():setBodyPartsLastState()
  end
  body:setScratched(true,false);body:setScratchTime(20)
- if spec.kind=='bandaged' then patient:getBodyDamage():SetBandaged(body:getIndex(),true,20,false,'Base.Bandage')
+ if spec.kind=='dirtyBandaged' then patient:getBodyDamage():SetBandaged(body:getIndex(),true,0,false,'Base.Bandage')
+ elseif spec.kind=='bandaged' then patient:getBodyDamage():SetBandaged(body:getIndex(),true,20,false,'Base.Bandage')
  elseif spec.kind=='deep' then body:generateDeepWound();body:setHaveGlass(false)
  elseif spec.kind=='stitched' then body:setStitched(true)
  elseif spec.kind=='fracture' then body:setFractureTime(21)
@@ -152,7 +153,7 @@ function Authority.prepare(player,phase)
   book:setAlreadyReadPages(book:getNumberOfPages()-pages);player:setAlreadyReadPages(book:getFullType(),book:getNumberOfPages()-pages)
  end
  current.pending={phase=phase,spec=spec,patient=patient,body=body,before=image(body),ids=ids,uses=uses,originalContainers=originalContainers,inventory=inventory(player),mutated=false,visualNames=not isServer() and visualNames(body,patient),visualFlags=not isServer() and visualFlags(body)}
- return {ok=true,phase=phase,items=ids,body=body:getIndex(),patient=session.patient,spawn=origin,before=current.pending.before,readiness=Authority.readiness(body),
+ return {ok=true,phase=phase,items=ids,body=body:getIndex(),patient=key(patient),spawn=origin,before=current.pending.before,readiness=Authority.readiness(body),
   patientSpawn={x=origin.x+(patient~=player and 1 or 0),y=origin.y,z=origin.z},
   front=current.items.front:getID(),frontPages=frontPages,tail=current.items.tail:getID(),bag=current.items.bag:getID()}
 end
@@ -172,7 +173,7 @@ function Authority.baseline(player,phase)
  if not isServer() then
   local names,flags=pending.visualNames,pending.visualFlags
   local expected={}
-  if flags.bandaged and names.clean then expected[names.clean]=2 end
+  if flags.bandaged and names.clean then expected[pending.spec.replace and names.blood or names.clean]=2 end
   for _,field in ipairs({'bite','scratch','cut'}) do if flags[field] and names[field] then expected[names[field]]=1 end end
   local actual={}
   for id,item in pairs(values) do for _,kind in pairs(names) do if item:getFullType()==kind then
@@ -233,11 +234,19 @@ function Authority.verify(player,phase)
    end
   end
   print('[QUEUE_TEST] HEALTH_INVENTORY_TOTAL phase='..phase..' before='..beforeCount..' after='..afterCount)
-  local cancelled=spec.cancel or (spec.guard and spec.guard~='helper') or spec.expanded or spec.remote
+  local cancelled=spec.cancel or (spec.guard and spec.guard~='helper') or spec.expanded or spec.remote or spec.replaceStop
+  local removedBandage=spec.replace and spec.replaceStop~='remove'
   local expectedOutputs={};for kind,count in pairs(spec.output or {}) do expectedOutputs[kind]=count end
-  if not isServer() and not cancelled then
+  if not isServer() and (not cancelled or removedBandage) then
    local names,flags=pending.visualNames,pending.visualFlags
-   if spec.handler=='HApplyBandage' then
+   if spec.replace then
+    for id,kind in pairs(pending.visualIDs) do
+     assert(kind==names.blood and not actual[id],'native replacement left original dirty bandage visual');changed[id]=true
+    end
+    if spec.replaceStop=='apply' then
+     for _,field in ipairs({'bite','scratch','cut'}) do if pending.restoreWounds[field] and names[field] then expectedOutputs[names[field]]=1 end end
+    else expectedOutputs[names.clean]=2 end
+   elseif spec.handler=='HApplyBandage' then
     assert(not flags.bandaged,'apply fixture began bandaged');expectedOutputs[names.clean]=2
     for _,field in ipairs({'bite','scratch','cut'}) do if flags[field] and names[field] then
      local id=assert(pending.visualRemoval[names[field]],'native wound visual removal ID missing')
@@ -279,7 +288,9 @@ function Authority.verify(player,phase)
   for _,name in ipairs({'front','tail'}) do local book=current.items[name]
    assert(actual[book:getID()]==book,'unrelated book ID not preserved '..name)
    local pages,total=book:getAlreadyReadPages(),book:getNumberOfPages()
-   if Selection.mode=='native' and name=='tail' and (spec.id=='nativeStop' or spec.id=='remoteRemoved') then
+   -- The native MP handmade splint can consume both inputs while leaving its one-page tail unread.
+   if Selection.mode=='native' and name=='tail' and (spec.id=='nativeStop' or spec.id=='remoteRemoved'
+    or Selection.kind=='mp' and (spec.id=='splintApply' or spec.id=='splintDrop')) then
     assert(pages==total or pages==total-1,'native control tail pages outside exact fixture range')
    else assert(pages==total,'unrelated book pages not preserved '..name) end
   end
@@ -288,7 +299,13 @@ function Authority.verify(player,phase)
   print('[QUEUE_TEST] HEALTH_BODY_RECEIPT phase='..phase..' patient='..key(pending.patient)..' part='..pending.body:getIndex()..' '..table.concat(fields,' '))
   print('[QUEUE_TEST] HEALTH_BOOK_RECEIPT phase='..phase..' frontId='..current.items.front:getID()..' frontPages='..current.items.front:getAlreadyReadPages()
    ..' tailId='..current.items.tail:getID()..' tailPages='..current.items.tail:getAlreadyReadPages())
-  if cancelled then for field,value in pairs(before) do assert(after[field]==value,'skipped/cancelled clinical state changed '..field) end
+  if spec.replace then
+   for field,value in pairs(before) do if field~='bandaged' then assert(after[field]==value,'replacement changed unrelated clinical state '..field) end end
+   print('[QUEUE_TEST] HEALTH_REPLACE_RECEIPT phase='..phase..' bandaged='..tostring(after.bandaged)..' life='..pending.body:getBandageLife()..' futureBandageId='..pending.ids.bandage)
+   if spec.replaceStop=='apply' then assert(not after.bandaged,'completed native removal was rolled back')
+   elseif spec.replaceStop=='remove' then assert(after.bandaged and pending.body:getBandageLife()<=0,'cancelled removal changed dirty bandage')
+   else assert(after.bandaged and pending.body:getBandageLife()>0,'replacement clean bandage effect missing') end
+  elseif cancelled then for field,value in pairs(before) do assert(after[field]==value,'skipped/cancelled clinical state changed '..field) end
   elseif spec.handler=='HApplyBandage' then assert(after.bandaged,'bandage effect missing')
   elseif spec.handler=='HRemoveBandage' then assert(not after.bandaged,'bandage removal missing')
   elseif spec.handler=='HDisinfect' then assert(after.alcohol>before.alcohol,'disinfect effect missing')

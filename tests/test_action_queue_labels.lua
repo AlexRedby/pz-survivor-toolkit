@@ -49,6 +49,8 @@ for _, language in ipairs({'EN', 'RU'}) do
         return signature
     end
     local signature = check({Type = 'ISWalkToTimedAction'}, e.walk)
+    check({Type = 'ISQueueActionsAction', toolkitWorldOperation = 'butcher'},
+        translations.UI_PZSurvivorToolkit_queue_native_ISButcherAnimal)
     local buildTitle = language == 'EN' and 'Build' or 'Построить'
     check({Type = 'ISBuildAction'}, buildTitle)
     check({Type = 'ISQueueActionsAction', toolkitWorldOperation = 'build'}, buildTitle)

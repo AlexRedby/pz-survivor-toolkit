@@ -18,8 +18,10 @@ local function fixture(options)
     options = options or {}
     local env = setmetatable({}, {__index = _G}); env._G = env
     local loaded, loads, queued = {}, 0, {}
+    env.isClient = function() return false end
     local function event() return {Add = function() end, Remove = function() end} end
     env.Events = setmetatable({}, {__index = function(self, name) local value = event(); rawset(self, name, value); return value end})
+    env.isClient = function() return false end
     env.PZSurvivorToolkit = {ActionQueueOperations = {registerProducer = function() end},
         ActionQueueDefinitions = {registerBehavior = function() end}}
     env.ISTimedActionQueue = {add = function(action) queued[#queued + 1] = action end,

@@ -237,12 +237,65 @@ if NativeWishlistWorkshopRoot then
     getActivatedMods=function() return {contains=function(_,id) return id=='EURY_CONTAINERS' end} end
     if FireTestBCPreinstalled then bcControls.install() end
 end
+local quartermasterStart, quartermasterOwner
+if NativeQuartermasterLuaRoot then
+    local root=NativeQuartermasterLuaRoot
+    local startCallbacks,loaded={},false
+    local earlierRequire,earlierReader,earlierMods=require,getModFileReader,getActivatedMods
+    Events.OnGameStart={Add=function(callback)startCallbacks[#startCallbacks+1]=callback end}
+    getActivatedMods=function()return {contains=function(_,id)
+        return id=='Quartermaster' or earlierMods and earlierMods():contains(id) or false
+    end}end
+    getModFileReader=function(mod,path)
+        if mod~='Quartermaster' then return earlierReader and earlierReader(mod,path) end
+        local content,index=read(root..'/'..path:gsub('^media/lua/','')),1
+        if FireTestQMChangedSource and path:find('LootSorter_CraftMenu.lua',1,true)then content=content..'\n-- changed\n'end
+        return {readLine=function()
+            if index>#content then return end
+            local stop=content:find('\n',index)or #content+1
+            local line=content:sub(index,stop-1);index=stop+1;return line
+        end,close=function()end}
+    end
+    LootSorter={};isDebugEnabled=function()return false end
+    player.getCharacterActions=function()return list()end
+    player.getCurrentState=function()end
+    assert(loadstring(read(root..'/shared/LootSorter_Debug.lua'),'@'..root..'/shared/LootSorter_Debug.lua'))()
+    LootSorter.gatherBoxes=function()error('forwarding proof must not call storage helpers')end
+    require=function(name)
+        if name~='LootSorter_CraftMenu'then return earlierRequire(name)end
+        if loaded then return end
+        loaded=true
+        assert(loadstring(read(root..'/client/LootSorter_CraftMenu.lua'),'@'..root..'/client/LootSorter_CraftMenu.lua'))()
+    end
+    if FireTestQMPreloaded then require('LootSorter_CraftMenu')end
+    local source=read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua')
+    local first=assert(source:find('local sourceFiles = {',1,true))
+    local last=assert(source:find('function Compat.prune()',first,true))
+    local functions=assert(source:find('-- getModFileReader resolves',last,true))
+    local stop=assert(source:find('local function snapshot(class)',functions,true))
+    -- Execute the production observer and checksum code without unrelated mod adapter fixtures.
+    local compat=assert(loadstring('local Compat={}\n'..source:sub(first,last-1)..source:sub(functions,stop-1)
+        ..'\nprepareQuartermasterContainers()\nreturn Compat'))()
+    PZSurvivorToolkit.ActionQueueCompat=compat
+    -- The normal client loader still runs the file when early observation was refused.
+    if not loaded then require('LootSorter_CraftMenu')end
+    quartermasterOwner=LootSorter
+    quartermasterStart=function()
+        if FireTestQMForeignGather then LootSorter.gatherBoxes=function()error('foreign storage helper must not run')end end
+        if FireTestQMForeignPredecessor then
+            local original=ISInventoryPaneContextMenu.getContainers
+            ISInventoryPaneContextMenu.getContainers=function(...)return original(...)end
+        end
+        for _,callback in ipairs(startCallbacks)do callback()end
+    end
+end
 local originalContainerGetter=ISInventoryPaneContextMenu.getContainers
 project('ActionQueueFire')
 ISBBQLightFromPetrol.new = originalBBQPetrol
 project('ActionQueuePolicy')
 local api, policy, operations = PZSurvivorToolkit.ActionQueueFire, PZSurvivorToolkit.ActionQueuePolicy, PZSurvivorToolkit.ActionQueueOperations
 assert(not api.matchesContainerGetter(function()end),'an unrelated getter cannot borrow the observed predecessor proof')
+if quartermasterStart and FireTestQMBeforeBC then quartermasterStart()end
 if bcControls then
     if FireTestBCPreinstalled then
         inventory.items={};local fuel=item('Log');containers=list({inventory})
@@ -265,6 +318,45 @@ if bcControls then
         assert(queue.queue[2].Type~='ISQueueActionsAction' and not api.isDeferredAction(queue.queue[2]))
         print('Fire unknown predecessor remains opaque after native BC install.');return
     end
+end
+if quartermasterStart then
+    if not FireTestQMBeforeBC then quartermasterStart()end
+    local valid=not (FireTestQMPreloaded or FireTestQMForeignPredecessor or FireTestQMChangedSource)
+    assert(api.matchesContainerGetter(originalContainerGetter)==valid,'Quartermaster accepts only the observed trusted predecessor')
+    assert(api.matchesContainerGetter(ISInventoryPaneContextMenu.getContainers)==valid,'Quartermaster current getter keeps the exact observed chain')
+    if not valid then print('Fire unknown/preloaded/changed Quartermaster chains remain opaque.');return end
+    local getter=ISInventoryPaneContextMenu.getContainers
+    ISInventoryPaneContextMenu.getContainers=function(...)return getter(...)end
+    assert(not api.matchesContainerGetter(originalContainerGetter),'an arbitrary late getter replacement revokes the chain')
+    ISInventoryPaneContextMenu.getContainers=getter
+    for _,name in ipairs({'DBG'})do
+        local callback=quartermasterOwner[name];quartermasterOwner[name]=function()end
+        assert(not api.matchesContainerGetter(originalContainerGetter),'a changed Quartermaster '..name..' revokes the shared proof')
+        quartermasterOwner[name]=callback
+    end
+    LootSorter={};assert(not api.matchesContainerGetter(originalContainerGetter),'Quartermaster owner replacement revokes the proof');LootSorter=quartermasterOwner
+    local clock=getTimestampMs;getTimestampMs=function()return 0 end
+    assert(not api.matchesContainerGetter(originalContainerGetter),'changed Quartermaster clock revokes the shared proof');getTimestampMs=clock
+    local busy=ISTimedActionQueue.isPlayerDoingAction;ISTimedActionQueue.isPlayerDoingAction=function()return false end
+    assert(not api.matchesContainerGetter(originalContainerGetter),'changed Quartermaster busy predicate revokes the shared proof');ISTimedActionQueue.isPlayerDoingAction=busy
+    local matcher=PZSurvivorToolkit.ActionQueueCompat.matchesQuartermasterContainerGetter
+    PZSurvivorToolkit.ActionQueueCompat.matchesQuartermasterContainerGetter=function()return true end
+    assert(not api.matchesContainerGetter(originalContainerGetter),'a changed observer cannot forge container proof')
+    PZSurvivorToolkit.ActionQueueCompat.matchesQuartermasterContainerGetter=matcher
+    local gather=quartermasterOwner.gatherBoxes
+    quartermasterOwner.gatherBoxes=function()error('a late storage helper must not be called while forwarding')end
+    assert(api.matchesContainerGetter(originalContainerGetter),'unused Quartermaster storage helpers do not affect forwarding proof')
+    assert(getter(player),'the real Quartermaster wrapper forwards without calling the untrusted storage helper')
+    quartermasterOwner.craftFromBoxes=true;quartermasterOwner._craftContextUntil=10
+    assert(not api.matchesContainerGetter(originalContainerGetter),'active Quartermaster availability injection stays opaque')
+    quartermasterOwner._craftContextUntil=-1
+    assert(api.matchesContainerGetter(originalContainerGetter),'expired Quartermaster context is a proven forwarding wrapper')
+    quartermasterOwner._craftContextUntil=10;quartermasterOwner._activelyCrafting=true
+    assert(api.matchesContainerGetter(originalContainerGetter),'Quartermaster disables availability injection while hauling/crafting')
+    quartermasterOwner.craftFromBoxes=false;quartermasterOwner._craftContextUntil=nil;quartermasterOwner._activelyCrafting=nil
+    quartermasterOwner.gatherBoxes=gather
+    assert(api.matchesContainerGetter(originalContainerGetter),'the original medical getter remains valid through the intact chain')
+    print('Fire Quartermaster cold install: old/current getters, BC order and changed owner/helper protection passed.')
 end
 local q=ISTimedActionQueue.getTimedActionQueue(player)
 local function reset()

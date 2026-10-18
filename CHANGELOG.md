@@ -10,6 +10,18 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.58
+
+- **Fixed:** Preserve the verified SP transfer chain when Quartermaster Manifest and SaucedCarts are both enabled.
+- **Added:** Guarded native inventory bandaging, including carried-bag pickups, with exact selected items and self-treatment targets.
+- **Added:** MiniHealthPlus bandage replacement is one queue operation across removal, pickup and application. Cancellation preserves completed effects and borrowed supplies; lost future materials stop replacement before removing the current bandage.
+
+### 0.1.57
+
+- **Fixed:** First drops of ready-made and handmade splints enqueue treatment with the exact dropped supplies, preserving native clinical restrictions and earlier handlers.
+- **Added:** Guarded MiniHealthPlus treatment queue operations with a stable doctor/patient, cancellation and reordering. Bandage replacement and direct inventory-menu treatment remain protected.
+- **Fixed:** Preserved reviewed container-getter chains after Quartermaster installs its crafting wrapper; active remote-storage availability scans remain protected.
+
 ### 0.1.56
 
 - **Fixed:** Planting inputs such as sunflower seeds, potatoes and herbs gain Farming/Seed tags while preserving their food/medical roles; empty seed packets keep Farming without Seed. Roles come from native crop definitions and seed-packet recipes.
@@ -284,6 +296,29 @@ The older README associates medicine indicators with this label, but no separate
 ## Toolkit Java Patches
 
 Previously named **PZ Network Fix** through 0.1.1.
+
+### 0.1.15
+
+- **Fixed:** Rejected a late server medical action whose BodyPart owner disconnected before argument decoding. Native Reject acknowledgement replaces the null-player exception; valid requests and existing queued actions remain native.
+- **Fixed:** Ignored an in-flight body-damage UPDATE after its patient disappeared from the client, preventing the native null-player exception. Valid health updates and subscription control packets retain native behavior; exact B42.21 bytecode is required.
+
+### 0.1.10
+
+- **Fixed:** Reconciled occupied-vehicle physics authority with the validated server driver after the reproduced collision/entry/release race, preserving towing ownership and native packet authorization.
+- **Added:** Bounded, opt-in vehicle diagnostics with `-Dpz.vehicle.trace=true`; the ownership repair itself needs no flag. Updated server/client setup and platform-specific collection instructions.
+- **Changed:** Combined vehicle recovery with the native string-property, fluid-container, fence-validation and early font-page guards from main under a distinct version. The vehicle-recovery candidate in a controlled macOS Host with two connected clients passed post-repair travel, towing/detachment and driver/passenger handoffs; spontaneous user-save and real WAN-loss incidence remain unverified.
+
+### 0.1.9
+
+- **Fixed:** Deferred native fence validation until script loading completed and corrected early font-page resolution. The font guard uses a separate local bootstrap JAR with explicit early loader activation.
+
+### 0.1.8
+
+- **Fixed:** Normalized the two shipped fluid-container name tokens `Large Bucket` and `Fuel Pump` before native parsing, preserving validation for other names.
+
+### 0.1.7
+
+- **Fixed:** Preserved five shipped native string properties without startup enum lookup exceptions, keeping alias IDs, values and string storage.
 
 ### [0.1.6](https://github.com/AlexRedby/pz-survivor-toolkit/commit/761aea81f0c699c34b3a41709d49cecc662dda94)
 

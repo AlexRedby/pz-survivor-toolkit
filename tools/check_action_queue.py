@@ -17,14 +17,18 @@ def selection(args, catalog, options=None):
     if suite["status"] != "ready":
         raise ValueError("Suite has not been migrated: " + args.suite)
     all_cases = {case["id"]: case for case in suite["cases"]}
-    if args.cases == '':
-        raise ValueError('--cases requires at least one case ID')
+    if args.cases is not None and (not isinstance(args.cases, str) or not args.cases):
+        raise ValueError('--cases requires a nonempty comma-separated string of case IDs')
     kind = args.kind or suite['cases'][0]['kinds'][0]
     cases = args.cases.split(",") if args.cases else ([suite['cases'][0]['id']] if args.suite != 'health' else [case['id'] for case in suite['cases'] if kind in case['kinds']])
     if not cases or len(cases) != len(set(cases)) or any(identifier not in all_cases for identifier in cases):
         raise ValueError("Select known unique case IDs; see matrix")
     spec = all_cases[cases[0]]
-    if args.mods == "selected":
+    if args.mods == 'vanilla':
+        if args.suite != 'startup' or args.mode != 'native':
+            raise ValueError('--mods vanilla requires startup in native mode')
+        mods = []
+    elif args.mods == "selected":
         mods = native._metadata(ROOT / "SurvivorQoL-selected.ini")["Mods"].split(";")
     else:
         mods = args.mods.split(",") if args.mods else spec.get('default_mods', suite.get('default_mods', ['PZSurvivorToolkit']))
@@ -38,7 +42,10 @@ def selection(args, catalog, options=None):
     if options.get('pack_lock') and not args.mods:
         locked = report.read_json(options['pack_lock'])
         mods = [row['id'] for row in locked['mods']]
-    overrides = dict(options.get('mod_sources', {}))
+    sources = options.get('mod_sources', {})
+    if not isinstance(sources, dict):
+        raise ValueError('options.mod_sources must contain a JSON object')
+    overrides = dict(sources)
     for value in args.mod_source:
         identifier, separator, path = value.partition('=')
         if not separator or not identifier or not Path(path).is_absolute():
@@ -131,16 +138,18 @@ def batch(args, catalog):
         interrupted = False
         print('START ' + job['id'], flush=True)
         try:
+            if not isinstance(plan.get('options', {}), dict) or not isinstance(job.get('options', {}), dict):
+                raise ValueError('Batch options must contain JSON objects')
             options = dict(plan.get('options', {}), **job.get('options', {}))
             if job.get('seed_job'):
                 options['seed_run'] = str(completed[job['seed_job']])
             mods = job.get('mods', plan.get('mods'))
-            if mods is not None and mods != 'selected' and (not isinstance(mods, list) or any(not isinstance(id, str) for id in mods)):
-                raise ValueError('Batch mods must be a list of Mod IDs or selected')
+            if mods is not None and mods not in ('selected', 'vanilla') and (not isinstance(mods, list) or not mods or any(not isinstance(id, str) for id in mods)):
+                raise ValueError('Batch mods must be a nonempty list of Mod IDs, selected or vanilla')
             if not isinstance(plan.get('resources', {}), dict) or not isinstance(job.get('resources', {}), dict):
                 raise ValueError('Batch resources must be objects')
             namespace = argparse.Namespace(suite=job['suite'], cases=job.get('case'), mode=job.get('mode', 'toolkit'),
-                kind=job.get('kind'), language=job.get('language'), mods='selected' if mods == 'selected' else ','.join(mods) if mods else None,
+                kind=job.get('kind'), language=job.get('language'), mods=mods if isinstance(mods, str) else ','.join(mods) if mods else None,
                 config=args.plan, mod_source=[], timeout=job.get('timeout', 900), ports=job.get('ports'),
                 resources=dict(plan.get('resources', {}), **job.get('resources', {})))
             selected = selection(namespace, catalog, options)
@@ -168,6 +177,8 @@ def batch(args, catalog):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    command = commands.add_parser('status', help='Show native stand owners, FIFO waiters and blocking reasons without launching the game')
+    command.add_argument('--json', action='store_true', help='Print the machine-readable admission snapshot')
     for name in ("prepare", "run"):
         command = commands.add_parser(name)
         command.add_argument("output", type=Path, help="Fresh isolated output directory")
@@ -175,7 +186,7 @@ def main(argv=None):
         command.add_argument("--kind", choices=("sp", "mp"))
         command.add_argument("--mode", choices=("toolkit", "native"), default="toolkit")
         command.add_argument("--cases", help="Comma-separated case IDs; omitted uses the suite default (all health cases for kind)")
-        command.add_argument("--mods", help="Comma-separated Mod IDs, or selected for project INI; omitted uses suite defaults")
+        command.add_argument("--mods", help="Comma-separated Mod IDs, selected for project INI, or vanilla for startup/native without production mods; omitted uses suite defaults")
         command.add_argument('--config', type=Path, help='JSON suite options with explicit dependency paths')
         command.add_argument('--mod-source', action='append', default=[], help='Explicit candidate MOD_ID=/absolute/mod/root; repeatable')
         command.add_argument('--world-template', type=Path, help='Copy a sealed prepared world into this fresh run; never launch the template itself')
@@ -219,6 +230,29 @@ def main(argv=None):
     command.add_argument('output', type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.command == 'status':
+            value = admission.status(legacy_lock=runner.LOCK)
+            if args.json:
+                print(json.dumps(value, indent=2))
+            else:
+                print('Running: ' + str(len(value['running'])))
+                for item in value['running']:
+                    print('  %s | PID %s%s | %s/%s/%s | %s | game PIDs %s' % (
+                        item['root'], item.get('pid', '?'), ' (owner exited)' if not item['owner_alive'] else '', item.get('suite') or '?',
+                        item.get('kind') or '?', item.get('mode') or '?',
+                        'exclusive' if item['budget']['exclusive'] else 'shared',
+                        ','.join(str(p['pid']) for p in item['processes']) or 'none'))
+                print('Waiting: ' + str(len(value['waiting'])))
+                for item in value['waiting']:
+                    print('  #%s %s | PID %s | %.0fs | %s | %s' % (
+                        item['position'], item['root'], item['pid'], item['wait_seconds'],
+                        'exclusive' if item['exclusive'] else 'shared', item['reason']))
+                print('Prepared port reservations: ' + str(len(value['prepared'])))
+                lock = value['legacy_lock']
+                print('Legacy lock: ' + ('exclusive' if lock['exclusive'] else 'shared/busy' if lock['busy'] else 'free'))
+                for limit in value['limits']:
+                    print('Note: ' + limit)
+            return 0
         catalog = report.read_json(CATALOG)
         catalog['suites'].update(adapters.definitions())
         if args.command == 'lock-pack':

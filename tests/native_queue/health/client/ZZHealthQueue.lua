@@ -95,6 +95,51 @@ Events.OnTick.Add(function()
   return spec.fn()
  end)
  if not ok then
+  for className,class in pairs({HealthPanelAction=HealthPanelAction,ISHealthPanel=ISHealthPanel,ISSplint=ISSplint,ISInventoryPaneContextMenu=ISInventoryPaneContextMenu}) do
+   for name,callback in pairs(class) do
+    if type(callback)=='function' and (className~='ISHealthPanel' and className~='ISInventoryPaneContextMenu'
+     or name=='checkItems' or name=='dropItemsOnBodyPart' or name=='doBodyPartContextMenu' or name=='getContainers'
+     or name=='applyBandage' or name=='transferIfNeeded') then
+     local known,filename=pcall(getFilenameOfClosure,callback)
+     print('[QUEUE_TEST] HEALTH_BINDING '..className..'.'..name..' source='..tostring(known and filename))
+    end
+   end
+  end
+  for owner,methods in pairs({ISInventoryTransferAction={'new','perform','transferItem'},ISInventoryTransferUtil={'newInventoryTransferAction','isPlayerCharacter','isCharacterGrabbingCorpseItem','isPlayerGrabbingCorpseItem'},luautils={'haveToBeTransfered','walkToContainer'}}) do
+   for _,name in ipairs(methods) do
+    local ok,source=pcall(getFilenameOfClosure,_G[owner][name])
+    print('[QUEUE_TEST] HEALTH_INVENTORY_BINDING '..owner..'.'..name..' source='..tostring(ok and source))
+   end
+  end
+  local carts=PZSurvivorToolkit.ActionQueueCarts
+  local compat=PZSurvivorToolkit.ActionQueueCompat
+  print('[QUEUE_TEST] HEALTH_INVENTORY_CART startupReady='..tostring(compat.isInstalled('SaucedCartsTransfers'))
+   ..' trusted='..tostring(carts and carts.install())..' containers='..tostring(compat.isInstalled('EURY_CONTAINERS'))
+   ..' currentApproved='..tostring(carts and carts.isTransferConstructor(ISInventoryTransferAction.new)))
+  for i=0,getLoadedLuaCount()-1 do
+   local path=getLoadedLua(i)
+   for _,name in ipairs({'ActionQueueCarts.lua','TransferRestrictions.lua','VisualUpdateQueue.lua','CartStateHandler.lua','/SaucedCarts/ContextMenu.lua'}) do
+    if path:find(name,1,true) then print('[QUEUE_TEST] HEALTH_LOAD '..i..' '..path);break end
+   end
+  end
+  for _,path in ipairs({'client/ISUI/ISInventoryPaneContextMenu.lua','shared/luautils.lua','shared/TimedActions/ISInventoryTransferUtil.lua'}) do
+   local reader=getGameFilesInput('media/lua/'..path);local hash,bytes=5381,0
+   if reader then
+    while bytes<=300000 do local line=reader:readLine();if not line then break end
+     bytes=bytes+#line+1;for i=1,#line do hash=(hash*33+string.byte(line,i))%4294967296 end;hash=(hash*33+10)%4294967296
+    end
+    reader:close()
+   end
+   print('[QUEUE_TEST] HEALTH_INVENTORY_SOURCE '..path..' hash='..hash..' bytes='..bytes)
+  end
+  print('[QUEUE_TEST] HEALTH_CONTAINER_GUARD '..tostring(PZSurvivorToolkit.ActionQueueFire.matchesContainerGetter(ISInventoryPaneContextMenu.getContainers)))
+  if LootSorter then
+   for _,entry in ipairs({{'client/LootSorter_CraftMenu.lua',2721161845},{'shared/LootSorter_Debug.lua',948729780}}) do
+    print('[QUEUE_TEST] HEALTH_QM_SOURCE '..entry[1]..' verified='..tostring(PZSurvivorToolkit.ActionQueueCompat.verifySources('Quartermaster',{entry})))
+   end
+   print('[QUEUE_TEST] HEALTH_QM_STATE hooks='..tostring(LootSorter._craftHooksAdded)..' wrapped='..tostring(LootSorter._getContainersWrapped)
+    ..' availability='..tostring(LootSorter.craftFromBoxes)..' crafting='..tostring(LootSorter._activelyCrafting)..' context='..tostring(LootSorter._craftContextUntil)..' now='..getTimestampMs())
+  end
   print('[QUEUE_TEST] HEALTH_DIAG current='..tostring(queue().current and queue().current.Type)..' native='..tostring(getPlayer():hasTimedActions()))
   for i,action in ipairs(queue().queue) do print('[QUEUE_TEST] HEALTH_QUEUE '..i..' '..action.Type..' started='..tostring(action:isStarted())) end
   print('[QUEUE_TEST] FAIL '..spec.name..' '..tostring(result));failures=failures+1

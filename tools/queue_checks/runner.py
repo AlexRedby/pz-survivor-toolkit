@@ -9,6 +9,7 @@ import time
 
 from .report import events, read_json, verify_manifest, write_json
 from . import adapters, admission, pack, worlds
+from .native import font_preload
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
@@ -107,7 +108,7 @@ def run(root, resource_wait=300):
                 raise ValueError("VOIP must be disabled before launch: " + role)
             loader = []
             if "ZombieBuddy" in selection["mods"]:
-                loader = ["-javaagent:" + str(game / "ZombieBuddy.jar") + "=config_dir=" + str(cache / "zombie-buddy") + ",policy=deny-new,verbosity=1"]
+                loader = ["-javaagent:" + str(game / "ZombieBuddy.jar") + "=config_dir=" + str(cache / "zombie-buddy") + ",policy=deny-new,verbosity=1" + (font_preload(cache, selection) if role != "server" else "")]
             if role == "server":
                 settings = (cache / "Server" / (runtime["server_name"] + ".ini")).read_text()
                 if not re.search(r"^VoiceEnable=false$", settings, re.M):

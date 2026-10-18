@@ -2,7 +2,8 @@ local root=assert(arg[1])
 isClient=function()return false end
 local function source(side,name) return assert(loadfile(root..'/'..side..'/'..name..'.lua'))() end
 AllCases=source('shared','QueueHealthCases')
-assert(#AllCases==28)
+assert(#AllCases==42)
+getActivatedMods=function() return {contains=function(_,id)return id=="MiniHealthPlus" end} end
 local TestSelection={kind='sp',mode='toolkit',cases={}}
 for _,spec in ipairs(AllCases) do TestSelection.cases[#TestSelection.cases+1]=spec.id end
 require=function(name)
@@ -47,7 +48,7 @@ end
 instanceof=function(item,kind) return kind=='InventoryContainer' and item.inner~=nil end
 function body()
  local result={}
- function result:RestoreToFullHealth() self.covered=false;self.stitch=false;self.shards=false;self.bullet=false;self.wash=false;self.splint=0;self.alcohol=0;self.comfrey=0;self.garlic=0;self.plantain=0;self.injured=false;self.deep=false;self.fracture=0;self.scratchFlag=false;self.scratchTime=0 end
+ function result:RestoreToFullHealth() self.covered=false;self.stitch=false;self.shards=false;self.bullet=false;self.wash=false;self.splint=0;self.alcohol=0;self.comfrey=0;self.garlic=0;self.plantain=0;self.injured=false;self.deep=false;self.fracture=0;self.scratchFlag=false;self.scratchTime=0;self.bandageLife=0 end
  result:RestoreToFullHealth()
  function result:getIndex() return 0 end
  function result:getType() return {
@@ -62,6 +63,7 @@ function body()
  function result:getScratchTime() return self.scratchTime end
  function result:getCutTime() return 0 end
  function result:bandaged() return self.covered end
+ function result:getBandageLife() return self.bandageLife end
  function result:stitched() return self.stitch end
  function result:haveGlass() return self.shards end
  function result:haveBullet() return self.bullet end
@@ -108,7 +110,7 @@ function player(name)
  function current:setLastX() end;function current:setLastY() end;function current:setLastZ() end
  function current:setCurrentSquareFromPosition() end
  function current:setAlreadyReadPages() end
- function current:getBodyDamage() local target=self.body;return {getBodyPart=function() return target end,SetBandaged=function(_,_,flag) target.covered=flag;if flag then target.scratchFlag=false end end,setBodyPartsLastState=function() end} end
+ function current:getBodyDamage() local target=self.body;return {getBodyPart=function() return target end,SetBandaged=function(_,_,flag,life) target.covered=flag;target.bandageLife=life;if flag then target.scratchFlag=false end end,setBodyPartsLastState=function() end} end
  return current
 end
 function addVisual(actor,kind)
@@ -116,7 +118,7 @@ function addVisual(actor,kind)
 end
 function fixtureVisuals(actor)
  local target=actor.body
- if target.covered then addVisual(actor,'Base.Bandage_LeftLowerArm');addVisual(actor,'Base.Bandage_LeftLowerArm') end
+ if target.covered then local kind='Base.Bandage_LeftLowerArm'..(target.bandageLife<=0 and '_Blood' or '');addVisual(actor,kind);addVisual(actor,kind) end
  if target.scratchFlag then addVisual(actor,'Base.Wound_LForearm_Scratch_Male') end
 end
 function removeVisual(actor,kind)
@@ -128,10 +130,10 @@ end
 function medicalVisualEffect(actor,handler)
  if handler=='HApplyBandage' then
   if actor.body.scratchFlag then removeVisual(actor,'Base.Wound_LForearm_Scratch_Male') end
-  actor.body.covered=true;actor.body.scratchFlag=false
+  actor.body.covered=true;actor.body.bandageLife=20;actor.body.scratchFlag=false
   addVisual(actor,'Base.Bandage_LeftLowerArm');addVisual(actor,'Base.Bandage_LeftLowerArm')
  elseif handler=='HRemoveBandage' then
-  removeVisual(actor,'Base.Bandage_LeftLowerArm');removeVisual(actor,'Base.Bandage_LeftLowerArm');actor.body.covered=false
+  local kind='Base.Bandage_LeftLowerArm'..(actor.body.bandageLife<=0 and '_Blood' or '');removeVisual(actor,kind);removeVisual(actor,kind);actor.body.covered=false
   if actor.body.scratchTime>0 then actor.body.scratchFlag=true;addVisual(actor,'Base.Wound_LForearm_Scratch_Male') end
  end
 end
@@ -183,20 +185,24 @@ for i,spec in ipairs(Cases) do
     if item.inner then local value=find(item.inner,id);if value then return value end end
    end
   end
-  local cancelled=spec.cancel or (spec.guard and spec.guard~='helper') or spec.expanded
+  local cancelled=spec.cancel or (spec.guard and spec.guard~='helper') or spec.expanded or spec.replaceStop
   if spec.guard=='missing' or spec.expanded=='missing' then
    Authority.mutate(actor,spec.id,'missing')
    assert(not find(actor.inventory,prep.items.bandage),'explicit missing ID remained')
    assert(not pcall(Authority.mutate,actor,spec.id,'missing'),'duplicate mutation accepted')
-  elseif not cancelled then
+  elseif not cancelled or spec.replaceStop=='apply' then
    for _,entry in ipairs(spec.supply or {}) do
     local item=find(actor.inventory,prep.items[entry[1]])
-    if entry[3]=='remove' then item.owner:Remove(item)
+    if not cancelled and entry[3]=='remove' then item.owner:Remove(item)
     elseif entry[3]=='use' then item.uses=item.uses-1
     elseif entry[3]=='fluid' then item.fluid.amount=item.fluid.amount-0.15 end
    end
    for kind,count in pairs(spec.output or {}) do for n=1,count do actor.inventory:AddItem(kind) end end
    local target=actor.body
+   if spec.replace then
+    medicalVisualEffect(actor,'HRemoveBandage')
+    if not spec.replaceStop then medicalVisualEffect(actor,'HApplyBandage') end
+   end
    if spec.handler=='HApplyBandage' or spec.handler=='HRemoveBandage' then medicalVisualEffect(actor,spec.handler) end
    if spec.handler=='HApplyBandage' then target.covered=true
    elseif spec.handler=='HRemoveBandage' then target.covered=false
@@ -226,6 +232,19 @@ for i,spec in ipairs(Cases) do
    assert(not Authority.verify(actor,spec.id).ok,'deleted unrelated original ID was ignored');actor.inventory:AddItem(front)
    local third=addVisual(actor,'Base.Bandage_LeftLowerArm')
    assert(not Authority.verify(actor,spec.id).ok,'third native bandage visual passed exact count2 receipt');actor:getWornItems():remove(third);actor.inventory:Remove(third)
+  end
+  if spec.id=='miniReplace' or spec.id=='miniReplaceStopApply' then
+   local dirty;for _,value in ipairs(actor.inventory.items) do if value.kind=='Base.BandageDirty' then dirty=value end end
+   assert(dirty,'replacement did not model native UseAndSync dirty output')
+   actor.inventory:Remove(dirty);assert(not Authority.verify(actor,spec.id).ok,'replacement accepted missing native dirty output');actor.inventory:AddItem(dirty)
+   local extra=actor.inventory:AddItem('Base.Bandage');assert(not Authority.verify(actor,spec.id).ok,'replacement accepted surviving clean oldBandage before UseAndSync');actor.inventory:Remove(extra)
+   local bandage=find(actor.inventory,prep.items.bandage)
+   if spec.replaceStop then
+    actor.body.covered=true;assert(not Authority.verify(actor,spec.id).ok,'cancelled apply rolled back completed removal');actor.body.covered=false
+    actor.inventory:Remove(bandage);assert(not Authority.verify(actor,spec.id).ok,'cancelled apply consumed future exact bandage');actor.inventory:AddItem(bandage)
+   else
+    actor.body.bandageLife=0;assert(not Authority.verify(actor,spec.id).ok,'replace accepted dirty final bandage');actor.body.bandageLife=20
+   end
   end
   if spec.id=='expandedCancel' then
    local needle=find(actor.inventory,prep.items.needle);local original=needle:getContainer()
@@ -538,6 +557,7 @@ do
   function actor:isPlayerMoving()return false end;function actor:pressedMovement()return false end
   function actor:tooDarkToRead()return false end;function actor:isTimedActionInstant()return false end
   function actor:startReceivingBodyDamageUpdates()end
+  function actor:stopReceivingBodyDamageUpdates()end
   function actor:getBodyDamageRemote()return self:getBodyDamage()end
  end
  getPlayer=function()return doctor end
@@ -598,3 +618,201 @@ do
  isServer=function()return false end
 end
 print('PASS actual native disconnect60s observation before owned cleanup; wrong action/patient/supply/front/tail rejected; exact authority receipts retained and pre-cleanup stall remains explicit')
+
+-- Headless panels never run native UI teardown; the fixture owns their exact patient subscription.
+for _,mode in ipairs({'native','toolkit'}) do for _,disconnect in ipairs({false,true}) do
+ local doctor,patientActor=player('doctor'),player('patient')
+ local starts,stops,now=0,0,0
+ local currentPanel,observer
+ local spec={id='subscription',handler='HApplyBandage',remote=disconnect and 'removed' or nil}
+ local selection={mode=mode,cases={spec},skipReason=function()end}
+ local authority={position=function(actor,x,y,z)actor:teleportTo(x,y,z)end,clinicalReady=function()return true end}
+ doctor:teleportTo(10.5,10.5,0);patientActor:teleportTo(11.5,10.5,0)
+ for _,actor in ipairs({doctor,patientActor}) do
+  function actor:getPlayerNum()return 0 end
+  function actor:getX()return self.x end;function actor:getY()return self.y end;function actor:getZ()return self.z end
+  function actor:getCurrentSquare()return {getX=function()return math.floor(actor.x)end,getY=function()return math.floor(actor.y)end,getZ=function()return actor.z end}end
+  function actor:isPlayerMoving()return false end;function actor:pressedMovement()return false end
+  function actor:tooDarkToRead()return false end;function actor:isTimedActionInstant()return false end
+  function actor:getBodyDamageRemote()return self:getBodyDamage()end
+ end
+ function doctor:startReceivingBodyDamageUpdates(patient)assert(patient==patientActor);starts=starts+1 end
+ function doctor:stopReceivingBodyDamageUpdates(patient)assert(patient==patientActor,'teardown followed reassigned panel');stops=stops+1 end
+ local online={doctor,patientActor}
+ getOnlinePlayers=function()return values(online)end;getPlayer=function()return doctor end;getTimestampMs=function()return now end
+ local front=doctor.inventory:AddItem('Base.BookCarpentry1');local tail=doctor.inventory:AddItem('Base.BookFirstAid1')
+ local prep={ok=true,patient='patient',items={},body=0,readiness={},front=front.id,frontPages=1,tail=tail.id,
+  spawn={x=10.5,y=10.5,z=0},patientSpawn={x=11.5,y=10.5,z=0}}
+ local q={queue={}};function q:indexOf(target)for i,value in ipairs(self.queue)do if value==target then return i end end end
+ local context={hideAndChildren=function()end}
+ ISHealthPanel={new=function(_,patient)return {character=patient,initialise=function()end,
+  setOtherPlayer=function(self,doctor)self.otherPlayer=doctor end,
+  tryStopReceivingBodyDamageUpdates=function()error('fixture changed native panel semantics')end,
+  doBodyPartContextMenu=function(self)
+   currentPanel=self;context.options={{target={Type='HApplyBandage'},onSelect=function()q.queue[#q.queue+1]={Type='HealthPanelAction'}end}}
+  end}end}
+ ISInventoryPaneContextMenu={onLiteratureItems=function(items)q.queue[#q.queue+1]={Type='ISReadABook',item=items[1],getDuration=ISReadABook.getDuration,minutesPerPage=2.0}end}
+ getPlayerContextMenu=function()return context end
+ Events={OnPlayerUpdate={Add=function(fn)observer=fn end,Remove=function(fn)assert(fn==observer);observer=nil end}}
+ PZSurvivorToolkit={Settings={actionQueue=function()return mode=='toolkit'end},ActionQueue={},
+  ActionQueuePolicy={setDiagnostics=function()end,inspect=function()return {}end},
+  ActionQueueDefinitions={describe=function()return {title='treatment',target='patient'}end},
+  ActionQueueOperations={run=function(fn,...)return fn(...)end}}
+ require=function(name)if name=='QueueHealthSelection'then return selection elseif name=='QueueHealthAuthority'then return authority end;return {}end
+ local stages,prepared,baselines,receipts={},{},{},{}
+ source('client','QueueHealthScenarios')(function(_,fn)stages[#stages+1]=fn end,function()return q end,function()return #q.queue==0 end,
+  {kind='mp',language='EN',ids=function()return {}end,preparations=prepared,baselines=baselines,receipts=receipts,
+   send=function(command,args)if command=='Prepare'then prepared[args.phase]=prep
+    elseif command=='Baseline'then baselines[args.phase]={ok=true}
+    elseif command=='Verify'then receipts[args.phase]={ok=true,front=front.id,tail=tail.id}
+    else error(command)end end})
+ stages[1]();local run=stages[2]
+ assert(run()==false and run()==false and run()==false and run()==false);now=500;assert(run()==false);now=501;assert(run()==false)
+ assert(starts==1 and stops==0 and currentPanel.otherPlayer==doctor,'subscription did not stay active during treatment')
+ currentPanel.character=doctor
+ if disconnect then online={doctor} end
+ assert(run()==false and stops==(disconnect and 1 or 0),'remote absence did not release subscription immediately')
+ q.queue={};assert(run()==false and stops==1 and not observer,'case drain did not release subscription')
+ now=1502;assert(run()==false);assert(run().status=='passed');stages[3]()
+ assert(starts==1 and stops==1 and currentPanel.otherPlayer==doctor,'cleanup repeated stop or mutated native panel')
+end end
+print('PASS actual fixture native/toolkit subscription lifecycle, immediate disconnect stop, exact reassigned patient reference and idempotent cleanup')
+
+-- Native MP handmade splint can consume both inputs and clear the unread tail before Done.
+-- Keep that observed control outcome separate from toolkit guarantees and ready-made splints.
+for _,scenario in ipairs({
+ {kind='mp',mode='native',case='splintDrop',allow=true},
+ {kind='mp',mode='native',case='splintDrop',allow=true,complete=true},
+ {kind='mp',mode='toolkit',case='splintDrop'},
+ {kind='sp',mode='native',case='splintDrop'},
+ {kind='mp',mode='native',case='readySplintDrop'},
+ {kind='mp',mode='native',case='splintApply',allow=true},
+ {kind='mp',mode='native',case='splintApply',allow=true,complete=true},
+ {kind='mp',mode='toolkit',case='splintApply'},
+ {kind='sp',mode='native',case='splintApply'},
+ {kind='mp',mode='native',case='readySplint'},
+}) do
+ require=AuthorityRequire
+ select(scenario.kind,scenario.mode,{scenario.case})
+ isServer=function()return scenario.kind=='mp'end
+ local doctor,patientActor=player('client1'),player('client2')
+ getOnlinePlayers=function()return values({doctor,patientActor})end
+ local authority=source('shared','QueueHealthAuthority')
+ authority.setup(doctor);if scenario.kind=='mp'then authority.setup(patientActor)else patientActor=doctor end
+ local prep=authority.prepare(doctor,scenario.case)
+ if scenario.kind=='sp'then fixtureVisuals(doctor)end
+ authority.baseline(doctor,scenario.case)
+ local front,tail,consumed
+ consumed={}
+ for i=#doctor.inventory.items,1,-1 do local item=doctor.inventory.items[i]
+  if item.id==prep.front then front=item;front.pages=100
+  elseif item.id==prep.tail then tail=item
+  else for _,id in pairs(prep.items)do if item.id==id then consumed[#consumed+1]=item;doctor.inventory:Remove(item)end end end
+ end
+ patientActor.body.splint=0.5;tail.pages=99
+ if scenario.allow then
+  tail.pages=98;assert(not authority.verify(doctor,scenario.case).ok,'native handmade control accepted extra tail loss');tail.pages=99
+  front.pages=99;assert(not authority.verify(doctor,scenario.case).ok,'native handmade control accepted front loss');front.pages=100
+  patientActor.body.splint=0;assert(not authority.verify(doctor,scenario.case).ok,'native handmade control accepted missing clinical effect');patientActor.body.splint=0.5
+  doctor.inventory:AddItem(consumed[1]);assert(not authority.verify(doctor,scenario.case).ok,'native handmade control accepted unconsumed exact supply');doctor.inventory:Remove(consumed[1])
+  doctor.inventory:Remove(tail);local replacement=doctor.inventory:AddItem('Base.BookFirstAid1');replacement.pages=99
+  assert(not authority.verify(doctor,scenario.case).ok,'native handmade control accepted replaced tail ID')
+  doctor.inventory:Remove(replacement);doctor.inventory:AddItem(tail)
+  if scenario.complete then tail.pages=100 end
+  local receipt=authority.verify(doctor,scenario.case);assert(receipt.ok,receipt.error)
+  assert(receipt.tail==prep.tail and receipt.outcome.tailCompleted==(scenario.complete==true) and receipt.outcome.tailPages==(scenario.complete and 100 or 99)
+   and receipt.outcome.tailTotal==100 and receipt.outcome.body.splint==0.5,'native handmade tail degradation was hidden')
+ else
+  assert(not authority.verify(doctor,scenario.case).ok,'unobserved native case or toolkit accepted lost tail')
+  tail.pages=100;local receipt=authority.verify(doctor,scenario.case);assert(receipt.ok,receipt.error)
+  assert(receipt.outcome.tailCompleted==true and receipt.outcome.tailPages==100,'complete tail was misreported')
+ end
+end
+isServer=function()return false end
+print('PASS exact native MP handmade splint tail degradation; toolkit, SP and ready-made controls stay strict; clinical, consumed IDs, front and tail identity remain checked')
+
+-- Inventory context-menu medicine is always self care, even while the MP session has a peer patient.
+do
+ require=AuthorityRequire
+ select('mp','toolkit',{'inventoryBandage'})
+ isServer=function()return true end
+ local first,second=player('client1'),player('client2')
+ getOnlinePlayers=function()return values({first,second})end
+ local authority=source('shared','QueueHealthAuthority');authority.setup(first);authority.setup(second)
+ for _,doctor in ipairs({first,second})do
+  local prep=authority.prepare(doctor,'inventoryBandage')
+  assert(prep.patient==doctor.name and prep.patientSpawn.x==prep.spawn.x,'MP inventory care targeted the session peer')
+  assert(doctor.body.scratchFlag,'actual doctor wound was not prepared')
+  authority.baseline(doctor,'inventoryBandage')
+  for _,entry in ipairs(doctor.inventory.items)do if entry.id==prep.items.bandage then doctor.inventory:Remove(entry);break end end
+  doctor.body.covered=true
+  for _,entry in ipairs(doctor.inventory.items)do if entry.id==prep.front or entry.id==prep.tail then entry.pages=100 end end
+  local receipt=authority.verify(doctor,'inventoryBandage');assert(receipt.ok,receipt.error)
+  authority.finish(doctor)
+ end
+ isServer=function()return false end
+end
+print('PASS both MP actors inventory medicine prepares and verifies exact local patient; connected peer remains outside clinical receipt')
+
+-- Exercise the actual scenario path with local BodyDamage and a direct inventory producer.
+for _,caseID in ipairs({'inventoryBandage','miniReplaceStopRemove','miniReplaceStopApply'})do
+for _,mode in ipairs({'native','toolkit'})do
+ for _,kind in ipairs({'sp','mp'})do
+ if caseID=='inventoryBandage' or mode=='toolkit' and kind=='sp' then
+  local actor=player('client1');actor.x,actor.y,actor.z=10.5,10.5,0;actor.body.injured=true;actor.body.scratchFlag=true
+  function actor:getPlayerNum()return 0 end
+  function actor:getX()return self.x end;function actor:getY()return self.y end;function actor:getZ()return self.z end
+  function actor:getCurrentSquare()return {getX=function()return 10 end,getY=function()return 10 end,getZ=function()return 0 end}end
+  function actor:isPlayerMoving()return false end;function actor:pressedMovement()return false end
+  function actor:tooDarkToRead()return false end;function actor:isTimedActionInstant()return false end
+  function actor:startReceivingBodyDamageUpdates()error('self-care subscribed to remote body damage')end
+  function actor:getBodyDamageRemote()error('self-care read remote body damage')end
+  getPlayer=function()return actor end
+  local front,tail,bandage=actor.inventory:AddItem('Base.BookCarpentry1'),actor.inventory:AddItem('Base.BookFirstAid1'),actor.inventory:AddItem('Base.Bandage')
+  local prep={ok=true,items={bandage=bandage.id},front=front.id,tail=tail.id,frontPages=1,body=0,patient=actor.name,
+   readiness={},spawn={x=10.5,y=10.5,z=0},patientSpawn={x=10.5,y=10.5,z=0}}
+  local q={queue={}};function q:indexOf(target)for i,value in ipairs(self.queue)do if target==value then return i end end end
+  local calls,observer,now,cancels=0,nil,0,0;local operation={};getTimestampMs=function()return now end
+  ISReadABook={getDuration=function()end}
+  ISInventoryPaneContextMenu={onLiteratureItems=function(items)q.queue[#q.queue+1]={Type='ISReadABook',item=items[1],getDuration=ISReadABook.getDuration,minutesPerPage=2.0}end,
+   applyBandage=function(item,body,index)
+    calls=calls+1;assert(item==bandage and body==actor.body and index==0,'direct inventory producer lost exact actor/body/item')
+    q.queue[#q.queue+1]={Type='ISApplyBandage',item=item,bodyPart=body}
+   end}
+  local context={hideAndChildren=function()end};ISContextMenu={get=function()return context end}
+  SandboxVars={MHP={EnableReplaceBandage=false}};MHP_SB_IsReplaceBandageEnabled=function()return SandboxVars.MHP.EnableReplaceBandage end
+  getFilenameOfClosure=function()return 'MiniHealthTreatments.lua'end
+  TwisTonFire_MHP={handle={player=actor,playerIndex=0},MiniHealthTreatment={doBodyPartContextMenu=function(_,body,ctx)
+   calls=calls+1;assert(body==actor.body and MHP_SB_IsReplaceBandageEnabled(),'replacement producer missing real setting or exact body')
+   ctx.options={{target={Type='HReplaceBandage',perform=function()end},param1='Base.Bandage',onSelect=function()q.queue[#q.queue+1]={Type='HealthPanelAction',toolkitQueueOperation=operation}end}}
+  end}}
+  ISHealthPanel={new=function(_,patient)return {character=patient,initialise=function()end,doBodyPartContextMenu=function()error('inventory case invoked health-panel menu')end}end}
+  Events={OnPlayerUpdate={Add=function(fn)observer=fn end,Remove=function(fn)assert(fn==observer);observer=nil end}}
+  PZSurvivorToolkit={Settings={actionQueue=function()return mode=='toolkit'end},ActionQueue={cancelOperation=function(_,child)assert(child.Type=='ISApplyBandage' and child.doIt==(caseID=='miniReplaceStopApply'));cancels=cancels+1;return true end},ActionQueuePolicy={setDiagnostics=function()end,inspect=function()return {targets={[actor.body]=true}}end},
+   ActionQueueOperations={run=function(fn,...)return fn(...)end},ActionQueueDefinitions={describe=function()return {title='bandage',target='self'}end}}
+  local spec;for _,entry in ipairs(AllCases)do if entry.id==caseID then spec=entry end end
+  local authority={position=function()end,clinicalReady=function()return true end}
+  local selection={mode=mode,cases={spec},skipReason=function()end}
+  require=function(name)if name=='QueueHealthSelection'then return selection elseif name=='QueueHealthAuthority'then return authority end;return {}end
+  local stages,prepared,baselines={},{},{}
+  source('client','QueueHealthScenarios')(function(_,fn)stages[#stages+1]=fn end,function()return q end,function()return #q.queue==0 end,
+   {kind=kind,language='EN',ids=function()return {username='client1'}end,preparations=prepared,baselines=baselines,
+    send=function(command,args)if command=='Prepare'then prepared[args.phase]=prep elseif command=='Baseline'then baselines[args.phase]={ok=true}else error(command)end end})
+  stages[1]();local run=stages[2]
+  assert(run()==false and run()==false and run()==false);now=500;assert(run()==false);assert(run()==false)
+  assert(calls==1 and #q.queue==3 and q.queue[2].Type==(spec.inventory and 'ISApplyBandage' or 'HealthPanelAction') and observer,'scenario did not preserve native front/treatment/tail queue')
+  if spec.replaceStop then
+   local meta={stop=function()end,complete=function()end};meta.__index=meta
+   local child=setmetatable({Type='ISApplyBandage',doIt=spec.replaceStop=='apply',toolkitQueueOperation=operation,
+    action={isStarted=function()return true end,finished=function()return false end}},meta)
+   actor.body.covered=spec.replaceStop=='remove';q.queue={child,q.queue[3]};observer(actor)
+   assert(run()==false and cancels==1,'actual replacement stage observer did not cancel exact active group')
+  end
+  stages[3]();assert(SandboxVars.MHP.EnableReplaceBandage==false,'fixture did not restore prior MiniHealthPlus setting')
+ end
+ end
+end
+end
+print('PASS actual SP/MP native/toolkit inventory scenario calls exact direct producer, local body, no remote subscription and native book timing')
+
+print('PASS actual MiniHealthPlus replacement scenario enables and restores sandbox option; cancels exact active removal/apply group after native phase state')

@@ -6,6 +6,7 @@ import shutil
 import tempfile
 from types import SimpleNamespace
 import unittest
+import zipfile
 from unittest.mock import patch
 
 
@@ -18,7 +19,16 @@ class NativeSnapshotTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
+        disk = patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=100 * 1024**3))
+        disk.start()
+        self.addCleanup(disk.stop)
         self.root = Path(self.directory.name).resolve()
+        state = patch.object(admission, 'STATE', self.root / 'admission-state')
+        state.start()
+        self.addCleanup(state.stop)
+        sample = patch.object(admission.host, 'sample', return_value={'processes': []})
+        sample.start()
+        self.addCleanup(sample.stop)
         self.project, self.game, self.jdk = [self.root / name for name in ("project", "game", "jdk")]
         for relative in ("projectzomboid.jar", "media/lua/shared/native.lua"):
             self.write(self.game / relative, "native input")
@@ -57,6 +67,81 @@ class NativeSnapshotTests(unittest.TestCase):
         selection = dict(self.selection, **changes)
         return native.prepare(self.project, self.root / name, self.game, self.jdk, selection)
 
+    def test_disk_shortage_refuses_before_profile_copy_compile_or_port_reservation(self):
+        with patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=1)), \
+             patch.object(native.shutil, 'copytree') as copy, patch.object(admission, 'allocate_ports') as ports:
+            with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
+                self.prepare(ports_auto=True)
+        self.assertFalse((self.root / 'run').exists())
+        copy.assert_not_called()
+        ports.assert_not_called()
+        self.compile_mock.assert_not_called()
+
+    def test_disk_estimate_counts_each_role_and_sparse_file_logical_size(self):
+        large = self.project / 'Toolkit/42/sparse.dat'
+        with large.open('wb') as stream:
+            stream.truncate(8 * 1024**2)
+        with patch.object(admission, 'require_disk', wraps=admission.require_disk) as check, \
+             patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=1)):
+            with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
+                self.prepare(kind='mp', clients=2, languages=['EN', 'RU'])
+        args = check.call_args_list[0].args
+        self.assertEqual(args[1], 3)
+        self.assertGreater(args[2], 3 * 8 * 1024**2)
+        self.assertFalse((self.root / 'run').exists())
+
+    def test_disk_is_rechecked_before_next_role(self):
+        with patch.object(admission.shutil, 'disk_usage', side_effect=[SimpleNamespace(free=100 * 1024**3),
+                 SimpleNamespace(free=100 * 1024**3), SimpleNamespace(free=1)]):
+            with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
+                self.prepare(kind='mp', clients=2, languages=['EN', 'RU'])
+        self.assertTrue((self.root / 'run/server').is_dir())
+        self.assertFalse((self.root / 'run/client1').exists())
+        self.compile_mock.assert_not_called()
+
+    def test_disk_is_rechecked_after_fixture_staging(self):
+        def stage(project, output, game, jdk, selection, locations, runtime):
+            admission.shutil.disk_usage.return_value = SimpleNamespace(free=1)
+        adapter = SimpleNamespace(__file__=__file__, validate=lambda _: None, sources=lambda *_: [],
+                                  definitions=lambda: {'health': {}}, stage=stage)
+        with patch.object(native.adapters, 'get', return_value=adapter):
+            with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
+                self.prepare()
+        self.assertEqual(self.compile_mock.call_count, 1)
+        self.assertFalse((self.root / 'run/selection.json').exists())
+
+    def test_font_preload_is_explicit_and_uses_only_selected_snapshot_jar(self):
+        cache = self.root / 'owned client'
+        selection = dict(self.selection, mods=['ZombieBuddy', 'PZToolkitJavaPatches'],
+                         options={'preload_toolkit_fonts': True})
+        layer = cache / 'mods/PZToolkitJavaPatches/42'
+        metadata = ('id=PZToolkitJavaPatches\njavaPkgName=net.alexredby.pztoolkitjavapatches\n'
+                    'javaJarFile=media/java/PZToolkitJavaPatches.jar\n')
+        self.write(layer / 'mod.info', metadata)
+        jar = layer / 'media/bootstrap/PZToolkitFonts.jar'
+        jar.parent.mkdir(parents=True)
+        with zipfile.ZipFile(jar, 'w') as archive:
+            archive.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\r\nZB-Preload: true\r\n\r\n')
+        self.assertEqual(native.font_preload(cache, selection),
+                         ',patches_jar=' + str(jar) + ':net.alexredby.pztoolkitbootstrap')
+        self.write(layer / 'media/java/PZToolkitJavaPatches.jar', 'ordinary mod jar')
+        approvals = native._approvals(cache, ['PZToolkitJavaPatches'])
+        self.assertEqual([row['jar_hash'] for row in approvals], [native.sha256(layer / 'media/java/PZToolkitJavaPatches.jar')])
+        self.assertEqual(native.font_preload(cache, dict(selection, options={})), '')
+        for value in ('true', 1, None):
+            with self.assertRaisesRegex(ValueError, 'boolean'):
+                native.font_preload(cache, dict(selection, options={'preload_toolkit_fonts': value}))
+        with self.assertRaisesRegex(ValueError, 'requires selected'):
+            native.font_preload(cache, dict(selection, mods=['ZombieBuddy']))
+        self.write(layer / 'mod.info', metadata.replace('pztoolkitjavapatches', 'wrongpackage'))
+        with self.assertRaisesRegex(ValueError, 'metadata'):
+            native.font_preload(cache, selection)
+        self.write(layer / 'mod.info', metadata)
+        with zipfile.ZipFile(jar, 'w') as archive:
+            archive.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\n')
+        with self.assertRaisesRegex(ValueError, 'manifest'):
+            native.font_preload(cache, selection)
+
     def test_fresh_snapshot_pins_sources_configs_mods_and_compiler_output(self):
         output = self.prepare()
         self.assertEqual(self.compile_mock.call_args.args[0][0], str(self.jdk / "bin/javac"))
@@ -80,6 +165,12 @@ class NativeSnapshotTests(unittest.TestCase):
         self.write(original, "changed after preparation")
         self.assertNotEqual(source[str(original)], native.sha256(original))
         self.assertNotEqual(copied.read_bytes(), original.read_bytes())
+
+    def test_source_overrides_reject_invalid_types_and_relative_paths(self):
+        for sources in ([], False, {'PZSurvivorToolkit': None}, {'PZSurvivorToolkit': []},
+                        {'PZSurvivorToolkit': 1}, {'PZSurvivorToolkit': 'relative/path'}):
+            with self.subTest(sources=sources), self.assertRaises(ValueError):
+                native._locations(self.project, [], ['PZSurvivorToolkit'], sources)
 
     def test_empty_common_layer_has_native_animation_directories_only_in_snapshot(self):
         source = self.project / "Toolkit/common"

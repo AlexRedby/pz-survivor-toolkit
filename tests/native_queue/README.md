@@ -39,6 +39,23 @@ python3 tools/check_action_queue.py run /tmp/pz-toolkit-fresh \
 
 The default suite is health and default mod set is only `PZSurvivorToolkit`. Use `--mods selected --workshop /path/to/workshop/content/108600` for the project INI; repeat `--workshop` for other explicit installed roots. Missing/ambiguous Mod IDs fail. Required Java patch artifacts must already be built using `tools/prepare_install.py`.
 
+For startup diagnostics, use `--suite startup --cases loaded --kind sp|mp`. This one-client smoke stops after native game start and a living player on a loaded square, without gameplay fixtures or animal/trailer actions. It retains the shared microphone/display preflight, source/snapshot checks, full log audit and owned-process cleanup. A functional load pass does not accept engine errors. MP supports compatible `--world-template` copies; SP currently requires a fresh world and rejects templates explicitly.
+
+```sh
+python3 tools/check_action_queue.py run /tmp/startup-vanilla-fresh \
+  --game "$PZ_GAME" --jdk "$PZ_JDK" --suite startup --kind sp \
+  --mode native --mods vanilla
+python3 tools/check_action_queue.py run /tmp/startup-pack-fresh \
+  --game "$PZ_GAME" --jdk "$PZ_JDK" --suite startup --kind mp \
+  --pack-lock /tmp/selected-pack.lock.json --world-template /tmp/prepared-world
+```
+
+For the trusted local Java Patches font candidate, add `"preload_toolkit_fonts": true` to config/job options. This explicitly appends the documented `patches_jar=<sealed selected fonts JAR>:net.alexredby.pztoolkitbootstrap` option to the client's existing single ZombieBuddy agent; both mods must be selected and ordinary mod metadata and the separate font bootstrap manifest must match. It does not write an unsigned entry into the signed preload cache. Omit it for the ordinary-load control. Use a new prepared snapshot when changing this option.
+
+`--mods vanilla` is restricted to startup/native and enables only the test helper, with no production mods or ZombieBuddy agent. Omitting `--mods` retains suite defaults. The pack plan's `startup` set runs only this load check; its gameplay sets remain independent.
+
+Prepared MP worlds retain their original whitelist. Startup defaults to `client1` / `smoke-local-only`; supply the fixture's existing credentials through `--config` or job options as `{"startup_connection":{"username":"client1","password":"isolated-native-only"}}` for a world created by the grouped animal fixture. A single-case animal fixture instead uses username `animal-fixture`. This changes the test connection only; it does not reset the saved whitelist or character.
+
 Registered stand suites are `crafting-plans`, `shared-wishlist`, `animal-trailer`, `video-recording`, `item-tags`, `wooden_cart_motion` and `wooden_cart_multiplayer`. Compatible crafting cases can share a lifecycle in `ui -> crafting -> alternatives` order; Wishlist supports `visual -> standalone`, with a real separate process restart for `reload`. Select any crafting subset with `--cases ui,crafting,alternatives`; each selected case retains its assertions and requires joint cleanup before the next. Animals support the fixed-patch subset `equipment-fixed,ghost,timer-starved,combined-starved` or timer-fixed subset `timer-shared,combined-shared` in one-client MP; incompatible production/JAR environments and missing-patch controls stay separate. Other scenarios use fresh lifecycles; omitted `--cases` selects the first case. Kind, client count, language and mod defaults come from its adapter. `matrix` lists every supported case and unavailable queue controls. Readiness means an adapter is installed, not that a native case passed. The medical event/receipt contract remains unchanged; other suites verify their exact preserved markers and authoritative effects.
 
 Pass suite resources as a JSON object with `--config FILE`: video needs absolute `ffmpeg`/`ffprobe`; animals need `patch_jar`; cart captures need those three plus explicit candidate `mod_sources` and SP `mesh_fbx`. Item tags need Toolkit with the documented ItemTags/TagVisuals APIs (now present in main); use an explicit candidate when testing another revision. `--mod-source MOD_ID=/absolute/mod/root` explicitly selects one candidate instead of the checkout/Workshop. These paths and bytes are recorded; no installed-profile or old temporary-cache fallback is used. Third-party timer cases require the exact declared timer JAR. Candidate tests do not verify the corresponding released/main feature.

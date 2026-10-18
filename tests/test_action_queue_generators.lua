@@ -767,4 +767,52 @@ scopedChild:stop();q:tick()
 assert(g.condition==96 and repairXp==committedXP and inv:contains(scrap2) and not inv:contains(scrap1)
     and q.current==repairTail and #q.queue==1,'second scoped repair cancellation changed committed effects, unused scrap or reading tail')
 ISUnequipAction.new=unequipConstructor
+-- The supported Java boundary replaces only SP's per-generator advancement interception.
+do
+    local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+    local bookTail=head()
+    bookTail.item.getNumberOfPages=function() return 100 end
+    bookTail.item.getAlreadyReadPages=function() return 99 end
+    inv.items={scrap1,scrap2,bookTail.item};g.condition=92
+    local parent=ISFixGenerator:new(p,g);parent.toolkitQueueOperation={}
+    local currentQueue=f.queue(parent,bookTail);parent:begin();adapter.prune()
+    assert(next(adapter.fixtureRegistries[3])==nil,'native-boundary regression requires an empty fallback registry')
+    for iteration=1,2 do
+        local repairing=currentQueue.current
+        assert(repairing.Type=='ISFixGenerator' and repairing.toolkitQueueOperation==parent.toolkitQueueOperation,
+            'native continuation lost the original operation')
+        assert(bookTail.toolkitQueueOperation~=parent.toolkitQueueOperation,'independent reading tail joined the repair operation')
+        local condition,removals,xp=g.condition,removedScraps,repairXp
+        assert(lifecycle.begin(repairing,'perform') and lifecycle.current(p)==repairing)
+        repairing:perform()
+        assert(next(adapter.fixtureRegistries[3])==nil,
+            'active common lifecycle must bypass the generator pendingPerform fallback')
+        lifecycle.finish(repairing,'perform',true)
+        assert(lifecycle.current(p)==nil and currentQueue.current==repairing
+            and g.condition==condition and removedScraps==removals and repairXp==xp,
+            'SP perform advanced or applied complete effects before the common lifecycle settled')
+        assert(lifecycle.flush(currentQueue)=='waiting','common lifecycle skipped the SP complete gate')
+        assert(lifecycle.begin(repairing,'complete'))
+        assert(repairing:complete())
+        lifecycle.finish(repairing,'complete',true)
+        assert(g.condition==condition+4 and removedScraps==removals+1 and repairXp==xp+5 and currentQueue.current==repairing,
+            'native completion must apply one effect while retaining its parent')
+        assert(currentQueue.queue[#currentQueue.queue]==bookTail and next(adapter.fixtureRegistries[3])==nil,
+            'native completion changed the independent tail or reactivated the fallback')
+        if iteration==1 then
+            local child=currentQueue.queue[2]
+            assert(#currentQueue.queue==3 and child.Type=='ISFixGenerator'
+                and child.toolkitQueueOperation==parent.toolkitQueueOperation,
+                'SP complete did not insert its child into the same operation before reading')
+        else assert(#currentQueue.queue==2,'final native repair added an extra continuation') end
+        assert(lifecycle.flush(currentQueue)=='waiting' and currentQueue.current==repairing,
+            'common lifecycle advanced before native removal')
+        repairing.action.fixtureStopped=true
+        assert(lifecycle.flush(currentQueue)=='completed' and currentQueue.current~=repairing,
+            'common lifecycle did not advance after native completion and removal')
+    end
+    assert(g.condition==100 and not inv:contains(scrap1) and not inv:contains(scrap2)
+        and inv:contains(bookTail.item) and currentQueue.current==bookTail and #currentQueue.queue==1,
+        'native completion bypass changed exact repair consumption or the independent reading tail')
+end
 print('Generator native contracts passed: native callbacks/completions, resource/power edges, cancellation guards, recursive SP/MP repair and source/helper trust.')
