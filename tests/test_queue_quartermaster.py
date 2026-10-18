@@ -107,6 +107,34 @@ class QuartermasterPresets(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     adapter.validate(dict(self.selection, cases=[case], options=options))
 
+    def test_transfer_modes_use_their_own_fixture_and_failure_marker(self):
+        self.selection.update(suite=adapter.TRANSFER_SUITE, cases=['manifest'], options={})
+        for mode in ('native', 'toolkit'):
+            adapter.validate(dict(self.selection, mode=mode))
+        sources = adapter.sources(ROOT, self.selection)
+        self.assertIn(ROOT / 'tests/native_queue/quartermaster-transfers/client/ZZQuartermasterTransfers.lua', sources)
+        self.assertFalse(any(path.is_relative_to(self.seed) for path in sources))
+        self.stage()
+        self.assertEqual(self.runtime['fixture']['failure_markers'], ['[QM_TRANSFER] FAIL '])
+
+    def test_transfer_verifier_requires_ordered_exact_outcomes_and_custom_denial(self):
+        self.selection.update(suite=adapter.TRANSFER_SUITE, cases=['manifest'], options={})
+        records = ['PHASE success moved=2 remaining=0 tailRead=true dirty=true',
+                   'PHASE partial moved=1 remaining=1 tailRead=true dirty=true',
+                   'PHASE rejected moved=0 remaining=2 tailRead=false dirty=false',
+                   'PHASE withdraw moved=1 remaining=1 tailRead=true dirty=true',
+                    'CUSTOM protected=3 queueUnchanged=true', 'COMPLETE case=manifest']
+        log = self.output / 'client1-launch.log'
+        def write(rows): log.write_text(''.join('[QM_TRANSFER] ' + row + '\n' for row in rows))
+        write(records)
+        self.assertEqual(adapter.verify(self.output, self.selection, {})['issues'], [])
+        for rows in (records[1:], records + records, records[::-1], records[:3] + records[4:],
+                     [records[0], records[1].replace('moved=1', 'moved=2'), *records[2:]],
+                     records + ['FAIL source identity changed']):
+            with self.subTest(rows=rows):
+                write(rows)
+                self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
+
 
 if __name__ == '__main__':
     unittest.main()

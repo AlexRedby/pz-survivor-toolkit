@@ -3,7 +3,7 @@ from collections import Counter
 from importlib import import_module
 
 MODULES = {'startup': 'startup', 'basement-hall': 'basement_hall', 'fire': 'fire', 'engine': 'engine', 'engine-peers': 'engine', 'craft': 'craft', 'equipment': 'equipment', 'animal-fixes': 'animal_fixes', 'crafting-plans': 'craft_wishlist', 'shared-wishlist': 'craft_wishlist',
-           'video-recording': 'auxiliary', 'item-tags': 'auxiliary', 'quartermaster-presets': 'quartermaster', 'animal-trailer': 'auxiliary',
+           'video-recording': 'auxiliary', 'item-tags': 'auxiliary', 'quartermaster-presets': 'quartermaster', 'quartermaster-transfers': 'quartermaster', 'animal-trailer': 'auxiliary',
            'wooden_cart_motion': 'carts', 'wooden_cart_multiplayer': 'carts'}
 
 

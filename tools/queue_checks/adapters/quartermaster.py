@@ -1,4 +1,4 @@
-"""Native Quartermaster global preset persistence across separate SP processes."""
+"""Native Quartermaster preset persistence and designated-container transfers."""
 import os
 from pathlib import Path
 import re
@@ -8,24 +8,30 @@ from .. import report
 
 
 SUITE = 'quartermaster-presets'
+TRANSFER_SUITE = 'quartermaster-transfers'
 MODS = ['PZSurvivorToolkit', 'Quartermaster', 'organizedCategories_core']
 STORES = ('QuartermasterPresets.txt', 'PZSTQuartermasterTagRules.txt')
 MARKER = '[QM_PRESET] '
+TRANSFER_MARKER = '[QM_TRANSFER] '
 
 
 def definitions():
-    return {SUITE: {'status': 'ready', 'clients': 1, 'default_mods': MODS,
+    return {suite: {'status': 'ready', 'clients': 1, 'default_mods': MODS,
             'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
-                       'kinds': ['sp'], 'languages': ['EN', 'RU'], 'modes': ['toolkit']}
-                      for case in ('seed', 'reload')]}}
+                       'kinds': ['sp'], 'languages': ['EN', 'RU'], 'modes': modes}
+                      for case in cases]}
+            for suite, cases, modes in ((SUITE, ('seed', 'reload'), ['toolkit']),
+                                        (TRANSFER_SUITE, ('manifest',), ['toolkit', 'native']))}
 
 
 def validate(selection):
-    if (selection.get('cases') not in (['seed'], ['reload']) or selection.get('kind') != 'sp'
-            or selection.get('mode') != 'toolkit' or type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
+    spec = definitions()[selection['suite']]
+    if (len(selection.get('cases', [])) != 1 or selection['cases'][0] not in [case['id'] for case in spec['cases']]
+            or selection.get('kind') != 'sp' or selection.get('mode') not in spec['cases'][0]['modes']
+            or type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
             or selection.get('languages') not in (['EN'], ['RU'])
             or not set(MODS) <= set(selection.get('mods', []))):
-        raise ValueError('Quartermaster presets require seed/reload, toolkit SP and one EN/RU client')
+        raise ValueError('Quartermaster requires one supported SP case and one EN/RU client')
     options = selection.get('options', {})
     if options.get('world_template') or bool(options.get('seed_run')) != (selection['cases'] == ['reload']):
         raise ValueError('Quartermaster reload requires seed_run; both cases create a fresh world')
@@ -64,7 +70,7 @@ def _seed(selection):
 
 
 def sources(project, selection):
-    paths = sorted((Path(project) / 'tests/native_queue/quartermaster-presets').rglob('*.lua'))
+    paths = sorted((Path(project) / 'tests/native_queue' / selection['suite']).rglob('*.lua'))
     paths.append(Path(project) / 'tests/native_queue/startup/client/ZZStartup.lua')
     if selection['cases'] == ['reload']:
         seed, stores = _seed(selection)
@@ -79,7 +85,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     cache = Path(runtime['roles']['client1']['cache'])
     client = cache / 'mods/ActionQueueTest/42/media/lua/client'
     shutil.copy2(Path(project) / 'tests/native_queue/startup/client/ZZStartup.lua', client / 'ZZStartup.lua')
-    runtime.setdefault('fixture', {})['failure_markers'] = [MARKER + 'FAIL ']
+    marker = TRANSFER_MARKER if selection['suite'] == TRANSFER_SUITE else MARKER
+    runtime.setdefault('fixture', {})['failure_markers'] = [marker + 'FAIL ']
     if selection['cases'] == ['reload']:
         seed, stores = _seed(selection)
         if Path(report.read_json(seed / 'runtime.json')['game']) != Path(game):
@@ -92,11 +99,14 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 
 def complete(selection, role, text):
-    return role == 'client1' and len(re.findall(re.escape(MARKER) + 'COMPLETE case='
+    marker = TRANSFER_MARKER if selection['suite'] == TRANSFER_SUITE else MARKER
+    return role == 'client1' and len(re.findall(re.escape(marker) + 'COMPLETE case='
             + selection['cases'][0] + r'(?:\s|$)', text)) == 1
 
 
 def verify(root, selection, catalog):
+    if selection['suite'] == TRANSFER_SUITE:
+        return _verify_transfers(Path(root), selection)
     root = Path(root)
     issues, generations = [], []
     try:
@@ -123,3 +133,21 @@ def verify(root, selection, catalog):
             'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
             'evidence': {'generations': generations, 'stores': list(STORES),
                          'limits': ['SP global stores in a fresh world; no Host or physical UI input coverage.']}}
+
+
+def _verify_transfers(root, selection):
+    issues = []
+    try:
+        text = (root / 'client1-launch.log').read_text(errors='replace')
+        expected = ['PHASE success moved=2 remaining=0 tailRead=true dirty=true',
+                    'PHASE partial moved=1 remaining=1 tailRead=true dirty=true',
+                    'PHASE rejected moved=0 remaining=2 tailRead=false dirty=false',
+                    'PHASE withdraw moved=1 remaining=1 tailRead=true dirty=true',
+                    'CUSTOM protected=3 queueUnchanged=true', 'COMPLETE case=manifest']
+        if re.findall(re.escape(TRANSFER_MARKER) + r'([^\r\n]+)', text) != expected:
+            raise ValueError('Missing, duplicate, reordered or incorrect native transfer outcomes')
+    except (OSError, ValueError) as error:
+        issues.append(str(error))
+    return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'manifest',
+            'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
+            'evidence': {'limits': ['SP only; programmatic UI callbacks and native actions, no physical input or Host.']}}
