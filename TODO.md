@@ -1,8 +1,3 @@
-# Faster animation development
-
-- [ ] Pass the expected scenes and time windows of the selected bank to the shared cart analyzer instead of sprint16/`--partial`; retain separate checks for movement, grip, body/clothing and runtime. Check missing scenes, incorrect phases and same-tick receipts with negative tests.
-- [ ] Add reproducible re-analysis of a saved capture into a separate directory: preserve the original report, input hashes and version of the new analyzer; attach a short video and frame-by-frame sample around the discovered defect. Fixing the oracle must not require replaying the game or present an old capture as verification of changed production code.
-
 # Wooden wheelbarrow collisions
 
 - [ ] Check manually backing the wooden wheelbarrow out of tight wall contact with female models and in MP; do not count a male-model SP check as a network check. Preserve manual reverse, natural rolling and native collision; do not add automatic backing.

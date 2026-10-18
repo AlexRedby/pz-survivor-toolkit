@@ -409,12 +409,12 @@ def _debug_coverage(cache, text, selection):
     if [row[0] for row in clips] != selected_scenes(selection):
         raise ValueError('Selected cart scene receipts differ from the snapshot')
     bank = selection['cases'][0]
-    default_seconds = {'interaction': 16, 'wheel': 30, 'interruption': 20, 'interruption-matrix': 20, 'repeat': 20, 'stop-timing': 16, 'brace': 18, 'wall-manual-exit': 29, 'wall-fast-manual-exit': 29}.get(bank, 12)
+    windows = _load(Path(__file__).resolve().parents[3] / 'tests/native_queue/contributions/wooden_cart_motion/evidence/scene_windows.py')
     probes = {kind: [json.loads(line) for line in (cache / file).read_text().splitlines()]
               for kind, file in (('body', 'body-clearance.jsonl'), ('grip', 'wood-grip-poses.jsonl'))}
     result = []
     for name, start, duration in clips:
-        seconds = 15 if bank == 'vehicles' and '-full-vehicle-' in name and '-slide-' in name else default_seconds
+        seconds = windows.record_seconds(bank, name)
         if abs(float(duration) - seconds) > .2:
             raise ValueError('Selected cart clip has an incomplete recording window: ' + name)
         start = int(start)
@@ -557,7 +557,10 @@ def verify(root, selection, catalog):
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
             if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat', 'impact'):
-                commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if debug or case != 'sprint' else []) + (['--stop-timing'] if case == 'stop-timing' else []) + (['--vehicles'] if case == 'vehicles' else []) + (['--brace'] if case == 'brace' else []) + (['--fast-slide'] if case == 'fast-slide' else []) + (['--wall-exit'] if case == 'wall-exit' else []) + (['--wall-manual-exit'] if case in ('wall-manual-exit','wall-fast-manual-exit') else [])))
+                scene_contract = analysis / 'selected-scenes.json'
+                windows = _load(ev / 'scene_windows.py')
+                _write(scene_contract, json.dumps(windows.contract(case, selected_scenes(selection)), indent=2))
+                commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis), '--scenes', str(scene_contract)]))
             evidence['analyzers'] = {name: _run(command, analysis, name) for name, command in commands}
             if case == 'impact':
                 impact = _load(intake / 'analyze-impact.py').analyze(cache, texts['client1'], selected_scenes(selection))
@@ -646,7 +649,7 @@ def verify(root, selection, catalog):
                 _write(analysis / 'reversal-motion.json', json.dumps(motion, indent=2, allow_nan=False))
             if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat'):
                 _coverage(cache, texts['client1'], SP_CASES[case][1], metrics)
-                evidence['nativePartialDiagnostic'] = case != 'sprint'
+                evidence['nativeSelectedScenes'] = selected_scenes(selection)
             evidence['evidenceComplete'] = True
         evidence['analysis'] = str(analysis)
     except (ValueError, OSError, KeyError, TypeError, AssertionError, subprocess.SubprocessError) as error:

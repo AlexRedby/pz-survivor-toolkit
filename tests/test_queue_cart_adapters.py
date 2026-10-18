@@ -498,7 +498,11 @@ class CartAdapterTests(unittest.TestCase):
         def run(command,directory,name):
             calls.append(name)
             if name=='native':
-                self.assertIn('--partial',command)
+                self.assertIn('--scenes',command)
+                self.assertNotIn('--partial',command)
+                contract=json.loads(Path(command[command.index('--scenes')+1]).read_text())
+                self.assertEqual([r['name'] for r in contract['scenes']],['male-full-corner'])
+                self.assertEqual(contract['scenes'][0]['measurementEndMs'],11800)
                 metrics={'cases':[dict(case='male-full-corner',gripSamples=120,wheelFloorMaxError=.01,body={'samples':120},pants={'samples':120})]}
                 (directory/'native-metrics.json').write_text(json.dumps(metrics))
             return dict(exit_code=1 if name=='pants' else 0)
@@ -611,6 +615,13 @@ class CartAdapterTests(unittest.TestCase):
         (cache / 'wood-grip-poses.jsonl').write_text('\n'.join(map(json.dumps, samples[22:])))
         with self.assertRaisesRegex(ValueError, 'probe window'):
             carts._coverage(cache, text, 20, metrics)
+
+    def test_same_tick_duplicate_probes_do_not_establish_window_coverage(self):
+        text, samples, metrics = self.coverage_fixture(1)
+        repeated = [samples[0]] * 100
+        (self.output / 'client1/wood-grip-poses.jsonl').write_text('\n'.join(map(json.dumps, repeated)))
+        with self.assertRaisesRegex(ValueError, 'probe window'):
+            carts._coverage(self.output / 'client1', text, 1, metrics)
 
     def test_vehicle_native_metrics_include_late_grip_and_clothing_failures(self):
         cache = self.output / 'client1'
@@ -800,10 +811,10 @@ class CartAdapterTests(unittest.TestCase):
                 self.assertFalse(result['issues'], result['issues'])
                 self.assertEqual(result['outcomes'][0]['status'], 'captured')
                 self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
-                self.assertTrue(result['evidence']['nativePartialDiagnostic'])
+                self.assertTrue(result['evidence']['nativeSelectedScenes'])
                 self.assertEqual(result['evidence']['analyzers']['stop']['exit_code'], 1)
                 self.assertTrue(result['evidence']['motion']['problems'])
-                self.assertIn('--partial', commands['native'])
+                self.assertIn('--scenes', commands['native'])
                 self.assertEqual(commands['native'][commands['native'].index('--log') + 1], str(log))
                 self.assertEqual(commands['stop'][commands['stop'].index('--log') + 1], str(log))
                 self.assertEqual(videos.call_args.args[3], text)
@@ -848,7 +859,7 @@ class CartAdapterTests(unittest.TestCase):
                 saved = Path(result['evidence']['analysis']) / 'stationary-motion.json'
                 self.assertEqual(json.loads(saved.read_text()), result['evidence']['motion'])
                 self.assertEqual(commands['stationary'][commands['stationary'].index('--log') + 1], str(log))
-                self.assertIn('--partial', commands['native'])
+                self.assertIn('--scenes', commands['native'])
                 self.assertEqual(log.read_text(), captured)
                 self.assertFalse((cache / 'native-launch.log').exists())
 
@@ -866,7 +877,7 @@ class CartAdapterTests(unittest.TestCase):
                 self.assertEqual(command[command.index('--log') + 1], str(log))
                 return original_run(command, directory, name)
             if name == 'native':
-                self.assertIn('--partial', command)
+                self.assertIn('--scenes', command)
                 (directory / 'native-metrics.json').write_text(json.dumps(metrics))
             return {'exit_code': 0}
         for bad in (False, True):
@@ -898,7 +909,7 @@ class CartAdapterTests(unittest.TestCase):
                 (directory / (name + '-motion.json')).write_text(json.dumps(report))
                 return {'exit_code': int(bad)}
             if name == 'native':
-                self.assertIn('--partial', command)
+                self.assertIn('--scenes', command)
                 (directory / 'native-metrics.json').write_text(json.dumps(metrics))
             return {'exit_code': 0}
         for case in ('collision', 'footprint'):
@@ -934,7 +945,10 @@ class CartAdapterTests(unittest.TestCase):
             for failed in (None, 'motionPass', 'footprintPass'):
                 def run(command, directory, name):
                     if name == 'native':
-                        self.assertIn('--wall-manual-exit' if bank=='wall-fast-manual-exit' else '--'+bank,command)
+                        self.assertIn('--scenes',command)
+                        spec=json.loads(Path(command[command.index('--scenes')+1]).read_text())
+                        self.assertEqual(spec['bank'],bank)
+                        self.assertEqual(len(spec['scenes']),count)
                         (directory / 'native-metrics.json').write_text(json.dumps(metrics))
                     if name == bank:
                         self.assertTrue(command[1].endswith('analyze-'+('footprint' if bank in ('fast-slide','wall-exit','wall-manual-exit','wall-fast-manual-exit') else bank)+'.py'))
@@ -984,7 +998,7 @@ class CartAdapterTests(unittest.TestCase):
         (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
         def run(command, directory, name):
             if name == 'native':
-                self.assertIn('--partial', command)
+                self.assertIn('--scenes', command)
                 (directory / 'native-metrics.json').write_text(json.dumps(metrics))
             return {'exit_code': 0}
         with patch.object(carts, '_run', side_effect=run), patch.object(carts, '_videos', return_value=[]):

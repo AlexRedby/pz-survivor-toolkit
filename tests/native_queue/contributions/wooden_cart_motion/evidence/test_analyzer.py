@@ -48,12 +48,46 @@ class AnalyzerEvidenceTests(unittest.TestCase):
             for row in rows:
                 writer.writerow({'event': 'grounding', **row})
 
-    def analyze(self, profile, output, log=None, stop_timing=False):
+    def analyze(self, profile, output, log=None, stop_timing=False, scenes=None):
         command = [sys.executable, str(HERE / 'analyze-native.py'), '--profile', str(profile), '--output', str(output)]
         if log is not None:
             command += ['--log', str(log)]
         if stop_timing: command.append("--stop-timing")
+        if scenes is not None: command += ["--scenes", str(scenes)]
         return subprocess.run(command, capture_output=True, text=True)
+
+    def test_selected_reverse_scenes_use_completed_windows_and_recorded_phases(self):
+        from scene_windows import contract
+        with tempfile.TemporaryDirectory() as temp:
+            profile, output = self.fixture(Path(temp))
+            names = ['male-empty-back-modifiers', 'female-full-back-arc-left']
+            lines = ['[WOOD_BANK] RUN_STARTED']
+            for name, start in zip(names, (100000, 120000)):
+                lines += [f'[WOOD_BANK] CASE {name} attempt=0 wall={start}',
+                          f'[WOOD_RAMP_EVENT] case={name} elapsed=1000 gait=0 drive=3',
+                          f'[WOOD_RAMP_EVENT] case={name} elapsed=3500 gait=1 drive=3',
+                          f'[WOOD_BANK] COMPLETE {name} wall={start} file=clip.mp4 frames=360 seconds=12']
+            lines.append('[WOOD_BANK] ALL_COMPLETE cases=2')
+            (profile / 'console.txt').write_text('\n'.join(lines))
+            scenes = profile / 'scenes.json'
+            scenes.write_text(json.dumps(contract('reverse', names)))
+            with (profile / 'wood-grip-poses.jsonl').open('a') as stream:
+                stream.write(json.dumps(dict(wallTimeMillis=104000, result=False)) + '\n')
+            result = self.analyze(profile, output, scenes=scenes)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            metrics = json.loads((output / 'native-metrics.json').read_text())
+            self.assertTrue(metrics['complete'])
+            self.assertEqual(metrics['validatedCartCases'], 2)
+            self.assertEqual(metrics['cases'][0]['failureStages'], {'drive=3,gait=1': 1})
+            self.assertTrue(metrics['provenance']['offlineAnalysisOnly'])
+            self.assertEqual(len(metrics['provenance']['analyzers']), 2)
+            self.assertEqual(len(metrics['provenance']['inputs']), 7)
+            self.assertFalse(metrics['checks']['grip'])
+            self.assertTrue(metrics['checks']['body'])
+            self.assertTrue(metrics['checks']['pants'])
+            original = (output / 'native-metrics.json').read_bytes()
+            self.assertNotEqual(self.analyze(profile, output, scenes=scenes).returncode, 0)
+            self.assertEqual((output / 'native-metrics.json').read_bytes(), original)
 
     def test_complete_finite_evidence_passes(self):
         with tempfile.TemporaryDirectory() as temp:

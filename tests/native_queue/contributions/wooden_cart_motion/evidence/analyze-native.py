@@ -1,13 +1,16 @@
 from pathlib import Path
 from collections import Counter
-import bisect,csv,json,re,sys,math,io
+import bisect,csv,json,re,sys,math,io,hashlib
+
+from scene_windows import completed_windows, phase_at
 
 import argparse
-parser=argparse.ArgumentParser(description="Analyze the existing 16-case WOOD_BANK protocol; never launches a game")
+parser=argparse.ArgumentParser(description="Analyze completed WOOD_BANK scene windows; never launches a game")
 parser.add_argument('--profile',type=Path,required=True,help='Owned capture/profile directory containing console.txt and probe outputs')
 parser.add_argument('--log',type=Path,help='Full native stdout; defaults to profile/console.txt')
 parser.add_argument('--output',type=Path,required=True,help='Result directory; may already contain the two mesh intersection JSON files')
-parser.add_argument('--partial',action='store_true')
+parser.add_argument('--partial',action='store_true',help='Legacy sprint capture diagnostics only')
+parser.add_argument('--scenes',type=Path,help='Exact selected scene/window contract from the shared runner')
 timing=parser.add_mutually_exclusive_group()
 timing.add_argument('--stop-timing',action='store_true',help='Cover all three stops in the 16-second timing bank')
 timing.add_argument('--vehicles',action='store_true',help='Include the extended full-load vehicle slide and release')
@@ -24,15 +27,26 @@ HERE=args.output
 HERE.mkdir(parents=True,exist_ok=True)
 assert not any((HERE/name).exists() for name in ['native-metrics.json','native-body-cases.jsonl','selected']), 'Preserve existing analysis output first'
 log=(args.log if args.log is not None else ROOT/'console.txt').read_text().rsplit('[WOOD_BANK] RUN_STARTED',1)[-1]
-complete='[WOOD_BANK] ALL_COMPLETE cases=16' in log
-cases={name:int(start) for name,start in re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)',log)}
-if args.partial:
- cases={name:int(start) for name,start in re.findall(r'\[WOOD_BANK\] CASE (\S+) attempt=\d+ wall=(\d+)',log)}
-if not args.partial:
- assert complete and len(cases)==16,(complete,len(cases))
-assert len(cases)==16 or args.partial
+scene_windows=None
+if args.scenes:
+ assert not args.partial and not any((args.stop_timing,args.vehicles,args.brace,args.fast_slide,args.wall_exit,args.wall_manual_exit)), 'Selected scenes replace legacy timing flags'
+ scene_windows=completed_windows(log,json.loads(args.scenes.read_text()))
+ cases={name:row['start'] for name,row in scene_windows.items()}
+ complete=True
+ end_ms=max(row['measurementEndMs'] for row in scene_windows.values())
+ def measurement_end(name):return scene_windows[name]['measurementEndMs']
+else:
+ # Archived sprint captures retain their explicit original command-line protocol.
+ complete='[WOOD_BANK] ALL_COMPLETE cases=16' in log
+ cases={name:int(start) for name,start in re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)',log)}
+ if args.partial:
+  cases={name:int(start) for name,start in re.findall(r'\[WOOD_BANK\] CASE (\S+) attempt=\d+ wall=(\d+)',log)}
+ if not args.partial:
+  assert complete and len(cases)==16,(complete,len(cases))
+ assert len(cases)==16 or args.partial
 
 def stage(elapsed,name=''):
+ if scene_windows is not None:return phase_at(scene_windows[name],elapsed)
  if args.wall_manual_exit:
   if elapsed<1000:return 'idle'
   if elapsed<9500:return 'wall-slide'
@@ -153,8 +167,20 @@ for name,start in cases.items():
  row['steadyFastFootSamples']=len(feet)
  row['steadyFastFootZRange']={side:(max(r['bones'][f'Bip01_{side}_Foot'][14]for r in feet)-min(r['bones'][f'Bip01_{side}_Foot'][14]for r in feet))if feet else None for side in 'LR'}
  summary['cases'].append(row)
+if scene_windows is not None:
+ summary['phaseSource']='Recorded input/path events of each completed attempt; equal-time probe/event ordering is unknown'
+ summary['sceneWindows']=scene_windows
+ def fingerprint(path):
+  with path.open('rb') as stream:digest=hashlib.file_digest(stream,'sha256').hexdigest()
+  return {'path':str(path.resolve()),'sha256':digest}
+ inputs=[args.log if args.log is not None else ROOT/'console.txt',args.scenes,
+         ROOT/'body-clearance.jsonl',ROOT/'wood-grip-poses.jsonl',ROOT/'wood-wheel-native.csv']
+ inputs += [HERE/file for file in ('hip-triangle-frames.json','pants-triangle-frames.json') if (HERE/file).exists()]
+ summary['provenance']={'offlineAnalysisOnly':True,'inputs':[fingerprint(path) for path in inputs],
+                        'analyzers':[fingerprint(Path(__file__)),fingerprint(Path(__file__).with_name('scene_windows.py'))]}
+
 if complete:
- assert len(summary['cases'])==16
+ assert len(summary['cases'])==(len(scene_windows) if scene_windows is not None else 16)
  assert all(r['gripSamples']>0 for r in summary['cases'])
  assert all(r['wheelFloorMaxError'] is not None for r in summary['cases']), 'Missing body/cart frames in a completed case'
 nativeText=(ROOT/'wood-wheel-native.csv').read_text()
