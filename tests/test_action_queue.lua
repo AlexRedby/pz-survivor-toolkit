@@ -1122,16 +1122,17 @@ local function borrowed(item, container)
     item.getIsCraftingConsumed=function(self) return self.consumed==true end
     return item
 end
--- Native completion validates its successor before any tick/start/stop hook can skip it.
-do
-    local generators=PZSurvivorToolkit.ActionQueueGenerators
+-- Skip audited unavailable successors before native validation/start, preserving cleanup and independent work.
+for _,family in ipairs({'ActionQueueGenerators','ActionQueueFire'}) do
+    local previous=PZSurvivorToolkit[family]
     for _,sameOperation in ipairs({false,true}) do
         p=player()
-        local blocker,missing,linked,ending=book(p),leaf(p,'unavailable repair'),leaf(p,'linked repair'),leaf(p,'independent tail')
+        local blocker,missing,linked,ending=book(p),leaf(p,'unavailable successor'),leaf(p,'linked successor'),leaf(p,'independent tail')
         local bag=sourceContainer()
         local item=borrowed(book(p).item,sameOperation and p.inventory or bag)
         local originalReturn=transfer(p,item,p.inventory,bag);originalReturn.allowMissingItems=true
-        missing.isValidStart=function() return false end
+        missing.isValidStart=function() return family=='ActionQueueFire' end
+        missing.isValid=function() error('an unavailable successor must never reach native validation') end
         if not sameOperation then q=ISTimedActionQueue.add(blocker) end
         operations.run(function()
             if sameOperation then q=ISTimedActionQueue.add(blocker) end
@@ -1140,7 +1141,7 @@ do
         ISTimedActionQueue.add(ending);frame(p)
         local token=missing.toolkitQueueOperation
         if sameOperation then token.toolkitPickups={[item]=bag} end
-        PZSurvivorToolkit.ActionQueueGenerators={canSkip=function(action) return action==missing end}
+        PZSurvivorToolkit[family]={canSkip=function(action) return action==missing end}
         blocker.action.forceStop=function() error('completion must not stop its already-finished owner') end
         blocker.action.done=true;frame(p)
         assert(token.toolkitCancelled and not missing.action and not linked.action and not originalReturn.action
@@ -1173,13 +1174,13 @@ do
         ISTimedActionQueue.add(ending);frame(p)
         if mode=='allocated' then missing.action=LuaTimedActionNew.new(missing) end
         enabled=mode~='disabled'
-        PZSurvivorToolkit.ActionQueueGenerators={canSkip=function(action) return mode~='unknown' and action==missing end}
+        PZSurvivorToolkit[family]={canSkip=function(action) return mode~='unknown' and action==missing end}
         blocker.action.done=true;frame(p)
         assert(#q.queue==0 and q.current==nil and not ending.action,
             mode..' invalid successor must retain native reset semantics')
         enabled=true
     end
-    PZSurvivorToolkit.ActionQueueGenerators=generators
+    PZSurvivorToolkit[family]=previous
 end
 p=player();a,b,d=book(p),book(p),book(p)
 local bag=sourceContainer();borrowed(a.item,bag)

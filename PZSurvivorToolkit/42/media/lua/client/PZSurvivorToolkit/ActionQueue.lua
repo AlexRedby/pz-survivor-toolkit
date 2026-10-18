@@ -173,11 +173,13 @@ ISTimedActionQueue.onCompleted = function(queue, action)
         Policy.skipUnavailableHygiene(queue)
     end
     local generators = Toolkit.ActionQueueGenerators
+    local fire = Toolkit.ActionQueueFire
     if Toolkit.Settings.actionQueue() and live(queue) and queue.current == action and queue.queue[1] == action
         and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false) then
         local pending = queue.queue[2]
-        -- Native onCompleted checks isValidStart before begin/stop can preserve the independent tail.
-        while pending and not pending.action and generators and generators.canSkip and generators.canSkip(pending) do
+        -- Skip audited unavailable targets before native validation/start can discard the independent tail.
+        while pending and not pending.action and ((generators and generators.canSkip and generators.canSkip(pending))
+            or (fire and fire.canSkip and fire.canSkip(pending))) do
             local token = pending.toolkitQueueOperation
             if token and token == action.toolkitQueueOperation then
                 local reason = Policy.cancelOperationReason(queue, pending)

@@ -140,7 +140,8 @@ local function fire()
     campfireObject.getModData=function() return {fuelAmt=campfire.fuelAmt,isLit=campfire.isLit} end
     return campfire
 end
-CCampfireSystem = {instance={getLuaObjectAt=function() return campfire end,getLuaObjectOnSquare=function() return campfire end}}
+CCampfireSystem = {instance={getLuaObjectAt=function() return campfire end,
+    getLuaObjectOnSquare=function() return campfireObject and not campfireObject.removed and campfire or nil end}}
 SCampfireSystem = {instance={getLuaObjectAt=function() return {addFuel=function(_, amount) campfire.fuelAmt=campfire.fuelAmt+amount end,
     lightFire=function() campfire.isLit=true end} end}}
 local function item(kind, source, drainable, uses)
@@ -614,6 +615,34 @@ assert(not api.canSkip(action),'finished native actions must retain completion e
 local originalGetter=camp.getIsoObject;camp.getIsoObject=function() return campfireObject end
 assert(not api.supports(action));camp.getIsoObject=originalGetter
 action.item=item('Log');assert(not api.supports(action))
+-- Removing an expanded target is unsafe even though the native prestart method still returns true.
+do
+    reset();local camp=fire();local source=container();containers=list({inventory,source})
+    local fuel=item('Log',source)
+    ISCampingMenu.onAddFuel(player,camp,'Base.Log',ISAddFuelAction,20)
+    local command=q.queue[2];expand(command);pickups()
+    local pending=q.queue[#q.queue]
+    local tail=synthetic(ISReadABook,player);tail.item=item('Book');ISTimedActionQueue.add(tail)
+    local token=pending.toolkitQueueOperation
+    assert(pending.Type=='ISAddFuelAction' and api.supports(pending) and not pending.action and pending:isValid()
+        and token.toolkitPickups[fuel]==source and inventory:contains(fuel) and not source:contains(fuel),
+        'expanded native fuel must retain the exact borrowed item/source for queue cleanup')
+    campfireObject.removed=true
+    assert(CCampfireSystem.instance:getLuaObjectOnSquare(camp:getSquare())==nil
+        and pending:isValidStart() and api.canSkip(pending),
+        'the audited unavailable predicate must cover an expanded target before native validity runs')
+    local ok,reason=pcall(pending.isValid,pending)
+    assert(not ok and tostring(reason):find("local 'campfire'",1,true),
+        'native campfire validity must expose the missing-object lookup that the queue transition avoids')
+    assert(camp.fuelAmt==20 and fuel.used==0 and inventory:contains(fuel)
+        and token.toolkitPickups[fuel]==source and q.queue[#q.queue]==tail
+        and tail.toolkitQueueOperation~=token and not tail.action,
+        'unavailable-target inspection must preserve borrowed cleanup identity and the independent tail')
+    pending.onCompleteFunc=function() error('unknown callback must not run') end
+    assert(not api.supports(pending) and not api.canSkip(pending),'unknown callbacks cannot gain unavailable-step permission')
+    pending.onCompleteFunc=nil
+    assert(api.canSkip(pending),'restoring the audited callback identity must restore unavailable-step permission')
+end
 -- Cancellation remains protected once fuel/ignition has started; native completion owns all effects.
 reset();a=target();item('Log');ISCampingMenu.onAddFuel(player,a,'Base.Log',ISBBQAddFuel,20);command=q.queue[2];expand(command)
 action=q.queue[#q.queue];q.queue={action};q.current=action;action.action={finished=function() return false end,isForceComplete=function() return false end,isStarted=function() return true end}
