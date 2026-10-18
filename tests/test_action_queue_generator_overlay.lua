@@ -39,19 +39,22 @@ local function fixture(options)
         end, close = function() end}
     end
     env.getFilenameOfClosure = NativeFilenameOfClosure or function(callback) return debug.getinfo(callback, 'S').source:gsub('^@', '') end
-    local function nativeClosure(callback, filename)
-        return type(callback) == 'function' and env.getFilenameOfClosure(callback):match('([^/]+)$') == filename
-    end
-    local function sourceMatches(path, expected)
-        if options.nativeChanged then return false end
-        local value = 5381
+    local proof = run(read(base .. 'PZSurvivorToolkit/SourceProof.lua'), base .. 'PZSurvivorToolkit/SourceProof.lua', env)
+    local nativeClosure = proof.closure
+    env.getGameFilesInput = function(path)
+        path = path:gsub('^media/lua/', '')
         local text = path == 'client/BGI/BGI_PowerRange.lua' and read(bgiPath, true) or read(NativeActionRoot .. '/' .. path, true)
         if options.shadowed and path == 'client/BGI/BGI_PowerRange.lua' then text = text .. '\n-- shadowed\n' end
-        for line in (text:gsub('\n$', '') .. '\n'):gmatch('(.-)\n') do
-            for i = 1, #line do value = (value * 33 + string.byte(line, i)) % 4294967296 end
-            value = (value * 33 + 10) % 4294967296
-        end
-        return value == expected
+        local index = 1
+        return {readLine = function()
+            if index > #text then return end
+            local ending = text:find('\n', index, true)
+            local line = text:sub(index, ending and ending - 1 or #text); index = ending and ending + 1 or #text + 1
+            return line
+        end, close = function() end}
+    end
+    local function sourceMatches(path, expected)
+        return not options.nativeChanged and proof.matches('media/lua/' .. path, expected)
     end
     local function derive(self, name)
         local class = {Type = name, derive = derive}; class.__index = class; return setmetatable(class, {__index = self})
@@ -67,7 +70,8 @@ local function fixture(options)
     env.ZombRand = function() return options.failedStart and 0 or 1 end
     env.require = function(module)
         if loaded[module] then return loaded[module] end
-        if module == 'PZSurvivorToolkit/ActionQueueCompat' then
+        if module == 'PZSurvivorToolkit/SourceProof' then return proof
+        elseif module == 'PZSurvivorToolkit/ActionQueueCompat' then
             loaded[module] = run(compatSource, base .. module .. '.lua', env); return loaded[module]
         elseif module == 'BGI/BGI_PowerRange' then
             loads = loads + 1; run(bgiSource, module .. '.lua', env); loaded[module] = true

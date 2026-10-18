@@ -74,13 +74,15 @@ The build acknowledgement patch lets Toolkit 0.1.30 interrupt active multiplayer
 
 ## Workstation crafting references
 
-Version 0.1.23 repairs the reproduced stale-index CraftBench decoder failure. An IsoObject's network entity ID includes its position in the square's object list. Removing an earlier object can change that ID without refreshing the server's entity registry. A workstation crafting request can then fail in `PZNetKahluaTableImpl.loadComponent` before constructing the server action, leaving client progress at 100%.
+Version 0.1.25 repairs the reproduced stale-index CraftBench decoder failure. An IsoObject's network entity ID includes its position in the square's object list. Removing an earlier object can change that ID without refreshing the server's entity registry. A workstation crafting request can then fail in `PZNetKahluaTableImpl.loadComponent` before constructing the server action, leaving client progress at 100%.
 
 The patch refreshes only a previously registered CraftBench owner already decoded as the request's `isoObject`, with an exact match between its current square/index and the incoming component ID. It uses the native ID/registry update and leaves component decoding, constructor arguments, recipe validation, costs, outputs and duration native. It does not search for replacement workstations, recreate removed entities, suppress unrelated decoder failures or force client completion. Truly missing/unregistered objects remain outside this repair.
 
 Install and approve the matching rebuilt Java mod on clients and the Host/server, restart and verify **`craftBench=true` in the server log**, plus `[ZB] Transformed: zombie.network.PZNetKahluaTableImpl`. The cross-platform headless regression is `python3 JavaPatches/build.py --game <game-java-directory> --jdk <jdk-25-directory> --test CraftBenchChecks`; it reproduces the original native exception and checks exact woven component/full request decoding, unchanged framing and negative guards.
 
 The [live forge suite](../tests/native_queue/forge/README.md) reproduced the actual 100% stall in Windows Host with all 48 selected mods, unchanged native durations and the real workstation UI. The matched 0.1.23 run passed its handcraft, unchanged-forge and shifted-forge cases: one server-created blade, exactly one charcoal and iron-bar-quarter debit, preserved tool IDs and idle action/UI. Gameplay fixture bytes were identical and only the Java mod changed. No server action errors remained; seven client font-loading errors present in both runs keep the broader report `needs-review`. This does not establish clean whole-pack, macOS, WAN or two-client acceptance, nor prove that every workstation stall has this cause.
+
+The forge candidate in the recorded live comparison was locally labeled 0.1.23 before integrating concurrent main releases; the published combined version is 0.1.25. Those historical gameplay results do not cover every upstream change added by that merge.
 
 ## Animal trailer reconciliation
 

@@ -16,7 +16,7 @@ local function event()
         fire = function(...) for _, fn in ipairs(callbacks) do fn(...) end end,
         count = function() return #callbacks end}
 end
-local client, server, active, legacy, now, multiplier = false, true, false, false, 0, 1
+local client, server, active, legacy, now = false, true, false, false, 0
 local sync, herbs = true, true
 local requests, responses, requires, players = {}, {}, {}, {}
 Events = {}
@@ -26,10 +26,7 @@ isClient = function() return client end
 isServer = function() return server end
 getActivatedMods = function() return {contains = function(_, id) return active and id == "MoodleFramework" or legacy and id == "MedicineMoodlesB42" end} end
 getTimestampMs = function() return now end
-getGameTime = function() return {getMultiplier = function() return multiplier end} end
 getSpecificPlayer = function(num) return players[num] end
-CharacterStat = {FOOD_SICKNESS = "sickness", POISON = "poison"}
-CharacterTrait = {IRON_GUT = "iron", WEAK_STOMACH = "weak"}
 PZSurvivorToolkit = {Settings = {
     medicineMoodleSync = function() return sync end,
     medicineHerbs = function() return herbs end,
@@ -38,7 +35,7 @@ require = function(name)
     requires[#requires + 1] = name
     if name == "PZSurvivorToolkit/MedicineEffects" then return PZSurvivorToolkit.MedicineEffects end
     assert(name == "PZSurvivorToolkit" or name == "PZSurvivorToolkit/Settings"
-        or name == "TimedActions/ISEatFoodAction" or name == "MF_ISMoodle", "Unexpected optional dependency: " .. name)
+        or name == "MF_ISMoodle", "Unexpected optional dependency: " .. name)
 end
 sendClientCommand = function(player, module, command, args)
     requests[#requests + 1] = {player = player, module = module, command = command, args = args}
@@ -46,33 +43,19 @@ end
 sendServerCommand = function(player, module, command, args)
     responses[#responses + 1] = {player = player, module = module, command = command, args = args}
 end
-local nativeCalls = {complete = 0, eat = 0}
-local function nativeEating(kind)
-    return function(action, amount, marker)
-        nativeCalls[kind] = nativeCalls[kind] + 1
-        action.amount, action.marker = amount, marker
-        if action.reduction then
-            action.character.stats.sickness = action.character.stats.sickness - action.reduction
-            action.character.stats.poison = action.character.stats.poison - action.reduction
-        end
-        return action.result
-    end
-end
-ISEatFoodAction = {complete = nativeEating("complete"), eat = nativeEating("eat")}
+ISEatFoodAction = {complete = function() end, eat = function() end}
 local nativeComplete, nativeEat = ISEatFoodAction.complete, ISEatFoodAction.eat
-local function player(num, id, traits)
-    local p = {modData = {Moodles = {LegacyMedicine = {Value = 0.75}}}, num = num or 0, id = id or 12, traits = traits or {}, stats = {sickness = 50, poison = 25},
+local function player(num, id)
+    local p = {modData = {Moodles = {LegacyMedicine = {Value = 0.75}}}, num = num or 0, id = id or 12,
         raw = {Antibiotics = 25, Antidepressants = 3300, BetaBlockers = 3300,
             Painkillers = 2700, SleepingTablets = 3300, SleepingIntensity = 0.2,
-            BlackSage = 3.5, CommonMallow = 2.5}}
+            BlackSage = 3.5, CommonMallow = 2.5, LemonGrassCooldown = 140}}
     function p:getModData() return self.modData end
     function p:getMoodles() return {getNumMoodles = function() return 0 end} end
     function p:getPlayerNum() return self.num end
     function p:getOnlineID() return self.id end
     function p:isDead() return self.dead == true end
     function p:isLocalPlayer() return self.remote ~= true end
-    function p:hasTrait(trait) return self.traits[trait] == true end
-    function p:getStats() return {get = function(_, stat) return self.stats[stat] end} end
     function p:getBodyDamage()
         return {getPainReduction = function() return self.raw.BlackSage end,
             getColdReduction = function() return self.raw.CommonMallow end}
@@ -84,10 +67,10 @@ local function player(num, id, traits)
     end
     return p
 end
-local function action(p, change, reduction, result)
-    return {character = p, item = {getFoodSicknessChange = function() return change end},
-        reduction = reduction, result = result}
+toolkitMedicineCooldown = function(who)
+    if not client then return who.raw.LemonGrassCooldown end
 end
+local nativeCooldown = toolkitMedicineCooldown
 
 check("absent optional mod has no callbacks, hooks or dependencies", function()
     dofile(base .. "shared/PZSurvivorToolkit/MedicineEffects.lua")
@@ -113,68 +96,41 @@ local effects = PZSurvivorToolkit.MedicineEffects
 local p = player()
 players[0] = p
 
-check("complete preserves native call, arguments and false result", function()
-    local a = action(p, -12, 3, false)
-    assert(ISEatFoodAction.complete(a, 0.25, "complete-marker") == false)
-    assert(nativeCalls.complete == 1 and a.amount == 0.25 and a.marker == "complete-marker")
-    near(effects.capture(p).LemonGrass, 230)
+check("native readings need no food hooks, callbacks, or independent countdown", function()
+    assert(ISEatFoodAction.complete == nativeComplete and ISEatFoodAction.eat == nativeEat)
+    assert(Events.OnTick.count() == 0 and Events.OnPlayerUpdate.count() == 0)
+    p.raw.LemonGrassCooldown = 187.625
+    near(effects.capture(p).LemonGrassCooldown, 187.625)
+    Events.OnTick.fire(); Events.OnPlayerUpdate.fire(p)
+    near(effects.capture(p).LemonGrassCooldown, 187.625)
+    p.raw.LemonGrassCooldown = 7.25
+    near(effects.capture(p).LemonGrassCooldown, 7.25)
+    p.raw.LemonGrassCooldown = 0
+    assert(effects.capture(p).LemonGrassCooldown == 0)
 end)
-check("partial cancelled consumption and native trait cooldown upper bounds", function()
-    for _, case in ipairs({{{}, 230}, {{iron = true}, 150}, {{weak = true}, 280}, {{iron = true, weak = true}, 150}}) do
-        local other = player(1, 23, case[1])
-        local a = action(other, -1, 0.25, "partial-result")
-        local calls = nativeCalls.eat
-        assert(ISEatFoodAction.eat(a, 0.25, "cancel-marker") == "partial-result")
-        assert(nativeCalls.eat == calls + 1 and a.amount == 0.25 and a.marker == "cancel-marker")
-        near(effects.capture(other).LemonGrass, case[2])
+check("missing, unsupported and invalid cooldown readings are unknown rather than zero", function()
+    toolkitMedicineCooldown = nil
+    local values = effects.capture(p)
+    assert(values.LemonGrassCooldown == false and values.Painkillers == 2700)
+    toolkitMedicineCooldown = function() return nil end
+    assert(effects.capture(p).LemonGrassCooldown == false)
+    toolkitMedicineCooldown = nativeCooldown
+    for _, invalid in ipairs({false, true, "3", -1, math.huge, -math.huge, 0 / 0, 1000000001}) do
+        p.raw.LemonGrassCooldown = invalid
+        assert(effects.capture(p).LemonGrassCooldown == false)
     end
-end)
-check("ineffective herbs, ordinary food and client prediction never start cooldown", function()
-    local other = player()
-    local calls = nativeCalls.complete
-    ISEatFoodAction.complete(action(other, -12, nil, "ineffective"))
-    ISEatFoodAction.complete(action(other, 0, 1, "ordinary"))
-    ISEatFoodAction.complete({character = other, result = "missing-item"})
-    assert(nativeCalls.complete == calls + 3 and effects.capture(other).LemonGrass == 0)
+    p.raw.LemonGrassCooldown = 140
+    near(effects.capture(p).LemonGrassCooldown, 140)
     client = true
-    ISEatFoodAction.complete(action(other, -12, 1, "client"))
-    assert(effects.capture(other).LemonGrass == 0)
+    assert(effects.capture(p).LemonGrassCooldown == false)
     client = false
-    multiplier = 2
-    Events.OnTick.fire()
-    local before = effects.capture(p).LemonGrass
-    ISEatFoodAction.complete(action(p, -12, nil, "still-ineffective"))
-    near(effects.capture(p).LemonGrass, before)
 end)
-check("server tick and single-player update use native rate without double decrement", function()
-    ISEatFoodAction.complete(action(p, -12, 1, true))
-    multiplier = 2
-    Events.OnPlayerUpdate.fire(p)
-    near(effects.capture(p).LemonGrass, 230)
-    Events.OnTick.fire()
-    near(effects.capture(p).LemonGrass, 229.97)
-    server = false
-    Events.OnTick.fire()
-    near(effects.capture(p).LemonGrass, 229.97)
-    Events.OnPlayerUpdate.fire(p)
-    near(effects.capture(p).LemonGrass, 229.94)
-    client = true
-    Events.OnPlayerUpdate.fire(p)
-    Events.OnTick.fire()
-    near(effects.capture(p).LemonGrass, 229.94)
-    client, server = false, true
-end)
-check("expired and dead cooldowns clear; native zero crossings cannot be negative", function()
-    multiplier = 100000
-    Events.OnTick.fire()
-    assert(effects.capture(p).LemonGrass == 0)
-    ISEatFoodAction.complete(action(p, -12, 1, true))
-    p.dead = true
-    Events.OnTick.fire()
-    assert(effects.capture(p).LemonGrass == 0)
-    p.dead, multiplier = false, 1
+check("native effect zero crossings are clamped without changing character state", function()
     for key in pairs(p.raw) do p.raw[key] = -0.01 end
-    for _, value in pairs(effects.capture(p)) do assert(value == 0) end
+    for key, value in pairs(effects.capture(p)) do
+        if key == "LemonGrassCooldown" then assert(value == false) else assert(value == 0) end
+    end
+    assert(p.raw.Painkillers == -0.01)
     p.raw = player().raw
 end)
 
@@ -199,6 +155,8 @@ check("server accepts authenticated self reads only, with nonce and 750ms rate l
     assert(responses[1].args.onlineID == p.id and responses[1].args.request == 1)
     near(responses[1].args.BlackSage, 3.5)
     near(responses[1].args.CommonMallow, 2.5)
+    near(responses[1].args.LemonGrassCooldown, 140)
+    assert(responses[1].args.LemonGrass == nil, "never send the old estimated field")
     now = 749
     request({request = 2})
     assert(#responses == 1)
@@ -208,6 +166,16 @@ check("server accepts authenticated self reads only, with nonce and 750ms rate l
     local other = player(1, 24)
     request({request = 3}, nil, nil, other)
     assert(#responses == 3 and responses[3].player == other and responses[3].args.onlineID == 24)
+end)
+
+check("server reports unavailable cooldown without discarding other native readings", function()
+    local other = player(2, 25)
+    toolkitMedicineCooldown = nil
+    request({request = 4}, nil, nil, other)
+    local values = responses[#responses].args
+    assert(values.onlineID == 25 and values.request == 4)
+    assert(values.LemonGrassCooldown == false and values.Painkillers == 2700)
+    toolkitMedicineCooldown = nativeCooldown
 end)
 
 -- Use the real framework when supplied; default fixtures cover only the public UI contract.
@@ -292,7 +260,7 @@ local function description(name) local m = moodle(name); return m:getDescription
 local function payload(who)
     who = who or p
     local result = effects.capture(who)
-    result.LemonGrass = 140
+    result.LemonGrassCooldown = 140
     result.request = medicine.states[who.num].request
     result.onlineID = who.id
     return result
@@ -351,8 +319,21 @@ check("duration-unchanged tooltips refresh and all item icons use native assets"
     end
     assert(p.modData.Moodles.LegacyMedicine.Value == 0.75)
 end)
+check("unavailable and legacy estimates hide only lemongrass; native zero stays valid", function()
+    for _, case in ipairs({{"legacy", 0}, {false, 0}, {0, 0}, {70, -0.25}, {140, -0.5}}) do
+        now = now + 1000; poll()
+        local values = payload()
+        values.LemonGrass = 280
+        if case[1] == "legacy" then values.LemonGrassCooldown = nil
+        else values.LemonGrassCooldown = case[1] end
+        receive(values); poll()
+        near(moodle("LemonGrass"):getValue(), case[2])
+        near(moodle("Painkillers"):getValue(), 0.5)
+        assert(not medicine.states[0].request)
+    end
+end)
 check("invalid and mismatched snapshots cannot replace accepted state", function()
-    now = 6000; poll()
+    now = now + 1000; poll()
     local state, accepted = medicine.states[0], medicine.states[0].values
     local function rejected(values, module, command)
         receive(values, module, command)
@@ -361,6 +342,9 @@ check("invalid and mismatched snapshots cannot replace accepted state", function
     rejected(nil); rejected("not-a-table"); rejected(payload(), "OtherModule"); rejected(payload(), nil, "OtherCommand")
     for _, invalid in ipairs({-1, math.huge, 0 / 0, "1", 1000000001}) do
         local values = payload(); values.Painkillers = invalid; rejected(values)
+    end
+    for _, invalid in ipairs({true, -1, math.huge, 0 / 0, "1", 1000000001}) do
+        local values = payload(); values.LemonGrassCooldown = invalid; rejected(values)
     end
     local values = payload(); values.BlackSage = nil; rejected(values)
     values = payload(); values.SleepingIntensity = 0 / 0; rejected(values)
@@ -432,8 +416,14 @@ check("single-player reads native effects directly without any network requests"
     local sent = #requests
     p.raw.Antibiotics, p.raw.Painkillers = 25, 2700
     p.raw.BlackSage, p.raw.CommonMallow = 3.5, 2.5
+    p.raw.LemonGrassCooldown = 70
     poll()
     for _, name in ipairs({"Antibiotics", "Painkillers", "BlackSage", "CommonMallow"}) do near(moodle(name):getValue(), 0.5) end
+    near(moodle("LemonGrass"):getValue(), -0.25)
+    toolkitMedicineCooldown = nil; poll()
+    assert(moodle("LemonGrass"):getLevel() == 0)
+    near(moodle("Painkillers"):getValue(), 0.5)
+    toolkitMedicineCooldown = nativeCooldown
     assert(#requests == sent)
 end)
 check("module reloads preserve UI registrations and native hooks", function()

@@ -27,6 +27,8 @@ Allow the outer shell more than 660 seconds, or disable its timeout. Preparation
 
 ## Recorded result
 
+The local forge candidate used version label 0.1.23 before concurrent upstream medicine/TV releases were merged. The combined published version is 0.1.25; the historical live comparison below is not whole-merge gameplay acceptance.
+
 The local runs `forge-baseline-05` and `forge-candidate-01` used B42.21, all 48 selected Mod IDs and identical gameplay fixture files. Their production manifests differed only in `PZToolkitJavaPatches` (0.1.22 versus 0.1.23).
 
 | Case | Pre-fix | Fixed |

@@ -18,7 +18,7 @@ local recipes = {
     DismantleImprovisedLighter = true,
 }
 
-local clothingRecipes = {RipClothing = true, RipDenimClothing = true}
+local clothingRecipes = {RipClothing = true, RipDenimClothing = true, CutUpBelt = true}
 
 local function inputFor(recipe, item)
     local found

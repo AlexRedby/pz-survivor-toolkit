@@ -8,18 +8,49 @@ except ImportError:
 
 
 INTEGRATIONS = {
+    'CleanUI': {
+        'owners': ['client/PZSurvivorToolkit/InventoryClasses.lua', 'client/PZSurvivorToolkit/InventoryFilter.lua',
+                   'client/PZSurvivorToolkit/InventoryLayout.lua', 'client/PZSurvivorToolkit/InventoryInteraction.lua',
+                   'client/PZSurvivorToolkit/InventoryTags.lua'],
+        'option': 'cleanui_inventory_pane', 'root': 'media/lua/client/ISUI', 'argument': 'ISInventoryPane.lua',
+        'tests': {name: ['ISInventoryPane.lua'] for name in (
+            'test_inventory_tags.lua', 'test_inventory_filter.lua', 'test_inventory_layout.lua',
+            'test_inventory_interaction.lua')},
+    },
+    'ContainerCapacityIndicator': {
+        'owners': ['client/PZSurvivorToolkit/InventoryClasses.lua', 'client/000ToolkitCCICompatibility.lua'],
+        'option': 'cci_source', 'root': 'media/lua/client', 'argument': 'ContainerCapacityIndicator.lua',
+        'tests': {'test_cci_compat.lua': ['ContainerCapacityIndicator.lua']},
+    },
+    'BravoItemDetails': {
+        'owners': ['client/PZSurvivorToolkit/InventoryClasses.lua', 'client/000ToolkitItemDetailsCompatibility.lua'],
+        'option': 'item_details_source', 'root': 'media/lua/client',
+        'tests': {'test_item_details.lua': ['BravoItemDetails.lua', 'BravoItemDetailsConfig.lua',
+                                          'BravoItemDetailsSorter.lua']},
+    },
     'Navigator': {
         'owners': ['client/PZSurvivorToolkit/Navigator.lua'],
         'option': 'navigator_source', 'root': 'media/lua/client/NavigatorRadio',
         'tests': {'test_navigator.lua': ['MonitorConfig.lua', 'MonitorRender.lua', 'NavigatorMonitorDrag.lua']},
     },
     'TVRadio_ReInvented': {
-        'owners': ['client/PZSurvivorToolkit/TVRadio.lua', 'client/PZSurvivorToolkit/TVVideos.lua',
+        'owners': ['client/PZSurvivorToolkit/TVRadio.lua', 'JavaPatches/src/net/alexredby/pztoolkitjavapatches/TVVideoPaths.java',
                    'client/PZSurvivorToolkit/TVDeviceResolver.lua'],
         'option': 'tv_source', 'root': 'media/lua/client/RadioCom',
         'argument': 'RadioWindowModules/RWMMergedTV.lua',
         'tests': {'test_tv_controls.lua': ['RadioWindowModules/RWMMergedTV.lua', 'ISRadioWindow.lua'],
                   'test_tv_videos.lua': ['RadioWindowModules/RWMMergedTV.lua']},
+    },
+    'MPFastForward': {
+        'owners': ['server/000ToolkitMPFFCompatibility.lua'],
+        'option': 'mpff_source', 'root': 'media/lua',
+        'tests': {'test_mpff_compat.lua': ['shared/MPFastForward_Config.lua', 'server/MPFastForward_Server.lua']},
+    },
+    'EURY_CONTAINERS': {
+        'owners': ['client/000ToolkitBCCompatibility.lua'],
+        'option': 'bc_filter_source', 'root': 'media/lua/client/BetterContainers/Categorize',
+        'argument': 'CategoryFilters.lua',
+        'tests': {'test_bc_filter_compat.lua': ['CategoryFilters.lua']},
     },
     'Quartermaster': {
         'owners': ['client/PZSurvivorToolkit/QuartermasterTags.lua',
@@ -31,6 +62,8 @@ INTEGRATIONS = {
         'tests': {'test_quartermaster_tags.lua': ['client/LootSorter_Picker.lua'],
                   'test_quartermaster_tag_rules.lua': ['shared/LootSorter_Presets.lua', 'shared/LootSorter_Util.lua',
                                                       'shared/LootSorter_Plan.lua', 'client/LootSorter_Core.lua'],
+                  'test_quartermaster_sync.lua': ['shared/LootSorter_Util.lua', 'shared/LootSorter_Presets.lua',
+                                                   'client/LootSorter_PresetSync.lua', 'client/LootSorter_Core.lua'],
                   'test_quartermaster_item_routing.lua': ['shared/LootSorter_Plan.lua'],
                   'test_quartermaster_craft_ui.lua': ['client/LootSorter_CraftMenu.lua']},
     },
@@ -80,7 +113,9 @@ def configure(args, project, requested):
         print('Upstream ' + id + ' -> ' + ', '.join(spec['owners']) + ' -> '
               + ', '.join(test for test in spec['tests'] if test in checks))
     for test, option, relative in (('test_tv_controls.lua', 'native_radio_root', 'media/lua/client'),
-                                    ('test_quartermaster_craft_ui.lua', 'native_action_root', 'media/lua')):
+                                    ('test_quartermaster_craft_ui.lua', 'native_action_root', 'media/lua'),
+                                    *[(test, 'native_inventory_pane', 'media/lua/client/ISUI/ISInventoryPane.lua')
+                                      for test in INTEGRATIONS['CleanUI']['tests']]):
         if test in checks:
             value = args.game.resolve() / relative
             previous = getattr(args, option)

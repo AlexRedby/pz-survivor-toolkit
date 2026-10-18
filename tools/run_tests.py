@@ -13,8 +13,8 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent.parent
 
-TAG_TESTS = ("test_item_tags.lua", "test_tag_visuals.lua", "test_inventory_tags.lua", "test_quartermaster_tags.lua", "test_tag_rule_picker.lua", "test_quartermaster_tag_rules.lua", "test_quartermaster_item_routing.lua", "test_tag_filter_presets.lua", "test_tag_filter_presets_menu.lua", "native_tags/check_reconnect.lua", "native_tags/check_sort_receipts.lua", "native_tags/check_barrier.lua")
-ACTION_TESTS = ("test_animal_info.lua", "test_action_queue_animals.lua", "test_ui_style.lua", "test_sidebar_tools.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_manage_containers.lua", "test_inventory_interaction.lua", "test_proximity_selection.lua", "test_bulk_dismantle.lua", "test_bulk_food.lua", "test_packaged_food.lua", "test_food_cart_compat.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_lifecycle.lua", "test_queue_equipment_floor.lua", "test_queue_equipment_bulk.lua", "test_queue_craft_fixture.lua", "test_queue_craft_ui_fixture.lua", "test_queue_engine_fixture.lua", "test_queue_fire_fixture.lua", "test_queue_fire_tidy.lua", "test_queue_equipment_authority.lua", "test_queue_equipment_slots.lua", "test_queue_equipment_postprocess.lua", "test_action_queue_acknowledgements.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_dismantle.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_hygiene.lua", "test_action_queue_compat.lua", "test_action_queue_tidy_intent.lua", "test_action_queue_manifest.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua", "test_action_queue_carts.lua", "test_action_queue_fire.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua", "test_context_menu_profile.lua", "test_context_menu_editor.lua")
+TAG_TESTS = ("test_item_tags.lua", "test_tag_visuals.lua", "test_inventory_tags.lua", "test_quartermaster_tags.lua", "test_tag_rule_picker.lua", "test_quartermaster_tag_rules.lua", "test_quartermaster_sync.lua", "test_quartermaster_item_routing.lua", "test_tag_filter_presets.lua", "test_tag_filter_presets_menu.lua", "native_tags/check_reconnect.lua", "native_tags/check_sort_receipts.lua", "native_tags/check_barrier.lua")
+ACTION_TESTS = ("test_source_proof.lua", "test_animal_info.lua", "test_action_queue_animals.lua", "test_ui_style.lua", "test_sidebar_tools.lua", "test_inventory_classes.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua", "test_bulk_dismantle.lua", "test_bulk_food.lua", "test_packaged_food.lua", "test_food_cart_compat.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_lifecycle.lua", "test_queue_equipment_floor.lua", "test_queue_equipment_bulk.lua", "test_queue_craft_fixture.lua", "test_queue_craft_ui_fixture.lua", "test_queue_engine_fixture.lua", "test_queue_fire_fixture.lua", "test_queue_fire_tidy.lua", "test_queue_equipment_authority.lua", "test_queue_equipment_slots.lua", "test_queue_equipment_postprocess.lua", "test_action_queue_acknowledgements.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_dismantle.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_hygiene.lua", "test_action_queue_compat.lua", "test_action_queue_tidy_intent.lua", "test_action_queue_manifest.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua", "test_action_queue_carts.lua", "test_action_queue_fire.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua", "test_context_menu_profile.lua", "test_context_menu_editor.lua")
 EXTRA_TESTS = (
     'test_quartermaster_craft_ui.lua',
     'test_highlighter.lua',
@@ -30,6 +30,7 @@ EXTRA_TESTS = (
     'test_auto_drink.lua',
     'test_cci_compat.lua',
     'test_item_details.lua',
+    'test_clothing_repair_menu.lua',
     'test_tv_videos.lua',
     'test_vhs_ownership.lua',
     'test_vehicle_ground.lua',
@@ -55,7 +56,6 @@ def main() -> None:
     parser.add_argument("--item-details-source", type=Path, help="Item Details media/lua/client directory")
     parser.add_argument("--cleanui-inventory-pane", type=Path, help="test against CleanUI ISInventoryPane.lua")
     parser.add_argument("--native-inventory-pane", type=Path, help="test against vanilla ISInventoryPane.lua")
-    parser.add_argument("--proximity-source", type=Path, help="test against ProximityInventory.lua and sibling ISInventoryPage.lua")
     parser.add_argument("--tv-source", type=Path, help="test VHS controls against TVRadio Reinvented RWMMergedTV.lua")
     parser.add_argument("--native-radio-root", type=Path, help="vanilla media/lua/client directory for RWMMedia and ISItemDropBox checks")
     parser.add_argument("--navigator-source", type=Path, help="NavigatorRadio source directory for upstream render/input checks")
@@ -65,7 +65,7 @@ def main() -> None:
     parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
     parser.add_argument("--quartermaster-source", type=Path, help="Quartermaster media/lua root for native integration checks")
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
-    parser.add_argument("--native-inventory-context-menu", type=Path, help="vanilla inventory transfer callbacks")
+    parser.add_argument("--native-inventory-context-menu", type=Path, help="vanilla inventory callbacks and sibling garment inspection UI")
     parser.add_argument("--native-action-root", type=Path, help="vanilla media/lua for queue/base/read contracts")
     parser.add_argument("--wishlist-game-root", type=Path, help="game Java directory for native wishlist menu callbacks")
     parser.add_argument("--wishlist-workshop-root", type=Path, help="Workshop content/108600 for wishlist UI source checks")
@@ -161,6 +161,8 @@ def main() -> None:
     if should_run('test_saucedcarts_compat.lua'):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
+        if args.native_action_root:
+            lua.globals().NativeActionRoot = str(args.native_action_root)
         if args.saucedcarts_source:
             lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
         lua.execute((ROOT / "tests/test_saucedcarts_compat.lua").read_text(encoding="utf-8"))
@@ -226,6 +228,13 @@ def main() -> None:
         if args.cci_source:
             lua.globals().CCISource = args.cci_source.read_text(encoding="utf-8")
         lua.execute((ROOT / "tests/test_cci_compat.lua").read_text(encoding="utf-8"))
+
+    if should_run('test_clothing_repair_menu.lua'):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().ProjectRoot = str(ROOT)
+        if args.native_inventory_context_menu:
+            lua.globals().NativeGarmentSource = (args.native_inventory_context_menu.parent / "ISGarmentUI.lua").read_text(encoding="utf-8")
+        lua.execute((ROOT / "tests/test_clothing_repair_menu.lua").read_text(encoding="utf-8"))
 
     if should_run('test_item_details.lua'):
         lua = LuaRuntime(unpack_returned_tuples=True)
@@ -313,9 +322,6 @@ def main() -> None:
             lua.globals().CleanUIInventoryPaneSource = args.cleanui_inventory_pane.read_text(encoding="utf-8")
         if name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua") and args.native_inventory_pane:
             lua.globals().NativeInventoryPaneSource = args.native_inventory_pane.read_text(encoding="utf-8")
-        if name == "test_proximity_selection.lua" and args.proximity_source:
-            lua.globals().ProximityInventorySource = args.proximity_source.read_text(encoding="utf-8")
-            lua.globals().ProximityInventoryPageSource = (args.proximity_source.parent / "ISInventoryPage.lua").read_text(encoding="utf-8")
         lua.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
         if name == "test_action_queue_fire.lua" and args.native_action_root and args.wishlist_workshop_root:
             scenarios = ["FireTestBCPreinstalled", "FireTestBCForeignPredecessor"]

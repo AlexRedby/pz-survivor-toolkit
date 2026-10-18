@@ -23,7 +23,8 @@ end
 local moddata = {}
 ModData = {getOrCreate = function(key) moddata[key] = moddata[key] or {}; return moddata[key] end,
     transmit = function() end, request = function() end}
-getFileReader = function(path)
+getFileReader = function(path, create)
+    if create and disk[path] == nil then disk[path] = '' end
     local text = disk[path]
     if not text then return nil end
     local done = false
@@ -130,7 +131,7 @@ if NativeQuartermasterLuaRoot then
     assert(#boxes == 1 and boxes[1].cats.Food and boxes[1].container == container, 'installed native private gather missed rule-only box')
     boxes = LootSorter.gatherBoxesOrWarn(player)
     assert(#boxes == 1 and boxes[1].cats.Food, 'installed native sorter gather missed rule-only box')
-    mode='client'; LootSorter._receivedRegistry=moddata.LootSorter_Registry
+    mode='client'; Rules.received={}; LootSorter._receivedRegistry=moddata.LootSorter_Registry
     object.md.LSBox['0']=nil; safe=false
     boxes=LootSorter.gatherBoxes(player)
     assert(#boxes==0 and object.md.LSBox['0']==nil, 'rule lookup touched forbidden safehouse before native permission gate')
@@ -210,6 +211,73 @@ assert(effective.FutureFood and effective.Manual and effective.Precise and items
 presets.Pantry.gen=presets.Pantry.gen+1
 assert(not Rules.getPreset('Pantry',presets.Pantry), 'deleted/remade preset inherited prior rule')
 assert(LootSorter.serverFns.removePreset(player,{name='Pantry'})=='ok' and not Rules.presetStore().Pantry)
+-- Failed reads must not publish an empty cache that a later save can overwrite.
+do
+    local originalRead, originalWrite = getFileReader, getFileWriter
+    local decode, encode = LootSorter.presetDeserialize, LootSorter.presetSerialize
+    local file = 'PZSTQuartermasterTagRules.txt'
+    local savedText = disk[file]
+    for _, stage in ipairs({'open', 'read', 'close', 'decode'}) do
+        local closes = 0
+        Rules.localPresets = nil
+        getFileReader = function(path, create)
+            assert(path == file and create == true)
+            if stage == 'open' then error('read-open failure') end
+            local reader = assert(originalRead(path))
+            return {readLine = function()
+                if stage == 'read' then error('read failure') end
+                return reader:readLine()
+            end, close = function()
+                closes = closes + 1
+                if stage == 'close' then error('read-close failure') end
+                reader:close()
+            end}
+        end
+        LootSorter.presetDeserialize = stage == 'decode' and function() error('decode failure') end or decode
+        assert(not pcall(Rules.presetStore), stage .. ' failure was hidden')
+        assert(Rules.localPresets == nil and disk[file] == savedText, stage .. ' failure published or saved an empty store')
+        assert(closes == (stage == 'open' and 0 or 1), stage .. ' failure leaked a reader')
+        getFileReader, LootSorter.presetDeserialize = originalRead, decode
+        assert(Rules.getPreset('Either', presets.Either).mode == 'any', stage .. ' failure prevented a clean retry')
+    end
+    Rules.localPresets = nil
+    getFileReader = function() return nil end
+    assert(not pcall(Rules.presetStore) and Rules.localPresets == nil,
+        'native nil reader for an existing file was cached as an empty store')
+    getFileReader = originalRead
+    assert(Rules.getPreset('Either', presets.Either).mode == 'any')
+    Rules.localPresets = nil
+    getFileReader = function() error('unavailable sidecar') end
+    assert(not pcall(put, player, {name='Unread', cats={}, items={}}) and not presets.Unread,
+        'native preset was changed before a failed sidecar load')
+    assert(not pcall(LootSorter.serverFns.removePreset, player, {name='Either'}) and presets.Either,
+        'native preset was removed before a failed sidecar load')
+    getFileReader = originalRead
+    Rules.presetStore()
+    local opens, closes = 0, 0
+    getFileWriter = function(path, create, append)
+        assert(path == file and create == true and append == false)
+        opens = opens + 1
+        disk[path] = '' -- Native getFileWriter truncates as soon as it opens.
+        return {write=function() error('write failure') end, close=function() closes=closes+1 end}
+    end
+    LootSorter.presetSerialize = function() error('encode failure') end
+    assert(not pcall(Rules.persistPresets) and opens == 0 and disk[file] == savedText,
+        'serializer failure opened/truncated the existing sidecar')
+    LootSorter.presetSerialize = function() return nil end
+    assert(not pcall(Rules.persistPresets) and opens == 0 and disk[file] == savedText,
+        'invalid serializer result opened/truncated the existing sidecar')
+    LootSorter.presetSerialize = encode
+    local ok, err = pcall(Rules.persistPresets)
+    assert(not ok and tostring(err):find('write failure', 1, true) and closes == 1,
+        'write failure was hidden or leaked its writer')
+    getFileWriter = function() return {write=function() end, close=function() error('write-close failure') end} end
+    assert(not pcall(Rules.persistPresets), 'writer close failure was hidden')
+    getFileReader, getFileWriter = originalRead, originalWrite
+    disk[file] = savedText
+    Rules.localPresets = nil
+    assert(Rules.getPreset('Either', presets.Either).mode == 'any')
+end
 if NativeQuartermasterLuaRoot then
     -- Paste must keep clipboard A's native picks when another copy replaces the global clipboard with B.
     local originalSave, pasteReply = Rules.saveBox

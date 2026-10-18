@@ -1,3 +1,5 @@
+local cartSelection=require 'QueueTestSelection'
+if cartSelection.cases[1]=='cart-pickup' then return end
 if not isServer() then return end
 local Fixture=require 'QueueEquipmentFixture'
 local Selection=require 'QueueTestSelection'

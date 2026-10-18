@@ -33,7 +33,7 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
             'repeat': ('scenario-interaction.lua', 12), 'manual': ('bootstrap.lua', 0),
-            'path': ('scenario-path.lua', 24)}
+            'path': ('scenario-path.lua', 24), 'variants': ('scenario-variants.lua', 3)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 SCENE_SPECS = {
     'sprint': ('comparison', 'direct', 'gait', 'runstop'),
@@ -51,7 +51,16 @@ SCENE_SPECS = {
 }
 
 
+VARIANTS = {'shopping-cart': 'SaucedCarts.ShoppingCart',
+            'wooden-wheelbarrow': 'SaucedWheelbarrow.WheelbarrowWood',
+            'metal-wheelbarrow': 'SaucedWheelbarrow.WheelbarrowMetal'}
+VARIANT_PHASES = ('inventory-equip', 'walk', 'run', 'sprint', 'drop-near', 'pickup-near',
+                  'drop-far', 'pickup-far', 'drop-repeat', 'pickup-repeat')
+
+
 def scene_names(case):
+    if case == 'variants':
+        return list(VARIANTS)
     if case == 'manual':
         return []
     if case == 'stop-timing':
@@ -137,7 +146,7 @@ def validate(selection):
             raise ValueError('Explicit candidate options.mod_sources.' + identifier + ' is required')
     for key in ('patch_jar', 'ffmpeg', 'ffprobe'):
         _path(selection, key, executable=key != 'patch_jar')
-    if suite == SP:
+    if suite == SP and selection['cases'] != ['variants']:
         _path(selection, 'mesh_fbx')
         try:
             importlib.import_module('numpy')
@@ -151,7 +160,9 @@ def sources(project, selection):
         paths += [path for path in _intake(project, suite).rglob('*') if path.is_file()
                   and path.suffix in ('.py', '.lua', '.java', '.json', '.md', '.mf', '.methods')]
     if selection['suite'] == SP:
-        paths += [Path(project) / 'tests/native_queue/support/QueueCartStartup.lua', _path(selection, 'mesh_fbx')]
+        paths += [Path(project) / 'tests/native_queue/support/QueueCartStartup.lua']
+        if selection['cases'] != ['variants']:
+            paths.append(_path(selection, 'mesh_fbx'))
     paths += [_path(selection, key, key != 'patch_jar') for key in ('patch_jar', 'ffmpeg', 'ffprobe')]
     return paths
 
@@ -180,6 +191,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     project, output, game = map(Path, (project, output, game))
     sp, mp = _intake(project, SP), _intake(project, MP)
     manual = selection['suite'] == SP and selection['cases'] == ['manual']
+    variants = selection['suite'] == SP and selection['cases'] == ['variants']
     patch = _path(selection, 'patch_jar')
     if not any(hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(patch.read_bytes()).digest()
                for path in Path(locations['PZToolkitJavaPatches']).rglob('*.jar')):
@@ -200,9 +212,9 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     evidence = sp / 'evidence'
     probe_sources = ([mp / 'ClearanceProbe.java'] if selection['suite'] == MP else
                      [evidence / (name + '.java') for name in ('WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe')])
-    if not manual:
+    if not manual and not variants:
         _compile(jdk, classpath, build / 'probe-classes', [*probe_sources, evidence / 'AttachWoodenWheelProbe.java'])
-    probes = [] if manual else ['ClearanceProbe'] if selection['suite'] == MP else ['WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe']
+    probes = [] if manual or variants else ['ClearanceProbe'] if selection['suite'] == MP else ['WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe']
     for name in probes:
         _jar(build / (name + '.jar'), build / 'probe-classes', (mp if selection['suite'] == MP else evidence) / (name + '.mf'))
     fixture = runtime.setdefault('fixture', {})
@@ -210,7 +222,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     fixture['attach'] = {}
     if manual:
         fixture['manual'] = True
-    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL']
+    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL']
     videos = {role: str(Path(config['cache']) / 'videos') for role, config in runtime['roles'].items() if role != 'server'}
     config = dict(selection, port=selection['ports'][0], disposable=True, ffmpeg=str(_path(selection, 'ffmpeg', True)), videoRoot=videos)
     for role, spec in runtime['roles'].items():
@@ -241,7 +253,10 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             _write(sandbox, 'SandboxVars={VERSION=6,Zombies=6,EnableVehicles=false,StartMonth=7,StartDay=9,StartTime=2}\n')
             continue
         classes = Path(spec['classes'])
-        if not manual:
+        if variants:
+            # An empty attachment list releases the existing startup gate without wooden probes.
+            fixture['attach'][role] = []
+        if not manual and not variants:
             shutil.copy2(build / 'probe-classes/AttachWoodenWheelProbe.class', classes / 'AttachWoodenWheelProbe.class')
         for name in probes:
             target = classes / 'probes' / (name + '.jar')
@@ -449,6 +464,43 @@ def _coverage(cache, text, count, metrics):
     _mesh_proof(cache)
 
 
+def _variant_coverage(text, scenes):
+    log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
+    records = [json.loads(line.split('[CART_VARIANT] PHASE ', 1)[1])
+               for line in log.splitlines() if '[CART_VARIANT] PHASE ' in line]
+    if [(row['case'], row['phase']) for row in records] != [(name, phase) for name in scenes for phase in VARIANT_PHASES]:
+        raise ValueError('Missing, duplicate or reordered cart variant phases')
+    result = []
+    for name in scenes:
+        rows = [row for row in records if row['case'] == name]
+        first = rows[0]
+        if (type(first['id']) is not int or first['id'] < 0 or not first['cargoIDs']
+                or not isinstance(first['cargoWeight'], (int, float)) or not math.isfinite(first['cargoWeight'])
+                or first['cargoWeight'] <= 0):
+            raise ValueError('Missing exact cart/cargo identity: ' + name)
+        for row in rows:
+            ground = row['phase'].startswith('drop-')
+            expected_id = -1 if ground else first['id']
+            if (row['kind'] != VARIANTS[name] or row['id'] != first['id']
+                    or row['cargoIDs'] != first['cargoIDs'] or row['cargoWeight'] != first['cargoWeight']
+                    or row['primaryID'] != expected_id or row['secondaryID'] != expected_id
+                    or row['inventoryCount'] != (0 if ground else 1) or row['worldCount'] != (1 if ground else 0)
+                    or row['luaActions'] != 0 or row['nativeActions'] != 0 or row['hasPath'] is not False
+                    or not isinstance(row['elapsed'], (int, float)) or not 0 < row['elapsed'] < 15000):
+                raise ValueError('Cart variant ownership/terminal queue failed: ' + name + '/' + row['phase'])
+            if row['phase'] in ('walk', 'run', 'sprint'):
+                if (not isinstance(row['distance'], (int, float)) or not math.isfinite(row['distance'])
+                        or row['distance'] < .25 or row['gaitSeen'] is not True):
+                    raise ValueError('Cart variant native gait did not move: ' + name + '/' + row['phase'])
+            if row['phase'] in ('pickup-near', 'pickup-far'):
+                distance = row['approachDistance']
+                if (not isinstance(distance, (int, float)) or not math.isfinite(distance)
+                        or (distance < 2 if row['phase'] == 'pickup-far' else distance > 1)):
+                    raise ValueError('Cart variant pickup approach not exercised: ' + name + '/' + row['phase'])
+        result.append({'case': name, 'kind': VARIANTS[name], 'id': first['id'], 'phases': len(rows)})
+    return {'functionalPass': True, 'cases': result}
+
+
 def verify(root, selection, catalog):
     root = Path(root)
     if selection['suite'] == SP and selection['cases'] == ['manual']:
@@ -475,9 +527,20 @@ def verify(root, selection, catalog):
         if any(not complete(selection, role, text) for role, text in texts.items()):
             raise ValueError('Cart capture did not complete')
         for text in texts.values():
-            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
+            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
                 raise ValueError('Cart capture contains fixture/probe errors')
         evidence['videos'] = {role: _videos(root, selection, role, text) for role, text in texts.items()}
+        if selection['suite'] == SP and selection['cases'] == ['variants']:
+            report = _variant_coverage(texts['client1'], selected_scenes(selection))
+            _write(analysis / 'variants.json', json.dumps(report, indent=2, allow_nan=False))
+            evidence.update(variants=report, analysis=str(analysis), evidenceComplete=True,
+                            scope='SP usability; wooden mesh, IK and cosmetic equivalence are not assessed')
+            return {'issues': [], 'evidence': evidence, 'outcomes': [
+                {'actor': 'client1', 'case': 'variants', 'status': 'captured',
+                 'reason': 'Native cart menu pickup/equip, Walk/Run/Sprint and drop/repeat ownership verified',
+                 'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
+                             'functionalPass': True, 'partialCoverage': debug,
+                             'selectedScenes': selected_scenes(selection)}}]}
         if selection['suite'] == MP:
             report = _load(intake / 'analyze.py').analyze(root)
             evidence['comparison'] = report

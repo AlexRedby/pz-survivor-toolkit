@@ -37,21 +37,27 @@ function Rules.presetStore()
         return store.presets
     end
     if Rules.localPresets then return Rules.localPresets end
-    Rules.localPresets = {}
-    local reader = getFileReader(FILE, false)
-    if reader then
+    local presets = {}
+    -- Create only if missing: nil can then only mean failure, never an empty store.
+    local reader = getFileReader(FILE, true)
+    if not reader then error("Cannot read Quartermaster tag rules") end
+    local ok, text = pcall(function()
         local lines, line = {}, reader:readLine()
         while line do lines[#lines + 1] = line; line = reader:readLine() end
-        reader:close()
-        local stored = LootSorter.presetDeserialize(table.concat(lines, "\n"))
-        for name, entry in pairs(stored) do
-            local rule = {mode = entry.items[ANY] and "any" or "all", include = {}, exclude = {}}
-            for id in pairs(entry.cats) do rule.include[#rule.include + 1] = id end
-            for id in pairs(entry.items) do if id ~= ANY then rule.exclude[#rule.exclude + 1] = id end end
-            rule = Tags.normalizeRule(rule)
-            if rule then Rules.localPresets[name] = {rule = rule, gen = entry.gen} end
-        end
+        return table.concat(lines, "\n")
+    end)
+    local closed, closeError = pcall(function() reader:close() end)
+    if not ok then error(text) end
+    if not closed then error(closeError) end
+    local stored = LootSorter.presetDeserialize(text)
+    for name, entry in pairs(stored) do
+        local rule = {mode = entry.items[ANY] and "any" or "all", include = {}, exclude = {}}
+        for id in pairs(entry.cats) do rule.include[#rule.include + 1] = id end
+        for id in pairs(entry.items) do if id ~= ANY then rule.exclude[#rule.exclude + 1] = id end end
+        rule = Tags.normalizeRule(rule)
+        if rule then presets[name] = {rule = rule, gen = entry.gen} end
     end
+    Rules.localPresets = presets
     return Rules.localPresets
 end
 
@@ -69,9 +75,15 @@ function Rules.persistPresets()
             records[name] = record
         end
     end
+    -- Opening the native writer truncates the file, so prepare the full text first.
+    local text = LootSorter.presetSerialize(records)
+    if type(text) ~= "string" then error("Cannot serialize Quartermaster tag rules") end
     local writer = getFileWriter(FILE, true, false)
     if not writer then error("Cannot save Quartermaster tag rules") end
-    writer:write(LootSorter.presetSerialize(records)); writer:close()
+    local ok, writeError = pcall(function() writer:write(text) end)
+    local closed, closeError = pcall(function() writer:close() end)
+    if not ok then error(writeError) end
+    if not closed then error(closeError) end
 end
 
 function Rules.getPreset(name, preset)
@@ -203,6 +215,12 @@ function Rules.installClient()
     if not LootSorter or LootSorter.pzstTagRuleClient or not LootSorter.getRegistry
         or not LootSorter.findDesignatedOnSquare then return end
     LootSorter.pzstTagRuleClient = true
+    if LootSorter.arePresetsSynced then
+        local synced = LootSorter.arePresetsSynced
+        LootSorter.arePresetsSynced = function(...)
+            return synced(...) and (not Tags.enabled() or Rules.presetsSynced())
+        end
+    end
     if LootSorter.requestPresets then
         local request = LootSorter.requestPresets
         LootSorter.requestPresets = function(...)

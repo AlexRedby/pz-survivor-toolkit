@@ -73,6 +73,25 @@ local function context(playerNum, menu, items)
     local entries = {}
     for fullType in pairs(types) do entries[#entries + 1] = { fullType = fullType, amount = 1 } end
     if #entries == 0 then return end
+    local list = W.Client.selected(playerNum)
+    if #entries == 1 and list then
+        local fullType, listId = entries[1].fullType, list.id
+        local keys = W.Client.entryKeys(list, fullType)
+        if #keys == 0 then
+            menu:addOption(getText("UI_PZSW_AddWanted"), playerNum, function(number)
+                W.Client.edit(number, "addMany", {listId = listId, entries = entries})
+            end)
+        end
+        for _, key in ipairs(keys) do
+            local entry = list.entries[key]
+            local name = getText(entry.vehicleTypes and "UI_PZSW_RemoveVehicleWanted" or "UI_PZSW_RemoveWanted")
+            if entry.vehicleTypes and #keys > 1 then name = name .. ": " .. getItemNameFromFullType(entry.vehicleTypes[1]) end
+            menu:addOption(name, playerNum, function(number)
+                W.Client.edit(number, "remove", {listId = listId, fullType = key})
+            end)
+        end
+        return
+    end
     menu:addOption(getText("UI_PZSW_AddWanted"), playerNum, function(number)
         W.Client.addItems(number, entries)
     end)

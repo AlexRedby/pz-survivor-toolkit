@@ -1339,6 +1339,16 @@ assert(api.cancelOperationReason(q,a)=='operation_dependent' and not api.cancelO
 pickup.perform=nativePerform
 PZSurvivorToolkit.BulkActions.guardTransfer(pickup)
 assert(not api.cancelOperationReason(q,a), 'the exact Toolkit pickup guard remains supported')
+PZSurvivorToolkit.BulkActions.guardTransfer(pickup)
+assert(not api.cancelOperationReason(q,a), 'repeated guards must retain exact native stop support')
+local safeCompletion = pickup.onCompleteFunc
+local foreignCompletion = function() end
+pickup.onCompleteFunc = foreignCompletion
+PZSurvivorToolkit.BulkActions.guardTransfer(pickup)
+assert(pickup.onCompleteFunc == foreignCompletion, 'a later owner keeps its completion callback')
+assert(api.cancelOperationReason(q,a) == 'operation_dependent' and not api.cancelOperation(q,a),
+    'an unknown completion callback must remain opaque after reapplying the guard')
+pickup.onCompleteFunc = safeCompletion
 
 -- Native MP object replacement updates action fields, but pickup-token keys retain the old object.
 local function replacementItem(character, original, container)

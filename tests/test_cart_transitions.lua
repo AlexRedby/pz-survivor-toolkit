@@ -173,12 +173,13 @@ local function setup(server, enabled, bridge)
     function p:faceLocationF(x, y) self.faceX, self.faceY = x, y end
     function p:shouldBeTurning() return self.turning end
     function p:setMetabolicTarget(value) self.metabolic = value end
-    function p:DistTo() return self.distance or 1 end
+    function p:DistTo() error("integer DistTo overload truncates fractional stance coordinates") end
+    function p:DistToSquared() return (self.distance or 1)^2 end
     function p:getPlayerNum() return 0 end
     function p:isHandItem(item) return self.primary == item or self.secondary == item end
     function p:getPathFindBehavior2() return {cancel = function() end} end
     function p:setPath2() end
-    function p:getSquare() return {canReachTo = function() return true end} end
+    function p:getSquare() return {canReachTo = function() return w.reachable ~= false end} end
     function w.item(kind, id)
         local item = {kind = kind or "SaucedWheelbarrow.WheelbarrowWood", id = id or 123, cart = true}
         function item:getType() return "WheelbarrowWood" end
@@ -223,6 +224,24 @@ local w = setup(false, false, true)
 assert(not ToolkitWoodCartPickup and not ToolkitWoodCartSetdown)
 w = setup(true, true, false)
 assert(ToolkitWoodCartPickup.Type == "ToolkitWoodCartPickup" and ToolkitWoodCartSetdown.Type == "ToolkitWoodCartSetdown")
+-- NetTimedAction serializes the fields named by the constructor's Lua parameters.
+local constructor, parameters = ISCartPickupAction.new, {}
+debug.sethook(function()
+    if debug.getinfo(2, "f").func ~= constructor then return end
+    for index = 1, 6 do parameters[index] = debug.getlocal(2, index) end
+end, "c")
+local serialized = ISCartPickupAction:new(w.p, 1, 2, 0, 123)
+debug.sethook()
+local arguments = {}
+for index = 2, 6 do
+    local name = parameters[index]
+    assert(name and serialized[name] ~= nil, "native MP constructor parameter has no serialized field: " .. tostring(name))
+    arguments[index - 1] = serialized[name]
+end
+local reconstructed = ISCartPickupAction:new(unpack(arguments, 1, 5))
+assert(reconstructed.character == w.p and reconstructed.squareX == 1 and reconstructed.squareY == 2
+    and reconstructed.squareZ == 0 and reconstructed.itemId == 123, "native server reconstruction lost pickup identity")
+print("PASS cart pickup constructor preserves the native parameter-name serialization contract")
 assert(ISCartPickupAction.complete == w.nativeComplete and ISUnequipAction.complete == w.nativeUnequipComplete,
     "shared registration must retain authoritative pickup and ordinary unequip complete")
 local wood = w.item(); w.worldFor(wood)
@@ -583,6 +602,38 @@ assert(getmetatable(ISCartPickupAction.FromWorldItem(p, world)) == ISCartPickupA
 p.instant = false
 p.distance = 1; w.worldFor(steel)
 assert(getmetatable(ISCartPickupAction.FromWorldItem(p, steel.world)) == ISCartPickupAction)
+-- Other cart types still need the ordinary approach that their upstream callback omits.
+for _, kind in ipairs({"SaucedCarts.ShoppingCart", "SaucedWheelbarrow.WheelbarrowMetal"}) do
+    local cart = w.item(kind, 125); w.worldFor(cart)
+    local stanceBridge = toolkitWoodCartStance; toolkitWoodCartStance = nil
+    w.reachable = false
+    local destination = {getX=function() return 0 end,getY=function() return 2 end,getZ=function() return 0 end}
+    AdjacentFreeTileFinder = {Find=function(square, character)
+        assert(square == cart.world:getSquare() and character == p)
+        return not w.noAdjacent and destination or nil
+    end}
+    local approach = ISCartPickupAction.FromWorldItem(p, cart.world)
+    assert(getmetatable(approach) == ISWalkToTimedActionF, kind .. " distant pickup omitted approach")
+    assert(approach.location:x() == .5 and approach.location:y() == 2.5 and approach.location:z() == 0)
+    local added = #w.added
+    approach:stop(); assert(#w.added == added, "cancelled cart approach queued a pickup")
+    local vanished = ISCartPickupAction.FromWorldItem(p, cart.world)
+    local originalWorld = cart.world; w.world = nil
+    vanished:perform(); assert(#w.added == added, "missing cart was picked up after approach")
+    w.world = originalWorld
+    local success = ISCartPickupAction.FromWorldItem(p, cart.world)
+    w.reachable = true; success:perform()
+    assert(#w.added == added + 1 and w.added[#w.added].itemId == 125
+        and getmetatable(w.added[#w.added]) == ISCartPickupAction, "ordinary cart inherited wooden action")
+    assert(getmetatable(ISCartPickupAction.FromWorldItem(p, cart.world)) == ISCartPickupAction,
+        "reachable cart queued an unnecessary approach")
+    w.reachable = false; w.noAdjacent = true
+    assert(getmetatable(ISCartPickupAction.FromWorldItem(p, cart.world)) == ISCartPickupAction,
+        "unreachable cart invented a path")
+    w.noAdjacent = nil; w.reachable = nil; toolkitWoodCartStance = stanceBridge
+end
+w.worldFor(steel)
+print("PASS shopping and metal cart approach uses native reachability, exact target, cancellation and unchanged pickup actions")
 local beforeEnd = w.ended
 w.events.OnPlayerUpdate(p)
 assert(w.ticked == p, "presentation recovery tick lost its exact player")
@@ -699,3 +750,13 @@ for _, pickupAction in ipairs({true, false}) do
 end
 require = originalRequire
 print("PASS wooden approach preserves exact world identity, skips disappeared/replaced targets, does not queue after cancellation and falls back safely without bridge helpers")
+
+local server = setup(true, true, true)
+local serverCart = server.item(); server.worldFor(serverCart)
+toolkitWoodCartStance = function() error("server must not load render models for pickup") end
+local serverPickup = ToolkitWoodCartPickup:new(server.p, 1, 2, 0, 123)
+assert(getmetatable(serverPickup) == ToolkitWoodCartPickup and serverPickup.maxTime == 88
+    and serverPickup.itemId == 123 and serverPickup.squareX == 1,
+    "server reconstruction changed the client action class, duration or identity")
+require = originalRequire
+print("PASS server pickup reconstructs the authored action without probing client render models")

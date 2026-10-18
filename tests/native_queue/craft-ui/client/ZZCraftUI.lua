@@ -9,11 +9,19 @@ local Toolkit=PZSurvivorToolkit
 local enabled=config.mode=='toolkit'
 local step,failed,phase,since,idle=1,0,'prepare',0,0
 local started,done=false,false
-local ids,state,authorityState,authority,window,owner,logic,tail,actions
+local ids,state,authorityState,authority,previousAuthority,window,owner,logic,tail,actions
 local progress,picked,returned,boundaries={},{},{},{perform=0,complete=0}
 local callbacks,callbackClass,returnsBeforeRead,localDeferrals
+local interrupted,interruptionProgress
+local removal,poolPhaseProof,manualMaterialIds,manualMaterialIdsAfterRemoval
+local previousCleanupIds,previousBagIds={},{}
+local secondAllocated,secondStarted=false,false
+local outcomeTrace={};local tailProgress=false
 local function case()return config.cases[step]end
 local function automatic()return case():sub(-5)=='-auto'end
+local function context()return case():match('^context')~=nil end
+local function pool()return case():find('missing-batch-pool',1,true)~=nil end
+local function failure()return case():find('cancel-active',1,true)~=nil or pool()end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function sorted(set)local out={};for id in pairs(set)do out[#out+1]=id end;table.sort(out);return out end
 local function refreshSources(player)
@@ -32,16 +40,25 @@ end
 local function request(command)
  if isClient()then sendClientCommand('CraftUITest',command,{case=case()})
  elseif command=='Prepare'then
-  authorityState=Fixture.prepare(getPlayer(),case());ids=Fixture.descriptor(authorityState)
+  authorityState=Fixture.prepare(getPlayer(),case(),previousAuthority);previousAuthority=nil;ids=Fixture.descriptor(authorityState)
   print('[CRAFT_UI_TEST] PREPARED '..JSON.encode(ids))
+ elseif command=='RemovePool'then
+  removal=Fixture.removePool(authorityState);print('[CRAFT_UI_TEST] REMOVED '..JSON.encode(removal))
  else
   authority=assert(Fixture.verify(authorityState));print('[CRAFT_UI_TEST] VERIFIED '..JSON.encode(authority))
  end
 end
 Events.OnServerCommand.Add(function(module,command,value)
+ local first=actions and actions[1]
+ if module=='PZSurvivorToolkitActions'and command=='State'and failure()and first
+  and value.player==ids.playerId and value.transaction==first.toolkitNativeTransaction and value.kind==first.toolkitNativeKind then
+  local row={protocol=value.protocol,player=value.player,transaction=value.transaction,kind=value.kind,token=value.token,state=value.state}
+  outcomeTrace[#outcomeTrace+1]=row
+  print('[CRAFT_UI_TEST] OUTCOME '..JSON.encode({case=case(),receipt=row}));return
+ end
  if module~='CraftUITest'then return end
  assert(command~='Failed',value.error)
- if command=='Prepared'then ids=value elseif command=='Verified'then authority=value end
+ if command=='Prepared'then ids=value elseif command=='Verified'then authority=value elseif command=='Removed'then removal=value end
 end)
 local begin=Toolkit.ActionQueueLifecycle.begin
 Toolkit.ActionQueueLifecycle.begin=function(action,nativePhase)
@@ -93,16 +110,32 @@ local function snapshotCallbacks()
   assert(Toolkit.ActionQueueCraft.supports(action),'UI craft callback owner unsupported: '..case())
   callbacks[i]={action.onStartFunc,action.onStartTarget,action.onCompleteFunc,action.onCompleteTarget,
    action.onCancelFunc,action.onCancelTarget}
-  if case()=='context'then
+  if context()then
    logic=action.onCompleteTarget;assert(action.onCompleteFunc==ISInventoryPaneContextMenu.OnNewCraftComplete,'context callback replaced')
   else
    assert(action.onStartTarget==owner and action.onCompleteTarget==owner and action.onCancelTarget==owner,'UI callback target differs')
   end
  end
 end
+local function captureMaterialIds()
+ local result={}
+ local recipe=actions[1].craftRecipe
+ local materialIndex=recipe:getIndexForIO(recipe:getInputs():get(0))
+ local expected={};for _,id in ipairs(ids.materials)do expected[id]=true end
+ for i,action in ipairs(actions)do
+  local selected=assert(action.manualInputs[materialIndex]);local selectedIds={}
+  assert(selected:size()==2,'UI craft did not retain the full shared material pool')
+  for index=0,selected:size()-1 do
+   local item=selected:get(index);assert(item:getFullType()=='Base.Plank'and expected[item:getID()],'UI shared pool selected another material')
+   assert(not selectedIds[item:getID()],'UI shared pool contains duplicate material identity');selectedIds[item:getID()]=true
+  end
+  result[i]=sorted(selectedIds)
+ end
+ return result
+end
 local function enqueue(player)
  local recipe=assert(getScriptManager():getCraftRecipe('QueueBorrowedTools'))
- if case()=='context'then
+ if context()then
   callbackClass='context'
   local menu=ISContextMenu.get(player:getPlayerNum(),20,20)
   menu:addOption(recipe:getTranslationName(),state.root:getItemById(ids.materials[1]),
@@ -125,6 +158,9 @@ local function enqueue(player)
  end
  assert(#actions==#ids.materials,'UI did not enqueue requested craft count: '..case()..' '..#actions)
  snapshotCallbacks()
+ if pool()then
+  manualMaterialIds=captureMaterialIds()
+ end
  if automatic()then
   assert(not logic:isManualSelectInputs(),'automatic UI switched to manual selection')
   for _,action in ipairs(actions)do assert(not action.manualInputs,'automatic action has pinned manual inputs')end
@@ -142,6 +178,10 @@ local function enqueue(player)
 end
 local function observe()
  local current=queue().current
+ if pool()then
+  secondAllocated=secondAllocated or actions[2].action~=nil
+  secondStarted=secondStarted or actions[2].craftStarted==true or actions[2]:isStarted()==true
+ end
  for i,action in ipairs(actions)do if current==action and action:isStarted()and action:getJobDelta()>0 then progress[i]=true end end
  if current and current.Type=='ISInventoryTransferAction'and current:isStarted()and current:getJobDelta()>0 then
   local items=current.queueList and current.queueList[1]and current.queueList[1].items or {current.item}
@@ -153,10 +193,37 @@ local function observe()
   end end
  end
  if current==tail and tail:isStarted()and tail:getJobDelta()>0 and returnsBeforeRead==nil then
-  returnsBeforeRead=true
+  tailProgress=true;returnsBeforeRead=true
   for i,meta in ipairs(ids.toolMeta)do
    local bag=state.root:getItemById(ids.bags[i]);local tool=bag and bag:getItemContainer():getItemById(meta.id)
    if not tool then returnsBeforeRead=false end
+  end
+ end
+end
+local function intervene()
+ if not failure()then return end
+ local first=actions[1]
+ if not interrupted and queue().current==first and first.craftStarted==true and first:isStarted()and first:getJobDelta()>0 then
+  local ack=config.kind=='mp'and Toolkit.ActionQueueAcknowledgements.capture(first)
+  if config.kind=='sp'or ack and Toolkit.ActionQueueAcknowledgements.state(first,ack)=='started'then
+   interruptionProgress=first:getJobDelta();assert(interruptionProgress<=0.25,'UI active intervention missed early native progress')
+   interrupted=true
+   if pool()then
+    assert(actions[2].action==nil and actions[2].craftStarted==false,'UI second craft allocated before pool-removal request')
+    poolPhaseProof={secondAllocatedAtRequest=false,observedBeforeSecondAllocation=false}
+    request('RemovePool')
+   elseif enabled then
+    local allowed,reason=Toolkit.ActionQueue.cancelOperation(queue(),first);assert(allowed,reason)
+   else first:forceStop()end
+  end
+ end
+ if pool()and interrupted and not poolPhaseProof.observedBeforeSecondAllocation then
+  assert(actions[2].action==nil and actions[2].craftStarted==false,'UI second craft allocated before pool removal was observed')
+  local absent=removal~=nil
+  for _,id in ipairs(ids.materials)do if state.root:getItemById(id)then absent=false end end
+  if absent and Fixture.sparePresent(getPlayer(),removal.introducedSpare)then
+   manualMaterialIdsAfterRemoval=captureMaterialIds()
+   poolPhaseProof.secondAllocatedAtRemoval=false;poolPhaseProof.observedBeforeSecondAllocation=true
   end
  end
 end
@@ -170,11 +237,27 @@ local function finish()
  local ownerIdle=not logic:isCraftActionInProgress();local remaining=owner and owner.craftTimes or 0
  local reason=(not ownerIdle or remaining>0)and 'owner-still-busy'or not authority.tailRead and 'native-independent-tail-not-preserved'
   or not returnsBeforeRead and 'native-returns-not-before-tail'or nil
+ if pool()then
+  if secondAllocated or secondStarted then reason='native-second-craft-allocated'
+  elseif authority.outputs~=1 or #authority.outputPlankCounts~=1 or authority.outputPlankCounts[1]~=1 then reason='native-retained-input-effect-differs'end
+ end
  local value={event='case',id=case(),status=reason and 'failed'or 'passed',reason=reason,
   requested=#ids.materials,actions=#actions,progressIds=sorted(progress),callbackClass=callbackClass,
   callbacksUnchanged=unchanged,callbackSafe=safe,nativeDuration=150,localDeferrals=localDeferrals,
   sharedPerformCount=boundaries.perform,sharedCompleteCount=boundaries.complete,
   ownerIdle=ownerIdle,remaining=remaining,pickupIds=sorted(picked),returnIds=sorted(returned),returnsBeforeRead=returnsBeforeRead==true}
+ if failure()then
+  assert(interrupted and progress[1],'UI active cancellation gate was not reached')
+  value.interrupted=true;value.interruptionProgress=interruptionProgress;value.outcomeTrace=outcomeTrace
+  value.playerId=ids.playerId;value.tailProgress=tailProgress
+  value.tokenCancelled=actions[1].toolkitQueueOperation and actions[1].toolkitQueueOperation.toolkitCancelled==true or false
+  if pool()then
+   assert(poolPhaseProof.observedBeforeSecondAllocation,'UI shared-pool prestart removal gate was not reached')
+   value.poolPhaseProof=poolPhaseProof;value.manualMaterialIds=manualMaterialIds
+   value.manualMaterialIdsAfterRemoval=manualMaterialIdsAfterRemoval
+   value.secondAllocated=secondAllocated;value.secondStarted=secondStarted
+  end
+ end
  if automatic()then
   value.manualSelect=owner.logic:isManualSelectInputs();value.manualInputTypes={};value.automaticToolIds={}
   for _,action in ipairs(actions)do
@@ -195,10 +278,28 @@ local function finish()
   emit({event='complete',cases=config.cases,expected=#config.cases,performed=#config.cases,failed=failed,skipped=0})
   print('[CRAFT_UI_TEST] COMPLETE');done=true;return
  end
- step=step+1;phase='prepare';since=getTimestampMs()
+ previousCleanupIds={authority.bookId}
+ for _,id in ipairs(authority.outputIds)do previousCleanupIds[#previousCleanupIds+1]=id end
+ previousBagIds=ids.bags
+ local bags={}
+ for _,id in ipairs(previousBagIds)do
+  previousCleanupIds[#previousCleanupIds+1]=id;bags[#bags+1]=assert(state.root:getItemById(id))
+ end
+ ISInventoryPaneContextMenu.onUnEquip(bags,getPlayer():getPlayerNum())
+ for _,id in ipairs(authority.materialIds)do previousCleanupIds[#previousCleanupIds+1]=id end
+ if authority.introducedSpare then previousCleanupIds[#previousCleanupIds+1]=authority.introducedSpare.id end
+ for _,resource in ipairs(authority.resources)do
+  previousCleanupIds[#previousCleanupIds+1]=resource.id
+ end
+ previousAuthority=authorityState
+ step=step+1;phase='unequip';since=getTimestampMs()
  ids,state,authorityState,authority,window,owner,logic,tail,actions=nil,nil,nil,nil,nil,nil,nil,nil,nil
  progress,picked,returned,boundaries={},{},{},{perform=0,complete=0}
  returnsBeforeRead,localDeferrals,idle=nil,0,0
+ interrupted,interruptionProgress=nil,nil
+ removal,poolPhaseProof,manualMaterialIds,manualMaterialIdsAfterRemoval=nil,nil,nil,nil
+ secondAllocated,secondStarted=false,false
+ outcomeTrace={};tailProgress=false
 end
 Events.OnPlayerUpdate.Add(function(player)
  if started and player==getPlayer()then idle=#queue().queue==0 and not player:hasTimedActions()and idle+1 or 0 end
@@ -215,6 +316,14 @@ Events.OnTick.Add(function()
   local player=getPlayer()
   if not player or player:isDead()or not player:getSquare()then return end
   if config.kind=='mp'and(not isClient()or player:getOnlineID()<0)then return end
+  if phase=='unequip'then
+   if #queue().queue>0 or player:hasTimedActions()or idle<10 then return end
+   for _,id in ipairs(previousBagIds)do
+    local bag=assert(player:getInventory():getItemById(id))
+    assert(not player:isEquipped(bag),'UI previous source bag remains equipped')
+   end
+   phase='prepare';return
+  end
   if phase=='prepare'then
    assert(Toolkit.Settings.actionQueue()==enabled,'UI queue option differs')
    if step==1 then emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=enabled,nativeDurations=true})end
@@ -222,6 +331,8 @@ Events.OnTick.Add(function()
   end
   if phase=='ready'then
    if not ids then return end
+   for _,id in ipairs(previousCleanupIds)do if player:getInventory():getItemById(id)then return end end
+   previousCleanupIds={}
    state=state or Fixture.resolve(player,ids)
    if not state or not state.containers then return end
    ISInventoryPaneContextMenu.onWearItems({state.root:getItemById(ids.bags[1])},player:getPlayerNum())
@@ -237,8 +348,14 @@ Events.OnTick.Add(function()
    phase='running';since=getTimestampMs();return
   end
   if phase=='running'then
-   observe()
-   if idle>=10 and #queue().queue==0 and not player:hasTimedActions()then request('Verify');phase='receipt'end
+   observe();intervene()
+   if idle>=10 and #queue().queue==0 and not player:hasTimedActions()then
+    if failure()and config.kind=='mp'then
+     if #outcomeTrace<2 then return end
+     assert(#outcomeTrace==2 and outcomeTrace[1].state=='started','UI native State lifecycle differs')
+    end
+    request('Verify');phase='receipt'
+   end
   elseif phase=='receipt'and authority then finish()end
  end)
  if not ok then print('[QUEUE_TEST] FAIL craft UI '..tostring(problem));done=true end

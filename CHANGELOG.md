@@ -10,6 +10,59 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.84
+
+- **Fixed:** Server-side cart unequip and broken-cart drop finish without accessing the client action queue and return a Boolean based on the authoritative item result.
+
+- **Fixed:** Server cart pickup reconstructs the selected action without querying client render models.
+- **Fixed:** Cart pickup retains the constructor field names required by native multiplayer serialization, so Host/server actions receive the cart coordinates and ID for every cart type.
+- **Fixed:** Repeated wooden-wheelbarrow pickup uses fractional stance distance rather than the integer-only distance overload, avoiding an unnecessary zero-length path and cancelled pickup.
+
+- **Fixed:** Shopping carts and metal wheelbarrows approach an accessible adjacent tile before ground pickup when out of reach. Native pickup/equip, cargo and the wooden-wheelbarrow stance are preserved.
+
+### 0.1.83
+
+- **Fixed:** Quartermaster waits for both its presets and Toolkit tag rules before multiplayer sorting, and requests both again through its existing gather retry when either is missing. Disabling tags retains native readiness.
+- **Fixed:** Failed single-player tag-rule reads no longer publish an empty cache or allow linked native preset changes before loading succeeds. Readers/writers close on exceptions; serialization finishes before opening the existing file for overwrite.
+
+### 0.1.82
+
+- **Added:** Wishlist requests for compatible vehicle parts from the mechanics window. All compatible variants of the requested vehicle class are highlighted in inventories and mechanics, with combined carried counts.
+- **Changed:** Item context menus and the catalog switch between adding and removing requests. Compatible vehicle groups have their own removal actions, preserving separate exact-item requests and the selected list.
+
+### 0.1.81
+
+- **Fixed:** Better Generator Info queue integration accepts its reviewed source in the game as well as the test runtime. Source checks now share UTF16 normalization, bounded reads and reader cleanup across compatibility, fire, generator and medical adapters; changed or unverified sources remain protected.
+
+### 0.1.80
+
+- **Fixed:** Verified native crafting UI batches skip an exhausted pool of selected one-use items before the next craft starts, preserving tool cleanup and independent queued actions. A sufficient remaining pool continues normally.
+
+### 0.1.79
+
+- **Fixed:** Shared transfer guards preserve existing completion callbacks and their arguments. Reapplying the guard retains native stop provenance without granting unknown callbacks queue permissions.
+- **Maintenance:** Removed adapters and checks for the excluded Proximity Inventory and Manage Containers mods. Current Better Containers and Quartermaster checks no longer require the old Proximity Inventory Workshop installation.
+
+### 0.1.78
+
+- **Fixed:** Bulk clothing cutting includes belts, eligible holsters and empty bandoliers through the native recipe, including mixed selections with clothing. Native tools, outputs and protected-item checks are preserved.
+
+### 0.1.77
+
+- **Fixed:** Clicking inventory items during transfers follows the pressed item across row changes and stack sorting instead of selecting the replacement row on mouse release. Rapid clicks on different items no longer trigger a double-click action after a transfer.
+
+### 0.1.76
+
+- **Maintenance:** TV videos retain the original mod's catalog and initialization. Removed the duplicate Lua video list and macOS path-depth search; path correction now runs before native video caching.
+
+### 0.1.75
+
+- **Changed:** Lemongrass displays the native cooldown instead of estimating its maximum duration. Removed the separate Lua countdown and food-action hooks; unsupported readings hide only this indicator.
+
+### 0.1.74
+
+- **Maintenance:** Inventory adapters share class discovery and CleanUI toggle subscriptions while preserving each adapter's installation order, native fallback and existing hooks.
+
 ### 0.1.73
 
 - **Added:** Authored wooden-wheelbarrow pickup and setdown clips, including the SaucedCarts setdown hotkey, cancellation recovery and exact world/held-item handoffs.
@@ -339,10 +392,19 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
-### 0.1.23
+### 0.1.25
 
+- **Version:** The forge candidate was locally labeled 0.1.23 during live verification; 0.1.25 integrates it without replacing the concurrent medicine and TV releases below. The historical live run does not cover every subsequently merged upstream change.
 - **Fixed:** Refresh a registered workstation's stale spatial entity ID before decoding its CraftBench reference on the server. Removing an earlier object from the same square could otherwise cause `loadComponent` to throw while accepting a crafting request, leaving the client at 100% progress. Recovery requires the exact already-resolved workstation and matching incoming ID; no recipe effects are forced or replayed.
 - **Checks:** Reproduced the 100% Forge Simple Blade stall in a disposable Windows Host world with all 48 selected mods and Java Patches 0.1.22. The same fixture with 0.1.23 passed ordinary hand crafting, unchanged-forge crafting and crafting after a real earlier-object removal: one blade, one charcoal/iron debit, conserved tool IDs and idle native action/UI. Only the Java mod changed. Native decoder/medical regressions also passed. Both live runs retain seven client font-loading errors; the fixed run has no server action errors but remains runtime `needs-review`, not a clean whole-pack acceptance. No macOS, WAN or second-client coverage is claimed.
+
+### 0.1.24
+
+- **Fixed:** Resolve recognized TV & Radio ReInvented video paths from the active mod directory on macOS, preserving native cache keys, dimensions and synchronous/asynchronous loading.
+
+### 0.1.23
+
+- **Added:** A guarded, read-only Lua accessor for the native food-sickness treatment cooldown in single-player and on the multiplayer server.
 
 ### 0.1.22
 

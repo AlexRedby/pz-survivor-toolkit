@@ -240,6 +240,7 @@ local Outfit = {
 local Gather = {build = function() return {} end, find = function(_, descriptor) return descriptor.item, 'container', descriptor.item:getContainer() end}
 local loaded = {}
 require = function(module)
+    if module == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/SourceProof.lua'))() end
     if loaded[module] then return loaded[module] end
     if module == 'NeatEquipment/NEQ_Outfit' then return Outfit end
     if module == 'NeatEquipment/NEQ_Gather' then return Gather end

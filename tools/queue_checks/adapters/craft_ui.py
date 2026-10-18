@@ -1,17 +1,38 @@
 """Native context and batch crafting callbacks with authoritative identity receipts."""
 import json
+import math
 from pathlib import Path
 import re
 
 from . import craft
 
 
-CASES = ['context', 'vanilla-batch', 'vanilla-auto', 'neat-batch', 'neat-auto', 'cook-batch', 'cook-auto']
-COUNTS = {case: 1 if case == 'context' else 2 for case in CASES}
-OWNERS = {case: ('context' if case == 'context' else 'ISWidgetHandCraftControl' if case.startswith('vanilla-')
+SUCCESS_CASES = ['context', 'vanilla-batch', 'vanilla-auto', 'neat-batch', 'neat-auto', 'cook-batch', 'cook-auto']
+CANCEL_CASES = ['context-cancel-active', 'vanilla-cancel-active', 'neat-cancel-active', 'cook-cancel-active']
+POOL_CASES = ['vanilla-missing-batch-pool', 'neat-missing-batch-pool', 'cook-missing-batch-pool']
+FAILURE_CASES = CANCEL_CASES + POOL_CASES
+CASES = SUCCESS_CASES + FAILURE_CASES
+COUNTS = {case: 1 if case.startswith('context') else 2 for case in CASES}
+OWNERS = {case: ('context' if case.startswith('context') else 'ISWidgetHandCraftControl' if case.startswith('vanilla-')
                  else 'NC_CraftActionPanel' if case.startswith('neat-') else 'PJCK_CraftActionPanel') for case in CASES}
 MODS = craft.MODS + ['NeatUI_Framework', 'Neat_Crafting', 'Project_Cook']
 RECEIPT_KEYS = {'materialIds', 'consumed', 'outputIds', 'outputs', 'resources', 'toolsReturned', 'bookId', 'tailRead'}
+FAILURE_RECEIPT_KEYS = {'materialStates', 'sparePlanks'}
+POOL_RECEIPT_KEYS = {'spentMaterials', 'survivingMaterials', 'removedMaterials', 'outputPlankCounts', 'introducedSpare'}
+POOL_OBSERVATIONS = {'poolPhaseProof', 'manualMaterialIds', 'manualMaterialIdsAfterRemoval', 'secondAllocated', 'secondStarted'}
+FAILURE_OBSERVATIONS = {'interrupted', 'interruptionProgress', 'outcomeTrace', 'playerId', 'tailProgress',
+                        'tokenCancelled'}
+
+
+def _receipt_keys(case):
+    return (RECEIPT_KEYS | (FAILURE_RECEIPT_KEYS if case in FAILURE_CASES else set())
+            | (POOL_RECEIPT_KEYS if case in POOL_CASES else set()))
+
+
+def _metadata(value):
+    return (type(value) is dict and set(value) == {'id', 'kind', 'condition', 'uses'}
+            and type(value.get('id')) is int and value.get('kind') == 'Base.Plank'
+            and all(type(value.get(key)) is int and value[key] >= 0 for key in ('condition', 'uses')))
 
 
 def definitions():
@@ -50,7 +71,7 @@ def complete(selection, role, text):
 def _authority(text):
     result = []
     for line in text.splitlines():
-        match = re.search(r'\[CRAFT_UI_TEST\] (PREPARED|VERIFIED)(?:\s|$)(.*)', line)
+        match = re.search(r'\[CRAFT_UI_TEST\] (PREPARED|REMOVED|VERIFIED)(?:\s|$)(.*)', line)
         if match:
             marker, payload = match.groups()
             value = json.loads(payload)
@@ -61,7 +82,9 @@ def _authority(text):
 
 
 def _prepared_valid(prep, case):
-    if (set(prep) != {'case', 'materials', 'bags', 'toolMeta', 'book', 'baselineOutputIds'}
+    failure = case in FAILURE_CASES
+    extra = {'materialMeta', 'sparePlanks', 'playerId'} if failure else set()
+    if (set(prep) != {'case', 'materials', 'bags', 'toolMeta', 'book', 'baselineOutputIds'} | extra
             or not craft._matches(prep, {'case': case}) or not craft._ids(prep.get('materials'), COUNTS[case])
             or not craft._ids(prep.get('bags'), 2) or not craft._ids(prep.get('baselineOutputIds'))
             or type(prep.get('toolMeta')) is not list or len(prep['toolMeta']) != 2):
@@ -73,16 +96,32 @@ def _prepared_valid(prep, case):
                 or any(type(meta.get(key)) is not int or meta[key] < 0 for key in ('condition', 'uses'))):
             return False
         tools.append(meta['id'])
-    return craft._ids(prep['materials'] + prep['bags'] + tools + [prep.get('book')] + prep['baselineOutputIds'])
+    spares = []
+    if failure:
+        materials, spare = prep.get('materialMeta'), prep.get('sparePlanks')
+        if (type(materials) is not list or not all(_metadata(meta) for meta in materials)
+                or [meta['id'] for meta in materials] != prep['materials'] or type(spare) is not list
+                or not all(_metadata(meta) for meta in spare) or type(prep.get('playerId')) is not int):
+            return False
+        spares = [meta['id'] for meta in spare]
+        if spares != sorted(spares):
+            return False
+    return craft._ids(prep['materials'] + prep['bags'] + tools + [prep.get('book')]
+                      + prep['baselineOutputIds'] + spares)
 
 
-def _case(selection, case, row, prep, receipt):
+def _case(selection, case, row, prep, receipt, removal=None):
     enabled, count = selection['mode'] == 'toolkit', COUNTS[case]
     issues = []
-    expected = dict(requested=count, actions=count, progressIds=list(range(1, count + 1)),
+    failure, pooled = case in FAILURE_CASES, case in POOL_CASES
+    completed = (1 if pooled else 0) if failure else count
+    expected_outputs = row.get('outputs') if pooled and not enabled else completed
+    expected = dict(requested=count, actions=count, progressIds=[1] if failure else list(range(1, count + 1)),
                     callbackClass=OWNERS[case], callbacksUnchanged=True, callbackSafe=True,
-                    nativeDuration=150, localDeferrals=0, sharedPerformCount=count if enabled else 0,
-                    sharedCompleteCount=count if enabled and selection['kind'] == 'sp' else 0)
+                    nativeDuration=150, localDeferrals=0, sharedPerformCount=completed if enabled else 0,
+                    sharedCompleteCount=completed if enabled and selection['kind'] == 'sp' else 0)
+    if pooled and not enabled:
+        del expected['progressIds']
     if case.endswith('-auto'):
         expected.update(manualSelect=False, manualInputTypes=['nil'] * count)
     if not craft._matches(row, expected):
@@ -94,6 +133,11 @@ def _case(selection, case, row, prep, receipt):
     reason = ('owner-still-busy' if row.get('ownerIdle') is False or type(row.get('remaining')) is int and row['remaining'] > 0
               else 'native-independent-tail-not-preserved' if row.get('tailRead') is False
               else 'native-returns-not-before-tail' if row.get('returnsBeforeRead') is False else None)
+    if pooled:
+        if row.get('secondAllocated') is True or row.get('secondStarted') is True:
+            reason = 'native-second-craft-allocated'
+        elif not craft._matches(row, dict(outputs=1, outputPlankCounts=[1])):
+            reason = 'native-retained-input-effect-differs'
     if enabled:
         if not craft._matches(row, dict(status='passed', reason=None, ownerIdle=True, remaining=0,
                                         tailRead=True, returnsBeforeRead=True, toolsReturned=2)):
@@ -109,16 +153,22 @@ def _case(selection, case, row, prep, receipt):
     for key in ('pickupIds', 'returnIds'):
         ids = row.get(key)
         if (not craft._ids(ids) or ids != sorted(ids) or not set(ids) <= set(tools)
-                or (case == 'context' or case.startswith('vanilla-')) and ids != sorted(tools)):
+                or (case.startswith('context') or case.startswith('vanilla-'))
+                and (key == 'pickupIds' or not failure or enabled or row.get('returnsBeforeRead') is True)
+                and ids != sorted(tools)
+                or failure and (case.startswith('neat-') or case.startswith('cook-')) and ids != []):
             issues.append('Craft UI exact observed tool transfers differ: ' + case + '/' + key)
-    if (set(receipt) != RECEIPT_KEYS | {'case'} or not craft._matches(receipt, {'case': case})
-            or not craft._matches(row, {key: receipt.get(key) for key in RECEIPT_KEYS})):
+    keys = _receipt_keys(case)
+    if (set(receipt) != keys | {'case'} or not craft._matches(receipt, {'case': case})
+            or not craft._matches(row, {key: receipt.get(key) for key in keys})):
         issues.append('Craft UI authority differs from client: ' + case)
-    if not craft._matches(row, dict(materialIds=prep['materials'], consumed=count, outputs=count, bookId=prep['book'])):
+    if not craft._matches(row, dict(materialIds=prep['materials'], consumed=0 if pooled else completed,
+                                   outputs=expected_outputs, bookId=prep['book'])):
         issues.append('Craft UI exact material/reader effect differs: ' + case)
     outputs = row.get('outputIds')
-    if (not craft._ids(outputs, count) or not craft._ids(prep['materials'] + prep['bags'] + tools
-                                                       + [prep['book']] + prep['baselineOutputIds'] + (outputs or []))):
+    if (not craft._ids(outputs, expected_outputs) or not craft._ids(prep['materials'] + prep['bags'] + tools
+                                                       + [prep['book']] + prep['baselineOutputIds']
+                                                       + [meta['id'] for meta in prep.get('sparePlanks', [])] + (outputs or []))):
         issues.append('Craft UI outputs are not new unique native items: ' + case)
     resources, returned = row.get('resources'), 0
     if type(resources) is not list or len(resources) != 2:
@@ -130,13 +180,89 @@ def _case(selection, case, row, prep, receipt):
                     or any(type(resource.get(key)) is not int or resource[key] not in (0, 1)
                            for key in ('sourceCount', 'rootCount'))
                     or resource.get('sourceCount', 0) + resource.get('rootCount', 0) != 1
-                    or (enabled or row.get('returnsBeforeRead') is True) and resource.get('sourceCount') != 1):
+                    or (enabled or row.get('returnsBeforeRead') is True
+                        or failure and (case.startswith('neat-') or case.startswith('cook-')))
+                    and resource.get('sourceCount') != 1):
                 issues.append('Craft UI exact tool conservation/endpoint differs: ' + case)
             else:
                 returned += resource['sourceCount']
         if not craft._matches(row, {'toolsReturned': returned}):
             issues.append('Craft UI returned-tool count differs: ' + case)
+    if failure:
+        issues.extend(_failure(selection, case, row, prep))
+    if pooled:
+        issues.extend(_pool(selection, case, row, prep, removal or {}))
     return issues, reason
+
+
+def _failure(selection, case, row, prep):
+    issues = []
+    progress = row.get('interruptionProgress')
+    if (not craft._matches(row, {'interrupted': True, 'playerId': prep['playerId']})
+            or type(progress) not in (int, float) or not math.isfinite(progress) or not 0 < progress <= .25
+            or type(row.get('tailProgress')) is not bool or row.get('tailRead') is not row.get('tailProgress')
+            or (prep['playerId'] < 0 if selection['kind'] == 'mp' else prep['playerId'] != 0)):
+        issues.append('Craft UI intervention/reader/actor proof differs: ' + case)
+    states = [dict(meta, state='removed' if case in POOL_CASES else 'surviving') for meta in prep['materialMeta']]
+    if (not craft._matches(row, dict(materialStates=states, sparePlanks=prep['sparePlanks']))
+            or type(row.get('tokenCancelled')) is not bool
+            or selection['mode'] == 'toolkit' and row['tokenCancelled'] is not True):
+        issues.append('Craft UI exact surviving material evidence differs: ' + case)
+    trace = row.get('outcomeTrace')
+    if selection['kind'] == 'sp':
+        if not craft._same(trace, []):
+            issues.append('SP craft UI cannot claim remote native State receipts: ' + case)
+    elif type(trace) is not list or len(trace) != 2:
+        issues.append('Craft UI native State lifecycle missing/duplicated: ' + case)
+    else:
+        for entry, state in zip(trace, ('started', 'completed' if case in POOL_CASES else 'canceled')):
+            if (type(entry) is not dict or set(entry) != craft.STATE_KEYS
+                    or not craft._matches(entry, dict(protocol=1, player=prep['playerId'], kind='ISHandcraftAction', state=state))
+                    or type(entry.get('transaction')) is not int or not -128 <= entry['transaction'] <= 127
+                    or entry['transaction'] == 0 or type(entry.get('token')) is not str
+                    or not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', entry['token'])):
+                issues.append('Craft UI native State identity/order differs: ' + case)
+        if (all(type(entry) is dict for entry in trace)
+                and any(not craft._same(trace[0].get(key), trace[1].get(key)) for key in craft.STATE_KEYS - {'state'})):
+            issues.append('Craft UI terminal State does not match its started transaction/token: ' + case)
+    return issues
+
+
+def _pool(selection, case, row, prep, removal):
+    issues = []
+    if (not craft._same(row.get('manualMaterialIds'), [sorted(prep['materials'])] * 2)
+            or not craft._same(row.get('manualMaterialIdsAfterRemoval'), [sorted(prep['materials'])] * 2)
+            or not craft._same(row.get('poolPhaseProof'), dict(secondAllocatedAtRequest=False,
+                              secondAllocatedAtRemoval=False, observedBeforeSecondAllocation=True))):
+        issues.append('Craft UI exact shared-pool prestart removal proof differs: ' + case)
+    if (set(removal) != {'case', 'removedMaterials', 'introducedSpare'}
+            or not craft._matches(removal, dict(case=case, removedMaterials=prep['materialMeta']))
+            or not craft._matches(row, dict(spentMaterials=[], survivingMaterials=[], removedMaterials=prep['materialMeta']))):
+        issues.append('Craft UI exact removed pool is not independently accounted: ' + case)
+    spare = removal.get('introducedSpare')
+    if (not _metadata(spare) or not craft._same(row.get('introducedSpare'), spare)
+            or not craft._ids(prep['materials'] + prep['bags'] + [meta['id'] for meta in prep['toolMeta']]
+                              + [prep['book']] + prep['baselineOutputIds']
+                              + [meta['id'] for meta in prep['sparePlanks']]
+                              + ([spare['id']] if _metadata(spare) else []) + (row.get('outputIds') or []))):
+        issues.append('Craft UI introduced spare is missing, changed or overlaps another identity: ' + case)
+    progress, counts = row.get('progressIds'), row.get('outputPlankCounts')
+    if (type(row.get('outputs')) is not int or row['outputs'] < 0
+            or type(counts) is not list or len(counts) != row['outputs']
+            or any(type(count) is not int or count < 0 for count in counts)
+            or type(row.get('secondAllocated')) is not bool or type(row.get('secondStarted')) is not bool
+            or row.get('secondStarted') is True and row.get('secondAllocated') is not True
+            or not craft._ids(progress) or progress not in ([1], [1, 2])
+            or progress == [1, 2] and row.get('secondStarted') is not True):
+        issues.append('Craft UI actual retained-input/second-action telemetry differs: ' + case)
+    if selection['mode'] == 'toolkit' and not craft._matches(row, dict(outputs=1, outputPlankCounts=[1],
+                                                                    secondAllocated=False, secondStarted=False)):
+        issues.append('Craft UI toolkit did not preserve exactly the first retained-input effect: ' + case)
+    return issues
+
+
+def _outcomes(text):
+    return [json.loads(match.group(1)) for match in re.finditer(r'\[CRAFT_UI_TEST\] OUTCOME (.*)', text)]
 
 
 def verify(root, selection, catalog):
@@ -169,25 +295,45 @@ def verify(root, selection, catalog):
         if len(rows) != 1 or not craft._matches(rows[0], expected):
             issues.append('Craft UI ' + event + ' evidence differs')
     if [(marker, value.get('case')) for marker, value in raw] != [
-            (marker, case) for case in cases for marker in ('PREPARED', 'VERIFIED')]:
+            (marker, case) for case in cases for marker in
+            (('PREPARED', 'REMOVED', 'VERIFIED') if case in POOL_CASES else ('PREPARED', 'VERIFIED'))]:
         issues.append('Missing, duplicated or reordered authoritative craft UI receipt')
     identities, output_ids, outcomes, failures = [], [], [], {}
+    cleanup_ids = set()
     for case in cases:
         row = next((row for row in results if row.get('id') == case), {})
         prep = next((value for marker, value in raw if marker == 'PREPARED' and value.get('case') == case), {})
         receipt = next((value for marker, value in raw if marker == 'VERIFIED' and value.get('case') == case), {})
-        case_issues, reason = _case(selection, case, row, prep, receipt)
+        removal = next((value for marker, value in raw if marker == 'REMOVED' and value.get('case') == case), {})
+        case_issues, reason = _case(selection, case, row, prep, receipt, removal)
         issues.extend(case_issues)
         if reason and not enabled:
             failures[case] = reason
         if _prepared_valid(prep, case):
-            identities += prep['materials'] + prep['bags'] + [meta['id'] for meta in prep['toolMeta']] + [prep['book']]
+            if cleanup_ids.intersection([meta['id'] for meta in prep.get('sparePlanks', [])] + prep['baselineOutputIds']):
+                issues.append('Craft UI previous owned cleanup identity remains in preparation: ' + case)
+            owned = prep['materials'] + prep['bags'] + [meta['id'] for meta in prep['toolMeta']] + [prep['book']]
+            identities += owned
+            cleanup_ids.update(owned)
+        if case in POOL_CASES and _metadata(removal.get('introducedSpare')):
+            probe_id = removal['introducedSpare']['id']
+            identities.append(probe_id)
+            cleanup_ids.add(probe_id)
         if craft._ids(row.get('outputIds')):
             output_ids += row['outputIds']
-        outcomes.append(dict(actor='client1', case=case, outcome={key: row.get(key) for key in RECEIPT_KEYS | {
+            cleanup_ids.update(row['outputIds'])
+        outcomes.append(dict(actor='client1', case=case, outcome={key: row.get(key) for key in _receipt_keys(case) | (FAILURE_OBSERVATIONS if case in FAILURE_CASES else set()) | (POOL_OBSERVATIONS if case in POOL_CASES else set()) | {
             'requested', 'actions', 'progressIds', 'callbackClass', 'callbacksUnchanged', 'callbackSafe',
             'nativeDuration', 'localDeferrals', 'sharedPerformCount', 'sharedCompleteCount', 'ownerIdle',
             'remaining', 'pickupIds', 'returnIds', 'returnsBeforeRead', 'manualSelect', 'manualInputTypes', 'automaticToolIds'}}))
+    traces = [dict(case=row.get('id'), receipt=entry) for row in results if row.get('id') in FAILURE_CASES
+              for entry in (row.get('outcomeTrace') if type(row.get('outcomeTrace')) is list else [])]
+    if not craft._same(_outcomes(text), traces):
+        issues.append('Craft UI raw native State receipts differ from case traces')
+    tokens = [entry['receipt'].get('token') for entry in traces
+              if type(entry['receipt']) is dict and entry['receipt'].get('state') == 'started']
+    if any(type(token) is not str for token in tokens) or len(set(tokens)) != len(tokens):
+        issues.append('Craft UI native started State token reused between cases')
     if not craft._ids(identities + output_ids):
         issues.append('Craft UI prepared/output identities overlap between cases')
     if '[QUEUE_TEST] FAIL ' in text or '[QUEUE_TEST] FAIL ' in authority:
@@ -198,4 +344,6 @@ def verify(root, selection, catalog):
     issues.extend(failures.values())
     return {'issues': issues, 'outcomes': outcomes, 'evidence': {'limits': [
         'Native context and batch callbacks are exercised through fixture-driven UI APIs; physical mouse input is not covered.',
+        'Shared-pool loss records retained-cache output effects separately from physical removal; removed items are not reported as normally consumed.',
+        'Neat and Project Cook handcraft owners use tools in their source bags; these cases do not claim late tool returns.',
         'Fresh one-client SP/Host, native durations and exact authority receipts; no WAN or concurrent-client coverage.']}}

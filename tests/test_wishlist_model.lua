@@ -176,6 +176,46 @@ check("entry, sharing, batch, owner and amount bounds", function()
     assert(Model.snapshot(store, "new-owner", env).error == "limit" and not store.lists['new-owner'])
     Model.limits.lists = previous
 end)
+check("vehicle alternatives are bounded, detached and retained by quantity and done edits", function()
+    local store = {}
+    own(store, "owner")
+    itemTypes['Base.OldTire2'], itemTypes['Base.NormalTire2'], itemTypes['Base.ModernTire2'] = true, true, true
+    local variants = {"Base.OldTire2", "Base.NormalTire2", "Base.ModernTire2"}
+    assert(not request(store, "owner", "add", nil, {fullType = variants[1], amount = 1,
+        vehicleTypes = variants, vehicleClass = 2}).error)
+    assert(not request(store, "owner", "add", nil, {fullType = "Base.OldTire2", amount = 2}).error)
+    assert(own(store, "owner").entries['Base.OldTire2'].amount == 2)
+    variants[2] = "Base.Hammer"
+    local entry = own(store, "owner").entries['vehicle:Base.OldTire2']
+    assert(entry.vehicleTypes[2] == "Base.NormalTire2" and entry.vehicleClass == 2)
+    entry.vehicleTypes[2] = "Base.Nails"
+    assert(not request(store, "owner", "set", nil, {fullType = "vehicle:Base.OldTire2", amount = 3}).error)
+    assert(not request(store, "owner", "done", nil, {fullType = "vehicle:Base.OldTire2", done = true}).error)
+    entry = own(store, "owner").entries['vehicle:Base.OldTire2']
+    assert(entry.amount == 3 and entry.done and entry.vehicleTypes[2] == "Base.NormalTire2")
+    assert(Model.validateStore(store) == nil)
+    assert(request(store, "owner", "add", nil, {fullType = "Base.OldTire2", amount = 1,
+        vehicleTypes = {"Base.OldTire2", "Base.NormalTire2"}, vehicleClass = 2}).error == "invalid_request")
+    local revision = store.lists.owner.revision
+    local bad = {{}, {[2] = "Base.OldTire2"}, {"Base.NormalTire2"},
+        {"Base.OldTire2", "Unknown.Item"}, {"Base.OldTire2", "Base.OldTire2"}, "Base.OldTire2"}
+    local tooMany = {}; for i = 1, 33 do tooMany[i] = "Base.OldTire2" end
+    bad[#bad + 1] = tooMany
+    for _, value in ipairs(bad) do
+        assert(request(store, "owner", "add", nil, {fullType = "Base.OldTire2", amount = 1,
+            vehicleTypes = value, vehicleClass = 2}).error == "invalid_request")
+    end
+    for _, value in ipairs({false, "2", 4, 0/0}) do
+        assert(request(store, "owner", "add", nil, {fullType = "Base.OldTire2", amount = 1,
+            vehicleTypes = {"Base.OldTire2"}, vehicleClass = value}).error == "invalid_request")
+    end
+    assert(request(store, "owner", "add", nil, {fullType = "Base.Hammer", amount = 1,
+        vehicleClass = 2}).error == "invalid_request")
+    assert(store.lists.owner.revision == revision)
+    assert(not request(store, "owner", "remove", nil, {fullType="vehicle:Base.OldTire2"}).error)
+    assert(not own(store,"owner").entries['vehicle:Base.OldTire2'])
+    assert(own(store,"owner").entries['Base.OldTire2'].amount==2, "group removal preserves exact wishes")
+end)
 check("unknown saved schema is preserved and refused", function()
     local store = {version = 2, lists = {owner = {marker = "keep"}}}
     assert(Model.request(store, "owner", {action = "sync"}, env).error == "storage_version")
@@ -268,6 +308,48 @@ check("failed write keeps previous memory and complete disk slot", function()
     writeFailure = nil
     assert(Service.snapshot(p).lists[1].entries['Base.Hammer'].amount == 2)
 end)
+check("legacy version-one journal is read and upgraded without losing exact wishes", function()
+    local previousWorld = world
+    world = "/Saves/Sandbox/legacy-wishlist"
+    local p = player("")
+    assert(not Service.snapshot(p).error)
+    files[paths[#paths]] = "PZSW\t1\t7\nL\tlocal\t2\t\nE\tBase.Hammer\t3\t0\nE\tBase.Nails\t1\t1\nEND\t7\t268429812\n"
+    modules['PZSurvivorWishlist/Service'] = nil
+    Service = require "PZSurvivorWishlist/Service"
+    local list = Service.snapshot(p).lists[1]
+    assert(list.revision == 2 and list.entries['Base.Hammer'].amount == 3)
+    assert(list.entries['Base.Nails'].done and not list.entries['Base.Hammer'].vehicleTypes)
+    assert(not Service.request(p, {action = "set", listId = "local", revision = 2,
+        fullType = "Base.Hammer", amount = 4}).error)
+    assert(files[paths[#paths]]:find("PZSW\t2\t8\n", 1, true) == 1)
+    modules['PZSurvivorWishlist/Service'] = nil
+    Service = require "PZSurvivorWishlist/Service"
+    list = Service.snapshot(p).lists[1]
+    assert(list.revision == 3 and list.entries['Base.Hammer'].amount == 4 and list.entries['Base.Nails'].done)
+    world = previousWorld
+end)
+check("vehicle rules survive private journal reload alongside legacy exact entries", function()
+    local previousWorld = world
+    world = "/Saves/Sandbox/vehicle-wishlist"
+    local p = player("")
+    assert(not Service.snapshot(p).error)
+    assert(not Service.request(p, {action = "add", listId = "local", revision = 0,
+        fullType = "Base.Hammer", amount = 2}).error)
+    assert(not Service.request(p, {action = "addMany", listId = "local", revision = 1, entries = {{
+        fullType = "Base.OldTire2", amount = 4, vehicleClass = 2,
+        vehicleTypes = {"Base.OldTire2", "Base.NormalTire2", "Base.ModernTire2"}}}}).error)
+    modules['PZSurvivorWishlist/Service'] = nil
+    Service = require "PZSurvivorWishlist/Service"
+    local entries = Service.snapshot(p).lists[1].entries
+    assert(entries['vehicle:Base.OldTire2'].vehicleTypes[3] == "Base.ModernTire2")
+    assert(entries['vehicle:Base.OldTire2'].vehicleClass == 2 and entries['vehicle:Base.OldTire2'].amount == 4)
+    assert(entries['Base.Hammer'].amount == 2 and not entries['Base.Hammer'].vehicleTypes)
+    assert(not Service.request(p,{action="remove",listId="local",revision=2,fullType="vehicle:Base.OldTire2"}).error)
+    modules['PZSurvivorWishlist/Service']=nil;Service=require "PZSurvivorWishlist/Service"
+    entries=Service.snapshot(p).lists[1].entries
+    assert(not entries['vehicle:Base.OldTire2'] and entries['Base.Hammer'].amount==2, "removed groups stay removed after reload")
+    world = previousWorld
+end)
 check("save identities isolate worlds and split long paths into safe components", function()
     local p = player("")
     world = "/Saves/Sandbox/" .. string.rep("longworld", 40)
@@ -280,12 +362,12 @@ check("unknown journal version is retained and read failures block writes", func
     world = "/Saves/Sandbox/version-test"
     assert(not Service.snapshot(p).error)
     local path = paths[#paths]
-    files[path] = "PZSW\t2\t1\n"
+    files[path] = "PZSW\t3\t1\n"
     modules['PZSurvivorWishlist/Service'] = nil
     Service = require "PZSurvivorWishlist/Service"
     local count = #paths
     assert(Service.request(p, {action = "sync"}).error == "storage_version")
-    assert(#paths == count and files[path] == "PZSW\t2\t1\n")
+    assert(#paths == count and files[path] == "PZSW\t3\t1\n")
     world, readFailure = "/Saves/Sandbox/read-failure", true
     assert(Service.snapshot(p).error == "storage_read" and #paths == count)
     readFailure = false

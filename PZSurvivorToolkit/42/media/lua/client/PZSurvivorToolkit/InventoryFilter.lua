@@ -1,3 +1,4 @@
+local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 require "PZSurvivorToolkit/Settings"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
 local Tags = require "PZSurvivorToolkit/ItemTags"
@@ -271,9 +272,7 @@ local function install(class)
 end
 
 local function installClasses()
-    install(ISInventoryPane)
-    install(CleanUI_Clean_ISInventoryPane)
-    install(CleanUI_Vanilla_ISInventoryPane)
+    InventoryClasses.panes(install)
 end
 
 local function installQuickTransfers()
@@ -330,7 +329,5 @@ Events.OnGameStart.Add(function()
     installClasses()
     installQuickTransfers()
     installSortMenu()
-    if CleanUI_RegisterInventoryUiToggleCallback then
-        CleanUI_RegisterInventoryUiToggleCallback(installClasses)
-    end
+    InventoryClasses.onToggle(installClasses)
 end)

@@ -91,7 +91,7 @@ class LuaRunner(unittest.TestCase):
     def test_unrelated_source_paths_do_not_block_any_test_group(self):
         options = ("--medicine-framework-source", "--mpff-source", "--bc-filter-source",
                    "--native-inventory-context-menu", "--navigator-source", "--cleanui-inventory-pane",
-                   "--native-inventory-pane", "--proximity-source", "--native-action-root")
+                   "--native-inventory-pane", "--native-action-root")
         arguments = [value for option in options for value in (option, "/nonexistent/unrelated")]
         for name in ("test_ui_style", "test_item_tags", "test_tv_controls", "test_wishlist_model"):
             self.executions.clear()
@@ -107,8 +107,7 @@ class LuaRunner(unittest.TestCase):
             "client/ISUI/ISModalDialog.lua": "native modal", "medicine.lua": "moodles", "bc.lua": "BC filters",
             "shared/MPFastForward_Config.lua": "MPFF config", "server/MPFastForward_Server.lua": "MPFF server",
             "MonitorConfig.lua": "navigator config", "MonitorRender.lua": "navigator render",
-            "NavigatorMonitorDrag.lua": "navigator drag", "proximity.lua": "proximity",
-            "ISInventoryPage.lua": "inventory page",
+            "NavigatorMonitorDrag.lua": "navigator drag",
         }
         for name, value in inputs.items():
             path = source / name
@@ -131,8 +130,6 @@ class LuaRunner(unittest.TestCase):
              {"NativeMPFFConfigSource": "MPFF config", "NativeMPFFServerSource": "MPFF server"}),
             (("test_navigator",), "--navigator-source", source,
              {"NativeNavigatorConfig": "navigator config", "NativeNavigatorRender": "navigator render", "NativeNavigatorDrag": "navigator drag"}),
-            (("test_proximity_selection",), "--proximity-source", source / "proximity.lua",
-             {"ProximityInventorySource": "proximity", "ProximityInventoryPageSource": "inventory page"}),
         ]
         for names, option, path, expected in cases:
             for name in names:

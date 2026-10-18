@@ -1,6 +1,7 @@
 if not NativeActionRoot then print('Generator native contracts SKIP.'); return end
 local f = assert(loadfile(ProjectRoot .. '/tests/support/action_queue_native.lua'))()
 require = function(name)
+    if name == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/SourceProof.lua'))() end
     if name == 'PZSurvivorToolkit/ActionQueueGeneratorOverlay' then
         return PZSurvivorToolkit.ActionQueueGeneratorOverlay or f.project('ActionQueueGeneratorOverlay')
     end

@@ -1,4 +1,7 @@
 require = function(name)
+    if name == "PZSurvivorToolkit/InventoryClasses" then
+        return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
+    end
     if name == "PZSurvivorToolkit/TagVisuals" then
         return {get=function() return {r=0.4,g=0.8,b=0.3,texture={}} end}
     end
@@ -13,9 +16,16 @@ PZSurvivorToolkit = {Settings = {inventoryFilters = function() return true end}}
 getTextOrNull = function() end
 getText = function(key) return key end
 ISMouseDrag = {}
+local shift, ctrl = false, false
+local playerInventory = {}
+getSpecificPlayer = function() return {nullifyAiming=function() end} end
+getPlayerInventory = function() return {inventory=playerInventory} end
+getPlayerLoot = getPlayerInventory
+getCore = function() return {getGameMode=function() return 'Sandbox' end} end
+CleanUI_getColumnDividerAtPoint = function() end
 instanceof = function(value) return value and value.isItem == true end
-isShiftKeyDown = function() return false end
-isCtrlKeyDown = isShiftKeyDown
+isShiftKeyDown = function() return shift end
+isCtrlKeyDown = function() return ctrl end
 CleanUI_isInventoryPageLocked = function() return false end
 
 -- Exact shared mouse branch, used without installed game sources. The optional
@@ -38,6 +48,41 @@ function ISInventoryPane:onMouseMove(dx, dy)
         if startY < 1 then startY = 1 end
         self.selected = {}
         for i=startY,endY do self:selectIndex(i) end
+    end
+end
+function ISInventoryPane:onMouseDown(x, y)
+    self.downX, self.downY = x, y
+    local row = self.items[self.mouseOverOption]
+    if not row then return end
+    if x < self.column2 and not instanceof(row, 'InventoryItem') then
+        self.collapsed[row.name] = not self.collapsed[row.name]
+        return
+    end
+    if not isShiftKeyDown() and not isCtrlKeyDown() and not self.selected[self.mouseOverOption] then self.selected = {} end
+    self.selected[self.mouseOverOption] = row
+    self.dragging = self.mouseOverOption
+    self.draggingX, self.draggingY = x, y
+    self.dragStarted = false
+    ISMouseDrag.dragging, ISMouseDrag.draggingFocus = {}, self
+end
+function ISInventoryPane:onMouseUp(x, y)
+    self.previousMouseUp = self.mouseOverOption
+    if not isShiftKeyDown() and not isCtrlKeyDown() and x >= self.column2 and x == self.downX and y == self.downY
+        and self.mouseOverOption ~= 0 and self.items[self.mouseOverOption] then
+        self.selected = {}
+        self:selectIndex(self.mouseOverOption)
+    end
+    self.dragging, ISMouseDrag.dragging, ISMouseDrag.draggingFocus = nil, nil, nil
+    if x >= 0 and y >= 0 and x < self.column3 then
+        self.mouseOverOption = math.floor((y-self.headerHgt)/self.itemHgt)+1
+    end
+    return true
+end
+function ISInventoryPane:onMouseDoubleClick(x, y)
+    if self.previousMouseUp == self.mouseOverOption then
+        local row = self.items[self.mouseOverOption]
+        self:doContextualDblClick(row.items and row.items[2] or row)
+        self.previousMouseUp = nil
     end
 end
 function ISInventoryPane:saveSelection(selected)
@@ -90,10 +135,11 @@ local function buildClass(source, enhanced)
     env.CleanUI_getStackDisplayItem = function(group)
         return group and (group.cleanUIDisplayItem or group.firstItem or group.items[1])
     end
+    env.CleanUI_getValidDblClickContainer = function(value) return value:getContainer() end
     env.CleanUI_getStackActualStartIndex = function(group)
         return group.cleanUILargeStackOptimized and 1 or 2
     end
-    for _, name in ipairs({'selectIndex', 'onMouseMove', 'saveSelection', 'restoreSelection'}) do
+    for _, name in ipairs({'selectIndex', 'onMouseDown', 'onMouseUp', 'onMouseDoubleClick', 'onMouseMove', 'saveSelection', 'restoreSelection'}) do
         local chunk = assert(loadstring(method(source, name))); setfenv(chunk, env); chunk()
     end
     if source ~= fallback then
@@ -165,8 +211,12 @@ dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/
 dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryInteraction.lua')
 for _, start in ipairs(starts) do start() end
 
+local function item()
+    return {isItem=true, getContainer=function() return playerInventory end}
+end
+
 local function pane(class)
-    local a, b = {isItem = true}, {isItem = true}
+    local a, b = item(), item()
     local groups = {{name = 'a', cat = 'Tool', items = {a,a}}, {name = 'b', cat = 'Food', items = {b,b}}}
     local dirty = false
     local inventory = {isDrawDirty = function() return dirty end,
@@ -174,7 +224,8 @@ local function pane(class)
     local hide = {setVisible = function() end}
     return setmetatable({player = 0, inventory = inventory, groups = groups, itemslist = groups,
         items = {groups[1],groups[2]}, selected = {groups[1],groups[2]}, collapsed = {a = true,b = true},
-        mode = 'details', column3 = 100, headerHgt = 0, itemHgt = 10,
+        mode = 'details', column2 = 20, column3 = 100, mouseOverOption = 0,
+        draggedItems = {reset=function() end}, headerHgt = 0, itemHgt = 10,
         draggingMarquisX = 0, draggingMarquisY = 15,
         getMouseX = function() return 50 end, getMouseY = function() return 5 end,
         getYScroll = function() return 0 end, getHeight = function() return 1000 end,
@@ -197,6 +248,116 @@ for _, spec in ipairs({{name='native',class=native}, {name='CleanUI',class=enhan
             assert(p.selected[1] == p.groups[1] and p.selected[2] == p.groups[2], 'group selection lost its row semantics')
         end)
     end
+    local function clickPane()
+        ISMouseDrag.dragging, ISMouseDrag.draggingFocus = nil, nil
+        shift, ctrl = false, false
+        local p = pane(spec.class)
+        p.isMouseOver = function() return false end
+        p.selected = {}
+        p.doContextualDblClick = function(self, value) self.doubleClicked = value end
+        local c = item()
+        p.groups[3] = {name='c', cat='Tool', items={c,c}}
+        p:renderdetails(false)
+        p.mouseOverOption = 2
+        return p
+    end
+    check(spec.name .. ' click survives row removal', function()
+        local p = clickPane()
+        local clicked = p.groups[2]
+        p:onMouseDown(50, 15)
+        table.remove(p.groups, 1)
+        p.inventory:setDrawDirty(true)
+        p:renderdetails(false)
+        p:onMouseUp(50, 15)
+        assert(p.selected[1] == clicked and not p.selected[2], 'mouse-up selected the replacement row')
+        assert(p.previousMouseUp ~= p.mouseOverOption, 'shifted row still accepted as a double click')
+        p:onMouseDoubleClick(50, 15); p:onMouseUp(50, 15)
+        assert(not p.doubleClicked and p.selected[2] == p.groups[2] and not p.selected[1],
+            'next rapid click after a shifted press was ignored or treated as a double click')
+    end)
+    check(spec.name .. ' consecutive clicks after transfer are not a double click', function()
+        local p = clickPane()
+        p:onMouseDown(50, 15); p:onMouseUp(50, 15)
+        table.remove(p.groups, 1)
+        p:refreshContainer(); p:renderdetails(false)
+        p:onMouseDoubleClick(50, 15); p:onMouseUp(50, 15)
+        assert(not p.doubleClicked, 'rapid click acted on replacement row as a double click')
+        assert(p.selected[2] == p.groups[2] and not p.selected[1], 'replacement row did not receive an ordinary click')
+    end)
+    check(spec.name .. ' real double click after harmless refresh', function()
+        local p = clickPane()
+        p:onMouseDown(50, 15); p:onMouseUp(50, 15)
+        local clicked = p.groups[2]
+        p.groups[2] = {name=clicked.name, cat=clicked.cat, items=clicked.items}
+        p:refreshContainer(); p:renderdetails(false)
+        p:onMouseDoubleClick(50, 15)
+        assert(p.doubleClicked == clicked.items[2], 'same group lost its native double-click action')
+    end)
+    check(spec.name .. ' click survives recreated groups', function()
+        local p = clickPane()
+        p:onMouseDown(50, 15)
+        local clicked = p.groups[2]
+        p.groups[2] = {name=clicked.name, cat=clicked.cat, items=clicked.items}
+        p:refreshContainer(); p:renderdetails(false)
+        p:onMouseUp(50, 15)
+        assert(p.selected[2] == p.groups[2] and not p.selected[1], 'new group table lost the click')
+    end)
+    check(spec.name .. ' vanished click target', function()
+        local p = clickPane()
+        p:onMouseDown(50, 15)
+        table.remove(p.groups, 2)
+        p:refreshContainer(); p:renderdetails(false)
+        p:onMouseUp(50, 15)
+        assert(next(p.selected) == nil, 'vanished item selected a different item')
+    end)
+    check(spec.name .. ' click collapses existing multiselection', function()
+        local p = clickPane()
+        p.selected = {p.groups[1], p.groups[2], p.groups[3]}
+        local clicked = p.groups[2]
+        p:onMouseDown(50, 15)
+        table.remove(p.groups, 1)
+        p:refreshContainer(); p:renderdetails(false)
+        p:onMouseUp(50, 15)
+        assert(p.selected[1] == clicked and not p.selected[2], 'ordinary click failed to collapse selection')
+    end)
+    check(spec.name .. ' expanded child survives reorder', function()
+        local p = clickPane()
+        local first, clicked, last = item(), item(), item()
+        local stack = {name='seeds', cat='Tool', items={first,first,clicked,last}}
+        p.groups, p.itemslist, p.selected = {stack}, {stack}, {}
+        p.collapsed.seeds = false
+        p:renderdetails(false)
+        p.mouseOverOption = 3
+        p:onMouseDown(50, 25)
+        stack.items = {clicked,clicked,first,last}
+        p:refreshContainer(); p:renderdetails(false)
+        p:onMouseUp(50, 25)
+        assert(p.selected[2] == clicked and not p.selected[3], 'mouse-up selected the reordered child')
+    end)
+    check(spec.name .. ' moved pointer keeps native drag selection', function()
+        local p = clickPane()
+        local clicked = p.groups[2]
+        p:onMouseDown(50, 15)
+        p.dragStarted = true
+        table.remove(p.groups, 1)
+        p:refreshContainer(); p:renderdetails(false)
+        local selected = p.selected
+        p:onMouseUp(51, 15)
+        assert(p.selected == selected and p.selected[1] ~= nil and not p.selected[2], 'drag release replaced selection')
+    end)
+    check(spec.name .. ' modifier release keeps selection', function()
+        for _, modifier in ipairs({'shift', 'ctrl'}) do
+            local p = clickPane()
+            p:onMouseDown(50, 15)
+            table.remove(p.groups, 1)
+            p:refreshContainer(); p:renderdetails(false)
+            local selected = p.selected
+            shift, ctrl = modifier == 'shift', modifier == 'ctrl'
+            p:onMouseUp(50, 15)
+            assert(p.selected == selected, 'modifier release replaced selection')
+        end
+        shift, ctrl = false, false
+    end)
     check(spec.name .. ' filtered page marquee', function()
         local p = pane(spec.class)
         p.draggingMarquis, p.toolkitCategory = true, 'Tool'
@@ -271,4 +432,4 @@ if hasAnchor then
     end)
 end
 assert(#failures == 0, table.concat(failures, '\n'))
-print('Inventory interaction checks passed: group semantics, filtered/dirty marquee and Shift anchor.')
+print('Inventory interaction checks passed: click identity, group semantics, filtered/dirty marquee and Shift anchor.')

@@ -65,51 +65,11 @@ local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "up
 local hashes = {ISAddFuelAction = 4284759792, ISLightFromLiterature = 3684576966, ISLightFromPetrol = 2461512401,
     ISLightFromKindle = 314037598, ISBBQAddFuel = 541222922, ISBBQLightFromLiterature = 1313125538,
     ISBBQLightFromPetrol = 1501433250, ISBBQLightFromKindle = 2588990961}
-local utf8Strings = string.byte("洗") == 230
+local Proof = require "PZSurvivorToolkit/SourceProof"
 local function sourceMatches(path, expected, mod)
-    local input = mod and getModFileReader or getGameFilesInput
-    if type(input) ~= "function" then return false end
-    local ok, reader
-    if mod then ok, reader = pcall(input, mod, "media/lua/" .. path, false)
-    else ok, reader = pcall(input, "media/lua/" .. path) end
-    if not ok or not reader then return false end
-    local valid, hash = pcall(function()
-        local value, bytes = 5381, 0
-        while true do
-            local line = reader:readLine()
-            if not line then break end
-            bytes = bytes + #line + 1
-            if bytes > 2000000 then return end
-            local i = 1
-            while i <= #line do
-                local code = string.byte(line, i)
-                if utf8Strings and code >= 192 then
-                    local count = code < 224 and 2 or code < 240 and 3 or 4
-                    code = code % (2 ^ (7 - count))
-                    for offset = 1, count - 1 do code = code * 64 + string.byte(line, i + offset) % 64 end
-                    i = i + count - 1
-                    if code > 65535 then
-                        code = code - 65536
-                        value = (value * 33 + 55296 + math.floor(code / 1024)) % 4294967296
-                        code = 56320 + code % 1024
-                    end
-                end
-                value = (value * 33 + code) % 4294967296
-                i = i + 1
-            end
-            value = (value * 33 + 10) % 4294967296
-        end
-        return value
-    end)
-    pcall(function() reader:close() end)
-    -- shortcut: queue permissions require the reviewed B42.21 sources; re-audit newer native code.
-    return valid and hash == expected
+    return Proof.matches("media/lua/" .. path, expected, mod)
 end
-local function nativeClosure(callback, filename)
-    if type(callback) ~= "function" or type(getFilenameOfClosure) ~= "function" then return false end
-    local ok, source = pcall(getFilenameOfClosure, callback)
-    return ok and type(source) == "string" and source:gsub("\\", "/"):match("([^/]+)$") == filename
-end
+local nativeClosure = Proof.closure
 local cleanUI = sourceMatches("client/ISUI/ISInventoryPaneContextMenu.lua", 1953753890)
 local trusted = sourceMatches("shared/Camping/ISCampingMenu.lua", 125174138)
     and sourceMatches("client/Map/CGlobalObject.lua", 1926494845)
@@ -141,16 +101,7 @@ local getContainers = ISInventoryPaneContextMenu.getContainers
 local initialGetContainers = getContainers
 local transferIfNeeded = ISInventoryPaneContextMenu.transferIfNeeded
 local returnItem = ISCraftingUI.ReturnItemToContainer
-local proximity, proximityGetter
 local containerSourceSafe = nativeClosure(getContainers, "ISInventoryPaneContextMenu.lua")
-if not containerSourceSafe and nativeClosure(getContainers, "CraftingFix.lua")
-    and sourceMatches("client/ProximityInventory/CraftingFix.lua", 2752217643, "ProximityInventory")
-    and sourceMatches("client/ProximityInventory/ProximityInventory.lua", 3363253772, "ProximityInventory") then
-    local loaded, module = pcall(require, "ProximityInventory/ProximityInventory")
-    if loaded and type(module) == "table" and nativeClosure(module.GetItemContainer, "ProximityInventory.lua") then
-        proximity, proximityGetter, containerSourceSafe = module, module.GetItemContainer, true
-    end
-end
 trusted = trusted and containerSourceSafe
     and nativeClosure(transferIfNeeded, "ISInventoryPaneContextMenu.lua") and nativeClosure(returnItem, "ISCraftingUI.lua")
 local cleanUIHelpers = {}
@@ -243,7 +194,6 @@ function Fire.matchesContainerGetter(callback)
     observeQuartermasterGetter()
     return containerSourceSafe and containerGetters[callback] == true
         and ISInventoryPaneContextMenu.getContainers == getContainers
-        and (not proximity or proximity.GetItemContainer == proximityGetter)
         and (not containerFilterUnchanged or containerFilterUnchanged())
 end
 
@@ -262,7 +212,6 @@ local function helpersSafe()
         and not (verifiedCartConstructor(transferConstructor) and verifiedCartConstructor(ISInventoryTransferAction.new)) then return false end
     for name, callback in pairs(cleanUIHelpers) do if ISInventoryPaneContextMenu[name] ~= callback then return false end end
     for name, callback in pairs(bindings) do if ISCampingMenu[name] ~= callback then return false end end
-    if proximity and proximity.GetItemContainer ~= proximityGetter then return false end
     if CCampfireGlobalObject ~= campfireClass then return false end
     for name, callback in pairs(campfireMethods) do if campfireClass[name] ~= callback then return false end end
     for name, callback in pairs(transferHelpers) do if ISInventoryTransferUtil[name] ~= callback then return false end end

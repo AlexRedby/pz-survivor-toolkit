@@ -9,9 +9,9 @@ local function source(value,path)return assert(loadstring(value,'@'..path))()end
 local compatPath=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
 local compatSource=read(compatPath)
 local pins=assert(compatSource:match('QuartermasterManifest = (%b{})'))
-local hashFrom=assert(compatSource:find('local utf8Strings =',1,true))
+local hashFrom=assert(compatSource:find('local Proof =',1,true))
 local hashTo=assert(compatSource:find('Compat.verifySources = verified',hashFrom,true))
-local closure=assert(compatSource:match('(local function quartermasterClosure%(.+\nend)\nfunction Compat.matchesQuartermasterContainerGetter'))
+local closure='local quartermasterClosure = Proof.closure'
 local installer=assert(compatSource:match('(local function installManifestTransfers%(%).-\nend)'))
 local query=assert(compatSource:match('(function Compat.isTransferPerform%(callback%).-\nend)'))
 local adapterSource='local Toolkit,Operations,containerHelpersUnchanged=...\nlocal Compat={}\n'
@@ -50,6 +50,7 @@ local function fixture(mode)
     local cell={getGridSquare=function()return square end}
     getCell=function()return cell end
     require=function(module)
+        if module=='PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/SourceProof.lua'))() end
         if module=='PZSurvivorToolkit/ItemTags'then return tags end
         if module=='LootSorter_Core'or module=='LootSorter_Manifest'then loadModule(module)end
     end

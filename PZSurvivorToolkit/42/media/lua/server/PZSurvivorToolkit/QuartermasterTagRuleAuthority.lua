@@ -66,12 +66,13 @@ function Rules.installAuthority()
             rule = Tags.normalizeRule(value)
             if not rule then return "invalid" end
         end
+        -- Load our sidecar before native put/remove can persist changes to the linked preset.
+        local store = Rules.presetStore()
         local verdict, detail = put(player, args)
         if verdict == "ok" and type(args) == "table" and type(args.name) == "string" then
             local presets = isServer() and ModData.getOrCreate("LootSorter_Presets").presets
                 or LootSorter.getPresetStore()
             local preset = presets and presets[args.name]
-            local store = Rules.presetStore()
             if preset and rule then
                 store[args.name] = Tags.ruleActive(rule) and {rule = rule, gen = preset.gen} or nil
                 Rules.persistPresets()
@@ -83,9 +84,10 @@ function Rules.installAuthority()
         return verdict, detail
     end
     LootSorter.serverFns.removePreset = function(player, args)
+        local store = Rules.presetStore()
         local verdict, detail = remove(player, args)
-        if verdict == "ok" and args and Rules.presetStore()[args.name] then
-            Rules.presetStore()[args.name] = nil; Rules.persistPresets()
+        if verdict == "ok" and args and store[args.name] then
+            store[args.name] = nil; Rules.persistPresets()
         end
         return verdict, detail
     end

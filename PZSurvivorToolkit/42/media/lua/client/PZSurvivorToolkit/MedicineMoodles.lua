@@ -16,7 +16,7 @@ Toolkit.MedicineMoodles = Medicine
 local medicines = {
     Antibiotics = {50, "Base.Antibiotics"}, Antidepressants = {6600, "Base.PillsAntiDep"},
     BetaBlockers = {6600, "Base.PillsBeta"}, Painkillers = {5400, "Base.Pills"},
-    SleepingTablets = {6600, "Base.PillsSleepingTablets"}, LemonGrass = {280, "Base.LemonGrass"},
+    SleepingTablets = {6600, "Base.PillsSleepingTablets"}, LemonGrass = {280, "Base.LemonGrass", "LemonGrassCooldown"},
     BlackSage = {7, "Base.BlackSage"}, CommonMallow = {5, "Base.CommonMallow"},
 }
 local herbs = {BlackSage = true, CommonMallow = true}
@@ -56,7 +56,8 @@ local function update(player)
         if not moodle.toolkitMedicineSetup then setup(moodle, name, spec) end
         local enabled = herbs[name] and Toolkit.Settings.medicineHerbs()
             or not herbs[name] and Toolkit.Settings.medicineMoodleSync()
-        local value = enabled and values and values[name] / spec[1] or 0
+        local remaining = values and values[spec[3] or name]
+        local value = enabled and type(remaining) == "number" and remaining / spec[1] or 0
         local shown, kind, description = value, 1
         if name == "Antidepressants" and value >= 1 then
             shown, kind = -0.05, 2
@@ -101,9 +102,10 @@ Events.OnPlayerUpdate.Add(function(player)
 end)
 Events.OnServerCommand.Add(function(module, command, values)
     if module ~= "PZSurvivorToolkitMedicine" or command ~= "State" or type(values) ~= "table" then return end
-    for name in pairs(medicines) do
-        local value = values[name]
-        if type(value) ~= "number" or not (value >= 0 and value <= 1000000000) then return end
+    for name, spec in pairs(medicines) do
+        local value = values[spec[3] or name]
+        if not (spec[3] and (value == nil or value == false))
+            and (type(value) ~= "number" or not (value >= 0 and value <= 1000000000)) then return end
     end
     if type(values.SleepingIntensity) ~= "number" or not (values.SleepingIntensity >= 0 and values.SleepingIntensity <= 1000000000) then return end
     for num, state in pairs(Medicine.states) do

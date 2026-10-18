@@ -76,7 +76,7 @@ To investigate a remaining desync, enable `-Dpz.vehicle.trace=true` in the Java 
 
 ## Animal trailer fix
 
-Install Java Patches **0.1.15** on the server and **every client, including the host**. It includes trailer-membership and equipment-acknowledgement fixes plus the null-animal hutch-unloading guard, five native string-property startup fixes and normalization of two shipped fluid-container names. It also corrects premature fence validation and missing material metadata for the two level-three wooden fence tiles; early font loading requires the [explicit startup option](JavaPatches/README.md#native-fence-validation-and-font-pages). It also repairs cross-cell basement room lookup loss and the exact malformed stock mannequin zone; see [map data scope](JavaPatches/README.md#map-data-and-cross-cell-basement-rooms). It preserves animal identities and does not restore previously lost animals. See [patch scope](JavaPatches/README.md#animal-trailer-reconciliation).
+Install the current prepared Java mod on the server and **every client, including the host**. Its trailer-membership, equipment-acknowledgement and hutch-unloading corrections preserve animal identities and do not restore previously lost animals. See [patch scope](JavaPatches/README.md#animal-trailer-reconciliation) for these fixes and the other engine corrections included in the same component.
 
 The INI also selects [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436), Mod ID `AnimalTrailerSyncMPFix`, Workshop ID `3801615436`, for a separate server update-timer bug that remains in B42.21. With several animals aboard, the vanilla timer permits periodic synchronization for only one animal; this mod lets every animal share the same due update. It complements the two unloading fixes. Workshop supplies it; do not copy it into the repository's local mod folders. After restarting, check `[AnimalTrailerSyncMPFix] ACTIVE` in the **server** log (verified version 1.3). If ZombieBuddy asks for its JAR approval, allow it and save the decision under the server account; Host owners do this in the client before starting Host, as described above.
 
@@ -90,7 +90,7 @@ If an animal is still stuck, preserve the save and collect server/client logs ar
 
 The INI includes the main `TVRadio_ReInvented` mod. Toolkit fixes device recognition on EN/RU clients and the native macOS video path; do not enable the separate `TVRadioReinventedFix4220`.
 
-- **macOS:** install the complete TV mod, including `.bik` files in `42/media/videos/`. Toolkit resolves files from its active directory, so no separate `Project Zomboid.app/workshop` symlink is needed.
+- **macOS:** install the complete TV mod, including `.bik` files in `42/media/videos/`. A matching Toolkit Java Patches build resolves requests from the active mod directory before native caching, so no separate `Project Zomboid.app/workshop` symlink is needed.
 - **Linux/SteamOS:** the former external fix describes a `steamapps/common/workshop` link in its [path instructions](https://steamcommunity.com/sharedfiles/filedetails/?id=3796050675). Toolkit's automatic path fix targets macOS; playback on Linux/SteamOS and Windows/Proton was not verified in that scenario.
 
 ## Player controls

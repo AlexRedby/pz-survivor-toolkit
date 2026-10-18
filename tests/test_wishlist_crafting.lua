@@ -43,9 +43,15 @@ local function logic(inputs, outputs)
 end
 
 local enabled, sent, menus, now = true, {}, {}, 1000
+local selected = { id = "Survivor", owner = "Survivor", entries = {} }
+local opened = 0
 PZSurvivorWishlist = { Settings = { craftingEnabled = function() return enabled end },
     Client = { addItems = function(num, entries) sent[#sent + 1] = { num = num, entries = entries } end,
-        selected = function() return { owner = "Survivor" } end, open = function() end } }
+        edit = function(num, action, values)
+            sent[#sent + 1] = { num = num, action = action, listId = values.listId,
+                entries = values.entries, fullType = values.fullType }
+        end,
+        selected = function() return selected end, open = function() opened = opened + 1 end } }
 require = function() end
 ResourceType = { Item = "item" }
 getText = function(key, ...) return key .. ":" .. table.concat({ ... }, ",") end
@@ -95,6 +101,13 @@ ISWidgetInput = { onRightMouseUp = function() called = called + 1; return "click
     onRightMouseUpOutside = function() return "outside" end }
 NC_CraftInput_Slot, NB_BuildingInput_Slot, PJCK_CraftInput_Slot = nil, nil, nil
 NC_CellBaseCraft, NB_BuildingInfoPanel, PJCK_HandCraftPanel, PJCK_ItemSlot, PJCK_BaseItemSlot = nil, nil, nil, nil, nil
+-- Use the production membership matcher while keeping command/UI doubles.
+local stubClient, savedEvents = PZSurvivorWishlist.Client, Events
+local function noop()end
+Events={OnServerCommand={Add=noop},OnTick={Add=noop},OnGameStart={Add=noop},OnMainMenuEnter={Add=noop}}
+dofile(path:gsub("Crafting.lua$", "Client.lua"))
+stubClient.entryKeys=PZSurvivorWishlist.Client.entryKeys
+PZSurvivorWishlist.Client, Events=stubClient,savedEvents
 local C = dofile(path)
 event()
 check(C == PZSurvivorWishlist.Crafting, "module is exported and installs without optional mods")
@@ -137,6 +150,68 @@ check(#result == 3 and result[1][1].amount == 2, "item result and converted inpu
 check(result[2][1].amount == 1 and result[3][1].amount == 3, "uses result and variable recipe counts bounded")
 
 sent = {}
+PZSurvivorWishlist.Client.isWanted = function() return true end
+local resultPanel = { player = player, logic = logic({}, { created }) }
+local resultMenu = C.openMenu(resultPanel)
+check(resultMenu.options[1].text:find("UI_PZSW_AddResult", 1, true) == 1,
+    "membership in another visible list does not change the selected-list action")
+local targetList = selected
+targetList.entries["Base.Nails"] = { amount = 7, done = true }
+selected = { id = "Other", owner = "Other", entries = {} }
+click(resultMenu.options[1])
+check(sent[1].action == "addMany" and sent[1].listId == "Survivor" and sent[1].entries[1].amount == 2,
+    "result Add retains its displayed target, intent and recipe amount after a list switch")
+selected = targetList
+resultMenu = C.openMenu(resultPanel)
+check(resultMenu.options[1].text:find("UI_PZSW_RemoveResult", 1, true) == 1
+    and not resultMenu.options[1].text:find("UI_PZSW_ItemCount", 1, true),
+    "completed result entry offers removal")
+selected = { id = "Other", owner = "Other", entries = {} }
+click(resultMenu.options[1])
+check(sent[2].action == "remove" and sent[2].listId == "Survivor" and sent[2].fullType == "Base.Nails"
+    and sent[2].entries == nil, "result Remove keeps its original list and removes the whole entry")
+selected = targetList
+local inputMenu = C.openInput({ player = player, logic = l, inputScript = inp })
+check(inputMenu.options[1].text:find("UI_PZSW_RemoveIngredient", 1, true) == 1,
+    "completed ingredient entry offers removal")
+click(inputMenu.options[1])
+check(sent[3].action == "remove" and sent[3].fullType == "Base.Nails" and sent[3].num == 1,
+    "ingredient Remove edits the correct player and entry")
+targetList.entries = {}
+inputMenu = C.openInput({ player = player, logic = l, inputScript = inp })
+check(inputMenu.options[1].text:find("UI_PZSW_AddIngredient", 1, true) == 1,
+    "absent ingredient offers addition")
+click(inputMenu.options[1])
+check(sent[4].action == "addMany" and sent[4].entries[1].amount == 4,
+    "ingredient Add preserves the full requested quantity")
+enabled = false
+click(inputMenu.options[1])
+check(#sent == 4, "disabling integration before a menu click prevents editing")
+enabled = true
+selected = nil
+inputMenu = C.openInput({ player = player, logic = l, inputScript = inp })
+selected = targetList
+click(inputMenu.options[1])
+check(opened == 1 and #sent == 4, "a menu without a target opens Wishlist instead of editing a later selection")
+
+sent = {}
+getItemNameFromFullType=function(fullType)return fullType end
+local tire=item('Base.ModernTire2')
+selected.entries={['Base.ModernTire2']={amount=1,done=false},
+    ['vehicle:Base.OldTire2']={amount=1,done=true,vehicleTypes={'Base.OldTire2','Base.ModernTire2'},vehicleClass=2}}
+local tireMenu=C.openMenu({player=player,logic=logic({}, {output({tire},1)})})
+check(#tireMenu.options==4 and tireMenu.options[2].text:find('UI_PZSW_RemoveVehicleWanted',1,true)==1,
+    'craft output exposes separate exact and compatible group removals')
+click(tireMenu.options[2])
+check(sent[1].action=='remove' and sent[1].fullType=='vehicle:Base.OldTire2' and sent[1].listId=='Survivor',
+    'compatible craft output removes the smart key, including completed groups')
+selected.entries={['vehicle:Base.OldTire2']=selected.entries['vehicle:Base.OldTire2']}
+tireMenu=C.openInput({player=player,logic=logic({input({tire},1)}),inputScript=input({tire},1)})
+check(#tireMenu.options==1 and tireMenu.options[1].text:find('UI_PZSW_RemoveVehicleWanted',1,true)==1,
+    'craft input recognizes compatible group membership')
+click(tireMenu.options[1]);check(sent[2].fullType=='vehicle:Base.OldTire2','input removes the whole compatible request')
+selected.entries={};sent={}
+selected.entries["Base.Nails"] = { amount = 7, done = true }
 local groupA = { { fullType = "Base.Nails", amount = 2, name = "Nails" } }
 local groupB = { { fullType = "Base.Plank", amount = 1 }, { fullType = "Base.Branch", amount = 3 } }
 local menu = C.choose(1, { groupA, groupB })
@@ -144,6 +219,8 @@ check(#sent == 0 and #menu.options == 3, "ambiguous batch waits; cancellation se
 click(menu.options[3])
 check(#sent == 1 and sent[1].num == 1 and #sent[1].entries == 2 and sent[1].entries[2].fullType == "Base.Branch", "one chosen alternative and unambiguous entries submitted atomically")
 check(sent[1].entries[1].name == nil, "display metadata stays out of server requests")
+check(sent[1].action == nil, "missing-ingredient batches remain additive when an entry already exists")
+selected.entries = {}
 enabled = false
 C.choose(1, { groupA }); C.openMenu({ player = player, logic = l })
 check(#sent == 1, "disabled integration cannot send commands")
@@ -255,6 +332,14 @@ check(PJCK_ItemSlot.showItemContextMenu({ EvoPanel = evo }) == "evolved" and #me
 sent = {}; click(menus[#menus].options[1])
 check(sent[1].entries[1].fullType == "Base.Soup" and sent[1].entries[1].amount == 1,
     "evolved result resolves the selected base item's module")
+selected.entries["Base.Soup"] = { amount = 2, done = true }
+PJCK_ItemSlot.showItemContextMenu({ EvoPanel = evo })
+local evolvedOption = menus[#menus].options[1]
+check(evolvedOption.text:find("UI_PZSW_RemoveResult", 1, true) == 1, "evolved completed result offers removal")
+click(evolvedOption)
+check(sent[2].action == "remove" and sent[2].fullType == "Base.Soup" and sent[2].listId == "Survivor",
+    "evolved result removes the selected list entry")
+selected.entries = {}
 
 if NativeWishlistGameRoot then
     local f = assert(io.open(NativeWishlistGameRoot .. "/media/lua/client/ISUI/ISContextMenu.lua", "r"))

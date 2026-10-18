@@ -10,6 +10,9 @@ local styles = {Food={r=0.4,g=0.8,b=0.3,texture=foodIcon}, Cooking={r=0.5,g=0.4,
     Perishable={r=0.4,g=0.8,b=0.3,texture=clockIcon}}
 local neutral = {r=0.5,g=0.5,b=0.5}
 require = function(name)
+    if name == "PZSurvivorToolkit/InventoryClasses" then
+        return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
+    end
     if name == 'PZSurvivorToolkit/ItemTags' then return Tags end
     if name == 'PZSurvivorToolkit/TagVisuals' then return {get=function(id) return styles[id] or neutral end} end
 end

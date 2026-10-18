@@ -176,9 +176,10 @@ setdown(ToolkitWoodCartSetdown, ISUnequipAction)
 setdown(ToolkitWoodCartDrop, ISDropWorldItemAction)
 
 local originalNew = ISCartPickupAction.new
-ISCartPickupAction.new = function(class, character, x, y, z, id)
-    local action = originalNew(class, character, x, y, z, id)
-    if toolkitWoodCartStance and not character:isTimedActionInstant() and wooden(action:findItem())
+-- Native NetTimedAction serializes fields by these exact constructor parameter names.
+ISCartPickupAction.new = function(class, character, squareX, squareY, squareZ, itemId)
+    local action = originalNew(class, character, squareX, squareY, squareZ, itemId)
+    if not isServer() and toolkitWoodCartStance and not character:isTimedActionInstant() and wooden(action:findItem())
         and toolkitWoodCartStance(character, action:findWorldItem()) then
         setmetatable(action, ToolkitWoodCartPickup)
         action.maxTime = action:getDuration()

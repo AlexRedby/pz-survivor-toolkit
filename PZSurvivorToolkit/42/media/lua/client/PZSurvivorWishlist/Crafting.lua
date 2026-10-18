@@ -118,6 +118,29 @@ local function submit(playerNum, entries)
     W.Client.addItems(playerNum, clean)
 end
 
+local function itemOption(context, playerNum, choice, kind, display)
+    local list = W.Client.selected(playerNum)
+    local listId = list and list.id
+    local keys = W.Client.entryKeys(list, choice.fullType)
+    if #keys == 0 then
+        context:addOption(getText("UI_PZSW_Add" .. kind) .. ": " .. (display or label(choice)), playerNum, function(num)
+            if not enabled() then return end
+            if not listId then W.Client.open(num); return end
+            W.Client.edit(num, "addMany", { listId = listId,
+                entries = { { fullType = choice.fullType, amount = choice.amount } } })
+        end)
+    end
+    for _, key in ipairs(keys) do
+        local entry = list.entries[key]
+        local title = entry.vehicleTypes and "UI_PZSW_RemoveVehicleWanted" or ("UI_PZSW_Remove" .. kind)
+        local name = display or choice.name or choice.fullType
+        if entry.vehicleTypes and #keys > 1 then name = getItemNameFromFullType(entry.vehicleTypes[1]) end
+        context:addOption(getText(title) .. ": " .. name, playerNum, function(num)
+            if enabled() then W.Client.edit(num, "remove", {listId = listId, fullType = key}) end
+        end)
+    end
+end
+
 -- Commit a batch only after each ambiguous input has one explicit choice.
 function Crafting.choose(playerNum, groups, entries, index)
     if not enabled() then return end
@@ -145,8 +168,7 @@ function Crafting.openMenu(panel)
     local context = ISContextMenu.get(playerNum, getMouseX(), getMouseY())
     for _, group in ipairs(Crafting.results(panel.logic)) do
         for _, choice in ipairs(group) do
-            context:addOption(getText("UI_PZSW_AddResult") .. ": " .. label(choice), playerNum,
-                function(num, selected) submit(num, { selected }) end, choice)
+            itemOption(context, playerNum, choice, "Result")
         end
     end
     local groups = Crafting.missing(panel.logic)
@@ -162,8 +184,7 @@ function Crafting.openInput(widget)
     if #choices == 0 then return end
     local context = ISContextMenu.get(widget.player:getPlayerNum(), getMouseX(), getMouseY())
     for _, choice in ipairs(choices) do
-        context:addOption(getText("UI_PZSW_AddIngredient") .. ": " .. label(choice), widget.player:getPlayerNum(),
-            function(num, selected) submit(num, { selected }) end, choice)
+        itemOption(context, widget.player:getPlayerNum(), choice, "Ingredient")
     end
     return context
 end
@@ -309,8 +330,7 @@ local function evolvedResult(slot)
     if not item then return end
     local context = getPlayerContextMenu(panel.player:getPlayerNum())
     if context then
-        context:addOption(getText("UI_PZSW_AddResult") .. ": " .. item:getDisplayName(), panel.player:getPlayerNum(),
-            function(num) submit(num, { { fullType = fullType, amount = 1 } }) end)
+        itemOption(context, panel.player:getPlayerNum(), { fullType = fullType, amount = 1 }, "Result", item:getDisplayName())
     end
 end
 
