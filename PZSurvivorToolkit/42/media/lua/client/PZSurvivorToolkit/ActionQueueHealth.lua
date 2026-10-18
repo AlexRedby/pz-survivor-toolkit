@@ -767,7 +767,7 @@ function Health.install()
             or child.onStartFunc or child.onCompleteFunc or child.onCancelFunc or child.retriggerLastAction then return false end
         for name, method in pairs(methods) do if (child[name] or false) ~= method then return false end end
         return true
-    end)
+    end, true)
     Events.OnTick.Add(function()
         -- Kahlua ignores weak tables; keep proofs only while their actions remain queued.
         for action in pairs(records) do

@@ -12,6 +12,7 @@ RECORD = re.compile(r"^\s*(?:LOG|WARN|ERROR|DEBUG|TRACE)\s*:")
 STAMP = re.compile(r"^\s*\[\d{2}-\d{2}-\d{2,4}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\]\s*")
 MIC = ("System create record sound", "initialisedRecDev=true", "fmodRecordSound=", "Microphone was not disabled")
 RECEIPT = re.compile(r"HEALTH_AUTH_RECEIPT (\S*) phase=(\w+) ok=(true|false) patient=(\S*) error=([^\n]+)")
+HEALTH_COMPLETION_CASES = {'bandageApply', 'glassHands', 'stitchApply', 'expandedCancel', 'missingChildSupply', 'nativeStop', 'miniReplaceBag'}
 SESSION = re.compile(r"\[QUEUE_SESSION\] (BEGIN|START|FINISH|CLEANUP|JOINT_CLEAN|COMPLETE|QUARANTINE) case=(\S+) epoch=(\d+) actor=(\S+)(?:\s|$)")
 ANTICHEAT_KICK = re.compile(
     r'^\s*WARN\s*:\s*Multiplayer\b.*\bat AntiCheat\.log\s*>\s*Anti-cheat="[^"\r\n]+" '
@@ -395,6 +396,14 @@ def functional(root, selection, catalog):
                 issues.append(role + ": skip without reason")
             counts[status] += 1
             if status == "passed":
+                if selection['suite'] == 'health' and identifier in HEALTH_COMPLETION_CASES:
+                    outcome = event.get('outcome')
+                    phases = outcome.get('nativeCompletion') if isinstance(outcome, dict) else None
+                    count = 1 if selection['mode'] == 'toolkit' else 0
+                    expected = dict(perform=count, complete=count if selection['kind'] == 'sp' else 0, flush=count)
+                    if (not isinstance(phases, dict) or set(phases) != set(expected)
+                            or any(type(phases.get(key)) is not int or phases[key] != value for key, value in expected.items())):
+                        issues.append(role + ': native medical completion phases differ ' + identifier)
                 matches = [r for r in receipts if r[1] == identifier and (selection["kind"] == "sp" or r[0] == role)]
                 expected_patient = role if specs[identifier]["producer"] == "inventory" else "client2" if role == "client1" else "client1"
                 if len(matches) != 1 or matches[0][2] != "true" or matches[0][4] != "nil" or (selection["kind"] == "mp" and matches[0][3] != expected_patient) or (selection["kind"] == "sp" and matches[0][0] != matches[0][3]):

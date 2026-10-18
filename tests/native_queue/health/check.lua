@@ -816,3 +816,93 @@ end
 print('PASS actual SP/MP native/toolkit inventory scenario calls exact direct producer, local body, no remote subscription and native book timing')
 
 print('PASS actual MiniHealthPlus replacement scenario enables and restores sandbox option; cancels exact active removal/apply group after native phase state')
+
+-- Execute the shipped passive parent observer without starting medical actions.
+do
+ local function observer(kind,mode,unexpectedBoundary,mpHost)
+  local actor,q={},{}
+  local present,tailStarted=false,false
+  local token={}
+  local parent={Type='HealthPanelAction',character=actor,action={},toolkitQueueOperation=token}
+  local child={Type='ISApplyBandage',character=actor,toolkitQueueOperation=token,audited=true}
+  local tail={Type='ISReadABook',character=actor,toolkitQueueOperation={},isStarted=function()return tailStarted end}
+  q.character=actor;q.current=parent;q.queue={parent,child,tail}
+  function actor:getCharacterActions()return {contains=function()return present end}end
+  local lifecycle={begin=function()return mode=='toolkit' or unexpectedBoundary==true end,finish=function()end,
+   current=function()return q.current end,flush=function()return 'completed',parent end}
+  PZSurvivorToolkit={ActionQueueLifecycle=lifecycle,Settings={actionQueue=function()return mode=='toolkit' end},
+   ActionQueuePolicy={inspect=function(action)return action.audited and {} end}}
+  ISTimedActionQueue={queues={[actor]=q}}
+  PZAPI={ModOptions={getOptions=function()return {getOption=function()return {setValue=function()end}end}end}}
+  getPlayer=function()return actor end
+  getFileReader=function()return {readLine=function()return 'client1' end,close=function()end}end
+  Events={}
+  for _,name in ipairs({'OnServerCommand','OnMainMenuEnter','OnPreUIDraw','OnConnectFailed','OnGameStart','OnTick'}) do
+   local event={};event.Add=function(callback)event.callback=callback end;Events[name]=event
+  end
+  require=function(name)
+   if name=='QueueTestSelection' then return {port=16261,options={mp_host=mpHost}} end
+   if name=='QueueHealthSelection' then return {kind=kind,mode=mode,cases={{id='bandageApply'}}} end
+   if name=='QueueHealthScenarios' then return function(stage)for i=1,3 do stage('stub',function()end)end end end
+   return {}
+  end
+  local file=assert(io.open(root..'/client/ZZHealthQueue.lua'))
+  local text=file:read('*a');file:close()
+  local completion=assert(loadstring(text..'\nreturn completion'))()
+  completion.watch('bandageApply',parent,tail)
+  return completion,lifecycle,parent,child,tail,q,function(value)present=value end,function(value)tailStarted=value end
+ end
+ for _,host in ipairs({false,true}) do
+  observer('mp','toolkit',false,host)
+  local connects,characters=0,0
+  isClient=function()return false end;isIngameState=function()return false end
+  ConnectToServer={instance={connect=function()connects=connects+1 end}}
+  local function nextCharacter()characters=characters+1 end
+  MainScreen={instance={charCreationProfession={getIsVisible=function()return true end,onOptionMouseDown=nextCharacter},
+   charCreationMain={onOptionMouseDown=nextCharacter}}}
+  MapSpawnSelect={instance={useDefaultSpawnRegion=function()end,setVisible=function()end}}
+  for i=1,2 do Events.OnMainMenuEnter.callback();Events.OnPreUIDraw.callback() end
+  assert(connects==(host and 0 or 1) and characters==(host and 0 or 2),
+   'medical Host ran legacy connection/character flow or non-Host lost it')
+ end
+ print('PASS medical Host delegates connection and character flow; non-Host preserves its guarded legacy startup')
+ for _,kind in ipairs({'sp','mp'}) do for _,mode in ipairs({'toolkit','native'}) do
+  local completion,lifecycle,parent,child,tail=observer(kind,mode)
+  lifecycle.begin(parent,'perform');lifecycle.finish(parent,'perform',true)
+  if kind=='sp' then lifecycle.begin(parent,'complete');lifecycle.finish(parent,'complete',true) end
+  lifecycle.flush(ISTimedActionQueue.queues[parent.character])
+  local result=completion.settled('bandageApply');local count=mode=='toolkit' and 1 or 0
+  assert(result.perform==count and result.complete==(kind=='sp' and count or 0) and result.flush==count,
+   'medical observer phases differ from SP/Host/control mode')
+  completion.watch('glassHands',parent,tail)
+  assert((mode=='native')==pcall(completion.settled,'glassHands'),'next medical parent retained preceding counters')
+ end end
+ local completion,lifecycle,parent=observer('sp','native',true)
+ assert(not pcall(lifecycle.begin,parent,'perform'),'queue-disabled medical control acquired an active completion boundary')
+ for _,fault in ipairs({'complete-first','duplicate-perform','duplicate-finish','failed-finish','wrong-owner','advanced-parent',
+                       'started-child','unknown-child','no-child','captured-reader','native-present','missing-complete',
+                       'duplicate-flush','early-tail','unsettled-reader','client-complete'}) do
+  local completion,lifecycle,parent,child,tail,q,present,tailStarted=observer(fault=='client-complete' and 'mp' or 'sp','toolkit')
+  local ok=pcall(function()
+   if fault=='complete-first' then lifecycle.begin(parent,'complete');return end
+   if fault=='wrong-owner' then q.current={};lifecycle.begin(parent,'perform');return end
+   lifecycle.begin(parent,'perform')
+   if fault=='duplicate-perform' then lifecycle.begin(parent,'perform');return end
+   if fault=='advanced-parent' then q.current=child end
+   if fault=='started-child' then child.action={} end
+   if fault=='unknown-child' then child.audited=false end
+   if fault=='no-child' then q.queue={parent,tail} end
+   if fault=='captured-reader' then tail.toolkitQueueOperation=parent.toolkitQueueOperation end
+   lifecycle.finish(parent,'perform',fault~='failed-finish')
+   if fault=='duplicate-finish' then lifecycle.finish(parent,'perform',true);return end
+   if fault~='missing-complete' then lifecycle.begin(parent,'complete');lifecycle.finish(parent,'complete',true) end
+   if fault=='native-present' then present(true) end
+   if fault=='early-tail' then tailStarted(true) end
+   if fault=='unsettled-reader' then completion.settled('bandageApply');return end
+   lifecycle.flush(q)
+   if fault=='duplicate-flush' then lifecycle.flush(q) end
+  end)
+  assert(not ok,'native medical observer accepted '..fault)
+ end
+ print('PASS passive medical parent phases, pre-start child contracts, independent reader, native removal and duplicate/error guards')
+end

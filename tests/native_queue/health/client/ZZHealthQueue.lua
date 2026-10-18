@@ -4,6 +4,7 @@ local Selection=require 'QueueHealthSelection'
 local config=require 'QueueTestSelection'
 local EventsJSON=require 'QueueHealthEvents'
 local kind,mode=Selection.kind,Selection.mode
+local commonHost=kind=='mp' and config.options and config.options.mp_host==true
 local queueOption=assert(PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'))
 queueOption:setValue(mode=='toolkit')
 assert(PZSurvivorToolkit.Settings.actionQueue()==(mode=='toolkit'),'medical queue mode bootstrap failed')
@@ -29,7 +30,73 @@ local function send(command,args)
  elseif command=='Baseline' then baselines[args.phase]=Authority.baseline(getPlayer(),args.phase)
  elseif command=='Skip' then skips[args.phase]=Authority.skip(getPlayer(),args.phase,args.reason) end
 end
-require('QueueHealthScenarios')(stage,queue,empty,{kind=kind,language=language,skips=skips,ids=function() return ids end,receipts=receipts,preparations=preparations,mutations=mutations,baselines=baselines,send=send})
+local completion,watched={},nil
+local completionCases={bandageApply=true,glassHands=true,stitchApply=true,expandedCancel=true,missingChildSupply=true,nativeStop=true,miniReplaceBag=true}
+local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+local begin,finish,flush=lifecycle.begin,lifecycle.finish,lifecycle.flush
+function completion.watch(case,parent,tail)
+ watched=nil
+ if not completionCases[case] then return end
+ assert(parent.Type=='HealthPanelAction','medical completion gate requires the exact expansion parent')
+ watched={id=case,parent=parent,tail=tail,perform=0,complete=0,flush=0,phases={}}
+end
+lifecycle.begin=function(action,phase)
+ local active=begin(action,phase)
+ if not watched or action~=watched.parent then return active end
+ assert(active==(mode=='toolkit'),'wrong native medical boundary mode')
+ if not active then return active end
+ local q=ISTimedActionQueue.queues[action.character]
+ assert(action.character==getPlayer() and q and q.current==action and q.queue[1]==action
+  and lifecycle.current(action.character)==action and action.action,'native medical completion ownership missing')
+ if phase=='perform' then
+  assert(not watched.native,'duplicate native medical perform boundary');watched.native=action.action
+ else
+  assert(phase=='complete' and kind=='sp' and watched.phases.perform=='finished','native medical complete preceded perform or ran on the client')
+ end
+ assert(watched.native==action.action and not watched.phases[phase],'duplicate or replaced native medical phase')
+ watched.phases[phase]='begun'
+ return active
+end
+lifecycle.finish=function(action,phase,succeeded)
+ finish(action,phase,succeeded)
+ if mode~='toolkit' or not watched or action~=watched.parent then return end
+ assert(watched.phases[phase]=='begun' and succeeded,'native medical phase did not finish once')
+ if phase=='perform' then
+  local q=ISTimedActionQueue.queues[action.character]
+  assert(q and q.current==action and q.queue[1]==action,'medical expansion advanced before child capture')
+  assert(watched.tail.toolkitQueueOperation~=action.toolkitQueueOperation,'medical expansion captured the independent reader')
+  local children=0
+  for _,child in ipairs(q.queue) do
+   if child~=action and child.toolkitQueueOperation==action.toolkitQueueOperation then
+    assert(not child.action and PZSurvivorToolkit.ActionQueuePolicy.inspect(child),'medical child started before its contract was captured')
+    children=children+1
+   end
+  end
+  assert(children>0,'medical expansion captured no children')
+ end
+ watched.phases[phase]='finished';watched[phase]=watched[phase]+1
+end
+lifecycle.flush=function(q)
+ local tracked=watched and q.current==watched.parent and watched.native
+ local absent=tracked and not q.character:getCharacterActions():contains(watched.native)
+ local tailStarted=tracked and watched.tail:isStarted()
+ local outcome,action=flush(q)
+ if tracked and outcome=='completed' then
+  assert(action==watched.parent and watched.flush==0 and absent and watched.phases.perform=='finished'
+   and (kind=='mp' or watched.phases.complete=='finished'),'native medical flushed before completion/removal or twice')
+  assert(not tailStarted,'independent reader started before native medical completion')
+  watched.flush=1
+ end
+ return outcome,action
+end
+function completion.settled(case)
+ if not completionCases[case] then return end
+ local count=mode=='toolkit' and 1 or 0
+ assert(watched and watched.id==case and watched.perform==count and watched.complete==(kind=='sp' and count or 0)
+  and watched.flush==count,'native medical completion phases did not settle before reader')
+ return {perform=watched.perform,complete=watched.complete,flush=watched.flush}
+end
+require('QueueHealthScenarios')(stage,queue,empty,{kind=kind,language=language,skips=skips,ids=function() return ids end,receipts=receipts,preparations=preparations,mutations=mutations,baselines=baselines,send=send,completion=completion})
 assert(#stages==#caseIDs+2,'HEALTH selected stage count changed')
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='HealthQueueTest' then return end
@@ -46,10 +113,11 @@ Events.OnServerCommand.Add(function(module,command,args)
 end)
 Events.OnMainMenuEnter.Add(function()
  entered=true
- if kind~='mp' or connecting or isClient() then return end;connecting=true
+ if commonHost or kind~='mp' or connecting or isClient() then return end;connecting=true
  ConnectToServer.instance:connect(MainScreen.instance,'Native HEALTH isolated test',user,'smoke-local-only','127.0.0.1','',tostring(assert(config.port,'medical connection port missing')),'',false,true,1)
 end)
 Events.OnPreUIDraw.Add(function()
+ if commonHost then return end
  if kind=='sp' then
   if started and isIngameState() and isGamePaused() then setGameSpeed(1) end
   if not entered or starting or isIngameState() then return end;starting=true

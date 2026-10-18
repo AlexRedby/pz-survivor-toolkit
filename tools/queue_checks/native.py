@@ -152,6 +152,8 @@ def _validate(selection):
         raise ValueError("ActionQueueTest is reserved for the native fixture")
     if selection['suite'] == 'health' and "PZSurvivorToolkit" not in selection["mods"]:
         raise ValueError("Native queue modes require PZSurvivorToolkit with its queue option toggled")
+    if suite == 'health' and coop.enabled(selection) and 'remoteRemoved' in selection['cases']:
+        raise ValueError('remoteRemoved stops the Host owner; patient disconnect requires a surviving server')
     languages = selection.get("languages")
     clients = selection.get('clients', 2 if selection['kind'] == 'mp' else 1)
     if type(clients) is not int or clients not in (1, 2) or selection['kind'] == 'sp' and clients != 1 or languages not in (["EN"], ["RU"], ["EN", "RU"]) or len(languages) != clients:
@@ -256,7 +258,11 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             if not asset.is_relative_to(game):
                 raise ValueError('Game input escapes installed game: ' + relative)
             sources.append(asset)
-    if coop.enabled(selection) and project / 'tests/native_queue/startup/client/ZZStartup.lua' not in sources:
+    host_bootstrap = project / 'tests/native_queue/startup/client/ZZStartup.lua'
+    health_host = selection['suite'] == 'health' and coop.enabled(selection)
+    if health_host and host_bootstrap.is_file():
+        sources.append(host_bootstrap)
+    if coop.enabled(selection) and host_bootstrap not in sources:
         raise ValueError('Host requires a suite using the common startup bootstrap')
     if selection.get('config_source'):
         sources.append(Path(selection['config_source']))
@@ -320,6 +326,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
                 shutil.copytree(suite / side, lua / side, dirs_exist_ok=True)
         shutil.copy2(support / "ZZReleasePreflight.lua", lua / "client")
         shutil.copy2(support / "QueueEnergyPlacement.lua", lua / "shared")
+        if health_host:
+            shutil.copy2(host_bootstrap, lua / 'client')
         language = selection["languages"][-1] if role == "client2" else selection["languages"][0]
         # Shared Lua must be byte-identical for native MP checksums; role/language live in cache/Lua.
         config = dict(selection, port=selection["ports"][0], resources=dict(admission.DEFAULTS, **selection.get('resources', {})))

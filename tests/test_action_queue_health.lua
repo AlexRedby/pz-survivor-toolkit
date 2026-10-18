@@ -179,6 +179,53 @@ end
 removeGlass:perform()
 assert(#q.queue==2 and q.current.Type=='ISRemoveGlass' and q.queue[2]==head)
 assert(q.current.toolkitQueueOperation==removeGlass.toolkitQueueOperation,'generated child retains medical intent')
+-- Capture the clinical child before native removal can advance the expansion parent.
+do
+    local lifecycle=f.project('ActionQueueLifecycle')
+    local client,actions=isClient,f.player.getCharacterActions
+    local toIndex=BodyPartType.ToIndex;BodyPartType.ToIndex=function()return 5 end
+    local username=f.player.getUsername;f.player.getUsername=function()return 'fixture doctor' end
+    local callbacks=0
+    for _,mp in ipairs({false,true}) do
+        isClient=function()return mp end
+        for _,kind in ipairs({'HRemoveGlass','HApplyBandage'}) do
+            local wound=part();wound.haveGlass=function()return true end
+            local parent=request(wound,kind,kind=='HRemoveGlass' and 'Hands' or 'Base.Bandage')
+            local owner=f.queue(parent,head)
+            local removed=false;parent.action={}
+            f.player.getCharacterActions=function()return {contains=function()return not removed end}end
+            owner.onCompleted=function(self,action)
+                if lifecycle.current(f.player)==action then
+                    assert(not PZSurvivorToolkit.ActionQueueOperations.deferCompletion(self,action),
+                        'migrated medicine acquired the legacy Operations completion scope')
+                    callbacks=callbacks+1
+                end
+                if lifecycle.deferCompletion(self,action) then return end
+                table.remove(self.queue,1);self.current=self.queue[1]
+            end
+            assert(health.inspect(parent) and lifecycle.begin(parent,'perform'))
+            parent:perform();lifecycle.finish(parent,'perform',true)
+            local child=owner.queue[2]
+            assert(owner.current==parent and #owner.queue==3 and owner.queue[3]==head
+                and child.Type==(kind=='HRemoveGlass' and 'ISRemoveGlass' or 'ISApplyBandage')
+                and child.toolkitQueueOperation==parent.toolkitQueueOperation and health.inspect(child)
+                and not child.action,'medical child started before its exact contract was captured')
+            assert(lifecycle.flush(owner)=='waiting','medical expansion advanced before native removal/completion')
+            if not mp then
+                -- The Java complete boundary also runs when the Lua parent has no complete method.
+                assert(parent.complete==nil and lifecycle.begin(parent,'complete'))
+                lifecycle.finish(parent,'complete',true)
+                assert(lifecycle.flush(owner)=='waiting','SP medical expansion ignored native removal')
+            end
+            removed=true
+            assert(lifecycle.flush(owner)=='completed' and owner.current==child and owner.queue[2]==head
+                and lifecycle.flush(owner)==nil,'medical expansion lost child-before-tail order or advanced twice')
+        end
+    end
+    assert(callbacks==4,'medical native-scope assertions did not run in SP and Host')
+    isClient=client;f.player.getCharacterActions=actions;BodyPartType.ToIndex=toIndex
+    f.player.getUsername=username
+end
 -- A later producer replacement cannot keep the audited handler permissions.
 local producer=ISHealthPanel.doBodyPartContextMenu
 ISHealthPanel.doBodyPartContextMenu=function()end

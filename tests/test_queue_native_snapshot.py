@@ -124,6 +124,40 @@ class NativeSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'common startup bootstrap'):
             self.prepare(kind='mp', clients=2, languages=['EN', 'RU'], options={'mp_host': True})
 
+    def test_health_host_seals_common_startup_for_both_peers_and_keeps_legacy_startup_separate(self):
+        bootstrap = self.project / 'tests/native_queue/startup/client/ZZStartup.lua'
+        self.write(bootstrap, (ROOT / 'tests/native_queue/startup/client/ZZStartup.lua').read_text())
+        for hosted in (False, True):
+            root = self.prepare('host' if hosted else 'dedicated', kind='mp', clients=2,
+                                languages=['EN', 'RU'], options={'mp_host': hosted})
+            sources = report.read_json(root / 'source-manifest.json')
+            self.assertEqual(str(bootstrap) in sources, hosted)
+            runtime = report.read_json(root / 'runtime.json')
+            self.assertEqual('host_cache' in runtime, hosted)
+            for role in ('server', 'client1', 'client2'):
+                lua = root / role / 'mods/ActionQueueTest/42/media/lua'
+                copied = lua / 'client/ZZStartup.lua'
+                self.assertEqual(copied.exists(), hosted)
+                if hosted:
+                    self.assertEqual(copied.read_bytes(), bootstrap.read_bytes())
+                self.assertTrue((lua / 'client/suite.lua').is_file())
+                self.assertTrue((lua / 'server/suite.lua').is_file())
+            shared = 'mods/ActionQueueTest/42/media/lua/shared/QueueTestSelection.lua'
+            self.assertEqual((root / 'client1' / shared).read_bytes(), (root / 'client2' / shared).read_bytes())
+        self.write(bootstrap, '-- changed after snapshot\n')
+        self.assertTrue(report.verify_manifest(root, 'source-manifest.json', absolute=True))
+
+    def test_health_host_rejects_patient_disconnect_before_preparing_profiles(self):
+        for mode in ('toolkit', 'native'):
+            with self.subTest(mode=mode):
+                selection = dict(self.selection, kind='mp', clients=2, languages=['EN', 'RU'],
+                                 mode=mode, cases=['remoteRemoved'], options={'mp_host': True})
+                with self.assertRaisesRegex(ValueError, 'remoteRemoved stops the Host owner'):
+                    native.prepare(self.project, self.root / 'run', self.game, self.jdk, selection)
+                self.assertFalse((self.root / 'run').exists())
+                self.compile_mock.assert_not_called()
+                native._validate(dict(selection, options={'mp_host': False}))
+
     def test_disk_estimate_counts_each_role_and_sparse_file_logical_size(self):
         large = self.project / 'Toolkit/42/sparse.dat'
         with large.open('wb') as stream:

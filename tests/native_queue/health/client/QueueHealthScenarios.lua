@@ -167,6 +167,7 @@ return function(stage,queue,empty,remote)
       assert(MHP_SB_IsReplaceBandageEnabled(),'fixture-owned MiniHealthPlus replacement setting missing')
      end
      front=read(prep.front,prep.frontPages);parent=enqueue(panel,body,spec,prep.items);tail=read(prep.tail,1)
+     if remote.completion then remote.completion.watch(spec.id,parent,tail) end
      assert(queue():indexOf(front)<queue():indexOf(parent) and queue():indexOf(parent)<queue():indexOf(tail),'native queue order differs')
      if spec.cancel then local ok,why=API.cancelOperation(queue(),parent);assert(ok,'waiting medical cancel rejected '..tostring(why))
      elseif spec.move then
@@ -184,6 +185,7 @@ return function(stage,queue,empty,remote)
      end
      local observe=function(character)
       if character~=player or not parent then return end
+      if remote.completion and queue().current==tail and tail:isStarted() then remote.completion.settled(spec.id) end
       for _,child in ipairs(queue().queue) do
        if (child~=parent or spec.inventory) and child.Type~='HealthPanelAction' and
         (native and ((child.Type=='ISDisinfect' or child.Type=='ISApplyBandage') and child.bodyPart==body or spec.bag and child.Type=='ISInventoryTransferAction') or not native and child.toolkitQueueOperation==parent.toolkitQueueOperation) then
@@ -257,6 +259,7 @@ return function(stage,queue,empty,remote)
       end
      end
      if not empty() then return false end
+     if remote.completion then remote.completion.settled(spec.id) end
      if nativeObservation and nativeObservation.nativeStallObserved then nativeObservation.cleanupQueueDrained=true end
      if spec.expanded or spec.replaceStop then assert(observed,'expanded child interception did not execute') end
      if spec.bag then
@@ -275,6 +278,10 @@ return function(stage,queue,empty,remote)
      if nativeObservation then result.outcome=result.outcome or {};for key,value in pairs(nativeObservation) do result.outcome[key]=value end end
      assert(result.ok,result.error)
      assert(result.front==prep.front and result.tail==prep.tail,'authority receipt changed book identities')
+     if remote.completion then
+      local phases=remote.completion.settled(spec.id)
+      if phases then result.outcome=result.outcome or {};result.outcome.nativeCompletion=phases end
+     end
      print('[QUEUE_TEST] HEALTH_RECEIPT phase='..spec.id..' authority='..(isClient() and 'server' or 'sp')..' actualPatient='..prep.patient)
      return {status='passed',outcome=result.outcome}
     end

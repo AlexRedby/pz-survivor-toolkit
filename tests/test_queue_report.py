@@ -60,7 +60,9 @@ class QueueReportTests(unittest.TestCase):
             context = {"actor": role, "suite": "health", "kind": kind, "mode": mode}
             records = [dict(context, event="setup", cases=selection["cases"], expected=1,
                             queueEnabled=mode == "toolkit", nativeDurations=True, language="RU" if role == "client2" else "EN"),
-                       dict(context, event="case", id="bandageApply", status=status),
+                       dict(context, event="case", id="bandageApply", status=status,
+                            outcome={'nativeCompletion': dict(perform=int(mode == 'toolkit'),
+                                     complete=int(mode == 'toolkit' and kind == 'sp'), flush=int(mode == 'toolkit'))}),
                        dict(context, event="complete", cases=selection["cases"], expected=1,
                             performed=int(status != "skipped"), skipped=int(status == "skipped"), failed=int(status == "failed"))]
             if status == "skipped":
@@ -102,6 +104,30 @@ class QueueReportTests(unittest.TestCase):
                 self.assertEqual(['media/lua', 'media/scripts'], result['provenance']['game_input_trees'])
                 del result['provenance']['game_input_trees']
                 self.assertIn('Live game trees: unsealed (legacy report)', report.summary(result))
+
+    def test_health_parent_completion_requires_exact_typed_sp_host_and_control_phases(self):
+        index = 0
+        for kind in ('sp', 'mp'):
+            for mode in ('toolkit', 'native'):
+                count = int(mode == 'toolkit')
+                expected = dict(perform=count, complete=count if kind == 'sp' else 0, flush=count)
+                mutations = [None, [], {}, dict(expected, stop=0)]
+                for key in expected:
+                    mutations += [dict(expected, **{key: value}) for value in (True, 1.0, '1', -1, expected[key] + 1)]
+                    mutations.append({name: value for name, value in expected.items() if name != key})
+                for phases in mutations:
+                    index += 1
+                    root = self.fixture('health-phases-' + str(index), kind, mode)
+                    self.mutate_event(root, 'case', outcome={'nativeCompletion': phases})
+                    result = report.build_report(root, self.catalog)
+                    with self.subTest(kind=kind, mode=mode, phases=phases):
+                        self.assertEqual(result['functional']['status'], 'failed')
+                        self.assertTrue(any('native medical completion phases differ' in issue for issue in result['functional']['issues']))
+        for outcome in (None, [], {}, {'nativeCompletion': None}):
+            index += 1
+            root = self.fixture('health-outcome-' + str(index))
+            self.mutate_event(root, 'case', outcome=outcome)
+            self.assertEqual(report.build_report(root, self.catalog)['functional']['status'], 'failed')
 
     def test_missing_native_input_seal_or_added_input_cannot_pass_report(self):
         for change in ('legacy', 'added'):
