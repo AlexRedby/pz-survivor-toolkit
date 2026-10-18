@@ -185,7 +185,9 @@ def check_java(game, jdk):
         runtime = jdk / "bin" / ("java.exe" if os.name == "nt" else "java")
         for pad in ('false', 'true'):
             subprocess.run([str(runtime), "-cp", os.pathsep.join([output, *map(str, jars)]), "KahluaChecks", str(HERE.parents[3])],
-                           check=True, cwd=game, env=dict(os.environ, PZ_CART_TEST_PAD=pad))
+                           check=True, cwd=game, env=dict(os.environ, PZ_CART_TEST_PAD=pad,
+                            PZ_CART_RUNTIME_FILE=str(Path(output)/'runtime.lua'),
+                            PZ_CART_COMMAND_FILE=str(Path(output)/'commands.txt')))
     return "PASS (compile, chunk-window bounds/guard and stock Kahlua obstacle checks; native game not launched)"
 
 

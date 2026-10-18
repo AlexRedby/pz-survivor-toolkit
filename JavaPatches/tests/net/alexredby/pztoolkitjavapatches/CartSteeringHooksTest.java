@@ -51,6 +51,8 @@ public final class CartSteeringHooksTest {
         @Override public AnimationPlayer getAnimationPlayer() { return null; }
         @Override public boolean isRunning() { return run; }
         @Override public boolean isSprinting() { return sprint; }
+        @Override public boolean isAllowRun() { return true; }
+        @Override public boolean isAllowSprint() { return true; }
         @Override public float getVariableFloat(String name,float fallback) {
             return switch(name) {case "WalkSpeed"->walkSpeed;case "ToolkitCartStepX"->stepX;case "ToolkitCartStepY"->stepY;case "ToolkitCartLegPace"->legPace;default->fallback;};
         }
@@ -136,6 +138,75 @@ public final class CartSteeringHooksTest {
         node.startTransitionIn(outgoing,new AnimTransition(),track);
         layer.getLiveAnimNodes().add(node);
         return node;
+    }
+
+    private static void adjacentBrakeRelease(Unsafe unsafe, Map<?,?> states) throws Exception {
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
+        type(cart,"SaucedWheelbarrow.WheelbarrowWood");player.walkSpeed=.8f;
+        var input=new IsoPlayer.InputState();
+        var time=GameTime.getInstance();float oldFps=time.fpsMultiplier;
+        try {
+            for(int fps:new int[]{30,60,144}) for(boolean sprint:new boolean[]{false,true})
+                for(String order:new String[]{"together","modifier-first","modifier-delayed","direction-first","walk-on"}) {
+                    time.fpsMultiplier=60f/fps;double dt=time.getRealworldSecondsSinceLastUpdate();
+                    CartSteeringHooks.reset(player);player.actualX=player.actualY=0;
+                    player.inputX=player.inputY=.5f;player.moving=true;player.run=player.sprint=false;
+                    input.setRunning(!sprint);input.sprinting=sprint;
+                    CartSteeringHooks.input(player,input);player.run=!sprint;player.sprint=sprint;
+                    accept(player,CartSteeringHooks.movement(player,(float)(.2*dt),0));
+                    Object state=states.get(player);
+                    if(order.startsWith("modifier-") || order.equals("walk-on")) {
+                        int frames=order.equals("modifier-delayed") && fps==144?4:1;
+                        for(int frame=0;frame<frames;frame++) {
+                            player.run=player.sprint=false;input.setRunning(false);input.sprinting=false;
+                            CartSteeringHooks.input(player,input);
+                            check(input.isRunning()==!sprint && input.sprinting==sprint,
+                                "modifier-first must retain its native fast node within 50ms: "+fps+"/"+sprint+"/"+frame);
+                            player.run=input.isRunning();player.sprint=input.sprinting;
+                            accept(player,CartSteeringHooks.movement(player,(float)(.2*dt),0));
+                        }
+                        if(order.equals("walk-on")) {
+                            double elapsed=dt;
+                            do {
+                                player.run=player.sprint=false;input.setRunning(false);input.sprinting=false;
+                                CartSteeringHooks.input(player,input);elapsed+=dt;
+                                check((input.isRunning() || input.sprinting)==(elapsed<=.05) && !player.woodBrake,
+                                    "holding direction after modifier release must enter Walk after at most 50ms: "+fps+"/"+elapsed);
+                                player.run=input.isRunning();player.sprint=input.sprinting;
+                                accept(player,CartSteeringHooks.movement(player,(float)(.1*dt),0));
+                            } while(input.isRunning() || input.sprinting);
+                            releaseAfterNativeGaitReset(player,input);
+                            check(!player.woodBrake,"a later deliberate Walk release must not replay the fast stop");
+                            continue;
+                        }
+                    } else if(order.equals("direction-first")) {
+                        player.run=player.sprint=false;player.inputX=player.inputY=0;
+                        CartSteeringHooks.input(player,input);
+                        check(player.woodBrake,"direction-first must arm the stop before releasing the modifier");
+                        player.moving=false;player.run=!sprint;player.sprint=sprint;
+                        accept(player,CartSteeringHooks.movement(player,(float)(.2*dt),0));
+                    }
+                    releaseAfterNativeGaitReset(player,input);player.moving=false;
+                    check(player.woodBrake && field(state,"braking").getBoolean(state),
+                        "both release orders and same-frame release must retain the native heavy stop: "+fps+"/"+sprint+"/"+order);
+                    var step=CartSteeringHooks.movement(player,.3f,0);
+                    check(Math.abs(step.getLength()-.2*dt)<1e-7,
+                        "release order must preserve the last accepted speed cap");
+                    accept(player,step);
+                }
+            time.fpsMultiplier=6;
+            CartSteeringHooks.reset(player);player.actualX=player.actualY=0;
+            player.inputX=player.inputY=.5f;player.moving=true;player.run=player.sprint=false;
+            input.setRunning(true);input.sprinting=false;CartSteeringHooks.input(player,input);player.run=true;
+            accept(player,CartSteeringHooks.movement(player,.02f,0));
+            player.run=false;input.setRunning(false);CartSteeringHooks.input(player,input);
+            check(!input.isRunning() && !input.sprinting,
+                "a slow frame must not extend modifier release beyond the 50ms coalescing window");
+        } finally {
+            CartSteeringHooks.reset(player);time.fpsMultiplier=oldFps;
+        }
     }
 
     private static void brakeControls(Unsafe unsafe, Map<?,?> states) throws Exception {
@@ -833,6 +904,7 @@ public final class CartSteeringHooksTest {
         stationaryControls(unsafe,states);
         stationaryCadence(unsafe,states);
         brakeControls(unsafe,states);
+        adjacentBrakeRelease(unsafe,states);
         wovenPathControls(unsafe,states);
         System.out.println("CART_STEERING_HOOKS_PASS (combat, local, path, scope, ownership, reset, native direction transitions)");
     }

@@ -7,7 +7,30 @@ import se.krka.kahlua.vm.JavaFunction;
 import se.krka.kahlua.vm.KahluaThread;
 
 public final class KahluaChecks {
+    private static void checkKeys() {
+        var core=zombie.core.Core.getInstance();
+        String[] actions={"Forward","Left","Right","Backward","Run","Sprint"};
+        int[] keys={17,30,32,31,42,56};
+        for(int i=0;i<actions.length;i++) core.addKeyBinding(actions[i],keys[i],0,false,false,false);
+        int[] directions={0,1,2,4,8,3,10,12,5};
+        for(int drive=0;drive<=8;drive++) for(int gait=0;gait<=2;gait++) {
+            net.alexredby.cartlab.Main.drive=drive;net.alexredby.cartlab.Main.gait=gait;
+            for(int i=0;i<keys.length;i++) {
+                boolean expected=i<4?(directions[drive]&(1<<i))!=0:i==4?gait==1:gait==2;
+                if(net.alexredby.cartlab.Main.fixtureKey(keys[i])!=expected)
+                    throw new AssertionError("Independent direction/modifier input changed: drive="+drive+" gait="+gait+" action="+actions[i]);
+            }
+        }
+        net.alexredby.cartlab.Main.drive=-1;
+        if(net.alexredby.cartlab.Main.Keys.enter(keys[4],false)
+                || net.alexredby.cartlab.Main.RawKeys.enter(keys[4],false))
+            throw new AssertionError("Manual mode must leave native keyboard input untouched");
+        net.alexredby.cartlab.Main.gait=0;
+        System.out.println("CART_INDEPENDENT_KEYS_PASS");
+    }
+
     public static void main(String[] args) throws Exception {
+        checkKeys();
         boolean pad = "true".equals(System.getenv("PZ_CART_TEST_PAD"));
         for (int original : new int[]{5, 13, 19, 25, 27}) {
             zombie.iso.IsoChunkMap.chunkGridWidth = original;

@@ -69,8 +69,8 @@ completed=re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)',log)
 assert len(completed)==24,'Require exactly one completed recording per case'
 starts={n:int(t) for n,t in completed}
 steps={
- 'run-stop':[(1,2),(0,0),(1,2),(0,0)],
- 'sprint-stop':[(2,2),(0,0),(2,2),(0,0)],
+ 'run-stop':[(1,2),(0,0),(1,2),(0,2),(0,0),(1,2),(1,0),(0,0)],
+ 'sprint-stop':[(2,2),(0,0),(2,2),(0,2),(0,0),(2,2),(2,0),(0,0)],
  'short-release':[(2,2),(0,0),(1,2),(0,0),(2,2),(0,0)],
  'run-resume-reverse':[(1,2),(0,0),(1,2),(0,0),(0,3),(0,0)],
  'sprint-resume-turn':[(2,2),(0,0),(2,1),(0,0)],
@@ -79,8 +79,9 @@ expected={f'{sex}-{cargo}-{spec}' for sex in ('male','female') for cargo in ('em
 assert set(starts)==expected,'Missing or unexpected stop cases'
 cases={n:[] for n in starts}
 events={n:[] for n in starts}
-for name,e,gait,drive in re.findall(r'\[WOOD_RAMP_EVENT\] case=(\S+) elapsed=(\d+) gait=(\d+) drive=(\d+)',log):
- if name in events:events[name].append(dict(elapsed=int(e),gait=int(gait),drive=int(drive)))
+for name,e,gait,drive,frame,keyRun,keySprint,keyMove in re.findall(r'\[WOOD_RAMP_EVENT\] case=(\S+) elapsed=(\d+) gait=(\d+) drive=(\d+) frame=(\d+) keyRun=(true|false) keySprint=(true|false) keyMove=(true|false)',log):
+ if name in events:events[name].append(dict(elapsed=int(e),gait=int(gait),drive=int(drive),frame=int(frame),
+  keyRun=keyRun=='true',keySprint=keySprint=='true',keyMove=keyMove=='true'))
 for line in log.splitlines():
  if '[WOOD_BANK_SAMPLE]' not in line:continue
  row=dict(re.findall(r'([A-Za-z]+)=([^ ]+)',line));name=row.get('case')
@@ -102,10 +103,16 @@ for name,rows in cases.items():
  assert len(rows)>250,(name,len(rows))
  spec=name.split('-',2)[2]
  assert [(e['gait'],e['drive'])for e in events[name]]==steps[spec],(name,'missing or reordered input events')
+ for event in events[name]:
+  assert (event['keyRun'],event['keySprint'],event['keyMove'])==(event['gait']==1,event['gait']==2,event['drive']!=0),(name,'actual native key flags differ from requested input',event)
+ if spec in ('run-stop','sprint-stop'):
+  for index in (4,7):
+   first,second=events[name][index-1:index+1]
+   assert second['frame']==first['frame']+1 and 0<second['elapsed']-first['elapsed']<=50,(name,'releases must use adjacent game ticks within 50ms')
  reports=[]
  for i,event in enumerate(events[name]):
-  if event['drive']!=0:continue
-  end=events[name][i+1]['elapsed'] if i+1<len(events[name]) else 11800
+  if event['drive']!=0 or i>0 and events[name][i-1]['drive']==0:continue
+  end=next((e['elapsed']for e in events[name][i+1:]if e['drive']!=0),11800)
   stop=[r for r in rows if event['elapsed']<r['elapsed']<end]
   clips=[t for r in stop for t in r['stops']]
   positions=[r for r in stop if r['elapsed']<=event['elapsed']+2500]
@@ -115,6 +122,7 @@ for name,rows in cases.items():
    'pathTiles':sum(math.hypot(b['x']-a['x'],b['y']-a['y']) for a,b in zip(positions,positions[1:])),
    'lastMovementAfterReleaseMs':max((r['elapsed']-event['elapsed'] for r in stop if r['actualDistance']>.001),default=0)}
   if name.endswith(('run-stop','sprint-stop')):
+   report['releaseOrder']='same-frame'if i==1 else 'modifier-first'if i==4 else 'direction-first'
    report['temporalReturn']=temporal_return(wheel,starts[name],event['elapsed'],end)if wheel else {
     'available':False,'reason':'Native wheel CSV unavailable; sparse bodyShift log is not a peak-speed substitute'}
    expectedClip='Bob_RunToStop2H_Heavy'if spec=='run-stop'else 'Bob_SprintToStop2h_Heavy'
@@ -122,9 +130,10 @@ for name,rows in cases.items():
    if not report['observedCoastingFrames']:problems.append((name,'no coasting',report))
    if report['lastMovementAfterReleaseMs']>2500:problems.append((name,'did not settle',report))
   reports.append(report)
- for event in events[name]:
+ for i,event in enumerate(events[name]):
   if event['drive']==0:continue
-  check=[r for r in rows if event['elapsed']+60<r['elapsed']<event['elapsed']+180]
+  end=events[name][i+1]['elapsed']if i+1<len(events[name])else 11800
+  check=[r for r in rows if event['elapsed']+60<r['elapsed']<min(end,event['elapsed']+180)]
   if any(r['brakeArmed']=='true' for r in check):problems.append((name,'input kept stop armed',event))
  for previous,current in zip(rows,rows[1:]):
   if current['direction']!=previous['direction'] and (float(previous['speed'])>1e-6 or previous['actualDistance']>1e-6):

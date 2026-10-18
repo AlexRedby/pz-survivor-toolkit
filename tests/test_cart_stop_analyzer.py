@@ -10,8 +10,8 @@ import unittest
 
 SCRIPT=Path(__file__).parent/'native_queue/contributions/wooden_cart_motion/analyze-stop.py'
 STEPS={
- 'run-stop':[(1000,1,2),(4000,0,0),(6000,1,2),(8750,0,0)],
- 'sprint-stop':[(1000,2,2),(4000,0,0),(6000,2,2),(8850,0,0)],
+ 'run-stop':[(1000,1,2),(2500,0,0),(4000,1,2),(5500,0,2),(5525,0,0),(7000,1,2),(8500,1,0),(8525,0,0)],
+ 'sprint-stop':[(1000,2,2),(2500,0,0),(4000,2,2),(5500,0,2),(5525,0,0),(7000,2,2),(8500,2,0),(8525,0,0)],
  'short-release':[(1000,2,2),(1250,0,0),(4000,1,2),(4250,0,0),(6500,2,2),(7000,0,0)],
  'run-resume-reverse':[(1000,1,2),(4000,0,0),(4150,1,2),(7000,0,0),(7150,0,3),(10000,0,0)],
  'sprint-resume-turn':[(1000,2,2),(4000,0,0),(4150,2,1),(8500,0,0)],
@@ -25,7 +25,7 @@ def evidence():
    for spec,events in STEPS.items():
     name=f'{sex}-{cargo}-{spec}';start=100000+len(lines)*15000
     lines.append(f'[WOOD_BANK] COMPLETE {name} wall={start}')
-    for t,g,d in events:lines.append(f'[WOOD_RAMP_EVENT] case={name} elapsed={t} gait={g} drive={d}')
+    for t,g,d in events:lines.append(f'[WOOD_RAMP_EVENT] case={name} elapsed={t} gait={g} drive={d} frame={t//25} keyRun={str(g==1).lower()} keySprint={str(g==2).lower()} keyMove={str(d!=0).lower()}')
     for t in range(0,12000,25):
      prior=[event for event in events if event[0]<=t]
      event=prior[-1]if prior else (0,0,0)
@@ -66,6 +66,8 @@ class CartStopAnalyzerTest(unittest.TestCase):
   self.assertEqual(result.returncode,0,result.stderr)
   self.assertEqual(len(report['cases']),24)
   self.assertEqual(report['problems'],[])
+  self.assertEqual([s['releaseOrder']for s in report['cases'][0]['stops']],
+   ['same-frame','modifier-first','direction-first'])
   self.assertFalse(report['cases'][0]['stops'][0]['temporalReturn']['available'])
 
  def test_explicit_stdout_path_overrides_legacy_log_without_rewriting_it(self):
@@ -91,7 +93,7 @@ class CartStopAnalyzerTest(unittest.TestCase):
   start=int(re.search(r'COMPLETE male-empty-run-stop wall=(\d+)',self.log)[1])
   wheel=[]
   for i,(time,player,offset)in enumerate(zip([0,.01,.03,.07,.11,.15],[0,.01,.01,.01,.01,.01],[.2,.3,.28,.24,.24,.24])):
-   wheel.append(dict(event='grounding',time=time,wallTimeMillis=start+4100+i*10,
+   wheel.append(dict(event='grounding',time=time,wallTimeMillis=start+2600+i*10,
     playerX=player,playerY=0,wheelX=player+offset,wheelY=0,forwardX=1,forwardY=0))
   result,report=self.analyze(self.log,wheel)
   self.assertEqual(result.returncode,0,result.stderr)
@@ -109,7 +111,7 @@ class CartStopAnalyzerTest(unittest.TestCase):
   start=int(re.search(r'COMPLETE male-empty-run-stop wall=(\d+)',self.log)[1])
   for times in ([i*.02 for i in range(11)],[0,.011,.043,.069,.1,.131,.157,.2],[0,.01,.03,.06,.08]):
    with self.subTest(times=times):
-    wheel=[dict(event='grounding',time=t,wallTimeMillis=start+4100+i*10,
+    wheel=[dict(event='grounding',time=t,wallTimeMillis=start+2600+i*10,
      playerX=0,playerY=0,wheelX=1-2*t,wheelY=0,forwardX=1,forwardY=0)for i,t in enumerate(times)]
     result,report=self.analyze(self.log,wheel)
     self.assertEqual(result.returncode,0,result.stderr)
@@ -135,6 +137,32 @@ class CartStopAnalyzerTest(unittest.TestCase):
 
  def test_missing_input_event(self):
   self.assertNotEqual(self.analyze(self.log.replace('[WOOD_RAMP_EVENT]','[MISSING]',1))[0].returncode,0)
+
+ def test_release_order_requires_distinct_adjacent_game_ticks(self):
+  for replacement in ('elapsed=5525 gait=0 drive=0 frame=220',
+   'elapsed=5525 gait=0 drive=0 frame=222','elapsed=5575 gait=0 drive=0 frame=221'):
+   with self.subTest(replacement=replacement):
+    self.assertNotEqual(self.analyze(self.log.replace('elapsed=5525 gait=0 drive=0 frame=221',replacement,1))[0].returncode,0)
+
+ def test_actual_keys_must_match_each_release_stage(self):
+  for current,replacement in (
+   ('drive=0 frame=340 keyRun=true keySprint=false keyMove=false',
+    'drive=0 frame=340 keyRun=false keySprint=false keyMove=false'),
+   ('drive=0 frame=340 keyRun=false keySprint=true keyMove=false',
+    'drive=0 frame=340 keyRun=false keySprint=false keyMove=false'),
+   ('drive=2 frame=220 keyRun=false keySprint=false keyMove=true',
+    'drive=2 frame=220 keyRun=false keySprint=false keyMove=false'),
+   ('keyRun=true keySprint=false keyMove=true','keyRun=true keySprint=false keyMove=unknown')):
+   with self.subTest(replacement=replacement):
+    self.assertIn(current,self.log)
+    self.assertNotEqual(self.analyze(self.log.replace(current,replacement,1))[0].returncode,0)
+
+ def test_each_release_order_requires_a_native_stop(self):
+  lines=self.log.splitlines()
+  for i,line in enumerate(lines):
+   if '[WOOD_BANK_SAMPLE] case=male-empty-run-stop 'in line and 5525<int(re.search(r'elapsed=(\d+)',line)[1])<7000:
+    lines[i]=re.sub(r'Bob_RunToStop2H_Heavy@[^;]+;','',line)
+  self.assertNotEqual(self.analyze('\n'.join(lines))[0].returncode,0)
 
  def test_failure_marker(self):
   self.assertNotEqual(self.analyze(self.log+'\n[WOOD_BANK] FAIL recorder')[0].returncode,0)

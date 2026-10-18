@@ -250,7 +250,9 @@ public final class Main {
     public static void main(String[] args) { System.out.println("[CART_LAB] LOADED"); }
 
     public static boolean fixtureKey(int key) {
-        if (drive <= 0) return false;
+        if (drive < 0) return false;
+        if (gait > 0 && key == Core.getInstance().getKey(gait == 1 ? "Run" : "Sprint")) return true;
+        if (drive == 0) return false;
         String first = switch(drive) {
             case 1, 5 -> "Forward"; case 2, 6 -> "Left";
             case 3, 8 -> "Right"; default -> "Backward";
@@ -259,8 +261,7 @@ public final class Main {
             case 5 -> "Left"; case 6 -> "Backward"; case 7 -> "Right"; case 8 -> "Forward"; default -> null;
         };
         return key == Core.getInstance().getKey(first)
-            || second != null && key == Core.getInstance().getKey(second)
-            || gait > 0 && key == Core.getInstance().getKey(gait == 1 ? "Run" : "Sprint");
+            || second != null && key == Core.getInstance().getKey(second);
     }
 
     @Patch(className="zombie.input.GameKeyboard", methodName="isKeyDown", warmUp=true)

@@ -174,6 +174,7 @@ local function setup(server, enabled, bridge)
         function item:canBeActivated() return false end
         function item:getContainer() end
         function item:IsInventoryContainer() return false end
+        function item:IsClothing() return false end
         function item:hasTag() return false end
         return item
     end
@@ -317,19 +318,42 @@ local stopOK, stopError = pcall(release.stop, release)
 assert(not stopOK and tostring(stopError):find("native stop failure", 1, true) and visualCalls == 1)
 ISUnequipAction.stop, ToolkitCartRefreshVisual = stopOriginal, nil
 local queue = {}
-for _, reason in ipairs({"drop", "place"}) do
-    local action = ISUnequipAction:new(p, wood, 1, reason)
+for _, reason in ipairs({false, "drop", "place"}) do
+    local action = ISUnequipAction:new(p, wood, reason and 1 or 50, reason or nil)
     assert(ISTimedActionQueue.addToQueue(queue, action) == "queued" and queue.last == action)
     assert(getmetatable(action) == ToolkitWoodCartSetdown and action.maxTime == 88)
     assert(action.stopOnWalk and action.stopOnRun and action.stopOnAim)
     assert(action.toolkitDropX == 1.25 and action.toolkitDropY == 2.75 and action.toolkitDropZ == 0 and action.toolkitDropRotation == 90)
     action:start(); action:update(); assert(p.vars.ToolkitWoodCartAction and wood.delta == .4)
-    local waiting = ISUnequipAction:new(p, wood, 1, reason)
+    local waiting = ISUnequipAction:new(p, wood, 1, reason or nil)
     ISTimedActionQueue.addToQueue(queue, waiting); waiting:forceCancel()
     assert(p.vars.ToolkitWoodCartAction, "queued setdown cancellation cleared another action presentation")
     action:forceCancel(); assert(not p.vars.ToolkitWoodCartAction and not p.vars.ToolkitWoodCartProgress)
     action:start(); action:stop(); assert(action.stopped and not p.vars.ToolkitWoodCartAction)
     action:start(); action:perform(); assert(action.performed == 1 and not p.vars.ToolkitWoodCartAction)
+end
+SaucedCarts.TransferRestrictions = {hasPendingTransfer = function(id) return id == wood:getID() end}
+local vehicleUnequip = ISUnequipAction:new(p, wood, 50)
+ISTimedActionQueue.addToQueue(queue, vehicleUnequip)
+assert(getmetatable(vehicleUnequip) == ISUnequipAction, "vehicle transfer became a ground setdown")
+SaucedCarts.TransferRestrictions = nil
+if NativeActionRoot then
+    getTextManager = function() return {getFontHeight = function() return 16 end} end
+    UIFont = {Small = "small"}
+    ISToolTip = ISBaseTimedAction
+    dofile(NativeActionRoot .. "/client/ISUI/ISInventoryPaneContextMenu.lua")
+    ISInventoryPane = {getActualItems = function(items) return items end}
+    getSpecificPlayer = function(number) assert(number == 0); return p end
+    function p:isEquipped(item) return self:isHandItem(item) end
+    function wood:getType() return "WheelbarrowWood" end
+    local add = ISTimedActionQueue.add
+    ISTimedActionQueue.add = function(action) return ISTimedActionQueue.addToQueue(queue, action) end
+    -- ISWorldObjectContextMenuLogic binds DropNamedItem to this inventory callback.
+    ISInventoryPaneContextMenu.onUnEquip({wood}, 0)
+    assert(queue.last.Type == "ToolkitWoodCartSetdown" and queue.last.reason == nil
+        and queue.last.maxTime == 88, "native world-menu drop bypassed wooden setdown")
+    ISTimedActionQueue.add = add
+    print("PASS native world-menu onUnEquip callback dispatches wooden setdown without a drop reason")
 end
 local refreshed = ISUnequipAction:new(p, wood, 1, "drop")
 ISTimedActionQueue.addToQueue(queue, refreshed)
@@ -357,7 +381,7 @@ for _, kind in ipairs({"reason", "item", "onehand", "subclass"}) do
 end
 for key, value in pairs(ISUnequipAction) do assert(unequipFingerprint[key] == value, "ordinary unequip class fingerprint changed: " .. key) end
 for key, value in pairs(unequipFingerprint) do assert(ISUnequipAction[key] == value) end
-print("PASS wooden setdown dispatch is limited to exact native drop/place actions holding wood in both hands; duration, flags and ordinary class fingerprints are preserved")
+print("PASS wooden setdown handles native unequip/drop/place while preserving vehicle transfers, exact classes, hands and ordinary fingerprints")
 
 for _, prepared in ipairs({true, false}) do
     for _, fails in ipairs({false, true}) do

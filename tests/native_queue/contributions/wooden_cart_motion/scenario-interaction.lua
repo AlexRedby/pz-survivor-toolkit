@@ -12,6 +12,7 @@ assert(not p:isDead() and CartTestArea and CartTestArea.ready,'Wait for BOOTSTRA
 assert(CartLabKey and CartLabHUD and cartLabDrive and cartLabGait and cartLabPoseHeading and toolkitVideoStart and toolkitVideoStatus and toolkitVideoStop,'CartLab/video bridge missing')
 require 'SaucedCarts/TimedActions/ISCartPickupAction'
 require 'TimedActions/ISUnequipAction'
+require 'ISUI/ISInventoryPaneContextMenu'
 require 'TimedActions/ISTimedActionQueue'
 if WoodPrototypeTick then Events.OnTick.Remove(WoodPrototypeTick) end
 cartLabDrive(0);cartLabGait(0);setGameSpeed(1)
@@ -327,7 +328,9 @@ local function tick()
    if heldFor<3900 then return end
   elseif heldFor<1100 then return end
   cartLabDrive(0);stage='drop'
-  local action=ISUnequipAction:new(p,item,1,'drop');ISTimedActionQueue.add(action)
+  -- The ground context menu binds DropNamedItem to onUnEquip, with no drop reason.
+  ISInventoryPaneContextMenu.onUnEquip({item},p:getPlayerNum())
+  local action=assert(ISTimedActionQueue.getTimedActionQueue(p).queue[1],'World-menu drop was not queued')
   assert(action.Type=='ToolkitWoodCartSetdown','Native wooden drop was not safely dispatched')
   event('dropQueued',now)
  elseif stage=='drop' then

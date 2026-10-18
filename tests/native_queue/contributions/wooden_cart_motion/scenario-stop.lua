@@ -32,8 +32,11 @@ for _,female in ipairs({false,true}) do
  for _,full in ipairs({false,true}) do
   for _,spec in ipairs({'run-stop','sprint-stop','short-release','run-resume-reverse','sprint-resume-turn','arc-stop'}) do
    local steps
-   if spec=='run-stop' then steps={{1000,1,2},{4000,0,0},{6000,1,2},{8750,0,0}}
-   elseif spec=='sprint-stop' then steps={{1000,2,2},{4000,0,0},{6000,2,2},{8850,0,0}}
+   if spec=='run-stop' or spec=='sprint-stop' then
+    local gait=spec=='run-stop' and 1 or 2
+    -- The fourth field delays this event until the next game tick, even after a slow frame.
+    steps={{1000,gait,2},{2500,0,0},{4000,gait,2},{5500,0,2},{5500,0,0,true},
+     {7000,gait,2},{8500,gait,0},{8500,0,0,true}}
    elseif spec=='short-release' then steps={{1000,2,2},{1250,0,0},{4000,1,2},{4250,0,0},{6500,2,2},{7000,0,0}}
    elseif spec=='run-resume-reverse' then steps={{1000,1,2},{4000,0,0},{4150,1,2},{7000,0,0},{7150,0,3},{10000,0,0}}
    elseif spec=='sprint-resume-turn' then steps={{1000,2,2},{4000,0,0},{4150,2,1},{8500,0,0}}
@@ -46,6 +49,7 @@ end
 assert(#cases==24)
 cases=CartLabSelectScenes(cases)
 local phase,since,stage,taken=0,0,0,{}
+local tickFrame,stageFrame=0,0
 local mode,attempt,videoSince='settle',0,0
 local sampleSince=0
 local function wood(full)
@@ -79,6 +83,9 @@ local function sprinting(level)
  p:setPerkLevelDebug(Perks.Sprinting,level);p:getXp():setXPToLevel(Perks.Sprinting,level)
  assert(p:getPerkLevel(Perks.Sprinting)==level,'Wrong Sprinting skill')
 end
+local function held(action)
+ return isKeyDown(getCore():getKey(action))
+end
 local function nextCase()
  sprinting(0)
  cartLabDrive(0);cartLabGait(0);phase=phase+1;stage=0;taken={};attempt=0
@@ -101,6 +108,7 @@ CartLabHUD.prerender=function(self)
  self:drawText('wall elapsed='..tostring(mode=='record' and getTimestampMs()-videoSince or 0)..'ms stage='..stage,10,30,1,1,1,1,UIFont.Small)
 end
 local function tick()
+ tickFrame=tickFrame+1
  local data=getPlayerData(0)
  if data and data.characterInfo then data.characterInfo:setVisible(false) end
  if ISChat and ISChat.instance then ISChat.instance:setVisible(false) end
@@ -142,11 +150,15 @@ local function tick()
    ..' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' skill='..p:getPerkLevel(Perks.Sprinting)..' speed='..p:getVariableFloat('WalkSpeed',0)
    ..' brakeArmed='..tostring(p:getVariableBoolean('ToolkitCartWoodBrake'))..' bare='..tostring(c.bare==true)..' item='..(p:getPrimaryHandItem() and p:getPrimaryHandItem():getFullType() or 'none')..' cartMotion='..tostring(p:getVariableBoolean('ToolkitCartMotion'))..' native='..cartLabNative()..' requestedGait='..tostring(c.steps[stage] and c.steps[stage][2] or 0)..' stepX='..p:getVariableFloat('ToolkitCartStepX',0)..' stepY='..p:getVariableFloat('ToolkitCartStepY',0)..' pace='..p:getVariableFloat('ToolkitCartLegPace',0)..' bank='..cartLabBank()..' reversal='..cartLabReversal()..' brake='..cartLabBrake()..' ramp='..cartLabRamp()..' tracks='..cartLabTracks())
  end
- while stage<#c.steps and elapsed>=c.steps[stage+1][1] do
+ while stage<#c.steps and elapsed>=c.steps[stage+1][1]
+  and (not c.steps[stage+1][4] or stageFrame<tickFrame) do
   stage=stage+1;local step=c.steps[stage]
+  stageFrame=tickFrame
   if step[2]~=nil then cartLabGait(step[2]) end
   cartLabDrive(step[3])
-  print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait='..tostring(step[2])..' drive='..step[3])
+  print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait='..tostring(step[2])..' drive='..step[3]..' frame='..tickFrame
+   ..' keyRun='..tostring(held('Run'))..' keySprint='..tostring(held('Sprint'))
+   ..' keyMove='..tostring(held('Forward') or held('Left') or held('Right') or held('Backward')))
  end
 
  if elapsed>=12000 then assert(toolkitVideoStop(),'Video stop rejected');mode='finish' end

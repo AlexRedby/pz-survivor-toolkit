@@ -18,12 +18,13 @@ public final class CartSteeringHooks {
         final CartSteeringMath.Bank bank = new CartSteeringMath.Bank();
         final CartLegPace.Ramp pace = new CartLegPace.Ramp();
         final CartSteeringMath.Reversal reversal = new CartSteeringMath.Reversal();
-        double brakeTarget, actualDistance, fastPoseTail, nativeSpeed, brakeLimit, brakeWait, brakePace;
+        double brakeTarget, actualDistance, fastPoseTail, nativeSpeed, brakeLimit, brakeWait, brakePace, fastReleaseWait;
         zombie.inventory.InventoryItem cart;
         float startX, startY;
         boolean wheelRendered, stationary, stationaryRoot, cartBlocked, recovering, path;
         double footprintFront=CartFootprint.WALK_FRONT;
         boolean moving, pending, sprintMomentum, sprintRequested, hasInput, wantsMove, braking, brakeSeen, fastMoving;
+        boolean sprintMoving;
         final CartSteeringMath.Step requested = new CartSteeringMath.Step();
         final Vector2 result = new Vector2();
         final Vector2 input = new Vector2();
@@ -83,6 +84,17 @@ public final class CartSteeringHooks {
             double desired=Math.atan2(move.y-move.x,move.y+move.x);
             state.hasInput=true;
             state.wantsMove=move.getLengthSquared()>1e-8;
+            if(input.isRunning() || input.sprinting) state.fastReleaseWait=0;
+            else {
+                double dt=GameTime.getInstance().getRealworldSecondsSinceLastUpdate();
+                state.fastReleaseWait+=Math.max(0,dt);
+                if(wasMoving && state.wantsMove && state.fastMoving && dt>0 && state.fastReleaseWait<=.05
+                    && state.reversal.direction>0 && !state.reversal.active && state.actualDistance>1e-6
+                    && player.isAllowRun() && (!state.sprintMoving || player.isAllowSprint())) {
+                    // Coalesce near-simultaneous key releases before the native fast node loses its stop transition.
+                    input.setRunning(!state.sprintMoving);input.sprinting=state.sprintMoving;
+                }
+            }
             if(state.wantsMove) {
                 state.braking=false;
                 player.setVariable("ToolkitCartWoodBrake",false);
@@ -355,6 +367,7 @@ public final class CartSteeringHooks {
         state=state(player);
         // Native clears the gait flags before UpdateInputState; retain the last finalized gait for release.
         state.fastMoving=player.isRunning() || player.isSprinting();
+        state.sprintMoving=player.isSprinting();
         boolean sprintRequested=state.sprintRequested;
         state.sprintRequested=false;
         state.load=load(player);

@@ -37,9 +37,12 @@ end)
 -- Change only cart action instances; ordinary equipment keeps its class and fingerprint.
 local addToQueue = ISTimedActionQueue.addToQueue
 ISTimedActionQueue.addToQueue = function(queue, action)
+    local transfers = SaucedCarts.TransferRestrictions
     if toolkitWoodCartUpdate and toolkitWoodCartDropPose and getmetatable(action) == ISUnequipAction
-        and (action.reason == "drop" or action.reason == "place")
+        -- The native world-menu "Drop <name>" calls onUnEquip without a reason.
+        and (action.reason == nil or action.reason == "drop" or action.reason == "place")
         and transitions.wooden(action.item)
+        and not (transfers and transfers.hasPendingTransfer and transfers.hasPendingTransfer(action.item:getID()))
         and not action.character:isTimedActionInstant()
         and action.character:getPrimaryHandItem() == action.item
         and action.character:getSecondaryHandItem() == action.item then
