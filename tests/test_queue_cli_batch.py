@@ -389,6 +389,47 @@ class BatchTests(unittest.TestCase):
                          [job['id'] for job in cli.selected_jobs(plan, sets=['tags', 'video'])])
 
 
+class MatrixTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def test_filters_keep_failed_evidence_and_unsupported_controls(self):
+        evidence = {'suite': 'startup', 'case': 'loaded', 'kind': 'sp', 'mode': 'toolkit',
+                    'actor': 'client1', 'status': 'passed'}
+        source = self.root / 'failed-report.json'
+        source.write_text(json.dumps({'status': 'failed', 'coverage': [evidence]}))
+        output = self.root / 'matrix.json'
+        text = io.StringIO()
+        with patch.object(cli.native, 'prepare') as prepare, patch.object(cli.runner, 'run') as run, \
+                patch('sys.stdout', text):
+            self.assertEqual(0, cli.main(['matrix', str(source), '--suite', 'startup',
+                                         '--suite', 'wooden_cart_motion', '--kind', 'sp', '--output', str(output)]))
+        prepare.assert_not_called()
+        run.assert_not_called()
+        rows = json.loads(output.read_text())['rows']
+        self.assertEqual({row['suite'] for row in rows}, {'startup', 'wooden_cart_motion'})
+        self.assertTrue(all(row['kind'] == 'sp' for row in rows))
+        self.assertEqual(len(text.getvalue().splitlines()), len(rows))
+        startup = next(row for row in rows if row['suite'] == 'startup' and row['mode'] == 'toolkit')
+        self.assertEqual(startup['status'], 'failed')
+        self.assertEqual(startup['evidence'], [evidence])
+        self.assertTrue(any(row['status'] == 'unsupported' for row in rows))
+        self.assertTrue(any(row['status'] == 'not-run' for row in rows))
+        with patch('sys.stdout', io.StringIO()):
+            self.assertEqual(0, cli.main(['matrix', str(source), '--suite', 'startup', '--kind', 'sp',
+                                         '--mode', 'toolkit', '--output', str(output)]))
+        self.assertEqual(json.loads(output.read_text())['rows'], [startup])
+
+    def test_unknown_suite_fails_without_writing_an_empty_matrix(self):
+        output = self.root / 'matrix.json'
+        with patch('sys.stderr', io.StringIO()) as error:
+            self.assertEqual(1, cli.main(['matrix', '--suite', 'typo', '--output', str(output)]))
+        self.assertIn('Unknown suites: typo', error.getvalue())
+        self.assertFalse(output.exists())
+
+
 class StatusTests(unittest.TestCase):
     def setUp(self):
         self.value = {'schema_version': 1,

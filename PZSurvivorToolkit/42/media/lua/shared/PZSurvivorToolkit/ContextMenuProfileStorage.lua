@@ -1,29 +1,13 @@
 local Proof = require "PZSurvivorToolkit/SourceProof"
+local TextFile = require "PZSurvivorToolkit/TextFile"
 local Storage = {}
 local files = {"PZSurvivorToolkit_ContextMenus_a.txt", "PZSurvivorToolkit_ContextMenus_b.txt"}
 local legacy = "PZSurvivorToolkit_ContextMenus.ini"
 local MAGIC, LIMIT, MAX_LINE, MAX_GENERATION = "PZST_CONTEXT", 20000000, 8192, 2147483646
 
 local function read(path)
-    local reader = getFileReader(path, true)
-    if not reader then error("Cannot read context menu profile: " .. path) end
-    local ok, result = pcall(function()
-        local values, size = {}, 0
-        while true do
-            local line = reader:readLine()
-            if line == nil then break end
-            -- Legacy parsing skips oversized records; keep them here so valid later preferences survive.
-            if type(line) ~= "string" or (path ~= legacy and #line > MAX_LINE) then error("Invalid context menu profile line") end
-            size = size + #line + 1
-            if size > LIMIT then error("Context menu profile exceeds storage limit") end
-            values[#values + 1] = line
-        end
-        return values
-    end)
-    local closed, closeError = pcall(function() reader:close() end)
-    if not ok then error(result) end
-    if not closed then error(closeError) end
-    return result
+    -- Legacy parsing skips oversized records so valid later preferences survive.
+    return TextFile.readLines(path, LIMIT, path ~= legacy and MAX_LINE or nil)
 end
 
 local function checksum(values)
@@ -95,12 +79,7 @@ function Storage.save(previous, lines)
     body[#body + 1] = string.format("END|%d|%d", generation, hash)
     local text = table.concat(body, "\n") .. "\n"
     if #text > LIMIT then error("Context menu profile exceeds storage limit") end
-    local writer = getFileWriter(files[slot], true, false)
-    if not writer then error("Cannot write context menu profile snapshot") end
-    local written, writeError = pcall(function() writer:write(text) end)
-    local closed, closeError = pcall(function() writer:close() end)
-    if not written then error(writeError) end
-    if not closed then error(closeError) end
+    TextFile.write(files[slot], text)
     local saved = read(files[slot])
     if table.concat(saved, "\n") .. "\n" ~= text then error("Context menu profile verification failed") end
     local result = parse(saved, slot)

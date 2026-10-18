@@ -1,5 +1,6 @@
 local Codec = require "PZSurvivorToolkit/QuartermasterPresetCodec"
 local Proof = require "PZSurvivorToolkit/SourceProof"
+local TextFile = require "PZSurvivorToolkit/TextFile"
 local Storage = {}
 local files = {"PZSTQuartermasterPresets_a.txt", "PZSTQuartermasterPresets_b.txt"}
 local legacy = {"QuartermasterPresets.txt", "PZSTQuartermasterTagRules.txt"}
@@ -12,24 +13,7 @@ local function lines(text)
 end
 
 local function read(path)
-    local reader = getFileReader(path, true)
-    if not reader then error("Cannot read Quartermaster presets: " .. path) end
-    local ok, result = pcall(function()
-        local values, size = {}, 0
-        while true do
-            local line = reader:readLine()
-            if line == nil then break end
-            if type(line) ~= "string" then error("Invalid preset reader") end
-            size = size + #line + 1
-            if size > LIMIT then error("Quartermaster presets exceed storage limit") end
-            values[#values + 1] = line
-        end
-        return values
-    end)
-    local closed, closeError = pcall(function() reader:close() end)
-    if not ok then error(result) end
-    if not closed then error(closeError) end
-    return result
+    return TextFile.readLines(path, LIMIT)
 end
 
 local function checksum(values)
@@ -93,12 +77,7 @@ function Storage.save(previous, native, rules)
     body[#body + 1] = "END|" .. generation .. "|" .. string.format("%.0f", hash)
     local text = table.concat(body, "\n") .. "\n"
     if #text > LIMIT then error("Quartermaster presets exceed storage limit") end
-    local writer = getFileWriter(files[slot], true, false)
-    if not writer then error("Cannot write Quartermaster snapshot") end
-    local written, writeError = pcall(function() writer:write(text) end)
-    local closed, closeError = pcall(function() writer:close() end)
-    if not written then error(writeError) end
-    if not closed then error(closeError) end
+    TextFile.write(files[slot], text)
     local saved = read(files[slot])
     if table.concat(saved, "\n") .. "\n" ~= text then error("Quartermaster snapshot verification failed") end
     local result = parse(saved, slot)

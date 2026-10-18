@@ -24,7 +24,10 @@ Preparation needs Python 3.11+, JDK 25+ and installed B42.21 game files. The mac
 python3 -m unittest discover -s tests -p 'test_queue_*.py'
 python3 tests/native_queue/health/check.py
 python3 tools/check_action_queue.py matrix
+python3 tools/check_action_queue.py matrix --suite startup --kind mp --mode toolkit
 ```
+
+Use repeatable `--suite`, plus optional `--kind` and `--mode`, to limit scenario discovery and existing-report views to the task. The same filters apply to `--output` JSON; unsupported controls, missing runs and failed evidence retain their original statuses.
 
 Set local `PZ_GAME` to the directory containing `projectzomboid.jar`, and `PZ_JDK` to a JDK root. Use the same queue-independent selection in both modes:
 

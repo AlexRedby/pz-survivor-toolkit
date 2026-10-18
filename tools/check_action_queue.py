@@ -250,6 +250,9 @@ def main(argv=None):
     command = commands.add_parser("matrix", help="List declared cases and actual evidence; never infer passes")
     command.add_argument("reports", type=Path, nargs="*")
     command.add_argument("--output", type=Path)
+    command.add_argument('--suite', action='append', default=[], help='Show only this suite; repeatable')
+    command.add_argument('--kind', choices=('sp', 'mp'), help='Show only single-player or multiplayer cases')
+    command.add_argument('--mode', choices=('toolkit', 'native'), help='Show only this feature mode')
     command = commands.add_parser('batch', help='Run an explicit stand plan sequentially with fresh profiles and a combined report')
     command.add_argument('plan', type=Path)
     command.add_argument('output', type=Path)
@@ -309,7 +312,15 @@ def main(argv=None):
         if args.command == 'batch':
             return batch(args, catalog)
         if args.command == "matrix":
+            unknown = set(args.suite) - catalog['suites'].keys()
+            if unknown:
+                raise ValueError('Unknown suites: ' + ', '.join(sorted(unknown))
+                                 + '; available: ' + ', '.join(catalog['suites']))
             value = report.matrix(catalog, [report.read_json(path) for path in args.reports])
+            value['rows'] = [row for row in value['rows']
+                             if (not args.suite or row['suite'] in args.suite)
+                             and (args.kind is None or row.get('kind') == args.kind)
+                             and (args.mode is None or row.get('mode') == args.mode)]
             if args.output:
                 report.write_json(args.output, value)
             for row in value["rows"]:

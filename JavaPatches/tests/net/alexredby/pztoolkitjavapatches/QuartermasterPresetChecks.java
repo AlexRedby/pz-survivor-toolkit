@@ -21,7 +21,7 @@ public final class QuartermasterPresetChecks {
             if (module == null) throw new AssertionError("Unexpected module: " + frame.get(0));
             return frame.push(module);
         });
-        for (String name : new String[]{"SourceProof", "QuartermasterPresetCodec", "QuartermasterPresetStorage"}) {
+        for (String name : new String[]{"SourceProof", "TextFile", "QuartermasterPresetCodec", "QuartermasterPresetStorage"}) {
             try (var reader = Files.newBufferedReader(root.resolve(
                     "PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/" + name + ".lua"))) {
                 modules.put("PZSurvivorToolkit/" + name,
