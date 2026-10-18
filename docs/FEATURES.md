@@ -123,7 +123,7 @@ With **SaucedCarts**, dedicated servers initialize the upstream drop, unequip an
 
 The wooden wheelbarrow has the refined animation: hands remain attached to its handles, the grounded wheel rolls with actual movement and turns lean up to 7 degrees. Walk, Run and Sprint retain moving legs; cargo affects acceleration and Sprint entry/exit. Releasing Run/Sprint uses a heavy-item braking step and a smooth return to the standing grip. New input interrupts braking. From a settled stop, side input uses full native lateral strides around the front wheel before pushing in the new direction. Cargo slows the stride cadence rather than shortening the steps. Run/Sprint wait for that turn to finish. Releasing the direction returns to standing; an opposite-direction command still requests a slower backward step. Use successive side directions for a U-turn.
 
-This tuning was checked locally with empty/full wooden wheelbarrows on both body models. Remote players currently do not receive the complete cart pose; local capture does not establish multiplayer equivalence. Stationary hip/clothing clearance, the remaining maneuver matrix and natural pickup/put-down transitions remain [open work](../TODO.md#естественная-анимация-деревянной-тачки). There is no separate cart rigid-body simulation.
+This tuning was checked locally with empty/full wooden wheelbarrows on both body models. Remote players currently do not receive the complete cart pose; local capture does not establish multiplayer equivalence. Stationary hip/clothing clearance, the remaining maneuver matrix and natural pickup/put-down transitions remain [open work](../TODO.md#natural-wooden-wheelbarrow-animation). There is no separate cart rigid-body simulation.
 
 ### Multiplayer auto-drink
 
@@ -192,4 +192,4 @@ The separate [Java patch guide](../JavaPatches/README.md) owns the supported eng
 
 The native scenario runner currently supports macOS and invokes game callbacks programmatically. This does not establish physical mouse/controller operation, Windows/Linux, WAN latency, long-session behavior or every combination of third-party mods. See [native scenarios](../tests/native_queue/README.md) for runnable checks and acceptance criteria.
 
-Java Patches 0.1.15 guards native body updates and rejects new server treatment requests arriving after their patient disconnects. The earlier clothing-visual synchronization mismatch remains unexplained; successful clinical actions do not establish a clean runtime. The [medical investigation in TODO](../TODO.md#адаптеры-ближайшего-этапа) records remaining checks.
+Java Patches 0.1.15 guards native body updates and rejects new server treatment requests arriving after their patient disconnects. The earlier clothing-visual synchronization mismatch remains unexplained; successful clinical actions do not establish a clean runtime. The [medical investigation in TODO](../TODO.md#near-term-adapters) records remaining checks.

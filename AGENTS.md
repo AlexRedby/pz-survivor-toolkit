@@ -1,39 +1,39 @@
-# Правила проекта
+# Project rules
 
-## Назначение и исходники
+## Purpose and sources
 
-PZ Survivor Toolkit — Quality of Life проект для личных игровых пожеланий пользователя, исправления замеченных им багов и интеграции понравившихся сторонних модов. Репозиторий включает Toolkit (в том числе Survivor Wishlist), Java-патчи и вспомогательные инструменты.
+PZ Survivor Toolkit is a quality-of-life project for the user's personal gameplay requests, fixes for bugs they have encountered, and integration of third-party mods they like. The repository includes Toolkit (including Survivor Wishlist), Java patches and supporting tools.
 
-Источник истины — локальные исходники проекта и его GitHub-репозиторий. Неотправленные локальные изменения могут быть новее GitHub. Установленная в игру копия является результатом установки, а не независимым источником кода.
+The local project sources and its GitHub repository are the source of truth. Unpushed local changes may be newer than GitHub. The copy installed in the game is an installation result, not an independent source of code.
 
-Определи фактический Git-репозиторий и актуальную рабочую копию. Если внешний каталог содержит несколько worktree и старую копию исходников, не принимай её за актуальную по одному совпадению имени каталога. Соблюдай общие правила изоляции изменений.
+Identify the actual Git repository and current working copy. If the enclosing directory contains several worktrees and an old source copy, do not assume a copy is current just because its directory name matches. Follow the general change-isolation rules.
 
-Версии, пути, команды сборки и проверок сверяй с актуальными файлами проекта. Используй существующие инструменты; читай нужные для задачи разделы `README.md`, `MOD_INSTALL.md` и `docs/DEVELOPMENT.md`.
+Check versions, paths, build commands and verification commands against the current project files. Use the existing tools; read the relevant sections of `README.md`, `MOD_INSTALL.md` and `docs/DEVELOPMENT.md` for the task.
 
-## Изменения и установка
+## Changes and installation
 
-Не вноси не запрошенные пользователем новые функции и изменения игрового поведения без обсуждения, даже если считаешь их улучшением. Исправление бага должно восстанавливать понятное уже установленное ожидаемое поведение; неоднозначный результат сначала согласуй.
+Do not add features or change gameplay behavior that the user has not requested without discussion, even if you consider them improvements. A bug fix must restore clear, already established expected behavior; agree on an ambiguous outcome first.
 
-Не устанавливай готовые изменения автоматически в локальную игру пользователя. Работа над кодом и проверки не разрешают перезаписывать его установленный мод. Установка требует отдельного запроса.
+Do not automatically install completed changes into the user's local game. Code changes and checks do not authorize overwriting their installed mod. Installation requires a separate request.
 
-## Поддерживаемое окружение
+## Supported environment
 
-- Только актуальная версия Build 42, на которой играет пользователь; поддержка старых версий не требуется. Переход на другую основную ветку игры отдельно не согласован.
-- Режимы: одиночная игра и Host из меню игры. Отдельный выделенный сервер не является обязательным целевым окружением.
-- Игроки используют Windows и macOS. Игровые проверки разрешены на обеих платформах, включая изолированные Windows-стенды, которые агент запускает самостоятельно (явное разрешение пользователя для текущей задачи и дальнейшей работы). Указывай фактически проверенную платформу; не выдавай проверку одной платформы за проверку другой.
-- Игровые проверки проводи с отдельными тестовыми настройками и сохранениями, не меняя текущие настройки и сохранения пользователя.
+- Only the current Build 42 version the user plays is supported; older versions do not need support. Moving to another major game branch has not been separately agreed.
+- Modes: single-player and Host from the game menu. A separate dedicated server is not a required target environment.
+- Players use Windows and macOS. In-game checks are allowed on both platforms, including isolated Windows environments launched independently by the agent (explicit user permission for the current task and future work). State the platform actually tested; do not present verification on one platform as verification on the other.
+- Run in-game checks with separate test settings and saves, without changing the user's current settings or saves.
 
-## Соразмерные проверки
+## Proportionate checks
 
-Выбирай минимальную полезную проверку по изменению и риску. Проверяй затронутое поведение и связанные последствия. Сборка, полный прогон тестов и запуск игры не обязательны после каждой правки.
+Choose the smallest useful check for the change and its risks. Check the affected behavior and related consequences. A build, full test run and game launch are not required after every edit.
 
-- Для документации проверяй исправленный текст и затронутые ссылки; игровой запуск не нужен.
-- Для локальной логики используй связанные тесты. Добавляй небольшой регрессионный тест, когда он надёжно ловит существенную ошибку и защищает от её повторения. Не пиши тесты ради количества или повторения реализации.
-- Изменённую игровую функцию проверяй в игре с полным набором модов, если автоматическая проверка не подтверждает нужное поведение. Сетевое взаимодействие проверяй соответствующим сценарием через Host.
-- Расширяй охват при изменении общего механизма, связанных интеграций или при конкретной неустранённой ошибке. После достаточной успешной проверки не повторяй её без новых изменений или оснований.
+- For documentation, check the edited text and affected links; no game launch is needed.
+- For local logic, use the related tests. Add a small regression test when it reliably catches a significant error and protects against recurrence. Do not write tests for quantity or to repeat the implementation.
+- Check a changed gameplay function in the game with the full mod set if automated checks do not confirm the required behavior. Check network interaction with the corresponding Host scenario.
+- Expand coverage when changing a shared mechanism or related integrations, or when a specific error remains unresolved. After sufficient successful verification, do not repeat it without new changes or reasons.
 
-В результате работы кратко указывай выполненные проверки и существенные ограничения. Не объявляй весь проект проверенным по результатам частичного прохода.
+Briefly report the checks performed and significant limitations. Do not claim the entire project has been verified based on a partial run.
 
-## Роли
+## Roles
 
-Выполняй свою задачу; отдельный поиск инфраструктурных проблем не является обязанностью каждого агента. Обязанности инфраструктурного ответственного описаны в проектном скилле `pz-infrastructure`, который подключается только по явному вызову пользователя.
+Carry out your task; each agent is not responsible for a separate search for infrastructure problems. The infrastructure maintainer's duties are described in the project's `pz-infrastructure` skill, which is used only when the user explicitly invokes it.

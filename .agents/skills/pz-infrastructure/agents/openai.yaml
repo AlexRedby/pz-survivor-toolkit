@@ -1,6 +1,6 @@
 interface:
   display_name: "PZ Infrastructure"
-  short_description: "Сопровождение инфраструктуры PZ Survivor Toolkit"
+  short_description: "Maintain PZ Survivor Toolkit infrastructure"
 
 policy:
   allow_implicit_invocation: false

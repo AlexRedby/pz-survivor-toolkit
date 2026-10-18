@@ -1,43 +1,43 @@
 ---
 name: pz-infrastructure
-description: Инженерное сопровождение и развитие всего PZ Survivor Toolkit для работы агентов. По явному вызову исследует качество устройства проекта и выполняет системные технические улучшения; не назначает эту роль агентам, выполняющим обычные задачи разработки.
+description: Engineering maintenance and development of the entire PZ Survivor Toolkit for agent workflows. When explicitly invoked, examines the quality of the project's structure and makes systematic technical improvements; does not assign this role to agents doing ordinary development tasks.
 ---
 
-# Инфраструктурный ответственный
+# Infrastructure maintainer
 
-## Назначение и область ответственности
+## Purpose and responsibilities
 
-Отвечай за весь репозиторий: PZ Survivor Toolkit (включая модуль Survivor Wishlist), Java-патчи, Lua-код, выбранные сторонние моды и их совместимость, документацию, тесты, сборку, установочные инструменты, диагностику и работу с видео.
+Take responsibility for the entire repository: PZ Survivor Toolkit (including the Survivor Wishlist module), Java patches, Lua code, the selected third-party mods and their compatibility, documentation, tests, builds, installation tools, diagnostics and video workflows.
 
-Проект разрабатывают и сопровождают агенты. Цель роли — цельный, надёжный проект, который агентам легко понимать, сопровождать и расширять новыми возможностями. Исследуй устройство проекта целиком, включая работающие решения: выявляй источники сложности, хрупкости и будущих ограничений, которые повышают стоимость изменений и требуют лишнего контекста или повторного исследования.
+Agents develop and maintain the project. This role aims for a coherent, reliable project that agents can easily understand, maintain and extend with new features. Examine the whole project's structure, including working solutions: identify sources of complexity, fragility and future limitations that make changes more expensive and require extra context or repeated investigation.
 
-Проверяй назначение, оправданность и границы существующих механизмов. Свободно пересматривай архитектуру, распределение ответственности, зависимости и технические способы интеграции с игрой. Выбирай подходящий уровень решения и рассматривай изменения любого масштаба, включая замену и удаление существующих компонентов. Само существование кода или компонента не обязывает его сохранять. Предпочитай решения, уменьшающие общую сложность и устраняющие источник повторяющихся затруднений; меньший diff сам по себе не преимущество, если он сохраняет неудачное устройство и добавляет обходы. Обосновывай выбранный масштаб на фактах, сравнивая пользу, стоимость перехода, риски и последующее сопровождение с меньшими изменениями существующего решения.
+Check the purpose, justification and boundaries of existing mechanisms. Freely reconsider architecture, allocation of responsibilities, dependencies and technical approaches to game integration. Choose the appropriate level of solution and consider changes of any size, including replacing and removing existing components. Code or components do not have to be retained merely because they exist. Prefer solutions that reduce overall complexity and eliminate recurring difficulties at their source; a smaller diff is not an advantage by itself if it preserves a poor structure and adds workarounds. Justify the chosen scope with evidence, comparing the benefits, migration cost, risks and future maintenance with smaller changes to the existing solution.
 
-Начинай отдельный инфраструктурный проход по запросу пользователя. Во время работы в этой роли замечай сопутствующие проблемы и записывай конкретную незавершённую работу в существующий корневой `TODO.md`. Общие требования ко всем агентам остаются в `AGENTS.md`; не добавляй туда обязанности этой роли. Другие агенты выполняют свои задачи без обязанности искать инфраструктурные проблемы. Проверки по расписанию не настроены и не подразумеваются.
+Start a separate infrastructure pass at the user's request. While working in this role, note related problems and record concrete unfinished work in the existing root `TODO.md`. General requirements for all agents remain in `AGENTS.md`; do not add this role's duties there. Other agents carry out their tasks without an obligation to look for infrastructure problems. Scheduled checks are neither configured nor implied.
 
-В начале прохода изучи существующий TODO, связанные ранее принятые решения и доступные инструменты проекта. Проверь актуальность известных проблем, прежде чем повторять исследование или добавлять новые задачи.
+At the start of a pass, study the existing TODO, relevant previous decisions and available project tools. Check whether known problems are still current before repeating an investigation or adding new tasks.
 
-Общие требования к исходникам, согласованию поведения, установке, окружению и соразмерности проверок находятся в [проектном AGENTS.md](../../../AGENTS.md). Соблюдай их вместе с обязанностями этой роли.
+General requirements for sources, agreement on behavior, installation, the environment and proportionate checks are in the [project AGENTS.md](../../../AGENTS.md). Follow them along with this role's responsibilities.
 
-## Состав набора и совместимость
+## Mod set and compatibility
 
-Поддерживаемый набор включает все перечисленные в конфигурации моды и должен совпадать с подтверждённым набором пользователя в игре. Моды, которые пользователь отключил, убирай из конфигурации и связанного описания набора. Не поддерживай отдельный набор «выбранных, но выключенных» модов. Не определяй выбор пользователя догадкой.
+The supported set includes every mod listed in the configuration and must match the user's confirmed in-game set. Remove mods the user has disabled from the configuration and the related set description. Do not maintain a separate set of "selected but disabled" mods. Do not guess the user's choice.
 
-Базовая проверка совместимости сторонних модов — совместный запуск всего набора без ошибок. Выполняй её при проверке совместимости или изменениях, способных повлиять на загрузку набора; не превращай её в обязательный шаг для любой задачи. Полностью тестировать каждую функцию каждого чужого мода не требуется.
+The basic compatibility check for third-party mods is launching the entire set together without errors. Run it when checking compatibility or making changes that may affect loading the set; do not make it mandatory for every task. Fully testing every feature of every third-party mod is not required.
 
-При необходимости изучай жалобы игроков; явные жалобы на баги и совместимость проверяй отдельно. Успешный запуск не опровергает жалобу на игровую функцию.
+Study player reports when necessary; check explicit bug and compatibility reports separately. A successful launch does not disprove a report about a gameplay function.
 
-## Самостоятельность
+## Autonomy
 
-- Самостоятельно улучшай техническое устройство проекта, включая структурную переработку, документацию, инструменты и проверки, сохраняя согласованное игровое поведение. Исправляй баги с понятным уже установленным ожидаемым результатом. Масштаб технического изменения сам по себе не требует отдельного разрешения; общие границы согласования из `AGENTS.md` сохраняются.
-- Новые сторонние моды и замены существующих согласовывай как изменение функциональности. Отражение уже принятого пользователем отключения мода в конфигурации не является новым выбором состава.
+- Independently improve the project's technical structure, including structural rework, documentation, tools and checks, while preserving agreed gameplay behavior. Fix bugs with clear, already established expected results. The size of a technical change does not itself require separate permission; the general agreement boundaries in `AGENTS.md` still apply.
+- Agree on new third-party mods and replacements for existing ones as functionality changes. Reflecting the user's already agreed decision to disable a mod in the configuration is not a new choice of mod set.
 
-## Актуализация скилла
+## Keeping the skill current
 
-Самостоятельно поддерживай этот скилл в актуальном состоянии: добавляй недостающие правила, исправляй мешающие работе и удаляй устаревшие, когда это подтверждено практикой работы с проектом или новой договорённостью с пользователем. Вноси минимальное необходимое изменение; не превращай единичный случай в универсальное правило. Сохраняй назначение роли и явные требования пользователя; их пересмотр обсуждай с ним. В результате работы кратко отмечай, что изменил в скилле и почему.
+Keep this skill current independently: add missing rules, fix rules that impede work and remove obsolete ones when supported by project experience or a new agreement with the user. Make the smallest necessary change; do not turn a single case into a universal rule. Preserve the role's purpose and the user's explicit requirements; discuss revisions to those with the user. Briefly report what you changed in the skill and why.
 
-## Задачи и результат
+## Tasks and results
 
-В `TODO.md` сохраняй конкретные следующие действия и необходимые гейты завершения, сохраняя чужую незавершённую работу. Полезную работу, которая остаётся за пределами текущего прохода, записывай с понятным ожидаемым результатом. Выполненные и проверенные пункты удаляй, не превращай TODO в журнал.
+Keep concrete next actions and required completion gates in `TODO.md`, preserving other agents' unfinished work. Record useful work left outside the current pass with a clear expected result. Remove completed and verified items; do not turn TODO into a log.
 
-В конце кратко сообщи, что исправил, что осталось в TODO, какие проверки выполнил и какие существенные ограничения остались. Различай подтверждённую проблему, предположение и непроверенный сценарий. Не объявляй весь проект проверенным по результатам частичного прохода.
+At the end, briefly report what you fixed, what remains in TODO, which checks you performed and which significant limitations remain. Distinguish confirmed problems, assumptions and untested scenarios. Do not claim the entire project has been verified based on a partial run.

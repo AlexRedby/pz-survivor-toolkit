@@ -118,6 +118,6 @@ explicit/faction revocation, concurrent revision handling, and wishlist ground
 colour competing with Toolkit. Assertions describe the failure each scenario
 guards; the retained successful logs do not prove a failing pre-fix build.
 
-The RU visual search uses decimal UTF-8 byte escapes for `топор`. UI work is programmatic and uses fixed delays; physical interaction, rendering on other systems, WAN reliability and current Workshop versions need separate verification. The concurrent scenario
+The RU visual search uses decimal UTF-8 byte escapes for the Russian word for "axe". UI work is programmatic and uses fixed delays; physical interaction, rendering on other systems, WAN reliability and current Workshop versions need separate verification. The concurrent scenario
 accepts either winning amount plus an optional `stale_revision`; it proves no
 chosen winner, and a later synchronization assertion supplies cross-client checks.

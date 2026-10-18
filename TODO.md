@@ -1,85 +1,85 @@
-# Крафт на Primitive Forge
+# Crafting on the Primitive Forge
 
-- [ ] Разобрать семь клиентских font-loading ошибок, оставшихся в обоих полных forge Host-прогонах; не объявлять весь набор runtime-clean по функциональному исправлению кузницы. Сам Forge Simple Blade stall воспроизведён в отдельном Windows Host-мире с 48 модами после удаления более раннего объекта на square: 0.1.22 зависает на 100%, 0.1.23 проходит все три случая (ручной контроль, обычная кузница, сдвиг индекса) с одним результатом, точным расходом и idle action/UI. Отчёты `forge-baseline-05` и `forge-candidate-01` сохраняют отдельный runtime verdict; Mac, WAN и два клиента этим не проверены. См. [стенд](tests/native_queue/forge/README.md).
+- [ ] Investigate the seven client font-loading errors remaining in both full forge Host runs; do not declare the entire set runtime-clean based on the functional forge fix. The Forge Simple Blade stall itself was reproduced in a separate Windows Host world with 48 mods after removing an earlier object on the square: 0.1.22 stalls at 100%, while 0.1.23 passes all three cases (manual control, ordinary forge, shifted index) with one result, exact consumption and idle action/UI. Reports `forge-baseline-05` and `forge-candidate-01` retain a separate runtime verdict; this does not verify Mac, WAN or two clients. See the [test setup](tests/native_queue/forge/README.md).
 
-# Сохранность настроек контекстного меню
+# Context-menu settings integrity
 
-- [ ] В `ContextMenuProfile.lua` отличать отказ `getFileReader` от нового профиля: сейчас nil оставляет пустые настройки, а следующий `changed()` вызывает прямую перезапись `PZSurvivorToolkit_ContextMenus.ini`. Сохранить прежние настройки при отказе open/read/close и неподтверждённой записи; проверить восстановление доступа без подмены пользовательских overrides/порядка/групп/теговых профилей и отдельный холодный reload.
+- [ ] In `ContextMenuProfile.lua`, distinguish a `getFileReader` failure from a new profile: currently nil leaves empty settings, and the next `changed()` directly overwrites `PZSurvivorToolkit_ContextMenus.ini`. Preserve existing settings on open/read/close failure and unconfirmed writes; check recovery of access without replacing user overrides/order/groups/tag profiles, plus a separate cold reload.
 
-# Ускорение разработки анимаций
+# Faster animation development
 
-- [ ] Передавать общему cart-анализатору ожидаемые сцены и временные окна выбранного банка вместо sprint16/`--partial`; сохранить отдельные проверки движения, хвата, тела/одежды и runtime. Проверить пропущенные сцены, неверные фазы и same-tick receipts отрицательными тестами.
-- [ ] Добавить воспроизводимый повторный анализ сохранённого capture в отдельный каталог: сохранить исходный отчёт, хеши входных данных и версию нового анализатора; приложить короткий ролик и покадровую выборку вокруг найденного дефекта. Исправление oracle не должно требовать повторной игры или объявлять старый capture проверкой изменённого production-кода.
+- [ ] Pass the expected scenes and time windows of the selected bank to the shared cart analyzer instead of sprint16/`--partial`; retain separate checks for movement, grip, body/clothing and runtime. Check missing scenes, incorrect phases and same-tick receipts with negative tests.
+- [ ] Add reproducible re-analysis of a saved capture into a separate directory: preserve the original report, input hashes and version of the new analyzer; attach a short video and frame-by-frame sample around the discovered defect. Fixing the oracle must not require replaying the game or present an old capture as verification of changed production code.
 
-# Столкновения деревянной тачки
+# Wooden wheelbarrow collisions
 
-- [ ] Проверить ручной выход деревянной тачки из тесного контакта со стеной с женскими моделями и в MP; не считать проверку мужской модели в SP сетевой проверкой. Сохранить ручной reverse, естественное качение и native collision; автоматический отъезд не добавлять.
-- [ ] При следующем общем cart-native прогоне получить штатный path-отчёт с исправленным учётом same-tick CancelAction/terminal: сохранённые 24 маршрута проверены отдельным анализом; исходный отчёт оставить неизменным. Общий визуальный гейт остаётся открытым из-за контактов широких брюк с левой ручкой и неклассифицированных сообщений шрифтов.
-- [ ] Допроверить стойку упора деревянной тачки в остальных collision-сценах: полный банк с женской моделью и Walk с полным грузом. Проверять стопы, хват, колесо и отсутствие рывка; Run/Sprint и impact проверять отдельными сценариями.
+- [ ] Check manually backing the wooden wheelbarrow out of tight wall contact with female models and in MP; do not count a male-model SP check as a network check. Preserve manual reverse, natural rolling and native collision; do not add automatic backing.
+- [ ] On the next shared cart-native run, obtain the standard path report with same-tick CancelAction/terminal accounting fixed: the saved 24 routes were checked in separate analysis; leave the original report unchanged. The shared visual gate remains open due to wide-trouser contact with the left handle and unclassified font messages.
+- [ ] Check the wooden wheelbarrow's braced stance in the remaining collision scenes: the full bank with a female model and Walk with a full load. Check feet, grip, wheel and absence of jolts; test Run/Sprint and impact in separate scenarios.
 
-# Сетевая анимация тачки
+# Networked cart animation
 
-- [ ] Реализовать визуальную реконструкцию для удалённых игроков: отделить remote render gate от local steering, передавать или восстанавливать pivot/обратный шаг/темп/наклон/вращение колеса и применять хват/заземление по удалённой позе. Не запускать локальную модель движения на observer/server; сохранить нативные сетевые координаты и коллизии. Проверить реальный owner+observer на одном onlineID/cartID, с полным render coverage по всем фазам; исходный дефект подтверждён в MP, локальный вариант не считать сетевым PASS.
+- [ ] Implement visual reconstruction for remote players: separate the remote render gate from local steering, transmit or reconstruct pivot/reverse step/tempo/lean/wheel rotation, and apply grip/grounding according to the remote pose. Do not run the local movement model on the observer/server; preserve native network coordinates and collisions. Check a real owner+observer pair using the same onlineID/cartID, with full render coverage across all phases; the original defect is confirmed in MP, so do not count a local variant as a network PASS.
 
-# Естественная анимация деревянной тачки
+# Natural wooden wheelbarrow animation
 
-## Манёвры и переходы
+## Maneuvers and transitions
 
-- [ ] Проверить полную матрицу манёвров: прямой ход, ±45°/±90°/±135°, разворот дугой на 180° в обе стороны при Run/Sprint, повторная змейка вверх/вниз по экрану с разными интервалами смены стороны, выход из поворота и остановку на дуге; для остальных манёвров отдельно Walk/Run/Sprint, оба пола, пустая/полная тачка. Противоположная клавиша остаётся командой отъезда назад; U-turn проверять последовательной дугой, не выдавать reverse за разворот.
-- [ ] Дополнить живую проверку переходов вперёд/назад на границе reverse 130°/140° и при столкновении, сбросе состояния и замене тачки; математика и hook-регрессии этих случаев уже есть. Полный визуальный гейт остаётся открытым до устранения дефектов позы ниже.
-- [ ] Дополнить столкновения оставшимися Walk/Run/Sprint-комбинациями фронтального упора и угла, Walk-скольжением, а у настоящей двери — оставшимися gait/sex/load комбинациями. Проверить смену груза, падение/бой/отпускание тачки и безопасный сброс состояния. Проверки неперенесённых сценариев не считать успехом.
+- [ ] Check the full maneuver matrix: straight travel, ±45°/±90°/±135°, 180° arcing turns in both directions at Run/Sprint, repeated screen-up/down slaloms with different side-switch intervals, exiting a turn and stopping on an arc; for other maneuvers, separately test Walk/Run/Sprint, both sexes, and an empty/full wheelbarrow. The opposite key remains a command to move backward; test a U-turn as a sequential arc, and do not present reverse as a turn.
+- [ ] Extend live checks of forward/backward transitions at the reverse 130°/140° boundary and during collision, state reset and cart replacement; the math and hook regressions for these cases already exist. The full visual gate remains open until the pose defects below are resolved.
+- [ ] Extend collision checks with the remaining Walk/Run/Sprint combinations for frontal bracing and angled contact, Walk sliding, and the remaining gait/sex/load combinations at a real door. Check load changes, falling/combat/releasing the cart and safe state reset. Do not count scenarios that have not been ported as passing.
 
-## Взятие и постановка
+## Pickup and put-down
 
-- [ ] Проверить в игре постановку деревянной тачки через горячую клавишу SaucedCarts: завершение/отмену и быстрый повтор, положение в соседнем square, хват, колесо и world/held handoff; отдельно подтвердить owner/server/observer в MP. Локальные проверки не заменяют визуальный и сетевой гейт.
+- [ ] In game, check putting down a wooden wheelbarrow via the SaucedCarts hotkey: completion/cancellation and quick repeat, position in the adjacent square, grip, wheel and world/held handoff; separately confirm owner/server/observer in MP. Local checks do not replace the visual and network gate.
 
-- [ ] Найти источник краткого появления силуэта инвентарной иконки при первом выборе тачки и после постановки, когда включается оранжевое выделение: промежуточная обводка иконки должна исчезнуть, штатное оранжевое выделение самой 3D-модели — сохраниться. Воспроизвести первый и повторный выбор/постановку; реализацию отложить по просьбе пользователя.
+- [ ] Find the source of the brief inventory-icon silhouette appearing on first selecting the cart and after putting it down, when the orange highlight turns on: the intermediate icon outline should disappear while the normal orange highlight on the 3D model remains. Reproduce first and repeated selection/put-down; defer implementation at the user's request.
 
-- [ ] Устранить краткие пересечения широких брюк с левой оглоблей при опускании перед хватом, особенно после диагонального подхода; контакты ткани ещё встречаются до 37% взятия. Проверять всю skin/pants геометрию Thigh/Calf, а не только таз; сохранить согласованный неглубокий присед, опору стоп, направление коленей и хват. Не скрывать контакт чрезмерным отводом таза назад.
-- [ ] Проверить непрерывность фазы колеса при аварийном сбросе взятия/постановки; сохранить проверенные владение, груз и восстановление хвата.
-- [ ] Дополнить отмену взятия/постановки движением Run/Sprint, сменой темпа и отпусканием WASD до конца recovery. Сохранить ограниченный возврат позы, хват, длины рук, фазу колеса и повторное действие; проверенные Walk/CancelAction не считать покрытием этих вариантов.
-- [ ] Проверить взятие из контейнера и подход к ручкам с неправильной стороны/через препятствия; согласовать с native path following, сохранив единственный authoritative complete и exact itemId/XYZ.
-- [ ] Для взятия/постановки дополнить живые проверки отмены до передачи в MP, опоздавшего сетевого результата, потери/замены предмета, разрушения тачки, лестницы, боя/падения/смерти и повторного запуска после этих событий. Сохранить проверенные exact IDs/груз и world/held handoff; аварийный instant-drop не задерживать. Lua/hook-регрессии не заменяют native visual gate и MP owner+observer.
+- [ ] Eliminate brief wide-trouser intersections with the left shaft as the character lowers into position before gripping, especially after a diagonal approach; fabric contact still occurs up to 37% of pickup. Check all skin/pants geometry at Thigh/Calf, not just the pelvis; preserve the agreed shallow crouch, foot support, knee direction and grip. Do not hide contact by moving the pelvis too far back.
+- [ ] Check wheel phase continuity during an emergency pickup/put-down reset; preserve verified ownership, load and grip recovery.
+- [ ] Extend pickup/put-down cancellation checks to Run/Sprint movement, tempo changes and releasing WASD before recovery ends. Preserve limited pose return, grip, arm lengths, wheel phase and repeat action; already checked Walk/CancelAction does not cover these variants.
+- [ ] Check pickup from a container and approaches to the handles from the wrong side/across obstacles; coordinate with native path following while preserving the single authoritative complete and exact itemId/XYZ.
+- [ ] For pickup/put-down, extend live checks to cancellation before MP handoff, a late network result, item loss/replacement, cart destruction, stairs, combat/fall/death and restarting after these events. Preserve verified exact IDs/load and world/held handoff; do not delay emergency instant-drop. Lua/hook regressions do not replace the native visual gate and MP owner+observer.
 
-## Известные дефекты позы
+## Known pose defects
 
-- [ ] Убрать редкие контакты широких джинсов с ручками в исходной прямой позе, около неё и при начале обратной дуги, сохранив понравившееся положение рук и корпуса. Контакты остаются в отдельных фазах нулевого наклона и рядом с ним; проверить также короткий переход Walk -> Cart Idle при экипировке. Включить Walk с полным грузом вдоль машины под 45° вправо: левая ручка касается брюк около 4,18 с сцены `male-full-vehicle-yaw45-slide-right` в записи `cart-vehicles-20261018/native05`.
-- [ ] Для выбранного поворота проверить поверхность хвата и большой палец на обеих руках и обоих полах: в прототипе без подъёма ручек угол кисти относительно ручки меняется с 25° до 35°, исходные глубина ладони и сжатие пальцев сохранены.
+- [ ] Remove rare contact between wide jeans and the handles in the original straight pose, near it and at the start of the reverse arc, preserving the preferred hand and torso position. Contact remains in some zero-lean phases and nearby; also check the short Walk -> Cart Idle transition while equipping. Include Walk with a full load alongside a vehicle at 45° to the right: the left handle touches the trousers at about 4.18 s in scene `male-full-vehicle-yaw45-slide-right` in capture `cart-vehicles-20261018/native05`.
+- [ ] For the selected turn, check the grip surface and thumb on both hands and both sexes: in the prototype without raising the handles, the hand angle relative to the handle changes from 25° to 35°, while the original palm depth and finger curl are preserved.
 
-# Корневое исправление очереди
+# Root fix for the action queue
 
-- [ ] Расширить live SP/MP гейты общего lifecycle на остальные семейства: недоступная цель, позднее продолжение, точный расход и независимый хвост перед заменой их локальных перехватов завершения.
-- [ ] Проверить общий протокол исходов с двумя настоящими MP-клиентами при reset/death/disconnect, повторном использовании byte ID, поздних и повторных ответах, задержках сети; дополнить уже пройденные проверки этих границ на native Java/Lua fixtures.
-- [ ] Удалять остальные семейные обходы после соответствующей пары SP/MP проверок; сохранить fallback для неподдержанного Java/сервера, ресурсные контракты и отдельные medical/cart sync исправления.
+- [ ] Extend live SP/MP gates for the shared lifecycle to the remaining families: unavailable target, late continuation, exact consumption and independent tail, before replacing their local completion intercepts.
+- [ ] Check the shared outcome protocol with two real MP clients during reset/death/disconnect, byte ID reuse, late and duplicate responses, and network delays; supplement the already completed boundary checks using native Java/Lua fixtures.
+- [ ] Remove the remaining family-specific bypasses after the corresponding SP/MP checks; preserve fallback for unsupported Java/server versions, resource contracts and separate medical/cart sync fixes.
 
-# Дальнейшая миграция очереди действий
+# Further action queue migration
 
-Исполнитель остаётся `ISTimedActionQueue`. Новые семейства добавляются через Definitions/Policy и точный адаптер, без общего графа планирования, второго scheduler или резервирования будущего инвентаря. Отображение и разрешение менять очередь проверяются отдельно. Ниже только незавершённая работа; интерфейсы описаны в [руководстве по возможностям](docs/FEATURES.md), команды проверок — в [руководстве разработчика](docs/DEVELOPMENT.md).
+The executor remains `ISTimedActionQueue`. Add new families through Definitions/Policy and a precise adapter, without a general planning graph, second scheduler or reservation of future inventory. Check display and permission to change the queue separately. Only unfinished work is listed below; interfaces are described in the [features guide](docs/FEATURES.md), and check commands are in the [developer guide](docs/DEVELOPMENT.md).
 
-## Общие игровые сессии и регрессия сборки
+## Shared game sessions and build regression
 
-- [ ] Чат тележек: интегрировать опубликованные объединённые SP cart matrices и collision cases после завершения их native-проверок. Сохранять независимые cold controls; отдельно измерить явный полный регрессионный профиль (расчётные17startup cycles вместо29 пока не подтверждены).
+- [ ] Cart chat: integrate the published combined SP cart matrices and collision cases after their native checks are complete. Keep independent cold controls; separately measure an explicit full regression profile (the estimated 17 startup cycles instead of 29 are not yet confirmed).
 
-## Адаптеры ближайшего этапа
+## Near-term adapters
 
-Для каждого семейства добавлять контракты в Definitions/Policy/Operations. Открывать только проверенные возможности, остальные оставлять с явной причиной запрета.
+Add contracts in Definitions/Policy/Operations for each family. Expose only verified capabilities; leave the rest with an explicit denial reason.
 
-- [ ] SaucedCarts: мировые/автомобильные/напольные endpoints и custom callbacks требуют отдельных контрактов. Добавить серверные результаты с корреляцией и защитой от повторных/поздних ответов перед снятием защиты активного MP-переноса и MP-возвратов; проверить отказ/частичный batch без предсказания успеха. Отдельно проверить смену/сброс самой тележки из рук; пока генераторы при удерживаемой тележке защищены. При необходимости расширить capacity proof на отложенную установку upstream hooks и доказанные эффекты освобождённого места.
-- [ ] Native MP медицины: получить live-воспроизведение редкого `SyncVisualsPacket` count mismatch 7/8 из MP10 с сохранённым диагностическим стендом `tests/native_queue/contributions/visual-sync`. Сопоставить упорядоченные ID до write и после parse, готовность assets и старые snapshots в полёте; установить причину конкретного отказа. Гейт возможной правки: положительный регрессионный случай, корректные 8/8 пакеты, штатные эффекты лечения и сопоставимые MP-контроли с аудитом логов. Не обходить count guard и не считать отсутствие сообщения доказательством исправления.
+- [ ] SaucedCarts: world/vehicle/floor endpoints and custom callbacks need separate contracts. Add correlated server results with protection against duplicate/late responses before removing protection for active MP transfer and MP returns; check failure/partial batch without predicting success. Separately check replacing/resetting the cart itself while held; generators are currently protected while the cart is held. If needed, extend the capacity proof to deferred installation of upstream hooks and proven effects of the freed space.
+- [ ] Native MP medicine: obtain a live reproduction of the rare `SyncVisualsPacket` count mismatch 7/8 from MP10 using the preserved diagnostic setup `tests/native_queue/contributions/visual-sync`. Compare ordered IDs before write and after parse, asset readiness and in-flight old snapshots; establish the cause of the specific failure. Gate for any fix: a positive regression case, correct 8/8 packets, normal treatment effects and comparable MP controls with log audit. Do not bypass the count guard or treat absence of a message as proof of a fix.
 
-Гейт каждого адаптера: основной успех; одинаковые/разные цели; ожидающая отмена; активная стадия; потеря предмета/объекта; изменённый callback/helper; повторный/поздний сетевой результат; точный расход, результат и возврат. Нативные complete/cleanup после совершённого серверного эффекта не подавлять guard-ом продолжения.
+Gate for each adapter: primary success; same/different targets; pending cancellation; active stage; item/object loss; changed callback/helper; duplicate/late network result; exact consumption, result and return. Do not suppress native complete/cleanup after a server effect has occurred with a continuation guard.
 
-## Остальные семейства
+## Remaining families
 
-- [ ] TidyUpMeister: возвраты на пол в смешанных сессиях и точные входы для пока неизвестных/динамических действий; сохранять обязательный общий cleanup при отмене.
-- [ ] Упакованная еда: проверить остальные рецепты открытия, включая случайное содержимое и модовые callbacks. До отдельного контракта сохранять их штатные команды; поддержка очереди ограничена проверенными `OpenCannedFood` и `OpenCannedFood2`.
-- [ ] Фермерство и животные: идентичность цели, состояние растения/животного, общие расходники и инструменты.
-- [ ] Механика: машина + деталь, установленные/снятые предметы, общий инструмент и перемещение машины.
-- [ ] Рыбалка/ловушки, остальные мир/строительство/оружие/отдых: семейные контракты входов, результатов, остановки и допустимого продолжения.
-- [ ] Уточнять области выбора динамических ресурсов по конкретному инвентарю только там, где это позволяет безопасно снять консервативный запрет. Не расширять права по одному Type или пустому inspect.
+- [ ] TidyUpMeister: floor returns in mixed sessions and exact entry points for still unknown/dynamic actions; preserve required shared cleanup on cancellation.
+- [ ] Packaged food: check the remaining opening recipes, including random contents and mod callbacks. Keep their standard commands until a separate contract exists; queue support is limited to verified `OpenCannedFood` and `OpenCannedFood2`.
+- [ ] Farming and animals: target identity, plant/animal state, shared consumables and tools.
+- [ ] Mechanics: vehicle + part, installed/removed items, shared tool and vehicle movement.
+- [ ] Fishing/traps, remaining world/building/weapons/rest actions: family contracts for inputs, results, stopping and permitted continuation.
+- [ ] Narrow dynamic-resource selection scopes to the specific inventory only where that safely lifts a conservative denial. Do not expand permissions based on a single Type or an empty inspect.
 
-Для каждого перенесённого семейства добавлять независимый положительный пример и опасный пример с общим ресурсом в обоих направлениях. При изменении lifecycle проходить соответствующий live-гейт. Смена подписи/иконки должна оставаться правкой presentation и перевода; смена права отмены/переноса — отдельным behavior-контрактом с проверкой.
+For each migrated family, add an independent positive example and a dangerous example with a shared resource in both directions. When lifecycle changes, run the corresponding live gate. Changing a label/icon must remain a presentation/translation change; changing cancellation/transfer permission requires a separate behavior contract and check.
 
 # Vehicle ownership desync
 
-- [ ] Снять синхронные `[VEHICLE_SYNC]` логи исходного эпизода с двумя разными позициями машины: controlled localhost race подтверждает потерю ownership, но не доказывает причину пользовательского случая. Проверить реальную задержку/потери WAN.
+- [ ] Capture synchronous `[VEHICLE_SYNC]` logs from the original episode with two different vehicle positions: the controlled localhost race confirms ownership loss but does not establish the cause of the user's case. Check real WAN latency/packet loss.
