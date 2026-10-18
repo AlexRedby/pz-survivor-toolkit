@@ -101,6 +101,18 @@ def check_manifest():
         try: footprint['selected'](empty,wall_exit=True)
         except AssertionError: pass
         else: raise AssertionError('Empty wall exit evidence must fail')
+    manual_exit=manifest['wall_manual_exit_scenario']
+    assert manual_exit['case_count']==8 and manual_exit['record_seconds_per_case']==29
+    assert manual_exit['native_bare_controls']==manifest['footprint_scenario']['native_bare_controls']
+    assert manual_exit['axes']==dict(sex=['male'],cargo=['empty','full'],gait=['walk'],spec=['wall-slide','wall-slide-right'],outward_angle_degrees=[45,90])
+    assert manual_exit['analyzer']=='analyze-footprint.py --wall-manual-exit'
+    assert len(footprint['WALL_MANUAL_EXIT_EXPECTED'])==8
+    assert footprint['steps']('male-empty-walk-wall-slide-manual-out45',wall_manual_exit=True)==[(1000,0,2),(9500,0,8),(12000,0,3),(15500,0,0),(16000,0,4),(26000,0,0)]
+    assert footprint['steps']('male-full-walk-wall-slide-right-manual-out90',wall_manual_exit=True)==[(1000,0,1),(9500,0,6),(12000,0,4),(15500,0,0),(16000,0,3),(21000,0,7),(26000,0,0)]
+    for empty in ('','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=8'):
+        try: footprint['selected'](empty,wall_manual_exit=True)
+        except AssertionError: pass
+        else: raise AssertionError('Empty manual wall exit evidence must fail')
     assert manifest['brace_scenario']['case_count']==8 and manifest['brace_scenario']['record_seconds_per_case']==18 and manifest['brace_scenario']['release_wall_segments']==3
     brace=runpy.run_path(str(HERE/'analyze-brace.py'))
     assert len(brace['EXPECTED'])==8 and brace['DURATION']==18000

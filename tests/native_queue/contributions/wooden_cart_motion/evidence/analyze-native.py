@@ -14,8 +14,9 @@ timing.add_argument('--vehicles',action='store_true',help='Include the extended 
 timing.add_argument('--brace',action='store_true',help='Cover the complete 18-second blocked-stance bank')
 timing.add_argument('--fast-slide',action='store_true',help='Label Run/Sprint wall sliding, release and reverse phases')
 timing.add_argument('--wall-exit',action='store_true',help='Label sustained wall sliding and uninterrupted outward turn')
+timing.add_argument('--wall-manual-exit',action='store_true',help='Cover manual reverse arc and forward departure over 29 seconds')
 args=parser.parse_args()
-end_ms=17800 if args.brace else 15800 if args.stop_timing else 11800
+end_ms=28800 if args.wall_manual_exit else 17800 if args.brace else 15800 if args.stop_timing else 11800
 def measurement_end(name):
  return 14800 if args.vehicles and '-full-vehicle-' in name and '-slide-' in name else end_ms
 ROOT=args.profile
@@ -32,6 +33,14 @@ if not args.partial:
 assert len(cases)==16 or args.partial
 
 def stage(elapsed,name=''):
+ if args.wall_manual_exit:
+  if elapsed<1000:return 'idle'
+  if elapsed<9500:return 'wall-slide'
+  if elapsed<12000:return 'reverse-straight'
+  if elapsed<15500:return 'reverse-arc'
+  if elapsed<16000:return 'release'
+  if elapsed<19500:return 'turn-out'
+  return 'forward-departure' if elapsed<26000 else 'release'
  if args.wall_exit:
   if elapsed<1000:return 'idle'
   if elapsed<5500:return 'wall-slide'

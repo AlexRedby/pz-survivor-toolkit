@@ -10,6 +10,8 @@ local footprint=config.footprint==true
 local brace=config.brace==true
 local fastSlide=config.fastSlide==true
 local wallExit=config.wallExit==true
+local wallManualExit=config.wallManualExit==true
+assert(not wallManualExit or wallExit,'Manual wall exit requires wall exit mode')
 assert(not wallExit or footprint and not fastSlide and not brace and not config.impact,'Wall exit bank requires footprint without fast slide, brace or impact')
 assert(not fastSlide or footprint and not brace and not config.impact,'Fast slide bank requires footprint without brace or impact')
 assert(not brace or footprint and not config.impact,'Brace bank requires footprint without impact')
@@ -81,15 +83,17 @@ if fastSlide then
 end
 if wallExit then
  cases={}
- for _,full in ipairs({false,true}) do for gaitIndex,gait in ipairs({'walk','run','sprint'}) do
+ for _,full in ipairs({false,true}) do for gaitIndex,gait in ipairs(wallManualExit and {'walk'} or {'walk','run','sprint'}) do
   for _,right in ipairs({false,true}) do for _,angle in ipairs({45,90}) do
    local spec=right and 'wall-slide-right' or 'wall-slide'
    cases[#cases+1]={female=false,full=full,spec=spec,startYaw=right and math.pi/2 or 0,
-    steps={{1000,gaitIndex-1,right and 1 or 2},{5500,gaitIndex-1,angle==90 and 7 or right and 3 or 4},{10000,0,0}},
-    name='male-'..(full and 'full-' or 'empty-')..gait..'-'..spec..'-out'..angle}
+    steps=wallManualExit and {{1000,0,right and 1 or 2},{9500,0,right and 6 or 8},{12000,0,right and 4 or 3},{15500,0,0},{16000,0,right and 3 or 4},{26000,0,0}}
+     or {{1000,gaitIndex-1,right and 1 or 2},{5500,gaitIndex-1,angle==90 and 7 or right and 3 or 4},{10000,0,0}},
+    name='male-'..(full and 'full-' or 'empty-')..gait..'-'..spec..(wallManualExit and '-manual' or '')..'-out'..angle}
+   if wallManualExit and angle==90 then table.insert(cases[#cases].steps,6,{21000,0,7}) end
   end end
  end end
- assert(#cases==24)
+ assert(#cases==(wallManualExit and 8 or 24))
 end
 if config.impact then
  cases={}
@@ -367,7 +371,7 @@ local function tick()
   print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait='..tostring(step[2])..' drive='..step[3])
  end
 
- if elapsed>=(brace and 18000 or 12000) then
+ if elapsed>=(wallManualExit and 29000 or brace and 18000 or 12000) then
   assert(not brace or c.spec~='wall-release' or taken.clear,'Missing guarded native wall removal')
   assert(not config.impact or c.spec~='native-impact' or taken.impact,'Missing native wall event')
   assert(toolkitVideoStop(),'Video stop rejected');mode='finish'

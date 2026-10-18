@@ -27,6 +27,7 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'brace': ('scenario-collision.lua', 8),
             'fast-slide': ('scenario-collision.lua', 16),
             'wall-exit': ('scenario-collision.lua', 24),
+            'wall-manual-exit': ('scenario-collision.lua', 8),
             'impact': ('scenario-collision.lua', 8),
             'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
@@ -57,9 +58,10 @@ def scene_names(case):
     if case == 'vehicles':
         return [f'male-{load}-vehicle-yaw{yaw}-{spec}' for load in ('empty', 'full')
                 for yaw in (0, 45) for spec in ('front', 'slide-left', 'slide-right')]
-    if case == 'wall-exit':
-        return [f'male-{load}-{gait}-{spec}-out{angle}' for load in ('empty','full')
-                for gait in ('walk','run','sprint') for spec in ('wall-slide','wall-slide-right') for angle in (45,90)]
+    if case in ('wall-exit','wall-manual-exit'):
+        manual=case=='wall-manual-exit'
+        return [f'male-{load}-{gait}-{spec}'+('-manual' if manual else '')+f'-out{angle}' for load in ('empty','full')
+                for gait in (('walk',) if manual else ('walk','run','sprint')) for spec in ('wall-slide','wall-slide-right') for angle in (45,90)]
     if case == 'repeat':
         return [sex + '-' + load + '-' + spec for sex in ('male', 'female')
                 for load in ('empty', 'full') for spec in ('complete-chain', 'pickup-restart', 'drop-restart')]
@@ -253,10 +255,11 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 motion['authoredClip'] = selection['options']['cart_authored_clip']
             if 'cart_scenes' in selection.get('options', {}):
                 motion['scenes'] = selected_scenes(selection)
-            if selection['cases'][0] in ('collision','footprint','brace','fast-slide','wall-exit'): motion['footprint']=True
+            if selection['cases'][0] in ('collision','footprint','brace','fast-slide','wall-exit','wall-manual-exit'): motion['footprint']=True
             if selection['cases'][0] == 'brace': motion['brace']=True
             if selection['cases'][0] == 'fast-slide': motion['fastSlide']=True
-            if selection['cases'][0] == 'wall-exit': motion['wallExit']=True
+            if selection['cases'][0] in ('wall-exit','wall-manual-exit'): motion['wallExit']=True
+            if selection['cases'][0] == 'wall-manual-exit': motion['wallManualExit']=True
             if selection['cases'][0] == 'impact': motion['impact']=True
             if selection['cases'][0] == 'vehicles': motion['vehicles']=True
             if selection['cases'][0] in ('interruption', 'interruption-matrix'): motion['interruptions']=True
@@ -389,7 +392,7 @@ def _debug_coverage(cache, text, selection):
     if [row[0] for row in clips] != selected_scenes(selection):
         raise ValueError('Selected cart scene receipts differ from the snapshot')
     bank = selection['cases'][0]
-    default_seconds = {'interaction': 16, 'wheel': 30, 'interruption': 20, 'interruption-matrix': 20, 'repeat': 20, 'stop-timing': 16, 'brace': 18}.get(bank, 12)
+    default_seconds = {'interaction': 16, 'wheel': 30, 'interruption': 20, 'interruption-matrix': 20, 'repeat': 20, 'stop-timing': 16, 'brace': 18, 'wall-manual-exit': 29}.get(bank, 12)
     probes = {kind: [json.loads(line) for line in (cache / file).read_text().splitlines()]
               for kind, file in (('body', 'body-clearance.jsonl'), ('grip', 'wood-grip-poses.jsonl'))}
     result = []
@@ -433,7 +436,7 @@ def _coverage(cache, text, count, metrics):
         start = int(start)
         row = next(row for row in rows if row['case'] == name)
         end_ms=row.get('measurementEndAfterCaseMs',metrics.get('measurementEndAfterCaseMs',11800))
-        if type(end_ms) is not int or end_ms not in (11800,14800,15800,17800):
+        if type(end_ms) is not int or end_ms not in (11800,14800,15800,17800,28800):
             raise ValueError('Invalid native measurement window for ' + name)
         for kind, samples in (('body', body), ('grip', grip)):
             times = sorted(set(row['wallTimeMillis'] for row in samples if start + 800 < row['wallTimeMillis'] < start + end_ms))
@@ -489,7 +492,7 @@ def verify(root, selection, catalog):
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
             if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat', 'impact'):
-                commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if debug or case != 'sprint' else []) + (['--stop-timing'] if case == 'stop-timing' else []) + (['--vehicles'] if case == 'vehicles' else []) + (['--brace'] if case == 'brace' else []) + (['--fast-slide'] if case == 'fast-slide' else []) + (['--wall-exit'] if case == 'wall-exit' else [])))
+                commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis)] + (['--partial'] if debug or case != 'sprint' else []) + (['--stop-timing'] if case == 'stop-timing' else []) + (['--vehicles'] if case == 'vehicles' else []) + (['--brace'] if case == 'brace' else []) + (['--fast-slide'] if case == 'fast-slide' else []) + (['--wall-exit'] if case == 'wall-exit' else []) + (['--wall-manual-exit'] if case == 'wall-manual-exit' else [])))
             evidence['analyzers'] = {name: _run(command, analysis, name) for name, command in commands}
             if case == 'impact':
                 impact = _load(intake / 'analyze-impact.py').analyze(cache, texts['client1'], selected_scenes(selection))
@@ -559,10 +562,10 @@ def verify(root, selection, catalog):
                 motion = _load(intake / 'analyze-reverse.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reverse-motion.json', json.dumps(motion, indent=2, allow_nan=False))
-            elif case in ('stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'path', 'vehicles', 'brace', 'fast-slide', 'wall-exit'):
-                analyzer='footprint' if case in ('collision','fast-slide','wall-exit') else case
+            elif case in ('stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'path', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit'):
+                analyzer='footprint' if case in ('collision','fast-slide','wall-exit','wall-manual-exit') else case
                 evidence['analyzers'][case] = _run([sys.executable, str(intake / ('analyze-' + analyzer + '.py')),
-                    '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / (case + '-motion.json'))] + (['--'+case] if case in ('fast-slide','wall-exit') else []), analysis, case)
+                    '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / (case + '-motion.json'))] + (['--'+case] if case in ('fast-slide','wall-exit','wall-manual-exit') else []), analysis, case)
                 evidence['motion'] = _json(analysis / (case + '-motion.json'))
                 if case == 'stop-timing' and not evidence['motion'].get('timingVerified'):
                     raise ValueError('Stop timing capture did not verify its measurement windows')
@@ -570,7 +573,7 @@ def verify(root, selection, catalog):
                     raise ValueError('Native residual-speed stop transitions were not verified')
                 if case == 'path' and not all(evidence['motion'].get(key) for key in ('motionPass', 'footprintVerified')):
                     raise ValueError('Native path/footprint verification failed: ' + str(evidence['motion'].get('failures')))
-                if case in ('vehicles','brace','fast-slide','wall-exit') and not all(evidence['motion'].get(key) for key in ('motionPass', 'footprintPass')):
+                if case in ('vehicles','brace','fast-slide','wall-exit','wall-manual-exit') and not all(evidence['motion'].get(key) for key in ('motionPass', 'footprintPass')):
                     raise ValueError('Native '+case+' motion/footprint verification failed: ' + str({key: evidence['motion'].get(key) for key in ('motionFailures', 'footprintFailures')}))
             elif case == 'reversal':
                 motion = _load(intake / 'analyze-reversal.py').analyze(texts['client1'])
