@@ -8,7 +8,7 @@ Quality-of-life mods for **Project Zomboid Build 42**: inventory tools, bulk act
 
 | Component | Version | Purpose |
 |---|---|---|
-| PZ Survivor Toolkit | 0.1.66 | Inventory tools, queues, crafting plans, shared Wishlist and compatibility. |
+| PZ Survivor Toolkit | 0.1.67 | Inventory tools, queues, crafting plans, shared Wishlist and compatibility. |
 | Toolkit Java Patches | 0.1.17 | Experimental B42.21 engine fixes; requires ZombieBuddy 2.3.4+. |
 
 The [selected set](SurvivorQoL-selected.ini) requires both local mod folders on the server and every client: **48 Mod IDs / 45 Workshop items**, targeting **B42.21**. Wishlist is included in Toolkit; existing lists and settings are preserved. Other game builds are outside the Java patches' supported scope.

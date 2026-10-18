@@ -86,6 +86,7 @@ local completed = {}
 function leaf:isValid() return true end
 function leaf:perform() completed[#completed + 1] = self.name; ISBaseTimedAction.perform(self) end
 PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('priority.fixture', {
+    types = {leaf.Type},
     matches = function(action) return getmetatable(action) == leaf end,
     inspect = function() return {items = {}, targets = {}, cancelWaiting = true, interrupt = 'finish-step'} end,
 })

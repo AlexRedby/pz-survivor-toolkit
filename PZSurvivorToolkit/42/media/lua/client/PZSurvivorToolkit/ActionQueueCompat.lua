@@ -922,7 +922,9 @@ ISTimedActionQueue.addToQueue = function(queue, action)
     return unpack(results, 1, results.n)
 end
 
-Toolkit.ActionQueueDefinitions.registerBehavior("compat.selected-chains", {matches = matches, inspect = inspect})
+local behaviorTypes = {"WMI_WaitForInvUpdate", "PJCK_SequenceWaitAction"}
+for _, name in ipairs(names) do behaviorTypes[#behaviorTypes + 1] = name end
+Toolkit.ActionQueueDefinitions.registerBehavior("compat.selected-chains", {types = behaviorTypes, matches = matches, inspect = inspect})
 Operations.registerProducer("compat.selected-chains", matches, function(parent, child)
     return matches(child) and child.toolkitQueueOperation == parent.toolkitQueueOperation
 end)

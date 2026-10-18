@@ -616,7 +616,7 @@ for _,class in ipairs({ISInventoryTransferAction,ISReadABook}) do
         fixtureContractMethods[class][name]=class[name]
     end
 end
-definitions.registerBehavior('fixture.native-tidy-inputs',{matches=function(action)
+definitions.registerBehavior('fixture.native-tidy-inputs',{types={'ISInventoryTransferAction','ISReadABook'},matches=function(action)
     local class=getmetatable(action); local methods=fixtureContractMethods[class]
     if not methods or action.perform~=methods.perform then return false end
     for name,callback in pairs(methods) do if class[name]~=callback then return false end end

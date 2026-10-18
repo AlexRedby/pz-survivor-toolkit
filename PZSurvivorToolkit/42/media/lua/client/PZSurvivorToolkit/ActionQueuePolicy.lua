@@ -41,13 +41,13 @@ local function resumableWorld(action)
     end
 end
 
-local function independentBulk(action)
-    local contract = inspect and inspect(action)
+local function independentBulk(action, context)
+    local contract = inspect and inspect(action, context)
     return action.toolkitIndependentBulk and contract and contract.bulk == true
 end
 
-local function stoppable(action)
-    local contract = inspect and inspect(action)
+local function stoppable(action, context)
+    local contract = inspect and inspect(action, context)
     return (contract and (contract.interrupt == "audited-stop" or contract.interrupt == "audited-resume"))
         or resumableWorld(action) or craft(action)
 end
@@ -64,27 +64,28 @@ local function appliance(action)
     return world and world.isApplianceAction and world.isApplianceAction(action)
 end
 
-function Policy.cancelReason(queue, action)
+function Policy.cancelReason(queue, action, context)
+    context = context or {contracts = {}, items = {}}
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 then return "unavailable" end
     if queue.toolkitCancel or queue.toolkitGroupCancel then return "stopping" end
-    if craft(action) then return Policy.cancelOperationReason(queue, action) end
-    if appliance(action) then return Policy.cancelOperationReason(queue, action) end
-    local contract = inspect and inspect(action)
+    if craft(action) then return Policy.cancelOperationReason(queue, action, context) end
+    if appliance(action) then return Policy.cancelOperationReason(queue, action, context) end
+    local contract = inspect and inspect(action, context)
     if contract and contract.cancelOperation == false then return "dependent" end
     if action.Type == "ISQueueActionsAction" then
         if not deferredWorld(action) and not (contract and contract.deferred) then return "dependent" end
-        return Policy.cancelOperationReason(queue, action)
+        return Policy.cancelOperationReason(queue, action, context)
     end
     local auditedCallbacks = contract and contract.callbacksSafe
     if action._isAddingActions or (action.onStartFunc and not craft(action) and not auditedCallbacks)
         or ((action.onCompleteFunc or action.onCancelFunc) and not resumableWorld(action) and not craft(action) and not auditedCallbacks)
         or action.retriggerLastAction or action.toolkitQueueLinked then return "dependent" end
-    if not stoppable(action) and contract and contract.cancelWaiting then return Policy.cancelOperationReason(queue, action) end
-    if not stoppable(action) and not independentBulk(action) then
+    if not stoppable(action, context) and contract and contract.cancelWaiting then return Policy.cancelOperationReason(queue, action, context) end
+    if not stoppable(action, context) and not independentBulk(action, context) then
         return "dependent"
     end
-    if independentBulk(action) then
+    if independentBulk(action, context) then
         -- A later arbitrary craft/generator may require this operation's output.
         for i = queue:indexOf(action) + 1, #queue.queue do
             local following = queue.queue[i]
@@ -95,7 +96,7 @@ function Policy.cancelReason(queue, action)
     end
     if action == queue.current or queue.queue[1] == action then
         -- These native stop paths clean up visuals/sound; materials and outputs belong to completion.
-        if not stoppable(action) then return "active" end
+        if not stoppable(action, context) then return "active" end
         if not action.action or not action.action:isStarted() or action.action:finished() or action.action:isForceComplete() then
             return "starting"
         end
@@ -109,23 +110,23 @@ local function itemKey(item)
     return instanceof(item, "InventoryItem") and item:getID() or item
 end
 local operationItems
-local function sharedItem(a, b)
-    local left, right = operationItems(a), operationItems(b)
+local function sharedItem(a, b, context)
+    local left, right = operationItems(a, context), operationItems(b, context)
     for item in pairs(left) do if right[item] then return item end end
-    local leftContract, rightContract = inspect(a), inspect(b)
+    local leftContract, rightContract = inspect(a, context), inspect(b, context)
     for item in pairs(leftContract and leftContract.containerOwners or {}) do if right[item] then return item end end
     for item in pairs(rightContract and rightContract.containerOwners or {}) do if left[item] then return item end end
 end
 
-local function knownCraftInputs(action)
+local function knownCraftInputs(action, context)
     if action.toolkitWorldOperation == "fuel" or action.toolkitWorldOperation == "wreck" then return false end
     if craft(action) and not Toolkit.ActionQueueCraft.futureResources then return Toolkit.ActionQueueCraft.collectItems(action, {}) end
-    local contract = inspect(action)
+    local contract = inspect(action, context)
     return contract ~= nil and contract.knownInputs ~= false
 end
 
-local function dynamicConflict(a, b)
-    local left, right = inspect(a), inspect(b)
+local function dynamicConflict(a, b, context)
+    local left, right = inspect(a, context), inspect(b, context)
     if not left or not right then return false end
     for kind in pairs(left.dynamicInputsByType or {}) do
         if right.unknownOutputs or (right.dynamicInputsByType and right.dynamicInputsByType[kind]) then return kind end
@@ -148,13 +149,13 @@ local function dynamicConflict(a, b)
     return false
 end
 
-local function sharedWorldTarget(a, b)
+local function sharedWorldTarget(a, b, context)
     local generators = Toolkit.ActionQueueGenerators
     if generators and generators.sharesTarget then
-        local target = generators.sharesTarget(a, b)
+        local target = generators.sharesTarget(a, b, context)
         if target then return target end
     end
-    local left, right = inspect and inspect(a), inspect and inspect(b)
+    local left, right = inspect and inspect(a, context), inspect and inspect(b, context)
     if left and right then
         for target in pairs(left.targets or {}) do if right.targets and right.targets[target] then return target end end
         if left.hands and left.hands == right.hands then return left.hands end
@@ -191,9 +192,9 @@ local transferMethods = {}
 for _, name in ipairs(preparationMethods) do transferMethods[name] = ISInventoryTransferAction[name] end
 nativePreparation[ISInventoryTransferAction] = transferMethods
 
-local function preparationCanFinish(action)
+local function preparationCanFinish(action, context)
     if action.Type == "ISInventoryTransferAction" and ordinaryTransfer and not ordinaryTransfer(action) then return false end
-    local contract = inspect and inspect(action)
+    local contract = inspect and inspect(action, context)
     if contract and contract.preparationFinish then return true end
     if appliance(action) then return true end
     if Toolkit.BulkActions.canFinish and Toolkit.BulkActions.canFinish(action) then return true end
@@ -206,7 +207,8 @@ local function preparationCanFinish(action)
     return true
 end
 
-operationItems = function(action)
+operationItems = function(action, context)
+    if context and context.items[action] then return context.items[action] end
     local items = {}
     for _, key in ipairs(itemFields) do
         local item = action[key]
@@ -216,8 +218,9 @@ operationItems = function(action)
     if Toolkit.ActionQueueCraft then Toolkit.ActionQueueCraft.collectItems(action, items) end
     local keys = {}
     for item in pairs(items) do keys[itemKey(item)] = true end
-    local contract = inspect and inspect(action)
+    local contract = inspect and inspect(action, context)
     if contract then for key in pairs(contract.items or {}) do keys[key] = true end end
+    if context then context.items[action] = keys end
     return keys
 end
 
@@ -244,7 +247,7 @@ local function repairInputs(action)
     return helper and helper.repairInputs and helper.repairInputs(action)
 end
 
-local function repairCanCross(repair, other)
+local function repairCanCross(repair, other, context)
     local types = repairInputs(repair)
     if not types then return true end
     if other.onStartFunc or other.onCompleteFunc or other.onCancelFunc or other.retriggerLastAction then return false end
@@ -260,7 +263,7 @@ local function repairCanCross(repair, other)
             end
         end
     elseif (other.Type ~= "ISInventoryTransferAction" and other.Type ~= "ISWalkToTimedAction"
-        and other.Type ~= "ISWalkToTimedActionF" and other.Type ~= "ISPathFindAction") or not preparationCanFinish(other) then
+        and other.Type ~= "ISWalkToTimedActionF" and other.Type ~= "ISPathFindAction") or not preparationCanFinish(other, context) then
         -- shortcut: craft/world outputs and other repairs can supply new donors; audit their outputs before allowing a crossing.
         return false
     end
@@ -731,9 +734,17 @@ end, inspect = function(action)
     return result
 end})
 
-inspect = function(action)
-    if action._isAddingActions or (Operations.isContinuationPending and Operations.isContinuationPending(action.toolkitQueueOperation)) then return end
-    return Definitions.inspect(action)
+inspect = function(action, context)
+    local cached = context and context.contracts[action]
+    if cached then return unpack(cached, 1, 3) end
+    if action._isAddingActions or (Operations.isContinuationPending and Operations.isContinuationPending(action.toolkitQueueOperation)) then
+        if context then context.contracts[action] = {} end
+        return
+    end
+    if not context then return Definitions.inspect(action) end
+    local result = {Definitions.inspect(action)}
+    context.contracts[action] = result
+    return unpack(result, 1, 3)
 end
 Policy.inspect = inspect
 
@@ -747,7 +758,7 @@ local function finiteWeight(value)
     return type(value) == "number" and value >= 0 and value < math.huge
 end
 
-local function transferCapacityConflict(queue, a, b, last, check)
+local function transferCapacityConflict(queue, a, b, last, check, context)
     local carts = Toolkit.ActionQueueCarts
     local function transfer(action)
         return action.Type == "ISInventoryTransferAction"
@@ -755,7 +766,7 @@ local function transferCapacityConflict(queue, a, b, last, check)
     end
     local aTransfer, bTransfer = transfer(a), transfer(b)
     if (aTransfer and not bTransfer) or (bTransfer and not aTransfer) then
-        local equipment = inspect(aTransfer and b or a)
+        local equipment = inspect(aTransfer and b or a, context)
         -- Hand/slot changes can alter carried weight or move heavy items out of external containers.
         if equipment and equipment.hands == queue.character then return queue.character:getInventory() end
     end
@@ -801,7 +812,7 @@ local function transferCapacityConflict(queue, a, b, last, check)
             and math.abs(weight) < math.huge and math.max(0, current + weight) + 0.01 <= capacity
     end
     for _, action in ipairs(order) do
-        local contract = inspect(action)
+        local contract = inspect(action, context)
         if not contract or contract.knownInputs == false then return check.blocker end
         if transfer(action) then
             local destination, source, seen = action.destContainer, action.srcContainer, {}
@@ -853,7 +864,8 @@ local function transferCapacityConflict(queue, a, b, last, check)
     check.blocker = nil
 end
 
-function Policy.cancelOperationReason(queue, action)
+function Policy.cancelOperationReason(queue, action, context)
+    context = context or {contracts = {}, items = {}}
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 then return "unavailable" end
     if queue.toolkitCancel or queue.toolkitGroupCancel then return "stopping" end
@@ -870,7 +882,7 @@ function Policy.cancelOperationReason(queue, action)
             return "operation_active"
         end
         local auditedCraft = craft(member)
-        local contract = inspect(member)
+        local contract = inspect(member, context)
         if contract and contract.cancelOperation == false then return "operation_dependent", nil, nil, member end
         local auditedCallbacks = contract and contract.callbacksSafe
         if member._isAddingActions or ((member.onStartFunc or member.onCancelFunc) and not auditedCraft and not resumableWorld(member) and not auditedCallbacks) or member.retriggerLastAction
@@ -881,7 +893,7 @@ function Policy.cancelOperationReason(queue, action)
         if member.Type == "ISQueueActionsAction" and not plannedCraft and not world and not (contract and contract.deferred) then
             return "operation_dependent"
         end
-        local supported = stoppable(member) or independentBulk(member) or world or plannedCraft or appliance(member)
+        local supported = stoppable(member, context) or independentBulk(member, context) or world or plannedCraft or appliance(member)
             or (contract and contract.cancelWaiting)
         if not supported and not (contract and contract.preparation) then return "operation_dependent" end
         main = main or supported
@@ -891,15 +903,15 @@ function Policy.cancelOperationReason(queue, action)
         end
         output = output or member.toolkitIndependentBulk or auditedCraft or (world and member.toolkitWorldDismantle) or plannedCraft
             or (member.Type == "ISMoveablesAction" and member.mode == "scrap")
-        for item in pairs(operationItems(member)) do inputs[item] = true end
+        for item in pairs(operationItems(member, context)) do inputs[item] = true end
     end
     if not main then return "operation_dependent" end
     if active then
         local current = queue.current
         if current.action and (current.action:finished() or current.action:isForceComplete()) then return "starting" end
-        if stoppable(current) then
+        if stoppable(current, context) then
             if not current.action or not current.action:isStarted() then return "starting" end
-        elseif not preparationCanFinish(current) then
+        elseif not preparationCanFinish(current, context) then
             return "operation_active"
         end
     end
@@ -907,22 +919,22 @@ function Policy.cancelOperationReason(queue, action)
     local capacityCheck = {first = first, last = last}
     for i, other in ipairs(queue.queue) do
         if i < first or i > last then
-            if other._isAddingActions or not knownCraftInputs(other) then return "operation_dependent", nil, nil, other end
-            for item in pairs(operationItems(other)) do
+            if other._isAddingActions or not knownCraftInputs(other, context) then return "operation_dependent", nil, nil, other end
+            for item in pairs(operationItems(other, context)) do
                 if inputs[item] then return "operation_shared_item", nil, nil, other, item end
             end
             for j = first, last do
-                local item = sharedItem(queue.queue[j], other)
+                local item = sharedItem(queue.queue[j], other, context)
                 if item then return "operation_shared_item", nil, nil, other, item end
-                local conflict = sharedWorldTarget(queue.queue[j], other) or dynamicConflict(queue.queue[j], other)
-                    or dynamicConflict(other, queue.queue[j])
+                local conflict = sharedWorldTarget(queue.queue[j], other, context) or dynamicConflict(queue.queue[j], other, context)
+                    or dynamicConflict(other, queue.queue[j], context)
                 if conflict then return "operation_dependent", nil, nil, other, conflict end
-                local capacity = transferCapacityConflict(queue, queue.queue[j], other, #queue.queue, capacityCheck)
+                local capacity = transferCapacityConflict(queue, queue.queue[j], other, #queue.queue, capacityCheck, context)
                 if capacity then return "container_capacity", nil, nil, other, capacity end
             end
             -- shortcut: output requirements of arbitrary later actions are unknown; add verified adapters to allow them.
             if output and i > last then
-                local independentCraft = craft(other) and knownCraftInputs(other)
+                local independentCraft = craft(other) and knownCraftInputs(other, context)
                 if ((other.onStartFunc or other.onCancelFunc) and not independentCraft) or other.retriggerLastAction
                     or (other.onCompleteFunc and other.onCompleteFunc ~= other.toolkitQueueSafeOnComplete and not independentCraft)
                     or (not independentCraft and not other.toolkitIndependentBulk and not other.toolkitBulkPreparation
@@ -935,7 +947,8 @@ function Policy.cancelOperationReason(queue, action)
     return nil, first, last
 end
 
-function Policy.moveReason(queue, action, target, after)
+function Policy.moveReason(queue, action, target, after, context)
+    context = context or {contracts = {}, items = {}}
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 or queue:indexOf(target or action) == -1 then return "unavailable" end
     if queue.toolkitCancel or queue.toolkitGroupCancel then return "stopping" end
@@ -946,7 +959,7 @@ function Policy.moveReason(queue, action, target, after)
         local member = queue.queue[i]
         if member.action or member == queue.current or i == 1 then return "move_active" end
         if member._isAddingActions then return "move_dependent" end
-        if not knownCraftInputs(member) and not repairInputs(member) then
+        if not knownCraftInputs(member, context) and not repairInputs(member) then
             return craft(member) and "move_craft_inputs" or "move_dependent"
         end
     end
@@ -956,7 +969,7 @@ function Policy.moveReason(queue, action, target, after)
     if preempt then
         local supported, reason = resumableWorld(queue.current)
         if not queue.current or (queue.current.Type ~= "ISReadABook" and not supported)
-            or Policy.cancelReason(queue, queue.current) then return reason or "move_active" end
+            or Policy.cancelReason(queue, queue.current, context) then return reason or "move_active" end
     end
     if preempt then
         for i = first, last do
@@ -973,20 +986,20 @@ function Policy.moveReason(queue, action, target, after)
         if i < first or i > last then
             local crossed = queue.queue[i]
             if crossed._isAddingActions then return "move_dependent", nil, nil, nil, nil, crossed end
-            if not knownCraftInputs(crossed) and not repairInputs(crossed) then
+            if not knownCraftInputs(crossed, context) and not repairInputs(crossed) then
                 return craft(crossed) and "move_craft_inputs" or "move_dependent", nil, nil, nil, nil, crossed
             end
             for j = first, last do
-                local item = sharedItem(queue.queue[j], crossed)
+                local item = sharedItem(queue.queue[j], crossed, context)
                 if item then return "move_shared_item", nil, nil, nil, nil, crossed, item end
-                local dynamic = dynamicConflict(queue.queue[j], crossed) or dynamicConflict(crossed, queue.queue[j])
+                local dynamic = dynamicConflict(queue.queue[j], crossed, context) or dynamicConflict(crossed, queue.queue[j], context)
                 if dynamic then return "move_craft_inputs", nil, nil, nil, nil, crossed, dynamic end
-                if not repairCanCross(queue.queue[j], crossed) or not repairCanCross(crossed, queue.queue[j]) then
+                if not repairCanCross(queue.queue[j], crossed, context) or not repairCanCross(crossed, queue.queue[j], context) then
                     return "move_craft_inputs", nil, nil, nil, nil, crossed
                 end
-                local target = sharedWorldTarget(queue.queue[j], crossed)
+                local target = sharedWorldTarget(queue.queue[j], crossed, context)
                 if target then return "move_dependent", nil, nil, nil, nil, crossed, target end
-                local capacity = transferCapacityConflict(queue, queue.queue[j], crossed, math.max(last, to - 1), capacityCheck)
+                local capacity = transferCapacityConflict(queue, queue.queue[j], crossed, math.max(last, to - 1), capacityCheck, context)
                 if capacity then return "container_capacity", nil, nil, nil, nil, crossed, capacity end
             end
         end
@@ -1011,8 +1024,8 @@ function Policy.replaceStop(previous, replacement)
     end
 end
 
-function Policy.evaluateMove(queue, action, target, after)
-    local reason, to, first, last, preempt, blocker, resource = Policy.moveReason(queue, action, target, after)
+function Policy.evaluateMove(queue, action, target, after, context)
+    local reason, to, first, last, preempt, blocker, resource = Policy.moveReason(queue, action, target, after, context)
     return {allowed = reason == nil, reason = reason, to = to, first = first, last = last,
         mode = preempt and "audited-resume" or "move", preempt = preempt, blocker = blocker, resource = resource}
 end
@@ -1030,12 +1043,13 @@ function Policy.evaluatePriority(queue, action, preempt)
     local _, activeLast = Operations.bounds(queue, queue.current)
     if not activeLast then return {allowed = false, reason = "operation_dependent"} end
     local activeToken = queue.current.toolkitQueueOperation
+    local context = {contracts = {}, items = {}}
     if preempt and activeLast == 1 and not (activeToken and activeToken.toolkitPriority == "urgent") then
-        local decision = Policy.evaluateMove(queue, action, queue.current, false)
+        local decision = Policy.evaluateMove(queue, action, queue.current, false, context)
         if decision.allowed then decision.target = queue.current; return decision end
     end
     local target = queue.queue[activeLast]
-    local decision = Policy.evaluateMove(queue, action, target, true)
+    local decision = Policy.evaluateMove(queue, action, target, true, context)
     decision.target, decision.after = target, true
     return decision
 end

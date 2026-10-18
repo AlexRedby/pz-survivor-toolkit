@@ -31,17 +31,38 @@ definitions.register('test.late', {types = {'LateAction'}, presentation = descri
 assert(definitions.resolve({Type = 'LateAction'}) == descriptor)
 assert(definitions.behavior({Type = 'LateAction'}) == nil)
 local safe = {Type = 'LateAction', verified = true}
-local behavior = {matches = function(action) return action == safe end,
+local behavior = {types = {'LateAction'}, matches = function(action) return action == safe end,
     inspect = function() return {resources = {}} end}
 definitions.registerBehavior('test.late.behavior', behavior)
 assert(definitions.inspect(safe).resources)
 assert(definitions.inspect({Type = 'LateAction'}) == nil, 'Type match must not grant a contract')
-definitions.registerBehavior('test.ambiguous', {matches = function(action) return action == safe end,
+definitions.registerBehavior('test.ambiguous', {types = {'LateAction'}, matches = function(action) return action == safe end,
     inspect = function() error('ambiguous inspector must not run') end})
 assert(definitions.inspect(safe) == nil, 'ambiguous behavior must fail closed')
 assert(not pcall(definitions.register, 'test.duplicate', {types = {'LateAction'}, presentation = {key = 'x'}}))
 assert(not pcall(definitions.register, 'test.late', {types = {'LateAction'}, presentation = {key = 'x'}}))
 assert(not pcall(definitions.registerBehavior, 'test.invalid', {matches = function() return true end}))
+for _, types in ipairs({false, {}, {""}, {"Duplicate", "Duplicate"}, {false}}) do
+    assert(not pcall(definitions.registerBehavior, 'test.invalid-domain', {types = types,
+        matches = function() return true end, inspect = function() return {} end}))
+end
+assert(not definitions.entries['test.invalid-domain'], 'invalid registration must leave no partial entry')
+local calls = 0
+local contract = {items = {}, targets = {}}
+local isolated = {types = {'IsolatedAction'}, matches = function(action)
+    calls = calls + 1
+    return action.verified
+end, inspect = function() return contract end}
+definitions.register('test.isolated', {types = {'PresentationOnly'}, presentation = descriptor, behavior = isolated})
+definitions.registerBehavior('test.isolated', isolated)
+assert(definitions.inspect({Type = 'IsolatedAction', verified = true}) == contract,
+    'behavior domains differ from presentation domains and repeated registration stays unique')
+assert(calls == 1)
+assert(not definitions.inspect({Type = 'PresentationOnly', verified = true}) and calls == 1,
+    'a presentation type cannot run the behavior matcher')
+assert(not definitions.inspect({Type = 'IsolatedAction'}) and calls == 2, 'type routing still requires the matcher')
+assert(not definitions.inspect({Type = 'UnknownType'}) and calls == 2)
+assert(not definitions.behavior(nil))
 
 getTexture = function(path) return path end
 local function item(text)
@@ -91,9 +112,15 @@ assert(labels.label({Type = 'CustomPresentation'}) == 'Custom title: Custom targ
 assert(labels.icon({Type = 'CustomPresentation'}) == 'custom-icon')
 assert(labels.describe({Type = 'CustomPresentation'}).details == 'Custom detail')
 assert(definitions.inspect({Type = 'CustomPresentation'}) == nil)
-definitions.registerBehavior('test.matchError', {matches = function() error('removed object') end,
+definitions.registerBehavior('test.matchError', {types = {'CustomPresentation'}, matches = function() error('removed object') end,
     inspect = function() error('must not run') end})
 assert(definitions.inspect({Type = 'CustomPresentation'}) == nil)
+assert(definitions.inspect({Type = 'IsolatedAction', verified = true}) == contract,
+    'an unrelated matcher exception must not disable this type')
+definitions.registerBehavior('test.same-type-error', {types = {'IsolatedAction'},
+    matches = function() error('same-type uncertainty') end, inspect = function() error('must not run') end})
+assert(not definitions.inspect({Type = 'IsolatedAction', verified = true}),
+    'uncertainty inside the applicable domain must still fail closed')
 local explanation = labels.decisionDetails({allowed = false,
     blocker = {Type = 'ISReadABook'}, resource = item('Shared item')})
 assert(explanation:find('Shared item', 1, true))

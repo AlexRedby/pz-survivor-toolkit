@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.67
+
+- **Fixed:** Queue behavior lookup evaluates only handlers registered for an action's type; an unrelated handler failure no longer disables other families. Matching errors and ambiguous contracts still deny control.
+- **Changed:** Move, cancellation and priority checks share lazy analysis within one decision and refresh resources and helper validation on the next decision.
+
 ### 0.1.65
 
 - **Changed:** Wishlist is included in Toolkit, with one ground-item scanner and sidebar entry. Existing lists and settings retain their identifiers and format. Remove the old Wishlist mod folder and Mod ID when updating; keep its saved data.

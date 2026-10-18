@@ -195,6 +195,7 @@ local function fixtureResources(action)
     return result
 end
 PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('fixture.lifecycle', {
+    types = {'ToolkitTestLeaf', 'ISInventoryTransferAction', 'ISEquipWeaponAction', 'ISWalkToTimedAction', 'ISMoveablesAction', 'ISRemoveBurntVehicle'},
     matches = function(action)
         if action.onStartFunc or action.onCompleteFunc or action.onCancelFunc or action.Type == 'ISQueueActionsAction' then return false end
         if action.fixtureScrap then return true end

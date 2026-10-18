@@ -68,6 +68,72 @@ assert(policy.moveReason(f.queue(head,transfer,other),transfer,other,true)=='mov
 ISFluidTransferAction.isValid=before
 print('Policy native fluid resources, IDs, symmetric move/cancel, unknown lifecycle and async barriers passed.')
 
+-- Decision-local analysis is shared by every check, but never by later decisions or direct inspections.
+do
+    local definitions=PZSurvivorToolkit.ActionQueueDefinitions
+    local originalInspect,originalCraft,originalGenerators=definitions.inspect,PZSurvivorToolkit.ActionQueueCraft,PZSurvivorToolkit.ActionQueueGenerators
+    local inspections,collections={},{}
+    definitions.inspect=function(action)
+        inspections[action]=(inspections[action] or 0)+1
+        return originalInspect(action)
+    end
+    PZSurvivorToolkit.ActionQueueCraft={supports=function()return false end,collectItems=function(action)
+        collections[action]=(collections[action] or 0)+1
+    end}
+    PZSurvivorToolkit.ActionQueueGenerators={sharesTarget=function(a,b,context)
+        -- The generator power-scope check must reuse the same inspected contracts.
+        policy.inspect(a,context);policy.inspect(b,context)
+    end}
+    local independent=f.action(ISFluidEmptyAction,{container=vessel()})
+    local queue=f.queue(head,transfer,independent)
+    local result=policy.evaluateMove(queue,independent,transfer)
+    assert(result.allowed and result.to==2 and result.first==3 and result.last==3)
+    assert(inspections[independent]==1 and inspections[transfer]==1
+        and collections[independent]==1 and collections[transfer]==1,'move analyzes each action once across resource and target checks')
+    inspections,collections={},{}
+    result=policy.evaluatePriority(queue,independent,true)
+    assert(result.allowed and result.to==2 and result.after and result.target==head)
+    assert(inspections[independent]==1 and inspections[head]==1 and inspections[transfer]==1,
+        'priority fallback shares analysis with the failed preemption attempt')
+    inspections,collections={},{}
+    result=policy.evaluateCancel(queue,independent)
+    assert(result.allowed and result.first==3 and result.last==3)
+    for _,action in ipairs(queue.queue) do
+        assert(inspections[action]==1 and collections[action]==1,'delegated cancellation shares contracts and operation items')
+    end
+    independent.container=source
+    inspections,collections={},{}
+    result=policy.evaluateMove(queue,independent,transfer)
+    assert(result.reason=='move_shared_item' and result.blocker==transfer and result.resource==owner:getID(),
+        'next decision observes changed resources and preserves blocker/resource')
+    assert(inspections[independent]==1 and inspections[transfer]==1)
+    independent.container=vessel()
+    independent.updateEmpty=function()error('must never execute replaced helpers')end
+    assert(policy.evaluateMove(queue,independent,transfer).reason=='move_dependent','next decision revalidates helpers')
+    independent.updateEmpty=nil
+    assert(policy.evaluateMove(queue,independent,transfer).allowed,'restored helper restores the next decision')
+    local opaque=f.action(ISBaseTimedAction:derive('OpaqueAnalysis'))
+    inspections={}
+    assert(policy.cancelReason(f.queue(head,opaque),opaque)=='dependent' and inspections[opaque]==1,
+        'a negative contract is analyzed once even across cancellation fallback checks')
+    independent.container=vessel()
+    local getOwner=independent.container.fluidContainer.getOwner
+    independent.container.fluidContainer.getOwner=function()error('removed fluid owner')end
+    inspections={}
+    assert(policy.cancelReason(queue,independent)=='dependent' and inspections[independent]==1,
+        'failed resource inspection remains closed and is cached within the decision')
+    independent.container.fluidContainer.getOwner=getOwner
+    assert(policy.evaluateCancel(queue,independent).allowed,'inspection errors do not leak state to the next decision')
+    assert(policy.inspect(independent))
+    independent.updateEmpty=function()end
+    assert(not policy.inspect(independent),'direct inspection is always fresh')
+    independent.updateEmpty=nil
+    assert(policy.inspect(independent),'direct inspection observes restored helpers')
+    definitions.inspect=originalInspect
+    PZSurvivorToolkit.ActionQueueCraft,PZSurvivorToolkit.ActionQueueGenerators=originalCraft,originalGenerators
+end
+print('Policy decision-local positive/negative contracts, item collection, fresh resources/helpers and direct inspection passed.')
+
 -- Transfers may alter the containing device even when moving an unrelated item.
 f.native('shared/TimedActions/ISToggleStoveAction.lua')
 policy.installContracts()
@@ -280,7 +346,7 @@ ISReadABook.animEvent=originalAnim
 assert(policy.adoptReadAnimEvent(readWrapper,originalAnim))
 
 local cleanupClass=ISBaseTimedAction:derive('GuardedCleanup')
-PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('fixture.cleanup-phase',{
+PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('fixture.cleanup-phase',{types={'GuardedCleanup'},
     matches=function(action)return getmetatable(action)==cleanupClass end,
     inspect=function()return {items={},targets={},interrupt='audited-stop',cancelWaiting=true,cancelOperation=false}end,
 })

@@ -241,7 +241,7 @@ local function enqueue(character, object, method, callback, args, trusted, selec
     records[action] = {target = target, trusted = trusted, fields = fields, args = savedArgs, selected = savedSelected}
     return Operations.run(ISTimedActionQueue.add, action)
 end
-local function powerConflict(first, second)
+local function powerConflict(first, second, context)
     local saved = records[first]
     local kind = saved and saved.target.kind or first.Type
     local object = saved and saved.target.object or first.generator
@@ -257,7 +257,7 @@ local function powerConflict(first, second)
         if second[name] then targets[#targets + 1] = second[name] end
     end
     if second.moveProps and second.moveProps.object then targets[#targets + 1] = second.moveProps.object end
-    local other = Policy.inspect(second)
+    local other = Policy.inspect(second, context)
     for target in pairs(other and other.targets or {}) do targets[#targets + 1] = target end
     for _, container in pairs({second.srcContainer, second.destContainer}) do
         if instanceof(container, "ItemContainer") then targets[#targets + 1] = container:getParent() end
@@ -312,8 +312,8 @@ function Generators.canSkip(action)
     elseif kind == "ISTakeGenerator" then return object:isConnected() end
     return false
 end
-function Generators.sharesTarget(first, second)
-    return powerConflict(first, second) or powerConflict(second, first)
+function Generators.sharesTarget(first, second, context)
+    return powerConflict(first, second, context) or powerConflict(second, first, context)
 end
 local installed
 function Generators.install()
@@ -432,7 +432,7 @@ function Generators.install()
         for name in pairs(classes) do
             if trusted or noEquipmentHooks[name] then Policy.registerNative(name, Generators.inspect) end
         end
-        Toolkit.ActionQueueDefinitions.registerBehavior("toolkit.generators", {matches = function(action)
+        Toolkit.ActionQueueDefinitions.registerBehavior("toolkit.generators", {types = {"ISQueueActionsAction"}, matches = function(action)
             return action.Type == "ISQueueActionsAction" and commandRecord(action) ~= nil
         end, inspect = commandInspect})
     end
