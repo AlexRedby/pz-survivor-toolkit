@@ -1,12 +1,15 @@
 if not getActivatedMods():contains("SaucedCarts") then return end
 require "SaucedCarts/TimedActions/ISCartPickupAction"
 require "TimedActions/ISUnequipAction"
+require "TimedActions/ISDropWorldItemAction"
 
 -- These subclasses inherit the authoritative Sauced complete, including break/stairs handling.
 ToolkitWoodCartPickup = ISCartPickupAction:derive("ToolkitWoodCartPickup")
 ToolkitWoodCartPickup.Type = "ToolkitWoodCartPickup"
 ToolkitWoodCartSetdown = ISUnequipAction:derive("ToolkitWoodCartSetdown")
 ToolkitWoodCartSetdown.Type = "ToolkitWoodCartSetdown"
+ToolkitWoodCartDrop = ISDropWorldItemAction:derive("ToolkitWoodCartDrop")
+ToolkitWoodCartDrop.Type = "ToolkitWoodCartDrop"
 
 local function wooden(item)
     return item and item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood"
@@ -103,50 +106,74 @@ function ToolkitWoodCartPickup:forceCancel()
     finish(self)
 end
 
-function ToolkitWoodCartSetdown:getDuration()
-    return self.character:isTimedActionInstant() and 1 or 88
-end
-function ToolkitWoodCartSetdown:start()
-    if not isServer() and toolkitWoodCartDropPose then
-        local pose = toolkitWoodCartDropPose(self.character, self.item)
-        if not pose then self:forceStop(); return end
-        self.toolkitDropX, self.toolkitDropY, self.toolkitDropZ = pose.x, pose.y, pose.z
-        self.toolkitDropRotation = pose.rotation
+local function setdownPose(self, pose, drop)
+    if drop then
+        local square = getCell():getGridSquare(math.floor(pose.x), math.floor(pose.y), pose.z)
+        if not square then return false end
+        self.sq = square
+        self.xoffset, self.yoffset, self.zoffset = pose.x - square:getX(), pose.y - square:getY(), 0
+        -- Native world-item construction randomizes exact zero offsets.
+        if self.xoffset == 0 then self.xoffset = .00001 end
+        if self.yoffset == 0 then self.yoffset = .00001 end
+        self.rotation = pose.rotation
     end
-    ISUnequipAction.start(self)
-    start(self, false)
-    if not isServer() and self.toolkitDropX and toolkitWoodCartSetdownPose then
-        toolkitWoodCartSetdownPose(self.character, self.item, self.toolkitDropX, self.toolkitDropY,
-            self.toolkitDropZ, self.toolkitDropRotation)
+    self.toolkitDropX, self.toolkitDropY, self.toolkitDropZ = pose.x, pose.y, pose.z
+    self.toolkitDropRotation = pose.rotation
+    return true
+end
+
+local function setdown(class, base)
+    function class:getDuration()
+        return self.character:isTimedActionInstant() and 1 or 88
     end
-end
-function ToolkitWoodCartSetdown:update()
-    ISUnequipAction.update(self)
-    present(self, false)
-end
-function ToolkitWoodCartSetdown:stop()
-    local result = stop(self, false, ISUnequipAction.stop)
-    if ToolkitCartRefreshVisual and self.character:getPrimaryHandItem() == self.item then
-        ToolkitCartRefreshVisual(self.character, self.action, true)
+    function class:start()
+        if not isServer() and toolkitWoodCartDropPose then
+            local pose = toolkitWoodCartDropPose(self.character, self.item)
+            if not pose then self:forceStop(); return end
+            if not setdownPose(self, pose, base == ISDropWorldItemAction) then self:forceStop(); return end
+        end
+        base.start(self)
+        start(self, false)
+        if not isServer() and self.toolkitDropX and toolkitWoodCartSetdownPose then
+            toolkitWoodCartSetdownPose(self.character, self.item, self.toolkitDropX, self.toolkitDropY,
+                self.toolkitDropZ, self.toolkitDropRotation)
+        end
     end
-    return result
+    function class:update()
+        base.update(self)
+        present(self, false)
+    end
+    function class:stop()
+        local result = stop(self, false, base.stop)
+        if ToolkitCartRefreshVisual and self.character:getPrimaryHandItem() == self.item then
+            ToolkitCartRefreshVisual(self.character, self.action, true)
+        end
+        return result
+    end
+    function class:perform()
+        finish(self)
+        return base.perform(self)
+    end
+    function class:forceCancel()
+        finish(self)
+    end
+    function class:complete()
+        if base == ISDropWorldItemAction then
+            -- Native drop transmits explicitly; bypass the unequip placement hook's automatic transmit.
+            return base.complete(self)
+        end
+        local prepared = self.toolkitDropX and toolkitWoodCartDropBegin
+            and toolkitWoodCartDropBegin(self.character, self.item, self.toolkitDropX, self.toolkitDropY,
+                self.toolkitDropZ, self.toolkitDropRotation)
+        local ok, result = pcall(base.complete, self)
+        if prepared then toolkitWoodCartDropEnd() end
+        if not ok then error(result) end
+        return result
+    end
+
 end
-function ToolkitWoodCartSetdown:perform()
-    finish(self)
-    return ISUnequipAction.perform(self)
-end
-function ToolkitWoodCartSetdown:forceCancel()
-    finish(self)
-end
-function ToolkitWoodCartSetdown:complete()
-    local prepared = self.toolkitDropX and toolkitWoodCartDropBegin
-        and toolkitWoodCartDropBegin(self.character, self.item, self.toolkitDropX, self.toolkitDropY,
-            self.toolkitDropZ, self.toolkitDropRotation)
-    local ok, result = pcall(ISUnequipAction.complete, self)
-    if prepared then toolkitWoodCartDropEnd() end
-    if not ok then error(result) end
-    return result
-end
+setdown(ToolkitWoodCartSetdown, ISUnequipAction)
+setdown(ToolkitWoodCartDrop, ISDropWorldItemAction)
 
 local originalNew = ISCartPickupAction.new
 ISCartPickupAction.new = function(class, character, x, y, z, id)
@@ -160,4 +187,4 @@ ISCartPickupAction.new = function(class, character, x, y, z, id)
     return action
 end
 
-return {wooden = wooden, finish = finish}
+return {wooden = wooden, finish = finish, setdownPose = setdownPose}

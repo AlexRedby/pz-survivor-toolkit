@@ -476,6 +476,7 @@ for kind, presentation in pairs({
     ISCartTransferAction = {key = prefix .. "transfer", family = "inventory", targets = {"item"}},
     ToolkitWoodCartPickup = {key = "ContextMenu_Grab", family = "inventory", role = "preparation"},
     ToolkitWoodCartSetdown = {key = "ContextMenu_Drop", family = "inventory", role = "preparation", targets = {"item"}},
+    ToolkitWoodCartDrop = {key = "ContextMenu_Drop", family = "inventory", role = "preparation", targets = {"item"}},
     PZSurvivorToolkitSetStoveState = {key = prefix .. "power", targets = {"object"}, modeField = "desired",
         modes = {[true] = prefix .. "stove_on", [false] = prefix .. "stove_off"}},
     PJCK_SequenceWaitAction = {key = prefix .. "wait", role = "preparation"},

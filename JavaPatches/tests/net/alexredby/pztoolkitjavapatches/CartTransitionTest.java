@@ -541,8 +541,8 @@ public final class CartTransitionTest {
         return action;
     }
     private static void authoredPendingHandoff() throws Exception {
-        for(String type:new String[]{"ISWalkToTimedActionF","ToolkitWoodCartPickup","ToolkitWoodCartSetdown"}) {
-            boolean pickup=!type.equals("ToolkitWoodCartSetdown");
+        for(String type:new String[]{"ISWalkToTimedActionF","ToolkitWoodCartPickup","ToolkitWoodCartSetdown","ToolkitWoodCartDrop"}) {
+            boolean pickup=type.equals("ISWalkToTimedActionF") || type.equals("ToolkitWoodCartPickup");
             var fixture=restartRecovery(pickup);var player=fixture.player;
             try {
                 var current=state(player);var lease=player.overridePrimaryHandModel;
@@ -604,10 +604,10 @@ public final class CartTransitionTest {
         }
     }
     private static void authoredPendingRefusals() throws Exception {
-        for(String type:new String[]{"ISWalkToTimedActionF","ToolkitWoodCartPickup","ToolkitWoodCartSetdown"})
+        for(String type:new String[]{"ISWalkToTimedActionF","ToolkitWoodCartPickup","ToolkitWoodCartSetdown","ToolkitWoodCartDrop"})
             for(String failure:new String[]{"wrong-item","unmarked","wrong-type","native-owner","lua-owner","multiple","finished","stopped",
                 "timeout","expired-update","protected","foreign-model","physical-owner"}) {
-            boolean pickup=!type.equals("ToolkitWoodCartSetdown");
+            boolean pickup=type.equals("ISWalkToTimedActionF") || type.equals("ToolkitWoodCartPickup");
             var fixture=restartRecovery(pickup);var player=fixture.player;
             try {
                 var current=state(player);var action=pendingAction(player,fixture.cart,type);var table=action.getTable();

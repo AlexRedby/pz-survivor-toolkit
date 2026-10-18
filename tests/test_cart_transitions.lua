@@ -10,13 +10,14 @@ local function setup(server, enabled, bridge)
     getActivatedMods = function() return {contains = function(_, name) return enabled and name == "SaucedCarts" end} end
     Events = {}
     w.events = {}
-    for _, event in ipairs({"OnPlayerUpdate", "OnPlayerDeath", "OnMainMenuEnter"}) do
+    for _, event in ipairs({"OnPlayerUpdate", "OnPlayerDeath", "OnMainMenuEnter", "OnGameStart", "OnKeyStartPressed"}) do
         Events[event] = {Add = function(fn) w.events[event] = fn end}
     end
     getTimestampMs = function() return 100 end
     getText = function(key) return key end
     Metabolics = {HeavyDomestic = "heavy"}
     ItemTag = {WEARABLE = "wearable"}
+    CharacterTrait = {DEXTROUS="dextrous",ALL_THUMBS="thumbs"}
     ISInventoryPage = {}
     triggerEvent = function() end
     getPlayerInventory = function() return {refreshBackpacks = function() end} end
@@ -56,6 +57,7 @@ local function setup(server, enabled, bridge)
     end
     function ISBaseTimedAction:stop() self.stopped = true; return "stopped" end
     function ISBaseTimedAction:forceCancel() end
+    function ISBaseTimedAction:forceStop() self.forcedStop=true;self:stop() end
     SaucedCarts = {isCart = function(item) return item.cart == true end}
     function SaucedCarts.clearCartPose(player)
         for _, name in ipairs({"Weapon", "RightHandMask", "LeftHandMask"}) do player:setVariable(name, "") end
@@ -82,6 +84,15 @@ local function setup(server, enabled, bridge)
         local sq = world:getSquare()
         return ISCartPickupAction:new(character, sq:getX(), sq:getY(), sq:getZ(), world:getItem():getID())
     end
+    ISDropWorldItemAction = ISBaseTimedAction:derive("ISDropWorldItemAction")
+    function ISDropWorldItemAction:getDuration() return self.character:isTimedActionInstant() and 1 or 15 end
+    function ISDropWorldItemAction:new(character, item, sq, xoffset, yoffset, zoffset, rotation, isMultiple)
+        return setmetatable({character=character,item=item,sq=sq,xoffset=xoffset,yoffset=yoffset,zoffset=zoffset,
+            rotation=rotation,isMultiple=isMultiple,maxTime=15},self)
+    end
+    function ISDropWorldItemAction:start() self.nativeDropStarted=true end
+    function ISDropWorldItemAction:update() self.item:setJobDelta(self:getJobDelta()) end
+    function ISDropWorldItemAction:complete() self.nativeDropCompleted=(self.nativeDropCompleted or 0)+1; return true end
     ISUnequipAction = ISBaseTimedAction:derive("ISUnequipAction")
     function ISUnequipAction:new(character, item, duration, reason)
         return setmetatable({character = character, item = item, maxTime = duration, reason = reason,
@@ -91,7 +102,10 @@ local function setup(server, enabled, bridge)
     function ISUnequipAction:update() self.item:setJobDelta(self:getJobDelta()) end
     function ISUnequipAction:complete() self.character:removeWornItem(self.item); return self.character.completeResult ~= false end
     if SaucedCartsSource then dofile(SaucedCartsSource .. "/TimedActions/ISCartPickupAction.lua") end
-    if NativeActionRoot then dofile(NativeActionRoot .. "/shared/TimedActions/ISUnequipAction.lua") end
+    if NativeActionRoot then
+        dofile(NativeActionRoot .. "/shared/TimedActions/ISUnequipAction.lua")
+        dofile(NativeActionRoot .. "/shared/TimedActions/ISDropWorldItemAction.lua")
+    end
     ISCartEquipAction = {findCart = function() end, isValid = function() return false end, perform = ISBaseTimedAction.perform}
     dofile(hands)
     w.nativeComplete, w.nativeUnequipComplete = ISCartPickupAction.complete, ISUnequipAction.complete
@@ -128,13 +142,20 @@ local function setup(server, enabled, bridge)
         assert(w.dropActive, "unprepared scope was cleared")
         w.dropEnds = (w.dropEnds or 0) + 1; w.dropActive = false
     end or nil
-    ToolkitWoodCartPickup, ToolkitWoodCartSetdown = nil, nil
+    ToolkitWoodCartPickup, ToolkitWoodCartSetdown, ToolkitWoodCartDrop = nil, nil, nil
+    w.dropFingerprint = {}; for key, value in pairs(ISDropWorldItemAction) do w.dropFingerprint[key] = value end
     w.unequipFingerprint = {}; for key, value in pairs(ISUnequipAction) do w.unequipFingerprint[key] = value end
     local transitions = dofile(shared)
     require = function(name) return name == "ToolkitWoodCartActions" and transitions or true end
     dofile(client)
     local p = {vars = {}, inventory = {}}
+    function p:hasTrait() return false end
+    function p:isWearingAwkwardGloves() return false end
+    function p:getEmitter() return {isPlaying=function() return false end} end
+    function p:playSound() return 1 end
+    function p:stopOrTriggerSound() end
     function p:isTimedActionInstant() return self.instant end
+    function p:getCurrentSquare() return w.square end
     function p:getPrimaryHandItem() return self.primary end
     function p:getSecondaryHandItem() return self.secondary end
     function p:setPrimaryHandItem(item) self.primary = item end
@@ -145,7 +166,7 @@ local function setup(server, enabled, bridge)
         assert(item == self.primary, "native complete received another item")
         if self.completeError then error("native complete failure") end
     end
-    function p:getInventory() return {getItemById = function(_, id) return self.inventory[id] end,
+    function p:getInventory() return {containsID=function(_,id) return self.inventory[id]~=nil end, getItemById = function(_, id) return self.inventory[id] end,
         contains = function(_, item) return self.inventory[item:getID()] == item end} end
     function p:setVariable(name, value) self.vars[name] = value end
     function p:clearVariable(name) self.vars[name] = nil end
@@ -160,6 +181,11 @@ local function setup(server, enabled, bridge)
     function p:getSquare() return {canReachTo = function() return true end} end
     function w.item(kind, id)
         local item = {kind = kind or "SaucedWheelbarrow.WheelbarrowWood", id = id or 123, cart = true}
+        function item:getType() return "WheelbarrowWood" end
+        function item:getActualWeight() return 10 end
+        function item:getUnequippedWeight() return 10 end
+        function item:getPlaceOneSound() end
+        function item:setWorldZRotation(rotation) self.worldRotation=rotation end
         function item:getFullType() return self.kind end
         function item:getID() return self.id end
         function item:isForceDropHeavyItem() return true end
@@ -180,7 +206,10 @@ local function setup(server, enabled, bridge)
     end
     w.square = {getX = function() return 1 end, getY = function() return 2 end, getZ = function() return 0 end}
     function w.square:getWorldObjects() return {size = function() return w.world and 1 or 0 end, get = function() return w.world end} end
-    getCell = function() return {getGridSquare = function(_, x, y, z) return x == 1 and y == 2 and z == 0 and w.square or nil end} end
+    getCell = function() return {getGridSquare = function(_, x, y, z)
+        if w.missingDropSquare then return nil end
+        if w.extraSquare and x==2 and y==3 and z==0 then return w.extraSquare end
+        return x == 1 and y == 2 and z == 0 and w.square or nil end} end
     instanceof = function(_, kind) return kind == "IsoWorldInventoryObject" end
     function w.worldFor(item)
         local world = {getItem = function() return item end, getSquare = function() return w.square end}
@@ -355,6 +384,118 @@ if NativeActionRoot then
     ISTimedActionQueue.add = add
     print("PASS native world-menu onUnEquip callback dispatches wooden setdown without a drop reason")
 end
+-- Exact native drop instances retain their constructor fields and authoritative callbacks.
+local dropBaseComplete = ISDropWorldItemAction.complete
+local dropCalls = 0
+ISDropWorldItemAction.complete = function(self)
+    dropCalls=dropCalls+1
+    assert(not w.dropActive, "drop must not enter the unequip hook that transmits automatically")
+    return "native drop complete"
+end
+local dropped = ISDropWorldItemAction:new(p,wood,w.square,.5,.5,0,0,false)
+ISTimedActionQueue.addToQueue(queue,dropped)
+assert(dropped.Type=="ToolkitWoodCartDrop" and dropped.maxTime==88)
+assert(dropped.rotation==90 and dropped.xoffset==.25 and dropped.yoffset==.75)
+assert(dropped:complete()=="native drop complete" and dropCalls==1)
+local copy = ToolkitWoodCartDrop:new(p,wood,dropped.sq,dropped.xoffset,dropped.yoffset,dropped.zoffset,dropped.rotation,dropped.isMultiple)
+assert(copy.Type=="ToolkitWoodCartDrop" and copy.rotation==90 and copy.xoffset==.25 and copy.yoffset==.75,
+    "server reconstruction lost native drop constructor fields")
+p.inventory[wood:getID()]=wood
+w.dropPose={x=1,y=2,z=0,rotation=135}
+dropped:start()
+assert(dropped.rotation==135 and dropped.xoffset==.00001 and dropped.yoffset==.00001,
+    "start must refresh serialized placement and avoid randomized zero offsets")
+dropped:update();assert(wood.delta==.4 and p.vars.ToolkitWoodCartAction)
+dropped:stop();assert(not p.vars.ToolkitWoodCartAction and dropCalls==1,"cancel must not complete or mutate ownership")
+w.dropPose=nil
+for _,kind in ipairs({"place","multiple","remote-square","onehand","item","instant","subclass","no-pose","transfer"}) do
+    local action=ISDropWorldItemAction:new(p,wood,w.square,.5,.5,0,0,false)
+    if kind=="place" then action.isPlaceItem=true
+    elseif kind=="multiple" then action.isMultiple=true
+    elseif kind=="remote-square" then action.sq={}
+    elseif kind=="onehand" then p.secondary=nil
+    elseif kind=="item" then action.item=steel
+    elseif kind=="instant" then p.instant=true
+    elseif kind=="subclass" then setmetatable(action,ISDropWorldItemAction:derive("OtherDrop"))
+    elseif kind=="no-pose" then w.noDropPose=true
+    else SaucedCarts.TransferRestrictions={hasPendingTransfer=function() return true end} end
+    local class=getmetatable(action)
+    ISTimedActionQueue.addToQueue(queue,action)
+    assert(getmetatable(action)==class and action.xoffset==.5 and action.rotation==0,kind.." drop was hijacked")
+    p.secondary=wood;p.instant=false;w.noDropPose=false;SaucedCarts.TransferRestrictions=nil
+end
+w.extraSquare={getX=function() return 2 end,getY=function() return 3 end,getZ=function() return 0 end}
+w.dropPose={x=2.25,y=3.75,z=0,rotation=135}
+local adjacent=ISDropWorldItemAction:new(p,wood,w.square,.5,.5,0,0,false)
+ISTimedActionQueue.addToQueue(queue,adjacent);adjacent:start()
+assert(adjacent.sq==w.extraSquare and adjacent.xoffset==.25 and adjacent.yoffset==.75 and adjacent.rotation==135)
+local adjacentCopy=ToolkitWoodCartDrop:new(p,wood,adjacent.sq,adjacent.xoffset,adjacent.yoffset,adjacent.zoffset,adjacent.rotation,false)
+assert(adjacentCopy.sq==w.extraSquare and adjacentCopy.rotation==135,"cross-square MP constructor fields changed")
+adjacent:stop();w.dropPose=nil;w.extraSquare=nil
+for _,missing in ipairs({"pose","square"}) do
+    local unavailable=ISDropWorldItemAction:new(p,wood,w.square,.5,.5,0,0,false)
+    ISTimedActionQueue.addToQueue(queue,unavailable)
+    local presented=w.presented
+    if missing=="pose" then w.noDropPose=true else w.missingDropSquare=true end
+    unavailable:start()
+    assert(unavailable.forcedStop and not p.vars.ToolkitWoodCartAction and w.presented==presented and dropCalls==1,
+        "missing safe "..missing.." must cancel before presentation or completion")
+    w.noDropPose=false;w.missingDropSquare=false
+end
+ISDropWorldItemAction.complete=dropBaseComplete
+for key,value in pairs(ISDropWorldItemAction) do assert(w.dropFingerprint[key]==value,"ordinary drop class changed: "..key) end
+print("PASS wooden native drop dispatch preserves placement, lifecycle, constructor fields and ordinary drop classes")
+
+if SaucedCartsSource and NativeActionRoot then
+    PZAPI={ModOptions={create=function() return {addKeyBind=function() return {getValue=function() return 99 end} end} end}}
+    Keyboard={KEY_V=99};SandboxVars={};SaucedCarts.debug=function() end
+    function p:isDead() return false end
+    function p:getVehicle() end
+    getSpecificPlayer=function(index) assert(index==0);return p end
+    ISTimedActionQueue.getTimedActionQueue=function() return {queue={}} end
+    local add=ISTimedActionQueue.add
+    ISTimedActionQueue.add=function(action) return ISTimedActionQueue.addToQueue(queue,action) end
+    dofile(SaucedCartsSource.."/../../client/SaucedCarts/Hotkeys.lua")
+    w.events.OnGameStart();queue.last=nil
+    w.events.OnKeyStartPressed(98);assert(not queue.last)
+    w.events.OnKeyStartPressed(99)
+    local action=queue.last
+    assert(action.Type=="ToolkitWoodCartDrop" and action.item==wood and action.maxTime==88,
+        "installed Sauced hotkey bypassed natural wooden setdown")
+    local nativeComplete=ISDropWorldItemAction.complete
+    local damage,transmissions,placed,removed=0,0,0,0
+    local inv=p:getInventory();inv.Remove=function(_,item) assert(item==wood);p.inventory[item:getID()]=nil;removed=removed+1 end
+    local getInventory=p.getInventory;p.getInventory=function() return inv end
+    sendRemoveItemFromContainer=function(_,item) assert(item==wood) end
+    w.square.getTotalWeightOfItemsOnFloor=function() return 0 end
+    w.square.AddWorldInventoryItem=function(_,item,x,y,z,transmit)
+        assert(item==wood and x==.25 and y==.75 and z==0 and transmit==false,
+            "drop changed placement or enabled automatic duplicate transmission")
+        placed=placed+1
+        item.world={setIgnoreRemoveSandbox=function() end,setExtendedPlacement=function() end,
+            transmitCompleteItemToClients=function() assert(item.worldRotation==90);transmissions=transmissions+1 end}
+        return item
+    end
+    ISDropWorldItemAction.complete=function(self)
+        damage=damage+1
+        if w.breakDrop then inv:Remove(self.item);return nil end
+        return nativeComplete(self)
+    end
+    action:start();assert(action:isValid());action:update()
+    action:stop();assert(removed==0 and not p.vars.ToolkitWoodCartAction)
+    action:start();assert(action:complete()==true)
+    assert(damage==1 and placed==1 and transmissions==1 and removed==1,"drop lost native completion/durability chain")
+    action:perform();assert(not p.vars.ToolkitWoodCartAction and action.performed==1)
+    p.inventory[wood:getID()]=wood;wood.world=nil
+    w.breakDrop=true
+    local broken=ToolkitWoodCartDrop:new(p,wood,w.square,.25,.75,0,90,false)
+    assert(broken:complete()==nil and damage==2 and placed==1 and transmissions==1 and removed==2,
+        "destroyed cart must stay destroyed instead of falling through to world placement")
+    ISDropWorldItemAction.complete=nativeComplete;w.breakDrop=nil;p.getInventory=getInventory
+    p.inventory[wood:getID()]=wood;wood.world=nil;ISTimedActionQueue.add=add
+    print("PASS installed Sauced hotkey uses native drop constructor, one authoritative placement/transmit, cancellation and live completion hooks")
+end
+
 local refreshed = ISUnequipAction:new(p, wood, 1, "drop")
 ISTimedActionQueue.addToQueue(queue, refreshed)
 assert(refreshed.toolkitDropX == 1.25)

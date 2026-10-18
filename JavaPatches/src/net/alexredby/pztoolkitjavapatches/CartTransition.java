@@ -235,7 +235,8 @@ public final class CartTransition {
             ?"ISWalkToTimedActionF".equals(type) && table.rawget("toolkitWoodCartItem")==state.item
                 || "ToolkitWoodCartPickup".equals(type) && table.rawget("itemId") instanceof Number id
                     && id.doubleValue()==state.item.getID()
-            :"ToolkitWoodCartSetdown".equals(type) && table.rawget("item")==state.item;
+            :("ToolkitWoodCartSetdown".equals(type) || "ToolkitWoodCartDrop".equals(type))
+                && table.rawget("item")==state.item;
         if(owned && state.pickup && (state.world.getSquare()!=state.cancelSquare
             || !state.placement.equals(placement(state.item,state.world)))) return false;
         if(owned && state.pendingStart==0) state.pendingStart=now;

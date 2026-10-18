@@ -38,7 +38,10 @@ end)
 local addToQueue = ISTimedActionQueue.addToQueue
 ISTimedActionQueue.addToQueue = function(queue, action)
     local transfers = SaucedCarts.TransferRestrictions
-    if toolkitWoodCartUpdate and toolkitWoodCartDropPose and getmetatable(action) == ISUnequipAction
+    local drop = getmetatable(action) == ISDropWorldItemAction and not action.isPlaceItem and not action.isMultiple
+        and action.sq == action.character:getCurrentSquare()
+    local unequip = getmetatable(action) == ISUnequipAction
+    if toolkitWoodCartUpdate and toolkitWoodCartDropPose and (unequip or drop)
         -- The native world-menu "Drop <name>" calls onUnEquip without a reason.
         and (action.reason == nil or action.reason == "drop" or action.reason == "place")
         and transitions.wooden(action.item)
@@ -47,10 +50,8 @@ ISTimedActionQueue.addToQueue = function(queue, action)
         and action.character:getPrimaryHandItem() == action.item
         and action.character:getSecondaryHandItem() == action.item then
         local pose = toolkitWoodCartDropPose(action.character, action.item)
-        if pose then
-            action.toolkitDropX, action.toolkitDropY, action.toolkitDropZ = pose.x, pose.y, pose.z
-            action.toolkitDropRotation = pose.rotation
-            setmetatable(action, ToolkitWoodCartSetdown)
+        if pose and transitions.setdownPose(action, pose, drop) then
+            setmetatable(action, drop and ToolkitWoodCartDrop or ToolkitWoodCartSetdown)
             action.maxTime = action:getDuration()
             action.stopOnWalk, action.stopOnRun, action.stopOnAim = true, true, true
         end

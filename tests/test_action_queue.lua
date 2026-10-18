@@ -138,7 +138,7 @@ local function frame(p)
     q:tick()
 end
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))()
-for kind, key in pairs({ToolkitWoodCartPickup='ContextMenu_Grab', ToolkitWoodCartSetdown='ContextMenu_Drop'}) do
+for kind, key in pairs({ToolkitWoodCartPickup='ContextMenu_Grab', ToolkitWoodCartSetdown='ContextMenu_Drop', ToolkitWoodCartDrop='ContextMenu_Drop'}) do
     local shown = PZSurvivorToolkit.ActionQueueDefinitions.describe({Type=kind})
     assert(shown.role=='preparation' and shown.title==getText(key), 'cart interaction lost its queue presentation')
 end
