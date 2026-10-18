@@ -10,6 +10,16 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.84
+
+- **Fixed:** Server-side cart unequip and broken-cart drop finish without accessing the client action queue and return a Boolean based on the authoritative item result.
+
+- **Fixed:** Server cart pickup reconstructs the selected action without querying client render models.
+- **Fixed:** Cart pickup retains the constructor field names required by native multiplayer serialization, so Host/server actions receive the cart coordinates and ID for every cart type.
+- **Fixed:** Repeated wooden-wheelbarrow pickup uses fractional stance distance rather than the integer-only distance overload, avoiding an unnecessary zero-length path and cancelled pickup.
+
+- **Fixed:** Shopping carts and metal wheelbarrows approach an accessible adjacent tile before ground pickup when out of reach. Native pickup/equip, cargo and the wooden-wheelbarrow stance are preserved.
+
 ### 0.1.83
 
 - **Fixed:** Quartermaster waits for both its presets and Toolkit tag rules before multiplayer sorting, and requests both again through its existing gather retry when either is missing. Disabling tags retains native readiness.

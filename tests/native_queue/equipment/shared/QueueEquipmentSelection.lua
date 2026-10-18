@@ -3,6 +3,10 @@ assert((config.kind=='sp' or config.kind=='mp') and config.clients==1,'equipment
 assert(config.mode=='native' or config.mode=='toolkit','invalid equipment mode')
 assert(type(config.languages)=='table' and #config.languages==1
  and (config.languages[1]=='EN' or config.languages[1]=='RU'),'equipment language must be EN or RU')
+if type(config.cases)=='table' and config.cases[1]=='cart-pickup' then
+ assert(config.kind=='mp' and #config.cases==1,'cart-pickup requires standalone MP equipment selection')
+ return {cases=config.cases,mode=config.mode,kind=config.kind,language=config.languages[1]}
+end
 local canonical={'hands-chain','waiting-cancel','bag-capacity','clothing-chain','hotbar-chain','floor-pickup','bulk-pickup','bulk-waiting-cancel','bulk-mixed'}
 local known,selected,seen={},{},{}
 for _,id in ipairs(canonical) do known[id]=true end

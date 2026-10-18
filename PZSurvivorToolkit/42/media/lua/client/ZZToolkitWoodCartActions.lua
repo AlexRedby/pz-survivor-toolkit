@@ -6,12 +6,21 @@ require "TimedActions/WalkToTimedActionF"
 local fromWorld = ISCartPickupAction.FromWorldItem
 ISCartPickupAction.FromWorldItem = function(character, world)
     local held = character:getPrimaryHandItem()
-    if not toolkitWoodCartStance or character:isTimedActionInstant() or not transitions.wooden(world:getItem())
-        or held and held:isForceDropHeavyItem() then
+    if character:isTimedActionInstant() or held and held:isForceDropHeavyItem() then
         return fromWorld(character, world)
     end
-    local stance = toolkitWoodCartStance(character, world)
-    if not stance or character:DistTo(stance.x, stance.y) < .05 then return fromWorld(character, world) end
+    local stance
+    if transitions.wooden(world:getItem()) then
+        stance = toolkitWoodCartStance and toolkitWoodCartStance(character, world)
+        if not stance or character:DistToSquared(stance.x, stance.y) < .05 * .05 then return fromWorld(character, world) end
+    else
+        local square = world:getSquare()
+        if character:getSquare():canReachTo(square) then return fromWorld(character, world) end
+        -- Sauced's ground callback queues pickup directly, whose validity requires an adjacent square.
+        local adjacent = AdjacentFreeTileFinder.Find(square, character)
+        if not adjacent then return fromWorld(character, world) end
+        stance = {x = adjacent:getX() + .5, y = adjacent:getY() + .5}
+    end
     local x, y, z, id = world:getSquare():getX(), world:getSquare():getY(), world:getSquare():getZ(), world:getItem():getID()
     local walk = ISWalkToTimedActionF:new(character, Vector3f.new(stance.x, stance.y, z))
     walk.toolkitWoodCartItem = world:getItem()

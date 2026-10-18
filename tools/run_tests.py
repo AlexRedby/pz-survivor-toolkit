@@ -160,6 +160,8 @@ def main() -> None:
     if should_run('test_saucedcarts_compat.lua'):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
+        if args.native_action_root:
+            lua.globals().NativeActionRoot = str(args.native_action_root)
         if args.saucedcarts_source:
             lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
         lua.execute((ROOT / "tests/test_saucedcarts_compat.lua").read_text(encoding="utf-8"))

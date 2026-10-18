@@ -1,5 +1,7 @@
 # Надёжная запись пресетов Quartermaster
 
+- [ ] Восстановить общий Lua-прогон: `test_quartermaster_tag_rules.lua` падает в `QuartermasterTagRules.lua:53` на `pairs(PresetStore.entries)`, когда entries отсутствует. Сверить контракт preset store и тестовые doubles; гейт — успешный общий `tools/run_tests.py`.
+
 - [ ] Устранить подтверждённую уязвимость прямой SP-перезаписи `QuartermasterPresets.txt` и `PZSTQuartermasterTagRules.txt`: native `LuaFileWriter` скрывает ошибки `PrintWriter`, а открытие файла уже удаляет прежний текст. Сохранить последний проверенный снимок при частичной записи/обрыве, подтверждать результат чтением и сохранять связь native preset generation с tag rule. Native `presetDeserialize` также превращает повреждённый непустой текст в пустую таблицу; отличать такой отказ от корректного пустого store. Переход должен читать существующие глобальные файлы и пройти отдельный cold restart; текущая защита от исключений загрузки/сериализации не заменяет этот гейт.
 
 # Ускорение разработки анимаций

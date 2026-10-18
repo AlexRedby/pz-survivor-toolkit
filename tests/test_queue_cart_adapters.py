@@ -127,6 +127,75 @@ class CartAdapterTests(unittest.TestCase):
         self.assertTrue(carts.complete(self.selection, 'client1', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=12\n'))
         self.assertFalse(carts.complete(self.selection, 'client1', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=8\n'))
 
+    def test_variants_stage_without_wooden_probes_mesh_or_numpy(self):
+        self.selection['cases'] = ['variants']
+        self.options.pop('mesh_fbx')
+        with patch.object(carts.importlib, 'import_module', side_effect=ModuleNotFoundError('numpy')) as dependency:
+            compiler = self.stage()
+        dependency.assert_not_called()
+        self.assertEqual(compiler.call_count, 1)
+        self.assertEqual(self.runtime['fixture']['attach'], {'client1': []})
+        self.assertIn('[CART_VARIANT] FAIL', self.runtime['fixture']['failure_markers'])
+        runtime = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE'])
+        source = runtime.read_text()
+        self.assertIn((ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-variants.lua').read_text(), source)
+        self.assertIn("triggerEvent('OnFillWorldObjectContextMenu'", source)
+        self.assertIn("triggerEvent('OnFillInventoryObjectContextMenu'", source)
+        self.assertIn('ISInventoryPaneContextMenu.onUnEquip({item}', source)
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if lua:
+            subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(runtime)) + '))'], check=True, capture_output=True)
+        self.assertTrue(carts.sources(ROOT, self.selection))
+
+    @staticmethod
+    def variant_log():
+        records = []
+        for name, kind in carts.VARIANTS.items():
+            for phase in carts.VARIANT_PHASES:
+                ground = phase.startswith('drop-')
+                records.append(dict(case=name, kind=kind, phase=phase, id=42, cargoIDs='99:Base.Log:1', cargoWeight=1,
+                    primaryID=-1 if ground else 42, secondaryID=-1 if ground else 42,
+                    inventoryCount=0 if ground else 1, worldCount=1 if ground else 0,
+                    luaActions=0, nativeActions=0, hasPath=False, elapsed=2500, distance=1, gaitSeen=True,
+                    approachDistance=2.25 if phase=='pickup-far' else .5))
+        return records
+
+    def test_variants_verifies_native_phases_and_rejects_missing_identity_ownership_or_gait(self):
+        self.selection['cases'] = ['variants']
+        def log(rows):
+            return '[WOOD_BANK] RUN_STARTED\n' + '\n'.join('[CART_VARIANT] PHASE ' + json.dumps(row) for row in rows)
+        records = self.variant_log()
+        report = carts._variant_coverage(log(records), carts.scene_names('variants'))
+        self.assertTrue(report['functionalPass'])
+        for label, index, key, value in [('cart identity', 1, 'id', 43), ('cargo identity', 1, 'cargoIDs', '100:Base.Log:1'),
+                ('cargo weight', 1, 'cargoWeight', 2), ('one hand', 1, 'secondaryID', -1),
+                ('duplicate world', 4, 'worldCount', 2), ('queue', 5, 'nativeActions', 1),
+                ('path', 7, 'hasPath', True), ('no movement', 2, 'distance', 0), ('wrong gait', 3, 'gaitSeen', False),
+                ('far not exercised', 7, 'approachDistance', .5), ('timeout', 9, 'elapsed', 15000)]:
+            with self.subTest(label=label):
+                bad=[dict(row) for row in records];bad[index][key]=value
+                with self.assertRaises(ValueError): carts._variant_coverage(log(bad), carts.scene_names('variants'))
+        for rows in (records[:-1], records + [records[-1]], list(reversed(records))):
+            with self.assertRaisesRegex(ValueError, 'phases'):
+                carts._variant_coverage(log(rows), carts.scene_names('variants'))
+
+    def test_variants_verify_keeps_functional_scope_and_skips_geometry_analyzers(self):
+        self.selection['cases'] = ['variants']
+        rows=self.variant_log()
+        text='[WOOD_BANK] RUN_STARTED\n' + '\n'.join('[CART_VARIANT] PHASE ' + json.dumps(row) for row in rows)
+        text+='\n[WOOD_BANK] ALL_COMPLETE cases=3\n'
+        (self.output/'client1-launch.log').write_text(text)
+        with patch.object(carts, '_videos', return_value=[]), patch.object(carts, '_run') as analyzer:
+            result=carts.verify(self.output,self.selection,{})
+        analyzer.assert_not_called()
+        self.assertEqual(result['issues'], [])
+        self.assertTrue(result['outcomes'][0]['outcome']['functionalPass'])
+        self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+        self.assertIn('wooden mesh', result['evidence']['scope'])
+        (self.output/'client1-launch.log').write_text(text.replace('"secondaryID": 42', '"secondaryID": -1', 1))
+        with patch.object(carts, '_videos', return_value=[]):
+            self.assertTrue(carts.verify(self.output,self.selection,{})['issues'])
+
     def test_manual_sp_rejects_automatic_scene_selection(self):
         self.selection['cases'] = ['manual']
         self.options['cart_scenes'] = ['male-full-corner']
@@ -162,7 +231,7 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path'])
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path', 'variants'])
         for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 8), ('wall-fast-manual-exit', 16), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case

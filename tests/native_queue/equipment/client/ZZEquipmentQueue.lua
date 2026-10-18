@@ -1,3 +1,5 @@
+local cartSelection=require 'QueueTestSelection'
+if cartSelection.cases[1]=='cart-pickup' then return end
 require 'PZSurvivorToolkit/ActionQueuePanel'
 local Selection=require 'QueueEquipmentSelection'
 local Fixture=require 'QueueEquipmentFixture'

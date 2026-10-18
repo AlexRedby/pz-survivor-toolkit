@@ -7,6 +7,9 @@ import subprocess
 import zipfile
 
 CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed']
+CART_CASE = 'cart-pickup'
+CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', 'SaucedWheelbarrow.WheelbarrowMetal']
+CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
 RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0}
 
 
@@ -14,18 +17,24 @@ def definitions():
     return {'equipment': {'status': 'ready', 'clients': 1, 'default_mods': ['PZSurvivorToolkit'],
                           'cases': [{'id': case, 'producer': 'inventory', 'capability': 'effect',
                                      'kinds': ['sp', 'mp'], 'languages': ['EN', 'RU'],
-                                     'modes': ['native', 'toolkit']} for case in CASES]}}
+                                     'modes': ['native', 'toolkit']} for case in CASES] +
+                                   [{'id': CART_CASE, 'producer': 'inventory', 'capability': 'effect',
+                                     'kinds': ['mp'], 'languages': ['EN', 'RU'], 'modes': ['native', 'toolkit']}]}}
 
 
 def validate(selection):
     cases = selection.get('cases')
-    if (not isinstance(cases, list) or not cases or cases != [case for case in CASES if case in cases]
+    if (not isinstance(cases, list) or not cases or cases != [case for case in [*CASES, CART_CASE] if case in cases]
             or selection.get('kind') not in ('sp', 'mp') or selection.get('mode') not in ('native', 'toolkit')
             or type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
             or selection.get('languages') not in (['EN'], ['RU'])
             or 'PZSurvivorToolkit' not in selection.get('mods', [])
             or selection.get('options', {}).get('world_template')):
         raise ValueError('Equipment requires an ordered case subset, fresh SP/MP, native/toolkit and one EN/RU client')
+    if CART_CASE in cases and (cases != [CART_CASE] or selection['kind'] != 'mp'
+                               or selection.get('options', {}).get('mp_host') is not True
+                               or not {'SaucedCarts', 'saucedwheelbarrow'} <= set(selection['mods'])):
+        raise ValueError('cart-pickup requires its own one-client Host MP run and both Sauced cart mods')
     if selection['kind'] == 'mp' and not {'ZombieBuddy', 'PZToolkitJavaPatches'} <= set(selection['mods']):
         raise ValueError('MP equipment requires ZombieBuddy and Toolkit Java Patches')
 
@@ -81,6 +90,8 @@ def complete(selection, role, text):
 
 def verify(root, selection, catalog):
     from ..report import events
+    if selection['cases'] == [CART_CASE]:
+        return _verify_cart(root, selection)
     issues, outcomes = [], []
     text = (Path(root) / 'client1-launch.log').read_text(errors='replace')
     records = events(text)
@@ -164,3 +175,102 @@ def verify(root, selection, catalog):
             issues.append('Equipment acknowledgement captures missing or duplicated')
     return {'issues': issues, 'outcomes': outcomes,
             'evidence': {'limits': ['Fresh world, one actual client, inventory callbacks invoked programmatically; WAN and physical input unverified.']}}
+
+
+def _verify_cart(root, selection):
+    """A client success flag cannot replace exact, ordered server ownership receipts."""
+    import json
+    from ..report import events
+    root = Path(root)
+    client = (root / 'client1-launch.log').read_text(errors='replace')
+    server = (root / 'server-launch.log').read_text(errors='replace')
+    issues = []
+    records = events(client)
+    if [row.get('event') for row in records] != ['setup', 'case', 'complete']:
+        issues.append('Missing, duplicated or unordered cart equipment events')
+    for row in records:
+        if any(row.get(key) != value for key, value in
+               dict(suite='equipment', kind='mp', mode=selection['mode'], actor='client1').items()):
+            issues.append('Cart equipment event context differs')
+    def exact(row, expected):
+        return all(type(row.get(key)) is type(value) and row.get(key) == value for key, value in expected.items())
+    setup = next((row for row in records if row.get('event') == 'setup'), {})
+    if not exact(setup, dict(cases=[CART_CASE], expected=1, nativeDurations=True, queueEnabled=selection['mode'] == 'toolkit')):
+        issues.append('Cart setup did not prove native durations and queue mode')
+    end = next((row for row in records if row.get('event') == 'complete'), {})
+    if not exact(end, dict(cases=[CART_CASE], expected=1, performed=1, skipped=0, failed=0)):
+        issues.append('Cart completion counters differ')
+    case = next((row for row in records if row.get('event') == 'case'), {})
+    outcome = case.get('outcome', {})
+    if not exact(case, dict(id=CART_CASE, status='passed')) or not exact(outcome, dict(
+            cartPickup=True, inventoryPreserved=True, equipmentMatches=True, cargoPreserved=True,
+            nativeDurations=True, postprocessingVerified=True, authoritative=True,
+            repeatedPickup=True, nativeDrop=True, cartTypes=CART_TYPES, phases=9)):
+        issues.append('Cart pickup/drop effects or authoritative proof missing')
+    def markers(text, kind):
+        rows = []
+        prefix = '[CART_PICKUP] ' + kind + ' '
+        for line in text.splitlines():
+            if prefix in line:
+                try:
+                    row = json.loads(line.split(prefix, 1)[1])
+                    if not isinstance(row, dict):
+                        raise ValueError('marker must be an object')
+                    rows.append(row)
+                except (ValueError, TypeError):
+                    issues.append('Malformed cart ' + kind + ' marker')
+        return rows
+    clients, servers = markers(client, 'RECEIPT'), markers(server, 'RECEIPT')
+    expected = [(index, kind, phase) for index, kind in enumerate(CART_TYPES, 1) for phase in CART_PHASES]
+    identities = {}
+    for actor, rows in (('client1', clients), ('server', servers)):
+        if [(row.get('index'), row.get('type'), row.get('phase')) for row in rows] != expected:
+            issues.append('Missing, duplicate or unordered ' + actor + ' cart receipts')
+        for row in rows:
+            index, phase = row.get('index'), row.get('phase')
+            cart_id, cargo_id = row.get('id'), row.get('cargoID')
+            if type(index) is not int or type(cart_id) is not int or type(cargo_id) is not int or cart_id == -1 or cargo_id == -1 or cart_id == cargo_id:
+                issues.append('Invalid exact cart/cargo identity')
+                continue
+            identity = (cart_id, cargo_id, row.get('cargoWeight'))
+            if index in identities and identities[index] != identity:
+                issues.append('Cart/cargo identity or weight changed between client/server phases')
+            identities[index] = identity
+            ground = phase == 'drop'
+            required = dict(actor=actor, cargoPreserved=True, inventoryCount=0 if ground else 1,
+                            worldCount=1 if ground else 0, worldAttached=ground, aiming=False,
+                            primaryID=-1 if ground else cart_id, secondaryID=-1 if ground else cart_id)
+            hold, weight = row.get('holdMs'), row.get('cargoWeight')
+            if (not exact(row, required) or type(hold) is not int or hold < 500
+                    or type(weight) not in (int, float) or not 0 < weight < 2):
+                issues.append('Exact cart/cargo ownership or stable hold missing: ' + actor + '/' + str(phase))
+            if actor == 'client1' and (not exact(row, dict(queueEmpty=True, nativeDurations=True))
+                    or type(row.get('idleUpdates')) is not int or row['idleUpdates'] < 6
+                    or not ground and not exact(row, dict(actionStarted=True, actionProgress=True))):
+                issues.append('Cart native action or postprocessing settlement unproven')
+            if actor == 'client1' and not ground:
+                action_type = row.get('actionType')
+                duration = 88 if action_type == 'ToolkitWoodCartPickup' else 50
+                if (action_type not in ('ISCartPickupAction', 'ToolkitWoodCartPickup')
+                        or action_type == 'ToolkitWoodCartPickup' and row.get('type') != CART_TYPES[1]
+                        or type(row.get('actionDuration')) is not int or row['actionDuration'] != duration):
+                    issues.append('Cart pickup did not preserve its native/custom action duration')
+    if len({value[0] for value in identities.values()}) != 3 or len({value[1] for value in identities.values()}) != 3:
+        issues.append('Cart variants reused fixture identities')
+    if outcome.get('receipts') != clients:
+        issues.append('Cart case outcome differs from client receipts')
+    for actor, text in (('client1', client), ('server', server)):
+        cleaned = markers(text, 'CLEANED')
+        if [(row.get('actor'), row.get('index'), row.get('id')) for row in cleaned] != [
+                (actor, index, identities.get(index, (None,))[0]) for index in range(1, 4)]:
+            issues.append('Exact cart cleanup acknowledgements missing: ' + actor)
+        if '[QUEUE_TEST] FAIL ' in text:
+            issues.append('Cart fixture logged a failure: ' + actor)
+    if (not complete(selection, 'client1', client)
+            or client.count('[EQUIPMENT_TEST] RECEIPT case=cart-pickup') != 1
+            or server.count('[EQUIPMENT_TEST] SERVER_READY') != 1
+            or server.count('[EQUIPMENT_TEST] TRANSFER_PROBE active=true') != 1):
+        issues.append('Cart equipment lifecycle or native transfer probe missing')
+    return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': CART_CASE,
+            'status': case.get('status'), 'reason': case.get('reason'), 'outcome': outcome}],
+            'evidence': {'limits': ['Fresh one-client Host world; real native cart actions invoked programmatically without aim input.']}}
