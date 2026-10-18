@@ -91,6 +91,9 @@ def _verify_live_inputs(root, selection, runtime):
 
 
 def run(root, resource_wait=300):
+    if sys.platform == 'win32':
+        from .windows import run as run_windows
+        return run_windows(root, resource_wait)
     if sys.platform != "darwin":
         raise ValueError("Native GUI launch currently supports macOS; reports/matrix work on any platform")
     root = Path(root).resolve()

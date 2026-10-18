@@ -18,7 +18,7 @@ For a suite, read `QueueTestSelection` for exact kind/mode/cases/port. Emit JSON
 
 ## Commands
 
-Preparation needs Python 3.11+, JDK 25+ and installed B42.21 game files. Native GUI launch currently supports macOS. The core runner needs no Python packages; the SP cart mesh analyzers additionally require NumPy, as declared in their contribution. Health fixture selfchecks use `luajit` on PATH; existing product Lua regressions separately use `lupa`.
+Preparation needs Python 3.11+, JDK 25+ and installed B42.21 game files. The macOS runner supports the suites below. Windows has a bounded one-client Host launch path for `startup` and `forge`, using the game's bundled Java runtime, explicit ports, isolated loader approvals and a Windows Job Object that owns only the test client and its descendants. A named lease serializes this initial Windows launch path; available-memory and disk guards run before launch. Other Windows suites and physical input automation are not supported by that path. The core runner needs no Python packages; the SP cart mesh analyzers additionally require NumPy, as declared in their contribution. Health fixture selfchecks use `luajit` on PATH; existing product Lua regressions separately use `lupa`.
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_queue_*.py'
@@ -142,6 +142,8 @@ Matrix cells describe functional coverage; consult the same run's separate runti
 Cart suites report `captured` only after complete motion/render/identity and artifact coverage. Measurements and failed geometry/native/motion diagnostics remain in `functional.evidence`; `captured` is never an animation-equivalence PASS and keeps the overall result in review. Read-only probes attach only to this invocation's owned client Popen objects, after readiness; all executable probe inputs are frozen under client classes. Missing attachment, body/mesh data or render windows fails the capture.
 
 ### Craft UI callbacks
+
+For the reported workstation hang use `--suite forge --cases handcraft,forge,forge-shift --kind mp --mode toolkit --mods selected --config <host-config.json> --ports <first> <second>`. The config must contain `{"mp_host":true}` and may pin pre-fix/candidate Java mods through `mod_sources`. It uses the real Saw Logs handcraft control and Forge Simple Blade at a factory-created native Primitive Forge, then repeats the forge recipe after a real earlier-object removal on its square. The selected UI's actual craft button and native durations remain unchanged. Server receipts independently record exact input IDs, new output IDs and tool conservation; the client records action/owner quiescence and any sustained 100% stall. Cleanup of a failed action happens only after recording its failure. A pre-fix reproduction remains failed, including its runtime exceptions; do not waive it as background or treat decoder-only checks as this gameplay gate. The fixture is programmatic UI dispatch, not physical mouse input.
 
 Use `--suite craft-ui --cases context,vanilla-batch,neat-batch,cook-batch` for an ordered subset in one fresh SP/Host session. The context case selects the real menu option; batch cases use actual vanilla, Neat and Project Cook controls and their button dispatch. The `*-batch` cases pin explicit material selections and execute two native crafts with unchanged durations. The fixture dispatches the installed completion/cancellation callbacks without replacing them.
 

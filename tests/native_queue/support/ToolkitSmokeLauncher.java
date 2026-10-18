@@ -18,7 +18,7 @@ public class ToolkitSmokeLauncher {
             GLFW.glfwPollEvents();
             monitor = GLFW.glfwGetPrimaryMonitor();
         }
-        if (monitor == 0) throw new IllegalStateException("No awake macOS display is available; wake/connect the display before running the native fixture.");
+        if (monitor == 0) throw new IllegalStateException("No awake display is available; wake/connect the display before running the native fixture.");
         var mode = GLFW.glfwGetVideoMode(monitor);
         if (mode == null) throw new IllegalStateException("The primary display has no video mode; native fixture cannot start.");
         System.out.println("[QUEUE_TEST] DISPLAY_READY " + mode.width() + "x" + mode.height());
@@ -51,6 +51,20 @@ public class ToolkitSmokeLauncher {
                                     if (!hostChild.compareAndSet(null, child)) throw new IllegalStateException("Multiple Host children");
                                     System.out.println("[QUEUE_TEST] HOST_CHILD pid=" + child.pid() + " parent=" + ProcessHandle.current().pid());
                                 });
+                            }
+                            if (hostChild.get() == null && System.getProperty("os.name").startsWith("Windows")) {
+                                // Windows ProcessHandle.Info may omit argv. Read the Process
+                                // created by native CoopMaster, never discover an unrelated PID.
+                                var field = zombie.network.CoopMaster.class.getDeclaredField("serverProcess");
+                                field.setAccessible(true);
+                                var process = (Process)field.get(zombie.network.CoopMaster.instance);
+                                if (process != null && process.isAlive()) {
+                                    var child = process.toHandle();
+                                    if (child.parent().map(parent -> parent.pid() == ProcessHandle.current().pid()).orElse(false)
+                                            && hostChild.compareAndSet(null, child)) {
+                                        System.out.println("[QUEUE_TEST] HOST_CHILD pid=" + child.pid() + " parent=" + ProcessHandle.current().pid());
+                                    }
+                                }
                             }
                         } else if (!shuttingDown.get() && !hostChild.get().isAlive()) {
                             throw new IllegalStateException("Host child exited before its owner");

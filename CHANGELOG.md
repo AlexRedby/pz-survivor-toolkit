@@ -339,6 +339,11 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.23
+
+- **Fixed:** Refresh a registered workstation's stale spatial entity ID before decoding its CraftBench reference on the server. Removing an earlier object from the same square could otherwise cause `loadComponent` to throw while accepting a crafting request, leaving the client at 100% progress. Recovery requires the exact already-resolved workstation and matching incoming ID; no recipe effects are forced or replayed.
+- **Checks:** Reproduced the 100% Forge Simple Blade stall in a disposable Windows Host world with all 48 selected mods and Java Patches 0.1.22. The same fixture with 0.1.23 passed ordinary hand crafting, unchanged-forge crafting and crafting after a real earlier-object removal: one blade, one charcoal/iron debit, conserved tool IDs and idle native action/UI. Only the Java mod changed. Native decoder/medical regressions also passed. Both live runs retain seven client font-loading errors; the fixed run has no server action errors but remains runtime `needs-review`, not a clean whole-pack acceptance. No macOS, WAN or second-client coverage is claimed.
+
 ### 0.1.22
 
 - **Added:** Wooden-wheelbarrow footprints respect walls, doors and vehicle hulls while allowing wall sliding. Tight contact requires a manual reverse manoeuvre before turning out.

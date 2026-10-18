@@ -253,7 +253,8 @@ public final class Main {
             + ", fences=" + fences + ", piano=" + PIANO_SUPPORTED + ", basementRooms=" + BASEMENT_ROOMS_SUPPORTED
             + ", basementHall=" + BASEMENT_HALL_SUPPORTED + ", mannequin=" + MANNEQUIN_SUPPORTED
             + ", itemTransactions=" + QueueManagers.ITEM_SUPPORTED + ", actionManager=" + QueueManagers.ACTION_SUPPORTED
-            + ", actionCompletion=" + COMPLETION_SUPPORTED + ", actionAcknowledgements=" + ActionAcknowledgements.SUPPORTED);
+            + ", actionCompletion=" + COMPLETION_SUPPORTED + ", actionAcknowledgements=" + ActionAcknowledgements.SUPPORTED
+            + ", craftBench=" + CraftBenchReferences.SUPPORTED);
     }
 
     @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="perform", warmUp=true, strictMatch=true)

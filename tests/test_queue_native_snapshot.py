@@ -33,9 +33,12 @@ class NativeSnapshotTests(unittest.TestCase):
         for relative in ("projectzomboid.jar", "media/lua/shared/native.lua", "media/scripts/items.txt",
                          "media/lua/shared/Translate/EN/Fixture_EN.txt"):
             self.write(self.game / relative, "native input")
-        for relative in ("bin/java", "bin/javac"):
-            self.write(self.jdk / relative, "fake Java executable")
-            (self.jdk / relative).chmod(0o755)
+        for name in ('java', 'javac'):
+            executable = native.jdk_binary(self.jdk, name)
+            self.write(executable, "fake Java executable")
+            executable.chmod(0o755)
+        if sys.platform == 'win32':
+            self.write(self.game / 'jre64/bin/java.exe', 'fake bundled game runtime')
         shutil.copytree(ROOT / "tests/native_queue/support", self.project / "tests/native_queue/support")
         self.write(self.project / "tools/check_action_queue.py", "# queue CLI\n")
         self.write(self.project / "tools/queue_checks/report.py", "# report framework\n")
@@ -105,6 +108,8 @@ class NativeSnapshotTests(unittest.TestCase):
         root = self.prepare(suite='startup', kind='mp', clients=1, cases=['loaded'], options={'mp_host': True})
         selected = report.read_json(root / 'selection.json')
         runtime = report.read_json(root / 'runtime.json')
+        initial = report.read_json(root / 'initial-settings.json')
+        self.assertEqual((root / 'server/options.ini').read_bytes().decode('utf-8'), initial['server/options.ini'])
         self.assertEqual(str(root / 'client1'), runtime['host_cache'])
         for name in ('queue-smoke.ini', 'queue-smoke_SandboxVars.lua'):
             self.assertEqual((root / 'server/Server' / name).read_bytes(), (root / 'client1/Server' / name).read_bytes())

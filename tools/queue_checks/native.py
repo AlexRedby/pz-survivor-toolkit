@@ -15,6 +15,10 @@ VERSION = re.compile(r"\d+(?:\.\d+)*")
 MOD_ID = re.compile(r"[A-Za-z0-9_.-]+")
 
 
+def jdk_binary(jdk, name):
+    return Path(jdk) / 'bin' / (name + ('.exe' if os.name == 'nt' else ''))
+
+
 def sha256(path):
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -181,6 +185,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             selection: dict, workshop: list[Path] = ()) -> Path:
     """Return a fresh snapshot directory; never reuse or change an earlier run."""
     project, output, game, jdk = (Path(path).resolve() for path in (project, output, game, jdk))
+    launch_java = game / 'jre64/bin/java.exe' if os.name == 'nt' else jdk_binary(jdk, 'java')
     if output.exists():
         raise FileExistsError("Fresh output directory required: " + str(output))
     if selection.get('ports_auto') and selection.get('options', {}).get('world_template'):
@@ -190,11 +195,11 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     if selection.get('ports_auto') and selection.get('options', {}).get('seed_run'):
         selection = dict(selection, ports=json.loads((Path(selection['options']['seed_run']) / 'selection.json').read_text())['ports'])
     _validate(selection)
-    for path in (game / "projectzomboid.jar", jdk / "bin/java", jdk / "bin/javac"):
+    for path in (game / "projectzomboid.jar", launch_java, jdk_binary(jdk, 'java'), jdk_binary(jdk, 'javac')):
         if not path.is_file():
             raise ValueError("Missing game/JDK file: " + str(path))
     for binary in ("java", "javac"):
-        if not os.access(jdk / "bin" / binary, os.X_OK):
+        if not os.access(jdk_binary(jdk, binary), os.X_OK):
             raise ValueError("JDK binary is not executable: " + str(jdk / "bin" / binary))
     if not (game / "media/lua").is_dir():
         raise ValueError("Missing native game Lua sources: " + str(game / "media/lua"))
@@ -223,7 +228,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             raise ValueError('Run output must be outside the world template')
     if any(output.is_relative_to(source) for source in [game, jdk, *locations.values()]):
         raise ValueError("Output must be outside game, JDK and source mod directories")
-    if any(char in str(path) for path in (output, game, jdk) for char in (",", ":", "\n", "\r")):
+    if any(char in str(path)[len(path.drive):] for path in (output, game, jdk) for char in (",", ":", "\n", "\r")):
         raise ValueError("Runtime paths cannot contain loader/classpath separators or newlines")
     support = project / "tests/native_queue/support"
     suite = project / "tests/native_queue" / selection["suite"]
@@ -237,7 +242,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     for source in locations.values():
         if output.is_relative_to(source):
             raise ValueError("Snapshot output cannot be inside a selected mod")
-    sources = required + sorted(suite.rglob("*.lua")) + sorted((project / "tools/queue_checks").glob("*.py")) + [Path(__file__).resolve(), game / "projectzomboid.jar", jdk / "bin/java", jdk / "bin/javac"]
+    sources = required + sorted(suite.rglob("*.lua")) + sorted((project / "tools/queue_checks").glob("*.py")) + [Path(__file__).resolve(), game / "projectzomboid.jar", launch_java, jdk_binary(jdk, 'java'), jdk_binary(jdk, 'javac')]
     sources.append(Path(adapters.__file__))
     if adapter:
         sources += [Path(adapter.__file__), *map(Path, adapter.sources(project, selection))]
@@ -274,7 +279,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     world_bytes = copy_size(template / 'state' / name for name in world['files']) if world else 0
     admission.require_disk(output, len(roles), len(roles) * (mod_bytes + fixture_bytes) + world_bytes)
     runtime = {"project": str(project), "game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
-               "java": str(jdk / "bin/java"), "server_name": "queue-smoke", "roles": {}}
+               "java": str(launch_java), "server_name": "queue-smoke", "roles": {}}
     output.mkdir(parents=True)
     if selection.get('ports_auto'):
         selection = dict(selection, ports=admission.allocate_ports(output, selection) if selection['kind'] == 'mp' else [17343, 17344])
@@ -327,7 +332,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         if role != "server":
             font_preload(cache, selection)
             shutil.copy2(support / "ToolkitSmokeLauncher.java", cache / "classes")
-            subprocess.run([str(jdk / "bin/javac"), "-cp", str(game / "projectzomboid.jar"),
+            subprocess.run([str(jdk_binary(jdk, 'javac')), "-cp", str(game / "projectzomboid.jar"),
                             str(cache / "classes/ToolkitSmokeLauncher.java")], check=True, capture_output=True, text=True, timeout=60,
                            env={key: value for key, value in os.environ.items() if key not in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")})
             if not (cache / "classes/ToolkitSmokeLauncher.class").is_file():
@@ -402,7 +407,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     _json(output / "source-manifest.json", source_manifest)
     _json(output / 'game-inputs.json', game_input_manifest)
     _json(output / "runtime.json", runtime)
-    initial_settings = {path.relative_to(output).as_posix(): path.read_text(encoding="utf-8")
+    initial_settings = {path.relative_to(output).as_posix(): path.read_bytes().decode("utf-8")
                         for role in roles for path in [output / role / "options.ini", *sorted((output / role / "Server").glob("*"))]
                         if path.is_file()}
     _json(output / "initial-settings.json", initial_settings)
