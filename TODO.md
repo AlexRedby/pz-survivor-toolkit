@@ -1,8 +1,6 @@
-# Надёжная запись пресетов Quartermaster
+# Отказ чтения пользовательских хранилищ
 
-- [ ] Восстановить общий Lua-прогон: `test_quartermaster_tag_rules.lua` падает в `QuartermasterTagRules.lua:53` на `pairs(PresetStore.entries)`, когда entries отсутствует. Сверить контракт preset store и тестовые doubles; гейт — успешный общий `tools/run_tests.py`.
-
-- [ ] Устранить подтверждённую уязвимость прямой SP-перезаписи `QuartermasterPresets.txt` и `PZSTQuartermasterTagRules.txt`: native `LuaFileWriter` скрывает ошибки `PrintWriter`, а открытие файла уже удаляет прежний текст. Сохранить последний проверенный снимок при частичной записи/обрыве, подтверждать результат чтением и сохранять связь native preset generation с tag rule. Native `presetDeserialize` также превращает повреждённый непустой текст в пустую таблицу; отличать такой отказ от корректного пустого store. Переход должен читать существующие глобальные файлы и пройти отдельный cold restart; текущая защита от исключений загрузки/сериализации не заменяет этот гейт.
+- [ ] В `PZSurvivorWishlist/Service.lua` и `TagFilterPresets.lua` отличать отсутствующий файл от native I/O failure: `getFileReader(..., false)` возвращает `nil` в обоих случаях, а недоступный каталог может дать пустую enumeration. Не публиковать пустой cache и не открывать writer после неоднозначного чтения. Проверить `nil` reader существующих slots и пустую enumeration недоступного каталога, сохранив создание нового store и прежние данные.
 
 # Ускорение разработки анимаций
 

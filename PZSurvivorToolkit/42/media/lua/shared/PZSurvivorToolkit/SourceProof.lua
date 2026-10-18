@@ -51,6 +51,10 @@ local function hash(reader, adler, limit)
     return adler and sum * 65536 + value or value
 end
 
+function Proof.checksum(reader, adler, limit)
+    return hash(reader, adler, limit or 2000000)
+end
+
 function Proof.matches(path, expected, mod, adler, limit)
     local input = mod and getModFileReader or getGameFilesInput
     if type(input) ~= "function" or type(expected) ~= "number" then return false end

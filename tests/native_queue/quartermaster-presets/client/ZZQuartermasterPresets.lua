@@ -9,6 +9,14 @@ local specs = {
   yes={'toolElectrical','craftingElectrical_material','foodNonPerishable_cannedJarred'}, no={'foodPerishable_fruit'}},
 }
 
+local function creatorToken(value)
+ if value == nil then return 'nil' end
+ assert(type(value) == 'string', 'invalid persisted native creator')
+ local parts = {'s'}
+ for index = 1, #value do parts[#parts + 1] = string.format('%04x', string.byte(value, index)) end
+ return table.concat(parts)
+end
+
 local function check()
  assert(not isClient() and not isServer(), 'real SP required')
  PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ItemTags'):setValue(true)
@@ -35,6 +43,12 @@ local function check()
   end
   local store = LootSorter.getPresetStore()
   local preset = assert(store[spec.name], 'preset missing after process restart')
+  assert(preset.rev == 2, 'persisted native revision differs')
+  if config.cases[1] == 'seed' then
+   local username = getPlayer():getUsername()
+   if type(username) == 'string' then assert(preset.createdBy == username, 'persisted native creator differs') end
+  end
+  local creator = creatorToken(preset.createdBy)
   local rule = assert(Rules.getPreset(spec.name, preset), 'rule missing or stale generation')
   local expected = Tags.normalizeRule(spec.rule)
   assert(rule.mode == expected.mode and table.concat(rule.include, ',') == table.concat(expected.include, ',')
@@ -54,7 +68,7 @@ local function check()
   local editor = assert(LootSorter._presetEditor)
   assert(editor.toolkitTagRule and editor.toolkitTagRule.mode == expected.mode, 'reopened editor lost preset rule')
   LootSorter.closeAllWindows()
-  print('[QM_PRESET] RULE index='..index..' gen='..tostring(preset.gen)..' mode='..rule.mode..' resolved=true')
+  print('[QM_PRESET] RULE index='..index..' gen='..tostring(preset.gen)..' rev='..tostring(preset.rev)..' creator='..creator..' mode='..rule.mode..' resolved=true')
  end
  print('[QM_PRESET] COMPLETE case='..config.cases[1])
 end

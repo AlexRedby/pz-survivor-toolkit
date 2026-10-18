@@ -10,7 +10,8 @@ from .. import report
 SUITE = 'quartermaster-presets'
 TRANSFER_SUITE = 'quartermaster-transfers'
 MODS = ['PZSurvivorToolkit', 'Quartermaster', 'organizedCategories_core']
-STORES = ('QuartermasterPresets.txt', 'PZSTQuartermasterTagRules.txt')
+STORES = ('PZSTQuartermasterPresets_a.txt', 'PZSTQuartermasterPresets_b.txt')
+LEGACY_STORES = ('QuartermasterPresets.txt', 'PZSTQuartermasterTagRules.txt')
 MARKER = '[QM_PRESET] '
 TRANSFER_MARKER = '[QM_TRANSFER] '
 
@@ -35,6 +36,17 @@ def validate(selection):
     options = selection.get('options', {})
     if options.get('world_template') or bool(options.get('seed_run')) != (selection['cases'] == ['reload']):
         raise ValueError('Quartermaster reload requires seed_run; both cases create a fresh world')
+
+
+def _stores(cache):
+    lua = Path(cache) / 'Lua'
+    paths = [lua / name for name in STORES + LEGACY_STORES]
+    if (any(path.is_symlink() for path in (Path(cache), lua, *paths))
+            or any(path.exists() and not path.is_file() for path in paths)):
+        raise ValueError('Quartermaster stores must be regular global store files')
+    if not any((lua / name).is_file() for name in STORES):
+        raise ValueError('Quartermaster seed must contain at least one snapshot store')
+    return [path for path in paths if path.is_file()]
 
 
 def _seed(selection):
@@ -63,10 +75,7 @@ def _seed(selection):
         pass
     else:
         raise ValueError('Quartermaster seed process is still alive')
-    paths = [root / 'client1/Lua' / name for name in STORES]
-    if any(path.is_symlink() for path in (root / 'client1', root / 'client1/Lua', *paths)) or any(not path.is_file() for path in paths):
-        raise ValueError('Quartermaster seed must contain two regular global store files')
-    return root, paths
+    return root, _stores(root / 'client1')
 
 
 def sources(project, selection):
@@ -108,30 +117,37 @@ def verify(root, selection, catalog):
     if selection['suite'] == TRANSFER_SUITE:
         return _verify_transfers(Path(root), selection)
     root = Path(root)
-    issues, generations = [], []
+    issues, generations, revisions, creators, stores = [], [], [], [], []
     try:
         text = (root / 'client1-launch.log').read_text(errors='replace')
         case = selection['cases'][0]
         if not complete(selection, 'client1', text) or MARKER + 'FAIL ' in text:
             raise ValueError('Missing successful Quartermaster preset completion')
-        matches = re.findall(re.escape(MARKER) + r'RULE index=([12]) gen=(\S+) mode=(all|any) resolved=true', text)
-        if len(matches) != 2 or [(index, mode) for index, _, mode in matches] != [('1', 'all'), ('2', 'any')]:
+        pattern = (re.escape(MARKER) + r'RULE index=([12]) gen=(\S+) rev=(\d+) '
+                   r'creator=(nil|s(?:[0-9a-f]{4})*) mode=(all|any) resolved=true')
+        matches = re.findall(pattern, text)
+        if (len(matches) != 2 or [(index, mode) for index, _, _, _, mode in matches] != [('1', 'all'), ('2', 'any')]
+                or any(revision != '2' for _, _, revision, _, _ in matches)):
             raise ValueError('Missing ordered native preset generation/rule/resolver assertions')
-        generations = [generation for _, generation, _ in matches]
+        generations = [generation for _, generation, _, _, _ in matches]
+        revisions = [revision for _, _, revision, _, _ in matches]
+        creators = [creator for _, _, _, creator, _ in matches]
+        stores = _stores(root / 'client1')
         if case == 'reload':
-            seed, stores = _seed(selection)
+            seed, previous_stores = _seed(selection)
             previous = (seed / 'client1-launch.log').read_text(errors='replace')
-            if re.findall(re.escape(MARKER) + r'RULE index=([12]) gen=(\S+) mode=(all|any) resolved=true', previous) != matches:
-                raise ValueError('Reload changed preset generations')
-            if any(source.read_bytes() != (root / 'client1/Lua' / source.name).read_bytes() for source in stores):
+            if re.findall(pattern, previous) != matches:
+                raise ValueError('Reload changed preset generations, revisions or creators')
+            if ([path.name for path in previous_stores] != [path.name for path in stores]
+                    or any(source.read_bytes() != (root / 'client1/Lua' / source.name).read_bytes()
+                           for source in previous_stores)):
                 raise ValueError('Reload changed the persisted global store files')
-        elif any(not (root / 'client1/Lua' / name).is_file() for name in STORES):
-            raise ValueError('Native Save did not create both global store files')
     except (OSError, ValueError, KeyError) as error:
         issues.append(str(error))
     return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': selection['cases'][0],
             'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
-            'evidence': {'generations': generations, 'stores': list(STORES),
+            'evidence': {'generations': generations, 'revisions': revisions, 'creators': creators,
+                         'stores': [path.name for path in stores],
                          'limits': ['SP global stores in a fresh world; no Host or physical UI input coverage.']}}
 
 

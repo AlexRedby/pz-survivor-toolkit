@@ -1,4 +1,4 @@
-local Proof = TestSourceProof or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/SourceProof.lua')
+local Proof = TestSourceProof or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua')
 local unicodeA, unicodeB = TestUnicodeA or 'A洗😀é', TestUnicodeB or '第二行'
 local path, opened, closed = 'media/lua/reviewed.lua', 0, 0
 local lines, failRead, failClose = {}, false, false

@@ -27,10 +27,17 @@ getFileReader = function(path, create)
     if create and disk[path] == nil then disk[path] = '' end
     local text = disk[path]
     if not text then return nil end
-    local done = false
-    return {readLine = function() if not done then done = true; return text end end, close = function() end}
+    local lines, index = {}, 0
+    if text ~= '' then
+        for line in (text:gsub('\n$', '') .. '\n'):gmatch('(.-)\n') do lines[#lines + 1] = line end
+    end
+    return {readLine = function() index = index + 1; return lines[index] end, close = function() end}
 end
-getFileWriter = function(path) return {write = function(_, text) disk[path] = text end, close = function() end} end
+getFileWriter = function(path, create, append)
+    assert(create == true and append == false)
+    disk[path] = ''
+    return {write = function(_, text) disk[path] = disk[path] .. text end, close = function() end}
+end
 local function list(values)
     return {size = function() return #values end, get = function(_, i) return values[i + 1] end}
 end
@@ -65,8 +72,16 @@ LootSorter.modDataHasDesignation = function(md)
     return false
 end
 LootSorter.squareHasDesignation = function() return LootSorter.modDataHasDesignation(object.md) end
-local presets = {}
-LootSorter.getPresetStore = function() return presets end
+LootSorter.loadPresets = function() LootSorter._presets = {}; return LootSorter._presets end
+LootSorter.savePresets = function() end
+LootSorter.getPresetStore = function()
+    if not LootSorter._presets then LootSorter.loadPresets() end
+    return LootSorter._presets
+end
+LootSorter.getItemNames = function() return {} end
+LootSorter.getDisplayNameForFullType = function(value) return value end
+LootSorter.getItemFullType = function(value) return value end
+local function presets() return LootSorter.getPresetStore() end
 LootSorter.resolveEffective = function(cats, items, links, store)
     local a,b = {}, {}; union(a,cats); union(b,items)
     for name,link in pairs(links or {}) do
@@ -78,31 +93,30 @@ end
 local function privateFind()
     local md=object.md
     if not (md.LSBox or md.LSBoxItems or md.LSBoxPresets) then return {} end
-    return LootSorter.resolveEffective(md.LSBox and md.LSBox['0'], md.LSBoxItems and md.LSBoxItems['0'],md.LSBoxPresets and md.LSBoxPresets['0'],presets)
+    return LootSorter.resolveEffective(md.LSBox and md.LSBox['0'], md.LSBoxItems and md.LSBoxItems['0'],md.LSBoxPresets and md.LSBoxPresets['0'],presets())
 end
 LootSorter.findDesignatedOnSquare = privateFind
 LootSorter.serverFns.putPreset = function(_, args)
-    local existing=presets[args.name]
+    local store = presets()
+    local existing=store[args.name]
     if existing and args.baseRev ~= existing.rev then return 'stale' end
-    presets[args.name] = {cats=args.cats,items=args.items,gen=existing and existing.gen or clock,rev=(existing and existing.rev or 0)+1}
+    store[args.name] = {cats=args.cats,items=args.items,gen=existing and existing.gen or clock,rev=(existing and existing.rev or 0)+1}
+    LootSorter.savePresets()
     return 'ok'
 end
-LootSorter.serverFns.removePreset = function(_, args) presets[args.name] = nil; return 'ok' end
-local function serialize(value)
-    if type(value) ~= 'table' then return type(value)=='string' and string.format('%q', value) or tostring(value) end
-    local out={'{'}; for key,v in pairs(value) do out[#out+1]='['..serialize(key)..']='..serialize(v)..',' end
-    out[#out+1]='}'; return table.concat(out)
+LootSorter.serverFns.removePreset = function(_, args)
+    presets()[args.name] = nil
+    LootSorter.savePresets()
+    return 'ok'
 end
-LootSorter.presetSerialize = function(value) return 'return '..serialize(value) end
-LootSorter.presetDeserialize = function(text) return assert(loadstring(text))() end
 if NativeQuartermasterLuaRoot then
     dofile(NativeQuartermasterLuaRoot .. '/shared/LootSorter_Presets.lua')
     dofile(NativeQuartermasterLuaRoot .. '/shared/LootSorter_Util.lua')
     dofile(NativeQuartermasterLuaRoot .. '/shared/LootSorter_Plan.lua')
     loaded['TimedActions/ISTimedActionQueue'], loaded['TimedActions/ISInventoryTransferAction'] = {}, {}
     LootSorter.DBG = function() end
-    LootSorter.arePresetsSynced = function() return true end
     LootSorter.removeCoords = function() end
+    dofile(NativeQuartermasterLuaRoot .. '/client/LootSorter_PresetSync.lua')
     dofile(NativeQuartermasterLuaRoot .. '/client/LootSorter_Core.lua')
 end
 local Rules = require 'PZSurvivorToolkit/QuartermasterTagRules'
@@ -132,6 +146,7 @@ if NativeQuartermasterLuaRoot then
     boxes = LootSorter.gatherBoxesOrWarn(player)
     assert(#boxes == 1 and boxes[1].cats.Food, 'installed native sorter gather missed rule-only box')
     mode='client'; Rules.received={}; LootSorter._receivedRegistry=moddata.LootSorter_Registry
+    LootSorter._receivedPresets=presets()
     object.md.LSBox['0']=nil; safe=false
     boxes=LootSorter.gatherBoxes(player)
     assert(#boxes==0 and object.md.LSBox['0']==nil, 'rule lookup touched forbidden safehouse before native permission gate')
@@ -193,91 +208,34 @@ mode='client'; assert(Rules.applyBox(player,args())=='invalid'); mode='sp'
 -- Preserve native preset conflict checks; store only normalized rule data after success.
 local put=LootSorter.serverFns.putPreset
 assert(put(player,{name='Pantry',cats={Precise=true},items={Beans=true},pzstTagRule=rule})=='ok')
-assert(Rules.getPreset('Pantry',presets.Pantry))
-local saved=disk['PZSTQuartermasterTagRules.txt']; assert(saved)
-Rules.localPresets=nil
-assert(Rules.getPreset('Pantry',presets.Pantry).exclude[1]=='perishable','SP rules did not survive file roundtrip')
+assert(Rules.getPreset('Pantry',presets().Pantry))
+local Storage = require 'PZSurvivorToolkit/QuartermasterPresetStorage'
+local saved = Storage.load()
+assert(saved.generation > 0 and saved.native.Pantry.cats.Precise
+    and saved.rules.Pantry.gen == saved.native.Pantry.gen and saved.rules.Pantry.cats.food,
+    'native selection and linked tag rule did not commit in one snapshot')
+local legacyNative, legacyRules = disk['QuartermasterPresets.txt'], disk['PZSTQuartermasterTagRules.txt']
+LootSorter._presets, Rules.localPresets = nil, nil
+assert(Rules.getPreset('Pantry',presets().Pantry).exclude[1]=='perishable','SP rules did not survive snapshot roundtrip')
 local anyRule={mode='any',include={'food','electrical'},exclude={'perishable'}}
 assert(put(player,{name='Either',cats={},items={},pzstTagRule=anyRule})=='ok')
-Rules.localPresets=nil
-assert(Rules.getPreset('Either',presets.Either).mode=='any', 'SP any-rule mode was lost in sidecar')
-local either=LootSorter.resolveEffective({}, {}, {Either=presets.Either.gen}, presets)
+LootSorter._presets, Rules.localPresets = nil, nil
+assert(Rules.getPreset('Either',presets().Either).mode=='any', 'SP any-rule mode was lost in snapshot')
+local either=LootSorter.resolveEffective({}, {}, {Either=presets().Either.gen}, presets())
 assert(either.Food and either.Electronics and not either.foodPerishable, 'saved any+excluded rule changed semantics')
-local rev=presets.Pantry.rev
+local rev=presets().Pantry.rev
 assert(put(player,{name='Pantry',baseRev=0,cats={},items={},pzstTagRule={mode='any',include={'electrical'},exclude={}}})=='stale')
-assert(presets.Pantry.rev==rev and Rules.getPreset('Pantry',presets.Pantry).include[1]=='food')
-local effective,items=LootSorter.resolveEffective({Manual=true},{ManualItem=true},{Pantry=presets.Pantry.gen},presets)
+assert(presets().Pantry.rev==rev and Rules.getPreset('Pantry',presets().Pantry).include[1]=='food')
+local effective,items=LootSorter.resolveEffective({Manual=true},{ManualItem=true},{Pantry=presets().Pantry.gen},presets())
 assert(effective.FutureFood and effective.Manual and effective.Precise and items.Beans and items.ManualItem)
-presets.Pantry.gen=presets.Pantry.gen+1
-assert(not Rules.getPreset('Pantry',presets.Pantry), 'deleted/remade preset inherited prior rule')
+presets().Pantry.gen=presets().Pantry.gen+1
+assert(not Rules.getPreset('Pantry',presets().Pantry), 'deleted/remade preset inherited prior rule')
 assert(LootSorter.serverFns.removePreset(player,{name='Pantry'})=='ok' and not Rules.presetStore().Pantry)
--- Failed reads must not publish an empty cache that a later save can overwrite.
-do
-    local originalRead, originalWrite = getFileReader, getFileWriter
-    local decode, encode = LootSorter.presetDeserialize, LootSorter.presetSerialize
-    local file = 'PZSTQuartermasterTagRules.txt'
-    local savedText = disk[file]
-    for _, stage in ipairs({'open', 'read', 'close', 'decode'}) do
-        local closes = 0
-        Rules.localPresets = nil
-        getFileReader = function(path, create)
-            assert(path == file and create == true)
-            if stage == 'open' then error('read-open failure') end
-            local reader = assert(originalRead(path))
-            return {readLine = function()
-                if stage == 'read' then error('read failure') end
-                return reader:readLine()
-            end, close = function()
-                closes = closes + 1
-                if stage == 'close' then error('read-close failure') end
-                reader:close()
-            end}
-        end
-        LootSorter.presetDeserialize = stage == 'decode' and function() error('decode failure') end or decode
-        assert(not pcall(Rules.presetStore), stage .. ' failure was hidden')
-        assert(Rules.localPresets == nil and disk[file] == savedText, stage .. ' failure published or saved an empty store')
-        assert(closes == (stage == 'open' and 0 or 1), stage .. ' failure leaked a reader')
-        getFileReader, LootSorter.presetDeserialize = originalRead, decode
-        assert(Rules.getPreset('Either', presets.Either).mode == 'any', stage .. ' failure prevented a clean retry')
-    end
-    Rules.localPresets = nil
-    getFileReader = function() return nil end
-    assert(not pcall(Rules.presetStore) and Rules.localPresets == nil,
-        'native nil reader for an existing file was cached as an empty store')
-    getFileReader = originalRead
-    assert(Rules.getPreset('Either', presets.Either).mode == 'any')
-    Rules.localPresets = nil
-    getFileReader = function() error('unavailable sidecar') end
-    assert(not pcall(put, player, {name='Unread', cats={}, items={}}) and not presets.Unread,
-        'native preset was changed before a failed sidecar load')
-    assert(not pcall(LootSorter.serverFns.removePreset, player, {name='Either'}) and presets.Either,
-        'native preset was removed before a failed sidecar load')
-    getFileReader = originalRead
-    Rules.presetStore()
-    local opens, closes = 0, 0
-    getFileWriter = function(path, create, append)
-        assert(path == file and create == true and append == false)
-        opens = opens + 1
-        disk[path] = '' -- Native getFileWriter truncates as soon as it opens.
-        return {write=function() error('write failure') end, close=function() closes=closes+1 end}
-    end
-    LootSorter.presetSerialize = function() error('encode failure') end
-    assert(not pcall(Rules.persistPresets) and opens == 0 and disk[file] == savedText,
-        'serializer failure opened/truncated the existing sidecar')
-    LootSorter.presetSerialize = function() return nil end
-    assert(not pcall(Rules.persistPresets) and opens == 0 and disk[file] == savedText,
-        'invalid serializer result opened/truncated the existing sidecar')
-    LootSorter.presetSerialize = encode
-    local ok, err = pcall(Rules.persistPresets)
-    assert(not ok and tostring(err):find('write failure', 1, true) and closes == 1,
-        'write failure was hidden or leaked its writer')
-    getFileWriter = function() return {write=function() end, close=function() error('write-close failure') end} end
-    assert(not pcall(Rules.persistPresets), 'writer close failure was hidden')
-    getFileReader, getFileWriter = originalRead, originalWrite
-    disk[file] = savedText
-    Rules.localPresets = nil
-    assert(Rules.getPreset('Either', presets.Either).mode == 'any')
-end
+saved = Storage.load()
+assert(not saved.native.Pantry and not saved.rules.Pantry and saved.native.Either and saved.rules.Either,
+    'native removal and tag-rule cleanup were not committed together')
+assert(disk['QuartermasterPresets.txt'] == legacyNative and disk['PZSTQuartermasterTagRules.txt'] == legacyRules,
+    'snapshot writes changed legacy files')
 if NativeQuartermasterLuaRoot then
     -- Paste must keep clipboard A's native picks when another copy replaces the global clipboard with B.
     local originalSave, pasteReply = Rules.saveBox

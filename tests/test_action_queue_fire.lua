@@ -1,6 +1,6 @@
 if not NativeActionRoot then print('Fire native-contract checks skipped.'); return end
 require = function(module)
-    if module == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/SourceProof.lua'))() end
+    if module == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
 end
 local enabled, client = true, false
 PZSurvivorToolkit = {BulkActions = {}, Settings = {actionQueue = function() return enabled end}}

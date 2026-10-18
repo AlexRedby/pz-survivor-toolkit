@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.85
+
+- **Fixed:** Single-player Quartermaster presets and Toolkit tag rules save as one verified snapshot, alternating between two files. Interrupted or short writes retain the previous coherent pair; failed verification forces a fresh read before another save. Existing global files import automatically and remain untouched.
+- **Fixed:** Preset snapshots preserve native generation, revision, creator and item full types across restarts. Strict parsing rejects malformed or trailing data; string quoting preserves backslashes, Unicode and control characters in the game's Lua runtime.
+
 ### 0.1.84
 
 - **Fixed:** Server-side cart unequip and broken-cart drop finish without accessing the client action queue and return a Boolean based on the authoritative item result.

@@ -30,8 +30,8 @@ class QuartermasterPresets(unittest.TestCase):
         self.write('selection.json', self.initial)
         self.write('runtime.json', {'game': str(self.game), 'roles': {'client1': {'cache': str(self.seed / 'client1')}}})
         self.write('manifest.json', [{'id': name, 'files': {}} for name in adapter.MODS])
-        self.text = ('[QM_PRESET] RULE index=1 gen=123 mode=all resolved=true\n'
-                     '[QM_PRESET] RULE index=2 gen=456 mode=any resolved=true\n')
+        self.text = ('[QM_PRESET] RULE index=1 gen=123 rev=2 creator=s00410042 mode=all resolved=true\n'
+                     '[QM_PRESET] RULE index=2 gen=456 rev=2 creator=nil mode=any resolved=true\n')
         (self.seed / 'client1-launch.log').write_text(self.text + '[QM_PRESET] COMPLETE case=seed\n')
         for name in adapter.STORES:
             (self.seed / 'client1/Lua' / name).write_text('native serialized ' + name)
@@ -50,18 +50,49 @@ class QuartermasterPresets(unittest.TestCase):
             path.mkdir(parents=True, exist_ok=True)
         adapter.stage(ROOT, self.output, self.game, self.root / 'jdk', self.selection, locations, self.runtime)
 
-    def test_reload_seals_and_copies_only_two_native_global_store_files(self):
+    def test_reload_seals_and_copies_only_known_global_store_files(self):
         adapter.validate(self.selection)
         (self.seed / 'client1/Lua/unrelated.txt').write_text('unrelated user data')
+        for name in adapter.LEGACY_STORES:
+            (self.seed / 'client1/Lua' / name).write_text('untouched legacy ' + name)
         sources = adapter.sources(ROOT, self.selection)
-        self.assertIn(self.seed / 'client1/Lua' / adapter.STORES[0], sources)
+        for name in adapter.STORES + adapter.LEGACY_STORES:
+            self.assertIn(self.seed / 'client1/Lua' / name, sources)
         self.assertNotIn(self.seed / 'client1/Lua/unrelated.txt', sources)
         self.stage()
-        self.assertEqual(sorted(path.name for path in (self.cache / 'Lua').iterdir()), sorted(adapter.STORES))
-        for name in adapter.STORES:
+        self.assertEqual(sorted(path.name for path in (self.cache / 'Lua').iterdir()),
+                         sorted(adapter.STORES + adapter.LEGACY_STORES))
+        for name in adapter.STORES + adapter.LEGACY_STORES:
             self.assertEqual((self.cache / 'Lua' / name).read_bytes(), (self.seed / 'client1/Lua' / name).read_bytes())
         self.assertEqual((self.cache / 'mods/ActionQueueTest/42/media/lua/client/ZZStartup.lua').read_bytes(),
                          (ROOT / 'tests/native_queue/startup/client/ZZStartup.lua').read_bytes())
+
+    def test_reload_accepts_either_single_snapshot_slot_and_optional_legacy(self):
+        for slot in adapter.STORES:
+            for name in adapter.STORES:
+                (self.seed / 'client1/Lua' / name).unlink(missing_ok=True)
+            (self.seed / 'client1/Lua' / slot).write_text('one valid slot')
+            for name in adapter.LEGACY_STORES:
+                (self.seed / 'client1/Lua' / name).write_text('untouched legacy')
+            with self.subTest(slot=slot):
+                sources = adapter.sources(ROOT, self.selection)
+                self.assertIn(self.seed / 'client1/Lua' / slot, sources)
+                absent = next(name for name in adapter.STORES if name != slot)
+                self.assertNotIn(self.seed / 'client1/Lua' / absent, sources)
+                self.stage()
+                self.assertEqual((self.cache / 'Lua' / slot).read_text(), 'one valid slot')
+                (self.output / 'client1-launch.log').write_text(self.text + '[QM_PRESET] COMPLETE case=reload\n')
+                self.assertEqual(adapter.verify(self.output, self.selection, {})['issues'], [])
+                for path in (self.cache / 'Lua').iterdir():
+                    path.unlink()
+
+    def test_reload_refuses_legacy_only_seed(self):
+        for name in adapter.STORES:
+            (self.seed / 'client1/Lua' / name).unlink()
+        for name in adapter.LEGACY_STORES:
+            (self.seed / 'client1/Lua' / name).write_text('old native store')
+        with self.assertRaisesRegex(ValueError, 'at least one snapshot'):
+            adapter.sources(ROOT, self.selection)
 
     def test_reload_refuses_unsafe_or_still_running_seed(self):
         for status, runtime in [('failed', 'clean'), ('needs-review', 'unclassified-errors')]:
@@ -78,23 +109,44 @@ class QuartermasterPresets(unittest.TestCase):
         store.symlink_to(self.seed / 'selection.json')
         with self.assertRaisesRegex(ValueError, 'regular global store'):
             adapter._seed(self.selection)
+        store.unlink()
+        legacy = self.seed / 'client1/Lua' / adapter.LEGACY_STORES[0]
+        legacy.symlink_to(self.seed / 'missing')
+        with self.assertRaisesRegex(ValueError, 'regular global store'):
+            adapter._seed(self.selection)
 
     def test_reload_refuses_mismatched_mod_contents(self):
         self.write('manifest.json', [{'id': name, 'files': {'unexpected.lua': 'changed'}} for name in adapter.MODS])
         with self.assertRaisesRegex(ValueError, 'different mod contents'):
             self.stage()
 
-    def test_verify_requires_both_rules_same_generations_and_unchanged_files(self):
+    def test_verify_requires_both_rules_same_generations_revisions_creators_and_unchanged_files(self):
         self.stage()
         log = self.output / 'client1-launch.log'
         log.write_text(self.text + '[QM_PRESET] COMPLETE case=reload\n')
         self.assertEqual(adapter.verify(self.output, self.selection, {})['issues'], [])
-        for wrong in (self.text.replace('gen=123', 'gen=789'), self.text.splitlines()[0] + '\n', self.text + self.text):
+        for wrong in (self.text.replace('gen=123', 'gen=789'), self.text.replace('rev=2', 'rev=3'),
+                      self.text.replace('creator=s00410042', 'creator=s00410043'),
+                      self.text.replace('creator=nil', 'creator=s'),
+                      self.text.replace('creator=s00410042', 'creator=s041'),
+                      self.text.splitlines()[0] + '\n', self.text + self.text):
             with self.subTest(wrong=wrong):
                 log.write_text(wrong + '[QM_PRESET] COMPLETE case=reload\n')
                 self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
         log.write_text(self.text + '[QM_PRESET] COMPLETE case=reload\n')
         (self.cache / 'Lua' / adapter.STORES[1]).write_text('rewritten instead of loaded')
+        self.assertIn('changed the persisted', adapter.verify(self.output, self.selection, {})['issues'][0])
+
+    def test_verify_rejects_new_stores_or_legacy_rewrites(self):
+        legacy = self.seed / 'client1/Lua' / adapter.LEGACY_STORES[0]
+        legacy.write_text('untouched legacy')
+        self.stage()
+        (self.output / 'client1-launch.log').write_text(self.text + '[QM_PRESET] COMPLETE case=reload\n')
+        copied = self.cache / 'Lua' / legacy.name
+        copied.write_text('rewritten legacy')
+        self.assertIn('changed the persisted', adapter.verify(self.output, self.selection, {})['issues'][0])
+        copied.write_bytes(legacy.read_bytes())
+        (self.cache / 'Lua' / adapter.LEGACY_STORES[1]).write_text('unexpected legacy')
         self.assertIn('changed the persisted', adapter.verify(self.output, self.selection, {})['issues'][0])
 
     def test_validation_requires_two_separate_sp_lifecycles(self):

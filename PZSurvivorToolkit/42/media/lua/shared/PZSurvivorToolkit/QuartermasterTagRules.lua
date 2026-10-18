@@ -2,8 +2,7 @@ local Tags = require "PZSurvivorToolkit/ItemTags"
 
 local Rules = {}
 PZSurvivorToolkit.QuartermasterTagRules = Rules
-local FIELD, STORE, FILE = "PZSTQuartermasterTagRules", "PZSTQuartermasterTagRules", "PZSTQuartermasterTagRules.txt"
-local ANY = "__PZST_ANY__"
+local FIELD, STORE = "PZSTQuartermasterTagRules", "PZSTQuartermasterTagRules"
 local byCategories = setmetatable({}, {__mode = "k"})
 local resolvedRules = setmetatable({}, {__mode = "k"})
 local gatheringPlayer
@@ -37,53 +36,13 @@ function Rules.presetStore()
         return store.presets
     end
     if Rules.localPresets then return Rules.localPresets end
-    local presets = {}
-    -- Create only if missing: nil can then only mean failure, never an empty store.
-    local reader = getFileReader(FILE, true)
-    if not reader then error("Cannot read Quartermaster tag rules") end
-    local ok, text = pcall(function()
-        local lines, line = {}, reader:readLine()
-        while line do lines[#lines + 1] = line; line = reader:readLine() end
-        return table.concat(lines, "\n")
-    end)
-    local closed, closeError = pcall(function() reader:close() end)
-    if not ok then error(text) end
-    if not closed then error(closeError) end
-    local stored = LootSorter.presetDeserialize(text)
-    for name, entry in pairs(stored) do
-        local rule = {mode = entry.items[ANY] and "any" or "all", include = {}, exclude = {}}
-        for id in pairs(entry.cats) do rule.include[#rule.include + 1] = id end
-        for id in pairs(entry.items) do if id ~= ANY then rule.exclude[#rule.exclude + 1] = id end end
-        rule = Tags.normalizeRule(rule)
-        if rule then presets[name] = {rule = rule, gen = entry.gen} end
-    end
-    Rules.localPresets = presets
-    return Rules.localPresets
+    return require("PZSurvivorToolkit/QuartermasterPresets").install(Rules).rules()
 end
 
 function Rules.persistPresets()
     if isServer() then ModData.transmit(STORE); return end
     if isClient() then return end
-    local records = {}
-    for name, entry in pairs(Rules.presetStore()) do
-        local rule = copy(entry.rule)
-        if rule and Tags.ruleActive(rule) then
-            local record = {cats = {}, items = {}, gen = entry.gen}
-            for _, id in ipairs(rule.include) do record.cats[id] = true end
-            for _, id in ipairs(rule.exclude) do record.items[id] = true end
-            if rule.mode == "any" then record.items[ANY] = true end
-            records[name] = record
-        end
-    end
-    -- Opening the native writer truncates the file, so prepare the full text first.
-    local text = LootSorter.presetSerialize(records)
-    if type(text) ~= "string" then error("Cannot serialize Quartermaster tag rules") end
-    local writer = getFileWriter(FILE, true, false)
-    if not writer then error("Cannot save Quartermaster tag rules") end
-    local ok, writeError = pcall(function() writer:write(text) end)
-    local closed, closeError = pcall(function() writer:close() end)
-    if not ok then error(writeError) end
-    if not closed then error(closeError) end
+    return require("PZSurvivorToolkit/QuartermasterPresets").install(Rules).save()
 end
 
 function Rules.getPreset(name, preset)
