@@ -10,6 +10,14 @@
 - [ ] On the next shared cart-native run, obtain the standard path report with same-tick CancelAction/terminal accounting fixed: the saved 24 routes were checked in separate analysis; leave the original report unchanged. The shared visual gate remains open due to wide-trouser contact with the left handle and unclassified font messages.
 - [ ] Check the wooden wheelbarrow's braced stance in the remaining collision scenes: the full bank with a female model and Walk with a full load. Check feet, grip, wheel and absence of jolts; test Run/Sprint and impact in separate scenarios.
 
+# Current movement and collision coverage
+
+- [ ] Replace stale absolute-key coverage claims with native relative-input maneuver and obstacle matrices. Keep historical reports unchanged; record actual body/load/gait, exact input stages, accepted heading, identity and sampling coverage.
+- [ ] Run straight movement, both directions of 45/90/135/180-degree arcs, steering release, arc stops and screen-up/down slaloms at multiple switch intervals across Walk/Run/Sprint, male/female and empty/full cargo. Gate: native gait progression, measured travel/yaw, no unintended reverse and bounded release/stop; retain grip/wheel/body diagnostics separately.
+- [ ] Run frontal contact/bracing/reverse recovery, both wall-slide directions, corner contact and real open/closed doors across the same body/load/gait combinations. Gate: native obstacle controls, actual geometry and full cart/wheel clearance, exact cargo/ownership, no trapping after manual reverse and safe cleanup.
+- [ ] Diagnose and fix reproducible movement defects exposed by these runs, with focused regressions and repeats. Known Host observer wall penetration remains a separate open defect; SP results do not close that multiplayer visual gate.
+- [ ] Inspect representative recordings and worst measured transitions, retain reproducible evidence, update only completed TODO portions, clean disposable profiles, and deliver checked changes to main with any required component version bump.
+
 # Natural wooden wheelbarrow animation
 
 ## Maneuvers and transitions

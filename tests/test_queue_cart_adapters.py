@@ -110,6 +110,27 @@ class CartAdapterTests(unittest.TestCase):
         self.assertFalse(carts.complete(self.selection, 'client1', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=0\n'))
         self.assertFalse(carts.complete(self.selection, 'client1', '[WOOD_PROTOTYPE] BOOTSTRAP_READY\n'))
 
+    def test_relative_motion_and_obstacle_matrices_keep_exact_axes_and_sources(self):
+        for bank, count, required in (
+                ('motion-matrix', 36, 'female-full-sprint-slalom-down'),
+                ('obstacle-matrix', 72, 'female-full-sprint-door-open')):
+            with self.subTest(bank=bank):
+                names = carts.scene_names(bank)
+                self.assertEqual(len(names), count)
+                self.assertEqual(len(set(names)), count)
+                self.assertIn(required, names)
+                for sex in ('male', 'female'):
+                    for load in ('empty', 'full'):
+                        for gait in ('walk', 'run', 'sprint'):
+                            self.assertEqual(sum(n.startswith(f'{sex}-{load}-{gait}-') for n in names), count//12)
+                self.selection['cases'] = [bank]
+                paths = carts.sources(ROOT, self.selection)
+                intake = ROOT/'tests/native_queue/contributions/wooden_cart_motion'
+                self.assertIn(intake/f'scenario-{bank}.lua', paths)
+                self.assertIn(intake/f'analyze-{bank}.py', paths)
+                self.assertTrue(carts.complete(self.selection, 'client1', f'[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases={count}\n'))
+                self.assertFalse(carts.complete(self.selection, 'client1', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=12\n'))
+
     def test_vehicle_bank_stages_only_owned_vehicle_fixture_and_exact_scenes(self):
         self.selection['cases'] = ['vehicles']
         self.stage()
@@ -491,7 +512,7 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'native-e'])
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'motion-matrix', 'obstacle-matrix', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'native-e'])
         for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 16), ('wall-fast-manual-exit', 32), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
@@ -738,7 +759,7 @@ class CartAdapterTests(unittest.TestCase):
             self.assertEqual(len(set(full)),count,bank)
             if bank=='manual': continue
             text=(intake/source).read_text()
-            start=text.index('local cases=')
+            start=text.index('local specs=') if bank == 'obstacle-matrix' else text.index('local cases=')
             marker='cases=CartLabSelectScenes(cases)'
             body=text[start:text.index(marker,start)+len(marker)]
             flags=dict(disposable=True,footprint=bank in ('collision','footprint','brace','fast-slide','wall-exit','wall-manual-exit','wall-fast-manual-exit'),vehicles=bank=='vehicles',brace=bank=='brace',fastSlide=bank=='fast-slide',wallExit=bank in ('wall-exit','wall-manual-exit','wall-fast-manual-exit'),wallManualExit=bank in ('wall-manual-exit','wall-fast-manual-exit'),wallFastManualExit=bank=='wall-fast-manual-exit',

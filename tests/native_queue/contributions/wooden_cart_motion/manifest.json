@@ -40,7 +40,11 @@
     "vehicle_analyzer": "analyze-vehicles.py",
     "brace_analyzer": "analyze-brace.py",
     "controls_scenario": "scenario-controls.lua",
-    "variants_scenario": "scenario-variants.lua"
+    "variants_scenario": "scenario-variants.lua",
+    "motion_matrix_scenario": "scenario-motion-matrix.lua",
+    "motion_matrix_analyzer": "analyze-motion-matrix.py",
+    "obstacle_matrix_scenario": "scenario-obstacle-matrix.lua",
+    "obstacle_matrix_analyzer": "analyze-obstacle-matrix.py"
   },
   "origin": {
     "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",
@@ -677,5 +681,64 @@
       "native-after"
     ],
     "scope": "Real native door control before/after cart gestures, nearest reachable cart priority, >0.5-second held drop, cancellation/repeat, exact ownership/cargo, restored context flag. SP only; independent Host ownership gate remains separate."
+  },
+  "motion_matrix_scenario": {
+    "case_count": 36,
+    "input_scheme": "relative-keyboard-v1",
+    "axes": {
+      "sex": [
+        "male",
+        "female"
+      ],
+      "cargo": [
+        "empty",
+        "full"
+      ],
+      "gait": [
+        "walk",
+        "run",
+        "sprint"
+      ],
+      "spec": [
+        "arcs",
+        "slalom-up",
+        "slalom-down"
+      ]
+    },
+    "record_seconds": {
+      "arcs": 90,
+      "slalom-up": 20,
+      "slalom-down": 20
+    },
+    "scope": "Measured forward arcs in both directions at 45/90/135/180 degrees, steering release, stop on arc, and screen-up/down slaloms at 300/600/900 ms intervals. Native controls and fixed full recording windows; motion results do not establish visual equivalence."
+  },
+  "obstacle_matrix_scenario": {
+    "case_count": 72,
+    "input_scheme": "relative-keyboard-v1",
+    "axes": {
+      "sex": [
+        "male",
+        "female"
+      ],
+      "cargo": [
+        "empty",
+        "full"
+      ],
+      "gait": [
+        "walk",
+        "run",
+        "sprint"
+      ],
+      "spec": [
+        "frontal",
+        "slide-left",
+        "slide-right",
+        "corner",
+        "door-closed",
+        "door-open"
+      ]
+    },
+    "record_seconds_per_case": 16,
+    "scope": "Native walls, corner and real doors with independent bare controls, held relative forward input, explicit manual reverse and final release. Exact cart/cargo and native mesh/wheel clearance; body/clothing and Host observer correctness remain separate."
   }
 }

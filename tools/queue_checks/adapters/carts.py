@@ -22,6 +22,8 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
             'stop-timing': ('scenario-stop.lua', 4),
             'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
+            'motion-matrix': ('scenario-motion-matrix.lua', 36),
+            'obstacle-matrix': ('scenario-obstacle-matrix.lua', 72),
             'collision': ('scenario-collision.lua', 24), 'footprint': ('scenario-collision.lua', 24),
             'vehicles': ('scenario-vehicles.lua', 12),
             'brace': ('scenario-collision.lua', 8),
@@ -72,6 +74,10 @@ CONTROL_POSES = {'forward-0': 0, 'forward-angle': 2.1, 'left-held': 0, 'right-he
 
 
 def scene_names(case):
+    if case in ('motion-matrix', 'obstacle-matrix'):
+        specs = ('arcs', 'slalom-up', 'slalom-down') if case == 'motion-matrix' else ('frontal', 'slide-left', 'slide-right', 'corner', 'door-closed', 'door-open')
+        return [f'{sex}-{load}-{gait}-{spec}' for sex in ('male', 'female') for load in ('empty', 'full')
+                for gait in ('walk', 'run', 'sprint') for spec in specs]
     if case in ('variants', 'controls'):
         return list(VARIANTS)
     if case == 'native-e':
@@ -505,7 +511,7 @@ def _coverage(cache, text, count, metrics):
         start = int(start)
         row = next(row for row in rows if row['case'] == name)
         end_ms=row.get('measurementEndAfterCaseMs',metrics.get('measurementEndAfterCaseMs',11800))
-        if type(end_ms) is not int or end_ms not in (11800,14800,15800,17800,28800):
+        if type(end_ms) is not int or end_ms not in (11800,14800,15800,17800,19800,28800,89800):
             raise ValueError('Invalid native measurement window for ' + name)
         for kind, samples in (('body', body), ('grip', grip)):
             times = sorted(set(row['wallTimeMillis'] for row in samples if start + 800 < row['wallTimeMillis'] < start + end_ms))
@@ -899,11 +905,15 @@ def verify(root, selection, catalog):
                 motion = _load(intake / 'analyze-reverse.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reverse-motion.json', json.dumps(motion, indent=2, allow_nan=False))
-            elif case in ('stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'path', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit'):
+            elif case in ('motion-matrix', 'obstacle-matrix', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'path', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit'):
                 analyzer='footprint' if case in ('collision','fast-slide','wall-exit','wall-manual-exit','wall-fast-manual-exit') else case
                 evidence['analyzers'][case] = _run([sys.executable, str(intake / ('analyze-' + analyzer + '.py')),
                     '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / (case + '-motion.json'))] + (['--'+case] if case in ('fast-slide','wall-exit','wall-manual-exit','wall-fast-manual-exit') else []), analysis, case)
                 evidence['motion'] = _json(analysis / (case + '-motion.json'))
+                if case in ('motion-matrix', 'obstacle-matrix') and not evidence['motion'].get('motionPass'):
+                    raise ValueError('Native '+case+' movement failed: ' + str(evidence['motion'].get('motionFailures')))
+                if case == 'obstacle-matrix' and not evidence['motion'].get('footprintPass'):
+                    raise ValueError('Native obstacle-matrix geometry failed: ' + str(evidence['motion'].get('footprintFailures')))
                 if case == 'stop-timing' and not evidence['motion'].get('timingVerified'):
                     raise ValueError('Stop timing capture did not verify its measurement windows')
                 if case == 'stop-timing' and not evidence['motion'].get('residualBrakingVerified'):

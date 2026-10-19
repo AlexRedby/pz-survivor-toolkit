@@ -37,6 +37,33 @@ Coordinate the GUI slot before `resume`. Preparation compiles fixtures and recor
 
 The adapter reads full `client1-launch.log` when available because high-rate scenario output rotates `console.txt`. Both stop and pose analyzers receive that same original path through `--log`; logs are never rewritten. A standalone analyzer can also accept `--log /absolute/full-stdout.log`.
 
+## Relative movement and obstacle matrices
+
+Use `--cases motion-matrix` for 36 current-control scenes: male/female, empty/full,
+Walk/Run/Sprint, with measured arcs and screen-up/down slaloms. Arc scenes record
+90 seconds and cover both directions at 45/90/135/180 degrees, steering release
+and stopping on an arc. Slalom scenes record 20 seconds with 300/600/900 ms side
+switches. Forward+Left/Right turns; Backward remains reverse. A scene never resets
+the actor's position or heading during its recording.
+
+Use `--cases obstacle-matrix` for 72 scenes across the same body/load/gait axes:
+frontal bracing, both wall-slide directions, corner contact and real open/closed
+doors. Every scene records 16 seconds, including explicit manual reverse and
+release. Independent bare native controls establish the obstacle layouts. Frontal,
+corner and door scenes require normal backoff; slides require manual backward
+travel along the wall. The separate wall-manual-exit banks cover reaching a wall
+end and turning out. Contact is checked against the current native collision
+envelope, while rendered mesh/wheel penetration is checked independently.
+The health overlay is hidden only in the disposable test process, without saving
+user options.
+
+Both banks retain the shared mesh/grip/native-pose probes. Their dedicated
+`analyze-motion-matrix.py` and `analyze-obstacle-matrix.py` report measured behavior;
+completion does not establish animation equivalence. Selected-scene runs retain
+the common partial/debug status. Historical absolute-input maneuver banks do not
+establish coverage of the current cart-relative controls. Host observer wall
+penetration remains a separate unresolved gate.
+
 ## Selected-scene debug captures
 
 Add `--cart-scene male-full-corner` to a fresh `prepare --suite wooden_cart_motion --cases path` command above to record that scene only. Repeat the flag for more exact scene IDs, or set `cart_scenes` to an array of exact names in the resource config. Names match the video/log scene names; unknown, duplicate and empty selections are rejected before profile creation. Execution preserves the original bank order. Omit the filter to retain the full matrix. Collision captures keep their three bare controls because scene layouts depend on them.
@@ -87,7 +114,7 @@ The fixture requires single-player and RU language in `options.ini`; other local
 ```sh
 python3 tests/native_queue/contributions/wooden_cart_motion/self_check.py
 python3 tests/native_queue/contributions/wooden_cart_motion/self_check.py \
-  --game-java-dir "$PZ_GAME_JAVA_DIR" --jdk "$JAVA_HOME"
+  --game-java-dir "$PZ_GAME_JAVA_DIR" --jdk "$JAVA_HOME" --patch-jar "$PZ_PATCH_JAR"
 ```
 
 Lua syntax requires `luajit` or `lua` on PATH, or `--lua`. Java compilation requires both explicit dependency paths; omitted checks are reported as skipped. Compilation output goes to a temporary directory. There are no runtime binaries, saves, screenshots, videos, copied mods or game assets in this contribution.

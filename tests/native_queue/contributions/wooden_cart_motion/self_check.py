@@ -23,6 +23,8 @@ def check_manifest():
         "java": "Main.java", "kahlua_checks": "KahluaChecks.java", "test_area": "test-area.lua",
         "bootstrap": "bootstrap.lua", "scenario": "scenario-clips.lua", "reverse_scenario": "scenario-reverse.lua", "reverse_analyzer": "analyze-reverse.py", "reversal_scenario": "scenario-reversal.lua", "stop_scenario": "scenario-stop.lua", "stop_analyzer": "analyze-stop.py",
         "evidence": "evidence/README.md",
+        "motion_matrix_scenario": "scenario-motion-matrix.lua", "motion_matrix_analyzer": "analyze-motion-matrix.py",
+        "obstacle_matrix_scenario": "scenario-obstacle-matrix.lua", "obstacle_matrix_analyzer": "analyze-obstacle-matrix.py",
         "reversal_analyzer": "analyze-reversal.py", "stationary_scenario": "scenario-stationary.lua", "stationary_analyzer": "analyze-stationary.py",
         "maneuvers_scenario": "scenario-maneuvers.lua", "maneuvers_analyzer": "analyze-maneuvers.py",
         "obstacles": "obstacles.lua", "collision_scenario": "scenario-collision.lua", "collision_analyzer": "analyze-collision.py",
@@ -52,7 +54,8 @@ def check_manifest():
     allowed = {"Main.java", "KahluaChecks.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py", "obstacles.lua", "scenario-collision.lua", "analyze-collision.py", "analyze-footprint.py"}
     allowed |= {"scenario-interaction.lua", "analyze-interaction.py", "analyze-interruption.py", "analyze-repeat.py",
                 "analyze-wheel-cycle.py", "scenario-path.lua", "analyze-path.py", "scene-selection.lua", "analyze-impact.py", "analyze-stop-timing.py", "vehicles.lua", "scenario-vehicles.lua", "analyze-vehicles.py", "analyze-brace.py"}
-    allowed |= {"scenario-controls.lua", "scenario-variants.lua", "scenario-native-e.lua"}
+    allowed |= {"scenario-controls.lua", "scenario-variants.lua", "scenario-native-e.lua",
+                "scenario-motion-matrix.lua", "analyze-motion-matrix.py", "scenario-obstacle-matrix.lua", "analyze-obstacle-matrix.py"}
     assert {p.name for p in HERE.iterdir() if p.is_file()} == allowed
     for path in HERE.rglob("*"):
         if path.is_file():
@@ -253,17 +256,17 @@ def check_lua(executable):
     return "PASS (syntax, missing config, area bounds and non-test-save refusal)"
 
 
-def check_java(game, jdk):
-    if game is None and jdk is None:
-        return "SKIPPED (supply --game-java-dir and --jdk)"
-    assert game is not None and jdk is not None, "Supply both Java dependency paths"
+def check_java(game, jdk, patch):
+    if game is None and jdk is None and patch is None:
+        return "SKIPPED (supply --game-java-dir, --jdk and --patch-jar)"
+    assert game is not None and jdk is not None and patch is not None, "Supply --game-java-dir, --jdk and --patch-jar"
     game, jdk = game.resolve(), jdk.resolve()
     compiler = jdk / "bin" / ("javac.exe" if os.name == "nt" else "javac")
     version = subprocess.run([str(compiler), "-version"], check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
     match = re.search(r"javac (\d+)", version)
     assert match and int(match[1]) >= 25, version
-    jars = [game / name for name in ("projectzomboid.jar", "ZombieBuddy.jar")]
-    assert all(path.is_file() for path in jars), "Local game/ZombieBuddy JARs required"
+    jars = [game / name for name in ("projectzomboid.jar", "ZombieBuddy.jar")] + [patch.resolve()]
+    assert all(path.is_file() for path in jars), "Local game/ZombieBuddy and candidate patch JARs required"
     with tempfile.TemporaryDirectory(prefix="wooden-cart-compile-") as output:
         subprocess.run([str(compiler), "--release", "17", "-cp", os.pathsep.join(map(str, jars)), "-d", output, str(HERE / "Main.java"), str(HERE / "KahluaChecks.java")], check=True)
         assert (Path(output) / "net/alexredby/cartlab/Main.class").is_file()
@@ -280,11 +283,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game-java-dir", type=Path)
     parser.add_argument("--jdk", type=Path)
+    parser.add_argument("--patch-jar", type=Path, help="Candidate with the current cart steering APIs")
     parser.add_argument("--lua", default=shutil.which("luajit") or shutil.which("lua"))
     args = parser.parse_args()
     check_manifest()
     lua = check_lua(args.lua)
-    java = check_java(args.game_java_dir, args.jdk)
+    java = check_java(args.game_java_dir, args.jdk, args.patch_jar)
     print(f"WOODEN_CART_FIXTURE_CHECK: schema/files=PASS; Lua={lua}; Java={java}; live=NOT_RUN")
 
 

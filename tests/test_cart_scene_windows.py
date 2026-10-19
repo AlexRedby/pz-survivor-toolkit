@@ -34,6 +34,22 @@ class CartSceneWindowTests(unittest.TestCase):
     def parse(self, text, names=None, bank='reverse'):
         return windows.completed_windows(text, windows.contract(bank, self.names if names is None else names))
 
+    def test_relative_matrix_windows_cover_late_arcs_and_slaloms(self):
+        for bank, name, seconds in (
+                ('motion-matrix', 'female-full-walk-arcs', 90),
+                ('motion-matrix', 'male-empty-sprint-slalom-down', 20),
+                ('obstacle-matrix', 'female-full-sprint-door-open', 16)):
+            with self.subTest(bank=bank, name=name):
+                phases = [(0, '0', 0), (1000, '2', 1), (int(seconds*1000)-3500, '0', 0)]
+                text = ('[WOOD_BANK] RUN_STARTED\n'
+                        + self.scene(name, 100000, seconds=seconds, phases=phases)
+                        + '[WOOD_BANK] ALL_COMPLETE cases=1\n')
+                scene = self.parse(text, [name], bank=bank)[name]
+                self.assertEqual(scene['measurementEndMs'], seconds*1000-200)
+                self.assertEqual(windows.phase_at(scene, seconds*1000-500), 'drive=0,gait=0')
+                with self.assertRaises(ValueError):
+                    self.parse(text.replace('seconds='+str(seconds), 'seconds=12'), [name], bank=bank)
+
     def test_reverse_subset_uses_exact_selected_names_and_native_phase_labels(self):
         result = self.parse(self.log())
         self.assertEqual(list(result), self.names)

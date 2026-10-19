@@ -5,6 +5,10 @@ import re
 
 
 def record_seconds(bank, name):
+    if bank == 'motion-matrix':
+        return 90 if name.endswith('-arcs') else 20
+    if bank == 'obstacle-matrix':
+        return 16
     if bank == 'vehicles' and '-full-vehicle-' in name and '-slide-' in name:
         return 15
     return {'interaction': 16, 'wheel': 30, 'interruption': 20,
