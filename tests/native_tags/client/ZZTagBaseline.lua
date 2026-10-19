@@ -487,7 +487,14 @@ if config.tagRules then
  add(function()
   if not Tags.enabled() then return end
   local own=ownEffective();if not own then return end
-  assert(own.cats[batteryCategory] and own.cats.foodPerishable_fruit and not own.cats.foodPerishable_meat,
+  local apple=assert(Fixture.find(source,setup.apple),'fixture Apple missing during dynamic rule check')
+  local steak=assert(Fixture.find(source,setup.steak),'fixture Steak missing during dynamic rule check')
+  local function matchesRule(item)
+   local tags=Tags.forItem(item)
+   for _,rule in ipairs(own.rules or {}) do if Tags.matchesRule(tags,rule) then return true end end
+   return false
+  end
+  assert(own.cats[batteryCategory] and matchesRule(apple) and not matchesRule(steak),
    're-enabled dynamic rule/manual selection changed')
   return sortSource()
  end)

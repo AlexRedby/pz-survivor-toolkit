@@ -24,6 +24,8 @@ local function fixture(options)
     env.isClient = function() return false end
     env.PZSurvivorToolkit = {ActionQueueOperations = {registerProducer = function() end},
         ActionQueueDefinitions = {registerBehavior = function() end}}
+    -- ActionQueueCompat's manifest installer expects the owned Quartermaster namespace to exist.
+    env.LootSorter = {}
     env.ISTimedActionQueue = {add = function(action) queued[#queued + 1] = action end,
         addAfter = function() end, addToQueue = function() end}
     env.getActivatedMods = function() return {contains = function(_, id) return id == 'BetterGeneratorInfo' and not options.inactive end} end

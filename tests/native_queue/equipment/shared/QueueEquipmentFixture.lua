@@ -41,6 +41,39 @@ local function worn(player)
  for i=0,values:size()-1 do local item=values:getItemByIndex(i);result[values:getLocation(item)]=item end
  return result
 end
+-- Host clothing snapshots can replace baseline slots before Prepared reaches the
+-- client. Carry the authority's pre-fixture slots instead of inferring them from
+-- an already modified client worn list. Inventory IDs/types remain mandatory.
+local function originalWorn(player,ids,actual)
+ local records=ids.originalWorn
+ assert(type(records)=='table' and getmetatable(records)==nil,'missing authoritative original worn slots')
+ local count=0
+ for key in pairs(records) do
+  count=count+1
+  assert(type(key)=='number' and key%1==0 and key>=1 and key<=#records,'invalid authoritative worn record index')
+ end
+ assert(count==#records,'sparse authoritative worn records')
+ local owned={};for _,id in pairs(ids.items) do owned[id]=true end
+ local result,locations,identities,missing={},{},{},false
+ for _,record in ipairs(records) do
+  assert(type(record)=='table' and getmetatable(record)==nil,'invalid authoritative worn record')
+  for key in pairs(record) do assert(key=='location' or key=='id' or key=='fullType','unexpected authoritative worn field') end
+  assert(type(record.location)=='string' and record.location~='' and type(record.id)=='number'
+   and record.id%1==0 and type(record.fullType)=='string' and record.fullType~='','invalid authoritative worn identity')
+  assert(not locations[record.location] and not identities[record.id] and not owned[record.id],
+   'duplicate or fixture-owned authoritative worn identity')
+  locations[record.location],identities[record.id]=true,true
+  local location=ItemBodyLocation.get(ResourceLocation.of(record.location))
+  assert(location and tostring(location)==record.location and player:getBodyLocationGroup():getLocation(location),
+   'unknown authoritative worn location '..record.location)
+  local item=actual[record.id]
+  if item then
+   assert(item:getFullType()==record.fullType,'authoritative original worn ID changed type '..record.id)
+   result[location]=item
+  else missing=true end
+ end
+ return not missing and result or nil
+end
 local function sameWorn(player,expected)
  local actual=worn(player)
  for location,item in pairs(expected) do assert(actual[location]==item,'worn identity changed at '..tostring(location)) end
@@ -67,12 +100,13 @@ function Fixture.position(player)
 end
 function Fixture.prepare(player,id,ids,options)
  local root=player:getInventory()
- local state={id=id,options=options or {},player=player,root=root,capacity=root:getCapacity(),originalEffectiveCapacity=root:getEffectiveCapacity(player),owned={},original=inventory(player),
-  originalContainers={},originalWorn=worn(player),originalPrimary=player:getPrimaryHandItem(),originalSecondary=player:getSecondaryHandItem(),items={},ids=ids}
+ local actual=inventory(player)
+ local baselineWorn=ids and assert(originalWorn(player,ids,actual),'authoritative original worn item not replicated') or worn(player)
+ local state={id=id,options=options or {},player=player,root=root,capacity=root:getCapacity(),originalEffectiveCapacity=root:getEffectiveCapacity(player),owned={},original=actual,
+  originalContainers={},originalWorn=baselineWorn,originalPrimary=player:getPrimaryHandItem(),originalSecondary=player:getSecondaryHandItem(),items={},ids=ids}
  if ids then
   local owned={};for _,itemID in pairs(ids.items) do owned[itemID]=true end
   for key in pairs(state.original) do if owned[key] then state.original[key]=nil end end
-  for location,item in pairs(state.originalWorn) do if owned[item:getID()] then state.originalWorn[location]=nil end end
   state.originalPrimary=ids.primary and state.original[ids.primary] or nil
   state.originalSecondary=ids.secondary and state.original[ids.secondary] or nil
  end
@@ -265,13 +299,18 @@ function Fixture.cleanup(state)
  sameWorn(player,state.originalWorn)
 end
 function Fixture.descriptor(state)
- local result={case=state.id,items={},primary=state.originalPrimary and state.originalPrimary:getID(),
+ local result={case=state.id,items={},originalWorn={},primary=state.originalPrimary and state.originalPrimary:getID(),
   secondary=state.originalSecondary and state.originalSecondary:getID(),floor=state.floor}
  for name,item in pairs(state.items) do result.items[name]=item:getID() end
+ for location,item in pairs(state.originalWorn) do
+  result.originalWorn[#result.originalWorn+1]={location=tostring(location),id=item:getID(),fullType=item:getFullType()}
+ end
+ table.sort(result.originalWorn,function(a,b)return a.location<b.location end)
  return result
 end
 function Fixture.available(player,ids)
  local actual=inventory(player)
+ if not originalWorn(player,ids,actual) then return false end
  for name,id in pairs(ids.items) do
   if name~='pickup' or not ids.floor then if not actual[id] then return false end end
  end

@@ -1,14 +1,6 @@
 # Walking inventory action regression
 
-- [ ] Run the prepared `belt_walk` equipment cases (`belt-knife,belt-hammer`) with the full selected mod set in isolated SP and Host sessions when a native test slot is available. The movement handoff fix passes the native-source SP/MP regressions; live walking remains unverified because the shared desktop runner was occupied. Check exact attachment identities, inventory conservation, and replicated belt cleanup. Use equipment config options `belt_walk=true` and `preload_toolkit_fonts=true`; add `mp_host=true` for the Host run, with the current game/JDK/Workshop paths.
-
-# Legacy tag scenario maintenance
-
-- [ ] Update the `tagRules` re-enable assertion in `tests/native_tags/client/ZZTagBaseline.lua`: it still expects dynamic rules to expand `own.cats.foodPerishable_fruit`, while owned Quartermaster now matches per-item rules through `own.rules`. Preserve its manual-category, toggle and exact-transfer checks; use the existing fixture-level checks before its next advanced multiplayer run.
-
-# Generator fixture initialization
-
-- [ ] Restore the owned `LootSorter` initialization in `test_action_queue_generators.lua` and `test_action_queue_generator_overlay.lua` before loading `ActionQueueCompat`. Both already fail on baseline `b82fba4` inside `installManifestTransfers` with a nil owner. Keep generator behavior checks intact; this fixture failure is not evidence of a gameplay regression.
+- [ ] Complete the full-pack SP `belt_walk` pair (`belt-knife,belt-hammer`) after the fixture-baseline change. Use the same batch plan for native and Toolkit modes, `belt_walk=true`, `preload_toolkit_fonts=true` and a hidden test workspace. Require exact attachment identities, inventory conservation, original worn-item restoration, subsequent reading and clean comparable runtime audits. The jobs are registered with the shared FIFO runner.
 
 # Wooden wheelbarrow collisions
 

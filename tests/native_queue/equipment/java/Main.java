@@ -17,7 +17,8 @@ import zombie.network.GameServer;
 
 /** Native drain evidence and opt-in walking input for the isolated equipment fixture. */
 public final class Main {
-    private static volatile boolean walking;
+    // Advice is inlined into GameKeyboard, outside this class's access boundary.
+    public static volatile boolean walking;
 
     @LuaMethod(name="equipmentTestWalk", global=true)
     public static void walk(boolean down) {

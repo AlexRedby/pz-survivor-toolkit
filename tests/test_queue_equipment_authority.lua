@@ -40,7 +40,7 @@ local item={getID=function() return 21 end}
 local values={size=function() return #inventory end,get=function(_,i) return inventory[i+1] end}
 state.player.getInventory=function() return {getItems=function() return values end} end
 instanceof=function() return false end
-local ids={items={hammer=21}}
+local ids={items={hammer=21},originalWorn={}}
 assert(not Fixture.available(state.player,ids),'delayed item replication must wait')
 inventory[1]=item;assert(Fixture.available(state.player,ids),'exact replicated ID should become ready')
 print('Equipment authority checks passed: delayed IDs, split attachment packets, detach metadata and reading tail.')
@@ -144,3 +144,165 @@ for _,case in ipairs({{kind='sp',held=gun,ok=true},{kind='sp',ok=false},
  local ok=pcall(lifecycle.begin,action,'perform')
  assert(ok==case.ok,'unequip observer accepted wrong hand state or rejected replicated Host completion')
 end
+
+-- Host snapshots can install the authority's fixture clothing before Prepared.
+-- Keep the pre-fixture belt as exact baseline data across that ordering.
+do
+ local locations={['base:belt']=true,['base:back']=true,['base:shirt']=true}
+ ItemBodyLocation={get=function(location)return locations[location]and location or nil end}
+ ResourceLocation={of=function(location)return location end}
+ Perks={Woodwork='Woodwork',Doctor='Doctor'}
+ local nextID=1000
+ local function values(items)
+  return {size=function()return #items end,get=function(_,index)return items[index+1]end}
+ end
+ local makeItem
+ local function container()
+  local source={items={}}
+  function source:getItems()return values(self.items)end
+  function source:getCapacity()return 100 end
+  function source:getEffectiveCapacity()return 100 end
+  function source:setCapacity(value)assert(value==100)end
+  function source:setExplored()end
+  function source:AddItem(kind)nextID=nextID+1;return makeItem(self,nextID,kind)end
+  function source:Remove(item)
+   for index,value in ipairs(self.items)do if value==item then table.remove(self.items,index);item.container=nil;return end end
+  end
+  return source
+ end
+ makeItem=function(source,id,kind)
+  local value={id=id,kind=kind,container=source,pages=0,slot=-1}
+  function value:getID()return self.id end
+  function value:getFullType()return self.kind end
+  function value:getContainer()return self.container end
+  function value:getNumberOfPages()return 100 end
+  function value:getAlreadyReadPages()return self.pages end
+  function value:setAlreadyReadPages(pages)self.pages=pages end
+  function value:setFavorite(favorite)self.favorite=favorite end
+  function value:getBodyLocation()return self.kind=='Base.Belt2'and 'base:belt' or 'base:shirt'end
+  function value:setAttachedSlot(slot)self.slot=slot end
+  function value:setAttachedSlotType(kind)self.slotType=kind end
+  function value:setAttachedToModel(model)self.model=model end
+  if kind=='Base.Bag_ALICEpack_Army'then
+   value.source=container()
+   function value:getItemContainer()return self.source end
+   function value:canBeEquipped()return 'base:back'end
+  end
+  source.items[#source.items+1]=value;return value
+ end
+ instanceof=function(item,kind)return kind=='InventoryContainer'and item.source~=nil end
+ local function player(root)
+  local result={root=root,worn={}}
+  function result:getInventory()return self.root end
+  function result:getPrimaryHandItem()return self.primary end
+  function result:getSecondaryHandItem()return self.secondary end
+  function result:setPrimaryHandItem(item)self.primary=item end
+  function result:setSecondaryHandItem(item)self.secondary=item end
+  function result:removeFromHands(item)
+   if self.primary==item then self.primary=nil end;if self.secondary==item then self.secondary=nil end
+  end
+  function result:getWornItem(location)return self.worn[location]end
+  function result:setWornItem(location,item)self.worn[location]=item end
+  function result:removeWornItem(item)
+   for location,value in pairs(self.worn)do if value==item then self.worn[location]=nil end end
+  end
+  function result:getWornItems()
+   local list={};for _,item in pairs(self.worn)do list[#list+1]=item end
+   return {size=function()return #list end,getItemByIndex=function(_,index)return list[index+1]end,
+    getLocation=function(_,item)for location,value in pairs(self.worn)do if value==item then return location end end end}
+  end
+  function result:getBodyLocationGroup()return {getLocation=function(_,location)return locations[location]end}end
+  function result:getAttachedItems()return {size=function()return 0 end}end
+  function result:removeAttachedItem()end
+  function result:getXp()return {setXPToLevel=function()end}end
+  function result:setPerkLevelDebug()end
+  function result:getPerkLevel()return 0 end
+  function result:setAlreadyReadPages()end
+  function result:getPlayerNum()return 0 end
+  return result
+ end
+ local function scan(source,result)
+  result=result or {};for _,item in ipairs(source.items)do
+   result[item.id]=item;if item.source then scan(item.source,result)end
+  end;return result
+ end
+ local function clone(source)
+  local result=container()
+  for _,item in ipairs(source.items)do
+   local copy=makeItem(result,item.id,item.kind);copy.pages=item.pages
+   if item.source then copy.source=clone(item.source)end
+  end
+  return result
+ end
+ local server=player(container())
+ local baselineBelt=makeItem(server.root,1,'Base.Belt2')
+ local baselineShirt=makeItem(server.root,2,'Base.Shirt_FormalWhite')
+ local spareBelt=makeItem(server.root,3,'Base.Belt2')
+ server.worn={['base:belt']=baselineBelt,['base:shirt']=baselineShirt}
+ isClient,isServer=function()return false end,function()return true end
+ sendClothing=function()end
+ local authority=Fixture.prepare(server,'belt-knife')
+ local descriptor=Fixture.descriptor(authority)
+ assert(#descriptor.originalWorn==2 and descriptor.originalWorn[1].location=='base:belt'
+  and descriptor.originalWorn[1].id==1 and descriptor.originalWorn[1].fullType=='Base.Belt2')
+ local client=player(clone(server.root));local actual=scan(client.root)
+ -- Model the full server clothing snapshot arriving before the Prepared command.
+ for location,item in pairs(server.worn)do client.worn[location]=actual[item.id]end
+ client.primary,client.secondary=actual[authority.hammer.id],actual[authority.screwdriver.id]
+ assert(client:getWornItem('base:belt')==actual[authority.belt.id]and actual[1]~=baselineBelt)
+ assert(Fixture.available(client,descriptor),'baseline and owned IDs should become ready independently of worn snapshot order')
+ local function malformed(change)
+  local bad={items=descriptor.items,originalWorn={}}
+  for i,record in ipairs(descriptor.originalWorn)do bad.originalWorn[i]={location=record.location,id=record.id,fullType=record.fullType}end
+  change(bad)
+  assert(not pcall(Fixture.available,client,bad),'invalid authoritative worn descriptor accepted')
+  assert(client:getWornItem('base:belt')==actual[authority.belt.id]and scan(client.root)[1]==actual[1],
+   'invalid descriptor must fail before changing any client item or worn slot')
+ end
+ malformed(function(bad)bad.originalWorn=nil end)
+ malformed(function(bad)bad.originalWorn[1].fullType='Base.Hammer'end)
+ malformed(function(bad)bad.originalWorn[1].id=authority.belt.id end)
+ malformed(function(bad)bad.originalWorn[2].location='base:belt'end)
+ malformed(function(bad)bad.originalWorn[2].id=1 end)
+ malformed(function(bad)bad.originalWorn[1].location='base:unknown'end)
+ malformed(function(bad)bad.originalWorn[1].extra=true end)
+ malformed(function(bad)bad.originalWorn[1]=nil end)
+ client.root:Remove(actual[1])
+ assert(not Fixture.available(client,descriptor),'missing baseline belt must wait even when fixture items are present')
+ local before=#client.root.items
+ assert(not pcall(Fixture.prepare,client,'belt-knife',descriptor),'prepare cannot proceed without the exact baseline belt')
+ assert(#client.root.items==before and client:getWornItem('base:belt')==actual[authority.belt.id])
+ actual[1].container=client.root;client.root.items[#client.root.items+1]=actual[1]
+ -- Client UI is only a view of the source containers in this fixture.
+ local function page()
+  return {inventoryPane={},setNewContainer=function(self,target)self.inventoryPane.inventory=target end,
+   refreshBackpacks=function()end}
+ end
+ getPlayerInventory,getPlayerLoot=function()return page()end,function()return page()end
+ ISInventoryPage={GetFloorContainer=function()return {}end}
+ ISInventoryPaneContextMenu={getContainers=function()return {contains=function()return true end}end}
+ getPlayerHotbar=function()return {reloadIcons=function()end}end
+ isClient,isServer=function()return true end,function()return false end
+ local adopted=Fixture.prepare(client,'belt-knife',descriptor)
+ assert(adopted.originalWorn['base:belt']==actual[1]and adopted.originalWorn['base:shirt']==actual[2],
+  'client must reconstruct original slots from exact authoritative inventory IDs')
+ assert(adopted.expectedWorn['base:belt']==adopted.belt and adopted.original[adopted.belt.id]==nil)
+ Fixture.release(adopted)
+ assert(client:getWornItem('base:belt')==actual[1],'client release must restore baseline belt before deletion')
+ for _,owned in ipairs(adopted.owned)do if owned.container then owned.container:Remove(owned)end end
+ assert(Fixture.removed(adopted),'owned removal must settle with the baseline belt still worn')
+ Fixture.cleanup(adopted)
+ assert(client:getWornItem('base:belt')==actual[1]and client:getWornItem('base:shirt')==actual[2])
+ local remaining=scan(client.root)
+ assert(remaining[1]==actual[1]and remaining[2]==actual[2]and remaining[3]==actual[3])
+ local count=0;for _ in pairs(remaining)do count=count+1 end;assert(count==3,'cleanup removed baseline inventory or left an owned item')
+ -- An authority baseline with no Belt slot must still reject an unrelated worn belt.
+ client:setWornItem('base:belt',actual[3])
+ local empty={id='hands-chain',player=client,root=client.root,owned={},original=remaining,
+  originalWorn={['base:shirt']=actual[2]},capacity=100,originalEffectiveCapacity=100}
+ local ok,problem=pcall(Fixture.cleanup,empty)
+ assert(not ok and tostring(problem):find('unexpected worn item at base:belt',1,true),
+  'baseline transport must not weaken unexpected worn identity conservation')
+ assert(scan(client.root)[3]==actual[3],'failed conservation check must not delete an unrelated belt')
+end
+print('Equipment authority worn baseline checks passed: pre-Prepared clothing snapshots, exact restoration and invalid descriptors.')

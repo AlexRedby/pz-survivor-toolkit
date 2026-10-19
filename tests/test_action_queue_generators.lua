@@ -30,6 +30,9 @@ getGameFilesInput = function(path)
     end, close = function() end}
 end
 Events.OnPressWalkTo = {Add = function() end}
+-- ActionQueueCompat's manifest installer reads the owned Quartermaster namespace even when
+-- the native-source fixture does not exercise manifest transfers.
+LootSorter = LootSorter or {}
 local mainMenuCleanup
 Events.OnMainMenuEnter = {Add = function(callback) mainMenuCleanup=callback end}
 native('shared/luautils.lua')
