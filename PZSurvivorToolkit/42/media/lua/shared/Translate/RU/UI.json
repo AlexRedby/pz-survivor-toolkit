@@ -1,4 +1,13 @@
 {
+  "UI_PZST_ConfigureContainer": "Настроить контейнер...",
+  "UI_PZST_ContainerName": "Название",
+  "UI_PZST_ContainerNameHint": "Необязательное название. Пустое поле вернёт стандартное название контейнера.",
+  "UI_PZST_ContainerIcon": "Выбрать значок",
+  "UI_PZST_ContainerIconSearch": "Поиск значков контейнеров и предметов",
+  "UI_PZST_ContainerColor": "Цвет",
+  "UI_PZST_ContainerResetAppearance": "Сбросить вид",
+  "UI_PZST_ContainerDefault": "По умолчанию",
+  "UI_PZST_ContainerSelectIcon": "Выбрать значок",
     "UI_PZSurvivorToolkit_queue_fitness_duration": "%1 мин",
     "UI_PZSurvivorToolkit_queue_fitness_progress": "%1/%2 мин",
   "UI_options_PZSurvivorToolkit_name": "PZ Survivor Toolkit",

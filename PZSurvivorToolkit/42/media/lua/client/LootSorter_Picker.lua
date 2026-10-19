@@ -17,6 +17,7 @@ local TagPicker = require "PZSurvivorToolkit/QuartermasterTags"
 local TagRules = require "PZSurvivorToolkit/QuartermasterTagRules"
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Categories = require "PZSurvivorToolkit/ItemCategories"
+local AppearanceControls = require "PZSurvivorToolkit/ContainerAppearanceControls"
 
 LootSorter = LootSorter or {}
 LootSorter.toolkitTagPicker = true
@@ -123,6 +124,7 @@ function Picker:createChildren()
     else
         self.toolkitTagRule = TagRules.getBox(self.targetObj, self.targetCI)
     end
+    AppearanceControls.create(self)
 
     self.filter = ISTextEntryBox:new("", pad, 0, 10, 22)
     self.filter:initialise(); self.filter:instantiate()
@@ -294,6 +296,7 @@ function Picker:layout()
     local halfW = (innerW - gap) / 2
     local rightX = pad + halfW + gap
     local top = self:titleBarHeight() + 8
+    top = AppearanceControls.layout(self, top)
 
     self.filter:setX(pad); self.filter:setY(top); self.filter:setWidth(innerW)
 
@@ -787,6 +790,10 @@ function Picker:configJoypad()
     self.joypadButtons = {}
     self.allJoypadButtons = {}   -- reset too: insertNewLineOfButtons APPENDS to this (else it leaks)
     self.joypadConfigured = true
+    if self.appearanceName then
+        self:insertNewLineOfButtons(self.appearanceName)
+        self:insertNewLineOfButtons(self.appearanceIcon, self.appearanceColor, self.appearanceReset)
+    end
     self:insertNewLineOfButtons(self.filter)                            -- filter (A = keyboard)
     if self.targetKind == "preset" then
         self:insertNewLineOfButtons(self.btnModeCat, self.btnModeItem)  -- preset editor: 2 modes only
@@ -833,6 +840,7 @@ end
 
 function Picker:closePicker()
     self.toolkitTagClosed = true
+    AppearanceControls.close(self)
     -- Restore joypad focus to whatever had it before we opened (the inventory/loot window), NOT nil.
     -- Handing focus to nil leaves the controller focused on nothing, so the still-open inventory goes
     -- dead until you reopen something -- the reported "menu glitches out" bug.
@@ -934,14 +942,7 @@ function Picker:onSave()
     local obj, ci = self.targetObj, self.targetCI
     local snapshot = LootSorter.snapshotDesignation({cats = self.selectedCats, items = self.selectedItems,
         presets = self.selectedPresets, priority = self.priority, pzstTagRule = self.toolkitTagRule})
-    local function saveDesignation()
-        LootSorter.setBoxDesignation(obj, ci, snapshot)
-        self:closePicker()
-    end
-    if not self.toolkitTagRuleTouched and not Tags.ruleActive(snapshot.pzstTagRule) then
-        saveDesignation()
-        return
-    end
+    snapshot.appearance = AppearanceControls.value(self)
     self.toolkitTagSaving = true
     TagRules.saveBox(obj, ci, snapshot.pzstTagRule, getSpecificPlayer(self.playerNum or 0),
         function(verdict, revision)
@@ -953,12 +954,12 @@ function Picker:onSave()
                 self.selection = self.mode == "items" and self.selectedItems
                     or self.mode == "presets" and self.selectedPresets or self.selectedCats
                 self.priority, self.toolkitTagRule, self.toolkitTagRuleRevision = snapshot.priority, snapshot.pzstTagRule, revision
-                saveDesignation()
+                self:closePicker()
             elseif LootSorter.notify then
                 LootSorter.notify(getSpecificPlayer(self.playerNum or 0), getText(verdict == "stale"
                     and "UI_PZST_QMTagRuleStale" or "UI_PZST_QMTagRuleFailed", tostring(verdict)))
             end
-        end, self.toolkitTagRuleRevision)
+        end, self.toolkitTagRuleRevision, snapshot)
 end
 
 function Picker:new(x, y, w, h)
@@ -975,7 +976,7 @@ function Picker:new(x, y, w, h)
     o.priority = 0
     o.onlyContents = false
     o._modeState = { cats = {}, items = {}, presets = {} }
-    o.title = "Quartermaster - designation"
+    o.title = getText("UI_PZST_ConfigureContainer")
     o.resizable = true
     o.minimumWidth = 300
     o.minimumHeight = 380
@@ -987,7 +988,7 @@ function LootSorter.openPicker(obj, ci, playerNum)
     LootSorter._cats, LootSorter._catItems = nil, nil
     if LootSorter._presetEditor then LootSorter._presetEditor:closePicker() end   -- don't orphan an editor of the old picker
     if LootSorter._picker then
-        LootSorter._picker:removeFromUIManager(); LootSorter._picker = nil
+        LootSorter._picker:closePicker()
     end
     local w, h = WIN_W, WIN_H
     local p = Picker:new(getCore():getScreenWidth() / 2 - w / 2,

@@ -1,4 +1,13 @@
 {
+  "UI_PZST_ConfigureContainer": "Configure container...",
+  "UI_PZST_ContainerName": "Name",
+  "UI_PZST_ContainerNameHint": "Optional name. Leave blank to use the container's default name.",
+  "UI_PZST_ContainerIcon": "Choose icon",
+  "UI_PZST_ContainerIconSearch": "Search container and item icons",
+  "UI_PZST_ContainerColor": "Colour",
+  "UI_PZST_ContainerResetAppearance": "Reset look",
+  "UI_PZST_ContainerDefault": "Default",
+  "UI_PZST_ContainerSelectIcon": "Select icon",
     "UI_PZSurvivorToolkit_queue_fitness_duration": "%1 min",
     "UI_PZSurvivorToolkit_queue_fitness_progress": "%1/%2 min",
   "UI_options_PZSurvivorToolkit_name": "PZ Survivor Toolkit",

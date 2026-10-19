@@ -12,6 +12,10 @@ local categoryTags = {OC_Food = {'food'}, OC_FoodPerishable = {'food', 'perishab
     OC_Electrical = {'electrical'}, OC_FoodElectrical = {'food', 'electrical'}}
 require = function(name)
     if name == 'LootSorter_Categories' then return end
+    if name == 'PZSurvivorToolkit/ContainerAppearanceControls' then
+        return {create=function() end, layout=function(_, top) return top end,
+            close=function() end, value=function() end}
+    end
     if name == 'PZSurvivorToolkit/ItemCategories' then return itemCategories end
     if name == 'PZSurvivorToolkit/TagVisuals' then
         return {get=function(id) return {r=0.3,g=0.7,b=0.3,texture=id and {id=id} or nil} end}
@@ -404,7 +408,8 @@ local function checkSaveContract()
         local replacement
         if closeVia == 'retarget' then p.targetCI = 1 else replacement = open() end
         reply('ok')
-        assert(#publications == writes and fixture.coordinates() == writes, 'late native save wrote after ' .. closeVia)
+        assert(#publications == writes + 1 and fixture.coordinates() == writes + 1,
+            'accepted save was not published once by authority after ' .. closeVia)
         if replacement then
             assert(LootSorter._picker == replacement and not replacement.removed,
                 'late native save closed new owner after ' .. closeVia)
@@ -414,8 +419,11 @@ local function checkSaveContract()
     p = open()
     local writes = #publications
     save(p)
+    assert(not p.removed and fixture.pendingRule() and #publications == writes,
+        'plain designation bypassed the full configuration authority')
+    reply('ok')
     assert(p.removed and not fixture.pendingRule() and #publications == writes + 1 and fixture.coordinates() == writes + 1,
-        'untouched native-only Save did not publish once without a rule request')
+        'plain designation did not publish once after acceptance')
     p = open()
     LootSorter.openPresetEditor('Pantry', 0, p)
     local editor = assert(LootSorter._presetEditor)

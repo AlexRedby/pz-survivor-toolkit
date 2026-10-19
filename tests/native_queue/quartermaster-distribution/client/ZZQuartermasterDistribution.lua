@@ -51,11 +51,20 @@ local function tick()
   if not packet or playerUpdates<30 then return end
   boxes=Fixture.resolve(packet);if not boxes then return end
   print('[QM_DISTRIBUTION] PREPARED '..JSON.encode(packet))
+  stageWalk(point.x+2)
+  phase='configure-item'
+ elseif phase=='configure-item'then
+  if not stageArrived()then return end
+  arrived=arrived or getTimestampMs();if getTimestampMs()-arrived<500 then return end
+  arrived=nil
   LootSorter.openPicker(boxes[2],0,0)
-  local picker=assert(LootSorter._picker)
-  picker.selectedItems={[boxes[1]:getContainer():getItemById(packet.ids[1]):getDisplayName()]=true}
-  picker.priority=5;picker.btnSave.onclick(picker)
-  assert(not LootSorter._picker,'plain designation did not save')
+  designationPicker=assert(LootSorter._picker)
+  designationPicker.selectedItems={[boxes[1]:getContainer():getItemById(packet.ids[1]):getDisplayName()]=true}
+  designationPicker.priority=5;designationPicker.btnSave.onclick(designationPicker)
+  phase='item-saved'
+ elseif phase=='item-saved'then
+  if LootSorter._picker==designationPicker then return end
+  assert(LootSorter.getBoxPriority(boxes[2],0)==5,'item editor lost accepted designation')
   LootSorter.copyDesignation(boxes[2],0)
   assert(LootSorter.pasteDesignation(boxes[3],0),'copy/paste did not start')
   assert(LootSorter.getBoxPriority(boxes[3],0)==5,'copy/paste lost priority')

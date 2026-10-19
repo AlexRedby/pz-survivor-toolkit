@@ -17,6 +17,9 @@ TAG_TESTS = ("test_item_tags.lua", "test_tag_visuals.lua", "test_inventory_tags.
 ACTION_TESTS = ("test_source_proof.lua", "test_drink_fluid.lua", "test_animal_info.lua", "test_action_queue_animals.lua", "test_ui_style.lua", "test_ui_text_fit.lua", "test_sidebar_tools.lua", "test_inventory_classes.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua", "test_bulk_dismantle.lua", "test_bulk_food.lua", "test_packaged_food.lua", "test_food_cart_compat.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_lifecycle.lua", "test_queue_equipment_floor.lua", "test_queue_equipment_bulk.lua", "test_queue_craft_fixture.lua", "test_queue_craft_ui_fixture.lua", "test_queue_engine_fixture.lua", "test_queue_fire_fixture.lua", "test_queue_fire_tidy.lua", "test_queue_equipment_authority.lua", "test_queue_equipment_slots.lua", "test_queue_equipment_postprocess.lua", "test_action_queue_acknowledgements.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_dismantle.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_hygiene.lua", "test_action_queue_compat.lua", "test_action_queue_grab_compat.lua", "test_action_queue_tidy_intent.lua", "test_action_queue_manifest.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua", "test_action_queue_carts.lua", "test_action_queue_fire.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua", "test_context_menu_profile.lua", "test_context_menu_profile_storage.lua", "test_context_menu_profile_failures.lua", "test_context_menu_editor.lua")
 ACTION_TESTS += ("test_bc_pins.lua", "test_action_queue_fitness.lua", "test_crafting_controls.lua")
 EXTRA_TESTS = (
+    'test_container_appearance_controls.lua',
+    'test_quartermaster_container_config.lua',
+    'test_container_configuration_menus.lua',
     'test_quartermaster_craft_ui.lua',
     'test_highlighter.lua',
     'test_saucedcarts_compat.lua',
@@ -177,6 +180,16 @@ def main() -> None:
             lua.globals().NativeQuartermasterLuaRoot = str(quartermaster_root)
         if name in ("native_tags/check_transfer_source.lua", "native_tags/check_placement.lua"):
             lua.globals().NativePZLuaRoot = str(args.native_action_root)
+        if name == 'test_container_appearance_controls.lua' and args.native_action_root:
+            lua.globals().NativeColorPickerSource = (args.native_action_root / 'client/ISUI/ISColorPickerHSB.lua').read_text(encoding='utf-8')
+        if name == 'test_container_configuration_menus.lua':
+            if args.native_action_root:
+                lua.globals().NativeInventoryPageSource = (args.native_action_root / 'client/ISUI/ISInventoryPage.lua').read_text(encoding='utf-8')
+            if args.cleanui_inventory_pane:
+                lua.globals().CleanUIInventoryPageSource = (args.cleanui_inventory_pane.parent / 'ISInventoryPage.lua').read_text(encoding='utf-8')
+                lua.globals().CleanUIVanillaInventoryPageSource = (args.cleanui_inventory_pane.parent.parent / 'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPage.lua').read_text(encoding='utf-8')
+            if args.bc_filter_source:
+                lua.globals().NativeBCPageCustomizerSource = (args.bc_filter_source.parent.parent / 'Customize/Customize_ISInventoryPage.lua').read_text(encoding='utf-8')
         if name == "test_highlighter.lua" and args.native_mod_options:
             lua.globals().NativeModOptionsSource = args.native_mod_options.read_text(encoding="utf-8")
         if name in ("test_saucedcarts_compat.lua", "test_cart_transitions.lua") and args.native_action_root:

@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.125
+
+- **Changed:** World containers have one **Configure container...** editor for sorting, name, icon and colour. It reuses Better Containers' existing appearance data and icon catalogue; supported container menus no longer offer separate rename/customize paths. Bags keep their existing controls.
+- **Changed:** The editor saves sorting selections, tag rules and appearance together after the same authority checks. Cancel leaves all fields unchanged; existing per-player/global Better Containers appearance is retained.
+
 ### 0.1.124
 
 - **Changed:** Quartermaster prepares its item/tag catalog once per editor window and shares it with rule previews. Search and selection filter prepared rows instead of rescanning every loaded item; reopening refreshes the catalog. Exact picks, partial-category rules and saved categories from missing mods retain their meaning.

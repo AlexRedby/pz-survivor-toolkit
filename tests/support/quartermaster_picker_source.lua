@@ -133,10 +133,10 @@ return function(control, rules, options)
             items = self.md.LSBoxItems['0'], presets = self.md.LSBoxPresets['0'], priority = self.md.LSBoxPriority['0'],
             pzstTagRule = self.md.PZSTQuartermasterTagRules and self.md.PZSTQuartermasterTagRules['0']})
     end
-    rules.saveBox = function(obj, ci, rule, _, callback, revision)
+    rules.saveBox = function(obj, ci, rule, _, callback, revision, configuration)
         assert(revision == 0 and obj and ci == 0, 'upstream picker changed rule save target/revision')
         assert(not pendingRule, 'duplicate upstream in-flight save')
-        pendingRule = {callback = callback, rule = rule}
+        pendingRule = {callback = callback, rule = rule, configuration = configuration}
     end
     rules.presetsSynced = function() return true end
     rules.getBox = function(target, ci)
@@ -158,7 +158,11 @@ return function(control, rules, options)
     local function reply(verdict)
         local request = assert(pendingRule)
         pendingRule = nil
-        if verdict == 'ok' then obj.md.PZSTQuartermasterTagRules = {['0'] = request.rule} end
+        if verdict == 'ok' then
+            obj.md.PZSTQuartermasterTagRules = {['0'] = request.rule}
+            -- The authority publishes the submitted draft; the UI callback must not publish again.
+            LootSorter.setBoxDesignation(obj, 0, request.configuration)
+        end
         request.callback(verdict, 1)
     end
     return {open = open, object = obj, joypad = joypad, failures = failures, publications = publications,

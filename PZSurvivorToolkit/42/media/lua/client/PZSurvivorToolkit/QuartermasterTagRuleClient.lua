@@ -1,13 +1,17 @@
 local Rules = require "PZSurvivorToolkit/QuartermasterTagRules"
 local Tags = require "PZSurvivorToolkit/ItemTags"
+local Config = require "PZSurvivorToolkit/QuartermasterContainerConfig"
 local MODULE, nextToken, pending = "PZSTQuartermasterTags", 0, {}
 
-function Rules.saveBox(obj, ci, value, player, onDone, baseRevision)
+function Rules.saveBox(obj, ci, value, player, onDone, baseRevision, configuration)
     local rule = Tags.normalizeRule(value)
-    if not obj or not player or not rule or not obj:getSquare() then onDone("invalid"); return end
+    local config = configuration ~= nil and Config.normalize(configuration) or nil
+    if not obj or not player or not rule or not obj:getSquare()
+        or (configuration ~= nil and not config) then onDone("invalid"); return end
     local square = obj:getSquare()
     local args = {x = square:getX(), y = square:getY(), z = square:getZ(),
-        object = obj:getObjectIndex(), ci = ci, rule = rule, baseRevision = baseRevision or Rules.getBoxRevision(obj, ci)}
+        object = obj:getObjectIndex(), ci = ci, rule = rule, baseRevision = baseRevision or Rules.getBoxRevision(obj, ci),
+        configuration = config}
     if not isClient() then
         local ok, verdict, revision = pcall(Rules.applyBox, player, args)
         onDone(ok and verdict or "invalid", revision)
@@ -20,8 +24,9 @@ function Rules.saveBox(obj, ci, value, player, onDone, baseRevision)
         if verdict == "ok" and (type(revision) ~= "number" or revision ~= args.baseRevision + 1) then verdict = "invalid" end
         if verdict == "ok" and Rules.getBoxRevision(obj, ci) > revision then verdict = "stale" end
         if verdict == "ok" then
-            -- Native Save transmits this same ModData before the object update may have arrived.
+            -- Mirror just the accepted fields; an object update may still be in flight.
             local md = obj:getModData()
+            if config then Config.apply(obj, ci, player, config) end
             md[Rules.FIELD] = md[Rules.FIELD] or {}
             md[Rules.FIELD][tostring(ci)] = Tags.ruleActive(rule) and rule or nil
             md[Rules.REVISIONS] = md[Rules.REVISIONS] or {}

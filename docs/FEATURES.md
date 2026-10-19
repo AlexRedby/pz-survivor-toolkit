@@ -153,12 +153,14 @@ options retain their identifiers. The Manifest retains its single-player scope.
 The original implementation and assets are credited in the
 [third-party notices](../PZSurvivorToolkit/THIRD_PARTY_NOTICES.md).
 
-To distribute carried loot, configure destination containers with **Configure sorting...**,
+To distribute carried loot, configure destination containers with **Configure container...**,
 open the source bag in your inventory, then right-click an item inside it and choose
 **Distribute Loot**. The command sorts eligible items from that bag; you can keep it
 on your back. Favorite items and items without a matching destination stay put.
 The inventory toolbar also has **Distribute Loot** for its selected container.
 For a vehicle trunk, open it in the loot window and use that window's button.
+
+Right-click a world container or its button in the loot window to open the same editor. With Better Containers enabled, it also contains **Name**, **Choose icon**, **Colour** and **Reset look**. Existing Better Containers appearance is preserved. Save applies the name, container-button icon/colour and sorting together; Cancel discards the draft. Reset look restores default appearance without clearing sorting. Appearance remains manual: choosing a sorting tag does not yet choose a name, icon or colour. Bags and other targets that cannot be sorting destinations retain their existing rename/customize controls.
 
 ### Item tags
 
@@ -180,7 +182,7 @@ Single-player Quartermaster presets are global to the game profile cache and use
 
 Planting inputs have Farming and Seed tags in addition to their existing roles: sunflower seeds remain Food, and medicinal herbs remain Medical. Empty seed packets have Farming without Seed. Tags follow native crop definitions and packet recipes; the game still decides whether a particular item is fresh, whole or otherwise valid for planting. Inventory filters and Quartermaster rules test each item, so choosing Seed does not include other snacks, vegetables or empty packets sharing its category.
 
-Tag rule writes use the acting player's server-validated location, exact container, safehouse and lock checks. Stale rule revisions are refused; reopen the designation window after a conflict. Quartermaster's existing full-object ModData transport remains in use for its manual selections, so this is not a replacement for all upstream synchronization behavior.
+Container-editor writes use the acting player's server-validated location, exact container, safehouse and lock checks. Sorting selections, tag rules and changed appearance are accepted together. Stale revisions are refused; reopen the configuration window after a conflict. Copy/paste sorting retains its existing full-object ModData transport.
 
 ### Item Details
 

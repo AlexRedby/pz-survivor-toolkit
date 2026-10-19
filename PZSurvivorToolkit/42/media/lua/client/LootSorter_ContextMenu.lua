@@ -1,10 +1,11 @@
 -- LootSorter: right-click context-menu entry points.
---   * World object (crate/locker/stacked boxes) -> "Configure sorting..." (opens the designation picker)
---   * Items in a world-container panel -> "Configure sorting..." for that container.
+--   * World object (crate/locker/stacked boxes) -> "Configure container..." (opens the unified editor)
+--   * Items in a world-container panel -> "Configure container..." for that container.
 --   * Carried items -> "Distribute Loot" for their source inventory or bag; also available on its toolbar.
 -- Handlers are LootSorter.* functions (reloadLuaFile-safe via the stable wrappers below).
 -- Depends on LootSorter.openPicker / containerIndex (Core + Picker).
 require "ISUI/ISWorldObjectContextMenu"   -- addToolTip, for the disabled-option hint
+require "PZSurvivorToolkit/ContainerConfigurationMenus"
 
 LootSorter = LootSorter or {}
 -- diagnostic trace: silent unless LootSorter.DEBUG is set or the game runs in -debug mode
@@ -55,19 +56,26 @@ function LootSorter.onWorldContext(playerNum, context, worldobjects, test)
     end
 end
 
--- The three per-container actions, shared by the world and inventory menus so they cannot drift.
--- At the top level rather than in a submenu: one hover less matters more for Configure sorting, the
--- action taken most, than a shorter menu does.
+function LootSorter.onConfigureContainer(obj, ci, playerNum)
+    LootSorter.openPicker(obj, ci, playerNum)
+end
+
+-- Shared by world, contents and container-button menus. Match the callback and exact target,
+-- rather than a translated label, when native and BC wrappers reach the same menu.
 function LootSorter.addBoxOptions(menu, obj, ci, suffix, playerNum)
+    for _, option in ipairs(menu.options or {}) do
+        if option.onSelect == LootSorter.onConfigureContainer and option.target == obj and option.param1 == ci then
+            return
+        end
+    end
     local function track(option)
         option.onHighlightParams = { obj }
         option.onHighlight = LootSorter.onHighlightBox
         return option
     end
 
-    track(menu:addOption("Configure sorting..." .. suffix, nil, function()
-        LootSorter.openPicker(obj, ci, playerNum)
-    end))
+    track(menu:addOption(getText("UI_PZST_ConfigureContainer") .. suffix,
+        obj, LootSorter.onConfigureContainer, ci, playerNum))
 
     track(menu:addOption("Copy sorting" .. suffix, nil, function()
         LootSorter.copyDesignation(obj, ci)
