@@ -17,6 +17,7 @@ local function setup(mode)
     fixture.native('shared/TimedActions/ISEatFoodAction.lua')
     fixture.native('shared/TimedActions/ISDrinkFluidAction.lua')
     SaucedCarts = nil
+    LootSorter = {} -- Unrelated owned transfer integration has no hooks in this presentation fixture.
     local loaded = {}
     require = function(name)
         if loaded[name] then return loaded[name] end
