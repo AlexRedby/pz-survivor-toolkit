@@ -653,7 +653,10 @@ function widget:update() end
 function widget:onResize() end
 function widget:setWidth(v) self.width=v end
 function widget:setHeight(v) self.height=v end
+function widget:setX(v) self.x=v end
 function widget:setY(v) self.y=v end
+function widget:getX() return self.x end
+function widget:getY() return self.y end
 function widget:getYScroll() return self.scroll end
 function widget:setYScroll(v) self.scroll=v end
 function widget:setScrollHeight(v) self.scrollHeight=v end
@@ -708,6 +711,7 @@ p = player(); a,b,c = book(p),book(p),book(p)
 q = ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); ISTimedActionQueue.add(c)
 refresh(); local panel=ui[#ui]; panel:update()
 assert(panel.visible and #panel.list.items==3 and not panel.closeButton.visible)
+assert(panel:getX()==840 and panel:getY()==420, 'first queue window retains its default position')
 assert(panel.list.doRepaintStencil, 'native list viewport must restore its enclosing window stencil')
 local list=panel.list
 local function click(n)
@@ -892,18 +896,51 @@ assert(list.dragAction==d, 'visible scrolled content-space row must be hit')
 list:clearGesture()
 list.scroll=-16;list:onMouseDown(30,8);assert(not list.dragAction, 'clipped rows cannot be hit')
 list.scroll=0;list:onMouseDown(30,16)
+panel:setX(125);panel:setY(85)
 enabled=false; refresh(); assert(not panel.visible and #panel.list.items==0, 'hidden view must release action snapshots')
 assert(not hasEntry(panel.expanded) and not list.dragAction and not list.pressedToggle)
 enabled=true; refresh(); assert(panel.visible and ui[#ui]==panel)
+assert(panel:getX()==125 and panel:getY()==85, 'feature hide/show retains the moved position')
 p.dead=true; refresh(); assert(not panel.visible)
 p=player(); ISTimedActionQueue.add(book(p)); refresh()
 assert(panel.removed and #panel.list.items==0 and not hasEntry(panel.expanded) and ui[#ui]~=panel and ui[#ui].queue.character==p)
 local replaced = ui[#ui]
+assert(replaced:getX()==125 and replaced:getY()==85, 'player replacement retains the window position')
+replaced:setX(0);replaced:setY(140)
 ISTimedActionQueue:new(p); ISTimedActionQueue.add(book(p)); refresh()
 assert(replaced.removed and ui[#ui].queue == ISTimedActionQueue.queues[p])
+assert(ui[#ui]:getX()==0 and ui[#ui]:getY()==140, 'queue replacement retains the latest position, including zero')
 ui[#ui]:update(); ISTimedActionQueue.clear(p); refresh()
 assert(not ui[#ui].visible and #ui[#ui].list.items == 0, 'completed/stopped queue must release rows')
+local emptyPanel=ui[#ui]
+ISTimedActionQueue.queues[p]=nil;refresh()
+assert(emptyPanel.removed and #emptyPanel.list.items==0, 'a missing queue still removes its stale window')
+ISTimedActionQueue.add(book(p));refresh()
+assert(ui[#ui]~=emptyPanel and ui[#ui]:getX()==0 and ui[#ui]:getY()==140,
+    'a new queue after an empty/missing queue restores the moved position')
 playerCount=0; refresh(); assert(ui[#ui].removed)
+-- Each local player keeps an independent position, including removal and rejoining.
+do
+    local first=player()
+    local second=player()
+    local specificPlayer=getSpecificPlayer
+    getSpecificPlayer=function(index) return index==0 and first or second end
+    playerCount=2
+    ISTimedActionQueue.add(book(first));ISTimedActionQueue.add(book(second));refresh()
+    local firstPanel,secondPanel=ui[#ui-1],ui[#ui]
+    assert(firstPanel:getX()==0 and firstPanel:getY()==140, 'removed player slot retains its position')
+    assert(secondPanel:getX()==840 and secondPanel:getY()==420, 'another player starts at the default position')
+    firstPanel:setX(210);firstPanel:setY(90)
+    secondPanel:setX(680);secondPanel:setY(250)
+    ISTimedActionQueue:new(first);ISTimedActionQueue.add(book(first))
+    ISTimedActionQueue:new(second);ISTimedActionQueue.add(book(second));refresh()
+    assert(firstPanel.removed and secondPanel.removed)
+    assert(ui[#ui-1]:getX()==210 and ui[#ui-1]:getY()==90)
+    assert(ui[#ui]:getX()==680 and ui[#ui]:getY()==250, 'queue replacements do not share player positions')
+    playerCount=0;refresh()
+    getSpecificPlayer=specificPlayer
+end
+print('Queue window: moved positions survive hide/show, native queue replacement, missing queues and player-slot removal independently.')
 -- The header cross removes every waiting step; child crosses retain their existing individual semantics.
 playerCount=1;p=player();a,d=book(p),book(p);q=ISTimedActionQueue.add(a)
 pickup,read,restore=preparation(p,'ISInventoryTransferAction'),book(p),preparation(p,'ISInventoryTransferAction')

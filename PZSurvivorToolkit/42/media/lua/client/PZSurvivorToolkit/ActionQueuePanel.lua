@@ -6,6 +6,8 @@ local Toolkit = PZSurvivorToolkit
 local Panel = ISCollapsableWindow:derive("PZSurvivorToolkitActionQueuePanel")
 local List = ISScrollingListBox:derive("PZSurvivorToolkitActionList")
 local panels = {}
+-- Native queues are replaced between actions; their windows must not own the user's position.
+local positions = {}
 Toolkit.ActionQueuePanel = Panel
 
 local function moveDecision(queue, action, target, after)
@@ -313,6 +315,7 @@ function Panel.refresh()
         local queue = player and ISTimedActionQueue.queues[player]
         local panel = panels[playerNum]
         if panel and panel.queue ~= queue then
+            positions[playerNum] = {x = panel:getX(), y = panel:getY()}
             panel:clearSnapshots()
             panel:removeFromUIManager()
             panels[playerNum], panel = nil, nil
@@ -320,8 +323,10 @@ function Panel.refresh()
         local visible = Toolkit.Settings.actionQueue() and player and not player:isDead()
             and queue and #queue.queue > 0
         if visible and not panel then
-            panel = Panel:new(getPlayerScreenLeft(playerNum) + math.max(80, getPlayerScreenWidth(playerNum) - 440),
-                getPlayerScreenTop(playerNum) + math.max(40, getPlayerScreenHeight(playerNum) - 300), 360, 240)
+            local position = positions[playerNum]
+            local x = position and position.x or getPlayerScreenLeft(playerNum) + math.max(80, getPlayerScreenWidth(playerNum) - 440)
+            local y = position and position.y or getPlayerScreenTop(playerNum) + math.max(40, getPlayerScreenHeight(playerNum) - 300)
+            panel = Panel:new(x, y, 360, 240)
             panel.queue, panel.playerNum = queue, playerNum
             panel.minimumWidth, panel.minimumHeight = 240, 160
             panel:initialise()
@@ -337,6 +342,7 @@ function Panel.refresh()
     end
     for playerNum, panel in pairs(panels) do
         if playerNum >= getNumActivePlayers() then
+            positions[playerNum] = {x = panel:getX(), y = panel:getY()}
             panel:clearSnapshots()
             panel:removeFromUIManager()
             panels[playerNum] = nil

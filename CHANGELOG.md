@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.108
+
+- **Fixed:** The action queue window remembers each local player's moved position when the native queue is replaced or disappears during the current game session.
+
 ### 0.1.107
 
 - **Changed:** E picks up the nearest reachable cart or puts down the held cart. Accepted cart actions take priority over doors and windows for that key press; ordinary Interact remains available when no cart action starts. The old V default migrates once, preserving other custom bindings.
