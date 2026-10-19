@@ -68,6 +68,13 @@ class LuaRunner(unittest.TestCase):
         self.assertEqual([name for name, _ in self.executions],
                          ["test_tv_controls.lua", "test_wishlist_model.lua"])
 
+    def test_new_extra_registration_is_executed_without_a_second_dispatch_entry(self):
+        name = "test_new_extra.lua"
+        (self.root / "tests" / name).write_text(name)
+        with patch.object(run_tests, "EXTRA_TESTS", (*run_tests.EXTRA_TESTS, name)):
+            self.invoke("--test", name)
+        self.assertEqual(self.executions, [(name, {"ProjectRoot": str(self.root)})])
+
     def test_default_keeps_all_groups_and_reconnect_variants(self):
         self.invoke()
         names = [name for name, _ in self.executions]
