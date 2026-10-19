@@ -14,8 +14,6 @@
 
 ## Pickup and put-down
 
-- [ ] Проверить быстрый повтор подхвата/постановки после исправления стыка кистей: complete-chain, pickup-restart и drop-restart с полным грузом. Предыдущая попытка запуска остановлена проверкой свободного места; потребуется не менее 2.3 ГБ плюс резерв других активных стендов. Сохранить хват, груз, колесо и однозначное владение тачкой.
-
 - [ ] In game, check putting down a wooden wheelbarrow via the SaucedCarts hotkey: completion/cancellation and quick repeat, position in the adjacent square, grip, wheel and world/held handoff; separately confirm owner/server/observer in MP. Local checks do not replace the visual and network gate.
 
 - [ ] Extend pickup clearance checks to the remaining approach angles and clothing combinations. Check all skin/pants geometry at Thigh/Calf, not just the pelvis; preserve the agreed shallow crouch, foot support, knee direction and grip.
