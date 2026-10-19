@@ -35,6 +35,8 @@
 
 # Root fix for the action queue
 
+These are implementation and verification gaps, not evidence that every action using the old completion path is broken. Keep working native behavior while migrating one verified family at a time.
+
 - [ ] Extend live SP/MP gates for the shared lifecycle to the remaining families: unavailable target, late continuation, exact consumption and independent tail, before replacing their local completion intercepts.
 - [ ] Check the shared outcome protocol with two real MP clients during reset/death/disconnect, byte ID reuse, late and duplicate responses, and network delays; supplement the already completed boundary checks using native Java/Lua fixtures.
 - [ ] Remove the remaining family-specific bypasses after the corresponding SP/MP checks; preserve fallback for unsupported Java/server versions, resource contracts and separate medical/cart sync fixes.
@@ -43,11 +45,25 @@
 
 The executor remains `ISTimedActionQueue`. Add new families through Definitions/Policy and a precise adapter, without a general planning graph, second scheduler or reservation of future inventory. Check display and permission to change the queue separately. Only unfinished work is listed below; interfaces are described in the [features guide](docs/FEATURES.md), and check commands are in the [developer guide](docs/DEVELOPMENT.md).
 
+## Known limits of move/cancel controls
+
+These operations can execute normally while some queue controls remain disabled. The work below is to prove safe edits; real shared dependencies and required cleanup must remain protected. Current behavior is described in the [action queue limits](docs/FEATURES.md#supported-actions-and-limits).
+
+- [ ] Vehicle fuel and wreck dismantling: reordering and individual cancellation remain protected because containers/tools are chosen at execution time. Define exact contracts for shared cans, hoses, masks and blowtorches before enabling these controls. Preserve deferred selection, native fuel transactions, wreck removal and the unrelated queue tail.
+- [ ] Project Cook evolved recipes: ingredient application and compensating consumed-spice cleanup protect the operation from cancellation. Define which edits, if any, are independent of already-applied ingredients; preserve authoritative consumption and required cleanup rather than dropping the cleanup step.
+- [ ] Complex handcraft recipes: identify concrete blocked recipes with Lua callbacks, fluid/energy inputs, unrestricted item selection or replacement/depletion/break effects. Add narrow resource/output contracts where practical; keep actual shared materials and shared crafting UI ordered. Plain-item crafting support is not an unfinished item here.
+- [ ] Medical world pickups and unknown treatment producers: add exact item/patient/wound contracts for specific unsupported entry points before allowing edits. Preserve native wound checks, supplies and clothing effects; do not mark all medicine unsupported.
+- [ ] Carried-container capacity: MP does not credit space that a previous pending pickup may free; synthetic proximity endpoints and unknown capacity callbacks also remain protected. Prove exact source/destination/ancestor capacity and authoritative transfer effects before relaxing a concrete blocked case.
+- [ ] Unknown mod actions and asynchronous continuations: capture the concrete action type, producer, continuation and cleanup when an operation is split into separate rows or becomes an edit barrier. Add scoped grouping/edit contracts for reviewed entry points; unknown or modified callbacks must retain a clear denial reason.
+
 ## Shared game sessions and build regression
 
+- [ ] Recheck affected source-pinned queue integrations against the updated Workshop sources. Compare the explicitly locked working baseline with current callbacks and run the affected SP/Host cases with queue-disabled controls; source changes must not silently inherit old permissions or old test results.
 - [ ] Cart chat: integrate the published combined SP cart matrices and collision cases after their native checks are complete. Keep independent cold controls; separately measure an explicit full regression profile (the estimated 17 startup cycles instead of 29 are not yet confirmed).
 
 ## Near-term adapters
+
+The medical packet mismatch below is an unresolved runtime observation; its cause has not been attributed to queue scheduling. Cart work remains owned by the cart chat.
 
 Add contracts in Definitions/Policy/Operations for each family. Expose only verified capabilities; leave the rest with an explicit denial reason.
 
@@ -58,12 +74,14 @@ Gate for each adapter: primary success; same/different targets; pending cancella
 
 ## Remaining families
 
-- [ ] TidyUpMeister: audit remaining clothing, hotbar and heavy-item restores and define safe edit contracts for mixed-session floor returns and still unknown/dynamic entry points; preserve required shared cleanup on cancellation.
+These families need contract/coverage audits. Missing verification or continued use of legacy completion does not by itself mean their native actions fail.
+
+- [ ] TidyUpMeister: migrate remaining clothing, hotbar and heavy-item restores only after their SP/Host lifecycle gates. Separately define safe edit contracts for mixed-session floor returns and unknown/dynamic entry points; these remain protected. Preserve required shared cleanup on cancellation.
 - [ ] Packaged food: check the remaining opening recipes, including random contents and mod callbacks. Keep their standard commands until a separate contract exists; queue support is limited to verified `OpenCannedFood` and `OpenCannedFood2`.
-- [ ] Farming and animals: target identity, plant/animal state, shared consumables and tools.
-- [ ] Mechanics: vehicle + part, installed/removed items, shared tool and vehicle movement.
+- [ ] Farming and animals: inventory the specific actions still missing verified edit contracts, then cover target identity, plant/animal state, shared consumables and tools.
+- [ ] Mechanics: inventory the specific actions still missing verified edit contracts, then cover vehicle + part, installed/removed items, shared tools and vehicle movement.
 - [ ] Fishing/traps, remaining world/building/weapons/rest actions: family contracts for inputs, results, stopping and permitted continuation.
-- [ ] Narrow dynamic-resource selection scopes to the specific inventory only where that safely lifts a conservative denial. Do not expand permissions based on a single Type or an empty inspect.
+- [ ] Dynamic-resource selection: narrow conflicts to a proven inventory/reachability scope only where safe, starting with concrete blocked cases such as MP washing soap selection. Cover server reselection and newly reachable resources. Do not expand permissions based on a single Type or an empty inspect.
 
 For each migrated family, add an independent positive example and a dangerous example with a shared resource in both directions. When lifecycle changes, run the corresponding live gate. Changing a label/icon must remain a presentation/translation change; changing cancellation/transfer permission requires a separate behavior contract and check.
 
