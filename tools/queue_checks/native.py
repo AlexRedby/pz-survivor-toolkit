@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import zipfile
 from . import adapters, worlds, pack, admission, report, coop
 from .mod_selection import MOD_ID, VERSION, metadata as _metadata, local_mod_infos, matching_roots, mod_layers, mod_info
@@ -213,7 +214,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         raise ValueError("Runtime paths cannot contain loader/classpath separators or newlines")
     support = project / "tests/native_queue/support"
     suite = project / "tests/native_queue" / selection["suite"]
-    required = [support / name for name in ("ToolkitSmokeLauncher.java", "ZZReleasePreflight.lua", "QueueEnergyPlacement.lua")]
+    required = [support / name for name in ("ToolkitSmokeLauncher.java", "ToolkitWindowBootstrap.java", "ZZReleasePreflight.lua", "QueueEnergyPlacement.lua")]
     required += [project / "tools/check_action_queue.py", project / "tests/native_queue/catalog.json"]
     if not adapter and (not (suite / "client").is_dir() or not (suite / "shared").is_dir() or selection["kind"] == "mp" and not (suite / "server").is_dir()):
         raise ValueError("Native suite is missing its client/shared/server source directories: " + str(suite))
@@ -318,12 +319,21 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         runtime["roles"][role] = {"cache": str(cache), "language": language}
         if role != "server":
             font_preload(cache, selection, game if os.name == 'nt' else None)
-            shutil.copy2(support / "ToolkitSmokeLauncher.java", cache / "classes")
+            for name in ("ToolkitWindowBootstrap.java", "ToolkitSmokeLauncher.java"):
+                shutil.copy2(support / name, cache / "classes")
             subprocess.run([str(jdk_binary(jdk, 'javac')), "-cp", str(game / "projectzomboid.jar"),
-                            str(cache / "classes/ToolkitSmokeLauncher.java")], check=True, capture_output=True, text=True, timeout=60,
+                            str(cache / "classes/ToolkitWindowBootstrap.java"), str(cache / "classes/ToolkitSmokeLauncher.java")], check=True, capture_output=True, text=True, timeout=60,
                            env={key: value for key, value in os.environ.items() if key not in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")})
             if not (cache / "classes/ToolkitSmokeLauncher.class").is_file():
                 raise RuntimeError("javac did not create ToolkitSmokeLauncher.class")
+            if sys.platform == 'darwin':
+                helper = cache / 'classes/ToolkitWindowBootstrap.class'
+                if not helper.is_file():
+                    raise RuntimeError('javac did not create ToolkitWindowBootstrap.class')
+                with zipfile.ZipFile(cache / 'classes/test-window-agent.jar', 'w', zipfile.ZIP_DEFLATED) as agent:
+                    agent.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\nPremain-Class: ToolkitWindowBootstrap\nCan-Retransform-Classes: true\n\n')
+                    for path in sorted((cache / 'classes').glob('ToolkitWindowBootstrap*.class')):
+                        agent.write(path, path.name)
             runtime["roles"][role]["classes"] = str(cache / "classes")
     if selection["kind"] == "mp":
         server = output / "server/Server"

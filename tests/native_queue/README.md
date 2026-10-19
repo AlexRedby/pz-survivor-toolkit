@@ -43,6 +43,9 @@ This first mapping does not implement the empty-queue, rapid repeated request, d
 
 Preparation needs Python 3.11+, JDK 25+ and installed B42.21 game files. The macOS runner supports the suites below. Windows has a bounded one-client Host launch path for `startup` and `forge`, using the game's bundled Java runtime, explicit ports, isolated loader approvals and a Windows Job Object that owns only the test client and its descendants. A named lease serializes this initial Windows launch path; available-memory and disk guards run before launch. Other Windows suites and physical input automation are not supported by that path. The core runner needs no Python packages; the SP cart mesh analyzers additionally require NumPy, as declared in their contribution. Health fixture selfchecks use `luajit` on PATH; existing product Lua regressions separately use `lupa`.
 
+
+On macOS, automated runs require AeroSpace and start on the inactive `PZ-TEST` workspace. To choose another workspace, set `"test_workspace":"NAME"` in the JSON config. The target must be hidden at launch; the runner never switches your workspace or focuses a test window. It identifies windows by the PID it launched, sets them floating and moves them before allowing the initially transparent game window to appear. Only the disposable profile contains the window agent; game files and AeroSpace configuration stay unchanged. Missing AeroSpace, failed routing, unexpected focus or a visible target workspace stop an automated run. Explicit manual fixtures use the same quiet startup, then allow you to visit their workspace for inspection. Other macOS game bytecode is rejected before window creation until its window lifecycle has been reviewed.
+
 ```sh
 python3 -m unittest discover -s tests -p 'test_queue_*.py'
 python3 tests/native_queue/health/check.py

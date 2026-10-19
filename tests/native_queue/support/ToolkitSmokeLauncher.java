@@ -7,6 +7,7 @@ import zombie.gameStates.TermsOfServiceState;
 public class ToolkitSmokeLauncher {
     public static void main(String[] args) throws Exception {
         if (!java.util.Arrays.asList(args).contains("-novoip")) throw new IllegalArgumentException("Native tests require -novoip to leave the microphone closed.");
+        ToolkitWindowBootstrap.beforeGlfwInit();
         GLFWErrorCallback.createPrint(System.err).set();
         // Match Display.init before pre-initializing Cocoa on the first thread.
         GLFW.glfwInitHint(GLFW.GLFW_COCOA_CHDIR_RESOURCES, GLFW.GLFW_FALSE);

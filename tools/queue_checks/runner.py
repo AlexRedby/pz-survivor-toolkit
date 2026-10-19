@@ -8,7 +8,7 @@ import sys
 import time
 
 from .report import events, execution_issues, read_json, verify_manifest, write_json
-from . import adapters, admission, pack, worlds, coop
+from . import adapters, admission, pack, worlds, coop, desktop
 from .native import font_preload
 
 
@@ -113,9 +113,10 @@ def run(root, resource_wait=300):
         if changed:
             raise ValueError('Inputs changed while waiting for resources:\n' + '\n'.join(changed))
         input_guards = _verify_live_inputs(root, selection, runtime)
+        window_manager = desktop.prepare(selection, manual=runtime.get('fixture', {}).get('manual', False))
         processes, streams, displayed = {}, [], set()
         execution = {"status": "running", "platform": "darwin", "processes": {}, "peer_disconnected": False, 'attachments': [],
-                     'resources': resources, 'input_guards': input_guards}
+                     'resources': resources, 'input_guards': input_guards, 'desktop': window_manager.evidence}
         game = Path(runtime["game"])
         base = [runtime["java"], "-Djava.awt.headless=true", "--enable-native-access=ALL-UNNAMED",
                 "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED", "-Dzomboid.steam=0",
@@ -145,9 +146,10 @@ def run(root, resource_wait=300):
                 arguments = ["-cp", "projectzomboid.jar", "zombie.network.GameServer", "-servername", runtime["server_name"], "-adminpassword", "smoke-local-only"]
             else:
                 arguments = ["-XstartOnFirstThread", "-cp", str(config["classes"]) + os.pathsep + "projectzomboid.jar", "ToolkitSmokeLauncher"]
-            command = base + loader + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
+            window_args = window_manager.arguments(cache, config["classes"]) if role != "server" else []
+            command = base + window_args + loader + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
             if hosted and role == 'client1':
-                command = base + ['-Dtoolkit.test.hostCache=' + str(cache)] + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
+                command = base + window_args + ['-Dtoolkit.test.hostCache=' + str(cache)] + arguments + ["-nosteam", "-novoip", "-cachedir=" + str(cache)]
             if role != "server":
                 command = ["launchctl", "asuser", str(os.getuid())] + command
             stream = (root / (role + "-launch.log")).open("w")
@@ -170,6 +172,8 @@ def run(root, resource_wait=300):
             processes[role] = process
             execution["processes"][role] = {"pid": process.pid}
             print(role + " PID " + str(process.pid), flush=True)
+            if role != "server":
+                window_manager.route(process, cache, root / (role + "-launch.log"))
 
         attached = {}
         def probe(role, spec, argument):
@@ -219,6 +223,9 @@ def run(root, resource_wait=300):
             deadline = time.monotonic() + selection["timeout_seconds"]
             while time.monotonic() < deadline:
                 current = {role: text(role) for role in adapters.roles(selection)}
+                for role in clients:
+                    if processes[role].poll() is None:
+                        window_manager.check(processes[role])
                 # A writer may be halfway through its final JSON line; final audit remains strict.
                 records = {role: events(current[role] if current[role].endswith("\n") else current[role].rsplit("\n", 1)[0] if "\n" in current[role] else "") for role in clients}
                 for role in clients:

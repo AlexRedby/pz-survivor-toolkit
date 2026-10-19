@@ -66,7 +66,9 @@ class NativeSnapshotTests(unittest.TestCase):
 
     @staticmethod
     def compile(command, **kwargs):
-        Path(command[-1]).with_suffix(".class").write_bytes(b"fake class")
+        for value in command:
+            if str(value).endswith(".java"):
+                Path(value).with_suffix(".class").write_bytes(b"fake class")
 
     def prepare(self, name="run", **changes):
         selection = dict(self.selection, **changes)
