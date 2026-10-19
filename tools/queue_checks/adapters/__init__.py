@@ -4,7 +4,7 @@ from importlib import import_module
 
 MODULES = {'vehicle-wishlist': 'vehicle_wishlist', 'pinned-items': 'pinned_items', 'startup': 'startup', 'basement-hall': 'basement_hall', 'fire': 'fire', 'engine': 'engine', 'engine-peers': 'engine', 'craft': 'craft', 'equipment': 'equipment', 'animal-fixes': 'animal_fixes', 'crafting-plans': 'craft_wishlist', 'shared-wishlist': 'craft_wishlist',
            'craft-ui': 'craft_ui', 'fluid': 'fluid', 'forge': 'forge',
-           'video-recording': 'auxiliary', 'item-tags': 'auxiliary', 'quartermaster-presets': 'quartermaster', 'quartermaster-transfers': 'quartermaster', 'animal-trailer': 'auxiliary',
+           'video-recording': 'auxiliary', 'item-tags': 'auxiliary', 'quartermaster-presets': 'quartermaster', 'quartermaster-transfers': 'quartermaster', 'quartermaster-distribution': 'quartermaster_distribution', 'quartermaster-crafting': 'quartermaster_crafting', 'animal-trailer': 'auxiliary',
            'wooden_cart_motion': 'carts', 'wooden_cart_multiplayer': 'carts'}
 
 

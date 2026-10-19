@@ -84,6 +84,8 @@ Audit known category IDs with `python3 tools/check_tag_categories.py --schema PZ
 
 Use the [native tag checks](../tests/native_tags/README.md) for reconnect and cold-restart scenarios. Quartermaster's global preset-rule store has native single-player `seed` and separate-process `reload` coverage; see the [runner guidance](../tests/native_queue/README.md#files-and-contributions) for its cases and evidence requirements. This coverage is distinct from container rules and local named filters. Automated callback and persistence checks do not establish physical mouse/controller input or WAN behavior.
 
+For basic storage gameplay, the native `quartermaster-distribution` and `quartermaster-crafting` suites exercise real walking/transfers and crafting through the owned UI handlers, with exact inventory effects and Host authority. The latter uses one native fixture recipe through both ordinary and Neat crafting, including kept tools. See the [runner guidance](../tests/native_queue/README.md) for scope and commands; a transfer-only Manifest check does not establish that either complete gameplay cycle works.
+
 ## Wishlist storage
 
 See [server setup](../MOD_INSTALL.md#server) for storage location and backup/restore requirements. Files use two alternating checked copies; global ModData is deliberately avoided because vanilla clients can request named global tables without wishlist access. Single-player uses the same validation and storage. No item, recipe or loot content is modified.
