@@ -1,6 +1,7 @@
 require "PZSurvivorWishlist/Client"
 require "PZSurvivorWishlist/Settings"
 require "ISUI/ISInventoryPane"
+local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 
 local W = PZSurvivorWishlist
 local Inventory = {}
@@ -57,9 +58,7 @@ local function install(class)
 end
 
 function Inventory.install()
-    install(ISInventoryPane)
-    install(CleanUI_Clean_ISInventoryPane)
-    install(CleanUI_Vanilla_ISInventoryPane)
+    InventoryClasses.panes(install)
 end
 
 local function context(playerNum, menu, items)
@@ -100,6 +99,6 @@ end
 Events.OnFillInventoryObjectContextMenu.Add(context)
 Events.OnGameStart.Add(function()
     Inventory.install()
-    if CleanUI_RegisterInventoryUiToggleCallback then CleanUI_RegisterInventoryUiToggleCallback(Inventory.install) end
+    InventoryClasses.onToggle(Inventory.install)
 end)
 return Inventory

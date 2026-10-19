@@ -64,29 +64,28 @@ local function verifyCreated()
     end
 end
 Events = {OnMainMenuEnter = {Add = function() end}, OnGameStart = {Add = function() end}}
-for _, withToolkit in ipairs({false, true}) do
-    created = {}
-    local applications = 0
-    PZSurvivorToolkit = withToolkit and {UIStyle = {button = function(b) applications = applications + 1; return style.button(b) end}} or nil
-    PZSurvivorWishlist = {Client = {sync = function() end, selected = function() end}, Settings = {craftingEnabled = function() return true end}}
-    local UI = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/UI.lua")
-    local window = UI.open(0)
-    assert(#created == 5 and window.shareButton.target == window)
-    verifyCreated()
-    assert(applications == (withToolkit and 5 or 0), "optional toolkit helper was not used")
-    created, applications = {}, 0
-    ISCraftRecipePanel = {createDynamicChildren = function(panel)
-        panel.rootTable = {addRow = function() return {index = function() return 0 end, setVisible = function() end} end,
-            setElement = function() end}
-    end, prerender = function() end}
-    ISBuildRecipePanel = {}
-    ISWidgetInput = {}
-    local crafting = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/Crafting.lua")
-    crafting.install()
-    local panel = {player = {}, logic = {getRecipe = function() return {} end}}
-    ISCraftRecipePanel.createDynamicChildren(panel)
-    assert(panel.pzswButton.target == panel and panel.pzswButton.onclick == crafting.openMenu)
-    verifyCreated()
-    assert(applications == (withToolkit and 1 or 0))
-end
-print("UI style checks passed: idempotence, independent colors, unchanged geometry/callbacks and standalone wishlist factories.")
+created = {}
+local applications = 0
+local applyStyle = style.button
+style.button = function(b) applications = applications + 1; return applyStyle(b) end
+PZSurvivorWishlist = {Client = {sync = function() end, selected = function() end}, Settings = {craftingEnabled = function() return true end}}
+local UI = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/UI.lua")
+local window = UI.open(0)
+assert(#created == 5 and window.shareButton.target == window)
+verifyCreated()
+assert(applications == 5, "Wishlist windows must use the shared style")
+created, applications = {}, 0
+ISCraftRecipePanel = {createDynamicChildren = function(panel)
+    panel.rootTable = {addRow = function() return {index = function() return 0 end, setVisible = function() end} end,
+        setElement = function() end}
+end, prerender = function() end}
+ISBuildRecipePanel = {}
+ISWidgetInput = {}
+local crafting = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/Crafting.lua")
+crafting.install()
+local panel = {player = {}, logic = {getRecipe = function() return {} end}}
+ISCraftRecipePanel.createDynamicChildren(panel)
+assert(panel.pzswButton.target == panel and panel.pzswButton.onclick == crafting.openMenu)
+verifyCreated()
+assert(applications == 1, "Wishlist crafting must use the shared style")
+print("UI style checks passed: idempotence, independent colors, unchanged geometry/callbacks and shared Wishlist factories.")

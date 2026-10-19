@@ -12,7 +12,12 @@ end
 local function load(path,env)return assert(setfenv(assert(loadfile(path)),env))()end
 local function client(user,toolkit,clock)
  local output={}
- local env=setmetatable({Events=events(),require=function()end,print=function(line)output[#output+1]=line end},{__index=_G})
+ local env=setmetatable({Events=events(),print=function(line)output[#output+1]=line end},{__index=_G})
+ env.require=function(name)
+  if name=='PZSurvivorToolkit/InventoryClasses'then
+   return load(project..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua',env)
+  end
+ end
  env.getActivatedMods=function()return{contains=function()return toolkit end}end
  env.getTimestampMs=function()return clock.now end
  env.getFileReader=function()

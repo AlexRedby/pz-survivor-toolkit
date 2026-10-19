@@ -52,7 +52,12 @@ PZSurvivorWishlist = { Settings = { craftingEnabled = function() return enabled 
                 entries = values.entries, fullType = values.fullType }
         end,
         selected = function() return selected end, open = function() opened = opened + 1 end } }
-require = function() end
+PZSurvivorToolkit = {}
+require = function(name)
+    if name == "PZSurvivorToolkit/UIStyle" then
+        return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
+    end
+end
 ResourceType = { Item = "item" }
 getText = function(key, ...) return key .. ":" .. table.concat({ ... }, ",") end
 UIFont = { Small = 1 }

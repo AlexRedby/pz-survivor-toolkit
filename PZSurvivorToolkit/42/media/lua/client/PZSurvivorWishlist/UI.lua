@@ -27,14 +27,7 @@ local function button(parent, x, y, width, label, callback)
     local control = ISButton:new(x, y, width, BH, label, parent, callback)
     control:initialise()
     control:instantiate()
-    if PZSurvivorToolkit and PZSurvivorToolkit.UIStyle then
-        PZSurvivorToolkit.UIStyle.button(control)
-    else
-        control.backgroundColor = {r = 0.10, g = 0.085, b = 0.07, a = 0.82}
-        control.backgroundColorMouseOver = {r = 0.55, g = 0.27, b = 0.09, a = 0.92}
-        control.borderColor = {r = 0.42, g = 0.34, b = 0.25, a = 0.65}
-        control.textColor = {r = 0.94, g = 0.90, b = 0.83, a = 1}
-    end
+    UIStyle.button(control)
     parent:addChild(control)
     return control
 end

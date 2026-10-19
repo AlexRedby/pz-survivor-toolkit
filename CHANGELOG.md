@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.100
+
+- **Changed:** Wishlist uses Toolkit's shared button styling and inventory-class integration, removing duplicate standalone paths while preserving existing controls and highlights when CleanUI switches views.
+
 ### 0.1.99
 
 - **Fixed:** Wishlist, tag-rule, context-menu and craft-chain labels share Unicode-safe truncation. Long labels preserve whole characters in the game's native string format, and very narrow columns no longer show an overflowing ellipsis.
