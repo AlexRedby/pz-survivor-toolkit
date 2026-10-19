@@ -13,6 +13,7 @@ Version labels come from committed component metadata, including changes made wi
 ### 0.1.103
 
 - Register bounded cart locomotion and interaction snapshots for native multiplayer variable synchronization; every client renders cart poses locally.
+- Align the final wooden wheelbarrow pickup approach with the center between its handles.
 
 ### 0.1.102
 
@@ -470,6 +471,14 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.30
+
+- Smooth the grip during wooden wheelbarrow pickup and setdown, preserving the thumb pose through the native transition into holding the handles.
+
+### 0.1.29
+
+- Center the wooden wheelbarrow pickup approach while preserving native collision and final handle alignment.
 
 ### 0.1.28
 

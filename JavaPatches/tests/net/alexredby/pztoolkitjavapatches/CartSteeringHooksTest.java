@@ -56,11 +56,17 @@ public final class CartSteeringHooksTest {
             return keyboard?zombie.characters.CharacterInputMode.KEYBOARD:zombie.characters.CharacterInputMode.GAMEPAD;
         }
         @Override public boolean isAimControlActive() { return aim; }
+        @Override public boolean isAiming() { return aim; }
         @Override public boolean isAutoWalk() { return autoWalk; }
         @Override public zombie.characters.component.CharacterInputComponent getCharacterInputComponent() { return keys; }
         zombie.pathfind.PathFindBehavior2 nativePath;
         zombie.ai.astar.AStarPathFinderResult finder;
         zombie.ai.StateMachine machine;
+        java.util.Stack<zombie.characters.CharacterTimedActions.BaseAction> actions;
+        @Override public java.util.Stack<zombie.characters.CharacterTimedActions.BaseAction> getCharacterActions() {
+            if(actions==null) actions=new java.util.Stack<>();
+            return actions;
+        }
         Runnable animationUpdate;
         float walkSpeed, slowFactor;
         @Override public float getSlowFactor() { return slowFactor; }
