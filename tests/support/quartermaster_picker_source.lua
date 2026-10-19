@@ -98,6 +98,7 @@ return function(control, rules, options)
     local preset = {cats = {OC_Food = true}, items = {Beans = true}, rev = 7, gen = 'generation'}
     LootSorter = {PRIORITY_MAX_DIGITS = 5, DBG = function() end,
         getCategories = options.categories or function() return {'OC_Food', 'OC_FoodPerishable', 'OC_Electrical'} end,
+        getTagScriptItems = options.scriptItems or function() return {} end,
         getItemNames = function() return {'Beans', 'Hammer'} end,
         getPresetStore = function() return {Pantry = preset} end,
         presetNames = function() return {'Pantry'} end,

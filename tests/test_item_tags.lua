@@ -219,4 +219,18 @@ assert(#LootSorter.getItemsInCategory('Material') == 1 and thread.category == 'M
 OrganizedCategories = nil
 dofile(shared .. 'LootSorter_Categories.lua')
 assert(#LootSorter.getCategories() == 1 and #LootSorter.getItemsInCategory('Material') == 2, 'provider-free catalog failed')
+local hidden = scriptItem('Base.Hidden', 'HiddenCategory')
+hidden.isHidden = function() return true end
+hidden.getObsolete = function() return false end
+local obsolete = scriptItem('Base.Obsolete', 'ObsoleteCategory')
+obsolete.isHidden = function() return false end
+obsolete.getObsolete = function() return true end
+getAllItems = function() return javaList({thread, hidden, obsolete}) end
+getScriptManager = function() return {getAllItems = getAllItems} end
+dofile(shared .. 'LootSorter_Categories.lua')
+local ruleScripts = LootSorter.getTagScriptItems()
+assert(#ruleScripts == 2 and ruleScripts[1] == thread and ruleScripts[2] == hidden,
+ 'rule catalog must include hidden items but exclude obsolete scripts')
+assert(#LootSorter.getCategories() == 1 and LootSorter.getCategories()[1] == 'Material',
+ 'visible category picker inherited rule-preview inclusion policy')
 print('ItemTags: '..count..' exact legacy projections, independent tags, aliases, unknown/ambiguous keys and live fluid changes passed.')

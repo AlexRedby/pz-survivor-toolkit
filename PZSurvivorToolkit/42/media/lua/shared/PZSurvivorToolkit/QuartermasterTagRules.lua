@@ -39,18 +39,6 @@ function Rules.getPreset(name, preset)
     return copy(entry.rule)
 end
 
-function Rules.scriptItems()
-    local items = getAllItems and getAllItems()
-    local result = {}
-    if items then
-        for i = 0, items:size() - 1 do
-            local script = items:get(i)
-            if script and (not script.getObsolete or not script:getObsolete()) then result[#result + 1] = script end
-        end
-    end
-    return result
-end
-
 function Rules.forBox(obj, ci, links, presets)
     local rules = {}
     if not Tags.enabled() then return rules end

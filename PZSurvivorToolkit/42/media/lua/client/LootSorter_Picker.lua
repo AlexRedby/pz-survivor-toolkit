@@ -408,8 +408,7 @@ function Picker:rebuild()
     local tagView = TagPicker.isTagView(self)
     local entries = self:activeList()
     if tagView then
-        entries = TagPicker.rows(entries, TagRules.scriptItems())
-        table.sort(entries, function(a, b) return a.label < b.label end)
+        entries = TagPicker.rows(self, entries)
     end
     self.listbox:clear()
     for _, entry in ipairs(entries) do

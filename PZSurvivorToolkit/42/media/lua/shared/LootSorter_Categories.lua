@@ -20,6 +20,21 @@ local function isListable(scriptItem)
     return listable
 end
 
+-- Rule previews include hidden items: they may share a routable category with visible items and
+-- change whether a tag covers that whole category. Only obsolete scripts are excluded here.
+-- The picker owns the snapshot lifetime; reopening it reads the current loaded scripts again.
+function LootSorter.getTagScriptItems()
+    local items = getAllItems and getAllItems()
+    local result = {}
+    if items then
+        for i = 0, items:size() - 1 do
+            local script = items:get(i)
+            if script and (not script.getObsolete or not script:getObsolete()) then result[#result + 1] = script end
+        end
+    end
+    return result
+end
+
 -- Every inventory category declared by any loaded item (vanilla + whatever mods are installed),
 -- deduped and alpha-sorted. Built lazily on first use and cached, so the picker always matches
 -- the actual game/mods instead of a frozen snapshot. Provider reads preserve loot-safe scripts.

@@ -1,15 +1,17 @@
 local enabled, starts, creates = true, {}, {}
 local openedRulePicker, adapter
 local scriptCatalog = {}
+local catalogReads, tagReads = 0, 0
 local ruleApi = {getBoxRevision = function(obj) return obj and obj.md.ruleRevision or 0 end,
     getBox = function() end, getPreset = function() end,
-    presetsSynced = function() return true end, scriptItems = function() return scriptCatalog end}
+    presetsSynced = function() return true end}
 getSpecificPlayer = function() return {} end
 PZSurvivorToolkit = {}
 local itemCategories = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/ItemCategories.lua')
 local categoryTags = {OC_Food = {'food'}, OC_FoodPerishable = {'food', 'perishable'},
     OC_Electrical = {'electrical'}, OC_FoodElectrical = {'food', 'electrical'}}
 require = function(name)
+    if name == 'LootSorter_Categories' then return end
     if name == 'PZSurvivorToolkit/ItemCategories' then return itemCategories end
     if name == 'PZSurvivorToolkit/TagVisuals' then
         return {get=function(id) return {r=0.3,g=0.7,b=0.3,texture=id and {id=id} or nil} end}
@@ -28,7 +30,7 @@ require = function(name)
         end,
         ruleActive = function(value) return value and (#value.include > 0 or #value.exclude > 0) or false end,
         forCategory = function(category) return categoryTags[category] or {'category:' .. category} end,
-        forScriptItem = function(script) return script.tags end,
+        forScriptItem = function(script) tagReads = tagReads + 1; return script.tags end,
         label = function(id) return id end}
 end
 Events = {OnGameStart = {Add = function(fn) starts[#starts + 1] = fn end},
@@ -73,6 +75,7 @@ assert(#starts == 0 and #creates == 0 and adapter.attach == nil,
     'tag helpers installed lifecycle hooks or retained per-instance attachment')
 local createFixture = dofile(ProjectRoot .. '/tests/support/quartermaster_picker_source.lua')
 local fixture = createFixture(control, ruleApi, {categories = function() return availableCats end,
+    scriptItems = function() catalogReads = catalogReads + 1; return scriptCatalog end,
     cats = storedCats, items = storedItems})
 local open = fixture.open
 local function edit() return fixture.edit(LootSorter._picker) end
@@ -227,12 +230,24 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
         script(names[3],'OC_Seeds',{'farming','seed'}),script(names[4],'OC_Seeds',{'farming'}),
         script(names[5],'OC_SeedOnly',{'farming','seed'})}
     fixture.setContents({'OC_Snack'})
+    local readsBefore = catalogReads
     open();local itemPicker=LootSorter._picker
+    assert(catalogReads == readsBefore + 1, 'reopened picker did not read a fresh catalog')
+    local projectionReads = tagReads
     itemPicker.selectedItems['Sunflower seeds']=true
     local seed,seedIndex=assert(find(itemPicker,'seed'))
     assert(seed.requiresRule and seed.items==nil and #seed.categories==1 and seed.categories[1]=='OC_SeedOnly',
         'partial categories did not require a stable tag rule')
     local catsBefore,itemsBefore=snapshot(itemPicker.selectedCats),snapshot(itemPicker.selectedItems)
+    for _, query in ipairs({'s', 'se', 'seed', ''}) do
+        itemPicker.filter:setText(query); itemPicker:prerender()
+        assert(find(itemPicker, 'seed') == seed, 'typing rebuilt the prepared tag rows')
+    end
+    itemPicker.selectedCats.NewMissingCategory = true; itemPicker.needRebuild = true; itemPicker:prerender()
+    assert(find(itemPicker, 'NewMissingCategory'), 'new saved category was omitted from prepared rows')
+    itemPicker.selectedCats.NewMissingCategory = nil; itemPicker.needRebuild = true; itemPicker:prerender()
+    assert(not find(itemPicker, 'NewMissingCategory'), 'removed saved category left a stale row')
+    seed, seedIndex = assert(find(itemPicker, 'seed'))
     click(itemPicker,'seed')
     assert(openedRulePicker.owner==itemPicker and openedRulePicker.rule.mode=='all'
         and openedRulePicker.rule.include[1]=='seed' and openedRulePicker.scriptItems==scriptCatalog,
@@ -266,6 +281,8 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
     assert(next(itemPicker.selectedCats)==nil,'Select all broadened a partial category')
     itemPicker.toolkitTagRuleButton.onclick(itemPicker)
     assert(openedRulePicker.scriptItems==scriptCatalog,'dynamic editor preview lacks the script catalog')
+    assert(catalogReads == readsBefore + 1 and tagReads == projectionReads,
+        'search, selection, saved-category changes or rule opening re-enumerated the item/tag catalog')
 end
 OrganizedCategories = nil
 print('Quartermaster tag view checks passed: owned controls, exact/refined selections, filters, controller, modes, reopens and opt-out.')

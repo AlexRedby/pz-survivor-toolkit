@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.124
+
+- **Changed:** Quartermaster prepares its item/tag catalog once per editor window and shares it with rule previews. Search and selection filter prepared rows instead of rescanning every loaded item; reopening refreshes the catalog. Exact picks, partial-category rules and saved categories from missing mods retain their meaning.
+
 ### 0.1.123
 
 - **Changed:** Wishlist and crafting-plan buttons share one owner for native crafting rows and Neat Crafting footers. Creation, visibility and reserved space no longer depend on nested layout hooks; action behavior, button order and embedded-plan controls are preserved.

@@ -3,6 +3,7 @@ local Categories = require "PZSurvivorToolkit/ItemCategories"
 local Visuals = require "PZSurvivorToolkit/TagVisuals"
 local Rules = require "PZSurvivorToolkit/QuartermasterTagRuleClient"
 local RulePicker = require "PZSurvivorToolkit/TagRulePicker"
+require "LootSorter_Categories"
 
 -- Tag projection and rule helpers. The owned Picker constructs and dispatches its UI directly.
 local Adapter = {}
@@ -39,7 +40,7 @@ end
 
 function Adapter.openRule(picker, rule, onApply)
     RulePicker.open({player = getSpecificPlayer(picker.playerNum or 0), owner = picker,
-        rule = rule, categories = picker:activeList(), scriptItems = Rules.scriptItems(),
+        rule = rule, categories = picker:activeList(), scriptItems = Adapter.catalog(picker).scriptItems,
         title = getText("UI_PZST_QMTagRuleTitle"), onApply = function(value)
             picker.toolkitTagRule = Tags.normalizeRule(value)
             picker.toolkitTagRuleTouched = true
@@ -47,21 +48,41 @@ function Adapter.openRule(picker, rule, onApply)
         end})
 end
 
-function Adapter.rows(categoryList, catalog)
-    local rows, byTag, groups = {}, {}, {}
-    for _, script in ipairs(catalog) do
+-- Loaded scripts and their tag projection are a snapshot for this window. Text/selection filters
+-- consume it, and the rule preview uses the same source. No session-wide cache survives a reopen.
+function Adapter.catalog(picker)
+    if picker.toolkitTagCatalog then return picker.toolkitTagCatalog end
+    local catalog = {scriptItems = LootSorter.getTagScriptItems(), groups = {}}
+    for _, script in ipairs(catalog.scriptItems) do
         local category = Categories.forScript(script)
-        local entry = {tags = {}}
-        for _, id in ipairs(Tags.forScriptItem(script)) do entry.tags[id] = true end
         if category then
-            groups[category] = groups[category] or {}
-            groups[category][#groups[category] + 1] = entry
+            local group = catalog.groups[category] or {count = 0, tags = {}}
+            catalog.groups[category] = group
+            group.count = group.count + 1
+            local seen = {}
+            for _, id in ipairs(Tags.forScriptItem(script)) do
+                if not seen[id] then group.tags[id] = (group.tags[id] or 0) + 1; seen[id] = true end
+            end
         end
     end
+    picker.toolkitTagCatalog = catalog
+    return catalog
+end
+
+local function sameCategories(left, right)
+    if not left or #left ~= #right then return false end
+    for i, category in ipairs(left) do if category ~= right[i] then return false end end
+    return true
+end
+
+function Adapter.rows(picker, categoryList)
+    local catalog = Adapter.catalog(picker)
+    if sameCategories(catalog.categories, categoryList) then return catalog.rows end
+    local rows, byTag = {}, {}
     for _, category in ipairs(categoryList) do
-        local members, ids = groups[category], {}
+        local members, ids = catalog.groups[category], {}
         if members then
-            for _, entry in ipairs(members) do for id in pairs(entry.tags) do ids[id] = true end end
+            ids = members.tags
         else
             for _, id in ipairs(Tags.forCategory(category)) do ids[id] = true end
         end
@@ -75,9 +96,7 @@ function Adapter.rows(categoryList, catalog)
                 byTag[id], rows[#rows + 1] = row, row
             end
             row.sourceCategories[#row.sourceCategories + 1] = category
-            local matches = 0
-            for _, entry in ipairs(members or {}) do if entry.tags[id] then matches = matches + 1 end end
-            if not members or matches == #members then
+            if not members or members.tags[id] == members.count then
                 row.categories[#row.categories + 1] = category
             else
                 -- Native specific-item keys are localized names; item refinements need a stable tag rule.
@@ -88,6 +107,8 @@ function Adapter.rows(categoryList, catalog)
     for _, row in ipairs(rows) do
         if row.requiresRule then row.label = row.label .. " (" .. getText("UI_PZST_QMTagRule") .. ")" end
     end
+    table.sort(rows, function(a, b) return a.label < b.label end)
+    catalog.categories, catalog.rows = categoryList, rows
     return rows
 end
 
