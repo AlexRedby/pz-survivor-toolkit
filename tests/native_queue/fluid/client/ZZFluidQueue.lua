@@ -14,6 +14,7 @@ local ids,state,authorityState,receipt,spec
 local previousAuthority,previousBag,lastCurrent
 local commands,observations={},{}
 local waitingCancelVerified=false
+local independentMoveVerified=false
 local function case()return config.cases[step]end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function emit(row)
@@ -105,6 +106,11 @@ local function cancelWaiting()
  if not spec.cancel or config.mode~='toolkit'then return end
  local removed,retained=observations[2].actions,{}
  assert(queue().queue[1]~=observations[2].drink and not observations[2].drink:isStarted(),'cancel target already active')
+ if spec.source=='root'then
+  assert(#removed==1 and #observations[3].actions==1,'root drink must be a single-action operation')
+  Checks.moveRoundtrip(queue(),Queue,Policy,observations[2].drink,observations[3].drink,true,observations[3].drink,false)
+  independentMoveVerified=true
+ end
  for _,index in ipairs({1,3})do for _,action in ipairs(observations[index].actions)do retained[#retained+1]=action end end
  Checks.waitingCancel(queue(),Queue,Policy,observations[2].drink,removed,retained)
  commands[2].cancelled=true;waitingCancelVerified=true
@@ -130,7 +136,8 @@ local function finish()
   end
  end
  if receipt.thirst>=ids.thirst-.00001 then reason='thirst-not-reduced'end
- local row={event='case',id=case(),status=reason and 'failed'or 'passed',reason=reason,commands=commands,waitingCancelVerified=waitingCancelVerified}
+ local row={event='case',id=case(),status=reason and 'failed'or 'passed',reason=reason,commands=commands,
+  waitingCancelVerified=waitingCancelVerified,independentMoveVerified=independentMoveVerified}
  for key,value in pairs(receipt)do row[key]=value end
  emit(row);if reason then failed=failed+1 end
  step=step+1
@@ -140,7 +147,7 @@ local function finish()
  end
  previousAuthority=authorityState;previousBag=state.bag
  ids,state,authorityState,receipt,lastCurrent=nil,nil,nil,nil,nil
- commands,observations={},{};waitingCancelVerified=false
+ commands,observations={},{};waitingCancelVerified=false;independentMoveVerified=false
  ISTimedActionQueue.add(ISUnequipAction:new(getPlayer(),previousBag,50))
  phase='unequipped';since=getTimestampMs()
 end

@@ -21,7 +21,7 @@ BAG_TYPE = 'Base.Bag_ALICEpack_Army'
 
 def definitions():
     groups = {
-        'drink-portions': ('Native portions from root or a worn military backpack; favorite bottles, repeated halves with native SP/Host semantics and waiting cancellation.',
+        'drink-portions': ('Native portions from root or a worn military backpack; favorite bottles, queued halves and serial quarters with native SP/Host semantics and waiting cancellation.',
                            [case for case in CASES if '-smart-' not in case and '-sip-' not in case]),
         'drink-smart': ('Drink Smart from a worn military backpack with favorite bottles at normal and low thirst.',
                         [case for case in CASES if '-smart-' in case]),
@@ -38,6 +38,7 @@ def definitions():
             checks['repeat-independent'] = {'fluid-bag-pair-queued-favorite': {'independentRequestsQueued': True, 'effectsVerified': True}}
             checks['repeat-same'] = {case: {'sameBottleRequestsVerified': True, 'effectsVerified': True} for case in cases if '-same-' in case}
             checks['cancel-waiting'] = {case: {'waitingCancelVerified': True, 'effectsVerified': True} for case in cases if '-cancel-' in case}
+            checks['move-independent'] = {'fluid-root-cancel-waiting-favorite': {'independentMoveVerified': True, 'effectsVerified': True}}
         actions[name] = {'scope': scope, 'mods': MODS, 'checks': checks}
     return {'fluid': {'status': 'ready', 'clients': 1, 'default_mods': MODS, 'scenario_actions': actions,
                       'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
@@ -95,6 +96,7 @@ def _close(value, expected, tolerance=.0001):
 
 def _commands(case):
     menu = next((name for name in ('all', 'quarter', 'smart', 'sip') if name in case.split('-')), 'half')
+    if '-same-serial-' in case: menu = 'quarter'
     portion = {'half': .5, 'all': 1, 'quarter': .25, 'sip': .01}.get(menu)
     targets = [0, 1, 2] if '-cancel-' in case else [0, 0] if '-same-' in case else [0, 1] if '-pair-' in case else [1] if '-second-' in case else [0]
     return menu, portion, targets
@@ -136,7 +138,8 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
         issues.append('Fluid thirst effect differs: ' + case)
     menu, portion, targets = _commands(case)
     commands, amounts, tolerances = row.get('commands'), {}, {}
-    if (not craft._matches(row, dict(status='passed', reason=None, waitingCancelVerified=cancelling)) or type(commands) is not list
+    if (not craft._matches(row, dict(status='passed', reason=None, waitingCancelVerified=cancelling,
+                                    independentMoveVerified=cancelling and not bag)) or type(commands) is not list
             or len(commands) != len(targets)):
         issues.append('Fluid native command count/status differs: ' + case)
     else:
@@ -226,6 +229,7 @@ def verify(root, selection, catalog):
                        independentRequestsQueued=not case_issues and case == 'fluid-bag-pair-queued-favorite',
                        sameBottleRequestsVerified=not case_issues and '-same-' in case,
                        waitingCancelVerified=not case_issues and '-cancel-' in case and selection['mode']=='toolkit',
+                       independentMoveVerified=not case_issues and case=='fluid-root-cancel-waiting-favorite' and selection['mode']=='toolkit',
                        serverAuthorityVerified=not case_issues and selection['kind'] == 'mp')
         outcomes.append(dict(actor='client1', case=case, outcome=outcome))
     if not craft._ids(identities):

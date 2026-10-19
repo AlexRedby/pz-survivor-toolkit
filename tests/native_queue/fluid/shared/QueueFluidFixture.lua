@@ -1,7 +1,8 @@
 local Fixture={bagType='Base.Bag_ALICEpack_Army'}
 function Fixture.scenario(case)
+ -- Repeated quarters stay above the native menu threshold despite Host progress overshoot.
  local menu=case:find('smart',1,true)and 'smart'or case:find('-sip-',1,true)and 'sip'
-  or case:find('-all-',1,true)and 'all'or case:find('-quarter-',1,true)and 'quarter'or 'half'
+  or case:find('-all-',1,true)and 'all'or (case:find('-quarter-',1,true)or case:find('-same-serial-',1,true))and 'quarter'or 'half'
  return {menu=menu,source=case:match('^fluid%-root')and 'root'or 'bag',favorite=case:sub(-9)=='-favorite',
   foodTimer=case:find('-full-',1,true)and 4000 or 0,
   thirst=case:find('smart%-low')and .04 or menu=='smart'and .2 or .8,

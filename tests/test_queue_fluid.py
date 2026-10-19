@@ -33,7 +33,7 @@ class FluidAdapterTests(unittest.TestCase):
             thirst = .04 if '-smart-low-' in case else .2 if '-smart-' in case else .8
             menu, portion = 'half', .5
             if '-all-' in case: menu, portion = 'all', 1
-            elif '-quarter-' in case: menu, portion = 'quarter', .25
+            elif '-quarter-' in case or '-same-serial-' in case: menu, portion = 'quarter', .25
             elif '-smart-' in case: menu, portion = 'smart', thirst / .5
             elif '-sip-' in case: menu, portion = 'sip', .01
             targets = [0, 1, 2] if '-cancel-' in case else [0, 0] if '-same-' in case else [0, 1] if '-pair-' in case else [1] if '-second-' in case else [0]
@@ -62,7 +62,7 @@ class FluidAdapterTests(unittest.TestCase):
                                     for n, bottle in enumerate(prep['bottles'])])
             raw += [('PREPARED', prep), ('VERIFIED', receipt)]
             rows.append(dict(event='case', id=case, status='passed', reason=None, commands=commands,
-                             waitingCancelVerified=cancelling,
+                             waitingCancelVerified=cancelling, independentMoveVerified=cancelling and not bag,
                              **copy.deepcopy({key: value for key, value in receipt.items() if key != 'case'})))
         rows.append(dict(event='complete', cases=cases, expected=len(cases), performed=len(cases), failed=0, skipped=0))
         return ([dict(row, suite='fluid', kind=self.selection['kind'], mode=self.selection['mode'], actor='client1')
@@ -276,26 +276,26 @@ class FluidAdapterTests(unittest.TestCase):
                 rows, raw = self.single(case)
                 commands = rows[1]['commands']
                 self.assertEqual(commands[0]['id'], commands[1]['id'])
-                self.assertEqual(.5 if '-serial-' in case else 1, commands[1]['dispatchAmount'])
-                self.assertEqual(.5 if kind == 'sp' and '-queued-' in case else .25, raw[1][1]['bottles'][0]['amount'])
+                self.assertEqual(.75 if '-serial-' in case else 1, commands[1]['dispatchAmount'])
+                self.assertEqual(.5625 if '-serial-' in case else .5 if kind == 'sp' else .25, raw[1][1]['bottles'][0]['amount'])
                 self.assertEqual([], self.verify((rows, raw))['issues'])
                 for fault in ('distinct-target', 'wrong-final-volume', 'wrong-dispatch-volume', 'missing-dispatch-source'):
                     rows, raw = self.single(case)
                     if fault == 'distinct-target': rows[1]['commands'][1]['id'] = raw[0][1]['bottles'][1]['id']
                     elif fault == 'wrong-final-volume':
                         rows[1]['bottles'][0]['amount'] = raw[1][1]['bottles'][0]['amount'] = .75
-                    elif fault == 'wrong-dispatch-volume': rows[1]['commands'][1]['dispatchAmount'] = .75
+                    elif fault == 'wrong-dispatch-volume': rows[1]['commands'][1]['dispatchAmount'] = .9
                     else: del rows[1]['commands'][1]['dispatchSource']
                     with self.subTest(kind=kind, case=case, fault=fault):
                         self.assertTrue(self.verify((rows, raw))['issues'])
 
-    def test_serial_dispatch_overshoot_cannot_hide_an_underconsumed_first_half(self):
+    def test_serial_dispatch_overshoot_cannot_hide_an_underconsumed_first_quarter(self):
         for kind in ('sp', 'mp'):
             self.selection['kind'] = kind
             rows, raw = self.single('fluid-bag-same-serial-favorite')
-            rows[1]['commands'][1]['dispatchAmount'] = .509
-            rows[1]['bottles'][0]['amount'] = raw[1][1]['bottles'][0]['amount'] = .2545
-            rows[1]['thirst'] = raw[1][1]['thirst'] = .8 - (1 - .2545) * .5
+            rows[1]['commands'][1]['dispatchAmount'] = .759
+            rows[1]['bottles'][0]['amount'] = raw[1][1]['bottles'][0]['amount'] = .56925
+            rows[1]['thirst'] = raw[1][1]['thirst'] = .8 - (1 - .56925) * .5
             with self.subTest(kind=kind):
                 self.assertIn('Fluid dispatch volume differs: fluid-bag-same-serial-favorite',
                               self.verify((rows, raw))['issues'])
@@ -310,10 +310,11 @@ class FluidAdapterTests(unittest.TestCase):
                     self.assertEqual([.5, 1 if cancelling else .5, .5], [bottle['amount'] for bottle in raw[1][1]['bottles']])
                     self.assertIs(rows[1]['waitingCancelVerified'], cancelling)
                     self.assertEqual([], self.verify((rows, raw))['issues'])
-                    for fault in ('flag', 'integer-flag', 'command-flag', 'middle-volume', 'middle-source', 'tail-progress', 'tail-target', 'missing-command'):
+                    for fault in ('flag', 'integer-flag', 'move-flag', 'command-flag', 'middle-volume', 'middle-source', 'tail-progress', 'tail-target', 'missing-command'):
                         rows, raw = self.single(case)
                         if fault == 'flag': rows[1]['waitingCancelVerified'] = not cancelling
                         elif fault == 'integer-flag': rows[1]['waitingCancelVerified'] = int(cancelling)
+                        elif fault == 'move-flag': rows[1]['independentMoveVerified'] = not rows[1]['independentMoveVerified']
                         elif fault == 'command-flag': rows[1]['commands'][1]['cancelled'] = not cancelling
                         elif fault == 'middle-volume':
                             rows[1]['bottles'][1]['amount'] = raw[1][1]['bottles'][1]['amount'] = .5 if cancelling else 1

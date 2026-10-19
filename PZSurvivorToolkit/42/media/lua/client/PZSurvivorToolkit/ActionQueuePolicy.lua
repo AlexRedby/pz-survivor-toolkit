@@ -434,12 +434,19 @@ function Policy.adoptReadAnimEvent(previous, replacement)
     return true
 end
 
-function Policy.adoptEatStart(previous, replacement, helpersUnchanged)
-    local snapshot = snapshots[ISEatFoodAction]
-    if not snapshot or snapshot.methods.start ~= previous or ISEatFoodAction.start ~= replacement
-        or type(previous) ~= "function" or type(replacement) ~= "function"
+function Policy.adoptConsumeStarts(previous, helpersUnchanged)
+    if not ISEatFoodAction or not ISDrinkFluidAction or type(previous) ~= "table"
         or type(helpersUnchanged) ~= "function" or not helpersUnchanged() then return false end
-    snapshot.methods.start, snapshot.startHelperGuard = replacement, helpersUnchanged
+    local classes = {ISEatFoodAction, ISDrinkFluidAction}
+    for _, class in ipairs(classes) do
+        local snapshot = snapshots[class]
+        if not snapshot or snapshot.methods.start ~= previous[class]
+            or type(previous[class]) ~= "function" or type(class.start) ~= "function" then return false end
+    end
+    for _, class in ipairs(classes) do
+        local snapshot = snapshots[class]
+        snapshot.methods.start, snapshot.startHelperGuard = class.start, helpersUnchanged
+    end
     return true
 end
 
@@ -643,7 +650,7 @@ function Policy.installContracts()
     registerNative("ISDrinkFluidAction", function(action)
         local result = itemResources(action)
         if result and action.fluidContainer and action.fluidContainer == action.item:getFluidContainer() then return result end
-    end, {"updateEat"})
+    end, {"updateEat", "setOverrideHandModels"})
     registerNative("ISEatFoodAction", function(action)
         local Food = Toolkit.BulkFood
         if not Food or not Food.isEat(action) then return end
@@ -763,6 +770,34 @@ local function finiteWeight(value)
     return type(value) == "number" and value >= 0 and value < math.huge
 end
 
+local waterPropertyEffects = {"getFatigueChange", "getHungerChange", "getStressChange", "getUnhappyChange",
+    "getCalories", "getCarbohydrates", "getLipids", "getProteins", "getAlcohol", "getPoison",
+    "getFluReduction", "getPainReduction", "getEnduranceChange", "getFoodSicknessChange"}
+local function boundedWaterDrink(action, character, source)
+    -- Clean water only reduces bottle weight and thirst. Keep every transfer's full current weight;
+    -- neither consumption nor cancellation grants additional space in this projection.
+    if source ~= "native.ISDrinkFluidAction" or action.character ~= character or action.useUtensil ~= false then return false end
+    local fluid = action.fluidContainer
+    if not instanceof(fluid, "FluidContainer") or not Fluid or not Fluid.Water
+        or not fluid:isPureFluid(Fluid.Water) or fluid:isTainted() or fluid:isPoisonous() then return false end
+    local amount, capacity, ratio = fluid:getAmount(), fluid:getCapacity(), fluid:getFilledRatio()
+    if not finiteWeight(amount) or amount == 0 or not finiteWeight(capacity) or amount > capacity
+        or not finiteWeight(ratio) or ratio == 0 or ratio > 1 then return false end
+    for _, field in ipairs({"percentage", "startRatio", "endRatio", "targetConsumedRatio", "consumedRatio"}) do
+        if not finiteWeight(action[field]) or action[field] > 1 then return false end
+    end
+    if action.percentage == 0 or action.startRatio == 0 or action.endRatio > ratio or ratio > action.startRatio
+        or action.consumedRatio > action.targetConsumedRatio or action.targetConsumedRatio > action.startRatio
+        or math.abs(action.targetConsumedRatio - (action.startRatio - action.endRatio)) > 0.000001
+        or math.abs(action.targetConsumedRatio - action.startRatio * action.percentage) > 0.000001 then return false end
+    local properties = fluid:getProperties()
+    for _, method in ipairs(waterPropertyEffects) do
+        if properties[method](properties) ~= 0 then return false end
+    end
+    local thirst = properties:getThirstChange()
+    return type(thirst) == "number" and thirst <= 0 and thirst > -math.huge
+end
+
 local function transferCapacityConflict(queue, a, b, last, check, context)
     local carts = Toolkit.ActionQueueCarts
     local function transfer(action)
@@ -817,7 +852,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
             and math.abs(weight) < math.huge and math.max(0, current + weight) + 0.01 <= capacity
     end
     for _, action in ipairs(order) do
-        local contract = inspect(action, context)
+        local contract, source = inspect(action, context)
         if not contract or contract.knownInputs == false then return check.blocker end
         if transfer(action) then
             local destination, source, seen = action.destContainer, action.srcContainer, {}
@@ -859,7 +894,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
             for _, batch in ipairs(action.queueList or {}) do
                 for _, item in ipairs(batch.items or {}) do if not add(item) then return check.blocker end end
             end
-        elseif not capacityNeutral[action.Type] then
+        elseif not capacityNeutral[action.Type] and not boundedWaterDrink(action, character, source) then
             -- shortcut: other actions may change carried weight; add verified weight effects before crossing their prefix.
             return check.blocker
         end

@@ -60,6 +60,8 @@ class FluidScenarioTests(unittest.TestCase):
                 self.assertEqual('passed', self.row(recorded, scenario='repeat-same', kind=kind, mode=mode)['status'])
                 self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
                                  self.row(recorded, scenario='cancel-waiting', kind=kind, mode=mode)['status'])
+                self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
+                                 self.row(recorded, scenario='move-independent', kind=kind, mode=mode)['status'])
 
     def test_historical_and_partial_receipts_do_not_gain_new_coverage(self):
         recorded = self.recorded()
@@ -83,7 +85,8 @@ class FluidScenarioTests(unittest.TestCase):
         recorded = self.recorded()
         for scenario, field, missing_case in (
                 ('repeat-same', 'sameBottleRequestsVerified', 'fluid-root-same-queued-favorite'),
-                ('cancel-waiting', 'waitingCancelVerified', 'fluid-bag-cancel-waiting-favorite')):
+                ('cancel-waiting', 'waitingCancelVerified', 'fluid-bag-cancel-waiting-favorite'),
+                ('move-independent', 'independentMoveVerified', 'fluid-root-cancel-waiting-favorite')):
             for fault in ('missing', 'integer', 'missing-case'):
                 bad = copy.deepcopy(recorded)
                 if fault == 'missing-case':
