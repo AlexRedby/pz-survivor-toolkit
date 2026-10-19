@@ -1,13 +1,15 @@
 package zombie.iso;
 
-import java.util.*;
-import java.util.function.Consumer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.*;
+import java.util.function.Consumer;
 import me.zed_0xff.zombie_buddy.Accessor;
 import me.zed_0xff.zombie_buddy.PatchEngine;
 import net.alexredby.pztoolkitjavapatches.FenceProperties;
+import net.alexredby.pztoolkitjavapatches.FenceValidation;
 import net.alexredby.pztoolkitjavapatches.Main;
+import net.alexredby.pztoolkitjavapatches.TilePropertyNames;
 import zombie.ai.states.ClimbOverFenceState;
 import zombie.ai.states.GrappledThrownOverFenceState;
 import zombie.ai.states.animals.AnimalClimbOverFenceState;
@@ -113,7 +115,7 @@ public final class FencePropertyChecks {
         zombie.network.GameServer.server = true;
         Main.main(new String[0]);
         PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", FencePropertyChecks.class.getClassLoader());
-        require(Main.PROPERTY_SUPPORTED && Main.FENCE_SUPPORTED, "unsupported native property/fence bytecode");
+        require(TilePropertyNames.SUPPORTED && FenceValidation.SUPPORTED, "unsupported native property/fence bytecode");
         loadNativeTiles();
         var manager = IsoSpriteManager.instance;
         var west = manager.namedMap.get("carpentry_02_48"); var north = manager.namedMap.get("carpentry_02_49");

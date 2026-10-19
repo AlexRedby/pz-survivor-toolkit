@@ -186,7 +186,7 @@ public final class MediaChecks {
         invalidStarts(media);
         clientGuard(media);
         standaloneGuard(media);
-        require(!net.alexredby.pztoolkitjavapatches.Main.supports("zombie/radio/devices/DeviceData.class", "unknown"),
+        require(!net.alexredby.pztoolkitjavapatches.BytecodeSupport.supports("zombie/radio/devices/DeviceData.class", "unknown"),
             "unknown engine fingerprint accepted");
         System.out.println("MEDIA_CHECKS_PASS (native restart race, woven restart, line progression, duplicate start, stop, invalid start, client/standalone guards, automatic end)");
     }

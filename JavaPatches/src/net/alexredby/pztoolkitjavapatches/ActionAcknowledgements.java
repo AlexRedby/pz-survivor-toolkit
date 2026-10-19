@@ -20,9 +20,9 @@ import zombie.network.fields.character.PlayerID;
 /** Outcomes of existing native actions; the native managers still execute all effects. */
 public final class ActionAcknowledgements {
     public static final boolean SUPPORTED = Main.BUILD_SUPPORTED
-        && Main.supports("zombie/core/NetTimedAction.class", "d4a3046eeaec409977a756c6ea80b0676229274684012ad51210559ebfcb1090")
-        && Main.supports("zombie/characters/CharacterTimedActions/LuaTimedActionNew.class", "f10236f1e8be9d0822dc144ebe61c42fa1d0e8ded3279c7aa6dd0ffb7291feb0")
-        && Main.supports("zombie/network/packets/NetTimedActionPacket.class", "ce367190ce6158eb88809f3215ebc471e6161896d9d526eb9ef0e73d58de847b");
+        && BytecodeSupport.supports("zombie/core/NetTimedAction.class", "d4a3046eeaec409977a756c6ea80b0676229274684012ad51210559ebfcb1090")
+        && BytecodeSupport.supports("zombie/characters/CharacterTimedActions/LuaTimedActionNew.class", "f10236f1e8be9d0822dc144ebe61c42fa1d0e8ded3279c7aa6dd0ffb7291feb0")
+        && BytecodeSupport.supports("zombie/network/packets/NetTimedActionPacket.class", "ce367190ce6158eb88809f3215ebc471e6161896d9d526eb9ef0e73d58de847b");
     private static final WeakHashMap<Object, String> tokens = new WeakHashMap<>();
 
     public static synchronized void started(Object action) {

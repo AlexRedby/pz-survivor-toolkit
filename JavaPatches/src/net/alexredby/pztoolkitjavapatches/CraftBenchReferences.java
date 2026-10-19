@@ -12,12 +12,12 @@ import zombie.network.PZNetKahluaTableImpl;
 
 /** Refresh a registered workstation's lazy spatial ID before native component lookup. */
 public final class CraftBenchReferences {
-    public static final boolean SUPPORTED = Main.supports("zombie/network/PZNetKahluaTableImpl.class",
+    public static final boolean SUPPORTED = BytecodeSupport.supports("zombie/network/PZNetKahluaTableImpl.class",
             "201f0e59502fc5a106f8c9021e0b0d13a30dcb8d0beb9e8934cec390231ddba6")
-        && Main.supports("zombie/iso/IsoObject.class", "22387ecf47c1cf9aac192466de6298067f27584160c76a72baee38c6ad36dff2")
-        && Main.supports("zombie/entity/GameEntityManager.class", "679953e42c73179cf083a40af5c1d67de67452519dace5efa517369c974a9775")
-        && Main.supports("zombie/entity/GameEntity.class", "fb46c896c05e72b5f951943b1adfac580a57ae709a6f496b77aa954b6a1886ee")
-        && Main.supports("zombie/entity/ComponentType.class", "28f3d346c47a0b1804c7258659587c0f415eef3d510d6cd67c50d2ff291ebcda");
+        && BytecodeSupport.supports("zombie/iso/IsoObject.class", "22387ecf47c1cf9aac192466de6298067f27584160c76a72baee38c6ad36dff2")
+        && BytecodeSupport.supports("zombie/entity/GameEntityManager.class", "679953e42c73179cf083a40af5c1d67de67452519dace5efa517369c974a9775")
+        && BytecodeSupport.supports("zombie/entity/GameEntity.class", "fb46c896c05e72b5f951943b1adfac580a57ae709a6f496b77aa954b6a1886ee")
+        && BytecodeSupport.supports("zombie/entity/ComponentType.class", "28f3d346c47a0b1804c7258659587c0f415eef3d510d6cd67c50d2ff291ebcda");
 
     public static void refresh(PZNetKahluaTableImpl table, ByteBufferReader reader, byte type, boolean supported) {
         if (!supported || !GameServer.server || type != 36 || reader.bb.remaining() < 10

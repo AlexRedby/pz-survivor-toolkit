@@ -11,7 +11,7 @@ import java.util.Map;
 import javax.imageio.ImageIO;
 import me.zed_0xff.zombie_buddy.Accessor;
 import me.zed_0xff.zombie_buddy.PatchEngine;
-import net.alexredby.pztoolkitjavapatches.Main;
+import net.alexredby.pztoolkitjavapatches.BytecodeSupport;
 import net.alexredby.pztoolkitjavapatches.PianoIcon;
 import zombie.GameWindow;
 import zombie.ZomboidFileSystem;
@@ -26,9 +26,9 @@ import zombie.debug.LogSeverity;
 import zombie.entity.ComponentType;
 import zombie.fileSystem.FileSystem;
 import zombie.fileSystem.FileSystemImpl;
+import zombie.scripting.ScriptLoadMode;
 import zombie.scripting.ScriptManager;
 import zombie.scripting.ScriptParser;
-import zombie.scripting.ScriptLoadMode;
 import zombie.scripting.entity.GameEntityScript;
 import zombie.scripting.entity.components.spriteconfig.SpriteConfigScript;
 import zombie.scripting.objects.ScriptModule;
@@ -197,8 +197,8 @@ public final class PianoChecks {
             }
 
             PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", PianoChecks.class.getClassLoader());
-            require(Main.PIANO_SUPPORTED, "unsupported native Piano bytecode");
-            require(!Main.supports("zombie/scripting/entity/components/crafting/CraftRecipe.class", "unknown"),
+            require(PianoIcon.SUPPORTED, "unsupported native Piano bytecode");
+            require(!BytecodeSupport.supports("zombie/scripting/entity/components/crafting/CraftRecipe.class", "unknown"),
                 "unknown native icon parser fingerprint accepted");
             var woven = nativeLoader(body);
             var component = recipe(woven);

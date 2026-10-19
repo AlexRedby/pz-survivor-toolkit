@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.HexFormat;
 import java.util.Set;
 import java.util.WeakHashMap;
+import me.zed_0xff.zombie_buddy.Patch;
 import zombie.Lua.LuaManager;
 import zombie.ZomboidFileSystem;
 import zombie.iso.BuildingDef;
@@ -17,6 +18,12 @@ import zombie.iso.RoomDef;
 import zombie.iso.RoomID;
 
 public final class BasementHallKey {
+    public static final boolean SUPPORTED = BasementRoomLookup.SUPPORTED
+        && BytecodeSupport.supports("zombie/buildingRooms/BREBuilding.class", "77d5710d7b102532e080c556a87439d3d827cf4c8a05fc5cd7e37c90175c83de")
+        && BytecodeSupport.supports("zombie/iso/areas/isoregion/metagrid/WorldRegionToMetaGrid.class", "635174f093618dac7ec320b3884780b847d1332d03b3c07b3221f2b899728b20")
+        && BytecodeSupport.supports("zombie/iso/LightingJNI.class", "3938fd1336a64403ae52a3a1552fcdff3a3c54f1a0360c6ee35512c2f9b7e5e7")
+        && BytecodeSupport.supports("zombie/iso/fboRenderChunk/FBORenderCell.class", "d5c46201d60cff36397ee46c56b53dbaee6e26e8733836f27bf56ad871eedf94");
+
     public static final long ORIGINAL_KEY = 786643L;
     public static final long HALL_KEY = 0x505A0000000C00D3L;
     private static final String HEADER = "media/maps/Muldraugh, KY/41_37.lotheader";
@@ -27,6 +34,10 @@ public final class BasementHallKey {
         Collections.newSetFromMap(new WeakHashMap<>()));
 
     private BasementHallKey() { }
+
+    public static void prepare() {
+        if (SUPPORTED) zombie.iso.RoomDef.class.getName();
+    }
 
     public static boolean beforeMerge(BuildingDef incoming, BuildingDef receiving, boolean supported) {
         if (!supported || incoming == null || receiving == null || incoming == receiving
@@ -95,5 +106,14 @@ public final class BasementHallKey {
     private static boolean matches(String file, String expected) throws Exception {
         byte[] bytes = Files.readAllBytes(Path.of(ZomboidFileSystem.instance.getString(file)));
         return expected.equals(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)));
+    }
+
+    @Patch(className="zombie.iso.RoomDef", methodName="calculateMetaID", strictMatch=true)
+    public static class NativeBasementHallKey {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.iso.RoomDef room, @Patch.Argument(0) int cellX,
+                                @Patch.Argument(1) int cellY, @Patch.Return(readOnly=false) long result) {
+            result = BasementHallKey.calculated(room, cellX, cellY, result, BasementHallKey.SUPPORTED);
+        }
     }
 }

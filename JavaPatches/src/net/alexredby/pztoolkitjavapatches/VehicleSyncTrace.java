@@ -13,7 +13,7 @@ import zombie.vehicles.BaseVehicle;
 public final class VehicleSyncTrace {
     public static final boolean ENABLED = Boolean.getBoolean("pz.vehicle.trace");
     public static final boolean SUPPORTED = Main.VEHICLE_OWNERSHIP_SUPPORTED
-        && Main.supports("zombie/network/packets/vehicle/VehiclePhysicsPacket.class",
+        && BytecodeSupport.supports("zombie/network/packets/vehicle/VehiclePhysicsPacket.class",
             "c3103be5b9bacad57747f49b94bff441ff6b530315885ed30c93dc05c13da2c4");
     private static final Map<String, Long> last = new HashMap<>();
     private static long started;

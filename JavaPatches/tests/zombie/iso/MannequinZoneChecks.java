@@ -114,7 +114,7 @@ public final class MannequinZoneChecks {
 
     static void woven(IsoMetaGrid grid, IsoMannequin mannequin, Method fromZone) throws Exception {
         me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", MannequinZoneChecks.class.getClassLoader());
-        require(net.alexredby.pztoolkitjavapatches.Main.MANNEQUIN_SUPPORTED, "Native engine hashes changed");
+        require(net.alexredby.pztoolkitjavapatches.MannequinZoneData.SUPPORTED, "Native engine hashes changed");
         LuaManager.thread = new KahluaThread(LuaManager.platform, LuaManager.env);
         LuaManager.thread.debugOwnerThread = Thread.currentThread();
         LuaManager.caller = new se.krka.kahlua.integration.LuaCaller(new se.krka.kahlua.converter.KahluaConverterManager());

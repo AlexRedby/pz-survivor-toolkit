@@ -1,10 +1,11 @@
 package zombie.iso.objects;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import net.alexredby.pztoolkitjavapatches.BytecodeSupport;
 import net.alexredby.pztoolkitjavapatches.HutchCleanup;
 import net.alexredby.pztoolkitjavapatches.Main;
 import sun.misc.Unsafe;
@@ -108,7 +109,7 @@ public final class HutchChecks {
 
         me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", HutchChecks.class.getClassLoader());
         require(Main.HUTCH_SUPPORTED, "unsupported native engine");
-        require(!Main.supports("zombie/iso/objects/IsoHutch.class", "unknown"), "unknown fingerprint accepted");
+        require(!BytecodeSupport.supports("zombie/iso/objects/IsoHutch.class", "unknown"), "unknown fingerprint accepted");
         for (int mode = 0; mode < 3; mode++) {
             zombie.network.GameClient.client = mode == 0;
             zombie.network.GameServer.server = mode == 2;

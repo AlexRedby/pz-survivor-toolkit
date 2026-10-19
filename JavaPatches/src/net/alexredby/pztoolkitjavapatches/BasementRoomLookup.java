@@ -1,6 +1,7 @@
 package net.alexredby.pztoolkitjavapatches;
 
 import java.util.ArrayList;
+import me.zed_0xff.zombie_buddy.Patch;
 import zombie.iso.BuildingDef;
 import zombie.iso.BuildingID;
 import zombie.iso.IsoMetaCell;
@@ -8,7 +9,26 @@ import zombie.iso.IsoWorld;
 import zombie.iso.RoomDef;
 
 public final class BasementRoomLookup {
+    public static final boolean SUPPORTED = BytecodeSupport.supports("zombie/basements/Basements.class",
+            "769908ad1fdab2fb667d41943fde29e91b2148d365e5993117601c07c854380c")
+        && BytecodeSupport.supports("zombie/iso/BuildingID.class",
+            "cfb8cb7815a84b5b6b4dc9743df585bb8d14959acd7c23850a9ec62a084c3ed1")
+        && BytecodeSupport.supports("zombie/iso/RoomID.class",
+            "d3d5bb425c94b2b6b5f03cd1d47fc82c079984563d4a9e6857c64b3809a2d52d")
+        && BytecodeSupport.supports("zombie/iso/BuildingDef.class",
+            "b1374ab72a3b7668afb554c22e9a4374841613f028712f3f98bf7a461d10faf1")
+        && BytecodeSupport.supports("zombie/iso/RoomDef.class",
+            "7cf340ad83010a27bb41a7b576d934c795b3a855118fc683ae80dfa02d8be989")
+        && BytecodeSupport.supports("zombie/iso/IsoMetaCell.class",
+            "ccf99cd2b176b079da51f31a74ae9408b45255a328f6d1ab6fe536600226cdee")
+        && BytecodeSupport.supports("zombie/iso/IsoMetaGrid.class",
+            "cdd50bb0a393c766d25c9dcbc5f7e929d7e10a6b9c9b95e22c3bae94b3b5b1f9");
+
     private BasementRoomLookup() { }
+
+    public static void prepare() {
+        if (SUPPORTED) zombie.basements.Basements.class.getName();
+    }
 
     public static final class State {
         private final long buildingID;
@@ -54,5 +74,23 @@ public final class BasementRoomLookup {
         if (corrected > 0) System.out.println("[PZToolkitJavaPatches] Basement room lookup repaired: cell="
             + cellX + "," + cellY + ", corrected=" + corrected);
         return corrected;
+    }
+
+    @Patch(className="zombie.basements.Basements", methodName="mergeBuildings", strictMatch=true)
+    public static class NativeBasementRoomLookup {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) zombie.iso.BuildingDef incoming,
+                                 @Patch.Argument(1) zombie.iso.BuildingDef receiving,
+                                 @Patch.Local("toolkitPreviousBuildingID") BasementRoomLookup.State previous) {
+            BasementHallKey.beforeMerge(incoming, receiving, BasementHallKey.SUPPORTED);
+            previous = BasementRoomLookup.beforeMerge(receiving, BasementRoomLookup.SUPPORTED);
+        }
+
+        @Patch.OnExit
+        public static void exit(@Patch.Argument(0) zombie.iso.BuildingDef incoming,
+                                @Patch.Argument(1) zombie.iso.BuildingDef receiving,
+                                @Patch.Local("toolkitPreviousBuildingID") BasementRoomLookup.State previous) {
+            BasementRoomLookup.repair(receiving, previous, BasementRoomLookup.SUPPORTED);
+        }
     }
 }

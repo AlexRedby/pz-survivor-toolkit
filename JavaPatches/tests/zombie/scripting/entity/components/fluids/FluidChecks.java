@@ -7,7 +7,8 @@ import java.util.ArrayList;
 import java.util.List;
 import me.zed_0xff.zombie_buddy.Accessor;
 import me.zed_0xff.zombie_buddy.PatchEngine;
-import net.alexredby.pztoolkitjavapatches.Main;
+import net.alexredby.pztoolkitjavapatches.BytecodeSupport;
+import net.alexredby.pztoolkitjavapatches.FluidContainerNames;
 import zombie.debug.DebugLog;
 import zombie.debug.DebugType;
 import zombie.debug.LogSeverity;
@@ -70,14 +71,14 @@ public final class FluidChecks {
             require(log.toString().contains("Sanitizing container name 'Unknown Container'"), "unknown native diagnostic missing");
 
             PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", FluidChecks.class.getClassLoader());
-            require(Main.FLUID_SUPPORTED, "unsupported fluid parser bytecode");
-            require(!Main.supports("zombie/scripting/entity/components/fluids/FluidContainerScript.class", "unknown"), "unknown fingerprint accepted");
+            require(FluidContainerNames.SUPPORTED, "unsupported fluid parser bytecode");
+            require(!BytecodeSupport.supports("zombie/scripting/entity/components/fluids/FluidContainerScript.class", "unknown"), "unknown fingerprint accepted");
             var untouched = nativeBlock("Large Bucket");
-            Main.NativeFluidName.normalize(untouched, false);
+            FluidContainerNames.normalize(untouched, false);
             require(untouched.getValue("ContainerName").getValue().trim().equals("Large Bucket"), "unsupported parser was modified");
-            Main.NativeFluidName.normalize(null, true);
+            FluidContainerNames.normalize(null, true);
             var noName = ScriptParser.parse("component FluidContainer { Capacity = 2, }").getBlock("component", "FluidContainer");
-            Main.NativeFluidName.normalize(noName, true);
+            FluidContainerNames.normalize(noName, true);
             require(noName.getValue("ContainerName") == null, "missing property invented");
             log.reset();
             require(load(nativeBlock("Large Bucket")).equals(bucket) && load(nativeBlock("Fuel Pump")).equals(pump),

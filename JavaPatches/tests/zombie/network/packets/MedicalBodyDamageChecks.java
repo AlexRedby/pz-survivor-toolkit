@@ -2,6 +2,7 @@ package zombie.network.packets;
 
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
+import net.alexredby.pztoolkitjavapatches.BytecodeSupport;
 import net.alexredby.pztoolkitjavapatches.Main;
 import net.alexredby.pztoolkitjavapatches.MedicalBodyDamage;
 import sun.misc.Unsafe;
@@ -47,9 +48,9 @@ public final class MedicalBodyDamageChecks {
     public static void main(String[] args) throws Exception {
         zombie.core.random.RandStandard.INSTANCE.init(); zombie.core.random.RandLua.INSTANCE.init();
         require(Main.MEDICAL_BODY_DAMAGE_SUPPORTED, "unsupported medical patch baseline");
-        require(Main.supports("zombie/network/packets/BodyDamageUpdatePacket.class", "2e37ca1add6b8696464285bd498e7c97cd9712c9094c51d1d57daac688145c8c"), "unsupported native packet");
-        require(Main.supports("zombie/network/fields/character/PlayerID.class", "d40d1b745a70ad3bf562c15765b9f46a117ecb48aeeabf05597ce646a73e0b56"), "unsupported native player resolution");
-        require(!Main.supports("zombie/network/packets/BodyDamageUpdatePacket.class", "unknown"), "unknown bytecode accepted");
+        require(BytecodeSupport.supports("zombie/network/packets/BodyDamageUpdatePacket.class", "2e37ca1add6b8696464285bd498e7c97cd9712c9094c51d1d57daac688145c8c"), "unsupported native packet");
+        require(BytecodeSupport.supports("zombie/network/fields/character/PlayerID.class", "d40d1b745a70ad3bf562c15765b9f46a117ecb48aeeabf05597ce646a73e0b56"), "unsupported native player resolution");
+        require(!BytecodeSupport.supports("zombie/network/packets/BodyDamageUpdatePacket.class", "unknown"), "unknown bytecode accepted");
         Field unsafeField = Unsafe.class.getDeclaredField("theUnsafe"); unsafeField.setAccessible(true);
         Unsafe unsafe = (Unsafe)unsafeField.get(null);
         var patient = (Patient)unsafe.allocateInstance(Patient.class);

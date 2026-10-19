@@ -8,7 +8,7 @@ import zombie.network.GameClient;
 
 /** Read the authoritative native cooldown without reconstructing its random starting value. */
 public final class MedicineCooldown {
-    static final boolean SUPPORTED = Main.supports("zombie/characters/IsoGameCharacter.class",
+    static final boolean SUPPORTED = BytecodeSupport.supports("zombie/characters/IsoGameCharacter.class",
         "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b");
     private static final Field TIMER = SUPPORTED
         ? Accessor.findField(IsoGameCharacter.class, "effectiveEdibleBuffTimer") : null;

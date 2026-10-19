@@ -7,7 +7,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import me.zed_0xff.zombie_buddy.Accessor;
-import net.alexredby.pztoolkitjavapatches.Main;
+import net.alexredby.pztoolkitjavapatches.BytecodeSupport;
+import net.alexredby.pztoolkitjavapatches.TilePropertyNames;
 import zombie.core.properties.IsoPropertyType;
 import zombie.core.properties.PropertyContainer;
 import zombie.debug.DebugLog;
@@ -73,9 +74,9 @@ public final class PropertyChecks {
                 require(originalLog.contains("Property Name not found: " + name), "native startup failure not reproduced: " + name + ": " + originalLog);
 
             me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", PropertyChecks.class.getClassLoader());
-            require(Main.PROPERTY_SUPPORTED, "unsupported property bytecode");
-            require(!Main.supports("zombie/core/properties/IsoPropertyType.class", "unknown"), "unknown fingerprint accepted");
-            require(!Main.NativeStringProperty.accepts("ladderW", false), "unsupported engine accepted");
+            require(TilePropertyNames.SUPPORTED, "unsupported property bytecode");
+            require(!BytecodeSupport.supports("zombie/core/properties/IsoPropertyType.class", "unknown"), "unknown fingerprint accepted");
+            require(!TilePropertyNames.accepts("ladderW", false), "unsupported engine accepted");
             log.reset();
             require(generate().equals(baseline), "alias storage differs from native baseline");
             ordinaryLookups();

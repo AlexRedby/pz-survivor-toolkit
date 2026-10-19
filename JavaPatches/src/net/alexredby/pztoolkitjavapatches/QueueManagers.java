@@ -14,17 +14,17 @@ import zombie.network.fields.character.PlayerID;
 import zombie.network.packets.ItemTransactionPacket;
 
 public final class QueueManagers {
-    public static final boolean ITEM_SUPPORTED = Main.supports("zombie/core/TransactionManager.class",
+    public static final boolean ITEM_SUPPORTED = BytecodeSupport.supports("zombie/core/TransactionManager.class",
             "4a0f649f5e55edd13eff7d6788934fbec49e0073901609e1c12731fc47d7481d")
-        && Main.supports("zombie/core/Transaction.class",
+        && BytecodeSupport.supports("zombie/core/Transaction.class",
             "107b0a554cc46d1015398ff283a2e48faf02efbc44adf12854f66394ee2487b6")
-        && Main.supports("zombie/network/packets/ItemTransactionPacket.class",
+        && BytecodeSupport.supports("zombie/network/packets/ItemTransactionPacket.class",
             "41608a6690d16cb0ac202a4a3196b2b0851dadb935bca2b1d9a0a3e501791e83")
-        && Main.supports("zombie/core/raknet/UdpConnection.class",
+        && BytecodeSupport.supports("zombie/core/raknet/UdpConnection.class",
             "9c9bb471ff0c3dccdd0e52a3bb3c770327d02f0ad262187f950e660b2730e763");
-    public static final boolean ACTION_SUPPORTED = Main.supports("zombie/core/ActionManager.class",
+    public static final boolean ACTION_SUPPORTED = BytecodeSupport.supports("zombie/core/ActionManager.class",
             "3e85655f0d287837b17164d2ee4cecb7067ab419ffbe8ce1adb36bd7d54b202f")
-        && Main.supports("zombie/core/Action.class",
+        && BytecodeSupport.supports("zombie/core/Action.class",
             "4a2fe6aaf0cf73235279946e930b40489ec44859aff64cc19d97976bcc75610d");
 
     private static final ThreadLocal<RejectScope> rejectScope = new ThreadLocal<>();

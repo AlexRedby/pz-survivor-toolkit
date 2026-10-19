@@ -106,7 +106,7 @@ public final class FenceChecks {
 
     static void eventDispatch(BrokenFences fences, ByteArrayOutputStream log, String sound) throws Exception {
         me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", FenceChecks.class.getClassLoader());
-        require(net.alexredby.pztoolkitjavapatches.Main.FENCE_SUPPORTED, "unsupported event hook");
+        require(net.alexredby.pztoolkitjavapatches.FenceValidation.SUPPORTED, "unsupported event hook");
         var env = table();
         LuaManager.platform = new J2SEPlatform(); LuaManager.env = env;
         LuaManager.thread = new KahluaThread(LuaManager.platform, env);

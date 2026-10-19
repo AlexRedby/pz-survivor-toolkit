@@ -66,7 +66,7 @@ public final class NativeChecks {
         net.alexredby.pztoolkitjavapatches.Main.main(new String[0]);
         if (!net.alexredby.pztoolkitjavapatches.Main.ZOMBIE_SUPPORTED || !net.alexredby.pztoolkitjavapatches.Main.VEHICLE_SUPPORTED)
             throw new AssertionError("unsupported native engine");
-        if (net.alexredby.pztoolkitjavapatches.Main.supports("zombie/vehicles/VehicleInterpolation.class", "unknown"))
+        if (net.alexredby.pztoolkitjavapatches.BytecodeSupport.supports("zombie/vehicles/VehicleInterpolation.class", "unknown"))
             throw new AssertionError("unknown engine fingerprint accepted");
         float[] patched = run(); // Actual woven helper prefix; no manual clearLast here.
         if (!(patched[0] <= patched[1])) throw new AssertionError("patch did not remove backward step");

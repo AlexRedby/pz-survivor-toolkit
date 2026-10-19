@@ -250,7 +250,7 @@ public final class BasementHallKeyChecks {
     }
 
     static void woven() throws Exception {
-        Main.main(new String[0]); require(Main.BASEMENT_HALL_SUPPORTED, "native bytecode is unsupported");
+        Main.main(new String[0]); require(BasementHallKey.SUPPORTED, "native bytecode is unsupported");
         PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", BasementHallKeyChecks.class.getClassLoader());
         for (int role = 0; role < 3; role++) {
             zombie.network.GameServer.server = role == 1; zombie.network.GameClient.client = role == 2;

@@ -1,18 +1,19 @@
 package zombie.core;
 
 import java.lang.reflect.Field;
-import java.nio.ByteBuffer;
 import java.nio.BufferUnderflowException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import net.alexredby.pztoolkitjavapatches.BytecodeSupport;
 import net.alexredby.pztoolkitjavapatches.Main;
 import net.alexredby.pztoolkitjavapatches.MedicalTimedActions;
 import se.krka.kahlua.j2se.J2SEPlatform;
 import se.krka.kahlua.vm.JavaFunction;
 import se.krka.kahlua.vm.KahluaTable;
 import sun.misc.Unsafe;
-import zombie.Lua.LuaManager;
 import zombie.GameTime;
+import zombie.Lua.LuaManager;
 import zombie.characters.BodyDamage.BodyDamage;
 import zombie.characters.BodyDamage.BodyPart;
 import zombie.characters.IsoPlayer;
@@ -143,8 +144,8 @@ public final class MedicalTimedActionChecks {
         GameServer.server = true;GameClient.client = false;GameServer.IDToPlayerMap.put((short)19, doctor);
         ctor(true);ctor(false);
         require(Main.MEDICAL_TIMED_ACTION_SUPPORTED, "unsupported timed-action patch baseline");
-        require(Main.supports("zombie/network/PZNetKahluaTableImpl.class", "201f0e59502fc5a106f8c9021e0b0d13a30dcb8d0beb9e8934cec390231ddba6"), "unsupported native table decoder");
-        require(!Main.supports("zombie/network/PZNetKahluaTableImpl.class", "unknown"), "unknown decoder accepted");
+        require(BytecodeSupport.supports("zombie/network/PZNetKahluaTableImpl.class", "201f0e59502fc5a106f8c9021e0b0d13a30dcb8d0beb9e8934cec390231ddba6"), "unsupported native table decoder");
+        require(!BytecodeSupport.supports("zombie/network/PZNetKahluaTableImpl.class", "unknown"), "unknown decoder accepted");
         var unsupportedReader = bodyValue((short)20);
         var unsupported = MedicalTimedActions.begin(new NetTimedActionPacket(), unsupportedReader, false);
         require(unsupported == null && !MedicalTimedActions.end(unsupported, null), "unsupported decoder guard activated");

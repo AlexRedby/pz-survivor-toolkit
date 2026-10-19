@@ -4,6 +4,8 @@ import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
+import net.alexredby.pztoolkitjavapatches.BytecodeSupport;
+import net.alexredby.pztoolkitjavapatches.Main;
 import se.krka.kahlua.j2se.J2SEPlatform;
 import se.krka.kahlua.vm.KahluaTable;
 import sun.misc.Unsafe;
@@ -20,7 +22,6 @@ import zombie.network.GameClient;
 import zombie.network.GameServer;
 import zombie.network.TableNetworkUtils;
 import zombie.network.packets.GeneralActionPacket;
-import net.alexredby.pztoolkitjavapatches.Main;
 
 public final class BuildChecks {
     static Unsafe unsafe;
@@ -152,7 +153,7 @@ public final class BuildChecks {
         require(connection.messages.size() == messages, "client emitted server acknowledgement");
         field = net.alexredby.pztoolkitjavapatches.BuildAcknowledgements.class.getDeclaredField("tokens"); field.setAccessible(true);
         require(((java.util.Map<?, ?>)field.get(null)).isEmpty(), "terminal builds retained tokens");
-        require(!Main.supports("zombie/core/BuildAction.class", "unknown"), "unknown engine fingerprint accepted");
+        require(!BytecodeSupport.supports("zombie/core/BuildAction.class", "unknown"), "unknown engine fingerprint accepted");
         System.out.println("BUILD_CHECKS_PASS (native reject, completion race, token cleanup, reused byte ID, wire serialization, authority guards)");
     }
 }
