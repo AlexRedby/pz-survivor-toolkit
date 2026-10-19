@@ -178,13 +178,15 @@ dofile(base .. "UI.lua")
 local closed, unfocused, removed = 0, 0, 0
 local window = {catalogWindow = {close = function() closed = closed + 1 end},
     shareWindow = {close = function() closed = closed + 1 end},
-    selector = {hidePopup = function() closed = closed + 1 end},
+    selector = {expanded=true, popup={}, hidePopup = function() closed = closed + 1 end},
     search = {unfocus = function() unfocused = unfocused + 1 end},
     quantity = {unfocus = function() unfocused = unfocused + 1 end},
     setVisible = function(_, visible) assert(not visible) end,
     removeFromUIManager = function() removed = removed + 1 end}
+window.selector.popup.parentCombo = window.selector
 PZSurvivorWishlist.UI.close(window)
 assert(closed == 3 and unfocused == 2 and removed == 1)
+assert(not window.selector.expanded)
 print("PASS wishlist windows: closing releases child dialogs, keyboard focus and UIManager references")
 
 local Catalog = windowClasses.PZSWCatalog

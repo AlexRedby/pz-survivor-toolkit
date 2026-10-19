@@ -19,6 +19,8 @@ function Base:prerender() end
 function Base:addChild() end
 function Base:addToUIManager() self.added=true end
 function Base:removeFromUIManager() self.added=false end
+function Base:unfocus() self.focused=false end
+function Base:hidePopup() self.popup.visible=false end
 function Base:setVisible(value) self.visible=value end
 function Base:getIsVisible() return self.visible end
 function Base:setTooltip(value) self.tooltip=value end
@@ -71,6 +73,18 @@ picker.search.value='ingredient';picker:prerender()
 assert(#picker.list.items==2 and picker.list.items[2].item.id=='ingredient','tag search failed')
 picker:apply()
 assert(applied.mode=='any' and #applied.include==2 and not picker.added and not owner.toolkitRulePicker and not owner.dimmer.visible,'apply or owner cleanup failed')
+picker=Picker.open({owner=owner,categories={'Tool'},onApply=function() end})
+picker.search.focused=true
+picker.group.expanded=true
+picker.group.popup={parentCombo=picker.group,visible=true}
+picker:close()
+assert(not picker.search.focused and not picker.group.popup.visible and not picker.group.expanded,
+    'closed picker retained keyboard focus or an owned popup')
+picker=Picker.open({owner=owner,categories={'Tool'},onApply=function() end})
+picker.group.expanded=true
+picker.group.popup={parentCombo={},visible=true}
+picker:close()
+assert(picker.group.popup.visible,'closing a picker hid another control\'s shared popup')
 local item={getDisplayCategory=function() return 'Tool' end,getCategory=function() return 'Tool' end,getName=function() return 'Hammer' end}
 picker=Picker.open({rule={mode='all',include={'tool'},exclude={}},categories={'Tool'},items={item,item},onApply=function() error('cancel applied changes') end})
 assert(picker.matchCount==2 and picker.preview.items[1].text=='Hammer','actual item preview missing')

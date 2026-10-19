@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.98
+
+- **Fixed:** Closing the context-menu editor or tag-rule picker releases text-entry focus and its open dropdown, including when the feature is disabled or settings cannot be saved.
+- **Fixed:** Window cleanup, including Wishlist, leaves another control's shared dropdown open.
+
 ### 0.1.97
 
 - **Changed:** Audited TidyUpMeister cleanup of temporarily held items uses shared native completion, preserving empty hands, exact inventory returns and explicit equipment intent. Clothing, hotbar, heavy items and unverified callbacks retain their existing completion path.

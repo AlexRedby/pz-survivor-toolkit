@@ -79,7 +79,11 @@ end
 function UI.close(window)
     if window.catalogWindow then window.catalogWindow:close() end
     if window.shareWindow then window.shareWindow:close() end
-    if window.selector then window.selector:hidePopup() end
+    local combo = window.selector
+    if combo and combo.expanded and combo.popup and combo.popup.parentCombo == combo then
+        combo:hidePopup()
+        combo.expanded = false
+    end
     if window.search then window.search:unfocus() end
     if window.quantity then window.quantity:unfocus() end
     window:setVisible(false)

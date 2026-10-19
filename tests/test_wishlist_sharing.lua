@@ -153,4 +153,7 @@ assert(not sharing.visible and not sharing.managed and not combo.editor.focused 
     "closing releases the native popup and its editor focus")
 multiplayer = false; sharing:refreshPlayers()
 assert(#combo.options == 1 and combo:getOptionData(combo.selected) == nil, "single player has no remote candidates")
+combo.expanded, combo.popup.managed, combo.popup.parentCombo = true, true, {}
+sharing:close()
+assert(combo.popup.managed, "closing Wishlist must not remove another control's shared popup")
 print("PASS wishlist sharing: native search/selection, exact identities, live roster, retained grants and popup cleanup")

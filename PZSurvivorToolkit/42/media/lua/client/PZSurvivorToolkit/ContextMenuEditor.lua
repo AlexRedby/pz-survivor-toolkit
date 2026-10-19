@@ -395,6 +395,13 @@ end
 function Editor:close()
     self.removed = true
     if self.toolkitRulePicker then self.toolkitRulePicker:close() end
+    for _, entry in ipairs({self.search, self.profileName, self.groupName}) do entry:unfocus() end
+    for _, combo in ipairs({self.scope, self.preview, self.parent, self.destination}) do
+        if combo.expanded and combo.popup and combo.popup.parentCombo == combo then
+            combo:hidePopup()
+            combo.expanded = false
+        end
+    end
     local saved = Organizer.save()
     self:setVisible(false)
     self:removeFromUIManager()

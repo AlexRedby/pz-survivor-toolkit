@@ -19,6 +19,8 @@ function Base:prerender() end
 function Base:addChild(child) self.children[#self.children+1]=child end
 function Base:addToUIManager() self.added=true end
 function Base:removeFromUIManager() self.added=false end
+function Base:unfocus() self.focused=false end
+function Base:hidePopup() self.popup.visible=false end
 function Base:setVisible(value) self.visible=value end
 function Base:setTooltip(value) self.tooltip=value end
 function Base:setPlaceholderText(value) self.placeholder=value end
@@ -246,6 +248,31 @@ assert(editor.added and Organizer==same and Organizer.storageError=='ReadFailed'
 disk.faults={}
 assert(Editor.show()==editor and not Organizer.storageError and #Organizer.groupIds()==groups)
 disk.faults[nextSlot()]={writerClose=true}
+editor.search.focused=true
+editor.parent.expanded=true
+editor.parent.popup={parentCombo=editor.parent,visible=true}
 enabled=false;editor:prerender()
 assert(not editor.added and Organizer.storageError=='WriteFailed','disabled feature trapped editor after save failure')
+assert(not editor.search.focused and not editor.parent.popup.visible,'failed save left editor input active')
 print('PASS editor persistence errors, rollback, close cleanup, stable-owner retry and settings-off failure')
+
+disk.faults={};enabled=true
+for _, name in ipairs({'scope','preview','parent','destination'}) do
+    editor=Editor.show()
+    for _, field in ipairs({'search','profileName','groupName'}) do editor[field].focused=true end
+    local combo=editor[name]
+    combo.expanded=true;combo.popup={parentCombo=combo,visible=true}
+    editor:close()
+    for _, field in ipairs({'search','profileName','groupName'}) do
+        assert(not editor[field].focused,'closed editor retained '..field..' focus')
+    end
+    assert(not combo.popup.visible and not combo.expanded,'closed editor retained '..name..' popup')
+end
+editor=Editor.show()
+local otherPopup={parentCombo={},visible=true}
+for _, name in ipairs({'scope','preview','parent','destination'}) do
+    editor[name].expanded=true;editor[name].popup=otherPopup
+end
+editor:close()
+assert(otherPopup.visible,'editor closed another window\'s shared combo popup')
+print('PASS editor input lifetime: all text fields, owned combos, failed saves and unrelated shared popups')

@@ -120,6 +120,11 @@ function Picker:apply()
 end
 
 function Picker:close()
+    self.search:unfocus()
+    if self.group.expanded and self.group.popup and self.group.popup.parentCombo == self.group then
+        self.group:hidePopup()
+        self.group.expanded = false
+    end
     for _, list in ipairs({self.list, self.preview}) do
         if list.tooltipUI then list.tooltipUI:setVisible(false); list.tooltipUI:removeFromUIManager() end
     end
