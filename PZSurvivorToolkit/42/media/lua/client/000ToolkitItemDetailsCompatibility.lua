@@ -8,6 +8,7 @@ if PZAPI.ModOptions:getOptions("BravoItemDetails") then
 end
 
 local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
+local Rows = require "PZSurvivorToolkit/InventoryRows"
 
 local config = require "BravoItemDetailsConfig"
 local numericOption = PZAPI.ModOptions:getOptions("BravoItemDetails").dict.showNumeric
@@ -98,8 +99,6 @@ local function install(class)
     local refresh = class.refreshContainer
     class.refreshContainer = function(pane, ...)
         local anchor = pane.items and pane.firstSelect and pane.items[pane.firstSelect]
-        local anchorItem = anchor and instanceof(anchor, "InventoryItem") and anchor
-        local anchorName = anchor and not anchorItem and anchor.name
         local result = refresh(pane, ...)
         if not config.enableSort then return result end
         local maxSort = math.floor(tonumber(config.maxSort) or class.MAX_ITEMS_IN_STACK_TO_RENDER or 50)
@@ -124,22 +123,7 @@ local function install(class)
         end
         for index in pairs(pane.selected) do pane.selected[index] = nil end
         pane:restoreSelection(selected)
-        if anchorItem or anchorName then
-            local row = 1
-            pane.firstSelect = nil
-            for _, stack in ipairs(pane.itemslist) do
-                if anchorName == stack.name then pane.firstSelect = row end
-                row = row + 1
-                if not pane.collapsed[stack.name] then
-                    local start = stack.cleanUIFirstActualIndex or 2
-                    local last = math.min(#stack.items, start + (class.MAX_ITEMS_IN_STACK_TO_RENDER or 50) - 1)
-                    for index = start, last do
-                        if anchorItem == stack.items[index] then pane.firstSelect = row end
-                        row = row + 1
-                    end
-                end
-            end
-        end
+        Rows.restoreAnchor(pane, anchor)
         return result
     end
 end

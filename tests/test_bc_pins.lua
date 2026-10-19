@@ -17,9 +17,9 @@ local function rowMap(pane)
         if not (pane.equippedCollapsed and row.equipped) then
             result[#result + 1] = row
             if row.items and not pane.collapsed[row.name] then
-                for index = row.cleanUIFirstActualIndex or 2, #row.items do
-                    result[#result + 1] = row.items[index]
-                end
+                local first = row.cleanUIFirstActualIndex or 2
+                local last = math.min(#row.items, first + pane.MAX_ITEMS_IN_STACK_TO_RENDER - 1)
+                for index = first, last do result[#result + 1] = row.items[index] end
             end
         end
     end
@@ -106,13 +106,20 @@ local function setup(active)
             target.renderdetails = function(pane, ...) pane.markerCalls = (pane.markerCalls or 0) + 1; return render(pane, ...) end
         end,
     }
-    local classes
+    local classes, inventoryRows
     env.require = function(name)
         w.loads[#w.loads + 1] = name
         if name == 'PZSurvivorToolkit' then return env.PZSurvivorToolkit end
         if name == 'PZSurvivorToolkit/InventoryClasses' then
             if not classes then local chunk = assert(loadfile(classesPath)); setfenv(chunk, env); classes = chunk() end
             return classes
+        end
+        if name == 'PZSurvivorToolkit/InventoryRows' then
+            if not inventoryRows then
+                local chunk = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))
+                setfenv(chunk, env); inventoryRows = chunk()
+            end
+            return inventoryRows
         end
         if name == 'BetterContainers/Upgrades/PinnedItems' then return w.pins end
         error('unexpected require ' .. name)
@@ -232,6 +239,28 @@ for _, virtual in ipairs({false, true}) do
         'expanded child selection/anchor changed with virtual header=' .. tostring(virtual))
 end
 print('PASS BC pins keeps expanded physical-item selection and Shift anchor with native and virtual headers')
+
+-- A preceding expanded stack contributes only its rendered children, even if it retains a long tail.
+local wide, target, pinned = group('a'), group('b'), group('c')
+for index=1,60 do wide.items[index+1]=item('wide-'..index) end
+pane = w.pane(w.clean, {wide,target,pinned}, {lateSort=true})
+pane.collapsed.a=false
+w.favourites={}; pane:refreshContainer()
+pane.selected,pane.firstSelect={[52]=target},52
+w.favourites['Base.c']=true; pane:refreshContainer()
+assert(names(pane)=='c,a,b' and pane.firstSelect==53,
+    'unrendered stack children shifted the following group anchor')
+
+local separator={name='equipment-header',type='separator',items={}}
+local hidden=group('equipped',{equipped=true})
+local a,c=group('a'),group('c')
+pane=w.pane(w.clean,{separator,hidden,a,c},{fixedOrder=true,equippedCollapsed=true})
+w.favourites={};pane:refreshContainer()
+pane.firstSelect=1
+w.favourites['Base.c']=true;pane:refreshContainer()
+assert(pane.firstSelect==1 and pane.itemslist[1]==separator,
+    'visible separator lost its anchor while hidden equipment and ordinary rows were reordered')
+print('PASS BC pins keeps visible separator and following group anchors after clipped stacks')
 
 local restore = w.clean.restoreSelection
 w.clean.restoreSelection = function(current, selected)

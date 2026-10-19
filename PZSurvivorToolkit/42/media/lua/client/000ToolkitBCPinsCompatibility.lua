@@ -2,6 +2,7 @@ if not getActivatedMods():contains('EURY_CONTAINERS') then return end
 require 'PZSurvivorToolkit'
 if PZSurvivorToolkit.BCPinCompatibility then return end
 local Classes = require 'PZSurvivorToolkit/InventoryClasses'
+local Rows = require 'PZSurvivorToolkit/InventoryRows'
 local Pins = require 'BetterContainers/Upgrades/PinnedItems'
 if Pins._panePatched then
     print('[PZSurvivorToolkit] Pin compatibility needs Toolkit before Better Containers')
@@ -49,21 +50,6 @@ local function prioritize(pane)
     return changed
 end
 
-local function visibleRows(pane)
-    local rows = {}
-    for _, group in ipairs(pane.itemslist) do
-        if not (pane.equippedCollapsed and group.equipped) then
-            rows[#rows + 1] = group
-            if group.items and not pane.collapsed[group.name] then
-                local first = group.cleanUIFirstActualIndex or 2
-                local last = math.min(#group.items, first + (ISInventoryPane.MAX_ITEMS_IN_STACK_TO_RENDER or 50) - 1)
-                for index = first, last do rows[#rows + 1] = group.items[index] end
-            end
-        end
-    end
-    return rows
-end
-
 local function finishRows(pane, selected, anchor)
     if not Pins.displayPinnedItem(pane.inventoryPage) or not pane.itemslist then return end
     if prioritize(pane) then
@@ -71,15 +57,7 @@ local function finishRows(pane, selected, anchor)
         table.wipe(pane.items)
         pane:restoreSelection(selected)
     end
-    if anchor then
-        pane.firstSelect = nil
-        for index, row in ipairs(visibleRows(pane)) do
-            if row == anchor or (not instanceof(anchor, 'InventoryItem') and row.items and anchor.items
-                and (row.name == anchor.name or row.items[1] == anchor.items[1])) then
-                pane.firstSelect = index; break
-            end
-        end
-    end
+    Rows.restoreAnchor(pane, anchor)
 end
 
 local function install(class)

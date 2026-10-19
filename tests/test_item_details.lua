@@ -67,7 +67,7 @@ local function run(initialEnhanced, lateVanilla)
                     if selected[stack.items[1]]=='group' then pane.selected[row]=stack end
                     row=row+1
                     if not pane.collapsed[stack.name] then
-                        for index=2,#stack.items do
+                        for index=stack.cleanUIFirstActualIndex or 2,#stack.items do
                             if selected[stack.items[index]]=='item' then pane.selected[row]=stack.items[index] end
                             row=row+1
                         end
@@ -109,7 +109,7 @@ local function run(initialEnhanced, lateVanilla)
     end
     local loaded = {}
     require = function(name)
-        if name == "PZSurvivorToolkit/InventoryClasses" then
+        if name == "PZSurvivorToolkit/InventoryClasses" or name == "PZSurvivorToolkit/InventoryRows" then
             return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
         end
         if loaded[name] then return loaded[name] end
@@ -218,6 +218,32 @@ local function run(initialEnhanced, lateVanilla)
         view.firstSelect=1
         view:refreshContainer()
         assert(view.selected[1]==stack and view.firstSelect==1,'selected group lost after its header changed')
+        -- CleanUI 42.19 omits collapsed equipment from rendered rows but keeps its separator.
+        -- Sort a visible stack after that section so the physical anchor must move within it.
+        for _, physical in ipairs({false,true}) do
+            local hiddenView=pane({low,high})
+            local visible=hiddenView.itemslist[1]
+            local equipped={name='equipped',equipped=true,items={low,low}}
+            local separator={name='equipment-header',type='separator',items={}}
+            hiddenView.itemslist={equipped,separator,visible}
+            hiddenView.equippedCollapsed=true
+            hiddenView.collapsed.equipped=true
+            hiddenView.items={separator,visible,low,high}
+            hiddenView.firstSelect=physical and 3 or 2
+            hiddenView.selected[hiddenView.firstSelect]=physical and low or visible
+            hiddenView:refreshContainer()
+            local expected=physical and 4 or 2
+            assert(hiddenView.firstSelect==expected,
+                'hidden equipment shifted the visible '..(physical and 'physical item' or 'group')..' anchor')
+        end
+        local virtualView=pane({low,high})
+        local visible=virtualView.itemslist[1]
+        virtualView.itemslist={
+            {name='virtual',cleanUIFirstActualIndex=1,items={low,high}},visible}
+        virtualView.items={virtualView.itemslist[1],low,high,visible,low,high}
+        virtualView.firstSelect=4
+        virtualView:refreshContainer()
+        assert(virtualView.firstSelect==4,'virtual headers must count their first actual child')
         local large={}
         for index=1,60 do large[index]=item(index) end
         local anchorView=pane(large)

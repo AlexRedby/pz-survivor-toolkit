@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.117
+
+- **Fixed:** Item Details sorting keeps the Shift-selection anchor on the same visible item or group when equipped rows are hidden. Item Details and Better Containers now share row mapping for collapsed equipment, virtual stack headers and clipped stacks.
+
 ### 0.1.116
 
 - **Changed:** Quartermaster exposes distant storage only during crafting-panel container refreshes for the requesting player. Removed the render-time global availability window; ordinary inventory queries and fallback crafting keep their normal containers, while ingredients still travel through the existing physical haul.
