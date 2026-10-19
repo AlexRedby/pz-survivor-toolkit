@@ -18,8 +18,6 @@
 
 ## Pickup and put-down
 
-- [ ] Agree on a non-conflicting PushCart binding before changing defaults: SaucedCarts and SmartRadialMenu both use V, and the radial menu remains open with its default toggle mode. Preserve existing user bindings; native animation captures can use F13 only inside their disposable profiles.
-
 - [ ] Extend pickup clearance checks to the remaining approach angles and clothing combinations. Check all skin/pants geometry at Thigh/Calf, not just the pelvis; preserve the agreed shallow crouch, foot support, knee direction and grip.
 - [ ] Check wheel phase continuity during an emergency pickup/put-down reset; preserve verified ownership, load and grip recovery.
 - [ ] Extend pickup/put-down cancellation checks to Run/Sprint movement, tempo changes and releasing WASD before recovery ends. Preserve limited pose return, grip, arm lengths, wheel phase and repeat action; already checked Walk/CancelAction does not cover these variants.

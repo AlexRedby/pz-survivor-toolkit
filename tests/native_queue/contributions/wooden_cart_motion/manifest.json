@@ -651,5 +651,20 @@
     "wall_reach_tiles": 40,
     "owned_wall_segments": 81,
     "finite_wall_span_verified": true
+  },
+  "native_e_scenario": {
+    "case_count": 1,
+    "scenario": "scenario-native-e.lua",
+    "input": "Test-only held E through native GameKeyboard polling and registered Lua press/release events; no direct doContext call",
+    "phases": [
+      "native-before",
+      "pickup",
+      "drop-long",
+      "pickup-cancel",
+      "pickup-repeat",
+      "drop-repeat",
+      "native-after"
+    ],
+    "scope": "Real native door control before/after cart gestures, nearest reachable cart priority, >0.5-second held drop, cancellation/repeat, exact ownership/cargo, restored context flag. SP only; independent Host ownership gate remains separate."
   }
 }

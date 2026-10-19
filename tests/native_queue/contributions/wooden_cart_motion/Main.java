@@ -13,6 +13,7 @@ public final class Main {
     private static final Path commands = configuredPath("PZ_CART_COMMAND_FILE");
     public static int drive = -1, gait;
     private static long lastCommand;
+    private static int heldKey = -1;
 
     @Patch(className="zombie.iso.IsoChunkMap", methodName="CalcChunkWidth", warmUp=true)
     public static class PadChunks {
@@ -439,7 +440,32 @@ public final class Main {
 
     public static void main(String[] args) { System.out.println("[CART_LAB] LOADED"); }
 
+    /** Hold a test key through the native input poll; dispatch the real Lua event handlers. */
+    @LuaMethod(name="cartLabKeyState", global=true)
+    public static void keyState(int key, boolean down) {
+        if (drive < 0 || key <= 0 || key >= 256)
+            throw new IllegalStateException("Key fixture requires isolated drive and a keyboard key");
+        if (down) {
+            if (heldKey == key) return;
+            if (heldKey >= 0) throw new IllegalStateException("Release the previous fixture key first");
+            heldKey = key;
+            zombie.Lua.LuaEventManager.triggerEvent("OnKeyStartPressed", Integer.valueOf(key));
+            zombie.Lua.LuaEventManager.triggerEvent("OnCustomUIKeyPressed", Integer.valueOf(key));
+        } else {
+            if (heldKey < 0) return;
+            if (heldKey != key) throw new IllegalStateException("Wrong fixture key release");
+            heldKey = -1;
+            zombie.Lua.LuaEventManager.triggerEvent("OnKeyPressed", Integer.valueOf(key));
+            zombie.Lua.LuaEventManager.triggerEvent("OnCustomUIKey", Integer.valueOf(key));
+            zombie.Lua.LuaEventManager.triggerEvent("OnCustomUIKeyReleased", Integer.valueOf(key));
+        }
+    }
+
+    @LuaMethod(name="cartLabContextSeconds", global=true)
+    public static float contextSeconds() { return IsoPlayer.getInstance().timePressedContext; }
+
     public static boolean fixtureKey(int key) {
+        if (heldKey == key) return true;
         if (drive < 0) return false;
         if (gait > 0 && key == Core.getInstance().getKey(gait == 1 ? "Run" : "Sprint")) return true;
         if (drive == 0) return false;

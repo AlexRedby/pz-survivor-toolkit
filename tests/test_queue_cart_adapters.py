@@ -465,7 +465,7 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls'])
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'native-e'])
         for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 8), ('wall-fast-manual-exit', 16), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
@@ -649,6 +649,34 @@ class CartAdapterTests(unittest.TestCase):
         self.options['cart_hotkey_setdown'] = 'true'
         with self.assertRaisesRegex(ValueError, 'boolean'):
             carts.validate(self.selection)
+
+    def test_native_e_stages_without_geometry_probes_and_validates_strict_receipts(self):
+        self.selection['cases'] = ['native-e']; self.options.pop('mesh_fbx')
+        self.assertEqual(carts.scene_names('native-e'), ['native-e'])
+        self.assertEqual(self.stage().call_count, 1)
+        self.assertEqual(self.runtime['fixture']['attach']['client1'], [])
+        source = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+        self.assertIn("cartLabKeyState(Keyboard.KEY_E,true)", source)
+        self.assertNotIn('p:doContext()', source)
+        records = []
+        for phase in carts.NATIVE_E_PHASES:
+            native = phase in ('native-before', 'native-after')
+            ground = phase not in ('pickup', 'pickup-repeat')
+            records.append(dict(phase=phase, id=42, cargoID=99, cargoWeight=1, cargoType='Base.Log', key=18, doorOpen=native,
+                capturedSeen=not native, ignoreRestored=True, nativeDownSeen=True,
+                inventoryCount=int(not ground), worldCount=int(ground), primaryID=-1 if ground else 42,
+                secondaryID=-1 if ground else 42, luaActions=0, nativeActions=0, hasPath=False,
+                cancelled=phase=='pickup-cancel', elapsed=1200, longSeen=phase=='drop-long'))
+        def log(rows): return '\n'.join('[CART_NATIVE_E] RECEIPT ' + json.dumps(row) for row in rows)
+        self.assertTrue(carts._native_e_coverage(log(records))['nativeEVerified'])
+        for index, field, value in ((0,'doorOpen',False),(1,'doorOpen',True),(1,'nativeDownSeen',False),(1,'capturedSeen',None),(1,'cargoWeight',2),
+                (2,'longSeen',False),(3,'cancelled',False),(4,'id',43),(5,'worldCount',2),
+                (6,'ignoreRestored',False),(6,'key',47)):
+            with self.subTest(index=index, field=field):
+                bad = [dict(row) for row in records];bad[index][field]=value
+                with self.assertRaises(ValueError): carts._native_e_coverage(log(bad))
+        with self.assertRaises(ValueError): carts._native_e_coverage(log(records[:-1]))
+        with self.assertRaises(ValueError): carts._native_e_coverage(log(records+records[-1:]))
 
     def test_missing_candidates_and_native_mode_are_rejected(self):
         self.selection['mode'] = 'native'

@@ -34,7 +34,7 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
             'repeat': ('scenario-interaction.lua', 12), 'hotkey': ('scenario-interaction.lua', 12), 'manual': ('bootstrap.lua', 0),
             'path': ('scenario-path.lua', 24), 'variants': ('scenario-variants.lua', 3),
-            'controls': ('scenario-controls.lua', 3)}
+            'controls': ('scenario-controls.lua', 3), 'native-e': ('scenario-native-e.lua', 1)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 SCENE_SPECS = {
     'sprint': ('comparison', 'direct', 'gait', 'runstop'),
@@ -74,6 +74,8 @@ CONTROL_POSES = {'forward-0': 0, 'forward-angle': 2.1, 'left-held': 0, 'right-he
 def scene_names(case):
     if case in ('variants', 'controls'):
         return list(VARIANTS)
+    if case == 'native-e':
+        return ['native-e']
     if case == 'manual':
         return []
     if case == 'stop-timing':
@@ -173,7 +175,7 @@ def validate(selection):
             raise ValueError('Explicit candidate options.mod_sources.' + identifier + ' is required')
     for key in ('patch_jar', 'ffmpeg', 'ffprobe'):
         _path(selection, key, executable=key != 'patch_jar')
-    if suite == SP and selection['cases'][0] not in ('variants', 'controls'):
+    if suite == SP and selection['cases'][0] not in ('variants', 'controls', 'native-e'):
         _path(selection, 'mesh_fbx')
         try:
             importlib.import_module('numpy')
@@ -188,7 +190,7 @@ def sources(project, selection):
                   and path.suffix in ('.py', '.lua', '.java', '.json', '.md', '.mf', '.methods')]
     if selection['suite'] == SP:
         paths += [Path(project) / 'tests/native_queue/support/QueueCartStartup.lua']
-        if selection['cases'][0] not in ('variants', 'controls'):
+        if selection['cases'][0] not in ('variants', 'controls', 'native-e'):
             paths.append(_path(selection, 'mesh_fbx'))
     if selection['suite'] == MP:
         paths.append(Path(project) / 'tests/native_queue/startup/client/ZZStartup.lua')
@@ -220,7 +222,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     project, output, game = map(Path, (project, output, game))
     sp, mp = _intake(project, SP), _intake(project, MP)
     manual = selection['suite'] == SP and selection['cases'] == ['manual']
-    simple = selection['suite'] == SP and selection['cases'][0] in ('variants', 'controls')
+    simple = selection['suite'] == SP and selection['cases'][0] in ('variants', 'controls', 'native-e')
     patch = _path(selection, 'patch_jar')
     if not any(hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(patch.read_bytes()).digest()
                for path in Path(locations['PZToolkitJavaPatches']).rglob('*.jar')):
@@ -251,7 +253,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     fixture['attach'] = {}
     if manual:
         fixture['manual'] = True
-    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL']
+    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL']
     videos = {role: str(Path(config['cache']) / 'videos') for role, config in runtime['roles'].items() if role != 'server'}
     config = dict(selection, port=selection['ports'][0], disposable=True, ffmpeg=str(_path(selection, 'ffmpeg', True)), videoRoot=videos)
     for role, spec in runtime['roles'].items():
@@ -702,6 +704,37 @@ def _controls_coverage(text, scenes):
     return {'controlsVerified': True, 'cases': result}
 
 
+NATIVE_E_PHASES = ('native-before', 'pickup', 'drop-long', 'pickup-cancel', 'pickup-repeat', 'drop-repeat', 'native-after')
+
+
+def _native_e_coverage(text):
+    records = [json.loads(line.split('[CART_NATIVE_E] RECEIPT ', 1)[1])
+               for line in text.splitlines() if '[CART_NATIVE_E] RECEIPT ' in line]
+    if [row.get('phase') for row in records] != list(NATIVE_E_PHASES):
+        raise ValueError('Missing, duplicate or reordered native E phases')
+    first = records[0]
+    if any(type(first.get(key)) is not int or first[key] < 0 for key in ('id', 'cargoID')):
+        raise ValueError('Missing exact native E cart/cargo identity')
+    for row in records:
+        phase = row['phase']
+        native = phase in ('native-before', 'native-after')
+        ground = phase not in ('pickup', 'pickup-repeat')
+        expected_id = -1 if ground else first['id']
+        if (row.get('id') != first['id'] or row.get('cargoID') != first['cargoID'] or row.get('key') != 18
+                or row.get('cargoWeight') != 1 or row.get('cargoType') != 'Base.Log'
+                or row.get('doorOpen') is not native or row.get('capturedSeen') is not (not native)
+                or row.get('ignoreRestored') is not True or row.get('nativeDownSeen') is not True
+                or row.get('inventoryCount') != int(not ground) or row.get('worldCount') != int(ground)
+                or row.get('primaryID') != expected_id or row.get('secondaryID') != expected_id
+                or row.get('luaActions') != 0 or row.get('nativeActions') != 0 or row.get('hasPath') is not False
+                or row.get('cancelled') is not (phase == 'pickup-cancel')
+                or not isinstance(row.get('elapsed'), (int, float)) or not math.isfinite(row['elapsed'])
+                or row['elapsed'] < (900 if phase == 'drop-long' else 150)
+                or phase == 'drop-long' and row.get('longSeen') is not True):
+            raise ValueError('Native E door priority/input/ownership/release proof failed: ' + phase)
+    return {'nativeEVerified': True, 'phases': records}
+
+
 def verify(root, selection, catalog):
     root = Path(root)
     if selection['suite'] == SP and selection['cases'] == ['manual']:
@@ -728,9 +761,19 @@ def verify(root, selection, catalog):
         if any(not complete(selection, role, text) for role, text in texts.items()):
             raise ValueError('Cart capture did not complete')
         for text in texts.values():
-            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
+            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
                 raise ValueError('Cart capture contains fixture/probe errors')
         evidence['videos'] = {role: _videos(root, selection, role, text) for role, text in texts.items()}
+        if selection['suite'] == SP and selection['cases'] == ['native-e']:
+            report = _native_e_coverage(texts['client1'])
+            _write(analysis / 'native-e.json', json.dumps(report, indent=2, allow_nan=False))
+            evidence.update(nativeE=report, analysis=str(analysis), evidenceComplete=True,
+                            scope='SP native E against a real door; cart priority, long hold, cancellation/repeat and restored ordinary interaction')
+            return {'issues': [], 'evidence': evidence, 'outcomes': [
+                {'actor': 'client1', 'case': 'native-e', 'status': 'captured',
+                 'reason': 'Native held E input and registered callbacks retain cart priority and restore ordinary door interaction',
+                 'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
+                             'nativeEVerified': True, 'functionalPass': True}}]}
         if selection['suite'] == SP and selection['cases'] == ['controls']:
             report = _controls_coverage(texts['client1'], selected_scenes(selection))
             _write(analysis / 'controls.json', json.dumps(report, indent=2, allow_nan=False))

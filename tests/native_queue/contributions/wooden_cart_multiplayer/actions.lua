@@ -80,7 +80,7 @@ local function enqueue(p,now)
  local spec=phases[session.index];local row,item=inspect(p,session)
  assert(matches(row,not spec.drop),'Unexpected ownership before '..spec.name)
  session.since=now;session.mode='action';session.cancelled=false;session.active=false;session.progress=false
- session.recovering=false;session.nativeProgress=false;session.quiet=nil;session.ack=nil;session.serialized=false
+ session.recovering=false;session.nativeProgress=false;session.quiet=nil;session.ack=nil;session.serialized=false;session.nativeE=false
  sendClientCommand('CartMP','ActionBegin',{index=session.index,phase=spec.name,id=session.id})
  marker('BEGIN',{actor='client1',index=session.index,phase=spec.name,id=session.id,cancel=spec.cancel==true,inputRoute=hotkey and spec.drop and 'hotkey' or 'menu'})
  local function callback()
@@ -97,8 +97,15 @@ local function enqueue(p,now)
    assert(type(key)=='number' and key>0,'PushCart keybind must be enabled')
    marker('INPUT',{actor='client1',index=session.index,phase=spec.name,id=session.id,inputRoute='hotkey',event='OnKeyStartPressed',key=key,
     rebound=testKey~=nil,events={'OnKeyStartPressed','OnCustomUIKeyPressed'}})
-   triggerEvent('OnKeyStartPressed',key)
-   triggerEvent('OnCustomUIKeyPressed',key)
+   session.nativeE=key==18
+   if session.nativeE then
+    assert(cartLabKeyState,'Native held E fixture bridge missing')
+    cartLabKeyState(key,true)
+    assert(p:isIgnoreContextKey(),'Accepted Host E drop did not capture native context')
+   else
+    triggerEvent('OnKeyStartPressed',key)
+    triggerEvent('OnCustomUIKeyPressed',key)
+   end
    session.pressKey=key
   elseif spec.drop then ISInventoryPaneContextMenu.onUnEquip({item},p:getPlayerNum())
   else
@@ -116,7 +123,7 @@ local function enqueue(p,now)
   local queued=queue(p).queue
   assert(#queued==1 and queued[1].Type=='ToolkitWoodCartDrop' and queued[1].item==item,
    'Installed hotkey did not queue the exact native wooden drop')
-  session.release={key=session.pressKey,action=queued[1]}
+  session.release={key=session.pressKey,action=queued[1],since=now,downSeen=false}
   marker('QUEUED',{actor='client1',index=session.index,phase=spec.name,id=session.id,inputRoute='hotkey',actionType=queued[1].Type,maxTime=queued[1].maxTime})
  end
 end
@@ -164,15 +171,27 @@ end
 function Actions.tick(p,setup,now)
  if session and session.mode=='complete' then return end
  if session and session.release then
-  local release=session.release;session.release=nil
-  triggerEvent('OnKeyPressed',release.key)
-  triggerEvent('OnCustomUIKey',release.key)
-  triggerEvent('OnCustomUIKeyReleased',release.key)
+  local release=session.release
+  if session.nativeE then
+   release.downSeen=release.downSeen or p:isInteractButtonDown()
+  end
+  if not session.nativeE or now-release.since>=150 then
+  session.release=nil
+  if session.nativeE then
+   assert(release.downSeen,'Held Host E never reached native Interact input')
+   cartLabKeyState(release.key,false)
+  else
+   triggerEvent('OnKeyPressed',release.key)
+   triggerEvent('OnCustomUIKey',release.key)
+   triggerEvent('OnCustomUIKeyReleased',release.key)
+  end
   local queued=queue(p).queue
   assert(#queued==1 and queued[1]==release.action and queued[1].Type=='ToolkitWoodCartDrop',
    'Key release changed or duplicated the exact queued native drop')
   marker('RELEASED',{actor='client1',index=session.index,phase=phases[session.index].name,id=session.id,key=release.key,
-   events={'OnKeyPressed','OnCustomUIKey','OnCustomUIKeyReleased'},actionType=queued[1].Type,queuedCount=#queued,sameAction=true})
+   events={'OnKeyPressed','OnCustomUIKey','OnCustomUIKeyReleased'},actionType=queued[1].Type,queuedCount=#queued,sameAction=true,
+   nativeDownSeen=release.downSeen,heldMs=now-release.since,nativeE=session.nativeE})
+  end
  end
  if not session then
   assert(not p:isTimedActionInstant(),'Native cart action durations required')
@@ -213,7 +232,7 @@ function Actions.tick(p,setup,now)
     action.action:forceStop()
    end
   end
-  if not empty(p) or s.active or s.recovering then session.quiet=nil;return end
+  if not empty(p) or s.active or s.recovering or session.nativeE and p:isIgnoreContextKey() then session.quiet=nil;return end
   local row=inspect(p,session)
   if not matches(row,spec.ground) or hotkey and spec.ground and not samePose(row.worldPose,session.expectedWorld) then session.quiet=nil;return end
   if not session.quiet then session.quiet=now;return end
@@ -223,6 +242,7 @@ function Actions.tick(p,setup,now)
   assert(not hotkey or not spec.drop or session.serialized,'Native started serialization not observed')
   row.index=session.index;row.phase=spec.name;row.actor='client1';row.cancelled=session.cancelled
   if hotkey and spec.ground then row.expectedWorld=session.expectedWorld end
+  row.nativeE=session.nativeE;row.ignoreRestored=not session.nativeE or not p:isIgnoreContextKey()
   row.presentationProgress=session.progress;row.nativeProgress=session.nativeProgress;row.recoveryObserved=session.recovering
   row.recoveryEnded=not s.active and not s.recovering;row.elapsed=now-session.since;marker('RECEIPT',row)
   sendClientCommand('CartMP','ActionCheck',{index=session.index,phase=spec.name,id=session.id,

@@ -275,6 +275,11 @@ def hotkey_coverage(logs, cartid, configured_key=None):
                 and release.get('actionType') == 'ToolkitWoodCartDrop' and release.get('queuedCount') == 1
                 and release.get('sameAction') is True and created['wall'] <= release['wall'] < owner[index]['wall'],
                 'Native hotkey release is missing, uncorrelated or duplicated the queued action')
+        if row['key'] == 18:
+            require(release.get('nativeE') is True and release.get('nativeDownSeen') is True
+                    and number(release.get('heldMs')) and release['heldMs'] >= 150
+                    and owner[index].get('nativeE') is True and owner[index].get('ignoreRestored') is True,
+                    'Host native E hold/release/context restoration was not observed')
         actual = dict(x=started['sqX']+started['xoffset'], y=started['sqY']+started['yoffset'],
                       z=started['sqZ']+started['zoffset'], rotation=started['rotation'])
         placement(started.get('expectedWorld'), actual, 'serialized constructor', 1e-7)

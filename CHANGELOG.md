@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.107
+
+- **Changed:** E picks up the nearest reachable cart or puts down the held cart. Accepted cart actions take priority over doors and windows for that key press; ordinary Interact remains available when no cart action starts. The old V default migrates once, preserving other custom bindings.
+
 ### 0.1.106
 
 - **Changed:** Quartermaster preset commands use owned storage directly, saving presets and tag rules together without replacing global functions or publishing temporary drafts. Existing saved formats, legacy import and multiplayer commands are preserved; the unused duplicate parser is removed.

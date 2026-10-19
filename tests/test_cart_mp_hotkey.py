@@ -87,6 +87,22 @@ class CartMPHotkeyTests(unittest.TestCase):
         self.assertIn('palmHandleErrorMax', report['phases']['client2'][0])
         self.assertIn('wheelFloorRange', report['phases']['client2'][0])
 
+    def test_e_requires_native_hold_and_restored_context(self):
+        for kind in ('INPUT', 'RELEASED'):
+            for row in self.rows('client1', kind): row['key'] = 18
+        for row in self.rows('client1', 'RELEASED'):
+            row.update(nativeE=True, nativeDownSeen=True, heldMs=150)
+        for row in self.rows('client1', 'RECEIPT'):
+            if row['index'] in self.poses: row.update(nativeE=True, ignoreRestored=True)
+        self.assertTrue(self.analyze()['actions']['hotkeySetdown']['evidenceComplete'])
+        original = copy.deepcopy(self.logs)
+        for kind, field, value in (('RELEASED', 'nativeE', False), ('RELEASED', 'nativeDownSeen', False),
+                                  ('RELEASED', 'heldMs', 149), ('RECEIPT', 'ignoreRestored', False)):
+            with self.subTest(kind=kind, field=field):
+                self.logs = copy.deepcopy(original)
+                self.rows('client1', kind)[0][field] = value
+                with self.assertRaises(ValueError): self.analyze()
+
     def test_rejects_missing_duplicate_or_fabricated_input_and_constructor(self):
         original = copy.deepcopy(self.logs)
         mutations = (
