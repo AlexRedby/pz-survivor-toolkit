@@ -46,6 +46,7 @@ class NativeRunnerTests(unittest.TestCase):
         (self.root / "selection.json").write_text(json.dumps(self.selection))
         (self.root / "runtime.json").write_text(json.dumps(self.runtime))
         self.seal_settings()
+        self.desktop = SimpleNamespace(evidence={}, arguments=lambda *args: [], route=lambda *args: None, check=lambda *args: None)
         self.commands = []
         self.processes = []
         self.streams = []
@@ -98,6 +99,7 @@ class NativeRunnerTests(unittest.TestCase):
              patch.object(admission.host, "sample", side_effect=self.sample_error, return_value=dict(self.snapshot,
                  processes=[{'pid': int(line.split()[0]), 'rss': 0, 'cpu': 0, 'game': True, 'command': line}
                             for line in collisions.splitlines() if line] or self.snapshot['processes'])), \
+             patch.object(runner.desktop, "prepare", return_value=self.desktop), \
              patch.object(runner.subprocess, "Popen", side_effect=self.popen), \
              patch.object(runner.os, "killpg", side_effect=kill_group) as kill, patch.object(runner.signal, "signal", side_effect=self.signal), \
              patch.object(runner.time, "sleep", side_effect=sleep):

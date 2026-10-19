@@ -725,9 +725,10 @@ end
 
 local function installCartEating()
     if not getActivatedMods or not getActivatedMods():contains("SaucedCarts") or not verified("SaucedCarts")
-        or not ISEatFoodAction or ISEatFoodAction._saucedCartsConsumeWrapped then return end
+        or not ISEatFoodAction or not ISDrinkFluidAction
+        or ISEatFoodAction._saucedCartsConsumeWrapped or ISDrinkFluidAction._saucedCartsConsumeWrapped then return end
     if SaucedCarts and SaucedCarts.ConsumeWithCart then return end
-    local previous = ISEatFoodAction.start
+    local previous = {[ISEatFoodAction] = ISEatFoodAction.start, [ISDrinkFluidAction] = ISDrinkFluidAction.start}
     local ok, consume = pcall(require, "SaucedCarts/ConsumeWithCart")
     local owner = SaucedCarts
     if not ok or not owner or type(consume) ~= "table" or owner.ConsumeWithCart ~= consume
@@ -741,8 +742,8 @@ local function installCartEating()
     end
     if not pcall(install) then return end
     local policy = Toolkit.ActionQueuePolicy
-    ready.SaucedCarts = policy and policy.adoptEatStart
-        and policy.adoptEatStart(previous, ISEatFoodAction.start, helpersUnchanged) == true
+    ready.SaucedCarts = policy and policy.adoptConsumeStarts
+        and policy.adoptConsumeStarts(previous, helpersUnchanged) == true
 end
 
 local function installManifestTransfers()

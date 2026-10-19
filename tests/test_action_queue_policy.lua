@@ -4,6 +4,7 @@ f.native('shared/Fluids/ISFluidContainer.lua')
 f.native('shared/Fluids/ISFluidTransferAction.lua')
 f.native('shared/Fluids/ISFluidEmptyAction.lua')
 f.native('shared/TimedActions/ISTransferAction.lua')
+f.native('shared/TimedActions/ISDrinkFluidAction.lua')
 isClient=function()return false end
 f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
 local policy=f.project('ActionQueuePolicy')
@@ -643,3 +644,155 @@ assert(not policy.moveReason(q,extra,fill))
 bagInventory.load,bagInventory.capacity=nil,nil
 print('Container policy: ancestor identities/cycles/capacity, proposed order, released-space cancellation and changed/missing/MP inputs passed.')
 instanceof=baseInstanceof
+
+do
+    f.project('ActionQueueLabels')
+    local api=f.project('ActionQueue')
+    local function drink()
+        local item,fluid=f.item('Base.WaterBottle'),{class='FluidContainer'}
+        item.getFluidContainer=function()return fluid end
+        return f.action(ISDrinkFluidAction,{item=item,fluidContainer=fluid})
+    end
+    local first,waiting,tail=drink(),drink(),drink()
+    local queue=f.queue(first,waiting,tail)
+    local contract,source=policy.inspect(waiting)
+    assert(source=='native.ISDrinkFluidAction' and contract.items[waiting.item:getID()]
+        and contract.cancelWaiting and contract.interrupt=='finish-step' and not policy.stoppable(waiting),
+        'native drinking supports waiting cancellation without stopping partial effects')
+    assert(api.move(queue,waiting,tail,true) and queue.queue[2]==tail and queue.queue[3]==waiting,
+        'independent waiting drink moves after the tail')
+    assert(api.move(queue,waiting,tail,false) and queue.queue[2]==waiting and queue.queue[3]==tail,
+        'independent waiting drink returns to its original position')
+    assert(api.cancelOperation(queue,waiting) and #queue.queue==2 and queue.queue[1]==first and queue.queue[2]==tail,
+        'cancel an independent waiting drink without removing either unrelated drink')
+    assert(waiting.toolkitQueueOperation.toolkitCancelled and not first.toolkitQueueOperation.toolkitCancelled
+        and not tail.toolkitQueueOperation.toolkitCancelled,'drink cancellation invalidates only its own operation')
+    waiting=drink()
+    queue=f.queue(first,waiting,tail)
+    local independent=tail.item
+    tail.item=drink().item;tail.item.id=waiting.item:getID()
+    local independentFluid=tail.fluidContainer;tail.fluidContainer=tail.item:getFluidContainer()
+    assert(policy.moveReason(queue,waiting,tail,true)=='move_shared_item' and not api.move(queue,waiting,tail,true)
+        and queue.queue[2]==waiting and queue.queue[3]==tail,'shared-bottle move preserves order')
+    assert(policy.cancelOperationReason(queue,waiting)=='operation_shared_item' and not api.cancelOperation(queue,waiting)
+        and #queue.queue==3,'replicated references to the same bottle protect waiting cancellation')
+    tail.item=independent
+    tail.fluidContainer=independentFluid
+    for _,fluid in ipairs({false,tail.fluidContainer}) do
+        waiting.fluidContainer=fluid or nil
+        assert(not policy.inspect(waiting) and policy.cancelOperationReason(queue,waiting)=='operation_dependent',
+            'missing or unrelated fluid containers cannot claim the bottle resource contract')
+    end
+    waiting.fluidContainer=waiting.item:getFluidContainer()
+    for _,method in ipairs({'updateEat','start','isValidStart','animEvent','onCompleteFunc'}) do
+        waiting[method]=function()error('policy must never invoke drink callbacks')end
+        assert(not policy.inspect(waiting) and policy.cancelOperationReason(queue,waiting)=='operation_dependent'
+            and not api.cancelOperation(queue,waiting) and #queue.queue==3,'changed drink '..method..' must fail closed')
+        waiting[method]=nil
+    end
+    queue=f.queue(waiting,tail)
+    assert(policy.cancelOperationReason(queue,waiting)=='operation_active' and not api.cancelOperation(queue,waiting)
+        and #queue.queue==2,'active drinking remains protected because its effects can be partial')
+    print('Drink policy: independent waiting cancellation, stable bottle IDs, changed callbacks and active protection passed.')
+end
+
+do
+    local api=PZSurvivorToolkit.ActionQueue
+    local oldInstanceof,oldFluid=instanceof,Fluid
+    instanceof=function(value,name)
+        return oldInstanceof(value,name) or (name=='IsoGameCharacter' and value==f.player)
+            or (name=='InventoryItem' and value==carriedBag)
+    end
+    Fluid={Water={}}
+    local effects={'getFatigueChange','getHungerChange','getStressChange','getUnhappyChange','getCalories',
+        'getCarbohydrates','getLipids','getProteins','getAlcohol','getPoison','getFluReduction','getPainReduction',
+        'getEnduranceChange','getFoodSicknessChange'}
+    local function operation()
+        local item=f.item('Base.WaterBottle');item.weight=1
+        item.getContainer=function()return bagInventory end
+        local properties={getThirstChange=function()return -.5 end}
+        for _,method in ipairs(effects)do properties[method]=function()return 0 end end
+        local fluid={class='FluidContainer',amount=1,capacity=1,ratio=1,pure=true,tainted=false,poisonous=false,
+            getAmount=function(self)return self.amount end,getFilledRatio=function(self)return self.ratio end,
+            getCapacity=function(self)return self.capacity end,
+            isPureFluid=function(self,value)return self.pure and value==Fluid.Water end,
+            isTainted=function(self)return self.tainted end,isPoisonous=function(self)return self.poisonous end,
+            getProperties=function()return properties end}
+        item.getFluidContainer=function()return fluid end
+        local token={}
+        local pickup=f.action(ISInventoryTransferAction,{item=item,srcContainer=bagInventory,destContainer=f.player.inventory})
+        local drink=f.action(ISDrinkFluidAction,{item=item,fluidContainer=fluid,useUtensil=false,percentage=.5,
+            startRatio=1,endRatio=.5,targetConsumedRatio=.5,consumedRatio=0})
+        local putback=f.action(ISInventoryTransferAction,{item=item,srcContainer=f.player.inventory,destContainer=bagInventory,
+            allowMissingItems=true})
+        for _,action in ipairs({pickup,drink,putback})do action.toolkitQueueOperation=token end
+        return {pickup,drink,putback,fluid=fluid,properties=properties}
+    end
+    local a,b,c=operation(),operation(),operation()
+    local queue=f.queue(a[1],a[2],a[3],b[1],b[2],b[3],c[1],c[2],c[3])
+    local previousContains=bagInventory.contains
+    bagInventory.contains=function()return true end
+    bagInventory.load,bagInventory.capacity=3,50
+    f.player.inventory.load,f.player.inventory.capacity=4,50
+    assert(not policy.cancelOperationReason(queue,b[2]),'clean-water groups retain an ample capacity proof')
+    a.fluid.amount,a.fluid.ratio,a[2].consumedRatio=.75,.75,.25
+    assert(not policy.cancelOperationReason(queue,b[2]),'partly consumed native water retains its full current-weight bound')
+    a.fluid.amount,a.fluid.ratio,a[2].consumedRatio=1,1,0
+    isClient=function()return true end
+    assert(not policy.cancelOperationReason(queue,b[2]),'clean-water upper bounds do not require speculative MP pickup credit')
+    isClient=function()return false end
+    bagInventory.capacity=3
+    assert(policy.cancelOperationReason(queue,b[2])=='container_capacity','full bag cannot borrow cancelled pickup space')
+    bagInventory.capacity=50;f.player.inventory.capacity=4.5
+    assert(policy.cancelOperationReason(queue,b[2])=='container_capacity','drinking does not grant root capacity credit')
+    f.player.inventory.capacity=50
+    for _,field in ipairs({'pure','tainted','poisonous'})do
+        local previous=a.fluid[field];a.fluid[field]=not previous
+        assert(policy.cancelOperationReason(queue,b[2])=='container_capacity','unsafe prefix fluid remains a barrier: '..field)
+        a.fluid[field]=previous
+    end
+    for _,method in ipairs(effects)do
+        local previous=a.properties[method];a.properties[method]=function()return .1 end
+        assert(policy.cancelOperationReason(queue,b[2])=='container_capacity','modified water effect remains a barrier: '..method)
+        a.properties[method]=previous
+    end
+    local thirst=a.properties.getThirstChange
+    for _,value in ipairs({.1,math.huge,-math.huge,0/0})do
+        a.properties.getThirstChange=function()return value end
+        assert(policy.cancelOperationReason(queue,b[2])=='container_capacity','invalid thirst effect remains a barrier')
+    end
+    a.properties.getThirstChange=thirst
+    for _,field in ipairs({'percentage','startRatio','endRatio','targetConsumedRatio','consumedRatio'})do
+        local previous=a[2][field]
+        for _,value in ipairs({-1,math.huge,0/0,1.1})do
+            a[2][field]=value
+            assert(policy.cancelOperationReason(queue,b[2])=='container_capacity','invalid consumption bound remains a barrier: '..field)
+        end
+        a[2][field]=previous
+    end
+    for _,field in ipairs({'amount','capacity','ratio'})do
+        local previous=a.fluid[field]
+        for _,value in ipairs({-1,math.huge,0/0})do
+            a.fluid[field]=value
+            assert(policy.cancelOperationReason(queue,b[2])=='container_capacity','invalid fluid bound remains a barrier: '..field)
+        end
+        a.fluid[field]=previous
+    end
+    a.fluid.amount=1.1
+    assert(policy.cancelOperationReason(queue,b[2])=='container_capacity','overfilled fluid is outside the bound')
+    a.fluid.amount=1
+    for _,method in ipairs({'start','updateEat','onCompleteFunc'})do
+        a[2][method]=function()error('capacity proof must not execute drink callbacks')end
+        assert(policy.cancelOperationReason(queue,b[2]),'changed prefix drink remains protected: '..method)
+        a[2][method]=nil
+    end
+    assert(api.cancelOperation(queue,b[2]) and #queue.queue==6,'cancel removes the whole waiting water operation')
+    for i,action in ipairs({a[1],a[2],a[3],c[1],c[2],c[3]})do
+        assert(queue.queue[i]==action and not action.toolkitQueueOperation.toolkitCancelled,'first and tail operations retain exact actions')
+    end
+    assert(b[2].toolkitQueueOperation.toolkitCancelled,'only the cancelled water operation is invalidated')
+    bagInventory.load,bagInventory.capacity,bagInventory.contains=nil,nil,previousContains
+    f.player.inventory.load,f.player.inventory.capacity=nil,nil
+    instanceof,Fluid=oldInstanceof,oldFluid
+    print('Drink capacity: grouped native water pickups/returns, full-weight bounds, unsafe fluids and callback barriers passed.')
+end

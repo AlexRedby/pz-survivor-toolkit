@@ -8,6 +8,10 @@ end
 
 Events.OnGameStart.Add(function()
     local ok, problem = pcall(function()
+        local size=assert(selection.window_size, 'prepared window_size missing')
+        local width,height=getCore():getScreenWidth(),getCore():getScreenHeight()
+        print('[QUEUE_TEST] WINDOW_SIZE width='..width..' height='..height)
+        assert(width==size[1] and height==size[2], 'window_size differs from prepared viewport: '..width..'x'..height)
         local count = 0
         for _, id in ipairs(selection.mods) do
             assert(getActivatedMods():contains(id), 'selected mod missing: ' .. id)

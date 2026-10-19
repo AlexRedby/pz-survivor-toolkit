@@ -481,6 +481,28 @@ def execution_issues(root, selection, execution):
     return issues
 
 
+def window_size_evidence(root, selection):
+    """New snapshots require one observed startup viewport per GUI client."""
+    expected = selection.get('window_size')
+    evidence = {'expected': expected, 'observed': {}, 'issues': []}
+    if expected is None:  # Legacy snapshots did not declare a viewport contract.
+        return evidence
+    for role in adapters.roles(selection):
+        if role == 'server':
+            continue
+        path = Path(root) / (role + '-launch.log')
+        text = path.read_text(errors='replace') if path.is_file() else ''
+        sizes = re.findall(r'\[QUEUE_TEST\] WINDOW_SIZE width=(\d+) height=(\d+)(?:\s|$)', text)
+        if len(sizes) != 1:
+            evidence['issues'].append(role + ': window_size requires exactly one startup observation')
+            continue
+        actual = list(map(int, sizes[0]))
+        evidence['observed'][role] = actual
+        if actual != expected:
+            evidence['issues'].append(role + ': window_size differs from prepared viewport: ' + str(actual))
+    return evidence
+
+
 def build_report(root, catalog, control=None):
     root = Path(root).resolve()
     selection = read_json(root / "selection.json")
@@ -497,6 +519,8 @@ def build_report(root, catalog, control=None):
     if not isinstance(execution, dict):
         execution = {"status": "invalid"}
     execution_errors = execution_issues(root, selection, execution)
+    viewport = window_size_evidence(root, selection)
+    execution_errors += viewport['issues']
     microphone = any(row["microphone"] for row in audits.values())
     counts = {severity + "_count": sum(row[severity + "_count"] for row in audits.values())
               for severity in ("fatal", "unclassified", "background")}
@@ -505,7 +529,7 @@ def build_report(root, catalog, control=None):
     report = {"schema_version": 1, "run": str(root), "selection": selection,
               "settings_fingerprint": fingerprint, "provenance": {"verified": not provenance_errors, "issues": provenance_errors,
                   'game_input_trees': list(GAME_INPUT_TREES) if not provenance_errors else []},
-              "functional": result, "coverage": coverage, "execution": execution, "execution_issues": execution_errors,
+              "functional": result, "coverage": coverage, "execution": execution, "execution_issues": execution_errors, "window_size": viewport,
               "runtime": dict(counts, status="unavailable" if any(not row["available"] for row in audits.values()) else runtime_status, roles=audits, microphone=microphone),
               "limits": ["Callback-driven native fixture; physical UI, WAN and long sessions are separate coverage.",
                          "Native tree seal scope: media/lua and media/scripts; other asset/binary trees are outside this seal."]}
@@ -568,6 +592,10 @@ def matrix(catalog, reports=()):
 def summary(report):
     lines = ["Overall: " + report["status"], "Execution: " + str(report["execution"].get("status", "invalid")), "Functional: " + report["functional"]["status"], "Runtime: " + report["runtime"]["status"],
              "Sources/snapshot: " + ("verified" if report["provenance"]["verified"] else "CHANGED")]
+    viewport = report.get('window_size', {})
+    if viewport.get('expected'):
+        lines.append('Window size: expected ' + 'x'.join(map(str, viewport['expected'])) + '; observed ' +
+                     ', '.join(role + '=' + 'x'.join(map(str, size)) for role, size in viewport.get('observed', {}).items()))
     trees = report['provenance'].get('game_input_trees')
     lines.append('Live game trees: ' + ('unsealed (legacy report)' if trees is None else ', '.join(trees) if trees else 'NOT VERIFIED'))
     for role, counts in report["functional"]["clients"].items():
