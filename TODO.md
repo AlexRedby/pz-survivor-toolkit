@@ -1,7 +1,3 @@
-# Walking inventory action regression
-
-- [ ] Complete the full-pack SP `belt_walk` pair (`belt-knife,belt-hammer`) after the fixture-baseline change. Use the same batch plan for native and Toolkit modes, `belt_walk=true`, `preload_toolkit_fonts=true` and a hidden test workspace. Require exact attachment identities, inventory conservation, original worn-item restoration, subsequent reading and clean comparable runtime audits. The jobs are registered with the shared FIFO runner.
-
 # Wooden wheelbarrow collisions
 
 - [ ] Fix observer-only wooden-cart wall penetration during the approach in Host `cart_wall_exit=left/right`. Native prediction and facing can form a pose that crosses the wall even while the owner is clear. Implement a jointly validated visual position/heading for the whole actor and held cart; keep native actor coordinates, targets, pathfinding, equipment and network traffic unchanged. Any render-only correction must reach both `ModelCameraRenderData` and `ModelSlotRenderData` before grounding/grip/wheel processing, with matching depth and safe identity/stale/geometry-reset handling.
