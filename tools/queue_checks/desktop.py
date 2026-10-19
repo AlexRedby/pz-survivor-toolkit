@@ -100,7 +100,8 @@ class Desktop:
         rows = self.owned(process)
         expected = self.evidence['windows'].get(str(process.pid), [])
         if not rows or set(rows) != set(expected) or any(workspace != self.workspace for workspace in rows.values()):
-            raise RuntimeError('Owned client window escaped its isolated test workspace')
+            raise RuntimeError('Owned client window escaped its isolated test workspace: '
+                               f'pid={process.pid}, expected={expected!r} on {self.workspace!r}, observed={rows!r}')
 
 
 def prepare(selection, manual=False):
