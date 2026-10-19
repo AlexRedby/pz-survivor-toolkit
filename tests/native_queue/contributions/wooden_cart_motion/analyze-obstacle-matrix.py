@@ -52,7 +52,8 @@ def spec_of(name):
 
 def planned(name):
     gait = ('walk', 'run', 'sprint').index(name.split('-', 3)[2])
-    return [(0, 0, 0), (800, gait, 1), (6800, 0, 0), (8000, 0, 4), (13000, 0, 0)]
+    fast_door = spec_of(name)=='door-open' and gait>0
+    return [(0, 0, 0), (800, gait, 1), (3000 if fast_door else 6800, 0, 0), (4000 if fast_door else 8000, 0, 4), (13000, 0, 0)]
 
 
 def root(row):
@@ -232,9 +233,10 @@ def analyze_motion(text, selected=None):
         coverage(rows, DURATION, 'obstacle ' + name)
         assert all(abs(r['wall'] - starts[name] - r['elapsed']) <= 5 for r in rows), 'Obstacle sample clocks disagree'
         plan = planned(name)
+        fast_door = spec=='door-open' and '-walk-' not in name
         assert len(events) == len(plan) and all((e['gait'], e['drive']) == (g, d) for e, (_, g, d) in zip(events, plan)), 'Wrong obstacle phase sequence'
         for i, (event, (at, _, _)) in enumerate(zip(events, plan)):
-            assert (1200 <= event['elapsed'] <= 6800 if spec == 'door-open' and i == 2 else abs(event['elapsed'] - at) <= 500), 'Late obstacle input phase'
+            assert (1200 <= event['elapsed'] <= plan[2][0] if spec == 'door-open' and i == 2 else abs(event['elapsed'] - at) <= 500), 'Late obstacle input phase'
         assert all(b['elapsed'] > a['elapsed'] for a, b in zip(events, events[1:])), 'Nonmonotonic obstacle phases'
         for event, following in zip(events, [*events[1:], dict(elapsed=DURATION)]):
             stage = [r for r in rows if event['elapsed'] + 150 <= r['elapsed'] < following['elapsed'] - 150]
@@ -268,7 +270,8 @@ def analyze_motion(text, selected=None):
         matched = matched_gait(moving)
         if len(matched) < max(2, .6*len(moving)) or not footprint.progressing(matched, {clip}):
             fail(name, 'requested native approach gait never progresses')
-        reverse = [r for r in rows if 8400 <= r['elapsed'] < 13000]
+        reverse_start, reverse_end = events[3]['elapsed'], events[4]['elapsed']
+        reverse = [r for r in rows if reverse_start+400 <= r['elapsed'] < reverse_end]
         if not footprint.progressing(reverse, {'Bob_WalkBwdNoAim1Hand'}) or not any(r['direction'] < 0 and r['actualDistance'] > 1e-6 for r in reverse):
             fail(name, 'manual native reverse gait never progresses')
         signed_reverse, reverse_distance = 0., 0.
@@ -282,7 +285,7 @@ def analyze_motion(text, selected=None):
                 fail(name, 'manual backward input produces forward displacement')
         if signed_reverse > -.3 or -signed_reverse < .6*reverse_distance:
             fail(name, 'manual reverse lacks measured signed backward travel')
-        if any(r['run'] or r['sprint'] for r in rows if 8400 <= r['elapsed']):
+        if any(r['run'] or r['sprint'] for r in rows if reverse_start+400 <= r['elapsed']):
             fail(name, 'fast gait survives manual reverse or final release')
         if any(r['direction'] < 0 and r['actualDistance'] > 1e-6 for r in rows if 800 <= r['elapsed'] < events[3]['elapsed']):
             fail(name, 'automatic reverse occurs before manual reverse command')
@@ -301,7 +304,17 @@ def analyze_motion(text, selected=None):
             fail(name, 'actor crosses the native corner')
         late = [r for r in approach if r['elapsed'] >= events[2]['elapsed'] - 1400]
         if spec == 'door-open':
-            if not any(r['x'] < wx - .8 for r in approach):
+            # A release can occur between the last forward sample and first
+            # neutral sample. Validate that measured boundary, never a later
+            # reverse/teleport or the fixture's release event alone.
+            before = [r for r in rows if r['elapsed'] < events[2]['elapsed']]
+            after = [r for r in rows if r['elapsed'] >= events[2]['elapsed']]
+            crossing = (before and after and before[-1]['drive']==1 and after[0]['drive']==0
+                        and events[2]['elapsed']-before[-1]['elapsed']<=200
+                        and after[0]['elapsed']-events[2]['elapsed']<=200
+                        and after[0]['elapsed']-before[-1]['elapsed']<=200
+                        and after[0]['x'] <= wx-1+.002)
+            if not crossing:
                 fail(name, 'open-door forward crossing never reaches release plane')
         else:
             measured_contact = [r for r in late if r['nativeBlocked'] and r['wantsMove'] and (spec.startswith('slide-') or r['blocked'] or r['brace'] > .1)]
@@ -322,8 +335,18 @@ def analyze_motion(text, selected=None):
                 fail(name, 'requested native gait is not sustained at wall-slide contact')
         elif spec != 'door-open' and (len(late) < 3 or collision.spread(late) > .025):
             fail(name, 'frontal or corner brace never settles at contact')
-        pre_reverse = [r for r in rows if 7500 <= r['elapsed'] < 8000]
+        pre_reverse = [r for r in rows if reverse_start-800 <= r['elapsed'] < reverse_start]
         assert pre_reverse, 'Missing released contact window'
+        if fast_door:
+            finite(events[3],('neutralMs',))
+            quiet = (len(pre_reverse)>=4 and pre_reverse[-1]['elapsed']-pre_reverse[0]['elapsed']>=500
+                     and reverse_start-pre_reverse[-1]['elapsed']<=200
+                     and pre_reverse[0]['elapsed']>=events[2]['elapsed']
+                     and collision.spread(pre_reverse)<=.025 and collision.angle_drift(pre_reverse,'acceptedHeading')<=.025
+                     and all(r['drive']==0 and r['gait']==0 and not r['run'] and not r['sprint'] and r['actualDistance']<=1e-6 for r in pre_reverse)
+                     and 500<=events[3]['neutralMs']<=reverse_start-events[2]['elapsed'])
+            if not quiet:
+                fail(name,'fast open-door reverse lacks 500ms measured settled neutral pose')
         baseline = pre_reverse[-1]
         if not spec.startswith('slide-') and reverse[-1]['x'] - baseline['x'] < .3:
             fail(name, 'manual reverse does not back away from wall')
@@ -380,7 +403,7 @@ def analyze(text, profile, selected=None):
         approach_end = case['phases'][2]['elapsed']
         contact = [f for f in frames if approach_end - 1200 <= f['elapsed'] < approach_end]
         if spec == 'door-open':
-            west = [f for f in frames if approach_end <= f['elapsed'] < 8000]
+            west = [f for f in frames if approach_end <= f['elapsed'] < case['phases'][3]['elapsed']]
             if not west or max(f['maxX'] for f in west[-3:]) > wx - .1:
                 fail(name, 'whole wooden mesh never clears open doorway westbound')
         # Native contact uses the independently checked conservative query envelope.

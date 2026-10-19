@@ -12,11 +12,9 @@
 
 # Current movement and collision coverage
 
-- [ ] Replace stale absolute-key coverage claims with native relative-input maneuver and obstacle matrices. Keep historical reports unchanged; record actual body/load/gait, exact input stages, accepted heading, identity and sampling coverage.
-- [ ] Run straight movement, both directions of 45/90/135/180-degree arcs, steering release, arc stops and screen-up/down slaloms at multiple switch intervals across Walk/Run/Sprint, male/female and empty/full cargo. Gate: native gait progression, measured travel/yaw, no unintended reverse and bounded release/stop; retain grip/wheel/body diagnostics separately.
-- [ ] Run frontal contact/bracing/reverse recovery, both wall-slide directions, corner contact and real open/closed doors across the same body/load/gait combinations. Gate: native obstacle controls, actual geometry and full cart/wheel clearance, exact cargo/ownership, no trapping after manual reverse and safe cleanup.
-- [ ] Diagnose reproducible movement defects exposed by these runs and distinguish functional failures from visual pose defects. Verify any accepted fix with focused regressions and repeats. Known Host observer wall penetration remains a separate open defect; SP results do not close that multiplayer visual gate.
-- [ ] Inspect representative recordings and worst measured transitions, retain reproducible evidence, update only completed TODO portions, clean disposable profiles, and deliver checked changes to main with any required component version bump.
+- [ ] Correct the fast open-door fixture's manual reverse window using the captured coast/return distances. Preserve a measured settled-neutral interval before reverse, complete west/east mesh crossings, native gait, exact cargo and no automatic backing. Correct the forward-crossing sample bracket at the early release boundary without accepting a missing crossing; add focused regressions.
+- [ ] Repeat all eight Run/Sprint open-door body/load variants after the fixture correction, and separately repeat `female-full-run-slalom-up` on the unchanged gameplay candidate. Preserve the original full-matrix failures: the slalom contains a corroborated native/rendered catch-up burst after a frame hitch, whose source is unproven. Keep the known pose jumps and rapid-steering response limitation open.
+- [ ] Finish representative video review and the user-facing video catalogue. Trim useless idle footage while preserving actions/transitions and a source-time mapping; validate the short clips before deleting their original videos as requested. Update only completed TODO portions, preserve original and repeated reports/probes, clean disposable profiles and deliver checked changes to main. SP results do not close the known Host observer wall-penetration gate.
 
 # Natural wooden wheelbarrow animation
 

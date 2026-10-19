@@ -49,7 +49,11 @@ the actor's position or heading during its recording.
 Use `--cases obstacle-matrix` for 72 scenes across the same body/load/gait axes:
 frontal bracing, both wall-slide directions, corner contact and real open/closed
 doors. Every scene records 16 seconds, including explicit manual reverse and
-release. Independent bare native controls establish the obstacle layouts. Frontal,
+release. Run/Sprint open-door scenes start manual reverse at 4 seconds after a
+measured settled-neutral interval of at least 500 ms; other scenes start at 8
+seconds. All release reverse at 13 seconds. The earlier fast-door return leaves
+room to bring the whole cart back after its longer coast through the doorway.
+Independent bare native controls establish the obstacle layouts. Frontal,
 corner and door scenes require normal backoff; slides require manual backward
 travel along the wall. The separate wall-manual-exit banks cover reaching a wall
 end and turning out. Contact is checked against the current native collision

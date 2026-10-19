@@ -70,17 +70,18 @@ def evidence(names=None):
         plan = a.planned(name)
         if spec=='door-open':
             plan[2] = (2600,0,0)
+        reverse_at=plan[3][0]
         previous = lo['startX'],lo['startY']
         for t in range(0,16000,100):
             for at,g,d in plan:
                 if t==at:
-                    lines.append(emit('PHASE',dict(case=name,wall=start+t,elapsed=t,gait=g,drive=d)))
+                    lines.append(emit('PHASE',dict(case=name,wall=start+t,elapsed=t,gait=g,drive=d,neutralMs=t-plan[2][0] if d==4 and reverse_at==4000 else 0)))
             _, gait, drive = [step for step in plan if step[0]<=t][-1]
             front=1.26 if name.split('-',3)[2]=='walk' else 1.62
             contact_heading=math.pi/2 if spec=='slide-left' else -math.pi/2 if spec=='slide-right' else lo['heading']
             support=a.native_support(dict(acceptedHeading=contact_heading,front=front),'west')
             contact_x=99 if spec=='door-open' else 100+support
-            x = lerp(t, [(0,lo['startX']),(800,lo['startX']),(2600,contact_x),(8000,contact_x),(13000,102.5 if spec=='door-open' else 103.8)])
+            x = lerp(t, [(0,lo['startX']),(800,lo['startX']),(2600,contact_x),(reverse_at,contact_x),(13000,102.5 if spec=='door-open' else 103.8)])
             if spec.startswith('slide-') and t>=8000:
                 x=contact_x
             if spec=='corner':
@@ -91,7 +92,7 @@ def evidence(names=None):
             else:
                 y=lo['startY']
             distance=math.dist(previous,(x,y));previous=x,y
-            reverse=t>=8000
+            reverse=t>=reverse_at
             moving=distance>1e-7
             clip='Bob_WalkBwdNoAim1Hand' if reverse else ('Bob_Walk','Bob_Run','Bob_Sprint')[gait]
             h=lerp(t,[(0,lo['heading']),(800,lo['heading']),(2600,contact_heading)])
@@ -334,6 +335,56 @@ class ObstacleMatrixTests(unittest.TestCase):
             prefix=row['root'].split(',rootTracks:',1)[0]
             return dict(row,root=prefix+f',rootTracks:Bob_Run@1/{time}/1;')
         self.assertIn('Matching native gait clock froze through more than 500ms of measured movement',self.reasons(change(self.log,name,frozen)))
+
+    def test_fast_open_door_reverse_is_earlier_without_shortening_walk_or_other_cases(self):
+        for name in a.EXPECTED:
+            plan=a.planned(name)
+            fast=a.spec_of(name)=='door-open' and '-walk-' not in name
+            self.assertEqual(plan[3][0],4000 if fast else 8000)
+        name='male-full-sprint-door-open'
+        # The original five-second reverse schedule is deliberately no longer
+        # accepted as coverage of a complete loaded fast return.
+        lines=[]
+        for line in self.log.splitlines():
+            if a.PREFIX+'PHASE ' in line:
+                row=json.loads(line.split(' PHASE ',1)[1])
+                if row.get('case')==name and row['drive']==4:
+                    row.update(elapsed=8000,wall=row['wall']+4000);line=emit('PHASE',row)
+            lines.append(line)
+        with self.assertRaisesRegex(AssertionError,'Late obstacle input phase'):
+            a.analyze_motion('\n'.join(lines))
+
+    def test_open_door_crossing_uses_neutral_boundary_pose_but_needs_real_plane_evidence(self):
+        name='male-empty-run-door-open'
+        # Reproduce the native100ms sample straddling an early release: the
+        # last forward pose is east of the plane; the first neutral pose is west.
+        def bracket(row):
+            if row['elapsed']==2500:
+                return dict(row,x=99.3)
+            return row
+        log=change(self.log,name,bracket)
+        self.assertNotIn('open-door forward crossing never reaches release plane',self.reasons(log))
+        missing=change(log,name,lambda r:dict(r,x=99.3) if r['elapsed']==2600 else r)
+        self.assertIn('open-door forward crossing never reaches release plane',self.reasons(missing))
+        delayed=change(log,name,lambda r:None if 2600<=r['elapsed']<=2800 else r)
+        self.assertIn('open-door forward crossing never reaches release plane',self.reasons(delayed))
+
+    def test_fast_door_reverse_requires_measured_quiet_window_and_live_receipt(self):
+        name='female-full-sprint-door-open'
+        # Native motion can persist despite identical rounded actor coordinates
+        # and a fixture claiming a long quiet interval.
+        moving=change(self.log,name,lambda r:dict(r,root=r['root'].replace('actualDistance:0.0,','actualDistance:.01,')) if 3200<=r['elapsed']<4000 else r)
+        self.assertIn('fast open-door reverse lacks 500ms measured settled neutral pose',self.reasons(moving))
+        lines=[]
+        for line in self.log.splitlines():
+            if a.PREFIX+'PHASE ' in line:
+                row=json.loads(line.split(' PHASE ',1)[1])
+                if row.get('case')==name and row['drive']==4:
+                    row['neutralMs']=499;line=emit('PHASE',row)
+            lines.append(line)
+        self.assertIn('fast open-door reverse lacks 500ms measured settled neutral pose',self.reasons('\n'.join(lines)))
+        drift=change(self.log,name,lambda r:dict(r,x=r['x']+.1*(r['elapsed']-3200)/800) if 3200<=r['elapsed']<4000 else r)
+        self.assertIn('fast open-door reverse lacks 500ms measured settled neutral pose',self.reasons(drift))
 
     def test_fixture_lua_syntax_and_no_recording_actor_reset(self):
         compiler=shutil.which('luajit')

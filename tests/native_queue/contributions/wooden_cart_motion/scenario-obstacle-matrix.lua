@@ -32,7 +32,7 @@ end
 local function emit(kind,row) print('[CART_OBSTACLE_MATRIX] '..kind..' '..encode(row)) end
 local item,itemID,cargoIDs,cargoWeight,c,index,controlIndex,stage,attempt,mode,since,recordStart,lastSample
 index=0;controlIndex=0;attempt=0
-local phases={{0,0,0},{800,nil,1},{6800,0,0},{8000,0,4},{13000,0,0}}
+local phases
 local function cargo(cart)
  local ids={};local items=cart:getInventory():getItems()
  for i=0,items:size()-1 do ids[#ids+1]=tostring(items:get(i):getID()) end
@@ -96,6 +96,9 @@ local function equip()
  assert(p:getPerkLevel(Perks.Sprinting)==10,'Sprint eligibility missing');p:getStats():reset(CharacterStat.ENDURANCE)
 end
 local function setup()
+ c.fastDoor=c.spec=='door-open' and c.gait>0
+ phases={{0,0,0},{800,nil,1},{c.fastDoor and 3000 or 6800,0,0},{c.fastDoor and 4000 or 8000,0,4},{13000,0,0}}
+ c.quietSince=nil;c.quietX=nil;c.quietY=nil;c.quietHeading=nil
  -- Change this disposable process only; never persist the user's mod settings.
  if PZAPI and PZAPI.ModOptions then
   local options=PZAPI.ModOptions:getOptions('MiniHealthPlus')
@@ -180,12 +183,20 @@ local function tick()
  if c.spec=='door-open' and stage==2 and p:getX()<=wx-1 then
   stage=3;c.openReleased=true;cartLabGait(0);cartLabDrive(0)
   emit('PHASE',{case=c.name,wall=now,elapsed=elapsed,gait=0,drive=0})
-  print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait=0 drive=0')
+  print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait=0 drive=0');sample(now)
+ end
+ -- Observe actual stopped pose while neutral, before requesting manual backward input.
+ if c.fastDoor and stage==3 then
+  local x,y,h=p:getX(),p:getY(),cartLabSteeringHeading()
+  if not c.quietSince or math.abs(x-c.quietX)>1e-6 or math.abs(y-c.quietY)>1e-6 or math.abs(h-c.quietHeading)>1e-6 or p:isRunning() or p:isSprinting() then c.quietSince=now end
+  c.quietX=x;c.quietY=y;c.quietHeading=h
  end
  while stage<#phases and elapsed>=phases[stage+1][1] do
   assert(c.spec~='door-open' or stage~=2,'Open door crossing did not reach bounded release plane')
   stage=stage+1;local command=phases[stage];local gait=command[2] or c.gait
-  cartLabGait(gait);cartLabDrive(command[3]);emit('PHASE',{case=c.name,wall=now,elapsed=elapsed,gait=gait,drive=command[3]})
+  local neutralMs=c.fastDoor and stage==4 and c.quietSince and now-c.quietSince or 0
+  assert(not c.fastDoor or stage~=4 or neutralMs>=500,'Fast open-door reverse requires 500ms measured stopped neutral pose')
+  cartLabGait(gait);cartLabDrive(command[3]);emit('PHASE',{case=c.name,wall=now,elapsed=elapsed,gait=gait,drive=command[3],neutralMs=neutralMs})
   print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait='..gait..' drive='..command[3])
  end
  if elapsed<16000 and now-lastSample>=100 then sample(now) end
