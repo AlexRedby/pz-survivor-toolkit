@@ -62,6 +62,81 @@ def tracks(root):
             result.setdefault(name, []).append(time)
     return result
 
+def moving_clock_stall(state, row, clip, clocks):
+    """Sampled moving-time stall, preserving continuity through same-gait phases.
+
+    A changed native clock includes ordinary loop wrap. Half a second permits
+    several ordinary samples or the maximum allowed capture gap; it is not a
+    claim that every rendered frame advanced. Nonmoving/gait-transition gaps
+    reset the moving-time budget. Same-tick phase-edge copies do not reset it.
+    """
+    previous = state.get('previous')
+    if previous is not None and row['wall'] == previous['wall'] and clip == state.get('clip'):
+        return state.get('frozenMs', 0.)
+    frozen = state.get('frozenMs', 0.)
+    if (previous is None or clip != state.get('clip') or not clocks or not state.get('clocks')
+            or math.hypot(row['x']-previous['x'], row['y']-previous['y']) <= 1e-6):
+        frozen = 0.
+    else:
+        before, after = state['clocks'], tuple(sorted(clocks))
+        # A field crossfade can add/remove an instance of the same clip. It is
+        # not itself clock progress; the next sample can compare the new set.
+        changed = len(before) == len(after) and any(abs(a-b) > 1e-6 for a,b in zip(before,after))
+        frozen = 0. if changed else frozen + row['wall']-previous['wall']
+    state.update(previous=row, clip=clip, clocks=tuple(sorted(clocks)) if clocks else (), frozenMs=frozen)
+    return frozen
+
+
+
+def slalom_response(rows, load, sign, direct_opposite):
+    """Bracket sampled response; never infer an exact sub-sample zero crossing.
+
+    woodenStep keeps old yaw on opposite input, braking at 6 rad/s². Its
+    integration step is capped at .1s; allow one such update for input delivery
+    and discrete integration. Sampling adds uncertainty to the crossing bracket,
+    not to the permitted old-direction angular excursion.
+    """
+    cap, acceleration, update_uncertainty, angle_noise = 1.6-.3*(load=='full'), 6., .1, .003
+    intervals = [(a['phaseElapsed']/1000, b['phaseElapsed']/1000,
+                  sign*wrap(b['acceptedHeading']-a['acceptedHeading'])) for a,b in zip(rows,rows[1:])]
+    deadline = update_uncertainty+cap/acceleration
+    # Integral of the maximum residual old-direction rate, including one
+    # delayed native update. This bounds each interval and the whole excursion.
+    def old_yaw(t):
+        delayed = min(t,update_uncertainty)*cap
+        braking = min(max(0.,t-update_uncertainty),cap/acceleration)
+        return delayed+cap*braking-.5*acceleration*braking*braking
+    opposite = sum(max(0.,-delta) for _,_,delta in intervals)
+    net = sum(delta for _,_,delta in intervals)
+    terminal = intervals[-1][2]/(intervals[-1][1]-intervals[-1][0])
+    first_requested = next((i for i,(_,_,d) in enumerate(intervals) if d>angle_noise),None)
+    bracket = None
+    if first_requested is not None:
+        preceding_old = [a for a,_,d in intervals[:first_requested] if d < -angle_noise]
+        bracket = [1000*(preceding_old[-1] if preceding_old else 0.),1000*intervals[first_requested][1]]
+    achieved = net >= .015 and terminal > .03
+    failures = []
+    if direct_opposite:
+        if opposite > old_yaw(intervals[-1][1])+angle_noise:
+            failures.append('Opposite slalom excursion exceeded bounded braking response')
+        if any(-d > old_yaw(b)-old_yaw(a)+angle_noise for a,b,d in intervals):
+            failures.append('Opposite slalom yaw persisted beyond bounded braking response')
+        if first_requested is not None and any(d < -angle_noise for _,_,d in intervals[first_requested+1:]):
+            failures.append('Slalom returned to the old direction after sampled response')
+        if rows[-1]['phaseElapsed'] >= 600:
+            settled = [(a,b,d) for a,b,d in intervals if a>=deadline]
+            if not settled:
+                failures.append('Insufficient samples after slalom braking deadline')
+            if not achieved or first_requested is None or any(d < -angle_noise for _,_,d in settled):
+                failures.append('Long slalom hold did not settle in the requested direction')
+    return dict(directOppositeInput=direct_opposite, sampledOppositeExcursion=opposite,
+                responseCrossingBracketMs=bracket, terminalSignedRate=terminal, netRequestedYaw=net,
+                requestedDirectionAchieved=achieved, oldYawDeadlineMs=1000*deadline,
+                oppositeExcursionBudget=old_yaw(intervals[-1][1])+angle_noise,
+                inputUpdateUncertaintyMs=1000*update_uncertainty,
+                maxSampleIntervalMs=1000*max(b-a for a,b,_ in intervals)), failures
+
+
 def selected_capture(text, expected_scenes=None):
     expected = selection(expected_scenes)
     assert '[WOOD_BANK] RUN_STARTED' in text, 'Missing run boundary'
@@ -90,7 +165,7 @@ def selected_capture(text, expected_scenes=None):
 
 def analyze(text, expected_scenes=None):
     captures, starts = selected_capture(text, expected_scenes)
-    failures, results = [], []
+    failures, results, rapid_limitations = [], [], []
     for name, events in captures.items():
         expected = schedule(name)
         _, load, gait, spec = name.split('-', 3)
@@ -99,10 +174,14 @@ def analyze(text, expected_scenes=None):
         previous_end = start
         initial_heading = None
         previous_sample = None
+        clock_state = {}
         def fail(phase, reason, value=None):
             failures.append(dict(case=name, phase=phase, reason=reason, value=value))
         for index, contract in enumerate(expected, 1):
             phase = contract['phase']
+            direct_opposite = (phase.startswith('slalom-') and index > 1
+                               and expected[index-2]['phase'].startswith('slalom-')
+                               and {contract['drive'],expected[index-2]['drive']} == {5,8})
             assert position < len(events) and events[position][0] == 'PHASE', 'Missing/reordered phase: '+phase
             begin = events[position][1]
             position += 1
@@ -139,6 +218,12 @@ def analyze(text, expected_scenes=None):
                 assert (load == 'empty' and row['cargoIDs'] == 'empty' and row['cargoWeight'] == 0
                         or load == 'full' and row['cargoIDs'] != 'empty' and row['cargoWeight'] > 0), 'Wrong scene load'
                 row['tracks'] = tracks(row['root'])
+                gait_ok = ((not row['run'] and not row['sprint']) if requested == 0
+                           else row['run'] and not row['sprint'] if requested == 1 else row['sprint'])
+                clip = 'Bob_'+('Walk','Run','Sprint')[requested] if drive else None
+                clocks = row['tracks'].get(clip, ()) if gait_ok else ()
+                if moving_clock_stall(clock_state, row, clip, clocks) > 500:
+                    fail(phase, 'Matching native gait clock froze through more than 500ms of measured movement')
                 rows.append(row)
             assert position < len(events) and events[position][0] == 'END', 'Missing phase completion: '+phase
             end = events[position][1]
@@ -178,7 +263,7 @@ def analyze(text, expected_scenes=None):
                     fail(phase, 'Implausible native displacement', norm)
                 if contract['drive']:
                     turn_sign = (1 if contract['target']>0 else -1) if contract['target'] else (-1 if contract['drive']==5 else 1 if contract['drive']==8 else 0)
-                    if turn_sign and delta*turn_sign < -.003:
+                    if turn_sign and not direct_opposite and delta*turn_sign < -.003:
                         fail(phase, 'Steering reversed inside a held arc', delta)
                     if abs(delta) > 3*(b['wall']-a['wall'])/1000+.03:
                         fail(phase, 'Native heading changed discontinuously', delta)
@@ -198,7 +283,7 @@ def analyze(text, expected_scenes=None):
                         fail(phase, 'Arc missed measured target or overshot', signed_yaw)
                 elif phase.startswith('slalom-'):
                     expected_sign = -1 if contract['drive']==5 else 1
-                    if signed_yaw*expected_sign < .015:
+                    if not direct_opposite and signed_yaw*expected_sign < .015:
                         fail(phase, 'Slalom steering missing/wrong sign', signed_yaw)
                 elif phase.startswith('release') or phase == 'straight':
                     if abs(signed_yaw) > .025 or sum(abs(wrap(b['acceptedHeading']-a['acceptedHeading'])) for a,b in zip(rows,rows[1:])) > .04:
@@ -226,14 +311,25 @@ def analyze(text, expected_scenes=None):
                 quiet_yaw = sum(abs(wrap(b['acceptedHeading']-a['acceptedHeading'])) for a,b in zip(quiet,quiet[1:]))
                 if len(quiet)<3 or drift > .025 or quiet_yaw > .025 or any(r['run'] or r['sprint'] for r in quiet):
                     fail(phase, 'Neutral state did not settle', dict(drift=drift,yaw=quiet_yaw))
-            phase_results.append(dict(phase=phase, elapsed=end['elapsed'], samples=len(rows), signedYaw=signed_yaw, forwardTravel=travel, distance=distance))
+            result = dict(phase=phase, elapsed=end['elapsed'], samples=len(rows), signedYaw=signed_yaw, forwardTravel=travel, distance=distance)
+            if phase.startswith('slalom-'):
+                response, response_failures = slalom_response(rows,load,-1 if contract['drive']==5 else 1,direct_opposite)
+                result.update(response)
+                for reason in response_failures:
+                    fail(phase,reason,response)
+                if contract['duration']==300 and not response['requestedDirectionAchieved']:
+                    rapid_limitations.append(dict(case=name,phase=phase,netRequestedYaw=response['netRequestedYaw'],
+                                                  terminalSignedRate=response['terminalSignedRate'],
+                                                  reason='300ms hold did not achieve net yaw in the requested direction'))
+            phase_results.append(result)
         assert position == len(events), 'Unexpected telemetry after final phase'
         assert DURATIONS[spec] <= previous_end-start <= DURATIONS[spec]+500, 'Truncated fixed recording window'
         results.append(dict(case=name, duration=previous_end-start, phases=phase_results))
     return dict(complete=True, caseCount=len(results), fullSceneCount=len(SCENES), matrixComplete=tuple(captures)==SCENES,
                 scope='full-matrix' if expected_scenes is None else 'selected-scenes', expectedScenes=list(captures),
                 inputScheme='relative-keyboard-v1', motionPass=not failures, motionFailures=failures, cases=results,
-                limit='Measured SP relative keyboard movement only. Sampled heading, positions, native gait and controls do not establish grip, wheel support, body/clothing clearance, visual quality, runtime cleanliness or multiplayer correctness.')
+                rapidResponsePass=not rapid_limitations, rapidResponseLimitations=rapid_limitations,
+                limit='Measured SP relative keyboard movement with bounded existing steering inertia. Rapid 300ms requested-direction response is reported independently by rapidResponsePass/rapidResponseLimitations. Sampled heading, positions, native gait and controls do not establish grip, wheel support, body/clothing clearance, visual quality, runtime cleanliness or multiplayer correctness.')
 
 def parse_scenes(value):
     return json.loads(value) if value.lstrip().startswith('[') else [v.strip() for v in value.split(',')]

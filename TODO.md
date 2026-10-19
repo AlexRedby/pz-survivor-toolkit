@@ -15,7 +15,7 @@
 - [ ] Replace stale absolute-key coverage claims with native relative-input maneuver and obstacle matrices. Keep historical reports unchanged; record actual body/load/gait, exact input stages, accepted heading, identity and sampling coverage.
 - [ ] Run straight movement, both directions of 45/90/135/180-degree arcs, steering release, arc stops and screen-up/down slaloms at multiple switch intervals across Walk/Run/Sprint, male/female and empty/full cargo. Gate: native gait progression, measured travel/yaw, no unintended reverse and bounded release/stop; retain grip/wheel/body diagnostics separately.
 - [ ] Run frontal contact/bracing/reverse recovery, both wall-slide directions, corner contact and real open/closed doors across the same body/load/gait combinations. Gate: native obstacle controls, actual geometry and full cart/wheel clearance, exact cargo/ownership, no trapping after manual reverse and safe cleanup.
-- [ ] Diagnose and fix reproducible movement defects exposed by these runs, with focused regressions and repeats. Known Host observer wall penetration remains a separate open defect; SP results do not close that multiplayer visual gate.
+- [ ] Diagnose reproducible movement defects exposed by these runs and distinguish functional failures from visual pose defects. Verify any accepted fix with focused regressions and repeats. Known Host observer wall penetration remains a separate open defect; SP results do not close that multiplayer visual gate.
 - [ ] Inspect representative recordings and worst measured transitions, retain reproducible evidence, update only completed TODO portions, clean disposable profiles, and deliver checked changes to main with any required component version bump.
 
 # Natural wooden wheelbarrow animation
@@ -36,6 +36,8 @@
 
 ## Known pose defects
 
+- [ ] Review rapid left/right steering response with the user before changing the established angular inertia: at Run/Sprint, a 300 ms opposite press can still produce net yaw in the previous direction. Keep measured response latency separate from unexpected stuck/wrong-way steering; preserve smooth bank transitions and wheel rolling if retuning is agreed.
+- [ ] Remove rendered fore-aft cart jumps during Walk side-clearance acquisition, Run/Sprint entry, rapid slaloms and stopping. Preserve native leg motion, the preferred straight pose and minimum hand/body clearance. Check monotonic-time wheel/handle trajectories and recordings, including startup and release; a clearance-only change or passing grip probes is insufficient.
 - [ ] Remove rare contact between wide jeans and the handles in the original straight pose, near it and at the start of the reverse arc, preserving the preferred hand and torso position. Contact remains in some zero-lean phases and nearby; also check the short Walk -> Cart Idle transition while equipping. Include Walk with a full load alongside a vehicle at 45° to the right: the left handle touches the trousers at about 4.18 s in scene `male-full-vehicle-yaw45-slide-right` in capture `cart-vehicles-20261018/native05`.
 - [ ] For the selected turn, check the grip surface and thumb on both hands and both sexes: in the prototype without raising the handles, the hand angle relative to the handle changes from 25° to 35°, while the original palm depth and finger curl are preserved.
 

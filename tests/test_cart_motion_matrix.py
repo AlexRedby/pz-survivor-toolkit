@@ -14,7 +14,7 @@ analyzer=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(analyzer)
 SMALL=('male-empty-walk-arcs','female-full-run-slalom-up','female-full-sprint-slalom-down')
 
-def evidence(names=SMALL):
+def evidence(names=SMALL,inertia=False):
     lines=['[WOOD_BANK] RUN_STARTED']
     def emit(kind,row):
         lines.append('[CART_MATRIX] '+kind+' '+json.dumps(row,separators=(',',':')))
@@ -25,6 +25,7 @@ def evidence(names=SMALL):
         x=y=100.
         heading=math.pi/4 if scenario=='slalom-down' else -3*math.pi/4
         frame=1
+        turn_rate=0.
         lines.append(f'[WOOD_BANK] CASE {name} attempt=0 wall={start}')
         for index,phase in enumerate(analyzer.schedule(name),1):
             begin=now
@@ -40,7 +41,17 @@ def evidence(names=SMALL):
             elapsed=0
             previous_yaw=0
             while True:
-                yaw=target*elapsed/duration if target else ((-.8 if phase['drive']==5 else .8)*elapsed/1000 if phase['phase'].startswith('slalom') else 0)
+                if inertia and phase['phase'].startswith('slalom'):
+                    yaw=previous_yaw
+                    requested_rate=(-1 if phase['drive']==5 else 1)*(1.6-.3*(load=='full'))
+                    if elapsed:
+                        # Native integration, independent of the analyzer's residual-yaw bound.
+                        for _ in range(10):
+                            turn_rate+=max(-.06,min(.06,requested_rate-turn_rate))
+                            yaw+=turn_rate*.01
+                else:
+                    turn_rate=0.
+                    yaw=target*elapsed/duration if target else ((-.8 if phase['drive']==5 else .8)*elapsed/1000 if phase['phase'].startswith('slalom') else 0)
                 delta=yaw-previous_yaw
                 if elapsed:
                     if phase['drive']:
@@ -132,6 +143,88 @@ class MotionMatrixTests(unittest.TestCase):
             self.assertAlmostEqual(math.degrees(measured),wanted)
         self.assertNotIn('visualPass',result)
         self.assertNotIn('footprintPass',result)
+
+    def test_direct_opposite_slaloms_allow_braking_but_report_unmet_rapid_response(self):
+        result=self.analyze(evidence(inertia=True))
+        self.assertTrue(result['motionPass'],result['motionFailures'])
+        self.assertFalse(result['rapidResponsePass'])
+        self.assertTrue(result['rapidResponseLimitations'])
+        for case in result['cases']:
+            for phase in case['phases']:
+                if not phase['phase'].startswith('slalom-'):
+                    continue
+                self.assertIn('sampledOppositeExcursion',phase)
+                if phase['phase'].startswith(('slalom-600-','slalom-900-')):
+                    self.assertTrue(phase['requestedDirectionAchieved'],phase)
+        unmet=[p for c in result['cases'] for p in c['phases']
+               if p.get('directOppositeInput') and p.get('netRequestedYaw',1)<0]
+        self.assertTrue(unmet)
+        self.assertTrue(all(not p['requestedDirectionAchieved'] for p in unmet))
+
+    def test_slalom_braking_bounds_reject_persistent_wrong_yaw_and_excess_excursion(self):
+        def rows(rate,stop=900):
+            return [dict(phaseElapsed=t,acceptedHeading=rate*t/1000) for t in range(0,stop+1,100)]
+        for load in ('empty','full'):
+            for rate in (-.8,-1.6):
+                response,failures=analyzer.slalom_response(rows(rate),load,1,True)
+                self.assertFalse(response['requestedDirectionAchieved'])
+                self.assertIn('Long slalom hold did not settle in the requested direction',failures)
+                self.assertTrue(any('bounded braking' in f for f in failures))
+        # Even a 300ms rapid hold cannot disguise an unbraked capped old rate.
+        response,failures=analyzer.slalom_response(rows(-1.6,300),'empty',1,True)
+        self.assertTrue(any('bounded braking' in f for f in failures))
+        # Positive eventual net yaw cannot excuse a large first old-direction jump.
+        jump=[dict(phaseElapsed=t,acceptedHeading=h) for t,h in ((0,0),(100,-.3),(200,-.2),(300,0),(400,.2),(500,.4),(600,.6))]
+        response,failures=analyzer.slalom_response(jump,'empty',1,True)
+        self.assertTrue(response['requestedDirectionAchieved'])
+        self.assertTrue(any('bounded braking' in f for f in failures))
+
+    def test_sampled_slalom_crossing_is_bracketed_and_requires_settled_observations(self):
+        rows=[dict(phaseElapsed=t,acceptedHeading=h) for t,h in
+              ((0,0),(100,-.12),(200,-.18),(300,-.17),(400,-.09),(500,.05),(600,.21))]
+        response,failures=analyzer.slalom_response(rows,'empty',1,True)
+        self.assertEqual(failures,[])
+        self.assertEqual(response['responseCrossingBracketMs'],[100,300])
+        self.assertGreater(response['terminalSignedRate'],0)
+        self.assertAlmostEqual(response['oldYawDeadlineMs'],100+1600/6)
+        sparse=[dict(phaseElapsed=t,acceptedHeading=h) for t,h in ((0,0),(300,-.1),(600,.3))]
+        self.assertIn('Insufficient samples after slalom braking deadline',analyzer.slalom_response(sparse,'empty',1,True)[1])
+        recross=rows+[dict(phaseElapsed=700,acceptedHeading=.15)]
+        self.assertIn('Slalom returned to the old direction after sampled response',analyzer.slalom_response(recross,'empty',1,True)[1])
+
+    def test_native_clock_cannot_advance_once_then_freeze_while_actor_moves(self):
+        def freeze(row):
+            if not row['drive']:
+                return row
+            boundary=1000 if row['phase']=='straight' else 200
+            time=1 if row['phaseElapsed']<=boundary else 2
+            clip=('Bob_Walk','Bob_Run','Bob_Sprint')[row['gait']]
+            return update(row,root=f'heading:{row["heading"]},rootTracks:{clip}@1/{time}/1;')
+        result=self.analyze(transform(self.log,'SAMPLE',lambda r:True,freeze))
+        self.assertFalse(result['motionPass'])
+        self.assertTrue(any('clock froze' in f['reason'] for f in result['motionFailures']))
+
+    def test_clock_freeze_budget_survives_consecutive_short_phase_edges(self):
+        state={};values=[]
+        # A 700ms freeze spans multiple 300ms steering phases. Same-tick
+        # phase-edge copies must not erase the accumulated moving time.
+        for time in range(0,701,100):
+            row=dict(wall=time,x=time/100000,y=0)
+            values.append(analyzer.moving_clock_stall(state,row,'Bob_Walk',[.25]))
+            if time in (300,600):
+                values.append(analyzer.moving_clock_stall(state,row,'Bob_Walk',[.25]))
+        self.assertGreater(max(values),500)
+        self.assertEqual(values[-1],700)
+
+    def test_clock_progress_accepts_loop_wrap_and_slow_loaded_advance(self):
+        state={}
+        for i,time in enumerate((.99998,.00001,.00002,.00003,.00004,.00005,.00006,.00007)):
+            row=dict(wall=i*100,x=i/1000,y=0)
+            self.assertEqual(analyzer.moving_clock_stall(state,row,'Bob_Walk',[time]),0)
+        # A real nonmoving/gait-transition gap resets the moving-time budget.
+        row=dict(wall=800,x=.007,y=0)
+        self.assertEqual(analyzer.moving_clock_stall(state,row,'Bob_Walk',[.00007]),0)
+        self.assertEqual(analyzer.moving_clock_stall(state,dict(wall=900,x=.008,y=0),'Bob_Run',[]),0)
 
     def test_selected_diagnostic_scope(self):
         result=self.analyze()

@@ -306,6 +306,35 @@ class ObstacleMatrixTests(unittest.TestCase):
                 self.assertFalse(result['motionPass'])
                 self.assertIn('position jumps outside native update budget',[reason for _,reason in result['motionFailures']])
 
+    def test_full_load_requires_positive_weight_and_nonempty_cargo_ids(self):
+        name='male-full-walk-frontal'
+        for modify in (lambda r:dict(r,cargoWeight=0),lambda r:dict(r,cargoIDs='empty')):
+            with self.assertRaisesRegex(AssertionError,'load variant'):
+                a.analyze_motion(change(self.log,name,modify))
+
+    def test_release_cannot_automatically_reverse_before_manual_command(self):
+        name='male-full-walk-frontal'
+        def backward(row, native_flag):
+            elapsed=row['elapsed']
+            if elapsed>=6800:
+                row=dict(row,x=row['x']+min(.5,(elapsed-6800)/4000))
+            if native_flag and 6900<=elapsed<8000:
+                row=dict(row,reversal='direction:-1,requested:0',root=row['root'].replace('actualDistance:0.0,','actualDistance:.01,'))
+            return row
+        for flag in (False,True):
+            reasons=self.reasons(change(self.log,name,lambda r:backward(r,flag)))
+            self.assertIn('automatic reverse occurs before manual reverse command',reasons)
+
+    def test_one_native_clock_change_does_not_cover_a_frozen_approach(self):
+        name='male-empty-run-slide-left'
+        def frozen(row):
+            if row['drive']!=1:
+                return row
+            time=1 if row['elapsed']<=1200 else 2
+            prefix=row['root'].split(',rootTracks:',1)[0]
+            return dict(row,root=prefix+f',rootTracks:Bob_Run@1/{time}/1;')
+        self.assertIn('Matching native gait clock froze through more than 500ms of measured movement',self.reasons(change(self.log,name,frozen)))
+
     def test_fixture_lua_syntax_and_no_recording_actor_reset(self):
         compiler=shutil.which('luajit')
         if compiler:

@@ -12,6 +12,9 @@ footprint = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(footprint)
 collision = footprint.collision
 wrap, fields = collision.wrap, collision.fields
+_motion_spec = importlib.util.spec_from_file_location('obstacle_motion_clock', Path(__file__).with_name('analyze-motion-matrix.py'))
+_motion = importlib.util.module_from_spec(_motion_spec)
+_motion_spec.loader.exec_module(_motion)
 DURATION = 16000
 SPECS = ('frontal', 'slide-left', 'slide-right', 'corner', 'door-closed', 'door-open')
 EXPECTED = tuple(f'{sex}-{load}-{gait}-{spec}' for sex in ('male', 'female') for load in ('empty', 'full')
@@ -238,8 +241,17 @@ def analyze_motion(text, selected=None):
             assert stage and all((r['gait'], r['drive']) == (event['gait'], event['drive']) for r in stage), 'Sampled obstacle input disagrees with phase'
         first = rows[0]
         assert all((r['id'], r['cargoIDs'], r['cargoWeight']) == (first['id'], first['cargoIDs'], first['cargoWeight']) for r in rows), 'Obstacle cart/cargo identity changed'
-        assert (first['cargoIDs'] == 'empty' and first['cargoWeight'] == 0) == ('-empty-' in name), 'Wrong obstacle load variant'
+        assert (first['cargoIDs'] == 'empty' and first['cargoWeight'] == 0 if '-empty-' in name else first['cargoIDs'] != 'empty' and first['cargoWeight'] > 0), 'Wrong obstacle load variant'
         assert math.dist((first['x'], first['y']), (layout['startX'], layout['startY'])) <= .025 and abs(wrap(first['acceptedHeading'] - layout['heading'])) <= .05, 'Obstacle capture starts after movement'
+        clock_state = {}
+        for row in rows:
+            requested = row['gait']
+            gait_ok = ((not row['run'] and not row['sprint']) if requested == 0
+                       else row['run'] and not row['sprint'] if requested == 1 else row['sprint'])
+            clip = ('Bob_WalkBwdNoAim1Hand' if row['drive'] == 4 else 'Bob_'+('Walk','Run','Sprint')[requested]) if row['drive'] else None
+            clocks = [c['time'] for c in row['clips'] if c['name'] == clip and c['weight'] > .1 and c['speed'] > 0] if gait_ok else []
+            if _motion.moving_clock_stall(clock_state, row, clip, clocks) > 500:
+                fail(name, 'Matching native gait clock froze through more than 500ms of measured movement')
         for a, b in zip(rows, rows[1:]):
             dt = (b['wall'] - a['wall']) / 1000
             if math.dist((a['x'], a['y']), (b['x'], b['y'])) > 8 * dt + .02:
@@ -272,8 +284,16 @@ def analyze_motion(text, selected=None):
             fail(name, 'manual reverse lacks measured signed backward travel')
         if any(r['run'] or r['sprint'] for r in rows if 8400 <= r['elapsed']):
             fail(name, 'fast gait survives manual reverse or final release')
-        if any(r['direction'] < 0 and r['actualDistance'] > 1e-6 for r in rows if 800 <= r['elapsed'] < events[2]['elapsed']):
+        if any(r['direction'] < 0 and r['actualDistance'] > 1e-6 for r in rows if 800 <= r['elapsed'] < events[3]['elapsed']):
             fail(name, 'automatic reverse occurs before manual reverse command')
+        released = [r for r in rows if events[2]['elapsed'] <= r['elapsed'] < events[3]['elapsed']]
+        progress = peak = 0.
+        for a, b in zip(released, released[1:]):
+            heading = a['acceptedHeading'] + wrap(b['acceptedHeading']-a['acceptedHeading'])/2
+            progress += (b['x']-a['x'])*math.cos(heading)+(b['y']-a['y'])*math.sin(heading)
+            peak = max(peak, progress)
+            if peak-progress > .03:
+                fail(name, 'automatic reverse occurs before manual reverse command')
         wx, sy = layout['wallX'], layout['southY']
         if spec != 'door-open' and any(r['x'] < wx - .002 for r in rows):
             fail(name, 'actor crosses a closed native obstacle')

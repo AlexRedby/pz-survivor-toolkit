@@ -58,8 +58,12 @@ The health overlay is hidden only in the disposable test process, without saving
 user options.
 
 Both banks retain the shared mesh/grip/native-pose probes. Their dedicated
-`analyze-motion-matrix.py` and `analyze-obstacle-matrix.py` report measured behavior;
-completion does not establish animation equivalence. Selected-scene runs retain
+`analyze-motion-matrix.py` and `analyze-obstacle-matrix.py` report measured behavior.
+Slalom reversals include the existing angular inertia: report sampled old-direction
+excursion and response timing separately from eventual steering. A short press
+that still produces net yaw in the previous direction remains an explicit response
+limitation even if the bounded-inertia checks pass. Completion does not establish
+animation equivalence; grip/body/floor checks also do not establish temporal smoothness. Selected-scene runs retain
 the common partial/debug status. Historical absolute-input maneuver banks do not
 establish coverage of the current cart-relative controls. Host observer wall
 penetration remains a separate unresolved gate.
