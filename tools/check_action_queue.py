@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import subprocess
 
-from queue_checks import native, report, runner, adapters, worlds, pack, admission
+from queue_checks import native, report, runner, adapters, worlds, pack, admission, scenarios
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
@@ -23,6 +23,15 @@ def selection(args, catalog, options=None):
     cases = args.cases.split(",") if args.cases else ([suite['cases'][0]['id']] if args.suite != 'health' else [case['id'] for case in suite['cases'] if kind in case['kinds']])
     if not cases or len(cases) != len(set(cases)) or any(identifier not in all_cases for identifier in cases):
         raise ValueError("Select known unique case IDs; see matrix")
+    scenario_ids = getattr(args, 'scenarios', None)
+    action_ids = getattr(args, 'actions', None)
+    required_mods = []
+    if action_ids is not None and scenario_ids is None:
+        raise ValueError('--actions requires --scenarios')
+    if scenario_ids is not None:
+        if args.cases is not None:
+            raise ValueError('Use either --cases or --scenarios')
+        cases, required_mods = scenarios.select(suite, scenario_ids, action_ids, kind, args.mode)
     spec = all_cases[cases[0]]
     if args.mods == 'vanilla':
         if args.suite != 'startup' or args.mode != 'native':
@@ -46,6 +55,8 @@ def selection(args, catalog, options=None):
     if options.get('pack_lock') and not args.mods:
         locked = report.read_json(options['pack_lock'])
         mods = [row['id'] for row in locked['mods']]
+    if set(required_mods) - set(mods):
+        raise ValueError('Scenario requires enabled mods: ' + ', '.join(required_mods))
     sources = options.get('mod_sources', {})
     if not isinstance(sources, dict):
         raise ValueError('options.mod_sources must contain a JSON object')
@@ -149,7 +160,7 @@ def batch_selection(plan, job, catalog, config, runs):
         raise ValueError('Batch mods must be a nonempty list of Mod IDs, selected or vanilla')
     if not isinstance(plan.get('resources', {}), dict) or not isinstance(job.get('resources', {}), dict):
         raise ValueError('Batch resources must be objects')
-    namespace = argparse.Namespace(suite=job['suite'], cases=job.get('case'), mode=job.get('mode', 'toolkit'),
+    namespace = argparse.Namespace(suite=job['suite'], cases=job.get('case'), scenarios=job.get('scenarios'), actions=job.get('actions'), mode=job.get('mode', 'toolkit'),
         kind=job.get('kind'), language=job.get('language'), mods=mods if isinstance(mods, str) else ','.join(mods) if mods else None,
         config=config, mod_source=[], timeout=job.get('timeout', 900), ports=job.get('ports'),
         resources=dict(plan.get('resources', {}), **job.get('resources', {})))
@@ -220,6 +231,8 @@ def main(argv=None):
         command.add_argument("--suite", default="health")
         command.add_argument("--kind", choices=("sp", "mp"))
         command.add_argument("--mode", choices=("toolkit", "native"), default="toolkit")
+        command.add_argument('--scenarios', help='Comma-separated common behavior IDs; all requested action/scenario pairs must be implemented')
+        command.add_argument('--actions', help='Comma-separated scenario action IDs; omitted selects all mapped actions in the suite')
         command.add_argument("--cases", help="Comma-separated case IDs; omitted uses the suite default (all health cases for kind)")
         command.add_argument('--cart-scene', action='append', help='Exact SP cart scene ID for a partial debug capture; repeatable, e.g. male-full-corner')
         command.add_argument("--mods", help="Comma-separated Mod IDs, selected for project INI, or vanilla for startup/native without production mods; omitted uses suite defaults")
@@ -249,6 +262,7 @@ def main(argv=None):
     command.add_argument("--control", type=Path)
     command = commands.add_parser("matrix", help="List declared cases and actual evidence; never infer passes")
     command.add_argument("reports", type=Path, nargs="*")
+    command.add_argument('--scenarios', action='store_true', help='Show behavior requirements per action, including implementation gaps')
     command.add_argument("--output", type=Path)
     command.add_argument('--suite', action='append', default=[], help='Show only this suite; repeatable')
     command.add_argument('--kind', choices=('sp', 'mp'), help='Show only single-player or multiplayer cases')
@@ -317,14 +331,18 @@ def main(argv=None):
                 raise ValueError('Unknown suites: ' + ', '.join(sorted(unknown))
                                  + '; available: ' + ', '.join(catalog['suites']))
             value = report.matrix(catalog, [report.read_json(path) for path in args.reports])
-            value['rows'] = [row for row in value['rows']
-                             if (not args.suite or row['suite'] in args.suite)
-                             and (args.kind is None or row.get('kind') == args.kind)
-                             and (args.mode is None or row.get('mode') == args.mode)]
+            for field in ('rows', 'scenarios'):
+                value[field] = [row for row in value[field]
+                                if (not args.suite or row['suite'] in args.suite)
+                                and (args.kind is None or row.get('kind') == args.kind or row['status'] == 'unmapped')
+                                and (args.mode is None or row.get('mode') == args.mode or row['status'] == 'unmapped')]
+            if args.scenarios:
+                value['rows'] = value['scenarios']
             if args.output:
                 report.write_json(args.output, value)
-            for row in value["rows"]:
-                print(" | ".join(str(row.get(key, "-")) for key in ("suite", "case", "producer", "capability", "kind", "mode", "status")))
+            columns = ('suite', 'action', 'scenario', 'kind', 'mode', 'status') if args.scenarios else ('suite', 'case', 'producer', 'capability', 'kind', 'mode', 'status')
+            for row in value['rows']:
+                print(' | '.join(str(row.get(key, '-')) for key in columns))
             return 0
         if args.command in ("prepare", "run"):
             args.resources = {key: getattr(args, key) for key in admission.DEFAULTS}

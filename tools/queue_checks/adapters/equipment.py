@@ -14,8 +14,46 @@ RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-
 TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands'}
 
 
+# Each binding names concrete native cases and their required observed outcomes.
+SCENARIO_ACTIONS = {
+    'equip-hands': {
+        'toolkit_only': ['capacity'],
+        'scope': 'Bag pickup, two-handed bat, primary hammer and secondary screwdriver; queued behind reading.',
+        'checks': {
+            'success-queued': {'hands-chain': {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}},
+            'move-independent': {'hands-chain': {'independentMoveVerified': True}},
+            'move-dependent': {'hands-chain': {'dependentMoveRejected': True}},
+            'cancel-waiting': {'waiting-cancel': {'cancelled': True, 'inventoryPreserved': True, 'tailCompleted': True}},
+            'cancel-active': {'hands-chain': {'activeProgress': True, 'activeProtected': True}},
+            'capacity': {'bag-capacity': {'capacityBarrier': True}},
+            'server-authority': {'hands-chain': {'authoritative': True}},
+        },
+    },
+    'pickup-bulk': {
+        'scope': 'Selected lightweight/heavy items from a worn bag and an independent transfer; exact item/container identities.',
+        'checks': {
+            'success-queued': {'bulk-pickup': {'lightMerged': True, 'heavySeparate': True, 'childrenWiped': True, 'exactBulkContainers': True}},
+            'cancel-waiting': {'bulk-waiting-cancel': {'bulkCancelled': True, 'unrelatedTailPreserved': True, 'exactBulkContainers': True}},
+            'server-authority': {'bulk-pickup': {'authoritative': True}},
+        },
+    },
+    'tidy-hands': {
+        'scope': 'P4 borrowed empty pistol rack and restoration of occupied or empty hands; exact containers and activation.',
+        'mods': ['P4TidyUpMeister'],
+        'toolkit_only': ['restore-hands', 'return-items'],
+        'checks': {
+            'success-queued': {'tidy-hands': {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}},
+            'restore-hands': {'tidy-hands': {'restoreVerified': True}, 'tidy-empty-hands': {'restoreVerified': True}},
+            'return-items': {'tidy-hands': {'restoreVerified': True, 'postprocessingVerified': True},
+                             'tidy-empty-hands': {'restoreVerified': True, 'postprocessingVerified': True}},
+            'server-authority': {'tidy-hands': {'authoritative': True}, 'tidy-empty-hands': {'authoritative': True}},
+        },
+    },
+}
+
+
 def definitions():
-    return {'equipment': {'status': 'ready', 'clients': 1, 'default_mods': ['PZSurvivorToolkit'],
+    return {'equipment': {'status': 'ready', 'scenario_actions': SCENARIO_ACTIONS, 'clients': 1, 'default_mods': ['PZSurvivorToolkit'],
                           'cases': [{'id': case, 'producer': 'inventory', 'capability': 'effect',
                                      'kinds': ['sp', 'mp'], 'languages': ['EN', 'RU'],
                                      'modes': ['native', 'toolkit']} for case in CASES] +
@@ -44,6 +82,7 @@ def sources(project, selection):
     project = Path(project)
     return [*sorted(path for path in (project / 'tests/native_queue/equipment').rglob('*') if path.suffix in ('.lua', '.java')),
             project / 'tests/native_queue/health/shared/QueueHealthEvents.lua',
+            project / 'tests/native_queue/support/QueueScenarioChecks.lua',
             project / 'tests/native_queue/startup/client/ZZStartup.lua']
 
 
@@ -73,6 +112,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     for role in runtime.get('roles', {'client1': {}}):
         lua = Path(output) / role / 'mods/ActionQueueTest/42/media/lua'
         shutil.copy2(Path(project) / 'tests/native_queue/health/shared/QueueHealthEvents.lua', lua / 'shared')
+        shutil.copy2(Path(project) / 'tests/native_queue/support/QueueScenarioChecks.lua', lua / 'shared')
         (lua / 'client').mkdir(exist_ok=True)
         shutil.copy2(Path(project) / 'tests/native_queue/startup/client/ZZStartup.lua', lua / 'client')
         if probe:

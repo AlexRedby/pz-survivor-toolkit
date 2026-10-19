@@ -16,6 +16,29 @@ Commit fixtures, parameters, assertions and reproduced limitations. Do not commi
 
 For a suite, read `QueueTestSelection` for exact kind/mode/cases/port. Emit JSON after `[QUEUE_CHECK] `: one `setup`, one ordered `case` per selected ID, then `complete`. Events name suite/actor/kind/mode. Cases report passed/failed/skipped; skips require reasons. Setup proves the actual feature mode and native durations. Exact effects require authoritative receipts. Each MP suite must validate its own authoritative effects before being marked ready.
 
+## Common behavior contracts
+
+`tools/queue_checks/scenarios.py` declares the shared behavior requirements. An adapter's `scenario_actions` maps each action scope to native case IDs and exact required outcome fields. Equipment is the first mapped family: `equip-hands`, `pickup-bulk`, `tidy-hands`. A scope names the actual targets, entry points and setup tested; a family pass does not cover every item or menu variant.
+
+```sh
+python3 tools/check_action_queue.py matrix --scenarios --suite equipment
+python3 tools/check_action_queue.py matrix /path/to/run/report.json --scenarios --suite equipment --kind mp
+python3 tools/check_action_queue.py run /tmp/equipment-selected-fresh \
+  --suite equipment --actions equip-hands --scenarios success-queued,cancel-waiting,move-independent \
+  --kind mp --mode toolkit --mods selected --config /path/to/host-options.json \
+  --game "$PZ_GAME" --jdk "$PZ_JDK" --workshop /path/to/workshop/content/108600
+```
+
+Host options contain `{"mp_host":true}`. Use the same action/scenario selection in a separate `--mode native` control, then pass its run directory with `--control`. `--scenarios` and `--cases` are mutually exclusive. Action IDs are suite-local; omitting `--actions` selects every mapped action and requires every requested pair to be implemented. Unknown, inapplicable or unimplemented requests fail before preparation; the runner never silently runs a partial selection. Required mods must be enabled.
+
+Batch jobs accept `"actions":"equip-hands", "scenarios":"success-queued,cancel-waiting,move-independent"` instead of `"case"`. The existing `control_job`, named sets and `--jobs` selection still apply. Cases are deduplicated in canonical order and share one session per compatible job; SP, Host and queue-disabled controls remain separate jobs. Preview the resolved cases with `batch PLAN OUTPUT --dry-run`.
+
+Every `coverage.json` includes a `scenarios` view alongside the original case rows. `matrix --scenarios` displays that view. States distinguish `unmapped` action families, `unimplemented` behavior, `not-applicable` with a reason, `not-run`, and `missing-evidence` from native pass/fail. A declaration, a unit test, `policyChecked`, or a native control cannot establish a Toolkit behavior pass. Required cases, actors, outcome types, mod presence, execution, provenance and overall log-audit verdict must all agree. Stored reports describe their own source snapshots; they are not fresh validation of subsequent source changes. Existing reports without the new move evidence remain `missing-evidence` for those scenarios.
+
+To add an action, reuse `support/QueueScenarioChecks.lua` for queue edits and the suite's existing fixture/session lifecycle. Supply real action handles, preparation, exact effects, server verification and cleanup in that suite; register the helper in the adapter's `sources()` and `stage()`. Bind only behavior actually exercised. Explicitly justify inapplicable scenarios; leave the rest visible as unimplemented. A scenario may require several cases (for example occupied and empty hand restoration), all of which must pass. Do not add another scheduler or infer success from the queue becoming empty.
+
+This first mapping does not implement the empty-queue, rapid repeated request, disappearing/replaced resource, return failure, network fault or physical input gaps. The vocabulary is an extensible checklist, not a claim that every possible game-state combination has been enumerated. Add concrete regressions and variants to the relevant action contract as they are identified.
+
 ## Commands
 
 Preparation needs Python 3.11+, JDK 25+ and installed B42.21 game files. The macOS runner supports the suites below. Windows has a bounded one-client Host launch path for `startup` and `forge`, using the game's bundled Java runtime, explicit ports, isolated loader approvals and a Windows Job Object that owns only the test client and its descendants. A named lease serializes this initial Windows launch path; available-memory and disk guards run before launch. Other Windows suites and physical input automation are not supported by that path. The core runner needs no Python packages; the SP cart mesh analyzers additionally require NumPy, as declared in their contribution. Health fixture selfchecks use `luajit` on PATH; existing product Lua regressions separately use `lupa`.

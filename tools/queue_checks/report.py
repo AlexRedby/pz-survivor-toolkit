@@ -527,7 +527,7 @@ def build_report(root, catalog, control=None):
     return report
 
 
-def matrix(catalog, reports=()):
+def _case_matrix(catalog, reports=()):
     rows = []
     for suite, definition in catalog["suites"].items():
         if not definition["cases"]:
@@ -556,6 +556,13 @@ def matrix(catalog, reports=()):
                     if matches and not invalid and not incomplete and all(row['status'] == 'captured' for row in matches):
                         rows[-1]['status'] = 'captured'
     return {"schema_version": 1, "rows": rows}
+
+
+def matrix(catalog, reports=()):
+    from . import scenarios
+    value = _case_matrix(catalog, reports)
+    value['scenarios'] = scenarios.matrix(catalog, reports, _case_matrix)
+    return value
 
 
 def summary(report):

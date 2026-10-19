@@ -238,7 +238,7 @@ class EquipmentTests(unittest.TestCase):
         self.assertTrue((target.parent / 'client/ZZStartup.lua').is_file())
         sources = equipment.sources(ROOT, self.selection)
         self.assertTrue(any('equipment' in path.parts for path in sources))
-        self.assertTrue(all('equipment' in path.parts or path.name in ('QueueHealthEvents.lua', 'ZZStartup.lua') for path in sources))
+        self.assertTrue(all('equipment' in path.parts or path.name in ('QueueHealthEvents.lua', 'QueueScenarioChecks.lua', 'ZZStartup.lua') for path in sources))
 
     def test_tidy_shared_completion_requires_real_returns_and_exact_phase_counts(self):
         self.selection['mods'].append('P4TidyUpMeister')

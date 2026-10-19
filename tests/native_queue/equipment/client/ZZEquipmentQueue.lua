@@ -7,6 +7,7 @@ local Slots=require 'QueueEquipmentSlots'
 local Floor=require 'QueueEquipmentFloor'
 local Postprocess=require 'QueueEquipmentPostprocess'
 local Bulk=require 'QueueEquipmentBulk'
+local Checks=require 'QueueScenarioChecks'
 local JSON=require 'QueueHealthEvents'
 local Toolkit=PZSurvivorToolkit
 local Completion=require('QueueEquipmentCompletion').observe(Toolkit,Selection)
@@ -36,13 +37,6 @@ Events.OnPlayerUpdate.Add(function(player)
  if player==getPlayer() then idleUpdates=empty() and idleUpdates+1 or 0 end
 end)
 local function run(fn,...) if native then return fn(...) end;return Ops.run(fn,...) end
-local function snapshot()
- local result={};for i,action in ipairs(queue().queue) do result[i]=action end;return result
-end
-local function unchanged(expected)
- assert(#expected==#queue().queue,'denied control changed queue size')
- for i,action in ipairs(expected) do assert(queue().queue[i]==action,'denied control changed queue order') end
-end
 local function read(book)
  local before=#queue().queue
  run(ISInventoryPaneContextMenu.onLiteratureItems,{book},getPlayer():getPlayerNum())
@@ -106,10 +100,8 @@ local function enqueue()
  end
 end
 local function denied(action,target,after,reason)
- local before=snapshot();local decision=Policy.evaluateMove(queue(),action,target,after)
- assert(not decision.allowed and decision.reason==reason,'unexpected policy barrier '..tostring(decision.reason))
- local ok,actual=API.move(queue(),action,target,after)
- assert(not ok and actual==reason,'queue API did not preserve policy barrier');unchanged(before)
+ Checks.deniedMove(queue(),API,Policy,action,target,after,reason)
+ state.dependentMoveRejected=true
 end
 local function controls()
  if Bulk.isCase(state.id) then
@@ -122,16 +114,10 @@ local function controls()
   denied(state.hammerAction,state.pickupAction,false,'container_capacity')
   denied(state.hammerAction,state.screwdriverAction,true,'move_dependent')
   denied(state.screwdriverAction,state.hammerAction,false,'move_dependent')
-  local before=snapshot()
-  assert(Policy.evaluateMove(queue(),state.tailAction,state.pickupAction,false).allowed,'independent book move should be allowed')
-  assert(API.move(queue(),state.tailAction,state.pickupAction,false),'independent book move failed')
-  assert(API.move(queue(),state.tailAction,state.screwdriverAction,true),'independent book restore failed');unchanged(before)
+  Checks.moveRoundtrip(queue(),API,Policy,state.tailAction,state.pickupAction,false,state.screwdriverAction,true)
+  state.independentMoveVerified=true
  elseif state.id=='waiting-cancel' then
-  local decision=Policy.evaluateCancel(queue(),state.pickupAction,true)
-  assert(decision.allowed,'actual waiting pickup/equip operation cannot be cancelled '..tostring(decision.reason))
-  assert(API.cancelOperation(queue(),state.pickupAction),'waiting pickup/equip cancellation failed')
-  assert(queue():indexOf(state.pickupAction)==-1 and queue():indexOf(state.equipAction)==-1,'whole equipment operation was not removed')
-  assert(queue():indexOf(state.frontAction)~=-1 and queue():indexOf(state.tailAction)~=-1,'cancellation removed unrelated books')
+  Checks.waitingCancel(queue(),API,Policy,state.pickupAction,{state.pickupAction,state.equipAction},{state.frontAction,state.tailAction})
  elseif state.id=='bag-capacity' then
   denied(state.pickupAction,state.replacementAction,true,'container_capacity')
   denied(state.replacementAction,state.pickupAction,false,'container_capacity')
@@ -187,10 +173,7 @@ Events.OnTick.Add(function()
    if action and action.Type=='ISEquipWeaponAction' and action:isStarted() and action:getJobDelta()>0 then
     state.activeProgress=true
     if not native then
-     local before=snapshot();local decision=Policy.evaluateCancel(queue(),action,true)
-     assert(not decision.allowed and decision.reason=='operation_dependent','active equipment must remain protected')
-     local allowed,reason=API.cancelOperation(queue(),action)
-     assert(not allowed and reason=='operation_dependent','active equipment cancellation bypassed policy');unchanged(before)
+     Checks.deniedCancel(queue(),API,Policy,action,'operation_dependent')
      state.activeProtected=true
     end
    end
@@ -290,6 +273,8 @@ Events.OnTick.Add(function()
   if phase=='finish' then
    performed=performed+1
    if state.postproblem then failures=failures+1;print('[EQUIPMENT_TEST] CASE_FAILED case='..state.id..' '..state.postproblem) end
+   outcome.independentMoveVerified=state.independentMoveVerified==true
+   outcome.dependentMoveRejected=state.dependentMoveRejected==true
    emit({event='case',id=state.id,status=state.postproblem and 'failed' or 'passed',reason=state.postproblem,outcome=outcome})
    print('[EQUIPMENT_TEST] RECEIPT case='..state.id)
    index=index+1;since=now;phase='prepare';state=nil;ids=nil;receipt=nil;checkpoint=nil;cleaned=false;outcome=nil;idleUpdates=0
