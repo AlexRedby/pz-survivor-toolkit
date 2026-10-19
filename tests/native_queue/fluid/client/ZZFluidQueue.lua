@@ -47,7 +47,12 @@ Events.OnGameStart.Add(function()
 end)
 local function enqueue(player,target)
  local bottle=assert(player:getInventory():getItemById(ids.bottles[target].id))
- local command={id=bottle:getID(),menu=spec.menu,pickupObserved=false,drinkProgress=false,menuDispatched=false,
+ local previous=observations[#observations]
+ assert(PZSurvivorToolkit.Settings.actionQueue()==(config.mode=='toolkit'),'fluid queue switch differs')
+ local command={queueEmptyBefore=#queue().queue==0 and not player:hasTimedActions(),
+  previousDrinkPending=previous~=nil and queue():indexOf(previous.drink)~=-1,
+  backpackWorn=player:getClothingItem_Back()==state.bag,
+  id=bottle:getID(),menu=spec.menu,pickupObserved=false,drinkProgress=false,menuDispatched=false,
   dispatchThirst=player:getStats():get(CharacterStat.THIRST),foodLevel=player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)}
  local observed={};local add=ISTimedActionQueue.add
  ISTimedActionQueue.add=function(action)
@@ -128,7 +133,7 @@ Events.OnTick.Add(function()
    assert(not player:isEquipped(previousBag),'previous fluid bag still equipped');phase='prepare'
   end
   if phase=='prepare'then
-   if step==1 then emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=config.mode=='toolkit',nativeDurations=true})end
+   if step==1 then emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=PZSurvivorToolkit.Settings.actionQueue(),nativeDurations=true})end
    spec=Fixture.scenario(case());phase='prepared';request('Prepare');return
   elseif phase=='prepared'and ids then
    state=Fixture.resolve(player,ids);if not state then return end

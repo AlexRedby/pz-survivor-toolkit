@@ -17,7 +17,24 @@ BAG_TYPE = 'Base.Bag_ALICEpack_Army'
 
 
 def definitions():
-    return {'fluid': {'status': 'ready', 'clients': 1, 'default_mods': MODS,
+    groups = {
+        'drink-portions': ('Native all/half/quarter from root or a worn military backpack; favorite, fullness and two distinct bottle variants.',
+                           [case for case in CASES if '-smart-' not in case and '-sip-' not in case]),
+        'drink-smart': ('Drink Smart from a worn military backpack with favorite bottles at normal and low thirst.',
+                        [case for case in CASES if '-smart-' in case]),
+        'drink-sip': ('Drink Smart sip from a worn military backpack with favorite bottles.',
+                      ['fluid-bag-sip-favorite']),
+    }
+    actions = {}
+    for name, (scope, cases) in groups.items():
+        checks = {
+            'success-empty': {case: {'emptyStartVerified': True, 'effectsVerified': True, 'wornBagVerified': True} for case in cases},
+            'server-authority': {case: {'serverAuthorityVerified': True, 'effectsVerified': True} for case in cases},
+        }
+        if name == 'drink-portions':
+            checks['repeat-independent'] = {'fluid-bag-pair-queued-favorite': {'independentRequestsQueued': True, 'effectsVerified': True}}
+        actions[name] = {'scope': scope, 'mods': MODS, 'checks': checks}
+    return {'fluid': {'status': 'ready', 'clients': 1, 'default_mods': MODS, 'scenario_actions': actions,
                       'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
                                  'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['native', 'toolkit']}
                                 for case in CASES]}}
@@ -111,10 +128,12 @@ def _case(case, row, prep, receipt):
             or len(commands) != len(targets)):
         issues.append('Fluid native command count/status differs: ' + case)
     else:
-        for command, target in zip(commands, targets):
-            if (type(command) is not dict or set(command) != {'id', 'menu', 'portion', 'nativeDuration', 'pickupObserved', 'drinkProgress', 'menuDispatched', 'dispatchThirst', 'foodLevel'}
+        for position, (command, target) in enumerate(zip(commands, targets)):
+            if (type(command) is not dict or set(command) != {'id', 'menu', 'portion', 'nativeDuration', 'pickupObserved', 'drinkProgress', 'menuDispatched', 'dispatchThirst', 'foodLevel', 'queueEmptyBefore', 'previousDrinkPending', 'backpackWorn'}
                     or not craft._matches(command, dict(id=bottles[target]['id'], menu=menu, nativeDuration=460,
-                                                        pickupObserved=bag, drinkProgress=True, menuDispatched=True, foodLevel=food_level))
+                                                        pickupObserved=bag, drinkProgress=True, menuDispatched=True, foodLevel=food_level,
+                                                        queueEmptyBefore=position == 0 or '-serial-' in case,
+                                                        previousDrinkPending=position > 0 and '-queued-' in case, backpackWorn=True))
                     or not _number(command.get('dispatchThirst')) or not 0 <= command['dispatchThirst'] <= 1):
                 issues.append('Fluid native target/menu/progress/duration differs: ' + case)
                 continue
@@ -173,11 +192,16 @@ def verify(root, selection, catalog):
         row = next((row for row in results if row.get('id') == case), {})
         prep = next((value for marker, value in raw if marker == 'PREPARED' and value.get('case') == case), {})
         receipt = next((value for marker, value in raw if marker == 'VERIFIED' and value.get('case') == case), {})
-        issues.extend(_case(case, row, prep, receipt))
+        case_issues = _case(case, row, prep, receipt)
+        issues.extend(case_issues)
         prepared_bottles = prep.get('bottles')
         identities += [prep.get('bagId')] + ([bottle.get('id') if type(bottle) is dict else None
                                              for bottle in prepared_bottles] if type(prepared_bottles) is list else [None, None])
-        outcomes.append(dict(actor='client1', case=case, outcome={key: row.get(key) for key in RECEIPT_KEYS | {'commands'}}))
+        outcome = {key: row.get(key) for key in RECEIPT_KEYS | {'commands'}}
+        outcome.update(emptyStartVerified=not case_issues, effectsVerified=not case_issues, wornBagVerified=not case_issues,
+                       independentRequestsQueued=not case_issues and case == 'fluid-bag-pair-queued-favorite',
+                       serverAuthorityVerified=not case_issues and selection['kind'] == 'mp')
+        outcomes.append(dict(actor='client1', case=case, outcome=outcome))
     if not craft._ids(identities):
         issues.append('Fluid fixture identities overlap between cases')
     if '[QUEUE_TEST] FAIL ' in client or '[QUEUE_TEST] FAIL ' in authority:

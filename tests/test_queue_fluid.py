@@ -48,7 +48,9 @@ class FluidAdapterTests(unittest.TestCase):
             raw += [('PREPARED', prep), ('VERIFIED', receipt)]
             commands = [dict(id=prep['bottles'][n]['id'], menu=menu, portion=portion,
                              pickupObserved=bag, drinkProgress=True, nativeDuration=460, menuDispatched=True,
-                             dispatchThirst=thirst, foodLevel=prep['foodLevel']) for n in targets]
+                             dispatchThirst=thirst, foodLevel=prep['foodLevel'], backpackWorn=True,
+                             queueEmptyBefore=position == 0 or '-serial-' in case,
+                             previousDrinkPending=position > 0 and '-queued-' in case) for position, n in enumerate(targets)]
             rows.append(dict(event='case', id=case, status='passed', reason=None, commands=commands,
                              **copy.deepcopy({key: value for key, value in receipt.items() if key != 'case'})))
         rows.append(dict(event='complete', cases=cases, expected=len(cases), performed=len(cases), failed=0, skipped=0))
@@ -213,6 +215,76 @@ class FluidAdapterTests(unittest.TestCase):
         rows, raw = self.single('fluid-bag-all-favorite')
         rows[1]['bottles'][0]['amount'] = raw[1][1]['bottles'][0]['amount'] = -.001
         self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_dispatch_queue_and_worn_bag_flags_are_required_typed_observations(self):
+        for field, wrong_values in (
+                ('queueEmptyBefore', (False, 1, 'true', None)),
+                ('previousDrinkPending', (True, 0, 'false', None)),
+                ('backpackWorn', (False, 1, 'true', None))):
+            rows, raw = self.single()
+            del rows[1]['commands'][0][field]
+            with self.subTest(field=field, change='missing'):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+            for value in wrong_values:
+                rows, raw = self.single()
+                rows[1]['commands'][0][field] = value
+                with self.subTest(field=field, value=value):
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_distinct_bottle_pairs_require_queued_or_serial_dispatch_state(self):
+        for case in ('fluid-bag-pair-queued-favorite', 'fluid-bag-pair-serial-favorite'):
+            rows, raw = self.single(case)
+            commands = rows[1]['commands']
+            self.assertNotEqual(commands[0]['id'], commands[1]['id'])
+            self.assertEqual([], self.verify((rows, raw))['issues'])
+            for position in (0, 1):
+                for field in ('queueEmptyBefore', 'previousDrinkPending'):
+                    for change in ('missing', 'opposite', 'integer'):
+                        rows, raw = self.single(case)
+                        command = rows[1]['commands'][position]
+                        if change == 'missing': del command[field]
+                        elif change == 'opposite': command[field] = not command[field]
+                        else: command[field] = int(command[field])
+                        with self.subTest(case=case, position=position, field=field, change=change):
+                            self.assertTrue(self.verify((rows, raw))['issues'])
+            rows, raw = self.single(case)
+            rows[1]['commands'][1].update(queueEmptyBefore='-queued-' in case,
+                                          previousDrinkPending='-serial-' in case)
+            with self.subTest(case=case, change='opposite-dispatch-kind'):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_scenario_outcomes_are_derived_from_valid_raw_case_evidence(self):
+        fields = ('emptyStartVerified', 'effectsVerified', 'wornBagVerified',
+                  'independentRequestsQueued', 'serverAuthorityVerified')
+        for kind in ('sp', 'mp'):
+            self.selection.update(kind=kind, cases=list(fluid.CASES))
+            result = self.verify()
+            self.assertEqual([], result['issues'])
+            for record in result['outcomes']:
+                outcome = record['outcome']
+                with self.subTest(kind=kind, case=record['case']):
+                    self.assertIs(outcome['emptyStartVerified'], True)
+                    self.assertIs(outcome['effectsVerified'], True)
+                    self.assertIs(outcome['wornBagVerified'], True)
+                    self.assertIs(outcome['independentRequestsQueued'],
+                                  record['case'] == 'fluid-bag-pair-queued-favorite')
+                    self.assertIs(outcome['serverAuthorityVerified'], kind == 'mp')
+            for fault in ('historic-command', 'busy-start', 'wrong-volume', 'client-only-authority'):
+                rows, raw = self.single('fluid-bag-pair-queued-favorite')
+                rows[1].update({field: True for field in fields})
+                if fault == 'historic-command':
+                    for command in rows[1]['commands']:
+                        for field in ('queueEmptyBefore', 'previousDrinkPending', 'backpackWorn'):
+                            del command[field]
+                elif fault == 'busy-start': rows[1]['commands'][0]['queueEmptyBefore'] = False
+                elif fault == 'wrong-volume':
+                    rows[1]['bottles'][0]['amount'] = raw[1][1]['bottles'][0]['amount'] = .9
+                elif kind != 'mp': continue
+                result = self.verify((rows, raw), wrong_authority=fault == 'client-only-authority')
+                with self.subTest(kind=kind, fault=fault):
+                    self.assertTrue(result['issues'])
+                    self.assertEqual('failed', result['outcomes'][0]['status'])
+                    self.assertTrue(all(result['outcomes'][0]['outcome'][field] is False for field in fields))
 
     def test_smart_fraction_uses_bounded_actual_dispatch_thirst(self):
         for case in ('fluid-bag-smart-favorite', 'fluid-bag-smart-low-favorite'):
