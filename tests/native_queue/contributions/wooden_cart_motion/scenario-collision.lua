@@ -12,6 +12,9 @@ local fastSlide=config.fastSlide==true
 local wallExit=config.wallExit==true
 local wallManualExit=config.wallManualExit==true
 local wallFastManualExit=config.wallFastManualExit==true
+local relativeManual=wallManualExit and not wallFastManualExit
+assert(not relativeManual or cartLabSteeringHeading,'Accepted steering heading diagnostics missing')
+if relativeManual then require 'TimedActions/ISTimedActionQueue' end
 assert(not wallFastManualExit or wallManualExit,'Fast manual wall exit requires manual wall exit mode')
 assert(not wallManualExit or wallExit,'Manual wall exit requires wall exit mode')
 assert(not wallExit or footprint and not fastSlide and not brace and not config.impact,'Wall exit bank requires footprint without fast slide, brace or impact')
@@ -93,6 +96,11 @@ if wallExit then
      or {{1000,gaitIndex-1,right and 1 or 2},{5500,gaitIndex-1,angle==90 and 7 or right and 3 or 4},{10000,0,0}},
     name='male-'..(full and 'full-' or 'empty-')..gait..'-'..spec..(wallManualExit and '-manual' or '')..'-out'..angle}
    if wallManualExit and angle==90 then table.insert(cases[#cases].steps,6,{21000,0,7}) end
+   if relativeManual then
+    local c=cases[#cases]
+    c.steps={{1000,0,1},{9500,0,4},{12000,0,right and 7 or 6},{15500,0,0},{16000,0,right and 8 or 5},{26000,0,0}}
+    if angle==90 then table.insert(c.steps,6,{21000,0,right and 8 or 5}) end
+   end
   end end
  end end
  assert(#cases==(wallFastManualExit and 16 or wallManualExit and 8 or 24))
@@ -128,6 +136,38 @@ local function controlDrive(spec) return (spec=='corner' or spec=='wall-slide-le
 local function controlHeading(spec) return spec=='wall-slide-right' and -math.pi*.75 or (spec=='corner' or spec=='wall-slide-left') and math.pi*.75 or math.pi end
 local controlStart,controlSample=0,0
 local sampleSince=0
+local function cargo(item)
+ local ids={};local contents=item:getInventory():getItems()
+ for i=0,contents:size()-1 do ids[#ids+1]=tostring(contents:get(i):getID()) end
+ table.sort(ids)
+ return #ids==0 and 'empty' or table.concat(ids,',')
+end
+local function relativeState(c,now,elapsed)
+ local item=c.item
+ local count=0;local inventory=p:getInventory():getItems()
+ for i=0,inventory:size()-1 do if inventory:get(i):getID()==item:getID() then count=count+1 end end
+ local queue=#ISTimedActionQueue.getTimedActionQueue(p).queue
+ local actions=p:getCharacterActions():size()
+ assert(p:getPrimaryHandItem()==item and p:getSecondaryHandItem()==item and item:getContainer()==p:getInventory() and not item:getWorldItem() and count==1,'Manual controls changed cart ownership')
+ assert(queue==0 and actions==0 and not p:hasPath(),'Manual controls enqueued an action/path')
+ assert(cargo(item)==c.cargoIds and math.abs(item:getInventory():getCapacityWeight()-c.cargoWeight)<.001,'Manual controls changed cargo')
+ print('[CART_RELATIVE_MANUAL] SAMPLE case='..c.name..' wall='..now..' elapsed='..elapsed..' acceptedHeading='..cartLabSteeringHeading()
+  ..' id='..item:getID()..' primary='..p:getPrimaryHandItem():getID()..' secondary='..p:getSecondaryHandItem():getID()
+  ..' inventoryCount='..count..' worldID='..(item:getWorldItem() and item:getWorldItem():getItem():getID() or -1)
+  ..' cargoIds='..cargo(item)..' cargoWeight='..item:getInventory():getCapacityWeight()..' queue='..queue..' actions='..actions..' path='..tostring(p:hasPath()))
+end
+local function relativeDrive(c)
+ local step=c.steps[stage];local drive=step and step[3] or 0
+ if stage==3 or stage==5 or stage==6 and #c.steps==7 then
+  local right=c.spec=='wall-slide-right'
+  local target=(right and -1 or 1)*(stage==3 and math.pi*.75 or stage==5 and math.pi*.25 or 0)
+  local error=math.atan2(math.sin(target-cartLabSteeringHeading()),math.cos(target-cartLabSteeringHeading()))
+  if taken[stage] or (right and -1 or 1)*error*(stage==3 and 1 or -1)<=.025 then
+   taken[stage]=true;drive=stage==3 and 4 or 1
+  end
+ end
+ if c.drive~=drive then c.drive=drive;cartLabDrive(drive) end
+end
 local function wood(full)
  for i=1,3 do
   local item=p:getPrimaryHandItem()
@@ -200,6 +240,7 @@ local function nextCase()
  sprinting(10)
  if p:isFemale()~=c.female then p:setFemale(c.female);p:getDescriptor():setFemale(c.female);p:resetModel() end
  wood(c.full or false);if c.bare then CartLabKey(Keyboard.KEY_F7) end
+ if relativeManual then c.item=p:getPrimaryHandItem();c.cargoIds=cargo(c.item);c.cargoWeight=c.item:getInventory():getCapacityWeight();c.drive=0 end
  if config.impact then c.item=p:getPrimaryHandItem() end
  pose();p:getStats():reset(CharacterStat.ENDURANCE)
  mode='layout';since=getTimestampMs()+1800
@@ -313,6 +354,7 @@ local function tick()
   -- Pad validation and encoder startup must finish before the measured window starts.
   now=getTimestampMs()
   videoSince=now;since=now;stage=0;taken={};mode='record'
+  if relativeManual then c.drive=0 end
   print('[WOOD_BANK] CASE '..c.name..' attempt='..attempt..' wall='..since)
   return
  end
@@ -339,8 +381,9 @@ local function tick()
   else
    print('[WOOD_BANK_SAMPLE] case='..c.name..' wall='..now..' elapsed='..elapsed..' x='..p:getX()..' y='..p:getY()
    ..' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' skill='..p:getPerkLevel(Perks.Sprinting)..' speed='..p:getVariableFloat('WalkSpeed',0)
-    ..' drive='..tostring(c.steps[stage] and c.steps[stage][3] or 0)..' requestedGait='..tostring(c.steps[stage] and c.steps[stage][2] or 0)..' stepX='..p:getVariableFloat('ToolkitCartStepX',0)..' stepY='..p:getVariableFloat('ToolkitCartStepY',0)..' pace='..p:getVariableFloat('ToolkitCartLegPace',0)..' wheelPhase='..cartLabWheelPhase()..' bank='..cartLabBank()..' reversal='..cartLabReversal()..' ramp='..cartLabRamp()..' stationary='..cartLabStationary()..' tracks='..cartLabTracks())
+    ..' drive='..tostring(relativeManual and c.drive or c.steps[stage] and c.steps[stage][3] or 0)..' requestedGait='..tostring(c.steps[stage] and c.steps[stage][2] or 0)..' stepX='..p:getVariableFloat('ToolkitCartStepX',0)..' stepY='..p:getVariableFloat('ToolkitCartStepY',0)..' pace='..p:getVariableFloat('ToolkitCartLegPace',0)..' wheelPhase='..cartLabWheelPhase()..' bank='..cartLabBank()..' reversal='..cartLabReversal()..' ramp='..cartLabRamp()..' stationary='..cartLabStationary()..' tracks='..cartLabTracks())
   end
+  if relativeManual then relativeState(c,now,elapsed) end
   if footprint then print('[CART_FOOTPRINT_STATE] case='..c.name..' wall='..now..' elapsed='..elapsed..' '..cartLabFootprint()) end
   if brace then print('[CART_BRACE_SAMPLE] case='..c.name..' wall='..now..' elapsed='..elapsed..' '..cartLabBrace(wallX,CartTestArea.y)) end
  end
@@ -379,9 +422,10 @@ local function tick()
   stage=stage+1;local step=c.steps[stage]
   if footprint and not wallExit and (not brace and stage==#c.steps-1 or brace and c.spec=='wall-restart' and stage==3) then step[3]=reverseDrive() end
   if step[2]~=nil then cartLabGait(step[2]) end
-  cartLabDrive(step[3])
+  if relativeManual then c.drive=nil;relativeDrive(c) else cartLabDrive(step[3]) end
   print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait='..tostring(step[2])..' drive='..step[3])
  end
+ if relativeManual then relativeDrive(c) end
 
  if elapsed>=(wallManualExit and 29000 or brace and 18000 or 12000) then
   assert(not brace or c.spec~='wall-release' or taken.clear,'Missing guarded native wall removal')
@@ -398,6 +442,7 @@ WoodPrototypeTick=function()
  end
 end
 print('[WOOD_BANK] RUN_STARTED')
+if relativeManual then print('[CART_RELATIVE_MANUAL] VERSION 1') end
 getCore():setAutoZoom(0,false)
 for i=1,16 do getCore():doZoomScroll(0,-1) end
 if p:getPrimaryHandItem() then CartLabKey(Keyboard.KEY_F7) end

@@ -25,14 +25,38 @@ import zombie.core.skinnedmodel.model.ModelMesh;
 import zombie.core.skinnedmodel.model.SkinningData;
 import zombie.scripting.objects.ModelAttachment;
 public final class CartGroundingTest {
+ private static ModelScript model(String moduleName,String name) throws Exception {
+  var manager=zombie.scripting.ScriptManager.instance;
+  var module=manager.moduleMap.get(moduleName);
+  if(module==null) {
+   module=new zombie.scripting.objects.ScriptModule();module.name=moduleName;
+   manager.moduleMap.put(moduleName,module);manager.moduleList.add(module);
+   var field=manager.getClass().getDeclaredField("models");field.setAccessible(true);
+   ((zombie.scripting.ScriptBucketCollection<?>)field.get(manager)).registerModule(module);
+  }
+  var existing=manager.getModelScript(moduleName+"."+name);
+  if(existing!=null) return existing;
+  var model=new ModelScript();model.name=name;model.InitLoadPP(name);model.setModule(module);manager.addModelScript(model);
+  return model;
+ }
  private static final class Player extends IsoPlayer {
   InventoryItem cart;
   ItemContainer inventory;
+  boolean remote,action;
+  int resets;
+  java.util.Stack<zombie.characters.CharacterTimedActions.BaseAction> actions=new java.util.Stack<>();
   zombie.ai.StateMachine machine;
   Player() {super(null,null,0,0,0);}
-  @Override public boolean isLocalPlayer() {return true;}
+  @Override public boolean isLocalPlayer() {return !remote;}
+  @Override public void resetEquippedHandsModels() {resets++;}
+  @Override public java.util.Stack<zombie.characters.CharacterTimedActions.BaseAction> getCharacterActions() {
+   if(actions==null) actions=new java.util.Stack<>();
+   return actions;
+  }
   @Override public boolean isNpc() {return false;}
-  @Override public boolean getVariableBoolean(String name) {return "ToolkitCartMotion".equals(name);}
+  @Override public boolean getVariableBoolean(String name) {
+   return "ToolkitCartMotion".equals(name) || action && "IsPerformingAnAction".equals(name);
+  }
   @Override public boolean isDead() {return false;}
   @Override public boolean hasHitReaction() {return false;}
   @Override public boolean isKnockedDown() {return false;}
@@ -154,8 +178,8 @@ public final class CartGroundingTest {
   var character=(Player)unsafe.allocateInstance(Player.class);
   var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
   character.inventory=new ItemContainer();character.cart=cart;cart.setContainer(character.inventory);
-  cart.setModule("SaucedWheelbarrow");cart.setType("WheelbarrowWood");cart.setStaticModel("WheelbarrowWood");
-  instance.modelScript=new ModelScript();instance.modelScript.name="WheelbarrowWood";
+  cart.setModule("SaucedWheelbarrow");cart.setType("WheelbarrowWood");cart.setStaticModel("Base.WheelbarrowWood");
+  instance.modelScript=model("Base","WheelbarrowWood");
   var body=new ModelInstanceRenderData();body.modelInstance=parent;
   var slot=new ModelSlotRenderData();slot.character=character;slot.modelData.add(body);slot.modelData.add(data);
   var mesh=instance.model.mesh;
@@ -265,7 +289,65 @@ public final class CartGroundingTest {
     throw new AssertionError("invalid/outside calibrated contact did not use AABB fallback");
   }
  }
+ private static void remoteFillModel() throws Exception {
+  Field field=Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);
+  var unsafe=(Unsafe)field.get(null);
+  var player=(Player)unsafe.allocateInstance(Player.class);player.remote=true;player.inventory=new ItemContainer();
+  var item=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);player.cart=item;
+  item.setModule("SaucedCarts");item.setType("ShoppingCart");item.setContainer(player.inventory);
+  item.setStaticModel("ShoppingCartModel");
+  var cached=new ModelInstance();cached.modelScript=model("Base",item.getStaticModel());
+  var full=model("Base","ShoppingCartFullModel");
+  player.primaryHandModel=cached;
+  item.setStaticModel("Base.ShoppingCartFullModel");
+  if(!cached.modelScript.getName().equals("ShoppingCartModel"))
+   throw new AssertionError("native ModData fixture unexpectedly refreshed its cached model");
+  CartGrounding.refreshRemoteModel(player);
+  if(player.resets!=1 || player.primaryHandModel!=cached || player.cart!=item
+   || !item.getStaticModel().equals("Base.ShoppingCartFullModel"))
+   throw new AssertionError("remote fill mismatch must queue refresh without mutating models or equipment");
+  cached.modelScript=full;player.resets=0;
+  CartGrounding.refreshRemoteModel(player);
+  if(player.resets!=0) throw new AssertionError("correct remote fill model was rebuilt");
+  item.setStaticModel("ShoppingCartFullModel");CartGrounding.refreshRemoteModel(player);
+  if(player.resets!=0 || CartGrounding.resolvedModel(item)!=full)
+   throw new AssertionError("qualified and unqualified native names resolved to different model identities");
+  for(String gate:new String[]{"local","action","stack","primaryOverride","secondaryOverride","unknownExpected",
+   "unknownActual","foreignExpected","foreignActual","differentFamily","unsupportedItem","missingInstance"}) {
+   player.remote=true;player.action=false;player.getCharacterActions().clear();
+   player.overridePrimaryHandModel=player.overrideSecondaryHandModel=null;player.primaryHandModel=cached;
+   item.setModule("SaucedCarts");item.setType("ShoppingCart");item.setStaticModel("ShoppingCartFullModel");
+   cached.modelScript=model("Base","ShoppingCartModel");
+   switch(gate) {
+    case "local" -> player.remote=false;
+    case "action" -> player.action=true;
+    case "stack" -> player.getCharacterActions().add(null);
+    case "primaryOverride" -> player.overridePrimaryHandModel="ShoppingCartModel";
+    case "secondaryOverride" -> player.overrideSecondaryHandModel="Mug";
+    case "unknownExpected" -> item.setStaticModel("OtherCartFullModel");
+    case "unknownActual" -> cached.modelScript=model("Base","OtherCartModel");
+    case "foreignExpected" -> {model("Foreign","ShoppingCartFullModel");item.setStaticModel("Foreign.ShoppingCartFullModel");}
+    case "foreignActual" -> cached.modelScript=model("Foreign","ShoppingCartModel");
+    case "differentFamily" -> {item.setModule("SaucedWheelbarrow");item.setType("WheelbarrowMetal");}
+    case "unsupportedItem" -> item.setType("OtherCart");
+    case "missingInstance" -> player.primaryHandModel=null;
+   }
+   CartGrounding.refreshRemoteModel(player);
+   if(player.resets!=0) throw new AssertionError("remote fill refresh escaped its exact ownership gate: "+gate);
+  }
+  for(String name:new String[]{"ShoppingCartModel","ShoppingCartPartialModel","ShoppingCartFullModel",
+   "ShoppingCartFlashlightModel","ShoppingCartFlashlightPartialModel","ShoppingCartFlashlightFullModel",
+   "WheelbarrowWood","WheelbarrowMetal"}) {
+   item.setModule(name.startsWith("Wheelbarrow")?"SaucedWheelbarrow":"SaucedCarts");
+   item.setType(name.startsWith("Wheelbarrow")?name:"ShoppingCart");
+   var expected=model("Base",name);item.setStaticModel("Base."+name);
+   if(CartGrounding.resolvedModel(item)!=expected || !CartGrounding.sameModel(item,name)
+    || CartGrounding.sameModel(item,"Foreign."+name))
+    throw new AssertionError("native cart-model resolution lost its exact Base identity: "+name);
+  }
+ }
  public static void main(String[] args) throws Exception {
+  remoteFillModel();
   nativeExportPose();
   rigidPose();
   capturedContacts();

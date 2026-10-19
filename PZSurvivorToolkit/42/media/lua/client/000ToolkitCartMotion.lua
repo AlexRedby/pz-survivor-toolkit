@@ -4,6 +4,12 @@ require "TimedActions/WalkToTimedAction"
 require "TimedActions/WalkToTimedActionF"
 require "Vehicles/TimedActions/ISPathFindAction"
 
+-- Host loads client Lua at the menu, before isClient() becomes true.
+if addVariableToSyncList then
+    addVariableToSyncList("ToolkitCartPose")
+    addVariableToSyncList("ToolkitCartActionPose")
+end
+
 local pathActions = {}
 for _, class in ipairs({ISWalkToTimedAction, ISWalkToTimedActionF, ISPathFindAction}) do
     pathActions[class.Type] = {class = class, start = class.start, update = class.update,
@@ -64,9 +70,35 @@ local function heldCart(player, finishingAction, stopped)
     return item
 end
 
+local function refreshRemoteModel(player, cart)
+    if not cart or not isClient() or isServer() or player:isLocalPlayer()
+        or player:getCharacterActions():size() ~= 0 or player:getVariableBoolean("IsPerformingAnAction")
+        or player:getVariableBoolean("ToolkitWoodCartAction") then return end
+    local kind = cart:getFullType()
+    if kind ~= "SaucedCarts.ShoppingCart" and kind ~= "SaucedWheelbarrow.WheelbarrowWood"
+        and kind ~= "SaucedWheelbarrow.WheelbarrowMetal" then return end
+    if not SaucedCarts.getCartData or not SaucedCarts.calculateFillState
+        or not SaucedCarts.buildCartModelName or not SaucedCarts.updateCartVisual then return end
+    local data = SaucedCarts.getCartData(cart)
+    if not data or not data.visualModels then return end
+    local inventory = cart:getInventory()
+    local capacity, weight = inventory:getEffectiveCapacity(player), inventory:getCapacityWeight()
+    if type(capacity) ~= "number" or capacity ~= capacity or capacity <= 0 or capacity == math.huge
+        or type(weight) ~= "number" or weight ~= weight or weight < 0 or weight == math.huge then return end
+    local expected = SaucedCarts.buildCartModelName(cart, SaucedCarts.calculateFillState(cart, player))
+    if type(expected) ~= "string" or expected == "" then return end
+    local scripts = getScriptManager()
+    local wanted = scripts:getModelScript(expected)
+    local current = cart:getStaticModel()
+    local actual = type(current) == "string" and scripts:getModelScript(current) or nil
+    -- Native replication can update cargo/ModData while retaining the previous fill model.
+    if wanted and actual ~= wanted then SaucedCarts.updateCartVisual(cart, player, true) end
+end
+
 function ToolkitCartRefreshVisual(player, finishingAction, stopped)
     local cart = heldCart(player, finishingAction, stopped)
     setVisual(player, cart ~= nil)
+    refreshRemoteModel(player, cart)
     return cart
 end
 
@@ -125,16 +157,15 @@ Events.OnMainMenuEnter.Add(function()
 end)
 
 -- Remote avatars can skip OnPlayerUpdate; only their visual gate needs updating.
-if isClient() then
-    local ticks = 0
-    Events.OnTick.Add(function()
-        ticks = ticks + 1
-        if ticks % 10 ~= 0 then return end
-        local players = getOnlinePlayers()
-        if not players then return end
-        for i = 0, players:size() - 1 do
-            local player = players:get(i)
-            if not player:isLocalPlayer() then ToolkitCartRefreshVisual(player) end
-        end
-    end)
-end
+local ticks = 0
+Events.OnTick.Add(function()
+    if not isClient() then return end
+    ticks = ticks + 1
+    if ticks % 10 ~= 0 then return end
+    local players = getOnlinePlayers()
+    if not players then return end
+    for i = 0, players:size() - 1 do
+        local player = players:get(i)
+        if not player:isLocalPlayer() then ToolkitCartRefreshVisual(player) end
+    end
+end)

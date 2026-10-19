@@ -1,12 +1,8 @@
 # Wooden wheelbarrow collisions
 
-- [ ] Check manually backing the wooden wheelbarrow out of tight wall contact with female models and in MP; do not count a male-model SP check as a network check. Preserve manual reverse, natural rolling and native collision; do not add automatic backing.
+- [ ] Finish relative-key manual reverse wall exits: remove small accumulated opposite-yaw corrections and release drift under tight contact, and obtain complete <=500 ms sampling and route edges for all eight scenes. Keep the existing <=.02 rad opposite-yaw and <=.025 rad release budgets; do not relax them to accept the current captures. Extend to female models and MP; preserve manual reverse, natural rolling and native collision, without automatic backing.
 - [ ] On the next shared cart-native run, obtain the standard path report with same-tick CancelAction/terminal accounting fixed: the saved 24 routes were checked in separate analysis; leave the original report unchanged. The shared visual gate remains open due to wide-trouser contact with the left handle and unclassified font messages.
 - [ ] Check the wooden wheelbarrow's braced stance in the remaining collision scenes: the full bank with a female model and Walk with a full load. Check feet, grip, wheel and absence of jolts; test Run/Sprint and impact in separate scenarios.
-
-# Networked cart animation
-
-- [ ] Implement visual reconstruction for remote players: separate the remote render gate from local steering, transmit or reconstruct pivot/reverse step/tempo/lean/wheel rotation, and apply grip/grounding according to the remote pose. Do not run the local movement model on the observer/server; preserve native network coordinates and collisions. Check a real owner+observer pair using the same onlineID/cartID, with full render coverage across all phases; the original defect is confirmed in MP, so do not count a local variant as a network PASS.
 
 # Natural wooden wheelbarrow animation
 
@@ -30,6 +26,7 @@
 
 ## Known pose defects
 
+- [ ] Fix the rare observer-only setdown pose solve failure around 62% progress: record the exact arm/foot solver refusal with native position lag before changing geometry; preserve grip, native XY, targets and world placement. Check every rendered frame, completion, cancellation and repeat; matching yaw/model/placement alone is insufficient.
 - [ ] Устранить остаточное боковое смещение после native-подхода к деревянной тачке до запуска приседа: отдельно записать конечный узел, X/Y/NextX/NextY, скорость и deferred root translation на Succeeded, завершении WalkTo и следующих кадрах перед хватом (снятие path2 разрешает остаточное движение анимации). Уменьшение arrival radius и промежуточная точка за ручками по отдельности не устраняют контакт; не включать эти прототипы без успешного живого гейта. Проверить male/baggy/full и женскую модель по полной trousers/Thigh/Calf геометрии, затем препятствие, отмену/потерю цели, независимый хвост очереди и Host; сохранить исходную позу и хват.
 - [ ] Remove rare contact between wide jeans and the handles in the original straight pose, near it and at the start of the reverse arc, preserving the preferred hand and torso position. Contact remains in some zero-lean phases and nearby; also check the short Walk -> Cart Idle transition while equipping. Include Walk with a full load alongside a vehicle at 45° to the right: the left handle touches the trousers at about 4.18 s in scene `male-full-vehicle-yaw45-slide-right` in capture `cart-vehicles-20261018/native05`.
 - [ ] For the selected turn, check the grip surface and thumb on both hands and both sexes: in the prototype without raising the handles, the hand angle relative to the handle changes from 25° to 35°, while the original palm depth and finger curl are preserved.

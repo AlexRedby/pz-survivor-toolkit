@@ -38,7 +38,9 @@
     "vehicles": "vehicles.lua",
     "vehicle_scenario": "scenario-vehicles.lua",
     "vehicle_analyzer": "analyze-vehicles.py",
-    "brace_analyzer": "analyze-brace.py"
+    "brace_analyzer": "analyze-brace.py",
+    "controls_scenario": "scenario-controls.lua",
+    "variants_scenario": "scenario-variants.lua"
   },
   "origin": {
     "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",

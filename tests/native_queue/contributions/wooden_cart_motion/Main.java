@@ -242,6 +242,17 @@ public final class Main {
         return Math.atan2(direction.y,direction.x);
     }
 
+    @LuaMethod(name="cartLabSteeringHeading", global=true)
+    public static double steeringHeading() {
+        float accepted=net.alexredby.pztoolkitjavapatches.CartSteeringHooks.networkHeading(IsoPlayer.getInstance());
+        return Float.isFinite(accepted)?accepted:heading();
+    }
+
+    @LuaMethod(name="cartLabFrame", global=true)
+    public static int frame() {
+        return zombie.iso.IsoWorld.instance.getFrameNo();
+    }
+
     @LuaMethod(name="cartLabWheelPhase", global=true)
     public static double wheelPhase() throws Exception {
         return ((Number)Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks")

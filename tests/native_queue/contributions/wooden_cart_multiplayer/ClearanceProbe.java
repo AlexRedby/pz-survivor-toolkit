@@ -13,6 +13,32 @@ public final class ClearanceProbe {
     private static BufferedWriter output;
     private static long last;
     private static boolean installed;
+    private static boolean cartModel(String name) {
+        if(name==null) return false;
+        return switch(name) {
+            case "WheelbarrowWood", "WheelbarrowMetal", "ShoppingCartModel", "ShoppingCartPartialModel", "ShoppingCartFullModel",
+                "ShoppingCartFlashlightModel", "ShoppingCartFlashlightPartialModel", "ShoppingCartFlashlightFullModel" -> true;
+            default -> false;
+        };
+    }
+    private static boolean cartFamily(String type,String model) {
+        return switch(type) {
+            case "SaucedCarts.ShoppingCart" -> model.startsWith("ShoppingCart");
+            case "SaucedWheelbarrow.WheelbarrowWood" -> "WheelbarrowWood".equals(model);
+            case "SaucedWheelbarrow.WheelbarrowMetal" -> "WheelbarrowMetal".equals(model);
+            default -> false;
+        };
+    }
+    private static String jsonString(String value) {
+        if(value==null)return "null";
+        var out=new StringBuilder("\"");
+        for(char c:value.toCharArray()) {
+            if(c=='\\' || c=='\"')out.append('\\').append(c);
+            else if(c<32)out.append(String.format("\\u%04x",(int)c));
+            else out.append(c);
+        }
+        return out.append('"').toString();
+    }
     private static void matrix(StringBuilder row, Matrix4f value) {
         float[] v=value.get(new float[16]);row.append('[');
         for(int i=0;i<16;i++){if(i>0)row.append(',');row.append(v[i]);}row.append(']');
@@ -22,14 +48,23 @@ public final class ClearanceProbe {
         for(var cart:slot.modelData) {
             var instance=cart.modelInstance;
             if(instance==null || instance.parent==null || instance.modelScript==null
-                || !"WheelbarrowWood".equals(instance.modelScript.getName()))continue;
+                || !cartModel(instance.modelScript.getName()))continue;
+            var item=player.getPrimaryHandItem();
+            String held=item==null?null:item.getStaticModel();
+            String actual=instance.modelScript.getName();
+            if(item!=null?!cartFamily(item.getFullType(),actual):!"WheelbarrowWood".equals(actual))continue;
             for(var body:slot.modelData) {
                 if(body.modelInstance!=instance.parent || body.matrixPalette==null
                     || !(body.modelInstance.model.tag instanceof SkinningData skin))continue;
                 var row=new StringBuilder(8192).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
                     .append(",\"id\":").append(((zombie.characters.IsoPlayer)slot.character).getOnlineID()).append(",\"local\":").append(((zombie.characters.IsoPlayer)slot.character).isLocalPlayer()).append(",\"enabled\":").append(net.alexredby.pztoolkitjavapatches.CartSteeringHooks.enabled((zombie.characters.IsoPlayer)slot.character)).append(",\"female\":").append(slot.character.isFemale())
                     .append(",\"primary\":").append(player.getPrimaryHandItem()==null?-1:player.getPrimaryHandItem().getID())
-                    .append(",\"secondary\":").append(player.getSecondaryHandItem()==null?-1:player.getSecondaryHandItem().getID()).append(",\"cart\":");
+                    .append(",\"secondary\":").append(player.getSecondaryHandItem()==null?-1:player.getSecondaryHandItem().getID())
+                    .append(",\"modelProbeVersion\":1,\"model\":").append(jsonString(actual))
+                    .append(",\"heldModel\":").append(jsonString(held))
+                    .append(",\"overridePrimary\":").append(jsonString(player.overridePrimaryHandModel))
+                    .append(",\"overrideSecondary\":").append(jsonString(player.overrideSecondaryHandModel))
+                    .append(",\"cart\":");
                 matrix(row,new Matrix4f(cart.xfrm).transpose());row.append(",\"bones\":{");
                 boolean comma=false;
                 for(var entry:skin.boneIndices.entrySet()) {

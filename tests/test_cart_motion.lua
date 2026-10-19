@@ -1,10 +1,11 @@
 local source = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/000ToolkitCartMotion.lua"
 local originalRequire = require
 local function setup(server, active, client)
-    local w = {events = {}, dt = 1 / 60, online = {}}
+    local w = {events = {}, dt = 1 / 60, online = {}, client = client == true, synced = {}, repaints = 0, sends = 0}
     ToolkitCartRefreshVisual = nil
     isServer = function() return server end
-    isClient = function() return client == true end
+    isClient = function() return w.client end
+    addVariableToSyncList = function(key) w.synced[key] = true end
     getActivatedMods = function() return {contains = function(_, name) return active and name == "SaucedCarts" end} end
     ISWalkToTimedAction, ISWalkToTimedActionF, ISPathFindAction = {}, {}, {}
     for _, entry in ipairs({{ISWalkToTimedAction, "ISWalkToTimedAction"},
@@ -16,7 +17,35 @@ local function setup(server, active, client)
         or name == "TimedActions/WalkToTimedActionF" or name == "Vehicles/TimedActions/ISPathFindAction") end
     instanceof = function(item, kind) return kind == "InventoryContainer" and item.container == true
         or kind == "LuaTimedActionNew" and item.native == true end
-    SaucedCarts = {safeIsCart = function(item) return item.cart == true end}
+    w.types = {
+        ["SaucedCarts.ShoppingCart"] = {visualModels = {empty = "ShoppingCartModel", partial = "ShoppingCartPartialModel", full = "ShoppingCartFullModel"}},
+        ["SaucedWheelbarrow.WheelbarrowWood"] = {visualModels = {empty = "WheelbarrowWood", partial = "WheelbarrowWood", full = "WheelbarrowWood"}},
+        ["SaucedWheelbarrow.WheelbarrowMetal"] = {visualModels = {empty = "WheelbarrowMetal", partial = "WheelbarrowMetal", full = "WheelbarrowMetal"}},
+    }
+    local models = {}
+    for _, data in pairs(w.types) do for _, model in pairs(data.visualModels) do models[model] = {} end end
+    models.ShoppingCartFlashlightFullModel = {}
+    getScriptManager = function() return {getModelScript = function(_, name) return models[(name:gsub("^Base%.", ""))] end} end
+    sendClientCommand = function() w.sends = w.sends + 1 end
+    sendServerCommand = sendClientCommand
+    SaucedCarts = {
+        safeIsCart = function(item) return item.cart == true end,
+        getCartData = function(item) return w.types[item:getFullType()] end,
+        calculateFillState = function(item, player)
+            assert(player and item == player.item)
+            return item.weight / item.capacity >= .66 and "full" or item.weight / item.capacity >= .33 and "partial" or "empty"
+        end,
+        buildCartModelName = function(item, fill)
+            if item.flashlight and fill == "full" then return "ShoppingCartFlashlightFullModel" end
+            return w.types[item:getFullType()].visualModels[fill]
+        end,
+        updateCartVisual = function(item, player, force)
+            assert(force == true and player.item == item and player.secondary == item)
+            w.repaints = w.repaints + 1
+            item.model = SaucedCarts.buildCartModelName(item, SaucedCarts.calculateFillState(item, player))
+            if isServer() then sendServerCommand() end
+        end,
+    }
     getGameTime = function() return {getRealworldSecondsSinceLastUpdate = function() return w.dt end} end
     getOnlinePlayers = function() return {size = function() return #w.online end, get = function(_, i) return w.online[i + 1] end} end
     Events = {}
@@ -52,6 +81,7 @@ local function setup(server, active, client)
             function cart:getFullType() return self.fullType or "SaucedWheelbarrow.WheelbarrowWood" end
             function cart:getWorldItem() return self.world end
             function cart:getContainer() return self.owner end
+            function cart:getStaticModel() return self.model or w.types[self:getFullType()].visualModels.empty end
             function cart:getInventory()
                 return {getEffectiveCapacity = function() return self.capacity end, getCapacityWeight = function() return self.weight end}
             end
@@ -74,6 +104,21 @@ for _, flags in ipairs({{true, true}, {false, false}}) do
 end
 assert(#setup(true, true, true).events.OnPlayerUpdate == 1, "host client motion was disabled")
 print("PASS cart motion: disabled without SaucedCarts and on dedicated servers; enabled for host clients")
+
+local startup = setup(false, true, false)
+assert(startup.synced.ToolkitCartPose and startup.synced.ToolkitCartActionPose,
+    "Host menu preload must register exact native snapshot keys before connecting")
+local observer = startup.player(); observer.localPlayer = false; observer:equip()
+startup.online = {observer}
+for _ = 1, 10 do startup.fire("OnTick") end
+assert(observer.vars.ToolkitCartMotion == nil, "menu tick queried remote avatars before connecting")
+startup.client = true
+for _ = 1, 10 do startup.fire("OnTick") end
+assert(observer.vars.ToolkitCartMotion, "Host connection must activate the preloaded remote visual callback")
+startup.client = false; observer:drop()
+for _ = 1, 10 do startup.fire("OnTick") end
+assert(observer.vars.ToolkitCartMotion, "disconnected callback continued querying remote avatars")
+print("PASS cart motion: menu preload registers native snapshots and enables remote visuals after Host connects")
 
 local w = setup(false, true)
 local p = w.player()
@@ -245,4 +290,47 @@ for _, class in ipairs({ISWalkToTimedAction, ISWalkToTimedActionF, ISPathFindAct
     p.localPlayer, p.actions, cart.fullType = true, 1, nil
 end
 print("PASS cart motion: exact stock WalkTo/F/PathFind retains wooden visual; overrides, subclasses, other carts and remote stay gated")
+
+w = setup(false, true, true); p = w.player(); p.localPlayer = false; cart = p:equip(50)
+cart.fullType, cart.model = "SaucedCarts.ShoppingCart", "Base.ShoppingCartFullModel"
+w.online = {p}
+local function remoteTicks(count)
+    for _ = 1, count or 10 do w.fire("OnTick") end
+end
+remoteTicks(30)
+assert(w.repaints == 0 and cart.model == "Base.ShoppingCartFullModel", "qualified alias repainted the same model script")
+cart.model = "Base.ShoppingCartModel"
+remoteTicks(30)
+assert(w.repaints == 1 and cart.model == "ShoppingCartFullModel", "wrong replicated fill did not reconcile exactly once")
+cart.weight = 20; remoteTicks(30)
+assert(w.repaints == 2 and cart.model == "ShoppingCartPartialModel", "replicated cargo change did not refresh fill")
+cart.weight = 50; cart.flashlight = true; remoteTicks(30)
+assert(w.repaints == 3 and cart.model == "ShoppingCartFlashlightFullModel", "registered upgrade model was lost")
+cart.model = "Base.ShoppingCartFlashlightFullModel"; remoteTicks(30)
+assert(w.repaints == 3 and w.sends == 0 and p.normal == 1, "remote refresh repainted an alias, sent packets or changed steering")
+print("PASS cart motion: remote fill/upgrade reconciliation resolves Base aliases and repaints once without sends or steering changes")
+
+for _, condition in ipairs({"local", "server", "disconnected", "disabled", "actions", "animated", "cartaction", "foreign", "owner", "onehand", "world", "aim", "missingmodel", "unregistered", "nanweight", "infinitecapacity"}) do
+    w = setup(condition == "server", condition ~= "disabled", true)
+    p = w.player(); p.localPlayer = condition == "local"; cart = p:equip(50)
+    cart.fullType, cart.model = "SaucedCarts.ShoppingCart", "ShoppingCartModel"
+    w.online = {p}
+    if condition == "disconnected" then w.client = false
+    elseif condition == "actions" then p.actions = 1
+    elseif condition == "animated" then p.vars.IsPerformingAnAction = true
+    elseif condition == "cartaction" then p.vars.ToolkitWoodCartAction = true
+    elseif condition == "foreign" then cart.fullType = "Other.ForeignCart"; w.types[cart.fullType] = w.types["SaucedCarts.ShoppingCart"]
+    elseif condition == "owner" then cart.owner = {}
+    elseif condition == "onehand" then p.secondary = nil
+    elseif condition == "world" then cart.world = {}
+    elseif condition == "aim" then p.aim = true
+    elseif condition == "missingmodel" then w.types[cart.fullType].visualModels.full = "UnknownModel"
+    elseif condition == "unregistered" then w.types[cart.fullType] = nil
+    elseif condition == "nanweight" then cart.weight = 0 / 0
+    elseif condition == "infinitecapacity" then cart.capacity = math.huge end
+    for _ = 1, 30 do w.fire("OnTick") end
+    w.tick(p)
+    assert(w.repaints == 0 and w.sends == 0 and cart.model == "ShoppingCartModel", condition .. " bypassed remote model guards")
+end
+print("PASS cart motion: remote model refresh preserves local/server/action/ownership/registration/finite guards")
 require = originalRequire

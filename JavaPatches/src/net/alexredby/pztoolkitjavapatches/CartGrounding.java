@@ -11,6 +11,9 @@ import zombie.core.skinnedmodel.animation.AnimationClip;
 import zombie.core.skinnedmodel.model.ModelInstanceRenderData;
 import zombie.core.skinnedmodel.model.ModelSlotRenderData;
 import zombie.core.skinnedmodel.model.SkinningData;
+import zombie.inventory.InventoryItem;
+import zombie.scripting.ScriptManager;
+import zombie.scripting.objects.ModelScript;
 
 /** Keep held carts rigid and on the floor without changing shared attachments. */
 public final class CartGrounding {
@@ -28,6 +31,47 @@ public final class CartGrounding {
             case "WheelbarrowMetal" -> METAL_CONTACT;
             default -> null;
         };
+    }
+
+    private static boolean cartModel(String type,String model) {
+        return switch(type) {
+            case "SaucedCarts.ShoppingCart" -> contact(model)==SHOP_CONTACT;
+            case "SaucedWheelbarrow.WheelbarrowWood" -> "WheelbarrowWood".equals(model);
+            case "SaucedWheelbarrow.WheelbarrowMetal" -> "WheelbarrowMetal".equals(model);
+            default -> false;
+        };
+    }
+
+    private static boolean cartModel(String type,ModelScript model) {
+        return model!=null && model.getModule()!=null && "Base".equals(model.getModule().name)
+            && cartModel(type,model.getName());
+    }
+
+    static ModelScript resolvedModel(InventoryItem item) {
+        String reference=item.getStaticModel();
+        if(reference==null) return null;
+        var model=ScriptManager.instance.getModelScript(reference);
+        return cartModel(item.getFullType(),model)?model:null;
+    }
+
+    static boolean sameModel(InventoryItem item,String reference) {
+        var expected=resolvedModel(item);
+        return expected!=null && reference!=null && expected==ScriptManager.instance.getModelScript(reference);
+    }
+
+    /** ModData can update the remote item's fill model after native equipped models were cached. */
+    static void refreshRemoteModel(IsoPlayer player) {
+        if(player.isLocalPlayer() || !CartSteeringHooks.supportedCart(player)
+            || player.getVariableBoolean("IsPerformingAnAction") || !player.getCharacterActions().isEmpty()
+            || player.forceNullOverride || player.isHideWeaponModel() || player.isHideEquippedHandR()
+            || player.overridePrimaryHandModel!=null && !player.overridePrimaryHandModel.isEmpty()
+            || player.overrideSecondaryHandModel!=null && !player.overrideSecondaryHandModel.isEmpty()) return;
+        var instance=player.primaryHandModel;
+        if(instance==null || instance.modelScript==null) return;
+        var item=player.getPrimaryHandItem();
+        var expected=resolvedModel(item);
+        if(expected!=null && expected!=instance.modelScript && cartModel(item.getFullType(),instance.modelScript))
+            player.resetEquippedHandsModels();
     }
 
     private static final class Matrices {
@@ -178,26 +222,30 @@ public final class CartGrounding {
     public static void render(ModelSlotRenderData slot) {
         CartWheelSpin.prepare(slot,Double.NaN);
         if(CartTransition.render(slot)) return;
-        if(!(slot.character instanceof IsoPlayer player) || !CartSteeringHooks.enabled(player)) return;
-        String name=player.getPrimaryHandItem().getStaticModel();
+        if(!(slot.character instanceof IsoPlayer player) || !CartMotionSync.visualEnabled(player)) return;
+        var expected=resolvedModel(player.getPrimaryHandItem());
+        if(expected==null) return;
+        String name=expected.getName();
         var clip=ModelManager.instance.getAnimationClip("Bob_Cart_Idle");
         for(var data:slot.modelData) {
             var instance=data.modelInstance;
-            if(instance.parent==null || instance.modelScript==null || !instance.modelScript.getName().equals(name)
+            if(instance.parent==null || instance.modelScript!=expected
                 || instance.model==null || instance.model.mesh==null) continue;
             var state=matrices.get();
             Matrix4f transform=state.transform;
             boolean rigid=rigid(data,clip,transform);
             if(rigid) lowerHandles(transform,name);
-            float lean=(float)CartSteeringHooks.lean(player);
+            float lean=(float)(player.isLocalPlayer()?CartSteeringHooks.lean(player):CartMotionSync.lean(player));
+            float pressure=(float)(player.isLocalPlayer()?CartSteeringHooks.clearanceLean(player):CartMotionSync.pressure(player));
             if(rigid
-                && ("WheelbarrowWood".equals(name)?alignWood(transform,lean,(float)CartSteeringHooks.clearanceLean(player),CartLegPace.woodenGaitShift(player),state.delta)
+                && ("WheelbarrowWood".equals(name)?alignWood(transform,lean,pressure,CartLegPace.woodenGaitShift(player),state.delta)
                     :align(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,
                         contact(instance.modelScript.getName()),lean,state.delta))) {
                 // A failed arm solve must not replace the grounded cart with the moving hand attachment.
                 CartGrip.render(slot,instance.parent,clip,state.delta,name,transform);
                 data.xfrm.set(transform).transpose();
-                CartWheelSpin.prepare(slot,CartSteeringHooks.wheelPhase(player,slot,transform));
+                CartWheelSpin.prepare(slot,player.isLocalPlayer()?CartSteeringHooks.wheelPhase(player,slot,transform)
+                    :CartWheelSpin.follow(player.getPrimaryHandItem(),slot.x,slot.y,slot.animPlayerAngle,transform));
             } else {
                 transform.set(data.xfrm).transpose();
                 if(ground(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz)) data.xfrm.set(transform).transpose();

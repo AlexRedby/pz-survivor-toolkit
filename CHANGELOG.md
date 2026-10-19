@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.103
+
+- Register bounded cart locomotion and interaction snapshots for native multiplayer variable synchronization; every client renders cart poses locally.
+
 ### 0.1.102
 
 - **Fixed:** An updated Project Cook interface no longer prevents TidyUpMeister from preserving explicit equipment choices. Independently verified recipe modifiers load before compatibility snapshots; changed cooking interfaces and unknown modifiers remain protected.
@@ -466,6 +470,11 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.26
+
+- Use heading-relative keyboard controls for shopping carts and both wheelbarrows: forward/reverse motion and continuous left/right steering, preserving native movement and collision handling.
+- Reconstruct cart grounding, grip, banking, wheel rotation and wooden pickup/setdown presentation for remote players from small throttled state snapshots, with identity, native-action and lifecycle guards.
 
 ### 0.1.25
 

@@ -3,7 +3,7 @@ package net.alexredby.pztoolkitjavapatches;
 /** Shopping-cart axle pivot and rolling wheelbarrow arc; native collision stays authoritative. */
 public final class CartSteeringMath {
     // shortcut: selected models use an approximate axle offset; recalibrate when their geometry changes.
-    private static final double AXLE_DISTANCE = 0.8;
+    static final double AXLE_DISTANCE = 0.8;
 
     public static final class Step {
         private double x, y, turn, travel;
@@ -68,6 +68,11 @@ public final class CartSteeringMath {
         return Math.atan2(Math.sin(angle), Math.cos(angle));
     }
 
+    static double keyboardTarget(double heading, int travel, int steering) {
+        return heading+(travel<0?Math.PI:0)
+            +steering*(travel<0?-1:1)*(travel==0?Math.PI/2:Math.PI/4);
+    }
+
     static boolean reversing(double heading, double target) {
         return Math.abs(wrap(target-heading))>Math.PI*.75;
     }
@@ -97,7 +102,7 @@ public final class CartSteeringMath {
         return step(heading,target,distance,seconds,load,axleDistance,lateralDegrees,reversing(heading,target),result);
     }
 
-    private static Step step(double heading, double target, double distance,
+    static Step step(double heading, double target, double distance,
                      double seconds, double load, double axleDistance, double lateralDegrees, boolean reverse, Step result) {
         if (!(distance > 0) || !(seconds > 0)) return result.set(0, 0, 0, 0);
         load = Math.max(0, Math.min(1, load));

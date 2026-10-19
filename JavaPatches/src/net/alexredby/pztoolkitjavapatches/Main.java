@@ -96,7 +96,9 @@ public final class Main {
         && supports("zombie/network/packets/GeneralActionPacket.class",
             "398a8729da87a4c222f17473cc46c9b5cb7fd9b3f74492d283765619c1d57c8a");
 
-    public static final boolean CART_SUPPORTED = supports("zombie/characters/IsoPlayer.class",
+    public static final boolean CART_SUPPORTED = supports("zombie/characters/component/CharacterInputComponent.class",
+            "e3ff79ae666e7809f753cbe7aac4a3e4729f520d4f795009643efc222b22088d")
+        && supports("zombie/characters/IsoPlayer.class",
             "3f1c4634d3a8e7e36baf4b33f76cf7ef79d88c3351bd0eb2a6a6bb34c2d9858f")
         && supports("zombie/characters/IsoGameCharacter.class",
             "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b")
@@ -119,6 +121,12 @@ public final class Main {
             "67702b5ea23d20fb9af7bf44534dd4c48d607be5adf7c14ed3a5628b27f75a5f")
         && supports("zombie/core/skinnedmodel/advancedanimation/AnimatedModel$AnimatedModelInstanceRenderData.class",
             "c96e48b6d138db930abe557459b2ff81e025a47cba6c3b199700473362e2f04d");
+
+    public static final boolean CART_SYNC_SUPPORTED = CART_SUPPORTED
+        && supports("zombie/network/packets/character/PlayerPacket.class","5284e8225bf513241787276471f20b526b8373a5f22c714f1370b6f013cfe5de")
+        && supports("zombie/network/packets/VariableSyncPacket.class","4fc2d32a491eb3f9e96aa0069dcd0f322e5d29e04e75c837cd4ec59cda42ef09")
+        && supports("zombie/characters/NetworkPlayerAI.class","46df5ede124384e10a848fe9eb6f6ba06cccbb3cc74f51e5e9b0306cd80a628a")
+        && supports("zombie/characters/NetworkCharacterAI.class","7ec30ba9fc20cd90ab14c36907c89ccba11faf29c506739e0998c167c598c4c8");
 
     public static final boolean CART_WHEEL_SUPPORTED = CART_SUPPORTED
         && supports("zombie/core/skinnedmodel/model/Model.class",
@@ -168,7 +176,7 @@ public final class Main {
         System.out.println("[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" + ZOMBIE_SUPPORTED
             + ", vehicle=" + VEHICLE_SUPPORTED + ", vehicleOwnership=" + VEHICLE_OWNERSHIP_SUPPORTED + ", media=" + MEDIA_SUPPORTED + ", build=" + BUILD_SUPPORTED
             + ", video=" + VIDEO_SUPPORTED + ", animal=" + ANIMAL_SUPPORTED + ", equipment=" + EQUIPMENT_SUPPORTED
-            + ", cart=" + CART_SUPPORTED + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", medicalVisuals=" + MEDICAL_VISUALS_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + TilePropertyNames.SUPPORTED + ", fluids=" + FluidContainerNames.SUPPORTED
+            + ", cart=" + CART_SUPPORTED + ", cartSync=" + CART_SYNC_SUPPORTED + ", medicalTimedAction=" + MEDICAL_TIMED_ACTION_SUPPORTED + ", medicalBodyDamage=" + MEDICAL_BODY_DAMAGE_SUPPORTED + ", medicalVisuals=" + MEDICAL_VISUALS_SUPPORTED + ", hutch=" + HUTCH_SUPPORTED + ", properties=" + TilePropertyNames.SUPPORTED + ", fluids=" + FluidContainerNames.SUPPORTED
             + ", fences=" + fences + ", piano=" + PianoIcon.SUPPORTED + ", basementRooms=" + BasementRoomLookup.SUPPORTED
             + ", basementHall=" + BasementHallKey.SUPPORTED + ", mannequin=" + MannequinZoneData.SUPPORTED
             + ", itemTransactions=" + QueueManagers.ITEM_SUPPORTED + ", actionManager=" + QueueManagers.ACTION_SUPPORTED
@@ -350,6 +358,26 @@ public final class Main {
                 @Patch.Return(readOnly=false) zombie.pathfind.PathFindBehavior2.BehaviorResult result) {
             if(Main.CART_SUPPORTED)
                 result=CartSteeringHooks.pathResult(Accessor.tryGet(path,"chr",(zombie.characters.IsoGameCharacter)null),result);
+        }
+    }
+
+    @Patch(className="zombie.characters.IsoPlayer", methodName="getInputMoveVector", warmUp=true)
+    public static class CartKeyboardMovement {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.characters.IsoPlayer player,
+            @Patch.Return zombie.iso.Vector2 movement) {
+            if(Main.CART_SUPPORTED) CartSteeringHooks.keyboardMovement(player,movement);
+        }
+    }
+
+    @Patch(className="zombie.network.packets.character.PlayerPacket", methodName="set", warmUp=true, strictMatch=true)
+    public static class CartNetworkHeading {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.network.packets.character.PlayerPacket packet,
+            @Patch.Argument(0) zombie.characters.IsoPlayer player) {
+            if(!Main.CART_SYNC_SUPPORTED) return;
+            float heading=CartSteeringHooks.networkHeading(player);
+            if(Float.isFinite(heading)) packet.prediction.direction=heading;
         }
     }
 
