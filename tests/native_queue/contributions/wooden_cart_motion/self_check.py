@@ -33,6 +33,7 @@ def check_manifest():
         "scene_selection": "scene-selection.lua",
         "vehicles": "vehicles.lua", "vehicle_scenario": "scenario-vehicles.lua", "vehicle_analyzer": "analyze-vehicles.py",
         "brace_analyzer": "analyze-brace.py",
+        "controls_scenario": "scenario-controls.lua", "variants_scenario": "scenario-variants.lua",
     }
     for name in manifest["sources"].values():
         assert (HERE / name).is_file(), name
@@ -51,6 +52,7 @@ def check_manifest():
     allowed = {"Main.java", "KahluaChecks.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py", "obstacles.lua", "scenario-collision.lua", "analyze-collision.py", "analyze-footprint.py"}
     allowed |= {"scenario-interaction.lua", "analyze-interaction.py", "analyze-interruption.py", "analyze-repeat.py",
                 "analyze-wheel-cycle.py", "scenario-path.lua", "analyze-path.py", "scene-selection.lua", "analyze-impact.py", "analyze-stop-timing.py", "vehicles.lua", "scenario-vehicles.lua", "analyze-vehicles.py", "analyze-brace.py"}
+    allowed |= {"scenario-controls.lua", "scenario-variants.lua"}
     assert {p.name for p in HERE.iterdir() if p.is_file()} == allowed
     for path in HERE.rglob("*"):
         if path.is_file():
@@ -59,7 +61,7 @@ def check_manifest():
         text = (HERE / name).read_text()
         assert not re.search(r"/(?:Users|home|private/tmp|opt/homebrew)/", text), name
         assert all(line.rstrip() == line for line in text.splitlines()), name
-    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua", "scenario-reversal.lua", "scenario-stop.lua", "scenario-stationary.lua", "scenario-maneuvers.lua", "obstacles.lua", "scenario-collision.lua", "scenario-interaction.lua", "scenario-path.lua", "scene-selection.lua", "vehicles.lua", "scenario-vehicles.lua"):
+    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua", "scenario-reversal.lua", "scenario-stop.lua", "scenario-stationary.lua", "scenario-maneuvers.lua", "obstacles.lua", "scenario-collision.lua", "scenario-interaction.lua", "scenario-path.lua", "scene-selection.lua", "vehicles.lua", "scenario-vehicles.lua", "scenario-controls.lua", "scenario-variants.lua"):
         first = next(line for line in (HERE / name).read_text().splitlines() if line.strip() and not line.startswith("--"))
         assert first.startswith("local config=assert(CartMotionConfig,"), name
     assert manifest['reverse_scenario']['case_count'] == 20
@@ -109,6 +111,12 @@ def check_manifest():
     assert len(footprint['WALL_MANUAL_EXIT_EXPECTED'])==8
     assert footprint['steps']('male-empty-walk-wall-slide-manual-out45',wall_manual_exit=True)==[(1000,0,2),(9500,0,8),(12000,0,3),(15500,0,0),(16000,0,4),(26000,0,0)]
     assert footprint['steps']('male-full-walk-wall-slide-right-manual-out90',wall_manual_exit=True)==[(1000,0,1),(9500,0,6),(12000,0,4),(15500,0,0),(16000,0,3),(21000,0,7),(26000,0,0)]
+    assert footprint['steps']('male-empty-walk-wall-slide-manual-out45',wall_manual_exit=True,relative=True)==[(1000,0,1),(9500,0,4),(12000,0,6),(15500,0,0),(16000,0,5),(26000,0,0)]
+    assert footprint['steps']('male-full-walk-wall-slide-right-manual-out90',wall_manual_exit=True,relative=True)==[(1000,0,1),(9500,0,4),(12000,0,7),(15500,0,0),(16000,0,8),(21000,0,8),(26000,0,0)]
+    manual_source=(HERE/'scenario-collision.lua').read_text()
+    assert 'local relativeManual=wallManualExit and not wallFastManualExit' in manual_source
+    assert '[CART_RELATIVE_MANUAL] VERSION 1' in manual_source and 'cartLabSteeringHeading()' in manual_source
+    assert 'Manual controls changed cart ownership' in manual_source and 'Manual controls changed cargo' in manual_source
     for empty in ('','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=8'):
         try: footprint['selected'](empty,wall_manual_exit=True)
         except AssertionError: pass
@@ -226,7 +234,7 @@ def check_reverse_analyzer(analyzer):
 def check_lua(executable):
     if not executable:
         return "SKIPPED (supply --lua or install Lua/LuaJIT)"
-    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua", "scenario-reversal.lua", "scenario-stop.lua", "scenario-stationary.lua", "scenario-maneuvers.lua", "obstacles.lua", "scenario-collision.lua", "scenario-interaction.lua", "scenario-path.lua", "scene-selection.lua", "vehicles.lua", "scenario-vehicles.lua"):
+    for name in ("test-area.lua", "bootstrap.lua", "scenario-clips.lua", "scenario-reverse.lua", "scenario-reversal.lua", "scenario-stop.lua", "scenario-stationary.lua", "scenario-maneuvers.lua", "obstacles.lua", "scenario-collision.lua", "scenario-interaction.lua", "scenario-path.lua", "scene-selection.lua", "vehicles.lua", "scenario-vehicles.lua", "scenario-controls.lua", "scenario-variants.lua"):
         path = json.dumps(str(HERE / name), ensure_ascii=False)
         # loadfile parses without executing game APIs; missing config must fail first.
         code = f"assert(loadfile({path})); local ok,err=pcall(dofile,{path}); assert(not ok and tostring(err):find('CartMotionConfig',1,true),tostring(err))"

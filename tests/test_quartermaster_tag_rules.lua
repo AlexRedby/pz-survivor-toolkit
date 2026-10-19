@@ -59,43 +59,11 @@ SafeHouse = {isSafehouseAllowLoot = function(sq, authenticated) assert(authentic
 local Tags = require 'PZSurvivorToolkit/ItemTags'
 assert(Tags.normalizeRule, 'ItemTags rule API missing')
 local categories = {'Food','foodPerishable','Electronics'}
--- The resolver boundary used by Core's private gather closure and the public manifest path.
-local function union(target, source) for k,v in pairs(source or {}) do if v then target[k] = v end end end
 LootSorter = {serverFns = {}, getCategories = function() return categories end,
-    parseCoordKey = function(key) local x,y,z=key:match('^(%d+),(%d+),(%d+)$'); return tonumber(x),tonumber(y),tonumber(z) end,
-    linkResolves = function(preset, link) return preset and (link == true or preset.gen == link) end,
-    getRegistry = function() return ModData.getOrCreate('LootSorter_Registry').boxes or {} end}
-LootSorter.modDataHasDesignation = function(md)
-    for _, field in ipairs({'LSBox','LSBoxItems','LSBoxPresets'}) do
-        for _, set in pairs(md[field] or {}) do for _, on in pairs(set) do if on then return true end end end
-    end
-    return false
-end
-LootSorter.squareHasDesignation = function() return LootSorter.modDataHasDesignation(object.md) end
-LootSorter.loadPresets = function() LootSorter._presets = {}; return LootSorter._presets end
-LootSorter.savePresets = function() end
-LootSorter.getPresetStore = function()
-    if not LootSorter._presets then LootSorter.loadPresets() end
-    return LootSorter._presets
-end
-LootSorter.getItemNames = function() return {} end
-LootSorter.getDisplayNameForFullType = function(value) return value end
-LootSorter.getItemFullType = function(value) return value end
+    getItemNames = function() return {} end,
+    getDisplayNameForFullType = function(value) return value end,
+    getItemFullType = function(value) return value end}
 local function presets() return LootSorter.getPresetStore() end
-LootSorter.resolveEffective = function(cats, items, links, store)
-    local a,b = {}, {}; union(a,cats); union(b,items)
-    for name,link in pairs(links or {}) do
-        local p=store and store[name]
-        if LootSorter.linkResolves(p,link) then union(a,p.cats); union(b,p.items) end
-    end
-    return a,b
-end
-local function privateFind()
-    local md=object.md
-    if not (md.LSBox or md.LSBoxItems or md.LSBoxPresets) then return {} end
-    return LootSorter.resolveEffective(md.LSBox and md.LSBox['0'], md.LSBoxItems and md.LSBoxItems['0'],md.LSBoxPresets and md.LSBoxPresets['0'],presets())
-end
-LootSorter.findDesignatedOnSquare = privateFind
 LootSorter.serverFns.putPreset = function(_, args)
     local store = presets()
     local existing=store[args.name]
@@ -109,20 +77,28 @@ LootSorter.serverFns.removePreset = function(_, args)
     LootSorter.savePresets()
     return 'ok'
 end
-if NativeQuartermasterLuaRoot then
-    dofile(NativeQuartermasterLuaRoot .. '/shared/LootSorter_Presets.lua')
-    dofile(NativeQuartermasterLuaRoot .. '/shared/LootSorter_Util.lua')
-    dofile(NativeQuartermasterLuaRoot .. '/shared/LootSorter_Plan.lua')
-    loaded['TimedActions/ISTimedActionQueue'], loaded['TimedActions/ISInventoryTransferAction'] = {}, {}
-    LootSorter.DBG = function() end
-    LootSorter.removeCoords = function() end
-    dofile(NativeQuartermasterLuaRoot .. '/client/LootSorter_PresetSync.lua')
-    dofile(NativeQuartermasterLuaRoot .. '/client/LootSorter_Core.lua')
-end
+dofile(root .. 'shared/LootSorter_Presets.lua')
+dofile(root .. 'shared/LootSorter_Util.lua')
+dofile(root .. 'shared/LootSorter_Plan.lua')
+loaded['TimedActions/ISTimedActionQueue'], loaded['TimedActions/ISInventoryTransferAction'] = {}, {}
+LootSorter.DBG = function() end
+LootSorter.removeCoords = function() end
+dofile(root .. 'client/LootSorter_PresetSync.lua')
+dofile(root .. 'client/LootSorter_Core.lua')
+local originalRegistry, originalResolver, originalPlanner = LootSorter.getRegistry, LootSorter.resolveEffective, LootSorter.planTrips
 local Rules = require 'PZSurvivorToolkit/QuartermasterTagRules'
 dofile(root .. 'server/PZSurvivorToolkit/QuartermasterTagRuleAuthority.lua')
 dofile(root .. 'client/PZSurvivorToolkit/QuartermasterTagRuleClient.lua')
 Rules.installAuthority(); Rules.installClient()
+assert(LootSorter.getRegistry == originalRegistry and LootSorter.resolveEffective == originalResolver
+    and LootSorter.planTrips == originalPlanner, 'tag rules replaced discovery or planner APIs')
+local function record(category, fullType)
+    return {cat = category, ref = {getDisplayCategory = function() return category end,
+        getFullType = function() return fullType end}}
+end
+local function target()
+    return LootSorter.findDesignatedOnSquare(square, player)[1] or {cats = {}, items = {}, rules = {}}
+end
 local rule={mode='all',include={'food'},exclude={'perishable'}}
 local function args(value) return {x=10,y=20,z=0,object=0,ci=0,rule=value or rule,baseRevision=Rules.getBoxRevision(object,0)} end
 local nativeLootSorter = LootSorter
@@ -135,64 +111,65 @@ local verdict, revision = Rules.applyBox(player,args())
 assert(verdict=='ok' and revision==1 and Rules.getBoxRevision(object,0)==1)
 assert(Rules.applyBox(player,oldRevisionArgs)=='stale' and Rules.getBoxRevision(object,0)==1,
     'concurrent stale editor replaced newer rule')
-assert(object.md[Rules.FIELD]['0'].include[1]=='food' and not object.md.LSBox['0'].food)
+assert(object.md[Rules.FIELD]['0'].include[1]=='food' and not object.md.LSBox,
+    'rule-only save created category anchors')
 assert(LootSorter.modDataHasDesignation(object.md), 'rule-only box lost designation')
+local box = target()
+assert(Rules.matches(box,record('Food')) and not Rules.matches(box,record('foodPerishable'))
+    and not Rules.matches(box,record('Electronics')), 'direct sorter did not resolve rule')
+assert(next(box.cats)==nil, 'tag rule expanded into legacy categories')
+local boxes = LootSorter.gatherBoxes(player)
+assert(#boxes == 1 and Rules.matches(boxes[1],record('Food')) and boxes[1].container == container,
+    'private gather missed rule-only box')
+boxes = LootSorter.gatherBoxesOrWarn(player)
+assert(#boxes == 1 and Rules.matches(boxes[1],record('Food')), 'sorter gather missed rule-only box')
+mode='client'; Rules.received={}; LootSorter._receivedRegistry=moddata.LootSorter_Registry
+LootSorter._receivedPresets=presets()
+safe=false
+boxes=LootSorter.gatherBoxes(player)
+assert(#boxes==0 and not object.md.LSBox, 'rule lookup touched forbidden safehouse before permission gate')
+safe=true; boxes=LootSorter.gatherBoxes(player)
+assert(#boxes==1 and Rules.matches(boxes[1],record('Food')), 'allowed Host gather lost rule-only box')
+LootSorter._manifestWin={playerNum=0}
 LootSorter.getRegistry()
-local cats=privateFind()
-assert(cats.Food and not cats.foodPerishable and not cats.Electronics, 'private sorter did not resolve rule')
-if NativeQuartermasterLuaRoot then
-    local boxes = LootSorter.gatherBoxes(player)
-    assert(#boxes == 1 and boxes[1].cats.Food and boxes[1].container == container, 'installed native private gather missed rule-only box')
-    boxes = LootSorter.gatherBoxesOrWarn(player)
-    assert(#boxes == 1 and boxes[1].cats.Food, 'installed native sorter gather missed rule-only box')
-    mode='client'; Rules.received={}; LootSorter._receivedRegistry=moddata.LootSorter_Registry
-    LootSorter._receivedPresets=presets()
-    object.md.LSBox['0']=nil; safe=false
-    boxes=LootSorter.gatherBoxes(player)
-    assert(#boxes==0 and object.md.LSBox['0']==nil, 'rule lookup touched forbidden safehouse before native permission gate')
-    safe=true; boxes=LootSorter.gatherBoxes(player)
-    assert(#boxes==1 and boxes[1].cats.Food, 'allowed MP gather lost rule-only box')
-    -- Manifest/public lookup does not run inside gather, and getRegistry resets the lookup index.
-    LootSorter._manifestWin={playerNum=0}
-    LootSorter.getRegistry()
-    boxes=LootSorter.findDesignatedOnSquare(square)
-    assert(#boxes==1 and boxes[1].cats.Food, 'MP manifest/public lookup lost rule-only box outside gather')
-    safe=false; object.md.LSBox['0']=nil; LootSorter.getRegistry()
-    boxes=LootSorter.findDesignatedOnSquare(square)
-    assert(#boxes==0 and object.md.LSBox['0']==nil, 'MP manifest bypassed safehouse permission')
-    safe=true; mode='sp'
-    local originalProps=farming_vegetableconf
-    farming_vegetableconf={props={Sunflower={seedName='Base.SunflowerSeeds'}}}
-    local seedOnly={mode='all',include={'food','seed'},exclude={}}
-    assert(Rules.applyBox(player,args(seedOnly))=='ok')
-    object.md.LSBox['0']={}
-    boxes=LootSorter.gatherBoxes(player)
-    assert(#boxes==1 and boxes[1].container==container,
-        'native private gather dropped an item-only food+seed rule with no manual designation')
-    local sunflower={getDisplayCategory=function() return 'Food' end,getFullType=function() return 'Base.SunflowerSeeds' end}
-    local itemRecord={ref=sunflower,cat='Food',name='Sunflower seeds',weight=1}
-    local plannedBox={cats=boxes[1].cats,items=boxes[1].items,capacity=10,used=0}
-    local plan=LootSorter.planTrips({itemRecord},{plannedBox},{{ref={},space=10,factor=1}},10)
-    assert(#plan.trips==1 and plan.trips[1].perBox[plannedBox][1].item==itemRecord and #plan.leftover==0,
-        'native planner did not receive/match item-only food+seed target')
-    assert(next(object.md.LSBox['0'])==nil,'rule-only gather persisted its transport marker')
-    enabled=false;boxes=LootSorter.gatherBoxes(player)
-    assert(#boxes==0,'disabled tags retained item-only rule target without native manual designation')
-    enabled=true;farming_vegetableconf=originalProps
-    assert(Rules.applyBox(player,args(rule))=='ok')
-end
-object.md.LSBox['0']={foodPerishable=true, PreciseModCategory=true}
-LootSorter.getRegistry(); cats=privateFind()
-assert(cats.foodPerishable and cats.PreciseModCategory, 'rule exclusions stripped manual picks')
+boxes=LootSorter.findDesignatedOnSquare(square)
+assert(#boxes==1 and Rules.matches(boxes[1],record('Food')), 'public lookup lost rule-only box outside gather')
+safe=false
+boxes=LootSorter.findDesignatedOnSquare(square)
+assert(#boxes==0 and not object.md.LSBox, 'public lookup bypassed safehouse permission')
+safe=true; mode='sp'
+local originalProps=farming_vegetableconf
+farming_vegetableconf={props={Sunflower={seedName='Base.SunflowerSeeds'}}}
+local seedOnly={mode='all',include={'food','seed'},exclude={}}
+assert(Rules.applyBox(player,args(seedOnly))=='ok')
+boxes=LootSorter.gatherBoxes(player)
+assert(#boxes==1 and boxes[1].container==container,
+    'private gather dropped an item-only food+seed rule with no manual designation')
+local itemRecord=record('Food','Base.SunflowerSeeds')
+itemRecord.name,itemRecord.weight='Sunflower seeds',1
+local plannedBox={cats=boxes[1].cats,items=boxes[1].items,rules=boxes[1].rules,capacity=10,used=0}
+local plan=LootSorter.planTrips({itemRecord},{plannedBox},{{ref={},space=10,factor=1}},10,nil,Rules.matches)
+assert(#plan.trips==1 and plan.trips[1].perBox[plannedBox][1].item==itemRecord and #plan.leftover==0,
+    'planner did not receive/match item-only food+seed target')
+assert(not object.md.LSBox,'rule-only gather persisted category anchors')
+enabled=false;boxes=LootSorter.gatherBoxes(player)
+assert(#boxes==0,'disabled tags retained item-only rule target without manual designation')
+enabled=true;farming_vegetableconf=originalProps
+assert(Rules.applyBox(player,args(rule))=='ok')
+object.md.LSBox={['0']={foodPerishable=true, PreciseModCategory=true}}
+box=target()
+assert(Rules.matches(box,record('foodPerishable')) and Rules.matches(box,record('PreciseModCategory')),
+    'rule exclusions stripped manual picks')
 local schema=require 'PZSurvivorToolkit/ItemTagSchema'
 schema.categories.FutureFood={'food'}; categories[#categories+1]='FutureFood'
-LootSorter.getRegistry(); cats=privateFind(); assert(cats.FutureFood, 'saved rule froze current categories')
-enabled=false; LootSorter.getRegistry(); cats=privateFind(); assert(not cats.FutureFood and cats.PreciseModCategory)
+box=target(); assert(Rules.matches(box,record('FutureFood')), 'saved rule froze current categories')
+enabled=false; box=target()
+assert(not Rules.matches(box,record('FutureFood')) and Rules.matches(box,record('PreciseModCategory')))
 enabled=true
--- A native empty category save removes the temporary anchor. Re-indexing restores only the empty anchor.
-object.md.LSBox['0']=nil; LootSorter.getRegistry(); cats=privateFind(); assert(cats.FutureFood)
+object.md.LSBox['0']=nil
+box=target(); assert(Rules.matches(box,record('FutureFood')), 'rule required a manual category anchor')
 assert(Rules.applyBox(player,args({mode='all',include={},exclude={}}))=='ok')
-LootSorter.findDesignatedOnSquare(square); cats=privateFind(); assert(not cats.FutureFood, 'cleared rule stayed in table lookup')
+box=target(); assert(not Rules.matches(box,record('FutureFood')), 'cleared rule stayed in routing')
 mode='server'
 assert(Rules.applyBox(nil,args())=='invalid', 'unauthenticated write allowed')
 local bad=args(); bad.object=1; assert(Rules.applyBox(player,bad)=='missing')
@@ -221,13 +198,16 @@ local anyRule={mode='any',include={'food','electrical'},exclude={'perishable'}}
 assert(put(player,{name='Either',cats={},items={},pzstTagRule=anyRule})=='ok')
 LootSorter._presets, Rules.localPresets = nil, nil
 assert(Rules.getPreset('Either',presets().Either).mode=='any', 'SP any-rule mode was lost in snapshot')
-local either=LootSorter.resolveEffective({}, {}, {Either=presets().Either.gen}, presets())
-assert(either.Food and either.Electronics and not either.foodPerishable, 'saved any+excluded rule changed semantics')
+local either={cats={},rules=Rules.forBox(nil,0,{Either=presets().Either.gen},presets())}
+assert(Rules.matches(either,record('Food')) and Rules.matches(either,record('Electronics'))
+    and not Rules.matches(either,record('foodPerishable')), 'saved any+excluded rule changed semantics')
 local rev=presets().Pantry.rev
 assert(put(player,{name='Pantry',baseRev=0,cats={},items={},pzstTagRule={mode='any',include={'electrical'},exclude={}}})=='stale')
 assert(presets().Pantry.rev==rev and Rules.getPreset('Pantry',presets().Pantry).include[1]=='food')
 local effective,items=LootSorter.resolveEffective({Manual=true},{ManualItem=true},{Pantry=presets().Pantry.gen},presets())
-assert(effective.FutureFood and effective.Manual and effective.Precise and items.Beans and items.ManualItem)
+local effectiveBox={cats=effective,rules=Rules.forBox(nil,0,{Pantry=presets().Pantry.gen},presets())}
+assert(Rules.matches(effectiveBox,record('FutureFood')) and effective.Manual and effective.Precise
+    and items.Beans and items.ManualItem and not effective.FutureFood)
 presets().Pantry.gen=presets().Pantry.gen+1
 assert(not Rules.getPreset('Pantry',presets().Pantry), 'deleted/remade preset inherited prior rule')
 assert(LootSorter.serverFns.removePreset(player,{name='Pantry'})=='ok' and not Rules.presetStore().Pantry)
@@ -236,7 +216,7 @@ assert(not saved.native.Pantry and not saved.rules.Pantry and saved.native.Eithe
     'native removal and tag-rule cleanup were not committed together')
 assert(disk['QuartermasterPresets.txt'] == legacyNative and disk['PZSTQuartermasterTagRules.txt'] == legacyRules,
     'snapshot writes changed legacy files')
-if NativeQuartermasterLuaRoot then
+do
     -- Paste must keep clipboard A's native picks when another copy replaces the global clipboard with B.
     local originalSave, pasteReply = Rules.saveBox
     Rules.saveBox = function(_,_,_,_,callback) pasteReply=callback end
@@ -285,4 +265,4 @@ end
 callback=nil; Rules.saveBox(object,0,rule,player,function(verdict) callback=verdict end)
 clock=clock+16000; for _,fn in ipairs(Events.OnTick.handlers) do fn() end
 assert(callback=='timeout')
-print('Quartermaster rules passed: dynamic resolver, exact picks, opt-out, clearing, authority, SP persistence, preset conflicts, client refusal/timeout.')
+print('Quartermaster rules passed: direct item matching/discovery, exact picks, opt-out, clearing, authority, SP persistence, preset conflicts, client refusal/timeout.')

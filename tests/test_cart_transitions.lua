@@ -595,7 +595,9 @@ w.queue = nil
 assert(#w.added == 1 and w.added[1].itemId == 123 and getmetatable(w.added[1]) == ToolkitWoodCartPickup)
 p.distance = .09
 assert(getmetatable(ISCartPickupAction.FromWorldItem(p, world)) == ISWalkToTimedActionF, "old stance skipped the small step behind the handles")
-p.distance = .04
+p.distance = .02
+assert(getmetatable(ISCartPickupAction.FromWorldItem(p, world)) == ISWalkToTimedActionF, "nearby off-center pickup skipped alignment")
+p.distance = .001
 assert(getmetatable(ISCartPickupAction.FromWorldItem(p, world)) == ToolkitWoodCartPickup, "already-positioned pickup queued another walk")
 p.distance = 1; p.instant = true
 assert(getmetatable(ISCartPickupAction.FromWorldItem(p, world)) == ISCartPickupAction, "instant pickup queued an approach")

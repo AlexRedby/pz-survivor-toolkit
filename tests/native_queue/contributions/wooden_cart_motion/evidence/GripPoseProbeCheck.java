@@ -11,10 +11,14 @@ public final class GripPoseProbeCheck {
             .getDeclaredMethods().filter(named("grip").and(takesArguments(7))).size()!=1)
             throw new AssertionError("pressure-aware grip diagnostic target changed");
         if(new net.bytebuddy.description.type.TypeDescription.ForLoadedType(Class.forName("net.alexredby.pztoolkitjavapatches.CartGrip"))
+            .getDeclaredMethods().filter(named("transitionGrip").and(takesArguments(8))).size()!=1)
+            throw new AssertionError("authored transition grip diagnostic target changed");
+        if(new net.bytebuddy.description.type.TypeDescription.ForLoadedType(Class.forName("net.alexredby.pztoolkitjavapatches.CartGrip"))
             .getDeclaredMethods().filter(named("reach").and(takesArguments(7))).size()!=1)
             throw new AssertionError("weighted reach diagnostic target changed");
         var transformed=new ByteBuddy().redefine(Class.forName("net.alexredby.pztoolkitjavapatches.CartGrip"))
             .visit(Advice.to(GripPoseProbe.GripAdvice.class).on(named("grip").and(takesArguments(7))))
+            .visit(Advice.to(GripPoseProbe.TransitionGripAdvice.class).on(named("transitionGrip").and(takesArguments(8))))
             .visit(Advice.to(GripPoseProbe.ReachAdvice.class).on(named("reach").and(takesArguments(7)))).make();
         if(transformed.getBytes().length==0)throw new AssertionError("empty instrumentation");
         var text=new StringWriter();var writer=new BufferedWriter(text);

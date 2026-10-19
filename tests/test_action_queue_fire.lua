@@ -228,16 +228,6 @@ if NativeQuartermasterLuaRoot then
     getActivatedMods=function()return {contains=function(_,id)
         return id=='Quartermaster' or earlierMods and earlierMods():contains(id) or false
     end}end
-    getModFileReader=function(mod,path)
-        if mod~='Quartermaster' then return earlierReader and earlierReader(mod,path) end
-        local content,index=read(root..'/'..path:gsub('^media/lua/','')),1
-        if FireTestQMChangedSource and path:find('LootSorter_CraftMenu.lua',1,true)then content=content..'\n-- changed\n'end
-        return {readLine=function()
-            if index>#content then return end
-            local stop=content:find('\n',index)or #content+1
-            local line=content:sub(index,stop-1);index=stop+1;return line
-        end,close=function()end}
-    end
     LootSorter={};isDebugEnabled=function()return false end
     player.getCharacterActions=function()return list()end
     player.getCurrentState=function()end
@@ -251,15 +241,13 @@ if NativeQuartermasterLuaRoot then
     end
     if FireTestQMPreloaded then require('LootSorter_CraftMenu')end
     local source=read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua')
-    local first=assert(source:find('local sourceFiles = {',1,true))
-    local last=assert(source:find('function Compat.prune()',first,true))
-    local functions=assert(source:find('-- getModFileReader resolves',last,true))
-    local stop=assert(source:find('local function snapshot(class)',functions,true))
-    -- Execute the production observer and checksum code without unrelated mod adapter fixtures.
-    local compat=assert(loadstring('local Compat,craftOwners={},{}\n'..source:sub(first,last-1)..source:sub(functions,stop-1)
-        ..'\nprepareQuartermasterContainers()\nreturn Compat'))()
+    local first=assert(source:find('local quartermasterContainers',1,true))
+    local stop=assert(source:find('local function snapshot(class)',first,true))
+    -- Exercise the owned installer handoff without unrelated external-source adapters.
+    local compat=assert(loadstring('local Compat,craftOwners={},{}\n'..source:sub(first,stop-1)
+        ..'\nreturn Compat'))()
     PZSurvivorToolkit.ActionQueueCompat=compat
-    -- The normal client loader still runs the file when early observation was refused.
+    -- Both preloaded and normally loaded owned modules use the same explicit handoff.
     if not loaded then require('LootSorter_CraftMenu')end
     quartermasterOwner=LootSorter
     quartermasterStart=function()
@@ -303,10 +291,10 @@ if bcControls then
 end
 if quartermasterStart then
     if not FireTestQMBeforeBC then quartermasterStart()end
-    local valid=not (FireTestQMPreloaded or FireTestQMForeignPredecessor or FireTestQMChangedSource)
+    local valid=not FireTestQMForeignPredecessor
     assert(api.matchesContainerGetter(originalContainerGetter)==valid,'Quartermaster accepts only the observed trusted predecessor')
     assert(api.matchesContainerGetter(ISInventoryPaneContextMenu.getContainers)==valid,'Quartermaster current getter keeps the exact observed chain')
-    if not valid then print('Fire unknown/preloaded/changed Quartermaster chains remain opaque.');return end
+    if not valid then print('Fire unknown Quartermaster predecessor remains opaque.');return end
     local getter=ISInventoryPaneContextMenu.getContainers
     ISInventoryPaneContextMenu.getContainers=function(...)return getter(...)end
     assert(not api.matchesContainerGetter(originalContainerGetter),'an arbitrary late getter replacement revokes the chain')

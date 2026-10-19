@@ -2,7 +2,7 @@
 
 For the Steam edition of Project Zomboid **B42.21**. The server and all players must use the same game build and identical local mod files.
 
-The [server INI](SurvivorQoL-selected.ini) defines the required set. Install the current Toolkit and Java Patches from the [repository components](README.md#components); their versions are recorded in their component metadata and [changelog](CHANGELOG.md). Wishlist is part of Toolkit; its lists and Options > Mods > Survivor Wishlist settings remain available. Java Patches are experimental and target B42.21 only. Feature switches remain per-player; the action queue is enabled on fresh profiles and preserves existing preferences. See [features and limitations](docs/FEATURES.md).
+The [server INI](SurvivorQoL-selected.ini) defines the required set. Install the current Toolkit and Java Patches from the [repository components](README.md#components); their versions are recorded in their component metadata and [changelog](CHANGELOG.md). Wishlist and the complete Quartermaster feature set are part of Toolkit, including sorting, presets, crafting and the storage manifest. Their existing data and settings remain available. Java Patches are experimental and target B42.21 only. Feature switches remain per-player; the action queue is enabled on fresh profiles and preserves existing preferences. See [features and limitations](docs/FEATURES.md).
 
 Java Patches 0.1.18 gives one stock corridor a distinct persistent room key. After saving with this correction, loading without the patch (including an unsupported game update) loses that corridor's saved explored, lighting, spawning and roof flags. Keep save backups and the matching patch; see [the save dependency](JavaPatches/README.md#map-data-and-cross-cell-basement-rooms).
 
@@ -59,10 +59,10 @@ After launching the client, check for **ZombieBuddy ... loaded** in the upper-le
 
 ## Update the set
 
-1. Stop the server and all clients. Back up the world and `Zomboid/Lua/PZSurvivorWishlist/`. Keep this data directory and the Wishlist settings in Mod Options; they preserve Wishlist data and preferences.
+1. Stop the server and all clients. Back up the world and `Zomboid/Lua/`, including Wishlist data, `QuartermasterPresets.txt`, `PZSTQuartermasterPresets_a.txt`, `PZSTQuartermasterPresets_b.txt` and `PZSTQuartermasterTagRules.txt` when present. Keep these files and both mods' existing settings; they preserve lists, sorting presets and preferences. Container designations stay in the world save.
 2. Delete the old installed `Zomboid/mods/PZSurvivorWishlist` folder from every client, Host and dedicated-server installation. In the game's Mods menu, remove the old `PZSurvivorWishlist` Mod ID from each saved single-player profile's mod list; leave `PZSurvivorToolkit` enabled. Never load the old Wishlist folder and integrated Toolkit version together. Do not delete `Zomboid/Lua/PZSurvivorWishlist/` or the Wishlist Mod Options.
 3. Update the repository and run `tools/prepare_install.py` again. Replace both local folders on the server and clients with this matching prepared version; do not merge old and new files.
-4. Copy only `Mods=` and `WorkshopItems=` from the prepared INI into an existing server profile. Keep `MedicineMoodlesB42`, `TakeAnyAmount` and `TVRadioReinventedFix4220` disabled; Toolkit supplies their replacements. Keep Moodle Framework and the main TV & Radio ReInvented mod.
+4. Copy only `Mods=` and `WorkshopItems=` from the prepared INI into an existing server profile. Remove the separate `Quartermaster` Mod ID and Workshop item `3761216758` from existing server and single-player mod lists; disable any local Quartermaster copy before loading the updated Toolkit. Do not load both copies together or delete their saved data. Keep `MedicineMoodlesB42`, `TakeAnyAmount` and `TVRadioReinventedFix4220` disabled; Toolkit supplies their replacements. Keep Moodle Framework and the main TV & Radio ReInvented mod.
 5. Use one installation method per Workshop mod: Steam or a complete local copy. The INI does not update local copies. Reapprove changed Java JARs when prompted on clients and the server.
 6. Start and join, checking the server Java loader as above. For version mismatches, compare both local folders and Workshop updates. Keep `DoLuaChecksum=true`.
 

@@ -1,5 +1,5 @@
 local enabled, starts, creates = true, {}, {}
-local openedRulePicker, savedRule
+local openedRulePicker, savedRule, adapter
 local scriptCatalog = {}
 local ruleApi = {getBoxRevision = function() return 0 end, getBox = function() end, getPreset = function() end, installClient = function() end, presetsSynced = function() return true end,
     scriptItems = function() return scriptCatalog end,
@@ -13,6 +13,7 @@ require = function(name)
         return {get=function(id) return {r=0.3,g=0.7,b=0.3,texture=id and {id=id} or nil} end}
     end
     if name == 'PZSurvivorToolkit/QuartermasterTagRuleClient' then return ruleApi end
+    if name == 'PZSurvivorToolkit/QuartermasterTags' then return assert(adapter) end
     if name == 'PZSurvivorToolkit/TagRulePicker' then return {open = function(args) openedRulePicker = args end} end
     assert(name == 'PZSurvivorToolkit/ItemTags')
     return {enabled = function() return enabled end,
@@ -143,17 +144,28 @@ LootSorter = {
     putPreset = function(args) return args end,
     openPicker = function() LootSorter._picker = picker(); return 'opened' end,
     openPresetEditor = function() LootSorter._presetEditor = picker('preset'); return 'edited' end}
-local adapter = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/QuartermasterTags.lua')
-starts[1](); local wrapped = LootSorter.openPicker
-starts[1](); creates[1]()
-assert(LootSorter.openPicker == wrapped, 'duplicate event wrappers')
+local originalOpen, originalEdit, originalPut = LootSorter.openPicker, LootSorter.openPresetEditor, LootSorter.putPreset
+adapter = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/QuartermasterTags.lua')
+assert(#starts == 0 and #creates == 0 and LootSorter.openPicker == originalOpen
+    and LootSorter.openPresetEditor == originalEdit and LootSorter.putPreset == originalPut,
+    'tag UI installed global wrappers or event-time hooks')
+local function open()
+    local result = LootSorter.openPicker()
+    adapter.attach(LootSorter._picker)
+    return result
+end
+local function edit()
+    local result = LootSorter.openPresetEditor()
+    adapter.attach(LootSorter._presetEditor)
+    return result
+end
 local function find(p, tagOrCategory)
     for index, row in ipairs(p.listbox.items) do
         if row.item.tag == tagOrCategory or row.item.key == tagOrCategory then return row.item, index end
     end
 end
 local function click(p, id) local row = assert(find(p, id), 'missing ' .. id); p.listbox.onmousedown(p, row); p:prerender() end
-assert(LootSorter.openPicker() == 'opened')
+assert(open() == 'opened')
 local p = LootSorter._picker
 assert(p.children[#p.children] == p.dimmer, 'tag switch bypasses preset dimmer')
 assert(p.rows[1] == p.toolkitTagSwitch and p.rows[2] == p.toolkitTagRuleButton and p.listbox.y == 156)
@@ -217,7 +229,7 @@ p.btnSave.onclick(p)
 assert(p.closed and storedCats.OC_Food and storedCats.MissingModCategory and not storedCats.food)
 assert(storedItems.Hammer, 'item selection lost on category save')
 categoryTags.OC_FoodNew = {'food'}; availableCats[#availableCats + 1] = 'OC_FoodNew'
-LootSorter.openPicker(); local reopened = LootSorter._picker
+open(); local reopened = LootSorter._picker
 assert(reopened ~= p and reopened.selectedCats.OC_Food and reopened.selectedCats.MissingModCategory)
 assert(not reopened.selectedCats.OC_FoodPerishable and reopened.toolkitTagView, 'reopen rebuilt broad tag selections')
 assert(not reopened.selectedCats.OC_FoodNew, 'saved tags automatically selected a later-added category')
@@ -225,7 +237,7 @@ local _, unknownIndex = find(reopened, 'MissingModCategory')
 reopened.listbox.mouseoverselected = unknownIndex
 reopened.listbox.onRightMouseUp(reopened.listbox)
 assert(reopened.listbox.inspected == 'MissingModCategory', 'unknown category inspector lost')
-LootSorter.openPresetEditor(); local editor = LootSorter._presetEditor
+edit(); local editor = LootSorter._presetEditor
 click(editor, 'perishable'); editor.refuse = true; editor.btnSave.onclick(editor)
 assert(editor.failureShown and not editor.closed, 'preset conflict protection bypassed')
 editor.refuse = false; editor.btnSave.onclick(editor)
@@ -237,7 +249,7 @@ assert(reopened.selectedCats.OC_Food and reopened.selectedCats.OC_FoodNew, 'batc
 enabled = false
 reopened:prerender()
 assert(not reopened.toolkitTagSwitch.visible and reopened.listbox.y == 100 and find(reopened, 'OC_Food'))
-LootSorter.openPicker(); local openedDisabled = LootSorter._picker
+open(); local openedDisabled = LootSorter._picker
 assert(openedDisabled.toolkitTagSwitch and not openedDisabled.toolkitTagSwitch.visible
     and openedDisabled.listbox.y == 100 and find(openedDisabled, 'OC_Food'), 'disabled picker did not retain native view')
 enabled = true; openedDisabled:prerender()
@@ -256,17 +268,17 @@ openedDisabled.btnSave.onclick(openedDisabled)
 assert(savedRule == dynamicRule and openedDisabled.closed, 'dynamic rule was not saved before native designation')
 ruleApi.presetsSynced = function() return false end
 editor.toolkitTagRule, editor.toolkitTagRuleTouched = nil, nil
-local payload = LootSorter.putPreset({cats=editor.selectedCats})
+local payload = adapter.presetArgs(editor,{cats=editor.selectedCats})
 assert(payload.pzstTagRule == nil, 'unsynced preset metadata was cleared by native exact-selection save')
 editor.toolkitTagRule, editor.toolkitTagRuleTouched = dynamicRule, true
-payload = LootSorter.putPreset({cats=editor.selectedCats})
+payload = adapter.presetArgs(editor,{cats=editor.selectedCats})
 assert(payload.pzstTagRule == dynamicRule, 'explicit rule edit was not passed through native preset conflict request')
 local delayed, requests
 ruleApi.saveBox = function(_, _, rule, _, callback, baseRevision)
     assert(baseRevision == 0, 'picker save did not use opening rule revision')
     delayed, requests = callback, (requests or 0) + 1
 end
-LootSorter.openPicker(); local pendingPicker = LootSorter._picker
+open(); local pendingPicker = LootSorter._picker
 pendingPicker.toolkitTagRule, pendingPicker.toolkitTagRuleTouched = dynamicRule, true
 pendingPicker.selectedCats.Before = true; pendingPicker.selectedItems.BeforeItem = true
 pendingPicker.priority = 4
@@ -280,19 +292,19 @@ delayed('ok', 1)
 assert(storedCats.Before and not storedCats.Later and storedItems.BeforeItem and not storedItems.LaterItem,
     'native save mixed accepted rule with selections changed during request')
 assert(pendingPicker.priority == 4 and not pendingPicker.selectedPresets.LaterPreset and pendingPicker.toolkitTagRule == dynamicRule)
-LootSorter.openPicker(); local cancelled = LootSorter._picker
+open(); local cancelled = LootSorter._picker
 cancelled.toolkitTagRule, cancelled.toolkitTagRuleTouched = dynamicRule, true
 cancelled.selectedCats.MustNotSave = true; cancelled.btnSave.onclick(cancelled)
 local cancelledReply = delayed
 cancelled:close()
-LootSorter.openPicker(); local replacement = LootSorter._picker
+open(); local replacement = LootSorter._picker
 cancelledReply('ok', 2)
 assert(LootSorter._picker == replacement and not replacement.closed and not storedCats.MustNotSave,
     'late save after close overwrote designation or closed replacement picker')
 replacement.toolkitTagRule, replacement.toolkitTagRuleTouched = dynamicRule, true
 replacement.selectedCats.ReplacedMustNotSave = true; replacement.btnSave.onclick(replacement)
 local replacedReply = delayed
-LootSorter.openPicker(); local newest = LootSorter._picker
+open(); local newest = LootSorter._picker
 replacedReply('ok', 3)
 assert(LootSorter._picker == newest and not newest.closed and not storedCats.ReplacedMustNotSave,
     'late save from replaced picker overwrote designation or closed current picker')
@@ -317,7 +329,7 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
         script(names[2],'OC_Snack',{'food','snack','farming','seed'}),
         script(names[3],'OC_Seeds',{'farming','seed'}),script(names[4],'OC_Seeds',{'farming'}),
         script(names[5],'OC_SeedOnly',{'farming','seed'})}
-    LootSorter.openPicker();local itemPicker=LootSorter._picker
+    open();local itemPicker=LootSorter._picker
     itemPicker.selectedItems['Sunflower seeds']=true
     local seed,seedIndex=assert(find(itemPicker,'seed'))
     assert(seed.requiresRule and seed.items==nil and #seed.categories==1 and seed.categories[1]=='OC_SeedOnly',
@@ -359,10 +371,6 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
     assert(openedRulePicker.scriptItems==scriptCatalog,'dynamic editor preview lacks the script catalog')
 end
 print('Quartermaster tag checks passed: exact saved keys, partial/refined batches, filters, controller, modes, conflicts, reopens and opt-out.')
-if NativeQuartermasterLuaRoot then
-    scriptCatalog = {}
-    dofile(ProjectRoot .. '/tests/support/quartermaster_picker_source.lua')(adapter, control, ruleApi, find, click,
-        function() return openedRulePicker end)
-else
-    print('SKIP: upstream Quartermaster picker contract requires --quartermaster-source')
-end
+scriptCatalog = {}
+dofile(ProjectRoot .. '/tests/support/quartermaster_picker_source.lua')(adapter, control, ruleApi, find, click,
+    function() return openedRulePicker end)

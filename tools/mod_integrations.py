@@ -61,25 +61,6 @@ INTEGRATIONS = {
         'argument': 'CategoryFilters.lua',
         'tests': {'test_bc_filter_compat.lua': ['CategoryFilters.lua']},
     },
-    'Quartermaster': {
-        'owners': ['client/PZSurvivorToolkit/QuartermasterTags.lua',
-                   'shared/PZSurvivorToolkit/QuartermasterTagRules.lua',
-                   'client/PZSurvivorToolkit/QuartermasterTagRuleClient.lua',
-                   'server/PZSurvivorToolkit/QuartermasterTagRuleAuthority.lua',
-                   'client/PZSurvivorToolkit/QuartermasterCraftUI.lua'],
-        'option': 'quartermaster_source', 'root': 'media/lua',
-        'tests': {'test_quartermaster_tags.lua': ['client/LootSorter_Picker.lua'],
-                  'test_quartermaster_tag_rules.lua': ['shared/LootSorter_Presets.lua', 'shared/LootSorter_Util.lua',
-                                                      'shared/LootSorter_Plan.lua', 'client/LootSorter_PresetSync.lua',
-                                                      'client/LootSorter_Core.lua'],
-                  'test_quartermaster_sync.lua': ['shared/LootSorter_Util.lua', 'shared/LootSorter_Presets.lua',
-                                                   'client/LootSorter_PresetSync.lua', 'client/LootSorter_Core.lua'],
-                  'test_quartermaster_preset_codec.lua': ['shared/LootSorter_Presets.lua'],
-                  'test_quartermaster_preset_transactions.lua': ['shared/LootSorter_Util.lua', 'shared/LootSorter_Presets.lua',
-                      'client/LootSorter_PresetSync.lua', 'client/LootSorter_Core.lua', 'server/LootSorter_Presets.lua'],
-                  'test_quartermaster_item_routing.lua': ['shared/LootSorter_Plan.lua'],
-                  'test_quartermaster_craft_ui.lua': ['client/LootSorter_CraftMenu.lua']},
-    },
 }
 
 
@@ -122,7 +103,6 @@ def configure(args, project, requested):
         print('Upstream ' + id + ' -> ' + ', '.join(spec['owners']) + ' -> '
               + ', '.join(test for test in spec['tests'] if test in checks))
     for test, option, relative in (('test_tv_controls.lua', 'native_radio_root', 'media/lua/client'),
-                                    ('test_quartermaster_craft_ui.lua', 'native_action_root', 'media/lua'),
                                     *[(test, 'native_inventory_pane', 'media/lua/client/ISUI/ISInventoryPane.lua')
                                       for test in INTEGRATIONS['CleanUI']['tests']]):
         if test in checks:

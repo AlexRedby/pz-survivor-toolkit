@@ -1,0 +1,34 @@
+module Quartermaster
+{
+    /* The Storage Manifest: a small craftable item whose right-click "Open storage manifest"
+       opens the read-only manifest window (see media/lua/client/LootSorter_Manifest.lua).
+       It is an ordinary carryable item -- the right-click behaviour is keyed off this item's
+       fullType (Quartermaster.StorageManifest) in LootSorter_ContextMenu.lua. */
+    item StorageManifest
+    {
+        DisplayCategory = Literature,
+        ItemType = base:normal,
+        Weight = 0.2,
+        Icon = QuartermasterManifest,
+        WorldStaticModel = EmptyNotebook,
+    }
+
+    /* Handcraft (Tags = InHandCraft -> no workstation/surface needed). No NeedToBeLearn, so it is
+       known by default. Consumes a notebook or notepad, keeps the pencil. */
+    craftRecipe MakeStorageManifest
+    {
+        time = 150,
+        Tags = InHandCraft,
+        category = Miscellaneous,
+        timedAction = Making,
+        inputs
+        {
+            item 1 [Base.Notebook;Base.Notepad],
+            item 1 [Base.Pencil] mode:keep,
+        }
+        outputs
+        {
+            item 1 Quartermaster.StorageManifest,
+        }
+    }
+}

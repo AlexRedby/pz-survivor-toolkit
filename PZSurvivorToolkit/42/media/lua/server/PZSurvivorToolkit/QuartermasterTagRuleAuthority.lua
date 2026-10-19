@@ -8,7 +8,7 @@ end
 
 function Rules.applyBox(player, args)
     if isClient() or not player or type(args) ~= "table" or not LootSorter
-        or not LootSorter.pzstTagRuleResolver or type(LootSorter.squareHasDesignation) ~= "function" then return "invalid" end
+        or type(LootSorter.squareHasDesignation) ~= "function" then return "invalid" end
     local value = args.rule
     if value == false then value = nil end
     local rule = Tags.normalizeRule(value)
@@ -38,10 +38,6 @@ function Rules.applyBox(player, args)
     md[Rules.REVISIONS][key] = revision + 1
     md[Rules.FIELD] = md[Rules.FIELD] or {}
     md[Rules.FIELD][key] = Tags.ruleActive(rule) and rule or nil
-    if Tags.ruleActive(rule) then
-        md.LSBox = md.LSBox or {}
-        md.LSBox[key] = md.LSBox[key] or {}
-    end
     obj:transmitModData()
     local registry = ModData.getOrCreate("LootSorter_Registry")
     registry.boxes = registry.boxes or {}
@@ -52,7 +48,6 @@ function Rules.applyBox(player, args)
 end
 
 function Rules.installAuthority()
-    Rules.installShared()
     if not LootSorter or LootSorter.pzstTagRuleAuthority or not LootSorter.serverFns
         or not LootSorter.serverFns.putPreset then return end
     LootSorter.pzstTagRuleAuthority = true

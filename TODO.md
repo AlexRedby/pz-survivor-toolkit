@@ -1,12 +1,8 @@
 # Wooden wheelbarrow collisions
 
-- [ ] Check manually backing the wooden wheelbarrow out of tight wall contact with female models and in MP; do not count a male-model SP check as a network check. Preserve manual reverse, natural rolling and native collision; do not add automatic backing.
+- [ ] Finish relative-key manual reverse wall exits: remove small accumulated opposite-yaw corrections and release drift under tight contact, and obtain complete <=500 ms sampling and route edges for all eight scenes. Keep the existing <=.02 rad opposite-yaw and <=.025 rad release budgets; do not relax them to accept the current captures. Extend to female models and MP; preserve manual reverse, natural rolling and native collision, without automatic backing.
 - [ ] On the next shared cart-native run, obtain the standard path report with same-tick CancelAction/terminal accounting fixed: the saved 24 routes were checked in separate analysis; leave the original report unchanged. The shared visual gate remains open due to wide-trouser contact with the left handle and unclassified font messages.
 - [ ] Check the wooden wheelbarrow's braced stance in the remaining collision scenes: the full bank with a female model and Walk with a full load. Check feet, grip, wheel and absence of jolts; test Run/Sprint and impact in separate scenarios.
-
-# Networked cart animation
-
-- [ ] Implement visual reconstruction for remote players: separate the remote render gate from local steering, transmit or reconstruct pivot/reverse step/tempo/lean/wheel rotation, and apply grip/grounding according to the remote pose. Do not run the local movement model on the observer/server; preserve native network coordinates and collisions. Check a real owner+observer pair using the same onlineID/cartID, with full render coverage across all phases; the original defect is confirmed in MP, so do not count a local variant as a network PASS.
 
 # Natural wooden wheelbarrow animation
 
@@ -20,12 +16,10 @@
 
 - [ ] In game, check putting down a wooden wheelbarrow via the SaucedCarts hotkey: completion/cancellation and quick repeat, position in the adjacent square, grip, wheel and world/held handoff; separately confirm owner/server/observer in MP. Local checks do not replace the visual and network gate.
 
-- [ ] Find the source of the brief inventory-icon silhouette appearing on first selecting the cart and after putting it down, when the orange highlight turns on: the intermediate icon outline should disappear while the normal orange highlight on the 3D model remains. Reproduce first and repeated selection/put-down; defer implementation at the user's request.
-
-- [ ] Eliminate brief wide-trouser intersections with the left shaft as the character lowers into position before gripping, especially after a diagonal approach; fabric contact still occurs up to 37% of pickup. Check all skin/pants geometry at Thigh/Calf, not just the pelvis; preserve the agreed shallow crouch, foot support, knee direction and grip. Do not hide contact by moving the pelvis too far back.
+- [ ] Extend pickup clearance checks to the remaining approach angles and clothing combinations. Check all skin/pants geometry at Thigh/Calf, not just the pelvis; preserve the agreed shallow crouch, foot support, knee direction and grip.
 - [ ] Check wheel phase continuity during an emergency pickup/put-down reset; preserve verified ownership, load and grip recovery.
 - [ ] Extend pickup/put-down cancellation checks to Run/Sprint movement, tempo changes and releasing WASD before recovery ends. Preserve limited pose return, grip, arm lengths, wheel phase and repeat action; already checked Walk/CancelAction does not cover these variants.
-- [ ] Check pickup from a container and approaches to the handles from the wrong side/across obstacles; coordinate with native path following while preserving the single authoritative complete and exact itemId/XYZ.
+- [ ] Check pickup from a container and approaches to the handles from the wrong side/across obstacles, including a blocked final alignment step, cancellation/target loss during approach and an independent queued action after it. Preserve native collision, the single authoritative complete and exact itemId/XYZ.
 - [ ] For pickup/put-down, extend live checks to cancellation before MP handoff, a late network result, item loss/replacement, cart destruction, stairs, combat/fall/death and restarting after these events. Preserve verified exact IDs/load and world/held handoff; do not delay emergency instant-drop. Lua/hook regressions do not replace the native visual gate and MP owner+observer.
 
 ## Known pose defects
@@ -58,7 +52,7 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Shared game sessions and build regression
 
-- [ ] Extend the common scenario contracts beyond the first equipment scopes. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
+- [ ] Extend the common scenario contracts beyond equipment and fluid drinking. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
 
 - [ ] Recheck affected source-pinned queue integrations against the updated Workshop sources. Start with Project Cook’s changed EvoPanel, including new base-item return/retry paths. Compare the explicitly locked working baseline with current callbacks and run the affected SP/Host cases with queue-disabled controls; source changes must not silently inherit old permissions or old test results.
 - [ ] Cart chat: integrate the published combined SP cart matrices and collision cases after their native checks are complete. Keep independent cold controls; separately measure an explicit full regression profile (the estimated 17 startup cycles instead of 29 are not yet confirmed).

@@ -144,6 +144,15 @@ When using both mods, load them in this order: **NeatUI Framework, CleanUI, PZ S
 
 With **Better Containers**, Toolkit owns category filters, preserving its proximity and container features. Keep Toolkit before Better Containers and MP Fast Forward; malformed speed commands are rejected before they reach MP Fast Forward. The selected INI already sets this order.
 
+### Quartermaster
+
+Toolkit includes Quartermaster's storage designations, automatic distribution,
+storage Manifest and ingredient fetching for vanilla and Neat Crafting. Disable
+the separate Quartermaster mod when updating; existing assignments, presets and
+options retain their identifiers. The Manifest retains its single-player scope.
+The original implementation and assets are credited in the
+[third-party notices](../PZSurvivorToolkit/THIRD_PARTY_NOTICES.md).
+
 ### Item tags
 
 For the organizedCategories taxonomy, disable **Better Containers > Show Advanced Display Categories** so organizedCategories supplies the category IDs. Unknown category IDs remain readable as individual tags.
@@ -154,7 +163,7 @@ Choose **Combine tags...** in the inventory column dropdown to select multiple t
 
 All 209 defined tags have native game icons, including shared ammunition icons for calibers; labels stay visible to distinguish them. Unknown/custom categories use a generic clipboard icon and keep their exact names. The schema contains 357 exact category mappings: all 274 organizedCategories translation IDs plus the known assignments found in the installed B42.21 game and selected mod sources. Both `FurnitureDoor` and `furnitureDoor` retain their original IDs. Saved exact-category filters keep matching after a category receives semantic tags. Arbitrary runtime category overrides remain opaque rather than being guessed from their names. Use `tools/check_tag_categories.py` with explicit game/mod roots to audit another installation.
 
-The **Saved tag filters** submenu saves the current tag rule under a name, reapplies it or deletes it. Saving under an existing name replaces that rule. These filters are local to your client and available across saves; text search is kept separate. Two alternating files under `Zomboid/Lua/PZSurvivorToolkit_TagFilters_*.txt` retain the previous snapshot if a write is interrupted. Quartermaster is not required.
+The **Saved tag filters** submenu saves the current tag rule under a name, reapplies it or deletes it. Saving under an existing name replaces that rule. These filters are local to your client and available across saves; text search is kept separate. Two alternating files under `Zomboid/Lua/PZSurvivorToolkit_TagFilters_*.txt` retain the previous snapshot if a write is interrupted. These inventory filters are independent of storage designations.
 
 Quartermaster's category picker defaults to tags. Selecting Food or Electrical selects matching whole categories; a dash indicates a partial selection. If a tag covers only part of a category, it opens the rule editor and saves stable tag IDs, so EN/RU clients use the same assignment. Switching to exact categories retains refinement, individual items and presets. Batch category selection saves exact category IDs; the separate Tag rule also supports combined dynamic matching.
 

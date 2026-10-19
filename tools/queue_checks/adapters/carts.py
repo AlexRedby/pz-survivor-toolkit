@@ -33,7 +33,8 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
             'repeat': ('scenario-interaction.lua', 12), 'manual': ('bootstrap.lua', 0),
-            'path': ('scenario-path.lua', 24), 'variants': ('scenario-variants.lua', 3)}
+            'path': ('scenario-path.lua', 24), 'variants': ('scenario-variants.lua', 3),
+            'controls': ('scenario-controls.lua', 3)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 SCENE_SPECS = {
     'sprint': ('comparison', 'direct', 'gait', 'runstop'),
@@ -56,10 +57,22 @@ VARIANTS = {'shopping-cart': 'SaucedCarts.ShoppingCart',
             'metal-wheelbarrow': 'SaucedWheelbarrow.WheelbarrowMetal'}
 VARIANT_PHASES = ('inventory-equip', 'walk', 'run', 'sprint', 'drop-near', 'pickup-near',
                   'drop-far', 'pickup-far', 'drop-repeat', 'pickup-repeat')
+CONTROL_PHASES = (
+    ('forward-0', 1, 0, 1000), ('forward-angle', 1, 0, 1000),
+    ('left-held', 5, 1, 4000), ('left-release', 1, 0, 600),
+    ('right-held', 8, 1, 4000), ('right-release', 1, 0, 600),
+    ('pivot-left', 2, 0, 1300), ('pivot-right', 3, 0, 1300), ('pivot-release', 0, 0, 700),
+    ('reverse', 4, 0, 1200), ('reverse-left', 6, 0, 1500), ('reverse-right', 7, 0, 1500),
+    ('moving-forward', 1, 0, 1000), ('moving-reverse', 4, 0, 1800),
+    ('run', 1, 1, 1000), ('run-stop', 0, 0, 1200),
+    ('sprint', 1, 2, 1000), ('sprint-stop', 0, 0, 1500))
+CONTROL_POSES = {'forward-0': 0, 'forward-angle': 2.1, 'left-held': 0, 'right-held': 0,
+                 'pivot-left': 0, 'pivot-right': 0, 'reverse': .8, 'reverse-left': .8,
+                 'reverse-right': .8, 'moving-forward': 1.3, 'run': 1.3, 'sprint': 1.3}
 
 
 def scene_names(case):
-    if case == 'variants':
+    if case in ('variants', 'controls'):
         return list(VARIANTS)
     if case == 'manual':
         return []
@@ -139,6 +152,14 @@ def validate(selection):
     if 'cart_authored_clip' in selection.get('options', {}):
         if suite != SP or type(selection['options']['cart_authored_clip']) is not bool:
             raise ValueError('cart_authored_clip requires an SP boolean pilot selection')
+    for flag in ('cart_fast_motion', 'cart_actions'):
+        if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
+            raise ValueError(flag + ' requires an MP boolean selection')
+    options = selection.get('options', {})
+    if 'cart_variant' in options and (suite != MP or not isinstance(options['cart_variant'], str) or options['cart_variant'] not in VARIANTS):
+        raise ValueError('cart_variant requires an exact MP cart variant: ' + ', '.join(VARIANTS))
+    if options.get('cart_actions') and options.get('cart_variant', 'wooden-wheelbarrow') != 'wooden-wheelbarrow':
+        raise ValueError('cart_actions requires wooden-wheelbarrow')
     overrides = selection.get('options', {}).get('mod_sources', {})
     for identifier in ('PZSurvivorToolkit', 'PZToolkitJavaPatches'):
         value = overrides.get(identifier)
@@ -146,7 +167,7 @@ def validate(selection):
             raise ValueError('Explicit candidate options.mod_sources.' + identifier + ' is required')
     for key in ('patch_jar', 'ffmpeg', 'ffprobe'):
         _path(selection, key, executable=key != 'patch_jar')
-    if suite == SP and selection['cases'] != ['variants']:
+    if suite == SP and selection['cases'][0] not in ('variants', 'controls'):
         _path(selection, 'mesh_fbx')
         try:
             importlib.import_module('numpy')
@@ -161,8 +182,10 @@ def sources(project, selection):
                   and path.suffix in ('.py', '.lua', '.java', '.json', '.md', '.mf', '.methods')]
     if selection['suite'] == SP:
         paths += [Path(project) / 'tests/native_queue/support/QueueCartStartup.lua']
-        if selection['cases'] != ['variants']:
+        if selection['cases'][0] not in ('variants', 'controls'):
             paths.append(_path(selection, 'mesh_fbx'))
+    if selection['suite'] == MP:
+        paths.append(Path(project) / 'tests/native_queue/startup/client/ZZStartup.lua')
     paths += [_path(selection, key, key != 'patch_jar') for key in ('patch_jar', 'ffmpeg', 'ffprobe')]
     return paths
 
@@ -191,7 +214,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     project, output, game = map(Path, (project, output, game))
     sp, mp = _intake(project, SP), _intake(project, MP)
     manual = selection['suite'] == SP and selection['cases'] == ['manual']
-    variants = selection['suite'] == SP and selection['cases'] == ['variants']
+    simple = selection['suite'] == SP and selection['cases'][0] in ('variants', 'controls')
     patch = _path(selection, 'patch_jar')
     if not any(hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(patch.read_bytes()).digest()
                for path in Path(locations['PZToolkitJavaPatches']).rglob('*.jar')):
@@ -212,9 +235,9 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     evidence = sp / 'evidence'
     probe_sources = ([mp / 'ClearanceProbe.java'] if selection['suite'] == MP else
                      [evidence / (name + '.java') for name in ('WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe')])
-    if not manual and not variants:
+    if not manual and not simple:
         _compile(jdk, classpath, build / 'probe-classes', [*probe_sources, evidence / 'AttachWoodenWheelProbe.java'])
-    probes = [] if manual or variants else ['ClearanceProbe'] if selection['suite'] == MP else ['WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe']
+    probes = [] if manual or simple else ['ClearanceProbe'] if selection['suite'] == MP else ['WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe']
     for name in probes:
         _jar(build / (name + '.jar'), build / 'probe-classes', (mp if selection['suite'] == MP else evidence) / (name + '.mf'))
     fixture = runtime.setdefault('fixture', {})
@@ -222,7 +245,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     fixture['attach'] = {}
     if manual:
         fixture['manual'] = True
-    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL']
+    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL']
     videos = {role: str(Path(config['cache']) / 'videos') for role, config in runtime['roles'].items() if role != 'server'}
     config = dict(selection, port=selection['ports'][0], disposable=True, ffmpeg=str(_path(selection, 'ffmpeg', True)), videoRoot=videos)
     for role, spec in runtime['roles'].items():
@@ -239,7 +262,9 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         options = cache / 'options.ini'
         _write(options, options.read_text() + 'toggleToRun=false\ntoggleToSprint=false\ndblTapJogToSprint=false\npauseOnFocusLoss=false\n')
         if selection['suite'] == MP:
-            for origin, target in [('client.lua', 'client/ZZCartMP.lua'), ('server.lua', 'server/ZZCartMP_Server.lua'),
+            if role != 'server':
+                _write(lua / 'client/QueueCartMPStartup.lua', (project / 'tests/native_queue/startup/client/ZZStartup.lua').read_text())
+            for origin, target in [('client.lua', 'client/ZZCartMP.lua'), ('actions.lua', 'client/CartMPActions.lua'), ('server.lua', 'server/ZZCartMP_Server.lua'),
                                    ('placement.lua', 'shared/CartMPPlacement.lua'), ('json.lua', 'shared/CartMPJSON.lua')]:
                 _write(lua / target, (mp / origin).read_text())
         elif role != 'server':
@@ -253,10 +278,10 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             _write(sandbox, 'SandboxVars={VERSION=6,Zombies=6,EnableVehicles=false,StartMonth=7,StartDay=9,StartTime=2}\n')
             continue
         classes = Path(spec['classes'])
-        if variants:
+        if simple:
             # An empty attachment list releases the existing startup gate without wooden probes.
             fixture['attach'][role] = []
-        if not manual and not variants:
+        if not manual and not simple:
             shutil.copy2(build / 'probe-classes/AttachWoodenWheelProbe.class', classes / 'AttachWoodenWheelProbe.class')
         for name in probes:
             target = classes / 'probes' / (name + '.jar')
@@ -329,6 +354,8 @@ def _videos(root, selection, role, text):
             raise ValueError('Expected one final MP video receipt')
         item = json.loads(rows[0]); records = [(role, '0', item['file'], str(item['frames']), str(item['seconds']))]
     expected = 1 if selection['suite'] == MP else len(selected_scenes(selection))
+    if selection['suite'] == SP and selection['cases'] == ['controls'] and [row[0] for row in records] != selected_scenes(selection):
+        raise ValueError('Missing, duplicate or reordered controls videos')
     if len(records) != expected or len({row[2] for row in records}) != expected:
         raise ValueError('Missing/duplicate completed cart clips')
     output = []
@@ -501,6 +528,171 @@ def _variant_coverage(text, scenes):
     return {'functionalPass': True, 'cases': result}
 
 
+def _controls_paused_gap(a, b, reference=None):
+    gap=b['elapsed']-a['elapsed']
+    if gap <= 500:
+        return None
+    frames=b['frame']-a['frame']
+    distance=math.hypot(b['x']-a['x'],b['y']-a['y'])
+    yaw=max(abs(math.atan2(math.sin(b[key]-a[key]),math.cos(b[key]-a[key])))
+            for key in ('heading','acceptedHeading'))
+    # Few native world updates plus a small pose change distinguish a stalled game from missing motion samples.
+    if not (gap <= 2000 and 1 <= frames <= 4 and yaw <= .15):
+        raise ValueError('Controls native sample gap lacks paused-frame evidence')
+    proof = {'startElapsed':a['elapsed'],'wallGapMs':gap,'nativeFrames':frames,'distance':distance,'yaw':yaw}
+    if distance <= .2:
+        return proof
+    if reference is None or a.get('phase') != 'sprint' or b.get('phase') != 'sprint' or a.get('case') not in VARIANTS:
+        raise ValueError('Controls native sample gap lacks paused-frame evidence')
+    c,d = reference
+    ref_gap,ref_frames = d['elapsed']-c['elapsed'],d['frame']-c['frame']
+    if (any(row.get('case') != a['case'] or row.get('phase') != 'sprint' for row in (b,c,d))
+            or not 0 < ref_gap <= 500 or ref_frames <= 0 or d['elapsed'] > a['elapsed'] or d['frame'] > a['frame']):
+        raise ValueError('Controls native sample gap lacks paused-frame evidence')
+    # Native coordinates/accepted yaw are float32. Bound both endpoint rounding errors, not wall-clock speed.
+    def spacing(value):
+        return math.ldexp(1., max(-149, math.frexp(abs(value))[1]-24)) if value else math.ldexp(1.,-149)
+    def position_error(first,last):
+        return math.hypot(*(max(spacing(first[key]),spacing(last[key])) for key in ('x','y')))
+    heading = a['acceptedHeading']
+    heading_error = 2*max(spacing(row[key]) for row in (a,b,c,d) for key in ('heading','acceptedHeading'))
+    if any(abs(math.atan2(math.sin(row[key]-heading),math.cos(row[key]-heading))) > heading_error
+           for row in (a,b,c,d) for key in ('heading','acceptedHeading')):
+        raise ValueError('Controls native sample gap lacks paused-frame evidence')
+    def straight(first,last):
+        dx,dy = last['x']-first['x'],last['y']-first['y']
+        forward = dx*math.cos(heading)+dy*math.sin(heading)
+        lateral = abs(-dx*math.sin(heading)+dy*math.cos(heading))
+        return forward > 0 and lateral <= position_error(first,last)+math.hypot(dx,dy)*math.sin(heading_error)
+    ref_distance = math.hypot(d['x']-c['x'],d['y']-c['y'])
+    allowance = position_error(a,b)+frames*position_error(c,d)/ref_frames
+    limit = frames*ref_distance/ref_frames+allowance
+    if not straight(c,d) or not straight(a,b) or distance > limit:
+        raise ValueError('Controls native sample gap lacks paused-frame evidence')
+    proof.update(method='straight-sprint-native-budget',referenceStartElapsed=c['elapsed'],referenceWallGapMs=ref_gap,
+                 referenceFrames=ref_frames,referenceDistance=ref_distance,referencePerUpdate=ref_distance/ref_frames,
+                 float32Allowance=allowance,maxDistance=limit)
+    return proof
+
+
+def _controls_coverage(text, scenes):
+    log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
+    records = [json.loads(line.split('[CART_CONTROLS] PHASE ', 1)[1])
+               for line in log.splitlines() if '[CART_CONTROLS] PHASE ' in line]
+    required = {'case', 'phase', 'kind', 'id', 'cargoID', 'cargoWeight', 'primaryID', 'secondaryID',
+                'inventoryCount', 'worldCount', 'luaActions', 'nativeActions', 'hasPath',
+                'drive', 'gait', 'gaitSeen', 'elapsed', 'samples'}
+    if any(not isinstance(row, dict) or not required <= row.keys() for row in records):
+        raise ValueError('Missing controls receipt identity/fields')
+    expected = [(name, phase[0]) for name in scenes for phase in CONTROL_PHASES]
+    if [(row['case'], row['phase']) for row in records] != expected:
+        raise ValueError('Missing, duplicate or reordered controls phases')
+    samples = {}
+    for line in log.splitlines():
+        if '[CART_CONTROLS] SAMPLE ' in line:
+            row = json.loads(line.split('[CART_CONTROLS] SAMPLE ', 1)[1])
+            if not isinstance(row, dict) or not {'case', 'phase', 'sample', 'elapsed', 'frame', 'x', 'y', 'heading', 'acceptedHeading'} <= row.keys():
+                raise ValueError('Missing controls sample identity/fields')
+            samples.setdefault((row['case'], row['phase']), []).append(row)
+    if list(samples) != expected:
+        raise ValueError('Missing, unexpected or reordered controls sample phases')
+    wrap = lambda angle: math.atan2(math.sin(angle), math.cos(angle))
+    result = []
+    last_frame = None
+    for name in scenes:
+        identity = None
+        previous = None
+        measured = []
+        for receipt, (phase, drive, gait, duration) in zip((row for row in records if row['case'] == name), CONTROL_PHASES):
+            exact = tuple(receipt[key] for key in ('id', 'cargoID', 'cargoWeight'))
+            if identity is None:
+                identity = exact
+            if (any(type(value) is not int or value < 0 for value in exact[:2])
+                    or type(exact[2]) not in (int, float) or not math.isfinite(exact[2]) or abs(exact[2]-1) > .001
+                    or exact != identity or receipt['kind'] != VARIANTS[name]
+                    or receipt['primaryID'] != exact[0] or receipt['secondaryID'] != exact[0]
+                    or receipt['inventoryCount'] != 1 or receipt['worldCount'] != 0
+                    or receipt['luaActions'] != 0 or receipt['nativeActions'] != 0 or receipt['hasPath'] is not False
+                    or receipt['drive'] != drive or receipt['gait'] != gait or receipt['gaitSeen'] is not True):
+                raise ValueError('Controls identity, ownership, queue or native gait failed: ' + name + '/' + phase)
+            rows = samples[name, phase]
+            if (len(rows) < 4 or receipt['samples'] != len(rows)
+                    or [row['sample'] for row in rows] != list(range(len(rows)))
+                    or any(type(row[key]) not in (int, float) or not math.isfinite(row[key])
+                           for row in rows for key in ('elapsed', 'x', 'y', 'heading', 'acceptedHeading'))
+                    or any(type(row['frame']) is not int or row['frame'] < 0 for row in rows)
+                    or last_frame is not None and rows[0]['frame'] < last_frame
+                    or rows[0]['elapsed'] != 0 or not duration <= rows[-1]['elapsed'] < duration+2000
+                    or receipt['elapsed'] != rows[-1]['elapsed']
+                    or any(b['elapsed'] <= a['elapsed'] or b['frame'] <= a['frame'] for a, b in zip(rows, rows[1:]))):
+                raise ValueError('Incomplete or reordered controls native samples: ' + name + '/' + phase)
+            paused_gaps,reference = [],None
+            for a,b in zip(rows,rows[1:]):
+                proof = _controls_paused_gap(a,b,reference)
+                if proof is not None:
+                    paused_gaps.append(proof)
+                elif b['elapsed']-a['elapsed'] <= 500:
+                    reference = (a,b)
+            if phase in CONTROL_POSES:
+                if any(abs(wrap(rows[0][key]-CONTROL_POSES[phase])) > .02 for key in ('heading', 'acceptedHeading')):
+                    raise ValueError('Controls initial heading not exercised: ' + name + '/' + phase)
+            elif previous is None or any(abs(rows[0][key]-previous[key]) > .001 for key in ('x', 'y', 'heading', 'acceptedHeading')):
+                raise ValueError('Controls continuous transition was repositioned: ' + name + '/' + phase)
+            yaw = travel = 0
+            segments = []
+            for a, b in zip(rows, rows[1:]):
+                turn = wrap(b['heading']-a['heading'])
+                if abs(turn) > 1:
+                    raise ValueError('Controls yaw sample gap/snap: ' + name + '/' + phase)
+                dx, dy = b['x']-a['x'], b['y']-a['y']
+                mid = a['heading']+turn/2
+                forward = dx*math.cos(mid)+dy*math.sin(mid)
+                yaw += turn; travel += forward
+                segments.append((b['elapsed'], forward, math.hypot(dx, dy), b['elapsed']-a['elapsed']))
+            if phase in ('left-held', 'right-held'):
+                correct = yaw*(-1 if drive == 5 else 1) > math.pi and travel > .4
+            elif phase in ('pivot-left', 'pivot-right'):
+                correct = yaw*(-1 if drive == 2 else 1) > .25 and abs(travel) < .12
+            elif phase == 'pivot-release':
+                correct = abs(yaw) < .1 and abs(travel) < .05
+            elif phase in ('left-release', 'right-release'):
+                accepted = rows[1:]
+                accepted_arc = sum(abs(wrap(b['acceptedHeading']-a['acceptedHeading'])) for a, b in zip(accepted, accepted[1:]))
+                visual_arc = sum(abs(wrap(b['heading']-a['heading'])) for a, b in zip(rows, rows[1:]))
+                late = [row for row in rows if row['elapsed'] >= 350]
+                late_arc = sum(abs(wrap(b['heading']-a['heading'])) for a, b in zip(late, late[1:]))
+                # Accepted yaw must stop; the native animated body can finish its existing blend.
+                correct = (accepted_arc < .02 and visual_arc < .5 and travel > .1
+                           and len(late) >= 2 and late[-1]['elapsed']-late[0]['elapsed'] >= 100
+                           and late_arc < .02 and all(abs(wrap(row['heading']-row['acceptedHeading'])) < .03 for row in late))
+            elif phase in ('reverse-left', 'reverse-right'):
+                correct = yaw*(1 if drive == 6 else -1) > .2 and travel < -.15
+            elif phase == 'moving-reverse':
+                correct = sum(row[1] for row in segments if row[0] > duration/2) < -.1 and abs(yaw) < .25
+                if name == 'wooden-wheelbarrow':
+                    correct = correct and any(row[1] > .001 for row in segments[:3])
+            elif phase.endswith('-stop'):
+                tail = [row for row in segments if row[0] > rows[-1]['elapsed']-300]
+                correct = abs(yaw) < .25 and sum(row[2] for row in tail)/sum(row[3] for row in tail)*1000 < .1
+            else:
+                correct = abs(yaw) < .25 and (travel < -.15 if drive == 4 else travel > .1)
+            if not correct:
+                release = (' acceptedYawArc=' + str(accepted_arc) + ' visualYawArc=' + str(visual_arc)
+                           + ' lateVisualYawArc=' + str(late_arc)) if phase in ('left-release', 'right-release') else ''
+                raise ValueError('Controls relative movement/yaw failed: ' + name + '/' + phase
+                                 + ' travel=' + str(travel) + ' yaw=' + str(yaw) + release)
+            detail = {'phase': phase, 'travel': travel, 'yaw': yaw, 'samples': len(rows)}
+            if paused_gaps:
+                detail['pausedFrameGaps'] = paused_gaps
+            if phase in ('left-release', 'right-release'):
+                detail.update(acceptedYawArc=accepted_arc, visualYawArc=visual_arc, lateVisualYawArc=late_arc)
+            measured.append(detail)
+            previous = rows[-1]
+            last_frame = rows[-1]['frame']
+        result.append({'case': name, 'kind': VARIANTS[name], 'id': identity[0], 'phases': measured})
+    return {'controlsVerified': True, 'cases': result}
+
+
 def verify(root, selection, catalog):
     root = Path(root)
     if selection['suite'] == SP and selection['cases'] == ['manual']:
@@ -527,9 +719,20 @@ def verify(root, selection, catalog):
         if any(not complete(selection, role, text) for role, text in texts.items()):
             raise ValueError('Cart capture did not complete')
         for text in texts.values():
-            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
+            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
                 raise ValueError('Cart capture contains fixture/probe errors')
         evidence['videos'] = {role: _videos(root, selection, role, text) for role, text in texts.items()}
+        if selection['suite'] == SP and selection['cases'] == ['controls']:
+            report = _controls_coverage(texts['client1'], selected_scenes(selection))
+            _write(analysis / 'controls.json', json.dumps(report, indent=2, allow_nan=False))
+            evidence.update(controls=report, analysis=str(analysis), evidenceComplete=True,
+                            scope='SP physical keyboard controls with light cargo; animation and mesh equivalence are not assessed')
+            return {'issues': [], 'evidence': evidence, 'outcomes': [
+                {'actor': 'client1', 'case': 'controls', 'status': 'captured',
+                 'reason': 'Native relative keyboard movement, held/released yaw, reverse and stops captured',
+                 'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
+                             'controlsVerified': True, 'partialCoverage': debug,
+                             'selectedScenes': selected_scenes(selection)}}]}
         if selection['suite'] == SP and selection['cases'] == ['variants']:
             report = _variant_coverage(texts['client1'], selected_scenes(selection))
             _write(analysis / 'variants.json', json.dumps(report, indent=2, allow_nan=False))

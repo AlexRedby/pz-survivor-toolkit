@@ -160,11 +160,22 @@ class LuaRunner(unittest.TestCase):
         self.assertTrue(self.executions[2][1]["RestartTagReconnect"])
         self.assertTrue(self.executions[3][1]["PlantingTagReconnect"])
         self.executions.clear()
-        self.invoke("--test", "test_quartermaster_craft_ui", "--quartermaster-source", "/mod",
-                    "--native-action-root", "/native")
+        self.invoke("--test", "test_quartermaster_craft_ui", "--native-action-root", "/native")
         self.assertEqual(self.executions, [("test_quartermaster_craft_ui.lua",
                          {"ProjectRoot": str(self.root), "NativePZLuaRoot": "/native",
-                          "NativeQuartermasterLuaRoot": "/mod"})])
+                          "NativeQuartermasterLuaRoot": str(self.root / "PZSurvivorToolkit/42/media/lua")})])
+
+    def test_quartermaster_checks_use_owned_sources_without_external_options(self):
+        self.invoke("--test", "test_quartermaster_tag_rules", "--test", "test_action_queue_manifest")
+        self.assertEqual({source for source, _ in self.executions},
+                         {"test_quartermaster_tag_rules.lua", "test_action_queue_manifest.lua"})
+        for _, variables in self.executions:
+            self.assertEqual(variables["NativeQuartermasterLuaRoot"],
+                             str(self.root / "PZSurvivorToolkit/42/media/lua"))
+        self.executions.clear()
+        with self.assertRaises(SystemExit):
+            self.invoke("--quartermaster-source", "/external")
+        self.assertEqual(self.executions, [])
 
     def test_game_supplies_selected_native_sources_and_preserves_explicit_overrides(self):
         game = self.root / 'game'
@@ -253,7 +264,8 @@ class LuaRunner(unittest.TestCase):
 
     def test_profile_listing_needs_no_lua_execution(self):
         self.invoke('--list-integrations')
-        self.assertIn('QuartermasterTags.lua', self.output.getvalue())
+        self.assertNotIn('Quartermaster', self.output.getvalue())
+        self.assertIn('Navigator.lua', self.output.getvalue())
         self.assertEqual([], self.executions)
         self.assertEqual(self.executions, [])
 

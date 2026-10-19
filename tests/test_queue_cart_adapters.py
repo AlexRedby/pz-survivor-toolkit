@@ -1,6 +1,7 @@
 """Cart adapter staging and evidence boundaries, without native launch/attachment."""
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import shutil
@@ -202,6 +203,199 @@ class CartAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'cart_scenes'):
             carts.validate(self.selection)
 
+    def test_controls_stage_real_keys_without_geometry_probes(self):
+        self.selection['cases'] = ['controls']; self.options.pop('mesh_fbx')
+        with patch.object(carts.importlib, 'import_module', side_effect=ModuleNotFoundError('numpy')) as dependency:
+            compiler = self.stage()
+        dependency.assert_not_called()
+        self.assertEqual(compiler.call_count, 1)
+        self.assertEqual(self.runtime['fixture']['attach'], {'client1': []})
+        self.assertEqual(carts.scene_names('controls'), list(carts.VARIANTS))
+        source = (ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-controls.lua').read_text()
+        runtime = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE'])
+        self.assertIn(source, runtime.read_text())
+        self.assertIn('cartLabGait(phase.gait);cartLabDrive(phase.drive)', source)
+        self.assertIn('heading=cartLabHeading()', source)
+        self.assertIn('acceptedHeading=cartLabSteeringHeading()', source)
+        self.assertIn('frame=cartLabFrame()', source)
+        bridge = (ROOT / 'tests/native_queue/contributions/wooden_cart_motion/Main.java').read_text()
+        self.assertIn('@LuaMethod(name="cartLabFrame", global=true)', bridge)
+        self.assertIn('return zombie.iso.IsoWorld.instance.getFrameNo();', bridge)
+        self.assertNotIn('setVariable(', source)
+        for phase, drive, gait, duration in carts.CONTROL_PHASES:
+            self.assertIn("name='" + phase + "',drive=" + str(drive) + ',gait=' + str(gait) + ',duration=' + str(duration), source)
+        lua = shutil.which('luajit') or shutil.which('lua')
+        if lua:
+            subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(runtime)) + '))'], check=True, capture_output=True)
+        self.assertIn(ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-controls.lua', carts.sources(ROOT, self.selection))
+
+    @staticmethod
+    def control_log():
+        events = []
+        frame = 100
+        for scene, kind in carts.VARIANTS.items():
+            x = y = heading = 0
+            for phase, drive, gait, duration in carts.CONTROL_PHASES:
+                if phase in carts.CONTROL_POSES:
+                    x = y = 0; heading = carts.CONTROL_POSES[phase]
+                turn = (-4 if drive == 5 else 4 if drive == 8 else -.7 if drive == 2 else .7 if drive == 3
+                        else .6 if drive == 6 else -.6 if drive == 7 else 0)
+                for index in range(11):
+                    frame += max(1, round(duration*.006)) if index else 1
+                    if index:
+                        yaw = turn/10
+                        distance = (0 if drive in (0, 2, 3) else -.06 if drive in (4, 6, 7) else .08)
+                        if phase == 'moving-reverse' and index <= 2: distance = .03
+                        if phase.endswith('-stop') and index <= 3: distance = .03
+                        x += distance*math.cos(heading+yaw/2); y += distance*math.sin(heading+yaw/2)
+                        heading = math.atan2(math.sin(heading+yaw), math.cos(heading+yaw))
+                    events.append(('SAMPLE', dict(case=scene, phase=phase, sample=index, elapsed=duration*index/10,
+                                                  frame=frame, x=x, y=y, heading=heading, acceptedHeading=heading)))
+                events.append(('PHASE', dict(case=scene, kind=kind, phase=phase, id=42, cargoID=99, cargoWeight=1,
+                    primaryID=42, secondaryID=42, inventoryCount=1, worldCount=0, luaActions=0, nativeActions=0,
+                    hasPath=False, drive=drive, gait=gait, gaitSeen=True, elapsed=duration, samples=11)))
+        return events
+
+    @staticmethod
+    def controls_text(events):
+        return '[WOOD_BANK] RUN_STARTED\n' + '\n'.join('[CART_CONTROLS] ' + kind + ' ' + json.dumps(row) for kind, row in events)
+
+    def test_controls_analyzer_uses_native_samples_and_rejects_wrong_direction_order_and_identity(self):
+        events = self.control_log()
+        self.assertTrue(carts._controls_coverage(self.controls_text(events), list(carts.VARIANTS))['controlsVerified'])
+        for label, change in (
+                ('wrong forward', lambda rows: [row.update(x=-row['x']) for kind, row in rows if kind=='SAMPLE' and row['phase']=='forward-0']),
+                ('wrong yaw', lambda rows: [row.update(heading=-row['heading']) for kind, row in rows if kind=='SAMPLE' and row['phase']=='left-held']),
+                ('identity', lambda rows: rows[11][1].update(id=43)),
+                ('missing ID', lambda rows: rows[11][1].pop('id')),
+                ('one hand', lambda rows: rows[11][1].update(secondaryID=-1)),
+                ('cargo', lambda rows: rows[11][1].update(cargoID=100)),
+                ('action', lambda rows: rows[11][1].update(nativeActions=1)),
+                ('path', lambda rows: rows[11][1].update(hasPath=True)),
+                ('no gait', lambda rows: rows[11][1].update(gaitSeen=False)),
+                ('nan', lambda rows: rows[0][1].update(x=float('nan'))),
+                ('missing accepted heading', lambda rows: rows[0][1].pop('acceptedHeading')),
+                ('nonfinite accepted heading', lambda rows: rows[0][1].update(acceptedHeading=float('nan'))),
+                ('missing frame', lambda rows: rows[0][1].pop('frame')),
+                ('boolean frame', lambda rows: rows[0][1].update(frame=True)),
+                ('frame reset', lambda rows: rows[1][1].update(frame=0)),
+                ('duplicate frame', lambda rows: rows[1][1].update(frame=rows[0][1]['frame'])),
+                ('sample ID', lambda rows: rows[1][1].update(sample=9)),
+                ('reordered', lambda rows: rows.reverse()),
+                ('missing', lambda rows: rows.pop(11))):
+            with self.subTest(label=label):
+                bad = [(kind, dict(row)) for kind, row in events]; change(bad)
+                with self.assertRaises(ValueError): carts._controls_coverage(self.controls_text(bad), list(carts.VARIANTS))
+
+    def test_controls_release_distinguishes_accepted_yaw_from_native_visual_blend(self):
+        events = self.control_log()
+        selected = [row for kind, row in events if kind=='SAMPLE' and row['case']=='wooden-wheelbarrow' and row['phase']=='right-release']
+        initial = selected[0]['heading']
+        # Observed SP01 visual tail: .257 radians of catch-up, then stable after 350ms.
+        tail = [(0, 0), (118, .1552555464), (232, .2431426007), (332, .2575082727),
+                (448, .2566645109), (548, .2568545303), (616, .2571349110)]
+        accepted = initial+tail[-1][1]
+        for row in selected:
+            for (a, x), (b, y) in zip(tail, tail[1:]):
+                if a <= row['elapsed'] <= b:
+                    row['heading'] = initial+x+(y-x)*(row['elapsed']-a)/(b-a)
+                    break
+            row['acceptedHeading'] = accepted
+        previous = [row for kind, row in events if kind=='SAMPLE' and row['case']=='wooden-wheelbarrow' and row['phase']=='right-held'][-1]
+        previous['acceptedHeading'] = accepted
+        report = carts._controls_coverage(self.controls_text(events), list(carts.VARIANTS))
+        release = next(phase for case in report['cases'] if case['case']=='wooden-wheelbarrow'
+                       for phase in case['phases'] if phase['phase']=='right-release')
+        self.assertGreater(release['visualYawArc'], .25)
+        self.assertEqual(release['acceptedYawArc'], 0)
+        self.assertLess(release['lateVisualYawArc'], .002)
+        for label, change in (
+                ('accepted steering continues', lambda row: row.update(acceptedHeading=accepted+max(0,row['elapsed']-60)*.0001)),
+                ('visual turn continues late', lambda row: row.update(heading=row['heading']+max(0,row['elapsed']-350)*.0001)),
+                ('unbounded visual tail', lambda row: row.update(heading=row['heading']+.7 if row['elapsed']==180 else row['heading']))):
+            with self.subTest(label=label):
+                bad = [(kind, dict(row)) for kind, row in events]
+                for kind, row in bad:
+                    if kind=='SAMPLE' and row['case']=='wooden-wheelbarrow' and row['phase']=='right-release': change(row)
+                with self.assertRaisesRegex(ValueError, 'relative movement/yaw'):
+                    carts._controls_coverage(self.controls_text(bad), list(carts.VARIANTS))
+
+    def test_controls_paused_gap_needs_few_native_frames_and_small_pose_change(self):
+        a = dict(elapsed=0, frame=100, x=0., y=0., heading=0., acceptedHeading=0.)
+        b = dict(a, elapsed=600, frame=102, x=.01, heading=.02, acceptedHeading=.02)
+        proof = carts._controls_paused_gap(a,b)
+        self.assertEqual((proof['wallGapMs'],proof['nativeFrames']),(600,2))
+        for change in (dict(frame=136),dict(x=.3),dict(heading=.3),dict(acceptedHeading=.3),dict(elapsed=2100)):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError,'paused-frame'):
+                carts._controls_paused_gap(a,dict(b,**change))
+        events = self.control_log()
+        target = [row for kind,row in events if kind=='SAMPLE' and row['case']=='shopping-cart' and row['phase']=='right-held']
+        before = dict(target[3])
+        paused = dict(before, elapsed=before['elapsed']+600, frame=before['frame']+2,
+                      x=before['x']+.01, heading=before['heading']+.02, acceptedHeading=before['acceptedHeading']+.02)
+        for row in target[4:]:row['elapsed'] += 600
+        at = next(i for i,(kind,row) in enumerate(events) if row is target[3])
+        events.insert(at+1,('SAMPLE',paused))
+        for index,row in enumerate([before_row for kind,before_row in events if kind=='SAMPLE' and before_row['case']=='shopping-cart' and before_row['phase']=='right-held']):
+            row['sample']=index
+        receipt = next(row for kind,row in events if kind=='PHASE' and row['case']=='shopping-cart' and row['phase']=='right-held')
+        receipt.update(samples=12,elapsed=4600)
+        report = carts._controls_coverage(self.controls_text(events),list(carts.VARIANTS))
+        phase = next(row for row in report['cases'][0]['phases'] if row['phase']=='right-held')
+        self.assertEqual(phase['pausedFrameGaps'][0]['nativeFrames'],2)
+        self.assertEqual(phase['pausedFrameGaps'][0]['wallGapMs'],600)
+
+    def test_controls_paused_straight_sprint_uses_prior_native_update_budget(self):
+        # Immutable SP07: two native updates during a586ms capture pause; each moved less than the prior healthy interval.
+        def row(elapsed,frame,x,y):
+            return dict(case='shopping-cart',phase='sprint',elapsed=elapsed,frame=frame,x=x,y=y,
+                        heading=1.2999999529989328,acceptedHeading=1.2999999523162842)
+        c = row(445,1923,10825.9306640625,10144.052734375)
+        a = row(569,1929,10826.19140625,10144.9892578125)
+        b = row(1155,1931,10826.2763671875,10145.296875)
+        proof = carts._controls_paused_gap(a,b,(c,a))
+        self.assertEqual(proof['method'],'straight-sprint-native-budget')
+        self.assertEqual((proof['nativeFrames'],proof['referenceFrames']),(2,6))
+        self.assertAlmostEqual(proof['distance'],.31913428983155206)
+        self.assertLess(proof['distance']/proof['nativeFrames'],proof['referencePerUpdate'])
+        self.assertGreater(proof['float32Allowance'],0)
+        self.assertLess(proof['maxDistance'],.327)
+        heading = a['acceptedHeading']
+        faster = dict(b,x=b['x']+.1*math.cos(heading),y=b['y']+.1*math.sin(heading))
+        lateral = dict(b,x=b['x']-.01*math.sin(heading),y=b['y']+.01*math.cos(heading))
+        reverse = dict(b,x=2*a['x']-b['x'],y=2*a['y']-b['y'])
+        for label,first,last,reference in (
+                ('faster',a,faster,(c,a)),('lateral',a,lateral,(c,a)),('reverse',a,reverse,(c,a)),
+                ('turn',a,dict(b,heading=b['heading']+.01),(c,a)),
+                ('accepted-turn',a,dict(b,acceptedHeading=b['acceptedHeading']+.01),(c,a)),
+                ('no-reference',a,b,None),('non-sprint',dict(a,phase='run'),dict(b,phase='run'),(c,a)),
+                ('too-many-updates',a,dict(b,frame=a['frame']+5),(c,a)),
+                ('frame-reset',a,dict(b,frame=a['frame']-1),(c,a)),
+                ('long-pause',a,dict(b,elapsed=a['elapsed']+2001),(c,a)),
+                ('unhealthy-reference',a,b,(dict(c,elapsed=-100),a)),
+                ('reference-frame-reset',a,b,(dict(c,frame=a['frame']),a)),
+                ('reference-turn',a,b,(dict(c,heading=c['heading']+.01),a)),
+                ('foreign-phase',a,b,(dict(c,phase='run'),a)),
+                ('foreign-case',a,dict(b,case='metal-wheelbarrow'),(c,a))):
+            with self.subTest(label=label),self.assertRaisesRegex(ValueError,'paused-frame'):
+                carts._controls_paused_gap(first,last,reference)
+
+    def test_controls_verify_requires_videos_and_keeps_capture_scope(self):
+        self.selection['cases'] = ['controls']
+        text = self.controls_text(self.control_log()) + '\n[WOOD_BANK] ALL_COMPLETE cases=3\n'
+        (self.output / 'client1-launch.log').write_text(text)
+        with patch.object(carts, '_videos', return_value=[]) as videos, patch.object(carts, '_run') as analyzer:
+            result = carts.verify(self.output, self.selection, {})
+        videos.assert_called_once(); analyzer.assert_not_called()
+        self.assertFalse(result['issues'])
+        self.assertEqual(result['outcomes'][0]['status'], 'captured')
+        self.assertTrue(result['outcomes'][0]['outcome']['controlsVerified'])
+        self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+        with patch.object(carts, '_videos', side_effect=ValueError('Missing video')):
+            self.assertEqual(carts.verify(self.output, self.selection, {})['outcomes'][0]['status'], 'failed')
+        with self.assertRaisesRegex(ValueError, 'controls videos'):
+            carts._videos(self.output, self.selection, 'client1', '[WOOD_BANK] COMPLETE wrong wall=0 file=x frames=1 seconds=1\n')
+
     def test_manual_review_never_claims_automated_animation_verification(self):
         self.selection['cases']=['manual']
         for ready in (False,True):
@@ -225,13 +419,53 @@ class CartAdapterTests(unittest.TestCase):
         for role in ('client1', 'client2'):
             self.assertEqual(len(self.runtime['fixture']['attach'][role]), 1)
             self.assertIn('CartLab', self.runtime['fixture']['mods'])
+        startup = ROOT / 'tests/native_queue/startup/client/ZZStartup.lua'
+        self.assertIn(startup, carts.sources(ROOT, self.selection))
+        for role in ('client1', 'client2'):
+            target = self.output / role / 'mods/ActionQueueTest/42/media/lua/client/QueueCartMPStartup.lua'
+            self.assertEqual(target.read_bytes(), startup.read_bytes())
+            client = (target.parent / 'ZZCartMP.lua').read_text()
+            self.assertNotIn('ConnectToServer.instance:connect', client)
+            self.assertEqual((target.parent / 'CartMPActions.lua').read_bytes(), (ROOT / 'tests/native_queue/contributions/wooden_cart_multiplayer/actions.lua').read_bytes())
         self.assertNotIn('server', self.runtime['fixture']['attach'])
         for role in ('client1', 'client2', 'server'):
             self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_TEST_PAD'], 'false')
 
+    def test_mp_cart_variant_requires_exact_enum_and_wood_for_actions(self):
+        self.options['cart_variant'] = 'wooden-wheelbarrow'
+        with self.assertRaisesRegex(ValueError, 'exact MP cart variant'):
+            carts.validate(self.selection)
+        self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+        for invalid in (None, True, 1, [], {}, 'unknown', 'SaucedCarts.ShoppingCart'):
+            self.options['cart_variant'] = invalid
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'exact MP cart variant'):
+                carts.validate(self.selection)
+        for variant in carts.VARIANTS:
+            self.options.update(cart_variant=variant, cart_actions=False, cart_fast_motion=True)
+            carts.validate(self.selection)
+            self.options['cart_actions'] = True
+            if variant == 'wooden-wheelbarrow': carts.validate(self.selection)
+            else:
+                with self.assertRaisesRegex(ValueError, 'requires wooden-wheelbarrow'): carts.validate(self.selection)
+        self.options.pop('cart_variant'); self.options['cart_actions'] = True
+        carts.validate(self.selection)
+
+    def test_mp_extra_capture_options_reject_nonbooleans_and_sp(self):
+        for flag in ('cart_fast_motion', 'cart_actions'):
+            self.options[flag] = True
+            with self.assertRaisesRegex(ValueError, 'MP boolean'):
+                carts.validate(self.selection)
+            self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+            carts.validate(self.selection)
+            self.options[flag] = 1
+            with self.assertRaisesRegex(ValueError, 'MP boolean'):
+                carts.validate(self.selection)
+            self.options.pop(flag)
+            self.selection.update(suite=carts.SP, cases=['reverse'], kind='sp', languages=['RU'])
+
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path', 'variants'])
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path', 'variants', 'controls'])
         for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 8), ('wall-fast-manual-exit', 16), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case

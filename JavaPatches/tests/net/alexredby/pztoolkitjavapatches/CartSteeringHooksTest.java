@@ -34,13 +34,39 @@ import zombie.iso.Vector2;
 import zombie.iso.objects.IsoWorldInventoryObject;
 
 public final class CartSteeringHooksTest {
+    private static final class Keys extends zombie.characters.component.CharacterInputComponent {
+        boolean forward,backward,left,right;
+        @Override public boolean isForwardKeyDown() { return forward; }
+        @Override public boolean isBackwardKeyDown() { return backward; }
+        @Override public boolean isLeftKeyDown() { return left; }
+        @Override public boolean isRightKeyDown() { return right; }
+        void set(int travel,int steering) {
+            forward=travel>0;backward=travel<0;left=steering<0;right=steering>0;
+        }
+    }
+
     // Skip world/renderer constructors, as the existing NativeChecks fixture does.
     private static final class Player extends IsoPlayer {
         int blocked;
         boolean pivot, woodBrake, brakeSprint, moving, run, sprint, pathActive, npc;
+        boolean keyboard,aim,autoWalk;
+        Keys keys;
+        // The existing world-direction cases describe the preserved absolute analog-input contract.
+        @Override public zombie.characters.CharacterInputMode getInputMode() {
+            return keyboard?zombie.characters.CharacterInputMode.KEYBOARD:zombie.characters.CharacterInputMode.GAMEPAD;
+        }
+        @Override public boolean isAimControlActive() { return aim; }
+        @Override public boolean isAiming() { return aim; }
+        @Override public boolean isAutoWalk() { return autoWalk; }
+        @Override public zombie.characters.component.CharacterInputComponent getCharacterInputComponent() { return keys; }
         zombie.pathfind.PathFindBehavior2 nativePath;
         zombie.ai.astar.AStarPathFinderResult finder;
         zombie.ai.StateMachine machine;
+        java.util.Stack<zombie.characters.CharacterTimedActions.BaseAction> actions;
+        @Override public java.util.Stack<zombie.characters.CharacterTimedActions.BaseAction> getCharacterActions() {
+            if(actions==null) actions=new java.util.Stack<>();
+            return actions;
+        }
         Runnable animationUpdate;
         float walkSpeed, slowFactor;
         @Override public float getSlowFactor() { return slowFactor; }
@@ -341,12 +367,21 @@ public final class CartSteeringHooksTest {
             walkNode.deferredBoneName=node.deferredBoneName;walkNode.deferredBoneAxis=node.deferredBoneAxis;
             walkNode.blends2d.addAll(node.blends2d);walkNode.blendTris.addAll(node.blendTris);walkNode.blend2dPicker=node.blend2dPicker;
             var movement=new AnimState();movement.nodes.add(walkNode);player.animator.animSet.states.put("movement",movement);
+            var outgoing=new AnimNode();outgoing.name="ToolkitCartPivotSprint";
+            outgoing.deferredBoneName=node.deferredBoneName;outgoing.deferredBoneAxis=node.deferredBoneAxis;
+            var live=LiveAnimNode.alloc(player.animator.getRootLayer(),outgoing);
+            var outgoingTrack=AnimationTrack.alloc();outgoingTrack.startClip(clips.get("Bob_Walk"),true,0);
+            outgoingTrack.setBlendFieldWeight(1);live.addMainTrack(outgoingTrack);
+            player.animator.getRootLayer().getLiveAnimNodes().add(live);
             for(boolean fast:new boolean[]{false,true}) {
                 field(state,"brace").setDouble(state,1);pace.reset(0);player.moving=false;player.stepY=0;
                 double wheel=CartSteeringHooks.wheelPhase(player);
                 input.setRunning(fast);CartSteeringHooks.input(player,input);player.run=fast;CartSteeringHooks.heading(player);
                 check(player.stepY>0 && player.stepY<.2 && pace.speed>0,
                     "cleared obstruction must restore a native root budget even before accepted movement");
+                float visualSpeed=field(state,"visualSpeed").getFloat(state);
+                check(visualSpeed>0 && visualSpeed<pace.speed && Math.abs(visualSpeed-outgoingTrack.getSpeedDelta())<1e-6,
+                    "brace snapshot must retain the actual outgoing native track budget, not its unscaled ramp");
                 check(CartSteeringHooks.wheelPhase(player)==wheel,"query-only brace release must not spin the wheel");
                 double previousSpeed=pace.speed;
                 for(int frame=0;frame<90;frame++) {
@@ -358,6 +393,16 @@ public final class CartSteeringHooksTest {
                 }
                 check(field(state,"brace").getDouble(state)==0 && Math.abs(player.stepY-(fast?1:.8))<1e-5,
                     "clear travel must leave bracing and recover a full stride");
+            }
+            field(state,"sprintMomentum").setBoolean(state,false);
+            player.run=player.sprint=false;outgoingTrack.setSpeedDelta(.37f);
+            CartSteeringHooks.input(player,input);CartSteeringHooks.heading(player);
+            check(field(state,"visualSpeed").getFloat(state)==-1 && outgoingTrack.getSpeedDelta()==.37f,
+                "ordinary calibrated Walk must leave outgoing native cadence without a root override");
+            for(String kind:new String[]{"SaucedCarts.ShoppingCart","SaucedWheelbarrow.WheelbarrowMetal"}) {
+                type(cart,kind);CartSteeringHooks.heading(player);state=states.get(player);
+                check(field(state,"visualSpeed").getFloat(state)==-1,
+                    "legacy cart cadence must not publish a synthetic root budget: "+kind);
             }
         } finally { CartSteeringHooks.reset(player);model.set(ModelManager.instance,previous); }
     }
@@ -532,6 +577,8 @@ public final class CartSteeringHooksTest {
         var input=new IsoPlayer.InputState();
         CartSteeringHooks.heading(player);
         Object manual=states.get(player);
+        check(field(manual,"visualSpeed").getFloat(manual)==-1,
+            "missing native clips must leave cadence without a root override");
         field(manual,"braking").setBoolean(manual,true);
         field(manual,"stationaryRoot").setBoolean(manual,true);
         var reversal=(CartSteeringMath.Reversal)field(manual,"reversal").get(manual);
@@ -546,6 +593,7 @@ public final class CartSteeringHooksTest {
         check(input.isRunning() && input.sprinting && !field(path,"hasInput").getBoolean(path),
             "path mode must leave native gait untouched and ignore keyboard steering");
         player.moving=true;
+        field(path,"visualSpeed").setFloat(path,.7f);
         var step=CartSteeringHooks.movement(player,.02f,0);
         check(step.x>.019 && Math.abs(step.y)<1e-6,"native path delta must own intent despite opposing keyboard input");
         accept(player,step);
@@ -555,6 +603,7 @@ public final class CartSteeringHooksTest {
         accept(player,step);
         check(field(path,"heading").getDouble(path)==before && !player.pivot && player.legPace==0,
             "path following must retain native yaw/cadence and leave manual pivot variables released");
+        check(field(path,"visualSpeed").getFloat(path)==-1,"native path must release the prior root override");
         for(double gx:new double[]{-2,0,2}) for(double gy:new double[]{-2,0,2}) {
             player.actualX=player.actualY=0;
             for(int tick=0;tick<500 && Math.hypot(gx-player.actualX,gy-player.actualY)>.01;tick++) {
@@ -673,6 +722,117 @@ public final class CartSteeringHooksTest {
     private static void direction(Player player,double heading) {
         player.inputX=(float)((Math.cos(heading)-Math.sin(heading))/2);
         player.inputY=(float)((Math.cos(heading)+Math.sin(heading))/2);
+    }
+
+    private static void keyboardControls(Unsafe unsafe,Map<?,?> states) throws Exception {
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
+        player.keyboard=true;player.keys=new Keys();player.walkSpeed=.8f;
+        var input=new IsoPlayer.InputState();var time=GameTime.getInstance();float old=time.fpsMultiplier;
+        try {
+            time.fpsMultiplier=1;
+            for(String kind:new String[]{"SaucedCarts.ShoppingCart","SaucedWheelbarrow.WheelbarrowWood",
+                    "SaucedWheelbarrow.WheelbarrowMetal"}) {
+                type(cart,kind);
+                for(double initial:new double[]{0,.7,-2.4}) for(int travel:new int[]{-1,0,1}) for(int sign:new int[]{-1,0,1}) {
+                    CartSteeringHooks.reset(player);player.actualX=player.actualY=0;player.moving=false;
+                    player.keys.set(travel,sign);CartSteeringHooks.heading(player);
+                    Object state=states.get(player);field(state,"heading").setDouble(state,initial);
+                    Vector2 move=CartSteeringHooks.keyboardMovement(player,new Vector2(0,-1.95f));
+                    if(travel==0 && sign==0) {
+                        check(move.getLengthSquared()==0,"idle keyboard has no native movement intent");
+                        continue;
+                    }
+                    double desired=CartSteeringMath.keyboardTarget(initial,travel,sign);
+                    check(Math.abs(CartSteeringMath.wrap(Math.atan2(move.y-move.x,move.y+move.x)-desired))<1e-6,
+                        "native movement must follow relative keyboard intent: "+kind+"/"+travel+"/"+sign);
+                    check(Math.abs(move.getLength()-1.95)<1e-6,"relative keys retain the native input magnitude");
+                    input.setRunning(true);input.sprinting=true;CartSteeringHooks.input(player,input);
+                    if(travel<=0) check(!input.isRunning() && !input.sprinting,"reverse and pivot must use walking: "+kind);
+                    player.moving=true;CartSteeringHooks.heading(player);
+                    CartSteeringHooks.movement(player,.02f,0);CartSteeringHooks.heading(player);
+                    check(field(state,"heading").getDouble(state)==initial,
+                        "native refused keyboard movement must not rotate the cart");
+                    double turned=0;
+                    for(int frame=0;frame<360;frame++) {
+                        CartSteeringHooks.input(player,input);
+                        double before=field(state,"heading").getDouble(state);
+                        Vector2 step=CartSteeringHooks.movement(player,.02f,0);
+                        check(step.getLength()<=.020001,"keyboard cannot invent a native stride budget");
+                        if(travel!=0) {
+                            double forward=step.x*Math.cos(before)+step.y*Math.sin(before);
+                            check(forward*travel>0,"forward/reverse travel sign must remain explicit: "+kind+"/"+travel+"/"+sign);
+                        }
+                        accept(player,step);
+                        turned+=CartSteeringMath.wrap(field(state,"heading").getDouble(state)-before);
+                    }
+                    int yaw=sign*(travel<0?-1:1);
+                    check(sign==0?Math.abs(turned)<1e-5:turned*yaw>Math.PI,
+                        "held steering must keep turning beyond a fixed world direction: "+kind+"/"+travel+"/"+sign+"/"+turned);
+                    player.keys.set(travel,0);CartSteeringHooks.input(player,input);
+                    if(travel==0) player.moving=false;
+                    double before=field(state,"heading").getDouble(state);
+                    accept(player,CartSteeringHooks.movement(player,.02f,0));
+                    double after=field(state,"heading").getDouble(state);
+                    check(Math.abs(CartSteeringMath.wrap(after-before))<.03,"steering release must settle without a world-direction snap");
+                    if(travel==0) check(player.stepX==0 && player.stepY==0,"released pivot must return to idle");
+                }
+                player.keys.forward=player.keys.backward=player.keys.left=player.keys.right=true;
+                check(CartSteeringHooks.keyboardMovement(player,new Vector2(0,-1.95f)).getLengthSquared()==0,
+                    "opposite keys cancel instead of inheriting native key priority");
+                CartSteeringHooks.input(player,input);
+                check(!field(states.get(player),"wantsMove").getBoolean(states.get(player)),"opposite keys release cart intent");
+                player.keys.set(1,1);
+                for(String gate:new String[]{"controller","aim","autowalk","path","remote","disabled"}) {
+                    player.keyboard=!gate.equals("controller");player.aim=gate.equals("aim");player.pathActive=gate.equals("path");
+                    player.autoWalk=gate.equals("autowalk");
+                    player.blocked=gate.equals("remote")?8:gate.equals("disabled")?10:0;
+                    Vector2 original=new Vector2(.3f,-.4f);
+                    check(CartSteeringHooks.keyboardMovement(player,original)==original && original.x==.3f && original.y==-.4f,
+                        "relative keyboard must leave native input untouched: "+gate);
+                }
+                player.keyboard=true;player.aim=player.autoWalk=player.pathActive=false;player.blocked=0;
+            }
+        } finally {CartSteeringHooks.reset(player);time.fpsMultiplier=old;}
+    }
+
+    private static void keyboardReleaseControls(Unsafe unsafe,Map<?,?> states) throws Exception {
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
+        type(cart,"SaucedWheelbarrow.WheelbarrowWood");player.keyboard=true;player.keys=new Keys();player.walkSpeed=.8f;
+        var input=new IsoPlayer.InputState();var time=GameTime.getInstance();float old=time.fpsMultiplier;
+        try {
+            for(int fps:new int[]{30,60,144}) for(int travel:new int[]{-1,0,1}) for(int sign:new int[]{-1,1})
+                for(boolean opposite:new boolean[]{false,true}) {
+                    time.fpsMultiplier=60f/fps;CartSteeringHooks.reset(player);
+                    player.actualX=player.actualY=0;player.moving=true;player.keys.set(travel,sign);
+                    CartSteeringHooks.input(player,input);
+                    Object state=states.get(player);
+                    // Native animation may plan several frames between fresh input callbacks.
+                    for(int frame=0;frame<fps;frame++) accept(player,CartSteeringHooks.movement(player,.02f,0));
+                    double before=field(state,"heading").getDouble(state),lean=CartSteeringHooks.lean(player);
+                    check(Math.abs(before)>.1,"held relative steering must survive sparse native input updates");
+                    player.keys.set(travel,0);
+                    if(opposite) player.keys.left=player.keys.right=true;
+                    for(int frame=0;frame<fps/2;frame++) {
+                        accept(player,CartSteeringHooks.movement(player,.02f,0));
+                        check(Math.abs(CartSteeringMath.wrap(field(state,"heading").getDouble(state)-before))<1e-5,
+                            "released/cancelled relative steering retained accepted yaw: "+fps+"/"+travel+"/"+sign+"/"+opposite);
+                        if(frame==0 && travel!=0 && Math.abs(lean)>1e-6)
+                            check(Math.abs(CartSteeringHooks.lean(player))>0 && Math.abs(CartSteeringHooks.lean(player))<Math.abs(lean),
+                                "keyboard yaw release must preserve the smooth bank return");
+                    }
+                }
+            CartSteeringHooks.reset(player);player.keyboard=false;player.inputX=player.inputY=.5f;
+            CartSteeringHooks.input(player,input);
+            Object state=states.get(player);field(state,"turnRate").setDouble(state,1);
+            field(state,"target").setDouble(state,-.01);
+            CartSteeringHooks.movement(player,.02f,0);
+            var requested=(CartSteeringMath.Step)field(state,"requested").get(state);
+            check(requested.turn()>0,"absolute/gamepad steering must retain its existing angular smoothing");
+        } finally {CartSteeringHooks.reset(player);time.fpsMultiplier=old;}
     }
 
     private static void stationaryControls(Unsafe unsafe,Map<?,?> states) throws Exception {
@@ -933,6 +1093,7 @@ public final class CartSteeringHooksTest {
     }
 
     public static void main(String[] args) throws Exception {
+        zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         var tiny=CartSteeringMath.step(0,0,.0002,1.0/60,0);
         check(!CartSteeringHooks.blockedStep(tiny,10825.5f,10142.5f,0),
             "float-rounded first Sprint step must not restart its acceleration forever");
@@ -1132,6 +1293,8 @@ public final class CartSteeringHooksTest {
         CartSteeringHooks.reset(player);
         check(CartSteeringHooks.sideClearance(player)==0,"reset cannot leak side clearance into the next cart");
         pathControls(unsafe,states);
+        keyboardControls(unsafe,states);
+        keyboardReleaseControls(unsafe,states);
         stationaryControls(unsafe,states);
         stationaryCadence(unsafe,states);
         brakeControls(unsafe,states);

@@ -85,7 +85,6 @@ def main() -> None:
     parser.add_argument("--native-vehicles", type=Path, help="vanilla Vehicles.lua for mechanics item-collection checks")
     parser.add_argument("--medicine-framework-source", type=Path, help="installed MF_ISMoodle.lua")
     parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
-    parser.add_argument("--quartermaster-source", type=Path, help="Quartermaster media/lua root for native integration checks")
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
     parser.add_argument("--native-inventory-context-menu", type=Path, help="vanilla inventory callbacks and sibling garment inspection UI")
     parser.add_argument("--native-action-root", type=Path, help="vanilla media/lua for queue/base/read contracts")
@@ -95,6 +94,7 @@ def main() -> None:
     parser.add_argument("--saucedcarts-source", type=Path, help="SaucedCarts shared module directory for server hook checks")
     parser.add_argument("--wheelbarrow-source", type=Path, help="SaucedWheelbarrow registration init.lua for spawn checks")
     args = parser.parse_args()
+    quartermaster_root = ROOT / "PZSurvivorToolkit/42/media/lua"
     available = set(TAG_TESTS) | set(ACTION_TESTS) | set(EXTRA_TESTS)
     available.update(path.name for path in (ROOT / "tests").glob("test_wishlist_*.lua"))
     requested = {name if name.endswith(".lua") else name + ".lua" for name in args.test}
@@ -116,8 +116,8 @@ def main() -> None:
         configure_game_sources(args)
     except ValueError as error:
         parser.error(str(error))
-    if "test_quartermaster_craft_ui.lua" in requested and not (args.quartermaster_source and args.native_action_root):
-        parser.error("test_quartermaster_craft_ui requires --quartermaster-source and --native-action-root")
+    if "test_quartermaster_craft_ui.lua" in requested and not args.native_action_root:
+        parser.error("test_quartermaster_craft_ui requires --game or --native-action-root")
     if requested.intersection({"native_tags/check_transfer_source.lua", "native_tags/check_placement.lua"}) and not args.native_action_root:
         parser.error("selected native tag checks require --native-action-root")
 
@@ -144,8 +144,7 @@ def main() -> None:
             check.globals().NativeInventoryPaneSource = args.native_inventory_pane.read_text(encoding="utf-8")
         if name == "test_inventory_tags.lua" and args.cleanui_inventory_pane:
             check.globals().CleanUIInventoryPaneSource = args.cleanui_inventory_pane.read_text(encoding="utf-8")
-        if args.quartermaster_source:
-            check.globals().NativeQuartermasterLuaRoot = str(args.quartermaster_source)
+        check.globals().NativeQuartermasterLuaRoot = str(quartermaster_root)
         if name == "test_tag_filter_presets_menu.lua" and args.native_action_root:
             check.globals().NativeTextBoxSource = (args.native_action_root / "client/ISUI/ISTextBox.lua").read_text(encoding="utf-8")
             check.globals().NativeModalDialogSource = (args.native_action_root / "client/ISUI/ISModalDialog.lua").read_text(encoding="utf-8")
@@ -166,7 +165,7 @@ def main() -> None:
     for name in EXTRA_TESTS:
         if not should_run(name):
             continue
-        if name == "test_quartermaster_craft_ui.lua" and not (args.quartermaster_source and args.native_action_root):
+        if name == "test_quartermaster_craft_ui.lua" and not args.native_action_root:
             continue
         if name in ("native_tags/check_transfer_source.lua", "native_tags/check_placement.lua") and not args.native_action_root:
             continue
@@ -174,7 +173,7 @@ def main() -> None:
         lua.globals().ProjectRoot = str(ROOT)
         if name == "test_quartermaster_craft_ui.lua":
             lua.globals().NativePZLuaRoot = str(args.native_action_root)
-            lua.globals().NativeQuartermasterLuaRoot = str(args.quartermaster_source)
+            lua.globals().NativeQuartermasterLuaRoot = str(quartermaster_root)
         if name in ("native_tags/check_transfer_source.lua", "native_tags/check_placement.lua"):
             lua.globals().NativePZLuaRoot = str(args.native_action_root)
         if name == "test_highlighter.lua" and args.native_mod_options:
@@ -220,8 +219,8 @@ def main() -> None:
             lua.globals().NativeActionRoot = str(args.native_action_root)
         if name in ("test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_dispatch.lua", "test_action_queue_compat.lua", "test_action_queue_tidy_intent.lua", "test_action_queue_manifest.lua", "test_action_queue_health.lua", "test_action_queue_fire.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua") and args.wishlist_workshop_root:
             lua.globals().NativeWishlistWorkshopRoot = str(args.wishlist_workshop_root)
-        if name in ("test_action_queue.lua", "test_action_queue_fire.lua", "test_action_queue_manifest.lua", "test_action_queue_compat.lua") and args.quartermaster_source:
-            lua.globals().NativeQuartermasterLuaRoot = str(args.quartermaster_source)
+        if name in ("test_action_queue.lua", "test_action_queue_fire.lua", "test_action_queue_manifest.lua", "test_action_queue_compat.lua"):
+            lua.globals().NativeQuartermasterLuaRoot = str(quartermaster_root)
         if name == "test_action_queue_dispatch.lua" and args.project_cook_picker:
             lua.globals().ProjectCookPickerSourcePath = str(args.project_cook_picker)
         if name == "test_action_queue_labels.lua":
@@ -256,15 +255,13 @@ def main() -> None:
         lua.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
         if name == "test_action_queue_fire.lua" and args.native_action_root and args.wishlist_workshop_root:
             scenarios = ["FireTestBCPreinstalled", "FireTestBCForeignPredecessor"]
-            if args.quartermaster_source:
-                scenarios += ["FireTestQMBeforeBC", "FireTestQMPreloaded", "FireTestQMForeignPredecessor", "FireTestQMChangedSource", "FireTestQMForeignGather"]
+            scenarios += ["FireTestQMBeforeBC", "FireTestQMPreloaded", "FireTestQMForeignPredecessor", "FireTestQMForeignGather"]
             for scenario in scenarios:
                 variant = LuaRuntime(unpack_returned_tuples=True)
                 variant.globals().ProjectRoot = str(ROOT)
                 variant.globals().NativeActionRoot = str(args.native_action_root)
                 variant.globals().NativeWishlistWorkshopRoot = str(args.wishlist_workshop_root)
-                if args.quartermaster_source:
-                    variant.globals().NativeQuartermasterLuaRoot = str(args.quartermaster_source)
+                variant.globals().NativeQuartermasterLuaRoot = str(quartermaster_root)
                 variant.globals()[scenario] = True
                 variant.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
 

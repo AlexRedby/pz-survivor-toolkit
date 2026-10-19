@@ -1,4 +1,4 @@
--- UI primitives only: window construction, rows, modes and save callbacks come from the upstream file.
+-- UI primitives only: window construction, rows, modes and save callbacks come from the owned picker.
 return function(adapter, control, rules, find, click, rulePicker)
     local function rect(x, y, w, h)
         local c = control()
@@ -107,10 +107,10 @@ return function(adapter, control, rules, find, click, rulePicker)
         pendingRule = callback
     end
     rules.presetsSynced = function() return true end
-    dofile(NativeQuartermasterLuaRoot .. '/client/LootSorter_Picker.lua')
+    dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/LootSorter_Picker.lua')
     -- Record the native failure callback outcome without constructing an unrelated modal UI.
     LootSorter.notifyPresetFailure = function(_, outcome) failures[#failures + 1] = outcome end
-    adapter.install()
+    assert(LootSorter.toolkitTagPicker, 'owned picker did not declare tag UI setup')
     local obj = {}
     local function open()
         LootSorter.openPicker(obj, 0, 0)
@@ -134,6 +134,14 @@ return function(adapter, control, rules, find, click, rulePicker)
         and rows[6][1] == p.listbox, 'native controller rows omitted tag controls')
     assert(p.listbox.vscroll.x == p.listbox.width - 16 and p.listbox.vscroll.height == p.listbox.height)
     assert(find(p, 'food') and find(p, 'MissingModCategory'), 'actual picker did not build tag/saved-category rows')
+    local createRule = {mode = 'all', include = {'food'}, exclude = {'perishable'}}
+    p.toolkitTagRule = createRule
+    p.onPresetNamed(p, {internal = 'OK', parent = {entry = {getText = function() return 'New pantry' end}}})
+    assert(presetPayload.name == 'New pantry' and presetPayload.expectExisting == false
+        and presetPayload.cats == p.selectedCats and presetPayload.items == p.selectedItems
+        and presetPayload.pzstTagRule == createRule, 'new preset entry lost its owning picker rule or selections')
+    pendingPreset('ok')
+    p.toolkitTagRule = nil
     local _, foodIndex = find(p, 'food')
     p.listbox.doDrawItem(p.listbox, 0, p.listbox.items[foodIndex])
     assert(p.listbox.drawnText == 'food (1/2)' and p.listbox.semanticIcon.id == 'food',
@@ -194,14 +202,20 @@ return function(adapter, control, rules, find, click, rulePicker)
     editor:prerender()
     assert(p.dimmer.visible and not editor.btnModePreset.visible and find(editor, 'food'))
     click(editor, 'perishable')
+    rules.presetsSynced = function() return false end
+    save(editor)
+    assert(presetPayload.pzstTagRule == nil and presetPayload.baseRev == 7
+        and presetPayload.baseGen == 'generation', 'untouched unsynced preset save cleared rule metadata')
+    pendingPreset('stale', {action = 'save'})
     editor.toolkitTagRule, editor.toolkitTagRuleTouched = {mode = 'all', include = {'food'}, exclude = {}}, true
     save(editor)
     assert(not editor.removed and presetPayload.expectExisting and presetPayload.baseRev == 7
         and presetPayload.baseGen == 'generation' and presetPayload.pzstTagRule == editor.toolkitTagRule,
         'native preset save lost rule metadata or conflict tokens')
+    rules.presetsSynced = function() return true end
     pendingPreset('stale', {action = 'save'})
     assert(not editor.removed and p.dimmer.visible and failures[#failures] == 'stale')
     save(editor); pendingPreset('ok')
     assert(editor.removed and LootSorter._presetEditor == nil and not p.dimmer.visible)
-    print('Upstream Quartermaster picker contract passed: actual construction, rows, modes, cached Save, asynchronous verdicts and owner guards.')
+    print('Owned Quartermaster picker contract passed: actual construction, rows, modes, cached Save, asynchronous verdicts and owner guards.')
 end

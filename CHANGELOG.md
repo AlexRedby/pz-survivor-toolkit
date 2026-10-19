@@ -10,6 +10,20 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.105
+
+- **Fixed:** Waiting native drinks from independent inventory bottles can be cancelled or reordered, including verified SaucedCarts wrappers. Clean-water backpack operations retain conservative capacity checks. Active drinking, shared bottles and unknown callbacks remain protected; vanilla portion calculations are unchanged.
+
+### 0.1.104
+
+- **Changed:** Quartermaster is included in Toolkit with its storage designations, distribution, Manifest and crafting integration. Disable the separate Workshop mod when updating; existing assignments, options and presets keep their identifiers and formats.
+- **Changed:** Container tag rules pass directly to sorting instead of temporarily replacing item categories. Craft-window layout and action-queue handoffs are integrated with the owned implementation.
+
+### 0.1.103
+
+- Register bounded cart locomotion and interaction snapshots for native multiplayer variable synchronization; every client renders cart poses locally.
+- Align the final wooden wheelbarrow pickup approach with the center between its handles.
+
 ### 0.1.102
 
 - **Fixed:** An updated Project Cook interface no longer prevents TidyUpMeister from preserving explicit equipment choices. Independently verified recipe modifiers load before compatibility snapshots; changed cooking interfaces and unknown modifiers remain protected.
@@ -466,6 +480,27 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.30
+
+- Smooth the grip during wooden wheelbarrow pickup and setdown, preserving the thumb pose through the native transition into holding the handles.
+
+### 0.1.29
+
+- Center the wooden wheelbarrow pickup approach while preserving native collision and final handle alignment.
+
+### 0.1.28
+
+- Prevent the inventory-icon silhouette from flashing when highlighting a wooden wheelbarrow in 3D. Preserve the orange model highlight and native sprite outlines when 3D ground items are disabled.
+
+### 0.1.27
+
+- Keep the wooden wheelbarrow grip continuous during setdown when native multiplayer position lag requires a little more shoulder reach; preserve hand targets, bone lengths and world placement.
+
+### 0.1.26
+
+- Use heading-relative keyboard controls for shopping carts and both wheelbarrows: forward/reverse motion and continuous left/right steering, preserving native movement and collision handling.
+- Reconstruct cart grounding, grip, banking, wheel rotation and wooden pickup/setdown presentation for remote players from small throttled state snapshots, with identity, native-action and lifecycle guards.
 
 ### 0.1.25
 

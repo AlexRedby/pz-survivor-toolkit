@@ -32,12 +32,15 @@ ANGLES = {1: -3*math.pi/4, 2: 3*math.pi/4, 3: -math.pi/4, 4: math.pi/4,
           5: math.pi, 6: math.pi/2, 7: 0., 8: -math.pi/2}
 
 
-def steps(name, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_fast_manual_exit=False):
+def steps(name, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_fast_manual_exit=False, relative=False):
     spec = name.split('-', 2)[2]
     if wall_manual_exit or wall_fast_manual_exit:
         gait, spec = spec.split('-',1)
         spec, angle = spec.rsplit('-manual-out',1)
         right=spec.endswith('right')
+        if relative:
+            assert wall_manual_exit and not wall_fast_manual_exit and gait == 'walk', 'Relative port covers only walk manual exit'
+            return [(1000,0,1),(9500,0,4),(12000,0,7 if right else 6),(15500,0,0),(16000,0,8 if right else 5)]+([(21000,0,8 if right else 5)] if angle=='90' else [])+[(26000,0,0)]
         return [(1000,('walk','run','sprint').index(gait),1 if right else 2),(9500,0,6 if right else 8),(12000,0,4 if right else 3),
                 (15500,0,0),(16000,0,3 if right else 4)]+([(21000,0,7)] if angle=='90' else [])+[(26000,0,0)]
     if wall_exit:
@@ -63,18 +66,36 @@ def steps(name, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_
     return result
 
 
-def selected(log, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_fast_manual_exit=False):
+def scene_scope(expected_scenes=None, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_fast_manual_exit=False):
     assert sum((fast_slide,wall_exit,wall_manual_exit,wall_fast_manual_exit)) <= 1, 'Footprint banks are mutually exclusive'
+    full = WALL_FAST_MANUAL_EXIT_EXPECTED if wall_fast_manual_exit else WALL_MANUAL_EXIT_EXPECTED if wall_manual_exit else WALL_EXIT_EXPECTED if wall_exit else FAST_SLIDE_EXPECTED if fast_slide else EXPECTED
+    if expected_scenes is None:
+        return full,full
+    assert isinstance(expected_scenes,(list,tuple)) and expected_scenes, 'Selected footprint scenes must be a nonempty list'
+    assert all(isinstance(name,str) for name in expected_scenes), 'Selected footprint scenes must be names'
+    assert len(set(expected_scenes))==len(expected_scenes), 'Duplicate selected footprint scenes'
+    expected=set(expected_scenes)
+    assert expected<=full, 'Unknown selected footprint scenes or wrong footprint bank'
+    return expected,full
+
+
+def selected(log, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_fast_manual_exit=False, expected_scenes=None):
+    expected,_=scene_scope(expected_scenes,fast_slide,wall_exit,wall_manual_exit,wall_fast_manual_exit)
     duration=29000 if wall_manual_exit or wall_fast_manual_exit else 12000
-    expected = WALL_FAST_MANUAL_EXIT_EXPECTED if wall_fast_manual_exit else WALL_MANUAL_EXIT_EXPECTED if wall_manual_exit else WALL_EXIT_EXPECTED if wall_exit else FAST_SLIDE_EXPECTED if fast_slide else EXPECTED
     assert re.search(r'\[WOOD_BANK\] ALL_COMPLETE cases='+str(len(expected))+r'(?:\s|$)', log), 'Capture incomplete'
     assert '[WOOD_BANK] FAIL' not in log, 'Scenario failed'
     complete = re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)', log)
     assert len(complete) == len(expected) and {n for n, _ in complete} == expected, 'Missing, duplicate or unexpected footprint cases'
     starts = {n: int(t) for n, t in complete}
     attempts = re.findall(r'\[WOOD_BANK\] CASE (\S+) attempt=\d+ wall=(\d+)', log)
+    if expected_scenes is not None:
+        assert {n for n,_ in attempts}==expected, 'Missing or unexpected selected footprint attempts'
     assert all(attempts.count((n, str(t))) == 1 for n, t in starts.items()), 'Missing or duplicate selected footprint attempt'
-    cases = {n: dict(rows=[], events=[], states=[]) for n in starts}
+    versions=re.findall(r'\[CART_RELATIVE_MANUAL\] VERSION (\S+)',log)
+    relative=bool(versions)
+    assert not relative or versions==['1'] and wall_manual_exit and not wall_fast_manual_exit, 'Unknown or misplaced relative manual input version'
+    assert relative or '[CART_RELATIVE_MANUAL]' not in log, 'Missing relative manual input version'
+    cases = {n: dict(rows=[], events=[], states=[], relative=relative, manual=[]) for n in starts}
     available, active = {}, None
     layout_keys=('wallX','southY','gapY','startX','startY','baselineX','baselineY')
     if wall_fast_manual_exit:layout_keys+=('ownedWalls','wallMinY','wallMaxY')
@@ -103,6 +124,14 @@ def selected(log, fast_slide=False, wall_exit=False, wall_manual_exit=False, wal
             assert row['case'] == active and row['wall'] >= starts[active], 'Footprint sample outside selected attempt'
             if row['wall'] < starts[active] + duration:
                 cases[active]['rows'].append(row)
+        if '[CART_RELATIVE_MANUAL] SAMPLE ' in line:
+            raw=fields(line.split('[CART_RELATIVE_MANUAL] SAMPLE ',1)[1])
+            assert relative and raw.pop('case',None)==active, 'Relative manual sample outside selected attempt'
+            assert set(raw)=={'wall','elapsed','acceptedHeading','id','primary','secondary','inventoryCount','worldID','cargoIds','cargoWeight','queue','actions','path'}, 'Missing or unexpected relative manual diagnostics'
+            for key in set(raw)-{'cargoIds','path'}:
+                raw[key]=float(raw[key]);assert math.isfinite(raw[key]), 'Nonfinite relative manual diagnostics'
+            assert raw['path'] in ('true','false'), 'Invalid relative manual path state'
+            if starts[active] <= raw['wall'] < starts[active]+duration: cases[active]['manual'].append(raw)
         if '[CART_FOOTPRINT_STATE] ' in line:
             raw = fields(line.split('[CART_FOOTPRINT_STATE] ', 1)[1])
             assert set(raw) == {'case', 'wall', 'elapsed', 'front', 'blocked', 'recovering', 'clear'}, 'Missing or unexpected footprint diagnostics'
@@ -116,6 +145,42 @@ def selected(log, fast_slide=False, wall_exit=False, wall_manual_exit=False, wal
             if starts[active] <= raw['wall'] < starts[active] + duration:
                 cases[active]['states'].append(raw)
     return starts, cases
+
+
+def relative_manual_inputs(name, rows, probes, events):
+    assert [(r['wall'],r['elapsed']) for r in probes]==[(r['wall'],r['elapsed']) for r in rows], 'Missing or misaligned relative manual diagnostics'
+    first=probes[0]
+    ids=first['cargoIds']
+    load_ok=(ids=='empty' and first['cargoWeight']==0) if '-empty-' in name else (re.fullmatch(r'-?\d+(?:,-?\d+)*',ids) and first['cargoWeight']>0)
+    assert load_ok, 'Wrong relative manual cargo load'
+    assert ids=='empty' or len(set(ids.split(',')))==len(ids.split(',')), 'Duplicate relative manual cargo identity'
+    assert ids=='empty' or first['id'] not in map(int,ids.split(',')), 'Cart identity appears in relative manual cargo'
+    for r in probes:
+        assert r['id']==first['id'] and r['id']==int(r['id']) and r['primary']==r['secondary']==r['id'] and r['inventoryCount']==1 and r['worldID']==-1, 'Relative manual cart identity/ownership changed'
+        assert r['cargoIds']==ids and abs(r['cargoWeight']-first['cargoWeight'])<.001, 'Relative manual cargo changed'
+        assert r['queue']==r['actions']==0 and r['path']=='false', 'Relative manual action/path ownership changed'
+    sign=-1 if '-right-' in name else 1
+    stages=[(0,0,0),*events,(29000,0,0)]
+    turns=[]
+    for index,(a,b) in enumerate(zip(stages,stages[1:])):
+        margin=min(200,(b[0]-a[0])/4)
+        samples=[(r,p) for r,p in zip(rows,probes) if a[0]+margin<=r['elapsed']<b[0]-margin]
+        assert samples and all(r['requestedGait']==0 for r,_ in samples), 'Missing relative manual input stage'
+        turning=index in (3,5) or index==6 and len(events)==7
+        if not turning:
+            assert all(r['drive']==a[2] for r,_ in samples), 'Wrong relative manual physical input'
+            continue
+        straight=4 if index==3 else 1
+        commands=[r['drive'] for r,_ in samples]
+        assert a[2] in commands and straight in commands and all(d==a[2] for d in commands[:commands.index(straight)]) and all(d==straight for d in commands[commands.index(straight):]), 'Relative manual steering did not release once at target'
+        target=sign*(3*math.pi/4 if index==3 else math.pi/4 if index==5 else 0)
+        yaw=[wrap(q['acceptedHeading']-p['acceptedHeading'])*sign*(1 if index==3 else -1) for (_,p),(_,q) in zip(samples,samples[1:])]
+        assert sum(yaw)>math.radians(15) and sum(-v for v in yaw if v<0)<=.02, 'Relative manual steering oscillates or turns in wrong direction'
+        released=[p for r,p in samples if r['drive']==straight]
+        assert all(abs(wrap(p['acceptedHeading']-target))<=.04 for p in released), 'Relative manual steering missed target heading'
+        assert collision.angle_drift(released,'acceptedHeading')<=.025, 'Relative manual steering continues after release'
+        turns.append(dict(target=target,acceptedYaw=sum(yaw)))
+    return dict(inputScheme='relative-keyboard-v1',cartID=first['id'],cargoIds=ids,cargoWeight=first['cargoWeight'],turns=turns)
 
 
 def mesh(profile):
@@ -208,11 +273,12 @@ def native_updates(profile, starts, durations=None):
     return cases, failures
 
 
-def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_fast_manual_exit=False):
+def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_fast_manual_exit=False, expected_scenes=None):
     assert '[WOOD_BANK] RUN_STARTED' in text, 'Missing footprint run boundary'
     log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[1]
     native, control_failures = collision.controls(log, wall_offset=3)
-    starts, cases = selected(log, fast_slide, wall_exit, wall_manual_exit, wall_fast_manual_exit)
+    starts, cases = selected(log, fast_slide, wall_exit, wall_manual_exit, wall_fast_manual_exit, expected_scenes)
+    _,full=scene_scope(expected_scenes,fast_slide,wall_exit,wall_manual_exit,wall_fast_manual_exit)
     duration=29000 if wall_manual_exit or wall_fast_manual_exit else 12000
     wall_manual_exit=wall_manual_exit or wall_fast_manual_exit
     wall_exit=wall_exit or wall_manual_exit
@@ -258,17 +324,21 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
                            (wx+.65, gy+.5) if spec == 'overlap' else
                            (wx+1.4, gy+.5) if spec == 'gait-contact' else (geometry['x'], geometry['y']))
         assert math.dist(origin, expected_origin) <= .025, 'Wrong footprint fixture start'
-        planned = steps(name, fast_slide, wall_exit, wall_manual_exit)
+        relative=case['relative']
+        planned = steps(name, fast_slide, wall_exit, wall_manual_exit, wall_fast_manual_exit,relative=relative)
         assert len(events) == len(planned), 'Missing footprint input events'
         for actual, expected in zip(events, planned):
             at, gait, drive = actual
             assert abs(at-expected[0]) <= 500 and gait == expected[1] and (drive == expected[2] if expected[2] is not None else drive in ANGLES), 'Wrong footprint input event'
         assert all(b[0] > a[0] for a, b in zip(events, events[1:])), 'Non-monotonic footprint events'
+        relative_comparison=relative_manual_inputs(name,rows,case['manual'],events) if relative else None
+        assert relative or not case['manual'], 'Unexpected relative manual diagnostics'
         stages = [(0, 0, 0), *events, (duration, 0, 0)]
         for a, b in zip(stages, stages[1:]):
             margin = min(200, (b[0]-a[0])/4)
             stage = [r for r in rows if a[0]+margin <= r['elapsed'] < b[0]-margin]
-            assert stage and all((r['requestedGait'], r['drive']) == a[1:] for r in stage), 'Missing or wrong footprint input stage'
+            if not relative:
+                assert stage and all((r['requestedGait'], r['drive']) == a[1:] for r in stage), 'Missing or wrong footprint input stage'
         def fail(reason, body=False):
             collection = footprint_failures if body else motion_failures
             if (name, reason) not in collection:
@@ -373,7 +443,7 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
             forward_event=events[4] if wall_manual_exit else events[1]
             before=min(rows,key=lambda r:abs(r['elapsed']-forward_event[0]))
             departure = window(forward_event[0]+(3500 if wall_manual_exit else 700), events[-1][0]-200)
-            outward = ANGLES[events[-2][2] if wall_manual_exit else forward_event[2]]
+            outward = (0 if name.endswith('out90') else (-1 if '-right-' in name else 1)*math.pi/4) if relative else ANGLES[events[-2][2] if wall_manual_exit else forward_event[2]]
             held_exit = window(forward_event[0], events[-1][0])
             if not wall_manual_exit and any(r['requested'] <= 0 or r['direction'] <= 0 or r['active'] or r['stationaryRoot'] or r['braking'] for r in held_exit):
                 fail('wall exit interrupts held forward motion')
@@ -408,7 +478,8 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
         if wall_manual_exit:
             if name.endswith('out90'):
                 gentle=window(events[5][0]-700,events[5][0]-200)
-                if not gentle or any(abs(wrap(r['heading']-ANGLES[events[4][2]])) > math.radians(4) for r in gentle):
+                gentle_heading=(-1 if '-right-' in name else 1)*math.pi/4 if relative else ANGLES[events[4][2]]
+                if not gentle or any(abs(wrap(r['heading']-gentle_heading)) > math.radians(4) for r in gentle):
                     fail('manual exit never holds gentle forward heading before perpendicular turn')
             straight=window(events[1][0]+1100,events[2][0]-100)
             arc=window(events[2][0]+300,events[3][0]-100)
@@ -428,7 +499,7 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
             quiet(window(events[3][0]+250,events[4][0]),'manual reverse does not stop before forward exit')
             if any(r['requested'] < 0 or r['direction'] < 0 or r['active'] or r['braking'] or r['stationaryRoot'] for r in departure):
                 fail('manual forward exit retains reverse or stationary motion')
-            manual_comparison=dict(reverseArcOutwardDisplacement=arc[-1]['x']-arc_start['x'])
+            manual_comparison=dict(reverseArcOutwardDisplacement=arc[-1]['x']-arc_start['x'],inputProof=relative_comparison)
         if spec == 'overlap':
             quiet(window(1200, 2800), 'initial overlap accepts forward movement')
             if collision.angle_drift(window(0, events[-1][0]), 'heading') > math.radians(1): fail('overlap escape adds yaw')
@@ -464,8 +535,15 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
         summaries.append(dict(case=name, samples=len(rows), frames=len(measured), nativeUpdates=len(native_rows), minX=min(f['minX'] for f in measured), maxY=max(f['maxY'] for f in measured),
                               initialOverlap=spec=='overlap', slideComparison=slide_comparison, exitComparison=exit_comparison, manualComparison=manual_comparison))
     return dict(complete=True, caseCount=len(cases), controlCount=len(native), meshSha256=sha, cases=summaries,
+                scope='full-matrix' if expected_scenes is None else 'selected-scenes', matrixComplete=set(cases)==full,
+                fullSceneCount=len(full), expectedScenes=sorted(cases),
+                inputScheme='relative-keyboard-v1' if any(c['relative'] for c in cases.values()) else 'legacy-absolute-v0',
                 motionPass=not motion_failures, footprintPass=not footprint_failures, motionFailures=motion_failures, footprintFailures=footprint_failures,
                 limit='Sampled held wooden mesh and continuous wheel-cylinder support against tile wall/door fixture planes; no separate collision body or vehicle-hull clearance claim. Initial overlap is an explicit recovery case, not an initial-clearance PASS. Motion between captured frames, body/grip/clothing, visual review, runtime errors and multiplayer authority remain separate gates.')
+
+
+def parse_scenes(value):
+    return json.loads(value) if value.lstrip().startswith('[') else [name.strip() for name in value.split(',')]
 
 
 def main():
@@ -477,11 +555,12 @@ def main():
     bank.add_argument('--wall-manual-exit', action='store_true', help='Require 8 male Walk manual reverse-arc wall exits')
     bank.add_argument('--wall-fast-manual-exit', action='store_true', help='Require 16 male Run/Sprint approaches followed by manual Walk reverse-arc exits')
     parser.add_argument('--log', type=Path)
+    parser.add_argument('--scenes', type=parse_scenes, help='Exact selected scene names as a JSON list or comma-separated list; requires every listed scene and rejects other scenes')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     assert args.profile.is_dir(), 'Capture profile is missing'
     assert not args.output.exists(), 'Refuse to overwrite an existing report'
-    result = analyze((args.log or args.profile/'native-launch.log').read_text(errors='replace'), args.profile, args.fast_slide, args.wall_exit, args.wall_manual_exit, args.wall_fast_manual_exit)
+    result = analyze((args.log or args.profile/'native-launch.log').read_text(errors='replace'), args.profile, args.fast_slide, args.wall_exit, args.wall_manual_exit, args.wall_fast_manual_exit, args.scenes)
     with args.output.open('x') as target:
         json.dump(result, target, indent=2, allow_nan=False);target.write('\n')
     print(json.dumps(result, indent=2, allow_nan=False))

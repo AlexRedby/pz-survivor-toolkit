@@ -37,15 +37,6 @@ local projectCookActionSources = {
     {"shared/Project_Cook/PJCK_FrozenCooking.lua", 3756381974},
 }
 local sourceFiles = {
-    Quartermaster = {
-        {"client/LootSorter_CraftMenu.lua", 2721161845},
-        {"shared/LootSorter_Debug.lua", 948729780},
-    },
-    QuartermasterManifest = {
-        {"client/LootSorter_Core.lua", 3616909975},
-        {"client/LootSorter_Manifest.lua", 4018553120},
-        {"shared/LootSorter_Util.lua", 3149945372},
-    },
     SaucedCartsTransfers = {
         {"shared/SaucedCarts/TimedActions/ISCartTransferAction.lua", 3962234240},
         {"shared/SaucedCarts/CartTransferInterceptor.lua", 2772644904},
@@ -133,7 +124,6 @@ end
 Compat.verifySources = verified
 
 local quartermasterContainers
-local quartermasterClosure = Proof.closure
 function Compat.matchesQuartermasterContainerGetter(previous, replacement)
     local saved = quartermasterContainers
     if not saved or saved.previous ~= previous or saved.replacement ~= replacement or LootSorter ~= saved.owner
@@ -145,54 +135,35 @@ function Compat.matchesQuartermasterContainerGetter(previous, replacement)
         and (type(saved.owner._craftContextUntil) ~= "number" or saved.clock() < saved.owner._craftContextUntil) then return false end
     return true
 end
-local function prepareQuartermasterContainers()
-    if not getActivatedMods or not getActivatedMods():contains("Quartermaster") or not verified("Quartermaster")
-        or type(LootSorter) ~= "table" or LootSorter._craftHooksAdded or LootSorter._getContainersWrapped
-        or not quartermasterClosure(LootSorter.DBG, "LootSorter_Debug.lua") then return end
-    local owner, debug = LootSorter, LootSorter.DBG
-    local event, add = Events.OnGameStart, Events.OnGameStart.Add
-    -- Capture the private installer at registration; an already loaded module has no observable delegate chain.
-    event.Add = function(callback)
-        if not quartermasterClosure(callback, "LootSorter_CraftMenu.lua") then return add(callback) end
-        return add(function(...)
-            local previous = ISInventoryPaneContextMenu.getContainers
-            local valid = LootSorter == owner and owner.DBG == debug and not owner._craftHooksAdded and not owner._getContainersWrapped
-            local queue, busy, clock = ISTimedActionQueue, ISTimedActionQueue.isPlayerDoingAction, getTimestampMs
-            local neat = craftOwners.NC_CraftActionPanel
-            local neatUnchanged = neat and NC_CraftActionPanel == neat.class
-            if neatUnchanged then
-                for method, expected in pairs(neat.methods) do
-                    if neat.class[method] ~= expected then neatUnchanged = false; break end
-                end
-            end
-            local results = pack(pcall(callback, ...))
-            local replacement = ISInventoryPaneContextMenu.getContainers
-            if results[1] and valid and owner._craftHooksAdded and owner._getContainersWrapped and replacement ~= previous
-                and quartermasterClosure(replacement, "LootSorter_CraftMenu.lua") then
-                quartermasterContainers = {previous = previous, replacement = replacement, owner = owner, debug = debug,
-                    queue = queue, busy = busy, clock = clock}
-                if neatUnchanged and NC_CraftActionPanel == neat.class then
-                    for method, expected in pairs(neat.methods) do
-                        local current = neat.class[method]
-                        if method == "prerender" or method == "onCraftButtonClick" then
-                            if current == expected or not quartermasterClosure(current, "LootSorter_CraftMenu.lua") then
-                                neatUnchanged = false; break
-                            end
-                        elseif current ~= expected then neatUnchanged = false; break end
-                    end
-                    if neatUnchanged then
-                        -- This pinned installer only wraps Neat's UI entry/render methods; keep every callback/helper baseline.
-                        neat.methods.prerender = neat.class.prerender
-                        neat.methods.onCraftButtonClick = neat.class.onCraftButtonClick
-                    end
-                end
-            end
-            if not results[1] then error(results[2], 0) end
-            return unpack(results, 2, results.n)
-        end)
+function Compat.installQuartermasterCraft(install)
+    local owner = LootSorter
+    if owner._craftHooksAdded then return end
+    local previous = ISInventoryPaneContextMenu.getContainers
+    local queue, busy, clock = ISTimedActionQueue, ISTimedActionQueue.isPlayerDoingAction, getTimestampMs
+    local debug = owner.DBG
+    local neat = craftOwners.NC_CraftActionPanel
+    local neatUnchanged = neat and NC_CraftActionPanel == neat.class
+    if neatUnchanged then
+        for method, expected in pairs(neat.methods) do
+            if neat.class[method] ~= expected then neatUnchanged = false; break end
+        end
     end
-    pcall(require, "LootSorter_CraftMenu")
-    event.Add = add
+    install()
+    local replacement = ISInventoryPaneContextMenu.getContainers
+    if LootSorter ~= owner or not owner._craftHooksAdded or not owner._getContainersWrapped then return end
+    quartermasterContainers = {previous = previous, replacement = replacement, owner = owner, debug = debug,
+        queue = queue, busy = busy, clock = clock}
+    if neatUnchanged and NC_CraftActionPanel == neat.class then
+        for method, expected in pairs(neat.methods) do
+            if method ~= "prerender" and method ~= "onCraftButtonClick" and neat.class[method] ~= expected then
+                neatUnchanged = false; break
+            end
+        end
+        if neatUnchanged then
+            neat.methods.prerender = neat.class.prerender
+            neat.methods.onCraftButtonClick = neat.class.onCraftButtonClick
+        end
+    end
 end
 
 local function snapshot(class)
@@ -754,9 +725,10 @@ end
 
 local function installCartEating()
     if not getActivatedMods or not getActivatedMods():contains("SaucedCarts") or not verified("SaucedCarts")
-        or not ISEatFoodAction or ISEatFoodAction._saucedCartsConsumeWrapped then return end
+        or not ISEatFoodAction or not ISDrinkFluidAction
+        or ISEatFoodAction._saucedCartsConsumeWrapped or ISDrinkFluidAction._saucedCartsConsumeWrapped then return end
     if SaucedCarts and SaucedCarts.ConsumeWithCart then return end
-    local previous = ISEatFoodAction.start
+    local previous = {[ISEatFoodAction] = ISEatFoodAction.start, [ISDrinkFluidAction] = ISDrinkFluidAction.start}
     local ok, consume = pcall(require, "SaucedCarts/ConsumeWithCart")
     local owner = SaucedCarts
     if not ok or not owner or type(consume) ~= "table" or owner.ConsumeWithCart ~= consume
@@ -770,40 +742,28 @@ local function installCartEating()
     end
     if not pcall(install) then return end
     local policy = Toolkit.ActionQueuePolicy
-    ready.SaucedCarts = policy and policy.adoptEatStart
-        and policy.adoptEatStart(previous, ISEatFoodAction.start, helpersUnchanged) == true
+    ready.SaucedCarts = policy and policy.adoptConsumeStarts
+        and policy.adoptConsumeStarts(previous, helpersUnchanged) == true
 end
 
 local function installManifestTransfers()
-    if isClient() or not getActivatedMods or not getActivatedMods():contains("Quartermaster")
-        or not verified("Quartermaster", sourceFiles.QuartermasterManifest) or type(LootSorter) ~= "table"
-        or LootSorter._manifestXferHooked or not quartermasterClosure(LootSorter.addOrReplaceHandler, "LootSorter_Util.lua")
-        or not quartermasterClosure(LootSorter.parseCoordKey, "LootSorter_Util.lua") then return end
+    if isClient() then return end
+    require "LootSorter_Core"
+    require "LootSorter_Manifest"
     local owner, modData, getOrCreate = LootSorter, ModData, ModData and ModData.getOrCreate
-    if type(getOrCreate) ~= "function" or not pcall(require, "LootSorter_Core") or LootSorter ~= owner
-        or not quartermasterClosure(owner.getRegistry, "LootSorter_Core.lua") then return end
-    local registry = owner.getRegistry
-    local parse = owner.parseCoordKey
-    local rules = Toolkit.QuartermasterTagRules
-    local registryMatch = rules and rules.matchesRegistryGetter
-    local previous = {new = ISInventoryTransferAction.new, perform = ISInventoryTransferAction.perform,
-        transferItem = ISInventoryTransferAction.transferItem}
-    if not pcall(require, "LootSorter_Manifest") or LootSorter ~= owner or not owner._manifestXferHooked
-        or not quartermasterClosure(ISInventoryTransferAction.perform, "LootSorter_Manifest.lua") then return end
+    local hooks = owner.manifestTransferHooks
+    if not hooks or type(getOrCreate) ~= "function" then return end
+    local registry, parse = hooks.registry, hooks.parse
     local function unchanged()
-        local registrySafe = owner.getRegistry == registry or (type(registryMatch) == "function"
-            and Toolkit.QuartermasterTagRules == rules and rules.matchesRegistryGetter == registryMatch
-            and registryMatch(registry, owner.getRegistry))
-        return LootSorter == owner and registrySafe and owner.parseCoordKey == parse and owner._manifestXferHooked == true
+        return LootSorter == owner and owner.getRegistry == registry and owner.parseCoordKey == parse
+            and owner.manifestTransferHooks == hooks and owner._manifestXferHooked == true
             and ModData == modData and modData.getOrCreate == getOrCreate and owner._receivedRegistry == nil
             and type(owner._manifestDirty) == "table" and getmetatable(owner._manifestDirty) == nil
             and (not containerHelpersUnchanged or containerHelpersUnchanged())
     end
-    local replacement = {new = ISInventoryTransferAction.new, perform = ISInventoryTransferAction.perform,
-        transferItem = ISInventoryTransferAction.transferItem}
-    if not Toolkit.ActionQueuePolicy.adoptTransferHooks(previous, replacement, unchanged)
-        or not Operations.adoptReturnHooks(previous, replacement, unchanged) then return end
-    manifestTransferPerform, manifestHelpersUnchanged = replacement.perform, unchanged
+    if not Toolkit.ActionQueuePolicy.adoptTransferHooks(hooks.previous, hooks.replacement, unchanged)
+        or not Operations.adoptReturnHooks(hooks.previous, hooks.replacement, unchanged) then return end
+    manifestTransferPerform, manifestHelpersUnchanged = hooks.replacement.perform, unchanged
 end
 
 function Compat.install()
@@ -1124,6 +1084,6 @@ Operations.registerProducer("compat.tidy-transfers", matchesTidyTransfer, accept
 Toolkit.ActionQueueDefinitions.registerBehavior("compat.tidy-equipment",
     {types = {"ISEquipWeaponAction", "P4RestoreAction", "ISUnequipAction"}, matches = matchesTidyEquipment, inspect = inspect})
 Operations.registerProducer("compat.tidy-equipment", matchesTidyEquipment, acceptsChild, true)
-prepareQuartermasterContainers()
+require "LootSorter_CraftMenu"
 Compat.install()
 return Compat

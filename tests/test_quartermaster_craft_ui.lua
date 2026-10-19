@@ -65,14 +65,11 @@ local function windowClass()
     return class
 end
 NC_HandcraftWindow, NC_EntityWindow = windowClass(), windowClass()
--- Toolkit can be loaded before Quartermaster: wait for upstream hooks before wrapping.
-local ui = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/QuartermasterCraftUI.lua')
 dofile(NativeQuartermasterLuaRoot .. '/client/LootSorter_CraftMenu.lua')
 for _, fn in ipairs(starts) do fn() end
-assert(not NC_HandcraftWindow.pzstQuartermasterLayout)
-for _, fn in ipairs(ticks) do fn() end
 local wrapped = NC_HandcraftWindow.prerender
-ui.install(); assert(wrapped == NC_HandcraftWindow.prerender, 'installation duplicated')
+for _, fn in ipairs(starts) do fn() end
+assert(wrapped == NC_HandcraftWindow.prerender, 'installation duplicated')
 for _, class in ipairs({NC_HandcraftWindow, NC_EntityWindow}) do
     for _, bottom in ipairs({false, true}) do
         local window = class:new(20, 40, 900, 600)
@@ -100,5 +97,5 @@ for _, class in ipairs({NC_HandcraftWindow, NC_EntityWindow}) do
     end
 end
 NC_HandcraftWindow, NC_EntityWindow = nil, nil
-ui.install() -- optional mods/classes absent
-print('Quartermaster crafting UI: real upstream injection/table layout, both windows, resize, bottom/collapse and toggles passed.')
+for _, fn in ipairs(starts) do fn() end -- repeated optional-mod setup is harmless
+print('Quartermaster crafting UI: owned injection and real native table layout, both windows, resize, bottom/collapse and toggles passed.')

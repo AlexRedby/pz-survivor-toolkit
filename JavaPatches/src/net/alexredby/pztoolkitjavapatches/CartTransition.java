@@ -41,6 +41,8 @@ public final class CartTransition {
 
     private static final class State {
         InventoryItem item;
+        long action;
+        boolean remote, remoteWaiting;
         boolean pickup, ik, rendered, recovering, authored, clipRetired;
         float cancelledProgress, nativeHeight, referenceHeight, movementProgress, recoveryReach, recoveryGrip;
         Matrix4f[] recoveryPose;
@@ -49,7 +51,7 @@ public final class CartTransition {
         Matrix4f[] lastPose, restartPose;
         CartTransitionMath.Placement lastPlacement, restartPlacement;
         float lastReach, lastGrip, restartReach, restartGrip;
-        long lastRender, restartStart, pendingStart;
+        long lastRender, restartStart, pendingStart, remoteModelBindStart;
         Quaternionf nativeRotation, referenceRotation;
         long recoveryStart;
         String visualModel;
@@ -127,6 +129,7 @@ public final class CartTransition {
         if(state==null || state.recovering || state.item!=item || state.pickup!=pickup) {
             var previous=cancelled.remove(player);
             end(player);state=new State();state.item=item;state.pickup=pickup;
+            state.action=CartActionSync.generation();
             state.authored=authoredClip(player,CLIP_RETIRING!=null);
             if(pickup) {
                 state.world=item.getWorldItem();
@@ -152,6 +155,7 @@ public final class CartTransition {
         }
         state.progress=(float)Math.max(0,Math.min(1,progress));state.updated=System.nanoTime();
         poseVariables(player,state);
+        publish(player,state);
         return true;
     }
 
@@ -201,13 +205,112 @@ public final class CartTransition {
     }
 
     private static boolean protectedState(IsoPlayer player) {
-        return !player.isLocalPlayer() || player.isDead() || player.isAiming() || player.hasHitReaction()
+        return !player.isLocalPlayer() || unsafeState(player);
+    }
+
+    private static boolean unsafeState(IsoPlayer player) {
+        return player.isDead() || player.isAiming() || player.hasHitReaction()
             || player.isKnockedDown() || player.isGettingUp() || player.getVehicle()!=null
             || player.isCurrentState(CollideWithWallState.instance())
             || player.isGrappling() || player.isBeingGrappled() || player.isRagdollSimulationActive();
     }
 
+    private static void publish(IsoPlayer player,State state) {
+        if(!state.remote) CartActionSync.publish(player,state.item,state.action,state.pickup,state.recovering,
+            state.progress,state.cancelledProgress,state.placement);
+    }
+
+    private static InventoryItem remoteItem(IsoPlayer player,CartActionSync.Pose pose) {
+        if(!pose.pickup()) {
+            var item=player.getPrimaryHandItem();
+            return wooden(item) && item.getID()==pose.cart() && player.getSecondaryHandItem()==item
+                && item.getContainer()==player.getInventory() && item.getWorldItem()==null?item:null;
+        }
+        if(player.getPrimaryHandItem()!=null || player.getSecondaryHandItem()!=null
+            || IsoWorld.instance==null || IsoWorld.instance.currentCell==null) return null;
+        var square=IsoWorld.instance.currentCell.getGridSquare((int)Math.floor(pose.x()),(int)Math.floor(pose.y()),(int)Math.floor(pose.z()));
+        if(square==null) return null;
+        for(var world:square.getWorldObjects()) {
+            var item=world.getItem();
+            if(wooden(item) && item.getID()==pose.cart() && item.getWorldItem()==world
+                && Math.abs(world.getWorldPosX()-pose.x())<.03 && Math.abs(world.getWorldPosY()-pose.y())<.03) return item;
+        }
+        return null;
+    }
+
+    private static boolean remoteOwner(IsoPlayer player,State state) {
+        if(state.pickup) return state.world!=null && state.item.getWorldItem()==state.world
+            && state.world.getItem()==state.item && state.world.getSquare()!=null
+            && player.getPrimaryHandItem()==null && player.getSecondaryHandItem()==null;
+        return state.item.getWorldItem()==null && state.item.getContainer()==player.getInventory()
+            && player.getPrimaryHandItem()==state.item && player.getSecondaryHandItem()==state.item;
+    }
+
+    private static boolean emptyRemoteModel(String model) {return model==null || model.isEmpty();}
+
+    /** Populate only presentation state; native actions retain hands, items and world ownership. */
+    static synchronized boolean remote(IsoPlayer player,CartActionSync.Pose pose,float progress) {
+        if(!Main.CART_SYNC_SUPPORTED || !GameClient.client || player.isLocalPlayer() || unsafeState(player)
+            || !pose.valid() || !pose.nearby(player.getX(),player.getY(),player.getZ())) return false;
+        var item=remoteItem(player,pose);
+        if(item==null) return false;
+        var state=states.get(player);
+        boolean same=state!=null && state.remote && state.item==item && state.action==pose.action() && state.pickup==pose.pickup();
+        boolean performing=player.getVariableBoolean("IsPerformingAnAction");
+        boolean nativeAction=performing && "ToolkitWoodCart".equals(player.getVariableString("PerformingAction"))
+            && CartGrounding.sameModel(item,player.overridePrimaryHandModel)
+            && emptyRemoteModel(player.overrideSecondaryHandModel);
+        if(performing && !nativeAction) return false;
+        if(!nativeAction && !same) return false;
+        if(!same) {
+            endRemote(player);state=new State();state.remote=true;state.item=item;state.action=pose.action();state.pickup=pose.pickup();
+            state.world=pose.pickup()?item.getWorldItem():null;
+            states.put(player,state);
+        }
+        state.placement=pose.placement();
+        long now=System.nanoTime();
+        if(!nativeAction) {
+            if(!state.recovering) {
+                if(!state.rendered || !CartGrip.validPosture(state.nativeHeight,state.nativeRotation)
+                    || !CartGrip.validPosture(state.referenceHeight,state.referenceRotation)
+                    || !emptyRemoteModel(player.overridePrimaryHandModel) || !emptyRemoteModel(player.overrideSecondaryHandModel)) return false;
+                state.visualModel=new String(item.getStaticModel());
+                player.overridePrimaryHandModel=state.visualModel;player.resetEquippedHandsModels();
+                state.recovering=true;state.cancelledProgress=pose.recovering()?pose.cancelled():state.progress;
+                state.recoveryStart=now;state.pendingStart=now;state.remoteModelBindStart=now;
+            }
+            rebindRemoteRecovery(player,state,now);
+            state.remoteWaiting=!pose.recovering();
+            if(state.remoteWaiting && now-state.pendingStart>300_000_000L || !recoveryOwner(player,state)) return false;
+            if(pose.recovering()) {state.cancelledProgress=pose.cancelled();state.progress=Math.min(progress,pose.cancelled());}
+        } else {
+            // A recovery snapshot can precede the native action-exit packet on the other reliable channel.
+            if(state.recovering) return false;
+            state.progress=pose.recovering()?Math.min(progress,pose.cancelled()):progress;
+            // Native approach catch-up may leave current animation yaw facing away from the world handles.
+            if(state.pickup) {
+                var network=player.getNetworkCharacterAI();
+                if(network!=null && network.prediction!=null && Float.isFinite(network.prediction.direction)) {
+                    float heading=network.prediction.direction;
+                    player.setTargetAndCurrentDirection((float)Math.cos(heading),(float)Math.sin(heading));
+                }
+            }
+        }
+        state.updated=now;
+        player.setVariable("ToolkitWoodCartClipPilot",false);
+        poseVariables(player,state);
+        return true;
+    }
+
+    static synchronized void endRemote(IsoPlayer player) {
+        var state=states.get(player);
+        if(state!=null && state.remote) end(player);
+    }
+
     private static boolean recoveryOwner(IsoPlayer player, State state) {
+        if(state.remote) return !unsafeState(player) && remoteOwner(player,state)
+            && state.visualModel!=null && state.visualModel==player.overridePrimaryHandModel
+            && emptyRemoteModel(player.overrideSecondaryHandModel);
         if(state.visualModel==null || protectedState(player)) return false;
         if(state.pickup) return state.world!=null && state.item.getWorldItem()==state.world
             && state.world.getItem()==state.item && state.world.getSquare()!=null
@@ -219,12 +322,26 @@ public final class CartTransition {
             && state.visualModel==player.overridePrimaryHandModel && player.overrideSecondaryHandModel==null;
     }
 
+    private static void rebindRemoteRecovery(IsoPlayer player,State state,long now) {
+        // ActionContext.update follows our animation-entry hook. Its native exit can clear
+        // the leased override again before rendering, even after the recovery aggregate arrived.
+        if(!state.remote || !state.recovering || state.visualModel==null
+            || now-state.recoveryStart>300_000_000L || unsafeState(player) || !remoteOwner(player,state)
+            || player.getVariableBoolean("IsPerformingAnAction")
+            || !emptyRemoteModel(player.overridePrimaryHandModel) || !emptyRemoteModel(player.overrideSecondaryHandModel)) return;
+        player.overridePrimaryHandModel=state.visualModel;
+        player.resetEquippedHandsModels();
+        state.remoteModelBindStart=state.recoveryStart;
+    }
+
     private static boolean pendingExpired(State state, long now) {
         return now-state.recoveryStart>=(.4+.2*state.cancelledProgress)*1_000_000_000.0
             || state.pendingStart!=0 && now-state.pendingStart>200_000_000L;
     }
 
     private static boolean recoveryActions(IsoPlayer player, State state, long now) {
+        if(state.remote) return !player.getVariableBoolean("IsPerformingAnAction")
+            && (!state.remoteWaiting || now-state.pendingStart<=300_000_000L);
         if(pendingExpired(state,now)) return false;
         var actions=player.getCharacterActions();
         if(actions.isEmpty()) return !player.getVariableBoolean("IsPerformingAnAction");
@@ -282,6 +399,7 @@ public final class CartTransition {
             state.cancelSquare=state.world==null?null:state.world.getSquare();
             cancelled.put(player,state);
         }
+        publish(player,state);
         return true;
     }
 
@@ -292,6 +410,7 @@ public final class CartTransition {
         var previous=cancelled.get(player);
         if(previous!=null && (protectedState(player) || now-previous.lastRender>200_000_000L)) cancelled.remove(player);
         var state=states.get(player);
+        if(state!=null && state.remote) return;
         if(state==null || !state.recovering) return;
         if(!recoveryOwner(player,state) || !recoveryActions(player,state,now)) {
             end(player,!protectedState(player) && !pendingExpired(state,now));return;
@@ -300,7 +419,7 @@ public final class CartTransition {
         state.progress=(float)CartTransitionMath.recover(state.cancelledProgress,(now-state.recoveryStart)*1e-9,!state.pickup);
         state.updated=now;
         if(state.progress<=0) end(player);
-        else poseVariables(player,state);
+        else {poseVariables(player,state);publish(player,state);}
     }
 
     @LuaMethod(name="toolkitWoodCartStatus", global=true)
@@ -319,8 +438,10 @@ public final class CartTransition {
     @LuaMethod(name="toolkitWoodCartSetdownPose", global=true)
     public static synchronized void setdownPose(IsoPlayer player, InventoryItem item, double x, double y, double z, double rotation) {
         var state=states.get(player);
-        if(state!=null && state.item==item && !state.pickup && Double.isFinite(x+y+z+rotation))
+        if(state!=null && state.item==item && !state.pickup && Double.isFinite(x+y+z+rotation)) {
             state.placement=new CartTransitionMath.Placement((float)x,(float)y,(float)z+.00175f,0,(float)rotation,0,item.worldScale*.85f);
+            publish(player,state);
+        }
     }
 
     @LuaMethod(name="toolkitWoodCartEnd", global=true)
@@ -330,11 +451,13 @@ public final class CartTransition {
 
     private static void end(IsoPlayer player, boolean preserveCancelled) {
         if(player==null) {
+            CartMotionSync.clearAll();CartActionSync.clearAll();
             for(var owner:new java.util.ArrayList<>(states.keySet())) end(owner);
             cancelled.clear();
             return;
         }
         if(!preserveCancelled) cancelled.remove(player);
+        if(player.isLocalPlayer()) CartActionSync.end(player);
         var state=states.remove(player);
         if(state!=null) retireAuthored(player,state);
         player.clearVariable("ToolkitWoodCartPoseX");player.clearVariable("ToolkitWoodCartPoseY");
@@ -351,17 +474,20 @@ public final class CartTransition {
         if(!(slot.character instanceof IsoPlayer player)) return false;
         var state=states.get(player);
         if(state==null) return false;
-        if(protectedState(player) || System.nanoTime()-state.updated>1_000_000_000L) {
+        if((state.remote?unsafeState(player):protectedState(player)) || System.nanoTime()-state.updated>1_000_000_000L) {
             end(player);return false;
         }
+        rebindRemoteRecovery(player,state,System.nanoTime());
         if(state.recovering && (!recoveryOwner(player,state) || !recoveryActions(player,state,System.nanoTime()))) {
             end(player,!pendingExpired(state,System.nanoTime()));return false;
         }
         var clip=ModelManager.instance.getAnimationClip("Bob_Cart_Idle");
         if(clip==null) return false;
+        boolean cartModelPresent=false;
         for(var data:slot.modelData) {
             var instance=data.modelInstance;
             if(instance.modelScript==null || !"WheelbarrowWood".equals(instance.modelScript.getName())) continue;
+            cartModelPresent=true;
             var held=new Matrix4f();var delta=new Matrix4f();
             if(!CartGrounding.rigid(data,clip,held)) continue;
             CartGrounding.lowerHandles(held,"WheelbarrowWood");
@@ -451,9 +577,13 @@ public final class CartTransition {
             CartWheelSpin.prepare(slot,CartWheelSpin.follow(state.item,slot.x,slot.y,slot.animPlayerAngle,transform));
             if(state.world!=null && !state.rendered) state.world.invalidateRenderChunkLevel(256);
             state.rendered=true;
+            state.remoteModelBindStart=0;
             return true;
         }
-        if(state.recovering) end(player);
+        // Native action exit removes pickup's hand model; our exact lease binds on the next model rebuild.
+        // Retain the previously rendered pose only through that initial bounded gap, never a failed cart solve.
+        if(state.recovering && !(state.remote && !cartModelPresent && state.remoteModelBindStart!=0
+            && System.nanoTime()-state.remoteModelBindStart<=300_000_000L)) end(player);
         return false;
     }
 

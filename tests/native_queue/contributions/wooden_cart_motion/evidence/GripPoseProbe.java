@@ -6,6 +6,7 @@ import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.asm.Advice;
 import static net.bytebuddy.matcher.ElementMatchers.*;
 import org.joml.Matrix4f;
+import zombie.core.skinnedmodel.animation.AnimationClip;
 import zombie.core.skinnedmodel.model.SkinningData;
 
 /** Copy grip inputs before IK mutates them; never change arguments, return values, or game state. */
@@ -67,6 +68,20 @@ public final class GripPoseProbe {
             GripPoseProbe.after(snapshot,result,thrown);
         }
     }
+    public static class TransitionGripAdvice {
+        @Advice.OnMethodEnter(suppress=Throwable.class)
+        public static String enter(@Advice.Argument(0) Matrix4f[] poses,@Advice.Argument(1) SkinningData actor,
+            @Advice.Argument(2) boolean female,@Advice.Argument(3) Matrix4f delta,@Advice.Argument(4) Matrix4f cart,
+            @Advice.Argument(5) float reachWeight,@Advice.Argument(6) float gripWeight,
+            @Advice.Argument(7) AnimationClip thumbReference) {
+            return thumbReference!=null && reachWeight==1 && gripWeight==1
+                ? GripPoseProbe.before(poses,actor,"WheelbarrowWood",female,delta,cart) : null;
+        }
+        @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
+        public static void exit(@Advice.Enter String snapshot,@Advice.Return boolean result,@Advice.Thrown Throwable thrown) {
+            GripPoseProbe.after(snapshot,result,thrown);
+        }
+    }
     public static synchronized String reachBefore(Matrix4f[] poses,SkinningData actor,String name,Matrix4f target,float weight) {
         if(reachFailures==null)return null;
         var bone=actor==null?null:actor.getBone(name);
@@ -110,6 +125,7 @@ public final class GripPoseProbe {
                 .type(named("net.alexredby.pztoolkitjavapatches.CartGrip"))
                 .transform((builder,description,loader,module,protection)->builder.visit(
                     Advice.to(GripAdvice.class).on(named("grip").and(takesArguments(7))))
+                    .visit(Advice.to(TransitionGripAdvice.class).on(named("transitionGrip").and(takesArguments(8))))
                     .visit(Advice.to(ReachAdvice.class).on(named("reach").and(takesArguments(7)))))
                 .installOn(instrumentation);installed=true;
         }

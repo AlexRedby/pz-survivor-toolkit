@@ -376,7 +376,7 @@ class PrepareInstall(unittest.TestCase):
                               ('PZSurvivorToolkit', 'MPFastForward'),
                               ('ZombieBuddy', 'PZToolkitJavaPatches'),
                               ('RealisticDash', 'Navigator'),
-                              ('Quartermaster', 'organizedCategories_core')):
+                              ('PZSurvivorToolkit', 'organizedCategories_core')):
             with self.subTest(before=before, after=after):
                 ordered = list(dict.fromkeys([after, before, *prepare_install.MOD_IDS]))
                 if before == 'CleanUI':

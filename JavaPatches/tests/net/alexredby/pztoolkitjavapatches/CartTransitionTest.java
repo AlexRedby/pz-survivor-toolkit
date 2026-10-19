@@ -34,8 +34,12 @@ public final class CartTransitionTest {
         java.util.Map<String,Float> variables;
         java.util.Stack<BaseAction> actions;
         zombie.ai.StateMachine machine;
+        zombie.core.skinnedmodel.animation.AnimationPlayer animation;
+        zombie.characters.NetworkPlayerAI network;
         int protection,modelResets,handWrites,clipPilotWrites;
         boolean performing,otherFloor,clipPilot,clipPilotAbsent;
+        String performingAction;
+        java.util.Map<zombie.ai.State.Param<?>,Object> nativeParams;
         java.util.Map<String,Boolean> booleanVariables;
         RuntimeException modelError;
         boolean expectedForceNull;
@@ -51,6 +55,9 @@ public final class CartTransitionTest {
         @Override public void setPrimaryHandItem(InventoryItem item){handWrites++;primary=item;}
         @Override public void setSecondaryHandItem(InventoryItem item){handWrites++;secondary=item;}
         @Override public boolean isLocalPlayer(){return protection!=1;}
+        @Override public boolean hasAnimationPlayer(){return animation!=null;}
+        @Override public zombie.core.skinnedmodel.animation.AnimationPlayer getAnimationPlayer(){return animation;}
+        @Override public zombie.characters.NetworkPlayerAI getNetworkCharacterAI(){return network;}
         @Override public boolean isDead(){return protection==2;}
         @Override public boolean isAiming(){return protection==3;}
         @Override public boolean hasHitReaction(){return protection==4;}
@@ -78,6 +85,13 @@ public final class CartTransitionTest {
             if(actions==null) actions=new java.util.Stack<>();return actions;
         }
         @Override public void resetEquippedHandsModels(){modelResets++;}
+        @Override public void resetModelNextFrame(){modelResets++;}
+        @Override public String getVariableString(String name){
+            return "PerformingAction".equals(name)?performingAction:super.getVariableString(name);
+        }
+        @Override public java.util.Map<zombie.ai.State.Param<?>,Object> getStateMachineParams(Class<?> type){
+            if(nativeParams==null) nativeParams=new java.util.HashMap<>();return nativeParams;
+        }
         @Override public void getItemVisuals(zombie.core.skinnedmodel.visual.ItemVisuals visuals){
             if(modelError!=null) {
                 check(forceNullOverride==expectedForceNull,"native model scope did not isolate the leased visual");
@@ -108,12 +122,12 @@ public final class CartTransitionTest {
     private static final class Cart extends InventoryItem {
         ItemContainer container;
         IsoWorldInventoryObject world;
-        String kind;
+        String kind,model;
         float rotation,alpha;
         boolean probeNative;
         Cart(){super(null,null,null,(String)null);}
         @Override public String getFullType(){return kind;}
-        @Override public String getStaticModel(){return "WheelbarrowWood";}
+        @Override public String getStaticModel(){return model==null?"WheelbarrowWood":model;}
         @Override public ItemContainer getContainer(){return container;}
         @Override public IsoWorldInventoryObject getWorldItem(){return world;}
         @Override public void setWorldZRotation(float value){rotation=value;}
@@ -154,7 +168,9 @@ public final class CartTransitionTest {
         jobModels.set(job,new zombie.core.skinnedmodel.model.ItemModelRenderer[]{renderer,renderer,renderer});
         var jobRender=jobType.getDeclaredMethod("renderMain");jobRender.setAccessible(true);
         world.square=allocate(IsoGridSquare.class);
+        var core=zombie.core.Core.getInstance();boolean previous3D=core.isOption3DGroundItem();
         try {
+            core.setOption3DGroundItem(true);
             check(CartTransition.update(player,cart,true,.6),"pickup ground-pass setup refused");
             check(!CartTransition.hidden(cart),"ground disappeared before a held model rendered");
             var statesField=CartTransition.class.getDeclaredField("states");statesField.setAccessible(true);
@@ -185,12 +201,18 @@ public final class CartTransitionTest {
             nativePass(()->invoke(jobRender,job),"cached FBO job stayed hidden after cleanup");
             nativePass(()->world.render(0,0,0,null,false,false,null),"sprite pass stayed hidden after cleanup");
             nativePass(()->world.renderObjectPicker(0,0,0,null),"picker stayed hidden after cleanup");
-            nativePass(outlinePass,"outline stayed hidden after cleanup");
+            outlinePass.run();
+            for(var kind:new String[]{"SaucedCarts.ShoppingCart","SaucedWheelbarrow.WheelbarrowMetal","Base.Hammer"}) {
+                cart.kind=kind;
+                nativePass(outlinePass,"native outline changed for "+kind);
+            }
+            cart.kind="SaucedWheelbarrow.WheelbarrowWood";core.setOption3DGroundItem(false);
+            nativePass(outlinePass,"2D wooden cart lost its native outline");
             cart.world=null;
             check(CartTransition.update(player,cart,false,.6),"setdown setup refused");
             state=((java.util.Map<?,?>)statesField.get(null)).get(player);rendered.setBoolean(state,true);
             check(!CartTransition.hidden(cart),"setdown without a native world item hid a static item");
-        } finally {CartTransition.end(player);}
+        } finally {CartTransition.end(player);core.setOption3DGroundItem(previous3D);}
     }
     private static void bridge() throws Exception {
         var player=allocate(Player.class);player.inventory=allocate(ItemContainer.class);player.square=allocate(IsoGridSquare.class);
@@ -897,6 +919,199 @@ public final class CartTransitionTest {
             }
         }
     }
+    private static void remoteNativeHandModels() throws Exception {
+        var manager=zombie.scripting.ScriptManager.instance;
+        var module=new zombie.scripting.objects.ScriptModule();module.name="Base";
+        manager.moduleMap.put("Base",module);manager.moduleList.add(module);
+        var models=manager.getClass().getDeclaredField("models");models.setAccessible(true);
+        ((zombie.scripting.ScriptBucketCollection<?>)models.get(manager)).registerModule(module);
+        var model=new zombie.scripting.objects.ModelScript();model.name="WheelbarrowWood";model.InitLoadPP(model.name);model.setModule(module);
+        manager.addModelScript(model);
+        boolean previousClient=zombie.network.GameClient.client;
+        zombie.network.GameClient.client=true;
+        var fixture=recovery(false);var player=fixture.player;var item=fixture.cart;
+        CartTransition.end(player);player.protection=1;
+        var nativeAction=allocate(BaseAction.class);nativeAction.chr=player;
+        var ai=allocate(zombie.characters.NetworkPlayerAI.class);ai.setAction(nativeAction);
+        // Native action params default null hand-model names to the empty string.
+        zombie.ai.states.PlayerActionsState.SECONDARY.set(player,null);
+        String empty=zombie.ai.states.PlayerActionsState.SECONDARY.get(player);
+        check("".equals(empty),"native secondary action param no longer defaults to empty");
+        item.model="Base.WheelbarrowWood";
+        ai.setOverride(true,"WheelbarrowWood",empty);
+        player.performing=true;player.performingAction="ToolkitWoodCart";
+        var pose=new CartActionSync.Pose(item.getID(),1,1,0,.4f,0,10.25f,20.75f,2.00175f,0,0,0,.85f);
+        try {
+            for(String gate:new String[]{"secondary","action","inactive","cart","container"}) {
+                player.overrideSecondaryHandModel=empty;player.performingAction="ToolkitWoodCart";player.performing=true;
+                item.container=player.inventory;
+                var candidate=pose;
+                switch(gate) {
+                    case "secondary" -> player.overrideSecondaryHandModel="Mug";
+                    case "action" -> player.performingAction="OtherAction";
+                    case "inactive" -> player.performing=false;
+                    case "cart" -> candidate=new CartActionSync.Pose(item.getID()+1,1,1,0,.4f,0,10.25f,20.75f,2.00175f,0,0,0,.85f);
+                    case "container" -> item.container=allocate(ItemContainer.class);
+                }
+                check(!CartTransition.remote(player,candidate,.4f) && state(player)==null,
+                    "remote action borrowed unrelated native ownership: "+gate);
+            }
+            item.container=player.inventory;player.performing=true;player.performingAction="ToolkitWoodCart";
+            ai.setOverride(true,"WheelbarrowWood",empty);
+            check(CartTransition.remote(player,pose,.4f),"native empty secondary rejected exact remote cart action");
+            var current=state(player);value(current,"rendered",true);
+            value(current,"nativeRotation",new Quaternionf());value(current,"referenceRotation",new Quaternionf());
+            ai.setOverride(false,empty,empty);player.performing=false;player.performingAction="";
+            var cancelled=new CartActionSync.Pose(item.getID(),1,2,2,.3f,.4f,10.25f,20.75f,2.00175f,0,0,0,.85f);
+            check(CartTransition.remote(player,cancelled,.3f) && Boolean.TRUE.equals(value(current,"recovering")),
+                "native empty exit overrides prevented remote cancellation recovery");
+            String lease=player.overridePrimaryHandModel;
+            check(lease!=null && lease.equals(item.getStaticModel()) && CartTransition.remote(player,cancelled,.25f),
+                "remote recovery lost its exact visual lease through native empty secondary");
+            // Native ActionContext.exit runs after the bridge's postUpdateAnimating entry hook.
+            ai.setOverride(false,null,null);
+            check(CartTransition.remote(player,cancelled,.24f) && player.overridePrimaryHandModel==lease,
+                "late native action exit discarded the same cart/generation recovery lease");
+            long deadline=(long)value(current,"recoveryStart");
+            check(value(current,"remoteModelBindStart").equals(deadline),"native clear extended recovery binding deadline");
+            value(current,"recoveryStart",System.nanoTime()-301_000_000L);
+            ai.setOverride(false,null,null);
+            check(!CartTransition.remote(player,cancelled,.23f) && player.overridePrimaryHandModel==null,
+                "expired native-clear recovery reclaimed an override");
+            value(current,"recoveryStart",deadline);player.overridePrimaryHandModel=lease;
+            player.performing=true;player.performingAction="OtherAction";ai.setOverride(false,null,null);
+            check(!CartTransition.remote(player,cancelled,.23f) && player.overridePrimaryHandModel==null,
+                "native-clear recovery stole another active action");
+            player.performing=false;player.performingAction="";player.overridePrimaryHandModel=lease;
+            player.overridePrimaryHandModel=new String(lease);
+            CartTransition.endRemote(player);
+            check(player.overridePrimaryHandModel!=lease && player.overridePrimaryHandModel.equals(lease),
+                "remote cleanup cleared a foreign equal-valued model lease");
+            check(player.handWrites==0 && player.primary==item && player.secondary==item && item.container==player.inventory,
+                "remote action presentation changed native item ownership");
+        } finally {CartTransition.endRemote(player);zombie.network.GameClient.client=previousClient;}
+    }
+    private static void remotePickupFacing(Player player,zombie.characters.NetworkPlayerAI ai,CartActionSync.Pose pose) throws Exception {
+        var animation=allocate(zombie.core.skinnedmodel.animation.AnimationPlayer.class);
+        value(animation,"targetDir",new zombie.iso.Vector2());
+        var forward=zombie.characters.IsoGameCharacter.class.getDeclaredField("forwardDirection");forward.setAccessible(true);
+        forward.set(player,new zombie.iso.Vector2());
+        player.animation=animation;player.network=ai;
+        ai.prediction=new zombie.network.fields.character.Prediction();
+        ai.prediction.direction=1.4306948f;ai.targetX=10.225f;ai.targetY=20.674f;
+        final float stale=-1.8766751f;
+        player.setTargetAndCurrentDirection((float)Math.cos(stale),(float)Math.sin(stale));
+        player.setForwardDirection((float)Math.cos(ai.prediction.direction),(float)Math.sin(ai.prediction.direction));
+        animation.updateForwardDirection(player);
+        check(Math.abs(CartSteeringMath.wrap(animation.getAngle()-ai.prediction.direction))>2,
+            "native target-only update no longer reproduces stale pickup render yaw");
+        check(CartTransition.remote(player,pose,.18f),"exact remote pickup facing refused");
+        close(animation.getAngle(),ai.prediction.direction,"remote pickup kept native catch-up yaw away from handles");
+        close(animation.getTargetAngle(),ai.prediction.direction,"remote pickup changed only current animation yaw");
+        close(player.getX(),10.25f,"remote pickup facing moved actor X");close(player.getY(),20.75f,"remote pickup facing moved actor Y");
+        close(ai.targetX,10.225f,"remote pickup facing changed native target X");close(ai.targetY,20.674f,"remote pickup facing changed native target Y");
+        for(String guard:new String[]{"foreign-action","protected","invalid-heading"}) {
+            animation.setAngle(stale);
+            player.performingAction="ToolkitWoodCart";player.protection=1;ai.prediction.direction=1.4306948f;
+            if(guard.equals("foreign-action")) player.performingAction="OtherAction";
+            if(guard.equals("protected")) player.protection=3;
+            if(guard.equals("invalid-heading")) ai.prediction.direction=Float.NaN;
+            boolean accepted=CartTransition.remote(player,pose,.2f);
+            check(accepted==guard.equals("invalid-heading"),"pickup facing changed ownership guard: "+guard);
+            close(animation.getAngle(),stale,"pickup facing borrowed unrelated or invalid native heading: "+guard);
+        }
+        player.performingAction="ToolkitWoodCart";player.protection=1;player.animation=null;player.network=null;
+    }
+
+    private static void remotePickupModelBind() throws Exception {
+        var modelField=zombie.core.skinnedmodel.ModelManager.class.getDeclaredField("animModel");modelField.setAccessible(true);
+        Object previousModel=modelField.get(zombie.core.skinnedmodel.ModelManager.instance);
+        var mesh=allocate(zombie.core.skinnedmodel.model.ModelMesh.class);
+        var clip=new zombie.core.skinnedmodel.animation.AnimationClip(1,java.util.List.of(),"Bob_Cart_Idle",true);
+        mesh.skinningData=new zombie.core.skinnedmodel.model.SkinningData(new java.util.HashMap<>(java.util.Map.of(clip.name,clip)),
+            java.util.List.of(),java.util.List.of(),java.util.List.of(),java.util.List.of(),new java.util.HashMap<>());
+        var previousCell=zombie.iso.IsoWorld.instance.currentCell;
+        boolean previousClient=zombie.network.GameClient.client;
+        int previousPlayers=IsoPlayer.numPlayers;
+        var cell=allocate(zombie.iso.IsoCell.class);var map=allocate(zombie.iso.IsoChunkMap.class);
+        value(cell,"chunkMap",new zombie.iso.IsoChunkMap[]{map});
+        var chunks=new zombie.iso.IsoChunk[zombie.iso.IsoChunkMap.chunkGridWidth*zombie.iso.IsoChunkMap.chunkGridWidth];
+        var chunk=allocate(zombie.iso.IsoChunk.class);chunk.loaded=true;chunk.minLevel=chunk.maxLevel=2;
+        chunk.squares=new IsoGridSquare[1][64];chunks[2*zombie.iso.IsoChunkMap.chunkGridWidth+1]=chunk;
+        value(map,"chunksSwapB",chunks);
+        try {
+            modelField.set(zombie.core.skinnedmodel.ModelManager.instance,mesh);
+            zombie.iso.IsoWorld.instance.currentCell=cell;zombie.network.GameClient.client=true;IsoPlayer.numPlayers=1;
+            for(String gate:new String[]{"delayed","facing","late-clear","timeout","replacement","foreign-lease","new-action","failed-solve"}) {
+                var fixture=recovery(true);var player=fixture.player;var item=fixture.cart;
+                CartTransition.end(player);player.protection=1;
+                var square=allocate(IsoGridSquare.class);value(square,"worldObjects",new java.util.ArrayList<>(java.util.List.of(fixture.world)));
+                fixture.world.square=square;player.square=square;chunk.squares[0][4*8+2]=square;
+                check(cell.getGridSquare(10,20,2)==square,"native remote pickup lookup fixture did not resolve the exact square");
+                var nativeAction=allocate(BaseAction.class);nativeAction.chr=player;
+                var ai=allocate(zombie.characters.NetworkPlayerAI.class);ai.setAction(nativeAction);
+                ai.setOverride(true,"WheelbarrowWood","");player.performing=true;player.performingAction="ToolkitWoodCart";
+                var pose=new CartActionSync.Pose(item.getID(),20,1,1,.4f,0,10.25f,20.75f,2.00175f,0,0,0,.85f);
+                try {
+                    check(CartTransition.remote(player,pose,.4f),"remote pickup setup refused: "+gate);
+                    if(gate.equals("facing")) remotePickupFacing(player,ai,pose);
+                    var current=state(player);value(current,"rendered",true);
+                    value(current,"nativeRotation",new Quaternionf());value(current,"referenceRotation",new Quaternionf());
+                    // Native exit can arrive before the recovery aggregate and removes pickup's only hand model.
+                    ai.setOverride(false,"","");player.performing=false;player.performingAction="";
+                    check(CartTransition.remote(player,pose,.4f),"native stop before recovery snapshot lost the rendered pickup");
+                    String lease=player.overridePrimaryHandModel;
+                    var slot=new zombie.core.skinnedmodel.model.ModelSlotRenderData();slot.character=player;
+                    check(!CartTransition.render(slot) && state(player)==current && player.overridePrimaryHandModel==lease,
+                        "empty render slot discarded the queued pickup model binding");
+                    var cancelled=new CartActionSync.Pose(item.getID(),20,2,3,.3f,.4f,10.25f,20.75f,2.00175f,0,0,0,.85f);
+                    check(CartTransition.remote(player,cancelled,.3f) && state(player)==current,
+                        "delayed recovery aggregate could not resume its exact rendered action");
+                    switch(gate) {
+                        case "late-clear" -> {
+                            ai.setOverride(false,null,null);
+                            check(!CartTransition.render(slot) && state(player)==current && player.overridePrimaryHandModel==lease,
+                                "render-time native clear lost the bounded exact recovery lease");
+                            check(value(current,"remoteModelBindStart").equals(value(current,"recoveryStart")),
+                                "render-time native clear extended the recovery binding deadline");
+                            value(current,"remoteModelBindStart",System.nanoTime()-301_000_000L);
+                        }
+                        case "delayed", "facing" -> {
+                            check(!CartTransition.render(slot) && state(player)==current,"recovery snapshot ended the initial bind grace");
+                            check(value(current,"remoteModelBindStart").equals(value(current,"pendingStart")),
+                                "repeated recovery aggregate extended the initial bind deadline");
+                            value(current,"remoteModelBindStart",System.nanoTime()-301_000_000L);
+                        }
+                        case "timeout" -> value(current,"remoteModelBindStart",System.nanoTime()-301_000_000L);
+                        case "replacement" -> item.world=null;
+                        case "foreign-lease" -> player.overridePrimaryHandModel=new String(lease);
+                        case "new-action" -> {player.performing=true;player.performingAction="OtherAction";}
+                        case "failed-solve" -> {
+                            var data=new zombie.core.skinnedmodel.model.ModelInstanceRenderData();
+                            data.modelInstance=new zombie.core.skinnedmodel.model.ModelInstance();
+                            data.modelInstance.modelScript=zombie.scripting.ScriptManager.instance.getModelScript("Base.WheelbarrowWood");
+                            slot.modelData.add(data);
+                        }
+                    }
+                    check(!CartTransition.render(slot) && state(player)==null,"bind grace retained an invalid or expired recovery: "+gate);
+                    check("foreign-lease".equals(gate)?player.overridePrimaryHandModel!=lease && player.overridePrimaryHandModel.equals(lease)
+                        :player.overridePrimaryHandModel==null,"bind cleanup changed another model lease: "+gate);
+                    check(player.handWrites==0 && player.primary==null && player.secondary==null && fixture.world.item==item
+                        && item.container==null,"remote model binding changed native ownership: "+gate);
+                } finally {CartTransition.endRemote(player);}
+            }
+            var local=recovery(true);
+            try {
+                check(CartTransition.cancel(local.player,local.cart,true,null),"local missing-model setup refused");
+                var slot=new zombie.core.skinnedmodel.model.ModelSlotRenderData();slot.character=local.player;
+                check(!CartTransition.render(slot) && state(local.player)==null,"remote bind grace changed local missing-model failure");
+            } finally {CartTransition.end(local.player);}
+        } finally {
+            zombie.network.GameClient.client=previousClient;zombie.iso.IsoWorld.instance.currentCell=previousCell;
+            IsoPlayer.numPlayers=previousPlayers;
+            modelField.set(zombie.core.skinnedmodel.ModelManager.instance,previousModel);
+        }
+    }
     public static void main(String[] args) throws Exception {
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         Field field=Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);unsafe=(Unsafe)field.get(null);
@@ -915,7 +1130,7 @@ public final class CartTransitionTest {
         var cart=allocate(Cart.class);cart.kind="SaucedWheelbarrow.WheelbarrowWood";
         check(Boolean.FALSE.equals(atlas.invoke(null,cart,null,0f,0f,0f,0f,0f,false)),
             "wooden cart atlas must defer to the same renderer as FBO without accessing a scene");
-        bridge();geometry();groundPasses();recoveryLifecycle();authoredClipDefault();authoredClockAndRecovery();authoredRestartHandoff();authoredRestartRefusals();authoredRestartRecancellation();authoredPendingHandoff();authoredPendingDeadline();authoredPendingRefusals();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();collisionInterruptions();recoveryLeaseIdentity();recoveryModelScope();
+        bridge();geometry();groundPasses();recoveryLifecycle();authoredClipDefault();authoredClockAndRecovery();authoredRestartHandoff();authoredRestartRefusals();authoredRestartRecancellation();authoredPendingHandoff();authoredPendingDeadline();authoredPendingRefusals();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();collisionInterruptions();recoveryLeaseIdentity();recoveryModelScope();remoteNativeHandModels();remotePickupModelBind();
         System.out.println("CART_TRANSITION_PASS (scoped exact-owner validation, native yaw geometry, model/depth/sprite/picker/outline suppression and cleanup)");
     }
 }
