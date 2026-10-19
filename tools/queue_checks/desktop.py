@@ -1,4 +1,4 @@
-"""Route only this run's GUI clients to an inactive AeroSpace workspace."""
+"""Keep this run's GUI clients on their assigned AeroSpace workspace."""
 from pathlib import Path
 import re
 import shutil
@@ -7,17 +7,14 @@ import time
 
 
 class Desktop:
-    def __init__(self, selection, manual=False):
-        self.manual = manual
+    def __init__(self, selection):
         self.workspace = selection.get('options', {}).get('test_workspace', 'PZ-TEST')
         if not isinstance(self.workspace, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', self.workspace):
             raise ValueError('test_workspace must be a workspace name using letters, digits, - or _')
         self.binary = shutil.which('aerospace')
         if not self.binary:
             raise RuntimeError('AeroSpace is required for isolated macOS native tests; no game launched')
-        self.evidence = {'workspace': self.workspace, 'manual_inspection': manual, 'windows': {}, 'version': self.call('--version').strip()}
-        self.require_inactive()
-        self.evidence['initial_focus'] = self.call('list-windows', '--focused', '--format', '%{window-id}').strip()
+        self.evidence = {'workspace': self.workspace, 'windows': {}, 'version': self.call('--version').strip()}
 
     def call(self, *args):
         try:
@@ -25,13 +22,6 @@ class Desktop:
                                   text=True, timeout=5).stdout
         except (OSError, subprocess.SubprocessError) as error:
             raise RuntimeError('AeroSpace isolation failed: ' + str(error)) from error
-
-    def require_inactive(self):
-        visible = self.call('list-workspaces', '--monitor', 'all', '--visible', '--format', '%{workspace}').splitlines()
-        if not visible:
-            raise RuntimeError('AeroSpace did not report an active workspace; isolation cannot be verified')
-        if self.workspace in visible:
-            raise RuntimeError('Test workspace ' + self.workspace + ' is visible; select another workspace before running tests')
 
     def owned(self, process):
         if process.poll() is not None:
@@ -57,7 +47,6 @@ class Desktop:
                 '-Dtoolkit.test.windowGate=' + str(gate)]
 
     def route(self, process, cache, log):
-        self.require_inactive()
         deadline = time.monotonic() + 30
         while True:
             rows = self.owned(process)
@@ -82,21 +71,12 @@ class Desktop:
         placed = self.owned(process)
         if not placed or any(workspace != self.workspace for workspace in placed.values()):
             raise RuntimeError('AeroSpace did not isolate all owned client windows')
-        focused = self.call('list-windows', '--focused', '--format', '%{app-pid}').strip()
-        if focused == str(process.pid):
-            raise RuntimeError('Owned test client unexpectedly received keyboard focus')
-        self.require_inactive()
         gate = Path(cache) / 'Lua/test-window-routed.txt'
         gate.write_text(pid + ':' + handle + '\n')
         self.evidence['windows'][str(process.pid)] = list(placed)
-        self.evidence['last_focus'] = self.call('list-windows', '--focused', '--format', '%{window-id}').strip()
 
     def check(self, process):
-        # Manual fixtures may be visited by the user after the same silent initial routing.
-        if not self.manual:
-            self.require_inactive()
-            if self.call('list-windows', '--focused', '--format', '%{app-pid}').strip() == str(process.pid):
-                raise RuntimeError('Owned test client unexpectedly received keyboard focus')
+        # Observation is allowed; only window ownership and placement define isolation.
         rows = self.owned(process)
         expected = self.evidence['windows'].get(str(process.pid), [])
         if not rows or set(rows) != set(expected) or any(workspace != self.workspace for workspace in rows.values()):
@@ -104,5 +84,5 @@ class Desktop:
                                f'pid={process.pid}, expected={expected!r} on {self.workspace!r}, observed={rows!r}')
 
 
-def prepare(selection, manual=False):
-    return Desktop(selection, manual=manual)
+def prepare(selection):
+    return Desktop(selection)

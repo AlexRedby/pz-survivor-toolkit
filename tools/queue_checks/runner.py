@@ -113,7 +113,7 @@ def run(root, resource_wait=300):
         if changed:
             raise ValueError('Inputs changed while waiting for resources:\n' + '\n'.join(changed))
         input_guards = _verify_live_inputs(root, selection, runtime)
-        window_manager = desktop.prepare(selection, manual=runtime.get('fixture', {}).get('manual', False))
+        window_manager = desktop.prepare(selection)
         processes, streams, displayed = {}, [], set()
         execution = {"status": "running", "platform": "darwin", "processes": {}, "peer_disconnected": False, 'attachments': [],
                      'resources': resources, 'input_guards': input_guards, 'desktop': window_manager.evidence}
