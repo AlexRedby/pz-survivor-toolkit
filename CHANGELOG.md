@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.97
+
+- **Changed:** Audited TidyUpMeister cleanup of temporarily held items uses shared native completion, preserving empty hands, exact inventory returns and explicit equipment intent. Clothing, hotbar, heavy items and unverified callbacks retain their existing completion path.
+
 ### 0.1.96
 
 - **Changed:** Wishlist sharing now searches and selects online players instead of accepting typed usernames. Existing offline members keep their access.

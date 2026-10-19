@@ -165,3 +165,20 @@ end
 borrowed.hammer.active=false;rejected(borrowed,'toolkit',true,'torch activation');borrowed.hammer.active=true
 borrowed.square.objects={};rejected(borrowed,'toolkit',true,'lost floor pickup ID');borrowed.square.objects={returned}
 borrowed.square.objects={returned,returned};rejected(borrowed,'toolkit',true,'duplicate restored floor ID')
+
+-- Empty hands must be restored after borrowing, with the exact gun returned once.
+for _,mode in ipairs({'toolkit','native'}) do
+ local empty=fixture('clothing-chain',mode);empty.id='tidy-empty-hands'
+ empty.pickup=empty.clothingA;empty.items.pickup=empty.clothingA;empty.items.clothingA=nil
+ function empty.pickup:getCurrentAmmoCount() return 0 end
+ function empty.pickup:isRoundChambered() return false end
+ empty.player.primary,empty.player.secondary=empty.pickup,nil
+ assert(Postprocess.verify(empty,mode,false).postprocessingVerified)
+ rejected(empty,mode,true,'postprocessing changed final hands')
+ empty.player.primary=nil
+ rejected(empty,mode,true,'postprocessing seed container differs pickup')
+ move(empty.pickup,empty.source)
+ assert(Postprocess.verify(empty,mode,true).postprocessingVerified)
+ empty.player.secondary=empty.screwdriver
+ rejected(empty,mode,true,'postprocessing changed final hands')
+end

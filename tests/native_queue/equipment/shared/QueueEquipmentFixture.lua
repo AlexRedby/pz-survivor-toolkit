@@ -123,11 +123,15 @@ function Fixture.prepare(player,id,ids)
  elseif id=='hands-chain' or id=='waiting-cancel' then seed('bat','Base.BaseballBat',state.source);seed('content','Base.Nails',state.source)
  elseif Bulk.isCase(id) then Bulk.prepare(state,seed)
  elseif id=='floor-pickup' then Floor.prepare(state,seed)
- elseif id=='tidy-hands' or id=='tidy-floor' then
+ elseif id=='tidy-hands' or id=='tidy-floor' or id=='tidy-empty-hands' then
   if id=='tidy-floor' then Floor.prepare(state,seed,'Base.Pistol') else seed('pickup','Base.Pistol',state.source) end
   assert(state.pickup:getCurrentAmmoCount()==0 and not state.pickup:isRoundChambered(),'restore fixture gun must be empty')
-  state.hammer:setUsedDelta(1);state.hammer:setActivated(true)
-  assert(state.hammer:canBeActivated() and state.hammer:isActivated(),'restore fixture torch must start on')
+  if id=='tidy-empty-hands' then
+   player:setPrimaryHandItem(nil);player:setSecondaryHandItem(nil)
+  else
+   state.hammer:setUsedDelta(1);state.hammer:setActivated(true)
+   assert(state.hammer:canBeActivated() and state.hammer:isActivated(),'restore fixture torch must start on')
+  end
  else Slots.prepare(state,seed) end
  for _,perk in ipairs({Perks.Woodwork,Perks.Doctor}) do
   player:getXp():setXPToLevel(perk,0);player:setPerkLevelDebug(perk,0)
@@ -165,7 +169,7 @@ function Fixture.verify(state,mode,checkpoint)
  end
  local cancelled=state.id=='waiting-cancel' and mode=='toolkit'
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' then primary,secondary=state.pickup,nil end
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' then primary,secondary=state.pickup,nil end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
  assert(player:getPrimaryHandItem()==primary and player:getSecondaryHandItem()==secondary,'native final hand identities differ')
@@ -267,7 +271,7 @@ function Fixture.settled(state,mode,checkpoint)
  local player=state.player
  local cancelled=state.id=='waiting-cancel' and mode=='toolkit'
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' then primary,secondary=state.pickup,nil end
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' then primary,secondary=state.pickup,nil end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
  if player:getPrimaryHandItem()~=primary or player:getSecondaryHandItem()~=secondary then return false end

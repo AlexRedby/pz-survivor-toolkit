@@ -113,3 +113,26 @@ for _,id in ipairs({'floor-pickup','tidy-floor'})do
  assert(not Fixture.removed(floorState),'floor removal packet must arrive before next fixture')
  worldPresent=false;assert(Fixture.removed(floorState))
 end
+
+-- A Host unequip can reach client perform after its server effect; SP cannot.
+local function exact(id)
+ return {getID=function()return id end,getFullType=function()return 'Base.Pistol' end}
+end
+local gun,other=exact(31),exact(32)
+for _,case in ipairs({{kind='sp',held=gun,ok=true},{kind='sp',ok=false},
+ {kind='mp',held=gun,ok=true},{kind='mp',ok=true},{kind='mp',held=other,ok=false},
+ {kind='mp',secondary=gun,ok=false}})do
+ local player={getPrimaryHandItem=function()return case.held end,getSecondaryHandItem=function()return case.secondary end}
+ local action={Type='ISUnequipAction',item=gun,character=player,action={},toolkitQueueOperation={}}
+ local queue={current=action,queue={action}}
+ ISTimedActionQueue={queues={[player]=queue}}
+ local lifecycle={begin=function()return true end,current=function()return action end,
+  finish=function()end,flush=function()end}
+ local toolkit={ActionQueueLifecycle=lifecycle,ActionQueueOperations={perform=function()end,deferCompletion=function()end},
+  ActionQueueDefinitions={inspect=function()return {},'compat.tidy-equipment' end},
+  ActionQueuePolicy={evaluateCancel=function()return {allowed=false}end}}
+ local observer=load('QueueEquipmentCompletion').observe(toolkit,{kind=case.kind,mode='toolkit'})
+ observer.watch({id='tidy-empty-hands',pickup=gun,hammer=exact(33),screwdriver=exact(34),baseline={[31]=gun}})
+ local ok=pcall(lifecycle.begin,action,'perform')
+ assert(ok==case.ok,'unequip observer accepted wrong hand state or rejected replicated Host completion')
+end

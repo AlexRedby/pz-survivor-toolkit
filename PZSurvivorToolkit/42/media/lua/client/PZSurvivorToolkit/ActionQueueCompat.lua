@@ -204,7 +204,7 @@ local function classUnchanged(class, methods)
 end
 
 local function sourceClassUnchanged(id, class, methods)
-    return classUnchanged(class, methods) or id == "P4TidyUpMeister" and class == ISInventoryTransferAction
+    return classUnchanged(class, methods) or id == "P4TidyUpMeister" and (class == ISInventoryTransferAction or class == ISUnequipAction)
         and tidyClassUnchanged and tidyClassUnchanged(class, class, methods)
 end
 
@@ -258,6 +258,8 @@ local function sourceMatches(action, record)
     if record.class == ISInventoryTransferAction and policy and policy.isOrdinaryTransfer and not policy.isOrdinaryTransfer(action) then return false end
     if record.class == ISEquipWeaponAction and (action.primary ~= record.primary or action.twoHands ~= record.twoHands
         or action.alwaysTurnOn ~= record.alwaysTurnOn) then return false end
+    if record.class == ISUnequipAction and (action.reason ~= record.reason or action.fromHotbar ~= record.fromHotbar
+        or action.hotbar ~= record.hotbar) then return false end
     for _, name in ipairs(lifecycle) do if action[name] ~= record.methods[name] then return false end end
     for name, method in pairs(record.methods) do if action[name] ~= method then return false end end
     for name, method in pairs(action) do
@@ -322,6 +324,11 @@ local function adopt(action)
     local baseline = classes[context.id] and classes[context.id][class]
     if not baseline or not sourceClassUnchanged(context.id, class, baseline) or action.onStartFunc or action.onCancelFunc
         or action.retriggerLastAction or action.onFailFunc or action.additionalTest then return end
+    local tidyHandUnequip = context.id == "P4TidyUpMeister" and class == ISUnequipAction and not action.fromHotbar
+            and (action.item == action.character:getPrimaryHandItem() or action.item == action.character:getSecondaryHandItem())
+            and not action.character:getWornItems():contains(action.item) and not isForceDropHeavyItem(action.item)
+    if context.id == "P4TidyUpMeister" and class == ISUnequipAction and not classUnchanged(class, baseline)
+        and (not tidyHandUnequip or not tidyClassUnchanged(action, class, baseline)) then return end
     context = tidyRestoreContext(context, action)
     if context.id == "P4TidyUpMeister" and not live(context) then return false end
     Operations.adopt(action, context.token)
@@ -331,6 +338,8 @@ local function adopt(action)
         token = action.toolkitQueueOperation, queue = queue, generation = queue.toolkitOperationGeneration or 0, worldGeneration = worldGeneration,
         id = context.id, target = context.target, fields = {}, itemIdentities = {}, owner = context.owner,
         primary = action.primary, twoHands = action.twoHands, alwaysTurnOn = action.alwaysTurnOn,
+        reason = action.reason, fromHotbar = action.fromHotbar, hotbar = action.hotbar,
+        tidyHandUnequip = tidyHandUnequip,
         opaque = context.opaque or (context.sharedCleanup and class == P4RestoreFloorAction), sharedCleanup = context.sharedCleanup}
     records[action] = record
     if context.id == "Project_Cook" and class == ISAddItemInRecipe then context.lastApply = action end
@@ -1084,7 +1093,7 @@ local function matchesTidyTransfer(action) return tidyTransfer(action) and match
 local function tidyEquipment(action)
     local record = records[action]
     return record and record.id == "P4TidyUpMeister"
-        and (record.class == ISEquipWeaponAction or record.class == P4RestoreAction)
+        and (record.class == ISEquipWeaponAction or record.class == P4RestoreAction or record.tidyHandUnequip)
 end
 local function matchesTidyEquipment(action) return tidyEquipment(action) and matches(action) end
 local function matchesSelectedChain(action) return not tidyTransfer(action) and not tidyEquipment(action) and matches(action) end
@@ -1098,7 +1107,7 @@ Toolkit.ActionQueueDefinitions.registerBehavior("compat.tidy-transfers",
     {types = {"ISInventoryTransferAction"}, matches = matchesTidyTransfer, inspect = inspect})
 Operations.registerProducer("compat.tidy-transfers", matchesTidyTransfer, acceptsChild, true)
 Toolkit.ActionQueueDefinitions.registerBehavior("compat.tidy-equipment",
-    {types = {"ISEquipWeaponAction", "P4RestoreAction"}, matches = matchesTidyEquipment, inspect = inspect})
+    {types = {"ISEquipWeaponAction", "P4RestoreAction", "ISUnequipAction"}, matches = matchesTidyEquipment, inspect = inspect})
 Operations.registerProducer("compat.tidy-equipment", matchesTidyEquipment, acceptsChild, true)
 prepareQuartermasterContainers()
 Compat.install()

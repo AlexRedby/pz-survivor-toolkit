@@ -68,8 +68,10 @@ function Postprocess.verify(state,mode,tidy)
    and player:getAlreadyReadPages(item:getFullType())==item:getNumberOfPages(),'postprocessing book incomplete')
  end
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' then
-  if not tidy then primary,secondary=state.pickup,nil else assert(state.hammer:isActivated(),'P4 did not restore torch activation') end
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' then
+  if not tidy then primary,secondary=state.pickup,nil
+  elseif state.id=='tidy-empty-hands' then primary,secondary=nil,nil
+  else assert(state.hammer:isActivated(),'P4 did not restore torch activation') end
   assert(state.pickup:getCurrentAmmoCount()==0 and not state.pickup:isRoundChambered(),'empty gun changed ammunition')
  end
  if state.id=='waiting-cancel' and mode=='native' then
@@ -118,7 +120,7 @@ function Postprocess.verify(state,mode,tidy)
   elseif name=='clothingA' then expected=tidy and state.source or root
   elseif name=='pickup' and state.id=='bag-capacity' then expected=root
   elseif name=='pickup' and (state.id=='floor-pickup' or state.id=='tidy-floor') then expected=root
-  elseif name=='pickup' and state.id=='tidy-hands' then expected=tidy and state.source or root
+  elseif name=='pickup' and (state.id=='tidy-hands' or state.id=='tidy-empty-hands') then expected=tidy and state.source or root
   else assert(rootNames[name],'unknown postprocessing seed '..name) end
   local item=actual[seed:getID()] or floorItem
   if not (name=='pickup' and floorRestored) then

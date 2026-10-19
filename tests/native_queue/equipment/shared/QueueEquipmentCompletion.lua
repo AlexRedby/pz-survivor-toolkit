@@ -35,7 +35,8 @@ function Completion.observe(toolkit,selection)
    record={id=id,kind=action.item:getFullType(),native=action.action,token=action.toolkitQueueOperation,counts=counter}
    if counter==restores then
     local primary=action.item:getID()==state.hammer:getID() and action.item:getFullType()==state.hammer:getFullType()
-    assert(primary or action.item:getID()==state.screwdriver:getID() and action.item:getFullType()==state.screwdriver:getFullType(),
+    assert(action.Type=='ISUnequipAction' and state.id=='tidy-empty-hands' and action.item:getID()==state.pickup:getID()
+     or primary or action.item:getID()==state.screwdriver:getID() and action.item:getFullType()==state.screwdriver:getFullType(),
      'P4 restored unexpected equipment')
     local queue=ISTimedActionQueue.queues[action.character]
     local decision=toolkit.ActionQueuePolicy.evaluateCancel(queue,action,true)
@@ -43,6 +44,12 @@ function Completion.observe(toolkit,selection)
     if action.Type=='ISEquipWeaponAction' then
      assert(action.primary==primary and not action.twoHands,'P4 restored wrong hand slots')
      restores.equip=restores.equip+1
+    elseif action.Type=='ISUnequipAction' then
+     local held=action.character:getPrimaryHandItem()
+     -- Host may replicate the authoritative unequip before the client performs its UI cleanup.
+     assert(not action.character:getSecondaryHandItem() and (held==action.item or selection.kind=='mp' and not held),
+      'P4 removed wrong temporary equipment')
+     restores.unequip=restores.unequip+1
     else
      assert(action.Type=='P4RestoreAction' and action.activated==primary,'P4 restored wrong activation')
      restores.activation=restores.activation+1
@@ -93,7 +100,7 @@ function Completion.observe(toolkit,selection)
  end
  function Completion.watch(value)
   state,records,counts=value,{},{perform=0,complete=0,flush=0,legacy=0}
-  restores={perform=0,complete=0,flush=0,legacy=0,equip=0,activation=0}
+  restores={perform=0,complete=0,flush=0,legacy=0,equip=0,activation=0,unequip=0}
  end
  function Completion.settled()
   assert(counts.perform==counts.flush and counts.complete==(selection.kind=='sp' and counts.perform or 0)

@@ -6,12 +6,12 @@ import shutil
 import subprocess
 import zipfile
 
-CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor']
+CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands']
 CART_CASE = 'cart-pickup'
 CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', 'SaucedWheelbarrow.WheelbarrowMetal']
 CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
-RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1}
-TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands'}
+RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1}
+TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands'}
 
 
 def definitions():
@@ -129,11 +129,14 @@ def verify(root, selection, catalog):
         if row.get('id') in ('clothing-chain', 'hotbar-chain'):
             required['slotsVerified'] = True
             required['clothing' if row['id'] == 'clothing-chain' else 'hotbar'] = True
-        if row.get('id') in ('tidy-hands', 'tidy-floor'):
+        if row.get('id') in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands'):
             required.update(restoreVerified=True, floorRestoreVerified=row['id'] == 'tidy-floor' and 'P4TidyUpMeister' in selection['mods'])
             count = int(selection['mode'] == 'toolkit' and 'P4TidyUpMeister' in selection['mods'])
-            expected = dict(perform=4*count, complete=4*count if selection['kind'] == 'sp' else 0,
-                            flush=4*count, legacy=0, equip=2*count, activation=2*count)
+            empty = row['id'] == 'tidy-empty-hands'
+            actions = count if empty else 4*count
+            expected = dict(perform=actions, complete=actions if selection['kind'] == 'sp' else 0,
+                            flush=actions, legacy=0, equip=0 if empty else 2*count,
+                            activation=0 if empty else 2*count, unequip=count if empty else 0)
             restore = result.get('restoreCompletion')
             if not isinstance(restore, dict) or restore != expected or any(type(v) is not int for v in restore.values()):
                 issues.append('P4 equipment restore completion evidence differs: ' + row['id'])

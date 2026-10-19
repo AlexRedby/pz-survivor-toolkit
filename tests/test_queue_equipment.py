@@ -40,12 +40,15 @@ class EquipmentTests(unittest.TestCase):
                 result['capacityBarrier'] = enabled
             if case in ('clothing-chain', 'hotbar-chain'):
                 result.update(slotsVerified=True, clothing=case == 'clothing-chain', hotbar=case == 'hotbar-chain')
-            if case in ('tidy-hands', 'tidy-floor'):
+            if case in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands'):
                 count = int(enabled and 'P4TidyUpMeister' in self.selection['mods'])
+                empty = case == 'tidy-empty-hands'
+                actions = count if empty else 4*count
                 result['primary'] = 731
                 result.update(restoreVerified=True, floorRestoreVerified=case == 'tidy-floor' and 'P4TidyUpMeister' in self.selection['mods'],
-                              restoreCompletion=dict(perform=4*count, complete=4*count if self.selection['kind'] == 'sp' else 0,
-                                                     flush=4*count, legacy=0, equip=2*count, activation=2*count))
+                              restoreCompletion=dict(perform=actions, complete=actions if self.selection['kind'] == 'sp' else 0,
+                                                     flush=actions, legacy=0, equip=0 if empty else 2*count,
+                                                     activation=0 if empty else 2*count, unequip=count if empty else 0))
             if case == 'floor-pickup':
                 result.update(floorPickup=True, pickupWorldRemoved=True)
             if case.startswith('bulk-'):
@@ -84,16 +87,17 @@ class EquipmentTests(unittest.TestCase):
         return equipment.verify(self.root, self.selection, {})
 
     def test_restore_requires_positive_exact_phases_and_world_effects(self):
-        self.selection.update(cases=['tidy-hands', 'tidy-floor'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        self.selection.update(cases=['tidy-hands', 'tidy-floor', 'tidy-empty-hands'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
         for kind in ('sp', 'mp'):
             self.selection['kind'] = kind
             for mode in ('toolkit', 'native'):
                 self.selection['mode'] = mode
                 self.assertEqual(self.verify(self.logs())['issues'], [])
-                for key in ('perform', 'complete', 'flush', 'legacy', 'equip', 'activation'):
-                    rows = self.records()
-                    rows[1]['outcome']['restoreCompletion'][key] += 1
-                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                for index in (1, 3):
+                    for key in ('perform', 'complete', 'flush', 'legacy', 'equip', 'activation', 'unequip'):
+                        rows = self.records()
+                        rows[index]['outcome']['restoreCompletion'][key] += 1
+                        self.assertTrue(self.verify(self.logs(rows))['issues'])
                 rows = self.records(); rows[2]['outcome']['floorRestoreVerified'] = False
                 self.assertTrue(self.verify(self.logs(rows))['issues'])
                 if kind == 'mp':

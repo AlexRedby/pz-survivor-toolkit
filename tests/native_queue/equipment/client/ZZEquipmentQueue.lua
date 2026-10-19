@@ -86,7 +86,7 @@ local function enqueue()
    first,state.screwdriverAction=equip(state.screwdriver,false,false)
   end
  elseif Bulk.isCase(state.id) then Bulk.enqueue(state,{run=run,queue=queue})
- elseif state.id=='tidy-hands' or state.id=='tidy-floor' then
+ elseif state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' then
   local before=#queue().queue
   run(ISInventoryPaneContextMenu.onRackGun,getPlayer(),state.pickup)
   for i=before+1,#queue().queue do local action=queue().queue[i]
@@ -135,7 +135,7 @@ local function controls()
  elseif state.id=='bag-capacity' then
   denied(state.pickupAction,state.replacementAction,true,'container_capacity')
   denied(state.replacementAction,state.pickupAction,false,'container_capacity')
- elseif state.id=='tidy-hands' then
+ elseif state.id=='tidy-hands' or state.id=='tidy-empty-hands' then
   local decision=Policy.evaluateMove(queue(),state.pickupAction,state.tailAction,true)
   assert(not decision.allowed,'mixed gun preparation must remain protected')
  elseif state.id=='floor-pickup' or state.id=='tidy-floor' then Floor.controls(state,{denied=denied,queue=queue,native=native})
@@ -263,7 +263,7 @@ Events.OnTick.Add(function()
     and getPlayer():getAlreadyReadPages(state.tail:getFullType())==state.tail:getNumberOfPages()
    outcome.postprocessingVerified=passed
    outcome.tidyCompletion=Completion.settled()
-   if state.id=='tidy-hands' or state.id=='tidy-floor' then
+   if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' then
     outcome.restoreVerified=passed;outcome.floorRestoreVerified=state.id=='tidy-floor' and passed and tidy
     outcome.restoreCompletion=Completion.restores()
    end

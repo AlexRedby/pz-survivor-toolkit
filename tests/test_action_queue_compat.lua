@@ -136,11 +136,16 @@ ISEquipWeaponAction.complete=function(action)
     else action.character.secondary=action.item end
     return true
 end
-ISUnequipAction.complete=function(action)
-    if action.character.primary==action.item then action.character.primary=nil end
-    if action.character.secondary==action.item then action.character.secondary=nil end
-    return true
+local unequipSource=read(NativeActionRoot..'/shared/TimedActions/ISUnequipAction.lua')
+for _,name in ipairs({'new','perform','complete'})do
+    assert(loadstring(assert(unequipSource:match('(function ISUnequipAction:'..name..'%([^\n]*\n.-\nend)'))))()
 end
+ISWearClothing.isStopOnWalk=function()return false end
+getPlayerHotbar=function()return nil end
+ItemTag={WEARABLE='wearable'}
+triggerEvent=function()end
+sendEquip=function(character)character.equipSyncs=(character.equipSyncs or 0)+1 end
+isForceDropHeavyItem=function(value)return value.fixtureHeavy or false end
 ISInventoryPaneContextMenu.equipWeapon=function(item,primary,twoHands,playerNum)
     local player=getSpecificPlayer(playerNum)
     ISInventoryPaneContextMenu.transferIfNeeded(player,item)
@@ -306,15 +311,19 @@ assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivo
 local compatSource = read(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua')
 -- Stub only the separately tested Carts hook proof; P4 adoption/matching and its source callbacks stay real.
 local priorCarts=PZSurvivorToolkit.ActionQueueCarts
-local lateCartProof={enabled=true,constructors={}}
+local lateCartProof={enabled=true,constructors={},unequipConstructors={}}
 function lateCartProof.isTransferConstructor(callback)
     local latest=lateCartProof.latest
     return lateCartProof.enabled and lateCartProof.constructors[callback]==true and latest
         and ISInventoryTransferAction.new==latest.new and ISInventoryTransferAction.perform==latest.perform
         and ISInventoryTransferAction.transferItem==latest.transferItem
 end
-lateCartProof.isUnequipConstructor=function()return false end
-lateCartProof.isNonCartUnequip=function()return true end
+function lateCartProof.isUnequipConstructor(callback)
+    local latest=lateCartProof.unequipLatest
+    return lateCartProof.enabled and lateCartProof.unequipConstructors[callback]==true and latest
+        and ISUnequipAction.new==latest.new and ISUnequipAction.complete==latest.complete
+end
+lateCartProof.isNonCartUnequip=function(action)return not action.item.fixtureCart end
 lateCartProof.isReturn=function()return false end
 lateCartProof.isTransfer=function()return false end
 PZSurvivorToolkit.ActionQueueCarts=lateCartProof
@@ -359,6 +368,7 @@ inventory.getItemById = function(self, id) for _, item in ipairs(self.values) do
 inventory.getParent = function() end
 inventory.getType = function() return 'inventory' end
 inventory.getContainingItem=function() end
+inventory.setDrawDirty=function()end
 local square = {getX = function() return 0 end, getY = function() return 0 end, getZ = function() return 0 end,
     canReachTo=function() return true end}
 local player = {class = 'IsoPlayer', getInventory = function() return inventory end, getPlayerNum = function() return 0 end,
@@ -369,6 +379,12 @@ local player = {class = 'IsoPlayer', getInventory = function() return inventory 
     getWornItems = function() return list({}) end, getPrimaryHandItem = function(self) return self.primary end,
     getSecondaryHandItem = function(self) return self.secondary end, isEquipped = function() return false end, setIsFarming = function() end,
     isTimedActionInstant = function() return false end, hasTrait = function() return false end}
+player.setPrimaryHandItem=function(self,value)self.primary=value end
+player.setSecondaryHandItem=function(self,value)self.secondary=value end
+player.removeWornItem=function()end
+MoodleType={UNHAPPY='unhappy',DRUNK='drunk'}
+player.getMoodles=function()return {getMoodleLevel=function()return 0 end}end
+player.getTimedActionTimeModifier=function()return 1 end
 player.getCurrentSquare=player.getSquare
 player.getPerkLevel=function() return 0 end
 player.getX=function() return 0 end; player.getY=function() return 0 end
@@ -396,7 +412,9 @@ local function item(container, id)
         getType = function() return 'Test' end, getBloodLevel = function() return 1 end, getDirtiness = function() return 1 end,
         getItemAfterCleaning = function() end, canBeActivated = function(self) return self.activatable or false end, isActivated = function(self) return self.activated or false end,
         setActivated=function(self,value) self.activated=value; self.activationChanges=(self.activationChanges or 0)+1 end,
-        getName = function() return 'test' end, isHidden = function() return false end}
+        getName = function() return 'test' end, isHidden = function() return false end,
+        setJobDelta=function()end, IsInventoryContainer=function()return false end, hasTag=function()return false end,
+        isTwoHandWeapon=function()return false end, isRequiresEquippedBothHands=function()return false end}
 end
 local function tail()
     local action = ISBaseTimedAction:new(player); ISTimedActionQueue.add(action); return action
@@ -802,6 +820,139 @@ do
     activate.activated=true
     while queue.queue[1]do local action=queue.queue[1];action:complete();action:perform()end
     tickTidy();tickTidy()
+end
+
+-- Empty-hand Tidy cleanup shares the native boundary; clothing/attachments keep their existing fallback.
+do
+    local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+    local client,actions,completed=isClient,player.getCharacterActions,queue.onCompleted
+    local callbacks=0
+    local function restoreEmptyHands(mixed,slot,worn,attached,kind)
+        reset();player.primary,player.secondary=nil,nil
+        local tool=item(inventory,148);inventory.values={tool}
+        tool.fixtureCart,tool.fixtureHeavy=kind=='cart',kind=='heavy'
+        local captured=TidyFixture.captureSession(player)
+        captured.armed,captured.restoreHands=true,true;TidyFixture.sessions[player]=captured
+        local owner=tail();local other=mixed and tail()or nil
+        if slot~='secondary'then player.primary=tool end
+        if slot=='secondary'or slot=='both'then player.secondary=tool end
+        local getWorn,hotbar=player.getWornItems,getPlayerHotbar
+        if worn then player.getWornItems=function()return {size=function()return 0 end,contains=function(_,value)return value==tool end}end end
+        if attached then getPlayerHotbar=function()return {isItemAttached=function()return true end}end end
+        owner:perform();if other then other:perform()end;tickTidy();tickTidy()
+        player.getWornItems,getPlayerHotbar=getWorn,hotbar
+        local action=queue.queue[1]
+        assert(action and action.Type=='ISUnequipAction','actual P4 source did not queue an empty-hand restore')
+        return tool,owner,action
+    end
+    local function drain()
+        while queue.queue[1]do local action=queue.queue[1];action:complete();action:perform()end
+        tickTidy();tickTidy()
+    end
+    queue.onCompleted=function(self,action)
+        if lifecycle.current(player)==action then
+            assert(not operations.deferCompletion(self,action),'P4 unequip acquired legacy completion scope')
+            callbacks=callbacks+1
+        end
+        return completed(self,action)
+    end
+    for _,mp in ipairs({false,true})do
+        for _,mixed in ipairs({false,true})do
+            for _,cancelled in ipairs({false,true})do
+                for _,slot in ipairs({'primary','secondary','both'})do
+                    local tool,owner,action=restoreEmptyHands(mixed,slot)
+                    local contract,id=definitions.inspect(action)
+                    assert(contract and id=='compat.tidy-equipment'and (contract.cancelOperation==false)==mixed,
+                        'P4 hand unequip did not select the existing shared cleanup contract')
+                    local following=tail();local syncs=player.equipSyncs or 0
+                    assert((action.toolkitQueueOperation==owner.toolkitQueueOperation)==not mixed)
+                    assert(action.toolkitQueueOperation~=following.toolkitQueueOperation)
+                    if cancelled then operations.invalidate(owner.toolkitQueueOperation)end
+                    local removed=false;action.action={};queue.current=action
+                    player.getCharacterActions=function()return list(removed and {}or{action.action})end
+                    isClient=function()return mp end
+                    if mp then action:complete()end
+                    assert(lifecycle.begin(action,'perform'));action:perform();lifecycle.finish(action,'perform',true)
+                    assert(queue.current==action and queue.queue[1]==action and queue.queue[2]==following,
+                        'hand unequip advanced before its native effect/removal')
+                    assert(lifecycle.flush(queue)=='waiting')
+                    if not mp then
+                        assert(player.primary==tool or player.secondary==tool,'SP unequip applied its effect during perform')
+                        assert(lifecycle.begin(action,'complete'));action:complete();lifecycle.finish(action,'complete',true)
+                    end
+                    assert(player.primary==nil and player.secondary==nil and player.equipSyncs==syncs+1,
+                        'native unequip must clear held items and sync exactly once')
+                    assert(lifecycle.flush(queue)=='waiting','hand unequip ignored native removal')
+                    removed=true
+                    assert(lifecycle.flush(queue)=='completed'and queue.current==following and lifecycle.flush(queue)==nil,
+                        'hand unequip completed twice or lost its independent tail')
+                    isClient,player.getCharacterActions=client,actions
+                    following:perform();tickTidy();tickTidy()
+                    assert(TidyFixture.restoring[player]==nil and TidyFixture.restoreFloor[player]==nil)
+                end
+            end
+        end
+    end
+    assert(callbacks==24,'hand unequip lifecycle missed a native return')
+    queue.onCompleted=completed
+    for _,field in ipairs({'reason','fromHotbar','hotbar','onCompleteFunc','start','item'})do
+        local _,_,action=restoreEmptyHands(true,'primary')
+        local original=action[field]
+        action[field]=(field=='onCompleteFunc'or field=='start')and function()end
+            or field=='item'and item(inventory,149)or field=='reason'and 'drop'or true
+        assert(not definitions.inspect(action),'P4 hand unequip accepted changed '..field)
+        action[field]=original;assert(select(2,definitions.inspect(action))=='compat.tidy-equipment')
+        drain()
+    end
+    local _,_,action=restoreEmptyHands(true,'primary')
+    local start=ISUnequipAction.start;ISUnequipAction.start=function()end
+    assert(not definitions.inspect(action),'changed unequip class retained source permissions')
+    ISUnequipAction.start=start;drain()
+    local _,_,worn=restoreEmptyHands(true,'primary',true)
+    assert(select(2,definitions.inspect(worn))=='compat.selected-chains','held/worn cleanup migrated without clothing verification')
+    drain()
+    local _,_,attached=restoreEmptyHands(true,'primary',false,true)
+    assert(select(2,definitions.inspect(attached))=='compat.selected-chains','hotbar cleanup migrated without attachment verification')
+    reset();tickTidy();tickTidy()
+    local _,_,heavy=restoreEmptyHands(true,'primary',false,false,'heavy')
+    assert(select(2,definitions.inspect(heavy))=='compat.selected-chains','heavy world-drop cleanup migrated without verification')
+    reset();tickTidy();tickTidy()
+    local methods={new=ISUnequipAction.new,complete=ISUnequipAction.complete}
+    local wrapped={new=function(...)return methods.new(...)end,complete=function(...)return methods.complete(...)end}
+    lateCartProof.unequipConstructors[methods.new],lateCartProof.unequipConstructors[wrapped.new]=true,true
+    lateCartProof.unequipLatest=wrapped
+    ISUnequipAction.new,ISUnequipAction.complete=wrapped.new,wrapped.complete
+    for _,mp in ipairs({false,true})do
+        local _,_,ordinary=restoreEmptyHands(true,'primary')
+        assert(select(2,definitions.inspect(ordinary))=='compat.tidy-equipment','audited non-cart unequip wrapper lost P4 cleanup ownership')
+        local following=tail();local removed=false;ordinary.action={};queue.current=ordinary
+        player.getCharacterActions=function()return list(removed and {}or{ordinary.action})end
+        isClient=function()return mp end
+        if mp then ordinary:complete()end
+        assert(lifecycle.begin(ordinary,'perform'));ordinary:perform();lifecycle.finish(ordinary,'perform',true)
+        assert(queue.queue[1]==ordinary and queue.queue[2]==following and lifecycle.flush(queue)=='waiting')
+        if not mp then
+            assert(lifecycle.begin(ordinary,'complete'));ordinary:complete();lifecycle.finish(ordinary,'complete',true)
+        end
+        removed=true
+        assert(player.primary==nil and lifecycle.flush(queue)=='completed'and queue.current==following and lifecycle.flush(queue)==nil)
+        isClient,player.getCharacterActions=client,actions;following:perform();tickTidy();tickTidy()
+    end
+    for _,case in ipairs({'worn','attached','heavy'})do
+        local _,_,unsupported=restoreEmptyHands(true,'primary',case=='worn',case=='attached',case)
+        assert(not definitions.inspect(unsupported) and not compat.fixtureRegistries[1][unsupported],
+            'late unequip wrapper expanded the previous fallback for '..case)
+        reset();tickTidy();tickTidy()
+    end
+    local _,_,cart=restoreEmptyHands(true,'primary',false,false,'cart')
+    assert(not definitions.inspect(cart),'cart unequip obtained the audited non-cart source contract')
+    reset();tickTidy();tickTidy()
+    lateCartProof.enabled=false
+    local _,_,unknown=restoreEmptyHands(true,'primary')
+    assert(not definitions.inspect(unknown),'changed Carts proof granted P4 unequip permissions')
+    lateCartProof.enabled=true
+    reset();ISUnequipAction.new,ISUnequipAction.complete=methods.new,methods.complete
+    lateCartProof.unequipLatest=nil
 end
 
 -- Exact fixture native actions supply the same known-input contracts the native Policy installs.

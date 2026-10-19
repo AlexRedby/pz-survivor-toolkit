@@ -58,7 +58,7 @@ Gate for each adapter: primary success; same/different targets; pending cancella
 
 ## Remaining families
 
-- [ ] TidyUpMeister: audit remaining unequip/clothing restores and define safe edit contracts for mixed-session floor returns and still unknown/dynamic entry points; preserve required shared cleanup on cancellation.
+- [ ] TidyUpMeister: audit remaining clothing, hotbar and heavy-item restores and define safe edit contracts for mixed-session floor returns and still unknown/dynamic entry points; preserve required shared cleanup on cancellation.
 - [ ] Packaged food: check the remaining opening recipes, including random contents and mod callbacks. Keep their standard commands until a separate contract exists; queue support is limited to verified `OpenCannedFood` and `OpenCannedFood2`.
 - [ ] Farming and animals: target identity, plant/animal state, shared consumables and tools.
 - [ ] Mechanics: vehicle + part, installed/removed items, shared tool and vehicle movement.
