@@ -234,7 +234,7 @@ function Authority.verify(player,phase)
    end
   end
   print('[QUEUE_TEST] HEALTH_INVENTORY_TOTAL phase='..phase..' before='..beforeCount..' after='..afterCount)
-  local cancelled=spec.cancel or (spec.guard and spec.guard~='helper') or spec.expanded or spec.remote or spec.replaceStop
+  local cancelled=(spec.cancel and Selection.mode=='toolkit') or (spec.guard and spec.guard~='helper') or spec.expanded or spec.remote or spec.replaceStop
   local removedBandage=spec.replace and spec.replaceStop~='remove'
   local expectedOutputs={};for kind,count in pairs(spec.output or {}) do expectedOutputs[kind]=count end
   if not isServer() and (not cancelled or removedBandage) then
@@ -272,7 +272,11 @@ function Authority.verify(player,phase)
     assert(actual[id]==item and math.abs(item:getFluidContainer():getAmount()-(pending.uses[entry[1]]-0.15))<0.00001,'native exact disinfectant fluid consumption differs')
    elseif effect=='use' then
     assert((not actual[id] and pending.uses[entry[1]]==1) or (actual[id] and actual[id]:getCurrentUses()==pending.uses[entry[1]]-1),'native exact use differs '..entry[1]);changed[id]=not actual[id]
-   else assert(actual[id]==item,'preserved exact supply ID lost '..entry[1]) end
+   else
+    assert(actual[id]==item,'preserved exact supply ID lost '..entry[1])
+    local baseline=assert(pending.baselineReceipts[id]);local preserved=itemReceipt(item)
+    assert(preserved.uses==baseline.uses and preserved.fluid==baseline.fluid,'preserved supply amount changed '..entry[1])
+   end
    if cancelled and spec.bag and id~=pending.removed then
     local expected=assert(pending.originalContainers[id],'original input container not recorded')
     assert(expected==current.items.bag:getItemContainer(),'bag fixture input did not begin in schoolbag')
@@ -289,9 +293,12 @@ function Authority.verify(player,phase)
    assert(actual[book:getID()]==book,'unrelated book ID not preserved '..name)
    local pages,total=book:getAlreadyReadPages(),book:getNumberOfPages()
    -- The native MP handmade splint can consume both inputs while leaving its one-page tail unread.
-   if Selection.mode=='native' and name=='tail' and (spec.id=='nativeStop' or spec.id=='remoteRemoved'
+   if Selection.mode=='native' and name=='tail' and spec.id=='missingSupply' then
+    assert(pages==total-1,'native missing-supply tail differs from observed untouched page')
+   elseif Selection.mode=='native' and name=='tail' and (spec.id=='nativeStop' or spec.id=='remoteRemoved'
     or Selection.kind=='mp' and (spec.id=='splintApply' or spec.id=='splintDrop')) then
     assert(pages==total or pages==total-1,'native control tail pages outside exact fixture range')
+   elseif spec.emptyStart and name=='front' then assert(pages==total-1,'unused front book changed')
    else assert(pages==total,'unrelated book pages not preserved '..name) end
   end
   local after=image(pending.body);local before=pending.before
@@ -322,6 +329,6 @@ function Authority.verify(player,phase)
  print('[QUEUE_TEST] HEALTH_AUTH_RECEIPT '..key(player)..' phase='..phase..' ok='..tostring(ok)..' patient='..key(pending.patient)..' error='..tostring(problem))
  local tail=current.items.tail
  return {phase=phase,ok=ok,error=tostring(problem),body=image(pending.body),supply=pending.ids,front=current.items.front:getID(),tail=tail:getID(),
-  outcome={body=image(pending.body),tailCompleted=tail:getAlreadyReadPages()==tail:getNumberOfPages(),tailPages=tail:getAlreadyReadPages(),tailTotal=tail:getNumberOfPages()}}
+  outcome={supplyEffectsVerified=ok,clinicalEffectVerified=ok,serverAuthorityVerified=ok and isServer(),body=image(pending.body),tailCompleted=tail:getAlreadyReadPages()==tail:getNumberOfPages(),tailPages=tail:getAlreadyReadPages(),tailTotal=tail:getNumberOfPages()}}
 end
 return Authority

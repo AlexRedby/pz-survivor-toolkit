@@ -3,6 +3,84 @@
   "suites": {
     "health": {
       "status": "ready",
+      "scenario_actions": {
+        "bandage-health-panel": {
+          "scope": "Native health-panel bandaging: self in SP and the other real player in Host; root bandage, empty or book-blocked queue. Waiting edits and supply loss have matching unedited native controls. No inventory, MiniHealthPlus, bag, repeat or replacement coverage implied.",
+          "mods": [
+            "PZSurvivorToolkit"
+          ],
+          "toolkit_only": ["lost-before-start"],
+          "checks": {
+            "success-empty": {
+              "bandageEmpty": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "tailCompleted": true,
+                "emptyStartVerified": true
+              }
+            },
+            "success-queued": {
+              "bandageApply": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "tailCompleted": true,
+                "queuedStartVerified": true
+              }
+            },
+            "cancel-waiting": {
+              "waitingCancel": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "tailCompleted": true,
+                "waitingCancelVerified": true
+              }
+            },
+            "move-independent": {
+              "waitingMove": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "tailCompleted": true,
+                "independentMoveVerified": true
+              }
+            },
+            "lost-before-start": {
+              "missingSupply": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "tailCompleted": true,
+                "supplyLostBeforeStartVerified": true
+              }
+            },
+            "server-authority": {
+              "bandageEmpty": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "serverAuthorityVerified": true
+              },
+              "bandageApply": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "serverAuthorityVerified": true
+              },
+              "waitingCancel": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "serverAuthorityVerified": true
+              },
+              "waitingMove": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "serverAuthorityVerified": true
+              },
+              "missingSupply": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "serverAuthorityVerified": true
+              }
+            }
+          }
+        }
+      },
       "cases": [
         {
           "id": "bandageApply",
@@ -221,7 +299,8 @@
             "mp"
           ],
           "modes": [
-            "toolkit"
+            "toolkit",
+            "native"
           ]
         },
         {
@@ -233,7 +312,8 @@
             "mp"
           ],
           "modes": [
-            "toolkit"
+            "toolkit",
+            "native"
           ]
         },
         {
@@ -245,7 +325,8 @@
             "mp"
           ],
           "modes": [
-            "toolkit"
+            "toolkit",
+            "native"
           ]
         },
         {
@@ -393,6 +474,7 @@
             "toolkit"
           ]
         },
+        {"id": "bandageEmpty", "producer": "menu", "capability": "effect", "kinds": ["sp", "mp"], "modes": ["toolkit", "native"]},
         {
           "id": "remoteMove",
           "producer": "menu",

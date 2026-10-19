@@ -215,6 +215,15 @@ class NativeSnapshotTests(unittest.TestCase):
         self.write(bootstrap, '-- changed after snapshot\n')
         self.assertTrue(report.verify_manifest(root, 'source-manifest.json', absolute=True))
 
+    def test_health_seals_and_stages_shared_scenario_assertions(self):
+        root = self.prepare()
+        helper = self.project / 'tests/native_queue/support/QueueScenarioChecks.lua'
+        self.assertIn(str(helper), report.read_json(root / 'source-manifest.json'))
+        copied = root / 'client1/mods/ActionQueueTest/42/media/lua/shared/QueueScenarioChecks.lua'
+        self.assertEqual(copied.read_bytes(), helper.read_bytes())
+        helper.write_text('-- changed assertions after snapshot\n')
+        self.assertTrue(report.verify_manifest(root, 'source-manifest.json', absolute=True))
+
     def test_health_host_rejects_patient_disconnect_before_preparing_profiles(self):
         for mode in ('toolkit', 'native'):
             with self.subTest(mode=mode):

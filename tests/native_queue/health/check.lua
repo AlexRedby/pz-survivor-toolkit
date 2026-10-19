@@ -2,7 +2,7 @@ local root=assert(arg[1])
 isClient=function()return false end
 local function source(side,name) return assert(loadfile(root..'/'..side..'/'..name..'.lua'))() end
 AllCases=source('shared','QueueHealthCases')
-assert(#AllCases==42)
+assert(#AllCases==43)
 getActivatedMods=function() return {contains=function(_,id)return id=="MiniHealthPlus" end} end
 local TestSelection={kind='sp',mode='toolkit',cases={}}
 for _,spec in ipairs(AllCases) do TestSelection.cases[#TestSelection.cases+1]=spec.id end
@@ -219,6 +219,7 @@ for i,spec in ipairs(Cases) do
    elseif spec.handler=='HApplyPlantain' then target.plantain=1 end
   end
   for _,item in ipairs(actor.inventory.items) do if item.kind:find('Base.Book',1,true) then item.pages=100 end end
+  if spec.emptyStart then find(actor.inventory,prep.front).pages=99 end
   if spec.id=='bandageRemove' then
    local original=priorVisuals[1];assert(original.kind=='Base.Bandage_LeftLowerArm')
    actor.inventory:AddItem(original);actor.worn[#actor.worn+1]=original
@@ -251,6 +252,17 @@ for i,spec in ipairs(Cases) do
    original:Remove(needle);actor.inventory:AddItem(needle)
    assert(not Authority.verify(actor,spec.id).ok,'cancelled bag input retained in root passed exact return receipt')
    actor.inventory:Remove(needle);original:AddItem(needle)
+  end
+  if spec.id=='waitingCancel' or spec.id=='nativeStop' then
+   local supply=find(actor.inventory,prep.items.bandage or prep.items.alcohol)
+   if supply.fluid then supply.fluid.amount=supply.fluid.amount-0.01 else supply.uses=supply.uses-1 end
+   assert(not Authority.verify(actor,spec.id).ok,'cancelled supply quantity change was ignored')
+   if supply.fluid then supply.fluid.amount=supply.fluid.amount+0.01 else supply.uses=supply.uses+1 end
+  end
+  if spec.emptyStart then
+   find(actor.inventory,prep.front).pages=100
+   assert(not Authority.verify(actor,spec.id).ok,'empty start accepted reading its unused front book')
+   find(actor.inventory,prep.front).pages=99
   end
   local result=Authority.verify(actor,spec.id);assert(result.ok,result.error)
  end
@@ -411,14 +423,14 @@ do
  for _,invalid in ipairs({{}, {'unknown'}, {'nativeStop','nativeStop'}}) do
   assert(not pcall(select,'sp','toolkit',invalid),'invalid medical selection accepted')
  end
- select('sp','native',{'waitingCancel','remoteRemoved'})
+ select('sp','native',{'miniWaitingCancel','remoteRemoved'})
  Authority=source('shared','QueueHealthAuthority')
  local actor=player('skip')
  Authority.setup(actor)
- assert(not pcall(Authority.prepare,actor,'waitingCancel'),'queue-only control silently executed')
+ assert(not pcall(Authority.prepare,actor,'miniWaitingCancel'),'queue-only control silently executed')
  assert(not pcall(Authority.skip,actor,'remoteRemoved','arbitrary'),'out-of-order skip accepted')
- assert(not pcall(Authority.skip,actor,'waitingCancel','arbitrary'),'invented skip reason accepted')
- assert(Authority.skip(actor,'waitingCancel',Selection.skipReason(Selection.cases[1],'skip')).ok)
+ assert(not pcall(Authority.skip,actor,'miniWaitingCancel','arbitrary'),'invented skip reason accepted')
+ assert(Authority.skip(actor,'miniWaitingCancel',Selection.skipReason(Selection.cases[1],'skip')).ok)
  assert(Authority.skip(actor,'remoteRemoved',Selection.skipReason(Selection.cases[2],'skip')).ok)
  assert(not pcall(Authority.skip,actor,'remoteRemoved','duplicate'),'duplicate skip accepted')
  for _,mode in ipairs({'native','toolkit'}) do
@@ -437,6 +449,28 @@ do
  end
 end
 print('PASS exact ordered subsets; duplicate/unknown/empty selection and invented/out-of-order skips rejected; native observed tail differs while toolkit remains strict')
+
+-- Missing supply has a measured queue-disabled tail loss, not a Toolkit success guarantee.
+for _,mode in ipairs({'native','toolkit'}) do
+ require=AuthorityRequire
+ select('sp',mode,{'missingSupply'})
+ Authority=source('shared','QueueHealthAuthority')
+ local actor=player('missing-'..mode);Authority.setup(actor)
+ local prep=Authority.prepare(actor,'missingSupply');fixtureVisuals(actor);Authority.baseline(actor,'missingSupply')
+ Authority.mutate(actor,'missingSupply','missing')
+ local tail
+ for _,book in ipairs(actor.inventory.items) do
+  if book.id==prep.front then book.pages=100 elseif book.id==prep.tail then tail=book end
+ end
+ if mode=='toolkit' then
+  assert(not Authority.verify(actor,'missingSupply').ok,'Toolkit accepted missing-supply tail loss');tail.pages=100
+ else
+  tail.pages=98;assert(not Authority.verify(actor,'missingSupply').ok,'native control accepted an unexpected tail state');tail.pages=99
+ end
+ local result=Authority.verify(actor,'missingSupply');assert(result.ok,result.error)
+ assert(result.outcome.tailCompleted==(mode=='toolkit') and result.outcome.supplyEffectsVerified and result.outcome.clinicalEffectVerified)
+end
+print('PASS missing supply native tail observation, strict Toolkit preservation and typed authoritative effects')
 
 -- Execute actual native control producer and stop observer with toolkit APIs forbidden.
 do
@@ -664,7 +698,7 @@ for _,mode in ipairs({'native','toolkit'}) do for _,disconnect in ipairs({false,
   {kind='mp',language='EN',ids=function()return {}end,preparations=prepared,baselines=baselines,receipts=receipts,
    send=function(command,args)if command=='Prepare'then prepared[args.phase]=prep
     elseif command=='Baseline'then baselines[args.phase]={ok=true}
-    elseif command=='Verify'then receipts[args.phase]={ok=true,front=front.id,tail=tail.id}
+    elseif command=='Verify'then receipts[args.phase]={ok=true,front=front.id,tail=tail.id,outcome={}}
     else error(command)end end})
  stages[1]();local run=stages[2]
  assert(run()==false and run()==false and run()==false and run()==false);now=500;assert(run()==false);now=501;assert(run()==false)

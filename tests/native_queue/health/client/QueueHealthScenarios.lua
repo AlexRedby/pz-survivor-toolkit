@@ -3,6 +3,7 @@ require 'TimedActions/ISReadABook'
 local Selection=require 'QueueHealthSelection'
 local Cases=Selection.cases
 local Authority=require 'QueueHealthAuthority'
+local Checks=require 'QueueScenarioChecks'
 return function(stage,queue,empty,remote)
  local Toolkit=PZSurvivorToolkit
  local API,Policy,Ops=Toolkit.ActionQueue,Toolkit.ActionQueuePolicy,Toolkit.ActionQueueOperations
@@ -117,13 +118,19 @@ return function(stage,queue,empty,remote)
    local positioned,subscribed,stableSince,baselineRequested=false,false,nil,false
    local bag,previousSecondary,bagVisible,bagHidden
    local removedAt,nativeObservation
+   local proofs={}
    local function notReady() stableSince=nil;return false end
    local function mutation(mode)
     if not controlSent then remote.send('Mutate',{phase=spec.id,mode=mode});controlSent=true end
     local receipt=remote.mutations[spec.id]
     if not receipt then return false end
     assert(receipt.ok,receipt.error)
-    if mode=='missing' then return not item(assert(prep.items.bandage)) end
+    if mode=='missing' then
+     if item(assert(prep.items.bandage)) then return false end
+     assert(queue():indexOf(parent)~=-1 and not parent.action,'supply loss occurred after medical parent started')
+     assert(receipt.removed==prep.items.bandage,'mutation removed the wrong supply')
+     proofs.supplyLostBeforeStartVerified=true;return true
+    end
     return true
    end
    stage('medical native '..spec.id,function()
@@ -166,13 +173,20 @@ return function(stage,queue,empty,remote)
       replaceSettings={value=SandboxVars.MHP.EnableReplaceBandage};SandboxVars.MHP.EnableReplaceBandage=true
       assert(MHP_SB_IsReplaceBandageEnabled(),'fixture-owned MiniHealthPlus replacement setting missing')
      end
-     front=read(prep.front,prep.frontPages);parent=enqueue(panel,body,spec,prep.items);tail=read(prep.tail,1)
+     assert(empty(),'medical case did not begin with a drained queue')
+     if not spec.emptyStart then front=read(prep.front,prep.frontPages) end
+     proofs.emptyStartVerified=spec.emptyStart==true and empty()
+     parent=enqueue(panel,body,spec,prep.items);tail=read(prep.tail,1)
      if remote.completion then remote.completion.watch(spec.id,parent,tail) end
-     assert(queue():indexOf(front)<queue():indexOf(parent) and queue():indexOf(parent)<queue():indexOf(tail),'native queue order differs')
-     if spec.cancel then local ok,why=API.cancelOperation(queue(),parent);assert(ok,'waiting medical cancel rejected '..tostring(why))
+     assert(queue():indexOf(parent)<queue():indexOf(tail),'medical parent/tail order differs')
+     if front then
+      assert(queue():indexOf(front)<queue():indexOf(parent),'native front/parent order differs')
+      proofs.queuedStartVerified=true
+     end
+     if spec.cancel then
+      if not native then Checks.waitingCancel(queue(),API,Policy,parent,{parent},{front,tail});proofs.waitingCancelVerified=true end
      elseif spec.move then
-      local ok,why=API.move(queue(),parent,tail,true);assert(ok,'waiting medical reorder rejected '..tostring(why))
-      ok,why=API.move(queue(),parent,tail,false);assert(ok,'waiting medical reorder restore rejected '..tostring(why))
+      if not native then Checks.moveRoundtrip(queue(),API,Policy,parent,tail,true,tail,false);proofs.independentMoveVerified=true end
      elseif spec.guard=='closed' then
       if activePatient==player then panel.character=nil else panel:tryStopReceivingBodyDamageUpdates();subscribedPatient=nil end
       assert(not Policy.inspect(parent),'closed panel kept permission')
@@ -277,6 +291,7 @@ return function(stage,queue,empty,remote)
      local result=remote.receipts[spec.id];if not result then return false end
      if nativeObservation then result.outcome=result.outcome or {};for key,value in pairs(nativeObservation) do result.outcome[key]=value end end
      assert(result.ok,result.error)
+     for key,value in pairs(proofs) do result.outcome[key]=value end
      assert(result.front==prep.front and result.tail==prep.tail,'authority receipt changed book identities')
      if remote.completion then
       local phases=remote.completion.settled(spec.id)

@@ -13,7 +13,8 @@ local function skipReason(spec,username)
  if spec.mini and selection.kind~='sp' then return 'MiniHealthPlus treats the local player; this fixture uses a remote MP patient' end
  if spec.mini and not (getActivatedMods and getActivatedMods():contains('MiniHealthPlus')) then return 'requires MiniHealthPlus' end
  if selection.kind=='sp' and spec.remote then return 'requires two actual online players' end
- if selection.mode=='native' and (spec.cancel or spec.move or spec.guard or spec.expanded and spec.bag or spec.replaceStop or spec.remote and spec.remote~='removed') then
+ local pairedControl=spec.id=='waitingCancel' or spec.id=='waitingMove' or spec.id=='missingSupply'
+ if selection.mode=='native' and not pairedControl and (spec.cancel or spec.move or spec.guard or spec.expanded and spec.bag or spec.replaceStop or spec.remote and spec.remote~='removed') then
   return 'requires toolkit queue operation or guard API'
  end
  if spec.id=='remoteRemoved' and username=='client1' then

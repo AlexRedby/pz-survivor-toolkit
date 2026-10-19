@@ -245,6 +245,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             if not asset.is_relative_to(game):
                 raise ValueError('Game input escapes installed game: ' + relative)
             sources.append(asset)
+    if selection['suite'] == 'health':
+        sources.append(support / 'QueueScenarioChecks.lua')
     host_bootstrap = project / 'tests/native_queue/startup/client/ZZStartup.lua'
     health_host = selection['suite'] == 'health' and coop.enabled(selection)
     if health_host and host_bootstrap.is_file():
@@ -313,6 +315,8 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
                 shutil.copytree(suite / side, lua / side, dirs_exist_ok=True)
         shutil.copy2(support / "ZZReleasePreflight.lua", lua / "client")
         shutil.copy2(support / "QueueEnergyPlacement.lua", lua / "shared")
+        if selection['suite'] == 'health':
+            shutil.copy2(support / 'QueueScenarioChecks.lua', lua / 'shared')
         if health_host:
             shutil.copy2(host_bootstrap, lua / 'client')
         language = selection["languages"][-1] if role == "client2" else selection["languages"][0]
