@@ -1,5 +1,6 @@
 require "PZSurvivorWishlist"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
+local Controls = require "PZSurvivorToolkit/CraftingControls"
 require "ISUI/ISButton"
 require "ISUI/ISContextMenu"
 require "Entity/ISUI/CraftRecipe/ISCraftRecipePanel"
@@ -224,19 +225,12 @@ local function tableButton(panel, tableLayout)
     if panel.xuiRecalculateLayout then panel:xuiRecalculateLayout() end
 end
 
-local function ncButton(panel)
-    if panel.pzswButton then return end
-    panel:addChild(newButton(panel))
-end
-
-local function ncLayout(panel, width, height)
-    local button = panel.pzswButton
-    if button then
-        button:setX(0)
-        button:setY(height - buttonHeight())
-        button:setWidth(width)
-    end
-end
+Controls.register("wishlist", {
+    order = 20, field = "pzswButton", rowField = "pzswRow", enabled = enabled,
+    create = function(panel)
+        if panel.player and panel.logic then return newButton(panel) end
+    end,
+})
 
 local function cookLayout(panel)
     local reserve = enabled() and buttonHeight() + 4 or 0
@@ -329,27 +323,12 @@ local function evolvedResult(slot)
 end
 
 function Crafting.install()
-    for _, class in ipairs({ ISCraftRecipePanel, ISBuildRecipePanel }) do
-        after(class, "createDynamicChildren", function(panel) tableButton(panel, panel.rootTable) end)
-    end
+    Controls.install()
+    after(ISBuildRecipePanel, "createDynamicChildren", function(panel) tableButton(panel, panel.rootTable) end)
     inputHooks(ISWidgetInput)
     inputHooks(NC_CraftInput_Slot)
     inputHooks(NB_BuildingInput_Slot)
     inputHooks(PJCK_CraftInput_Slot)
-    after(NC_CellBaseCraft, "createChildren", ncButton)
-    -- Reserve a row from NC's scrollable input area; its other controls keep their sizes.
-    if NC_CellBaseCraft and not NC_CellBaseCraft.pzswLayoutWrapped then
-        local original = NC_CellBaseCraft.layoutChildren
-        if type(original) == "function" then
-            NC_CellBaseCraft.pzswLayoutWrapped = true
-            NC_CellBaseCraft.layoutChildren = function(panel, width, height)
-                local reserve = panel.pzswButton and enabled() and buttonHeight() + 4 or 0
-                local result = pack(original(panel, width, height - reserve))
-                ncLayout(panel, width, height)
-                return unpack(result, 1, result.n)
-            end
-        end
-    end
     after(NB_BuildingInfoPanel, "createChildren", function(panel) tableButton(panel, panel) end)
     after(PJCK_HandCraftPanel, "createChildren", cookButton)
     -- Project Cook loads its handcraft classes lazily when that tab is first opened.
@@ -359,7 +338,7 @@ function Crafting.install()
     end)
     after(PJCK_ItemSlot, "showItemContextMenu", evolvedResult)
     after(PJCK_BaseItemSlot, "showBaseItemActionMenu", evolvedResult)
-    for _, class in pairs({ ISCraftRecipePanel, ISBuildRecipePanel, NC_CellBaseCraft, NB_BuildingInfoPanel, PJCK_HandCraftPanel }) do
+    for _, class in pairs({ ISBuildRecipePanel, NB_BuildingInfoPanel, PJCK_HandCraftPanel }) do
         after(class, "prerender", refreshButton)
     end
 end

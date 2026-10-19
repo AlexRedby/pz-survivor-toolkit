@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.123
+
+- **Changed:** Wishlist and crafting-plan buttons share one owner for native crafting rows and Neat Crafting footers. Creation, visibility and reserved space no longer depend on nested layout hooks; action behavior, button order and embedded-plan controls are preserved.
+
 ### 0.1.122
 
 - **Fixed:** Better Containers pin markers now follow the inventory's rendered rows, including hidden CleanUI equipment and expanded stacks. Toolkit draws the markers directly while BC retains pin settings, menus and assets; removed the global pane swap used to install BC's separate row renderer.

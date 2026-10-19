@@ -64,6 +64,12 @@ Use the checks below for the affected behavior. A fixture's assertions describe 
 | Java animal fixes | Compare unpatched/patched early equipment delivery, replay a late trailer snapshot, and compare synchronization with the timer mod absent/present. Check exact animal identities, all native grabs/drops and direct periodic sends. Use the [animal-trailer fixture](../tests/native_queue/contributions/animal-trailer/README.md). |
 | UI and recording | Exercise both inventory modes, scaling, expanded stacks and repeated window close/reopen; inspect screenshots. Use the [item-tag fixture](../tests/native_queue/contributions/item-tags/README.md) and [video fixture](../tests/native_queue/contributions/video-recording/README.md). Successful callback assertions alone do not establish physical input or correct rendering. |
 
+## Crafting controls
+
+`CraftingControls` owns the extra rows in `ISCraftRecipePanel` and the footer in `NC_CellBaseCraft`. `CraftChains` and Wishlist register their buttons with explicit order, enabled/visible predicates and feature callbacks. The owner rebuilds native rows, reserves the combined footer height and updates visibility; consumers must not wrap those create/layout/prerender methods independently. An embedded plan receives the content height left above the visible footers. Project Cook and Building retain their specialized Wishlist adapters.
+
+Keep recipe interpretation in its feature: Wishlist describes wanted items and approximate usable containers, the planner accepts exact executable recipes, and Quartermaster matches physical ingredients for hauling. Their quantities are not interchangeable.
+
 ## Action queue adapters
 
 Queue regression checks use the installed game's Lua queue, base action, reading action and list geometry with simulated Java/UI lifecycle. Run them with `--game "$PZ_GAME"`; without it or an explicit `--native-action-root`, those native-source checks are skipped.

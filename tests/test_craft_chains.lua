@@ -111,7 +111,12 @@ local Planner = {plan=function(model,target,count)
         [1]={fullType='Knife',amount=1,resourceIds={42},generated=0},
     }}},consumed={Handle=count}}
 end}
+local Controls
 require = function(name)
+    if name=='PZSurvivorToolkit/CraftingControls' then
+        Controls=Controls or dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua')
+        return Controls
+    end
     if name=='PZSurvivorToolkit/UIStyle' then
         return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua')
     end
@@ -145,11 +150,13 @@ local nc=panel()
 NC_CellBaseCraft.createChildren(nc)
 a,b,c=NC_CellBaseCraft.layoutChildren(nc,500,400)
 check(a=='layout' and b==nil and c==5 and nc.baseHeight==370 and nc.pzstPlanButton.y==374,'NC reserves only one planning row')
--- Another toolbar wrapper (Wishlist) may be installed before or after ours.
-local previous=NC_CellBaseCraft.layoutChildren
-NC_CellBaseCraft.layoutChildren=function(panel,w,h) previous(panel,w,h-24);panel.wishlistY=h-20 end
+-- The shared owner reserves the independent Wishlist footer below Plan.
+Controls.register('wishlist', {order=20,field='pzswButton',rowField='pzswRow',
+    enabled=function() return true end,create=function() return widget(0,0,10,20) end})
+Controls.install()
+NC_CellBaseCraft.createChildren(nc)
 NC_CellBaseCraft.layoutChildren(nc,500,400)
-check(nc.pzstPlanButton.y+nc.pzstPlanButton.height<=nc.wishlistY,'toolbar wrappers compose without overlapping')
+check(nc.pzstPlanButton.y+nc.pzstPlanButton.height<=nc.pzswButton.y,'shared toolbar rows do not overlap')
 enabled=false;NC_CellBaseCraft.prerender(nc)
 check(nc.baseHeight==376 and not nc.pzstPlanButton.visible,'disable restores NC space while preserving other toolbar')
 check(Chains.open(p)==nil,'disabled planning opens nothing')
@@ -210,7 +217,7 @@ check(hand.logic.showManual==false and hand.logic.inputFilter==nil,'closing pick
 local owner={HandCraftPanel=hand}
 check(hand.MainPanel.focusCleared and #NC_HandcraftWindow.getJoypadInputEntries(owner)==0
     and #NC_HandcraftWindow.getJoypadOutputEntries(owner)==0,'controller cannot refocus or activate hidden native slots')
-check(view.height<=nc.wishlistY and view.start.y+view.start.height<=view.height,'plan controls fit above independent Wishlist footer')
+check(view.height<=nc.pzswButton.y and view.start.y+view.start.height<=view.height,'plan controls fit above independent Wishlist footer')
 NC_CellBaseCraft.layoutChildren(nc,290,310)
 check(view.width==290 and view.height==286 and view.preview.height>0,'embedded content follows parent resize')
 view.preview.tooltipUI=widget();view.preview.tooltipUI:addToUIManager()
@@ -228,9 +235,9 @@ check(view.closed and not nc.pzstPlanView,'native recipe change closes stale emb
 view=Chains.open(hand);enabled=false;NC_CellBaseCraft.prerender(nc)
 check(view.closed and not nc.pzstPlanButton.visible and nc.craftInputPanel.visible,'disabling restores recipe but hides planning entry')
 enabled=true;NC_CellBaseCraft.prerender(nc)
-view=Chains.open(hand);check(#nc.children==2,'repeated opening has only one plan child plus entry button')
+view=Chains.open(hand);check(#nc.children==3,'repeated opening has one plan child and two registered entry buttons')
 NC_HandcraftWindow.close({HandCraftPanel=hand})
-check(view.closed and #nc.children==1,'closing native owner releases plan child')
+check(view.closed and #nc.children==2,'closing native owner releases plan child')
 
 -- Presentation uses consumed stock, not every intermediate input; tools are reused across steps.
 view=Chains.open(hand)
@@ -310,7 +317,7 @@ for _, name in ipairs({'OnMainMenuEnter','OnGameExit','OnPlayerDeath'}) do
     check(view.closed and menu.hidden and not nc.pzstPlanView and not view.model and not view.context,
         'shutdown releases registered views, menus and inventory snapshots')
     local reopened=Chains.open(hand)
-    check(reopened~=view and not reopened.closed and #nc.children==2,'shutdown permits a fresh bound plan view')
+    check(reopened~=view and not reopened.closed and #nc.children==3,'shutdown permits a fresh bound plan view')
     reopened:close()
 end
 print('Craft-chain UI: '..checks..' checks passed (icons, accounting, embedding, changes, layout and lifecycle).')

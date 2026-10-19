@@ -53,7 +53,12 @@ PZSurvivorWishlist = { Settings = { craftingEnabled = function() return enabled 
         end,
         selected = function() return selected end, open = function() opened = opened + 1 end } }
 PZSurvivorToolkit = {}
+local Controls
 require = function(name)
+    if name == "PZSurvivorToolkit/CraftingControls" then
+        Controls = Controls or dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
+        return Controls
+    end
     if name == "PZSurvivorToolkit/UIStyle" then
         return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
     end

@@ -1,6 +1,7 @@
 require "PZSurvivorToolkit/Settings"
 local Planner = require "PZSurvivorToolkit/CraftPlanner"
 local Recipes = require "PZSurvivorToolkit/CraftChainRecipes"
+local Controls = require "PZSurvivorToolkit/CraftingControls"
 local fit = require("PZSurvivorToolkit/UIStyle").fit
 require "ISUI/ISCollapsableWindow"
 require "ISUI/ISPanel"
@@ -460,9 +461,21 @@ local function newButton(panel)
     button:initialise(); button:instantiate()
     button.tooltip = text("ButtonTooltip")
     button:setVisible(Settings.craftChains())
-    panel.pzstPlanButton, panel.pzstPlanEnabled = button, Settings.craftChains()
     return button
 end
+
+Controls.register("plan", {
+    order = 10, field = "pzstPlanButton", rowField = "pzstRow", create = newButton,
+    enabled = Settings.craftChains,
+    visible = function(panel, enabled) return enabled and not panel.pzstPlanView end,
+    update = function(panel, button, enabled)
+        if panel.pzstPlanView and not enabled then panel.pzstPlanView:close() end
+        button:setEnable(enabled and panel.logic and panel.logic:getRecipe() ~= nil)
+    end,
+    layout = function(panel, width, contentHeight)
+        if panel.pzstPlanView then panel.pzstPlanView:layout(width, contentHeight) end
+    end,
+})
 
 local hooked = {}
 local function pack(...) return {n=select("#", ...), ...} end
@@ -480,29 +493,8 @@ local function after(class, method, callback)
 end
 
 function Chains.install()
+    Controls.install()
     after(ISHandCraftPanel, "OnCloseWindow", closeOwner)
-    after(ISCraftRecipePanel, "createDynamicChildren", function(panel)
-        panel.pzstPlanButton = nil
-        if not panel.logic or not panel.logic:getRecipe() then return end
-        local button, row = newButton(panel), panel.rootTable:addRow()
-        button.pzstRow = row
-        row:setVisible(Settings.craftChains(), true)
-        panel.rootTable:setElement(0, row:index(), button)
-        panel:xuiRecalculateLayout()
-    end)
-    after(NC_CellBaseCraft, "createChildren", function(panel) panel:addChild(newButton(panel)) end)
-    if NC_CellBaseCraft and not NC_CellBaseCraft.pzstPlanLayout then
-        local original = NC_CellBaseCraft.layoutChildren
-        NC_CellBaseCraft.pzstPlanLayout = true
-        NC_CellBaseCraft.layoutChildren = function(panel, width, panelHeight)
-            local button, view = panel.pzstPlanButton, panel.pzstPlanView
-            local reserve = button and Settings.craftChains() and not view and height() + 4 or 0
-            local result = pack(original(panel, width, panelHeight - reserve))
-            if button then button:setX(0); button:setY(panelHeight - height()); button:setWidth(width) end
-            if view then view:layout(width, panelHeight) end
-            return unpack(result, 1, result.n)
-        end
-    end
     after(NC_HandCraftPanel, "onLogicRecipeChanged", function(panel)
         local view = panel.cellBaseCraft and panel.cellBaseCraft.pzstPlanView
         if view and view.target ~= panel.logic:getRecipe() then view:close() end
@@ -533,21 +525,6 @@ function Chains.install()
             end
         end
       end
-    end
-    for _, class in pairs({ISCraftRecipePanel, NC_CellBaseCraft}) do
-        after(class, "prerender", function(panel)
-            local button, enabled = panel.pzstPlanButton, Settings.craftChains()
-            if not button then return end
-            if panel.pzstPlanView and not enabled then panel.pzstPlanView:close() end
-            button:setEnable(enabled and panel.logic and panel.logic:getRecipe() ~= nil)
-            if panel.pzstPlanEnabled == enabled then return end
-            panel.pzstPlanEnabled = enabled
-            button:setVisible(enabled and not panel.pzstPlanView)
-            if button.pzstRow then
-                button.pzstRow:setVisible(enabled, true)
-                panel:xuiRecalculateLayout()
-            else panel:calculateLayout(panel.width, panel.height) end
-        end)
     end
 end
 
