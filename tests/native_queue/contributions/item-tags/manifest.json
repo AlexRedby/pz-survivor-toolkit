@@ -12,7 +12,6 @@
     "CleanUI",
     "PZSurvivorToolkit",
     "EURY_CONTAINERS",
-    "Quartermaster",
     "BravoItemDetails",
     "organizedCategories_core"
   ],
@@ -34,5 +33,5 @@
     "physical_input": "unverified",
     "full_user_mod_set": "unverified"
   },
-  "toolkit_min_version": "0.1.53"
+  "toolkit_min_version": "0.1.119"
 }

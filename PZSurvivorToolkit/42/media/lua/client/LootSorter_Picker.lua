@@ -37,6 +37,7 @@ local function countSet(t) local n = 0; if t then for _, v in pairs(t) do if v t
 function Picker:activeList()
     if self.mode == "items" then return LootSorter.getItemNames()
     elseif self.mode == "presets" then return LootSorter.presetNames(LootSorter.getPresetStore())
+    elseif Tags.enabled() then return TagPicker.categories(LootSorter.getCategories(), self.selectedCats)
     else return LootSorter.getCategories() end
 end
 
@@ -116,6 +117,13 @@ function Picker:createChildren()
     ISCollapsableWindow.createChildren(self)
     local pad = 10
 
+    self.toolkitTagRuleRevision = TagRules.getBoxRevision(self.targetObj, self.targetCI)
+    if self.targetKind == "preset" then
+        self.toolkitTagRule = TagRules.getPreset(self.presetName, LootSorter.getPresetStore()[self.presetName])
+    else
+        self.toolkitTagRule = TagRules.getBox(self.targetObj, self.targetCI)
+    end
+
     self.filter = ISTextEntryBox:new("", pad, 0, 10, 22)
     self.filter:initialise(); self.filter:instantiate()
     self.filter.font = UIFont.Medium
@@ -136,6 +144,11 @@ function Picker:createChildren()
     self.chkContents = self:makeCheckbox("onlyContents", "Only Contents")
     self.chkChecked:setTooltip("Show only entries this box is set to hold")
     self.chkContents:setTooltip("Show only entries matching what's currently in this box")
+
+    self.toolkitTagSwitch = ISButton:new(pad, 0, 10, 22, "", self, Picker.onTagView)
+    self.toolkitTagRuleButton = ISButton:new(pad, 0, 10, 22, "", self, Picker.onTagRule)
+    self.toolkitTagSwitch:setTooltip(getText("UI_PZST_QMTagsHint"))
+    self.toolkitTagRuleButton:setTooltip(getText("UI_PZST_QMTagRuleHint"))
 
     -- Priority: higher boxes are filled first, 0 is normal, negatives go last. A preset is not a box,
     -- so the editor hides these.
@@ -170,6 +183,8 @@ function Picker:createChildren()
     self.listbox.onRightMouseUp = function(lb, x, y)
         local row = lb.mouseoverselected and lb.items[lb.mouseoverselected]
         local key = row and row.item and row.item.key
+        -- Tag rows have no category inspector; saved unknown categories retain their exact key.
+        if TagPicker.isTagView(lb.target) and not key then return end
         Picker.openRowMenu(lb.target, key, getMouseX(), getMouseY())
     end
     -- Controller model: the list is a normal navigable ROW -- up/down pass OVER it to the rows above/
@@ -200,7 +215,9 @@ function Picker:createChildren()
         if button == Joypad.YButton then
             -- Y/triangle on the highlighted row -> the same menu the mouse gets from right-click
             local selection = lb.items[lb.selected]
-            Picker.openRowMenu(lb.target, selection and selection.item and selection.item.key,
+            local key = selection and selection.item and selection.item.key
+            if TagPicker.isTagView(lb.target) and not key then return end
+            Picker.openRowMenu(lb.target, key,
                 lb.target:getAbsoluteX() + 30, lb.target:getAbsoluteY() + 40)
             return
         end
@@ -240,6 +257,7 @@ function Picker:createChildren()
     -- priorityEntry is absent on purpose: like self.filter it is a text box, already initialised and
     -- added where it was created.
     for _, b in ipairs({ self.btnModeCat, self.btnModeItem, self.btnModePreset, self.chkChecked, self.chkContents,
+                         self.toolkitTagSwitch, self.toolkitTagRuleButton,
                          self.btnPriorityDown, self.btnPriorityUp,
                          self.listbox, self.btnAll, self.btnClear, self.btnSave }) do
         b:initialise(); b:instantiate(); self:addChild(b)
@@ -338,8 +356,28 @@ function Picker:layout()
     end
 
     local listY = secondRowY + rowH + gap
+    local showTags = Tags.enabled() and self.mode == "cats"
+    self.toolkitTagSwitch:setVisible(showTags)
+    self.toolkitTagRuleButton:setVisible(showTags)
+    if showTags then
+        self.toolkitTagSwitch:setX(pad); self.toolkitTagSwitch:setY(listY)
+        self.toolkitTagSwitch:setWidth(innerW); self.toolkitTagSwitch:setHeight(rowH)
+        self.toolkitTagRuleButton:setX(pad); self.toolkitTagRuleButton:setY(listY + rowH + gap)
+        self.toolkitTagRuleButton:setWidth(innerW); self.toolkitTagRuleButton:setHeight(rowH)
+    end
     self.listbox:setX(pad); self.listbox:setY(listY); self.listbox:setWidth(innerW)
     self.listbox:setHeight(math.max(40, (by - gap) - listY))
+    if showTags then
+        self.listbox:setY(listY + (rowH + gap) * 2)
+        self.listbox:setHeight(math.max(12, self.listbox:getHeight() - (rowH + gap) * 2))
+    end
+    -- Native clipping reads scrollbar geometry, including after mode changes and live tag toggles.
+    local scroll = self.listbox.vscroll
+    if scroll then
+        scroll:setX(innerW - 16)
+        scroll:setHeight(self.listbox:getHeight())
+        self.listbox:updateScrollbars()
+    end
 
     if self.dimmer then                              -- cover the whole window (incl. title bar) when shown
         self.dimmer:setX(0); self.dimmer:setY(0)
@@ -367,18 +405,46 @@ end
 function Picker:rebuild()
     local text = string.lower(self:currentFilter())
     local contents = self.onlyContents and self:contentsSet() or nil
+    local tagView = TagPicker.isTagView(self)
+    local entries = self:activeList()
+    if tagView then
+        entries = TagPicker.rows(entries, TagRules.scriptItems())
+        table.sort(entries, function(a, b) return a.label < b.label end)
+    end
     self.listbox:clear()
-    for _, entry in ipairs(self:activeList()) do
-        local ok = (text == "" or string.find(string.lower(entry), text, 1, true))
-        if ok and self.onlyChecked and not self.selection[entry] then ok = false end
-        if ok and self.onlyContents and not contents[entry] then ok = false end
-        if ok then self.listbox:addItem(entry, { key = entry }) end
+    for _, entry in ipairs(entries) do
+        local label = tagView and entry.label or entry
+        local checked, hasContents
+        if tagView then
+            checked = TagPicker.state(self.selectedCats, entry) > 0
+            hasContents = not contents
+            if contents then
+                for _, category in ipairs(entry.sourceCategories) do
+                    if contents[category] then hasContents = true; break end
+                end
+            end
+        else
+            checked = self.selection[entry]
+            hasContents = not contents or contents[entry]
+        end
+        if (text == "" or string.find(string.lower(label), text, 1, true))
+            and (not self.onlyChecked or checked) and hasContents then
+            self.listbox:addItem(label, tagView and entry or {key = entry})
+        end
     end
     self.lastFilter = text
     self.needRebuild = false
 end
 
 function Picker:prerender()
+    local enabled = Tags.enabled()
+    if self.toolkitTagsEnabled ~= enabled then
+        self.toolkitTagsEnabled, self.needRebuild = enabled, true
+        self:layout()
+        if self.joypadConfigured then self:configJoypad() end
+    end
+    self.toolkitTagRuleButton:setTitle(getText("UI_PZST_QMTagRule") .. (Tags.ruleActive(self.toolkitTagRule) and " *" or ""))
+    self.toolkitTagSwitch:setTitle(getText(self.toolkitTagView and "UI_PZST_QMShowCategories" or "UI_PZST_QMShowTags"))
     ISCollapsableWindow.prerender(self)
     if self.configJoypadLater then self.configJoypadLater = false; self:configJoypad() end
     if self._lw ~= self:getWidth() or self._lh ~= self:getHeight() then
@@ -415,6 +481,7 @@ end
 -- draw a row: real checkbox glyph + label, with hover / checked highlight
 function Picker.doDrawItem(self, y, item, alt)
     local picker = self.target
+    if TagPicker.isTagView(picker) and item.item.toolkitTagRow then return TagPicker.drawRow(self, y, item) end
     local key = item.item.key
     local on = picker.selection[key] and true or false
     local w, h = self:getWidth(), item.height
@@ -477,6 +544,16 @@ end
 
 function Picker.onRowClick(picker, itemData)
     if not itemData then return end
+    if TagPicker.isTagView(picker) and itemData.toolkitTagRow then
+        if itemData.requiresRule then
+            TagPicker.openRule(picker, {mode = "all", include = {itemData.tag}, exclude = {}})
+        else
+            local checked, total = TagPicker.state(picker.selectedCats, itemData)
+            TagPicker.selectRow(picker.selectedCats, itemData, checked ~= total)
+            picker.needRebuild = true
+        end
+        return
+    end
     local key = itemData.key
     if picker.selection[key] then
         picker.selection[key] = nil
@@ -487,6 +564,24 @@ function Picker.onRowClick(picker, itemData)
 end
 
 function Picker:onSelectFiltered()
+    if TagPicker.isTagView(self) then
+        local include, entries = {}, self.listbox.items
+        for _, entry in ipairs(entries) do
+            if entry.item.requiresRule then include[#include + 1] = entry.item.tag end
+        end
+        local function selectCategories()
+            for _, entry in ipairs(entries) do
+                if not entry.item.requiresRule then TagPicker.selectRow(self.selectedCats, entry.item, true) end
+            end
+            self.needRebuild = true
+        end
+        if #include > 0 then
+            TagPicker.openRule(self, {mode = "any", include = include, exclude = {}}, selectCategories)
+        else
+            selectCategories()
+        end
+        return
+    end
     for i = 1, #self.listbox.items do
         local key = self.listbox.items[i].item.key
         self.selection[key] = self:selectionValue(key)
@@ -498,6 +593,16 @@ function Picker:onClear()
     elseif self.mode == "presets" then self.selectedPresets = {}; self.selection = self.selectedPresets
     else self.selectedCats = {}; self.selection = self.selectedCats end
     if self.onlyChecked then self.needRebuild = true end
+end
+
+function Picker:onTagView()
+    self.toolkitTagView = not self.toolkitTagView
+    self.needRebuild = true
+    self.listbox:setYScroll(0)
+end
+
+function Picker:onTagRule()
+    TagPicker.openRule(self, self.toolkitTagRule)
 end
 
 -- The row context menu, opened by right-click or Y/triangle. Each mode offers its own; Items has
@@ -650,6 +755,7 @@ function Picker:setMode(target)
     self.filter:setText(ns.filterText or "")
     self.lastFilter = nil
     self.needRebuild = true
+    self:layout()
     -- rebuild controller nav: the checkbox row differs by mode ("Only Contents" is hidden for presets),
     -- so the d-pad rows must match the now-visible controls. Cheap; only on an explicit mode switch.
     if self.joypadConfigured and getJoypadData(self.playerNum) then self:configJoypad() end
@@ -698,6 +804,10 @@ function Picker:configJoypad()
         filterRow[#filterRow + 1] = self.priorityEntry
     end
     self:insertNewLineOfButtons(unpack(filterRow))
+    if Tags.enabled() and self.mode == "cats" then
+        self:insertNewLineOfButtons(self.toolkitTagSwitch)
+        self:insertNewLineOfButtons(self.toolkitTagRuleButton)
+    end
     self:insertNewLineOfButtons(self.listbox)                           -- the list (A = toggle, Y = preset menu)
     self:insertNewLineOfButtons(self.btnAll, self.btnClear, self.btnSave)  -- action row (uniform)
     self.joypadIndexY = self:getMinVisibleRow()
@@ -859,6 +969,7 @@ function Picker:new(x, y, w, h)
     o.selectedItems = {}
     o.selectedPresets = {}
     o.mode = "cats"
+    o.toolkitTagView = true
     o.selection = o.selectedCats
     o.targetKind = "box"
     o.onlyChecked = false
@@ -904,7 +1015,6 @@ function LootSorter.openPicker(obj, ci, playerNum)
         p.grabbedJoypad = true
     end
     LootSorter._picker = p
-    TagPicker.attach(p)
 end
 
 -- brief bright-border flash on the editor to signal "finish here" when the modal backdrop is clicked
@@ -945,7 +1055,6 @@ function LootSorter.openPresetEditor(name, playerNum, parent)
         editor.grabbedJoypad = true
     end
     LootSorter._presetEditor = editor
-    TagPicker.attach(editor)
 end
 
 -- (Reload-safety: LootSorter.closeAllWindows() in LootSorter_Core.lua tears down this window and the

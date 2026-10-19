@@ -9,8 +9,8 @@ add(function()
  -- VISUAL_TEXTURE_GATE
  local visuals=require 'PZSurvivorToolkit/TagVisuals'
  for _,tag in ipairs({'food','electrical','tool','medical','material','perishable','fruit','preserved'}) do assert(visuals.get(tag).texture,'Missing tag icon '..tag) end
- for _,id in ipairs({'Quartermaster','BravoItemDetails','organizedCategories_core','CleanUI','EURY_CONTAINERS','PZSurvivorToolkit'}) do assert(getActivatedMods():contains(id),'missing '..id) end
- assert(LootSorter._ocCategoryPatch,'OC adapter missing')
+ for _,id in ipairs({'BravoItemDetails','organizedCategories_core','CleanUI','EURY_CONTAINERS','PZSurvivorToolkit'}) do assert(getActivatedMods():contains(id),'missing '..id) end
+ assert(not getActivatedMods():contains('Quartermaster'),'external Quartermaster conflicts with the owned picker')
  local p=getPlayer();p:setGodMod(true);p:setGhostMode(true);p:setAutoDrink(false)
  getCore():setOptionAutoDrink(false)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
@@ -119,7 +119,11 @@ add(function()
  pane.toolkitTag='food';pane:refreshContainer()
  local count=0
  for _,group in ipairs(pane.itemslist) do if group.items and group.items[1] then
-  assert(PZSurvivorToolkit.ItemTags.matches(group.cat,{'food'}),'native tag filter leaked')
+  for _,item in ipairs(group.items) do
+   assert(PZSurvivorToolkit.ItemTags.matches(PZSurvivorToolkit.ItemTags.forItem(item),{'food'}),
+    'native tag filter leaked '..item:getFullType()..' category='..tostring(item:getDisplayCategory())..
+    ' row='..tostring(group.cat)..' enabled='..tostring(PZSurvivorToolkit.Settings.inventoryFilters()))
+  end
   count=count+1
  end end
  assert(count==2,'native tag filter missing food')

@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.120
+
+- **Changed:** Quartermaster's owned editor now creates and handles its tag controls directly. Removed per-window method replacements for layout, filtering and controller navigation while preserving exact categories, tag rules and Save behavior.
+
 ### 0.1.119
 
 - **Fixed:** Inventory selection follows visible rows after refresh, filtering and sorting, including hidden equipment and expanded stacks beyond the render limit. Whole-stack selections remain groups across repeated refreshes instead of becoming a single item; selection and Shift anchors share one row projection.

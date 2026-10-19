@@ -4,40 +4,40 @@ local Visuals = require "PZSurvivorToolkit/TagVisuals"
 local Rules = require "PZSurvivorToolkit/QuartermasterTagRuleClient"
 local RulePicker = require "PZSurvivorToolkit/TagRulePicker"
 
+-- Tag projection and rule helpers. The owned Picker constructs and dispatches its UI directly.
 local Adapter = {}
 PZSurvivorToolkit.QuartermasterTags = Adapter
 
-local function tagView(picker)
+function Adapter.isTagView(picker)
     return Tags.enabled() and picker.mode == "cats" and picker.toolkitTagView
 end
 
-local function categories(picker, source)
+function Adapter.categories(source, selectedCats)
     local result, seen = {}, {}
-    for _, category in ipairs(source(picker)) do
+    for _, category in ipairs(source) do
         result[#result + 1], seen[category] = category, true
     end
     -- A saved category may disappear from the installed scripts; keep it available for refinement.
-    for category, selected in pairs(picker.selectedCats) do
+    for category, selected in pairs(selectedCats) do
         if selected and not seen[category] then result[#result + 1] = category end
     end
     table.sort(result)
     return result
 end
 
-local function state(picker, row)
+function Adapter.state(selectedCats, row)
     local checked = 0
     for _, category in ipairs(row.categories) do
-        if picker.selectedCats[category] then checked = checked + 1 end
+        if selectedCats[category] then checked = checked + 1 end
     end
     return checked, #row.categories
 end
 
-local function selectRow(picker, row, selected)
-    for _, category in ipairs(row.categories) do picker.selectedCats[category] = selected or nil end
-    picker.needRebuild = true
+function Adapter.selectRow(selectedCats, row, selected)
+    for _, category in ipairs(row.categories) do selectedCats[category] = selected or nil end
 end
 
-local function openRule(picker, rule, onApply)
+function Adapter.openRule(picker, rule, onApply)
     RulePicker.open({player = getSpecificPlayer(picker.playerNum or 0), owner = picker,
         rule = rule, categories = picker:activeList(), scriptItems = Rules.scriptItems(),
         title = getText("UI_PZST_QMTagRuleTitle"), onApply = function(value)
@@ -47,7 +47,7 @@ local function openRule(picker, rule, onApply)
         end})
 end
 
-local function tagRows(categoryList, catalog)
+function Adapter.rows(categoryList, catalog)
     local rows, byTag, groups = {}, {}, {}
     for _, script in ipairs(catalog) do
         local category = Categories.forScript(script)
@@ -91,9 +91,9 @@ local function tagRows(categoryList, catalog)
     return rows
 end
 
-local function drawTag(list, y, item)
+function Adapter.drawRow(list, y, item)
     local row, picker = item.item, list.target
-    local checked, total = state(picker, row)
+    local checked, total = Adapter.state(picker.selectedCats, row)
     local h, w = item.height, list:getWidth()
     local scroll = list:getYScroll()
     if y + scroll + h < 0 or y + scroll >= list:getHeight() then return y + h end
@@ -125,168 +125,6 @@ local function drawTag(list, y, item)
     list:drawText(label, textX, y + (h - getTextManager():getFontHeight(UIFont.Medium)) / 2,
         1, 1, 1, 1, UIFont.Medium)
     return y + h
-end
-
-function Adapter.attach(picker)
-    if not picker or picker.toolkitTagSwitch then return end
-    local original = {}
-    for _, name in ipairs({"activeList", "rebuild", "layout", "setMode", "prerender", "insertNewLineOfButtons"}) do
-        original[name] = picker[name]
-    end
-    picker.toolkitTagView = true
-    picker.toolkitTagRuleRevision = Rules.getBoxRevision(picker.targetObj, picker.targetCI)
-    if picker.targetKind == "preset" and LootSorter.getPresetStore then
-        picker.toolkitTagRule = Rules.getPreset(picker.presetName, LootSorter.getPresetStore()[picker.presetName])
-    else
-        picker.toolkitTagRule = Rules.getBox(picker.targetObj, picker.targetCI)
-    end
-    local ruleButton = ISButton:new(10, 0, 10, 22, "", picker, function(target)
-        openRule(target, target.toolkitTagRule)
-    end)
-    ruleButton:initialise(); ruleButton:instantiate()
-    ruleButton:setTooltip(getText("UI_PZST_QMTagRuleHint"))
-    picker.toolkitTagRuleButton = ruleButton
-    picker:addChild(ruleButton)
-    local button = ISButton:new(10, 0, 10, 22, "", picker, function(target)
-        target.toolkitTagView = not target.toolkitTagView
-        target.needRebuild = true
-        target.listbox:setYScroll(0)
-    end)
-    button:initialise(); button:instantiate()
-    button:setTooltip(getText("UI_PZST_QMTagsHint"))
-    picker.toolkitTagSwitch = button
-    picker:addChild(button)
-    if picker.dimmer then picker:removeChild(picker.dimmer); picker:addChild(picker.dimmer) end
-
-    picker.activeList = function(self)
-        if Tags.enabled() and self.mode == "cats" then return categories(self, original.activeList) end
-        return original.activeList(self)
-    end
-    picker.rebuild = function(self)
-        if not tagView(self) then return original.rebuild(self) end
-        local rows = tagRows(self:activeList(), Rules.scriptItems())
-        table.sort(rows, function(a, b) return a.label < b.label end)
-        local filter = string.lower(self:currentFilter())
-        local contents = self.onlyContents and self:contentsSet() or nil
-        self.listbox:clear()
-        for _, row in ipairs(rows) do
-            local checked = state(self, row)
-            local hasContents = not contents
-            if contents then
-                for _, category in ipairs(row.sourceCategories) do
-                    if contents[category] then hasContents = true; break end
-                end
-            end
-            if (filter == "" or string.find(string.lower(row.label), filter, 1, true))
-                and (not self.onlyChecked or checked > 0) and hasContents then
-                self.listbox:addItem(row.label, row)
-            end
-        end
-        self.lastFilter, self.needRebuild = filter, false
-    end
-    picker.layout = function(self)
-        original.layout(self)
-        local visible = Tags.enabled() and self.mode == "cats"
-        button:setVisible(visible)
-        ruleButton:setVisible(visible)
-        if visible then
-            button:setX(self.listbox:getX()); button:setY(self.listbox:getY())
-            button:setWidth(self.listbox:getWidth()); button:setHeight(22)
-            ruleButton:setX(self.listbox:getX()); ruleButton:setY(self.listbox:getY() + 28)
-            ruleButton:setWidth(self.listbox:getWidth()); ruleButton:setHeight(22)
-            self.listbox:setY(self.listbox:getY() + 56)
-            self.listbox:setHeight(math.max(12, self.listbox:getHeight() - 56))
-        end
-        -- Native clipping reads scrollbar geometry, which keeps the picker's initial 10x10 size.
-        local scroll = self.listbox.vscroll
-        if scroll then
-            scroll:setX(self.listbox:getWidth() - 16)
-            scroll:setHeight(self.listbox:getHeight())
-            self.listbox:updateScrollbars()
-        end
-    end
-    picker.setMode = function(self, mode)
-        original.setMode(self, mode)
-        self:layout()
-    end
-    picker.prerender = function(self, ...)
-        local enabled = Tags.enabled()
-        if self.toolkitTagsEnabled ~= enabled then
-            self.toolkitTagsEnabled, self.needRebuild = enabled, true
-            self:layout()
-            if self.joypadConfigured then self:configJoypad() end
-        end
-        ruleButton:setTitle(getText("UI_PZST_QMTagRule") .. (Tags.ruleActive(self.toolkitTagRule) and " *" or ""))
-        button:setTitle(getText(self.toolkitTagView and "UI_PZST_QMShowCategories" or "UI_PZST_QMShowTags"))
-        return original.prerender(self, ...)
-    end
-    -- The native controller row builder calls this instance method before inserting the list.
-    picker.insertNewLineOfButtons = function(self, first, ...)
-        if first == self.listbox and Tags.enabled() and self.mode == "cats" then
-            original.insertNewLineOfButtons(self, button)
-            original.insertNewLineOfButtons(self, ruleButton)
-        end
-        return original.insertNewLineOfButtons(self, first, ...)
-    end
-
-    local list, rowClick = picker.listbox, picker.listbox.onmousedown
-    list.onmousedown = function(target, row, ...)
-        if tagView(target) and row and row.toolkitTagRow then
-            if row.requiresRule then
-                openRule(target, {mode = "all", include = {row.tag}, exclude = {}})
-                return
-            end
-            local checked, total = state(target, row)
-            selectRow(target, row, checked ~= total)
-            return
-        end
-        return rowClick(target, row, ...)
-    end
-    local draw, joypad, rightMouse = list.doDrawItem, list.onJoypadDown, list.onRightMouseUp
-    list.doDrawItem = function(self, y, item, ...)
-        if tagView(self.target) and item.item.toolkitTagRow then return drawTag(self, y, item) end
-        return draw(self, y, item, ...)
-    end
-    list.onJoypadDown = function(self, key, ...)
-        if tagView(self.target) then
-            if key == Joypad.AButton then
-                local selected = self.items[self.selected]
-                if selected then self.onmousedown(self.target, selected.item) end
-                return
-            end
-            if key == Joypad.YButton then
-                local selected = self.items[self.selected]
-                if not selected or not selected.item.key then return end
-            end
-        end
-        return joypad(self, key, ...)
-    end
-    list.onRightMouseUp = function(self, ...)
-        if not tagView(self.target) then return rightMouse(self, ...) end
-        -- Unknown categories still use Quartermaster's category inspector.
-        local selected = self.items[self.mouseoverselected]
-        if selected and selected.item.key then return rightMouse(self, ...) end
-    end
-    local selectFiltered = picker.btnAll.onclick
-    picker.btnAll.onclick = function(target, ...)
-        if not tagView(target) then return selectFiltered(target, ...) end
-        local include, entries = {}, target.listbox.items
-        for _, entry in ipairs(entries) do
-            if entry.item.requiresRule then include[#include + 1] = entry.item.tag end
-        end
-        if #include > 0 then
-            openRule(target, {mode = "any", include = include, exclude = {}}, function()
-                for _, entry in ipairs(entries) do
-                    if not entry.item.requiresRule then selectRow(target, entry.item, true) end
-                end
-            end)
-            return
-        end
-        for _, row in ipairs(target.listbox.items) do selectRow(target, row.item, true) end
-    end
-    picker.needRebuild = true
-    picker:layout(); picker:rebuild()
-    if picker.joypadConfigured then picker:configJoypad() end
 end
 
 function Adapter.presetArgs(picker, args)

@@ -2,9 +2,9 @@
 
 [Development](../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../README.md)
 
-The common runner stages this B42.21 RU/SP fixture through `tools/queue_checks/adapters/auxiliary.py`, with exact scene assertions and screenshots. It requires Toolkit 0.1.53+ and the listed UI mods. Current verification belongs in per-run reports; English, multiplayer, physical input and the complete selected mod set remain unverified. UI handler calls are programmatic.
+The common runner stages this B42.21 RU/SP fixture through `tools/queue_checks/adapters/auxiliary.py`, with exact scene assertions and screenshots. It uses the current Toolkit and listed UI mods; pass `--mods selected` with a pack lock to run the complete set. Verification belongs in per-run reports. UI handler calls are programmatic; this scenario does not cover English, multiplayer or physical input.
 
-`manifest.json` lists the seven required mod IDs, their load order, five screenshot names, and log markers. The runner must obtain these mods from the local installation; this contribution contains no game or Workshop assets, Java launcher, profile, logs, or captures.
+`manifest.json` lists the six required mod IDs, their load order, five screenshot names, and log markers. Quartermaster is owned by Toolkit; the separate Workshop mod must be disabled. The runner must obtain the selected mods from local sources; this contribution contains no game or Workshop assets, Java launcher, profile, logs, or captures.
 
 From the repository root, prepare a new helper mod directory:
 
@@ -15,7 +15,7 @@ python3 tests/native_queue/contributions/item-tags/prepare.py \
 python3 tests/native_queue/contributions/item-tags/test_prepare.py
 ```
 
-The preparer copies this contribution's Lua fixture, injects assertions for every texture name currently declared in Toolkit's `TagVisuals.lua`, and writes B42 helper metadata plus source hashes and the texture list. It refuses to overwrite an existing directory. It does not copy the Toolkit mod or dependencies, create a game profile, or launch a process. The common runner must copy the prepared helper alongside all seven locally resolved dependencies and activate `QuartermasterScreens` last.
+The preparer copies this contribution's Lua fixture, injects assertions for every texture name currently declared in Toolkit's `TagVisuals.lua`, and writes B42 helper metadata plus source hashes and the texture list. It refuses to overwrite an existing directory. It does not copy the Toolkit mod or dependencies, create a game profile, or launch a process. The common runner must copy the prepared helper alongside the locally resolved dependencies and activate `QuartermasterScreens` last.
 
 The scenario checks:
 
@@ -29,7 +29,7 @@ The runner owns the disposable profile and must use Russian language, 1280x900 w
 Keep these native findings when integrating:
 
 - Inventory page resizing propagates through Java anchor handling after Lua setters. `inventory()` changes the parent first; `reflowInventory()` runs in a later timed step, fixes child bounds, calls `onResize()`, and refreshes. Merging these steps previously left a child beyond the parent.
-- Quartermaster's native scrollbar starts with stale 10x10 geometry; its clipping can hide tag rows even when items exist. Toolkit's adapter updates scrollbar X/height and calls `updateScrollbars()` after layout. Keep the geometry log and visible screenshot check.
+- The owned picker's scrollbar starts with 10x10 geometry; its clipping can hide tag rows even when items exist. Picker layout updates scrollbar X/height and calls `updateScrollbars()`. Keep the geometry log and visible screenshot check.
 - Run one native game owner at a time under the common GUI mutex. Check for an existing user/game session before launch. Track the process/PID group started by the runner and stop only that owned group; never use global Java/game termination. Hold and release the mutex through launch and cleanup.
 - VOIP must be disabled before game initialization: `-novoip`, profile `voiceEnable=false`, and the common launcher's native recording-state check with `[QUEUE_TEST] VOICE_DISABLED`. Fail if recording starts (`System create record sound`). Lua preferences alone do not prove that microphone capture stayed closed.
 - Require `[QM_SCREEN] COMPLETE`, reject `[QM_SCREEN] FAIL` or early process exit, and verify all five screenshot files before declaring success. The fixture exits after completion/failure; runner timeouts and cleanup remain necessary. Keep output and captures outside Git.
