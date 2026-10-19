@@ -33,6 +33,8 @@ return {
  {id='miniWaitingMove',handler='HApplyBandage',kind='scratch',mini=true,move=true,supply={{'bandage','Base.Bandage','remove'}}},
  {id='inventoryBandage',handler='HApplyBandage',kind='scratch',inventory=true,supply={{'bandage','Base.Bandage','remove'}}},
  {id='inventoryBag',handler='HApplyBandage',kind='scratch',inventory=true,bag=true,supply={{'bandage','Base.Bandage','remove'}}},
+ {id='inventoryRepeatSame',handler='HApplyBandage',kind='scratch',inventory=true,repeatSame=true,supply={{'bandage','Base.Bandage','remove'},{'spare','Base.Bandage'}}},
+ {id='inventoryReplaceSupply',handler='HApplyBandage',kind='scratch',inventory=true,guard='replaced',supply={{'bandage','Base.Bandage'}}},
  {id='inventoryWaitingCancel',handler='HApplyBandage',kind='scratch',inventory=true,cancel=true,supply={{'bandage','Base.Bandage'}}},
  {id='inventoryWaitingMove',handler='HApplyBandage',kind='scratch',inventory=true,move=true,supply={{'bandage','Base.Bandage','remove'}}},
  {id='miniReplace',handler='HReplaceBandage',kind='dirtyBandaged',mini=true,replace=true,supply={{'bandage','Base.Bandage','remove'}},output={['Base.BandageDirty']=1}},

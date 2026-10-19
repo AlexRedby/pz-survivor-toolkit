@@ -9,7 +9,9 @@
           "mods": [
             "PZSurvivorToolkit"
           ],
-          "toolkit_only": ["lost-before-start"],
+          "toolkit_only": [
+            "lost-before-start"
+          ],
           "checks": {
             "success-empty": {
               "bandageEmpty": {
@@ -73,6 +75,70 @@
                 "serverAuthorityVerified": true
               },
               "missingSupply": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "serverAuthorityVerified": true
+              }
+            }
+          }
+        },
+        "bandage-inventory": {
+          "scope": "Direct inventory bandaging of the exact local self body in SP/Host, root favorite bandages. Repeat means two pending uses of the same selected object with a same-type spare preserved; supply replacement has a distinct new ID. No reused-ID, network replay, independent-wound or bag-return coverage implied.",
+          "mods": [
+            "PZSurvivorToolkit"
+          ],
+          "toolkit_only": [
+            "repeat-same",
+            "lost-before-start"
+          ],
+          "checks": {
+            "success-queued": {
+              "inventoryBandage": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "tailCompleted": true,
+                "queuedStartVerified": true
+              }
+            },
+            "repeat-same": {
+              "inventoryRepeatSame": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "tailCompleted": true,
+                "repeatSameQueuedVerified": true,
+                "singleSelectedConsumptionVerified": true,
+                "requestCount": 2
+              }
+            },
+            "move-dependent": {
+              "inventoryRepeatSame": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "tailCompleted": true,
+                "sharedMoveProtectedVerified": true
+              }
+            },
+            "lost-before-start": {
+              "inventoryReplaceSupply": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "tailCompleted": true,
+                "supplyLostBeforeStartVerified": true,
+                "replacementPreservedVerified": true
+              }
+            },
+            "server-authority": {
+              "inventoryBandage": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "serverAuthorityVerified": true
+              },
+              "inventoryRepeatSame": {
+                "supplyEffectsVerified": true,
+                "clinicalEffectVerified": true,
+                "serverAuthorityVerified": true
+              },
+              "inventoryReplaceSupply": {
                 "supplyEffectsVerified": true,
                 "clinicalEffectVerified": true,
                 "serverAuthorityVerified": true
@@ -535,6 +601,8 @@
             "native"
           ]
         },
+        {"id": "inventoryRepeatSame", "producer": "inventory", "capability": "effect", "kinds": ["sp", "mp"], "modes": ["toolkit", "native"]},
+        {"id": "inventoryReplaceSupply", "producer": "inventory", "capability": "effect", "kinds": ["sp", "mp"], "modes": ["toolkit", "native"]},
         {
           "id": "inventoryWaitingCancel",
           "producer": "inventory",

@@ -207,14 +207,21 @@ end
 function Authority.mutate(player,phase,mode)
  local current=assert(states[key(player)]);local pending=assert(current.pending)
  assert(pending.phase==phase and not pending.mutated,'duplicate/out-of-order mutation');pending.mutated=true
- if mode=='missing' then
+ if mode=='missing' or mode=='replaced' then
   local id=assert(pending.ids.bandage);local item=assert(inventory(player)[id]);local container=item:getContainer();container:Remove(item)
   if isServer() then sendRemoveItemFromContainer(container,item) end;pending.removed=id
+  if mode=='replaced' then
+   assert(pending.spec.inventory and pending.spec.guard=='replaced' and container==player:getInventory(),'replacement requires the exact root inventory producer')
+   local replacement=seed(current,player,phase..'-replacement',item:getFullType())
+   assert(replacement~=item and replacement:getID()~=id,'replacement reused the selected identity')
+   pending.replacement=replacement;pending.replacementBefore=itemReceipt(replacement)
+   current.fixtureIDs[replacement:getID()]=true
+  end
  elseif mode=='move' or mode=='range' then
   local distance=mode=='move' and 1 or 9
   position(pending.patient,origin.x+distance,origin.y+1,origin.z)
  else error('unexpected authority mutation '..tostring(mode)) end
- return {ok=true,phase=phase,mode=mode,removed=pending.removed}
+ return {ok=true,phase=phase,mode=mode,removed=pending.removed,replacement=pending.replacement and pending.replacement:getID()}
 end
 function Authority.verify(player,phase)
  local current=assert(states[key(player)]);local pending=assert(current.pending);local spec=pending.spec
@@ -285,6 +292,21 @@ function Authority.verify(player,phase)
    end
   end
   for id,item in pairs(pending.inventory) do if not changed[id] then assert(actual[id]==item,'unrelated original ID changed '..id..' type='..item:getFullType()..' beforeWorn='..tostring(pending.beforeWorn[id]==true)..' afterWorn='..tostring(afterWorn[id]==true)) end end
+  if spec.repeatSame then
+   local spareId=assert(pending.ids.spare);local spare=actual[spareId]
+   assert(spare==pending.inventory[spareId] and spare:getContainer()==pending.originalContainers[spareId]
+    and spare:getContainer()==player:getInventory() and spare:isFavorite(),'repeat changed the spare bandage identity/container/favorite')
+   assert(not actual[pending.ids.bandage] and not pending.removed,'repeat did not consume exactly its selected bandage')
+   assert(pending.body:bandaged() and pending.body:getBandageLife()>0,'repeat lacks the native bandage effect')
+  end
+  if pending.replacement then
+   local item=pending.replacement;local before=pending.replacementBefore;local live=actual[item:getID()]
+   assert(live==item and live:getContainer()==player:getInventory() and live:isFavorite(),'replacement identity/container/favorite changed')
+   local after=itemReceipt(live)
+   assert(after.kind==before.kind and after.uses==before.uses and after.fluid==before.fluid,'replacement contents changed')
+   expectedOutputs[item:getFullType()]=(expectedOutputs[item:getFullType()] or 0)+1
+   print('[QUEUE_TEST] HEALTH_SUPPLY_REPLACEMENT phase='..phase..' selectedId='..pending.removed..' replacementId='..item:getID()..' untouched=true')
+  end
   local outputs={}
   for id,item in pairs(actual) do if not pending.inventory[id] then outputs[item:getFullType()]=(outputs[item:getFullType()] or 0)+1;current.outputIDs[id]=true;print('[QUEUE_TEST] HEALTH_OUTPUT_RECEIPT phase='..phase..' id='..id..' kind='..item:getFullType()) end end
   for kind,count in pairs(expectedOutputs) do assert(outputs[kind]==count,'exact output count differs '..kind);outputs[kind]=nil end
@@ -295,6 +317,8 @@ function Authority.verify(player,phase)
    -- The native MP handmade splint can consume both inputs while leaving its one-page tail unread.
    if Selection.mode=='native' and name=='tail' and spec.id=='missingSupply' then
     assert(pages==total-1,'native missing-supply tail differs from observed untouched page')
+   elseif Selection.mode=='native' and name=='tail' and (spec.repeatSame or spec.guard=='replaced') then
+    assert(pages==total or pages==total-1,'native direct control tail pages outside exact fixture range')
    elseif Selection.mode=='native' and name=='tail' and (spec.id=='nativeStop' or spec.id=='remoteRemoved'
     or Selection.kind=='mp' and (spec.id=='splintApply' or spec.id=='splintDrop')) then
     assert(pages==total or pages==total-1,'native control tail pages outside exact fixture range')
@@ -329,6 +353,6 @@ function Authority.verify(player,phase)
  print('[QUEUE_TEST] HEALTH_AUTH_RECEIPT '..key(player)..' phase='..phase..' ok='..tostring(ok)..' patient='..key(pending.patient)..' error='..tostring(problem))
  local tail=current.items.tail
  return {phase=phase,ok=ok,error=tostring(problem),body=image(pending.body),supply=pending.ids,front=current.items.front:getID(),tail=tail:getID(),
-  outcome={supplyEffectsVerified=ok,clinicalEffectVerified=ok,serverAuthorityVerified=ok and isServer(),body=image(pending.body),tailCompleted=tail:getAlreadyReadPages()==tail:getNumberOfPages(),tailPages=tail:getAlreadyReadPages(),tailTotal=tail:getNumberOfPages()}}
+  outcome={singleSelectedConsumptionVerified=ok and spec.repeatSame==true,replacementPreservedVerified=ok and pending.replacement~=nil,selectedId=pending.ids.bandage,replacementId=pending.replacement and pending.replacement:getID(),supplyEffectsVerified=ok,clinicalEffectVerified=ok,serverAuthorityVerified=ok and isServer(),body=image(pending.body),tailCompleted=tail:getAlreadyReadPages()==tail:getNumberOfPages(),tailPages=tail:getAlreadyReadPages(),tailTotal=tail:getNumberOfPages()}}
 end
 return Authority

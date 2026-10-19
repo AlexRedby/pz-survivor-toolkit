@@ -113,7 +113,7 @@ return function(stage,queue,empty,remote)
  end,empty)
  for _,spec in ipairs(Cases) do
    local skipSent=false
-   local prep,phase,front,tail,parent,panel,body,activePatient,requested=false,'prepare'
+   local prep,phase,front,tail,parent,repeated,panel,body,activePatient,requested=false,'prepare'
    local controlSent,observed,doneTick,observerProblem=false,false,nil,nil
    local positioned,subscribed,stableSince,baselineRequested=false,false,nil,false
    local bag,previousSecondary,bagVisible,bagHidden
@@ -121,14 +121,26 @@ return function(stage,queue,empty,remote)
    local proofs={}
    local function notReady() stableSince=nil;return false end
    local function mutation(mode)
-    if not controlSent then remote.send('Mutate',{phase=spec.id,mode=mode});controlSent=true end
+    if not controlSent then
+     if mode=='missing' or mode=='replaced' then
+      assert(queue():indexOf(parent)~=-1 and not parent.action,'supply mutation was not requested before action start')
+     end
+     remote.send('Mutate',{phase=spec.id,mode=mode});controlSent=true
+    end
     local receipt=remote.mutations[spec.id]
     if not receipt then return false end
     assert(receipt.ok,receipt.error)
-    if mode=='missing' then
+    if mode=='missing' or mode=='replaced' then
      if item(assert(prep.items.bandage)) then return false end
      assert(queue():indexOf(parent)~=-1 and not parent.action,'supply loss occurred after medical parent started')
      assert(receipt.removed==prep.items.bandage,'mutation removed the wrong supply')
+     if mode=='replaced' then
+      local replacement=item(assert(receipt.replacement,'replacement ID missing'))
+      if not replacement then return false end
+      assert(replacement~=parent.item and replacement:getID()~=receipt.removed and replacement:getFullType()==parent.item:getFullType()
+       and replacement:getContainer()==player:getInventory() and replacement:isFavorite(),'replacement is not the distinct untouched root supply')
+      assert(parent.item:getID()==receipt.removed and queue():indexOf(parent)~=-1 and not parent.action,'pending command changed its selected item')
+     end
      proofs.supplyLostBeforeStartVerified=true;return true
     end
     return true
@@ -176,7 +188,26 @@ return function(stage,queue,empty,remote)
      assert(empty(),'medical case did not begin with a drained queue')
      if not spec.emptyStart then front=read(prep.front,prep.frontPages) end
      proofs.emptyStartVerified=spec.emptyStart==true and empty()
-     parent=enqueue(panel,body,spec,prep.items);tail=read(prep.tail,1)
+     parent=enqueue(panel,body,spec,prep.items)
+     if spec.repeatSame then
+      repeated=enqueue(panel,body,spec,prep.items)
+      assert(parent~=repeated and parent.Type=='ISApplyBandage' and repeated.Type=='ISApplyBandage'
+       and parent.item==repeated.item and parent.item:getID()==prep.items.bandage
+       and parent.bodyPart==body and repeated.bodyPart==body and parent.otherPlayer==player and repeated.otherPlayer==player
+       and queue():indexOf(parent)<queue():indexOf(repeated) and not parent.action and not repeated.action,'repeat did not queue two uses of exact same item/body')
+      if not native then
+       assert(parent.toolkitQueueOperation~=repeated.toolkitQueueOperation,'separate inventory commands were merged')
+       Checks.deniedMove(queue(),API,Policy,parent,repeated,true,'move_shared_item')
+       Checks.deniedMove(queue(),API,Policy,repeated,parent,false,'move_shared_item')
+       proofs.sharedMoveProtectedVerified=true
+      end
+      proofs.repeatSameQueuedVerified=true;proofs.requestCount=2
+     end
+     tail=read(prep.tail,1)
+     if repeated and not native then
+      assert(parent.toolkitQueueOperation~=front.toolkitQueueOperation and parent.toolkitQueueOperation~=tail.toolkitQueueOperation
+       and repeated.toolkitQueueOperation~=front.toolkitQueueOperation and repeated.toolkitQueueOperation~=tail.toolkitQueueOperation,'repeat captured independent queue work')
+     end
      if remote.completion then remote.completion.watch(spec.id,parent,tail) end
      assert(queue():indexOf(parent)<queue():indexOf(tail),'medical parent/tail order differs')
      if front then
@@ -236,7 +267,7 @@ return function(stage,queue,empty,remote)
      observer=function(character) local ok,problem=pcall(observe,character);if not ok then observerProblem=tostring(problem) end end
      Events.OnPlayerUpdate.Add(observer);phase='control';return false
     elseif phase=='control' then
-     if spec.guard=='missing' then if not mutation('missing') then return false end
+     if spec.guard=='missing' or spec.guard=='replaced' then if not mutation(spec.guard) then return false end
      elseif spec.remote=='move' or spec.remote=='range' then
       if not mutation(spec.remote) then return false end
      elseif spec.remote=='removed' then

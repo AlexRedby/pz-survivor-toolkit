@@ -11,6 +11,8 @@ from queue_checks import report, scenarios
 
 
 ACTION = 'bandage-health-panel'
+INVENTORY_ACTION = 'bandage-inventory'
+INVENTORY_CASES = ['inventoryBandage', 'inventoryRepeatSame', 'inventoryReplaceSupply']
 CASES = ['bandageEmpty', 'bandageApply', 'waitingCancel', 'waitingMove', 'missingSupply']
 
 
@@ -20,6 +22,8 @@ class HealthScenarioTests(unittest.TestCase):
         self.suite = catalog['suites']['health']
         self.catalog = {'suites': {'health': self.suite}}
         self.checks = self.suite['scenario_actions'][ACTION]['checks']
+        self.inventory_action = self.suite['scenario_actions'][INVENTORY_ACTION]
+        self.inventory_checks = self.inventory_action['checks']
 
     def recorded(self, bindings, *, kind='sp', mode='toolkit'):
         """Synthetic completed report solely for exercising matrix admission rules."""
@@ -40,9 +44,9 @@ class HealthScenarioTests(unittest.TestCase):
                                    actor=actor, status='passed', outcome=copy.deepcopy(fields))
                               for actor in actors for case, fields in bindings.items()])
 
-    def row(self, scenario, *reports, kind='sp', mode='toolkit'):
+    def row(self, scenario, *reports, kind='sp', mode='toolkit', action=ACTION):
         return next(row for row in report.matrix(self.catalog, reports)['scenarios']
-                    if row['action'] == ACTION and row['scenario'] == scenario
+                    if row['action'] == action and row['scenario'] == scenario
                     and row['kind'] == kind and row['mode'] == mode)
 
     def test_actual_catalog_resolves_canonical_same_cases_for_both_modes_and_kinds(self):
@@ -130,6 +134,78 @@ class HealthScenarioTests(unittest.TestCase):
             with self.subTest(fault=fault):
                 self.assertNotEqual(self.row('success-empty', bad)['status'], 'passed')
 
+    def test_inventory_action_selects_exact_controls_for_both_kinds_and_modes(self):
+        requested = 'success-queued,repeat-same,move-dependent,lost-before-start'
+        for kind in ('sp', 'mp'):
+            for mode in ('toolkit', 'native'):
+                with self.subTest(kind=kind, mode=mode):
+                    self.assertEqual(scenarios.select(self.suite, requested, INVENTORY_ACTION, kind, mode),
+                                     (INVENTORY_CASES, ['PZSurvivorToolkit']))
+        self.assertEqual(scenarios.select(self.suite, 'server-authority', INVENTORY_ACTION, 'mp', 'native'),
+                         (INVENTORY_CASES, ['PZSurvivorToolkit']))
+        with self.assertRaisesRegex(ValueError, 'requires MP'):
+            scenarios.select(self.suite, 'server-authority', INVENTORY_ACTION, 'sp', 'toolkit')
+
+    def test_inventory_contract_requires_exact_boolean_and_request_count_proofs(self):
+        for scenario, bindings in self.inventory_checks.items():
+            kind = 'mp' if scenario == 'server-authority' else 'sp'
+            good = self.recorded(bindings, kind=kind)
+            self.assertEqual(self.row(scenario, good, kind=kind, action=INVENTORY_ACTION)['status'], 'passed')
+            for case, fields in bindings.items():
+                for field, expected in fields.items():
+                    faults = ('missing', False, 1, 'true', None) if expected is True else ('missing', True, 1, '2', 2.0, None)
+                    for fault in faults:
+                        bad = copy.deepcopy(good)
+                        evidence = next(row for row in bad['coverage'] if row['case'] == case)
+                        if fault == 'missing':
+                            del evidence['outcome'][field]
+                        else:
+                            evidence['outcome'][field] = fault
+                        with self.subTest(scenario=scenario, case=case, field=field, fault=fault):
+                            self.assertEqual(self.row(scenario, bad, kind=kind, action=INVENTORY_ACTION)['status'],
+                                             'missing-evidence')
+
+    def test_inventory_native_controls_do_not_claim_repeat_loss_or_queue_edits(self):
+        self.assertEqual(set(self.inventory_action['toolkit_only']), {'repeat-same', 'lost-before-start'})
+        self.assertIn('move-dependent', scenarios.QUEUE_ONLY)
+        for scenario in ('repeat-same', 'lost-before-start', 'move-dependent'):
+            native = self.recorded(self.inventory_checks[scenario], mode='native')
+            row = self.row(scenario, native, mode='native', action=INVENTORY_ACTION)
+            self.assertEqual(row['status'], 'not-applicable')
+            self.assertIn('controls', row['reason'])
+        native = self.recorded(self.inventory_checks['success-queued'], mode='native')
+        self.assertEqual(self.row('success-queued', native, mode='native', action=INVENTORY_ACTION)['status'], 'passed')
+        self.assertEqual(self.row('repeat-same', action=INVENTORY_ACTION)['status'], 'not-run')
+
+    def test_inventory_host_authority_requires_all_three_cases_and_both_self_patients(self):
+        good = self.recorded(self.inventory_checks['server-authority'], kind='mp')
+        self.assertEqual(self.row('server-authority', good, kind='mp', action=INVENTORY_ACTION)['status'], 'passed')
+        for fault in ('case', 'doctor', 'skipped', 'authority-proof'):
+            bad = copy.deepcopy(good)
+            if fault == 'case':
+                bad['coverage'] = [row for row in bad['coverage'] if row['case'] != 'inventoryReplaceSupply']
+            elif fault == 'doctor':
+                bad['coverage'] = [row for row in bad['coverage'] if row['actor'] == 'client1']
+            elif fault == 'skipped':
+                bad['coverage'][-1]['status'] = 'skipped'
+            else:
+                bad['coverage'][-1]['outcome']['serverAuthorityVerified'] = False
+            with self.subTest(fault=fault):
+                self.assertNotEqual(self.row('server-authority', bad, kind='mp', action=INVENTORY_ACTION)['status'], 'passed')
+
+    def test_inventory_scope_does_not_claim_reused_identity_replay_or_return_coverage(self):
+        for scenario in ('replaced-target', 'duplicate-response', 'return-items', 'repeat-independent'):
+            for mode in ('native', 'toolkit'):
+                with self.subTest(scenario=scenario, mode=mode):
+                    kind = 'mp' if scenario == 'duplicate-response' else 'sp'
+                    self.assertEqual(self.row(scenario, kind=kind, mode=mode, action=INVENTORY_ACTION)['status'], 'unimplemented')
+                    with self.assertRaisesRegex(ValueError, 'not implemented'):
+                        scenarios.select(self.suite, scenario, INVENTORY_ACTION, kind, mode)
+        repeat = self.inventory_checks['repeat-same']['inventoryRepeatSame']
+        self.assertEqual(repeat['requestCount'], 2)
+        self.assertNotIn('replayVerified', repeat)
+        self.assertNotIn('reusedIdVerified', repeat)
+
     def test_shipped_lua_native_selection_runs_only_the_new_paired_controls(self):
         try:
             from lupa import LuaRuntime
@@ -144,6 +220,7 @@ class HealthScenarioTests(unittest.TestCase):
 local cases=dofile(shared_path..'/QueueHealthCases.lua')
 local config={kind=selected_kind,mode='native',cases={
  'bandageEmpty','bandageApply','waitingCancel','waitingMove','missingSupply',
+ 'inventoryBandage','inventoryRepeatSame','inventoryReplaceSupply',
  'changedHelper','reassignedPanel','expandedCancel','miniWaitingCancel'}}
 require=function(name)
  if name=='QueueTestSelection' then return config end
@@ -154,7 +231,7 @@ getActivatedMods=function()return {contains=function(_,id)return id=='MiniHealth
 local selection=dofile(shared_path..'/QueueHealthSelection.lua')
 for i,spec in ipairs(selection.cases) do
  local reason=selection.skipReason(spec,'client1')
- if i<=5 then assert(reason==nil,spec.id..' incorrectly skipped')
+ if i<=8 then assert(reason==nil,spec.id..' incorrectly skipped')
  else assert(type(reason)=='string' and #reason>0,spec.id..' unsupported control admitted') end
 end
 """)

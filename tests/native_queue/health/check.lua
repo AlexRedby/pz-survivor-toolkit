@@ -2,7 +2,7 @@ local root=assert(arg[1])
 isClient=function()return false end
 local function source(side,name) return assert(loadfile(root..'/'..side..'/'..name..'.lua'))() end
 AllCases=source('shared','QueueHealthCases')
-assert(#AllCases==43)
+assert(#AllCases==45)
 getActivatedMods=function() return {contains=function(_,id)return id=="MiniHealthPlus" end} end
 local TestSelection={kind='sp',mode='toolkit',cases={}}
 for _,spec in ipairs(AllCases) do TestSelection.cases[#TestSelection.cases+1]=spec.id end
@@ -34,7 +34,8 @@ function container()
   function item:getID() return self.id end
   function item:getFullType() return self.kind end
   function item:getContainer() return self.owner end
-  function item:setFavorite() end
+  function item:setFavorite(value) self.favorite=value end
+  function item:isFavorite() return self.favorite==true end
   function item:getCurrentUses() return self.uses end
   if kind=='Base.Disinfectant' then item.fluid={amount=0.5,getAmount=function(self) return self.amount end};function item:getFluidContainer() return self.fluid end end
   function item:getNumberOfPages() return 100 end
@@ -185,11 +186,19 @@ for i,spec in ipairs(Cases) do
     if item.inner then local value=find(item.inner,id);if value then return value end end
    end
   end
+  local replacement
   local cancelled=spec.cancel or (spec.guard and spec.guard~='helper') or spec.expanded or spec.replaceStop
   if spec.guard=='missing' or spec.expanded=='missing' then
    Authority.mutate(actor,spec.id,'missing')
    assert(not find(actor.inventory,prep.items.bandage),'explicit missing ID remained')
    assert(not pcall(Authority.mutate,actor,spec.id,'missing'),'duplicate mutation accepted')
+  elseif spec.guard=='replaced' then
+   local receipt=Authority.mutate(actor,spec.id,'replaced')
+   assert(receipt.ok and receipt.removed==prep.items.bandage and receipt.replacement~=receipt.removed,'replacement mutation lost exact IDs')
+   replacement=assert(find(actor.inventory,receipt.replacement),'authority replacement missing')
+   assert(replacement.kind=='Base.Bandage' and replacement.owner==actor.inventory and replacement:isFavorite(),'replacement seed differs from original root favorite type')
+   assert(not find(actor.inventory,prep.items.bandage),'replaced selected ID remained')
+   assert(not pcall(Authority.mutate,actor,spec.id,'replaced'),'duplicate replacement mutation accepted')
   elseif not cancelled or spec.replaceStop=='apply' then
    for _,entry in ipairs(spec.supply or {}) do
     local item=find(actor.inventory,prep.items[entry[1]])
@@ -259,12 +268,46 @@ for i,spec in ipairs(Cases) do
    assert(not Authority.verify(actor,spec.id).ok,'cancelled supply quantity change was ignored')
    if supply.fluid then supply.fluid.amount=supply.fluid.amount+0.01 else supply.uses=supply.uses+1 end
   end
+  if spec.repeatSame then
+   local spare=assert(find(actor.inventory,prep.items.spare),'same-type spare missing')
+   assert(spare.id~=prep.items.bandage and spare.kind=='Base.Bandage','repeat fixture did not distinguish selected/spare IDs')
+   local function rejectRepeat(reason)
+    local receipt=Authority.verify(actor,spec.id)
+    assert(not receipt.ok and receipt.outcome.singleSelectedConsumptionVerified==false,reason)
+   end
+   spare.uses=spare.uses-1;rejectRepeat('repeat accepted spare consumption');spare.uses=spare.uses+1
+   actor.inventory:Remove(spare);rejectRepeat('repeat accepted missing spare');actor.inventory:AddItem(spare)
+   local bag=assert(find(actor.inventory,prep.bag)).inner
+   actor.inventory:Remove(spare);bag:AddItem(spare)
+   rejectRepeat('repeat accepted spare moved from its exact root container')
+   bag:Remove(spare);actor.inventory:AddItem(spare)
+   spare:setFavorite(false);rejectRepeat('repeat accepted spare favorite loss');spare:setFavorite(true)
+  end
+  if replacement then
+   local function rejectReplacement(reason)
+    local receipt=Authority.verify(actor,spec.id)
+    assert(not receipt.ok and receipt.outcome.replacementPreservedVerified==false,reason)
+   end
+   actor.inventory:Remove(replacement);rejectReplacement('missing replacement passed preserved exact-ID receipt')
+   local wrong=actor.inventory:AddItem(replacement.kind);wrong:setFavorite(true)
+   rejectReplacement('same-type wrong-ID replacement passed preserved exact-ID receipt')
+   actor.inventory:Remove(wrong);actor.inventory:AddItem(replacement)
+   replacement.uses=replacement.uses-1;rejectReplacement('consumed replacement passed untouched receipt');replacement.uses=replacement.uses+1
+   local bag=assert(find(actor.inventory,prep.bag)).inner
+   actor.inventory:Remove(replacement);bag:AddItem(replacement)
+   rejectReplacement('replacement moved into carried bag passed exact root-container receipt')
+   bag:Remove(replacement);actor.inventory:AddItem(replacement)
+   replacement:setFavorite(false);rejectReplacement('replacement favorite loss passed untouched receipt');replacement:setFavorite(true)
+   actor.body.covered=true;rejectReplacement('replacement case accepted a clinical bandaging effect');actor.body.covered=false
+  end
   if spec.emptyStart then
    find(actor.inventory,prep.front).pages=100
    assert(not Authority.verify(actor,spec.id).ok,'empty start accepted reading its unused front book')
    find(actor.inventory,prep.front).pages=99
   end
   local result=Authority.verify(actor,spec.id);assert(result.ok,result.error)
+  assert(result.outcome.singleSelectedConsumptionVerified==(spec.repeatSame==true),'single-consumption proof escaped its valid repeat receipt')
+  assert(result.outcome.replacementPreservedVerified==(replacement~=nil),'replacement proof escaped its valid mutation receipt')
  end
 end
 for _,spec in ipairs(AllCases) do if spec.remote then assert(Authority.skip(actor,spec.id,Selection.skipReason(spec,'all')).ok) end end
@@ -471,6 +514,36 @@ for _,mode in ipairs({'native','toolkit'}) do
  assert(result.outcome.tailCompleted==(mode=='toolkit') and result.outcome.supplyEffectsVerified and result.outcome.clinicalEffectVerified)
 end
 print('PASS missing supply native tail observation, strict Toolkit preservation and typed authoritative effects')
+
+-- Direct controls observe either exact one-page tail state; only Toolkit guarantees completion.
+for _,kind in ipairs({'sp','mp'}) do for _,mode in ipairs({'native','toolkit'}) do
+ for _,case in ipairs({'inventoryRepeatSame','inventoryReplaceSupply'}) do
+  for _,pages in ipairs({99,100}) do
+   require=AuthorityRequire
+   select(kind,mode,{case});Authority=source('shared','QueueHealthAuthority')
+   local actor=player('direct-'..kind..'-'..mode..'-'..case..'-'..pages);Authority.setup(actor)
+   local prep=Authority.prepare(actor,case);fixtureVisuals(actor);Authority.baseline(actor,case)
+   local tail
+   for _,item in ipairs(actor.inventory.items) do
+    if item.id==prep.front then item.pages=100 elseif item.id==prep.tail then tail=item end
+   end
+   if case=='inventoryReplaceSupply' then Authority.mutate(actor,case,'replaced')
+   else
+    for _,item in ipairs(actor.inventory.items) do if item.id==prep.items.bandage then actor.inventory:Remove(item);break end end
+    medicalVisualEffect(actor,'HApplyBandage')
+   end
+   tail.pages=98;assert(not Authority.verify(actor,case).ok,'direct control accepted tail outside its exact one-page bounds')
+   tail.pages=pages
+   local receipt=Authority.verify(actor,case)
+   assert(receipt.ok==(mode=='native' or pages==100),'direct native observation/Toolkit strict tail contract differs '..case..' '..mode)
+   assert(receipt.outcome.singleSelectedConsumptionVerified==(receipt.ok and case=='inventoryRepeatSame'),'failed or non-repeat receipt claimed single consumption')
+   assert(receipt.outcome.replacementPreservedVerified==(receipt.ok and case=='inventoryReplaceSupply'),'failed or non-replacement receipt claimed preserved replacement')
+   if receipt.ok then assert(receipt.outcome.tailCompleted==(pages==100),'tail observation changed authoritative pages') end
+  end
+ end
+end end
+print('PASS direct controls bound observed native tail states; Toolkit requires completion and failed receipts cannot claim consumption/replacement proofs')
+
 
 -- Execute actual native control producer and stop observer with toolkit APIs forbidden.
 do

@@ -30,12 +30,12 @@ def main():
     catalog = json.loads((ROOT.parent / "catalog.json").read_text())
     assert catalog["schema"] == 1
     cases = catalog["suites"]["health"]["cases"]
-    assert len(cases) == len({case["id"] for case in cases}) == 43
+    assert len(cases) == len({case["id"] for case in cases}) == 45
     assert cases[0]["id"] == "bandageApply"
     for case in cases:
         assert set(case["modes"]) <= {"native", "toolkit"}
         assert case["producer"] in ("menu", "drop", "mini-menu", "inventory")
-    print("PASS Lua syntax and 43-case medical catalog")
+    print("PASS Lua syntax and 45-case medical catalog")
     print("NOT RUN: PZ, native durations, SP/MP, real disconnect, or rendered UI")
 
 
