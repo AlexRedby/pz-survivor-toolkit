@@ -104,11 +104,11 @@ def check_manifest():
         except AssertionError: pass
         else: raise AssertionError('Empty wall exit evidence must fail')
     manual_exit=manifest['wall_manual_exit_scenario']
-    assert manual_exit['case_count']==8 and manual_exit['record_seconds_per_case']==29
+    assert manual_exit['case_count']==16 and manual_exit['record_seconds_per_case']==29
     assert manual_exit['native_bare_controls']==manifest['footprint_scenario']['native_bare_controls']
-    assert manual_exit['axes']==dict(sex=['male'],cargo=['empty','full'],gait=['walk'],spec=['wall-slide','wall-slide-right'],outward_angle_degrees=[45,90])
+    assert manual_exit['axes']==dict(sex=['male','female'],cargo=['empty','full'],gait=['walk'],spec=['wall-slide','wall-slide-right'],outward_angle_degrees=[45,90])
     assert manual_exit['analyzer']=='analyze-footprint.py --wall-manual-exit'
-    assert len(footprint['WALL_MANUAL_EXIT_EXPECTED'])==8
+    assert len(footprint['WALL_MANUAL_EXIT_EXPECTED'])==16
     assert footprint['steps']('male-empty-walk-wall-slide-manual-out45',wall_manual_exit=True)==[(1000,0,2),(9500,0,8),(12000,0,3),(15500,0,0),(16000,0,4),(26000,0,0)]
     assert footprint['steps']('male-full-walk-wall-slide-right-manual-out90',wall_manual_exit=True)==[(1000,0,1),(9500,0,6),(12000,0,4),(15500,0,0),(16000,0,3),(21000,0,7),(26000,0,0)]
     assert footprint['steps']('male-empty-walk-wall-slide-manual-out45',wall_manual_exit=True,relative=True)==[(1000,0,1),(9500,0,4),(12000,0,6),(15500,0,0),(16000,0,5),(26000,0,0)]
@@ -117,12 +117,12 @@ def check_manifest():
     assert 'local relativeManual=wallManualExit\n' in manual_source
     assert '[CART_RELATIVE_MANUAL] VERSION 1' in manual_source and 'cartLabSteeringHeading()' in manual_source
     assert 'Manual controls changed cart ownership' in manual_source and 'Manual controls changed cargo' in manual_source
-    for empty in ('','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=8'):
+    for empty in ('','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=8','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=16'):
         try: footprint['selected'](empty,wall_manual_exit=True)
         except AssertionError: pass
         else: raise AssertionError('Empty manual wall exit evidence must fail')
     fast_manual_exit=manifest['wall_fast_manual_exit_scenario']
-    assert fast_manual_exit['case_count']==16 and fast_manual_exit['record_seconds_per_case']==29
+    assert fast_manual_exit['case_count']==32 and fast_manual_exit['record_seconds_per_case']==29
     assert fast_manual_exit['native_bare_controls']==manual_exit['native_bare_controls']
     assert fast_manual_exit['axes']==dict(manual_exit['axes'],gait=['run','sprint'])
     assert fast_manual_exit['analyzer']=='analyze-footprint.py --wall-fast-manual-exit'
@@ -131,7 +131,7 @@ def check_manifest():
     assert fast_manual_exit['steering_gates']==dict(opposite_yaw_radians_max=.02,released_heading_drift_radians_max=.025,sample_gap_ms_max=500)
     assert fast_manual_exit['wall_reach_tiles']==40 and fast_manual_exit['owned_wall_segments']==81 and fast_manual_exit['finite_wall_span_verified'] is True
     assert fast_manual_exit['start_offset_from_center_tiles']==20
-    assert len(footprint['WALL_FAST_MANUAL_EXIT_EXPECTED'])==16
+    assert len(footprint['WALL_FAST_MANUAL_EXIT_EXPECTED'])==32
     for name in footprint['WALL_FAST_MANUAL_EXIT_EXPECTED']:
         planned=footprint['steps'](name,wall_fast_manual_exit=True)
         walk=footprint['steps'](name.replace('-run-','-walk-').replace('-sprint-','-walk-'),wall_manual_exit=True)
@@ -139,7 +139,7 @@ def check_manifest():
         relative=footprint['steps'](name,wall_fast_manual_exit=True,relative=True)
         relative_walk=footprint['steps'](name.replace('-run-','-walk-').replace('-sprint-','-walk-'),wall_manual_exit=True,relative=True)
         assert relative[0]==(1000,planned[0][1],1) and relative[1:]==relative_walk[1:]
-    for empty in ('','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=16'):
+    for empty in ('','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=16','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=32'):
         try: footprint['selected'](empty,wall_fast_manual_exit=True)
         except AssertionError: pass
         else: raise AssertionError('Empty fast manual wall exit evidence must fail')

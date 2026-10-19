@@ -704,7 +704,7 @@ class WallManualExitTests(unittest.TestCase):
         report=self.report()
         self.assertTrue(report['motionPass'],report['motionFailures'])
         self.assertTrue(report['footprintPass'],report['footprintFailures'])
-        self.assertEqual((report['caseCount'],report['controlCount']),(8,5))
+        self.assertEqual((report['caseCount'],report['controlCount']),(16,5))
         self.assertEqual({c['case'] for c in report['cases']},analyzer.WALL_MANUAL_EXIT_EXPECTED)
         for case in report['cases']:
             self.assertGreater(case['manualComparison']['reverseArcOutwardDisplacement'],.15)
@@ -799,7 +799,7 @@ class RelativeWallManualExitTests(unittest.TestCase):
         self.assertEqual(result['inputScheme'],'relative-keyboard-v1')
         self.assertTrue(result['motionPass'],result['motionFailures'])
         self.assertTrue(result['footprintPass'],result['footprintFailures'])
-        self.assertEqual(len(result['cases']),8)
+        self.assertEqual(len(result['cases']),16)
         for case in result['cases']:
             self.assertEqual(case['manualComparison']['inputProof']['cartID'],17)
             self.assertGreater(case['manualComparison']['reverseArcOutwardDisplacement'],.15)
@@ -842,8 +842,8 @@ class SelectedSceneTests(unittest.TestCase):
         self.root=Path(self.temp.name)
         self.full,sha=fixture(self.root,wall_manual_exit=True,relative=True)
         excluded=analyzer.WALL_MANUAL_EXIT_EXPECTED-set(self.scenes)
-        self.log='\n'.join(line for line in self.full.splitlines() if not any(name in line for name in excluded))
-        self.log=self.log.replace('ALL_COMPLETE cases=8','ALL_COMPLETE cases=4')
+        self.log='\n'.join(line for line in self.full.splitlines() if not excluded.intersection(re.findall(r'(?:case=|CASE |COMPLETE )(\S+)',line)))
+        self.log=self.log.replace('ALL_COMPLETE cases=16','ALL_COMPLETE cases=4')
         self.hash_patch=patch.object(analyzer,'MESH_SHA',sha);self.hash_patch.start();self.addCleanup(self.hash_patch.stop)
 
     def selected(self,log=None,scenes=None,**flags):
@@ -855,11 +855,11 @@ class SelectedSceneTests(unittest.TestCase):
         self.assertTrue(result['motionPass'],result['motionFailures'])
         self.assertTrue(result['footprintPass'],result['footprintFailures'])
         self.assertEqual((result['scope'],result['matrixComplete'],result['caseCount'],result['fullSceneCount']),
-                         ('selected-scenes',False,4,8))
+                         ('selected-scenes',False,4,16))
         self.assertEqual({case['case'] for case in result['cases']},set(self.scenes))
         self.assertEqual(result['inputScheme'],'relative-keyboard-v1')
 
-    def test_default_still_requires_all_eight_scenes(self):
+    def test_default_requires_both_sexes(self):
         with self.assertRaisesRegex(AssertionError,'Capture incomplete'):
             analyzer.selected(self.log,wall_manual_exit=True)
         starts,_=analyzer.selected(self.full,wall_manual_exit=True)
@@ -889,6 +889,52 @@ class SelectedSceneTests(unittest.TestCase):
         with self.assertRaises(AssertionError):self.selected(scenes=analyzer.parse_scenes(','.join(self.scenes)+','))
 
 
+class ManualExitSexSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+
+    def capture(self,fast,sex):
+        flags=dict(wall_fast_manual_exit=True) if fast else dict(wall_manual_exit=True)
+        full,sha=fixture(self.root,relative=True,**flags)
+        bank=analyzer.WALL_FAST_MANUAL_EXIT_EXPECTED if fast else analyzer.WALL_MANUAL_EXIT_EXPECTED
+        scenes=sorted(name for name in bank if name.startswith(sex+'-'))
+        excluded=bank-set(scenes)
+        log='\n'.join(line for line in full.splitlines() if not excluded.intersection(re.findall(r'(?:case=|CASE |COMPLETE )(\S+)',line)))
+        log=log.replace(f'ALL_COMPLETE cases={len(bank)}',f'ALL_COMPLETE cases={len(scenes)}')
+        return flags,log,sha,scenes
+
+    def test_female_and_historical_male_subsets_preserve_motion_and_partial_scope(self):
+        for fast in (False,True):
+            for sex in ('female','male'):
+                flags,log,sha,scenes=self.capture(fast,sex)
+                with self.subTest(fast=fast,sex=sex),patch.object(analyzer,'MESH_SHA',sha):
+                    report=analyzer.analyze(log,self.root,expected_scenes=scenes,**flags)
+                    self.assertTrue(report['motionPass'],report['motionFailures'])
+                    self.assertTrue(report['footprintPass'],report['footprintFailures'])
+                    self.assertEqual((report['scope'],report['matrixComplete'],report['caseCount'],report['fullSceneCount']),
+                                     ('selected-scenes',False,16 if fast else 8,32 if fast else 16))
+                    self.assertEqual({row['case'] for row in report['cases']},set(scenes))
+                    self.assertEqual(report['inputScheme'],'relative-keyboard-v1')
+                    with self.assertRaisesRegex(AssertionError,'Capture incomplete'):
+                        analyzer.selected(log,**flags)
+
+    def test_female_subset_requires_actual_boolean_female_probe_records(self):
+        for fast in (False,True):
+            flags,log,sha,scenes=self.capture(fast,'female')
+            path=self.root/'body-clearance.jsonl'
+            original=[json.loads(line) for line in path.read_text().splitlines()]
+            start=int(re.search(r'COMPLETE '+scenes[0]+r' wall=(\d+)',log)[1])
+            index=next(i for i,row in enumerate(original) if row['wallTimeMillis']==start)
+            for value in (False,0,1,'true',None,'missing'):
+                rows=[dict(row) for row in original]
+                if value=='missing':rows[index].pop('female')
+                else:rows[index]['female']=value
+                path.write_text('\n'.join(map(json.dumps,rows)))
+                with self.subTest(fast=fast,value=value),patch.object(analyzer,'MESH_SHA',sha),self.assertRaisesRegex(AssertionError,'Wrong footprint frame sex'):
+                    analyzer.analyze(log,self.root,expected_scenes=scenes,**flags)
+
+
 class WallFastManualExitTests(unittest.TestCase):
     duration=29000
     mutate_frames=FootprintTests.mutate_frames
@@ -908,7 +954,7 @@ class WallFastManualExitTests(unittest.TestCase):
         report=self.report()
         self.assertTrue(report['motionPass'],report['motionFailures'])
         self.assertTrue(report['footprintPass'],report['footprintFailures'])
-        self.assertEqual((report['caseCount'],report['controlCount']),(16,5))
+        self.assertEqual((report['caseCount'],report['controlCount']),(32,5))
         self.assertEqual({c['case'] for c in report['cases']},analyzer.WALL_FAST_MANUAL_EXIT_EXPECTED)
         for case in report['cases']:
             name=case['case']
@@ -1034,7 +1080,7 @@ class RelativeWallFastManualExitTests(unittest.TestCase):
         self.assertEqual(report['inputScheme'],'relative-keyboard-v1')
         self.assertTrue(report['motionPass'],report['motionFailures'])
         self.assertTrue(report['footprintPass'],report['footprintFailures'])
-        self.assertEqual((report['caseCount'],report['controlCount']),(16,5))
+        self.assertEqual((report['caseCount'],report['controlCount']),(32,5))
         self.assertEqual({case['case'] for case in report['cases']},analyzer.WALL_FAST_MANUAL_EXIT_EXPECTED)
         for case in report['cases']:
             name=case['case']

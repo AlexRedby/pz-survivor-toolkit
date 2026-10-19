@@ -24,9 +24,9 @@ FAST_SLIDE_EXPECTED = {f'{sex}-{cargo}-{gait}-{spec}' for sex in ('male', 'femal
                        for gait in ('run', 'sprint') for spec in ('wall-slide', 'wall-slide-right')}
 WALL_EXIT_EXPECTED = {f'male-{cargo}-{gait}-{spec}-out{angle}' for cargo in ('empty', 'full')
                       for gait in ('walk', 'run', 'sprint') for spec in ('wall-slide', 'wall-slide-right') for angle in (45, 90)}
-WALL_MANUAL_EXIT_EXPECTED = {f'male-{cargo}-walk-{spec}-manual-out{angle}' for cargo in ('empty','full')
+WALL_MANUAL_EXIT_EXPECTED = {f'{sex}-{cargo}-walk-{spec}-manual-out{angle}' for sex in ('male','female') for cargo in ('empty','full')
                              for spec in ('wall-slide','wall-slide-right') for angle in (45,90)}
-WALL_FAST_MANUAL_EXIT_EXPECTED = {f'male-{cargo}-{gait}-{spec}-manual-out{angle}' for cargo in ('empty','full')
+WALL_FAST_MANUAL_EXIT_EXPECTED = {f'{sex}-{cargo}-{gait}-{spec}-manual-out{angle}' for sex in ('male','female') for cargo in ('empty','full')
                                   for gait in ('run','sprint') for spec in ('wall-slide','wall-slide-right') for angle in (45,90)}
 ANGLES = {1: -3*math.pi/4, 2: 3*math.pi/4, 3: -math.pi/4, 4: math.pi/4,
           5: math.pi, 6: math.pi/2, 7: 0., 8: -math.pi/2}
@@ -293,7 +293,7 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
         assert type(at) in (int, float) and math.isfinite(at), 'Invalid footprint frame time'
         for start, name in windows:
             if start <= at < start+duration:
-                assert type(frame['female']) is bool and frame['female'] == name.startswith('female-'), 'Wrong footprint frame sex'
+                assert type(frame.get('female')) is bool and frame['female'] == name.startswith('female-'), 'Wrong footprint frame sex'
                 bounds = world_bounds(frame, vertices)
                 frames[name].append(dict(wall=at, elapsed=at-start, **bounds, slotX=frame['slotX'], slotY=frame['slotY'], slotAngle=frame['slotAngle']))
                 break
@@ -552,8 +552,8 @@ def main():
     bank = parser.add_mutually_exclusive_group()
     bank.add_argument('--fast-slide', action='store_true', help='Require the separate 16-case native Run/Sprint slide bank')
     bank.add_argument('--wall-exit', action='store_true', help='Require 24 male Walk/Run/Sprint outward wall exits')
-    bank.add_argument('--wall-manual-exit', action='store_true', help='Require 8 male Walk manual reverse-arc wall exits')
-    bank.add_argument('--wall-fast-manual-exit', action='store_true', help='Require 16 male Run/Sprint approaches followed by manual Walk reverse-arc exits')
+    bank.add_argument('--wall-manual-exit', action='store_true', help='Require 16 male/female Walk manual reverse-arc wall exits')
+    bank.add_argument('--wall-fast-manual-exit', action='store_true', help='Require 32 male/female Run/Sprint approaches followed by manual Walk reverse-arc exits')
     parser.add_argument('--log', type=Path)
     parser.add_argument('--scenes', type=parse_scenes, help='Exact selected scene names as a JSON list or comma-separated list; requires every listed scene and rejects other scenes')
     parser.add_argument('--output', type=Path, required=True)

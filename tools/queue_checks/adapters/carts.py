@@ -27,8 +27,8 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'brace': ('scenario-collision.lua', 8),
             'fast-slide': ('scenario-collision.lua', 16),
             'wall-exit': ('scenario-collision.lua', 24),
-            'wall-manual-exit': ('scenario-collision.lua', 8),
-            'wall-fast-manual-exit': ('scenario-collision.lua', 16),
+            'wall-manual-exit': ('scenario-collision.lua', 16),
+            'wall-fast-manual-exit': ('scenario-collision.lua', 32),
             'impact': ('scenario-collision.lua', 8),
             'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
@@ -85,7 +85,7 @@ def scene_names(case):
                 for yaw in (0, 45) for spec in ('front', 'slide-left', 'slide-right')]
     if case in ('wall-exit','wall-manual-exit','wall-fast-manual-exit'):
         manual=case in ('wall-manual-exit','wall-fast-manual-exit')
-        return [f'male-{load}-{gait}-{spec}'+('-manual' if manual else '')+f'-out{angle}' for load in ('empty','full')
+        return [f'{sex}-{load}-{gait}-{spec}'+('-manual' if manual else '')+f'-out{angle}' for sex in (('male','female') if manual else ('male',)) for load in ('empty','full')
                 for gait in (('run','sprint') if case=='wall-fast-manual-exit' else ('walk',) if manual else ('walk','run','sprint')) for spec in ('wall-slide','wall-slide-right') for angle in (45,90)]
     if case in ('repeat', 'hotkey'):
         return [sex + '-' + load + '-' + spec for sex in ('male', 'female')

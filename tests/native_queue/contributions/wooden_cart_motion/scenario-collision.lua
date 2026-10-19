@@ -88,13 +88,14 @@ if fastSlide then
 end
 if wallExit then
  cases={}
+ for _,female in ipairs(wallManualExit and {false,true} or {false}) do
  for _,full in ipairs({false,true}) do for gaitIndex,gait in ipairs(wallFastManualExit and {'run','sprint'} or wallManualExit and {'walk'} or {'walk','run','sprint'}) do
   for _,right in ipairs({false,true}) do for _,angle in ipairs({45,90}) do
    local spec=right and 'wall-slide-right' or 'wall-slide'
-   cases[#cases+1]={female=false,full=full,spec=spec,startYaw=right and math.pi/2 or 0,
+   cases[#cases+1]={female=female,full=full,spec=spec,startYaw=right and math.pi/2 or 0,
     steps=wallManualExit and {{1000,wallFastManualExit and (gait=='run' and 1 or 2) or 0,right and 1 or 2},{9500,0,right and 6 or 8},{12000,0,right and 4 or 3},{15500,0,0},{16000,0,right and 3 or 4},{26000,0,0}}
      or {{1000,gaitIndex-1,right and 1 or 2},{5500,gaitIndex-1,angle==90 and 7 or right and 3 or 4},{10000,0,0}},
-    name='male-'..(full and 'full-' or 'empty-')..gait..'-'..spec..(wallManualExit and '-manual' or '')..'-out'..angle}
+    name=(female and 'female-' or 'male-')..(full and 'full-' or 'empty-')..gait..'-'..spec..(wallManualExit and '-manual' or '')..'-out'..angle}
    if wallManualExit and angle==90 then table.insert(cases[#cases].steps,6,{21000,0,7}) end
    if relativeManual then
     local c=cases[#cases]
@@ -103,7 +104,8 @@ if wallExit then
    end
   end end
  end end
- assert(#cases==(wallFastManualExit and 16 or wallManualExit and 8 or 24))
+ end
+ assert(#cases==(wallFastManualExit and 32 or wallManualExit and 16 or 24))
 end
 if config.impact then
  cases={}

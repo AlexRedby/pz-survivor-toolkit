@@ -466,7 +466,7 @@ class CartAdapterTests(unittest.TestCase):
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
                          ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'native-e'])
-        for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 8), ('wall-fast-manual-exit', 16), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
+        for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 16), ('wall-fast-manual-exit', 32), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -721,7 +721,7 @@ class CartAdapterTests(unittest.TestCase):
             from queue_checks.native import _lua
             for chosen in (None,[full[-1],full[0]] if count>1 else [full[0]]):
                 if chosen: flags['scenes']=chosen
-                code='CartMotionConfig='+_lua(flags)+';local config=CartMotionConfig;local footprint=config.footprint==true;local brace=config.brace==true;local fastSlide=config.fastSlide==true;local wallExit=config.wallExit==true;local wallManualExit=config.wallManualExit==true;local wallFastManualExit=config.wallFastManualExit==true;dofile('+json.dumps(str(intake/'scene-selection.lua'))+');'+body+';for _,c in ipairs(cases) do print(c.name) end'
+                code='CartMotionConfig='+_lua(flags)+';local config=CartMotionConfig;local footprint=config.footprint==true;local brace=config.brace==true;local fastSlide=config.fastSlide==true;local wallExit=config.wallExit==true;local wallManualExit=config.wallManualExit==true;local wallFastManualExit=config.wallFastManualExit==true;dofile('+json.dumps(str(intake/'scene-selection.lua'))+');'+body+(';for _,c in ipairs(cases) do assert(c.female==(c.name:sub(1,7)==\"female-\"), \"scene sex metadata differs\") end' if bank in ('wall-manual-exit','wall-fast-manual-exit') else '')+';for _,c in ipairs(cases) do print(c.name) end'
                 result=subprocess.run([lua,'-e',code],check=True,text=True,capture_output=True)
                 self.assertEqual(result.stdout.splitlines(),[n for n in full if chosen is None or n in chosen],bank)
 
@@ -784,6 +784,21 @@ end
         self.assertFalse(carts.complete(self.selection,'client1',log.replace('cases=2','cases=24')))
         self.selection.update(suite=carts.MP,cases=['owner_observer_motion'],kind='mp',languages=['EN','RU'])
         with self.assertRaisesRegex(ValueError,'SP cart'): carts.validate(self.selection)
+
+    def test_female_manual_banks_stage_only_exact_selected_scenes(self):
+        for bank,count in (('wall-manual-exit',8),('wall-fast-manual-exit',16)):
+            self.output=self.root/bank;self.output.mkdir();self.role('client1')
+            self.selection['cases']=[bank]
+            names=[name for name in carts.scene_names(bank) if name.startswith('female-')]
+            self.assertEqual(len(names),count)
+            self.options['cart_scenes']=list(reversed(names))
+            carts.validate(self.selection)
+            self.assertEqual(carts.selected_scenes(self.selection),names)
+            self.stage()
+            text=Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+            self.assertIn('["scenes"]={'+','.join(json.dumps(name) for name in names)+'}',text)
+            self.assertNotIn('\"male-empty-',text.splitlines()[0])
+            self.assertNotIn('\"male-full-',text.splitlines()[0])
 
     def test_authored_clip_pilot_is_explicit_sp_boolean(self):
         for bad in ('true', 1, None):
@@ -1262,7 +1277,7 @@ end
         self.assertTrue((Path(result['evidence']['analysis']) / 'footprint-motion.json').is_file())
 
     def test_native_obstacle_banks_require_motion_and_mesh_proof_independently(self):
-        for bank,source,count,end in (('vehicles','vehicle',12,11800),('brace','brace',8,17800),('fast-slide','footprint',16,11800),('wall-exit','footprint',24,11800),('wall-manual-exit','footprint',8,28800),('wall-fast-manual-exit','footprint',16,28800)):
+        for bank,source,count,end in (('vehicles','vehicle',12,11800),('brace','brace',8,17800),('fast-slide','footprint',16,11800),('wall-exit','footprint',24,11800),('wall-manual-exit','footprint',16,28800),('wall-fast-manual-exit','footprint',32,28800)):
             self.selection['cases'] = [bank]
             fixture = carts._load(ROOT / ('tests/test_cart_'+source+'_analyzer.py'))
             text, _ = fixture.fixture(self.output / 'client1',**({'fast_slide':True} if bank=='fast-slide' else {'wall_exit':True} if bank=='wall-exit' else {'wall_manual_exit':True} if bank=='wall-manual-exit' else {'wall_fast_manual_exit':True} if bank=='wall-fast-manual-exit' else {}))
