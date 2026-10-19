@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.110
+
+- **Changed:** Quartermaster's owned editor and clipboard save complete container designations directly, without callback interception or temporarily replacing the clipboard. Native fields are published together after any tag-rule acceptance; existing save data and authorization are preserved.
+- **Fixed:** Copy/paste preserves preset generations, preventing a copied link from silently attaching to a deleted-and-recreated preset with the same name.
+
 ### 0.1.109
 
 - **Fixed:** Inspecting clothing from storage uses the item delivered to the player's inventory in Host/multiplayer, keeping the inspection window open after transfer. Delayed cart deliveries get a bounded wait; carried-item and single-player inspection retain the native window.

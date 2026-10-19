@@ -4,6 +4,7 @@ local Rules=require 'PZSurvivorToolkit/QuartermasterTagRuleClient'
 local JSON=require 'QueueHealthEvents'
 local started,done,since,phase=false,false,0,'prepare'
 local state,packet,boxes,point,saved,receipt,cleaned,arrived,designatedAt
+local designationPicker
 local cleanupRetry=0
 local playerUpdates=0
 local stagingWalk,stagingComplete,stagingTarget
@@ -11,6 +12,9 @@ local walked,loaded,deposited=false,false,{}
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function stageWalk(x)
  stagingTarget=assert(getCell():getGridSquare(x,point.y,point.z));stagingComplete=false
+ local player=getPlayer()
+ print('[QM_DISTRIBUTION] STAGE_START '..JSON.encode({phase=phase,x=player:getX(),y=player:getY(),z=player:getZ(),
+  targetX=x,targetY=point.y,targetZ=point.z}))
  stagingWalk=LootSorter.WalkAction:new(getPlayer(),stagingTarget)
  stagingWalk:setOnComplete(function()stagingComplete=true end)
  ISTimedActionQueue.add(stagingWalk)
@@ -18,7 +22,9 @@ end
 local function stageArrived()
  if #queue().queue>0 or getPlayer():hasTimedActions()then return false end
  assert(stagingComplete and getPlayer():getCurrentSquare()==stagingTarget,
-  'preparation walk did not arrive: result='..tostring(stagingWalk.result))
+  'preparation walk did not arrive: phase='..phase..' result='..tostring(stagingWalk.result)
+  ..' actor='..getPlayer():getX()..','..getPlayer():getY()..','..getPlayer():getZ()
+  ..' target='..stagingTarget:getX()..','..stagingTarget:getY()..','..stagingTarget:getZ())
  return true
 end
 Events.OnPlayerUpdate.Add(function(player)
@@ -44,18 +50,31 @@ local function tick()
   if not packet or playerUpdates<30 then return end
   boxes=Fixture.resolve(packet);if not boxes then return end
   print('[QM_DISTRIBUTION] PREPARED '..JSON.encode(packet))
-  LootSorter.setBoxItems(boxes[2],0,{[boxes[1]:getContainer():getItemById(packet.ids[1]):getDisplayName()]=true})
+  LootSorter.openPicker(boxes[2],0,0)
+  local picker=assert(LootSorter._picker)
+  picker.selectedItems={[boxes[1]:getContainer():getItemById(packet.ids[1]):getDisplayName()]=true}
+  picker.priority=5;picker.btnSave.onclick(picker)
+  assert(not LootSorter._picker,'plain designation did not save')
+  LootSorter.copyDesignation(boxes[2],0)
+  assert(LootSorter.pasteDesignation(boxes[3],0),'copy/paste did not start')
+  assert(LootSorter.getBoxPriority(boxes[3],0)==5,'copy/paste lost priority')
   stageWalk(point.x+4)
   phase='configure'
  elseif phase=='configure'then
   if not stageArrived()then return end
   arrived=arrived or getTimestampMs();if getTimestampMs()-arrived<500 then return end
-  Rules.saveBox(boxes[3],0,{mode='all',include={'food','perishable'},exclude={'meat'}},player,function(verdict)
-   assert(verdict=='ok','tag designation rejected '..tostring(verdict));saved=true;designatedAt=getTimestampMs()
-  end)
+  LootSorter.openPicker(boxes[3],0,0)
+  designationPicker=assert(LootSorter._picker)
+  designationPicker.selectedItems={};designationPicker.priority=7
+  designationPicker.toolkitTagRule={mode='all',include={'food','perishable'},exclude={'meat'}}
+  designationPicker.toolkitTagRuleTouched=true
+  designationPicker.btnSave.onclick(designationPicker)
   phase='return'
  elseif phase=='return'then
-  if not saved then return end
+  if LootSorter._picker==designationPicker then return end
+  assert(Rules.getBox(boxes[3],0) and not LootSorter.getBoxItems(boxes[3],0)
+   and LootSorter.getBoxPriority(boxes[3],0)==7,'editor lost accepted designation')
+  saved=true;designatedAt=getTimestampMs()
   stageWalk(point.x)
   phase='ready'
  elseif phase=='ready'then

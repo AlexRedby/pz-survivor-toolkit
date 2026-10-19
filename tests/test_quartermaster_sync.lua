@@ -65,9 +65,8 @@ for _, file in ipairs({'shared/LootSorter_Util.lua', 'shared/LootSorter_Presets.
     dofile(NativeQuartermasterLuaRoot .. '/' .. file)
 end
 local Rules = require 'PZSurvivorToolkit/QuartermasterTagRules'
-dofile(root .. 'client/PZSurvivorToolkit/QuartermasterTagRuleClient.lua')
 local synced, request = LootSorter.arePresetsSynced, LootSorter.requestPresets
-Rules.installClient()
+dofile(root .. 'client/PZSurvivorToolkit/QuartermasterTagRuleClient.lua')
 assert(LootSorter.arePresetsSynced == synced and LootSorter.requestPresets == request,
     'tag client replaced owned preset synchronization')
 local rule = {mode = 'all', include = {'food'}, exclude = {}}

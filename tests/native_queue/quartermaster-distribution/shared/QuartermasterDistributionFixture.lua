@@ -80,6 +80,16 @@ function Fixture.receipt(player,boxes,ids,original)
   for id,count in pairs(original)do assert(pools[4][id]==count,'pre-existing player inventory changed')end
   for id,count in pairs(pools[4])do assert(original[id]==count,'distribution left carried items')end
  end
+ -- Confirm the editor's complete field write on both the actor and Host authority, including
+ -- clearing the pasted item designation while retaining the accepted tag rule.
+ local md2,md3=boxes[2]:getModData(),boxes[3]:getModData()
+ local item=boxes[2]:getContainer():getItemById(ids[1])
+ local items2=md2.LSBoxItems and md2.LSBoxItems['0']
+ local rule=md3.PZSTQuartermasterTagRules and md3.PZSTQuartermasterTagRules['0']
+ if not items2 or not items2[item:getDisplayName()] or not md2.LSBoxPriority or md2.LSBoxPriority['0']~=5
+  or (md3.LSBoxItems and md3.LSBoxItems['0']) or not md3.LSBoxPriority or md3.LSBoxPriority['0']~=7
+  or not rule or rule.mode~='all' or #rule.include~=2 or rule.include[1]~='food' or rule.include[2]~='perishable'
+  or #rule.exclude~=1 or rule.exclude[1]~='meat' then return nil,'awaiting complete saved designations' end
  local favorite=boxes[1]:getContainer():getItemById(ids[4])
  assert(favorite and favorite:isFavorite(),'favorite flag lost')
  return {items=rows,moved=2,retained=2,favorite=true}

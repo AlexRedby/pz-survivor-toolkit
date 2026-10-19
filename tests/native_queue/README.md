@@ -237,7 +237,7 @@ For basic end-to-end storage gameplay, use `--suite quartermaster-distribution -
 and `--suite quartermaster-crafting --cases vanilla,neat`, with `--mode toolkit --mods selected`.
 Both support one-client SP and Host (`--kind mp`, with `mp_host: true` in the suite
 config or batch job options).
-Distribution invokes the real loot-window button callback: haul from a world crate,
+Distribution saves designations through the owned picker and copy/paste, checking complete native fields and accepted rules on the actor and Host authority. It invokes the real loot-window button callback: haul from a world crate,
 walk to two destinations selected by item and tag rules, and retain the unmatched
 and favorite items. Exact item IDs must occur once in the expected containers,
 with no leftover haul in the player's inventory.

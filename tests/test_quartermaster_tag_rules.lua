@@ -13,6 +13,7 @@ local mode, enabled, disk, clock = 'sp', true, {}, 100
 isClient = function() return mode == 'client' end
 isServer = function() return mode == 'server' end
 getTimestampMs = function() return clock end
+getText = function(key) return key end
 PZSurvivorToolkit = {Settings = {itemTags = function() return enabled end}}
 local function event() return {handlers = {}, Add = function() end} end
 Events = {}
@@ -86,7 +87,6 @@ local Rules = require 'PZSurvivorToolkit/QuartermasterTagRules'
 dofile(root .. 'server/LootSorter_Presets.lua')
 dofile(root .. 'server/PZSurvivorToolkit/QuartermasterTagRuleAuthority.lua')
 dofile(root .. 'client/PZSurvivorToolkit/QuartermasterTagRuleClient.lua')
-Rules.installClient()
 assert(LootSorter.getRegistry == originalRegistry and LootSorter.resolveEffective == originalResolver
     and LootSorter.planTrips == originalPlanner, 'tag rules replaced discovery or planner APIs')
 local function record(category, fullType)
@@ -214,19 +214,60 @@ assert(not saved.native.Pantry and not saved.rules.Pantry and saved.native.Eithe
 assert(disk['QuartermasterPresets.txt'] == legacyNative and disk['PZSTQuartermasterTagRules.txt'] == legacyRules,
     'snapshot writes changed legacy files')
 do
-    -- Paste must keep clipboard A's native picks when another copy replaces the global clipboard with B.
-    local originalSave, pasteReply = Rules.saveBox
-    Rules.saveBox = function(_,_,_,_,callback) pasteReply=callback end
+    local value = {cats = {Precise = 'truthy', Ignored = false}, items = {Beans = true},
+        presets = {Bound = 41}, priority = '7', pzstTagRule = rule}
+    local snapshot = LootSorter.snapshotDesignation(value)
+    assert(snapshot.cats.Precise == 'truthy' and not snapshot.cats.Ignored and snapshot.presets.Bound == 41
+        and snapshot.priority == 7 and LootSorter.snapshotDesignation({priority = 'invalid'}).priority == 0,
+        'designation snapshot lost truthy values, generations or numeric priority')
+    snapshot.cats.Precise, snapshot.items.Beans, snapshot.presets.Bound = nil, nil, 42
+    snapshot.pzstTagRule.include[1], snapshot.pzstTagRule.exclude[1] = 'electrical', 'meat'
+    assert(value.cats.Precise == 'truthy' and value.items.Beans and value.presets.Bound == 41
+        and rule.include[1] == 'food' and rule.exclude[1] == 'perishable', 'snapshot aliased source sets or nested rule')
+    local originalData, originalTransmit = object.md, object.transmitModData
+    local originalAdd, originalRemove = LootSorter.addCoord, LootSorter.removeCoords
+    local publications, coordUpdates = 0, 0
+    object.md = {LSBox = {['0'] = {Old = true}, ['1'] = {OtherContainer = true}},
+        LSBoxItems = {['0'] = {OldItem = true}}, LSBoxPresets = {['0'] = {OldPreset = true}},
+        LSBoxPriority = {['0'] = 99}, [Rules.FIELD] = {['0'] = rule}, [Rules.REVISIONS] = {['0'] = 17}}
+    LootSorter.addCoord = function() coordUpdates = coordUpdates + 1 end
+    LootSorter.removeCoords = LootSorter.addCoord
+    object.transmitModData = function(self)
+        publications = publications + 1
+        assert(self.md[Rules.FIELD]['0'] == rule and self.md[Rules.REVISIONS]['0'] == 17,
+            'native publication rewrote rule data or revision outside authority')
+        if publications == 1 then
+            assert(self.md.LSBox['0'].Precise == 'truthy' and not self.md.LSBox['0'].Old
+                and self.md.LSBoxItems['0'].Beans and not self.md.LSBoxItems['0'].OldItem
+                and self.md.LSBoxPresets['0'].Bound == 41 and not self.md.LSBoxPresets['0'].OldPreset
+                and self.md.LSBoxPriority['0'] == 7, 'publication exposed a partial native designation')
+        else
+            assert(not self.md.LSBox['0'] and not self.md.LSBoxItems['0'] and not self.md.LSBoxPresets['0']
+                and not self.md.LSBoxPriority['0'], 'empty complete designation did not clear every native field')
+        end
+    end
+    LootSorter.setBoxDesignation(object, 0, value)
+    assert(publications == 1 and coordUpdates == 1 and object.md.LSBox['1'].OtherContainer,
+        'complete designation published more than once or changed another container')
+    object.md.LSBox['0'].Precise, object.md.LSBoxPresets['0'].Bound = nil, 42
+    assert(value.cats.Precise == 'truthy' and value.presets.Bound == 41, 'complete designation retained input tables')
+    LootSorter.setBoxDesignation(object, 0, {})
+    assert(publications == 2 and coordUpdates == 2, 'empty designation did not publish once')
+    object.md, object.transmitModData = originalData, originalTransmit
+    LootSorter.addCoord, LootSorter.removeCoords = originalAdd, originalRemove
+end
+do
+    local originalData, originalClipboard, originalAdd = object.md, LootSorter.clipboard, LootSorter.addCoord
     LootSorter.addCoord = function() end
-    LootSorter.clipboard={cats={ClipboardA=true},items={ItemA=true},presets={},priority=3,pzstTagRule=rule}
-    LootSorter.pasteDesignation(object,0)
-    local newerClipboard={cats={ClipboardB=true},items={ItemB=true},presets={},priority=9}
-    LootSorter.clipboard=newerClipboard
-    pasteReply('ok',10)
-    assert(object.md.LSBox['0'].ClipboardA and not object.md.LSBox['0'].ClipboardB
-        and object.md.LSBoxItems['0'].ItemA and LootSorter.clipboard==newerClipboard,
-        'pending paste mixed new clipboard selections with old accepted rule')
-    Rules.saveBox=originalSave
+    object.md = {LSBoxPresets = {['0'] = {GenerationBound = 41}}}
+    local copied = LootSorter.copyDesignation(object, 0)
+    assert(copied.presets.GenerationBound == 41, 'copy discarded the numeric preset generation')
+    object.md = {}
+    assert(LootSorter.pasteDesignation(object, 0))
+    assert(object.md.LSBoxPresets['0'].GenerationBound == 41, 'paste discarded the numeric preset generation')
+    assert(not LootSorter.linkResolves({gen = 42}, object.md.LSBoxPresets['0'].GenerationBound),
+        'pasted designation resolved a deleted and recreated preset')
+    object.md, LootSorter.clipboard, LootSorter.addCoord = originalData, originalClipboard, originalAdd
 end
 -- Client commands carry the selected authenticated player; failures and timeouts leave caller in control.
 mode='client'; local sent, callback
@@ -262,4 +303,93 @@ end
 callback=nil; Rules.saveBox(object,0,rule,player,function(verdict) callback=verdict end)
 clock=clock+16000; for _,fn in ipairs(Events.OnTick.handlers) do fn() end
 assert(callback=='timeout')
+do
+    -- Exercise actual client acknowledgement ordering, not a replacement saveBox callback.
+    local originalData, originalClipboard, originalTransmit = object.md, LootSorter.clipboard, object.transmitModData
+    local originalAdd, originalRemove, originalNotify = LootSorter.addCoord, LootSorter.removeCoords, LootSorter.notify
+    local publications, added, removed, notified = 0, 0, 0, 0
+    local expectedClipboard, expectCleared
+    LootSorter.addCoord = function() added = added + 1 end
+    LootSorter.removeCoords = function() removed = removed + 1 end
+    LootSorter.notify = function() notified = notified + 1 end
+    local function baseline()
+        object.md = {LSBox = {['0'] = {Original = true}}, LSBoxItems = {['0'] = {OriginalItem = true}},
+            LSBoxPresets = {['0'] = {OriginalPreset = 12}}, LSBoxPriority = {['0'] = 8},
+            [Rules.FIELD] = {['0'] = {mode = 'all', include = {'electrical'}, exclude = {}}},
+            [Rules.REVISIONS] = {['0'] = 1}}
+    end
+    local function respond(verdict)
+        for _, fn in ipairs(Events.OnServerCommand.handlers) do
+            fn('PZSTQuartermasterTags', 'saved', {token = sent.token, verdict = verdict, revision = sent.baseRevision + 1})
+        end
+    end
+    object.transmitModData = function(self)
+        publications = publications + 1
+        assert(LootSorter.clipboard == expectedClipboard, 'native transmit observed a temporary global clipboard')
+        assert(Rules.getBoxRevision(self, 0) == 2, 'native transmit preceded the accepted rule revision')
+        if expectCleared then
+            assert(not Rules.getBox(self, 0) and not self.md.LSBox['0'] and not self.md.LSBoxItems['0']
+                and not self.md.LSBoxPresets['0'] and not self.md.LSBoxPriority['0'], 'empty paste did not replace all layers')
+        else
+            assert(Rules.getBox(self, 0).include[1] == 'food' and self.md.LSBox['0'].ClipboardA
+                and not self.md.LSBox['0'].Original and self.md.LSBoxItems['0'].ItemA
+                and self.md.LSBoxPresets['0'].Pantry == 41 and self.md.LSBoxPriority['0'] == 3,
+                'native paste published mixed or partial designation layers')
+        end
+    end
+    baseline()
+    LootSorter.clipboard = {cats = {ClipboardA = true}, items = {ItemA = true}, presets = {Pantry = 41},
+        priority = 3, pzstTagRule = {mode = 'all', include = {'food'}, exclude = {'perishable'}}}
+    local clipboardA = LootSorter.clipboard
+    assert(LootSorter.pasteDesignation(object, 0) and publications == 0 and object.md.LSBox['0'].Original,
+        'paste wrote native selections before authority accepted its rule')
+    clipboardA.cats.ClipboardA, clipboardA.items.ItemA, clipboardA.presets.Pantry = nil, nil, 42
+    clipboardA.pzstTagRule.include[1], clipboardA.pzstTagRule.exclude[1] = 'electrical', 'meat'
+    expectedClipboard = {cats = {ClipboardB = true}, items = {ItemB = true}, presets = {}, priority = 9}
+    LootSorter.clipboard = expectedClipboard
+    respond('ok')
+    assert(publications == 1 and added == 1 and removed == 0 and LootSorter.clipboard == expectedClipboard,
+        'accepted paste did not publish exactly once while preserving current clipboard')
+
+    local copied = LootSorter.copyDesignation(object, 0)
+    object.md.LSBox['0'].ClipboardA, object.md.LSBoxItems['0'].ItemA, object.md.LSBoxPresets['0'].Pantry = nil, nil, 42
+    object.md[Rules.FIELD]['0'].include[1], object.md[Rules.FIELD]['0'].exclude[1] = 'electrical', 'meat'
+    assert(copied.cats.ClipboardA and copied.items.ItemA and copied.presets.Pantry == 41
+        and copied.pzstTagRule.include[1] == 'food' and copied.pzstTagRule.exclude[1] == 'perishable',
+        'copy aliased source native sets or nested rule')
+    copied.cats.ClipboardA, copied.pzstTagRule.include[1] = 'changed', 'seed'
+    assert(not object.md.LSBox['0'].ClipboardA and object.md[Rules.FIELD]['0'].include[1] == 'electrical',
+        'clipboard edits mutated source designation')
+
+    for _, verdict in ipairs({'denied', 'stale', 'timeout'}) do
+        baseline()
+        LootSorter.clipboard = {cats = {Refused = true}, items = {}, presets = {}, priority = 99, pzstTagRule = rule}
+        LootSorter.pasteDesignation(object, 0)
+        if verdict == 'timeout' then
+            clock = clock + 16000
+            for _, fn in ipairs(Events.OnTick.handlers) do fn() end
+        else respond(verdict) end
+        assert(publications == 1 and added == 1 and removed == 0 and object.md.LSBox['0'].Original
+            and not object.md.LSBox['0'].Refused and object.md.LSBoxItems['0'].OriginalItem
+            and object.md.LSBoxPresets['0'].OriginalPreset == 12 and object.md.LSBoxPriority['0'] == 8
+            and Rules.getBoxRevision(object, 0) == 1 and Rules.getBox(object, 0).include[1] == 'electrical',
+            'paste ' .. verdict .. ' changed native or rule state')
+    end
+    assert(notified == 3, 'refused or timed out paste did not report failure')
+    object.md = {[Rules.FIELD] = {['0'] = rule}}
+    LootSorter.copyDesignation(object, 0)
+    assert(LootSorter.hasClipboardContent() and LootSorter.describeClipboard() == 'UI_PZST_QMTagRule',
+        'rule-only clipboard was hidden or described as empty')
+    baseline()
+    expectedClipboard, expectCleared = {}, true
+    LootSorter.clipboard = expectedClipboard
+    assert(not LootSorter.hasClipboardContent() and LootSorter.describeClipboard() == 'empty')
+    assert(LootSorter.pasteDesignation(object, 0) and publications == 1, 'empty paste skipped authoritative rule clear')
+    respond('ok')
+    assert(publications == 2 and added == 1 and removed == 1, 'cleared designation did not remove its coordinate once')
+    LootSorter.clipboard = nil
+    assert(not LootSorter.pasteDesignation(object, 0) and LootSorter.describeClipboard() == nil)
+    object.md, LootSorter.clipboard, object.transmitModData = originalData, originalClipboard, originalTransmit
+    LootSorter.addCoord, LootSorter.removeCoords, LootSorter.notify = originalAdd, originalRemove, originalNotify
+end
 print('Quartermaster rules passed: direct item matching/discovery, exact picks, opt-out, clearing, authority, SP persistence, preset conflicts, client refusal/timeout.')

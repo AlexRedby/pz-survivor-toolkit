@@ -53,7 +53,6 @@ local recipe = {
     getOutputs = function() return list({{getPossibleResultItems = function() return list({seedScript, emptyScript}) end}}) end,
 }
 ScriptManager = {instance = {getCraftRecipe = function(_, name) assert(name == 'Base.OpenPacketOfSeeds'); return recipe end}}
-Rules.installClient()
 local presetRules = require('PZSurvivorToolkit/QuartermasterPresets').rules()
 local seedRule = {mode = 'all', include = {'seed'}, exclude = {}}
 local function box(rule, manual, named, links, presets)

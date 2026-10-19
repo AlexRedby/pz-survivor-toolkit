@@ -14,6 +14,8 @@ require "ISUI/ISContextMenu"
 require "ISUI/ISButton"
 require "ISUI/ISLabel"
 local TagPicker = require "PZSurvivorToolkit/QuartermasterTags"
+local TagRules = require "PZSurvivorToolkit/QuartermasterTagRules"
+local Tags = require "PZSurvivorToolkit/ItemTags"
 
 LootSorter = LootSorter or {}
 LootSorter.toolkitTagPicker = true
@@ -719,6 +721,7 @@ function Picker:onJoypadDown(button, joypadData)
 end
 
 function Picker:closePicker()
+    self.toolkitTagClosed = true
     -- Restore joypad focus to whatever had it before we opened (the inventory/loot window), NOT nil.
     -- Handing focus to nil leaves the controller focused on nothing, so the still-open inventory goes
     -- dead until you reopen something -- the reported "menu glitches out" bug.
@@ -816,11 +819,35 @@ function Picker:onSave()
             end)
         return
     end
-    LootSorter.setBoxCats(self.targetObj, self.targetCI, self.selectedCats)
-    LootSorter.setBoxItems(self.targetObj, self.targetCI, self.selectedItems)
-    LootSorter.setBoxPresets(self.targetObj, self.targetCI, self.selectedPresets)
-    LootSorter.setBoxPriority(self.targetObj, self.targetCI, self.priority)
-    self:closePicker()
+    if self.toolkitTagSaving then return end
+    local obj, ci = self.targetObj, self.targetCI
+    local snapshot = LootSorter.snapshotDesignation({cats = self.selectedCats, items = self.selectedItems,
+        presets = self.selectedPresets, priority = self.priority, pzstTagRule = self.toolkitTagRule})
+    local function saveDesignation()
+        LootSorter.setBoxDesignation(obj, ci, snapshot)
+        self:closePicker()
+    end
+    if not self.toolkitTagRuleTouched and not Tags.ruleActive(snapshot.pzstTagRule) then
+        saveDesignation()
+        return
+    end
+    self.toolkitTagSaving = true
+    TagRules.saveBox(obj, ci, snapshot.pzstTagRule, getSpecificPlayer(self.playerNum or 0),
+        function(verdict, revision)
+            self.toolkitTagSaving = false
+            if self.toolkitTagClosed or LootSorter._picker ~= self or self.targetObj ~= obj
+                or self.targetCI ~= ci then return end
+            if verdict == "ok" then
+                self.selectedCats, self.selectedItems, self.selectedPresets = snapshot.cats, snapshot.items, snapshot.presets
+                self.selection = self.mode == "items" and self.selectedItems
+                    or self.mode == "presets" and self.selectedPresets or self.selectedCats
+                self.priority, self.toolkitTagRule, self.toolkitTagRuleRevision = snapshot.priority, snapshot.pzstTagRule, revision
+                saveDesignation()
+            elseif LootSorter.notify then
+                LootSorter.notify(getSpecificPlayer(self.playerNum or 0), getText(verdict == "stale"
+                    and "UI_PZST_QMTagRuleStale" or "UI_PZST_QMTagRuleFailed", tostring(verdict)))
+            end
+        end, self.toolkitTagRuleRevision)
 end
 
 function Picker:new(x, y, w, h)

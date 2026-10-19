@@ -75,52 +75,5 @@ function Rules.matches(box, item)
     return false
 end
 
-function Rules.installClient()
-    if not LootSorter or LootSorter.pzstTagRuleClient or not LootSorter.getRegistry
-        or not LootSorter.findDesignatedOnSquare then return end
-    LootSorter.pzstTagRuleClient = true
-    if LootSorter.copyDesignation then
-        local copyDesignation, paste = LootSorter.copyDesignation, LootSorter.pasteDesignation
-        LootSorter.copyDesignation = function(obj, ci)
-            local result = copyDesignation(obj, ci)
-            result.pzstTagRule = Rules.getBox(obj, ci)
-            return result
-        end
-        LootSorter.pasteDesignation = function(obj, ci)
-            local clipboard = LootSorter.clipboard
-            if not clipboard then return false end
-            if not Tags.ruleActive(clipboard.pzstTagRule) and not Rules.getBox(obj, ci) then return paste(obj, ci) end
-            local snapshot = {priority = clipboard.priority, pzstTagRule = copy(clipboard.pzstTagRule)}
-            for _, field in ipairs({"cats", "items", "presets"}) do
-                snapshot[field] = {}
-                for key, value in pairs(clipboard[field] or {}) do snapshot[field][key] = value end
-            end
-            Rules.saveBox(obj, ci, snapshot.pzstTagRule, getSpecificPlayer(0), function(verdict)
-                if verdict == "ok" then
-                    local current = LootSorter.clipboard
-                    LootSorter.clipboard = snapshot
-                    local ok, result = pcall(paste, obj, ci)
-                    LootSorter.clipboard = current
-                    if not ok then error(result) end
-                elseif LootSorter.notify then
-                    LootSorter.notify(getSpecificPlayer(0), getText("UI_PZST_QMTagRuleFailed", tostring(verdict)))
-                end
-            end)
-            return true
-        end
-        local has, describe = LootSorter.hasClipboardContent, LootSorter.describeClipboard
-        LootSorter.hasClipboardContent = function()
-            return has() or Tags.ruleActive(LootSorter.clipboard and LootSorter.clipboard.pzstTagRule)
-        end
-        LootSorter.describeClipboard = function()
-            local text = describe()
-            if Tags.ruleActive(LootSorter.clipboard and LootSorter.clipboard.pzstTagRule) then
-                return (text and text ~= "empty" and text .. ", " or "") .. getText("UI_PZST_QMTagRule")
-            end
-            return text
-        end
-    end
-end
-
 Rules.FIELD, Rules.STORE, Rules.REVISIONS = FIELD, STORE, REVISIONS
 return Rules

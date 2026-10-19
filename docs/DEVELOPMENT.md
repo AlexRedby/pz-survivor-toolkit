@@ -86,6 +86,8 @@ Use the [native tag checks](../tests/native_tags/README.md) for reconnect and co
 
 `QuartermasterPresets` owns the single-player preset/rule pair: `native()` and `rules()` read the published state; `transaction(fn)` supplies private draft tables and publishes them only after the existing snapshot store accepts the pair. Preset put/remove commands call it directly. Multiplayer keeps its two server ModData stores; `LootSorter_PresetSync` owns their combined request/readiness checks. `QuartermasterTagRuleAuthority` handles container-rule authorization independently of preset persistence.
 
+Container copy/paste and `LootSorter_Picker` Save use `LootSorter.snapshotDesignation` to detach selections, including numeric preset generations. After any `QuartermasterTagRuleClient.saveBox` acceptance, `LootSorter.setBoxDesignation` writes all native fields with one object transmission and one coordinate update. It does not authorize or write tag rules. The picker owns pending-save and late-reply guards; the tag UI module only supplies its view and rule editing.
+
 For basic storage gameplay, the native `quartermaster-distribution` and `quartermaster-crafting` suites exercise real walking/transfers and crafting through the owned UI handlers, with exact inventory effects and Host authority. The latter uses one native fixture recipe through both ordinary and Neat crafting, including kept tools. See the [runner guidance](../tests/native_queue/README.md) for scope and commands; a transfer-only Manifest check does not establish that either complete gameplay cycle works.
 
 ## Wishlist storage

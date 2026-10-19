@@ -66,7 +66,7 @@ return function(adapter, control, rules, find, click, rulePicker)
     end}
     local originalRequire = require
     require = function(name)
-        if name:sub(1, 5) == 'ISUI/' then return end
+        if name:sub(1, 5) == 'ISUI/' or name:sub(1, 13) == 'TimedActions/' then return end
         return originalRequire(name)
     end
     local core = getCore()
@@ -82,36 +82,50 @@ return function(adapter, control, rules, find, click, rulePicker)
     updateJoypadFocus = function() end
     getSpecificPlayer = function() return {getJoypadBind = function() return 0 end} end
 
-    local saved, pendingRule, pendingPreset, presetPayload, failures = {}, nil, nil, nil, {}
+    local pendingRule, pendingPreset, presetPayload, failures = nil, nil, nil, {}
+    local publications, coordinates = {}, 0
     local preset = {cats = {OC_Food = true}, items = {Beans = true}, rev = 7, gen = 'generation'}
-    LootSorter = {PRIORITY_MAX_DIGITS = 5,
+    LootSorter = {PRIORITY_MAX_DIGITS = 5, DBG = function() end,
         getCategories = function() return {'OC_Food', 'OC_FoodPerishable', 'OC_Electrical'} end,
         getItemNames = function() return {'Beans', 'Hammer'} end,
         getPresetStore = function() return {Pantry = preset} end,
         presetNames = function() return {'Pantry'} end,
-        getBoxCats = function() return {OC_Food = true, MissingModCategory = true} end,
-        getBoxItems = function() return {Beans = true} end,
-        getBoxPresets = function() return {Pantry = 'generation'} end,
-        getBoxPriority = function() return 4 end,
         putPreset = function(args, callback) presetPayload, pendingPreset = args, callback end,
-        notify = function(_, message) failures[#failures + 1] = message end}
-    for field, setter in pairs({cats = 'setBoxCats', items = 'setBoxItems', presets = 'setBoxPresets', priority = 'setBoxPriority'}) do
-        LootSorter[setter] = function(obj, ci, value)
-            saved[field], saved.obj, saved.ci = value, obj, ci
-            saved.writes = (saved.writes or 0) + 1
-        end
+        notify = function(_, message) failures[#failures + 1] = message end,
+        addCoord = function() coordinates = coordinates + 1 end,
+        removeCoords = function() coordinates = coordinates + 1 end}
+    local function event() return {Add = function() end, Remove = function() end} end
+    Events.OnReceiveGlobalModData, Events.OnTick, Events.OnObjectAdded = event(), event(), event()
+    isClient, isServer = function() return false end, function() return false end
+    dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/LootSorter_Util.lua')
+    dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/LootSorter_Core.lua')
+    LootSorter.notify = function(_, message) failures[#failures + 1] = message end
+    local obj = {md = {LSBox = {['0'] = {OC_Food = true, MissingModCategory = true}},
+        LSBoxItems = {['0'] = {Beans = true}}, LSBoxPresets = {['0'] = {Pantry = 'generation'}},
+        LSBoxPriority = {['0'] = 4}}}
+    local square = {getX = function() return 10 end, getY = function() return 20 end, getZ = function() return 0 end,
+        getObjects = function() return {size = function() return 1 end, get = function() return obj end} end}
+    obj.getModData, obj.hasModData = function(self) return self.md end, function() return true end
+    obj.getSquare = function() return square end
+    function obj:transmitModData()
+        publications[#publications + 1] = LootSorter.snapshotDesignation({cats = self.md.LSBox['0'],
+            items = self.md.LSBoxItems['0'], presets = self.md.LSBoxPresets['0'], priority = self.md.LSBoxPriority['0'],
+            pzstTagRule = self.md.PZSTQuartermasterTagRules and self.md.PZSTQuartermasterTagRules['0']})
     end
     rules.saveBox = function(obj, ci, rule, _, callback, revision)
         assert(revision == 0 and obj and ci == 0, 'upstream picker changed rule save target/revision')
         assert(not pendingRule, 'duplicate upstream in-flight save')
-        pendingRule = callback
+        pendingRule = {callback = callback, rule = rule}
     end
     rules.presetsSynced = function() return true end
+    rules.getBox = function(target, ci)
+        local value = target and target.md and target.md.PZSTQuartermasterTagRules
+        return value and value[tostring(ci)] and require('PZSurvivorToolkit/ItemTags').normalizeRule(value[tostring(ci)])
+    end
     dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/LootSorter_Picker.lua')
     -- Record the native failure callback outcome without constructing an unrelated modal UI.
     LootSorter.notifyPresetFailure = function(_, outcome) failures[#failures + 1] = outcome end
     assert(LootSorter.toolkitTagPicker, 'owned picker did not declare tag UI setup')
-    local obj = {}
     local function open()
         LootSorter.openPicker(obj, 0, 0)
         local p = assert(LootSorter._picker)
@@ -121,13 +135,20 @@ return function(adapter, control, rules, find, click, rulePicker)
     end
     local function save(p) p.btnSave.onclick(p.btnSave.target, p.btnSave) end
     local function reply(verdict)
-        local callback = assert(pendingRule)
+        local request = assert(pendingRule)
         pendingRule = nil
-        callback(verdict, 1)
+        if verdict == 'ok' then obj.md.PZSTQuartermasterTagRules = {['0'] = request.rule} end
+        request.callback(verdict, 1)
     end
     local p = open()
-    assert(p.btnSave.cachedOnclick ~= p.btnSave.onclick and p.btnSave.onclick == p.onSave,
-        'adapter did not replace actual upstream cached Save callback')
+    assert(p.btnSave.cachedOnclick == p.btnSave.onclick and p.btnSave.onclick == p.onSave,
+        'view adapter replaced the owned Save callback')
+    assert(p.onSave == getmetatable(p).onSave and p.closePicker == getmetatable(p).closePicker
+        and p.close == p.closePicker, 'view adapter wrapped owned Save or close methods')
+    local ownedSave, ownedClose = p.onSave, p.closePicker
+    adapter.attach(p)
+    assert(p.onSave == ownedSave and p.closePicker == ownedClose and p.btnSave.onclick == ownedSave,
+        'repeated view attachment replaced owned lifecycle methods')
     assert(p.children[#p.children] == p.dimmer and not p.dimmer.visible)
     local rows = p.joypadButtonsY
     assert(rows[4][1] == p.toolkitTagSwitch and rows[5][1] == p.toolkitTagRuleButton
@@ -139,7 +160,8 @@ return function(adapter, control, rules, find, click, rulePicker)
     p.onPresetNamed(p, {internal = 'OK', parent = {entry = {getText = function() return 'New pantry' end}}})
     assert(presetPayload.name == 'New pantry' and presetPayload.expectExisting == false
         and presetPayload.cats == p.selectedCats and presetPayload.items == p.selectedItems
-        and presetPayload.pzstTagRule == createRule, 'new preset entry lost its owning picker rule or selections')
+        and presetPayload.pzstTagRule.include[1] == 'food' and presetPayload.pzstTagRule.exclude[1] == 'perishable'
+        and presetPayload.pzstTagRule ~= createRule, 'new preset entry lost its owning picker rule or selections')
     pendingPreset('ok')
     p.toolkitTagRule = nil
     local _, foodIndex = find(p, 'food')
@@ -163,13 +185,22 @@ return function(adapter, control, rules, find, click, rulePicker)
     assert(draft.owner == p and draft.player and #draft.categories == 4)
     draft.onApply({mode = 'all', include = {'food'}, exclude = {}})
     save(p); save(p)
-    assert(pendingRule and not p.removed and not saved.writes, 'native Save bypassed asynchronous rule verdict')
+    assert(pendingRule and not p.removed and #publications == 0, 'native Save bypassed asynchronous rule verdict')
     p.selectedCats.Later, p.selectedItems.Later, p.priority = true, true, 99
+    p.selectedPresets.Later = 42
+    p.toolkitTagRule.include[1] = 'electrical'
+    p.toolkitTagRule, p.toolkitTagRuleTouched = nil, nil
+    save(p)
+    assert(#publications == 0 and pendingRule.rule.include[1] == 'food',
+        'pending Save used a cleared rule to bypass its in-flight guard or aliased its rule draft')
     reply('ok')
-    assert(p.removed and LootSorter._picker == nil and saved.writes == 4)
+    assert(p.removed and LootSorter._picker == nil and #publications == 1 and coordinates == 1,
+        'designation Save did not publish exactly once')
+    local saved = publications[1]
     assert(saved.cats.OC_Food and saved.cats.MissingModCategory and not saved.cats.Later and not saved.cats.food
         and saved.items.Hammer and not saved.items.Later and saved.priority == 4
-        and saved.presets.Pantry == 'generation', 'actual native save mixed snapshot and later edits')
+        and saved.presets.Pantry == 'generation' and not saved.presets.Later
+        and saved.pzstTagRule.include[1] == 'food', 'actual native save mixed snapshot and later edits')
 
     local function startPending()
         local owner = open()
@@ -177,25 +208,34 @@ return function(adapter, control, rules, find, click, rulePicker)
         save(owner)
         return owner
     end
-    p = startPending()
-    reply('stale')
-    assert(not p.removed and LootSorter._picker == p and saved.writes == 4 and #failures == 1,
-        'rule refusal closed actual picker or wrote exact selections')
+    for _, verdict in ipairs({'stale', 'denied', 'timeout'}) do
+        p = startPending()
+        reply(verdict)
+        assert(not p.removed and LootSorter._picker == p and #publications == 1 and coordinates == 1,
+            'rule ' .. verdict .. ' closed actual picker or wrote exact selections')
+    end
+    assert(#failures == 3)
     save(p); reply('ok')
-    assert(p.removed and saved.writes == 8, 'rule refusal prevented retry')
+    assert(p.removed and #publications == 2 and coordinates == 2, 'rule refusal prevented retry')
     for _, closeVia in ipairs({'close', 'replace', 'retarget'}) do
         p = startPending()
-        local writes = saved.writes
+        local writes = #publications
         if closeVia == 'close' then p:close() end
         local replacement
         if closeVia == 'retarget' then p.targetCI = 1 else replacement = open() end
         reply('ok')
-        assert(saved.writes == writes, 'late native save wrote after ' .. closeVia)
+        assert(#publications == writes and coordinates == writes, 'late native save wrote after ' .. closeVia)
         if replacement then
             assert(LootSorter._picker == replacement and not replacement.removed,
                 'late native save closed new owner after ' .. closeVia)
         end
     end
+    obj.md.PZSTQuartermasterTagRules = nil
+    p = open()
+    local writes = #publications
+    save(p)
+    assert(p.removed and not pendingRule and #publications == writes + 1 and coordinates == writes + 1,
+        'untouched native-only Save did not publish once without a rule request')
     p = open()
     LootSorter.openPresetEditor('Pantry', 0, p)
     local editor = assert(LootSorter._presetEditor)
@@ -210,12 +250,12 @@ return function(adapter, control, rules, find, click, rulePicker)
     editor.toolkitTagRule, editor.toolkitTagRuleTouched = {mode = 'all', include = {'food'}, exclude = {}}, true
     save(editor)
     assert(not editor.removed and presetPayload.expectExisting and presetPayload.baseRev == 7
-        and presetPayload.baseGen == 'generation' and presetPayload.pzstTagRule == editor.toolkitTagRule,
+        and presetPayload.baseGen == 'generation' and presetPayload.pzstTagRule.include[1] == 'food',
         'native preset save lost rule metadata or conflict tokens')
     rules.presetsSynced = function() return true end
     pendingPreset('stale', {action = 'save'})
     assert(not editor.removed and p.dimmer.visible and failures[#failures] == 'stale')
     save(editor); pendingPreset('ok')
     assert(editor.removed and LootSorter._presetEditor == nil and not p.dimmer.visible)
-    print('Owned Quartermaster picker contract passed: actual construction, rows, modes, cached Save, asynchronous verdicts and owner guards.')
+    print('Owned Quartermaster picker contract passed: actual construction, rows, modes, complete Save, asynchronous verdicts and owner guards.')
 end

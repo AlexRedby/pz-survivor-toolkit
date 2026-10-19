@@ -3,6 +3,7 @@
 require "TimedActions/ISTimedActionQueue"
 require "TimedActions/ISInventoryTransferAction"
 local TagRules = require "PZSurvivorToolkit/QuartermasterTagRules"
+local Tags = require "PZSurvivorToolkit/ItemTags"
 
 LootSorter = LootSorter or {}
 -- diagnostic trace: silent unless LootSorter.DEBUG is set or the game runs in -debug mode
@@ -100,7 +101,7 @@ end
 -- designations live per container on the parent object, in three additive layers:
 --   md.LSBox[ci]        = { [category]=true }      manual categories
 --   md.LSBoxItems[ci]   = { [displayName]=true }   manual specific items
---   md.LSBoxPresets[ci] = { [presetName]=true }    presets this box uses (see LootSorter_Presets.lua)
+--   md.LSBoxPresets[ci] = { [presetName]=generation }    presets this box uses (see LootSorter_Presets.lua)
 -- A container's EFFECTIVE designation is the union of the two manual sets with the contents of every
 -- preset it uses, resolved in findDesignatedOnSquare via LootSorter.resolveEffective (the sort/manifest
 -- read path). A container may use any combination.
@@ -118,7 +119,7 @@ function LootSorter.getBoxItems(obj, ci)
     return md.LSBoxItems[tostring(ci)]
 end
 
--- which PRESETS this container uses: md.LSBoxPresets[ci] = { [presetName]=true }
+-- which PRESETS this container uses: md.LSBoxPresets[ci] = { [presetName]=generation }
 function LootSorter.getBoxPresets(obj, ci)
     if not obj then return nil end
     local md = obj:getModData()
@@ -180,11 +181,14 @@ local function syncCoord(obj)
 end
 
 -- write a set under a ModData field (LSBox = categories, LSBoxItems = item display names)
-local function setBoxSet(obj, ci, set, field)
-    if not obj or ci == nil then return end
-    local md = obj:getModData()
+local function writeBoxSet(md, ci, set, field)
     md[field] = md[field] or {}
     if set and tableHasAny(set) then md[field][tostring(ci)] = set else md[field][tostring(ci)] = nil end
+end
+
+local function setBoxSet(obj, ci, set, field)
+    if not obj or ci == nil then return end
+    writeBoxSet(obj:getModData(), ci, set, field)
     if obj.transmitModData then obj:transmitModData() end
     syncCoord(obj)
 end
@@ -198,9 +202,7 @@ function LootSorter.getBoxPriority(obj, ci)
     return tonumber(md.LSBoxPriority[tostring(ci)]) or 0
 end
 
-function LootSorter.setBoxPriority(obj, ci, priority)
-    if not obj or ci == nil then return end
-    local md = obj:getModData()
+local function writeBoxPriority(md, ci, priority)
     local value = tonumber(priority) or 0
     if value == 0 then
         -- Not created just to hold a zero: saving an untouched box would otherwise add an empty table
@@ -210,6 +212,11 @@ function LootSorter.setBoxPriority(obj, ci, priority)
         md.LSBoxPriority = md.LSBoxPriority or {}
         md.LSBoxPriority[tostring(ci)] = value
     end
+end
+
+function LootSorter.setBoxPriority(obj, ci, priority)
+    if not obj or ci == nil then return end
+    writeBoxPriority(obj:getModData(), ci, priority)
     if obj.transmitModData then obj:transmitModData() end
 end
 
@@ -223,7 +230,7 @@ function LootSorter.setBoxPresets(obj, ci, presetsSet) setBoxSet(obj, ci, preset
 local function copySet(set)
     if not set then return nil end
     local out = {}
-    for key, on in pairs(set) do if on then out[key] = true end end
+    for key, value in pairs(set) do if value then out[key] = value end end
     return out
 end
 
@@ -233,25 +240,55 @@ local function countSet(set)
     return total
 end
 
-function LootSorter.copyDesignation(obj, ci)
-    LootSorter.clipboard = {
-        cats     = copySet(LootSorter.getBoxCats(obj, ci)),
-        items    = copySet(LootSorter.getBoxItems(obj, ci)),
-        presets  = copySet(LootSorter.getBoxPresets(obj, ci)),
-        priority = LootSorter.getBoxPriority(obj, ci),
+-- A detached value shared by clipboard and editor saves. Preset links carry generations, not
+-- booleans: changing a link to true would let it resolve a deleted-and-recreated preset by name.
+function LootSorter.snapshotDesignation(value)
+    return {
+        cats = copySet(value.cats), items = copySet(value.items), presets = copySet(value.presets),
+        priority = tonumber(value.priority) or 0,
+        pzstTagRule = value.pzstTagRule and Tags.normalizeRule(value.pzstTagRule) or nil,
     }
+end
+
+-- Publish a complete native designation once. A tag-rule edit must first be accepted by
+-- TagRules.saveBox; it owns rule authorization/revisions and updates this same object's ModData.
+function LootSorter.setBoxDesignation(obj, ci, value)
+    if not obj or ci == nil then return end
+    local snapshot, md = LootSorter.snapshotDesignation(value), obj:getModData()
+    writeBoxSet(md, ci, snapshot.cats, "LSBox")
+    writeBoxSet(md, ci, snapshot.items, "LSBoxItems")
+    writeBoxSet(md, ci, snapshot.presets, "LSBoxPresets")
+    writeBoxPriority(md, ci, snapshot.priority)
+    if obj.transmitModData then obj:transmitModData() end
+    syncCoord(obj)
+end
+
+function LootSorter.copyDesignation(obj, ci)
+    LootSorter.clipboard = LootSorter.snapshotDesignation({
+        cats = LootSorter.getBoxCats(obj, ci), items = LootSorter.getBoxItems(obj, ci),
+        presets = LootSorter.getBoxPresets(obj, ci), priority = LootSorter.getBoxPriority(obj, ci),
+        pzstTagRule = TagRules.getBox(obj, ci),
+    })
     return LootSorter.clipboard
 end
 
--- Replaces rather than merges, which is what "paste" means everywhere else. An empty clipboard is a
--- legitimate thing to copy: pasting it clears the target.
+-- Replaces rather than merges. Capture the request now: another Copy may replace the clipboard
+-- before the server accepts its rule. Never temporarily expose this snapshot as the global clipboard.
 function LootSorter.pasteDesignation(obj, ci)
-    local clipboard = LootSorter.clipboard
-    if not clipboard then return false end
-    LootSorter.setBoxCats(obj, ci, copySet(clipboard.cats))
-    LootSorter.setBoxItems(obj, ci, copySet(clipboard.items))
-    LootSorter.setBoxPresets(obj, ci, copySet(clipboard.presets))
-    LootSorter.setBoxPriority(obj, ci, clipboard.priority or 0)
+    if not LootSorter.clipboard then return false end
+    local snapshot = LootSorter.snapshotDesignation(LootSorter.clipboard)
+    if not Tags.ruleActive(snapshot.pzstTagRule) and not TagRules.getBox(obj, ci) then
+        LootSorter.setBoxDesignation(obj, ci, snapshot)
+        return true
+    end
+    local player = getSpecificPlayer(0)
+    TagRules.saveBox(obj, ci, snapshot.pzstTagRule, player, function(verdict)
+        if verdict == "ok" then
+            LootSorter.setBoxDesignation(obj, ci, snapshot)
+        elseif LootSorter.notify then
+            LootSorter.notify(player, getText("UI_PZST_QMTagRuleFailed", tostring(verdict)))
+        end
+    end)
     return true
 end
 
@@ -260,7 +297,7 @@ end
 function LootSorter.hasClipboardContent()
     local clipboard = LootSorter.clipboard
     if not clipboard then return false end
-    if (clipboard.priority or 0) ~= 0 then return true end
+    if (clipboard.priority or 0) ~= 0 or Tags.ruleActive(clipboard.pzstTagRule) then return true end
     return countSet(clipboard.cats) + countSet(clipboard.items) + countSet(clipboard.presets) > 0
 end
 
@@ -280,6 +317,7 @@ function LootSorter.describeClipboard()
     if (clipboard.priority or 0) ~= 0 then
         parts[#parts + 1] = "priority " .. tostring(clipboard.priority)
     end
+    if Tags.ruleActive(clipboard.pzstTagRule) then parts[#parts + 1] = getText("UI_PZST_QMTagRule") end
     if #parts == 0 then return "empty" end
     return table.concat(parts, ", ")
 end

@@ -119,9 +119,10 @@ for _,mode in ipairs({'sp','mp','preinstalled','foreign-delegate','fake-filename
         owner._receivedRegistry={};assert(not api.isTransferPerform(wrapped),'MP registry state cannot inherit SP manifest proof');owner._receivedRegistry=nil
         bc(false);assert(not api.isTransferPerform(wrapped),'changed predecessor BC helper revokes proof');bc(true)
         assert(api.isTransferPerform(wrapped),'restoring exact dependencies restores observed manifest proof')
-        f.rules.installClient()
+        f.rules=source(read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/QuartermasterTagRules.lua'),
+            'PZSurvivorToolkit/QuartermasterTagRules.lua')
         assert(owner.getRegistry==registry and api.isTransferPerform(wrapped),
-            'direct tag rules leave the registry and manifest transfer contract unchanged')
+            'loading direct tag rules leaves the registry and manifest transfer contract unchanged')
         owner.getRegistry=function(...)return registry(...)end
         assert(not api.isTransferPerform(wrapped),'an unknown registry wrapper remains opaque')
         owner.getRegistry=registry

@@ -60,7 +60,5 @@ Events.OnReceiveGlobalModData.Add(function(key, value)
 end)
 Events.OnGameStart.Add(function()
     pending = {}
-    Rules.installClient()
 end)
-Events.OnCreatePlayer.Add(Rules.installClient)
 return Rules

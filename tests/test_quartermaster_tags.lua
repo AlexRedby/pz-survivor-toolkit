@@ -1,9 +1,8 @@
 local enabled, starts, creates = true, {}, {}
-local openedRulePicker, savedRule, adapter
+local openedRulePicker, adapter
 local scriptCatalog = {}
-local ruleApi = {getBoxRevision = function() return 0 end, getBox = function() end, getPreset = function() end, installClient = function() end, presetsSynced = function() return true end,
-    scriptItems = function() return scriptCatalog end,
-    saveBox = function(_, _, rule, _, callback) savedRule = rule; callback('ok') end}
+local ruleApi = {getBoxRevision = function() return 0 end, getBox = function() end, getPreset = function() end,
+    presetsSynced = function() return true end, scriptItems = function() return scriptCatalog end}
 getSpecificPlayer = function() return {} end
 PZSurvivorToolkit = {}
 local categoryTags = {OC_Food = {'food'}, OC_FoodPerishable = {'food', 'perishable'},
@@ -12,12 +11,18 @@ require = function(name)
     if name == 'PZSurvivorToolkit/TagVisuals' then
         return {get=function(id) return {r=0.3,g=0.7,b=0.3,texture=id and {id=id} or nil} end}
     end
-    if name == 'PZSurvivorToolkit/QuartermasterTagRuleClient' then return ruleApi end
+    if name == 'PZSurvivorToolkit/QuartermasterTagRuleClient' or name == 'PZSurvivorToolkit/QuartermasterTagRules' then return ruleApi end
     if name == 'PZSurvivorToolkit/QuartermasterTags' then return assert(adapter) end
     if name == 'PZSurvivorToolkit/TagRulePicker' then return {open = function(args) openedRulePicker = args end} end
     assert(name == 'PZSurvivorToolkit/ItemTags')
     return {enabled = function() return enabled end,
-        normalizeRule = function(value) return value or {mode='all',include={},exclude={}} end,
+        normalizeRule = function(value)
+            local result = {mode = value and value.mode or 'all', include = {}, exclude = {}}
+            for _, field in ipairs({'include', 'exclude'}) do
+                for _, id in ipairs(value and value[field] or {}) do result[field][#result[field] + 1] = id end
+            end
+            return result
+        end,
         ruleActive = function(value) return value and (#value.include > 0 or #value.exclude > 0) or false end,
         forCategory = function(category) return categoryTags[category] or {'category:' .. category} end,
         forScriptItem = function(script) return script.tags end,
@@ -95,15 +100,6 @@ function native:addChild(child) self.children[#self.children + 1] = child end
 function native:removeChild(child)
     for i, c in ipairs(self.children) do if c == child then table.remove(self.children, i); return end end
 end
-function native:onSave()
-    if self.targetKind == 'preset' and self.refuse then self.failureShown = true; return end
-    storedCats, storedItems = self.selectedCats, self.selectedItems
-    self.closed = true
-end
-function native:closePicker()
-    self.closed = true
-    LootSorter._picker = nil
-end
 local function picker(kind)
     local p = setmetatable({mode = 'cats', targetKind = kind or 'box', selectedCats = {}, selectedItems = {},
         selectedPresets = {Pantry = 'generation'}, children = {}, rows = {}}, {__index = native})
@@ -126,7 +122,6 @@ local function picker(kind)
     lb.doDrawItem = function() return 'native draw' end
     lb.onJoypadDown = function(self, key) self.nativeJoypad = key end
     lb.onRightMouseUp = function(self) self.inspected = self.items[self.mouseoverselected].item.key end
-    p.btnSave = control(); p.btnSave.onclick = native.onSave
     p.btnAll = control()
     p.btnAll.onclick = function(target)
         for _, row in ipairs(target.listbox.items) do target.selection[row.item.key] = true end
@@ -225,9 +220,9 @@ click(p, 'Hammer'); assert(p.selectedItems.Hammer and p.selectedItems.Beans)
 p:setMode('presets'); p:prerender(); click(p, 'Pantry')
 assert(not p.selectedPresets.Pantry and find(p, 'Pantry'), 'preset mode intercepted')
 p:setMode('cats'); p:prerender()
-p.btnSave.onclick(p)
-assert(p.closed and storedCats.OC_Food and storedCats.MissingModCategory and not storedCats.food)
-assert(storedItems.Hammer, 'item selection lost on category save')
+-- View changes preserve exact keys; actual owned Save is checked below.
+storedCats, storedItems = p.selectedCats, p.selectedItems
+assert(storedCats.OC_Food and storedCats.MissingModCategory and not storedCats.food and storedItems.Hammer)
 categoryTags.OC_FoodNew = {'food'}; availableCats[#availableCats + 1] = 'OC_FoodNew'
 open(); local reopened = LootSorter._picker
 assert(reopened ~= p and reopened.selectedCats.OC_Food and reopened.selectedCats.MissingModCategory)
@@ -238,10 +233,8 @@ reopened.listbox.mouseoverselected = unknownIndex
 reopened.listbox.onRightMouseUp(reopened.listbox)
 assert(reopened.listbox.inspected == 'MissingModCategory', 'unknown category inspector lost')
 edit(); local editor = LootSorter._presetEditor
-click(editor, 'perishable'); editor.refuse = true; editor.btnSave.onclick(editor)
-assert(editor.failureShown and not editor.closed, 'preset conflict protection bypassed')
-editor.refuse = false; editor.btnSave.onclick(editor)
-assert(storedCats.OC_FoodPerishable and not storedCats.perishable and editor.closed)
+click(editor, 'perishable')
+assert(editor.selectedCats.OC_FoodPerishable and not editor.selectedCats.perishable)
 reopened.btnClear.onclick(reopened); reopened:prerender()
 assert(next(reopened.selectedCats) == nil and reopened.selection == reopened.selectedCats, 'native Uncheck all did not clear category batches')
 click(reopened, 'food')
@@ -264,51 +257,14 @@ local exactCats = openedDisabled.selectedCats
 local dynamicRule = {mode='all',include={'food'},exclude={'perishable'}}
 openedRulePicker.onApply(dynamicRule)
 assert(openedDisabled.selectedCats == exactCats, 'dynamic rule stripped precise picks')
-openedDisabled.btnSave.onclick(openedDisabled)
-assert(savedRule == dynamicRule and openedDisabled.closed, 'dynamic rule was not saved before native designation')
 ruleApi.presetsSynced = function() return false end
 editor.toolkitTagRule, editor.toolkitTagRuleTouched = nil, nil
 local payload = adapter.presetArgs(editor,{cats=editor.selectedCats})
 assert(payload.pzstTagRule == nil, 'unsynced preset metadata was cleared by native exact-selection save')
 editor.toolkitTagRule, editor.toolkitTagRuleTouched = dynamicRule, true
 payload = adapter.presetArgs(editor,{cats=editor.selectedCats})
-assert(payload.pzstTagRule == dynamicRule, 'explicit rule edit was not passed through native preset conflict request')
-local delayed, requests
-ruleApi.saveBox = function(_, _, rule, _, callback, baseRevision)
-    assert(baseRevision == 0, 'picker save did not use opening rule revision')
-    delayed, requests = callback, (requests or 0) + 1
-end
-open(); local pendingPicker = LootSorter._picker
-pendingPicker.toolkitTagRule, pendingPicker.toolkitTagRuleTouched = dynamicRule, true
-pendingPicker.selectedCats.Before = true; pendingPicker.selectedItems.BeforeItem = true
-pendingPicker.priority = 4
-pendingPicker.btnSave.onclick(pendingPicker)
-pendingPicker.btnSave.onclick(pendingPicker)
-assert(requests == 1, 'duplicate in-flight rule request')
-pendingPicker.selectedCats.Later = true; pendingPicker.selectedItems.LaterItem = true
-pendingPicker.selectedPresets.LaterPreset = true; pendingPicker.priority = 99
-pendingPicker.toolkitTagRule = {mode='any',include={'electrical'},exclude={}}
-delayed('ok', 1)
-assert(storedCats.Before and not storedCats.Later and storedItems.BeforeItem and not storedItems.LaterItem,
-    'native save mixed accepted rule with selections changed during request')
-assert(pendingPicker.priority == 4 and not pendingPicker.selectedPresets.LaterPreset and pendingPicker.toolkitTagRule == dynamicRule)
-open(); local cancelled = LootSorter._picker
-cancelled.toolkitTagRule, cancelled.toolkitTagRuleTouched = dynamicRule, true
-cancelled.selectedCats.MustNotSave = true; cancelled.btnSave.onclick(cancelled)
-local cancelledReply = delayed
-cancelled:close()
-open(); local replacement = LootSorter._picker
-cancelledReply('ok', 2)
-assert(LootSorter._picker == replacement and not replacement.closed and not storedCats.MustNotSave,
-    'late save after close overwrote designation or closed replacement picker')
-replacement.toolkitTagRule, replacement.toolkitTagRuleTouched = dynamicRule, true
-replacement.selectedCats.ReplacedMustNotSave = true; replacement.btnSave.onclick(replacement)
-local replacedReply = delayed
-open(); local newest = LootSorter._picker
-replacedReply('ok', 3)
-assert(LootSorter._picker == newest and not newest.closed and not storedCats.ReplacedMustNotSave,
-    'late save from replaced picker overwrote designation or closed current picker')
-
+assert(payload.pzstTagRule.include[1] == 'food' and payload.pzstTagRule.exclude[1] == 'perishable'
+    and payload.pzstTagRule ~= dynamicRule, 'explicit rule edit was not detached for native preset conflict request')
 local function script(name, category, tags)
     return {tags=tags,getDisplayCategory=function() return category end,getDisplayName=function() return name end}
 end

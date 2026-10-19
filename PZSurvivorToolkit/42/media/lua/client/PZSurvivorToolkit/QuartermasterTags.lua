@@ -146,46 +146,6 @@ function Adapter.attach(picker)
     ruleButton:setTooltip(getText("UI_PZST_QMTagRuleHint"))
     picker.toolkitTagRuleButton = ruleButton
     picker:addChild(ruleButton)
-    local close = picker.closePicker
-    if close then
-        picker.closePicker = function(self, ...)
-            self.toolkitTagClosed = true
-            return close(self, ...)
-        end
-        picker.close = picker.closePicker
-    end
-    local save = picker.onSave
-    picker.onSave = function(self, ...)
-        if self.targetKind == "preset" or (not self.toolkitTagRuleTouched and not Tags.ruleActive(self.toolkitTagRule)) then
-            return save(self, ...)
-        end
-        if self.toolkitTagSaving then return end
-        self.toolkitTagSaving = true
-        local snapshot = {obj = self.targetObj, ci = self.targetCI, priority = self.priority,
-            rule = Tags.normalizeRule(self.toolkitTagRule)}
-        for _, field in ipairs({"selectedCats", "selectedItems", "selectedPresets"}) do
-            snapshot[field] = {}
-            for key, value in pairs(self[field]) do snapshot[field][key] = value end
-        end
-        Rules.saveBox(snapshot.obj, snapshot.ci, snapshot.rule,
-            getSpecificPlayer(self.playerNum or 0), function(verdict, revision)
-                self.toolkitTagSaving = false
-                if self.toolkitTagClosed or LootSorter._picker ~= self or self.targetObj ~= snapshot.obj
-                    or self.targetCI ~= snapshot.ci then return end
-                if verdict == "ok" then
-                    self.selectedCats, self.selectedItems, self.selectedPresets = snapshot.selectedCats,
-                        snapshot.selectedItems, snapshot.selectedPresets
-                    self.selection = self.mode == "items" and self.selectedItems
-                        or self.mode == "presets" and self.selectedPresets or self.selectedCats
-                    self.priority, self.toolkitTagRule, self.toolkitTagRuleRevision = snapshot.priority, snapshot.rule, revision
-                    save(self)
-                elseif LootSorter.notify then
-                    LootSorter.notify(getSpecificPlayer(self.playerNum or 0), getText(verdict == "stale" and "UI_PZST_QMTagRuleStale" or "UI_PZST_QMTagRuleFailed", tostring(verdict)))
-                end
-            end, self.toolkitTagRuleRevision)
-    end
-    -- Native Save caches Picker.onSave when creating the button.
-    if picker.btnSave then picker.btnSave.onclick = picker.onSave end
     local button = ISButton:new(10, 0, 10, 22, "", picker, function(target)
         target.toolkitTagView = not target.toolkitTagView
         target.needRebuild = true
