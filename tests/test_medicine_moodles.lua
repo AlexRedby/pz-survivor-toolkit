@@ -134,7 +134,13 @@ check("native effect zero crossings are clamped without changing character state
     p.raw = player().raw
 end)
 
+-- Kahlua stores ordinary strong keys even when __mode requests weak ones.
+local nativeSetmetatable = setmetatable
+setmetatable = function(value, meta)
+    return meta and meta.__mode and value or nativeSetmetatable(value, meta)
+end
 dofile(base .. "server/PZSurvivorToolkit/MedicineMoodles.lua")
+setmetatable = nativeSetmetatable
 local function request(args, module, command, who)
     Events.OnClientCommand.fire(module or "PZSurvivorToolkitMedicine", command or "Read", who or p, args)
 end
@@ -176,6 +182,23 @@ check("server reports unavailable cooldown without discarding other native readi
     assert(values.onlineID == 25 and values.request == 4)
     assert(values.LemonGrassCooldown == false and values.Painkillers == 2700)
     toolkitMedicineCooldown = nativeCooldown
+end)
+
+check("expired server throttles release former players without weak-key support", function()
+    local former = setmetatable({}, {__mode = "v"})
+    now, responses = 10000, {}
+    for i = 1, 12 do
+        local previous = player(i, 100 + i)
+        former[i] = previous
+        request({request = 1}, nil, nil, previous)
+    end
+    now, responses = now + 750, {}
+    request({request = 2})
+    collectgarbage("collect")
+    for i = 1, 12 do assert(former[i] == nil, "expired throttle retained a player") end
+    assert(#responses == 1 and responses[1].player == p)
+    request({request = 3})
+    assert(#responses == 1, "cleanup must retain the active player's throttle")
 end)
 
 -- Use the real framework when supplied; default fixtures cover only the public UI contract.

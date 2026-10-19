@@ -457,15 +457,22 @@ end
 Events = {OnClientCommand = event(), OnTick = event()}
 getTimestampMs = function() return now end
 local owner, friend, stranger = player("owner"), player("friend"), player("stranger")
-getOnlinePlayers = function() return {size = function() return 3 end,
-    get = function(_, i) return ({owner, friend, stranger})[i + 1] end} end
+local online = {owner, friend, stranger}
+getOnlinePlayers = function() return {size = function() return #online end,
+    get = function(_, i) return online[i + 1] end} end
 local sent = {}
 sendServerCommand = function(p, module, command, args)
     assert(p and module == "PZSurvivorWishlist" and command == "snapshot")
     sent[#sent + 1] = {player = p, args = args}
 end
 server, world = true, "/Saves/Multiplayer/server-test"
+-- Kahlua does not implement weak table ownership.
+local nativeSetmetatable = setmetatable
+setmetatable = function(value, meta)
+    return meta and meta.__mode and value or nativeSetmetatable(value, meta)
+end
 dofile(base .. "server/PZSurvivorWishlist/Server.lua")
+setmetatable = nativeSetmetatable
 local function command(p, args) Events.OnClientCommand.fire("PZSurvivorWishlist", "request", p, args) end
 check("targeted server snapshots notify edits, revoke access, isolate request ids", function()
     Events.OnTick.fire()
@@ -507,5 +514,25 @@ check("server bounds mutation bursts with explicit denial", function()
     now, sent = 20000, {}
     for i = 1, 10 do command(owner, {action = "sync", requestId = tostring(i)}) end
     assert(#sent == 9 and sent[9].args.error == "rate_limited" and sent[9].args.requestId == "9")
+end)
+check("refresh preserves online rate limits and releases departed players without weak keys", function()
+    local former = setmetatable({}, {__mode = "v"})
+    do
+        local departed = player("departed")
+        former[1] = departed
+        online[#online + 1] = departed
+        command(departed, {action = "sync"})
+    end
+    online = {owner, friend, stranger}
+    sent = {}
+    Events.OnTick.fire()
+    sent = {}
+    collectgarbage("collect")
+    assert(former[1] == nil, "snapshots or request buckets retained a departed player")
+    command(owner, {action = "sync", requestId = "11"})
+    assert(#sent == 0, "refresh must not reset an online player's rate limit")
+    now = now + 5000
+    Events.OnTick.fire()
+    assert(#sent == 0, "unchanged online snapshots must remain cached")
 end)
 print("Wishlist model/server checks passed: " .. passed)

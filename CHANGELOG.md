@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.95
+
+- **Fixed:** Server medicine throttles discard expired player entries, and Wishlist refreshes release disconnected players' snapshots and request buckets without relying on weak tables unsupported by Kahlua.
+
 ### 0.1.94
 
 - **Fixed:** TidyUpMeister can return borrowed floor items in Host after the network replaces their inventory reference, preserving exact item identity, original placement and explicit pickup intent with the queue enabled or disabled.

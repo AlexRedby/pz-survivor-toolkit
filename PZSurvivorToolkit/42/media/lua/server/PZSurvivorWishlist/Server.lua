@@ -2,8 +2,7 @@ if not isServer() then return end
 local Service = require "PZSurvivorWishlist/Service"
 if PZSurvivorWishlist.serverInstalled then return end
 PZSurvivorWishlist.serverInstalled = true
-local snapshots = setmetatable({}, {__mode = "k"})
-local requests = setmetatable({}, {__mode = "k"})
+local snapshots, requests = {}, {}
 local nextRefresh = 0
 
 local function same(a, b)
@@ -19,13 +18,17 @@ local function send(player, payload)
 end
 local function refresh(except)
     local online = getOnlinePlayers()
+    -- Kahlua ignores weak keys; retain state only for players still online.
+    local currentSnapshots, currentRequests = {}, {}
     for i = 0, online:size() - 1 do
         local player = online:get(i)
         if player ~= except then
             local payload = Service.snapshot(player)
             if not same(payload, snapshots[player]) then send(player, payload) end
         end
+        currentSnapshots[player], currentRequests[player] = snapshots[player], requests[player]
     end
+    snapshots, requests = currentSnapshots, currentRequests
 end
 Events.OnClientCommand.Add(function(module, command, player, args)
     if module ~= "PZSurvivorWishlist" or command ~= "request" or not player then return end
