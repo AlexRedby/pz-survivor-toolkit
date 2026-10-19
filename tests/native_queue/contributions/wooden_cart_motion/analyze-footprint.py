@@ -39,8 +39,7 @@ def steps(name, fast_slide=False, wall_exit=False, wall_manual_exit=False, wall_
         spec, angle = spec.rsplit('-manual-out',1)
         right=spec.endswith('right')
         if relative:
-            assert wall_manual_exit and not wall_fast_manual_exit and gait == 'walk', 'Relative port covers only walk manual exit'
-            return [(1000,0,1),(9500,0,4),(12000,0,7 if right else 6),(15500,0,0),(16000,0,8 if right else 5)]+([(21000,0,8 if right else 5)] if angle=='90' else [])+[(26000,0,0)]
+            return [(1000,('walk','run','sprint').index(gait),1),(9500,0,4),(12000,0,7 if right else 6),(15500,0,0),(16000,0,8 if right else 5)]+([(21000,0,8 if right else 5)] if angle=='90' else [])+[(26000,0,0)]
         return [(1000,('walk','run','sprint').index(gait),1 if right else 2),(9500,0,6 if right else 8),(12000,0,4 if right else 3),
                 (15500,0,0),(16000,0,3 if right else 4)]+([(21000,0,7)] if angle=='90' else [])+[(26000,0,0)]
     if wall_exit:
@@ -93,7 +92,7 @@ def selected(log, fast_slide=False, wall_exit=False, wall_manual_exit=False, wal
     assert all(attempts.count((n, str(t))) == 1 for n, t in starts.items()), 'Missing or duplicate selected footprint attempt'
     versions=re.findall(r'\[CART_RELATIVE_MANUAL\] VERSION (\S+)',log)
     relative=bool(versions)
-    assert not relative or versions==['1'] and wall_manual_exit and not wall_fast_manual_exit, 'Unknown or misplaced relative manual input version'
+    assert not relative or versions==['1'] and (wall_manual_exit or wall_fast_manual_exit), 'Unknown or misplaced relative manual input version'
     assert relative or '[CART_RELATIVE_MANUAL]' not in log, 'Missing relative manual input version'
     cases = {n: dict(rows=[], events=[], states=[], relative=relative, manual=[]) for n in starts}
     available, active = {}, None
@@ -165,7 +164,7 @@ def relative_manual_inputs(name, rows, probes, events):
     for index,(a,b) in enumerate(zip(stages,stages[1:])):
         margin=min(200,(b[0]-a[0])/4)
         samples=[(r,p) for r,p in zip(rows,probes) if a[0]+margin<=r['elapsed']<b[0]-margin]
-        assert samples and all(r['requestedGait']==0 for r,_ in samples), 'Missing relative manual input stage'
+        assert samples and all(r['requestedGait']==a[1] for r,_ in samples), 'Missing relative manual input stage'
         turning=index in (3,5) or index==6 and len(events)==7
         if not turning:
             assert all(r['drive']==a[2] for r,_ in samples), 'Wrong relative manual physical input'
@@ -319,12 +318,13 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
         origin = (layout['startX'], layout['startY'])
         assert math.dist((rows[0]['x'], rows[0]['y']), origin) <= .025, 'Footprint scene starts after movement'
         wx, sy, gy = (layout[k] for k in ('wallX', 'southY', 'gapY'))
-        expected_origin = ((wx+2.8, gy+.5) if wall_exit else (wx+1.3, sy-1.18) if spec == 'corner-pivot' else
+        relative=case['relative']
+        start_offset=(20 if spec=='wall-slide-right' else -20) if wall_fast_manual_exit and relative else 0
+        expected_origin = ((wx+2.8, gy+.5+start_offset) if wall_exit else (wx+1.3, sy-1.18) if spec == 'corner-pivot' else
                            (wx+1.8, gy+.5) if spec in ('passage', 'door-open') else
                            (wx+.65, gy+.5) if spec == 'overlap' else
                            (wx+1.4, gy+.5) if spec == 'gait-contact' else (geometry['x'], geometry['y']))
         assert math.dist(origin, expected_origin) <= .025, 'Wrong footprint fixture start'
-        relative=case['relative']
         planned = steps(name, fast_slide, wall_exit, wall_manual_exit, wall_fast_manual_exit,relative=relative)
         assert len(events) == len(planned), 'Missing footprint input events'
         for actual, expected in zip(events, planned):

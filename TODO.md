@@ -8,7 +8,7 @@
 
 # Wooden wheelbarrow collisions
 
-- [ ] Extend relative-key manual reverse wall exits to female models, Run/Sprint approaches and Host multiplayer. Preserve the <=.02 rad opposite-yaw, <=.025 rad release and <=500 ms sampling budgets, manual reverse, natural rolling and native collision, without automatic backing.
+- [ ] Extend relative-key manual reverse wall exits to female models with Walk/Run/Sprint approaches and to Host multiplayer. Preserve the <=.02 rad opposite-yaw, <=.025 rad release and <=500 ms sampling budgets, manual reverse, natural rolling and native collision, without automatic backing.
 - [ ] On the next shared cart-native run, obtain the standard path report with same-tick CancelAction/terminal accounting fixed: the saved 24 routes were checked in separate analysis; leave the original report unchanged. The shared visual gate remains open due to wide-trouser contact with the left handle and unclassified font messages.
 - [ ] Check the wooden wheelbarrow's braced stance in the remaining collision scenes: the full bank with a female model and Walk with a full load. Check feet, grip, wheel and absence of jolts; test Run/Sprint and impact in separate scenarios.
 

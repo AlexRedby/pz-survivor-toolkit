@@ -52,7 +52,7 @@ def check_manifest():
     allowed = {"Main.java", "KahluaChecks.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py", "obstacles.lua", "scenario-collision.lua", "analyze-collision.py", "analyze-footprint.py"}
     allowed |= {"scenario-interaction.lua", "analyze-interaction.py", "analyze-interruption.py", "analyze-repeat.py",
                 "analyze-wheel-cycle.py", "scenario-path.lua", "analyze-path.py", "scene-selection.lua", "analyze-impact.py", "analyze-stop-timing.py", "vehicles.lua", "scenario-vehicles.lua", "analyze-vehicles.py", "analyze-brace.py"}
-    allowed |= {"scenario-controls.lua", "scenario-variants.lua"}
+    allowed |= {"scenario-controls.lua", "scenario-variants.lua", "scenario-native-e.lua"}
     assert {p.name for p in HERE.iterdir() if p.is_file()} == allowed
     for path in HERE.rglob("*"):
         if path.is_file():
@@ -114,7 +114,7 @@ def check_manifest():
     assert footprint['steps']('male-empty-walk-wall-slide-manual-out45',wall_manual_exit=True,relative=True)==[(1000,0,1),(9500,0,4),(12000,0,6),(15500,0,0),(16000,0,5),(26000,0,0)]
     assert footprint['steps']('male-full-walk-wall-slide-right-manual-out90',wall_manual_exit=True,relative=True)==[(1000,0,1),(9500,0,4),(12000,0,7),(15500,0,0),(16000,0,8),(21000,0,8),(26000,0,0)]
     manual_source=(HERE/'scenario-collision.lua').read_text()
-    assert 'local relativeManual=wallManualExit and not wallFastManualExit' in manual_source
+    assert 'local relativeManual=wallManualExit\n' in manual_source
     assert '[CART_RELATIVE_MANUAL] VERSION 1' in manual_source and 'cartLabSteeringHeading()' in manual_source
     assert 'Manual controls changed cart ownership' in manual_source and 'Manual controls changed cargo' in manual_source
     for empty in ('','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=8'):
@@ -127,12 +127,18 @@ def check_manifest():
     assert fast_manual_exit['axes']==dict(manual_exit['axes'],gait=['run','sprint'])
     assert fast_manual_exit['analyzer']=='analyze-footprint.py --wall-fast-manual-exit'
     assert fast_manual_exit['input_schedule_ms']==manual_exit['input_schedule_ms']
+    assert fast_manual_exit['input_scheme']=='relative-keyboard-v1'
+    assert fast_manual_exit['steering_gates']==dict(opposite_yaw_radians_max=.02,released_heading_drift_radians_max=.025,sample_gap_ms_max=500)
     assert fast_manual_exit['wall_reach_tiles']==40 and fast_manual_exit['owned_wall_segments']==81 and fast_manual_exit['finite_wall_span_verified'] is True
+    assert fast_manual_exit['start_offset_from_center_tiles']==20
     assert len(footprint['WALL_FAST_MANUAL_EXIT_EXPECTED'])==16
     for name in footprint['WALL_FAST_MANUAL_EXIT_EXPECTED']:
         planned=footprint['steps'](name,wall_fast_manual_exit=True)
         walk=footprint['steps'](name.replace('-run-','-walk-').replace('-sprint-','-walk-'),wall_manual_exit=True)
         assert planned[0]==(1000,1 if '-run-' in name else 2,walk[0][2]) and planned[1:]==walk[1:]
+        relative=footprint['steps'](name,wall_fast_manual_exit=True,relative=True)
+        relative_walk=footprint['steps'](name.replace('-run-','-walk-').replace('-sprint-','-walk-'),wall_manual_exit=True,relative=True)
+        assert relative[0]==(1000,planned[0][1],1) and relative[1:]==relative_walk[1:]
     for empty in ('','[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=16'):
         try: footprint['selected'](empty,wall_fast_manual_exit=True)
         except AssertionError: pass

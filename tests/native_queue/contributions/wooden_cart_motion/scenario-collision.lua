@@ -12,7 +12,7 @@ local fastSlide=config.fastSlide==true
 local wallExit=config.wallExit==true
 local wallManualExit=config.wallManualExit==true
 local wallFastManualExit=config.wallFastManualExit==true
-local relativeManual=wallManualExit and not wallFastManualExit
+local relativeManual=wallManualExit
 assert(not relativeManual or cartLabSteeringHeading,'Accepted steering heading diagnostics missing')
 if relativeManual then require 'TimedActions/ISTimedActionQueue' end
 assert(not wallFastManualExit or wallManualExit,'Fast manual wall exit requires manual wall exit mode')
@@ -98,7 +98,7 @@ if wallExit then
    if wallManualExit and angle==90 then table.insert(cases[#cases].steps,6,{21000,0,7}) end
    if relativeManual then
     local c=cases[#cases]
-    c.steps={{1000,0,1},{9500,0,4},{12000,0,right and 7 or 6},{15500,0,0},{16000,0,right and 8 or 5},{26000,0,0}}
+    c.steps={{1000,wallFastManualExit and (gait=='run' and 1 or 2) or 0,1},{9500,0,4},{12000,0,right and 7 or 6},{15500,0,0},{16000,0,right and 8 or 5},{26000,0,0}}
     if angle==90 then table.insert(c.steps,6,{21000,0,right and 8 or 5}) end
    end
   end end
@@ -196,7 +196,10 @@ local function sprinting(level)
 end
 local function poseCase()
  local c=cases[phase]
- if wallExit then pose(wallX+2.8,CartTestArea.y)
+ if wallExit then
+  -- A tangent-aligned Sprint needs runway for both contact and the later outward exit.
+  local offset=wallFastManualExit and (c.spec=='wall-slide-right' and 20 or -20) or 0
+  pose(wallX+2.8,CartTestArea.y+offset)
  elseif brace then pose(wallX+1.8,CartTestArea.y,math.pi)
  elseif footprint then
   if c.spec=='corner-pivot' then pose(wallX+1.3,southY-1.18)

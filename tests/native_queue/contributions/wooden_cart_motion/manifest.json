@@ -646,11 +646,20 @@
       "PZToolkitJavaPatches": ">=0.1.20"
     },
     "purpose": "Separate manual recovery gate after Run/Sprint tight wall contact; no automatic reverse or gameplay steering change.",
+    "input_scheme": "relative-keyboard-v1",
+    "input": "Held W with the selected native Run/Sprint gait, then explicit Walk S and mirrored S+A/D reverse arc, release, W+A/D outward turn and W after the accepted heading reaches target. out90 adds a second outward turn at 21000 ms. Bare controls retain independent native directions; legacy absolute captures remain readable.",
+    "steering_gates": {
+      "opposite_yaw_radians_max": 0.02,
+      "released_heading_drift_radians_max": 0.025,
+      "sample_gap_ms_max": 500
+    },
     "scope": "Male-only empty/full Run/Sprint wall slides, switch to Walk with explicit straight reverse at 9500 ms, then reverse arc, stop, gentle forward 45-degree exit and optional perpendicular turn at 21000 ms. Requires actual selected native fast gait during approach and steady contact, native backward Walk and negative direction, measured reverse arc clearance, forward native Walk and outward heading/displacement, whole wooden mesh and continuous wheel support clearance, native update budgets and final settle. Female models, body/grip/clothing, visual quality and multiplayer authority are separate gates. Its scene wall has 81 owned W segments from gapY-40 through gapY+40; native bare controls retain reach 24. Exact actual count/extent receipts and actor/whole-mesh bounds must remain inside the finite wall span.",
     "manual_forward_turn_allowance_ms": 3500,
     "wall_reach_tiles": 40,
     "owned_wall_segments": 81,
-    "finite_wall_span_verified": true
+    "finite_wall_span_verified": true,
+    "start_offset_from_center_tiles": 20,
+    "start_offset_direction": "Opposite the initial tangent travel: -Y for wall-slide and +Y for wall-slide-right. Keeps the full Sprint approach and forward exit within the existing 81-segment wall and safe pad."
   },
   "native_e_scenario": {
     "case_count": 1,

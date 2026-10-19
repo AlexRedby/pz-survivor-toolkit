@@ -58,11 +58,12 @@ def fixture(profile, slide_stop=5800, fast_slide=False, wall_exit=False, wall_ma
         if fast_slide or wall_exit: _, scene = scene.split('-', 1)
         if wall_exit: scene, _ = scene.rsplit('-out', 1)
         if wall_manual_exit:scene=scene.removesuffix('-manual')
-        initial = (2.8, 10.5) if wall_exit else (1.3, 10.82) if scene=='corner-pivot' else (1.8, 10.5) if scene in ('passage', 'door-open') else (.65, 10.5) if scene=='overlap' else (1.4, 10.5) if scene=='gait-contact' else (3.5, 10.5)
+        start_offset=(20 if scene=='wall-slide-right' else -20) if wall_fast_manual_exit and relative else 0
+        initial = (2.8, 10.5+start_offset) if wall_exit else (1.3, 10.82) if scene=='corner-pivot' else (1.8, 10.5) if scene in ('passage', 'door-open') else (.65, 10.5) if scene=='overlap' else (1.4, 10.5) if scene=='gait-contact' else (3.5, 10.5)
         lines.extend([f'[CART_COLLISION_LAYOUT] case={name} wallX=0 southY=12 gapY=10 startX={initial[0]} startY={initial[1]} baselineX=.3 baselineY=11.7'+(' ownedWalls=81 wallMinY=-30 wallMaxY=50' if wall_fast_manual_exit else ''),
                       f'[WOOD_BANK] CASE {name} attempt=0 wall={start}'])
         events = [(at, g, (1 if scene=='corner-pivot' else 3 if scene=='wall-slide' else 4 if scene=='wall-slide-right' else 7) if d is None else d) for at, g, d in analyzer.steps(name, fast_slide, wall_exit, wall_manual_exit)]
-        input_events=analyzer.steps(name,wall_manual_exit=True,relative=True) if relative else events
+        input_events=analyzer.steps(name,wall_manual_exit=not wall_fast_manual_exit,wall_fast_manual_exit=wall_fast_manual_exit,relative=True) if relative else events
         previous, phase = initial, 0.
         for t in range(0, duration, 100):
             command = [e for e in input_events if e[0] < t]
@@ -83,7 +84,7 @@ def fixture(profile, slide_stop=5800, fast_slide=False, wall_exit=False, wall_ma
                         (21000,analyzer.ANGLES[events[4][2]]),(22500,outward)])
                     x=lerp(t,[(0,2.8),(1000,2.8),(3000,.35),(12000,.35),(12100,.55),(15500,2.5),(16000,2.5),(26000,8.5)])
                     tangent=lerp(t,[(0,0),(1000,0),(9500,3.4),(10500,3.4),(12000,2.6),(15500,.9),(16000,.9),(21000,4.2),(26000,7.4 if name.endswith('out45') else 4.2)])
-                y = 10.5+(-1 if scene.endswith('right') else 1)*tangent
+                y = initial[1]+(-1 if scene.endswith('right') else 1)*tangent
             elif scene in ('passage', 'door-open'):
                 x = lerp(t, [(0, 1.8), (1000, 1.8), (events[1][0]-300, -2.), (reverse_at, -2.), (9000, 2.4)])
                 y = 10.5
@@ -1002,6 +1003,122 @@ class WallFastManualExitTests(unittest.TestCase):
                 result=subprocess.run([sys.executable,str(SCRIPT),'--profile',str(self.root),'--output',str(self.root/'out.json'),
                                        '--wall-fast-manual-exit',option],capture_output=True,text=True)
                 self.assertNotEqual(result.returncode,0);self.assertIn('not allowed with argument',result.stderr)
+
+
+
+class RelativeWallFastManualExitTests(unittest.TestCase):
+    duration=29000
+    mutate_samples=FastSlideTests.mutate_samples
+    mutate_frames=FootprintTests.mutate_frames
+    mutate_updates=FootprintTests.mutate_updates
+
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+        self.log,sha=fixture(self.root,wall_fast_manual_exit=True,relative=True)
+        self.hash_patch=patch.object(analyzer,'MESH_SHA',sha);self.hash_patch.start();self.addCleanup(self.hash_patch.stop)
+
+    def report(self,log=None):
+        return analyzer.analyze(self.log if log is None else log,self.root,wall_fast_manual_exit=True)
+
+    def mutate_probes(self,name,start,stop,update):
+        def alter(line):
+            elapsed=int(re.search(r'elapsed=(\d+)',line)[1])
+            heading=float(re.search(r'acceptedHeading=([^ ]+)',line)[1])
+            return re.sub(r'acceptedHeading=[^ ]+',f'acceptedHeading={update(heading,elapsed)}',line)
+        return '\n'.join(alter(line) if '[CART_RELATIVE_MANUAL] SAMPLE ' in line and f'case={name} ' in line
+            and start<=int(re.search(r'elapsed=(\d+)',line)[1])<stop else line for line in self.log.splitlines())
+
+    def test_relative_fast_matrix_preserves_native_gait_controls_and_clearance(self):
+        report=self.report()
+        self.assertEqual(report['inputScheme'],'relative-keyboard-v1')
+        self.assertTrue(report['motionPass'],report['motionFailures'])
+        self.assertTrue(report['footprintPass'],report['footprintFailures'])
+        self.assertEqual((report['caseCount'],report['controlCount']),(16,5))
+        self.assertEqual({case['case'] for case in report['cases']},analyzer.WALL_FAST_MANUAL_EXIT_EXPECTED)
+        for case in report['cases']:
+            name=case['case']
+            planned=analyzer.steps(name,wall_fast_manual_exit=True,relative=True)
+            self.assertEqual(planned[0],(1000,1 if '-run-' in name else 2,1))
+            self.assertTrue(all(event[1]==0 for event in planned[1:]))
+            self.assertEqual(case['slideComparison']['requestedGait'],'Run' if '-run-' in name else 'Sprint')
+            self.assertGreaterEqual(case['slideComparison']['cart']['durationMs'],500)
+            self.assertEqual(len(case['manualComparison']['inputProof']['turns']),3 if name.endswith('out90') else 2)
+            self.assertGreater(case['manualComparison']['reverseArcOutwardDisplacement'],.15)
+            self.assertGreater(case['exitComparison']['minClearance'],.35)
+
+    def test_relative_fast_requires_exact_mirrored_runway_origins(self):
+        for right in (False,True):
+            name='male-empty-sprint-wall-slide'+('-right' if right else '')+'-manual-out45'
+            for delta in ((-20,-40) if right else (20,40)):
+                # Translate every physical evidence stream together: the only failure is the wrong origin.
+                fixture(self.root,wall_fast_manual_exit=True,relative=True)
+                def translate(line):
+                    key='startY' if '[CART_COLLISION_LAYOUT]' in line else 'y'
+                    return re.sub(r' '+key+r'=([^ ]+)',lambda m:' '+key+'='+str(float(m[1])+delta),line)
+                log='\n'.join(translate(line) if f'case={name} ' in line and
+                    ('[CART_COLLISION_LAYOUT]' in line or '[WOOD_BANK_SAMPLE]' in line) else line for line in self.log.splitlines())
+                self.mutate_frames(name,lambda row,t:row.__setitem__('slotY',row['slotY']+delta))
+                self.mutate_updates(name,lambda row,t:row.__setitem__('playerY',float(row['playerY'])+delta))
+                with self.subTest(right=right,delta=delta),self.assertRaisesRegex(AssertionError,'Wrong footprint fixture start'):
+                    self.report(log)
+
+    def test_relative_fast_approach_and_recovery_require_physical_input_and_gait(self):
+        for gait,level in (('run',1),('sprint',2)):
+            name=f'male-full-{gait}-wall-slide-right-manual-out90'
+            for start,stop,old,new in ((2000,3000,'drive=1 ','drive=2 '),
+                                      (8500,9300,f'requestedGait={level} ','requestedGait=0 '),
+                                      (10600,11800,'drive=4 ','drive=8 '),
+                                      (12300,13000,'requestedGait=0 ',f'requestedGait={level} '),
+                                      (14800,15300,'drive=4 ','drive=7 '),
+                                      (24000,25000,'drive=1 ','drive=8 ')):
+                with self.subTest(gait=gait,start=start),self.assertRaises(AssertionError):
+                    self.report(self.mutate_samples(name,start,stop,lambda line:line.replace(old,new)))
+            for alter in (lambda line:line.replace(gait+'=true',gait+'=false'),
+                          lambda line:line.replace('Bob_'+gait.title()+'@','Bob_Walk@'),
+                          lambda line:re.sub('Bob_'+gait.title()+r'@1/[^/]+/','Bob_'+gait.title()+'@1/0/',line)):
+                with self.subTest(gait=gait):
+                    self.assertIn((name,'native requested fast gait does not progress at wall contact'),
+                        self.report(self.mutate_samples(name,8500,9300,alter))['motionFailures'])
+
+    def test_fast_relative_diagnostics_and_ownership_remain_required(self):
+        for old,new in (('[CART_RELATIVE_MANUAL] VERSION 1',''),('VERSION 1','VERSION 2'),
+                         ('primary=17','primary=19'),('cargoIds=18','cargoIds=19'),
+                         ('queue=0','queue=1'),('path=false','path=true')):
+            with self.subTest(new=new),self.assertRaises(AssertionError):self.report(self.log.replace(old,new,1))
+        missing='\n'.join(line for line in self.log.splitlines() if not ('[CART_RELATIVE_MANUAL] SAMPLE' in line and 'elapsed=14000 ' in line))
+        with self.assertRaisesRegex(AssertionError,'misaligned'):self.report(missing)
+
+    def test_fast_relative_opposite_yaw_budget_stays_point_zero_two(self):
+        # At 13000 the unchanged reverse-arc sample advances pi/100 from the prior sample.
+        name='male-empty-run-wall-slide-manual-out45'
+        for opposite,accepted in ((.019,True),(.021,False)):
+            log=self.mutate_probes(name,13000,13100,lambda heading,t:heading-math.pi/100-opposite)
+            with self.subTest(opposite=opposite):
+                if accepted:
+                    self.assertTrue(self.report(log)['motionPass'])
+                else:
+                    with self.assertRaisesRegex(AssertionError,'oscillates or turns in wrong direction'):self.report(log)
+
+    def test_fast_relative_released_heading_budget_stays_point_zero_two_five(self):
+        name='male-empty-sprint-wall-slide-manual-out45'
+        for drift,accepted in ((.024,True),(.026,False)):
+            # Both endpoints remain within the independent .04 target-heading tolerance.
+            log=self.mutate_probes(name,14500,15400,lambda heading,t:heading+drift*((t-14500)/700-.5))
+            with self.subTest(drift=drift):
+                if accepted:
+                    self.assertTrue(self.report(log)['motionPass'])
+                else:
+                    with self.assertRaisesRegex(AssertionError,'continues after release'):self.report(log)
+
+    def test_relative_fast_coverage_finite_wall_and_mesh_remain_required(self):
+        name='male-empty-sprint-wall-slide-manual-out45'
+        gap='\n'.join(line for line in self.log.splitlines() if not (f'case={name} ' in line and 'elapsed=' in line and 22000<=int(re.search(r'elapsed=(\d+)',line)[1])<22600))
+        with self.assertRaisesRegex(AssertionError,'sample window'):self.report(gap)
+        with self.assertRaisesRegex(AssertionError,'fast manual wall layout'):
+            self.report(self.log.replace('ownedWalls=81','ownedWalls=49',1))
+        self.mutate_frames(name,lambda row,t:row['cart'].__setitem__(12,-3.) if t==12500 else None)
+        self.assertIn((name,'wooden mesh enters closed wall'),self.report()['footprintFailures'])
 
 
 if __name__=='__main__': unittest.main()

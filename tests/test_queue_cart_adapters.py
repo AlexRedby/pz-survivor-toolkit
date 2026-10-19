@@ -725,6 +725,48 @@ class CartAdapterTests(unittest.TestCase):
                 result=subprocess.run([lua,'-e',code],check=True,text=True,capture_output=True)
                 self.assertEqual(result.stdout.splitlines(),[n for n in full if chosen is None or n in chosen],bank)
 
+    def test_fast_manual_runway_pose_is_mirrored_and_bare_controls_stay_centered(self):
+        lua=shutil.which('luajit') or shutil.which('lua')
+        if not lua:self.skipTest('Lua interpreter unavailable')
+        source=(ROOT/'tests/native_queue/contributions/wooden_cart_motion/scenario-collision.lua').read_text()
+        pose=source[source.index('local function pose('):source.index('local function sprinting(')]
+        pose_case=source[source.index('local function poseCase('):source.index('local function reverseDrive(')]
+        control_block=source[source.index("if mode=='control-layout' then\n"):]
+        control_pose=next(line.strip() for line in control_block.splitlines() if line.strip().startswith('pose('))
+        code="""
+local p={}
+for _,axis in ipairs({'X','Y','Z','NextX','NextY','LastX','LastY'}) do
+ p['set'..axis]=function(self,value) self[axis]=value end
+end
+for _,method in ipairs({'ensureOnTile','setCurrentSquareFromPosition','setMovingSquareNow'}) do p[method]=function() end end
+local CartTestArea={x=103.5,y=200.5,z=7,checkPosition=function() end}
+local wallX,southY=100,202
+local cases,phase={{spec='wall-slide',startYaw=0}},1
+local wallExit,brace,footprint=true,false,true
+local config={impact=false}
+local function cartLabPoseHeading() end
+local function controlHeading() return 0 end
+"""+pose+pose_case+"""
+for _,fast in ipairs({false,true}) do
+ wallFastManualExit=fast
+ for _,spec in ipairs({'wall-slide','wall-slide-right'}) do
+  cases[1].spec=spec;poseCase()
+  print('cart',tostring(fast),spec,p.X,p.Y,p.Z)
+ end
+ for _,kind in ipairs({'wall','corner','passage','wall-slide-left','wall-slide-right'}) do
+ """+control_pose+"""
+  print('control',tostring(fast),kind,p.X,p.Y,p.Z)
+ end
+end
+"""
+        result=subprocess.run([lua,'-e',code],check=True,text=True,capture_output=True)
+        rows=[line.split() for line in result.stdout.splitlines()]
+        self.assertEqual(len(rows),14)
+        for kind,fast,spec,x,y,z in rows:
+            expected_y=(220.5 if spec.endswith('right') else 180.5) if kind=='cart' and fast=='true' else 200.5
+            with self.subTest(kind=kind,fast=fast,spec=spec):
+                self.assertEqual(tuple(map(float,(x,y,z))),(102.8 if kind=='cart' else 103.5,expected_y,7.))
+
     def test_scene_selection_is_strict_and_is_staged_in_snapshot_order(self):
         self.selection['cases']=['path']
         for bad in (None,[],True,'male-full-corner',['unknown'],['male-full-corner']*2,[2],['male-full-yaw0']):
