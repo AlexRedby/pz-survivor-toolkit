@@ -58,10 +58,12 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Shared game sessions and build regression
 
+- [ ] Fix P4 losing explicit equipment in the current full pack with the queue disabled: `waiting-cancel` equips the bat, then P4 returns it to the bag in both SP and Host. Confirm the suspected load-order dependency: changed Project Cook EvoPanel disables eager loading, unchanged recipe modifiers load after P4 snapshots, and its global guard rejects unrelated equipment. Keep the changed EvoPanel adapter protected; independently verified early loading of the unchanged modifiers is a candidate fix. Gate: a regression for changed UI with unchanged modifiers, unknown-modifier rejection, and grouped SP/Host equipment runs with successful native controls and clean logs.
+
 - [ ] Extend the common scenario contracts beyond the first equipment scopes. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
 - [ ] Collect fresh SP/Host evidence for the extracted equipment control helper and its new move outcome fields. Use grouped `equip-hands` scenario selection and matching native controls; historical reports without these fields must remain `missing-evidence` for those behaviors.
 
-- [ ] Recheck affected source-pinned queue integrations against the updated Workshop sources. Compare the explicitly locked working baseline with current callbacks and run the affected SP/Host cases with queue-disabled controls; source changes must not silently inherit old permissions or old test results.
+- [ ] Recheck affected source-pinned queue integrations against the updated Workshop sources. Start with Project Cook’s changed EvoPanel, including new base-item return/retry paths. Compare the explicitly locked working baseline with current callbacks and run the affected SP/Host cases with queue-disabled controls; source changes must not silently inherit old permissions or old test results.
 - [ ] Cart chat: integrate the published combined SP cart matrices and collision cases after their native checks are complete. Keep independent cold controls; separately measure an explicit full regression profile (the estimated 17 startup cycles instead of 29 are not yet confirmed).
 
 ## Near-term adapters

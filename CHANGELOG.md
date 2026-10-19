@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.101
+
+- **Fixed:** Queue transfer controls recognize Better Containers 42.21 and its new stale-vehicle helper. Modified helpers remain protected, and transfers into stale vehicle containers retain the upstream rejection.
+
 ### 0.1.100
 
 - **Changed:** Wishlist uses Toolkit's shared button styling and inventory-class integration, removing duplicate standalone paths while preserving existing controls and highlights when CleanUI switches views.

@@ -36,6 +36,8 @@ table.wipe = function(value) for key in pairs(value) do value[key] = nil end end
 getText = function(value) return value end
 getTextOrNull = getText
 getTexture=function() return {} end
+isDebugEnabled=function() return false end
+LuaEventManager={AddEvent=function() end}
 isClient = function() return false end
 isServer = function() return false end
 isMultiplayer = function() return false end
@@ -183,7 +185,7 @@ local paths = {
     Project_Cook = '3490188370/mods/Project_Cook/common',
     Neat_Crafting = '3502080466/mods/Neat_Crafting/common',
     MPFastForward = '3738738086/mods/MPFastForward/42',
-    EURY_CONTAINERS = '3586216562/mods/BetterContainers/42.20',
+    EURY_CONTAINERS = '3586216562/mods/BetterContainers/42.21',
 }
 ISInventoryPage={onBackpackRightMouseDown=function() end}
 local floorSource=read(NativeActionRoot..'/client/ISUI/ISInventoryPage.lua')
@@ -269,7 +271,6 @@ require = function(module)
     if module == 'NeatEquipment/NEQ_Categories' then return {SLOTS = {}} end
     if module == 'NeatEquipment/NEQ_State' then return {wardrobeSwapContainers = false} end
     if module == 'Project_Cook/PJCK_Config' then PJCK_Config = {get = function() return {portionPolicy = 'full_first'} end}; return end
-    if module=='BetterContainers/Helpers' then return {} end
     if module=='BetterContainers/_Options' then return {} end
     if module=='BetterContainers/_IO/IniWriter' then return {makeFeature=function() return {get=function() return {} end} end} end
     local id, branch
@@ -285,6 +286,7 @@ require = function(module)
         return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
     elseif module == 'P4TidyUpMeister' then id, branch = 'P4TidyUpMeister', 'client/'
     elseif module == 'MPFastForward_ReadFix' then id, branch = 'MPFastForward', 'server/'
+    elseif module=='BetterContainers/Helpers' then id,branch='EURY_CONTAINERS','shared/'
     elseif module:match('^BetterContainers/') then id,branch='EURY_CONTAINERS','client/'
     elseif module:match('^TimedActions/P4Restore') then id, branch = 'P4TidyUpMeister', 'shared/' end
     if not id then return end
@@ -418,6 +420,49 @@ local function item(container, id)
 end
 local function tail()
     local action = ISBaseTimedAction:new(player); ISTimedActionQueue.add(action); return action
+end
+do
+    local ordinary=ISInventoryTransferAction:new(player,item(inventory,22),inventory,inventory)
+    assert(fixturePolicy.isOrdinaryTransfer(ordinary),'reviewed Better Containers allows ordinary transfers')
+    local helpers=EURY_CONTAINERS
+    local staleVehicle=helpers.isStaleVehicleContainer
+    helpers.isStaleVehicleContainer=function() return false end
+    assert(not fixturePolicy.isOrdinaryTransfer(ordinary),'changed stale-vehicle helper loses transfer permissions')
+    helpers.isStaleVehicleContainer=staleVehicle
+    EURY_CONTAINERS={isStaleVehicleContainer=staleVehicle}
+    assert(not fixturePolicy.isOrdinaryTransfer(ordinary),'changed Helpers owner loses transfer permissions')
+    EURY_CONTAINERS=helpers
+    assert(fixturePolicy.isOrdinaryTransfer(ordinary),'restored exact Helpers identity remains valid')
+
+    local vehicle={}
+    local ancestor={getVehiclePart=function() return {getVehicle=function() return vehicle end} end,
+        getContainingItem=function() end,getCapacityWeight=function() return 0 end,getEffectiveCapacity=function() return 10 end}
+    local owner={getContainer=function() return ancestor end}
+    local destination={getType=function() return 'inventory' end,getContainingItem=function() return owner end}
+    ordinary.destContainer=destination
+    ordinary.item.getUnequippedWeight=function() return 1 end
+    assert(ordinary:isValid(),'live vehicle ancestor accepts the native nested transfer')
+    vehicle=nil
+    assert(not ordinary:isValid(),'stale vehicle ancestor retains the upstream transfer rejection')
+
+    local reader=getModFileReader
+    for _,path in ipairs({'media/lua/client/BetterContainers/Nested.lua','media/lua/shared/BetterContainers/Helpers.lua'}) do
+        getModFileReader=function(id,file,...)
+            local input=reader(id,file,...)
+            if id=='EURY_CONTAINERS' and file==path then
+                local readLine=input.readLine;local first=true
+                input.readLine=function(...)
+                    local line=readLine(...)
+                    if first then first=false;return line..' -- changed' end
+                    return line
+                end
+            end
+            return input
+        end
+        assert(not compat.verifySources('EURY_CONTAINERS'),'changed Better Containers source must remain unapproved: '..path)
+    end
+    getModFileReader=reader
+    assert(compat.verifySources('EURY_CONTAINERS'),'exact current Better Containers sources remain approved')
 end
 local function wash(value)
     menu.options = {}; WS.WMI_BuildWashMenu(menu, {value}, player, sink)

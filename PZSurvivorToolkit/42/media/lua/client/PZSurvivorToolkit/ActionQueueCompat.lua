@@ -80,7 +80,8 @@ local sourceFiles = {
     EURY_CONTAINERS = {
         {"client/BetterContainers/Proximity.lua", 3626949969},
         {"client/BetterContainers/Proximity/Proximity_ISInventoryTransferAction.lua", 909048245},
-        {"client/BetterContainers/Nested.lua", 1899062461},
+        {"client/BetterContainers/Nested.lua", 2806093898},
+        {"shared/BetterContainers/Helpers.lua", 365367801},
     },
 }
 
@@ -718,12 +719,17 @@ local function installContainerTransfers()
     if not verified("EURY_CONTAINERS") then return end
     local ok, proximity = pcall(require, "BetterContainers/Proximity")
     if not ok or type(proximity) ~= "table" then return end
+    local loaded, helpers = pcall(require, "BetterContainers/Helpers")
+    if not loaded or type(helpers) ~= "table" or helpers ~= EURY_CONTAINERS
+        or type(helpers.isStaleVehicleContainer) ~= "function" then return end
+    local staleVehicle = helpers.isStaleVehicleContainer
     local proximityMethods = {invName = proximity.invName, invName_corpses = proximity.invName_corpses}
     for _, name in ipairs({"isLockedForPlayer", "setTransferRunning", "hasQueuedTransferAction", "isProximityType"}) do
         if type(proximity[name]) ~= "function" then return end
         proximityMethods[name] = proximity[name]
     end
     containerHelpersUnchanged = function()
+        if EURY_CONTAINERS ~= helpers or helpers.isStaleVehicleContainer ~= staleVehicle then return false end
         for name, expected in pairs(proximityMethods) do if proximity[name] ~= expected then return false end end
         return true
     end
