@@ -4,6 +4,8 @@ local J=require 'CartMPJSON'
 local players,ready,armed={}, {}, {}
 local epoch,last,origin,lastTraffic= nil,0,nil,0
 local actions=config.options and config.options.cart_actions
+local hotkey=config.options and config.options.cart_hotkey_setdown==true
+assert(not hotkey or actions,'cart_hotkey_setdown requires cart_actions')
 local variants={['shopping-cart']='SaucedCarts.ShoppingCart',['wooden-wheelbarrow']='SaucedWheelbarrow.WheelbarrowWood',['metal-wheelbarrow']='SaucedWheelbarrow.WheelbarrowMetal'}
 local variant=config.options and config.options.cart_variant or 'wooden-wheelbarrow'
 local cartType=assert(variants[variant],'Unknown MP cart_variant')
@@ -12,6 +14,14 @@ local actionPhases={'drop-complete','pickup-complete','drop-cancel','drop-repeat
 local actionGround={true,false,false,true,true,false}
 local cartSession,actionIndex,pendingAction,actionStarted,actionsDone=nil,1,nil,false,false
 local function broadcast(command,args) for _,p in pairs(players) do sendServerCommand(p,'CartMP',command,args) end end
+local function samePose(actual,expected)
+ if type(actual)~='table' or type(expected)~='table' then return false end
+ for _,key in ipairs({'x','y','z','rotation'}) do
+  if type(actual[key])~='number' or type(expected[key])~='number' or actual[key]~=actual[key] or expected[key]~=expected[key] then return false end
+ end
+ return math.abs(actual.x-expected.x)<=.002 and math.abs(actual.y-expected.y)<=.002 and math.abs(actual.z-expected.z)<=.002
+  and math.abs((actual.rotation-expected.rotation+180)%360-180)<=.01
+end
 local function actionState(p)
  local found,count,worldCount=nil,0,0
  local contents=p:getInventory():getItems()
@@ -38,18 +48,22 @@ local function actionState(p)
  local a,b=p:getPrimaryHandItem(),p:getSecondaryHandItem()
  local held=found and count==1 and worldCount==0 and not found:getWorldItem() and found:getContainer()==p:getInventory() and a==found and b==found
  local ground=found and count==0 and worldCount==1 and found:getWorldItem()~=nil and not a and not b
- return {actor='server',index=actionIndex,phase=actionPhases[actionIndex],id=cartSession.id,cargoID=cargoID,cargoWeight=cargoWeight,
+ local world=found and found:getWorldItem()
+ local placement=world and {x=world:getWorldPosX(),y=world:getWorldPosY(),z=world:getWorldPosZ(),rotation=found:getWorldZRotation()} or nil
+ return {worldPose=placement,actor='server',index=actionIndex,phase=actionPhases[actionIndex],id=cartSession.id,cargoID=cargoID,cargoWeight=cargoWeight,
   cargoPreserved=cargoOK,inventoryCount=count,worldCount=worldCount,primaryID=a and a:getID() or -1,secondaryID=b and b:getID() or -1,
   nativeActions=p:getCharacterActions():size(),hasPath=p:hasPath(),held=held==true,ground=ground==true,wall=getTimestampMs()}
 end
 local function pollAction(now)
  if not pendingAction then return end
  local row=actionState(pendingAction.player)
+ if hotkey then row.expectedWorld=pendingAction.expectedWorld end
  assert(now-pendingAction.since<3000,'Authoritative cart action state deadline '..row.phase)
  if not pendingAction.logged or now-pendingAction.logged>=250 then
   pendingAction.logged=now;print('[CART_MP_ACTION] SERVER_STATE '..J.encode(row))
  end
  if not row.cargoPreserved or row.nativeActions~=0 or row.hasPath or not (actionGround[actionIndex] and row.ground or not actionGround[actionIndex] and row.held) then pendingAction.hold=nil;return end
+ if hotkey and (not pendingAction.observed or actionGround[actionIndex] and not samePose(row.worldPose,pendingAction.expectedWorld)) then pendingAction.hold=nil;return end
  if not pendingAction.hold then pendingAction.hold=now;return end
  if now-pendingAction.hold<100 then return end
  row.ok=true;row.holdMs=now-pendingAction.hold
@@ -109,6 +123,20 @@ Events.OnClientCommand.Add(function(module,command,p,args)
     for _,v in pairs(players) do sendServerCommand(v,module,'Start',{epoch=epoch}) end
     print('[CART_MP] START epoch='..epoch)
    end
+  elseif command=='ActionObservation' then
+   assert(hotkey and actions and user=='client2' and pendingAction and args.index==actionIndex
+    and args.phase==actionPhases[actionIndex] and args.id==cartSession.id,'Unexpected observer receipt')
+   assert(not pendingAction.observed and args.actor=='client2' and args.cargoID==cartSession.cargoID
+    and args.cargoPreserved==true and type(args.cargoWeight)=='number' and math.abs(args.cargoWeight-cartSession.cargoWeight)<.001
+    and args.inventoryCount==nil and args.inventoryScope=='remote-hand-snapshot'
+    and args.itemSource==(actionGround[actionIndex] and 'world' or 'hands') and args.handSameItem==not actionGround[actionIndex]
+    and args.luaActions==0 and args.nativeActions==0 and args.hasPath==false and args.worldAttached==actionGround[actionIndex]
+    and args.worldCount==(actionGround[actionIndex] and 1 or 0)
+    and args.primaryID==(actionGround[actionIndex] and -1 or cartSession.id)
+    and args.secondaryID==(actionGround[actionIndex] and -1 or cartSession.id)
+    and (not actionGround[actionIndex] or samePose(args.worldPose,pendingAction.expectedWorld)), 'Observer native endpoint differs')
+   pendingAction.observed=true
+   print('[CART_MP_ACTION] SERVER_OBSERVATION '..J.encode(args))
   elseif command=='ActionBegin' or command=='ActionCheck' then
    assert(actions and epoch and user=='client1' and not actionsDone and cartSession,'Unexpected cart action request')
    assert(type(args)=='table' and args.index==actionIndex and args.phase==actionPhases[actionIndex] and args.id==cartSession.id,'Out-of-order exact cart action request')
@@ -121,7 +149,12 @@ Events.OnClientCommand.Add(function(module,command,p,args)
     print('[CART_MP_ACTION] SERVER_BEGIN '..J.encode(row));broadcast('ActionPhase',row)
    else
     assert(actionStarted and not pendingAction,'Action check without native phase begin')
-    pendingAction={player=p,since=getTimestampMs()}
+    pendingAction={player=p,since=getTimestampMs(),expectedWorld=args.expectedWorld}
+    if hotkey then
+     assert(not actionGround[actionIndex] or samePose(args.expectedWorld,args.expectedWorld),'Missing exact expected world pose')
+     broadcast('ActionAudit',{index=actionIndex,phase=actionPhases[actionIndex],id=cartSession.id,
+      cargoID=cartSession.cargoID,cargoWeight=cartSession.cargoWeight,expectedWorld=args.expectedWorld})
+    end
    end
   else error('unknown test command') end
  end)

@@ -32,7 +32,7 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'impact': ('scenario-collision.lua', 8),
             'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
-            'repeat': ('scenario-interaction.lua', 12), 'manual': ('bootstrap.lua', 0),
+            'repeat': ('scenario-interaction.lua', 12), 'hotkey': ('scenario-interaction.lua', 12), 'manual': ('bootstrap.lua', 0),
             'path': ('scenario-path.lua', 24), 'variants': ('scenario-variants.lua', 3),
             'controls': ('scenario-controls.lua', 3)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
@@ -85,7 +85,7 @@ def scene_names(case):
         manual=case in ('wall-manual-exit','wall-fast-manual-exit')
         return [f'male-{load}-{gait}-{spec}'+('-manual' if manual else '')+f'-out{angle}' for load in ('empty','full')
                 for gait in (('run','sprint') if case=='wall-fast-manual-exit' else ('walk',) if manual else ('walk','run','sprint')) for spec in ('wall-slide','wall-slide-right') for angle in (45,90)]
-    if case == 'repeat':
+    if case in ('repeat', 'hotkey'):
         return [sex + '-' + load + '-' + spec for sex in ('male', 'female')
                 for load in ('empty', 'full') for spec in ('complete-chain', 'pickup-restart', 'drop-restart')]
     if case in ('interruption', 'interruption-matrix'):
@@ -152,7 +152,7 @@ def validate(selection):
     if 'cart_authored_clip' in selection.get('options', {}):
         if suite != SP or type(selection['options']['cart_authored_clip']) is not bool:
             raise ValueError('cart_authored_clip requires an SP boolean pilot selection')
-    for flag in ('cart_fast_motion', 'cart_actions'):
+    for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown'):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
@@ -160,6 +160,12 @@ def validate(selection):
         raise ValueError('cart_variant requires an exact MP cart variant: ' + ', '.join(VARIANTS))
     if options.get('cart_actions') and options.get('cart_variant', 'wooden-wheelbarrow') != 'wooden-wheelbarrow':
         raise ValueError('cart_actions requires wooden-wheelbarrow')
+    if options.get('cart_hotkey_setdown') and not options.get('cart_actions'):
+        raise ValueError('cart_hotkey_setdown requires cart_actions')
+    if 'cart_hotkey_key' in options:
+        key = options['cart_hotkey_key']
+        if type(key) is not int or not 0 < key < 256 or not (suite == SP and selection['cases'] == ['hotkey'] or suite == MP and options.get('cart_hotkey_setdown')):
+            raise ValueError('cart_hotkey_key requires an enabled hotkey scenario and a key code in 1..255')
     overrides = selection.get('options', {}).get('mod_sources', {})
     for identifier in ('PZSurvivorToolkit', 'PZToolkitJavaPatches'):
         value = overrides.get(identifier)
@@ -306,7 +312,10 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             if selection['cases'][0] == 'vehicles': motion['vehicles']=True
             if selection['cases'][0] in ('interruption', 'interruption-matrix'): motion['interruptions']=True
             if selection['cases'][0] == 'interruption-matrix': motion['interruptionMatrix']=True
-            if selection['cases'][0] == 'repeat': motion['rapidRepeats']=True
+            if selection['cases'][0] in ('repeat', 'hotkey'): motion['rapidRepeats']=True
+            if selection['cases'][0] == 'hotkey':
+                motion['hotkeySetdown']=True
+                if 'cart_hotkey_key' in selection['options']: motion['hotkeyKey']=selection['options']['cart_hotkey_key']
             if selection['cases'][0] == 'wheel': motion['wheelCycle']=True
             if selection['cases'][0] == 'stop-timing': motion['stopTiming']=True
             runtime_source = 'CartMotionConfig=' + _lua(motion) + '\n(function()\n' + (sp / 'scene-selection.lua').read_text() + '\nend)()\nif not CartAdapterBootstrapped then\nCartAdapterBootstrapped=true\n'
@@ -459,10 +468,10 @@ def _debug_coverage(cache, text, selection):
                 if any(type(r['result']) is not bool for r in selected):
                     raise ValueError('Invalid selected-scene grip result: ' + name)
                 row['gripFailures'] = sum(not r['result'] for r in selected)
-        if bank in ('interaction', 'wheel', 'interruption', 'interruption-matrix', 'repeat'):
+        if bank in ('interaction', 'wheel', 'interruption', 'interruption-matrix', 'repeat', 'hotkey'):
             row['actionCoverage'] = _debug_action_coverage(log, name, start, seconds, probes)
         result.append(row)
-    _mesh_proof(cache, moving=bank not in ('interaction', 'wheel', 'interruption', 'interruption-matrix', 'repeat'))
+    _mesh_proof(cache, moving=bank not in ('interaction', 'wheel', 'interruption', 'interruption-matrix', 'repeat', 'hotkey'))
     return result
 
 
@@ -759,7 +768,7 @@ def verify(root, selection, catalog):
                 ('body', [sys.executable, str(ev / 'check-hip-actual.py'), '--game-java-dir', str(game), '--mesh', str(_path(selection, 'mesh_fbx')), '--mesh-vbo', str(cache / 'WheelbarrowWood.bin'), '--capture', str(cache / 'body-clearance.jsonl'), '--output', str(analysis)]),
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
-            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat', 'impact'):
+            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat', 'hotkey', 'impact'):
                 scene_contract = analysis / 'selected-scenes.json'
                 windows = _load(ev / 'scene_windows.py')
                 _write(scene_contract, json.dumps(windows.contract(case, selected_scenes(selection)), indent=2))
@@ -777,7 +786,7 @@ def verify(root, selection, catalog):
                      'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
                                  'partialCoverage': debug, 'nativeRecoveryVerified': True}}]}
             if debug:
-                if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat'):
+                if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat', 'hotkey'):
                     _coverage(cache, texts['client1'], len(selected_scenes(selection)), _json(analysis / 'native-metrics.json'))
                 evidence.update(scope='selected-scenes', selectedScenes=selected_scenes(selection),
                                 fullSceneCount=SP_CASES[case][1], diagnosticOnly=True, evidenceComplete=True,
@@ -795,9 +804,9 @@ def verify(root, selection, catalog):
                 if not evidence['wheel']['pass']:
                     raise ValueError('Wheel cycle verification failed: ' + str(evidence['wheel']['failures']))
                 evidence['nativeMotionNotApplicable'] = True
-            elif case == 'repeat':
+            elif case in ('repeat', 'hotkey'):
                 evidence['analyzers'][case] = _run([sys.executable, str(intake / 'analyze-repeat.py'),
-                    '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'repeat.json')], analysis, case)
+                    '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'repeat.json')] + (['--hotkey'] if case == 'hotkey' else []), analysis, case)
                 evidence['repeat'] = _json(analysis / 'repeat.json')
                 if not all(evidence['repeat'].get(key) for key in ('functionalPass', 'clockVerified', 'recoveryVerified', 'wheelCoverageVerified')):
                     raise ValueError('Rapid repeat verification failed: ' + str(evidence['repeat']['failures']))
@@ -850,7 +859,7 @@ def verify(root, selection, catalog):
                 motion = _load(intake / 'analyze-reversal.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reversal-motion.json', json.dumps(motion, indent=2, allow_nan=False))
-            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat'):
+            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat', 'hotkey'):
                 _coverage(cache, texts['client1'], SP_CASES[case][1], metrics)
                 evidence['nativeSelectedScenes'] = selected_scenes(selection)
             evidence['evidenceComplete'] = True

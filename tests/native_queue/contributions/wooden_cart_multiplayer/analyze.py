@@ -204,7 +204,9 @@ def action_coverage(logs, poses, cartid, epoch, duration):
             frames = coverage(frames, 'wallTimeMillis', 0, (active[0]['wall'], active[-1]['wall']), role + '/' + name + '/action render')
             require(all(r['local'] is (role == 'client1') for r in frames), role + '/' + name + ': raw action render identity mismatch')
             phases.append({'phase': name, 'activeSamples': len(active), 'renderFrames': len(frames),
-                           'recoverySamples': sum(r['recovering'] for r in selected)})
+                           'recoverySamples': sum(r['recovering'] for r in selected),
+                           'wheelFloorRange': [min(wheel(r) for r in frames), max(wheel(r) for r in frames)],
+                           'palmHandleErrorMax': {side: max(palm(r, side) for r in frames) for side in 'LR'}})
         quiet = [r for r in samples if r['index'] == 6 and r['wall'] >= finished[0]['wall']]
         require(len(quiet) >= 2 and quiet[-1]['wall']-quiet[0]['wall'] >= 100
                 and quiet[-1]['wall'] >= finished[0]['wall']+200
@@ -212,6 +214,98 @@ def action_coverage(logs, poses, cartid, epoch, duration):
         result[role] = phases
     return {'evidenceComplete': True, 'cargoID': cargo[0], 'cargoWeight': cargo[1], 'phases': result}
 
+
+
+def hotkey_coverage(logs, cartid, configured_key=None):
+    """Require real input dispatch, started constructor data and three native endpoints."""
+    def rows(role, kind, indices):
+        marker = '[CART_MP_ACTION] ' + kind + ' '
+        values = [parse(line.split(marker, 1)[1]) for line in logs[role].splitlines() if marker in line]
+        require(all(isinstance(row, dict) for row in values), role + '/' + kind + ': malformed object')
+        require([(r.get('index'), r.get('phase')) for r in values] == [(i, ACTION_PHASES[i-1]) for i in indices],
+                role + '/' + kind + ': missing/duplicate/reordered hotkey evidence')
+        require(all(r.get('id') == cartid and number(r.get('wall')) for r in values), role + '/' + kind + ': wrong identity/time')
+        return {r['index']: r for r in values}
+    def placement(actual, expected, label, epsilon=.002):
+        require(isinstance(actual, dict) and isinstance(expected, dict)
+                and all(number(row.get(k)) for row in (actual, expected) for k in ('x', 'y', 'z', 'rotation')),
+                label + ': missing/nonfinite world pose')
+        require(all(abs(actual[k]-expected[k]) <= epsilon for k in ('x', 'y', 'z'))
+                and abs((actual['rotation']-expected['rotation']+180) % 360-180) <= .01,
+                label + ': exact world placement differs from started native drop')
+    begins = rows('client1', 'BEGIN', range(1, 7))
+    inputs = rows('client1', 'INPUT', (1, 3, 4))
+    queued = rows('client1', 'QUEUED', (1, 3, 4))
+    released = rows('client1', 'RELEASED', (1, 3, 4))
+    serialized = rows('client1', 'SERIALIZED', (1, 3, 4))
+    owner = rows('client1', 'RECEIPT', range(1, 7))
+    server = rows('server', 'SERVER_RECEIPT', range(1, 7))
+    observer = rows('client2', 'OBSERVER_RECEIPT', range(1, 7))
+    forwarded = rows('server', 'SERVER_OBSERVATION', range(1, 7))
+    for index, begin in begins.items():
+        require(begin.get('inputRoute') == ('hotkey' if index in inputs else 'menu'), 'Frozen hotkey input route differs')
+    for index, row in inputs.items():
+        created, started = queued[index], serialized[index]
+        require(row.get('actor') == 'client1' and row.get('inputRoute') == 'hotkey'
+                and row.get('event') == 'OnKeyStartPressed' and row.get('events') == ['OnKeyStartPressed', 'OnCustomUIKeyPressed']
+                and type(row.get('key')) is int and 0 < row['key'] < 256
+                and row.get('rebound') is (configured_key is not None)
+                and (configured_key is None or row['key'] == configured_key),
+                'Installed PushCart key event missing')
+        # ISBaseTimedAction.create applies physiological modifiers to Lua maxTime.
+        # LuaTimedActionNew constructs native maxTime via KahluaNumberConverter$2:
+        # Double.intValue truncates positive fractions to the actual native tick count.
+        require(number(created.get('maxTime')) and number(started.get('maxTime'))
+                and created['maxTime'] == started['maxTime'] and int(created['maxTime']) == 88,
+                'Hotkey queued/started native duration differs from 88 ticks')
+        require(created.get('actor') == started.get('actor') == 'client1' and created.get('inputRoute') == 'hotkey'
+                and created.get('actionType') == started.get('actionType') == 'ToolkitWoodCartDrop'
+                and started.get('started') is True,
+                'Hotkey did not retain native wooden drop lifecycle')
+        require(begins[index]['wall'] <= row['wall'] <= created['wall'] <= started['wall'] < owner[index]['wall'],
+                'Input/queued/started native evidence reordered')
+        require(all(type(started.get(k)) is int for k in ('sqX', 'sqY', 'sqZ'))
+                and all(number(started.get(k)) for k in ('xoffset', 'yoffset', 'zoffset', 'rotation'))
+                and 0 < started['xoffset'] < 1 and 0 < started['yoffset'] < 1
+                and started['zoffset'] == 0 and 0 <= started['rotation'] < 360 and started.get('isMultiple') is False,
+                'Native serialized drop constructor fields missing/unsafe')
+        release = released[index]
+        require(release.get('actor') == 'client1' and release.get('key') == row['key']
+                and release.get('events') == ['OnKeyPressed', 'OnCustomUIKey', 'OnCustomUIKeyReleased']
+                and release.get('actionType') == 'ToolkitWoodCartDrop' and release.get('queuedCount') == 1
+                and release.get('sameAction') is True and created['wall'] <= release['wall'] < owner[index]['wall'],
+                'Native hotkey release is missing, uncorrelated or duplicated the queued action')
+        actual = dict(x=started['sqX']+started['xoffset'], y=started['sqY']+started['yoffset'],
+                      z=started['sqZ']+started['zoffset'], rotation=started['rotation'])
+        placement(started.get('expectedWorld'), actual, 'serialized constructor', 1e-7)
+        placement(actual, started.get('plannedWorld'), 'refreshed drop pose', .000011)
+    cargo = (owner[1].get('cargoID'), owner[1].get('cargoWeight'))
+    for index, ground in enumerate(ACTION_GROUND, 1):
+        observed = observer[index]
+        require(observed.get('actor') == 'client2' and (observed.get('cargoID'), observed.get('cargoWeight')) == cargo
+                and observed.get('cargoPreserved') is True and observed.get('inventoryCount') is None
+                and observed.get('inventoryScope') == 'remote-hand-snapshot'
+                and observed.get('itemSource') == ('world' if ground else 'hands') and observed.get('handSameItem') is (not ground)
+                and observed.get('worldCount') == int(ground) and observed.get('primaryID') == (-1 if ground else cartid)
+                and observed.get('secondaryID') == (-1 if ground else cartid) and observed.get('worldAttached') is ground
+                and observed.get('luaActions') == 0 and observed.get('nativeActions') == 0 and observed.get('hasPath') is False,
+                ACTION_PHASES[index-1] + ': observer native cargo/ownership/queue differs')
+        require(owner[index]['wall'] <= observed['wall'] <= server[index]['wall']
+                and server[index]['wall']-owner[index]['wall'] < 3500,
+                'Observer replication did not settle within authoritative audit window')
+        require(forwarded[index] == observed, 'Server observer receipt differs from native observation')
+        if ground:
+            expected = serialized[1 if index == 1 else 4]['expectedWorld']
+            for role, row in (('client1', owner[index]), ('server', server[index]), ('client2', observed)):
+                placement(row.get('expectedWorld'), expected, role + '/expected')
+                placement(row.get('worldPose'), expected, role + '/native world')
+        else:
+            require(all(row.get('worldPose') is None for row in (owner[index], server[index], observed)),
+                    'Held endpoint retained native world object')
+    return {'evidenceComplete': True, 'inputEvent': 'OnKeyStartPressed', 'dropPhases': 3,
+            'configuredKey': configured_key, 'completeTap': True, 'nativeDurationTicks': 88,
+            'durationConversion': 'LuaTimedActionNew / KahluaNumberConverter$2 / Double.intValue',
+            'worldEndpointRoles': ['client1', 'server', 'client2'], 'positionTolerance': .002, 'rotationToleranceDegrees': .01}
 
 def analyze(profile):
     profile = Path(profile)
@@ -223,6 +317,13 @@ def analyze(profile):
     require(type(extended) is bool, 'cart_fast_motion must be boolean')
     actions = selection.get('options', {}).get('cart_actions', False)
     require(type(actions) is bool, 'cart_actions must be boolean')
+    hotkey = selection.get('options', {}).get('cart_hotkey_setdown', False)
+    require(type(hotkey) is bool, 'cart_hotkey_setdown must be boolean')
+    require(not hotkey or actions, 'cart_hotkey_setdown requires cart_actions')
+    hotkey_key = selection.get('options', {}).get('cart_hotkey_key')
+    require('cart_hotkey_key' not in selection.get('options', {})
+            or type(hotkey_key) is int and 0 < hotkey_key < 256 and hotkey,
+            'cart_hotkey_key requires hotkey setdown and an integer keyboard code in 1..255')
     variant = selection.get('options', {}).get('cart_variant', 'wooden-wheelbarrow')
     require(isinstance(variant, str) and variant in VARIANTS, 'cart_variant must be an exact supported MP variant')
     require(not actions or variant == 'wooden-wheelbarrow', 'cart_actions requires wooden-wheelbarrow')
@@ -373,6 +474,8 @@ def analyze(profile):
         result['fastMotion'] = moving
     if actions:
         result['actions'] = action_coverage(logs, poses, cartid, epoch, 26000 if extended else 15000)
+        if hotkey:
+            result['actions']['hotkeySetdown'] = hotkey_coverage(logs, cartid, hotkey_key)
         require(spec is None or result['actions']['cargoID'] == spec['cargoID']
                 and abs(result['actions']['cargoWeight']-spec['cargoWeight']) < .001, 'Action sequence changed initial motion cargo')
     return result

@@ -465,7 +465,7 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'manual', 'path', 'variants', 'controls'])
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'stationary', 'maneuvers', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls'])
         for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 8), ('wall-fast-manual-exit', 16), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
@@ -627,6 +627,29 @@ class CartAdapterTests(unittest.TestCase):
                 self.assertEqual(set(commands), {'aabb', 'body', 'pants', 'repeat'})
                 self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
 
+    def test_hotkey_case_stages_native_event_and_requires_mp_actions(self):
+        self.selection['cases'] = ['hotkey']
+        carts.validate(self.selection)
+        self.stage()
+        text = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+        self.assertIn('["hotkeySetdown"]=true', text)
+        self.assertIn('["rapidRepeats"]=true', text)
+        self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+        self.options['cart_hotkey_setdown'] = True
+        with self.assertRaisesRegex(ValueError, 'requires cart_actions'):
+            carts.validate(self.selection)
+        self.options['cart_actions'] = True
+        self.options['cart_hotkey_key'] = 100
+        carts.validate(self.selection)
+        for bad in (0, -1, 256, True, '100'):
+            self.options['cart_hotkey_key'] = bad
+            with self.assertRaisesRegex(ValueError, 'key code'):
+                carts.validate(self.selection)
+        self.options['cart_hotkey_key'] = 100
+        self.options['cart_hotkey_setdown'] = 'true'
+        with self.assertRaisesRegex(ValueError, 'boolean'):
+            carts.validate(self.selection)
+
     def test_missing_candidates_and_native_mode_are_rejected(self):
         self.selection['mode'] = 'native'
         with self.assertRaisesRegex(ValueError, 'toolkit mode'):
@@ -666,7 +689,7 @@ class CartAdapterTests(unittest.TestCase):
             body=text[start:text.index(marker,start)+len(marker)]
             flags=dict(disposable=True,footprint=bank in ('collision','footprint','brace','fast-slide','wall-exit','wall-manual-exit','wall-fast-manual-exit'),vehicles=bank=='vehicles',brace=bank=='brace',fastSlide=bank=='fast-slide',wallExit=bank in ('wall-exit','wall-manual-exit','wall-fast-manual-exit'),wallManualExit=bank in ('wall-manual-exit','wall-fast-manual-exit'),wallFastManualExit=bank=='wall-fast-manual-exit',
                        wheelCycle=bank=='wheel',interruptions=bank in ('interruption','interruption-matrix'),
-                       interruptionMatrix=bank=='interruption-matrix',rapidRepeats=bank=='repeat',stopTiming=bank=='stop-timing',impact=bank=='impact')
+                       interruptionMatrix=bank=='interruption-matrix',rapidRepeats=bank in ('repeat','hotkey'),stopTiming=bank=='stop-timing',impact=bank=='impact')
             from queue_checks.native import _lua
             for chosen in (None,[full[-1],full[0]] if count>1 else [full[0]]):
                 if chosen: flags['scenes']=chosen

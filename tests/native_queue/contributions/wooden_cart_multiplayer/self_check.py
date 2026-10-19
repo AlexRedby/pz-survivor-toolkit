@@ -518,6 +518,7 @@ def check_action_windows(lua):
     code=r"""
 for _,name in ipairs({'SaucedCarts/ContextMenu','ISUI/ISContextMenu','ISUI/ISInventoryPaneContextMenu','TimedActions/ISTimedActionQueue'}) do package.preload[name]=function() return {} end end
 package.preload.CartMPJSON=function() return {encode=function() return '{}' end} end
+package.preload.QueueTestSelection=function() return {options={}} end
 local count=0
 print=function(line) if line:find('PRESENTATION',1,true) then count=count+1 end end
 getTimestampMs=function() return 1000 end

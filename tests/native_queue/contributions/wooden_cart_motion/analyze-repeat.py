@@ -36,7 +36,8 @@ def tracks(frame):
     return found
 
 
-def analyze(text, lifecycle, body, grip, world, draws, pose_tail):
+def analyze(text, lifecycle, body, grip, world, draws, pose_tail, *, hotkey=False):
+    types = dict(TYPES, drop='ToolkitWoodCartDrop') if hotkey else TYPES
     assert '[WOOD_BANK] RUN_STARTED' in text, 'Missing repeat run boundary'
     log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
     completed = re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)', log)
@@ -47,6 +48,8 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail):
         match = re.search(r'\[WOOD_INTERACTION_(SAMPLE|EVENT)\] (\{.*\})', line)
         if match:
             (samples if match[1] == 'SAMPLE' else events).append(decode(match[2]))
+    hotkeys = [decode(m[1]) for m in re.finditer(r'\[WOOD_HOTKEY\] (\{.*\})', log)]
+    releases = [decode(m[1]) for m in re.finditer(r'\[WOOD_HOTKEY_RELEASE\] (\{.*\})', log)]
     summaries = []
     for name, stamp in completed:
         start = int(stamp)
@@ -92,7 +95,7 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail):
             for bone in ('Bip01_Spine',)+ARM_BONES:
                 matrix(frame['bones'][bone])
         assert all(f['cartModelCount'] == 0 and not any(t['weight']*t['field'] > .0001 for t in tracks(f).values()) for f in frames if f['wallTimeMillis'] >= final['wall']), 'Final native cart model/clip cleanup incomplete'
-        native = [r for r in lifecycle if start <= r['wallTimeMillis'] <= start+20000 and r['metaType'] in TYPES.values()]
+        native = [r for r in lifecycle if start <= r['wallTimeMillis'] <= start+20000 and r['metaType'] in types.values()]
         queued = [r for r in receipts if r['event'] == 'actionQueued']
         terminals = [r for r in receipts if r['event'] in ('actionCompleted','cancelCleared')]
         native_groups = []
@@ -101,13 +104,13 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail):
             assert queue['actionSerial'] == terminal['actionSerial'] == serial, 'Wrong rapid action serial'
             names = ['start','stop'] if cancelled else ['start','perform','complete']
             group = native[cursor:cursor+len(names)];cursor += len(names)
-            assert [r['event'] for r in group] == names and all(r['metaType'] == TYPES[action] for r in group), 'Missing/duplicate/reordered native action lifecycle'
+            assert [r['event'] for r in group] == names and all(r['metaType'] == types[action] for r in group), 'Missing/duplicate/reordered native action lifecycle'
             assert len({r['nativeActionId'] for r in group}) == 1 and all(r['phase'] == 'exit' and r['playerNum'] == 0 and not r['threw'] for r in group), 'Invalid repeat native receipt'
             assert queue['wall'] <= group[0]['wallTimeMillis'] < group[-1]['wallTimeMillis'] <= terminal['wall'], 'Native action outside rapid boundaries'
             if cancelled:
                 request = next(r for r in receipts if r['event'] == 'cancelRequested' and r['actionSerial'] == serial)
                 threshold = .55 if serial == (1 if spec == 'pickup-restart' else 2) else .88
-                assert request['actionType'] == TYPES[action] and threshold <= request['progress'] < threshold+.1, 'Wrong repeat cancellation phase'
+                assert request['actionType'] == types[action] and threshold <= request['progress'] < threshold+.1, 'Wrong repeat cancellation phase'
                 assert request['wall'] <= group[-1]['wallTimeMillis'] <= terminal['wall'] and not group[-1]['finished'], 'Cancelled repeat performed/transferred'
                 assert terminal['nativeActions'] == terminal['luaActions'] == 0, 'Restart queued before native/Lua clear'
                 assert terminal['inventoryCount'] == queue['inventoryCount'] and terminal['worldCount'] == queue['worldCount'], 'Cancellation transferred cart ownership'
@@ -116,7 +119,7 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail):
                 assert terminal['inventoryCount'] == int(action == 'pickup'), 'Successful repeat did not transfer exact item'
             stable = [r for r in rows if group[0]['wallTimeMillis']+100 < r['wall'] < group[-1]['wallTimeMillis'] and r['progress'] < .98]
             assert len(stable) >= 3, 'Missing stable authored repeat action samples'
-            assert all(r['actionSerial'] == serial and r['actionType'] == TYPES[action]
+            assert all(r['actionSerial'] == serial and r['actionType'] == types[action]
                        and all(r[key] is True for key in ('active','authored','rendered','ik')) for r in stable), 'Stable authored repeat presentation/IK failed'
             native_groups.append(group)
             active_body = [r for r in body if group[0]['wallTimeMillis'] <= r['wallTimeMillis'] <= group[-1]['wallTimeMillis']]
@@ -129,6 +132,29 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail):
             for frame in active_grip: finite(frame)
             assert len(active_grip) >= 3 and all(r['result'] is True and r['threw'] is False for r in active_grip), 'Missing/failed repeat grip coverage'
         assert cursor == len(native) and len({g[0]['nativeActionId'] for g in native_groups}) == 4, 'Duplicate/reused native repeat action'
+        if hotkey:
+            keys = [r for r in hotkeys if r['case'] == name and r['start'] == start]
+            drops = [i for i,(action,_) in enumerate(plan) if action == 'drop']
+            assert [(r['actionSerial'],r['event']) for r in keys] == [(i+1,e) for i in drops for e in ('queued','started')], 'Missing/duplicate hotkey entry and start receipts'
+            released = [r for r in releases if r['case'] == name and r['start'] == start]
+            assert [r['actionSerial'] for r in released] == [i+1 for i in drops], 'Missing/duplicate hotkey release receipts'
+            for i in drops:
+                request, placement = [r for r in keys if r['actionSerial'] == i+1]
+                for r in (request,placement):
+                    finite(r)
+                    assert r['route'] == 'OnKeyStartPressed' and r['actionType'] == types['drop'] and r['id'] == first['id'] and type(r['key']) is int and r['key'] > 0, 'Wrong hotkey producer or exact item'
+                release = next(r for r in released if r['actionSerial'] == i+1)
+                finite(release)
+                assert release['id'] == first['id'] and release['key'] == request['key'] and request['wall'] < release['wall'] <= request['wall']+100, 'Hotkey tap was not released on a subsequent frame'
+                assert request['key'] == placement['key'] and request['wall'] == queued[i]['wall'], 'Hotkey input not correlated with queue'
+                assert native_groups[i][0]['wallTimeMillis'] <= placement['wall'] < native_groups[i][-1]['wallTimeMillis'], 'Hotkey placement not sampled after native start'
+                distance = max(abs(math.floor(placement['x'])-math.floor(placement['actorX'])),abs(math.floor(placement['y'])-math.floor(placement['actorY'])))
+                assert distance == 1 and math.floor(placement['z']) == math.floor(placement['actorZ']), 'Hotkey adjacent-square placement not exercised'
+                if not plan[i][1]:
+                    result = terminals[i]
+                    assert max(abs(result['world'+axis.upper()]-placement[axis]) for axis in 'xyz') <= .002, 'Hotkey world placement differs from native start fields'
+                    yaw = (result['worldRotation']-placement['rotation']+180)%360-180
+                    assert abs(yaw) <= .01, 'Hotkey world rotation differs from native start fields'
         transitions = []
         for index in range(3):
             retired = native_groups[index][-1]['wallTimeMillis'];fresh = native_groups[index+1][0]['wallTimeMillis']
@@ -202,12 +228,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('profile','log','output'):
         parser.add_argument('--'+name,type=Path,required=True)
+    parser.add_argument('--hotkey', action='store_true', help='Require native hotkey drop and serialized adjacent-square placement evidence')
     args = parser.parse_args()
     assert not args.output.exists(), 'Refuse to overwrite report'
     def read(name): return [decode(line) for line in (args.profile/name).read_text().splitlines()]
     try:
         result = analyze(args.log.read_text(errors='replace'),read('action-lifecycle.jsonl'),read('body-clearance.jsonl'),
-                         read('wood-grip-poses.jsonl'),read('world-cart-poses.jsonl'),read('wheel-roll-draws.jsonl'),read('action-tail-poses.jsonl'))
+                         read('wood-grip-poses.jsonl'),read('world-cart-poses.jsonl'),read('wheel-roll-draws.jsonl'),read('action-tail-poses.jsonl'),hotkey=args.hotkey)
     except (AssertionError,KeyError,TypeError,ValueError,OSError) as error:
         result = dict(functionalPass=False,clockVerified=False,recoveryVerified=False,wheelCoverageVerified=False,failures=[str(error)],cases=[])
     args.output.write_text(json.dumps(result,indent=2,allow_nan=False)+'\n')

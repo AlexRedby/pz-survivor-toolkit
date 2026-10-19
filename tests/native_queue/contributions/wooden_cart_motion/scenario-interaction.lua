@@ -65,6 +65,7 @@ local interrupted,cancelAt,cancelledAt,retryStage
 local cycle,driveStage=1,0
 local selectionWorld,selectionOn
 local actionSerial,restartCount,cleanupAt=0,0,nil
+local hotkeyAction,hotkeyStarted,hotkeyCode,hotkeyReleaseAt
 local kind='SaucedWheelbarrow.WheelbarrowWood'
 local function encode(record)
  local out={}
@@ -170,7 +171,9 @@ local function prepare()
  p:removeFromHands(item);SaucedCarts.clearCartPose(p);p:getInventory():Remove(item)
  local square=assert(getCell():getGridSquare(math.floor(x+1),math.floor(y),z),'Ground square missing')
  assert(square:getWorldObjects():size()==0,'Ground square occupied')
- square:AddWorldInventoryItem(item,.5,.5,0,true);item:setWorldZRotation(cases[phase].yaw)
+ -- Shift only the hotkey fixture so the handle stance is across a tile boundary.
+ local offset=config.hotkeySetdown and .75 or .5
+ square:AddWorldInventoryItem(item,offset,offset,0,true);item:setWorldZRotation(cases[phase].yaw)
  assert(item:getWorldItem() and inventoryCount()==0,'Fixture ground placement failed')
  assert(SaucedCarts.markDropPersistent(item),'Fixture cart persistence marking failed');SaucedCarts.updateCartVisual(item,p,true)
  if cases[phase].nearStance then
@@ -202,17 +205,40 @@ CartLabHUD.prerender=function(self)
  local c=cases[phase]
  self:drawText(c and c.name..' '..stage..' wallMs='..math.max(0,getTimestampMs()-since) or 'Complete',10,5,1,1,1,1,UIFont.Medium)
 end
+local function hotkeyPlacement(eventName,action,now)
+ assert(action and action.Type=='ToolkitWoodCartDrop' and action.item==item,'Hotkey did not retain exact native drop action')
+ local sq=assert(action.sq,'Hotkey drop square missing')
+ local row={event=eventName,case=cases[phase].name,start=since,wall=now,actionSerial=actionSerial,id=item:getID(),
+  key=hotkeyCode,actionType=action.Type,x=sq:getX()+action.xoffset,y=sq:getY()+action.yoffset,z=sq:getZ()+action.zoffset,
+  rotation=action.rotation,actorX=p:getX(),actorY=p:getY(),actorZ=p:getZ(),route='OnKeyStartPressed'}
+ print('[WOOD_HOTKEY] '..encode(row))
+end
 local function rapidQueue(action,now)
  actionSerial=actionSerial+1;stage=action
  if action=='pickup' then
   ISTimedActionQueue.add(ISCartPickupAction.FromWorldItem(p,assert(item:getWorldItem())))
  else
-  local queued=ISUnequipAction:new(p,item,1,'drop');ISTimedActionQueue.add(queued)
-  assert(queued.Type=='ToolkitWoodCartSetdown','Native rapid drop was not dispatched')
+  if config.hotkeySetdown then
+   assert(#ISTimedActionQueue.getTimedActionQueue(p).queue==0 and p:getCharacterActions():isEmpty(),'Hotkey requires an empty native/Lua queue')
+   local options=assert(PZAPI.ModOptions:getOptions('SaucedCarts'),'SaucedCarts options missing')
+   local binding=assert(options:getOption('PushCart'),'SaucedCarts PushCart key missing')
+   if config.hotkeyKey then binding:setValue(config.hotkeyKey) end -- Disposable in-memory preference only; never save.
+   hotkeyCode=binding:getValue();assert(not config.hotkeyKey or hotkeyCode==config.hotkeyKey,'Disposable hotkey binding did not apply')
+   triggerEvent('OnKeyStartPressed',hotkeyCode);triggerEvent('OnCustomUIKeyPressed',hotkeyCode)
+   hotkeyReleaseAt=now
+   hotkeyAction=assert(ISTimedActionQueue.getTimedActionQueue(p).queue[1],'Hotkey did not enqueue a drop')
+   hotkeyStarted=false;hotkeyPlacement('queued',hotkeyAction,now)
+  else
+   local queued=ISUnequipAction:new(p,item,1,'drop');ISTimedActionQueue.add(queued)
+   assert(queued.Type=='ToolkitWoodCartSetdown','Native rapid drop was not dispatched')
+  end
  end
  event('actionQueued',now)
 end
 local function rapidTick(now,elapsed,row,c)
+ if config.hotkeySetdown and stage=='drop' and hotkeyAction and not hotkeyStarted and hotkeyAction:isStarted() then
+  hotkeyStarted=true;hotkeyPlacement('started',hotkeyAction,now)
+ end
  assert(elapsed<19000 or stage=='dropped','Rapid action sequence timed out')
  if stage=='grounded' then
   if elapsed>=700 then rapidQueue('pickup',now) end
@@ -252,6 +278,11 @@ local function tick()
  getCore():setAutoZoom(0,false)
  if getCore():getZoom(0)>.251 then getCore():doZoomScroll(0,-1) end
  local now=getTimestampMs();local c=cases[phase]
+ if hotkeyReleaseAt and now>hotkeyReleaseAt then
+  triggerEvent('OnKeyPressed',hotkeyCode);triggerEvent('OnCustomUIKey',hotkeyCode);triggerEvent('OnCustomUIKeyReleased',hotkeyCode)
+  print('[WOOD_HOTKEY_RELEASE] '..encode({case=c.name,start=since,wall=now,actionSerial=actionSerial,id=item:getID(),key=hotkeyCode}))
+  hotkeyReleaseAt=nil
+ end
  if mode=='settle' then
   if now<since then return end
   assert(toolkitVideoStart(videoRoot..'/'..c.name..'-'..attempt,ffmpeg),'Video start rejected')

@@ -18,7 +18,7 @@
 
 ## Pickup and put-down
 
-- [ ] In game, check putting down a wooden wheelbarrow via the SaucedCarts hotkey: completion/cancellation and quick repeat, position in the adjacent square, grip, wheel and world/held handoff; separately confirm owner/server/observer in MP. Local checks do not replace the visual and network gate.
+- [ ] Agree on a non-conflicting PushCart binding before changing defaults: SaucedCarts and SmartRadialMenu both use V, and the radial menu remains open with its default toggle mode. Preserve existing user bindings; native animation captures can use F13 only inside their disposable profiles.
 
 - [ ] Extend pickup clearance checks to the remaining approach angles and clothing combinations. Check all skin/pants geometry at Thigh/Calf, not just the pelvis; preserve the agreed shallow crouch, foot support, knee direction and grip.
 - [ ] Check wheel phase continuity during an emergency pickup/put-down reset; preserve verified ownership, load and grip recovery.
