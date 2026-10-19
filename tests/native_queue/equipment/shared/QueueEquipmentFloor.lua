@@ -20,15 +20,23 @@ local function status(state,stage)
   ..' dontAdd='..tostring(action and action.dontAdd))
  return world,present
 end
-function Floor.prepare(state,seed)
+function Floor.prepare(state,seed,kind)
  local player=state.player
  if isClient() then
   state.floor=assert(state.ids.floor,'authoritative floor fixture metadata missing')
   state.pickup=assert(Floor.resolve(state.floor),'authoritative floor fixture has not replicated')
  else
   local square=assert(player:getCurrentSquare(),'floor fixture square missing')
-  state.pickup=assert(square:AddWorldInventoryItem('Base.Plank',0.5,0.5,0),'native floor fixture creation failed')
+  if state.id=='tidy-floor' then
+   state.pickup=assert(instanceItem(kind),'native borrowed floor fixture creation failed')
+   state.pickup:setWorldZRotation(37)
+   square:AddWorldInventoryItem(state.pickup,0.5,0.5,0,true)
+  else state.pickup=assert(square:AddWorldInventoryItem(kind or 'Base.Plank',0.5,0.5,0),'native floor fixture creation failed') end
   state.floor={id=state.pickup:getID(),x=square:getX(),y=square:getY(),z=square:getZ()}
+ end
+ if state.id=='tidy-floor' and not isClient() then
+  local world=assert(state.pickup:getWorldItem())
+  state.floor.pose={world:getOffX(),world:getOffY(),world:getOffZ(),state.pickup:getWorldXRotation(),state.pickup:getWorldYRotation(),state.pickup:getWorldZRotation()}
  end
  state.items.pickup=state.pickup;state.owned[#state.owned+1]=state.pickup
  state.pickupWorld=assert(state.pickup:getWorldItem(),'fixture must start as an actual world item')

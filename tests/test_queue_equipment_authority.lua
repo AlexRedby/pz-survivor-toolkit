@@ -102,3 +102,14 @@ equipmentNativeTransferCount=function() return 1 end
 assert(not Fixture.transactionsSettled(),'real server pending transfer must hold its containers alive')
 equipmentNativeTransferCount=function() return 0 end
 assert(Fixture.transactionsSettled(),'idle server manager permits verification and cleanup')
+
+local worldPresent=true
+function getCell() return {getGridSquare=function()return {getWorldObjects=function()return {
+ size=function()return worldPresent and 1 or 0 end,get=function()return {getItem=function()return item end}end
+}end}end}end
+for _,id in ipairs({'floor-pickup','tidy-floor'})do
+ local floorState={id=id,player=state.player,owned={item},floor={id=item:getID(),x=1,y=2,z=0}}
+ worldPresent=true
+ assert(not Fixture.removed(floorState),'floor removal packet must arrive before next fixture')
+ worldPresent=false;assert(Fixture.removed(floorState))
+end

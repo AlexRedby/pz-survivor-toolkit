@@ -86,6 +86,15 @@ local function enqueue()
    first,state.screwdriverAction=equip(state.screwdriver,false,false)
   end
  elseif Bulk.isCase(state.id) then Bulk.enqueue(state,{run=run,queue=queue})
+ elseif state.id=='tidy-hands' or state.id=='tidy-floor' then
+  local before=#queue().queue
+  run(ISInventoryPaneContextMenu.onRackGun,getPlayer(),state.pickup)
+  for i=before+1,#queue().queue do local action=queue().queue[i]
+   if action.Type=='ISInventoryTransferAction' then state.pickupAction=action end
+   if action.Type=='ISRackFirearm' then state.rackAction=action end
+  end
+  assert(state.pickupAction and state.pickupAction.item==state.pickup and state.rackAction and state.rackAction.gun==state.pickup,
+   'native rack callback did not borrow exact gun')
  elseif state.id=='floor-pickup' then Floor.enqueue(state,{run=run,queue=queue})
  else Slots.enqueue(state,{run=run,queue=queue}) end
  state.tailAction=read(state.tail)
@@ -126,7 +135,10 @@ local function controls()
  elseif state.id=='bag-capacity' then
   denied(state.pickupAction,state.replacementAction,true,'container_capacity')
   denied(state.replacementAction,state.pickupAction,false,'container_capacity')
- elseif state.id=='floor-pickup' then Floor.controls(state,{denied=denied,queue=queue,native=native})
+ elseif state.id=='tidy-hands' then
+  local decision=Policy.evaluateMove(queue(),state.pickupAction,state.tailAction,true)
+  assert(not decision.allowed,'mixed gun preparation must remain protected')
+ elseif state.id=='floor-pickup' or state.id=='tidy-floor' then Floor.controls(state,{denied=denied,queue=queue,native=native})
  else Slots.controls(state,{denied=denied,queue=queue,native=native}) end
  if state.id=='waiting-cancel' then state.expectedReceipts=0 end
  state.policyChecked=true
@@ -158,7 +170,7 @@ Events.OnTick.Add(function()
   if state and Selection.kind=='mp' then
    local action=queue().current
    local record=action and Toolkit.ActionQueueAcknowledgements.capture(action)
-   if record and (action.Type=='ISEquipWeaponAction' or action.Type=='ISWearClothing' or action.Type=='ISAttachItemHotbar') and not state.seen[record.token] then
+   if phase~='drain' and phase~='checkpointReceipt' and record and (action.Type=='ISEquipWeaponAction' or action.Type=='ISWearClothing' or action.Type=='ISAttachItemHotbar') and not state.seen[record.token] then
     state.seen[record.token]=true;state.records[#state.records+1]=record
     print('[EQUIPMENT_TEST] CAPTURE case='..state.id..' kind='..action.Type..' token='..record.token)
    end
@@ -251,6 +263,10 @@ Events.OnTick.Add(function()
     and getPlayer():getAlreadyReadPages(state.tail:getFullType())==state.tail:getNumberOfPages()
    outcome.postprocessingVerified=passed
    outcome.tidyCompletion=Completion.settled()
+   if state.id=='tidy-hands' or state.id=='tidy-floor' then
+    outcome.restoreVerified=passed;outcome.floorRestoreVerified=state.id=='tidy-floor' and passed and tidy
+    outcome.restoreCompletion=Completion.restores()
+   end
    if Bulk.isCase(state.id) then outcome.borrowedReturned=state.id=='bulk-mixed' and passed and tidy or false end
    outcome.finalPrimary=getPlayer():getPrimaryHandItem() and getPlayer():getPrimaryHandItem():getID() or false
    outcome.finalSecondary=getPlayer():getSecondaryHandItem() and getPlayer():getSecondaryHandItem():getID() or false

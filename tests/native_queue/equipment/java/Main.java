@@ -7,8 +7,10 @@ import me.zed_0xff.zombie_buddy.Patch;
 import net.alexredby.pztoolkitjavapatches.QueueManagers;
 import se.krka.kahlua.vm.JavaFunction;
 import zombie.Lua.LuaManager;
+import zombie.core.NetTimedAction;
 import zombie.core.Transaction.TransactionState;
 import zombie.core.TransactionManager;
+import zombie.inventory.InventoryItem;
 import zombie.network.GameServer;
 
 /** Read-only drain evidence for the isolated one-player equipment fixture. */
@@ -45,6 +47,21 @@ public final class Main {
     public static void observe() {
         if (!GameServer.server || LuaManager.env == null) return;
         LuaManager.env.rawset("equipmentNativeTransferCount", pending);
+    }
+
+    public static void floorResult(NetTimedAction action, boolean result) {
+        if (!GameServer.server || !"P4RestoreFloorAction".equals(action.type)) return;
+        Object item = action.action == null ? null : action.action.rawget("item");
+        int id = item instanceof InventoryItem value ? value.getID() : -1;
+        System.out.println("[EQUIPMENT_TEST] FLOOR_RESTORE id=" + id + " result=" + result);
+    }
+
+    @Patch(className="zombie.core.NetTimedAction", methodName="perform", warmUp=true, strictMatch=true)
+    public static class FloorCompleted {
+        @Patch.OnExit(suppress=Throwable.class)
+        public static void exit(@Patch.This NetTimedAction action, @Patch.Return boolean result) {
+            floorResult(action, result);
+        }
     }
 
     @Patch(className="zombie.core.TransactionManager", methodName="update", warmUp=true, strictMatch=true)

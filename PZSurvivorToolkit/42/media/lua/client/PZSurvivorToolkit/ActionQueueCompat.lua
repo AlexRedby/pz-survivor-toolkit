@@ -26,7 +26,10 @@ local containerTransferPerform
 local containerHelpersUnchanged
 local manifestTransferPerform, manifestHelpersUnchanged
 local washWalkHelper
-local tidyClassUnchanged
+local tidyClassUnchanged, tidyActionUnchanged
+local tidyFloorPage, tidyFloorGetter
+local tidyFloorValid
+local repairedFloors = setmetatable({}, {__mode = "k"})
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform",
     "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceStop", "forceCancel"}
 local sourceFiles = {
@@ -244,15 +247,17 @@ local function instanceUnchanged(target, class)
     return true
 end
 
-local function matches(action, record)
+local function sourceMatches(action, record)
     record = record or records[action]
-    if not record or record.opaque or getmetatable(action) ~= record.class or action.Type ~= record.class.Type
+    if not record or getmetatable(action) ~= record.class or action.Type ~= record.class.Type
         or action.character ~= record.character or action.toolkitQueueOperation ~= record.token
         or not sourceClassUnchanged(record.id, record.class, record.baseline) or not ownerUnchanged(record.id)
         or (record.owner and not instanceUnchanged(record.owner, PJCK_EvoPanel))
         or (record.class == ISInventoryTransferAction and containerHelpersUnchanged and not containerHelpersUnchanged()) then return false end
     local policy = Toolkit.ActionQueuePolicy
     if record.class == ISInventoryTransferAction and policy and policy.isOrdinaryTransfer and not policy.isOrdinaryTransfer(action) then return false end
+    if record.class == ISEquipWeaponAction and (action.primary ~= record.primary or action.twoHands ~= record.twoHands
+        or action.alwaysTurnOn ~= record.alwaysTurnOn) then return false end
     for _, name in ipairs(lifecycle) do if action[name] ~= record.methods[name] then return false end end
     for name, method in pairs(record.methods) do if action[name] ~= method then return false end end
     for name, method in pairs(action) do
@@ -278,6 +283,12 @@ local function matches(action, record)
         for i, value in ipairs(record.commandArgs) do if action.args[i] ~= value then return false end end
     end
     return not action.retriggerLastAction and not action.onFailFunc and not action.additionalTest
+end
+
+local function matches(action, record)
+    record = record or records[action]
+    if not record or record.opaque then return false end
+    return sourceMatches(action, record)
 end
 
 local function tidyRestoreContext(context, action)
@@ -319,6 +330,7 @@ local function adopt(action)
     local record = {class = class, baseline = baseline, character = action.character,
         token = action.toolkitQueueOperation, queue = queue, generation = queue.toolkitOperationGeneration or 0, worldGeneration = worldGeneration,
         id = context.id, target = context.target, fields = {}, itemIdentities = {}, owner = context.owner,
+        primary = action.primary, twoHands = action.twoHands, alwaysTurnOn = action.alwaysTurnOn,
         opaque = context.opaque or (context.sharedCleanup and class == P4RestoreFloorAction), sharedCleanup = context.sharedCleanup}
     records[action] = record
     if context.id == "Project_Cook" and class == ISAddItemInRecipe then context.lastApply = action end
@@ -344,6 +356,7 @@ local function adopt(action)
         end
     end
     for _, name in ipairs({"item", "sink", "srcContainer", "destContainer", "slotType", "activated", "x", "y", "z",
+        "offX", "offY", "offZ", "rotationX", "rotationY", "rotationZ",
         "addActionsFunction", "args", "toolkitQueueCommand", "wmiTransferAction", "wmiReturnContainer", "wmiOriginalContainer",
         "baseItem", "usedItem", "recipe", "soaps"}) do
         if action[name] ~= nil then
@@ -503,6 +516,123 @@ local function inspect(action)
     return result
 end
 
+local function repairTidyFloor(character, callback, ...)
+    if not character or not character:isLocalPlayer() or not isClient() or not tidyActionUnchanged
+        or not tidyFloorValid or P4RestoreFloorAction.isValid ~= tidyFloorValid
+        or ISInventoryPage ~= tidyFloorPage or not tidyFloorGetter
+        or tidyFloorPage.GetFloorContainer ~= tidyFloorGetter then return callback(...) end
+    local queue = ISTimedActionQueue.getTimedActionQueue(character)
+    local add, buffered = ISTimedActionQueue.add, {}
+    ISTimedActionQueue.add = function(action) buffered[#buffered + 1] = action; return queue end
+    local results = pack(pcall(callback, ...))
+    ISTimedActionQueue.add = add
+    if not results[1] then
+        for _, action in ipairs(buffered) do add(action) end
+        error(results[2], 0)
+    end
+    if #buffered == 0 then return unpack(results, 2, results.n) end
+    if not tidyActionUnchanged() then
+        for _, action in ipairs(buffered) do add(action) end
+        return unpack(results, 2, results.n)
+    end
+    local inventory = character:getInventory()
+    local floor = tidyFloorGetter(character:getPlayerNum())
+    local planned, transfers = {}, {}
+    local function validTransfer(action, item)
+        return action and action.character == character and getmetatable(action) == ISInventoryTransferAction
+            and instanceof(action.item, "InventoryItem") and action.item:getID() == item:getID()
+            and action.item:getFullType() == item:getFullType() and action.item:getContainer() == inventory
+            and action.srcContainer == inventory and action.destContainer == floor
+            and tidyActionUnchanged(action)
+    end
+    for _, action in ipairs(buffered) do
+        if action.character == character and getmetatable(action) == P4RestoreFloorAction and tidyActionUnchanged(action) then
+            local old = action.item
+            local item = instanceof(old, "InventoryItem") and inventory:getItemById(old:getID())
+            if item and old ~= item and item:getID() == old:getID() and item:getFullType() == old:getFullType()
+                and old:getContainer() == floor and item:getContainer() == inventory then
+                local here = character:getCurrentSquare()
+                local target = getCell():getGridSquare(action.x, action.y, action.z)
+                if here and target and here:getZ() == action.z and math.abs(here:getX() - action.x) <= 2
+                    and math.abs(here:getY() - action.y) <= 2 then
+                    local transfer = transfers[item:getID()]
+                    if not transfer then
+                        transfer = ISInventoryTransferAction:new(character, item, inventory, floor)
+                        if validTransfer(transfer, item) then planned[#planned + 1] = transfer else transfer = nil end
+                    end
+                    if validTransfer(transfer, item) then
+                        transfers[item:getID()], action.item = transfer, item
+                        local repair = {character = character, queue = queue, generation = queue.toolkitOperationGeneration or 0,
+                            worldGeneration = worldGeneration, id = item:getID(), fullType = item:getFullType(),
+                            lootGetter = getPlayerLoot, fields = {}}
+                        for _, name in ipairs({"x", "y", "z", "offX", "offY", "offZ", "rotationX", "rotationY", "rotationZ", "debugOutput"}) do
+                            repair.fields[name] = action[name]
+                        end
+                        repairedFloors[action] = repair
+                    end
+                end
+            end
+        elseif action.character == character and getmetatable(action) == ISInventoryTransferAction
+            and instanceof(action.item, "InventoryItem") and action.srcContainer == inventory and action.destContainer == floor then
+            transfers[action.item:getID()] = action
+        end
+        planned[#planned + 1] = action
+    end
+    for _, action in ipairs(planned) do add(action) end
+    return unpack(results, 2, results.n)
+end
+
+local function installTidyFloorValidation()
+    local page, class = ISInventoryPage, P4RestoreFloorAction
+    local getter = page and page.GetFloorContainer
+    if not Proof.closure(getter, "ISInventoryPage.lua") then return end
+    local valid = class.isValid
+    class.isValid = function(action, ...)
+        local repair = repairedFloors[action]
+        if not repair then return valid(action, ...) end
+        local character, queue = repair.character, repair.queue
+        if not isClient() or not character:isLocalPlayer() or character:isDead()
+            or repair.worldGeneration ~= worldGeneration or action.character ~= character
+            or ISTimedActionQueue.queues[character] ~= queue or queue.current ~= action or queue:indexOf(action) == -1
+            or (queue.toolkitOperationGeneration or 0) ~= repair.generation
+            or ISInventoryPage ~= page or page.GetFloorContainer ~= getter
+            or getPlayerLoot ~= repair.lootGetter or not tidyActionUnchanged or not tidyActionUnchanged(action, true)
+            or not instanceof(action.item, "InventoryItem") or action.item:getID() ~= repair.id
+            or action.item:getFullType() ~= repair.fullType then return false end
+        local record = records[action]
+        if record and record.token.toolkitCancelled and not record.sharedCleanup then return false end
+        for _, name in ipairs({"x", "y", "z", "offX", "offY", "offZ", "rotationX", "rotationY", "rotationZ", "debugOutput"}) do
+            if action[name] ~= repair.fields[name] then return false end
+        end
+        if not valid(action, ...) then return false end
+        local floor = getter(character:getPlayerNum())
+        local function resolved()
+            local item = floor:getItemById(repair.id)
+            if not instanceof(item, "InventoryItem") or item:getFullType() ~= repair.fullType
+                or item:getID() ~= repair.id or item:getContainer() ~= floor then return end
+            local world = item:getWorldItem()
+            local square, here = world and world:getSquare(), character:getCurrentSquare()
+            if not square or not here or world:getItem() ~= item or square:getZ() ~= here:getZ()
+                or math.abs(square:getX() - here:getX()) > 2 or math.abs(square:getY() - here:getY()) > 2 then return end
+            return item
+        end
+        local item = resolved()
+        if not item then
+            local loot = repair.lootGetter(character:getPlayerNum())
+            local refresh = page.refreshBackpacks
+            if not loot or loot.player ~= character:getPlayerNum() or loot.onCharacter ~= false
+                or type(refresh) ~= "function" or loot.refreshBackpacks ~= refresh then return false end
+            -- The normal UI refresh associates the received world replica with the native floor cache.
+            refresh(loot)
+            item = resolved()
+        end
+        if not item then return false end
+        action.item = item
+        return true
+    end
+    tidyFloorValid = class.isValid
+end
+
 local function loadSource(id, module, eventName)
     local event = eventName and Events[eventName]
     local eventAdd, derive = event and event.Add, ISBaseTimedAction.derive
@@ -515,6 +645,10 @@ local function loadSource(id, module, eventName)
     end
     if event then
         event.Add = function(callback)
+            if id == "P4TidyUpMeister" then
+                local native = callback
+                callback = function(character, ...) return repairTidyFloor(character, native, character, ...) end
+            end
             eventAdd(function(...)
                 if id == "P4TidyUpMeister" then
                     local character = select(1, ...)
@@ -770,6 +904,7 @@ function Compat.install()
         local policy=Toolkit.ActionQueuePolicy
         if policy and policy.adoptTransferQueueObserver then policy.adoptTransferQueueObserver(previous,ISInventoryTransferAction.checkQueueList) end
     end
+    if ready.P4TidyUpMeister then installTidyFloorValidation() end
     for id, sourceClasses in pairs(classes) do
         if ready[id] then
             for _, name in ipairs(names) do
@@ -809,7 +944,10 @@ function Compat.install()
         end
         local stickSource=getActivatedMods and getActivatedMods():contains('organizedCategories_core')
             and verified('organizedCategories_core',{{'client/organizedCategories_itemStick.lua',2877670095}})
-        TidyIntent.install(function(action)
+        local floorPage = ISInventoryPage
+        local floorGetter = floorPage and floorPage.GetFloorContainer
+        if Proof.closure(floorGetter, "ISInventoryPage.lua") then tidyFloorPage, tidyFloorGetter = floorPage, floorGetter end
+        tidyActionUnchanged = function(action, sourceOnly)
             if P4TidyUpMeister~=owner or owner.registerActionPolicy~=actionPolicy or owner.registerWornItemReplacement~=wornPolicy then return false end
             for class,methods in pairs(classes.P4TidyUpMeister) do if not tidyClassUnchanged(class,class,methods) then return false end end
             if not action then return true end
@@ -818,8 +956,10 @@ function Compat.install()
             local record=records[action]
             if not record and (action.onStartFunc or action.onCompleteFunc or action.onCancelFunc
                 or action.retriggerLastAction or action.onFailFunc or action.additionalTest) then return false end
-            return record and matches(action,record) or not record and tidyClassUnchanged(action,getmetatable(action),baseline)
-        end,function(menu,name)
+            return record and (sourceOnly and sourceMatches(action,record) or not sourceOnly and matches(action,record))
+                or not record and tidyClassUnchanged(action,getmetatable(action),baseline)
+        end
+        TidyIntent.install(tidyActionUnchanged,function(menu,name)
             return stickSource and menu==ISInventoryPaneContextMenu and menu['_ocStick_'..name]==menu[name]
                 and quartermasterClosure(menu[name],'organizedCategories_itemStick.lua')
         end)
@@ -941,7 +1081,13 @@ local function tidyTransfer(action)
     return record and record.id == "P4TidyUpMeister" and record.class == ISInventoryTransferAction
 end
 local function matchesTidyTransfer(action) return tidyTransfer(action) and matches(action) end
-local function matchesSelectedChain(action) return not tidyTransfer(action) and matches(action) end
+local function tidyEquipment(action)
+    local record = records[action]
+    return record and record.id == "P4TidyUpMeister"
+        and (record.class == ISEquipWeaponAction or record.class == P4RestoreAction)
+end
+local function matchesTidyEquipment(action) return tidyEquipment(action) and matches(action) end
+local function matchesSelectedChain(action) return not tidyTransfer(action) and not tidyEquipment(action) and matches(action) end
 local function acceptsChild(parent, child)
     return matches(child) and child.toolkitQueueOperation == parent.toolkitQueueOperation
 end
@@ -951,6 +1097,9 @@ Operations.registerProducer("compat.selected-chains", matchesSelectedChain, acce
 Toolkit.ActionQueueDefinitions.registerBehavior("compat.tidy-transfers",
     {types = {"ISInventoryTransferAction"}, matches = matchesTidyTransfer, inspect = inspect})
 Operations.registerProducer("compat.tidy-transfers", matchesTidyTransfer, acceptsChild, true)
+Toolkit.ActionQueueDefinitions.registerBehavior("compat.tidy-equipment",
+    {types = {"ISEquipWeaponAction", "P4RestoreAction"}, matches = matchesTidyEquipment, inspect = inspect})
+Operations.registerProducer("compat.tidy-equipment", matchesTidyEquipment, acceptsChild, true)
 prepareQuartermasterContainers()
 Compat.install()
 return Compat

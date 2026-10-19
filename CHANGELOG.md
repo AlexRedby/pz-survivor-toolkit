@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.94
+
+- **Fixed:** TidyUpMeister can return borrowed floor items in Host after the network replaces their inventory reference, preserving exact item identity, original placement and explicit pickup intent with the queue enabled or disabled.
+- **Changed:** Audited TidyUpMeister hand and activation restores use shared native completion, preserving protected mixed-session cleanup. Equipment slot and floor placement fields are checked before granting queue permissions.
+
 ### 0.1.93
 
 - **Changed:** Audited TidyUpMeister inventory returns retain their queue contracts after approved late transfer hooks and use shared native completion ownership, preserving exact destinations, explicit pickup/equipment intent and the unsupported-engine fallback.

@@ -64,4 +64,18 @@ item.world=world;objects.values={};Floor.cleanup(state)
 assert(removals==0 and not item.world,'already replicated removal must not send a duplicate world removal')
 item.world=world;objects.values={world};Floor.cleanup(state)
 assert(removals==1 and not item.world and objects:size()==0)
+-- The authoritative placement must broadcast the final rotation, not an earlier random value.
+client,server=false,true
+instanceItem=function(kind) assert(kind=='Base.Pistol');return item end
+item.setWorldZRotation=function(s,value) s.rotation=value end
+item.getWorldXRotation=function()return 0 end;item.getWorldYRotation=function()return 0 end
+item.getWorldZRotation=function(s)return s.rotation end
+world.getOffX=function()return .5 end;world.getOffY=function()return .5 end;world.getOffZ=function()return 0 end
+square.AddWorldInventoryItem=function(s,value,x,y,z,transmit)
+ assert(value==item and item.rotation==37 and transmit,'floor pose changed after its initial broadcast')
+ item.world=world;objects.values={world}
+end
+state={id='tidy-floor',player=player,root=root,items={},owned={}}
+Floor.prepare(state,nil,'Base.Pistol')
+assert(state.floor.pose[6]==37)
 print('Equipment floor fixture identity/source/cleanup checks passed.')

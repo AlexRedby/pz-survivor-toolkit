@@ -142,3 +142,26 @@ local bulk=fixture('bulk-pickup','toolkit');move(bulk.bulkHeavyB,bulk.source)
 rejected(bulk,'toolkit',true,'bulk exact source/destination differs bulkHeavyB')
 local bulkCancel=fixture('bulk-waiting-cancel','toolkit');move(bulkCancel.bulkSurvivor,bulkCancel.source)
 rejected(bulkCancel,'toolkit',true,'bulk exact source/destination differs bulkSurvivor')
+
+-- Borrowed floor returns require exact pose, activation and identity, not merely an empty queue.
+local borrowed=fixture('floor-pickup','toolkit');borrowed.id='tidy-floor'
+local gun=borrowed.pickup
+function gun:getCurrentAmmoCount() return 0 end
+function gun:isRoundChambered() return false end
+function borrowed.hammer:isActivated() return self.active~=false end
+borrowed.floor.pose={0.25,0.75,0,0,0,37}
+local pose={0.25,0.75,0,0,0,37}
+local returned={getItem=function() return gun end,getSquare=function() return borrowed.square end,
+ getOffX=function() return pose[1] end,getOffY=function() return pose[2] end,getOffZ=function() return pose[3] end}
+function gun:getWorldXRotation() return pose[4] end
+function gun:getWorldYRotation() return pose[5] end
+function gun:getWorldZRotation() return pose[6] end
+move(gun,nil);gun.world=returned;borrowed.square.objects={returned}
+assert(Postprocess.verify(borrowed,'toolkit',true).floorRestored)
+for i=1,6 do
+ local old=pose[i];pose[i]=old+0.1
+ rejected(borrowed,'toolkit',true,'borrowed floor pose changed');pose[i]=old
+end
+borrowed.hammer.active=false;rejected(borrowed,'toolkit',true,'torch activation');borrowed.hammer.active=true
+borrowed.square.objects={};rejected(borrowed,'toolkit',true,'lost floor pickup ID');borrowed.square.objects={returned}
+borrowed.square.objects={returned,returned};rejected(borrowed,'toolkit',true,'duplicate restored floor ID')

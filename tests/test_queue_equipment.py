@@ -40,6 +40,12 @@ class EquipmentTests(unittest.TestCase):
                 result['capacityBarrier'] = enabled
             if case in ('clothing-chain', 'hotbar-chain'):
                 result.update(slotsVerified=True, clothing=case == 'clothing-chain', hotbar=case == 'hotbar-chain')
+            if case in ('tidy-hands', 'tidy-floor'):
+                count = int(enabled and 'P4TidyUpMeister' in self.selection['mods'])
+                result['primary'] = 731
+                result.update(restoreVerified=True, floorRestoreVerified=case == 'tidy-floor' and 'P4TidyUpMeister' in self.selection['mods'],
+                              restoreCompletion=dict(perform=4*count, complete=4*count if self.selection['kind'] == 'sp' else 0,
+                                                     flush=4*count, legacy=0, equip=2*count, activation=2*count))
             if case == 'floor-pickup':
                 result.update(floorPickup=True, pickupWorldRemoved=True)
             if case.startswith('bulk-'):
@@ -72,7 +78,32 @@ class EquipmentTests(unittest.TestCase):
         (self.root / 'client1-launch.log').write_text(text)
         if self.selection['kind'] == 'mp' and not (self.root / 'server-launch.log').exists():
             (self.root / 'server-launch.log').write_text('[EQUIPMENT_TEST] TRANSFER_PROBE active=true\n[EQUIPMENT_TEST] SERVER_READY\n' + '\n'.join('[EQUIPMENT_TEST] CHECKPOINT case=' + case + '\n[EQUIPMENT_TEST] AUTHORITY case=' + case + ' inventoryPreserved=true equipmentMatches=true tailCompleted=true' for case in self.selection['cases']))
+            if 'tidy-floor' in self.selection['cases'] and 'P4TidyUpMeister' in self.selection['mods']:
+                with (self.root / 'server-launch.log').open('a') as log:
+                    log.write('\n[EQUIPMENT_TEST] FLOOR_RESTORE id=731 result=true\n')
         return equipment.verify(self.root, self.selection, {})
+
+    def test_restore_requires_positive_exact_phases_and_world_effects(self):
+        self.selection.update(cases=['tidy-hands', 'tidy-floor'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for mode in ('toolkit', 'native'):
+                self.selection['mode'] = mode
+                self.assertEqual(self.verify(self.logs())['issues'], [])
+                for key in ('perform', 'complete', 'flush', 'legacy', 'equip', 'activation'):
+                    rows = self.records()
+                    rows[1]['outcome']['restoreCompletion'][key] += 1
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+                rows = self.records(); rows[2]['outcome']['floorRestoreVerified'] = False
+                self.assertTrue(self.verify(self.logs(rows))['issues'])
+                if kind == 'mp':
+                    server = self.root / 'server-launch.log'
+                    original = server.read_text()
+                    marker = '[EQUIPMENT_TEST] FLOOR_RESTORE id=731 result=true'
+                    for replacement in ('', marker + '\n' + marker, marker.replace('731', '732'), marker.replace('true', 'false')):
+                        server.write_text(original.replace(marker, replacement))
+                        self.assertTrue(self.verify(self.logs())['issues'])
+                    server.write_text(original)
 
     def test_subset_and_mode_selection(self):
         for mode in ('native', 'toolkit'):
@@ -242,7 +273,7 @@ class EquipmentTests(unittest.TestCase):
             self.skipTest('Lua interpreter unavailable')
         script = r'''
 local root=arg[1]
-local function run(kind,mode,fault)
+local function run(kind,mode,fault,equipment)
  local enabled=mode=='toolkit'
  local item={getID=function()return 7 end,getFullType=function()return 'Base.Nails'end}
  local inventory,source={},{}
@@ -262,10 +293,13 @@ local function run(kind,mode,fault)
  ISInventoryTransferAction={}
  local operations=dofile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua')
  operations.registerProducer('fixture.tidy',function(a)return a==action end,function()return false end,fault~='legacy')
- toolkit.ActionQueueDefinitions={inspect=function()if enabled then return {},'compat.tidy-transfers'end end}
+ toolkit.ActionQueueDefinitions={inspect=function()if enabled then return {},equipment and 'compat.tidy-equipment' or 'compat.tidy-transfers'end end}
+ toolkit.ActionQueuePolicy={evaluateCancel=function()return {allowed=false}end}
+ action.Type,action.primary,action.twoHands='ISEquipWeaponAction',true,false
  if fault=='early-flush' then lifecycle.flush=function()return 'completed',action end end
  local observer=dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentCompletion.lua').observe(toolkit,{kind=kind,mode=mode})
- observer.watch({root=inventory,source=source,baseline={[7]=item}})
+ observer.watch({root=inventory,source=source,baseline={[7]=item},hammer={getID=item.getID,getFullType=item.getFullType}})
+ if equipment then action.item={getID=item.getID,getFullType=item.getFullType} end
  if not enabled then
   lifecycle.begin(action,'perform');lifecycle.finish(action,'perform',true)
   local counts=observer.settled();assert(counts.perform==0 and counts.complete==0 and counts.flush==0);return
@@ -289,11 +323,11 @@ local function run(kind,mode,fault)
  if fault~='early-flush' then assert(lifecycle.flush(queue)=='waiting');present=false end
  assert(lifecycle.flush(queue)=='completed')
  assert(lifecycle.flush(queue)==nil)
- local counts=observer.settled()
+ local counts=equipment and observer.restores() or observer.settled()
  assert(counts.perform==1 and counts.complete==(kind=='sp' and 1 or 0) and counts.flush==1 and counts.legacy==0)
 end
 for _,kind in ipairs({'sp','mp'})do
- for _,mode in ipairs({'native','toolkit'})do run(kind,mode)end
+ for _,mode in ipairs({'native','toolkit'})do run(kind,mode);run(kind,mode,nil,true)end
  for _,fault in ipairs({'id','endpoint','token','handle','parent','failed','duplicate-perform','legacy','early-flush','unflushed'})do
   local ok=pcall(run,kind,'toolkit',fault);assert(not ok,'observer accepted '..kind..' '..fault)
  end

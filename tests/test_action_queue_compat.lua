@@ -181,6 +181,23 @@ local paths = {
     EURY_CONTAINERS = '3586216562/mods/BetterContainers/42.20',
 }
 ISInventoryPage={onBackpackRightMouseDown=function() end}
+local floorSource=read(NativeActionRoot..'/client/ISUI/ISInventoryPage.lua')
+assert(loadstring(assert(floorSource:match('(function ISInventoryPage.GetFloorContainer%(playerNum%).-\nend)')),'@ISInventoryPage.lua'))()
+local nativeFloorGetter,previousOrigin=ISInventoryPage.GetFloorContainer,getFilenameOfClosure
+-- Model only vanilla refreshBackpacks' world-item -> cached-floor association; source ownership remains pinned.
+local nativeFloorRefresh=function(self)
+    self.refreshCount=(self.refreshCount or 0)+1
+    local floor=ISInventoryPage.GetFloorContainer(self.player)
+    floor.values=self.worldItems or {}
+    for _,value in ipairs(floor.values)do value.container=floor end
+end
+ISInventoryPage.refreshBackpacks=nativeFloorRefresh
+getFilenameOfClosure=function(callback)
+    if callback==nativeFloorGetter then return 'ISInventoryPage.lua' end
+    if previousOrigin then return previousOrigin(callback) end
+end
+ISInventoryPage.floorContainer={{class='ItemContainer',getType=function()return 'floor'end,
+    getParent=function()end,getContainingItem=function()end}}
 local containerGuards={}
 PZSurvivorToolkit.ActionQueuePolicy={skipUnavailableHygiene=function() end,
     hygieneUnavailable=function() return false end, adoptReadAnimEvent=function(previous,replacement)
@@ -305,7 +322,8 @@ local proofSeams
 compatSource,proofSeams=compatSource:gsub('local carts=ready%.SaucedCartsTransfers and Toolkit%.ActionQueueCarts',
     'local carts=Toolkit.ActionQueueCarts')
 assert(proofSeams==1,'late-hook fixture must replace only the Carts proof capture')
-local compat = assert(loadstring((compatSource:gsub('\nreturn Compat', '\nCompat.fixtureRegistries = {records, sessions}\nreturn Compat'))))()
+local compat = assert(loadstring((compatSource:gsub('\nreturn Compat',
+    '\nCompat.fixtureRegistries = {records, sessions}\nCompat.fixtureRepairTidyFloor = repairTidyFloor\nreturn Compat'))))()
 assert(not compat.isInstalled('MPFastForward'),'server wrapper waits for the server loading boundary')
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/server/000_PZSurvivorToolkitReadCompat.lua'))()
 assert(WS and NEQ_Dresser and TidyFixture and PJCK_EvoPanel and NC_CraftActionPanel and PJCK_CraftActionPanel)
@@ -351,6 +369,7 @@ local player = {class = 'IsoPlayer', getInventory = function() return inventory 
     getWornItems = function() return list({}) end, getPrimaryHandItem = function(self) return self.primary end,
     getSecondaryHandItem = function(self) return self.secondary end, isEquipped = function() return false end, setIsFarming = function() end,
     isTimedActionInstant = function() return false end, hasTrait = function() return false end}
+player.getCurrentSquare=player.getSquare
 player.getPerkLevel=function() return 0 end
 player.getX=function() return 0 end; player.getY=function() return 0 end
 getSpecificPlayer = function() return player end
@@ -700,6 +719,91 @@ tickTidy(); tickTidy()
 assert(TidyFixture.restoring[player]==nil and TidyFixture.restoreFloor[player]==nil,
     'partial task cancellation preserves native completion and native Tidy cleanup')
 
+-- P4 hand/activation cleanup uses the native completion boundary even after its original owner is cancelled.
+do
+    local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+    local client,actions,completed=isClient,player.getCharacterActions,queue.onCompleted
+    local callbacks=0
+    local function restoreEquipment(mixed)
+        reset();player.secondary=nil
+        local torch=item(inventory,143);torch.activatable,torch.activated=true,true
+        inventory.values={torch};player.primary=torch
+        local captured=TidyFixture.captureSession(player)
+        captured.armed,captured.restoreHands=true,true;TidyFixture.sessions[player]=captured
+        local owner=tail();local other=mixed and tail()or nil
+        player.primary=nil;torch.activated=false
+        owner:perform();if other then other:perform()end;tickTidy();tickTidy()
+        local equip,activate=queue.queue[1],queue.queue[2]
+        assert(equip.Type=='ISEquipWeaponAction'and activate.Type=='P4RestoreAction')
+        for _,action in ipairs({equip,activate})do
+            local contract,id=definitions.inspect(action)
+            assert(contract and id=='compat.tidy-equipment','P4 equipment did not select its shared producer')
+            assert((contract.cancelOperation==false)==mixed,'P4 shared cleanup cancellation contract changed')
+        end
+        assert(equip.toolkitQueueOperation==activate.toolkitQueueOperation)
+        assert((equip.toolkitQueueOperation==owner.toolkitQueueOperation)==not mixed)
+        return torch,owner,equip,activate
+    end
+    queue.onCompleted=function(self,action)
+        if lifecycle.current(player)==action then
+            assert(not operations.deferCompletion(self,action),'P4 equipment acquired legacy completion scope')
+            callbacks=callbacks+1
+        end
+        return completed(self,action)
+    end
+    for _,mp in ipairs({false,true})do
+        for _,mixed in ipairs({false,true})do
+            for _,cancelled in ipairs({false,true})do
+                local torch,owner,equip,activate=restoreEquipment(mixed)
+                local unrelated=tail()
+                assert(unrelated.toolkitQueueOperation~=equip.toolkitQueueOperation)
+                if cancelled then operations.invalidate(owner.toolkitQueueOperation)end
+                isClient=function()return mp end
+                for index,action in ipairs({equip,activate})do
+                    local following=index==1 and activate or unrelated
+                    local token=action.toolkitQueueOperation
+                    local removed=false;action.action={};queue.current=action
+                    player.getCharacterActions=function()return list(removed and {}or{action.action})end
+                    -- Model the authoritative Host effect separately from its client perform boundary.
+                    if mp then action:complete()end
+                    assert(lifecycle.begin(action,'perform'));action:perform();lifecycle.finish(action,'perform',true)
+                    assert(queue.current==action and queue.queue[1]==action and queue.queue[2]==following
+                        and action.toolkitQueueOperation==token,'P4 cleanup lost native ownership or its independent tail')
+                    if not mp then
+                        assert(lifecycle.flush(queue)=='waiting','SP equipment advanced before its effect')
+                        assert(lifecycle.begin(action,'complete'));action:complete();lifecycle.finish(action,'complete',true)
+                    end
+                    assert(lifecycle.flush(queue)=='waiting','P4 equipment advanced before native removal')
+                    removed=true
+                    assert(lifecycle.flush(queue)=='completed'and queue.current==following and lifecycle.flush(queue)==nil,
+                        'P4 cleanup advanced twice or lost the following action')
+                end
+                assert(player.primary==torch and torch.activated and torch.activationChanges==1,
+                    'P4 hand/activation effects did not complete exactly once')
+                isClient=client;player.getCharacterActions=actions;unrelated:perform();tickTidy();tickTidy()
+                assert(TidyFixture.restoring[player]==nil and TidyFixture.restoreFloor[player]==nil)
+            end
+        end
+    end
+    assert(callbacks==16,'P4 equipment lifecycle gates missed a native return')
+    queue.onCompleted=completed
+    for _,field in ipairs({'primary','twoHands','alwaysTurnOn','onCompleteFunc','start'})do
+        local _,_,equip=restoreEquipment(true)
+        local original=equip[field]
+        equip[field]=(field=='onCompleteFunc'or field=='start')and function()end or not original
+        assert(not definitions.inspect(equip),'P4 equip accepted changed '..field)
+        equip[field]=original;assert(definitions.inspect(equip))
+        while queue.queue[1]do local action=queue.queue[1];action:complete();action:perform()end
+        tickTidy();tickTidy()
+    end
+    local _,_,_,activate=restoreEquipment(true)
+    activate.activated=false
+    assert(not definitions.inspect(activate),'P4 activation accepted a changed effect')
+    activate.activated=true
+    while queue.queue[1]do local action=queue.queue[1];action:complete();action:perform()end
+    tickTidy();tickTidy()
+end
+
 -- Exact fixture native actions supply the same known-input contracts the native Policy installs.
 local nativeTransferPerform=ISInventoryTransferAction.perform
 local pinnedFloorHelper=ISInventoryTransferAction.getNotFullFloorSquare
@@ -728,8 +832,9 @@ local tidyBagOwner=item(inventory,40); tidyBagOwner.class='InventoryContainer'
 local tidyBag={class='ItemContainer',getParent=function() end,getType=function() return 'bag' end,
     getContainingItem=function() return tidyBagOwner end}
 getPlayerLoot=function() return {backpacks={{inventory=tidyBag}}} end
-local function tidyTasks(shared, insertion)
+local function tidyTasks(shared, insertion, queueEnabled)
     reset(); doNotReequip=false; player.primary=nil
+    if queueEnabled~=nil then enabled=queueEnabled end
     local first,second=item(tidyBag,41),item(tidyBag,42)
     local firstPickup,firstRead,secondPickup,secondRead
     operations.run(function()
@@ -991,6 +1096,240 @@ assert(floorRestores==2,'actual installed Tidy builds MP floor cleanup without t
 while queue.queue[1] do queue.queue[1]:perform() end
 isClient=nativeClient; tickTidy(); tickTidy()
 assert(TidyFixture.restoring[player]==nil and TidyFixture.restoreFloor[player]==nil)
+-- Nonmixed MP floor placement remains legacy, with its exact server placement fields pinned.
+do
+    reset();doNotReequip=false;player.primary,player.secondary=nil,nil
+    local value=item(tidyBag,144)
+    local pickup,readAction
+    operations.run(function()
+        pickup=ISInventoryTransferAction:new(player,value,tidyBag,inventory);ISTimedActionQueue.add(pickup)
+        readAction=ISReadABook:new(player,value);ISTimedActionQueue.add(readAction)
+    end)
+    local captured=TidyFixture.sessions[player]
+    captured.transferredItems[value].container=tidyFloor
+    captured.floorItems[value:getFullType()]={square=square,offX=0.1,offY=0.2,offZ=0.3,
+        rotationX=10,rotationY=20,rotationZ=30}
+    pickup:perform();readAction:perform();inventory.values={value}
+    local cell=getCell
+    getCell=function()return {getGridSquare=function()return square end}end
+    isClient=function()return true end
+    tickTidy();tickTidy()
+    local floorAction
+    for _,action in ipairs(queue.queue)do if action.Type=='P4RestoreFloorAction'then floorAction=action end end
+    local contract,id=definitions.inspect(floorAction)
+    assert(contract and id=='compat.selected-chains'and contract.interrupt=='finish-step',
+        'nonmixed floor placement must keep its existing protected completion contract')
+    for _,field in ipairs({'offX','offY','offZ','rotationX','rotationY','rotationZ'})do
+        local previous=floorAction[field];floorAction[field]=previous+1
+        assert(not definitions.inspect(floorAction),'floor placement accepted changed '..field)
+        floorAction[field]=previous;assert(definitions.inspect(floorAction))
+    end
+    while queue.queue[1]do queue.queue[1]:perform()end
+    isClient=nativeClient;getCell=cell;tickTidy();tickTidy()
+end
+-- Host can retain the old floor proxy after the authoritative transfer recreates its exact ID in root.
+do
+    local client,multi,cell,loot=isClient,isMultiplayer,getCell,getPlayerLoot
+    local cached=ISInventoryPage.floorContainer[1]
+    local floor={class='ItemContainer',getParent=function()return square end,getType=function()return 'floor'end,
+        getContainingItem=function()end,values={},getItemById=function(self,id)
+            for _,value in ipairs(self.values)do if value:getID()==id then return value end end
+        end}
+    ISInventoryPage.floorContainer[1]=floor
+    getCell=function()return {getGridSquare=function()return square end}end
+    local floorLoot={player=0,onCharacter=false,refreshBackpacks=nativeFloorRefresh,
+        backpacks={{inventory=tidyBag},{inventory=floor}}}
+    getPlayerLoot=function()return floorLoot end
+    local function worldItem(id)
+        local value=item(floor,id)
+        local world={getSquare=function()return square end,getItem=function()return value end}
+        value.getWorldItem=function()return world end
+        return value
+    end
+    local function clearIntent()
+        for _,callback in ipairs(events.OnMainMenuEnter or {})do callback()end
+    end
+    local function placement(value)
+        return P4RestoreFloorAction:new(player,value,0,0,0,0.1,0.2,0.3,10,20,30,false)
+    end
+    local function drain()
+        while queue.queue[1]do queue.queue[1]:perform()end
+        tickTidy();tickTidy()
+    end
+    for _,queueEnabled in ipairs({true,false})do
+        for _,staleFloor in ipairs({true,false})do
+            clearIntent()
+            local old,second,firstToken,_,captured=tidyTasks(false,nil,queueEnabled)
+            captured.transferredItems[old].container=floor
+            captured.floorItems[old:getFullType()]={square=square,offX=0.1,offY=0.2,offZ=0.3,rotationX=10,rotationY=20,rotationZ=30}
+            local live=item(inventory,old:getID());inventory.values={live,second};old.container=staleFloor and floor or nil
+            isClient=function()return true end;isMultiplayer=function()return true end
+            tickTidy();tickTidy()
+            local transfers,relocations,returned,placementAction=0,0
+            for index,action in ipairs(queue.queue)do
+                if action.Type=='ISInventoryTransferAction'and action.item==live and action.destContainer==floor then
+                    transfers=transfers+1
+                    local following=queue.queue[index+1]
+                    assert(following.Type=='P4RestoreFloorAction'and following.item==live,
+                        'exact rebound transfer must precede its native relocation')
+                    returned,placementAction=action,following
+                    assert((not queueEnabled or not definitions.inspect(action))and not definitions.inspect(following),
+                        'mixed floor repair must not gain queue edit rights')
+                end
+                if action.Type=='P4RestoreFloorAction'and action.item:getID()==old:getID()then
+                    relocations=relocations+1;assert(action.item==live,'Host floor relocation retained its stale proxy')
+                end
+            end
+            assert(transfers==1 and relocations==1,'Host floor rebound lost or duplicated its actual P4 return pair')
+            assert(old:getContainer()==(staleFloor and floor or nil),'repair mutated the stale source proxy')
+            local replica
+            if staleFloor then
+                -- Native MP removes the held proxy and receives a new world replica before relocation starts.
+                returned:perform();live.container=nil
+                replica=worldItem(live:getID());floor.values={};floorLoot.worldItems={replica}
+                firstToken.toolkitCancelled=true
+                local refreshed=floorLoot.refreshCount or 0
+                assert(placementAction:isValid()and placementAction.item==replica,
+                    'actual P4 repaired relocation did not resolve its post-transfer world replica')
+                assert(floorLoot.refreshCount==refreshed+1 and placementAction:isValid()
+                    and floorLoot.refreshCount==refreshed+1,'cached exact replica must not repeatedly refresh native UI')
+                assert(not definitions.inspect(placementAction),'mixed floor validation widened opaque queue rights')
+            end
+            drain();assert((replica or live):getContainer()==floor and TidyFixture.restoring[player]==nil)
+            isClient,isMultiplayer=client,multi
+        end
+    end
+    -- Source callback emission exercises the same owned hook without adding a queue permission contract.
+    for _,queueEnabled in ipairs({true,false})do
+        for _,change in ipairs({'none','wrapped-refresh','missing','id','type','root','world','world-item','far','target','pose','debug','item',
+            'callback','instance','class','owner','getter','refresh','missing-refresh','loot-api','loot-method','loot-player','loot-character',
+            'generation','removed','cancelled'})do
+            clearIntent();reset();enabled=queueEnabled;doNotReequip=false
+            isClient=function()return true end
+            local old,held=item(floor,148),item(inventory,148);inventory.values={held}
+            local action=placement(old)
+            local getter,refresh,lootAPI,owner=ISInventoryPage.GetFloorContainer,ISInventoryPage.refreshBackpacks,getPlayerLoot,P4TidyUpMeister
+            local nativeValid=P4RestoreFloorAction.isValid
+            compat.fixtureRepairTidyFloor(player,function()ISTimedActionQueue.add(action)end)
+            assert(#queue.queue==2 and action.item==held,'owned relocation fixture failed to create exact return pair')
+            queue.queue[1]:perform();held.container=nil
+            local replica=worldItem(148);floor.values={};floorLoot.worldItems={replica}
+            floorLoot.player,floorLoot.onCharacter,floorLoot.refreshBackpacks=0,false,nativeFloorRefresh
+            if change=='missing'then floorLoot.worldItems={}
+            elseif change=='id'then replica.id=149
+            elseif change=='type'then replica.getFullType=function()return 'Base.Other'end
+            elseif change=='root'then floorLoot.worldItems={};held.container=inventory;inventory.values={held}
+            elseif change=='world'then replica.getWorldItem=function()end
+            elseif change=='world-item'then replica.getWorldItem=function()return {getSquare=function()return square end,getItem=function()return held end}end
+            elseif change=='far'then replica.getWorldItem=function()return {getSquare=function()return {getX=function()return 3 end,getY=function()return 0 end,getZ=function()return 0 end}end,getItem=function()return replica end}end
+            elseif change=='target'then getCell=function()return {getGridSquare=function()end}end
+            elseif change=='pose'then action.offX=0.9
+            elseif change=='debug'then action.debugOutput=nil
+            elseif change=='item'then action.item=item(inventory,149)
+            elseif change=='callback'then action.onCompleteFunc=function()end
+            elseif change=='instance'then action.start=function()end
+            elseif change=='class'then P4RestoreFloorAction.isValid=function()return true end
+            elseif change=='owner'then P4TidyUpMeister={}
+            elseif change=='getter'then ISInventoryPage.GetFloorContainer=function()return floor end
+            elseif change=='wrapped-refresh'then
+                ISInventoryPage.refreshBackpacks=function(self)return nativeFloorRefresh(self)end
+                floorLoot.refreshBackpacks=ISInventoryPage.refreshBackpacks
+            elseif change=='refresh'then
+                ISInventoryPage.refreshBackpacks=function()end
+                floorLoot.refreshBackpacks=ISInventoryPage.refreshBackpacks
+            elseif change=='missing-refresh'then ISInventoryPage.refreshBackpacks=nil
+            elseif change=='loot-api'then getPlayerLoot=function()return floorLoot end
+            elseif change=='loot-method'then floorLoot.refreshBackpacks=function()end
+            elseif change=='loot-player'then floorLoot.player=1
+            elseif change=='loot-character'then floorLoot.onCharacter=true
+            elseif change=='generation'then queue.toolkitOperationGeneration=(queue.toolkitOperationGeneration or 0)+1
+            elseif change=='removed'then queue.queue,queue.current={},nil
+            elseif change=='cancelled'then dead=true end
+            local ok=nativeValid(action)
+            local resolved=change=='none'or change=='wrapped-refresh'
+            assert(ok==resolved,'owned floor validation accepted unsafe '..change..' queue='..tostring(queueEnabled))
+            assert(action.item==(resolved and replica or change=='item'and action.item or held),
+                'failed floor validation changed the retained proxy: '..change)
+            assert(not definitions.inspect(action),'unadopted floor repair gained queue rights')
+            assert(held.container==(change=='root'and inventory or nil),'floor validation mutated stale item container')
+            ISInventoryPage.GetFloorContainer,ISInventoryPage.refreshBackpacks,getPlayerLoot,P4TidyUpMeister=getter,refresh,lootAPI,owner
+            P4RestoreFloorAction.isValid=nativeValid
+            floorLoot.player,floorLoot.onCharacter,floorLoot.refreshBackpacks=0,false,nativeFloorRefresh
+            getCell=function()return {getGridSquare=function()return square end}end
+            dead=false;queue.queue,queue.current={},nil
+        end
+    end
+    isClient=client
+    -- Direct helper checks keep the real matcher while varying the emitted source action and native refs.
+    for _,change in ipairs({'none','existing','invalid-existing','missing','id','type','world','far','unloaded','callback','instance','class','owner','getter','refresh','valid-hook','error'})do
+        clearIntent();reset();doNotReequip=false
+        local old,live=item(floor,145),item(inventory,145);inventory.values={live}
+        local action=placement(old)
+        local originalStart,owner,floorGetter=ISInventoryTransferAction.start,P4TidyUpMeister,ISInventoryPage.GetFloorContainer
+        local floorRefresh,floorValid=ISInventoryPage.refreshBackpacks,P4RestoreFloorAction.isValid
+        if change=='missing'then inventory.values={}
+        elseif change=='id'then live.id=146
+        elseif change=='type'then live.getFullType=function()return 'Base.Other'end
+        elseif change=='world'then live.container=floor
+        elseif change=='far'then action.x=3
+        elseif change=='unloaded'then getCell=function()return {getGridSquare=function()end}end
+        elseif change=='callback'then action.onCompleteFunc=function()end
+        elseif change=='instance'then action.start=function()end
+        elseif change=='class'then ISInventoryTransferAction.start=function()end
+        elseif change=='owner'then P4TidyUpMeister={}
+        elseif change=='getter'then ISInventoryPage.GetFloorContainer=function()return floor end
+        elseif change=='refresh'then ISInventoryPage.refreshBackpacks=function()end
+        elseif change=='valid-hook'then P4RestoreFloorAction.isValid=function()return true end end
+        isClient=function()return true end
+        local add=ISTimedActionQueue.add
+        local ok,result=pcall(function()
+            return compat.fixtureRepairTidyFloor(player,function()
+                if change=='existing'or change=='invalid-existing'then
+                    local transfer=ISInventoryTransferAction:new(player,live,inventory,floor)
+                    if change=='invalid-existing'then transfer.onCompleteFunc=function()end;transfer.onCompleteArgs={}end
+                    ISTimedActionQueue.add(transfer)
+                end
+                ISTimedActionQueue.add(action)
+                if change=='error'then error('native floor callback failed')end
+                return 'native-result'
+            end)
+        end)
+        assert(ISTimedActionQueue.add==add,'floor callback leaked its temporary add hook')
+        assert(ok==(change~='error')and (not ok or result=='native-result'),'floor wrapper changed native return/error')
+        local repaired=change=='none'or change=='existing'or change=='refresh'
+        assert(action.item==(repaired and live or old),'floor repair accepted unsafe '..change)
+        assert(#queue.queue==((repaired or change=='invalid-existing')and 2 or 1),'floor repair duplicated/removed source actions: '..change)
+        if change=='refresh'then
+            queue.queue[1]:perform()
+            assert(not action:isValid(),'unknown no-op UI refresh must refuse late resolution, not suppress the native return pair')
+        end
+        ISInventoryTransferAction.start=originalStart;P4TidyUpMeister=owner;ISInventoryPage.GetFloorContainer=floorGetter
+        ISInventoryPage.refreshBackpacks,P4RestoreFloorAction.isValid=floorRefresh,floorValid
+        getCell=function()return {getGridSquare=function()return square end}end
+        drain();isClient=client
+    end
+    clearIntent();reset();doNotReequip=false;player.primary,player.secondary=nil,nil
+    local old,live=item(tidyBag,147),item(inventory,147)
+    ISInventoryPaneContextMenu.onGrabItems({old},0)
+    local pickup=queue.queue[1];pickup.fixtureRebound=live
+    ISTimedActionQueue.add(ISReadABook:new(player,old))
+    local captured=TidyFixture.sessions[player]
+    captured.transferredItems[old].container=floor
+    captured.floorItems[old:getFullType()]={square=square,offX=0,offY=0,offZ=0,rotationX=0,rotationY=0,rotationZ=0}
+    inventory.values={live}
+    local intent=PZSurvivorToolkit.ActionQueueTidyIntent
+    intent.begin(pickup,'perform');pickup:perform();intent.finish(pickup,'perform',true)
+    queue.queue[1]:perform();old.container=floor
+    isClient=function()return true end;isMultiplayer=function()return true end
+    tickTidy();tickTidy()
+    assert(#queue.queue==0 and live:getContainer()==inventory,'explicit pickup must suppress repaired floor return and relocation together')
+    local called=0
+    compat.fixtureRepairTidyFloor(nil,function()called=called+1 end)
+    compat.fixtureRepairTidyFloor({isLocalPlayer=function()return false end},function()called=called+1 end)
+    assert(called==2,'floor wrapper changed native nil/remote early guards')
+    isClient,isMultiplayer,getCell,getPlayerLoot=client,multi,cell,loot
+    ISInventoryPage.floorContainer[1]=cached
+end
 -- Match the early-Compat / later-ActionQueue startup order, including inherited P4 stop methods.
 local previousStop=ISBaseTimedAction.stop
 ISBaseTimedAction.stop=function(...) return previousStop(...) end

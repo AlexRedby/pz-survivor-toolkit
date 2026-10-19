@@ -24,7 +24,7 @@ function Postprocess.verify(state,mode,tidy)
  assert(player:getInventory()==root and state.bag:getItemContainer()==state.source,'postprocessing container identity changed')
  local actual=inventory(root,{})
  local floorItem,floorRestored=nil,false
- if state.id=='floor-pickup' then
+ if state.id=='floor-pickup' or state.id=='tidy-floor' then
   local square=assert(getCell():getGridSquare(state.floor.x,state.floor.y,state.floor.z),'original floor square unloaded')
   local objects=square:getWorldObjects()
   assert(not objects:contains(state.pickupWorld),'original pickup world object survived')
@@ -40,6 +40,13 @@ function Postprocess.verify(state,mode,tidy)
    assert(not actual[state.floor.id],'floor pickup duplicated in carried inventory')
    assert(same(floorItem,state.baseline[state.floor.id]),'restored floor ID changed type')
    floorRestored=true
+   if state.id=='tidy-floor' then
+    local world=floorItem:getWorldItem()
+    local pose={world:getOffX(),world:getOffY(),world:getOffZ(),floorItem:getWorldXRotation(),floorItem:getWorldYRotation(),floorItem:getWorldZRotation()}
+    for i,value in ipairs(assert(state.floor.pose)) do
+     assert(math.abs(pose[i]-value)<0.001,'borrowed floor pose changed '..i..' expected='..value..' actual='..pose[i])
+    end
+   end
    state.pickup,state.items.pickup=floorItem,floorItem
    for i,item in ipairs(state.owned or {}) do if item:getID()==state.floor.id then state.owned[i]=floorItem end end
   else
@@ -61,6 +68,10 @@ function Postprocess.verify(state,mode,tidy)
    and player:getAlreadyReadPages(item:getFullType())==item:getNumberOfPages(),'postprocessing book incomplete')
  end
  local primary,secondary=state.hammer,state.screwdriver
+ if state.id=='tidy-hands' or state.id=='tidy-floor' then
+  if not tidy then primary,secondary=state.pickup,nil else assert(state.hammer:isActivated(),'P4 did not restore torch activation') end
+  assert(state.pickup:getCurrentAmmoCount()==0 and not state.pickup:isRoundChambered(),'empty gun changed ammunition')
+ end
  if state.id=='waiting-cancel' and mode=='native' then
   primary,secondary=state.bat,state.bat
   if tidy then
@@ -106,14 +117,15 @@ function Postprocess.verify(state,mode,tidy)
   elseif name=='content' or name:match('^plank%d+$') then expected=state.source
   elseif name=='clothingA' then expected=tidy and state.source or root
   elseif name=='pickup' and state.id=='bag-capacity' then expected=root
-  elseif name=='pickup' and state.id=='floor-pickup' then expected=root
+  elseif name=='pickup' and (state.id=='floor-pickup' or state.id=='tidy-floor') then expected=root
+  elseif name=='pickup' and state.id=='tidy-hands' then expected=tidy and state.source or root
   else assert(rootNames[name],'unknown postprocessing seed '..name) end
   local item=actual[seed:getID()] or floorItem
   if not (name=='pickup' and floorRestored) then
    assert(item and item:getContainer()==expected,'postprocessing seed container differs '..name)
   end
  end
- assert(not floorRestored,'P4 returned deliberately picked up floor item after native completion')
- return {postprocessingVerified=true,tidy=tidy,floorRestored=false}
+ assert(floorRestored==(state.id=='tidy-floor' and tidy),'P4 returned deliberately picked up floor item or lost borrowed floor return')
+ return {postprocessingVerified=true,tidy=tidy,floorRestored=floorRestored}
 end
 return Postprocess

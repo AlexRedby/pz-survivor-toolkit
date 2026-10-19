@@ -86,7 +86,7 @@ function Fixture.prepare(player,id,ids)
   state[name]=item;state.items[name]=item;state.owned[#state.owned+1]=item;return item
  end
  seed('front','Base.BookCarpentry1');seed('tail','Base.BookFirstAid1')
- seed('hammer','Base.Hammer');seed('screwdriver','Base.Screwdriver');seed('bag','Base.Bag_Schoolbag')
+ seed('hammer',id:match('^tidy%-') and 'Base.Torch' or 'Base.Hammer');seed('screwdriver','Base.Screwdriver');seed('bag','Base.Bag_Schoolbag')
  state.location=state.bag:canBeEquipped();assert(state.location and tostring(state.location)~='','fixture bag has no native worn slot')
  player:setWornItem(state.location,state.bag)
  player:setPrimaryHandItem(state.hammer);player:setSecondaryHandItem(state.screwdriver)
@@ -123,6 +123,11 @@ function Fixture.prepare(player,id,ids)
  elseif id=='hands-chain' or id=='waiting-cancel' then seed('bat','Base.BaseballBat',state.source);seed('content','Base.Nails',state.source)
  elseif Bulk.isCase(id) then Bulk.prepare(state,seed)
  elseif id=='floor-pickup' then Floor.prepare(state,seed)
+ elseif id=='tidy-hands' or id=='tidy-floor' then
+  if id=='tidy-floor' then Floor.prepare(state,seed,'Base.Pistol') else seed('pickup','Base.Pistol',state.source) end
+  assert(state.pickup:getCurrentAmmoCount()==0 and not state.pickup:isRoundChambered(),'restore fixture gun must be empty')
+  state.hammer:setUsedDelta(1);state.hammer:setActivated(true)
+  assert(state.hammer:canBeActivated() and state.hammer:isActivated(),'restore fixture torch must start on')
  else Slots.prepare(state,seed) end
  for _,perk in ipairs({Perks.Woodwork,Perks.Doctor}) do
   player:getXp():setXPToLevel(perk,0);player:setPerkLevelDebug(perk,0)
@@ -139,14 +144,14 @@ function Fixture.prepare(player,id,ids)
   for i=0,attached:size()-1 do local entry=attached:get(i);state.originalAttached[tostring(entry:getLocation())]=entry:getItem() end
  end
  state.expectedWorn=worn(player);state.baseline=inventory(player)
- if id=='floor-pickup' then state.baseline[state.pickup:getID()]=state.pickup end
+ if id=='floor-pickup' or id=='tidy-floor' then state.baseline[state.pickup:getID()]=state.pickup end
  return state
 end
 function Fixture.verify(state,mode,checkpoint)
  Fixture.refresh(state)
  local player,root=state.player,state.root
  assert(player:getInventory()==root and state.bag:getItemContainer()==state.source,'fixture source/target container identity changed')
- if state.id=='floor-pickup' then Floor.verify(state,mode) end
+ if state.id=='floor-pickup' or state.id=='tidy-floor' then Floor.verify(state,mode) end
  local actual=inventory(player)
  for id,item in pairs(state.baseline) do
   assert(actual[id] and actual[id]:getFullType()==item:getFullType(),'inventory ID missing or changed type '..id)
@@ -160,6 +165,7 @@ function Fixture.verify(state,mode,checkpoint)
  end
  local cancelled=state.id=='waiting-cancel' and mode=='toolkit'
  local primary,secondary=state.hammer,state.screwdriver
+ if state.id=='tidy-hands' or state.id=='tidy-floor' then primary,secondary=state.pickup,nil end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
  assert(player:getPrimaryHandItem()==primary and player:getSecondaryHandItem()==secondary,'native final hand identities differ')
@@ -182,7 +188,7 @@ function Fixture.verify(state,mode,checkpoint)
  assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,state.expectedWorn)
  local outcome={inventoryPreserved=true,frontCompleted=true,tailCompleted=not checkpoint,equipmentMatches=true,nativeDurations=true,
   policyChecked=mode=='toolkit',cancelled=cancelled,capacityBarrier=state.id=='bag-capacity' and mode=='toolkit',
-  primary=primary:getID(),secondary=secondary:getID(),bag=state.bag:getID(),front=state.front:getID(),tail=state.tail:getID(),
+  primary=primary:getID(),secondary=secondary and secondary:getID() or false,bag=state.bag:getID(),front=state.front:getID(),tail=state.tail:getID(),
   capacity=state.effectiveCapacity,weightBefore=state.weightBefore,weightAfterReplacement=state.weightAfterRemoval}
  for key,value in pairs(extra) do outcome[key]=value end
  if state.id=='floor-pickup' then outcome.floorPickup=true;outcome.pickupWorldRemoved=true end
@@ -211,7 +217,7 @@ end
 function Fixture.removed(state)
  local actual=inventory(state.player)
  for _,item in ipairs(state.owned) do if actual[item:getID()] then return false end end
- if state.id=='floor-pickup' and Floor.resolve(state.floor) then return false end
+ if (state.id=='floor-pickup' or state.id=='tidy-floor') and Floor.resolve(state.floor) then return false end
  return true
 end
 function Fixture.transactionsSettled()
@@ -228,7 +234,7 @@ end
 function Fixture.cleanup(state)
  Fixture.release(state)
  local player=state.player
- if state.id=='floor-pickup' then Floor.cleanup(state) end
+ if state.id=='floor-pickup' or state.id=='tidy-floor' then Floor.cleanup(state) end
  local actualBefore=inventory(player)
  for i=#state.owned,1,-1 do
   local original=state.owned[i]
@@ -261,6 +267,7 @@ function Fixture.settled(state,mode,checkpoint)
  local player=state.player
  local cancelled=state.id=='waiting-cancel' and mode=='toolkit'
  local primary,secondary=state.hammer,state.screwdriver
+ if state.id=='tidy-hands' or state.id=='tidy-floor' then primary,secondary=state.pickup,nil end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
  if player:getPrimaryHandItem()~=primary or player:getSecondaryHandItem()~=secondary then return false end
