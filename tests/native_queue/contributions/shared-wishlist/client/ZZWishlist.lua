@@ -191,7 +191,8 @@ else
  end)
  stage('owner shares through native access dialog',function()
   if user=='client1'then local window=W().UI.open(0);window:share();local share=window.shareWindow
-   share.username:setText('client2');share:addMember();share:save();window:close()
+   share.selector:selectData('client2');assert(share.selector:getOptionData(share.selector.selected)=='client2')
+   share:addMember();share:save();window:close()
   end
  end)
  stage('peer receives shared list and edits it',function()

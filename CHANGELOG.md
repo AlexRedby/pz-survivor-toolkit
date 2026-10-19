@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.96
+
+- **Changed:** Wishlist sharing now searches and selects online players instead of accepting typed usernames. Existing offline members keep their access.
+
 ### 0.1.95
 
 - **Fixed:** Server medicine throttles discard expired player entries, and Wishlist refreshes release disconnected players' snapshots and request buckets without relying on weak tables unsupported by Kahlua.

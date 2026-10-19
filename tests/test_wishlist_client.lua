@@ -181,11 +181,10 @@ local window = {catalogWindow = {close = function() closed = closed + 1 end},
     selector = {hidePopup = function() closed = closed + 1 end},
     search = {unfocus = function() unfocused = unfocused + 1 end},
     quantity = {unfocus = function() unfocused = unfocused + 1 end},
-    username = {unfocus = function() unfocused = unfocused + 1 end},
     setVisible = function(_, visible) assert(not visible) end,
     removeFromUIManager = function() removed = removed + 1 end}
 PZSurvivorWishlist.UI.close(window)
-assert(closed == 3 and unfocused == 3 and removed == 1)
+assert(closed == 3 and unfocused == 2 and removed == 1)
 print("PASS wishlist windows: closing releases child dialogs, keyboard focus and UIManager references")
 
 local Catalog = windowClasses.PZSWCatalog

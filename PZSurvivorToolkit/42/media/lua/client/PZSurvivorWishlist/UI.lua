@@ -82,7 +82,6 @@ function UI.close(window)
     if window.selector then window.selector:hidePopup() end
     if window.search then window.search:unfocus() end
     if window.quantity then window.quantity:unfocus() end
-    if window.username then window.username:unfocus() end
     window:setVisible(false)
     -- The base close only hides windows; catalog instances must leave UIManager.
     window:removeFromUIManager()
@@ -340,9 +339,19 @@ end
 function Sharing:initialise()
     ISCollapsableWindow.initialise(self)
     local top = self:titleBarHeight() + 10
-    self.username = entry(self, 10, top, self.width - 120)
-    self.username:setTooltip(text("UsernameHint"))
-    button(self, self.width - 100, top, 90, text("Add"), Sharing.addMember)
+    self.selector = ISComboBox:new(10, top, self.width - 120, BH, self)
+    self.selector:initialise()
+    self.selector:instantiate()
+    self.selector:setEditable(true)
+    self.selector.showPopup = function(control)
+        -- A new search must not reuse a previously selected recipient.
+        self:refreshPlayers()
+        control:setFilterText(nil)
+        if control.editor then control.editor:setText("") end
+        ISComboBox.showPopup(control)
+    end
+    self:addChild(self.selector)
+    self.addButton = button(self, self.width - 100, top, 90, text("Add"), Sharing.addMember)
     self.list = listbox(self, 10, top + BH + 10, self.width - 20, self.height - top - BH * 4 - 65)
     self.list.itemheight = BH
     local members = {}
@@ -360,19 +369,56 @@ function Sharing:initialise()
     self.faction.enable = faction ~= nil
     self:addChild(self.faction)
     self.saveButton = button(self, 10, self.faction:getBottom() + 8, self.width - 20, text("SaveSharing"), Sharing.save)
+    self:refreshPlayers()
+end
+
+function Sharing:refreshPlayers()
+    local excluded, names = {[self.source.owner] = true}, {}
+    for _, row in ipairs(self.list.items) do excluded[row.item] = true end
+    if isClient() then
+        local players = getOnlinePlayers()
+        for i = 0, players:size() - 1 do
+            local username = players:get(i):getUsername()
+            if username and username ~= "" and not excluded[username] then
+                names[#names + 1] = username
+                excluded[username] = true
+            end
+        end
+    end
+    table.sort(names)
+    self.selector:clear()
+    self.selector:addOption(text(#names == 0 and "NoOnlinePlayers" or "SelectPlayer"))
+    for _, username in ipairs(names) do self.selector:addOptionWithData(username, username) end
+    self.selector.selected = 1
+    self.selector:setToolTipMap({defaultTooltip = text("UsernameHint")})
+end
+
+function Sharing:prerender()
+    ISCollapsableWindow.prerender(self)
+    self.addButton:setEnable(not self.selector.expanded and #self.list.items < 32
+        and self.selector:getOptionData(self.selector.selected) ~= nil)
+    self.removeButton:setEnable(self.list.items[self.list.selected] ~= nil)
 end
 
 function Sharing:addMember()
-    local username = self.username:getInternalText():match("^%s*(.-)%s*$")
-    if username == "" or username == self.source.owner or #username > 64 or #self.list.items >= 32 then return end
+    local username = self.selector:getOptionData(self.selector.selected)
+    if self.selector.expanded or not username or username == self.source.owner
+        or #username > 64 or #self.list.items >= 32 then return end
     for _, row in ipairs(self.list.items) do if row.item == username then return end end
-    self.list:addItem(username, username)
-    self.username:setText("")
+    local players = getOnlinePlayers()
+    for i = 0, players:size() - 1 do
+        if players:get(i):getUsername() == username then
+            self.list:addItem(username, username)
+            break
+        end
+    end
+    self:refreshPlayers()
 end
 
 function Sharing:removeMember()
     local row = self.list.items[self.list.selected]
     if row then self.list:removeItem(row.text) end
+    self:refreshPlayers()
 end
 
 function Sharing:save()
