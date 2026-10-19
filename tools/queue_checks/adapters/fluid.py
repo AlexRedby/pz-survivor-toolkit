@@ -3,6 +3,7 @@ import json
 import math
 from pathlib import Path
 import re
+import shutil
 
 from . import craft
 
@@ -10,7 +11,9 @@ CASES = ['fluid-bag', 'fluid-root', 'fluid-bag-favorite', 'fluid-root-favorite',
          'fluid-bag-all-favorite', 'fluid-bag-quarter-favorite', 'fluid-bag-smart-favorite',
          'fluid-bag-sip-favorite', 'fluid-bag-second-favorite', 'fluid-bag-pair-queued-favorite',
          'fluid-bag-pair-serial-favorite', 'fluid-bag-smart-low-favorite',
-         'fluid-bag-full-favorite', 'fluid-root-full-favorite']
+         'fluid-bag-full-favorite', 'fluid-root-full-favorite',
+         'fluid-bag-same-serial-favorite', 'fluid-root-same-queued-favorite',
+         'fluid-root-cancel-waiting-favorite', 'fluid-bag-cancel-waiting-favorite']
 MODS = craft.MODS + ['Drink_Smart']
 RECEIPT_KEYS = {'bagId', 'bagType', 'thirst', 'bottles', 'foodLevel'}
 BAG_TYPE = 'Base.Bag_ALICEpack_Army'
@@ -18,7 +21,7 @@ BAG_TYPE = 'Base.Bag_ALICEpack_Army'
 
 def definitions():
     groups = {
-        'drink-portions': ('Native all/half/quarter from root or a worn military backpack; favorite, fullness and two distinct bottle variants.',
+        'drink-portions': ('Native portions from root or a worn military backpack; favorite bottles, repeated halves with native SP/Host semantics and waiting cancellation.',
                            [case for case in CASES if '-smart-' not in case and '-sip-' not in case]),
         'drink-smart': ('Drink Smart from a worn military backpack with favorite bottles at normal and low thirst.',
                         [case for case in CASES if '-smart-' in case]),
@@ -33,6 +36,8 @@ def definitions():
         }
         if name == 'drink-portions':
             checks['repeat-independent'] = {'fluid-bag-pair-queued-favorite': {'independentRequestsQueued': True, 'effectsVerified': True}}
+            checks['repeat-same'] = {case: {'sameBottleRequestsVerified': True, 'effectsVerified': True} for case in cases if '-same-' in case}
+            checks['cancel-waiting'] = {case: {'waitingCancelVerified': True, 'effectsVerified': True} for case in cases if '-cancel-' in case}
         actions[name] = {'scope': scope, 'mods': MODS, 'checks': checks}
     return {'fluid': {'status': 'ready', 'clients': 1, 'default_mods': MODS, 'scenario_actions': actions,
                       'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
@@ -53,13 +58,16 @@ def validate(selection):
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     return [*sorted((root / 'fluid').rglob('*.lua')), *sorted((root / 'craft/scripts').rglob('*.txt')),
-            root / 'health/shared/QueueHealthEvents.lua',
+            root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueScenarioChecks.lua',
             *sorted((root / 'startup').rglob('*.lua'))]
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     craft.stage_common(project, output, game, jdk, selection, locations, runtime)
+    for role in runtime['roles'].values():
+        shutil.copy2(Path(project) / 'tests/native_queue/support/QueueScenarioChecks.lua',
+                     Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua/shared')
 
 
 def complete(selection, role, text):
@@ -88,11 +96,11 @@ def _close(value, expected, tolerance=.0001):
 def _commands(case):
     menu = next((name for name in ('all', 'quarter', 'smart', 'sip') if name in case.split('-')), 'half')
     portion = {'half': .5, 'all': 1, 'quarter': .25, 'sip': .01}.get(menu)
-    targets = [0, 1] if '-pair-' in case else [1] if '-second-' in case else [0]
+    targets = [0, 1, 2] if '-cancel-' in case else [0, 0] if '-same-' in case else [0, 1] if '-pair-' in case else [1] if '-second-' in case else [0]
     return menu, portion, targets
 
 
-def _case(case, row, prep, receipt):
+def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
     issues = []
     bag, favorite = case.startswith('fluid-bag'), case.endswith('-favorite')
     full = '-full-' in case
@@ -100,40 +108,46 @@ def _case(case, row, prep, receipt):
     source = 'bag' if bag else 'root'
     initial_thirst = .04 if '-smart-low-' in case else .2 if '-smart-' in case else .8
     bottles = prep.get('bottles')
+    cancelling = '-cancel-' in case and mode == 'toolkit'
+    count = 3 if '-cancel-' in case else 2
     if (set(prep) != RECEIPT_KEYS | {'case', 'foodTimer'}
             or not craft._matches(prep, dict(case=case, bagType=BAG_TYPE, foodTimer=4000 if full else 0, foodLevel=food_level))
             or not _close(prep.get('thirst'), initial_thirst, .00001)
-            or type(bottles) is not list or len(bottles) != 2
+            or type(bottles) is not list or len(bottles) != count
             or any(type(bottle) is not dict or set(bottle) != {'id', 'amount', 'favorite', 'source', 'thirstChange'}
                    or not craft._matches(bottle, dict(source=source, favorite=favorite))
                    or not _close(bottle.get('amount'), 1) or not _number(bottle.get('thirstChange'))
                    or bottle['thirstChange'] >= 0 for bottle in bottles)
-            or not craft._ids([prep.get('bagId')] + [bottle.get('id') for bottle in bottles], 3)):
+            or not craft._ids([prep.get('bagId')] + [bottle.get('id') for bottle in bottles], count + 1)):
         return ['Fluid preparation identity/state differs: ' + case]
     final = receipt.get('bottles')
     if (set(receipt) != RECEIPT_KEYS | {'case'} or not craft._matches(receipt, dict(case=case, bagId=prep['bagId'], bagType=BAG_TYPE, foodLevel=food_level))
             or not craft._matches(row, {key: receipt.get(key) for key in RECEIPT_KEYS})
-            or type(final) is not list or len(final) != 2
+            or type(final) is not list or len(final) != count
             or any(type(bottle) is not dict or set(bottle) != {'id', 'amount', 'favorite', 'source', 'count'}
                    or not craft._matches(bottle, dict(id=original['id'], favorite=favorite, count=1))
                    or not _number(bottle.get('amount')) or bottle['amount'] < 0
                    for bottle, original in zip(final, bottles))):
         return ['Fluid authority/client identity or conservation differs: ' + case]
     thirst = receipt.get('thirst')
-    if not _number(thirst) or not 0 <= thirst < prep['thirst'] - .00001:
+    expected_thirst = max(0, prep['thirst'] + sum((original['amount'] - bottle['amount']) * original['thirstChange']
+                                                for original, bottle in zip(bottles, final)))
+    if not _number(thirst) or not 0 <= thirst < prep['thirst'] - .00001 or not _close(thirst, expected_thirst, .01):
         issues.append('Fluid thirst effect differs: ' + case)
     menu, portion, targets = _commands(case)
-    commands, portions = row.get('commands'), {}
-    if (not craft._matches(row, dict(status='passed', reason=None)) or type(commands) is not list
+    commands, amounts, tolerances = row.get('commands'), {}, {}
+    if (not craft._matches(row, dict(status='passed', reason=None, waitingCancelVerified=cancelling)) or type(commands) is not list
             or len(commands) != len(targets)):
         issues.append('Fluid native command count/status differs: ' + case)
     else:
         for position, (command, target) in enumerate(zip(commands, targets)):
-            if (type(command) is not dict or set(command) != {'id', 'menu', 'portion', 'nativeDuration', 'pickupObserved', 'drinkProgress', 'menuDispatched', 'dispatchThirst', 'foodLevel', 'queueEmptyBefore', 'previousDrinkPending', 'backpackWorn'}
+            cancelled = cancelling and position == 1
+            if (type(command) is not dict or set(command) != {'id', 'menu', 'portion', 'nativeDuration', 'pickupObserved', 'drinkProgress', 'menuDispatched', 'dispatchThirst', 'foodLevel', 'queueEmptyBefore', 'previousDrinkPending', 'backpackWorn', 'dispatchAmount', 'dispatchSource', 'cancelled'}
                     or not craft._matches(command, dict(id=bottles[target]['id'], menu=menu, nativeDuration=460,
-                                                        pickupObserved=bag, drinkProgress=True, menuDispatched=True, foodLevel=food_level,
+                                                        pickupObserved=bag and not cancelled, drinkProgress=not cancelled, menuDispatched=True, foodLevel=food_level,
+                                                        dispatchSource=source, cancelled=cancelled,
                                                         queueEmptyBefore=position == 0 or '-serial-' in case,
-                                                        previousDrinkPending=position > 0 and '-queued-' in case, backpackWorn=True))
+                                                        previousDrinkPending=position > 0 and '-serial-' not in case, backpackWorn=True))
                     or not _number(command.get('dispatchThirst')) or not 0 <= command['dispatchThirst'] <= 1):
                 issues.append('Fluid native target/menu/progress/duration differs: ' + case)
                 continue
@@ -146,19 +160,29 @@ def _case(case, row, prep, receipt):
             if not _close(command.get('portion'), expected_portion, .000001):
                 issues.append('Fluid menu-defined portion differs: ' + case)
                 continue
-            portions[target] = command['portion']
+            initial = amounts.get(target, bottles[target]['amount']) if '-serial-' in case else bottles[target]['amount']
+            tolerance = tolerances.get(target, .0001) if '-serial-' in case else .0001
+            if not _number(command.get('dispatchAmount')) or not max(0, initial - tolerance) <= command['dispatchAmount'] <= initial + .0001:
+                issues.append('Fluid dispatch volume differs: ' + case)
+                continue
+            if cancelled:
+                continue
+            # SP snapshots the ratio at enqueue; Host reconstructs the native action on the server.
+            base = amounts.get(target, command['dispatchAmount']) if kind == 'mp' and '-queued-' in case else command['dispatchAmount']
+            amounts[target] = base * (1 - command['portion'])
+            tolerances[target] = tolerances.get(target, 0) * (1 - command['portion']) + .01
     for index, (original, bottle) in enumerate(zip(bottles, final)):
-        if index not in targets:
+        if index not in targets or cancelling and index == 1:
             if not _close(bottle['amount'], original['amount']) or bottle.get('source') != source:
                 issues.append('Fluid unselected bottle changed: ' + case)
             continue
         if bottle.get('source') not in (('bag', 'root') if bag else ('root',)):
             issues.append('Fluid selected bottle endpoint differs: ' + case)
-        if index not in portions:
+        if index not in amounts:
             continue
-        expected_amount = max(0, original['amount'] * (1 - portions[index]))
+        expected_amount = max(0, amounts[index])
         # Native 100ms drinkFluid events can use progress >1 before complete; allow at most 10mL extra debit.
-        if not max(0, expected_amount - .01) <= bottle['amount'] <= expected_amount + .0001:
+        if not max(0, expected_amount - tolerances[index]) <= bottle['amount'] <= expected_amount + .0001:
             issues.append('Fluid bounded water debit/endpoint differs: ' + case)
     return issues
 
@@ -192,7 +216,7 @@ def verify(root, selection, catalog):
         row = next((row for row in results if row.get('id') == case), {})
         prep = next((value for marker, value in raw if marker == 'PREPARED' and value.get('case') == case), {})
         receipt = next((value for marker, value in raw if marker == 'VERIFIED' and value.get('case') == case), {})
-        case_issues = _case(case, row, prep, receipt)
+        case_issues = _case(case, row, prep, receipt, selection['kind'], selection['mode'])
         issues.extend(case_issues)
         prepared_bottles = prep.get('bottles')
         identities += [prep.get('bagId')] + ([bottle.get('id') if type(bottle) is dict else None
@@ -200,6 +224,8 @@ def verify(root, selection, catalog):
         outcome = {key: row.get(key) for key in RECEIPT_KEYS | {'commands'}}
         outcome.update(emptyStartVerified=not case_issues, effectsVerified=not case_issues, wornBagVerified=not case_issues,
                        independentRequestsQueued=not case_issues and case == 'fluid-bag-pair-queued-favorite',
+                       sameBottleRequestsVerified=not case_issues and '-same-' in case,
+                       waitingCancelVerified=not case_issues and '-cancel-' in case and selection['mode']=='toolkit',
                        serverAuthorityVerified=not case_issues and selection['kind'] == 'mp')
         outcomes.append(dict(actor='client1', case=case, outcome=outcome))
     if not craft._ids(identities):

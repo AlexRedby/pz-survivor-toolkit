@@ -36,22 +36,33 @@ class FluidAdapterTests(unittest.TestCase):
             elif '-quarter-' in case: menu, portion = 'quarter', .25
             elif '-smart-' in case: menu, portion = 'smart', thirst / .5
             elif '-sip-' in case: menu, portion = 'sip', .01
-            targets = [0, 1] if '-pair-' in case else [1] if '-second-' in case else [0]
+            targets = [0, 1, 2] if '-cancel-' in case else [0, 0] if '-same-' in case else [0, 1] if '-pair-' in case else [1] if '-second-' in case else [0]
+            cancelling = '-cancel-' in case and self.selection['mode'] == 'toolkit'
             prep = dict(case=case, bagId=base, bagType='Base.Bag_ALICEpack_Army', thirst=thirst,
                         foodTimer=4000 if full else 0, foodLevel=3 if full else 0,
                         bottles=[dict(id=base + n + 1, amount=1.0, favorite=favorite,
-                                      source='bag' if bag else 'root', thirstChange=-.5) for n in range(2)])
-            receipt = dict(case=case, bagId=base, bagType=prep['bagType'], thirst=max(0, thirst - .5 * portion * len(targets)), foodLevel=prep['foodLevel'],
-                           bottles=[dict(id=bottle['id'], amount=1.0 - portion if n in targets else 1.0,
+                                      source='bag' if bag else 'root', thirstChange=-.5) for n in range(3 if '-cancel-' in case else 2)])
+            amounts = [1.0] * len(prep['bottles'])
+            commands = []
+            for position, n in enumerate(targets):
+                cancelled = cancelling and position == 1
+                dispatch_amount = amounts[n] if '-serial-' in case else 1.0
+                commands.append(dict(id=prep['bottles'][n]['id'], menu=menu, portion=portion,
+                                     pickupObserved=bag and not cancelled, drinkProgress=not cancelled, nativeDuration=460, menuDispatched=True,
+                                     dispatchThirst=thirst, foodLevel=prep['foodLevel'], backpackWorn=True,
+                                     queueEmptyBefore=position == 0 or '-serial-' in case,
+                                     previousDrinkPending=position > 0 and '-serial-' not in case,
+                                     dispatchAmount=dispatch_amount, dispatchSource='bag' if bag else 'root', cancelled=cancelled))
+                if not cancelled:
+                    base_amount = amounts[n] if self.selection['kind'] == 'mp' and '-queued-' in case else dispatch_amount
+                    amounts[n] = base_amount * (1 - portion)
+            receipt = dict(case=case, bagId=base, bagType=prep['bagType'], thirst=max(0, thirst - .5 * sum(1 - amount for amount in amounts)), foodLevel=prep['foodLevel'],
+                           bottles=[dict(id=bottle['id'], amount=amounts[n],
                                          favorite=favorite, source=bottle['source'], count=1)
                                     for n, bottle in enumerate(prep['bottles'])])
             raw += [('PREPARED', prep), ('VERIFIED', receipt)]
-            commands = [dict(id=prep['bottles'][n]['id'], menu=menu, portion=portion,
-                             pickupObserved=bag, drinkProgress=True, nativeDuration=460, menuDispatched=True,
-                             dispatchThirst=thirst, foodLevel=prep['foodLevel'], backpackWorn=True,
-                             queueEmptyBefore=position == 0 or '-serial-' in case,
-                             previousDrinkPending=position > 0 and '-queued-' in case) for position, n in enumerate(targets)]
             rows.append(dict(event='case', id=case, status='passed', reason=None, commands=commands,
+                             waitingCancelVerified=cancelling,
                              **copy.deepcopy({key: value for key, value in receipt.items() if key != 'case'})))
         rows.append(dict(event='complete', cases=cases, expected=len(cases), performed=len(cases), failed=0, skipped=0))
         return ([dict(row, suite='fluid', kind=self.selection['kind'], mode=self.selection['mode'], actor='client1')
@@ -73,7 +84,7 @@ class FluidAdapterTests(unittest.TestCase):
         return self.evidence()
 
     def test_matrix_accepts_sp_host_native_and_toolkit(self):
-        self.assertEqual(14, len(fluid.CASES))
+        self.assertEqual(18, len(fluid.CASES))
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
                 self.selection.update(kind=kind, mode=mode)
@@ -96,7 +107,7 @@ class FluidAdapterTests(unittest.TestCase):
                 fluid.validate(dict(self.selection, **change))
         project = self.root / 'project'
         paths = ['fluid/client/UI.lua', 'fluid/shared/Fixture.lua', 'fluid/server/Server.lua',
-                 'craft/scripts/queue_craft.txt', 'health/shared/QueueHealthEvents.lua',
+                 'craft/scripts/queue_craft.txt', 'health/shared/QueueHealthEvents.lua', 'support/QueueScenarioChecks.lua',
                  'startup/client/ZZStartup.lua', 'startup/server/ZZStartupServer.lua']
         for name in paths + ['fluid/ignored.txt', 'craft/client/Old.lua']:
             path = project / 'tests/native_queue' / name
@@ -104,8 +115,13 @@ class FluidAdapterTests(unittest.TestCase):
             path.write_text('fixture')
         self.assertCountEqual([project / 'tests/native_queue' / name for name in paths], fluid.sources(project, self.selection))
         with patch.object(fluid.craft, 'stage_common') as common:
-            fluid.stage(project, self.root, 'game', 'jdk', self.selection, {}, {})
-            common.assert_called_once_with(project, self.root, 'game', 'jdk', self.selection, {}, {})
+            runtime = {'roles': {name: {'cache': self.root / name} for name in ('client1', 'server')}}
+            for role in runtime['roles'].values():
+                (role['cache'] / 'mods/ActionQueueTest/42/media/lua/shared').mkdir(parents=True)
+            fluid.stage(project, self.root, 'game', 'jdk', self.selection, {}, runtime)
+            common.assert_called_once_with(project, self.root, 'game', 'jdk', self.selection, {}, runtime)
+            for role in runtime['roles'].values():
+                self.assertEqual('fixture', (role['cache'] / 'mods/ActionQueueTest/42/media/lua/shared/QueueScenarioChecks.lua').read_text())
 
     def test_events_markers_context_and_counts_are_strict(self):
         for marker in ('', '[FLUID_TEST] COMPLETE_PENDING', '[FLUID_TEST] COMPLETE\n[FLUID_TEST] COMPLETE'):
@@ -253,6 +269,81 @@ class FluidAdapterTests(unittest.TestCase):
             with self.subTest(case=case, change='opposite-dispatch-kind'):
                 self.assertTrue(self.verify((rows, raw))['issues'])
 
+    def test_same_bottle_repetition_preserves_native_sp_host_fraction_semantics(self):
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for case in ('fluid-bag-same-serial-favorite', 'fluid-root-same-queued-favorite'):
+                rows, raw = self.single(case)
+                commands = rows[1]['commands']
+                self.assertEqual(commands[0]['id'], commands[1]['id'])
+                self.assertEqual(.5 if '-serial-' in case else 1, commands[1]['dispatchAmount'])
+                self.assertEqual(.5 if kind == 'sp' and '-queued-' in case else .25, raw[1][1]['bottles'][0]['amount'])
+                self.assertEqual([], self.verify((rows, raw))['issues'])
+                for fault in ('distinct-target', 'wrong-final-volume', 'wrong-dispatch-volume', 'missing-dispatch-source'):
+                    rows, raw = self.single(case)
+                    if fault == 'distinct-target': rows[1]['commands'][1]['id'] = raw[0][1]['bottles'][1]['id']
+                    elif fault == 'wrong-final-volume':
+                        rows[1]['bottles'][0]['amount'] = raw[1][1]['bottles'][0]['amount'] = .75
+                    elif fault == 'wrong-dispatch-volume': rows[1]['commands'][1]['dispatchAmount'] = .75
+                    else: del rows[1]['commands'][1]['dispatchSource']
+                    with self.subTest(kind=kind, case=case, fault=fault):
+                        self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_serial_dispatch_overshoot_cannot_hide_an_underconsumed_first_half(self):
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            rows, raw = self.single('fluid-bag-same-serial-favorite')
+            rows[1]['commands'][1]['dispatchAmount'] = .509
+            rows[1]['bottles'][0]['amount'] = raw[1][1]['bottles'][0]['amount'] = .2545
+            rows[1]['thirst'] = raw[1][1]['thirst'] = .8 - (1 - .2545) * .5
+            with self.subTest(kind=kind):
+                self.assertIn('Fluid dispatch volume differs: fluid-bag-same-serial-favorite',
+                              self.verify((rows, raw))['issues'])
+
+    def test_waiting_cancellation_requires_untouched_middle_and_retained_drinks(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode)
+                for case in ('fluid-root-cancel-waiting-favorite', 'fluid-bag-cancel-waiting-favorite'):
+                    rows, raw = self.single(case)
+                    cancelling = mode == 'toolkit'
+                    self.assertEqual([.5, 1 if cancelling else .5, .5], [bottle['amount'] for bottle in raw[1][1]['bottles']])
+                    self.assertIs(rows[1]['waitingCancelVerified'], cancelling)
+                    self.assertEqual([], self.verify((rows, raw))['issues'])
+                    for fault in ('flag', 'integer-flag', 'command-flag', 'middle-volume', 'middle-source', 'tail-progress', 'tail-target', 'missing-command'):
+                        rows, raw = self.single(case)
+                        if fault == 'flag': rows[1]['waitingCancelVerified'] = not cancelling
+                        elif fault == 'integer-flag': rows[1]['waitingCancelVerified'] = int(cancelling)
+                        elif fault == 'command-flag': rows[1]['commands'][1]['cancelled'] = not cancelling
+                        elif fault == 'middle-volume':
+                            rows[1]['bottles'][1]['amount'] = raw[1][1]['bottles'][1]['amount'] = .5 if cancelling else 1
+                        elif fault == 'middle-source':
+                            rows[1]['bottles'][1]['source'] = raw[1][1]['bottles'][1]['source'] = 'floor'
+                        elif fault == 'tail-progress': rows[1]['commands'][2]['drinkProgress'] = False
+                        elif fault == 'tail-target': rows[1]['commands'][2]['id'] = rows[1]['commands'][1]['id']
+                        else: rows[1]['commands'].pop(1)
+                        with self.subTest(kind=kind, mode=mode, case=case, fault=fault):
+                            self.assertTrue(self.verify((rows, raw))['issues'])
+                    if cancelling:
+                        for field in ('drinkProgress', 'pickupObserved'):
+                            rows, raw = self.single(case)
+                            rows[1]['commands'][1][field] = True
+                            with self.subTest(kind=kind, case=case, field=field):
+                                self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_dispatch_volume_source_and_cancelled_fields_are_strict(self):
+        for field, values in (('dispatchAmount', (True, float('nan'), .5)),
+                              ('dispatchSource', ('floor', 'root', None)),
+                              ('cancelled', (True, 0, None))):
+            rows, raw = self.single()
+            del rows[1]['commands'][0][field]
+            self.assertTrue(self.verify((rows, raw))['issues'])
+            for value in values:
+                rows, raw = self.single()
+                rows[1]['commands'][0][field] = value
+                with self.subTest(field=field, value=value):
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+
     def test_scenario_outcomes_are_derived_from_valid_raw_case_evidence(self):
         fields = ('emptyStartVerified', 'effectsVerified', 'wornBagVerified',
                   'independentRequestsQueued', 'serverAuthorityVerified')
@@ -269,6 +360,8 @@ class FluidAdapterTests(unittest.TestCase):
                     self.assertIs(outcome['independentRequestsQueued'],
                                   record['case'] == 'fluid-bag-pair-queued-favorite')
                     self.assertIs(outcome['serverAuthorityVerified'], kind == 'mp')
+                    self.assertIs(outcome['sameBottleRequestsVerified'], '-same-' in record['case'])
+                    self.assertIs(outcome['waitingCancelVerified'], '-cancel-' in record['case'])
             for fault in ('historic-command', 'busy-start', 'wrong-volume', 'client-only-authority'):
                 rows, raw = self.single('fluid-bag-pair-queued-favorite')
                 rows[1].update({field: True for field in fields})

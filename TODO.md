@@ -52,6 +52,8 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Shared game sessions and build regression
 
+- [ ] Complete the prepared fluid gate before releasing the waiting-drink contract: run the five selected repeat-independent/repeat-same/cancel-waiting cases in full-pack SP/Host with the queue enabled/disabled. Preserve vanilla portion semantics; confirm exact same-bottle effects, whole-operation cancellation with first/tail preserved, bag returns and independent reorder protection. Local policy, receipt mutation and Java fluid checks pass; live launch is blocked by disk capacity (SP requires at least 2.30 GiB, Host more). Native controls must not claim Toolkit cancellation coverage.
+
 - [ ] Extend the common scenario contracts beyond equipment and fluid drinking. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
 
 - [ ] Recheck affected source-pinned queue integrations against the updated Workshop sources. Start with Project Cook’s changed EvoPanel, including new base-item return/retry paths. Compare the explicitly locked working baseline with current callbacks and run the affected SP/Host cases with queue-disabled controls; source changes must not silently inherit old permissions or old test results.

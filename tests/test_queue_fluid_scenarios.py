@@ -40,8 +40,11 @@ class FluidScenarioTests(unittest.TestCase):
             self.assertEqual(sorted(fluid.MODS), mods)
             self.assertEqual(['fluid-bag-pair-queued-favorite'],
                              scenarios.select(self.suite, 'repeat-independent', 'drink-portions', 'mp', mode)[0])
-        for action, scenario in [('drink-portions', 'repeat-same'), ('drink-portions', 'cancel-waiting'),
-                                 ('drink-smart', 'repeat-independent'), ('drink-sip', 'physical-input')]:
+            self.assertEqual(['fluid-bag-same-serial-favorite', 'fluid-root-same-queued-favorite'],
+                             scenarios.select(self.suite, 'repeat-same', 'drink-portions', 'mp', mode)[0])
+            self.assertEqual(['fluid-root-cancel-waiting-favorite', 'fluid-bag-cancel-waiting-favorite'],
+                             scenarios.select(self.suite, 'cancel-waiting', 'drink-portions', 'mp', mode)[0])
+        for action, scenario in [('drink-smart', 'repeat-independent'), ('drink-sip', 'physical-input')]:
             with self.subTest(action=action, scenario=scenario), self.assertRaisesRegex(ValueError, 'not implemented'):
                 scenarios.select(self.suite, scenario, action, 'mp', 'toolkit')
 
@@ -54,7 +57,9 @@ class FluidScenarioTests(unittest.TestCase):
                     self.assertEqual('passed' if kind == 'mp' else 'not-applicable',
                                      self.row(recorded, action=action, scenario='server-authority', kind=kind, mode=mode)['status'])
                 self.assertEqual('passed', self.row(recorded, scenario='repeat-independent', kind=kind, mode=mode)['status'])
-                self.assertEqual('unimplemented', self.row(recorded, scenario='repeat-same', kind=kind, mode=mode)['status'])
+                self.assertEqual('passed', self.row(recorded, scenario='repeat-same', kind=kind, mode=mode)['status'])
+                self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
+                                 self.row(recorded, scenario='cancel-waiting', kind=kind, mode=mode)['status'])
 
     def test_historical_and_partial_receipts_do_not_gain_new_coverage(self):
         recorded = self.recorded()
@@ -73,6 +78,28 @@ class FluidScenarioTests(unittest.TestCase):
         serial = copy.deepcopy(recorded)
         serial['coverage'] = [row for row in serial['coverage'] if row['case'] != 'fluid-bag-pair-queued-favorite']
         self.assertNotEqual('passed', self.row(serial, scenario='repeat-independent')['status'])
+
+    def test_repeated_and_cancelled_cases_require_their_own_verified_evidence(self):
+        recorded = self.recorded()
+        for scenario, field, missing_case in (
+                ('repeat-same', 'sameBottleRequestsVerified', 'fluid-root-same-queued-favorite'),
+                ('cancel-waiting', 'waitingCancelVerified', 'fluid-bag-cancel-waiting-favorite')):
+            for fault in ('missing', 'integer', 'missing-case'):
+                bad = copy.deepcopy(recorded)
+                if fault == 'missing-case':
+                    bad['coverage'] = [row for row in bad['coverage'] if row['case'] != missing_case]
+                else:
+                    for row in bad['coverage']:
+                        if fault == 'missing': row['outcome'].pop(field)
+                        else: row['outcome'][field] = 1
+                with self.subTest(scenario=scenario, fault=fault):
+                    self.assertNotEqual('passed', self.row(bad, scenario=scenario)['status'])
+        for kind in ('sp', 'mp'):
+            native = self.recorded(kind, 'native')
+            for row in native['coverage']:
+                row['outcome']['waitingCancelVerified'] = True
+            self.assertEqual('not-applicable', self.row(native, scenario='cancel-waiting', kind=kind, mode='native')['status'],
+                             'disabled queue controls cannot claim Toolkit cancellation coverage')
 
 
 if __name__ == '__main__':

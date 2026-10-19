@@ -4,6 +4,7 @@ f.native('shared/Fluids/ISFluidContainer.lua')
 f.native('shared/Fluids/ISFluidTransferAction.lua')
 f.native('shared/Fluids/ISFluidEmptyAction.lua')
 f.native('shared/TimedActions/ISTransferAction.lua')
+f.native('shared/TimedActions/ISDrinkFluidAction.lua')
 isClient=function()return false end
 f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
 local policy=f.project('ActionQueuePolicy')
@@ -643,3 +644,48 @@ assert(not policy.moveReason(q,extra,fill))
 bagInventory.load,bagInventory.capacity=nil,nil
 print('Container policy: ancestor identities/cycles/capacity, proposed order, released-space cancellation and changed/missing/MP inputs passed.')
 instanceof=baseInstanceof
+
+do
+    f.project('ActionQueueLabels')
+    local api=f.project('ActionQueue')
+    local function drink()
+        local item,fluid=f.item('Base.WaterBottle'),{class='FluidContainer'}
+        item.getFluidContainer=function()return fluid end
+        return f.action(ISDrinkFluidAction,{item=item,fluidContainer=fluid})
+    end
+    local first,waiting,tail=drink(),drink(),drink()
+    local queue=f.queue(first,waiting,tail)
+    local contract,source=policy.inspect(waiting)
+    assert(source=='native.ISDrinkFluidAction' and contract.items[waiting.item:getID()]
+        and contract.cancelWaiting and contract.interrupt=='finish-step' and not policy.stoppable(waiting),
+        'native drinking supports waiting cancellation without stopping partial effects')
+    assert(api.cancelOperation(queue,waiting) and #queue.queue==2 and queue.queue[1]==first and queue.queue[2]==tail,
+        'cancel an independent waiting drink without removing either unrelated drink')
+    assert(waiting.toolkitQueueOperation.toolkitCancelled and not first.toolkitQueueOperation.toolkitCancelled
+        and not tail.toolkitQueueOperation.toolkitCancelled,'drink cancellation invalidates only its own operation')
+    waiting=drink()
+    queue=f.queue(first,waiting,tail)
+    local independent=tail.item
+    tail.item=drink().item;tail.item.id=waiting.item:getID()
+    local independentFluid=tail.fluidContainer;tail.fluidContainer=tail.item:getFluidContainer()
+    assert(policy.cancelOperationReason(queue,waiting)=='operation_shared_item' and not api.cancelOperation(queue,waiting)
+        and #queue.queue==3,'replicated references to the same bottle protect waiting cancellation')
+    tail.item=independent
+    tail.fluidContainer=independentFluid
+    for _,fluid in ipairs({false,tail.fluidContainer}) do
+        waiting.fluidContainer=fluid or nil
+        assert(not policy.inspect(waiting) and policy.cancelOperationReason(queue,waiting)=='operation_dependent',
+            'missing or unrelated fluid containers cannot claim the bottle resource contract')
+    end
+    waiting.fluidContainer=waiting.item:getFluidContainer()
+    for _,method in ipairs({'updateEat','start','isValidStart','animEvent','onCompleteFunc'}) do
+        waiting[method]=function()error('policy must never invoke drink callbacks')end
+        assert(not policy.inspect(waiting) and policy.cancelOperationReason(queue,waiting)=='operation_dependent'
+            and not api.cancelOperation(queue,waiting) and #queue.queue==3,'changed drink '..method..' must fail closed')
+        waiting[method]=nil
+    end
+    queue=f.queue(waiting,tail)
+    assert(policy.cancelOperationReason(queue,waiting)=='operation_active' and not api.cancelOperation(queue,waiting)
+        and #queue.queue==2,'active drinking remains protected because its effects can be partial')
+    print('Drink policy: independent waiting cancellation, stable bottle IDs, changed callbacks and active protection passed.')
+end

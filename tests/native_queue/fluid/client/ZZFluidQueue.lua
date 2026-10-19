@@ -3,6 +3,9 @@ require 'TimedActions/ISDrinkFluidAction'
 require 'TimedActions/ISWearClothing'
 require 'TimedActions/ISUnequipAction'
 local Fixture=require 'QueueFluidFixture'
+local Checks=require 'QueueScenarioChecks'
+local Queue=require 'PZSurvivorToolkit/ActionQueue'
+local Policy=require 'PZSurvivorToolkit/ActionQueuePolicy'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local started,done=false,false
@@ -10,6 +13,7 @@ local step,failed,phase,since,idle=1,0,'prepare',0,0
 local ids,state,authorityState,receipt,spec
 local previousAuthority,previousBag,lastCurrent
 local commands,observations={},{}
+local waitingCancelVerified=false
 local function case()return config.cases[step]end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function emit(row)
@@ -47,15 +51,19 @@ Events.OnGameStart.Add(function()
 end)
 local function enqueue(player,target)
  local bottle=assert(player:getInventory():getItemById(ids.bottles[target].id))
+ assert(bottle:getContainer()==state.bag:getItemContainer()or bottle:getContainer()==player:getInventory(),'unexpected dispatch container')
  local previous=observations[#observations]
  assert(PZSurvivorToolkit.Settings.actionQueue()==(config.mode=='toolkit'),'fluid queue switch differs')
  local command={queueEmptyBefore=#queue().queue==0 and not player:hasTimedActions(),
   previousDrinkPending=previous~=nil and queue():indexOf(previous.drink)~=-1,
   backpackWorn=player:getClothingItem_Back()==state.bag,
+  dispatchAmount=bottle:getFluidContainer():getAmount(),
+  dispatchSource=bottle:getContainer()==state.bag:getItemContainer()and 'bag'or 'root',cancelled=false,
   id=bottle:getID(),menu=spec.menu,pickupObserved=false,drinkProgress=false,menuDispatched=false,
   dispatchThirst=player:getStats():get(CharacterStat.THIRST),foodLevel=player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)}
- local observed={};local add=ISTimedActionQueue.add
+ local observed={actions={}};local add=ISTimedActionQueue.add
  ISTimedActionQueue.add=function(action)
+  observed.actions[#observed.actions+1]=action
   if action.Type=='ISInventoryTransferAction'and action.item:getID()==command.id
    and action.destContainer==player:getInventory()then assert(not observed.pickup,'duplicate bottle pickup');observed.pickup=action end
   if action.Type=='ISDrinkFluidAction'then
@@ -89,26 +97,40 @@ local function enqueue(player,target)
  end)
  ISTimedActionQueue.add=add
  assert(ok,problem);assert(observed.drink and observed.drink.item:getID()==command.id,'native drink action missing')
- assert((observed.pickup~=nil)==(ids.bottles[target].source=='bag'),'native pickup presence differs')
+ assert((observed.pickup~=nil)==(command.dispatchSource=='bag'),'native pickup presence differs')
  commands[#commands+1]=command;observations[#observations+1]=observed
  trace('dispatch',command)
+end
+local function cancelWaiting()
+ if not spec.cancel or config.mode~='toolkit'then return end
+ local removed,retained=observations[2].actions,{}
+ assert(queue().queue[1]~=observations[2].drink and not observations[2].drink:isStarted(),'cancel target already active')
+ for _,index in ipairs({1,3})do for _,action in ipairs(observations[index].actions)do retained[#retained+1]=action end end
+ Checks.waitingCancel(queue(),Queue,Policy,observations[2].drink,removed,retained)
+ commands[2].cancelled=true;waitingCancelVerified=true
+ trace('waiting-cancel',{id=commands[2].id,removed=#removed,retained=#retained})
 end
 local function finish()
  local reason
  for index,bottle in ipairs(receipt.bottles)do
-  local portion=0
+  local expected=ids.bottles[index].amount
+  local tolerance=0
   for _,command in ipairs(commands)do if command.id==bottle.id then
-   portion=command.portion
-   if not command.drinkProgress then reason='drink-not-started'end
-   if ids.bottles[index].source=='bag'and not command.pickupObserved then reason='pickup-not-observed'end
+   if command.cancelled then
+    if command.drinkProgress or command.pickupObserved then reason='cancelled-action-started'end
+   else
+    local base=config.kind=='mp'and not spec.serial and expected or command.dispatchAmount
+    expected=base*(1-command.portion);tolerance=tolerance*(1-command.portion)+.01
+    if not command.drinkProgress then reason='drink-not-started'end
+    if command.dispatchSource=='bag'and not command.pickupObserved then reason='pickup-not-observed'end
+   end
   end end
-  local expected=ids.bottles[index].amount*(1-portion)
-  if bottle.amount<math.max(0,expected-(portion>0 and .01 or .0001))or bottle.amount>expected+.0001 then
+  if bottle.amount<math.max(0,expected-tolerance)or bottle.amount>expected+.0001 then
    reason='portion-consumption-differs'
   end
  end
  if receipt.thirst>=ids.thirst-.00001 then reason='thirst-not-reduced'end
- local row={event='case',id=case(),status=reason and 'failed'or 'passed',reason=reason,commands=commands}
+ local row={event='case',id=case(),status=reason and 'failed'or 'passed',reason=reason,commands=commands,waitingCancelVerified=waitingCancelVerified}
  for key,value in pairs(receipt)do row[key]=value end
  emit(row);if reason then failed=failed+1 end
  step=step+1
@@ -118,7 +140,7 @@ local function finish()
  end
  previousAuthority=authorityState;previousBag=state.bag
  ids,state,authorityState,receipt,lastCurrent=nil,nil,nil,nil,nil
- commands,observations={},{}
+ commands,observations={},{};waitingCancelVerified=false
  ISTimedActionQueue.add(ISUnequipAction:new(getPlayer(),previousBag,50))
  phase='unequipped';since=getTimestampMs()
 end
@@ -146,7 +168,9 @@ Events.OnTick.Add(function()
    if idle<10 then return end
    assert(player:getClothingItem_Back()==state.bag,'fixture military backpack not on back')
    assert(player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)==ids.foodLevel,'fixture fullness differs')
-   enqueue(player,spec.targets[1]);if #spec.targets==2 and not spec.serial then enqueue(player,spec.targets[2])end
+   enqueue(player,spec.targets[1])
+   if not spec.serial then for index=2,#spec.targets do enqueue(player,spec.targets[index])end end
+   cancelWaiting()
    phase='running';since=getTimestampMs();return
   elseif phase=='running'then
    local current=queue().queue[1]

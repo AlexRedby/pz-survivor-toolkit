@@ -7,6 +7,7 @@ require "TimedActions/ISActivateGenerator"
 require "TimedActions/ISFixGenerator"
 require "TimedActions/ISTransferAction"
 require "TimedActions/ISEatFoodAction"
+require "TimedActions/ISDrinkFluidAction"
 require "TimedActions/ISWashClothing"
 require "TimedActions/ISWashYourself"
 require "TimedActions/ISDryMyself"
@@ -639,6 +640,10 @@ function Policy.skipUnavailableHygiene(queue)
 end
 
 function Policy.installContracts()
+    registerNative("ISDrinkFluidAction", function(action)
+        local result = itemResources(action)
+        if result and action.fluidContainer and action.fluidContainer == action.item:getFluidContainer() then return result end
+    end, {"updateEat"})
     registerNative("ISEatFoodAction", function(action)
         local Food = Toolkit.BulkFood
         if not Food or not Food.isEat(action) then return end

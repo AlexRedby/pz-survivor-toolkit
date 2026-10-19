@@ -5,7 +5,9 @@ function Fixture.scenario(case)
  return {menu=menu,source=case:match('^fluid%-root')and 'root'or 'bag',favorite=case:sub(-9)=='-favorite',
   foodTimer=case:find('-full-',1,true)and 4000 or 0,
   thirst=case:find('smart%-low')and .04 or menu=='smart'and .2 or .8,
-  targets=case:find('-pair-',1,true)and {1,2}or {case:find('-second-',1,true)and 2 or 1},
+  targets=case:find('-cancel-',1,true)and {1,2,3}or case:find('-same-',1,true)and {1,1}
+   or case:find('-pair-',1,true)and {1,2}or {case:find('-second-',1,true)and 2 or 1},
+  cancel=case:find('-cancel-',1,true)~=nil,
   serial=case:find('-serial-',1,true)~=nil}
 end
 local function count(container,id)
@@ -47,7 +49,7 @@ function Fixture.prepare(player,case,previous)
  local bag=assert(root:AddItem(Fixture.bagType))
  local source=spec.source=='bag'and bag:getItemContainer()or root
  local bottles,descriptors={},{}
- for index=1,2 do
+ for index=1,spec.cancel and 3 or 2 do
   local bottle=assert(source:AddItem('Base.WaterBottle'));bottle:setFavorite(spec.favorite)
   local fluid=assert(bottle:getFluidContainer());fluid:Empty();fluid:addFluid(Fluid.Water,1)
   bottles[index]=bottle

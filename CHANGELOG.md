@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.105
+
+- **Fixed:** Waiting native drinks from independent inventory bottles can be cancelled or reordered, including verified SaucedCarts wrappers. Clean-water backpack operations retain conservative capacity checks. Active drinking, shared bottles and unknown callbacks remain protected; vanilla portion calculations are unchanged.
+
 ### 0.1.104
 
 - **Changed:** Quartermaster is included in Toolkit with its storage designations, distribution, Manifest and crafting integration. Disable the separate Workshop mod when updating; existing assignments, options and presets keep their identifiers and formats.
