@@ -4,7 +4,7 @@ local enabled = true
 PZSurvivorToolkit = {Settings = {itemTags = function() return enabled end}}
 Events = {OnGameBoot = {Add = function() end}}
 isClient, isServer = function() return false end, function() return false end
-getFileReader = function() return nil end
+getFileReader = function() return {readLine = function() end, close = function() end} end
 local function list(values)
     return {size = function() return #values end, get = function(_, index) return values[index + 1] end}
 end
@@ -54,7 +54,7 @@ local recipe = {
 }
 ScriptManager = {instance = {getCraftRecipe = function(_, name) assert(name == 'Base.OpenPacketOfSeeds'); return recipe end}}
 Rules.installClient()
-Rules.localPresets = {}
+local presetRules = require('PZSurvivorToolkit/QuartermasterPresets').rules()
 local seedRule = {mode = 'all', include = {'seed'}, exclude = {}}
 local function box(rule, manual, named, links, presets)
     local cats = manual or {}
@@ -107,18 +107,18 @@ destinations = checkPlan({sunflower, candy, full, empty}, {additive})
 assert(destinations[candy] == additive and destinations[full] == additive and not destinations[empty],
     'rule exclusions stripped additive manual categories or widened unrelated seed categories')
 local presets = {Seeds = {gen = 7, cats = {}, items = {}}}
-Rules.localPresets.Seeds = {gen = 7, rule = seedRule}
+presetRules.Seeds = {gen = 7, rule = seedRule}
 local presetBox = box(nil, {}, {}, {Seeds = 7}, presets)
 destinations = checkPlan({sunflower, candy, potato, empty}, {presetBox})
 assert(destinations[sunflower] == presetBox and destinations[potato] == presetBox
     and not destinations[candy] and not destinations[empty], 'preset tag-only rule lost actual item semantics')
 local stalePreset = box(nil, {}, {}, {Seeds = 6}, presets)
 destinations = checkPlan({sunflower}, {stalePreset}); assert(not destinations[sunflower], 'stale preset link routed an item')
-Rules.localPresets.Seeds.gen = 8
+presetRules.Seeds.gen = 8
 local staleRule = box(nil, {}, {}, {Seeds = 7}, presets)
 destinations = checkPlan({sunflower}, {staleRule})
 assert(not destinations[sunflower], 'remade sidecar preset inherited an old native generation')
-Rules.localPresets.Seeds.gen = 7
+presetRules.Seeds.gen = 7
 local combined = box({mode = 'all', include = {'food'}, exclude = {'seed'}}, {}, {}, {Seeds = 7}, presets)
 destinations = checkPlan({sunflower, candy, full, empty}, {combined})
 assert(destinations[sunflower] == combined and destinations[candy] == combined and destinations[full] == combined

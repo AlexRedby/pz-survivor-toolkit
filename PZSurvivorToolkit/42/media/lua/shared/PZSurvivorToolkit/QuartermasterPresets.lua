@@ -53,62 +53,54 @@ local function copy(value)
     return result
 end
 
-function Presets.install(Rules)
-    local owner = LootSorter
-    if owner.pzstPresetStorage then return owner.pzstPresetStorage end
+local native, rules, snapshot
+
+local function singlePlayer()
     if isClient() or isServer() then error("Quartermaster file storage is single-player only") end
-    local state, snapshot, staging = {}, nil, false
-    local function load()
-        local candidate = Storage.load()
-        local presets = candidate.nativeVersion == 1 and copy(candidate.native)
-            or translate(candidate.native, owner.getDisplayNameForFullType)
-        local rules = decodeRules(candidate.rules)
-        owner._presets, Rules.localPresets, snapshot = presets, rules, candidate
-        return presets
+end
+
+function Presets.load()
+    singlePlayer()
+    local candidate = Storage.load()
+    local loaded = candidate.nativeVersion == 1 and copy(candidate.native)
+        or translate(candidate.native, LootSorter.getDisplayNameForFullType)
+    local loadedRules = decodeRules(candidate.rules)
+    native, rules, snapshot = loaded, loadedRules, candidate
+    return native
+end
+
+local function ensure()
+    singlePlayer()
+    if not snapshot then Presets.load() end
+end
+
+function Presets.native()
+    ensure()
+    return native
+end
+
+function Presets.rules()
+    ensure()
+    return rules
+end
+
+function Presets.transaction(fn)
+    ensure()
+    local draftNative, draftRules = copy(native), copy(rules)
+    local verdict, detail = fn(draftNative, draftRules)
+    if verdict ~= "ok" then return verdict, detail end
+    local ok, candidate = pcall(function()
+        LootSorter.getItemNames()
+        local records = translate(draftNative, function(item) return LootSorter.getItemFullType(item) or item end)
+        return Storage.save(snapshot, records, encodeRules(draftRules))
+    end)
+    if not ok then
+        -- A complete new slot may exist despite an I/O error; rescan before any later use.
+        native, rules, snapshot = nil, nil, nil
+        error(candidate)
     end
-    local function ensure()
-        if not snapshot or not owner._presets or not Rules.localPresets then load() end
-    end
-    local function save(presets, rules)
-        local ok, candidate = pcall(function()
-            owner.getItemNames()
-            local records = translate(presets, function(item) return owner.getItemFullType(item) or item end)
-            return Storage.save(snapshot, records, encodeRules(rules))
-        end)
-        if not ok then
-            -- A complete new slot may exist despite an I/O error; rescan before any later write.
-            owner._presets, Rules.localPresets, snapshot = nil, nil, nil
-            error(candidate)
-        end
-        owner._presets, Rules.localPresets, snapshot = presets, rules, candidate
-    end
-    function state.rules()
-        ensure()
-        return Rules.localPresets
-    end
-    function state.save()
-        if staging then return end
-        ensure()
-        save(owner._presets, Rules.localPresets)
-    end
-    function state.transaction(fn)
-        ensure()
-        local previous, oldRules = owner._presets, Rules.localPresets
-        owner._presets, Rules.localPresets = copy(previous), copy(oldRules)
-        staging = true
-        local ok, verdict, detail = pcall(fn)
-        staging = false
-        local presets, rules = owner._presets, Rules.localPresets
-        owner._presets, Rules.localPresets = previous, oldRules
-        if not ok then error(verdict) end
-        if verdict == "ok" then save(presets, rules) end
-        return verdict, detail
-    end
-    owner.loadPresets = load
-    owner.savePresets = state.save
-    owner._presets, Rules.localPresets = nil, nil
-    owner.pzstPresetStorage = state
-    return state
+    native, rules, snapshot = draftNative, draftRules, candidate
+    return verdict, detail
 end
 
 return Presets

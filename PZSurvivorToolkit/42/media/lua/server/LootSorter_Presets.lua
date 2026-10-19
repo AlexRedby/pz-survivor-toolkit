@@ -8,6 +8,9 @@
 -- has to exist on a client, which only sends the command rather than running it.
 LootSorter = LootSorter or {}
 
+local Tags = require "PZSurvivorToolkit/ItemTags"
+local Rules = require "PZSurvivorToolkit/QuartermasterTagRules"
+local Presets = require "PZSurvivorToolkit/QuartermasterPresets"
 local MOD_DATA_KEY = "LootSorter_Presets"
 
 local function worldStore()
@@ -20,15 +23,22 @@ local function transmit()
     pcall(function() ModData.transmit(MOD_DATA_KEY) end)
 end
 
--- Transport is shared but the STORE is not: a server owns the world's copy in global ModData,
--- single-player owns the player's file. Writing the wrong one loses the change silently.
-local function ownedPresets()
-    if isServer() then return worldStore().presets end
-    return LootSorter.getPresetStore()
+local function worldRules()
+    local store = ModData.getOrCreate(Rules.STORE)
+    store.presets = store.presets or {}
+    return store.presets
 end
 
-local function persist()
-    if isServer() then transmit() else LootSorter.savePresets() end
+-- Both selections and tag rules belong to this command. SP commits their drafts together;
+-- a Host retains the existing two world ModData stores and their wire formats.
+local function mutate(fn)
+    if not isServer() then return Presets.transaction(fn) end
+    local verdict, detail, nativeChanged, rulesChanged = fn(worldStore().presets, worldRules())
+    if verdict == "ok" then
+        if nativeChanged then transmit() end
+        if rulesChanged then ModData.transmit(Rules.STORE) end
+    end
+    return verdict, detail
 end
 
 -- Only string -> true survives, so a malformed or hostile packet can't put arbitrary values in a
@@ -45,56 +55,75 @@ end
 -- The write is refused if either claim is wrong: expectExisting means someone deleted or created the
 -- name meanwhile, baseRev/baseGen mean someone else changed it while this editor was open.
 LootSorter.putPreset = LootSorter.serverFn("putPreset", function(player, args)
-    local name = args and args.name
-    if type(name) ~= "string" or name == "" then return "ok" end
-    local presets = ownedPresets()
-
-    local existing = presets[name]
-    local verdict = LootSorter.presetWriteVerdict(existing, args.expectExisting or false,
-        args.baseRev or 0, args.baseGen)
-    if verdict ~= "ok" then
-        LootSorter.DBG(("preset %s refused: %s"):format(name, verdict))
-        return verdict, { name = name, action = "save" }
+    local rule
+    if type(args) == "table" and args.pzstTagRule ~= nil then
+        local value = args.pzstTagRule
+        if value == false then value = nil end
+        rule = Tags.normalizeRule(value)
+        if not rule then return "invalid" end
     end
-    local exists = existing ~= nil
-    presets[name] = {
-        cats = cleanSet(args.cats),
-        items = cleanSet(args.items),
-        rev = (exists and (existing.rev or 0) or 0) + 1,
-        gen = (exists and existing.gen) or getTimestampMs(),
-        createdBy = (exists and existing.createdBy)
-            or (player and player:getUsername()) or nil,
-    }
-    persist()
-    LootSorter.DBG("preset saved: " .. name)
-    return "ok"
+    local name = type(args) == "table" and args.name
+    if type(name) ~= "string" or name == "" then return "ok" end
+    return mutate(function(presets, rules)
+        local existing = presets[name]
+        local verdict = LootSorter.presetWriteVerdict(existing, args.expectExisting or false,
+            args.baseRev or 0, args.baseGen)
+        if verdict ~= "ok" then
+            LootSorter.DBG(("preset %s refused: %s"):format(name, verdict))
+            return verdict, {name = name, action = "save"}
+        end
+        local exists = existing ~= nil
+        local preset = {
+            cats = cleanSet(args.cats),
+            items = cleanSet(args.items),
+            rev = (exists and (existing.rev or 0) or 0) + 1,
+            gen = (exists and existing.gen) or getTimestampMs(),
+            createdBy = (exists and existing.createdBy)
+                or (player and player:getUsername()) or nil,
+        }
+        presets[name] = preset
+        local rulesChanged = false
+        if rule then
+            rules[name] = Tags.ruleActive(rule) and {rule = rule, gen = preset.gen} or nil
+            rulesChanged = true
+        elseif rules[name] then
+            local entry = rules[name]
+            if type(entry) ~= "table" or tostring(entry.gen) ~= tostring(preset.gen)
+                or not entry.rule or not Tags.normalizeRule(entry.rule) then
+                rules[name] = nil
+                rulesChanged = true
+            end
+        end
+        LootSorter.DBG("preset saved: " .. name)
+        return "ok", nil, true, rulesChanged
+    end)
 end)
 
--- baseGen is the generation the user was looking at when they chose to delete, so a name that has
--- since been remade is refused rather than destroyed.
+-- baseGen identifies the preset shown to the editor, protecting a deleted/remade name.
 LootSorter.removePreset = LootSorter.serverFn("removePreset", function(player, args)
-    local name = args and args.name
+    local name = type(args) == "table" and args.name
     if type(name) ~= "string" or name == "" then return "ok" end
-    local presets = ownedPresets()
-    local verdict = LootSorter.presetDeleteVerdict(presets[name], args.baseGen)
-    if verdict == "gone" then return "ok" end           -- already the outcome they wanted
-    if verdict ~= "ok" then
-        LootSorter.DBG(("preset %s delete refused: %s"):format(name, verdict))
-        return verdict, { name = name, action = "delete" }
-    end
-    presets[name] = nil
-    persist()
-    LootSorter.DBG("preset removed: " .. name)
-    return "ok"
+    return mutate(function(presets, rules)
+        local verdict = LootSorter.presetDeleteVerdict(presets[name], args.baseGen)
+        if verdict ~= "ok" and verdict ~= "gone" then
+            LootSorter.DBG(("preset %s delete refused: %s"):format(name, verdict))
+            return verdict, {name = name, action = "delete"}
+        end
+        local rulesChanged = rules[name] ~= nil
+        presets[name], rules[name] = nil, nil
+        if verdict == "ok" then LootSorter.DBG("preset removed: " .. name) end
+        return "ok", nil, verdict == "ok", rulesChanged
+    end)
 end)
 
--- isServer, not isAuthority, to match ownedPresets/persist above: single-player's store is the file,
+-- isServer, not isAuthority, to match mutate above: single-player's store is the file,
 -- so creating the world table there would leave an empty one in the save and report a count of 0
 -- however many presets the file holds.
 if isServer() then
     -- Make sure the table exists (and so is saved with the world) before anyone writes a preset.
     LootSorter.addOrReplaceHandler(Events.OnInitGlobalModData, "_presetStoreInit", function()
         local store = worldStore()
+        worldRules()
         local count = 0
         for _ in pairs(store.presets) do count = count + 1 end
         LootSorter.DBG("preset store ready, " .. count .. " preset(s)")

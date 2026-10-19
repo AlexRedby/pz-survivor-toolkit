@@ -44,7 +44,7 @@ LootSorter.serverFn = function(name, callback)
     end
 end
 for _, path in ipairs({'shared/LootSorter_Util.lua', 'shared/LootSorter_Presets.lua',
-    'client/LootSorter_PresetSync.lua', 'client/LootSorter_Core.lua', 'server/LootSorter_Presets.lua'}) do
+    'server/LootSorter_Presets.lua'}) do
     dofile(NativeQuartermasterLuaRoot .. '/' .. path)
 end
 local label = 'Original label'
@@ -60,14 +60,12 @@ disk['PZSTQuartermasterTagRules.txt'] = Codec.encode({Pantry={cats={food=true},i
 local oldNative, oldRules = disk['QuartermasterPresets.txt'], disk['PZSTQuartermasterTagRules.txt']
 local Rules = require 'PZSurvivorToolkit/QuartermasterTagRules'
 dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/server/PZSurvivorToolkit/QuartermasterTagRuleAuthority.lua')
-Rules.installAuthority()
-assert(LootSorter.getPresetStore().Pantry.rev == 7, 'SP storage was not installed before the first native read')
+assert(Presets.native().Pantry.rev == 7, 'SP store required a client or game-start installer')
 assert(Rules.presetStore().Pantry.rule.include[1] == 'food')
-local function reload()
-    LootSorter.pzstPresetStorage = nil
-    Presets.install(Rules)
-    return LootSorter.getPresetStore()
+for _, path in ipairs({'client/LootSorter_PresetSync.lua', 'client/LootSorter_Core.lua'}) do
+    dofile(NativeQuartermasterLuaRoot .. '/' .. path)
 end
+local function reload() return Presets.load() end
 local function put(baseRev, rule)
     return LootSorter.putPreset({name='Pantry', cats={Food=true}, items={[label]=true},
         expectExisting=true, baseRev=baseRev, baseGen=41, pzstTagRule=rule})
@@ -86,12 +84,27 @@ assert(reload().Pantry.items[label] and not LootSorter.getPresetStore().Pantry.i
 assert(Rules.getPreset('Pantry', LootSorter.getPresetStore().Pantry).mode == 'any')
 local before, oldCache = writes, LootSorter.getPresetStore()
 assert(put(7, all) == 'stale' and writes == before and LootSorter.getPresetStore() == oldCache, 'native conflict wrote a snapshot')
+local oldRules = Presets.rules()
+assert(not pcall(Presets.transaction, function(native, rules)
+    native.Pantry.rev, rules.Pantry.gen = 999, 999
+    assert(Presets.native() == oldCache and Presets.rules() == oldRules, 'drafts leaked while callback ran')
+    error('callback failed')
+end))
+assert(Presets.native() == oldCache and Presets.rules() == oldRules and writes == before,
+    'callback error published drafts or wrote a snapshot')
+assert(Presets.transaction(function(native, rules)
+    native.Pantry.rev, rules.Pantry.gen = 999, 999
+    return 'stale', 'unchanged'
+end) == 'stale')
+assert(Presets.native() == oldCache and Presets.rules() == oldRules and writes == before,
+    'refused transaction published drafts or wrote a snapshot')
 short = true
-assert(not pcall(put, 8, all) and LootSorter._presets == nil and Rules.localPresets == nil, 'failed commit published staged caches')
+assert(not pcall(put, 8, all), 'failed commit was acknowledged')
+assert(oldCache.Pantry.rev == 8 and oldRules.Pantry.rule.mode == 'any', 'failed commit mutated committed tables')
 short = false
 assert(LootSorter.getPresetStore().Pantry.rev == 8 and Rules.getPreset('Pantry', LootSorter.getPresetStore().Pantry).mode == 'any')
 readback = true
-assert(not pcall(put, 8, all) and LootSorter._presets == nil and Rules.localPresets == nil, 'ambiguous commit retained stale caches')
+assert(not pcall(put, 8, all), 'ambiguous commit was acknowledged')
 readback, readFailure = false, nil
 assert(LootSorter.getPresetStore().Pantry.rev == 9 and Rules.getPreset('Pantry', LootSorter.getPresetStore().Pantry).mode == 'all', 'reload mixed old/new pair after readback failure')
 before = writes
@@ -102,7 +115,15 @@ before = writes
 server = true
 assert(LootSorter.serverFns.putPreset(player, {name='Server',cats={},items={},pzstTagRule=all}) == 'ok')
 assert(data.LootSorter_Presets.presets.Server and Rules.presetStore().Server and writes == before, 'MP authority accessed SP files')
+local serverPreset = data.LootSorter_Presets.presets.Server
+for _, malformed in ipairs({true, {gen=serverPreset.gen}, {gen=serverPreset.gen, rule={mode='invalid'}}}) do
+    Rules.presetStore().Server = malformed
+    assert(LootSorter.serverFns.putPreset(player, {name='Server', cats={}, items={},
+        expectExisting=true, baseRev=serverPreset.rev, baseGen=serverPreset.gen}) == 'ok')
+    assert(not Rules.presetStore().Server and writes == before, 'native edit retained a malformed rule sidecar')
+    serverPreset = data.LootSorter_Presets.presets.Server
+end
 client, server = true, false
 Rules.received = {Client={gen=1,rule=all}}
 assert(Rules.presetStore().Client and writes == before)
-print('Quartermaster preset transactions passed: actual native put/remove, one pair commit, fullType translation, generations/revisions/owner, conflicts, partial/ambiguous failure recovery and MP isolation.')
+print('Quartermaster preset transactions passed: direct owned put/remove, private drafts, one pair commit, fullType translation, generations/revisions/owner, conflicts, partial/ambiguous failure recovery and MP isolation.')

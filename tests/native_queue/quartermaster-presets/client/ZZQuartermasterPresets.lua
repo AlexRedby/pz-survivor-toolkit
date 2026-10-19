@@ -20,7 +20,7 @@ end
 local function check()
  assert(not isClient() and not isServer(), 'real SP required')
  PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ItemTags'):setValue(true)
- assert(Tags.enabled() and LootSorter.pzstTagRuleAuthority and LootSorter.toolkitTagPicker, 'missing adapters')
+ assert(Tags.enabled() and LootSorter.serverFns.putPreset and LootSorter.toolkitTagPicker, 'missing adapters')
  local categories = {}
  for _, category in ipairs(LootSorter.getCategories()) do categories[category] = true end
  for index, spec in ipairs(specs) do

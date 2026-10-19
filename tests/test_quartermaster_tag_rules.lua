@@ -64,18 +64,14 @@ LootSorter = {serverFns = {}, getCategories = function() return categories end,
     getDisplayNameForFullType = function(value) return value end,
     getItemFullType = function(value) return value end}
 local function presets() return LootSorter.getPresetStore() end
-LootSorter.serverFns.putPreset = function(_, args)
-    local store = presets()
-    local existing=store[args.name]
-    if existing and args.baseRev ~= existing.rev then return 'stale' end
-    store[args.name] = {cats=args.cats,items=args.items,gen=existing and existing.gen or clock,rev=(existing and existing.rev or 0)+1}
-    LootSorter.savePresets()
-    return 'ok'
-end
-LootSorter.serverFns.removePreset = function(_, args)
-    presets()[args.name] = nil
-    LootSorter.savePresets()
-    return 'ok'
+LootSorter.isAuthority = function() return not isClient() end
+LootSorter.serverFn = function(name, fn)
+    LootSorter.serverFns[name] = fn
+    return function(args, done)
+        local verdict, detail = fn(player, args)
+        if done then done(verdict, detail) end
+        return verdict, detail
+    end
 end
 dofile(root .. 'shared/LootSorter_Presets.lua')
 dofile(root .. 'shared/LootSorter_Util.lua')
@@ -87,9 +83,10 @@ dofile(root .. 'client/LootSorter_PresetSync.lua')
 dofile(root .. 'client/LootSorter_Core.lua')
 local originalRegistry, originalResolver, originalPlanner = LootSorter.getRegistry, LootSorter.resolveEffective, LootSorter.planTrips
 local Rules = require 'PZSurvivorToolkit/QuartermasterTagRules'
+dofile(root .. 'server/LootSorter_Presets.lua')
 dofile(root .. 'server/PZSurvivorToolkit/QuartermasterTagRuleAuthority.lua')
 dofile(root .. 'client/PZSurvivorToolkit/QuartermasterTagRuleClient.lua')
-Rules.installAuthority(); Rules.installClient()
+Rules.installClient()
 assert(LootSorter.getRegistry == originalRegistry and LootSorter.resolveEffective == originalResolver
     and LootSorter.planTrips == originalPlanner, 'tag rules replaced discovery or planner APIs')
 local function record(category, fullType)
@@ -192,17 +189,17 @@ assert(saved.generation > 0 and saved.native.Pantry.cats.Precise
     and saved.rules.Pantry.gen == saved.native.Pantry.gen and saved.rules.Pantry.cats.food,
     'native selection and linked tag rule did not commit in one snapshot')
 local legacyNative, legacyRules = disk['QuartermasterPresets.txt'], disk['PZSTQuartermasterTagRules.txt']
-LootSorter._presets, Rules.localPresets = nil, nil
+require('PZSurvivorToolkit/QuartermasterPresets').load()
 assert(Rules.getPreset('Pantry',presets().Pantry).exclude[1]=='perishable','SP rules did not survive snapshot roundtrip')
 local anyRule={mode='any',include={'food','electrical'},exclude={'perishable'}}
 assert(put(player,{name='Either',cats={},items={},pzstTagRule=anyRule})=='ok')
-LootSorter._presets, Rules.localPresets = nil, nil
+require('PZSurvivorToolkit/QuartermasterPresets').load()
 assert(Rules.getPreset('Either',presets().Either).mode=='any', 'SP any-rule mode was lost in snapshot')
 local either={cats={},rules=Rules.forBox(nil,0,{Either=presets().Either.gen},presets())}
 assert(Rules.matches(either,record('Food')) and Rules.matches(either,record('Electronics'))
     and not Rules.matches(either,record('foodPerishable')), 'saved any+excluded rule changed semantics')
 local rev=presets().Pantry.rev
-assert(put(player,{name='Pantry',baseRev=0,cats={},items={},pzstTagRule={mode='any',include={'electrical'},exclude={}}})=='stale')
+assert(put(player,{name='Pantry',expectExisting=true,baseRev=0,cats={},items={},pzstTagRule={mode='any',include={'electrical'},exclude={}}})=='stale')
 assert(presets().Pantry.rev==rev and Rules.getPreset('Pantry',presets().Pantry).include[1]=='food')
 local effective,items=LootSorter.resolveEffective({Manual=true},{ManualItem=true},{Pantry=presets().Pantry.gen},presets())
 local effectiveBox={cats=effective,rules=Rules.forBox(nil,0,{Pantry=presets().Pantry.gen},presets())}

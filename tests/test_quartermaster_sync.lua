@@ -66,10 +66,10 @@ for _, file in ipairs({'shared/LootSorter_Util.lua', 'shared/LootSorter_Presets.
 end
 local Rules = require 'PZSurvivorToolkit/QuartermasterTagRules'
 dofile(root .. 'client/PZSurvivorToolkit/QuartermasterTagRuleClient.lua')
+local synced, request = LootSorter.arePresetsSynced, LootSorter.requestPresets
 Rules.installClient()
-local installed = LootSorter.arePresetsSynced
-Rules.installClient()
-assert(LootSorter.arePresetsSynced == installed, 'readiness hook stacked')
+assert(LootSorter.arePresetsSynced == synced and LootSorter.requestPresets == request,
+    'tag client replaced owned preset synchronization')
 local rule = {mode = 'all', include = {'food'}, exclude = {}}
 local function begin()
     client, enabled, clock = true, true, clock + 10000
@@ -104,6 +104,10 @@ for _, nativeFirst in ipairs({true, false}) do
     -- The existing native gather retry must keep requesting both stores while either is missing.
     requests = {}
     waiting()
+    requests = {}
+    clock = clock + LootSorter.SYNC_RETRY_MS
+    fire('OnTick')
+    bothRequested()
     if nativeFirst then toolkit() else native() end
     local boxes, synced = LootSorter.gatherBoxes(player)
     assert(synced and #boxes == 1 and Rules.matches(boxes[1], {cat="Food", ref={getDisplayCategory=function() return "Food" end}}) and boxes[1].container == container,

@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.106
+
+- **Changed:** Quartermaster preset commands use owned storage directly, saving presets and tag rules together without replacing global functions or publishing temporary drafts. Existing saved formats, legacy import and multiplayer commands are preserved; the unused duplicate parser is removed.
+- **Fixed:** The multiplayer startup retry waits for both preset data and enabled tag rules, matching the sorting readiness check.
+
 ### 0.1.105
 
 - **Fixed:** Waiting native drinks from independent inventory bottles can be cancelled or reordered, including verified SaucedCarts wrappers. Clean-water backpack operations retain conservative capacity checks. Active drinking, shared bottles and unknown callbacks remain protected; vanilla portion calculations are unchanged.

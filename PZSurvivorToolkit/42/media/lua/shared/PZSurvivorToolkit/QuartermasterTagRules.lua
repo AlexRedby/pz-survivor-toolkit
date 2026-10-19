@@ -30,14 +30,7 @@ function Rules.presetStore()
         store.presets = store.presets or {}
         return store.presets
     end
-    if Rules.localPresets then return Rules.localPresets end
-    return require("PZSurvivorToolkit/QuartermasterPresets").install(Rules).rules()
-end
-
-function Rules.persistPresets()
-    if isServer() then ModData.transmit(STORE); return end
-    if isClient() then return end
-    return require("PZSurvivorToolkit/QuartermasterPresets").install(Rules).save()
+    return require("PZSurvivorToolkit/QuartermasterPresets").rules()
 end
 
 function Rules.getPreset(name, preset)
@@ -86,19 +79,6 @@ function Rules.installClient()
     if not LootSorter or LootSorter.pzstTagRuleClient or not LootSorter.getRegistry
         or not LootSorter.findDesignatedOnSquare then return end
     LootSorter.pzstTagRuleClient = true
-    if LootSorter.arePresetsSynced then
-        local synced = LootSorter.arePresetsSynced
-        LootSorter.arePresetsSynced = function(...)
-            return synced(...) and (not Tags.enabled() or Rules.presetsSynced())
-        end
-    end
-    if LootSorter.requestPresets then
-        local request = LootSorter.requestPresets
-        LootSorter.requestPresets = function(...)
-            if isClient() then ModData.request(STORE) end
-            return request(...)
-        end
-    end
     if LootSorter.copyDesignation then
         local copyDesignation, paste = LootSorter.copyDesignation, LootSorter.pasteDesignation
         LootSorter.copyDesignation = function(obj, ci)

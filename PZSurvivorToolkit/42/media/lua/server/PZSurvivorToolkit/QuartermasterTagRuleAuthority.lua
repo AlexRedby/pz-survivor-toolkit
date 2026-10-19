@@ -47,64 +47,8 @@ function Rules.applyBox(player, args)
     return "ok", revision + 1
 end
 
-function Rules.installAuthority()
-    if not LootSorter or LootSorter.pzstTagRuleAuthority or not LootSorter.serverFns
-        or not LootSorter.serverFns.putPreset then return end
-    LootSorter.pzstTagRuleAuthority = true
-    if isServer() then Rules.presetStore() end
-    if not isClient() and not isServer() then
-        require("PZSurvivorToolkit/QuartermasterPresets").install(Rules)
-    end
-    local function transaction(fn)
-        return function(player, args)
-            if not isClient() and not isServer() then
-                local storage = require("PZSurvivorToolkit/QuartermasterPresets").install(Rules)
-                return storage.transaction(function() return fn(player, args) end)
-            end
-            return fn(player, args)
-        end
-    end
-    local put, remove = LootSorter.serverFns.putPreset, LootSorter.serverFns.removePreset
-    LootSorter.serverFns.putPreset = transaction(function(player, args)
-        local rule
-        if type(args) == "table" and args.pzstTagRule ~= nil then
-            local value = args.pzstTagRule
-            if value == false then value = nil end
-            rule = Tags.normalizeRule(value)
-            if not rule then return "invalid" end
-        end
-        -- Load our sidecar before native put/remove can persist changes to the linked preset.
-        local store = Rules.presetStore()
-        local verdict, detail = put(player, args)
-        if verdict == "ok" and type(args) == "table" and type(args.name) == "string" then
-            local presets = isServer() and ModData.getOrCreate("LootSorter_Presets").presets
-                or LootSorter.getPresetStore()
-            local preset = presets and presets[args.name]
-            if preset and rule then
-                store[args.name] = Tags.ruleActive(rule) and {rule = rule, gen = preset.gen} or nil
-                Rules.persistPresets()
-            elseif store[args.name] and not Rules.getPreset(args.name, preset) then
-                store[args.name] = nil
-                Rules.persistPresets()
-            end
-        end
-        return verdict, detail
-    end)
-    LootSorter.serverFns.removePreset = transaction(function(player, args)
-        local store = Rules.presetStore()
-        local verdict, detail = remove(player, args)
-        if verdict == "ok" and args and store[args.name] then
-            store[args.name] = nil; Rules.persistPresets()
-        end
-        return verdict, detail
-    end)
-end
-
-Events.OnInitGlobalModData.Add(Rules.installAuthority)
-Events.OnGameStart.Add(Rules.installAuthority)
 Events.OnClientCommand.Add(function(module, command, player, args)
     if module ~= MODULE or command ~= "saveBox" or isClient() then return end
-    Rules.installAuthority()
     local verdict = "invalid"
     local ok, result, revision = pcall(Rules.applyBox, player, args)
     if ok then verdict = result end

@@ -3,77 +3,27 @@
 --   single-player -- a file under <Zomboid>/Lua/, so presets follow you into every world
 --   multiplayer   -- the server's per-world table, which arrives via OnReceiveGlobalModData; asking
 --                    for it (and retrying once) is why this file exists
--- Shape: presets = { [name] = { cats={..}, items={..} } }. The (de)serialization is pure and lives
--- in shared/LootSorter_Presets.lua; this file is just the engine I/O around it.
+-- SP presets and tag rules share QuartermasterPresets' paired storage. MP retains both
+-- existing ModData stores; neither can be used for tag routing until both have arrived.
 -- Trade-off: in MP presets no longer follow you between servers. Import-from-library is the fix.
 
 LootSorter = LootSorter or {}
+local Presets = require "PZSurvivorToolkit/QuartermasterPresets"
+local Rules = require "PZSurvivorToolkit/QuartermasterTagRules"
+local Tags = require "PZSurvivorToolkit/ItemTags"
 
-local PRESET_FILE = "QuartermasterPresets.txt"
 local MOD_DATA_KEY = "LootSorter_Presets"
-
-local function translateItems(presets, translate)
-    local out = {}
-    for name, preset in pairs(presets) do
-        local items = {}
-        for key in pairs(preset.items or {}) do
-            local mapped = translate(key)
-            if mapped then items[mapped] = true end
-        end
-        local cats = {}
-        for key, value in pairs(preset.cats or {}) do if value then cats[key] = true end end
-        out[name] = { cats = cats, items = items, gen = preset.gen, rev = preset.rev, createdBy = preset.createdBy }
-    end
-    return out
-end
-
-function LootSorter.loadPresets()
-    local presets = {}
-    pcall(function()
-        local reader = getFileReader(PRESET_FILE, false)   -- do not create; nil when the file is absent
-        if reader then
-            local buffer = {}
-            local line = reader:readLine()
-            while line ~= nil do buffer[#buffer + 1] = line; line = reader:readLine() end
-            reader:close()
-            local stored, version = LootSorter.presetDeserialize(table.concat(buffer, "\n"))
-            if version and version >= 2 then
-                presets = translateItems(stored, LootSorter.getDisplayNameForFullType)
-            else
-                presets = stored
-            end
-        end
-    end)
-    LootSorter._presets = presets
-    return presets
-end
-
-function LootSorter.savePresets()
-    if isClient() then return end          -- MP writes go to the server, not the local file
-    pcall(function()
-        LootSorter.getItemNames()
-        local forWrite = translateItems(LootSorter._presets or {}, function(displayName)
-            return LootSorter.getItemFullType(displayName) or displayName
-        end)
-        local writer = getFileWriter(PRESET_FILE, true, false)   -- create if missing, overwrite (no append)
-        if writer then
-            writer:write(LootSorter.presetSerialize(forWrite))
-            writer:close()
-        end
-    end)
-end
 
 -- On an MP client getOrCreate is permanently empty; the live table arrives via
 -- OnReceiveGlobalModData. In SP that event never fires and the file-backed table is the truth.
 function LootSorter.getPresetStore()
     if isClient() then return LootSorter._receivedPresets or {} end
-    if not LootSorter._presets then LootSorter.loadPresets() end
-    return LootSorter._presets
+    return Presets.native()
 end
 
 function LootSorter.arePresetsSynced()
-    if LootSorter._receivedPresets then return true end
-    return not isClient()
+    return not isClient() or (LootSorter._receivedPresets ~= nil
+        and (not Tags.enabled() or Rules.presetsSynced()))
 end
 
 LootSorter.addOrReplaceHandler(Events.OnReceiveGlobalModData, "_onReceivePresets",
@@ -88,7 +38,9 @@ LootSorter.addOrReplaceHandler(Events.OnReceiveGlobalModData, "_onReceivePresets
     end)
 
 function LootSorter.requestPresets()
-    pcall(function() if isClient() then ModData.request(MOD_DATA_KEY) end end)
+    if not isClient() then return end
+    ModData.request(Rules.STORE)
+    pcall(function() ModData.request(MOD_DATA_KEY) end)
 end
 
 LootSorter.removeHandler(Events.OnTick, "_presetRetryTick")
@@ -96,7 +48,7 @@ LootSorter.removeHandler(Events.OnTick, "_presetRetryTick")
 LootSorter.addOrReplaceHandler(Events.OnGameStart, "_onGameStartPresets", function()
     -- A store held over from a previous server would read as synced and authorise pruning against
     -- the wrong world. Drop it and wait for this server's copy.
-    LootSorter._receivedPresets = nil
+    LootSorter._receivedPresets, Rules.received = nil, nil
     LootSorter.requestPresets()
     -- one retry, in case the first request raced the connection
     local retryAt = getTimestampMs() + LootSorter.SYNC_RETRY_MS
@@ -105,7 +57,7 @@ LootSorter.addOrReplaceHandler(Events.OnGameStart, "_onGameStartPresets", functi
         if getTimestampMs() < retryAt then return end
         Events.OnTick.Remove(retryTick)
         if LootSorter._presetRetryTick == retryTick then LootSorter._presetRetryTick = nil end
-        if not LootSorter._receivedPresets then LootSorter.requestPresets() end
+        if not LootSorter.arePresetsSynced() then LootSorter.requestPresets() end
     end
     LootSorter.addOrReplaceHandler(Events.OnTick, "_presetRetryTick", retryTick)
 end)

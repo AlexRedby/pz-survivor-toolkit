@@ -73,35 +73,12 @@ assert(not pcall(Codec.encode, {A = {rev = math.huge}}), 'encoder accepted infin
 assert(not pcall(Codec.encode, {A = {gen = 0 / 0}}), 'encoder accepted NaN')
 assert(not pcall(Codec.encode, {[string.rep('x', 2000001)] = {}}), 'encoder exceeded text limit')
 
-if NativeQuartermasterLuaRoot then
-    LootSorter = {}
-    dofile(NativeQuartermasterLuaRoot .. '/shared/LootSorter_Presets.lua')
-    local nativeShape = {}
-    for key, preset in pairs(samples) do
-        -- Native Kahlua %q cannot represent literal backslashes reliably.
-        nativeShape[key:gsub('\\', '')] = {cats = preset.cats, items = preset.items, gen = preset.gen}
-    end
-    local nativeText = LootSorter.presetSerialize(nativeShape)
-    local strict, strictVersion = Codec.decode(nativeText)
-    local native, nativeVersion = LootSorter.presetDeserialize(nativeText)
-    equal(strict, native)
-    assert(strictVersion == nativeVersion and strictVersion == 2)
-    -- v1 emitted by the previous flat-map format uses the same quoted names and escapes.
-    local v1 = nativeText:gsub('^return { version = 2, presets = {', 'return {'):gsub('} }\n$', '}\n')
-    strict, strictVersion = Codec.decode(v1)
-    native, nativeVersion = LootSorter.presetDeserialize(v1)
-    equal(strict, native)
-    assert(strictVersion == 1 and nativeVersion == 1)
-    equal(LootSorter.presetDeserialize(Codec.encode(nativeShape)), nativeShape)
-    local literalSlash = {['\\ '] = {cats = {}, items = {}}}
-    equal(LootSorter.presetDeserialize(Codec.encode(literalSlash)), literalSlash)
-    if string.format('%q', '\\ ') == '"\\ "' then
-        rejects(LootSorter.presetSerialize(literalSlash))
-        assert(LootSorter.presetDeserialize(LootSorter.presetSerialize(literalSlash))[' '],
-            'native Kahlua backslash-loss control changed')
-    end
-    print('Quartermaster preset codec actual-upstream comparison passed.')
-else
-    print('SKIP Quartermaster preset codec actual-upstream comparison: source root not supplied.')
-end
+-- Fixed examples of the old Quartermaster flat-map and version-2 file layouts.
+-- Compatibility is with the saved bytes, not an otherwise unused second parser.
+local legacyBody = '["Pantry"] = { cats = { ["Food"]=true, }, items = { ["Base.TinCan"]=true, }, gen = 41 },'
+local legacyShape = {Pantry = {cats = {Food = true}, items = {["Base.TinCan"] = true}, gen = 41}}
+local flat, flatVersion = Codec.decode('return { ' .. legacyBody .. ' }')
+local wrapped, wrappedVersion = Codec.decode('return { version = 2, presets = { ' .. legacyBody .. ' } }')
+equal(flat, legacyShape); equal(wrapped, legacyShape)
+assert(flatVersion == 1 and wrappedVersion == 2)
 print('Quartermaster preset codec passed: strict v1/v2, EOF, shape, bounds, escapes and metadata.')

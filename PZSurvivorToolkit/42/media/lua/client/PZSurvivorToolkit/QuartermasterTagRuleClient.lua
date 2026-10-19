@@ -9,7 +9,6 @@ function Rules.saveBox(obj, ci, value, player, onDone, baseRevision)
     local args = {x = square:getX(), y = square:getY(), z = square:getZ(),
         object = obj:getObjectIndex(), ci = ci, rule = rule, baseRevision = baseRevision or Rules.getBoxRevision(obj, ci)}
     if not isClient() then
-        Rules.installAuthority()
         local ok, verdict, revision = pcall(Rules.applyBox, player, args)
         onDone(ok and verdict or "invalid", revision)
         return
@@ -60,9 +59,8 @@ Events.OnReceiveGlobalModData.Add(function(key, value)
     end
 end)
 Events.OnGameStart.Add(function()
-    pending, Rules.received = {}, nil
+    pending = {}
     Rules.installClient()
-    if isClient() and LootSorter and LootSorter.pzstTagRuleClient then ModData.request(Rules.STORE) end
 end)
 Events.OnCreatePlayer.Add(Rules.installClient)
 return Rules
