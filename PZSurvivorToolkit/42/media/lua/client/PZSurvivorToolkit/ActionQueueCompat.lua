@@ -945,7 +945,7 @@ function Compat.install()
         end
         TidyIntent.install(tidyActionUnchanged,function(menu,name)
             return stickSource and menu==ISInventoryPaneContextMenu and menu['_ocStick_'..name]==menu[name]
-                and quartermasterClosure(menu[name],'organizedCategories_itemStick.lua')
+                and Proof.closure(menu[name],'organizedCategories_itemStick.lua')
         end)
     end
 end

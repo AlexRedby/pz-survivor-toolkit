@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.111
+
+- **Fixed:** Grab and Grab One work when organizedCategories and Tidy Up Meister are loaded. The compatibility guard now uses the shared closure check instead of calling a removed helper before the pickup starts.
+
 ### 0.1.110
 
 - **Changed:** Quartermaster's owned editor and clipboard save complete container designations directly, without callback interception or temporarily replacing the clipboard. Native fields are published together after any tag-rule acceptance; existing save data and authorization are preserved.
