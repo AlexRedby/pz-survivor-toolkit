@@ -358,6 +358,16 @@ public final class Main {
                 @Patch.Return(readOnly=false) zombie.pathfind.PathFindBehavior2.BehaviorResult result) {
             if(Main.CART_SUPPORTED)
                 result=CartSteeringHooks.pathResult(Accessor.tryGet(path,"chr",(zombie.characters.IsoGameCharacter)null),result);
+            if(Main.CART_TRANSITION_SUPPORTED && Main.COMPLETION_SUPPORTED)
+                result=CartPickupApproach.result(Accessor.tryGet(path,"chr",(zombie.characters.IsoGameCharacter)null),path,result);
+        }
+    }
+
+    @Patch(className="zombie.characters.IsoGameCharacter", methodName="isDeferredMovementEnabled", warmUp=true)
+    public static class WoodenPickupRootMovement {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.characters.IsoGameCharacter actor,@Patch.Return(readOnly=false) boolean enabled) {
+            if(enabled && Main.CART_TRANSITION_SUPPORTED && Main.COMPLETION_SUPPORTED && CartPickupApproach.suppressDeferred(actor))enabled=false;
         }
     }
 

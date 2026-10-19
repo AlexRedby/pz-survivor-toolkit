@@ -174,10 +174,10 @@ local function prepare()
  assert(item:getWorldItem() and inventoryCount()==0,'Fixture ground placement failed')
  assert(SaucedCarts.markDropPersistent(item),'Fixture cart persistence marking failed');SaucedCarts.updateCartVisual(item,p,true)
  if cases[phase].nearStance then
-  -- A legal start inside the former .12-tile skip radius must still take the small approach step.
+  -- A lateral error inside native arrival tolerance must still align before pickup.
   local stance=assert(toolkitWoodCartStance(p,item:getWorldItem()),'Missing near-stance target')
   local heading=math.atan2(stance.faceY-p:getY(),stance.faceX-p:getX())
-  local nearX,nearY=stance.x+.09*math.cos(heading),stance.y+.09*math.sin(heading)
+  local nearX,nearY=stance.x+.03*math.sin(heading),stance.y-.03*math.cos(heading)
   p:setX(nearX);p:setY(nearY);p:setNextX(nearX);p:setNextY(nearY);p:setLastX(nearX);p:setLastY(nearY)
   p:ensureOnTile();p:setCurrentSquareFromPosition();p:setMovingSquareNow()
  end

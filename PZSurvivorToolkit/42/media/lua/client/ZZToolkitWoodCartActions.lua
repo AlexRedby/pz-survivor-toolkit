@@ -12,7 +12,7 @@ ISCartPickupAction.FromWorldItem = function(character, world)
     local stance
     if transitions.wooden(world:getItem()) then
         stance = toolkitWoodCartStance and toolkitWoodCartStance(character, world)
-        if not stance or character:DistToSquared(stance.x, stance.y) < .05 * .05 then return fromWorld(character, world) end
+        if not stance or character:DistToSquared(stance.x, stance.y) < .002 * .002 then return fromWorld(character, world) end
     else
         local square = world:getSquare()
         if character:getSquare():canReachTo(square) then return fromWorld(character, world) end

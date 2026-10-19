@@ -14,7 +14,7 @@ import zombie.inventory.InventoryItem;
 /** Read-only final render poses for native body/handle clearance measurements. */
 public final class ClearanceProbe {
     private static BufferedWriter output;
-    private static BufferedWriter worldOutput, tailOutput, lifecycleOutput, outlineOutput;
+    private static BufferedWriter worldOutput, tailOutput, lifecycleOutput, outlineOutput, approachOutput;
     private static final java.util.WeakHashMap<zombie.characters.CharacterTimedActions.LuaTimedActionNew,Long> actionIds=new java.util.WeakHashMap<>();
     private record StoppedCart(long actionId, InventoryItem item) {}
     private static final java.util.WeakHashMap<zombie.characters.IsoGameCharacter,StoppedCart> stoppedCarts=new java.util.WeakHashMap<>();
@@ -178,6 +178,7 @@ public final class ClearanceProbe {
         if(lifecycleOutput==null)return;
         long identity=actionIds.computeIfAbsent(action,key->++nextActionId);
         var actor=action.chr;
+        approach(actor,event,null);
         var player=actor instanceof zombie.characters.IsoPlayer value?value:null;
         var primary=actor==null?null:actor.getPrimaryHandItem();
         var secondary=actor==null?null:actor.getSecondaryHandItem();
@@ -217,6 +218,39 @@ public final class ClearanceProbe {
                 throw new IllegalStateException("Previous stopped cart still has no render receipt");
         }
     }
+    public static synchronized void approach(zombie.characters.IsoGameCharacter actor,String event,String result) throws Exception {
+        if(approachOutput==null || !(actor instanceof zombie.characters.IsoPlayer player) || !player.isLocalPlayer())return;
+        var actions=actor.getCharacterActions();
+        if(actions.isEmpty() || !(actions.get(0) instanceof zombie.characters.CharacterTimedActions.LuaTimedActionNew action))return;
+        String type=action.getMetaType();
+        if(!"ToolkitWoodCartPickup".equals(type) && !("ISWalkToTimedActionF".equals(type)
+            && action.getTable().rawget("toolkitWoodCartItem") instanceof InventoryItem item
+            && "SaucedWheelbarrow.WheelbarrowWood".equals(item.getFullType())))return;
+        var path=actor.getPathFindBehavior2();var deferred=actor.getDeferredMovement(new zombie.iso.Vector2());
+        approachOutput.write("{\"wallTimeMillis\":"+System.currentTimeMillis()+",\"event\":"+quoted(event)
+            +",\"result\":"+quoted(result)+",\"action\":"+quoted(type)+",\"started\":"+action.isStarted()
+            +",\"x\":"+actor.getX()+",\"y\":"+actor.getY()+",\"nextX\":"+actor.getNextX()+",\"nextY\":"+actor.getNextY()
+            +",\"targetX\":"+path.getTargetX()+",\"targetY\":"+path.getTargetY()
+            +",\"path\":"+(actor.getPath2()!=null)+",\"moving\":"+actor.isMoving()
+            +",\"deferredX\":"+deferred.x+",\"deferredY\":"+deferred.y+"}\n");
+        approachOutput.flush();
+    }
+    public static class ApproachPathCapture {
+        @Advice.OnMethodExit(suppress=Throwable.class)
+        public static void exit(@Advice.FieldValue("chr") zombie.characters.IsoGameCharacter actor,
+            @Advice.Return zombie.pathfind.PathFindBehavior2.BehaviorResult result) {
+            try{ClearanceProbe.approach(actor,"path-update",result.name());}
+            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] APPROACH ERROR "+error);}
+        }
+    }
+    public static class ApproachPositionCapture {
+        @Advice.OnMethodExit(suppress=Throwable.class)
+        public static void exit(@Advice.This zombie.iso.IsoMovingObject object) {
+            try{if(object instanceof zombie.characters.IsoGameCharacter actor)ClearanceProbe.approach(actor,"postupdate",null);}
+            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] APPROACH ERROR "+error);}
+        }
+    }
+
     public static class LifecycleCapture {
         @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
         public static void exit(@Advice.This zombie.characters.CharacterTimedActions.LuaTimedActionNew action,
@@ -259,14 +293,15 @@ public final class ClearanceProbe {
     }
 
     private static void closeOutputs() throws Exception {
-        var body=output;var world=worldOutput;var tails=tailOutput;var lifecycle=lifecycleOutput;var outlines=outlineOutput;
-        output=null;worldOutput=null;tailOutput=null;lifecycleOutput=null;outlineOutput=null;actionIds.clear();stoppedCarts.clear();nextActionId=0;
+        var body=output;var world=worldOutput;var tails=tailOutput;var lifecycle=lifecycleOutput;var outlines=outlineOutput;var approaches=approachOutput;
+        output=null;worldOutput=null;tailOutput=null;lifecycleOutput=null;outlineOutput=null;approachOutput=null;actionIds.clear();stoppedCarts.clear();nextActionId=0;
         Exception failure=null;
         try{if(body!=null)body.close();}catch(Exception error){failure=error;}
         try{if(world!=null)world.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
         try{if(tails!=null)tails.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
         try{if(lifecycle!=null)lifecycle.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
         try{if(outlines!=null)outlines.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
+        try{if(approaches!=null)approaches.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
         if(failure!=null)throw failure;
     }
 
@@ -281,24 +316,32 @@ public final class ClearanceProbe {
         Path tailFile=directory.resolve("action-tail-poses.jsonl");
         Path lifecycleFile=directory.resolve("action-lifecycle.jsonl");
         Path outlineFile=directory.resolve("cart-outlines.jsonl");
-        if(Files.exists(outlineFile) || Files.exists(file) || Files.exists(worldFile) || Files.exists(tailFile) || Files.exists(lifecycleFile))throw new IllegalStateException("Preserve existing clearance output first");
+        Path approachFile=directory.resolve("cart-approach.jsonl");
+        if(Files.exists(approachFile) || Files.exists(outlineFile) || Files.exists(file) || Files.exists(worldFile) || Files.exists(tailFile) || Files.exists(lifecycleFile))throw new IllegalStateException("Preserve existing clearance output first");
         try {
             output=Files.newBufferedWriter(file,java.nio.file.StandardOpenOption.CREATE_NEW);
             worldOutput=Files.newBufferedWriter(worldFile,java.nio.file.StandardOpenOption.CREATE_NEW);
             tailOutput=Files.newBufferedWriter(tailFile,java.nio.file.StandardOpenOption.CREATE_NEW);last=0;lastTail=0;
             lifecycleOutput=Files.newBufferedWriter(lifecycleFile,java.nio.file.StandardOpenOption.CREATE_NEW);
             outlineOutput=Files.newBufferedWriter(outlineFile,java.nio.file.StandardOpenOption.CREATE_NEW);
+            approachOutput=Files.newBufferedWriter(approachFile,java.nio.file.StandardOpenOption.CREATE_NEW);
             if(!installed){new AgentBuilder.Default().disableClassFormatChanges()
                 .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
                 .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
                 .type(named("net.alexredby.pztoolkitjavapatches.CartGrounding")
                     .or(named("zombie.core.skinnedmodel.model.ItemModelRenderer"))
                     .or(named("zombie.characters.CharacterTimedActions.LuaTimedActionNew"))
+                    .or(named("zombie.pathfind.PathFindBehavior2"))
+                    .or(named("zombie.iso.IsoMovingObject"))
                     .or(named("zombie.iso.objects.IsoWorldInventoryObject"))
                     .or(named("zombie.iso.fboRenderChunk.FBORenderObjectOutline$Drawer2"))
                     .or(named("zombie.iso.fboRenderChunk.FBORenderObjectOutline")))
                 .transform((b,d,l,m,p)->d.getName().equals("net.alexredby.pztoolkitjavapatches.CartGrounding")
                     ?b.visit(Advice.to(Capture.class).on(named("render")))
+                    :d.getName().equals("zombie.pathfind.PathFindBehavior2")
+                    ?b.visit(Advice.to(ApproachPathCapture.class).on(named("update").and(takesArguments(float.class))))
+                    :d.getName().equals("zombie.iso.IsoMovingObject")
+                    ?b.visit(Advice.to(ApproachPositionCapture.class).on(named("postupdate")))
                     :d.getName().equals("zombie.characters.CharacterTimedActions.LuaTimedActionNew")
                     ?b.visit(Advice.to(LifecycleCapture.class).on(takesArguments(0).and(namedOneOf("start","stop","perform","complete","interruptWaitToStart"))))
                     :d.getName().equals("zombie.iso.fboRenderChunk.FBORenderObjectOutline")
