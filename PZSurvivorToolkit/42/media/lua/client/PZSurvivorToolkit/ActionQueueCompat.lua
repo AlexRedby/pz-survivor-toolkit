@@ -32,6 +32,10 @@ local tidyFloorValid
 local repairedFloors = setmetatable({}, {__mode = "k"})
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform",
     "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceStop", "forceCancel"}
+local projectCookActionSources = {
+    {"client/Project_Cook/EvolvedRecipePanel/OverrideFoodRelatedAction.lua", 222676723},
+    {"shared/Project_Cook/PJCK_FrozenCooking.lua", 3756381974},
+}
 local sourceFiles = {
     Quartermaster = {
         {"client/LootSorter_CraftMenu.lua", 2721161845},
@@ -68,8 +72,8 @@ local sourceFiles = {
     Project_Cook = {
         {"client/Project_Cook/HandCraftPanel/PJCK_CraftActionPanel.lua", 253384307},
         {"client/Project_Cook/EvolvedRecipePanel/PJCK_EvoPanel.lua", 3224482149},
-        {"client/Project_Cook/EvolvedRecipePanel/OverrideFoodRelatedAction.lua", 222676723},
-        {"shared/Project_Cook/PJCK_FrozenCooking.lua", 3756381974},
+        projectCookActionSources[1],
+        projectCookActionSources[2],
         {"shared/Project_Cook/PJCK_EvolvedSpiceGuard.lua", 2430144672},
     },
     MPFastForward = {{"server/MPFastForward_ReadFix.lua", 598888215}},
@@ -810,6 +814,11 @@ function Compat.install()
     installManifestTransfers()
     if getActivatedMods and getActivatedMods():contains("SaucedCarts") and verified("SaucedCarts", sourceFiles.SaucedCartsTransfers) then
         ready.SaucedCartsTransfers = require("PZSurvivorToolkit/ActionQueueCarts").install()
+    end
+    -- Snapshot reviewed native modifiers even when an updated cooking UI disables its own adapter.
+    if getActivatedMods and getActivatedMods():contains("Project_Cook") and verified("Project_Cook", projectCookActionSources) then
+        pcall(require, "Project_Cook/PJCK_FrozenCooking")
+        pcall(require, "Project_Cook/EvolvedRecipePanel/OverrideFoodRelatedAction")
     end
     for _, owner in ipairs({
         {"Neat_Crafting", "NC_CraftActionPanel", "Neat_Crafting/NC_CraftActionPanel"},

@@ -1694,4 +1694,79 @@ if NativeQuartermasterLuaRoot then
     PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat=oldOperations,oldDefinitions,oldCompat
     ISTimedActionQueue.add,getActivatedMods,getModFileReader=oldAdd,oldMods,oldReader
 end
+do
+    -- A changed cooking panel must not delay reviewed recipe hooks past P4's class snapshot.
+    local previousRequire,previousReader,previousMods=require,getModFileReader,getActivatedMods
+    local previousPolicy=PZSurvivorToolkit.ActionQueuePolicy
+    local previousOperations,previousDefinitions,previousCompat=PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat
+    local previousAdd,previousAfter,previousToQueue=ISTimedActionQueue.add,ISTimedActionQueue.addAfter,ISTimedActionQueue.addToQueue
+    local previousRecipe,previousHandcraft,previousFrozen=ISAddItemInRecipe,ISHandcraftAction,PJCK_FrozenCooking
+    local previousPanel=PJCK_CraftActionPanel
+    local modulePaths={
+        ['Project_Cook/PJCK_FrozenCooking']='shared/Project_Cook/PJCK_FrozenCooking.lua',
+        ['Project_Cook/EvolvedRecipePanel/OverrideFoodRelatedAction']='client/Project_Cook/EvolvedRecipePanel/OverrideFoodRelatedAction.lua',
+    }
+    local panelPath='media/lua/client/Project_Cook/EvolvedRecipePanel/PJCK_EvoPanel.lua'
+    local function clone(class)
+        local result={};for name,value in pairs(class)do result[name]=value end
+        return setmetatable(result,getmetatable(class))
+    end
+    local function cookingHooks(changed)
+        ISAddItemInRecipe,ISHandcraftAction=clone(previousRecipe),clone(previousHandcraft)
+        PJCK_FrozenCooking,PJCK_CraftActionPanel=nil,nil
+        local loadedHooks,guard={}
+        local isolatedIntent={observeTransfers=function()end,install=function(valid)guard=valid end}
+        getActivatedMods=function()return {contains=function(_,id)return id=='Project_Cook'or id=='P4TidyUpMeister'end}end
+        getModFileReader=function(id,path,...)
+            local reader=previousReader(id,path,...)
+            if id=='Project_Cook'and(path==panelPath or path=='media/lua/'..tostring(changed))then
+                local readLine=reader.readLine;local first=true
+                reader.readLine=function(...)
+                    local line=readLine(...)
+                    if first then first=false;return line..' -- changed source'end
+                    return line
+                end
+            end
+            return reader
+        end
+        require=function(module)
+            if module=='PZSurvivorToolkit/ActionQueueTidyIntent'then return isolatedIntent end
+            local path=modulePaths[module]
+            if not path then return previousRequire(module)end
+            if loadedHooks[module]then return loadedHooks[module]end
+            local source=read(NativeWishlistWorkshopRoot..'/'..paths.Project_Cook..'/media/lua/'..path)
+            if path==changed then source=source..'\n-- changed source'end
+            local result=assert(loadstring(source,'@'..path))()
+            loadedHooks[module]=result or true;return result
+        end
+        PZSurvivorToolkit.ActionQueuePolicy={}
+        PZSurvivorToolkit.ActionQueueOperations={registerProducer=function()end}
+        PZSurvivorToolkit.ActionQueueDefinitions={registerBehavior=function()end}
+        local selected=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'))()
+        assert(not selected.isInstalled('Project_Cook')and PJCK_CraftActionPanel==nil,
+            'changed EvoPanel must not enable the cooking adapter')
+        assert(selected.isInstalled('P4TidyUpMeister'),'P4 source must remain installed')
+        assert(guard,'P4 class guard must be captured')
+        assert(guard(),'unrelated P4 class guard must start valid')
+        if changed then
+            assert(not selected.verifySources('Project_Cook',{{changed,changed:find('FrozenCooking',1,true)and 3756381974 or 222676723}}),
+                'changed recipe modifier source must remain unapproved')
+            for module,path in pairs(modulePaths)do if path==changed then assert(not loadedHooks[module],'unapproved modifier was eagerly loaded')end end
+        end
+        for module in pairs(modulePaths)do require(module)end
+        local equip=ISEquipWeaponAction:new(player,item(inventory,190),50,true,false)
+        if not changed then
+            assert(guard()and guard(equip),'reviewed recipe hooks must preserve unrelated P4 equipment intent')
+        else
+            assert(not guard(),'late unapproved recipe hook must still invalidate P4 class proof')
+        end
+    end
+    cookingHooks()
+    for _,path in pairs(modulePaths)do cookingHooks(path)end
+    require,getModFileReader,getActivatedMods=previousRequire,previousReader,previousMods
+    ISAddItemInRecipe,ISHandcraftAction,PJCK_FrozenCooking,PJCK_CraftActionPanel=previousRecipe,previousHandcraft,previousFrozen,previousPanel
+    PZSurvivorToolkit.ActionQueuePolicy=previousPolicy
+    PZSurvivorToolkit.ActionQueueOperations,PZSurvivorToolkit.ActionQueueDefinitions,PZSurvivorToolkit.ActionQueueCompat=previousOperations,previousDefinitions,previousCompat
+    ISTimedActionQueue.add,ISTimedActionQueue.addAfter,ISTimedActionQueue.addToQueue=previousAdd,previousAfter,previousToQueue
+end
 print('Selected mod chain actual-source checks passed.')

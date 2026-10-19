@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.102
+
+- **Fixed:** An updated Project Cook interface no longer prevents TidyUpMeister from preserving explicit equipment choices. Independently verified recipe modifiers load before compatibility snapshots; changed cooking interfaces and unknown modifiers remain protected.
+
 ### 0.1.101
 
 - **Fixed:** Queue transfer controls recognize Better Containers 42.21 and its new stale-vehicle helper. Modified helpers remain protected, and transfers into stale vehicle containers retain the upstream rejection.
