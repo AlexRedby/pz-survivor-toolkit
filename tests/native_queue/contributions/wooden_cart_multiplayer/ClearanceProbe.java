@@ -1,5 +1,11 @@
 import java.io.BufferedWriter;
 import java.lang.instrument.Instrumentation;
+import java.lang.reflect.Method;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import org.lwjgl.BufferUtils;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL15;
 import java.nio.file.*;
 import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.asm.Advice;
@@ -12,6 +18,12 @@ import zombie.core.skinnedmodel.model.*;
 public final class ClearanceProbe {
     private static BufferedWriter output;
     private static BufferedWriter solves;
+    private static Path directory;
+    private static boolean meshProof, phaseMeshProof, meshError;
+    private static double firstMeshPhase;
+    private static String firstMeshHash;
+    private static Method wheelPhase;
+    private static final String MESH_SHA="0f99448cda120bad9f324f38bdbf994f8788ab6731473533475fb6eaf3f4c948";
     private static final ThreadLocal<StringBuilder> solve = new ThreadLocal<>();
     private static long last;
     private static boolean installed;
@@ -60,6 +72,8 @@ public final class ClearanceProbe {
                     || !(body.modelInstance.model.tag instanceof SkinningData skin))continue;
                 var row=new StringBuilder(8192).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
                     .append(",\"id\":").append(((zombie.characters.IsoPlayer)slot.character).getOnlineID()).append(",\"local\":").append(((zombie.characters.IsoPlayer)slot.character).isLocalPlayer()).append(",\"enabled\":").append(net.alexredby.pztoolkitjavapatches.CartSteeringHooks.enabled((zombie.characters.IsoPlayer)slot.character)).append(",\"female\":").append(slot.character.isFemale())
+                    .append(",\"slotX\":").append(slot.x).append(",\"slotY\":").append(slot.y)
+                    .append(",\"slotZ\":").append(slot.z).append(",\"slotAngle\":").append(slot.animPlayerAngle)
                     .append(",\"primary\":").append(player.getPrimaryHandItem()==null?-1:player.getPrimaryHandItem().getID())
                     .append(",\"secondary\":").append(player.getSecondaryHandItem()==null?-1:player.getSecondaryHandItem().getID())
                     .append(",\"modelProbeVersion\":1,\"model\":").append(jsonString(actual))
@@ -82,6 +96,69 @@ public final class ClearanceProbe {
             }
         }
     }
+    /** Read the already drawn wooden VBO without changing it or leaving another GL binding active. */
+    public static synchronized void mesh(ModelSlotRenderData slot,ModelInstanceRenderData data,boolean rendered) {
+        if(output==null || meshError || phaseMeshProof || !rendered
+            || !(slot.character instanceof zombie.characters.IsoPlayer) || data==null
+            || data.modelInstance==null || data.modelInstance.modelScript==null
+            || !"WheelbarrowWood".equals(data.modelInstance.modelScript.getName()))return;
+        try {
+            if(wheelPhase==null) {
+                wheelPhase=Class.forName("net.alexredby.pztoolkitjavapatches.CartWheelSpin")
+                    .getDeclaredMethod("phase",ModelInstanceRenderData.class);
+                wheelPhase.setAccessible(true);
+            }
+            Double value=(Double)wheelPhase.invoke(null,data);
+            if(value==null || !Double.isFinite(value))throw new IllegalStateException("Missing native wooden wheel phase");
+            double phase=value;
+            if(meshProof && Math.abs(Math.IEEEremainder(phase-firstMeshPhase,Math.PI*2))<=.25)return;
+            var vb=data.modelInstance.model.mesh.vb;
+            var field=vb.getClass().getDeclaredField("handle");field.setAccessible(true);
+            var handle=(VertexBufferObject.Vbo)field.get(vb);
+            int old=GL11.glGetInteger(GL15.GL_ARRAY_BUFFER_BINDING);
+            byte[] raw;
+            int bytes;
+            try {
+                GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER,handle.vboId);
+                bytes=GL15.glGetBufferParameteri(GL15.GL_ARRAY_BUFFER,GL15.GL_BUFFER_SIZE);
+                if(bytes!=8116*32 || handle.numElements!=16914)
+                    throw new IllegalStateException("Unexpected native wooden VBO layout: "+bytes+" / "+handle.numElements);
+                var buffer=BufferUtils.createByteBuffer(bytes);
+                GL15.glGetBufferSubData(GL15.GL_ARRAY_BUFFER,0,buffer);
+                raw=new byte[bytes];buffer.get(raw);
+            } finally {GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER,old);}
+            String hash=HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw));
+            boolean matches=MESH_SHA.equals(hash);
+            if(!meshProof)Files.write(directory.resolve("WheelbarrowWood.bin"),raw,StandardOpenOption.CREATE_NEW);
+            var proof=new StringBuilder("{\n  \"wallTimeMillis\": ").append(System.currentTimeMillis())
+                .append(",\n  \"id\": ").append(((zombie.characters.IsoPlayer)slot.character).getOnlineID())
+                .append(",\n  \"local\": ").append(((zombie.characters.IsoPlayer)slot.character).isLocalPlayer())
+                .append(",\n  \"vboId\": ").append(handle.vboId).append(",\n  \"eboId\": ").append(handle.eboId)
+                .append(",\n  \"bytes\": ").append(bytes).append(",\n  \"indices\": ").append(handle.numElements)
+                .append(",\n  \"phase\": ").append(phase).append(",\n  \"proofAfterPhaseChanged\": ").append(meshProof)
+                .append(",\n  \"sha256\": ").append(jsonString(hash)).append(",\n  \"matchesOriginal\": ").append(matches);
+            if(meshProof)proof.append(",\n  \"initialPhase\": ").append(firstMeshPhase)
+                .append(",\n  \"initialSha256\": ").append(jsonString(firstMeshHash))
+                .append(",\n  \"matchesInitial\": ").append(firstMeshHash.equals(hash));
+            Files.writeString(directory.resolve(meshProof?"wood-wheel-mesh-phase-proof.json":"wood-wheel-mesh-proof.json"),
+                proof.append("\n}\n").toString(),StandardOpenOption.CREATE_NEW);
+            if(!matches || meshProof && !firstMeshHash.equals(hash))
+                throw new IllegalStateException("Native wooden wheel mesh changed: "+hash);
+            if(meshProof)phaseMeshProof=true;
+            else {meshProof=true;firstMeshPhase=phase;firstMeshHash=hash;}
+        } catch(Throwable error) {
+            meshError=true;System.err.println("[CLEARANCE_PROBE] MESH ERROR "+error);error.printStackTrace();
+            try {Files.writeString(directory.resolve("wood-wheel-mesh-error.json"),
+                "{\"error\":"+jsonString(error.toString())+"}\n",StandardOpenOption.CREATE_NEW);}
+            catch(Throwable failure){System.err.println("[CLEARANCE_PROBE] MESH ERROR OUTPUT "+failure);}
+        }
+    }
+    public static class Drawing {
+        @Advice.OnMethodExit(suppress=Throwable.class)
+        public static void exit(@Advice.Argument(1) ModelSlotRenderData slot,@Advice.Argument(2) ModelInstanceRenderData data,
+            @Advice.Return boolean rendered) {ClearanceProbe.mesh(slot,data,rendered);}
+    }
+
     public static void beginSolve(String method, ModelSlotRenderData slot) {
         if(solves==null || !(slot.character instanceof zombie.characters.IsoPlayer player)) return;
         var status=net.alexredby.pztoolkitjavapatches.CartTransition.status(player);
@@ -157,16 +234,21 @@ public final class ClearanceProbe {
         if(solves!=null){solves.close();solves=null;}
         if("stop".equals(args)){System.out.println("[CLEARANCE_PROBE] stopped");return;}
         if(args==null || args.isBlank() || !Path.of(args).isAbsolute())throw new IllegalArgumentException("Agent args: absolute output directory, or stop");
-        Path directory=Path.of(args);
+        directory=Path.of(args);
         if(!Files.isDirectory(directory))throw new IllegalArgumentException("Output directory must exist");
         Path file=directory.resolve("body-clearance.jsonl");
-        if(Files.exists(file))throw new IllegalStateException("Preserve existing clearance output first");
+        for(String name:new String[]{"body-clearance.jsonl","transition-solve.jsonl","WheelbarrowWood.bin",
+            "wood-wheel-mesh-proof.json","wood-wheel-mesh-phase-proof.json","wood-wheel-mesh-error.json"})
+            if(Files.exists(directory.resolve(name)))throw new IllegalStateException("Preserve existing clearance output first: "+name);
         output=Files.newBufferedWriter(file,java.nio.file.StandardOpenOption.CREATE_NEW);last=0;
         solves=Files.newBufferedWriter(directory.resolve("transition-solve.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);
+        meshProof=phaseMeshProof=meshError=false;firstMeshHash=null;firstMeshPhase=0;
         if(!installed){new AgentBuilder.Default().disableClassFormatChanges()
             .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
             .type(named("net.alexredby.pztoolkitjavapatches.CartGrounding"))
             .transform((b,d,l,m,p)->b.visit(Advice.to(Capture.class).on(named("render"))))
+            .type(named("net.alexredby.pztoolkitjavapatches.CartWheelSpin"))
+            .transform((b,d,l,m,p)->b.visit(Advice.to(Drawing.class).on(named("render"))))
             .type(named("net.alexredby.pztoolkitjavapatches.CartGrip"))
             .transform((b,d,l,m,p)->b
                 .visit(Advice.to(Solve.class).on(namedOneOf("transition","authoredTransition","movingRecovery")))

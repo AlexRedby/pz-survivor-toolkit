@@ -1,6 +1,9 @@
 local config=require 'QueueTestSelection'
 assert(config.disposable==true,'Cart MP requires fresh owned disposable profiles')
 local J=require 'CartMPJSON'
+local wallSide=config.options and config.options.cart_wall_exit
+local wallBank=wallSide and require 'CartMPWall'
+local wallDone,wallCleaned,originSince={},false,nil
 local players,ready,armed={}, {}, {}
 local epoch,last,origin,lastTraffic= nil,0,nil,0
 local actions=config.options and config.options.cart_actions
@@ -89,15 +92,26 @@ Events.OnClientCommand.Add(function(module,command,p,args)
   if command=='Ready' then
    if not players[user] then
     if not p:getCurrentSquare() then return end
-    if not origin then origin=require('CartMPPlacement')(p);print('[CART_MP] CART_PAD '..J.encode(origin)) end
+    if not origin then
+     if not originSince then originSince=getTimestampMs() end
+     origin=require('CartMPPlacement')(p)
+     if not origin then
+      assert(wallSide and getTimestampMs()-originSince<30000,'Native wall pad chunk readiness deadline')
+      return
+     end
+     print('[CART_MP] CART_PAD '..J.encode(origin))
+    end
     local state={x=origin.x+(user=='client2' and 2 or 0),y=origin.y+(user=='client2' and 3 or 0),z=origin.z,variant=variant,cartType=cartType,
      minX=origin.minX,minY=origin.minY,size=origin.size,margin=origin.margin,vegetationFree=origin.vegetationFree,bankVersion=origin.bankVersion,
      elevated=origin.elevated,floorSprite=origin.floorSprite}
+    if wallSide then
+     for _,key in ipairs({'wallSide','wallSprite','wallX','wallMinY','wallMaxY','ownedWalls','initialHeading'}) do state[key]=origin[key] end
+    end
     if user=='client1' then
      local cart=assert(p:getInventory():AddItem(cartType));state.cartId=cart:getID()
      local cargo=cart:getInventory():AddItem('Base.Log');cargo:setActualWeight(cart:getInventory():getEffectiveCapacity(p));cargo:setCustomWeight(true)
      cartSession={id=cart:getID(),cargoID=cargo:getID(),cargoWeight=cargo:getActualWeight(),x=state.x,y=state.y,z=state.z}
-     print('[CART_MP] CART_SPEC '..J.encode({variant=variant,cartType=cartType,id=cart:getID(),cargoCount=1,cargoID=cargo:getID(),cargoWeight=cargo:getActualWeight()}))
+     print('[CART_MP] CART_SPEC '..J.encode({variant=variant,cartType=cartType,id=cart:getID(),cargoCount=1,cargoID=cargo:getID(),cargoWeight=cargo:getActualWeight(),cargoType=cargo:getFullType(),capacity=cart:getInventory():getEffectiveCapacity(p)}))
      sendAddItemToContainer(p:getInventory(),cart)
     end
     if not origin.elevated then p:teleportTo(math.floor(state.x),math.floor(state.y),state.z) end
@@ -110,7 +124,8 @@ Events.OnClientCommand.Add(function(module,command,p,args)
    sendServerCommand(p,module,'Setup',ready[user])
   elseif command=='Armed' then
    if origin and origin.elevated and not armed[user] then
-    assert(type(args)=='table' and args.padFloors==961 and args.padVersion==3,'Client did not observe every native elevated floor')
+    assert(type(args)=='table' and args.padFloors==origin.size*origin.size and args.padVersion==origin.bankVersion and (not wallSide or args.padWalls==49),'Client did not observe every native elevated floor')
+    if wallSide then print('[CART_MP_WALL] ARMED '..J.encode({actor=user,wall=getTimestampMs(),floors=args.padFloors,walls=args.padWalls,bankVersion=args.padVersion})) end
     local target=ready[user]
     p:teleportTo(math.floor(target.x),math.floor(target.y),target.z)
    end
@@ -122,6 +137,14 @@ Events.OnClientCommand.Add(function(module,command,p,args)
     epoch=getTimestampMs()+25000
     for _,v in pairs(players) do sendServerCommand(v,module,'Start',{epoch=epoch}) end
     print('[CART_MP] START epoch='..epoch)
+   end
+  elseif wallSide and command=='WallDone' then
+   assert(epoch and getTimestampMs()-epoch>=29000 and armed[user] and not wallDone[user],'Unexpected wall completion')
+   wallDone[user]=true
+   if wallDone.client1 and wallDone.client2 then
+    assert(not wallCleaned,'Duplicate wall cleanup');local count=wallBank.cleanup();assert(count==49,'Native wall ownership cleanup mismatch')
+    wallCleaned=true;local receipt={wall=getTimestampMs(),walls=count}
+    print('[CART_MP_WALL] CLEANUP '..J.encode(receipt));broadcast('WallCleanup',receipt)
    end
   elseif command=='ActionObservation' then
    assert(hotkey and actions and user=='client2' and pendingAction and args.index==actionIndex
@@ -163,9 +186,9 @@ end)
 Events.OnTick.Add(function()
  local now=getTimestampMs()
  if pendingAction then local ok,e=pcall(pollAction,now);if not ok then pendingAction=nil;print('[QUEUE_TEST] FAIL CART_MP server '..tostring(e));broadcast('ActionFailed',{error=tostring(e)}) end end
- if (epoch and now-epoch>(config.options and config.options.cart_fast_motion and 27000 or 16000)+(actions and 35000 or 0)) or now-last<(epoch and 100 or 500) then return end;last=now
+ if (epoch and now-epoch>(wallSide and 30000 or config.options and config.options.cart_fast_motion and 27000 or 16000)+(actions and 35000 or 0)) or now-last<(epoch and 100 or 500) then return end;last=now
  for user,p in pairs(players) do
-  if epoch and now>=epoch-2000 and config.options and config.options.cart_fast_motion and user=='client1'
+  if epoch and now>=epoch-2000 and (wallSide or config.options and config.options.cart_fast_motion) and user=='client1'
    and not (p:getX()>=origin.minX+origin.margin and p:getX()<=origin.minX+origin.size-origin.margin
     and p:getY()>=origin.minY+origin.margin and p:getY()<=origin.minY+origin.size-origin.margin and math.abs(p:getZ()-origin.z)<.25) then
    print('[QUEUE_TEST] FAIL CART_MP owner left validated pad interior');return

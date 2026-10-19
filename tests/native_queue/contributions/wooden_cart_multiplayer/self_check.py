@@ -465,7 +465,7 @@ def check_capture_environment(lua):
     assert 'core.setAutoZoom(0,false);' in bridge and 'core.offscreenBuffer.setZoomAndTargetZoom(0,observer?1f:.25f);' in bridge
     assert 'doZoomScroll' not in client
     assert "' zoom='..getCore():getZoom(0)" in client
-    assert 'p:getStats():reset(CharacterStat.ENDURANCE)\n    cartLabGait(steps[stage][3]);cartLabDrive(steps[stage][2])' in client
+    assert 'p:getStats():reset(CharacterStat.ENDURANCE)\n    cartLabGait(steps[stage][3]);if not wallSide then cartLabDrive(steps[stage][2]) end' in client
     assert 'setSprinting(' not in client and 'setForceSprint(' not in client
     assert 'setPerkLevelDebug(' not in client and 'setXPToLevel(' not in client
     assert "p:getPerkLevel(Perks.Sprinting)==10" in client and 'Authoritative Sprinting snapshot deadline' in client
@@ -474,7 +474,7 @@ def check_capture_environment(lua):
     assert 'INetworkPacket.send(p,zombie.network.PacketTypes.PacketType.PlayerXp,p)' in bridge
     assert 'worldExistedAtStartup' in bridge and 'zombie.network.CoopSlave.instance==null' in bridge
     assert client.index('if count~=961 then return end')<client.index('position(p,setup.x,setup.y,setup.z)')
-    assert "padFloors=padReady and 961 or 0,padVersion=setup.bankVersion" in client
+    assert "padFloors=padReady and setup.size*setup.size or 0,padWalls=wallSide and 49 or 0,padVersion=setup.bankVersion" in client
     code="""
 local started,command,startCount
 startCount=0
@@ -643,7 +643,7 @@ def main():
     print('Variants:', check_variants())
     lua = args.lua or shutil.which('luajit') or shutil.which('lua')
     if lua:
-        for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua'):
+        for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua'):
             subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(HERE / name)) + '))'], check=True)
         subprocess.run([lua, '-e', 'local J=dofile(' + json.dumps(str(HERE / 'json.lua')) + '); assert(J.encode({true,false})=="[true,false]"); assert(not pcall(J.encode,0/0))'], check=True)
         print('Lua: PASS (syntax and JSON values)')

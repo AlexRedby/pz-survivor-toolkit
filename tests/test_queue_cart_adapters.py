@@ -431,6 +431,32 @@ class CartAdapterTests(unittest.TestCase):
         for role in ('client1', 'client2', 'server'):
             self.assertEqual(self.runtime['roles'][role]['env']['PZ_CART_TEST_PAD'], 'false')
 
+    def test_mp_wall_exit_requires_host_wooden_isolated_bank(self):
+        self.options.update(cart_wall_exit='left', mp_host=True)
+        with self.assertRaisesRegex(ValueError, 'native MP Host'): carts.validate(self.selection)
+        self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
+        for side in ('left', 'right'):
+            self.options['cart_wall_exit']=side
+            carts.validate(self.selection)
+        for value in ('LEFT', None, True, [], {}):
+            self.options['cart_wall_exit']=value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'native MP Host'): carts.validate(self.selection)
+        self.options['cart_wall_exit']='left'
+        for key, value in [('mp_host', False), ('cart_variant', 'shopping-cart'), ('cart_fast_motion', True),
+                           ('cart_actions', True), ('cart_hotkey_setdown', True), ('cart_hotkey_key', 18)]:
+            before=dict(self.options); self.options[key]=value
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'cart_wall_exit'): carts.validate(self.selection)
+            self.options.clear();self.options.update(before)
+        with patch.object(carts.importlib, 'import_module', side_effect=ModuleNotFoundError('numpy')):
+            with self.assertRaisesRegex(ValueError, 'MP wall analyzers require'): carts.validate(self.selection)
+        self.role('client2'); self.role('server'); self.stage()
+        for role in ('client1', 'client2', 'server'):
+            lua=self.output/role/'mods/ActionQueueTest/42/media/lua'
+            self.assertEqual((lua/'shared/CartMPWall.lua').read_bytes(),
+                (ROOT/'tests/native_queue/contributions/wooden_cart_multiplayer/wall.lua').read_bytes())
+        self.assertTrue(any(path.name=='analyze-wall.py' for path in carts.sources(ROOT,self.selection)))
+        self.assertIn(ROOT/'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.java', carts.sources(ROOT,self.selection))
+
     def test_mp_cart_variant_requires_exact_enum_and_wood_for_actions(self):
         self.options['cart_variant'] = 'wooden-wheelbarrow'
         with self.assertRaisesRegex(ValueError, 'exact MP cart variant'):

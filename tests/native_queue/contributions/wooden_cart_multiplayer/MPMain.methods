@@ -39,6 +39,9 @@
         var network=p.getNetworkCharacterAI();
         var cargo=a instanceof zombie.inventory.types.InventoryContainer cart?cart.getInventory():null;
         int cargoCount=cargo==null?0:cargo.getItems().size();
+        int inventoryCount=0;
+        if(a!=null)for(var item:p.getInventory().getItems())if(item.getID()==a.getID())inventoryCount++;
+        var world=a==null?null:a.getWorldItem();
         var out=new StringBuilder("{\"wall\":").append(System.currentTimeMillis())
             .append(",\"id\":").append(p.getOnlineID()).append(",\"user\":\"").append(p.getUsername())
             .append("\",\"local\":").append(p.isLocalPlayer()).append(",\"enabled\":")
@@ -48,6 +51,8 @@
             .append(",\"targetX\":").append(network==null?0:network.targetX)
             .append(",\"targetY\":").append(network==null?0:network.targetY)
             .append(",\"predictionType\":").append(network==null?-1:network.predictionType)
+            .append(",\"female\":").append(p.isFemale())
+            .append(",\"hasPath\":").append(p.hasPath())
             .append(",\"nativeMoving\":").append(p.isPlayerMoving())
             .append(",\"deferredLength\":").append(p.getDeferredMovement(new zombie.iso.Vector2()).getLength())
             .append(",\"heading\":").append(p.getDirectionAngleRadians()).append(",\"run\":").append(p.isRunning())
@@ -70,6 +75,10 @@
             .append(",\"overrideSecondary\":").append(mpJsonString(p.overrideSecondaryHandModel))
             .append(",\"performing\":").append(p.getVariableBoolean("IsPerformingAnAction"))
             .append(",\"action\":").append(mpJsonString(p.getVariableString("PerformingAction")))
+            .append(",\"inventoryCount\":").append(inventoryCount)
+            .append(",\"inventoryScope\":").append(mpJsonString(p.isLocalPlayer() || zombie.network.GameServer.server
+                ?"owner-inventory":"remote-hand-snapshot"))
+            .append(",\"worldID\":").append(world==null || world.getItem()==null?-1:world.getItem().getID())
             .append(",\"primaryInInventory\":").append(a!=null && a.getContainer()==p.getInventory())
             .append(",\"characterActions\":").append(p.getCharacterActions().size())
             .append(",\"cargoCount\":").append(cargoCount)
@@ -90,7 +99,17 @@
             .append(",\"tracks\":\"");
         if(p.getAnimationPlayer()!=null && p.getAnimationPlayer().getMultiTrack()!=null)
             for(var t:p.getAnimationPlayer().getMultiTrack().getTracks())out.append(t.getName()).append('=').append(t.getSpeedDelta()).append('@').append(t.getBlendWeight()).append(';');
-        return out.append("\"}").toString();
+        out.append("\",\"trackProgress\":[");
+        boolean comma=false;
+        if(p.getAnimationPlayer()!=null && p.getAnimationPlayer().getMultiTrack()!=null)
+            for(var t:p.getAnimationPlayer().getMultiTrack().getTracks()) {
+                if(comma)out.append(',');comma=true;
+                out.append("{\"name\":").append(mpJsonString(t.getName()))
+                    .append(",\"time\":").append(t.getCurrentTrackTime())
+                    .append(",\"duration\":").append(t.getDuration())
+                    .append(",\"weight\":").append(t.getBlendWeight()).append('}');
+            }
+        return out.append("]}").toString();
     }
 
     @LuaMethod(name="cartMPCamera", global=true)

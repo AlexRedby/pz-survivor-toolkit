@@ -2,17 +2,27 @@ local config=require 'QueueTestSelection'
 assert(config.disposable==true,'Cart MP requires fresh owned disposable profiles')
 return function(player)
  local current=assert(player:getCurrentSquare(),'actor square missing')
- local extended=config.options and config.options.cart_fast_motion
+ local wallSide=config.options and config.options.cart_wall_exit
+ local extended=config.options and (config.options.cart_fast_motion or wallSide)
  if extended then
   assert(config.kind=='mp' and config.options.mp_host==true and isServer() and not isClient() and cartMPPadHost(),
    'Elevated cart pad requires fresh disposable queue-smoke Host')
   local cell,chunks=getCell(),{}
   local x,y,z=current:getX(),current:getY(),7
-  local area={x=x+4.5,y=y+.5,z=z,minX=x-15,minY=y-15,size=31,margin=2,vegetationFree=true,bankVersion=3,floorSprite='carpentry_02_57',elevated=true}
+  local half=wallSide and 31 or 15
+  local area={x=x+4.5,y=y+.5,z=z,minX=x-half,minY=y-half,size=half*2+1,margin=2,vegetationFree=true,bankVersion=wallSide and 4 or 3,floorSprite='carpentry_02_57',elevated=true}
+  local wall
+  if wallSide then
+   area.wallSide=wallSide;area.wallSprite='walls_exterior_wooden_01_0';area.wallX=x-3;area.wallMinY=y-24;area.wallMaxY=y+24;area.ownedWalls=49
+   area.initialHeading=(wallSide=='left' and .75 or -.75)*math.pi;area.x=area.wallX+2.8
+   wall=require 'CartMPWall';wall.preflight(area)
+  end
   -- addFloor creates neighbouring empty squares too; validate that halo before the first write.
-  for a=x-16,x+16 do for b=y-16,y+16 do
+  for a=x-half-1,x+half+1 do for b=y-half-1,y+half+1 do
    local chunk=cell:getChunkForGridSquare(a,b,0)
-   assert(chunk and cell:getGridSquare(a,b,0),'Elevated cart pad ground chunk not loaded')
+   local ground=cell:getGridSquare(a,b,0)
+   if wallSide and (not chunk or not ground) then return nil end
+   assert(chunk and ground,'Elevated cart pad ground chunk not loaded')
    chunks[chunk]=true
    local sq=cell:getGridSquare(a,b,z)
    assert(not sq or not sq:getFloor() and sq:getObjects():size()==0 and sq:getSpecialObjects():size()==0
@@ -27,6 +37,7 @@ return function(player)
    assert(sq:addFloor(area.floorSprite),'Elevated cart pad native floor creation failed')
   end end
   for chunk in pairs(chunks) do cell:setCacheChunk(chunk) end
+  if wall then wall.create(area) end
   print('[CART_MP] OPEN_PAD '..x..','..y..','..z)
   return area
  end

@@ -158,6 +158,17 @@ def validate(selection):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
+    if 'cart_wall_exit' in options:
+        if suite != MP or options.get('mp_host') is not True or options['cart_wall_exit'] not in ('left', 'right'):
+            raise ValueError('cart_wall_exit requires left/right in a native MP Host selection')
+        if (options.get('cart_variant', 'wooden-wheelbarrow') != 'wooden-wheelbarrow'
+                or any(options.get(flag, False) is not False for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown'))
+                or 'cart_hotkey_key' in options):
+            raise ValueError('cart_wall_exit requires wooden-wheelbarrow without fast/action/hotkey banks')
+        try:
+            importlib.import_module('numpy')
+        except ImportError as error:
+            raise ValueError('MP wall analyzers require working NumPy in ' + sys.executable) from error
     if 'cart_variant' in options and (suite != MP or not isinstance(options['cart_variant'], str) or options['cart_variant'] not in VARIANTS):
         raise ValueError('cart_variant requires an exact MP cart variant: ' + ', '.join(VARIANTS))
     if options.get('cart_actions') and options.get('cart_variant', 'wooden-wheelbarrow') != 'wooden-wheelbarrow':
@@ -194,6 +205,8 @@ def sources(project, selection):
             paths.append(_path(selection, 'mesh_fbx'))
     if selection['suite'] == MP:
         paths.append(Path(project) / 'tests/native_queue/startup/client/ZZStartup.lua')
+        if 'cart_wall_exit' in selection.get('options', {}):
+            paths.append(Path(project) / 'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.java')
     paths += [_path(selection, key, key != 'patch_jar') for key in ('patch_jar', 'ffmpeg', 'ffprobe')]
     return paths
 
@@ -273,7 +286,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             if role != 'server':
                 _write(lua / 'client/QueueCartMPStartup.lua', (project / 'tests/native_queue/startup/client/ZZStartup.lua').read_text())
             for origin, target in [('client.lua', 'client/ZZCartMP.lua'), ('actions.lua', 'client/CartMPActions.lua'), ('server.lua', 'server/ZZCartMP_Server.lua'),
-                                   ('placement.lua', 'shared/CartMPPlacement.lua'), ('json.lua', 'shared/CartMPJSON.lua')]:
+                                   ('placement.lua', 'shared/CartMPPlacement.lua'), ('wall.lua', 'shared/CartMPWall.lua'),
+                                   ('wall-input.lua', 'client/CartMPWallInput.lua'), ('json.lua', 'shared/CartMPJSON.lua')]:
                 _write(lua / target, (mp / origin).read_text())
         elif role != 'server':
             _write(lua / 'client/QueueCartStartup.lua', (project / 'tests/native_queue/support/QueueCartStartup.lua').read_text())

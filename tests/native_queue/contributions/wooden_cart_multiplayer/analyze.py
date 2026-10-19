@@ -5,6 +5,7 @@ import json
 import math
 import re
 import statistics
+import runpy
 
 ROLES = ('server', 'client1', 'client2')
 WINDOWS = {'idle': (300, 1700), 'walk': (2500, 4500), 'turn': (5500, 7500),
@@ -318,6 +319,8 @@ def analyze(profile):
     require(isinstance(selection, dict) and selection.get('suite') in ('cart_motion_mp', 'wooden_cart_multiplayer')
             and selection.get('kind') == 'mp' and selection.get('mode') == 'toolkit'
             and selection.get('cases') == ['owner_observer_motion'], 'Frozen selection does not match the Cart MP capture')
+    if 'cart_wall_exit' in selection.get('options', {}):
+        return runpy.run_path(str(Path(__file__).with_name('analyze-wall.py')))['analyze'](profile, selection, globals())
     extended = selection.get('options', {}).get('cart_fast_motion', False)
     require(type(extended) is bool, 'cart_fast_motion must be boolean')
     actions = selection.get('options', {}).get('cart_actions', False)
