@@ -16,6 +16,8 @@ Do not add features or change gameplay behavior that the user has not requested 
 
 Do not automatically install completed changes into the user's local game. Code changes and checks do not authorize overwriting their installed mod. Installation requires a separate request.
 
+Before pushing changes to main, compare each changed component with the latest main. Changes to shipped code, assets or runtime metadata, including behavior-preserving refactors, require a version newer than main for that component: Toolkit uses `PZSurvivorToolkit/42/mod.info`; Java Patches uses the generated metadata in `JavaPatches/build.py`. One bump can cover the complete set of changes delivered together; individual implementation commits do not each need a bump. Record the delivered changes in `CHANGELOG.md` and recheck versions after merging concurrent work. Changes confined to tests, development tools, documentation or agent instructions do not require a mod version bump.
+
 ## Supported environment
 
 - Only the current Build 42 version the user plays is supported; older versions do not need support. Moving to another major game branch has not been separately agreed.

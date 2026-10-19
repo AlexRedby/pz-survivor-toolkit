@@ -35,6 +35,7 @@ Version labels come from committed component metadata, including changes made wi
 ### 0.1.100
 
 - **Changed:** Wishlist uses Toolkit's shared button styling and inventory-class integration, removing duplicate standalone paths while preserving existing controls and highlights when CleanUI switches views.
+- **Fixed:** Better Containers pins remain first within their search and equipment sections across native, CleanUI and organizedCategories inventory views, preserving selection and the chosen column order. Added under this existing version label in `2dd301c`.
 
 ### 0.1.99
 
@@ -504,6 +505,7 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.25
 
+- **Changed:** Startup patches own their bytecode contracts and installation checks instead of keeping those details in the central dispatcher; patch guards and gameplay behavior are preserved. Refactored under this existing version label in `4fc28c8`.
 - **Version:** The forge candidate was locally labeled 0.1.23 during live verification; 0.1.25 integrates it without replacing the concurrent medicine and TV releases below. The historical live run does not cover every subsequently merged upstream change.
 - **Fixed:** Refresh a registered workstation's stale spatial entity ID before decoding its CraftBench reference on the server. Removing an earlier object from the same square could otherwise cause `loadComponent` to throw while accepting a crafting request, leaving the client at 100% progress. Recovery requires the exact already-resolved workstation and matching incoming ID; no recipe effects are forced or replayed.
 - **Checks:** Reproduced the 100% Forge Simple Blade stall in a disposable Windows Host world with all 48 selected mods and Java Patches 0.1.22. The same fixture with 0.1.23 passed ordinary hand crafting, unchanged-forge crafting and crafting after a real earlier-object removal: one blade, one charcoal/iron debit, conserved tool IDs and idle native action/UI. Only the Java mod changed. Native decoder/medical regressions also passed. Both live runs retain seven client font-loading errors; the fixed run has no server action errors but remains runtime `needs-review`, not a clean whole-pack acceptance. No macOS, WAN or second-client coverage is claimed.
