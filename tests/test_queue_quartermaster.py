@@ -1,4 +1,4 @@
-"""Quartermaster restart cases retain strict provenance and immutable store input."""
+"""Quartermaster store provenance and exact native distribution evidence."""
 import json
 from pathlib import Path
 import sys
@@ -9,6 +9,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import quartermaster as adapter
+from queue_checks.adapters import quartermaster_distribution as distribution
 
 
 class QuartermasterPresets(unittest.TestCase):
@@ -189,6 +190,88 @@ class QuartermasterPresets(unittest.TestCase):
             with self.subTest(rows=rows):
                 write(rows)
                 self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
+
+
+class QuartermasterBackpack(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.selection = dict(suite=distribution.SUITE, cases=['backpack'], kind='sp', mode='toolkit',
+                              clients=1, languages=['EN'], mods=distribution.MODS, options={})
+        self.prepared = {'ids': [101, 102, 103, 104, 105]}
+        self.result = dict(self.prepared, moved=1, retained=3, backpackWorn=True, menuDispatched=True,
+                           toolbarVisible=True, sourceBag=True, transfer=True)
+
+    def write(self, prepared=None, result=None, complete='[QM_BACKPACK] COMPLETE\n'):
+        text = ('[QM_BACKPACK] PREPARED ' + json.dumps(self.prepared if prepared is None else prepared) + '\n'
+                '[QM_BACKPACK] RESULT ' + json.dumps(self.result if result is None else result) + '\n' + complete)
+        (self.root / 'client1-launch.log').write_text(text)
+        return text
+
+    def test_backpack_case_is_separate_fresh_sp_with_existing_required_mods(self):
+        cases = distribution.definitions()[distribution.SUITE]['cases']
+        self.assertEqual([(case['id'], case['kinds']) for case in cases], [('sort', ['sp', 'mp']), ('backpack', ['sp'])])
+        distribution.validate(self.selection)
+        for changes in ({'kind': 'mp'}, {'cases': ['sort', 'backpack']}, {'mode': 'native'},
+                        {'languages': ['RU']}, {'clients': 2}, {'mods': distribution.MODS[:-1]},
+                        {'options': {'world_template': 'existing'}}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                distribution.validate(dict(self.selection, **changes))
+        for kind in ('sp', 'mp'):
+            distribution.validate(dict(self.selection, cases=['sort'], kind=kind))
+
+    def test_backpack_requires_exact_result_and_case_specific_completion(self):
+        text = self.write()
+        report = distribution.verify(self.root, self.selection, {})
+        self.assertEqual(report['issues'], [])
+        self.assertEqual(report['evidence']['receipt'], self.result)
+        self.assertEqual(report['outcomes'][0]['case'], 'backpack')
+        self.assertTrue(distribution.complete(self.selection, 'client1', text))
+        self.assertFalse(distribution.complete(self.selection, 'server', text))
+        self.assertFalse(distribution.complete(dict(self.selection, cases=['sort']), 'client1', text))
+        for key in self.result:
+            wrong = dict(self.result)
+            wrong[key] = [101, 102, 103, 104, 999] if key == 'ids' else 2 if key == 'moved' else 4 if key == 'retained' else False
+            with self.subTest(key=key):
+                self.write(result=wrong)
+                self.assertTrue(distribution.verify(self.root, self.selection, {})['issues'])
+        for wrong in (dict(self.result, moved=True), dict(self.result, transfer=1),
+                      dict(self.result, ids=[True, 102, 103, 104, 105]), dict(self.result, extra=True)):
+            self.write(result=wrong)
+            self.assertTrue(distribution.verify(self.root, self.selection, {})['issues'])
+
+    def test_backpack_rejects_invalid_identities_duplicate_records_and_missing_gate(self):
+        for ids in ([101, 102, 103, 104], [101, 102, 103, 104, 104], [True, 102, 103, 104, 105],
+                    [101.0, 102, 103, 104, 105], '101,102,103,104,105'):
+            with self.subTest(ids=ids):
+                self.write(prepared={'ids': ids}, result=dict(self.result, ids=ids))
+                self.assertIn('five unique integers', distribution.verify(self.root, self.selection, {})['issues'][0])
+        original = self.write()
+        rows = original.splitlines(keepends=True)
+        invalid = [original.replace(row, '') for row in rows]
+        invalid += [original + row for row in rows]
+        invalid += [''.join(reversed(rows)), original.replace('[QM_BACKPACK] COMPLETE', '[QM_DISTRIBUTION] COMPLETE'),
+                    original.replace('[QM_BACKPACK] COMPLETE', '[QM_BACKPACK] COMPLETE extra'),
+                    original + '[QM_BACKPACK] FAIL observed mismatch\n']
+        for text in invalid:
+            with self.subTest(text=text):
+                (self.root / 'client1-launch.log').write_text(text)
+                self.assertTrue(distribution.verify(self.root, self.selection, {})['issues'])
+
+    def test_sort_receipt_and_completion_remain_unchanged(self):
+        selection = dict(self.selection, cases=['sort'])
+        prepared = {'ids': [11, 12, 13, 14]}
+        result = {'items': [{'id': value, 'container': dest} for value, dest in zip(prepared['ids'], [2, 3, 1, 1])],
+                  'moved': 2, 'retained': 2, 'favorite': True}
+        text = ('[QM_DISTRIBUTION] PREPARED ' + json.dumps(prepared) + '\n'
+                '[QM_DISTRIBUTION] LOCAL ' + json.dumps(result) + '\n'
+                '[QM_DISTRIBUTION] AUTHORITY ' + json.dumps(result) + '\n'
+                '[QM_DISTRIBUTION] COMPLETE moved=2 retained=2 walking=true pickup=true destinations=2 favorite=true\n')
+        (self.root / 'client1-launch.log').write_text(text)
+        self.assertEqual(distribution.verify(self.root, selection, {})['issues'], [])
+        self.assertTrue(distribution.complete(selection, 'client1', text))
+        self.assertFalse(distribution.complete(self.selection, 'client1', text))
 
 
 if __name__ == '__main__':

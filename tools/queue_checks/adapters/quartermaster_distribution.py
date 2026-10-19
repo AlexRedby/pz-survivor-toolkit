@@ -1,4 +1,4 @@
-"""Basic owned Quartermaster world-container distribution, in SP and Host."""
+"""Owned Quartermaster world-container and worn-backpack distribution."""
 import json
 from pathlib import Path
 import re
@@ -10,16 +10,18 @@ MODS = ['PZSurvivorToolkit', 'PZToolkitJavaPatches', 'organizedCategories_core']
 
 def definitions():
     return {SUITE: {'status': 'ready', 'clients': 1, 'default_mods': MODS,
-                   'cases': [{'id': 'sort', 'producer': 'fixture', 'capability': 'effect',
-                              'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['toolkit']}]}}
+                   'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
+                              'kinds': kinds, 'languages': ['EN'], 'modes': ['toolkit']}
+                             for case, kinds in [('sort', ['sp', 'mp']), ('backpack', ['sp'])]]}}
 
 
 def validate(selection):
-    if (selection.get('cases') != ['sort'] or selection.get('kind') not in ('sp', 'mp')
+    if (selection.get('cases') not in (['sort'], ['backpack']) or selection.get('kind') not in ('sp', 'mp')
+            or (selection.get('cases') == ['backpack'] and selection.get('kind') != 'sp')
             or selection.get('mode') != 'toolkit' or selection.get('clients', 1) != 1
             or selection.get('languages') != ['EN'] or not set(MODS) <= set(selection.get('mods', []))
             or selection.get('options', {}).get('world_template')):
-        raise ValueError('Distribution requires sort, fresh SP/Host, one EN client and Toolkit')
+        raise ValueError('Distribution requires sort in fresh SP/Host or backpack in fresh SP, one EN client and Toolkit')
 
 
 def sources(project, selection):
@@ -41,6 +43,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 
 def complete(selection, role, text):
+    if selection.get('cases') == ['backpack']:
+        return role == 'client1' and len(re.findall(r'\[QM_BACKPACK\] COMPLETE[ \t]*\r?$', text, re.MULTILINE)) == 1
     return role == 'client1' and len(re.findall(r'\[QM_DISTRIBUTION\] COMPLETE(?:\s|$)', text)) == 1
 
 
@@ -51,7 +55,37 @@ def _one(text, event):
     return json.loads(values[0])
 
 
+def _backpack(root, selection):
+    issues, receipt = [], None
+    try:
+        text = (Path(root) / 'client1-launch.log').read_text(errors='replace')
+        records = re.findall(r'\[QM_BACKPACK\] (PREPARED|RESULT|COMPLETE)(?:[ \t]|$)([^\r\n]*)', text, re.MULTILINE)
+        if [event for event, _ in records] != ['PREPARED', 'RESULT', 'COMPLETE']:
+            raise ValueError('Backpack preparation/result/completion missing, duplicated or reordered')
+        prepared, receipt = [json.loads(value) for _, value in records[:2]]
+        ids = prepared.get('ids') if type(prepared) is dict else None
+        if (type(ids) is not list or len(ids) != 5 or any(type(value) is not int for value in ids)
+                or len(set(ids)) != 5 or set(prepared) != {'ids'}):
+            raise ValueError('Backpack item identities are not five unique integers')
+        expected = dict(ids=ids, moved=1, retained=3, backpackWorn=True, menuDispatched=True,
+                        toolbarVisible=True, sourceBag=True, transfer=True)
+        if (type(receipt) is not dict or set(receipt) != set(expected)
+                or any(type(receipt[key]) is not type(value) or receipt[key] != value
+                       for key, value in expected.items())
+                or any(type(value) is not int for value in receipt['ids'])):
+            raise ValueError('Backpack exact menu/source/movement/transfer effects differ')
+        if not complete(selection, 'client1', text) or records[2][1].strip() or '[QM_BACKPACK] FAIL ' in text:
+            raise ValueError('Backpack completion gate missing or fixture failed')
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        issues.append(str(error))
+    return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'backpack',
+            'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
+            'evidence': {'receipt': receipt, 'limits': ['Programmatic native context-menu callback; no physical input or Host coverage.']}}
+
+
 def verify(root, selection, catalog):
+    if selection.get('cases') == ['backpack']:
+        return _backpack(root, selection)
     issues, receipt = [], None
     try:
         root = Path(root)

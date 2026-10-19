@@ -153,6 +153,13 @@ options retain their identifiers. The Manifest retains its single-player scope.
 The original implementation and assets are credited in the
 [third-party notices](../PZSurvivorToolkit/THIRD_PARTY_NOTICES.md).
 
+To distribute carried loot, configure destination containers with **Configure sorting...**,
+open the source bag in your inventory, then right-click an item inside it and choose
+**Distribute Loot**. The command sorts eligible items from that bag; you can keep it
+on your back. Favorite items and items without a matching destination stay put.
+The inventory toolbar also has **Distribute Loot** for its selected container.
+For a vehicle trunk, open it in the loot window and use that window's button.
+
 ### Item tags
 
 For the organizedCategories taxonomy, disable **Better Containers > Show Advanced Display Categories** so organizedCategories supplies the category IDs. Unknown category IDs remain readable as individual tags.

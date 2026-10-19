@@ -1,4 +1,5 @@
 local config=require 'QueueTestSelection'
+if config.cases[1]~='sort' then return end
 local Fixture=require 'QuartermasterDistributionFixture'
 local Rules=require 'PZSurvivorToolkit/QuartermasterTagRuleClient'
 local JSON=require 'QueueHealthEvents'

@@ -388,13 +388,13 @@ menu,actions=potMenu(true,true)
 for i=1,5 do
  menu:prerender()
  assert(not contains(menu,actions.recipe) and not present(menu,actions.native), 'covered cooking and input-search paths must disappear, not move into another group')
- assert(not contains(menu,actions.distribute),'mouse distribution uses the visible toolbar button')
+ assert(contains(menu,actions.distribute),'right-click distribution must remain available beside the visible toolbar button')
  assert(contains(menu,actions.cook) and contains(menu,actions.fluid))
  assert(contains(menu,actions.drop) and contains(menu,actions.place) and not group(menu,'transfer'),'fluid, drop and placement must not gain an extra transfer group')
  local misc=assert(moreGroup(menu));assert(#misc.options==6 and not contains(misc,actions.category) and contains(misc,actions.pin))
  assert(contains(misc,actions.search) and contains(misc,actions.wishlist),'rare search and wishlist commands belong in More')
  assert(not contains(menu,actions.search) and not contains(menu,actions.wishlist))
- assert(#menu.options==6,'rare commands must not clutter the root')
+ assert(#menu.options==7,'rare commands must not clutter the root')
  Organizer.restore(menu);same(menu,actions.original);same(actions.misc,actions.originalMisc)
 end
 menu:prerender();enabled=false;menu:prerender();same(menu,actions.original);enabled=true
@@ -421,6 +421,10 @@ for _,fallback in ipairs({'controller','hidden','absent'}) do
  menu,actions=potMenu(true,true);menu:prerender();assert(contains(menu,actions.distribute),'distribution context fallback missing: '..fallback)
 end
 controller=false;buttonVisible=true;page.controlsUI=controls
+Organizer.setOverride('label:Distribute Loot','hidden')
+menu,actions=potMenu(true,true);menu:prerender()
+assert(not present(menu,actions.distribute),'an explicit profile override may hide right-click distribution')
+Organizer.reset()
 Organizer.setOverride('label:Soup','root')
 menu,actions=potMenu(true,true);menu:prerender();assert(contains(menu,actions.recipe),'manual placements override preferred routes')
 Organizer.reset()
@@ -492,7 +496,7 @@ Organizer.reset()
 local dropKey='callback:ISInventoryPaneContextMenu.onDropItems'
 local placeKey='callback:ISInventoryPaneContextMenu.onPlaceItemOnGround'
 menu,actions=potMenu(true,true);menu.toolkitContextItemType='Base.Pot';menu:prerender()
-assert(#Organizer.getLayout('Base.Pot','root')==6,'editor must show the actual compact default layout')
+assert(#Organizer.getLayout('Base.Pot','root')==7,'editor must show the actual compact default layout')
 local foundRoot=false
 for _,entry in ipairs(Organizer.getEntries('Base.Pot')) do if entry.key==dropKey then foundRoot=entry.category=='root' end end
 assert(foundRoot,'editor must report rendered placement, not semantic classifier category')
@@ -523,7 +527,7 @@ assert(Organizer.setOverride(dropKey,custom,'Base.Pot'))
 assert(Organizer.deleteGroup(custom) and Organizer.getOverride(dropKey,'Base.Pot')==nil)
 Organizer.reset()
 menu,actions=potMenu(true,true);menu.toolkitContextItemType='Base.Pot';menu:prerender()
-assert(#menu.options==6 and contains(menu,actions.drop) and contains(menu,actions.place),'full reset must restore current defaults')
+assert(#menu.options==7 and contains(menu,actions.drop) and contains(menu,actions.place) and contains(menu,actions.distribute),'full reset must restore current defaults')
 for _,row in ipairs(menu.options) do assert(row.name~='My hands') end
 print('PASS item rules, custom groups, renaming, order, persistence, deletion and exact defaults reset')
 

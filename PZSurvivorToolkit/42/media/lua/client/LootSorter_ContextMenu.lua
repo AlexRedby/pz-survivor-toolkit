@@ -1,6 +1,7 @@
 -- LootSorter: right-click context-menu entry points.
 --   * World object (crate/locker/stacked boxes) -> "Configure sorting..." (opens the designation picker)
---   * Items in a container panel -> "Configure sorting..." (designation only; distribution is the button)
+--   * Items in a world-container panel -> "Configure sorting..." for that container.
+--   * Carried items -> "Distribute Loot" for their source inventory or bag; also available on its toolbar.
 -- Handlers are LootSorter.* functions (reloadLuaFile-safe via the stable wrappers below).
 -- Depends on LootSorter.openPicker / containerIndex (Core + Picker).
 require "ISUI/ISWorldObjectContextMenu"   -- addToolTip, for the disabled-option hint

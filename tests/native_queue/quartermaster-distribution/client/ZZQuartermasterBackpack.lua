@@ -1,0 +1,143 @@
+local config=require 'QueueTestSelection'
+if config.cases[1]~='backpack' then return end
+require 'TimedActions/ISWearClothing'
+local Fixture=require 'QuartermasterDistributionFixture'
+require 'PZSurvivorToolkit/Settings'
+local Tags=require 'PZSurvivorToolkit/ItemTags'
+local Rules=require 'PZSurvivorToolkit/QuartermasterTagRuleClient'
+local JSON=require 'QueueHealthEvents'
+local started,done,since,phase=false,false,0,'prepare'
+local point,box,bag,items,ids,original,designatedAt,quietSince
+local transferred,dispatched,sourceBag=false,false,false
+local updates=0
+local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
+local function counts(container,result)
+ result=result or {}
+ for i=0,container:getItems():size()-1 do
+  local item=container:getItems():get(i);local id=item:getID();result[id]=(result[id]or 0)+1
+  if instanceof(item,'InventoryContainer')then counts(item:getInventory(),result)end
+ end
+ return result
+end
+Events.OnGameStart.Add(function()
+ started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false)
+ getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false)
+ getPlayer():setGodMod(true);getPlayer():setGhostMode(true)
+ if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
+end)
+Events.OnPlayerUpdate.Add(function(player)
+ if started and player==getPlayer()then updates=updates+1 end
+end)
+local function showBag()
+ local page=assert(getPlayerInventory(0));page:refreshBackpacks();page:setNewContainer(bag:getInventory())
+ page:setVisible(true);page.isCollapsed=false;page:setMaxDrawHeight(page.height)
+ local pane=page.inventoryPane;pane:refreshContainer();pane:prerender()
+ return page,pane
+end
+local function dispatch(player)
+ local page,pane=showBag()
+ local row,index
+ for i,value in ipairs(pane.items)do
+  local item=instanceof(value,'InventoryItem')and value or value.items[1]
+  if item:getFullType()==items[1]:getFullType()and item:getContainer()==bag:getInventory()then row,index=value,i;break end
+ end
+ assert(row and items[1]:isInPlayerInventory(),'worn bag Thread row missing')
+ pane.selected={[index]=row}
+ page.controlsUI:arrange()
+ local handler=assert(page.controlsUI.handlers[ISInventoryWindowControlHandler_LootSorterDistribute])
+ assert(page:getIsVisible()and page.controlsUI:getIsVisible()and handler.control:getIsVisible()
+  and handler.container==bag:getInventory()and player:getJoypadBind()==-1,'visible bag toolbar precondition missing')
+ assert(PZSurvivorToolkit.Settings.contextMenus(),'context organizer must be enabled for this regression')
+ local inInventory=pane.inventory:isInCharacterInventory(player)
+ assert(inInventory,'source bag is not carried')
+ local menu=assert(ISInventoryPaneContextMenu.createMenu(0,inInventory,{row},20,20))
+ assert(menu.toolkitContextKind=='inventory','right-click route is not the carried inventory context')
+ menu:setVisible(true);menu:prerender()
+ local option,optionIndex
+ for i,value in ipairs(menu.options)do
+  if value.name=='Distribute Loot'then option,optionIndex=value,i;break end
+ end
+ print('[QM_BACKPACK] MENU '..JSON.encode({visible=option~=nil,toolbarVisible=true,category=items[1]:getDisplayCategory()}))
+ assert(option and option.onSelect and not option.notAvailable and not option.isDisabled,'Distribute Loot hidden from worn bag context menu')
+ menu:prerender();assert(menu.options[optionIndex]==option,'distribution option moved during layout')
+ menu.mouseOver=optionIndex;menu:ensureVisible()
+ local scroll=menu:getScrollHeight()>menu:getScrollAreaHeight()
+ local y=menu.padTopBottom+(scroll and menu.scrollIndicatorHgt or 0)+menu:getScrollAreaHeight()/2-menu:getYScroll()
+ local before=LootSorter._sortRunSeq or 0
+ menu:onMouseUp(5,y)
+ assert((LootSorter._sortRunSeq or 0)>before and #queue().queue>0,'context option did not start distribution')
+ dispatched=true
+end
+local function tick()
+ local player=getPlayer();local root=player:getInventory()
+ if phase=='prepare'then
+  if updates<30 then return end
+  -- Use the documented organizedCategories provider, not BetterContainers' alternative categories.
+  local options=PZAPI.ModOptions:getOptions('BetterContainers')
+  if options then
+   options:getOption('showAdvancedDisplayCategories'):setValue(false);options:apply()
+   assert(not require('BetterContainers/_Options').showAdvancedDisplayCategories,'category provider not configured')
+  end
+  original=counts(root);assert(not player:getClothingItem_Back(),'fresh fixture already has a worn bag')
+  point=Fixture.place(player)
+  local square=assert(getCell():getGridSquare(point.x+1,point.y,point.z))
+  box=IsoThumpable.new(getCell(),square,'carpentry_01_16',false,{})
+  box:setBlockAllTheSquare(true);box:setIsContainer(true)
+  box:getContainer():setType('crate');box:getContainer():setCapacity(100);box:getContainer():setExplored(true)
+  box:getModData().PZSTDistributionFixture=true;square:AddSpecialObject(box)
+  bag=assert(root:AddItem('Base.Bag_Schoolbag'))
+  items={assert(bag:getInventory():AddItem('Base.Thread')),assert(bag:getInventory():AddItem('Base.Thread')),
+   assert(bag:getInventory():AddItem('Base.LargeStone')),assert(root:AddItem('Base.Thread'))}
+  items[2]:setFavorite(true);ids={}
+  for _,item in ipairs(items)do ids[#ids+1]=item:getID()end
+  ids[#ids+1]=bag:getID();print('[QM_BACKPACK] PREPARED '..JSON.encode({ids=ids}))
+  ISTimedActionQueue.add(ISWearClothing:new(player,bag,50));phase='configure'
+ elseif phase=='configure'then
+  if #queue().queue>0 or player:hasTimedActions()then return end
+  assert(player:getClothingItem_Back()==bag,'native wear did not equip backpack')
+  -- organizedCategories applies inventory display categories when the bag is opened.
+  showBag()
+  assert(items[1]:getDisplayCategory()=='craftingTailoring_material','Thread has unexpected category '..tostring(items[1]:getDisplayCategory()))
+  assert(Tags.matches(Tags.forItem(items[1]),{'tailoring'})and not Tags.matches(Tags.forItem(items[3]),{'tailoring'}),'invalid tailoring fixture items')
+  LootSorter.openPicker(box,0,0);local picker=assert(LootSorter._picker)
+  picker.toolkitTagRule={mode='all',include={'tailoring'},exclude={}};picker.toolkitTagRuleTouched=true
+  picker.btnSave.onclick(picker)
+  assert(not LootSorter._picker and Rules.getBox(box,0)and Rules.getBox(box,0).include[1]=='tailoring','tailoring designation did not save')
+  designatedAt=getTimestampMs();phase='ready'
+ elseif phase=='ready'then
+  if not LootSorter.isRegistrySynced()or not LootSorter.arePresetsSynced()then return end
+  local found=false
+  for _,entry in ipairs(LootSorter.gatherBoxes(player)or {})do if entry.obj==box then found=true end end
+  if not found then return end
+  dispatch(player);phase='sorting'
+ elseif phase=='sorting'then
+  local current=queue().current
+  if current and current.Type=='LootSorterDeposit'and current:isStarted()and current:getJobDelta()>0 then
+   assert(current.srcContainer==bag:getInventory()and current.destContainer==box:getContainer(),'wrong transfer endpoints')
+   sourceBag=true;transferred=true
+  end
+  if #queue().queue>0 or player:hasTimedActions()then quietSince=nil;return end
+  quietSince=quietSince or getTimestampMs();if getTimestampMs()-quietSince<1000 then return end
+  local carried,dest=counts(root),counts(box:getContainer())
+  for i,item in ipairs(items)do
+   local id=ids[i];assert((carried[id]or 0)+(dest[id]or 0)==1,'lost/duplicated fixture item')
+   assert(item:getContainer()==(i==1 and box:getContainer()or i==4 and root or bag:getInventory()),'wrong final item container')
+  end
+  assert(items[2]:isFavorite()and bag:getContainer()==root and player:getClothingItem_Back()==bag,'favorite/equipment state lost')
+  for id,count in pairs(original)do assert(carried[id]==count,'pre-existing inventory changed')end
+  assert(transferred and sourceBag and dispatched,'missing native distribution progress')
+  print('[QM_BACKPACK] RESULT '..JSON.encode({ids=ids,moved=1,retained=3,backpackWorn=true,
+   menuDispatched=dispatched,toolbarVisible=true,sourceBag=sourceBag,transfer=transferred}))
+  phase='cleanup'
+ elseif phase=='cleanup'then
+  if getTimestampMs()-designatedAt<LootSorter.ADD_GRACE_MS+1000 then return end
+  Fixture.cleanup({boxes={box}})
+  LootSorter.removeCoords({keys={(point.x+1)..','..point.y..','..point.z}})
+  print('[QM_BACKPACK] COMPLETE');done=true
+ end
+end
+Events.OnTick.Add(function()
+ if not started or done or not isIngameState()or not getPlayer()or not getPlayer():getSquare()then return end
+ local ok,problem=pcall(function()assert(getTimestampMs()-since<120000,'backpack timeout phase='..phase);tick()end)
+ if not ok then done=true;print('[QUEUE_TEST] FAIL backpack '..tostring(problem))end
+end)

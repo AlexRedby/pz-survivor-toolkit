@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.113
+
+- **Fixed:** `Distribute Loot` remains available when right-clicking an item in the inventory or a worn bag, even when its toolbar button is visible. Explicit menu-profile hiding remains respected.
+
 ### 0.1.112
 
 - **Fixed:** Walking no longer loses the queued action after an item finishes transferring from a carried bag. Belt attachment, drinking and other follow-up actions retain their native movement and cancellation rules.

@@ -358,15 +358,6 @@ function Rules.defaults(menu, options, context, visible)
             end
             if covered then defaults[option] = "hidden" end
         end
-        if context == "inventory" and option.name == "Distribute Loot" and sourceEndsWith(option, "/LootSorter_ContextMenu.lua") then
-            local player = getSpecificPlayer(menu.player)
-            local page = getPlayerInventory(menu.player)
-            local controls = page and page.controlsUI
-            local handler = controls and controls.handlers and controls.handlers[ISInventoryWindowControlHandler_LootSorterDistribute]
-            if handler and handler.control and player and player:getJoypadBind() == -1 and page:getIsVisible() and controls:getIsVisible()
-                and handler.control:getIsVisible()
-                and handler.container == page.inventoryPane.inventory then defaults[option] = "hidden" end
-        end
     end
     return defaults
 end
