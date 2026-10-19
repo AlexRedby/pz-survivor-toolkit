@@ -12,10 +12,10 @@ import tempfile
 
 try:
     from .package_mod import ROOT, validate, validate_no_symlinks
-    from .queue_checks.mod_selection import mod_ids
+    from .queue_checks.mod_selection import mod_ids, metadata
 except ImportError:
     from package_mod import ROOT, validate, validate_no_symlinks
-    from queue_checks.mod_selection import mod_ids
+    from queue_checks.mod_selection import mod_ids, metadata
 
 
 MOD_IDS = ("PZSurvivorToolkit", "PZToolkitJavaPatches")
@@ -29,13 +29,6 @@ LOAD_ORDER = (
     ("RealisticDash", "Navigator"),
     ("Quartermaster", "organizedCategories_core"),
 )
-
-
-def metadata(path: Path) -> dict[str, str]:
-    return {key.strip(): value.strip()
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if "=" in line and not line.lstrip().startswith("#")
-            for key, value in [line.split("=", 1)]}
 
 
 def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None,

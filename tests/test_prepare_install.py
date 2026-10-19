@@ -59,8 +59,31 @@ class PrepareInstall(unittest.TestCase):
         self.sentinel = self.output / "previous.txt"
         self.sentinel.write_text("previous prepared set")
         self.addCleanup(patch.stopall)
-        patch.object(package_mod, "ROOT", self.root).start()
         self.build = patch.object(prepare_install.subprocess, "run").start()
+
+    def test_utf8_bom_metadata_is_accepted_and_preserved_in_prepared_files(self):
+        files = [self.root / prepare_install.INI_NAME, self.root / 'PZSurvivorToolkit/42/mod.info',
+                 self.patch / '42/mod.info']
+        for path in files:
+            path.write_text(path.read_text(), encoding='utf-8-sig')
+        result = prepare_install.prepare(self.root)
+        self.build.assert_called_once()
+        for source, target in zip(files, [result / 'Server' / prepare_install.INI_NAME,
+                                         result / 'mods/PZSurvivorToolkit/42/mod.info',
+                                         result / 'mods/PZToolkitJavaPatches/42/mod.info']):
+            self.assertEqual(source.read_bytes(), target.read_bytes())
+
+    def test_missing_files_in_an_external_copy_produce_validation_errors(self):
+        mod = self.root / 'PZSurvivorToolkit'
+        (mod / '42/media/lua/shared/PZSurvivorToolkit.lua').unlink()
+        (mod / '42/mod.info').unlink()
+        errors = package_mod.validate(mod)
+        self.assertEqual(2, len(errors))
+        self.assertTrue(all('required file is missing' in error for error in errors), errors)
+        with self.assertRaisesRegex(ValueError, 'PZSurvivorToolkit/42/mod.info'):
+            prepare_install.prepare(self.root)
+        self.build.assert_not_called()
+        self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
 
     def test_complete_set_preserves_metadata_and_builds_once_with_forwarded_options(self):
         game, jdk = self.root / "game folder", self.root / "jdk folder"

@@ -8,6 +8,11 @@ from pathlib import Path
 import tempfile
 import zipfile
 
+try:
+    from .queue_checks.mod_selection import metadata
+except ImportError:
+    from queue_checks.mod_selection import metadata
+
 
 ROOT = Path(__file__).resolve().parent.parent
 MOD_ROOT = ROOT / "PZSurvivorToolkit"
@@ -33,23 +38,19 @@ def validate(mod_root: Path = MOD_ROOT) -> list[str]:
                             for layer in ("common", "42") for name in ("AnimSets", "actiongroups")]
     for required in (mod_root / "common", mod_root / "42", *required_directories):
         if not required.is_dir():
-            errors.append(f"required directory is missing or not a directory: {required.relative_to(ROOT)}")
+            errors.append(f"required directory is missing or not a directory: {required.relative_to(mod_root.parent)}")
     for required in (mod_info, bootstrap):
         if not required.is_file():
-            errors.append(f"required file is missing or not a file: {required.relative_to(ROOT)}")
+            errors.append(f"required file is missing or not a file: {required.relative_to(mod_root.parent)}")
 
     if mod_info.is_file():
-        metadata: dict[str, str] = {}
-        for line in mod_info.read_text(encoding="utf-8").splitlines():
-            if "=" in line:
-                key, value = line.split("=", 1)
-                metadata[key.strip()] = value.strip()
-        if metadata.get("name") != MOD_NAMES[mod_root.name]:
+        info = metadata(mod_info)
+        if info.get("name") != MOD_NAMES[mod_root.name]:
             errors.append(f"mod.info must declare name={MOD_NAMES[mod_root.name]}")
-        if metadata.get("id") != mod_root.name:
+        if info.get("id") != mod_root.name:
             errors.append(f"mod.info must declare id={mod_root.name}")
         for key in ("icon", "poster"):
-            name = metadata.get(key, "")
+            name = info.get(key, "")
             candidates = [mod_root / folder / name for folder in ("42", "common")]
             if not name or not any(path.is_file() and path.resolve().is_relative_to(mod_root.resolve())
                                    for path in candidates):
