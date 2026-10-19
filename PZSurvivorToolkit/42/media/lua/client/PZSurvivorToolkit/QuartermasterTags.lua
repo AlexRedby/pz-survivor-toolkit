@@ -1,4 +1,5 @@
 local Tags = require "PZSurvivorToolkit/ItemTags"
+local Categories = require "PZSurvivorToolkit/ItemCategories"
 local Visuals = require "PZSurvivorToolkit/TagVisuals"
 local Rules = require "PZSurvivorToolkit/QuartermasterTagRuleClient"
 local RulePicker = require "PZSurvivorToolkit/TagRulePicker"
@@ -49,7 +50,7 @@ end
 local function tagRows(categoryList, catalog)
     local rows, byTag, groups = {}, {}, {}
     for _, script in ipairs(catalog) do
-        local category = script:getDisplayCategory()
+        local category = Categories.forScript(script)
         local entry = {tags = {}}
         for _, id in ipairs(Tags.forScriptItem(script)) do entry.tags[id] = true end
         if category then

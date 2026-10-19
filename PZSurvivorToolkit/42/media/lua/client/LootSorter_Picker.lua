@@ -16,6 +16,7 @@ require "ISUI/ISLabel"
 local TagPicker = require "PZSurvivorToolkit/QuartermasterTags"
 local TagRules = require "PZSurvivorToolkit/QuartermasterTagRules"
 local Tags = require "PZSurvivorToolkit/ItemTags"
+local Categories = require "PZSurvivorToolkit/ItemCategories"
 
 LootSorter = LootSorter or {}
 LootSorter.toolkitTagPicker = true
@@ -47,6 +48,7 @@ function Picker:contentsSet()
     pcall(function()
         local cont = self.targetObj and self.targetObj:getContainerByIndex(self.targetCI)
         if cont then
+            Categories.prepareContainer(cont)
             local items = cont:getItems()
             for i = 0, items:size() - 1 do
                 local it = items:get(i)
@@ -872,6 +874,7 @@ end
 
 -- entry point called from the context menu
 function LootSorter.openPicker(obj, ci, playerNum)
+    LootSorter._cats, LootSorter._catItems = nil, nil
     if LootSorter._presetEditor then LootSorter._presetEditor:closePicker() end   -- don't orphan an editor of the old picker
     if LootSorter._picker then
         LootSorter._picker:removeFromUIManager(); LootSorter._picker = nil

@@ -207,3 +207,19 @@ picker=Picker.open({categories={'Tool'},scriptItems={},onApply=function() end})
 assert(#picker.entries==0 and picker.matchCount==0,'empty script catalog fell back to coarse categories')
 picker:close()
 print('Item-aware tag picker checks passed: item/script choices, seed packets, dynamic preview and independent food/seed roles.')
+
+-- A script retains its vanilla loot category while the provider supplies the
+-- inventory category. Choices and preview must agree with the item in the bag.
+local thread=scriptItem('Base.Thread','Material','Thread')
+local stone=scriptItem('Base.LargeStone','Material','Stone')
+OrganizedCategories={getScriptInventoryDisplayCategory=function(script)
+    if script==thread then return 'craftingTailoring_material' end
+end}
+picker=Picker.open({scriptItems={thread,stone},rule={mode='all',include={'tailoring'},exclude={}},onApply=function() end})
+rows={}
+for _,row in ipairs(picker.entries) do rows[row.id]=row end
+assert(rows.tailoring and picker.matchCount==1 and picker.preview.items[1].text=='Thread',
+    'script rule picker omitted tailoring or previewed an unrelated material')
+assert(thread:getDisplayCategory()=='Material','picker rewrote script loot category')
+picker:close()
+OrganizedCategories=nil

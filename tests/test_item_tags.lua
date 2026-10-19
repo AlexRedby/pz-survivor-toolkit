@@ -170,4 +170,53 @@ resetPlanting()
 assert(Tags.matches(Tags.forScriptItem(scriptItem('Mod.LateCrop','Food')),{'food','seed'}),
  'preboot planting cache ignored definitions loaded later')
 next = luaNext
+
+-- Script loot buckets must not leak into inventory tag/catalog choices. The
+-- optional provider may load after this module; live instance overrides win.
+local Categories = require 'PZSurvivorToolkit/ItemCategories'
+local thread = scriptItem('Base.Thread', 'Material')
+thread.getDisplayName = function() return 'Thread' end
+local stone = scriptItem('Base.LargeStone', 'Material')
+stone.getDisplayName = function() return 'Stone' end
+assert(Categories.forScript(thread) == 'Material' and Categories.forScript(nil) == nil)
+local liveThread = inventoryItem(thread)
+Categories.prepareItem(liveThread)
+assert(liveThread.category == 'Material', 'provider-free preparation changed item')
+local providerCategory = 'craftingTailoring_material'
+local prepared = {}
+OrganizedCategories = {
+ getScriptInventoryDisplayCategory = function(script)
+  if script == thread then return providerCategory end
+ end,
+ autoSortLiquid = function(item) prepared[#prepared+1] = 'fluid';item.category = 'mechanicsFuel' end,
+ applyItemDisplayOverride = function(item)
+  prepared[#prepared+1] = 'override'
+  if item == liveThread then item.category = 'medicalTreatment' end
+ end,
+}
+assert(Tags.matches(Tags.forScriptItem(thread), {'tailoring', 'material'}), 'script tags used loot bucket')
+assert(Categories.forScript(stone) == 'Material', 'missing provider value lost raw fallback')
+providerCategory = ''
+assert(Categories.forScript(thread) == 'Material', 'empty provider value lost raw fallback')
+providerCategory = 'craftingTailoring_material'
+local liquid = inventoryItem(scriptItem('Base.Bottle', 'Container'))
+liquid.isFluidContainer = function() return true end
+Categories.prepareContainer({getItems=function() return javaList({liveThread, liquid}) end})
+assert(table.concat(prepared, ',') == 'override,fluid,override', 'fluid preparation must precede instance overrides')
+assert(Tags.matches(Tags.forItem(liveThread), {'medical'}) and not Tags.matches(Tags.forItem(liveThread), {'tailoring'}),
+ 'live instance override replaced by script/type category')
+assert(Tags.matches(Tags.forItem(liquid), {'fuel'}), 'fluid result lost')
+assert(thread.category == 'Material', 'inventory preparation rewrote loot-safe ScriptItem')
+
+-- Exercise the owned catalog without organizedCategories replacing its functions.
+getScriptManager = function() return {getAllItems=function() return javaList({thread, stone}) end} end
+dofile(shared .. 'LootSorter_Categories.lua')
+local cats = LootSorter.getCategories()
+assert(#cats == 2 and cats[1] == 'Material' and cats[2] == providerCategory, 'owned catalog ignored inventory categories')
+local entries = LootSorter.getItemsInCategory(providerCategory)
+assert(#entries == 1 and entries[1].fullType == 'Base.Thread', 'owned catalog grouped by loot bucket')
+assert(#LootSorter.getItemsInCategory('Material') == 1 and thread.category == 'Material', 'catalog changed script data')
+OrganizedCategories = nil
+dofile(shared .. 'LootSorter_Categories.lua')
+assert(#LootSorter.getCategories() == 1 and #LootSorter.getItemsInCategory('Material') == 2, 'provider-free catalog failed')
 print('ItemTags: '..count..' exact legacy projections, independent tags, aliases, unknown/ambiguous keys and live fluid changes passed.')

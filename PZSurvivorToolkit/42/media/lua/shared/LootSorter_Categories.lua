@@ -1,4 +1,5 @@
 -- LootSorter: item DisplayCategory list (built dynamically from loaded item scripts) + config.
+local Categories = require "PZSurvivorToolkit/ItemCategories"
 LootSorter = LootSorter or {}
 
 -- These caches live on the global LootSorter, which a hot reload does not clear: it redefines the
@@ -19,10 +20,9 @@ local function isListable(scriptItem)
     return listable
 end
 
--- Every DisplayCategory declared by any loaded item (vanilla + whatever mods are installed),
+-- Every inventory category declared by any loaded item (vanilla + whatever mods are installed),
 -- deduped and alpha-sorted. Built lazily on first use and cached, so the picker always matches
--- the actual game/mods instead of a frozen snapshot. This mirrors how the vanilla admin item
--- panel enumerates categories (ISItemsListTable: iterate getAllItems() -> getDisplayCategory()).
+-- the actual game/mods instead of a frozen snapshot. Provider reads preserve loot-safe scripts.
 function LootSorter.getCategories()
     if LootSorter._cats then return LootSorter._cats end
     local set, list = {}, {}
@@ -31,7 +31,7 @@ function LootSorter.getCategories()
         for i = 1, items:size() do
             local it = items:get(i - 1)
             local cat
-            if isListable(it) then pcall(function() cat = it:getDisplayCategory() end) end
+            if isListable(it) then pcall(function() cat = Categories.forScript(it) end) end
             if cat and cat ~= "" and not set[cat] then
                 set[cat] = true
                 list[#list + 1] = cat
@@ -109,7 +109,7 @@ function LootSorter.getItemsInCategory(category)
                 local cat, name, fullType
                 if isListable(it) then
                     pcall(function()
-                        cat = it:getDisplayCategory()
+                        cat = Categories.forScript(it)
                         name = it:getDisplayName()
                         fullType = it:getFullName()
                     end)

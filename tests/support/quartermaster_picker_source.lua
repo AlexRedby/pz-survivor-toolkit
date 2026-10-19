@@ -141,6 +141,21 @@ return function(adapter, control, rules, find, click, rulePicker)
         request.callback(verdict, 1)
     end
     local p = open()
+    do
+        local item = {category = 'Material', getDisplayCategory = function(self) return self.category end}
+        local contents = {getItems = function()
+            return {size = function() return 1 end, get = function() return item end}
+        end}
+        obj.getContainerByIndex = function() return contents end
+        OrganizedCategories = {applyItemDisplayOverride = function(current)
+            assert(current == item, 'picker replaced the real contents item')
+            current.category = 'OC_FoodPerishable'
+        end}
+        local visible = p:contentsSet()
+        assert(item.category == 'OC_FoodPerishable' and visible.OC_FoodPerishable and not visible.Material,
+            'owned picker contents required an external category preparation wrapper')
+        OrganizedCategories = nil
+    end
     assert(p.btnSave.cachedOnclick == p.btnSave.onclick and p.btnSave.onclick == p.onSave,
         'view adapter replaced the owned Save callback')
     assert(p.onSave == getmetatable(p).onSave and p.closePicker == getmetatable(p).closePicker

@@ -4,6 +4,7 @@ require "TimedActions/ISTimedActionQueue"
 require "TimedActions/ISInventoryTransferAction"
 local TagRules = require "PZSurvivorToolkit/QuartermasterTagRules"
 local Tags = require "PZSurvivorToolkit/ItemTags"
+local Categories = require "PZSurvivorToolkit/ItemCategories"
 
 LootSorter = LootSorter or {}
 -- diagnostic trace: silent unless LootSorter.DEBUG is set or the game runs in -debug mode
@@ -520,6 +521,7 @@ function LootSorter.sort(sourceContainer, playerNum)
     local player = getSpecificPlayer(playerNum)
     if not player or not sourceContainer then return end
     local ok, err = pcall(function()
+        Categories.prepareContainer(sourceContainer)
         if LootSorter.applyOptions then LootSorter.applyOptions() end  -- pick up live range settings
         -- Is the source already carried by the player (a bag / main inventory)? Then there's no
         -- hauling to do -- the loot is already on us. We just walk to each box once and deposit.

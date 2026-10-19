@@ -1,5 +1,6 @@
 local schema = require "PZSurvivorToolkit/ItemTagSchema"
 local planting = require "PZSurvivorToolkit/PlantingTags"
+local categories = require "PZSurvivorToolkit/ItemCategories"
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 local Tags = {}
 PZSurvivorToolkit.ItemTags = Tags
@@ -51,7 +52,7 @@ end
 
 function Tags.forScriptItem(script)
     if not script then return {} end
-    return itemTags(script:getDisplayCategory(), script:getFullName(), script)
+    return itemTags(categories.forScript(script), script:getFullName(), script)
 end
 
 function Tags.forItem(item)

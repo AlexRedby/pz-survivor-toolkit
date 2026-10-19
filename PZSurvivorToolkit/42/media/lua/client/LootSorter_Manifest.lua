@@ -10,6 +10,7 @@
 require "ISUI/ISCollapsableWindow"
 require "ISUI/ISCollapsableWindowJoypad"
 require "TimedActions/ISInventoryTransferAction"
+local Categories = require "PZSurvivorToolkit/ItemCategories"
 
 LootSorter = LootSorter or {}
 
@@ -50,6 +51,7 @@ local function snapshotSquare(sq)
     for _, rec in ipairs(found) do
         local c = rec.container
         if c then
+            Categories.prepareContainer(c)
             local items = c:getItems()
             for i = 0, items:size() - 1 do
                 local it = items:get(i)

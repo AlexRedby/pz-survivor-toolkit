@@ -88,6 +88,10 @@ local function tick()
   bag=assert(root:AddItem('Base.Bag_Schoolbag'))
   items={assert(bag:getInventory():AddItem('Base.Thread')),assert(bag:getInventory():AddItem('Base.Thread')),
    assert(bag:getInventory():AddItem('Base.LargeStone')),assert(root:AddItem('Base.Thread'))}
+  local script=items[1]:getScriptItem();local lootCategory=script:getDisplayCategory()
+  assert(lootCategory=='Material','Thread script no longer has its loot-safe category')
+  assert(Tags.matches(Tags.forScriptItem(script),{'tailoring','material'}),'Thread catalog tags disagree with inventory category')
+  assert(script:getDisplayCategory()==lootCategory,'catalog tags changed native loot category')
   items[2]:setFavorite(true);ids={}
   for _,item in ipairs(items)do ids[#ids+1]=item:getID()end
   ids[#ids+1]=bag:getID();print('[QM_BACKPACK] PREPARED '..JSON.encode({ids=ids}))

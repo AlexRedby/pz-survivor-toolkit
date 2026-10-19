@@ -44,6 +44,9 @@ local function fixture(mode)
     local cell={getGridSquare=function()return square end}
     getCell=function()return cell end
     require=function(module)
+        if module=='PZSurvivorToolkit/ItemCategories' then
+            return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/ItemCategories.lua'))()
+        end
         if module=='PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
         if module=='PZSurvivorToolkit/ItemTags'then return tags end
         if module=='PZSurvivorToolkit/QuartermasterTagRules'then return f.rules end
@@ -77,6 +80,24 @@ for _,mode in ipairs({'sp','mp','preinstalled','foreign-delegate','fake-filename
     else
         assert(wrapped~=native and api.isTransferPerform(wrapped),'actual reviewed SP manifest is observed and adopted')
         assert(not api.isTransferPerform(function()end),'another wrapper cannot borrow manifest permission')
+        do
+            local previousCell, previousFind, previousProvider = getCell, LootSorter.findDesignatedOnSquare, OrganizedCategories
+            local item = {category='Material',getDisplayCategory=function(self)return self.category end,
+                getDisplayName=function()return 'Thread'end,getFullType=function()return 'Base.Thread'end}
+            local content={getItems=function()return {size=function()return 1 end,get=function()return item end}end}
+            local sq={getX=function()return 1 end,getY=function()return 2 end,getZ=function()return 0 end}
+            getCell=function()return {getGridSquare=function(_,x,y,z)if x==1 and y==2 and z==0 then return sq end end}end
+            LootSorter.findDesignatedOnSquare=function()return {{container=content}}end
+            OrganizedCategories={applyItemDisplayOverride=function(current)
+                assert(current==item,'manifest replaced the original item')
+                current.category='craftingTailoring_material'
+            end}
+            LootSorter.manifestReconcile()
+            local snapshot=stores.LootSorter_Manifest.boxes['1,2,0'].Thread
+            assert(snapshot.n==1 and snapshot.ft=='Base.Thread' and snapshot.cat=='craftingTailoring_material',
+                'owned manifest snapshotted a raw category without provider preparation')
+            getCell,LootSorter.findDesignatedOnSquare,OrganizedCategories=previousCell,previousFind,previousProvider
+        end
         local p=f.player
         p.setIsFarming=function(self,value)self.farming=value end
         ISLogSystem={logAction=function(action)action.logged=(action.logged or 0)+1 end}

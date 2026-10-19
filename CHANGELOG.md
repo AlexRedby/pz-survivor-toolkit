@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.114
+
+- **Fixed:** Tag choices and previews use organizedCategories inventory categories while preserving native loot categories. Quartermaster prepares item categories directly before sorting, inspecting container contents and recording the storage manifest, removing dependence on prior inventory-pane refreshes or external wrappers.
+
 ### 0.1.113
 
 - **Fixed:** `Distribute Loot` remains available when right-clicking an item in the inventory or a worn bag, even when its toolbar button is visible. Explicit menu-profile hiding remains respected.

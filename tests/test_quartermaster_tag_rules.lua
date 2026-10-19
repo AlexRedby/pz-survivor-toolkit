@@ -392,4 +392,25 @@ do
     object.md, LootSorter.clipboard, object.transmitModData = originalData, originalClipboard, originalTransmit
     LootSorter.addCoord, LootSorter.removeCoords, LootSorter.notify = originalAdd, originalRemove, originalNotify
 end
-print('Quartermaster rules passed: direct item matching/discovery, exact picks, opt-out, clearing, authority, SP persistence, preset conflicts, client refusal/timeout.')
+do
+    local previousProvider = OrganizedCategories
+    local previousGather, previousNotify = LootSorter.gatherBoxesOrWarn, LootSorter.notify
+    local item = {category = 'Material', getDisplayCategory = function(self) return self.category end}
+    local source = {getItems = function() return list({item}) end, isInCharacterInventory = function() return true end}
+    local gathered = false
+    OrganizedCategories = {applyItemDisplayOverride = function(current)
+        assert(current == item, 'sort replaced the original inventory item')
+        current.category = 'craftingTailoring_material'
+    end}
+    LootSorter.gatherBoxesOrWarn = function()
+        gathered = true
+        assert(item.category == 'craftingTailoring_material', 'owned sort did not prepare its raw source before planning')
+        return {}
+    end
+    LootSorter.notify = function() end
+    LootSorter.sort(source, 0)
+    assert(gathered and item.category == 'craftingTailoring_material', 'owned sort required an external preparation wrapper')
+    OrganizedCategories = previousProvider
+    LootSorter.gatherBoxesOrWarn, LootSorter.notify = previousGather, previousNotify
+end
+print('Quartermaster rules passed: direct item matching/discovery, exact picks, opt-out, clearing, authority, SP persistence, preset conflicts, client refusal/timeout and owned sort preparation.')

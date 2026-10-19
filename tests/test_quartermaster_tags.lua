@@ -5,9 +5,11 @@ local ruleApi = {getBoxRevision = function() return 0 end, getBox = function() e
     presetsSynced = function() return true end, scriptItems = function() return scriptCatalog end}
 getSpecificPlayer = function() return {} end
 PZSurvivorToolkit = {}
+local itemCategories = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/ItemCategories.lua')
 local categoryTags = {OC_Food = {'food'}, OC_FoodPerishable = {'food', 'perishable'},
     OC_Electrical = {'electrical'}, OC_FoodElectrical = {'food', 'electrical'}}
 require = function(name)
+    if name == 'PZSurvivorToolkit/ItemCategories' then return itemCategories end
     if name == 'PZSurvivorToolkit/TagVisuals' then
         return {get=function(id) return {r=0.3,g=0.7,b=0.3,texture=id and {id=id} or nil} end}
     end
@@ -266,7 +268,7 @@ payload = adapter.presetArgs(editor,{cats=editor.selectedCats})
 assert(payload.pzstTagRule.include[1] == 'food' and payload.pzstTagRule.exclude[1] == 'perishable'
     and payload.pzstTagRule ~= dynamicRule, 'explicit rule edit was not detached for native preset conflict request')
 local function script(name, category, tags)
-    return {tags=tags,getDisplayCategory=function() return category end,getDisplayName=function() return name end}
+    return {tags=tags,uiCategory=category,getDisplayCategory=function() return 'Material' end,getDisplayName=function() return name end}
 end
 for category, ids in pairs({OC_Snack={'food','snack'},OC_Seeds={'farming','seed'},
     OC_SeedOnly={'farming','seed'}}) do
@@ -279,6 +281,7 @@ local function unchanged(set,before,message)
     for key,value in pairs(before) do assert(set[key]==value,message) end
     for key,value in pairs(set) do assert(before[key]==value,message) end
 end
+OrganizedCategories = {getScriptInventoryDisplayCategory = function(script) return script.uiCategory end}
 for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','Pure seed'},
     {'Конфеты','Семечки подсолнуха','Пакет семян','Пустой пакет семян','Семена'}}) do
     scriptCatalog={script(names[1],'OC_Snack',{'food','snack'}),
@@ -326,6 +329,7 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
     itemPicker.toolkitTagRuleButton.onclick(itemPicker)
     assert(openedRulePicker.scriptItems==scriptCatalog,'dynamic editor preview lacks the script catalog')
 end
+OrganizedCategories = nil
 print('Quartermaster tag checks passed: exact saved keys, partial/refined batches, filters, controller, modes, conflicts, reopens and opt-out.')
 scriptCatalog = {}
 dofile(ProjectRoot .. '/tests/support/quartermaster_picker_source.lua')(adapter, control, ruleApi, find, click,
