@@ -14,7 +14,7 @@ local function execute(module,command,player,args)
    assert(not session and not pending and Selection.cases[verified+1]==args.case,'out-of-order equipment prepare')
    player:setGhostMode(true)
    if verified==0 then Fixture.position(player) end
-   session=Fixture.prepare(player,args.case)
+   session=Fixture.prepare(player,args.case,nil,Selection.options)
    local ids=Fixture.descriptor(session)
    ids.spawn={x=player:getX(),y=player:getY(),z=player:getZ()}
    for _,item in ipairs(session.owned) do

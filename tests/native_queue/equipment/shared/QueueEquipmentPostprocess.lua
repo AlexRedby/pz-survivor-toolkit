@@ -1,5 +1,6 @@
 local Postprocess={}
 local Bulk=require 'QueueEquipmentBulk'
+local function isBelt(id) return id=='belt-knife' or id=='belt-hammer' end
 local function same(item,expected)
  return item==nil and expected==nil or item~=nil and expected~=nil
   and item:getID()==expected:getID() and item:getFullType()==expected:getFullType()
@@ -89,28 +90,30 @@ function Postprocess.verify(state,mode,tidy)
  for location,item in pairs(assert(state.originalAttached,'postprocessing attachment baseline missing')) do
   expectedAttached[location]=item
  end
- if state.id=='hotbar-chain' then expectedAttached[state.hotbarLocation]=state.hotbarReplacement end
+ if (state.id=='hotbar-chain' or isBelt(state.id)) then expectedAttached[state.hotbarLocation]=state.hotbarReplacement end
  local actualAttached={};local attachments=player:getAttachedItems()
  for i=0,attachments:size()-1 do local entry=attachments:get(i);actualAttached[tostring(entry:getLocation())]=entry:getItem() end
- if tidy and state.id=='hotbar-chain' then
+ if tidy and (state.id=='hotbar-chain' or isBelt(state.id)) then
   assert(actual[state.hotbarReplacement:getID()]:getContainer()==root
    and same(actualAttached[state.hotbarLocation],state.hotbarReplacement),'P4 removed deliberately attached hotbar item after native completion')
  end
  sameSlots(actualAttached,expectedAttached,'attachment')
- if state.id=='hotbar-chain' then
+ if (state.id=='hotbar-chain' or isBelt(state.id)) then
   local item=actual[state.hotbarReplacement:getID()]
   assert(item:getAttachedSlot()==state.hotbarIndex and item:getAttachedSlotType()==state.hotbarType
    and item:getAttachedToModel()==state.hotbarLocation,'postprocessing changed hotbar metadata')
+  if state.hotbarInitial then
   local initial=actual[state.hotbarInitial:getID()]
   assert(initial:getAttachedSlot()==-1 and (initial:getAttachedSlotType()==nil or initial:getAttachedSlotType()=='')
-   and (initial:getAttachedToModel()==nil or initial:getAttachedToModel()==''),'postprocessing changed detached metadata')
+   and (initial:getAttachedToModel()==nil or initial:getAttachedToModel()==''),'postprocessing changed detached metadata') end
+  if isBelt(state.id) then assert(item:isFavorite()==state.beltFavorite,'postprocessing changed attached favorite flag') end
  end
  local actualWorn={};local values=player:getWornItems()
  for i=0,values:size()-1 do local item=values:getItemByIndex(i);actualWorn[values:getLocation(item)]=item end
  sameSlots(actualWorn,state.expectedWorn,'worn item')
  if Bulk.isCase(state.id) then Bulk.verify(state,true,tidy) end
  local rootNames={front=true,tail=true,hammer=true,screwdriver=true,bag=true,pickupBag=true,
-  clothingB=true,hotbarInitial=true,hotbarReplacement=true}
+  clothingB=true,hotbarInitial=true,hotbarReplacement=true,belt=true}
  for name,seed in pairs(state.items) do
   local expected=root
   if name:match('^bulk') then expected=Bulk.container(state,name,true,tidy)

@@ -6,6 +6,8 @@ import me.zed_0xff.zombie_buddy.Accessor;
 import me.zed_0xff.zombie_buddy.Patch;
 import net.alexredby.pztoolkitjavapatches.QueueManagers;
 import se.krka.kahlua.vm.JavaFunction;
+import se.krka.kahlua.integration.annotations.LuaMethod;
+import zombie.core.Core;
 import zombie.Lua.LuaManager;
 import zombie.core.NetTimedAction;
 import zombie.core.Transaction.TransactionState;
@@ -13,8 +15,42 @@ import zombie.core.TransactionManager;
 import zombie.inventory.InventoryItem;
 import zombie.network.GameServer;
 
-/** Read-only drain evidence for the isolated one-player equipment fixture. */
+/** Native drain evidence and opt-in walking input for the isolated equipment fixture. */
 public final class Main {
+    private static volatile boolean walking;
+
+    @LuaMethod(name="equipmentTestWalk", global=true)
+    public static void walk(boolean down) {
+        if (GameServer.server) throw new IllegalStateException("Walking requires the isolated fixture client");
+        walking = down;
+    }
+
+    @Patch(className="zombie.input.GameKeyboard", methodName="isKeyDown", warmUp=true, strictMatch=true)
+    public static class Keys {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.Argument(0) int key, @Patch.Local("fixture") boolean fixture) {
+            fixture = walking && key == Core.getInstance().getKey("Forward");
+            return fixture;
+        }
+        @Patch.OnExit
+        public static void exit(@Patch.Local("fixture") boolean fixture, @Patch.Return(readOnly=false) boolean result) {
+            if (fixture) result = true;
+        }
+    }
+
+    @Patch(className="zombie.input.GameKeyboard", methodName="isKeyDownRaw", warmUp=true, strictMatch=true)
+    public static class RawKeys {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.Argument(0) int key, @Patch.Local("fixture") boolean fixture) {
+            fixture = walking && key == Core.getInstance().getKey("Forward");
+            return fixture;
+        }
+        @Patch.OnExit
+        public static void exit(@Patch.Local("fixture") boolean fixture, @Patch.Return(readOnly=false) boolean result) {
+            if (fixture) result = true;
+        }
+    }
+
     private static final JavaFunction pending = (frame, arguments) -> {
         int value = GameServer.server && QueueManagers.ITEM_SUPPORTED
             ? count(Accessor.tryGet(TransactionManager.class, "transactions", (ConcurrentLinkedQueue<?>)null)) : -1;

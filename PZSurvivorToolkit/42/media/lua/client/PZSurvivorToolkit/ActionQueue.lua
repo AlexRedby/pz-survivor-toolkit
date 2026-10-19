@@ -315,7 +315,9 @@ end
 
 local tick = ISTimedActionQueue.tick
 ISTimedActionQueue.tick = function(queue)
-    if not live(queue) or queue.character:isPlayerMoving() or queue.character:pressedMovement(false) then
+    -- Walking may continue native inventory actions. Keep their completed callback
+    -- until Java removes the action; native stop/reset still revokes completion.
+    if not live(queue) then
         Toolkit.ActionQueueLifecycle.reset(queue)
     end
     local completion = Toolkit.ActionQueueLifecycle.flush(queue)

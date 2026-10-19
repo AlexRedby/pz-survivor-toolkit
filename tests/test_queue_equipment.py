@@ -38,6 +38,10 @@ class EquipmentTests(unittest.TestCase):
                 result['cancelled'] = enabled
             if case == 'bag-capacity':
                 result['capacityBarrier'] = enabled
+            if case in ('belt-knife', 'belt-hammer'):
+                result.update(policyChecked=False, slotsVerified=True, belt=True, emptyQueueClick=True, favoritePreserved=True)
+                if self.selection['options'].get('belt_walk'):
+                    result.update(walkingVerified=True, walkedDuringTransfer=True, walkedDuringAttach=True, walkReleased=True, walkDistance=0.75)
             if case in ('clothing-chain', 'hotbar-chain'):
                 result.update(slotsVerified=True, clothing=case == 'clothing-chain', hotbar=case == 'hotbar-chain')
             if case in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands'):
@@ -85,6 +89,42 @@ class EquipmentTests(unittest.TestCase):
                 with (self.root / 'server-launch.log').open('a') as log:
                     log.write('\n[EQUIPMENT_TEST] FLOOR_RESTORE id=731 result=true\n')
         return equipment.verify(self.root, self.selection, {})
+
+    def test_belt_requires_empty_queue_and_exact_effect_checks(self):
+        self.selection['cases'] = ['belt-knife', 'belt-hammer']
+        self.assertEqual(self.verify(self.logs())['issues'], [])
+        for case in self.selection['cases']:
+            for field in ('emptyQueueClick', 'slotsVerified', 'belt', 'favoritePreserved', 'postprocessingVerified'):
+                with self.subTest(case=case, field=field):
+                    rows = self.records()
+                    next(row for row in rows if row.get('id') == case)['outcome'].pop(field)
+                    self.assertTrue(self.verify(self.logs(rows))['issues'])
+
+    def test_walking_belt_requires_real_motion_and_isolated_probe(self):
+        self.selection.update(cases=['belt-knife', 'belt-hammer'],
+                              mods=['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit'], options={'belt_walk': True})
+        equipment.validate(self.selection)
+        self.assertEqual(self.verify(self.logs())['issues'], [])
+        for field in ('walkingVerified', 'walkedDuringTransfer', 'walkedDuringAttach', 'walkReleased', 'walkDistance'):
+            rows = self.records()
+            next(row for row in rows if row.get('id') == 'belt-knife')['outcome'].pop(field)
+            self.assertTrue(self.verify(self.logs(rows))['issues'], field)
+        for key, value in (('belt_walk', 1), ('belt_favorite', 'true')):
+            with self.assertRaises(ValueError):
+                equipment.validate(dict(self.selection, options={key: value}))
+        with self.assertRaises(ValueError):
+            equipment.validate(dict(self.selection, mods=['PZSurvivorToolkit']))
+        with self.assertRaises(ValueError):
+            equipment.validate(dict(self.selection, cases=['hands-chain']))
+        for role in ('client1',):
+            (self.root / role / 'mods/ActionQueueTest/42/media/lua/shared').mkdir(parents=True)
+        probe = self.root / 'walk-probe.jar'
+        probe.write_bytes(b'isolated native walking probe')
+        runtime = {'roles': {'client1': {}}}
+        with patch.object(equipment, '_transfer_probe', return_value=probe) as compile_probe:
+            equipment.stage(ROOT, self.root, None, None, self.selection, {}, runtime)
+            compile_probe.assert_called_once()
+        self.assertEqual(runtime['fixture']['mods'], ['EquipmentTransferProbe'])
 
     def test_restore_requires_positive_exact_phases_and_world_effects(self):
         self.selection.update(cases=['tidy-hands', 'tidy-floor', 'tidy-empty-hands'], mods=['PZSurvivorToolkit', 'P4TidyUpMeister'])

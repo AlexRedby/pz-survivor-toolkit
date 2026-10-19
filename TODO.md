@@ -1,3 +1,7 @@
+# Walking inventory action regression
+
+- [ ] Run the prepared `belt_walk` equipment cases (`belt-knife,belt-hammer`) with the full selected mod set in isolated SP and Host sessions when a native test slot is available. The movement handoff fix passes the native-source SP/MP regressions; live walking remains unverified because the shared desktop runner was occupied. Check exact attachment identities, inventory conservation, and replicated belt cleanup. Use equipment config options `belt_walk=true` and `preload_toolkit_fonts=true`; add `mp_host=true` for the Host run, with the current game/JDK/Workshop paths.
+
 # Legacy tag scenario maintenance
 
 - [ ] Update the `tagRules` re-enable assertion in `tests/native_tags/client/ZZTagBaseline.lua`: it still expects dynamic rules to expand `own.cats.foodPerishable_fruit`, while owned Quartermaster now matches per-item rules through `own.rules`. Preserve its manual-category, toggle and exact-transfer checks; use the existing fixture-level checks before its next advanced multiplayer run.

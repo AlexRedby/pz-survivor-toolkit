@@ -87,6 +87,14 @@ inventory[1]=item
 assert(not Fixture.removed({player=state.player,owned={item}}),'cleanup command must not mask pending removal packets')
 inventory[1]=nil
 assert(Fixture.removed({player=state.player,owned={item}}),'actual authoritative inventory deletion should settle')
+local belt={getID=function() return 23 end,getBodyLocation=function() return 'BELT' end}
+local replicatedBelt={getID=belt.getID}
+state.player.getWornItem=function() return replicatedBelt end
+assert(not Fixture.removed({player=state.player,owned={},belt=belt}),
+ 'inventory deletion must not mask a stale replicated worn belt with the same exact ID')
+state.player.getWornItem=function() return nil end
+assert(Fixture.removed({player=state.player,owned={},belt=belt}),'authoritative worn belt removal should settle')
+
 local checked={}
 isItemTransactionDone=function(id) checked[id]=true;return id~=-17 end
 assert(not Fixture.transactionsSettled(),'a pending native transfer must block verification/deletion')

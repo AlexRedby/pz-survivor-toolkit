@@ -65,9 +65,9 @@ function Fixture.position(player)
  end end end
  error('no clear loaded outdoor equipment fixture square')
 end
-function Fixture.prepare(player,id,ids)
+function Fixture.prepare(player,id,ids,options)
  local root=player:getInventory()
- local state={id=id,player=player,root=root,capacity=root:getCapacity(),originalEffectiveCapacity=root:getEffectiveCapacity(player),owned={},original=inventory(player),
+ local state={id=id,options=options or {},player=player,root=root,capacity=root:getCapacity(),originalEffectiveCapacity=root:getEffectiveCapacity(player),owned={},original=inventory(player),
   originalContainers={},originalWorn=worn(player),originalPrimary=player:getPrimaryHandItem(),originalSecondary=player:getSecondaryHandItem(),items={},ids=ids}
  if ids then
   local owned={};for _,itemID in pairs(ids.items) do owned[itemID]=true end
@@ -86,7 +86,7 @@ function Fixture.prepare(player,id,ids)
   state[name]=item;state.items[name]=item;state.owned[#state.owned+1]=item;return item
  end
  seed('front','Base.BookCarpentry1');seed('tail','Base.BookFirstAid1')
- seed('hammer',id:match('^tidy%-') and 'Base.Torch' or 'Base.Hammer');seed('screwdriver','Base.Screwdriver');seed('bag','Base.Bag_Schoolbag')
+ seed('hammer',id:match('^tidy%-') and 'Base.Torch' or 'Base.Hammer');seed('screwdriver','Base.Screwdriver');seed('bag',Slots.isBelt(id) and 'Base.Bag_ALICEpack_Army' or 'Base.Bag_Schoolbag')
  state.location=state.bag:canBeEquipped();assert(state.location and tostring(state.location)~='','fixture bag has no native worn slot')
  player:setWornItem(state.location,state.bag)
  player:setPrimaryHandItem(state.hammer);player:setSecondaryHandItem(state.screwdriver)
@@ -188,7 +188,7 @@ function Fixture.verify(state,mode,checkpoint)
  end
  local extra={}
  if Bulk.isCase(state.id) then extra=Bulk.verify(state,false,false) end
- if state.id=='clothing-chain' or state.id=='hotbar-chain' then extra=Slots.verify(state,mode) end
+ if Slots.handles(state.id) then extra=Slots.verify(state,mode) end
  assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,state.expectedWorn)
  local outcome={inventoryPreserved=true,frontCompleted=true,tailCompleted=not checkpoint,equipmentMatches=true,nativeDurations=true,
   policyChecked=mode=='toolkit',cancelled=cancelled,capacityBarrier=state.id=='bag-capacity' and mode=='toolkit',
@@ -201,8 +201,15 @@ end
 function Fixture.release(state)
  Fixture.refresh(state)
  local player=state.player
- if state.id=='clothing-chain' or state.id=='hotbar-chain' then Slots.cleanup(state) end
+ if Slots.handles(state.id) then Slots.cleanup(state) end
  for _,item in ipairs(state.owned) do player:removeFromHands(item);player:removeWornItem(item) end
+ if state.belt then
+  local location=state.belt:getBodyLocation()
+  local current=player:getWornItem(location)
+  -- Replication may leave a distinct worn object after its inventory identity was removed.
+  if current and current:getID()==state.belt:getID() then player:setWornItem(location,nil) end
+  if isServer() then sendClothing(player,location,state.originalWorn[location]) end
+ end
  for location,item in pairs(state.originalWorn) do player:setWornItem(location,item) end
  player:setPrimaryHandItem(state.originalPrimary);player:setSecondaryHandItem(state.originalSecondary)
  -- Close both bag views while authoritative containers still exist.
@@ -221,6 +228,10 @@ end
 function Fixture.removed(state)
  local actual=inventory(state.player)
  for _,item in ipairs(state.owned) do if actual[item:getID()] then return false end end
+ if state.belt then
+  local current=state.player:getWornItem(state.belt:getBodyLocation())
+  if current and current:getID()==state.belt:getID() then return false end
+ end
  if (state.id=='floor-pickup' or state.id=='tidy-floor') and Floor.resolve(state.floor) then return false end
  return true
 end
@@ -284,13 +295,13 @@ function Fixture.settled(state,mode,checkpoint)
   end
  end
  if state.id=='clothing-chain' and player:getWornItem(state.clothingLocation)~=state.clothingB then return false end
- if state.id=='hotbar-chain' then
+ if state.id=='hotbar-chain' or Slots.isBelt(state.id) then
   local item,old=state.hotbarReplacement,state.hotbarInitial
   -- Native attachment and item-field packets use separate channels.
   if player:getAttachedItems():getItem(state.hotbarLocation)~=item or item:getAttachedSlot()~=state.hotbarIndex
    or item:getAttachedSlotType()~=state.hotbarType or item:getAttachedToModel()~=state.hotbarLocation
-   or old:getAttachedSlot()~=-1 or (old:getAttachedSlotType()~=nil and old:getAttachedSlotType()~='')
-   or (old:getAttachedToModel()~=nil and old:getAttachedToModel()~='') then return false end
+   or old and (old:getAttachedSlot()~=-1 or (old:getAttachedSlotType()~=nil and old:getAttachedSlotType()~='')
+   or (old:getAttachedToModel()~=nil and old:getAttachedToModel()~='')) then return false end
  end
  return true
 end

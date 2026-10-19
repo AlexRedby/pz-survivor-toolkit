@@ -1245,6 +1245,76 @@ local function borrowed(item, container)
     item.getIsCraftingConsumed=function(self) return self.consumed==true end
     return item
 end
+-- Walking must not erase a successful native transfer's deferred completion boundary.
+do
+    local Lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+    local previousClient=isClient
+    for _,client in ipairs({false,true}) do
+        isClient=function() return client end
+        for _,movement in ipairs({'moving','pressed'}) do
+            local character=player()
+            local item=book(character).item
+            local source=sourceContainer();borrowed(item,source)
+            local pickup=transfer(character,item,source,character.inventory)
+            pickup.stopOnWalk=false
+            local followup=book(character)
+            local starts=0
+            local startAction=character.StartAction
+            character.StartAction=function(self,native)
+                if native.table==followup then starts=starts+1 end
+                return startAction(self,native)
+            end
+            local queue=ISTimedActionQueue.add(pickup);ISTimedActionQueue.add(followup)
+            frame(character)
+            assert(pickup.action.started and not followup.action,'transfer must start before native completion')
+            assert(Lifecycle.begin(pickup,'perform'))
+            pickup:perform()
+            assert(queue.current==pickup and queue.queue[1]==pickup and not followup.action,
+                'native perform must defer followup until callbacks and Java removal finish')
+            Lifecycle.finish(pickup,'perform',true)
+            if not client then
+                assert(Lifecycle.begin(pickup,'complete'))
+                Lifecycle.finish(pickup,'complete',true)
+            end
+            if movement=='moving' then character.moving=true
+            else character.pressedMovement=function() return true end end
+            queue:tick()
+            assert(queue.current==pickup and not followup.action and starts==0,
+                'walking transfer must wait while its completed Java action is still present')
+            character.actions[pickup.action]=nil
+            queue:tick()
+            assert(queue.current==followup and #queue.queue==1 and starts==1 and followup.action
+                and item:getContainer()==character.inventory,
+                (client and 'MP' or 'SP')..' '..movement..' lost a successful walking transfer completion')
+            queue:tick();queue:tick()
+            assert(queue.current==followup and starts==1 and #queue.queue==1,
+                'walking completion must start the original followup exactly once')
+        end
+        for _,abort in ipairs({'reset','clear','stop'}) do
+            local character=player()
+            local item=book(character).item
+            local source=sourceContainer();borrowed(item,source)
+            local pickup=transfer(character,item,source,character.inventory)
+            pickup.stopOnWalk=false
+            local followup=book(character)
+            local queue=ISTimedActionQueue.add(pickup);ISTimedActionQueue.add(followup)
+            frame(character)
+            assert(Lifecycle.begin(pickup,'perform'))
+            pickup:perform()
+            if abort=='reset' then queue:resetQueue()
+            elseif abort=='clear' then queue:clearQueue()
+            else pickup:stop() end
+            Lifecycle.finish(pickup,'perform',true)
+            character.actions[pickup.action]=nil;character.moving=true
+            queue:tick()
+            -- Native clearQueue empties the queue without clearing its current pointer.
+            assert(#queue.queue==0 and queue.current~=followup and not followup.action and Lifecycle.flush(queue)==nil,
+                abort..' must invalidate deferred completion rather than resurrecting its followup')
+        end
+    end
+    isClient=previousClient
+end
+print('Walking native completion: SP/MP callbacks, movement input, Java removal, single followup start and explicit abort guards passed.')
 -- Skip audited unavailable successors before native validation/start, preserving cleanup and independent work.
 for _,family in ipairs({'ActionQueueGenerators','ActionQueueFire'}) do
     local previous=PZSurvivorToolkit[family]

@@ -1,5 +1,6 @@
 local Slots={}
-function Slots.handles(id) return id=='clothing-chain' or id=='hotbar-chain' end
+function Slots.isBelt(id) return id=='belt-knife' or id=='belt-hammer' end
+function Slots.handles(id) return id=='clothing-chain' or id=='hotbar-chain' or Slots.isBelt(id) end
 local function attached(player,exclude)
  local result={};local items=player:getAttachedItems()
  for i=0,items:size()-1 do
@@ -15,7 +16,17 @@ local function sameAttached(player,expected)
 end
 function Slots.prepare(state,seed)
  if not Slots.handles(state.id) then return end
- if state.id=='clothing-chain' then
+ if Slots.isBelt(state.id) then
+  seed('belt','Base.Belt2')
+  state.player:setWornItem(state.belt:getBodyLocation(),state.belt)
+  seed('hotbarReplacement',state.id=='belt-knife' and 'Base.HuntingKnife' or 'Base.Hammer',state.source)
+  state.beltFavorite=state.options and state.options.belt_favorite==true or false
+  state.hotbarReplacement:setFavorite(state.beltFavorite)
+  state.hotbarIndex,state.hotbarType=2,'SmallBeltLeft'
+  state.hotbarLocation=state.id=='belt-knife' and 'Belt Left Upside' or 'Belt Left'
+  state.originalAttached=attached(state.player)
+  assert(not state.originalAttached[state.hotbarLocation],'fresh fixture belt model is occupied')
+ elseif state.id=='clothing-chain' then
   seed('clothingA','Base.Socks_Ankle',state.source);seed('clothingB','Base.Socks_Ankle')
   state.clothingLocation=state.clothingA:getBodyLocation()
   assert(state.clothingLocation and tostring(state.clothingLocation)~='' and state.clothingB:getBodyLocation()==state.clothingLocation,
@@ -57,7 +68,24 @@ end
 function Slots.enqueue(state,helpers)
  if not Slots.handles(state.id) then return false end
  assert(not state.player:isTimedActionInstant(),'native slot durations required')
- if state.id=='clothing-chain' then
+ if Slots.isBelt(state.id) then
+  local queue=helpers.queue()
+  assert(#queue.queue==0 and not state.player:hasTimedActions(),'belt click must start with an empty native queue')
+  local hotbar=assert(getPlayerHotbar(state.player:getPlayerNum()))
+  hotbar:refresh();hotbar:reloadIcons()
+  local slot=assert(hotbar.availableSlot[state.hotbarIndex],'native left belt slot missing')
+  assert(slot.def.type==state.hotbarType and slot.def.attachments[state.hotbarReplacement:getAttachmentType()]==state.hotbarLocation
+   and not hotbar.attachedItems[state.hotbarIndex],'native left belt definition or vacancy differs')
+  local actions=operation(state,helpers,ISHotbar.attachItem,hotbar,state.hotbarReplacement,state.hotbarLocation,state.hotbarIndex,slot.def,true)
+  assert(#actions==2,'native empty-belt click must enqueue only transfer and attach')
+  transfer(state,actions[1],state.hotbarReplacement)
+  local action=actions[2]
+  assert(action.Type=='ISAttachItemHotbar' and action.item==state.hotbarReplacement and action.hotbar==hotbar
+   and action.slot==state.hotbarLocation and action.slotIndex==state.hotbarIndex and action.slotDef==slot.def
+   and action.maxTime==-1 and action.animEvent==ISAttachItemHotbar.animEvent,'native belt attach changed')
+  state.slotFirst,state.slotLast=actions[1],action
+  state.emptyQueueClick=true
+ elseif state.id=='clothing-chain' then
   local first=operation(state,helpers,ISInventoryPaneContextMenu.onWearItems,{state.clothingA},state.player:getPlayerNum())
   assert(#first==2,'native bag clothing callback must enqueue pickup and wear')
   transfer(state,first[1],state.clothingA);wear(first[2],state.clothingA)
@@ -116,23 +144,29 @@ function Slots.verify(state,mode)
   assert(state.hotbarReplacement:getAttachedSlot()==state.hotbarIndex
    and state.hotbarReplacement:getAttachedSlotType()==state.hotbarType
    and state.hotbarReplacement:getAttachedToModel()==state.hotbarLocation,'native replacement attachment metadata differs')
-  assert(state.hotbarInitial:getAttachedSlot()==-1 and (state.hotbarInitial:getAttachedSlotType()==nil or state.hotbarInitial:getAttachedSlotType()=='')
-   and (state.hotbarInitial:getAttachedToModel()==nil or state.hotbarInitial:getAttachedToModel()==''),'native detach did not clear exact initial metadata')
-  assert(state.hotbarInitial:getContainer()==state.root and state.hotbarReplacement:getContainer()==state.root,
+  if state.hotbarInitial then assert(state.hotbarInitial:getAttachedSlot()==-1 and (state.hotbarInitial:getAttachedSlotType()==nil or state.hotbarInitial:getAttachedSlotType()=='')
+   and (state.hotbarInitial:getAttachedToModel()==nil or state.hotbarInitial:getAttachedToModel()==''),'native detach did not clear exact initial metadata') end
+  assert((not state.hotbarInitial or state.hotbarInitial:getContainer()==state.root) and state.hotbarReplacement:getContainer()==state.root,
    'native hotbar identities reached wrong containers')
   assert(state.source:getItems():isEmpty(),'native hotbar source did not become empty')
+  if Slots.isBelt(state.id) then
+   assert(state.hotbarReplacement:isFavorite()==state.beltFavorite,'belt click changed favorite flag')
+   assert(state.bag:getFullType()=='Base.Bag_ALICEpack_Army' and player:getWornItem(state.location)==state.bag
+    and player:getWornItem(state.belt:getBodyLocation())==state.belt,'belt fixture worn equipment changed')
+  end
   if not isServer() then
    local hotbar=assert(getPlayerHotbar(player:getPlayerNum()));hotbar:reloadIcons()
    assert(hotbar.attachedItems[state.hotbarIndex]==state.hotbarReplacement,'native hotbar icon identity differs')
   end
  end
  return {slotsVerified=true,clothing=state.id=='clothing-chain',hotbar=state.id=='hotbar-chain',
-  nativeDurations=true,policyChecked=mode=='toolkit',
+  nativeDurations=true,policyChecked=mode=='toolkit' and not Slots.isBelt(state.id),emptyQueueClick=state.emptyQueueClick,
+  belt=Slots.isBelt(state.id),favoritePreserved=Slots.isBelt(state.id) and state.hotbarReplacement:isFavorite()==state.beltFavorite or nil,
   clothingItem=state.clothingB and state.clothingB:getID(),hotbarItem=state.hotbarReplacement and state.hotbarReplacement:getID()}
 end
 function Slots.cleanup(state)
- if state.id~='hotbar-chain' then return end
- for _,item in ipairs({state.hotbarInitial,state.hotbarReplacement}) do
+ if state.id~='hotbar-chain' and not Slots.isBelt(state.id) then return end
+ for _,item in pairs({state.hotbarInitial,state.hotbarReplacement}) do
   state.player:removeAttachedItem(item);item:setAttachedSlot(-1);item:setAttachedSlotType(nil);item:setAttachedToModel(nil)
  end
  sameAttached(state.player,state.originalAttached)

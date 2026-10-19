@@ -6,11 +6,11 @@ import shutil
 import subprocess
 import zipfile
 
-CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands']
+CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands']
 CART_CASE = 'cart-pickup'
 CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', 'SaucedWheelbarrow.WheelbarrowMetal']
 CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
-RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1}
+RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1}
 TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands'}
 
 
@@ -63,6 +63,15 @@ def definitions():
 
 def validate(selection):
     cases = selection.get('cases')
+    options = selection.get('options', {})
+    for key in ('belt_walk', 'belt_favorite'):
+        if key in options and type(options[key]) is not bool:
+            raise ValueError(key + ' must be Boolean')
+        if options.get(key) and (not isinstance(cases, list) or not cases
+                                 or any(case not in ('belt-knife', 'belt-hammer') for case in cases)):
+            raise ValueError(key + ' requires only belt regression cases')
+    if options.get('belt_walk') and not {'ZombieBuddy', 'PZToolkitJavaPatches'} <= set(selection.get('mods', [])):
+        raise ValueError('Walking equipment requires ZombieBuddy and Toolkit Java Patches')
     if (not isinstance(cases, list) or not cases or cases != [case for case in [*CASES, CART_CASE] if case in cases]
             or selection.get('kind') not in ('sp', 'mp') or selection.get('mode') not in ('native', 'toolkit')
             or type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
@@ -106,7 +115,7 @@ def _transfer_probe(project, output, game, jdk, locations):
 
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
-    probe = _transfer_probe(project, output, game, jdk, locations) if selection['kind'] == 'mp' else None
+    probe = _transfer_probe(project, output, game, jdk, locations) if selection['kind'] == 'mp' or selection.get('options', {}).get('belt_walk') else None
     if probe:
         runtime.setdefault('fixture', {})['mods'] = ['EquipmentTransferProbe']
     for role in runtime.get('roles', {'client1': {}}):
@@ -118,7 +127,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         if probe:
             layer = Path(output) / role / 'mods/EquipmentTransferProbe/42'
             (layer / 'media/java').mkdir(parents=True)
-            (layer / 'mod.info').write_text('name=Read-only equipment transfer probe\nid=EquipmentTransferProbe\nversionMin=42.21\n'
+            (layer / 'mod.info').write_text('name=Isolated native equipment probe\nid=EquipmentTransferProbe\nversionMin=42.21\n'
                                           'require=\\ZombieBuddy\njavaPkgName=net.alexredby.equipmentprobe\n'
                                           'javaJarFile=media/java/EquipmentTransferProbe.jar\n')
             shutil.copy2(probe, layer / 'media/java/EquipmentTransferProbe.jar')
@@ -160,6 +169,12 @@ def verify(root, selection, catalog):
         required = {'inventoryPreserved': True, 'frontCompleted': True, 'tailCompleted': True,
                     'equipmentMatches': True, 'nativeDurations': True, 'postprocessingVerified': True,
                     'policyChecked': selection['mode'] == 'toolkit'}
+        if row.get('id') in ('belt-knife', 'belt-hammer'):
+            required.update(policyChecked=False, slotsVerified=True, belt=True, emptyQueueClick=True, favoritePreserved=True)
+            if selection.get('options', {}).get('belt_walk'):
+                required.update(walkingVerified=True, walkedDuringTransfer=True, walkedDuringAttach=True, walkReleased=True)
+                if type(result.get('walkDistance')) not in (int, float) or result.get('walkDistance', 0) <= 0.1:
+                    issues.append('Walking belt case lacks native displacement: ' + row['id'])
         if row.get('id') == 'hands-chain':
             required.update(activeProgress=True, activeProtected=selection['mode'] == 'toolkit')
         if row.get('id') == 'waiting-cancel':
@@ -196,7 +211,7 @@ def verify(root, selection, catalog):
             if type(result.get('receipts')) is not int or result.get('receipts') != count:
                 issues.append('Missing native equipment outcome acknowledgements: ' + str(row.get('id')))
             states = result.get('receiptStates')
-            allowed = ('completed', 'canceled') if row.get('id') == 'hotbar-chain' else ('completed',)
+            allowed = ('completed', 'canceled') if row.get('id') in ('hotbar-chain', 'belt-knife', 'belt-hammer') else ('completed',)
             if not isinstance(states, list) or len(states) != count or any(state not in allowed for state in states):
                 issues.append('Unexpected native equipment terminal states: ' + str(row.get('id')))
         if row.get('status') != 'passed' or any(result.get(key) is not value for key, value in required.items()):

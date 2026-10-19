@@ -38,9 +38,12 @@ function makeItem(kind,dest)
  nextID=nextID+1
  local i={kind=kind,id=nextID,container=dest,slot=-1}
  function i:getID() return self.id end
- function i:getBodyLocation() if self.kind=='Base.Socks_Ankle' then return 'SOCKS' end return '' end
+ function i:getBodyLocation() if self.kind=='Base.Socks_Ankle' then return 'SOCKS' elseif self.kind=='Base.Belt2' then return 'BELT' end return '' end
  function i:canBeEquipped() return '' end
- function i:getAttachmentType() return 'Shovel' end
+ function i:getAttachmentType() if self.kind=='Base.HuntingKnife' then return 'Knife' elseif self.kind=='Base.Hammer' then return 'Hammer' end return 'Shovel' end
+ function i:getFullType() return self.kind end
+ function i:setFavorite(value) self.favorite=value end
+ function i:isFavorite() return self.favorite==true end
  function i:getContainer() return self.container end
  function i:getAttachedSlot() return self.slot end
  function i:setAttachedSlot(v) self.slot=v end
@@ -58,10 +61,11 @@ function makeItem(kind,dest)
  function i:IsInventoryContainer() return false end
  dest.items[i]=true;return i
 end
-local function runCase(id)
+local function runCase(id,favorite)
  local player={worn={},attached={}}
  function player:isEquipped() return false end
  function player:isTimedActionInstant() return false end
+ function player:hasTimedActions() return false end
  function player:getPlayerNum() return 0 end
  function player:getAttachedItems()
   local entries={};for location,item in pairs(self.attached) do local loc,it=location,item;entries[#entries+1]={getLocation=function() return loc end,getItem=function() return it end} end
@@ -76,12 +80,16 @@ local function runCase(id)
  function player:getWornItems() return {contains=function(_,item) for _,value in pairs(player.worn) do if value==item then return true end end return false end} end
  function player:getPrimaryHandItem() return self.hammer end
  function player:getSecondaryHandItem() return self.screwdriver end
- local state={id=id,player=player,root=container(),source=container(),expectedWorn={}}
+ local state={id=id,options={belt_favorite=favorite==true},player=player,root=container(),source=container(),expectedWorn={}}
  local unrelated=makeItem('Base.HolsterSimple',state.root)
- unrelated:setAttachedSlot(2);unrelated:setAttachedSlotType('HolsterRight');unrelated:setAttachedToModel('Holster Right')
+ local unrelatedIndex=Slots.isBelt(id) and 4 or 2
+ unrelated:setAttachedSlot(unrelatedIndex);unrelated:setAttachedSlotType('HolsterRight');unrelated:setAttachedToModel('Holster Right')
  player:setAttachedItem('Holster Right',unrelated)
  state.hammer=makeItem('Base.Hammer',state.root);state.screwdriver=makeItem('Base.Screwdriver',state.root)
  player.hammer,player.screwdriver=state.hammer,state.screwdriver
+ if Slots.isBelt(id) then
+  state.bag=makeItem('Base.Bag_ALICEpack_Army',state.root);state.location='Back';player:setWornItem(state.location,state.bag)
+ end
  local queue={queue={}}
  ISTimedActionQueue={add=function(action) queue.queue[#queue.queue+1]=action end}
  function ISInventoryPaneContextMenu.transferIfNeeded(_,item)
@@ -89,6 +97,7 @@ local function runCase(id)
  end
  function getSpecificPlayer() return player end
  local hotbar={chr=player,attachedItems={},availableSlot={{def={name='Back',type='Back',attachments={Shovel='Shovel Back'}}}},replacements={Shovel='Shovel Back with Bag'}}
+ hotbar.availableSlot[2]={def={name='Belt Left',type='SmallBeltLeft',attachments={Knife='Belt Left Upside',Hammer='Belt Left'}}}
  setmetatable(hotbar,{__index=ISHotbar})
  function hotbar:refresh() end
  function hotbar:setAttachAnim() end
@@ -99,10 +108,21 @@ local function runCase(id)
   state[name]=makeItem(kind,dest or state.root);local item=state[name]
   assert(not identities[item:getID()]);identities[item:getID()]=item;return item
  end)
+ if Slots.isBelt(id) then
+  queue.queue[1]={}
+  assert(not pcall(Slots.enqueue,state,{queue=function() return queue end}),'belt fixture accepted a nonempty queue')
+  queue.queue={}
+ end
  assert(Slots.enqueue(state,{queue=function() return queue end,run=function(fn,...) return fn(...) end}))
  state.tailAction={};local denied=0
- Slots.controls(state,{native=false,denied=function(_,_,_,reason) assert(reason=='move_dependent');denied=denied+1 end})
- assert(denied==2 and state.policyChecked)
+ if Slots.isBelt(id) then
+  assert(#queue.queue==2 and queue.queue[1].Type=='ISInventoryTransferAction' and queue.queue[2].Type=='ISAttachItemHotbar'
+   and queue.queue[2].start==ISAttachItemHotbar.start and queue.queue[2].isValid==ISAttachItemHotbar.isValid,
+   'empty belt must retain unmodified native transfer/attach methods')
+ else
+  Slots.controls(state,{native=false,denied=function(_,_,_,reason) assert(reason=='move_dependent');denied=denied+1 end})
+  assert(denied==2 and state.policyChecked)
+ end
  for _,action in ipairs(queue.queue) do
   if action.Type=='ISInventoryTransferAction' then action.srcContainer.items[action.item]=nil;action.destContainer.items[action.item]=true;action.item.container=action.destContainer
   elseif action.Type=='ISWearClothing' then assert(action:complete())
@@ -124,16 +144,19 @@ local function runCase(id)
   state.hotbarReplacement:setAttachedSlotType(nil)
   assert(not pcall(Slots.verify,state,'toolkit'),'missing hotbar metadata escaped verification')
   state.hotbarReplacement:setAttachedSlotType(state.hotbarType)
-  player:setAttachedItem(state.hotbarLocation,state.hotbarInitial)
+  player:setAttachedItem(state.hotbarLocation,state.hotbarInitial or unrelated)
   assert(not pcall(Slots.verify,state,'toolkit'),'wrong attached identity escaped verification')
   player:setAttachedItem(state.hotbarLocation,state.hotbarReplacement)
  end
  assert(Slots.verify(state,'toolkit').slotsVerified)
  Slots.cleanup(state)
- assert(player.attached['Holster Right']==unrelated and unrelated:getAttachedSlot()==2
+ assert(player.attached['Holster Right']==unrelated and unrelated:getAttachedSlot()==unrelatedIndex
   and unrelated:getAttachedSlotType()=='HolsterRight' and unrelated:getAttachedToModel()=='Holster Right',
   'unrelated attachment changed during execution or cleanup')
- if id=='hotbar-chain' then
+ if Slots.isBelt(id) then
+  assert(outcome.belt and outcome.emptyQueueClick and outcome.favoritePreserved and outcome.policyChecked==false)
+  assert(player.attached[state.hotbarLocation]==nil and state.hotbarReplacement:getAttachedSlot()==-1,'belt item survived cleanup')
+ elseif id=='hotbar-chain' then
   assert(player.attached[state.hotbarLocation]==nil and state.hotbarInitial:getAttachedSlot()==-1
    and state.hotbarReplacement:getAttachedSlot()==-1,'owned hotbar attachment survived cleanup')
   for _,item in ipairs({state.hotbarInitial,state.hotbarReplacement}) do
@@ -142,4 +165,4 @@ local function runCase(id)
  end
  print(id..': real native callback composition, native final mutation, policy assertions, cleanup passed')
 end
-runCase('clothing-chain');runCase('hotbar-chain')
+runCase('clothing-chain');runCase('hotbar-chain');runCase('belt-knife');runCase('belt-hammer');runCase('belt-knife',true)

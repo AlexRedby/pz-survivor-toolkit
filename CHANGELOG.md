@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.112
+
+- **Fixed:** Walking no longer loses the queued action after an item finishes transferring from a carried bag. Belt attachment, drinking and other follow-up actions retain their native movement and cancellation rules.
+
 ### 0.1.111
 
 - **Fixed:** Grab and Grab One work when organizedCategories and Tidy Up Meister are loaded. The compatibility guard now uses the shared closure check instead of calling a removed helper before the pickup starts.

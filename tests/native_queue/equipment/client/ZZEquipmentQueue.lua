@@ -52,9 +52,32 @@ local function equip(item,primary,both)
  assert(first and last.Type=='ISEquipWeaponAction' and last.item==item,'native equip callback missing')
  return first,last
 end
+local function beltTrace(stage,action,value)
+ local item=state.slotLast and state.slotLast.item or state.hotbarReplacement;local types={}
+ for _,entry in ipairs(queue().queue) do types[#types+1]=entry.Type end
+ print('[EQUIPMENT_TEST] BELT case='..state.id..' stage='..stage..' action='..tostring(action and action.Type)
+  ..' result='..tostring(value)..' id='..item:getID()..' item='..tostring(item)..' root='..tostring(item:getContainer()==state.root)
+  ..' container='..tostring(item:getContainer())..' attachAnim='..tostring(state.player:getVariableString('AttachAnim'))
+  ..' moving='..tostring(state.player:isPlayerMoving())..' pressed='..tostring(state.player:pressedMovement(false))
+  ..' x='..state.player:getX()..' y='..state.player:getY()..' slot='..item:getAttachedSlot()..' model='..tostring(item:getAttachedToModel())..' queue='..table.concat(types,','))
+end
 local function enqueue()
+ if Slots.isBelt(state.id) then
+  Slots.enqueue(state,{run=run,queue=queue})
+  beltTrace('enqueued',state.slotLast)
+  if Selection.options.belt_walk then
+   assert(type(equipmentTestWalk)=='function','native equipment keyboard probe missing')
+   state.walkX,state.walkY=state.player:getX(),state.player:getY()
+   state.walkSince=getTimestampMs()
+   state.expectedReceipts=1;state.records={};state.seen={};state.policyChecked=false
+   equipmentTestWalk(true)
+   return
+  end
+ end
  state.frontAction=read(state.front)
- if state.id=='bag-capacity' then
+ if Slots.isBelt(state.id) then
+  state.policyChecked=false
+ elseif state.id=='bag-capacity' then
   local before=#queue().queue
   run(ISInventoryPaneContextMenu.onGrabItems,{state.pickup},getPlayer():getPlayerNum())
   for i=before+1,#queue().queue do local action=queue().queue[i]
@@ -152,6 +175,20 @@ Events.OnTick.Add(function()
  if not started or done then return end
  local now=getTimestampMs()
  local ok,problem=pcall(function()
+  if state and phase=='beltWalk' then
+   assert(now-state.walkSince<15000,'walking belt action did not settle within bounded input hold')
+   local player=state.player
+   local dx,dy=player:getX()-state.walkX,player:getY()-state.walkY
+   state.walkDistance=math.max(state.walkDistance or 0,math.sqrt(dx*dx+dy*dy))
+   if player:isPlayerMoving() then
+    if queue().current==state.slotFirst then state.walkedDuringTransfer=true end
+    if queue().current==state.slotLast then state.walkedDuringAttach=true end
+   end
+  end
+  if state and Slots.isBelt(state.id) and state.beltCurrent~=queue().current then
+   state.beltCurrent=queue().current;beltTrace('current',queue().current)
+   if queue().current==state.slotLast then beltTrace('valid',state.slotLast,state.slotLast:isValid()) end
+  end
   if state and Bulk.isCase(state.id) then Bulk.observe(state,queue()) end
   if state and Selection.kind=='mp' then
    local action=queue().current
@@ -184,7 +221,7 @@ Events.OnTick.Add(function()
    if not empty() or getPlayer():isPlayerMoving() or (Selection.kind=='sp' and getPlayer():tooDarkToRead()) then return end
    if Selection.kind=='mp' then
     sendClientCommand('EquipmentQueueTest','Prepare',{case=Selection.cases[index]});phase='ready'
-   else state=Fixture.prepare(getPlayer(),Selection.cases[index]);Completion.watch(state);enqueue();phase='controls' end
+   else state=Fixture.prepare(getPlayer(),Selection.cases[index],nil,Selection.options);Completion.watch(state);enqueue();phase=Slots.isBelt(state.id) and (Selection.options.belt_walk and 'beltWalk' or 'checkpoint') or 'controls' end
   elseif phase=='ready' then
    if not ids or not Fixture.available(getPlayer(),ids) then return end
    assert(ids.case==Selection.cases[index],'wrong authoritative fixture case')
@@ -196,7 +233,16 @@ Events.OnTick.Add(function()
   elseif phase=='positioned' then
    local player=getPlayer()
    if not player:getCurrentSquare() or player:isPlayerMoving() or player:tooDarkToRead() then return end
-   state=Fixture.prepare(player,Selection.cases[index],ids);Completion.watch(state);enqueue();phase='controls'
+   state=Fixture.prepare(player,Selection.cases[index],ids,Selection.options);Completion.watch(state);enqueue();phase=Slots.isBelt(state.id) and (Selection.options.belt_walk and 'beltWalk' or 'checkpoint') or 'controls'
+  elseif phase=='beltWalk' then
+   if queue():indexOf(state.slotLast)~=-1 then return end
+   equipmentTestWalk(false);state.walkReleased=true;beltTrace('released',state.slotLast)
+   assert(state.walkedDuringTransfer and state.walkedDuringAttach and (state.walkDistance or 0)>0.1,
+    'belt regression did not walk through native transfer and attach')
+   phase='beltWalkStop'
+  elseif phase=='beltWalkStop' then
+   if not empty() or getPlayer():isPlayerMoving() or getPlayer():pressedMovement(false) then return end
+   state.frontAction=read(state.front);state.tailAction=read(state.tail);phase='checkpoint'
   elseif phase=='controls' then
    if queue():indexOf(state.frontAction)==-1 then
     print('[EQUIPMENT_TEST] FRONT_MISSING case='..state.id..' moving='..tostring(getPlayer():isPlayerMoving())..' dark='..tostring(getPlayer():tooDarkToRead())
@@ -206,7 +252,7 @@ Events.OnTick.Add(function()
    if queue().current~=state.frontAction or not state.frontAction.action or not state.frontAction.action:isStarted() then return end
    controls();phase='checkpoint'
   elseif phase=='checkpoint' and queue().current==state.tailAction and state.tailAction:isStarted() then
-   assert(native or state.policyChecked,'toolkit policy evidence missing')
+   assert(native or state.policyChecked or Slots.isBelt(state.id),'toolkit policy evidence missing')
    local receiptStates={}
    if Selection.kind=='mp' then
     if not Fixture.transactionsSettled() then return end
@@ -214,13 +260,17 @@ Events.OnTick.Add(function()
     for _,record in ipairs(state.records) do
      if record.state=='started' then return end
      -- Attach mutates through client field packets; its server complete() has no effects.
-     assert(record.state=='completed' or state.id=='hotbar-chain' and record.kind=='ISAttachItemHotbar' and record.state=='canceled',
+     assert(record.state=='completed' or (state.id=='hotbar-chain' or Slots.isBelt(state.id)) and record.kind=='ISAttachItemHotbar' and record.state=='canceled',
       'unexpected native equipment outcome '..record.kind..':'..record.state)
      receiptStates[#receiptStates+1]=record.state
     end
    end
    if state.id=='hands-chain' then assert(state.activeProgress,'equipment never made native active progress') end
    outcome=Fixture.verify(state,Selection.mode,true)
+   if Selection.options.belt_walk then
+    outcome.walkingVerified=true;outcome.walkedDuringTransfer=state.walkedDuringTransfer==true
+    outcome.walkedDuringAttach=state.walkedDuringAttach==true;outcome.walkReleased=state.walkReleased==true;outcome.walkDistance=state.walkDistance
+   end
    if Bulk.isCase(state.id) then for key,value in pairs(Bulk.evidence(state)) do outcome[key]=value end end
    if state.id=='hands-chain' then outcome.activeProgress=true;outcome.activeProtected=not native end
    outcome.receipts=Selection.kind=='mp' and #state.records or 0
@@ -282,6 +332,7 @@ Events.OnTick.Add(function()
   end
  end)
  if not ok then
+  if Selection.options.belt_walk and type(equipmentTestWalk)=='function' then equipmentTestWalk(false) end
   failures=failures+1;performed=performed+1
   emit({event='case',id=Selection.cases[index],status='failed',reason=tostring(problem)})
   print('[QUEUE_TEST] FAIL equipment '..tostring(problem));complete()
