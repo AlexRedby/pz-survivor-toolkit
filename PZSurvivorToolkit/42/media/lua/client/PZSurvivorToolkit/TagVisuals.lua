@@ -15,7 +15,7 @@ local families = {
     electrical = {yellow, "media/ui/Entity/Energy/icon_energy_electric.png"},
     tool = {blue, "Item_Hammer"}, mechanics = {blue, "Item_Wrench"},
     maintenance = {blue, "Item_Glue"}, cleaning = {blue, "Item_Toothbrush"},
-    medical = {red, "media/ui/LootableMaps/map_medcross.png"}, drug = {red, "Item_SutureNeedle"},
+    medical = {red, "media/ui/LootableMaps/map_medcross.png"}, drug = {red, "Item_Pills"},
     material = {brown, "Item_Plank"}, construction = {brown, "Item_Hammer"},
     crafting = {brown, "Item_Hammer"}, furniture = {brown, "Item_Plank"},
     clothing = {purple, "Item_ShirtGeneric"}, character = {purple, "Item_Toothbrush"},

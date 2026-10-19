@@ -154,6 +154,57 @@ assert(destinations[sunflower] == additive and destinations[candy] == additive
 enabled = true
 
 do
+    local hammer = item('Base.Hammer', 'toolCarpentry', 'Hammer')
+    local broken = item('Base.Hammer', 'toolCarpentry', 'Hammer')
+    local wrench = item('Base.Wrench', 'toolMechanics', 'Wrench')
+    local nativeTool = item('Base.Tool', 'Tool', 'Native tool')
+    local plank = item('Base.Plank', 'craftingCarpentry_material', 'Plank')
+    local weapon = item('Base.BaseballBat', 'Weapon', 'Bat')
+    for _, record in ipairs({hammer, broken, wrench, nativeTool, plank, weapon}) do
+        record.ref.broken = record ~= hammer
+        record.ref.isBroken = function(self) return self.broken end
+    end
+    local tools = box(nil, {toolCarpentry = true, toolMechanics = true, Tool = true})
+    destinations, plan = checkPlan({hammer, broken, wrench, nativeTool}, {tools})
+    assert(destinations[hammer] == tools and not destinations[broken] and not destinations[wrench]
+        and not destinations[nativeTool] and #plan.leftover == 3 and plan.leftoverReasons.nomatch == 3,
+        'default tool categories admitted broken instances or rejected a usable tool')
+
+    local carpentry = box(nil, {toolCarpentry = true, craftingCarpentry_material = true})
+    destinations = checkPlan({hammer, broken, plank}, {carpentry})
+    assert(destinations[hammer] == carpentry and destinations[plank] == carpentry and not destinations[broken],
+        'default carpentry selection admitted broken tools or lost materials')
+    local toolRule = box({mode = 'all', include = {'tool'}, exclude = {}})
+    local carpentryRule = box({mode = 'all', include = {'carpentry'}, exclude = {}})
+    for _, target in ipairs({toolRule, carpentryRule}) do
+        destinations = checkPlan({hammer, broken, plank}, {target})
+        assert(destinations[hammer] == target and not destinations[broken], 'tag rule admitted a broken tool')
+    end
+    assert(destinations[plank] == carpentryRule, 'carpentry rule lost non-tool materials')
+    local weaponBox = box(nil, {Weapon = true})
+    destinations = checkPlan({weapon}, {weaponBox})
+    assert(destinations[weapon] == weaponBox, 'tool exclusion changed unrelated broken-item routing')
+
+    local toolPresets = {Tools = {gen = 9, cats = {toolCarpentry = true}, items = {}}}
+    local presetTools = box(nil, {}, {}, {Tools = 9}, toolPresets)
+    destinations = checkPlan({hammer, broken}, {presetTools})
+    assert(destinations[hammer] == presetTools and not destinations[broken], 'linked default preset admitted a broken tool')
+    local namedTool = box(nil, {}, {Hammer = true})
+    destinations = checkPlan({hammer, broken}, {tools, namedTool})
+    assert(destinations[hammer] == namedTool and destinations[broken] == namedTool,
+        'default tool exclusion overrode explicit item assignments')
+
+    broken.ref.broken = false
+    destinations = checkPlan({broken}, {tools})
+    assert(destinations[broken] == tools, 'repair did not restore routing for the same tool instance')
+    broken.ref.broken = true
+    enabled = false
+    destinations = checkPlan({broken}, {tools})
+    assert(destinations[broken] == tools, 'disabled item tags changed legacy category routing')
+    enabled = true
+end
+
+do
     local small = box(seedRule); small.capacity, small.used = 2, 1
     local heavy = item('Base.Potato', 'foodPerishable_vegetable', 'Heavy potato', 11)
     destinations, plan = checkPlan({sunflower, full, candy, heavy}, {small}, {{ref = {}, factor = 1, space = 10}}, 10)
@@ -210,4 +261,4 @@ Tags.matchesRule = function(...)
 end
 assertFailureRestored(function() LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, nil, Rules.matches) end)
 Tags.matchesRule = originalMatches
-print('Quartermaster item routing passed: seed/food roles, packets, box/preset rules, additive picks, display-name precedence, opt-out, identities, capacity/carriers/leftovers and failure safety.')
+print('Quartermaster item routing passed: seed/food roles, packets, broken tools, repair, box/preset rules, additive picks, display-name precedence, opt-out, identities, capacity/carriers/leftovers and failure safety.')

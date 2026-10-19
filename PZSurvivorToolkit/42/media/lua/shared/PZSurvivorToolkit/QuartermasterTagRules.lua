@@ -66,6 +66,11 @@ function Rules.forBox(obj, ci, links, presets)
 end
 
 function Rules.matches(box, item)
+    -- Tag/category selections describe usable tools. Explicit item assignments still
+    -- take precedence in the planner, so broken tools can be collected separately.
+    local ref = item.ref
+    if Tags.enabled() and ref and ref.isBroken and ref:isBroken()
+        and Tags.matches(Tags.forItem(ref), {"tool"}) then return false end
     if item.cat and box.cats and box.cats[item.cat] then return true end
     if not Tags.enabled() or not box.rules or #box.rules == 0 then return false end
     local tags = Tags.forItem(item.ref)

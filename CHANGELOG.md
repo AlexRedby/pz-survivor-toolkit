@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.115
+
+- **Changed:** With item tags enabled, Quartermaster category and tag selections exclude broken tools, including carpentry tools. Explicit item assignments can still collect them.
+- **Fixed:** The `drug` tag uses the native pill icon instead of a suture needle.
+
 ### 0.1.114
 
 - **Fixed:** Tag choices and previews use organizedCategories inventory categories while preserving native loot categories. Quartermaster prepares item categories directly before sorting, inspecting container contents and recording the storage manifest, removing dependence on prior inventory-pane refreshes or external wrappers.
