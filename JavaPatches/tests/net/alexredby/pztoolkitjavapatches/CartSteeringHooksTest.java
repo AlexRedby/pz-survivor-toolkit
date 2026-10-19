@@ -835,6 +835,54 @@ public final class CartSteeringHooksTest {
         } finally {CartSteeringHooks.reset(player);time.fpsMultiplier=old;}
     }
 
+    private static void keyboardWorldReleaseControls(Unsafe unsafe,Map<?,?> states) throws Exception {
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
+        player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
+        type(cart,"SaucedWheelbarrow.WheelbarrowWood");player.keyboard=true;player.keys=new Keys();player.walkSpeed=.8f;
+        var input=new IsoPlayer.InputState();var time=GameTime.getInstance();float old=time.fpsMultiplier;
+        try {
+            time.fpsMultiplier=1;
+            for(float origin:new float[]{8192,10825.5f,16384}) for(double initial:new double[]{-.7,.7,-1.3,1.3})
+                for(float budget:new float[]{.002f,.005f,.02f}) {
+                    CartSteeringHooks.reset(player);player.actualX=player.actualY=origin;
+                    player.moving=true;player.keys.set(-1,1);CartSteeringHooks.input(player,input);
+                    Object state=states.get(player);field(state,"heading").setDouble(state,initial);
+                    field(state,"turnRate").setDouble(state,-1);
+                    // Release steering between input callbacks, retaining deliberate reverse travel.
+                    player.keys.set(-1,0);
+                    for(int frame=0;frame<240;frame++) {
+                        Vector2 step=CartSteeringHooks.movement(player,budget,0);
+                        check(step.getLength()<=budget+1e-7,"released reverse cannot invent a native stride budget");
+                        accept(player,step);
+                        double drift=Math.abs(CartSteeringMath.wrap(field(state,"heading").getDouble(state)-initial));
+                        check(drift<=.025,"released reverse must retain yaw at native world precision: "
+                            +origin+"/"+initial+"/"+budget+"/"+frame+" drift="+drift);
+                    }
+                    check(Math.hypot(player.actualX-origin,player.actualY-origin)>budget*100,
+                        "yaw stability must preserve deliberate reverse progress");
+                }
+            // Collision-displaced analog movement retains its existing rolling-yaw contract.
+            for(String gate:new String[]{"controller","aim","autowalk"}) {
+                CartSteeringHooks.reset(player);player.keyboard=!gate.equals("controller");
+                player.aim=gate.equals("aim");player.autoWalk=gate.equals("autowalk");
+                player.actualX=player.actualY=10825.5f;player.moving=true;player.keys.set(-1,0);
+                CartSteeringHooks.heading(player);Object state=states.get(player);
+                double initial=.7;field(state,"heading").setDouble(state,initial);
+                direction(player,initial);CartSteeringHooks.input(player,input);
+                double axle=CartSteeringMath.woodenAxle((float)CartSteeringHooks.clearanceLean(player),
+                    CartLegPace.woodenGaitShift(player));
+                CartSteeringHooks.movement(player,.02f,0);
+                float x=player.actualX,y=player.actualY;
+                player.actualX+=.015f;player.actualY+=.003f;
+                double expected=CartSteeringMath.acceptedTurn(initial,axle,player.actualX-x,player.actualY-y);
+                CartSteeringHooks.heading(player);
+                check(Math.abs(CartSteeringMath.wrap(field(state,"heading").getDouble(state)-initial)-expected)<1e-9,
+                    "relative release correction must retain native collision yaw for "+gate);
+            }
+        } finally {CartSteeringHooks.reset(player);time.fpsMultiplier=old;}
+    }
+
     private static void stationaryControls(Unsafe unsafe,Map<?,?> states) throws Exception {
         var player=(Player)unsafe.allocateInstance(Player.class);
         var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
@@ -1295,6 +1343,7 @@ public final class CartSteeringHooksTest {
         pathControls(unsafe,states);
         keyboardControls(unsafe,states);
         keyboardReleaseControls(unsafe,states);
+        keyboardWorldReleaseControls(unsafe,states);
         stationaryControls(unsafe,states);
         stationaryCadence(unsafe,states);
         brakeControls(unsafe,states);

@@ -107,10 +107,107 @@ public final class CartFootprintTest {
             "an overlapped cart retains its existing backward escape");
     }
 
+    private static void relativeReverseContactChecks(double axle) {
+        double dt=1.0/60,front=CartFootprint.WALK_FRONT;
+        for(double origin:new double[]{0,8192,10825.5,16384}) for(int normal:new int[]{-1,1})
+            for(int side:new int[]{-1,1}) for(boolean released:new boolean[]{false,true}) {
+                double localHeading=side*(released?1.7:1.575);
+                double heading=normal>0?localHeading:Math.PI-localHeading;
+                int yaw=normal*side;
+                double x=(float)(origin+normal*1.6599903106689453),y=(float)origin;
+                CartFootprint.Query wall=(x1,y1,x2,y2)->
+                    Math.max(normal*(x1-origin),normal*(x2-origin))+.3>=2;
+                // Start at the nearest representable clear position without waiving the envelope.
+                for(int retreat=0;!CartFootprint.clear(wall,x,y,heading,front) && retreat<4;retreat++)
+                    x=Math.nextAfter((float)x,normal>0?Double.NEGATIVE_INFINITY:Double.POSITIVE_INFINITY);
+                String context=origin+"/"+normal+"/"+side+"/released="+released;
+                check(CartFootprint.clear(wall,x,y,heading,front),"reverse contact must start clear: "+context);
+                double target=heading+Math.PI+(released?0:yaw*Math.PI/4);
+                var requested=CartSteeringMath.woodenStep(heading,target,.02,dt,0,axle,0,true,new CartSteeringMath.Step());
+                double fraction=CartFootprint.limit(wall,x,y,heading,requested.x(),requested.y(),axle,front);
+                check(fraction<1,"reverse contact regression must exercise the blocked path: "+context);
+                var slide=CartFootprint.steeredSlide(wall,x,y,heading,requested.x(),requested.y(),front,fraction,released?0:requested.turn());
+                check(slide!=null && Math.hypot(slide.x(),slide.y())>.01,
+                    "relative contact must retain clear manual reverse progress: "+context);
+                check(released?slide.turn()==0:slide.turn()*yaw>=0 && Math.abs(slide.turn())<=Math.abs(requested.turn())+1e-12,
+                    "relative contact must not introduce opposite or released yaw: "+context+" slide="+slide);
+                check(CartFootprint.rigidLimit(wall,x,y,heading,slide.x(),slide.y(),heading+slide.turn(),front)==1,
+                    "relative reverse correction must retain native-coordinate swept clearance: "+context);
+                check(Math.abs(slide.x())<1e-9,
+                    "relative contact must remove inward travel instead of inventing an automatic escape: "+context);
+            }
+    }
+
+    private static void relativeBlockedTurnContactChecks(double axle) {
+        double dt=1.0/60,front=CartFootprint.FAST_FRONT;
+        for(double origin:new double[]{0,8192,10825.5,16384}) for(int normal:new int[]{-1,1})
+            for(int side:new int[]{-1,1}) {
+                double localHeading=side*.7,heading=normal>0?localHeading:Math.PI-localHeading;
+                int yaw=-normal*side;
+                double contact=2-.3-(front-.28)*Math.cos(localHeading)-.00001;
+                double x=(float)(origin+normal*contact),y=(float)origin;
+                CartFootprint.Query wall=(x1,y1,x2,y2)->
+                    Math.max(normal*(x1-origin),normal*(x2-origin))+.3>=2;
+                for(int retreat=0;!CartFootprint.clear(wall,x,y,heading,front) && retreat<4;retreat++)
+                    x=Math.nextAfter((float)x,normal>0?Double.NEGATIVE_INFINITY:Double.POSITIVE_INFINITY);
+                String context=origin+"/"+normal+"/"+side;
+                check(CartFootprint.clear(wall,x,y,heading,front),"blocked-turn contact must start clear: "+context);
+                var requested=CartSteeringMath.woodenStep(heading,heading+yaw*Math.PI/4,.02,dt,0,axle,0,false,
+                    new CartSteeringMath.Step());
+                double fraction=CartFootprint.rigidLimit(wall,x,y,heading,requested.x(),requested.y(),
+                    heading+requested.turn(),front);
+                check(fraction<1,"blocked-turn regression must contact the wall: "+context);
+                check(CartFootprint.rigidLimit(wall,x,y,heading,0,requested.y(),heading,front)==1,
+                    "straight tangent must remain clear when the requested yaw is blocked: "+context);
+                var slide=CartFootprint.steeredSlide(wall,x,y,heading,requested.x(),requested.y(),front,fraction,requested.turn());
+                check(slide!=null && Math.abs(slide.y())>.01,
+                    "collision-blocked yaw must not discard clear tangent progress: "+context+" slide="+slide);
+                check(slide.turn()*yaw>=0 && Math.abs(slide.turn())<=Math.abs(requested.turn())+1e-12,
+                    "blocked yaw may stop but must not reverse steering: "+context);
+                check(CartFootprint.rigidLimit(wall,x,y,heading,slide.x(),slide.y(),heading+slide.turn(),front)==1,
+                    "blocked-yaw fallback must retain its complete swept clearance: "+context);
+            }
+    }
+
+    private static void relativeWallGuideChecks() {
+        for(double origin:new double[]{8192,10825.5,16384}) for(int normal:new int[]{-1,1})
+            for(int direction:new int[]{-1,1}) {
+                double x=(float)(origin+normal*1.6),y=(float)origin,tangent=direction*Math.PI/2;
+                double near=tangent-normal*direction*.04,away=tangent+normal*direction*.04;
+                CartFootprint.Query wall=(x1,y1,x2,y2)->
+                    Math.max(normal*(x1-origin),normal*(x2-origin))+.3>=2;
+                CartFootprint.Query empty=(x1,y1,x2,y2)->false;
+                String context=origin+"/"+normal+"/"+direction;
+                for(double heading:new double[]{near,tangent,away})
+                    check(CartFootprint.clear(wall,x,y,heading,CartFootprint.FAST_FRONT),
+                        "relative guide regression must retain a clear cart envelope: "+context);
+                check(CartFootprint.followWall(wall,x,y,near,near,tangent,normal,0,CartFootprint.FAST_FRONT,true),
+                    "relative contact must finish aligning from within the old pressure cutoff: "+context);
+                check(CartFootprint.followWall(wall,x,y,tangent,tangent,tangent,normal,0,CartFootprint.FAST_FRONT,true),
+                    "relative tangent contact must retain its established guide: "+context);
+                check(!CartFootprint.followWall(wall,x,y,away,away,tangent,normal,0,CartFootprint.FAST_FRONT,true),
+                    "relative outward intent must release wall guidance immediately: "+context);
+                check(!CartFootprint.followWall(empty,x,y,near,near,tangent,normal,0,CartFootprint.FAST_FRONT,true)
+                    && !CartFootprint.followWall(empty,x,y,tangent,tangent,tangent,normal,0,CartFootprint.FAST_FRONT,true),
+                    "relative guidance must end when the wall ends: "+context);
+                check(!CartFootprint.followWall(wall,x-normal,y,near,near,tangent,normal,0,CartFootprint.FAST_FRONT,true),
+                    "relative guidance must end after leaving wall contact: "+context);
+                check(!CartFootprint.followWall(wall,x,y,near,near,tangent,normal,0,CartFootprint.FAST_FRONT)
+                    && !CartFootprint.followWall(wall,x,y,tangent,tangent,tangent,normal,0,CartFootprint.FAST_FRONT),
+                    "absolute guidance must preserve its existing pressure threshold: "+context);
+                double pressing=tangent-normal*direction*.08;
+                check(CartFootprint.followWall(wall,x,y,tangent,pressing,tangent,normal,0,CartFootprint.FAST_FRONT),
+                    "absolute guidance must still accept pressure above its established cutoff: "+context);
+            }
+    }
+
     public static void main(String[] args) {
         CartFootprint.Query empty=(x1,y1,x2,y2)->false;
         double axle=CartSteeringMath.woodenAxle(0,0);
         blockedProbeChecks(axle);
+        relativeReverseContactChecks(axle);
+        relativeBlockedTurnContactChecks(axle);
+        relativeWallGuideChecks();
         for(double heading:new double[]{0,.3,Math.PI/2,Math.PI,-Math.PI/2}) {
             for(double dx:new double[]{-.2,0,.2}) for(double dy:new double[]{-.2,0,.2})
                 check(CartFootprint.limit(empty,10825.5,10142.5,heading,dx,dy,axle,1.62)==1,

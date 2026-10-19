@@ -133,11 +133,26 @@ final class CartFootprint {
 
     static boolean followWall(Query query,double x,double y,double heading,double target,
                               double tangent,double normalX,double normalY,double front) {
-        return pressingWall(target,tangent,normalX,normalY)
-            && rigidLimit(query,x,y,heading,normalX*.25,normalY*.25,heading,front)<1;
+        return followWall(query,x,y,heading,target,tangent,normalX,normalY,front,false);
+    }
+
+    static boolean followWall(Query query,double x,double y,double heading,double target,
+                              double tangent,double normalX,double normalY,double front,boolean relative) {
+        // Forward-only relative intent follows the accepted heading. Keep established contact
+        // through tangent alignment; an away-steering request or the end of the wall releases it.
+        boolean pressing=relative
+            ?Math.cos(target)*normalX+Math.sin(target)*normalY>=-1e-6 && Math.cos(target-tangent)>.1
+            :pressingWall(target,tangent,normalX,normalY);
+        return pressing && rigidLimit(query,x,y,heading,normalX*.25,normalY*.25,heading,front)<1;
     }
 
     record Slide(double x,double y,double turn,double target,double normalX,double normalY) {}
+
+    /** Relative keys own yaw; blocked steering may stop while clear tangent travel continues. */
+    static Slide steeredSlide(Query query,double x,double y,double heading,double dx,double dy,
+                              double front,double fraction,double turn) {
+        return slide(query,x,y,heading,dx,dy,front,fraction,turn,turn);
+    }
 
     /** Deflect along a clear wall/vehicle edge, within the existing turn-rate budget. */
     static Slide slide(Query query,double x,double y,double heading,double dx,double dy,

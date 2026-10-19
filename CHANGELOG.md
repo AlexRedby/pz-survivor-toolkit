@@ -504,6 +504,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.31
+
+- **Fixed:** Wooden wheelbarrow steering no longer accumulates yaw from rounded world coordinates after releasing the keys. Manual wall exits keep the requested turn direction while collision checks limit travel and rotation. Forward wall sliding finishes aligning with the wall and releases guidance when steering away or releasing forward movement.
+
 ### 0.1.30
 
 - Smooth the grip during wooden wheelbarrow pickup and setdown, preserving the thumb pose through the native transition into holding the handles.

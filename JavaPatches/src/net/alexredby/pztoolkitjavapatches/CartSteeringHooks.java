@@ -29,7 +29,7 @@ public final class CartSteeringHooks {
         boolean wheelRendered, stationary, stationaryRoot, cartBlocked, recovering, path, relative;
         double footprintFront=CartFootprint.WALK_FRONT;
         double slideTurn=Double.NaN;
-        double wallHeading=Double.NaN, wallNormalX, wallNormalY;
+        double wallHeading=Double.NaN, wallNormalX, wallNormalY, wallTurnRate;
         boolean moving, pending, sprintMomentum, sprintRequested, hasInput, wantsMove, braking, brakeSeen, fastMoving;
         boolean sprintMoving, momentumSprint;
         final CartSteeringMath.Step requested = new CartSteeringMath.Step();
@@ -333,9 +333,10 @@ public final class CartSteeringHooks {
         if(query!=null) state.footprintFront=footprintFront(player,state);
         boolean footprintClear=query!=null && CartFootprint.clear(query,state.startX,state.startY,state.heading,state.footprintFront);
         boolean guided=Double.isFinite(state.wallHeading) && state.wantsMove && !state.braking
+            && (!state.relative || keyboard(player) && travel(player)>0)
             && !state.stationaryRoot && !state.reversal.active && state.reversal.direction>0 && footprintClear
             && CartFootprint.followWall(query,state.startX,state.startY,state.heading,state.target,state.wallHeading,
-                state.wallNormalX,state.wallNormalY,state.footprintFront);
+                state.wallNormalX,state.wallNormalY,state.footprintFront,state.relative);
         if(!guided) state.wallHeading=Double.NaN;
         double rollingTarget=guided?state.wallHeading:state.reversal.braking?state.brakeTarget
             :state.wantsMove?state.target:state.heading+(state.reversal.direction<0?Math.PI:0);
@@ -347,7 +348,7 @@ public final class CartSteeringHooks {
         } else if(wooden(player)) CartSteeringMath.woodenStep(state.heading,
                 rollingTarget, distance,
                 GameTime.getInstance().getRealworldSecondsSinceLastUpdate(),state.load,axle(player),
-                state.turnRate,state.reversal.direction<0,state.requested);
+                guided?state.wallTurnRate:state.turnRate,state.reversal.direction<0,state.requested);
         else CartSteeringMath.step(state.heading,
                 state.relative || state.moving ? state.target : state.heading, distance,
                 GameTime.getInstance().getRealworldSecondsSinceLastUpdate(), state.load, axle(player),
@@ -355,7 +356,10 @@ public final class CartSteeringHooks {
         state.pending = true;
         state.result.set((float)state.requested.x(),(float)state.requested.y());
         state.cartBlocked=guided;state.recovering=false;
-        state.slideTurn=Double.NaN;
+        // Native float-coordinate rounding is not a steering input. Keep relative yaw coupled
+        // to the planned arc and scale it only by accepted travel, using the same swept oracle.
+        boolean steered=state.relative && wooden(player);
+        state.slideTurn=steered?state.requested.turn():Double.NaN;
         if(query!=null) {
             if(!footprintClear) {
                 // An equipped/door-overlapped cart may back out, without sweeping its nose sideways.
@@ -364,14 +368,18 @@ public final class CartSteeringHooks {
                 state.result.set((float)(reverse*Math.cos(state.heading)),(float)(reverse*Math.sin(state.heading)));
                 state.cartBlocked=reverse==0;
             } else {
-                double fraction=CartFootprint.limit(query,state.startX,state.startY,state.heading,
-                    state.result.x,state.result.y,axle(player),state.footprintFront);
+                double fraction=steered?CartFootprint.rigidLimit(query,state.startX,state.startY,state.heading,
+                    state.result.x,state.result.y,state.heading+state.requested.turn(),state.footprintFront)
+                    :CartFootprint.limit(query,state.startX,state.startY,state.heading,
+                        state.result.x,state.result.y,axle(player),state.footprintFront);
                 double guideCap=Math.min((1.6-.3*state.load)*dt,distance/axle(player));
                 double guideBase=Math.max(-guideCap,Math.min(guideCap,state.turnRate*dt));
-                var slide=CartFootprint.slide(query,state.startX,state.startY,state.heading,
-                    state.result.x,state.result.y,state.footprintFront,fraction,
-                    Math.max(-guideCap,guideBase-6*dt*dt),Math.min(guideCap,guideBase+6*dt*dt));
-                if(slide==null) state.result.scale((float)fraction);
+                var slide=steered?CartFootprint.steeredSlide(query,state.startX,state.startY,state.heading,
+                    state.result.x,state.result.y,state.footprintFront,fraction,state.requested.turn())
+                    :CartFootprint.slide(query,state.startX,state.startY,state.heading,
+                        state.result.x,state.result.y,state.footprintFront,fraction,
+                        Math.max(-guideCap,guideBase-6*dt*dt),Math.min(guideCap,guideBase+6*dt*dt));
+                if(slide==null) {state.result.scale((float)fraction);state.slideTurn*=fraction;}
                 else {
                     double nx=slide.normalX(),ny=slide.normalY();
                     if(state.wantsMove && !state.braking && !state.stationaryRoot && !state.reversal.active
@@ -573,6 +581,8 @@ public final class CartSteeringHooks {
         double bank=state.stationaryRoot ? 0 : wooden(player) ? CartSteeringMath.rollingLean(acceptedTurn,travel,dt)
             : wheelbarrow(player) && dt>0 ? Math.max(-.10,Math.min(.10,Math.signum(travel)*acceptedTurn/dt*.065)) : 0;
         state.turnRate=dt>0?acceptedTurn/dt:0;
+        // Contact alignment has its own rate; releasing steering must still stop free/reverse yaw.
+        state.wallTurnRate=Double.isFinite(state.wallHeading)?state.turnRate:0;
         if(blocked) state.stationaryRate=0;
         if(wooden(player)) state.lean=state.bank.update(bank,dt);
         else state.lean+=(bank-state.lean)*(1-Math.exp(-dt/.08));
