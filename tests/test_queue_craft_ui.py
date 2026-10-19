@@ -26,6 +26,27 @@ class CraftUIAdapterTests(unittest.TestCase):
         raw = []
         for index, case in enumerate(cases):
             count, base = craft_ui.COUNTS[case], 100 + index * 100
+            if case == craft_ui.EVOLVED_CASE:
+                prep = dict(case=case, bags=[base + 10, base + 11], book=base + 12,
+                            base=dict(id=base, kind='Base.Bowl'),
+                            ingredient=dict(id=base + 1, kind='Base.Tomato', hunger=-.12),
+                            spice=dict(id=base + 2, kind='Base.Pepper', hunger=-.005), baselineDishIds=[800], cookingLevel=0)
+                dish = dict(id=5000 + index * 10, kind='Base.Salad', totalCount=1, rootCount=0, sourceCount=1,
+                            extras=['Base.Tomato'], spices=['Base.Pepper'])
+                receipt = dict(case=case, bags=prep['bags'].copy(), base=dict(id=base, totalCount=0),
+                               ingredient=dict(id=base + 1, kind='Base.Tomato', hunger=-.06,
+                                               sourceCount=1, rootCount=0, totalCount=1),
+                               spice=dict(id=base + 2, kind='Base.Pepper', totalCount=0),
+                               dishes=[dish], outputIds=[dish['id']], outputs=1, bookId=prep['book'], tailRead=True)
+                raw += [('PREPARED', prep), ('VERIFIED', receipt)]
+                row = dict(event='case', id=case, status='passed', reason=None, requested=2, actions=2,
+                           actionInputIds=[base + 1, base + 2], progressIds=[1, 2], nativeDurations=[100, 100], cookingLevel=0,
+                           sourceMethodsUnchanged=True, callbackClass='PJCK_EvoPanel', sourceDeferred=True,
+                           sourceVerified=True, tokensGrouped=enabled, tailIndependent=True, tailProgress=True,
+                           returnsBeforeRead=True, selectedDishId=dish['id'])
+                row.update({key: copy.deepcopy(value) for key, value in receipt.items() if key != 'case'})
+                rows.append(row)
+                continue
             prep = dict(case=case, materials=list(range(base, base + count)), bags=[base + 10, base + 11],
                         book=base + 12, baselineOutputIds=[800],
                         toolMeta=[dict(id=base + 20 + n, kind=kind, condition=10, uses=0)
@@ -93,6 +114,78 @@ class CraftUIAdapterTests(unittest.TestCase):
             text += '\n' + authority
         (self.root / 'client1-launch.log').write_text(text)
         return craft_ui.verify(self.root, self.selection, {})
+
+    def test_evolved_gate_shares_ordered_sessions_in_sp_host_both_modes(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode, cases=['cook-batch', craft_ui.EVOLVED_CASE])
+                with self.subTest(kind=kind, mode=mode):
+                    craft_ui.validate(self.selection)
+                    result = self.verify()
+                    self.assertEqual([], result['issues'])
+                    self.assertEqual(self.selection['cases'], [row['case'] for row in result['outcomes']])
+        with self.assertRaises(ValueError):
+            craft_ui.validate(dict(self.selection, cases=[craft_ui.EVOLVED_CASE, 'cook-batch']))
+
+    def test_evolved_effect_source_and_native_phase_falsifications_fail(self):
+        self.selection['cases'] = [craft_ui.EVOLVED_CASE]
+        changes = [('requested', 1), ('actions', 1), ('actionInputIds', [102, 101]),
+                   ('progressIds', [1]), ('nativeDurations', [1, 1]), ('nativeDurations', [True, 100]),
+                   ('cookingLevel', True), ('sourceMethodsUnchanged', False), ('sourceDeferred', False),
+                   ('sourceVerified', False), ('tokensGrouped', False), ('tailIndependent', False),
+                   ('tailProgress', False), ('returnsBeforeRead', False), ('selectedDishId', 999)]
+        for key, value in changes:
+            evidence = self.evidence()
+            evidence[0][1][key] = value
+            with self.subTest(key=key):
+                self.assertTrue(self.verify(evidence)['issues'])
+        for change in ('base-present', 'spice-survivor', 'wrong-leftover', 'changed-input-id', 'changed-spice-id',
+                       'dish-at-root', 'duplicate-dish', 'missing-extra', 'duplicate-spice', 'old-dish-id', 'missing-reader'):
+            rows, raw = self.evidence()
+            row, receipt = rows[1], raw[1][1]
+            if change == 'base-present': receipt['base']['totalCount'] = 1
+            elif change == 'spice-survivor': receipt['spice']['totalCount'] = 1
+            elif change == 'wrong-leftover': receipt['ingredient']['hunger'] = -.01
+            elif change == 'changed-input-id': receipt['ingredient']['id'] = 999
+            elif change == 'changed-spice-id': receipt['spice']['id'] = 999
+            elif change == 'dish-at-root': receipt['dishes'][0].update(sourceCount=0, rootCount=1)
+            elif change == 'duplicate-dish': receipt['dishes'][0]['totalCount'] = 2
+            elif change == 'missing-extra': receipt['dishes'][0]['extras'] = []
+            elif change == 'duplicate-spice': receipt['dishes'][0]['spices'] *= 2
+            elif change == 'old-dish-id':
+                receipt['dishes'][0]['id'] = 800
+                receipt['outputIds'] = [800]
+                row['selectedDishId'] = 800
+            else: receipt['tailRead'] = False
+            row.update({key: copy.deepcopy(value) for key, value in receipt.items() if key != 'case'})
+            with self.subTest(change=change):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_evolved_receipt_must_be_authoritative_and_preparation_exact(self):
+        self.selection.update(kind='mp', cases=[craft_ui.EVOLVED_CASE])
+        self.assertTrue(self.verify(wrong_authority=True)['issues'])
+        for key, value in [('base', dict(id=100, kind='Base.Salad')),
+                           ('ingredient', dict(id=101, kind='Base.Tomato', hunger=-.01)),
+                           ('spice', dict(id=102, kind='Base.Pepper', hunger=0)),
+                           ('bags', [110, 110]), ('book', True), ('baselineDishIds', [100])]:
+            rows, raw = self.evidence()
+            raw[0][1][key] = value
+            with self.subTest(key=key):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+        rows, raw = self.evidence()
+        raw[1][1]['ingredient']['hunger'] = -.01
+        self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_evolved_native_deviations_remain_failed_controls(self):
+        self.selection.update(mode='native', cases=[craft_ui.EVOLVED_CASE])
+        rows, raw = self.evidence()
+        raw[1][1]['dishes'][0].update(sourceCount=0, rootCount=1)
+        rows[1].update({key: copy.deepcopy(value) for key, value in raw[1][1].items() if key != 'case'})
+        rows[1].update(status='failed', reason='native-evolved-effect-differs', returnsBeforeRead=False)
+        rows[-1]['failed'] = 1
+        result = self.verify((rows, raw))
+        self.assertEqual(['native-evolved-effect-differs'], result['issues'])
+        self.assertEqual('failed', result['outcomes'][0]['status'])
 
     def test_sp_host_native_and_toolkit_accept_exact_receipts(self):
         for kind in ('sp', 'mp'):

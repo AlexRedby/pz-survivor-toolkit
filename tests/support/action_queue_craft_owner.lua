@@ -2,6 +2,9 @@
 return function(source)
     local Toolkit = PZSurvivorToolkit
     local previousRequire, reader, mods, events = require, getModFileReader, getActivatedMods, Events
+    local lootSorter = LootSorter
+    -- This Neat-only fixture does not install Quartermaster's SP manifest hooks.
+    LootSorter = LootSorter or {}
     local definitions, operations, queue = Toolkit.ActionQueueDefinitions, Toolkit.ActionQueueOperations, ISTimedActionQueue
     local add = queue and queue.add
     local producer = operations and operations.registerProducer
@@ -26,11 +29,15 @@ return function(source)
         if module == 'PZSurvivorToolkit/SourceProof' then
             return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()
         end
+        if module == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
+            return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/QuartermasterCraftContainers.lua'))()
+        end
         if module == 'Neat_Crafting/NC_CraftActionPanel' then return assert(loadstring(source))() end
         return previousRequire(module)
     end
     local compat = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'))()
     require, getModFileReader, getActivatedMods, Events = previousRequire, reader, mods, events
+    LootSorter = lootSorter
     Toolkit.ActionQueueDefinitions, Toolkit.ActionQueueOperations = definitions, operations
     if operations then operations.registerProducer = producer end
     ISTimedActionQueue = queue

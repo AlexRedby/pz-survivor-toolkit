@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.121
+
+- **Fixed:** Restored the reviewed Project Cook 1.4.10 action-queue integration, including batch completion and automatic dish returns. The new return producer keeps its operation ownership; changed configuration helpers remain protected.
+
 ### 0.1.120
 
 - **Changed:** Quartermaster's owned editor now creates and handles its tag controls directly. Removed per-window method replacements for layout, filtering and controller navigation while preserving exact categories, tag rules and Save behavior.

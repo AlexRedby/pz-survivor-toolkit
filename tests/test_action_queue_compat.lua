@@ -204,6 +204,8 @@ end
 ISInventoryPage.refreshBackpacks=nativeFloorRefresh
 getFilenameOfClosure=function(callback)
     if callback==nativeFloorGetter then return 'ISInventoryPage.lua' end
+    local source=debug and debug.getinfo(callback,'S').source
+    if source and source:match('/PJCK_Config%.lua$') then return source end
     if previousOrigin then return previousOrigin(callback) end
 end
 ISInventoryPage.floorContainer={{class='ItemContainer',getType=function()return 'floor'end,
@@ -277,13 +279,12 @@ require = function(module)
     if module == 'NeatEquipment/NEQ_Gather' then return Gather end
     if module == 'NeatEquipment/NEQ_Categories' then return {SLOTS = {}} end
     if module == 'NeatEquipment/NEQ_State' then return {wardrobeSwapContainers = false} end
-    if module == 'Project_Cook/PJCK_Config' then PJCK_Config = {get = function() return {portionPolicy = 'full_first'} end}; return end
     if module=='BetterContainers/_Options' then return {} end
     if module=='BetterContainers/_IO/IniWriter' then return {makeFeature=function() return {get=function() return {} end} end} end
     local id, branch
     if module:match('^NeatEquipment/') then id, branch = 'NeatUI_Equipment', 'client/'
     elseif module:match('^Neat_Crafting/NC_CraftActionPanel') then id, branch = 'Neat_Crafting', 'client/'
-    elseif module:match('^Project_Cook/HandCraftPanel/PJCK_CraftActionPanel') or module:match('^Project_Cook/EvolvedRecipePanel/') then id, branch = 'Project_Cook', 'client/'
+    elseif module == 'Project_Cook/PJCK_Config' or module:match('^Project_Cook/HandCraftPanel/PJCK_CraftActionPanel') or module:match('^Project_Cook/EvolvedRecipePanel/') then id, branch = 'Project_Cook', 'client/'
     elseif module == 'Project_Cook/PJCK_FrozenCooking' or module == 'Project_Cook/PJCK_EvolvedSpiceGuard' then id, branch = 'Project_Cook', 'shared/'
     elseif module:match('^ISUI/WMI_') and module ~= 'ISUI/WMI_Compat_TABAS' then id, branch = 'WashFix', 'client/'
     elseif module == 'TimedActions/WMI_PatchWashClothing' then id, branch = 'WashFix', 'shared/'
@@ -302,7 +303,7 @@ require = function(module)
     if module == 'ISUI/WMI_WashingSubmenus' then
         source = source .. '\nWS.WMI_BuildWashMenu = function(menu, items, character, sink) return menu:addOption("Wash", character, onWashClothing3, sink, {}, items, nil, true) end\n'
     elseif module == 'P4TidyUpMeister' then source = source .. '\nTidyFixture = P4TidyUpMeister\n' end
-    local result = assert(loadstring(source, module))()
+    local result = assert(loadstring(source, module == 'Project_Cook/PJCK_Config' and '@Project_Cook/PJCK_Config.lua' or module))()
     loaded[module] = result or true; return result
 end
 -- Load the real controller before source adapters, matching the game's lifecycle/load order.
@@ -772,6 +773,163 @@ panel:returnBaseItemToOriginalContainer(); transfer=queue.queue[1]; unrelated=ta
 assert(definitions.inspect(transfer),'remembered base return callback has source ownership')
 operations.invalidate(transfer.toolkitQueueOperation); transfer:perform()
 assert(queue.queue[1]==unrelated and food.container==bag and consumed==2,'completed native return survives cancellation without late source effects')
+do
+    -- Use the selected source's real settings helpers and deferred finalizer, including
+    -- replacement/return failures; these checks must not substitute callback bodies.
+    local previousClock,previousHalo=getTimestampMs,HaloTextHelper
+    local now,notices=100,0
+    getTimestampMs=function() return now end
+    HaloTextHelper={addBadText=function() notices=notices+1 end}
+    assert(PJCK_Config.getBaseItemHandling()=='keep_inventory' and not PJCK_Config.shouldReturnBaseItemToSource(),
+        'actual Project Cook config defaults to retaining the base in inventory')
+    local foreign={class='ItemContainer',getParent=function() end,getType=function() return 'none' end,getContainingItem=function() end}
+    local function settings(value)
+        PJCK_Config.get().baseItemHandling=value
+        assert(PJCK_Config.shouldReturnBaseItemToSource()==(value=='return_source'))
+    end
+    local function expand(action)
+        assert(queue.queue[1]==action and action.Type=='ISQueueActionsAction')
+        action:start()
+        local size=#queue.queue
+        action:start()
+        assert(#queue.queue==size,'repeated source command start cannot duplicate a return or retry')
+        action:perform()
+    end
+    local function finalizer(value,container)
+        reset(); now,notices=100,0; settings('return_source')
+        panel.baseItem=value or item(inventory,21000)
+        panel.baseItemOriginalContainer=container or bag
+        panel.pendingBaseItemReplacement=nil
+        panel.inputGroupCache={Ingredient={none={usableItems={}}}}
+        panel:addIngredients({{groupKey='none',panelType='Ingredient',recipeCompatible=true}},recipe,panel.baseItem)
+        assert(#queue.queue==2,'return-source setting appends one finalizer after the requested ingredient')
+        local first=queue.queue[1]
+        local later=tail()
+        expand(first)
+        assert(queue.queue[1].Type=='PJCK_SequenceWaitAction')
+        queue.queue[1]:perform()
+        assert(queue.queue[1].Type=='ISQueueActionsAction' and queue.queue[2]==later)
+        return queue.queue[1],later
+    end
+    local function waitRetry(later)
+        assert(queue.queue[1].Type=='PJCK_SequenceWaitAction' and queue.queue[3]==later,
+            'a bounded return retry stays ahead of independent work')
+        queue.queue[1]:perform()
+        return queue.queue[1]
+    end
+    reset(); settings('return_source')
+    panel.baseItem=item(inventory,21001); panel.baseItemOriginalContainer=bag
+    assert(panel:queueBaseItemReturn(bag),'new public Project Cook return producer queues its transfer')
+    local direct=queue.queue[1]
+    assert(definitions.inspect(direct) and direct.destContainer==bag,'public return retains source ownership and exact destination')
+    local config=PJCK_Config
+    for _,name in ipairs({'get','getBaseItemHandling','shouldReturnBaseItemToSource','load','validate'}) do
+        local callback=config[name]
+        config[name]=function() error('unreviewed Project Cook setting helper') end
+        assert(not definitions.inspect(direct),'changed Project Cook '..name..' helper rejects an existing source contract')
+        config[name]=callback
+        assert(definitions.inspect(direct),'restoring the exact setting helper restores the source contract')
+    end
+    PJCK_Config={}
+    assert(not definitions.inspect(direct),'replaced Project Cook config table cannot inherit a source contract')
+    PJCK_Config=config
+    settings('keep_inventory')
+    assert(definitions.inspect(direct),'ordinary settings data changes preserve source method identity')
+    direct:perform()
+    assert(panel.baseItem==direct.item and direct.item.container==bag,'native return completion keeps the returned base selected')
+
+    local finish,later=finalizer()
+    local base=panel.baseItem
+    panel.baseItemOriginalContainer=foreign
+    expand(finish)
+    local returned=queue.queue[1]
+    assert(returned.Type=='ISInventoryTransferAction' and returned.item==base and returned.destContainer==bag
+        and definitions.inspect(returned),'automatic return uses the sequence-captured source and audited transfer')
+    returned:perform()
+    assert(base.container==bag and panel.baseItem==base and panel.baseItemOriginalContainer==bag and queue.queue[1]==later,
+        'automatic return settles once, preserves selection and leaves independent work queued')
+    for _,destination in ipairs({bag,foreign}) do
+        finish,later=finalizer()
+        panel.baseItem.container=destination
+        expand(finish)
+        assert(queue.queue[1].Type=='PJCK_SequenceWaitAction' and queue.queue[2]==later,
+            'already returned and unexpected third-container bases produce no extra transfer')
+        queue.queue[1]:perform()
+        assert(queue.queue[1]==later and notices==0)
+    end
+
+    finish,later=finalizer()
+    local stale=panel.baseItem
+    stale.container=nil
+    expand(finish); finish=waitRetry(later)
+    local replacement=item(inventory,stale.id)
+    inventory.values={replacement}
+    expand(finish)
+    returned=queue.queue[1]
+    assert(returned.Type=='ISInventoryTransferAction' and returned.item==replacement and returned.destContainer==bag,
+        'base return retry resolves the live inventory replacement instead of returning its stale proxy')
+    returned:perform()
+    assert(panel.baseItem==replacement and replacement.container==bag and stale.container==nil and queue.queue[1]==later,
+        'replacement return preserves the authoritative inventory identity and source endpoint')
+
+    finish,later=finalizer()
+    panel.baseItem=nil
+    for attempt=1,21 do
+        expand(finish)
+        if attempt<=20 then
+            finish=waitRetry(later)
+        else
+            assert(queue.queue[1].Type=='PJCK_SequenceWaitAction' and queue.queue[2]==later and notices==1,
+                'missing base stops after twenty retries with one sequence notice')
+            queue.queue[1]:perform()
+        end
+    end
+    assert(queue.queue[1]==later,'exhausted base return does not clear independent work')
+    finish,later=finalizer(); panel.baseItem=nil
+    expand(finish); finish=waitRetry(later); now=8101
+    expand(finish)
+    assert(queue.queue[1].Type=='PJCK_SequenceWaitAction' and queue.queue[2]==later and notices==1,
+        'base return also expires at its eight-second deadline before the retry count')
+    queue.queue[1]:perform()
+
+    finish,later=finalizer(); panel.baseItem=nil
+    expand(finish); finish=waitRetry(later)
+    operations.invalidate(finish.toolkitQueueOperation)
+    expand(finish)
+    assert(queue.queue[1]==later and notices==0,'cancelled base-return retry cannot append another wait, return or notification')
+
+    reset(); settings('keep_inventory'); panel.baseItem=item(inventory,21003); panel.baseItemOriginalContainer=bag
+    panel.inputGroupCache={Ingredient={none={usableItems={}}}}
+    panel:addIngredients({{groupKey='none',panelType='Ingredient',recipeCompatible=true}},recipe,panel.baseItem)
+    assert(#queue.queue==1,'default keep-inventory setting does not append automatic return work')
+
+    -- Exercise the actual ingredient retry deadline independently of the return path.
+    reset(); now,notices=100,0; food.container=bag; panel.baseItem=item(inventory,21004)
+    panel.inputGroupCache={Ingredient={[group]={usableItems={food}}}}
+    local delayed,reader=cook(); delayed.fixtureDelay=true; delayed:perform()
+    local retry=queue.queue[1]
+    expand(retry); retry=waitRetry(reader); now=5101
+    expand(retry)
+    assert(queue.queue[1].Type=='PJCK_SequenceWaitAction' and queue.queue[2]==reader and notices==1,
+        'ingredient retry expires at five seconds without consuming or clearing independent work')
+    queue.queue[1]:perform()
+    assert(food.container==bag and consumed==2)
+    reset(); now,notices=100,0; food.container=bag; panel.baseItem=item(inventory,21005)
+    panel.inputGroupCache={Ingredient={[group]={usableItems={food}}}}
+    delayed,reader=cook(); delayed.fixtureDelay=true; delayed:perform(); retry=queue.queue[1]
+    for attempt=1,21 do
+        expand(retry)
+        if attempt<=20 then retry=waitRetry(reader)
+        else
+            assert(queue.queue[1].Type=='PJCK_SequenceWaitAction' and queue.queue[2]==reader and notices==1,
+                'ingredient retries also stop after twenty attempts with one notice')
+            queue.queue[1]:perform()
+        end
+    end
+    assert(queue.queue[1]==reader and food.container==bag and consumed==2)
+    settings('keep_inventory'); getTimestampMs,HaloTextHelper=previousClock,previousHalo
+    reset()
+end
 local hooks={table.insert,ISTimedActionQueue.add,ISTimedActionQueue.addAfter,ISTimedActionQueue.queueActions,ISContextMenu.addOption}
 local old=NEQ_Dresser.resolve; NEQ_Dresser.resolve=function() error('changed producer') end
 assert(not pcall(function() NEQ_Dresser.wear(player,0,{}) end)); NEQ_Dresser.resolve=old

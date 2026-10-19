@@ -12,6 +12,7 @@ local records = {}
 local classes, installed, sessions = {}, {}, {}
 local owners = {}
 local craftOwners = {}
+local projectCookConfig
 local nativeXuiMethods = ISXuiSkinFunctions and {
     xuiRecalculateLayout = ISXuiSkinFunctions.xuiRecalculateLayout,
     xuiRootElement = ISXuiSkinFunctions.xuiRootElement,
@@ -62,7 +63,8 @@ local sourceFiles = {
     Neat_Crafting = {{"client/Neat_Crafting/NC_CraftActionPanel.lua", 2203522815}},
     Project_Cook = {
         {"client/Project_Cook/HandCraftPanel/PJCK_CraftActionPanel.lua", 253384307},
-        {"client/Project_Cook/EvolvedRecipePanel/PJCK_EvoPanel.lua", 3224482149},
+        {"client/Project_Cook/EvolvedRecipePanel/PJCK_EvoPanel.lua", 286152189},
+        {"client/Project_Cook/PJCK_Config.lua", 2629049005},
         projectCookActionSources[1],
         projectCookActionSources[2],
         {"shared/Project_Cook/PJCK_EvolvedSpiceGuard.lua", 2430144672},
@@ -204,7 +206,25 @@ local function live(record)
     return true
 end
 
+local function captureProjectCookConfig()
+    if not pcall(require, "Project_Cook/PJCK_Config") or type(PJCK_Config) ~= "table" then return false end
+    local methods = {}
+    for _, name in ipairs({"get", "getBaseItemHandling", "shouldReturnBaseItemToSource", "load", "validate"}) do
+        local callback = PJCK_Config[name]
+        if not Proof.closure(callback, "PJCK_Config.lua") then return false end
+        methods[name] = callback
+    end
+    projectCookConfig = {owner = PJCK_Config, methods = methods}
+    return true
+end
+
 local function ownerUnchanged(id)
+    if id == "Project_Cook" then
+        if not projectCookConfig or PJCK_Config ~= projectCookConfig.owner then return false end
+        for name, callback in pairs(projectCookConfig.methods) do
+            if PJCK_Config[name] ~= callback then return false end
+        end
+    end
     if id == "WashFix" and washWalkHelper then
         local scopedWalk = sourceScope and sourceScope.id == id and sourceScope.walkAdjacentWrapper
         if luautils ~= washWalkHelper.owner or (luautils.walkAdj ~= washWalkHelper.callback and luautils.walkAdj ~= scopedWalk) then return false end
@@ -789,7 +809,8 @@ function Compat.install()
     }) do
         if not installed[owner[1]] and getActivatedMods and getActivatedMods():contains(owner[1]) then
             installed[owner[1]] = true
-            if not _G[owner[2]] and verified(owner[1]) and pcall(require, owner[3]) then
+            if not _G[owner[2]] and verified(owner[1])
+                and (owner[1] ~= "Project_Cook" or captureProjectCookConfig()) and pcall(require, owner[3]) then
                 local class = _G[owner[2]]
                 if class and owner[1] == "Project_Cook" then
                     local complete, methods = class.onHandcraftActionComplete
@@ -811,7 +832,7 @@ function Compat.install()
                     if pcall(require, "Project_Cook/EvolvedRecipePanel/OverrideFoodRelatedAction")
                         and loadSource("Project_Cook", "Project_Cook/EvolvedRecipePanel/PJCK_EvoPanel") then
                         ready.Project_Cook = true
-                        for _, name in ipairs({"addIngredients", "returnBaseItemToOriginalContainer", "setBaseItem"}) do
+                        for _, name in ipairs({"addIngredients", "returnBaseItemToOriginalContainer", "queueBaseItemReturn", "setBaseItem"}) do
                             local callback = PJCK_EvoPanel[name]
                             PJCK_EvoPanel[name] = function(self, ...)
                                 if not instanceUnchanged(self, PJCK_EvoPanel) then return callback(self, ...) end

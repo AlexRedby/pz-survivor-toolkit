@@ -11,7 +11,8 @@ SUCCESS_CASES = ['context', 'vanilla-batch', 'vanilla-auto', 'neat-batch', 'neat
 CANCEL_CASES = ['context-cancel-active', 'vanilla-cancel-active', 'neat-cancel-active', 'cook-cancel-active']
 POOL_CASES = ['vanilla-missing-batch-pool', 'neat-missing-batch-pool', 'cook-missing-batch-pool']
 FAILURE_CASES = CANCEL_CASES + POOL_CASES
-CASES = SUCCESS_CASES + FAILURE_CASES
+EVOLVED_CASE = 'cook-evolved-return'
+CASES = SUCCESS_CASES + FAILURE_CASES + [EVOLVED_CASE]
 COUNTS = {case: 1 if case.startswith('context') else 2 for case in CASES}
 OWNERS = {case: ('context' if case.startswith('context') else 'ISWidgetHandCraftControl' if case.startswith('vanilla-')
                  else 'NC_CraftActionPanel' if case.startswith('neat-') else 'PJCK_CraftActionPanel') for case in CASES}
@@ -24,7 +25,15 @@ FAILURE_OBSERVATIONS = {'interrupted', 'interruptionProgress', 'outcomeTrace', '
                         'tokenCancelled'}
 
 
+EVOLVED_RECEIPT_KEYS = {'bags', 'base', 'ingredient', 'spice', 'dishes', 'outputIds', 'outputs', 'bookId', 'tailRead'}
+EVOLVED_OBSERVATIONS = {'requested', 'actions', 'actionInputIds', 'progressIds', 'nativeDurations', 'cookingLevel',
+                        'sourceMethodsUnchanged', 'callbackClass', 'sourceDeferred', 'sourceVerified', 'tokensGrouped',
+                        'tailIndependent', 'tailProgress', 'returnsBeforeRead', 'selectedDishId'}
+
+
 def _receipt_keys(case):
+    if case == EVOLVED_CASE:
+        return EVOLVED_RECEIPT_KEYS
     return (RECEIPT_KEYS | (FAILURE_RECEIPT_KEYS if case in FAILURE_CASES else set())
             | (POOL_RECEIPT_KEYS if case in POOL_CASES else set()))
 
@@ -33,6 +42,102 @@ def _metadata(value):
     return (type(value) is dict and set(value) == {'id', 'kind', 'condition', 'uses'}
             and type(value.get('id')) is int and value.get('kind') == 'Base.Plank'
             and all(type(value.get(key)) is int and value[key] >= 0 for key in ('condition', 'uses')))
+
+
+def _number(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def _food_meta(value, kind, hunger):
+    return (type(value) is dict and set(value) == {'id', 'kind', 'hunger'}
+            and type(value.get('id')) is int and value.get('kind') == kind
+            and _number(value.get('hunger')) and abs(value['hunger'] - hunger) < .00001)
+
+
+def _evolved_prepared(prep):
+    base = prep.get('base')
+    if (set(prep) != {'case', 'bags', 'book', 'base', 'ingredient', 'spice', 'baselineDishIds', 'cookingLevel'}
+            or prep.get('case') != EVOLVED_CASE or type(prep.get('cookingLevel')) is not int
+            or not 0 <= prep['cookingLevel'] <= 10 or not craft._ids(prep.get('bags'), 2)
+            or not craft._ids(prep.get('baselineDishIds')) or type(prep.get('book')) is not int
+            or type(base) is not dict or set(base) != {'id', 'kind'}
+            or type(base.get('id')) is not int or base.get('kind') != 'Base.Bowl'
+            or not _food_meta(prep.get('ingredient'), 'Base.Tomato', -.12)
+            or not _food_meta(prep.get('spice'), 'Base.Pepper', -.005)):
+        return False
+    return craft._ids(prep['bags'] + [prep['book'], base['id'], prep['ingredient']['id'], prep['spice']['id']]
+                      + prep['baselineDishIds'])
+
+
+def _evolved_case(selection, row, prep, receipt):
+    issues, enabled = [], selection['mode'] == 'toolkit'
+    if not _evolved_prepared(prep):
+        return ['Craft UI evolved preparation identity/portion differs'], None
+    ids = [prep['ingredient']['id'], prep['spice']['id']]
+    level, durations = row.get('cookingLevel'), row.get('nativeDurations')
+    if (not craft._matches(row, dict(requested=2, actions=2, actionInputIds=ids, progressIds=[1, 2],
+                                    sourceMethodsUnchanged=True, callbackClass='PJCK_EvoPanel', sourceDeferred=True,
+                                    sourceVerified=True, tokensGrouped=enabled, tailIndependent=True))
+            or type(level) is not int or level != prep['cookingLevel'] or type(durations) is not list or len(durations) != 2
+            or any(not _number(duration) or duration != 100 - level * 2.5 for duration in durations)):
+        issues.append('Craft UI evolved native UI/action/progress/grouping proof differs')
+    keys = EVOLVED_RECEIPT_KEYS
+    if (set(receipt) != keys | {'case'} or receipt.get('case') != EVOLVED_CASE
+            or not craft._matches(row, {key: receipt.get(key) for key in keys})):
+        issues.append('Craft UI evolved authority differs from client')
+    expected_shape = craft._matches(row, dict(bags=prep['bags'], bookId=prep['book']))
+    base, ingredient, spice, dishes = (row.get(key) for key in ('base', 'ingredient', 'spice', 'dishes'))
+    for value, expected, fields in [
+        (base, dict(id=prep['base']['id']), {'id', 'totalCount'}),
+        (spice, dict(id=prep['spice']['id'], kind='Base.Pepper'), {'id', 'kind', 'totalCount'}),
+        (ingredient, dict(id=prep['ingredient']['id'], kind='Base.Tomato'),
+         {'id', 'kind', 'hunger', 'sourceCount', 'rootCount', 'totalCount'})]:
+        if (type(value) is not dict or set(value) != fields or not craft._matches(value, expected)
+                or type(value.get('totalCount')) is not int or value['totalCount'] < 0):
+            expected_shape = False
+    if (type(ingredient) is not dict or not _number(ingredient.get('hunger'))
+            or any(type(ingredient.get(key)) is not int or ingredient[key] not in (0, 1)
+                   for key in ('sourceCount', 'rootCount'))
+            or ingredient.get('sourceCount', 0) + ingredient.get('rootCount', 0) != ingredient.get('totalCount')):
+        expected_shape = False
+    outputs, output_ids = row.get('outputs'), row.get('outputIds')
+    if (type(outputs) is not int or outputs < 0 or not craft._ids(output_ids, outputs)
+            or type(dishes) is not list or len(dishes) != outputs):
+        expected_shape = False
+    else:
+        for dish, identity in zip(dishes, output_ids):
+            if (type(dish) is not dict or set(dish) != {'id', 'kind', 'sourceCount', 'rootCount', 'totalCount', 'extras', 'spices'}
+                    or not craft._matches(dish, dict(id=identity, kind='Base.Salad', totalCount=1))
+                    or any(type(dish.get(key)) is not int or dish[key] not in (0, 1) for key in ('sourceCount', 'rootCount'))
+                    or dish.get('sourceCount', 0) + dish.get('rootCount', 0) != 1
+                    or any(type(dish.get(key)) is not list or any(type(value) is not str for value in dish[key])
+                           for key in ('extras', 'spices'))):
+                expected_shape = False
+    if not expected_shape:
+        issues.append('Craft UI evolved exact effect/endpoint envelope differs')
+    owned = prep['bags'] + [prep['book'], prep['base']['id']] + ids + prep['baselineDishIds']
+    if not craft._ids(owned + (output_ids if craft._ids(output_ids) else [])):
+        issues.append('Craft UI evolved dish is not a new unique replacement identity')
+    if (type(row.get('tailRead')) is not bool or type(row.get('tailProgress')) is not bool
+            or row.get('tailRead') is not row.get('tailProgress') or type(row.get('returnsBeforeRead')) is not bool
+            or row.get('returnsBeforeRead') is True and row.get('tailRead') is not True
+            or type(row.get('selectedDishId')) is not int):
+        issues.append('Craft UI evolved reader/selection observations differ')
+    effect = (expected_shape and outputs == 1 and base['totalCount'] == 0 and spice['totalCount'] == 0
+              and ingredient['totalCount'] == 1 and ingredient['sourceCount'] == 1
+              and abs(ingredient['hunger'] - (prep['ingredient']['hunger'] + .06 * (1 - .03 * prep['cookingLevel']))) < .00001
+              and dishes[0]['sourceCount'] == 1 and dishes[0]['extras'] == ['Base.Tomato']
+              and dishes[0]['spices'] == ['Base.Pepper'])
+    reason = ('native-evolved-effect-differs' if not effect else 'native-independent-tail-not-preserved'
+              if row.get('tailRead') is False else 'native-returns-not-before-tail'
+              if row.get('returnsBeforeRead') is False else None)
+    if effect and row.get('selectedDishId') != output_ids[0]:
+        issues.append('Craft UI evolved selected dish differs from authority replacement')
+    if not craft._matches(row, dict(status='failed' if reason else 'passed', reason=reason)):
+        issues.append('Craft UI evolved observed status differs')
+    if enabled and reason:
+        issues.append('Craft UI toolkit evolved continuation/return effect differs: ' + reason)
+    return issues, reason
 
 
 def definitions():
@@ -82,6 +187,8 @@ def _authority(text):
 
 
 def _prepared_valid(prep, case):
+    if case == EVOLVED_CASE:
+        return _evolved_prepared(prep)
     failure = case in FAILURE_CASES
     extra = {'materialMeta', 'sparePlanks', 'playerId'} if failure else set()
     if (set(prep) != {'case', 'materials', 'bags', 'toolMeta', 'book', 'baselineOutputIds'} | extra
@@ -111,6 +218,8 @@ def _prepared_valid(prep, case):
 
 
 def _case(selection, case, row, prep, receipt, removal=None):
+    if case == EVOLVED_CASE:
+        return _evolved_case(selection, row, prep, receipt)
     enabled, count = selection['mode'] == 'toolkit', COUNTS[case]
     issues = []
     failure, pooled = case in FAILURE_CASES, case in POOL_CASES
@@ -310,9 +419,14 @@ def verify(root, selection, catalog):
         if reason and not enabled:
             failures[case] = reason
         if _prepared_valid(prep, case):
-            if cleanup_ids.intersection([meta['id'] for meta in prep.get('sparePlanks', [])] + prep['baselineOutputIds']):
+            if case == EVOLVED_CASE:
+                retained = prep['baselineDishIds']
+                owned = prep['bags'] + [prep['book'], prep['base']['id'], prep['ingredient']['id'], prep['spice']['id']]
+            else:
+                retained = [meta['id'] for meta in prep.get('sparePlanks', [])] + prep['baselineOutputIds']
+                owned = prep['materials'] + prep['bags'] + [meta['id'] for meta in prep['toolMeta']] + [prep['book']]
+            if cleanup_ids.intersection(retained):
                 issues.append('Craft UI previous owned cleanup identity remains in preparation: ' + case)
-            owned = prep['materials'] + prep['bags'] + [meta['id'] for meta in prep['toolMeta']] + [prep['book']]
             identities += owned
             cleanup_ids.update(owned)
         if case in POOL_CASES and _metadata(removal.get('introducedSpare')):
@@ -322,7 +436,7 @@ def verify(root, selection, catalog):
         if craft._ids(row.get('outputIds')):
             output_ids += row['outputIds']
             cleanup_ids.update(row['outputIds'])
-        outcomes.append(dict(actor='client1', case=case, outcome={key: row.get(key) for key in _receipt_keys(case) | (FAILURE_OBSERVATIONS if case in FAILURE_CASES else set()) | (POOL_OBSERVATIONS if case in POOL_CASES else set()) | {
+        outcomes.append(dict(actor='client1', case=case, outcome={key: row.get(key) for key in _receipt_keys(case) | (EVOLVED_OBSERVATIONS if case == EVOLVED_CASE else set()) | (FAILURE_OBSERVATIONS if case in FAILURE_CASES else set()) | (POOL_OBSERVATIONS if case in POOL_CASES else set()) | {
             'requested', 'actions', 'progressIds', 'callbackClass', 'callbacksUnchanged', 'callbackSafe',
             'nativeDuration', 'localDeferrals', 'sharedPerformCount', 'sharedCompleteCount', 'ownerIdle',
             'remaining', 'pickupIds', 'returnIds', 'returnsBeforeRead', 'manualSelect', 'manualInputTypes', 'automaticToolIds'}}))
@@ -346,4 +460,5 @@ def verify(root, selection, catalog):
         'Native context and batch callbacks are exercised through fixture-driven UI APIs; physical mouse input is not covered.',
         'Shared-pool loss records retained-cache output effects separately from physical removal; removed items are not reported as normally consumed.',
         'Neat and Project Cook handcraft owners use tools in their source bags; these cases do not claim late tool returns.',
+        'Evolved return uses real Salad/Tomato/Pepper actions and source UI with a prepared nearly depleted spice; it does not cover every evolved recipe or retry failure in game.',
         'Fresh one-client SP/Host, native durations and exact authority receipts; no WAN or concurrent-client coverage.']}}

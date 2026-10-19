@@ -1,4 +1,5 @@
 local Fixture={}
+local Evolved=require 'QueueCookEvolvedFixture'
 local function pool(case)return case:find('missing-batch-pool',1,true)~=nil end
 local function failure(case)return case:find('cancel-active',1,true)~=nil or pool(case)end
 local function list(container)
@@ -61,6 +62,7 @@ function Fixture.prepare(player,case,previous)
    root:Remove(item);if isServer()then sendRemoveItemFromContainer(root,item)end
   end
  end
+ if Evolved.isCase(case)then return Evolved.prepare(player,case)end
  local state={player=player,case=case,materials={},bags={},toolMeta={},baselineOutputIds={}}
  local root=player:getInventory();state.root=root
  if failure(case)then
@@ -91,6 +93,7 @@ function Fixture.prepare(player,case,previous)
  return state
 end
 function Fixture.descriptor(state)
+ if Evolved.isCase(state.case)then return Evolved.descriptor(state)end
  local value={case=state.case,materials=state.materials,bags=state.bags,toolMeta=state.toolMeta,
   book=state.book,baselineOutputIds=state.baselineOutputIds}
  if failure(state.case)then
@@ -99,6 +102,7 @@ function Fixture.descriptor(state)
  return value
 end
 function Fixture.resolve(player,ids)
+ if Evolved.isCase(ids.case)then return Evolved.resolve(player,ids)end
  local root=player:getInventory();local containers=ArrayList.new();containers:add(root)
  for _,id in ipairs(ids.bags)do
   local bag=root:getItemById(id);if not bag then return end
@@ -128,6 +132,7 @@ function Fixture.removePool(state)
  return state.poolRemoval
 end
 function Fixture.verify(state)
+ if Evolved.isCase(state.case)then return Evolved.verify(state)end
  local root=state.player:getInventory();local baseline={};local outputIds={}
  local materialStates,consumed={},0
  local spentMaterials,survivingMaterials,removedMaterials={},{},{}

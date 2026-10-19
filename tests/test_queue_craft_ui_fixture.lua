@@ -1,3 +1,8 @@
+local nativeRequire=require
+require=function(module)
+ if module=='QueueCookEvolvedFixture'then return assert(loadfile(ProjectRoot..'/tests/native_queue/craft-ui/shared/'..module..'.lua'))()end
+ return nativeRequire(module)
+end
 local Fixture=assert(loadfile(ProjectRoot..'/tests/native_queue/craft-ui/shared/QueueCraftUIFixture.lua'))()
 instanceof=function(item,class)return class=='InventoryContainer'and item.bag end
 local makeItem
@@ -251,3 +256,56 @@ assert(cancelRoot:getItemById(701)==unrelatedOutput and not cancelRoot:getItemBy
 assert(nativeReceipt.resources[1].rootCount==1 and nativeReceipt.resources[1].id==rootTool.id,
  'cleanup must not rewrite the prior authoritative root-tool receipt')
 print('craft UI full owned cleanup, contents/equipped guards and unrelated conservation checks passed')
+
+-- The evolved authority keeps exact physical IDs and portions separate from native
+-- output effects; these envelope tests do not execute or replace game recipes.
+do
+ local Evolved=require 'QueueCookEvolvedFixture'
+ local evolvedRoot=container()
+ local previousMake=makeItem
+ makeItem=function(source,id,kind)
+  local value=previousMake(source,id,kind)
+  value.hunger=kind=='Base.Tomato'and -0.12 or -0.1
+  function value:getHungChange()return self.hunger end
+  function value:setHungChange(hunger)self.hunger=hunger end
+  return value
+ end
+ local previousServer,previousClock=isServer,getTimestampMs
+ isServer=function()return false end;getTimestampMs=function()return 100 end
+ Perks={Cooking='Cooking'}
+ local evolvedPlayer={getInventory=function()return evolvedRoot end,getPerkLevel=function()return 0 end,setAlreadyReadPages=function()end}
+ local baseline=makeItem(evolvedRoot,80000,'Base.Salad')
+ local prepared=Evolved.prepare(evolvedPlayer,'cook-evolved-return')
+ local descriptor=Evolved.descriptor(prepared)
+ assert(descriptor.base.kind=='Base.Bowl'and descriptor.ingredient.hunger==-0.12 and descriptor.spice.hunger==-0.005)
+ assert(descriptor.baselineDishIds[1]==baseline.id and descriptor.cookingLevel==0)
+ local source=evolvedRoot:getItemById(prepared.bags[1]):getItemContainer()
+ local ingredientSource=evolvedRoot:getItemById(prepared.bags[2]):getItemContainer()
+ local old=evolvedRoot:getItemById(prepared.base.id)
+ local spice=evolvedRoot:getItemById(prepared.spice.id)
+ source:Remove(old);old.container=nil
+ ingredientSource:Remove(spice);spice.container=nil
+ local tomato=evolvedRoot:getItemById(prepared.ingredient.id);tomato.hunger=-0.06
+ local dish=makeItem(source,80001,'Base.Salad')
+ local function strings(values)return {size=function()return #values end,get=function(_,index)return values[index+1]end}end
+ function dish:getExtraItems()return strings({'Base.Tomato'})end
+ function dish:getSpices()return strings({'Base.Pepper'})end
+ evolvedRoot:getItemById(prepared.book).pages=100
+ local value=assert(Evolved.verify(prepared))
+ assert(value.base.totalCount==0 and value.spice.totalCount==0 and value.outputs==1 and value.tailRead)
+ assert(value.dishes[1].id==dish.id and value.dishes[1].sourceCount==1 and value.dishes[1].totalCount==1)
+ assert(value.ingredient.id==tomato.id and value.ingredient.sourceCount==1 and value.ingredient.hunger==-0.06)
+ assert(value.dishes[1].extras[1]=='Base.Tomato'and value.dishes[1].spices[1]=='Base.Pepper')
+ source:Remove(dish);dish.container=evolvedRoot;evolvedRoot.items[#evolvedRoot.items+1]=dish
+ local deviation=assert(Evolved.verify(prepared))
+ assert(deviation.dishes[1].sourceCount==0 and deviation.dishes[1].rootCount==1,
+  'native misplaced dish must remain an observed endpoint deviation')
+ assert(value.dishes[1].sourceCount==1,'later verification cannot rewrite a prior receipt')
+ baseline.kind='Base.Bowl';assert(not Evolved.verify(prepared),'baseline replacement cannot be relabelled as a new dish')
+ baseline.kind='Base.Salad'
+ local duplicate=makeItem(evolvedRoot,prepared.bags[1],'Base.Bowl')
+ assert(not Evolved.verify(prepared),'duplicate source identity must reject authority verification')
+ evolvedRoot:Remove(duplicate)
+ makeItem=previousMake;isServer,getTimestampMs=previousServer,previousClock
+end
+print('craft UI evolved replacement/leftover/spice/endpoint authority envelope checks passed')

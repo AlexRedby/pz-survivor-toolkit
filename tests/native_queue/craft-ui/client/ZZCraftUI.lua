@@ -3,6 +3,7 @@ require 'ISUI/Crafting/ISHandcraftWindow'
 require 'Neat_Crafting/NC_CraftActionPanel'
 require 'Project_Cook/PJCK_Window'
 local Fixture=require 'QueueCraftUIFixture'
+local Evolved=require 'QueueCookEvolved'
 local config=require 'QueueTestSelection'
 local JSON=require 'QueueHealthEvents'
 local Toolkit=PZSurvivorToolkit
@@ -10,6 +11,7 @@ local enabled=config.mode=='toolkit'
 local step,failed,phase,since,idle=1,0,'prepare',0,0
 local started,done=false,false
 local ids,state,authorityState,authority,previousAuthority,window,owner,logic,tail,actions
+local evolvedRun
 local progress,picked,returned,boundaries={},{},{},{perform=0,complete=0}
 local callbacks,callbackClass,returnsBeforeRead,localDeferrals
 local interrupted,interruptionProgress
@@ -18,6 +20,7 @@ local previousCleanupIds,previousBagIds={},{}
 local secondAllocated,secondStarted=false,false
 local outcomeTrace={};local tailProgress=false
 local function case()return config.cases[step]end
+local function evolved()return case()=='cook-evolved-return'end
 local function automatic()return case():sub(-5)=='-auto'end
 local function context()return case():match('^context')~=nil end
 local function pool()return case():find('missing-batch-pool',1,true)~=nil end
@@ -134,6 +137,7 @@ local function captureMaterialIds()
  return result
 end
 local function enqueue(player)
+ if evolved()then evolvedRun=Evolved.start(player,state,ids,enabled);return true end
  local recipe=assert(getScriptManager():getCraftRecipe('QueueBorrowedTools'))
  if context()then
   callbackClass='context'
@@ -177,6 +181,7 @@ local function enqueue(player)
  return true
 end
 local function observe()
+ if evolved()then Evolved.observe(evolvedRun);return end
  local current=queue().current
  if pool()then
   secondAllocated=secondAllocated or actions[2].action~=nil
@@ -228,6 +233,13 @@ local function intervene()
  end
 end
 local function finish()
+ if evolved()then
+  local value,reason=Evolved.finish(evolvedRun,authority)
+  if reason then failed=failed+1 end;emit(value)
+  assert(step==#config.cases,'evolved return must be the final grouped case')
+  emit({event='complete',cases=config.cases,expected=#config.cases,performed=#config.cases,failed=failed,skipped=0})
+  print('[CRAFT_UI_TEST] COMPLETE');done=true;return
+ end
  local unchanged,safe=true,true
  for i,action in ipairs(actions)do
   local now={action.onStartFunc,action.onStartTarget,action.onCompleteFunc,action.onCompleteTarget,action.onCancelFunc,action.onCancelTarget}
