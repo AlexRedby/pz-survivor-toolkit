@@ -28,6 +28,9 @@ local function snapshot(player,bag,bottle)
   source=source,count=count(root,bottle:getID())}
 end
 function Fixture.prepare(player,case,previous)
+ -- Host can tick the server actor before its first client option sync; disable before issuing root bottles.
+ player:setAutoDrink(false)
+ assert(not player:getAutoDrink(),'fluid fixture auto-drink still enabled')
  local root=player:getInventory()
  if previous then
   assert(previous.player==player and previous.verified,'previous fluid state unverified')
