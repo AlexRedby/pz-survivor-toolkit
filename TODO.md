@@ -1,3 +1,7 @@
+# Legacy tag scenario maintenance
+
+- [ ] Update the `tagRules` re-enable assertion in `tests/native_tags/client/ZZTagBaseline.lua`: it still expects dynamic rules to expand `own.cats.foodPerishable_fruit`, while owned Quartermaster now matches per-item rules through `own.rules`. Preserve its manual-category, toggle and exact-transfer checks; use the existing fixture-level checks before its next advanced multiplayer run.
+
 # Wooden wheelbarrow collisions
 
 - [ ] Finish relative-key manual reverse wall exits: remove small accumulated opposite-yaw corrections and release drift under tight contact, and obtain complete <=500 ms sampling and route edges for all eight scenes. Keep the existing <=.02 rad opposite-yaw and <=.025 rad release budgets; do not relax them to accept the current captures. Extend to female models and MP; preserve manual reverse, natural rolling and native collision, without automatic backing.
