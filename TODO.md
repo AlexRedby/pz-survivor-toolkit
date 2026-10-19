@@ -1,7 +1,3 @@
-# Inventory selection restoration
-
-- [ ] Reproduce and correct `selected` row offsets after refresh with hidden equipment and expanded stacks longer than the rendered limit. Current CleanUI 42.19 `restoreSelection` counts hidden groups and all children, while its renderer omits them; Better Containers' replacement also counts all children. Keep selection policy and physical item/group identity, and verify actual selected rows with native sources and the affected in-game inventory controls. The shared `InventoryRows.restoreAnchor` fixes `firstSelect` only; it does not establish that the selection table itself matches rendered rows.
-
 # Walking inventory action regression
 
 - [ ] Run the prepared `belt_walk` equipment cases (`belt-knife,belt-hammer`) with the full selected mod set in isolated SP and Host sessions when a native test slot is available. The movement handoff fix passes the native-source SP/MP regressions; live walking remains unverified because the shared desktop runner was occupied. Check exact attachment identities, inventory conservation, and replicated belt cleanup. Use equipment config options `belt_walk=true` and `preload_toolkit_fonts=true`; add `mp_host=true` for the Host run, with the current game/JDK/Workshop paths.

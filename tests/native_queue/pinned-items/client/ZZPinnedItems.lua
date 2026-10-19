@@ -1,4 +1,8 @@
 local config = require 'QueueTestSelection'
+if config.cases[1]=='selection' then
+    require('PinnedItemsSelection').start(config)
+    return
+end
 local pins = require 'BetterContainers/Upgrades/PinnedItems'
 local F = require 'PinnedItemsFixture'
 local mp={active=config.kind=='mp'}

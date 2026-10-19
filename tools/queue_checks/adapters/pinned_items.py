@@ -30,6 +30,9 @@ def definitions():
             'default_mods': ['PZSurvivorToolkit', 'EURY_CONTAINERS'],
             'cases': [{'id': 'trunk', 'producer': 'fixture', 'capability': 'effect',
                        'kinds': ['sp', 'mp'], 'languages': ['EN', 'RU'],
+                       'modes': ['toolkit', 'native']},
+                      {'id': 'selection', 'producer': 'fixture', 'capability': 'effect',
+                       'kinds': ['sp'], 'languages': ['EN', 'RU'],
                        'modes': ['toolkit', 'native']} ]}}
 
 
@@ -38,6 +41,15 @@ def validate(selection):
     clients = selection.get('clients', 2 if kind == 'mp' else 1)
     languages = selection.get('languages')
     options = selection.get('options', {})
+    if selection.get('cases') == ['selection']:
+        if (not isinstance(options, dict) or kind != 'sp'
+                or selection.get('mode') not in ('toolkit', 'native')
+                or type(clients) is not int or clients != 1
+                or languages not in (['EN'], ['RU'])
+                or not {'PZSurvivorToolkit', 'EURY_CONTAINERS'} <= set(selection.get('mods', []))
+                or any(options.get(key) for key in ('world_template', 'seed_run', 'startup_connection', 'mp_host'))):
+            raise ValueError('Pinned selection requires fresh SP and Toolkit plus EURY_CONTAINERS')
+        return
     if (not isinstance(options, dict)
             or selection.get('cases') != ['trunk'] or kind not in ('sp', 'mp')
             or selection.get('mode') not in ('toolkit', 'native')
@@ -72,7 +84,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 
 def complete(selection, role, text):
-    return role in ('client1', 'client2') and text.count(MARKER + 'COMPLETE trunk') == 1
+    case = 'selection' if selection.get('cases') == ['selection'] else 'trunk'
+    return role in ('client1', 'client2') and text.count(MARKER + 'COMPLETE ' + case) == 1
 
 
 def _records(text, name, issues):
@@ -286,11 +299,47 @@ def _verify_mp(root, selection, issues):
 def verify(root, selection, catalog):
     issues = []
     try:
-        result = (_verify_mp(root, selection, issues) if selection['kind'] == 'mp'
+        result = (_verify_selection(root, selection, issues) if selection.get('cases') == ['selection']
+                  else _verify_mp(root, selection, issues) if selection['kind'] == 'mp'
                   else _verify_sp(root, selection, issues))
     except OSError as error:
         issues.append(str(error))
-        result = {'outcomes': [{'actor': role, 'case': 'trunk', 'status': 'failed', 'reason': str(error)}
+        result = {'outcomes': [{'actor': role, 'case': selection['cases'][0], 'status': 'failed', 'reason': str(error)}
                                for role in (('client1', 'client2') if selection['kind'] == 'mp' else ('client1',))],
                   'evidence': {'scenes': []}}
     return {'issues': issues, **result}
+
+
+def _verify_selection(root, selection, issues):
+    text = (Path(root) / 'client1-launch.log').read_text(errors='replace')
+    rows = _records(text, 'SELECTION', issues)
+    expected = ['clean', 'vanilla'] if 'CleanUI' in selection.get('mods', []) else ['vanilla']
+    if [row.get('mode') for row in rows] != expected:
+        issues.append('Missing, duplicate or out-of-order inventory selection classes')
+    for row in rows:
+        mode = row.get('mode')
+        expected_class = ('CleanUI_Clean_ISInventoryPane' if mode == 'clean'
+                          else 'CleanUI_Vanilla_ISInventoryPane' if 'CleanUI' in selection.get('mods', [])
+                          else 'ISInventoryPane')
+        if (row.get('status') != 'passed' or row.get('class') != expected_class
+                or row.get('input') != 'programmatic-key-predicates'
+                or row.get('stackCount') != 55 or row.get('renderedChildren') != 50
+                or row.get('equippedHidden') is not (mode == 'clean')
+                or type(row.get('equippedHeaders')) is not int
+                or mode == 'clean' and row.get('equippedHeaders', 0) < 1
+                or any(row.get(key) is not True for key in ('exactSelection', 'groupSemantics', 'itemSemantics',
+                                                          'repeatedRefresh', 'shiftRange'))
+                or any(type(row.get(key)) is not int or row[key] < 1
+                       for key in ('groupRow', 'childRow', 'shiftRow', 'capRow'))
+                or not isinstance(row.get('childId'), str) or not row['childId'].isdigit()):
+            issues.append('Inventory selection ' + str(mode) + ': ' + str(row.get('reason', 'invalid native row evidence')))
+        elif (row['shiftRow'] != row['childRow'] - 1 or row['groupRow'] <= row['capRow']
+              or row['childRow'] <= row['groupRow']):
+            issues.append('Inventory selection offsets do not prove capped-stack and Shift ordering')
+    if not complete(selection, 'client1', text) or MARKER + 'FAIL ' in text:
+        issues.append('Missing inventory selection completion or fatal fixture marker')
+    return {'outcomes': [{'actor': 'client1', 'case': 'selection',
+                          'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
+            'evidence': {'selection': rows, 'limits': [
+                'Real SP player panes and native callbacks; Shift uses temporary key predicates, not physical input. '
+                'No Host, controller or natural long-session selection coverage.']}}

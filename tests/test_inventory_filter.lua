@@ -1,6 +1,6 @@
 local pickerOptions, presetMenuOptions
 require = function(name)
-    if name == "PZSurvivorToolkit/InventoryClasses" then
+    if name == "PZSurvivorToolkit/InventoryClasses" or name == "PZSurvivorToolkit/InventoryRows" then
         return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
     end
     if name == "PZSurvivorToolkit/TagFilterPresetsMenu" then return {add=function(_,options) presetMenuOptions=options end} end
@@ -92,7 +92,8 @@ starts[1]()
 local wrapped = class.restoreSelection
 starts[1](); toggles[1]()
 assert(class.restoreSelection == wrapped, 'duplicate wrapper')
-local pane = setmetatable({items = {}, saved = {[hammer] = true, [beans] = true}, player = 0,
+local pane = setmetatable({items = {}, saved = {[hammer] = 'group', [beans] = 'group'}, player = 0,
+    collapsed = {beans=true,hammer=true,screwdriver=true,['mod item']=true,mixed=true,full=true,empty=true},
     inventory = source,
     setYScroll = function() end, mode = 'details', headerHgt = 20, addChild = function() end,
     typeHeader = {getIsVisible = function() return true end, getWidth = function() return 140 end,
@@ -350,7 +351,7 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
         local starts={}
         env.Events={OnGameStart={Add=function(fn) starts[#starts+1]=fn end}}
         env.require=function(name)
-            if name=='PZSurvivorToolkit/InventoryClasses' then
+            if name=='PZSurvivorToolkit/InventoryClasses' or name=='PZSurvivorToolkit/InventoryRows' then
                 local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))
                 setfenv(chunk,env);return chunk()
             end
@@ -392,7 +393,7 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
         local inv={getItems=function() return {size=function() return #objects end,get=function(_,index) return objects[index+1] end} end,
             setDrawDirty=function() end}
         local noOp=function() end
-        local p=setmetatable({inventory=inv,player=0,parent={onCharacter=false},items={},selected={},collapsed={},
+        local p=setmetatable({inventory=inv,player=0,parent={onCharacter=false},items={},selected={},collapsed={},mode='details',
             itemSortFunc=function(a,b) return a.name<b.name end,
             collapseAll={setVisible=noOp},expandAll={setVisible=noOp},updateScrollbars=noOp,
             updateWorldObjectHighlight=noOp,isMouseOver=function() return false end}, {__index=real})
@@ -459,7 +460,7 @@ groups={mixed,{name='full',cat='farmingSeed',items={fullPacket,fullPacket},match
     {name='empty',cat='farmingSeed',items={emptyPacket,emptyPacket},matchesSearch=true}}
 pane.itemindex={mixed=mixed}
 pane.toolkitTagRule={mode='all',include={'seed'},exclude={}}
-pane.saved={[sunflower]=true,[candy]=true}
+pane.saved={[sunflower]='group',[candy]='group'}
 pane:refreshContainer()
 local shown=pane.itemslist[1]
 assert(#pane.itemslist==2 and shown~=mixed and shown.items[1]==sunflower and shown.items[2]==sunflower,

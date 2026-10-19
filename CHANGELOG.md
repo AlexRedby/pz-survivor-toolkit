@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.119
+
+- **Fixed:** Inventory selection follows visible rows after refresh, filtering and sorting, including hidden equipment and expanded stacks beyond the render limit. Whole-stack selections remain groups across repeated refreshes instead of becoming a single item; selection and Shift anchors share one row projection.
+
 ### 0.1.118
 
 - **Added:** Fitness requests show exercise-specific labels and elapsed workout time in the action queue. Waiting workouts can be reordered or canceled before preparation.

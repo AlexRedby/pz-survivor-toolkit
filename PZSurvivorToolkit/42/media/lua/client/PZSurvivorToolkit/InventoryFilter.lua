@@ -1,4 +1,5 @@
 local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
+local Rows = require "PZSurvivorToolkit/InventoryRows"
 require "PZSurvivorToolkit/Settings"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
 local Tags = require "PZSurvivorToolkit/ItemTags"
@@ -242,7 +243,11 @@ local function install(class)
     patched[class] = true
     local restore, prerender, transfer = class.restoreSelection, class.prerender, class.transferItemsByWeight
     class.restoreSelection = function(self, selected)
-        return restore(self, applyFilter(self, selected) or selected)
+        local saved = applyFilter(self, selected) or selected
+        local result = restore(self, saved)
+        -- Keep mod ordering/filter hooks, then publish indices for the final view.
+        if self.mode == "details" then Rows.restoreSelection(self, saved) end
+        return result
     end
     class.prerender = function(self, ...)
         local enabled, filtersEnabled = Tags.enabled(), Toolkit.Settings.inventoryFilters()

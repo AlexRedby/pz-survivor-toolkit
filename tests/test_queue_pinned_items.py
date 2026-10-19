@@ -93,6 +93,54 @@ class PinnedItemsTests(unittest.TestCase):
         pinned_items.stage(ROOT, self.root, None, None, self.selection, {}, runtime)
         self.assertFalse((cache / 'Lua/ModOptions.ini').exists())
 
+    def selection_record(self, mode):
+        return {'mode': mode, 'status': 'passed', 'input': 'programmatic-key-predicates',
+                'class': 'CleanUI_Clean_ISInventoryPane' if mode == 'clean' else 'CleanUI_Vanilla_ISInventoryPane',
+                'stackCount': 55, 'renderedChildren': 50, 'equippedHidden': mode == 'clean',
+                'equippedHeaders': 1 if mode == 'clean' else 0,
+                'groupRow': 53, 'childRow': 55, 'shiftRow': 54, 'capRow': 52, 'childId': '781',
+                'exactSelection': True, 'groupSemantics': True, 'itemSemantics': True,
+                'repeatedRefresh': True, 'shiftRange': True}
+
+    def verify_selection(self, rows):
+        self.selection.update(cases=['selection'], mods=['PZSurvivorToolkit', 'EURY_CONTAINERS', 'CleanUI'])
+        log = ''.join('[PIN_ITEMS] SELECTION ' + json.dumps(row) + '\n' for row in rows)
+        (self.root / 'client1-launch.log').write_text(log + '[PIN_ITEMS] COMPLETE selection\n')
+        return pinned_items.verify(self.root, self.selection, {})
+
+    def test_inventory_selection_is_an_independent_sp_case(self):
+        selection = dict(self.selection, cases=['selection'])
+        pinned_items.validate(selection)
+        for change in ({'kind': 'mp', 'clients': 2, 'languages': ['EN', 'RU']},
+                       {'options': {'mp_host': True}}, {'mods': ['PZSurvivorToolkit']},
+                       {'cases': ['trunk', 'selection']}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                pinned_items.validate(dict(selection, **change))
+
+    def test_inventory_selection_requires_both_active_native_classes(self):
+        rows = [self.selection_record(mode) for mode in ('clean', 'vanilla')]
+        self.assertEqual([], self.verify_selection(rows)['issues'])
+        for wrong in (rows[:1], rows[::-1], rows + rows[-1:]):
+            with self.subTest(rows=wrong):
+                self.assertTrue(self.verify_selection(wrong)['issues'])
+        # Without CleanUI the one real ISInventoryPane receipt is sufficient.
+        self.verify_selection(rows)
+        self.selection['mods'].remove('CleanUI')
+        native = dict(rows[1], **{'class': 'ISInventoryPane'})
+        (self.root / 'client1-launch.log').write_text(
+            '[PIN_ITEMS] SELECTION ' + json.dumps(native) + '\n[PIN_ITEMS] COMPLETE selection\n')
+        self.assertEqual([], pinned_items.verify(self.root, self.selection, {})['issues'])
+
+    def test_inventory_selection_rejects_lost_semantics_and_wrong_visible_rows(self):
+        rows = [self.selection_record(mode) for mode in ('clean', 'vanilla')]
+        for change in ({'exactSelection': False}, {'groupSemantics': False}, {'itemSemantics': False},
+                       {'repeatedRefresh': False}, {'shiftRange': False}, {'renderedChildren': 55},
+                       {'equippedHeaders': 0}, {'shiftRow': 53}, {'capRow': 55},
+                       {'status': 'failed', 'reason': 'Selected entry differs from rendered row 63'}):
+            with self.subTest(change=change):
+                result = self.verify_selection([dict(rows[0], **change), rows[1]])
+                self.assertTrue(result['issues'])
+                self.assertEqual('failed', result['outcomes'][0]['status'])
     def test_verifier_accepts_ordered_scenes_and_rejects_missing_duplicate_and_bad_records(self):
         rows = [self.record(scene) for scene in pinned_items.SCENES]
         self.assertEqual([], self.verify(rows)['issues'])

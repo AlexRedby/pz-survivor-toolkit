@@ -1,5 +1,5 @@
 require = function(name)
-    if name == "PZSurvivorToolkit/InventoryClasses" then
+    if name == "PZSurvivorToolkit/InventoryClasses" or name == "PZSurvivorToolkit/InventoryRows" then
         return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
     end
     if name == "PZSurvivorToolkit/TagVisuals" then
@@ -189,11 +189,13 @@ local function buildClass(source, enhanced)
         if not doDragged then
             table.wipe(self.items)
             for _, group in ipairs(self.itemslist) do
-                self.items[#self.items + 1] = group
-                if not self.collapsed[group.name] then
-                    local first = env.CleanUI_getStackActualStartIndex(group)
-                    for i=first,math.min(#group.items, first + 49) do
-                        self.items[#self.items + 1] = group.items[i]
+                if not (self.equippedCollapsed and group.equipped) then
+                    self.items[#self.items + 1] = group
+                    if not self.collapsed[group.name] then
+                        local first = env.CleanUI_getStackActualStartIndex(group)
+                        for i=first,math.min(#group.items, first + 49) do
+                            self.items[#self.items + 1] = group.items[i]
+                        end
                     end
                 end
             end
@@ -240,14 +242,12 @@ local function check(name, fn)
     if not ok then failures[#failures + 1] = name .. ': ' .. tostring(err) end
 end
 for _, spec in ipairs({{name='native',class=native}, {name='CleanUI',class=enhanced}}) do
-    if spec.class == enhanced then
-        check(spec.name .. ' repeated group restoration', function()
+    check(spec.name .. ' repeated group restoration', function()
             local p = pane(spec.class)
             p.isMouseOver = function() return false end
             p:refreshContainer(); p:refreshContainer()
             assert(p.selected[1] == p.groups[1] and p.selected[2] == p.groups[2], 'group selection lost its row semantics')
-        end)
-    end
+    end)
     local function clickPane()
         ISMouseDrag.dragging, ISMouseDrag.draggingFocus = nil, nil
         shift, ctrl = false, false
@@ -420,6 +420,37 @@ for _, spec in ipairs({{name='native',class=native}, {name='CleanUI',class=enhan
         assert(#p.items == 52 and p.items[52] == virtual, 'render fixture did not cap expanded rows')
         assert(p.selected[1] == expanded and p.selected[51] == expanded.items[51], 'expanded children missed replay')
         assert(p.selected[52] == virtual, 'virtual header shifted after capped expanded stack')
+    end)
+    check(spec.name .. ' saved selection uses rendered rows', function()
+        local p = pane(spec.class)
+        p.isMouseOver = function() return false end
+        local head = item()
+        local expanded = {name='wide', cat='Tool', items={head,head}}
+        for index=2,60 do expanded.items[index+1] = item() end
+        local last = item()
+        local later = {name='later', cat='Tool', items={last,last}}
+        local hiddenItem = item()
+        local hidden = {name='equipped',cat='Tool',equipped=true,items={hiddenItem,hiddenItem}}
+        p.groups = spec.class == enhanced and {hidden,expanded,later} or {expanded,later}
+        p.itemslist,p.collapsed,p.selected = p.groups,{equipped=true,wide=false,later=false},{}
+        p.equippedCollapsed = spec.class == enhanced
+        p:renderdetails(false)
+        local saved = {[last]='group',[expanded.items[4]]='item',[expanded.items[58]]='item'}
+        if p.equippedCollapsed then saved[hiddenItem]='group' end
+        p:restoreSelection(saved)
+        for pass=1,2 do
+            p:renderdetails(false)
+            assert(p.selected[52]==later and p.items[52]==later,'group after clipped/hidden rows moved')
+            assert(p.selected[4]==expanded.items[4] and p.items[4]==expanded.items[4],'physical child moved')
+            local count=0
+            for index,value in pairs(p.selected) do
+                count=count+1;assert(p.items[index]==value,'selected row differs from rendered row')
+            end
+            assert(count==2,'hidden or clipped selections survived, or group became a child')
+            p:refreshContainer()
+        end
+        p.groups={expanded};p:refreshContainer();p:renderdetails(false)
+        assert(not p.selected[52] and p.selected[4]==expanded.items[4],'removed group retained selection')
     end)
 end
 if hasAnchor then
