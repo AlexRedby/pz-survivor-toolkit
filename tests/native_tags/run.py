@@ -12,6 +12,10 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT / 'tools'))
+from queue_checks import native, runner
+from queue_checks.mod_selection import metadata, mod_ids
+
 BASELINE = ['configure', 'reopen', 'sort', 'baseline-reconnect']
 CASES = ['configure', 'reopen', 'icons', 'inventory-all', 'inventory-any', 'inventory-exclude',
          'preset-save', 'inventory-empty', 'preset-apply', 'rule-save', 'rule-reopen', 'rule-stale',
@@ -23,7 +27,32 @@ PLANTING_TYPES = dict(sunflower='Base.SunflowerSeeds', candy='Base.Candycane', c
                       potato='Base.Potato', lemongrass='Base.LemonGrass', hemp='Base.HempBundle')
 PLANTING_SEEDS = {'sunflower', 'carrot', 'fullPacket', 'potato', 'lemongrass'}
 INTEGRATION = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS',
-               'Quartermaster', 'BravoItemDetails', 'organizedCategories_core']
+               'BravoItemDetails', 'organizedCategories_core']
+
+
+def stage_sources(source, source_ref=None):
+    """Freeze product inputs; historical comparisons still use the current harness."""
+    source.mkdir()
+    parts = ['PZSurvivorToolkit', 'SurvivorQoL-selected.ini']
+    if source_ref:
+        # Baselines before the merge kept Wishlist in a separate source tree.
+        if subprocess.check_output(['git', 'ls-tree', '--name-only', source_ref, 'PZSurvivorWishlist'], cwd=ROOT).strip():
+            parts.append('PZSurvivorWishlist')
+        archive = subprocess.check_output(['git', 'archive', '--format=tar', source_ref, *parts], cwd=ROOT)
+        with tarfile.open(fileobj=io.BytesIO(archive)) as files:
+            files.extractall(source, filter='data')
+    else:
+        shutil.copytree(ROOT / 'PZSurvivorToolkit', source / 'PZSurvivorToolkit')
+        shutil.copy2(ROOT / 'SurvivorQoL-selected.ini', source)
+    for name in ('tools', 'tests/native_queue'):
+        shutil.copytree(ROOT / name, source / name, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    shutil.copytree(HERE, source / 'tests/native_queue/tags', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+
+
+def integration_mods(source, selected=False):
+    identifiers = mod_ids(metadata(source / 'SurvivorQoL-selected.ini').get('Mods'))
+    # Historical product refs may still select the external Quartermaster.
+    return identifiers if selected else [id for id in identifiers if id in (*INTEGRATION, 'Quartermaster')]
 
 
 def main():
@@ -32,8 +61,8 @@ def main():
     parser.add_argument('--game', type=Path, required=True, help='Directory containing projectzomboid.jar')
     parser.add_argument('--jdk', type=Path, required=True)
     parser.add_argument('--workshop', type=Path, action='append', required=True,
-                        help='Explicit mod roots, in preference order (first matching root wins)')
-    parser.add_argument('--source-ref', help='Use committed product bytes; fixture stays current')
+                        help='Explicit mod roots; each nonlocal Mod ID must resolve exactly once')
+    parser.add_argument('--source-ref', help='Use committed product bytes and selection; runner and fixture stay current')
     parser.add_argument('--baseline', action='store_true', help='Check old selection/sort and actual reconnect')
     parser.add_argument('--planting', action='store_true', help='Add exact-ID planting UI/sort/reconnect checks')
     parser.add_argument('--selected', action='store_true', help='Use all Mods from the selected INI')
@@ -58,63 +87,21 @@ def main():
         raise ValueError('Output must be outside game, JDK, mod sources and test sources')
     output.mkdir(parents=True, exist_ok=False)
     source = output / 'source'
-    source.mkdir()
-    parts = ['PZSurvivorToolkit', 'tools', 'tests/native_queue']
-    if args.source_ref:
-        # Baselines before the merge kept Wishlist in a separate source tree.
-        if subprocess.check_output(['git', 'ls-tree', '--name-only', args.source_ref, 'PZSurvivorWishlist'], cwd=ROOT).strip():
-            parts.append('PZSurvivorWishlist')
-        archive = subprocess.check_output(['git', 'archive', '--format=tar', args.source_ref, *parts,
-                                           'SurvivorQoL-selected.ini'], cwd=ROOT)
-        with tarfile.open(fileobj=io.BytesIO(archive)) as files:
-            files.extractall(source, filter='data')
-    else:
-        for name in parts:
-            shutil.copytree(ROOT / name, source / name, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-        shutil.copy2(ROOT / 'SurvivorQoL-selected.ini', source)
-    shutil.copytree(HERE, source / 'tests/native_queue/tags', ignore=shutil.ignore_patterns('__pycache__'))
-    sys.path.insert(0, str(source / 'tools'))
-    from queue_checks.native import prepare, _matching_roots
-    from queue_checks.runner import run
-    identifiers = seed['selection']['mods'] if seed else INTEGRATION
-    if args.selected and not seed:
-        line = next(line for line in (source / 'SurvivorQoL-selected.ini').read_text().splitlines()
-                    if line.startswith('Mods='))
-        identifiers = line[5:].split(';')
-    for identifier in identifiers:
-        if identifier == 'PZSurvivorToolkit' or (identifier == 'PZSurvivorWishlist' and (source / identifier).is_dir()):
-            continue
-        if identifier == 'PZToolkitJavaPatches':
-            candidate = ROOT / 'JavaPatches/build/PZToolkitJavaPatches'
-            if not candidate.is_dir():
-                raise ValueError('Build JavaPatches with tools/prepare_install.py before selected tests')
-        else:
-            found = set()
-            for workshop in args.workshop:
-                found = _matching_roots(workshop.rglob('mod.info'), identifier)
-                if found:
-                    break
-            if len(found) != 1:
-                raise ValueError('Expected one explicit mod source for ' + identifier + ': ' + str(found))
-            candidate = next(iter(found))
-        shutil.copytree(candidate, source / identifier)
-    # B42 looks for these asset directories even in empty common layers.
-    for identifier in identifiers:
-        mod = source / identifier
-        versions = [p for p in mod.iterdir() if p.is_dir() and re.fullmatch(r'42(?:[.][0-9]+)*', p.name)]
-        # Common-only B42 mods still make the engine scan its 42.0 fallback.
-        fallback = [mod / '42.0'] if (mod / 'common/mod.info').is_file() else []
-        layers = [mod / 'common', *(versions or fallback)]
-        for layer in layers:
-            for name in ('AnimSets', 'actiongroups'):
-                (layer / 'media' / name).mkdir(parents=True, exist_ok=True)
+    stage_sources(source, args.source_ref)
+    identifiers = seed['selection']['mods'] if seed else integration_mods(source, args.selected)
     visuals = (source / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/TagVisuals.lua').read_text()
     textures = sorted(set(re.findall(r'"((?:Item_|media/ui/)[^"]+)"', visuals)))
     cases = ['server-restart', 'restart-sort'] if seed else (BASELINE if args.baseline else PLANTING_CASES if args.planting else CASES)
     selection = dict(schema_version=1, suite='tags', kind='mp', mode='toolkit', cases=cases,
                      mods=identifiers, languages=['EN', 'RU'], ports=[port, port + 1],
                      timeout_seconds=600, expected_checks=len(cases) + 2,
-                     tagRules=not args.baseline, textureNames=textures, placementBarrier=True, reconnectEvidence=True)
+                     tagRules=not args.baseline, textureNames=textures, placementBarrier=True, reconnectEvidence=True,
+                     config_source=str(source / 'SurvivorQoL-selected.ini'))
+    if 'PZToolkitJavaPatches' in identifiers:
+        candidate = ROOT / 'JavaPatches/build/PZToolkitJavaPatches'
+        if not candidate.is_dir():
+            raise ValueError('Build JavaPatches with tools/prepare_install.py before selected tests')
+        selection['options'] = dict(mod_sources={'PZToolkitJavaPatches': str(candidate.resolve())})
     if args.restart_seed:
         selection['tagRestartSeed'] = True
     if args.planting:
@@ -122,7 +109,7 @@ def main():
     if seed:
         selection.update(tagRestart=seed['states'], placementBarrier=False, reconnectEvidence=False)
         assert selection['ports'] == seed['selection']['ports'], 'Restart endpoints changed'
-    prepared = prepare(source, output / 'run', args.game, args.jdk, selection)
+    prepared = native.prepare(source, output / 'run', args.game, args.jdk, selection, args.workshop)
     if seed:
         restore_seed(seed, prepared)
     (output / 'candidate.json').write_text(json.dumps({'source_ref': args.source_ref or 'working-tree',
@@ -130,7 +117,7 @@ def main():
     print('PREPARED ' + str(prepared), flush=True)
     if args.prepare_only:
         return
-    execution = run(prepared)
+    execution = runner.run(prepared)
     if execution['status'] != 'completed':
         raise RuntimeError(execution)
     verify(output)
@@ -235,7 +222,6 @@ def validate_seed(output):
     assert record['kind'] == 'seed' and record['files'] == persisted_files(run), 'Persisted seed inputs changed'
     assert record['states'] == seed_states(text) and record['result_sha256'] == digest(output / 'result.json')
     assert all(digest(run / name) == value for name, value in record['evidence'].items()), 'Seed execution evidence changed'
-    sys.path.insert(0, str(output / 'source/tools'))
     from queue_checks.report import verify_manifest
     errors = verify_manifest(run, 'source-manifest.json', True) + verify_manifest(run, 'snapshot-hashes.json')
     assert not errors, errors
@@ -397,7 +383,6 @@ def verify(output):
     selection = json.loads((prepared / 'selection.json').read_text())
     baseline, cases = not selection['tagRules'], selection['cases']
     restart = selection.get('tagRestart')
-    sys.path.insert(0, str(output / 'source/tools'))
     from queue_checks.report import audit_logs, events, verify_manifest, verified_game_sha256
     receipts = []
     server_text = (prepared / 'server-launch.log').read_text(errors='replace')
