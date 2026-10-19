@@ -2,11 +2,11 @@
 from pathlib import Path
 
 from . import report
-from .mod_selection import mod_ids
+from .mod_selection import mod_ids, mod_info
 
 
 def create(project, output, game, workshop=(), overrides=None):
-    from .native import _locations, _metadata, hashes, sha256, VERSION
+    from .native import _locations, _metadata, hashes, sha256
     project, output, game = Path(project), Path(output), Path(game)
     if output.exists():
         raise FileExistsError('Fresh pack lock output required')
@@ -18,11 +18,7 @@ def create(project, output, game, workshop=(), overrides=None):
         raise ValueError('Pack lock output must be outside selected mod sources')
     rows = []
     for id, root in locations.items():
-        layers = [(tuple(map(int, p.name.split('.'))), p) for p in root.iterdir()
-                  if p.is_dir() and VERSION.fullmatch(p.name) and (42,) <= tuple(map(int, p.name.split('.'))) <= (42, 21)]
-        chosen = [max(layers)[1], root / 'common', root] if layers else [root / 'common', root]
-        info = next(path / 'mod.info' for path in chosen if (path / 'mod.info').is_file())
-        metadata = _metadata(info)
+        metadata = _metadata(mod_info(root))
         rows.append({'id': id, 'source': str(root), 'version': metadata.get('version') or metadata.get('modversion'), 'files': hashes(root)})
     value = {'schema_version': 1, 'selected_ini_sha256': sha256(ini), 'selected_settings': settings,
              'workshop_ids': [id for id in settings.get('WorkshopItems', '').split(';') if id],

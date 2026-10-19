@@ -3,8 +3,10 @@ from pathlib import Path
 
 try:
     from .queue_checks import native, pack
+    from .queue_checks.mod_selection import mod_layers
 except ImportError:
     from queue_checks import native, pack
+    from queue_checks.mod_selection import mod_layers
 
 
 INTEGRATIONS = {
@@ -82,12 +84,8 @@ INTEGRATIONS = {
 
 
 def source_path(root, relative):
-    """Resolve the same active B42 layer, common fallback and legacy root as the pack."""
-    versions = [(tuple(map(int, child.name.split('.'))), child) for child in root.iterdir()
-                if child.is_dir() and native.VERSION.fullmatch(child.name)
-                and (42,) <= tuple(map(int, child.name.split('.'))) <= (42, 21)]
-    layers = ([max(versions)[1]] if versions else []) + [root / 'common', root]
-    path = next((layer / relative for layer in layers if (layer / relative).is_file()), None)
+    """Resolve an effective source file, with the selected version overriding common."""
+    path = next((layer / relative for layer in reversed(mod_layers(root)) if (layer / relative).is_file()), None)
     if path is None:
         raise ValueError('Missing upstream source: ' + str(root / relative))
     return path

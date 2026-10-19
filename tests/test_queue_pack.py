@@ -108,6 +108,13 @@ class PackLockTests(unittest.TestCase):
         value = self.create()
         self.assertEqual('1.2.3', value['mods'][0]['version'])
 
+    def test_root_metadata_remains_a_fallback_for_a_versioned_mod(self):
+        root = self.root / 'First'
+        (root / '42/mod.info').rename(root / 'mod.info')
+        value = self.create()
+        self.assertEqual('1.2.3', value['mods'][0]['version'])
+        self.assertEqual(str(root), self.validate()['First'])
+
     def test_added_removed_and_changed_mod_files_invalidate_lock(self):
         self.create()
         path = self.root / 'First/42/source.lua'

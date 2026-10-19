@@ -79,6 +79,30 @@ class ModIntegrations(unittest.TestCase):
         self.assertEqual(self.tv, args.tv_source)
         self.assertIsNone(args.native_radio_root)
 
+    def test_b42_checks_cannot_fall_back_to_legacy_root_sources(self):
+        for id, source, test in (
+                ('Navigator', self.nav / 'MonitorConfig.lua', 'test_navigator.lua'),
+                ('TVRadio_ReInvented', self.tv, 'test_tv_videos.lua')):
+            with self.subTest(id=id):
+                relative = source.relative_to(self.root / id).parts[1:]
+                self.write(self.root.joinpath(id, *relative), source.read_text())
+                source.unlink()
+                self.lock_sources()
+                with self.assertRaisesRegex(ValueError, 'Missing upstream source'):
+                    self.configure(requested=[test])
+                self.lock.unlink()
+
+    def test_effective_source_uses_common_fallback_and_root_only_mods(self):
+        source = self.nav / 'MonitorConfig.lua'
+        relative = source.relative_to(self.root / 'Navigator/42.13')
+        common = self.root / 'Navigator/common' / relative
+        self.write(common, 'common fallback')
+        source.unlink()
+        self.assertEqual(common, mod_integrations.source_path(self.root / 'Navigator', relative))
+        standalone = self.root / 'Standalone' / relative
+        self.write(standalone, 'root-only mod')
+        self.assertEqual(standalone, mod_integrations.source_path(self.root / 'Standalone', relative))
+
     def test_named_quartermaster_routing_does_not_require_ui_inputs(self):
         (self.qm / 'client/LootSorter_Picker.lua').unlink()
         (self.qm / 'client/LootSorter_CraftMenu.lua').unlink()

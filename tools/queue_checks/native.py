@@ -9,10 +9,7 @@ import shutil
 import subprocess
 import zipfile
 from . import adapters, worlds, pack, admission, report, coop
-from .mod_selection import MOD_ID
-
-
-VERSION = re.compile(r"\d+(?:\.\d+)*")
+from .mod_selection import MOD_ID, VERSION, metadata as _metadata, local_mod_infos, matching_roots, mod_layers, mod_info
 
 
 def jdk_binary(jdk, name):
@@ -37,11 +34,6 @@ def hashes(root):
 
 def _json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
-def _metadata(path):
-    return {key.strip(): value.strip() for line in path.read_text(encoding="utf-8-sig").splitlines()
-            if "=" in line and not line.lstrip().startswith("#") for key, value in [line.split("=", 1)]}
 
 
 def font_preload(cache, selection, game=None):
@@ -82,16 +74,6 @@ def _approvals(cache, identifiers):
                     == '42/media/bootstrap/PZToolkitFonts.jar')]
 
 
-def _mod_root(info):
-    parent = info.parent
-    return parent.parent if parent.name == "common" or VERSION.fullmatch(parent.name) else parent
-
-
-def _matching_roots(infos, identifier):
-    return {_mod_root(info).resolve() for info in infos
-            if _metadata(info).get("id", "").strip() == identifier}
-
-
 def _locations(project, workshop, identifiers, overrides=None):
     overrides = {} if overrides is None else overrides
     if not isinstance(overrides, dict) or any(not isinstance(id, str) or not isinstance(path, (str, Path))
@@ -99,11 +81,7 @@ def _locations(project, workshop, identifiers, overrides=None):
         raise ValueError('Mod source overrides must map Mod IDs to absolute paths')
     if set(overrides) - set(identifiers):
         raise ValueError('Mod source override is not selected')
-    local_infos = list(project.glob("*/mod.info")) + list(project.glob("*/*/mod.info"))
-    local_infos += list((project / "JavaPatches/build/PZToolkitJavaPatches").glob("*/mod.info"))
-    patch_info = project / "JavaPatches/build/PZToolkitJavaPatches/mod.info"
-    if patch_info.is_file():
-        local_infos.append(patch_info)
+    local_infos = local_mod_infos(project)
     remote_infos = []
     for root in dict.fromkeys(path.resolve() for path in workshop):
         if not root.is_dir():
@@ -113,21 +91,17 @@ def _locations(project, workshop, identifiers, overrides=None):
     for identifier in identifiers:
         if identifier in overrides:
             explicit = Path(overrides[identifier]).resolve()
-            found = _matching_roots(explicit.rglob('mod.info'), identifier) if explicit.is_dir() else set()
+            found = matching_roots(explicit.rglob('mod.info'), identifier) if explicit.is_dir() else set()
         else:
-            found = _matching_roots(local_infos, identifier)
+            found = matching_roots(local_infos, identifier)
         if not found and identifier not in overrides:
-            found = _matching_roots(remote_infos, identifier)
+            found = matching_roots(remote_infos, identifier)
         if len(found) != 1:
             raise ValueError("Mod ID must resolve exactly once: " + identifier + ": " + str(sorted(map(str, found))))
         root = next(iter(found))
-        versions = [(tuple(map(int, child.name.split("."))), child) for child in root.iterdir()
-                    if child.is_dir() and VERSION.fullmatch(child.name)]
-        compatible = [(version, child) for version, child in versions if (42,) <= version <= (42, 21)]
-        if versions and not compatible:
+        if not mod_layers(root):
             raise ValueError("No compatible 42.21 mod layer: " + identifier)
-        layers = [max(compatible)[1], root / "common", root] if compatible else [root / "common", root]
-        info = next((layer / "mod.info" for layer in layers if (layer / "mod.info").is_file()), None)
+        info = mod_info(root)
         if info is None or _metadata(info).get("id") != identifier:
             raise ValueError("Selected version has a different Mod ID: " + identifier)
         result[identifier] = root

@@ -10,27 +10,21 @@ import json
 from pathlib import Path
 import re
 
+try:
+    from .queue_checks.mod_selection import (
+        VERSION, local_mod_infos, matching_roots, metadata, mod_ids, mod_info, mod_layers,
+    )
+except ImportError:
+    from queue_checks.mod_selection import (
+        VERSION, local_mod_infos, matching_roots, metadata, mod_ids, mod_info, mod_layers,
+    )
+
 ROOT = Path(__file__).resolve().parent.parent
 DERIVE = re.compile(r"([\w.]+)\s*=\s*([\w.]+)\s*:\s*derive\s*\(\s*['\"]([^'\"]+)['\"]")
-VERSION = re.compile(r"\d+(?:\.\d+)*")
 
 
 def read(path):
     return path.read_text(encoding="utf-8-sig", errors="replace")
-
-
-def metadata(path):
-    return {key.strip(): value.strip() for line in read(path).splitlines()
-            if "=" in line and not line.lstrip().startswith("#") for key, value in [line.split("=", 1)]}
-
-
-def mod_layers(folder, version):
-    versions = [(tuple(map(int, child.name.split("."))), child) for child in folder.iterdir()
-                if child.is_dir() and VERSION.fullmatch(child.name)]
-    eligible = [(v, p) for v, p in versions if (42,) <= v <= version]
-    if eligible:
-        return [p for p in [folder / "common", max(eligible)[1]] if p.is_dir()]
-    return [folder / "common"] if versions and (folder / "common").is_dir() else ([] if versions else [folder])
 
 
 def source_roots(project, native, workshop, ini, version):
@@ -38,23 +32,24 @@ def source_roots(project, native, workshop, ini, version):
     if native and native.is_dir():
         roots.append(("native", native))
     settings = metadata(ini) if ini else {}
-    selected = [x for x in settings.get("Mods", "PZSurvivorToolkit").split(";") if x]
+    selected_value = settings.get("Mods", "PZSurvivorToolkit")
+    selected = [] if selected_value == "" else mod_ids(selected_value)
     ids = [x for x in settings.get("WorkshopItems", "").split(";") if x]
+    local_infos = local_mod_infos(project)
+    workshop_infos = [info for wid in ids for info in (workshop / wid).glob("mods/**/mod.info")] if workshop else []
     for mod in selected:
-        local = project / ("JavaPatches/build/PZToolkitJavaPatches" if mod == "PZToolkitJavaPatches" else mod)
-        folders = {local} if local.is_dir() else set()
-        if not folders and workshop:
-            for wid in ids:
-                for info in (workshop / wid).glob("mods/**/mod.info"):
-                    if metadata(info).get("id", "").strip() != mod:
-                        continue
-                    parent = info.parent
-                    folders.add(parent.parent if parent.name == "common" or VERSION.fullmatch(parent.name) else parent)
+        folders = matching_roots(local_infos, mod) or matching_roots(workshop_infos, mod)
         if len(folders) != 1:
             mods.append({"id": mod, "status": "missing-or-ambiguous", "roots": sorted(map(str, folders))})
             continue
         folder = next(iter(folders))
         layers = mod_layers(folder, version)
+        active_info = mod_info(folder, version)
+        actual_id = metadata(active_info).get("id") if active_info else None
+        if layers and actual_id != mod:
+            mods.append({"id": mod, "status": "different-mod-id", "root": str(folder),
+                         "actual_id": actual_id})
+            continue
         roots.extend((mod, layer / "media/lua") for layer in layers)
         mods.append({"id": mod, "status": "found" if layers else "missing-compatible-version",
                      "layers": [str(layer) for layer in layers]})
