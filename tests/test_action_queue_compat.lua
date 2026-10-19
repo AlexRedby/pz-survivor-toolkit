@@ -16,6 +16,8 @@ local function derive(self, name)
     return setmetatable(class, {__index = self})
 end
 require = function() end
+-- This fixture isolates other integrations; the owned Manifest handoff has its own suite.
+LootSorter = {}
 ISBaseObject = {derive = derive}
 ISPanel = {derive = derive}
 ISTableLayout = {derive = derive}
@@ -337,7 +339,10 @@ local compat = assert(loadstring((compatSource:gsub('\nreturn Compat',
     '\nCompat.fixtureRegistries = {records, sessions}\nCompat.fixtureRepairTidyFloor = repairTidyFloor\nreturn Compat'))))()
 assert(not compat.isInstalled('MPFastForward'),'server wrapper waits for the server loading boundary')
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/server/000_PZSurvivorToolkitReadCompat.lua'))()
-assert(WS and NEQ_Dresser and TidyFixture and PJCK_EvoPanel and NC_CraftActionPanel and PJCK_CraftActionPanel)
+for name, available in pairs({WS=WS~=nil, NEQ_Dresser=NEQ_Dresser~=nil, TidyFixture=TidyFixture~=nil,
+    PJCK_EvoPanel=PJCK_EvoPanel~=nil, NC_CraftActionPanel=NC_CraftActionPanel~=nil, PJCK_CraftActionPanel=PJCK_CraftActionPanel~=nil}) do
+    assert(available, 'selected source not installed: '..name)
+end
 assert(transferHelperAdopted,'verified Tidy load hands the exact native wrapper pointers to Policy')
 assert(transferItemGuard and transferItemGuard() and adoptedTransferItem==ISTransferAction.transferItem,
     'actual pinned Tidy source adopts its once-captured native delegate wrapper')
@@ -1624,25 +1629,8 @@ if NativeQuartermasterLuaRoot then
         local starts={}
         Events={OnTick={Add=function() end},OnGameStart={Add=function(callback)starts[#starts+1]=callback end}}
         getActivatedMods=function()return {contains=function(_,id)return id=='Neat_Crafting'or id=='Quartermaster'end}end
-        getModFileReader=function(id,path,...)
-            if id~='Quartermaster'then return oldReader(id,path,...)end
-            local source=path=='media/lua/client/LootSorter_CraftMenu.lua'and menuSource or debugSource
-            if change=='changed-source'then source=source..'\n-- changed source'end
-            local cursor=1
-            return {close=function()end,readLine=function()
-                if cursor>#source then return end
-                local boundary=source:find('\n',cursor,true)or #source+1
-                local line=source:sub(cursor,boundary-1);cursor=boundary+1;return line
-            end}
-        end
-        getFilenameOfClosure=function(callback)
-            local origin=debug.getinfo(callback,'S').source:gsub('^@','')
-            if change=='bad-provenance'and origin=='LootSorter_CraftMenu.lua'and NC_CraftActionPanel
-                and(callback==NC_CraftActionPanel.prerender or callback==NC_CraftActionPanel.onCraftButtonClick)then
-                return 'unknown-wrapper.lua'
-            end
-            return origin
-        end
+        getModFileReader=oldReader
+        getFilenameOfClosure=previousOrigin
         require=function(module)
             if module=='Neat_Crafting/NC_CraftActionPanel'then return assert(loadstring(neatSource,'@NC_CraftActionPanel.lua'))()end
             if module=='LootSorter_CraftMenu'then return assert(loadstring(menuSource,'@LootSorter_CraftMenu.lua'))()end
@@ -1685,7 +1673,7 @@ if NativeQuartermasterLuaRoot then
         end
     end
     quartermasterNeat()
-    for _,change in ipairs({'early-callback','early-helper','late-callback','late-helper','bad-provenance','changed-source','preloaded'})do
+    for _,change in ipairs({'early-callback','early-helper','late-callback','late-helper','preloaded'})do
         quartermasterNeat(change)
     end
     require,Events,getFilenameOfClosure=previousRequire,previousEvents,previousOrigin

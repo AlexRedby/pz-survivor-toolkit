@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.104
+
+- **Changed:** Quartermaster is included in Toolkit with its storage designations, distribution, Manifest and crafting integration. Disable the separate Workshop mod when updating; existing assignments, options and presets keep their identifiers and formats.
+- **Changed:** Container tag rules pass directly to sorting instead of temporarily replacing item categories. Craft-window layout and action-queue handoffs are integrated with the owned implementation.
+
 ### 0.1.103
 
 - Register bounded cart locomotion and interaction snapshots for native multiplayer variable synchronization; every client renders cart poses locally.

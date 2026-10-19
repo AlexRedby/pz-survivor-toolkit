@@ -8,16 +8,11 @@ end
 local function source(value,path)return assert(loadstring(value,'@'..path))()end
 local compatPath=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
 local compatSource=read(compatPath)
-local pins=assert(compatSource:match('QuartermasterManifest = (%b{})'))
-local hashFrom=assert(compatSource:find('local Proof =',1,true))
-local hashTo=assert(compatSource:find('Compat.verifySources = verified',hashFrom,true))
-local closure='local quartermasterClosure = Proof.closure'
 local installer=assert(compatSource:match('(local function installManifestTransfers%(%).-\nend)'))
 local query=assert(compatSource:match('(function Compat.isTransferPerform%(callback%).-\nend)'))
-local adapterSource='local Toolkit,Operations,containerHelpersUnchanged=...\nlocal Compat={}\n'
-    ..'local sourceFiles={QuartermasterManifest='..pins..'}\nlocal ready={}\n'
+local adapterSource='local Toolkit,Operations,containerHelpersUnchanged=...\nlocal Compat={}\nlocal ready={}\n'
     ..'local containerTransferPerform,manifestTransferPerform,manifestHelpersUnchanged\n'
-    ..compatSource:sub(hashFrom,hashTo-1)..'\n'..closure..'\n'..installer..'\n'..query
+    ..installer..'\n'..query
     ..'\nreturn Compat,installManifestTransfers'
 local origin=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source:gsub('^@','')end
 local function fixture(mode)
@@ -32,7 +27,6 @@ local function fixture(mode)
     end})
     ISCollapsableWindowJoypad={derive=ISBaseObject.derive}
     LootSorter={DBG=function()end}
-    source(read(NativeQuartermasterLuaRoot..'/shared/LootSorter_Util.lua'),'media/lua/shared/LootSorter_Util.lua')
     local stores={LootSorter_Registry={boxes={['1,2,0']=true,['4,5,0']=true}}}
     ModData={getOrCreate=function(key)stores[key]=stores[key]or{};return stores[key]end}
     local modules={}
@@ -52,18 +46,10 @@ local function fixture(mode)
     require=function(module)
         if module=='PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
         if module=='PZSurvivorToolkit/ItemTags'then return tags end
+        if module=='PZSurvivorToolkit/QuartermasterTagRules'then return f.rules end
         if module=='LootSorter_Core'or module=='LootSorter_Manifest'then loadModule(module)end
     end
-    getActivatedMods=function()return {contains=function(_,id)return mode~='no-qm'and id=='Quartermaster'end}end
-    getModFileReader=function(id,path)
-        assert(id=='Quartermaster')
-        local text=read(NativeQuartermasterLuaRoot..'/'..path:gsub('^media/lua/',''))
-        if mode=='source-changed'then text=text..'\n-- changed source\n'end
-        local lines={};for line in(text..'\n'):gmatch('(.-)\n')do lines[#lines+1]=line end
-        -- Match BufferedReader: a final LF terminates its preceding line, without an extra empty line.
-        if text:sub(-1)=='\n' then table.remove(lines)end
-        local i=0;return {readLine=function()i=i+1;return lines[i]end,close=function()end}
-    end
+    source(read(NativeQuartermasterLuaRoot..'/shared/LootSorter_Util.lua'),'media/lua/shared/LootSorter_Util.lua')
     f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
     local policy=f.project('ActionQueuePolicy')
     local native=ISInventoryTransferAction.perform
@@ -80,12 +66,12 @@ local function fixture(mode)
     install()
     return f,api,policy,native,stores,function(value)bcSafe=value end,modules
 end
-for _,mode in ipairs({'sp','mp','no-qm','source-changed','preinstalled','foreign-delegate','fake-filename'})do
+for _,mode in ipairs({'sp','mp','preinstalled','foreign-delegate','fake-filename'})do
     local f,api,policy,native,stores,bc,modules=fixture(mode)
     local wrapped=ISInventoryTransferAction.perform
-    if mode~='sp'then
+    if mode~='sp'and mode~='preinstalled'then
         assert(not api.isTransferPerform(wrapped),'unobserved/unreviewed manifest delegation remains opaque: '..mode)
-        if mode=='mp'or mode=='no-qm'or mode=='source-changed'then
+        if mode=='mp'then
             assert(wrapped==native and not modules.LootSorter_Manifest,'ineligible source/runtime must not install the SP manifest: '..mode)
         end
     else
@@ -133,44 +119,13 @@ for _,mode in ipairs({'sp','mp','no-qm','source-changed','preinstalled','foreign
         owner._receivedRegistry={};assert(not api.isTransferPerform(wrapped),'MP registry state cannot inherit SP manifest proof');owner._receivedRegistry=nil
         bc(false);assert(not api.isTransferPerform(wrapped),'changed predecessor BC helper revokes proof');bc(true)
         assert(api.isTransferPerform(wrapped),'restoring exact dependencies restores observed manifest proof')
-        local rules,tags=f.rules,f.tags
-        owner.gatherBoxesOrWarn=function()
-            assert(not api.isTransferPerform(wrapped),'active tag-rule gathering cannot borrow manifest-only registry permission')
-            return {},true
-        end
-        rules.installClient()
-        local patched=owner.getRegistry
-        assert(patched~=registry and rules.matchesRegistryGetter(registry,patched) and api.isTransferPerform(wrapped),
-            'actual own tag-rule client wrapper preserves observed manifest permission')
-        assert(patched()==stores.LootSorter_Registry.boxes and f.tagData.LSBox and f.tagData.LSBox['0'],
-            'actual registry wrapper forwards the original registry and indexes real tag-rule designations')
-        owner.gatherBoxesOrWarn(f.player)
-        assert(api.isTransferPerform(wrapped),'gather completion restores manifest-only registry forwarding')
-        assert(not rules.matchesRegistryGetter(function()end,patched),'a different registry predecessor cannot borrow the known link')
-        for _,binding in ipairs({{rules,'indexSquare'},{owner,'parseCoordKey'},{tags,'ruleActive'},{tags,'normalizeRule'}})do
-            local target,key=binding[1],binding[2];local saved=target[key]
-            target[key]=function()error('foreign own-rule helper must not execute under manifest rights')end
-            assert(not api.isTransferPerform(wrapped),'changed own-rule helper '..key..' revokes manifest proof');target[key]=saved
-        end
-        local cellGetter=getCell;getCell=function()error('foreign cell getter must not execute under rights')end
-        assert(not api.isTransferPerform(wrapped),'changed own-rule world lookup revokes manifest proof');getCell=cellGetter
-        local match=rules.matchesRegistryGetter;rules.matchesRegistryGetter=function()return true end
-        assert(not api.isTransferPerform(wrapped),'replaced registry proof API cannot grant manifest rights');rules.matchesRegistryGetter=match
-        PZSurvivorToolkit.QuartermasterTagRules={matchesRegistryGetter=match}
-        assert(not api.isTransferPerform(wrapped),'replacement rules owner cannot inherit the registry proof');PZSurvivorToolkit.QuartermasterTagRules=rules
-        PZSurvivorToolkit.ItemTags={ruleActive=tags.ruleActive,normalizeRule=tags.normalizeRule}
-        assert(not api.isTransferPerform(wrapped),'replacement tag owner cannot inherit the registry proof');PZSurvivorToolkit.ItemTags=tags
+        f.rules.installClient()
+        assert(owner.getRegistry==registry and api.isTransferPerform(wrapped),
+            'direct tag rules leave the registry and manifest transfer contract unchanged')
         owner.getRegistry=function(...)return registry(...)end
-        assert(not api.isTransferPerform(wrapped),'another forwarding registry wrapper remains opaque');owner.getRegistry=patched
-        assert(api.isTransferPerform(wrapped),'restoring the exact own registry wrapper and helpers restores manifest proof')
+        assert(not api.isTransferPerform(wrapped),'an unknown registry wrapper remains opaque')
+        owner.getRegistry=registry
+
     end
 end
-for _,changed in ipairs({'indexSquare','ruleActive','normalizeRule','parseCoordKey'})do
-    local f,api=fixture('sp')
-    local wrapped=ISInventoryTransferAction.perform
-    local target=changed=='indexSquare'and f.rules or changed=='parseCoordKey'and LootSorter or f.tags
-    target[changed]=function()error('pre-install foreign helper must never gain manifest permission')end
-    f.rules.installClient()
-    assert(not api.isTransferPerform(wrapped),'pre-install changed '..changed..' must not become a trusted registry-link baseline')
-end
-print('Quartermaster manifest: real SP hook preserves native completion/queue and dirty marks; MP/absent/changed/preinstalled/foreign delegates and mutable guards stay opaque.')
+print('Quartermaster manifest: native completion, queue tail, dirty marks, both load orders and changed delegate guards passed.')

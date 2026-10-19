@@ -83,14 +83,14 @@ class AuxiliaryAdapterTests(unittest.TestCase):
 
     def test_locked_pack_uses_actual_ini_order_but_still_requires_all_tag_dependencies(self):
         mods = list(adapter.ITEM_MODS)
-        a, b = mods.index('Quartermaster'), mods.index('BravoItemDetails')
+        a, b = mods.index('PZSurvivorToolkit'), mods.index('BravoItemDetails')
         mods[a], mods[b] = mods[b], mods[a]
         self.selection.update(suite='item-tags', cases=['scenes'], languages=['RU'], mods=mods)
         with self.assertRaisesRegex(ValueError, 'load order'):
             adapter.validate(self.selection)
         self.selection['options']['pack_lock'] = '/explicit/validated-by-common-prepare.lock.json'
         adapter.validate(self.selection)
-        self.selection['mods'].remove('Quartermaster')
+        self.selection['mods'].remove('PZSurvivorToolkit')
         with self.assertRaisesRegex(ValueError, 'Required fixture mods missing'):
             adapter.validate(self.selection)
 

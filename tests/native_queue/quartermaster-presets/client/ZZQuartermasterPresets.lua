@@ -56,13 +56,17 @@ local function check()
   assert(not Rules.getPreset(spec.name, {gen=preset.gen+1}), 'stale generation accepted')
   local cats, items = LootSorter.resolveEffective({}, {}, {[spec.name]=preset.gen}, store)
   for _ in pairs(items) do error('tag rule changed explicit item selection') end
+  local box = {cats=cats, rules=Rules.forBox(nil, 0, {[spec.name]=preset.gen}, store)}
+  local function matches(category)
+   return Rules.matches(box, {cat=category, ref={getDisplayCategory=function() return category end}})
+  end
   for _, category in ipairs(spec.yes) do
    assert(categories[category], 'missing source category '..category)
-   assert(cats[category], 'rule lost matching category '..category)
+   assert(matches(category), 'rule lost matching category '..category)
   end
   for _, category in ipairs(spec.no) do
    assert(categories[category], 'missing source category '..category)
-   assert(not cats[category], 'rule included excluded category '..category)
+   assert(not matches(category), 'rule included excluded category '..category)
   end
   LootSorter.openPresetEditor(spec.name, 0)
   local editor = assert(LootSorter._presetEditor)

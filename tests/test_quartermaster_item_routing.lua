@@ -25,26 +25,7 @@ LootSorter = {
         return resultCats, resultItems
     end,
 }
-if NativeQuartermasterLuaRoot then
-    dofile(NativeQuartermasterLuaRoot .. '/shared/LootSorter_Plan.lua')
-else
-    -- The installed planner exercises capacity and carrier details below; this fallback checks the adapter contract.
-    function LootSorter.planTrips(items, boxes, carriers, _, accepts)
-        local trip, leftovers = {perBox = {}, visit = {}}, {}
-        for _, item in ipairs(items) do
-            local destination
-            for _, box in ipairs(boxes) do if box.items and box.items[item.name] then destination = box; break end end
-            if not destination then
-                for _, box in ipairs(boxes) do if box.cats and box.cats[item.cat] then destination = box; break end end
-            end
-            if destination and (not accepts or accepts(carriers[1].ref, item.ref)) then
-                if not trip.perBox[destination] then trip.perBox[destination] = {}; trip.visit[#trip.visit + 1] = destination end
-                trip.perBox[destination][#trip.perBox[destination] + 1] = {item = item, carrier = carriers[1]}
-            else leftovers[#leftovers + 1] = item end
-        end
-        return {trips = #trip.visit > 0 and {trip} or {}, leftover = leftovers}
-    end
-end
+dofile(shared .. 'LootSorter_Plan.lua')
 local Tags = require 'PZSurvivorToolkit/ItemTags'
 local Rules = require 'PZSurvivorToolkit/QuartermasterTagRules'
 farming_vegetableconf = {props = {
@@ -79,16 +60,16 @@ local function box(rule, manual, named, links, presets)
     local cats = manual or {}
     local md = {LSBox = {['0'] = cats}, [Rules.FIELD] = rule and {['0'] = rule} or {}}
     local object = {hasModData = function() return true end, getModData = function() return md end}
-    Rules.indexSquare({getObjects = function() return list({object}) end})
     local effective, items = LootSorter.resolveEffective(cats, named or {}, links, presets)
-    return {ref = object, cats = effective, items = items, capacity = 100, used = 0, dist = 1}
+    return {ref = object, cats = effective, items = items, rules = Rules.forBox(object, 0, links, presets),
+        capacity = 100, used = 0, dist = 1}
 end
 local carrier = {ref = {}, factor = 1, space = 100}
 local function checkPlan(items, boxes, carriers, budget, accepts)
     local categories, categoryTables, knownItems, knownBoxes = {}, {}, {}, {}
     for _, record in ipairs(items) do categories[record], knownItems[record] = record.cat, true end
     for _, record in ipairs(boxes) do categoryTables[record], knownBoxes[record] = record.cats, true end
-    local plan = LootSorter.planTrips(items, boxes, carriers or {carrier}, budget or 100, accepts)
+    local plan = LootSorter.planTrips(items, boxes, carriers or {carrier}, budget or 100, accepts, Rules.matches)
     for _, record in ipairs(items) do assert(record.cat == categories[record], 'planner left a transient item category') end
     for _, record in ipairs(boxes) do assert(record.cats == categoryTables[record], 'planner replaced original category-table identity') end
     local destinations = {}
@@ -133,6 +114,25 @@ assert(destinations[sunflower] == presetBox and destinations[potato] == presetBo
     and not destinations[candy] and not destinations[empty], 'preset tag-only rule lost actual item semantics')
 local stalePreset = box(nil, {}, {}, {Seeds = 6}, presets)
 destinations = checkPlan({sunflower}, {stalePreset}); assert(not destinations[sunflower], 'stale preset link routed an item')
+Rules.localPresets.Seeds.gen = 8
+local staleRule = box(nil, {}, {}, {Seeds = 7}, presets)
+destinations = checkPlan({sunflower}, {staleRule})
+assert(not destinations[sunflower], 'remade sidecar preset inherited an old native generation')
+Rules.localPresets.Seeds.gen = 7
+local combined = box({mode = 'all', include = {'food'}, exclude = {'seed'}}, {}, {}, {Seeds = 7}, presets)
+destinations = checkPlan({sunflower, candy, full, empty}, {combined})
+assert(destinations[sunflower] == combined and destinations[candy] == combined and destinations[full] == combined
+    and not destinations[empty], 'manual and linked preset rules stopped being additive')
+local excluded = box({mode = 'all', include = {}, exclude = {'seed'}})
+destinations = checkPlan({sunflower, candy}, {excluded})
+assert(not destinations[sunflower] and destinations[candy] == excluded, 'exclusion-only rule lost its match')
+local emptyRule = box({mode = 'all', include = {}, exclude = {}})
+destinations = checkPlan({sunflower, candy}, {emptyRule})
+assert(next(destinations) == nil, 'empty rule matched every item')
+local customItem = item('Mod.Custom', 'ModCategory', 'Custom item')
+local customBox = box({mode = 'all', include = {'category:ModCategory'}, exclude = {}})
+destinations = checkPlan({customItem, candy}, {customBox})
+assert(destinations[customItem] == customBox and not destinations[candy], 'custom category rule widened or disappeared')
 local named = box(nil, {}, {['Sunflower seeds'] = true})
 named.dist, named.priority, seeds.priority = 50, -10, 100
 destinations = checkPlan({sunflower, full}, {seeds, named})
@@ -154,7 +154,7 @@ assert(destinations[sunflower] == additive and destinations[candy] == additive
     and not destinations[potato] and not destinations[full], 'disabled tags changed manual exact categories')
 enabled = true
 
-if NativeQuartermasterLuaRoot then
+do
     local small = box(seedRule); small.capacity, small.used = 2, 1
     local heavy = item('Base.Potato', 'foodPerishable_vegetable', 'Heavy potato', 11)
     destinations, plan = checkPlan({sunflower, full, candy, heavy}, {small}, {{ref = {}, factor = 1, space = 10}}, 10)
@@ -162,6 +162,17 @@ if NativeQuartermasterLuaRoot then
         'item routing bypassed native capacity, used space or carrier size')
     assert(plan.leftoverReasons.full == 1 and plan.leftoverReasons.nomatch == 1 and plan.leftoverReasons.carry == 1,
         'native leftover reasons changed under item-aware routing')
+    local far = box(seedRule); far.dist = 10
+    small.capacity, small.used = 1, 0
+    destinations, plan = checkPlan({sunflower, full}, {small, far}, {{ref = {}, factor = 1, space = 10}}, 1)
+    assert(destinations[sunflower] == small and destinations[full] == far and #plan.trips == 2,
+        'tag matches changed capacity overflow or carry-budget trip batching')
+    destinations = checkPlan({sunflower}, {seeds}, nil, nil, function()
+        assert(sunflower.cat == 'foodNonPerishable_candySnack' and next(seeds.cats) == nil,
+            'planner exposed temporary item categories or sentinel box categories during execution')
+        return true
+    end)
+    assert(destinations[sunflower] == seeds)
     local restricted, main = {ref = {}, factor = .1, space = 2}, {ref = {}, factor = 1, space = 2}
     local calls = 0
     destinations, plan = checkPlan({sunflower, full}, {seeds}, {restricted, main}, 2, function(carrierRef, itemRef)
@@ -186,11 +197,11 @@ local function assertFailureRestored(callback)
         'failed routing corrupted original item categories or box category-table identity')
 end
 assertFailureRestored(function()
-    LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, function() error('routing test failure') end)
+    LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, function() error('routing test failure') end, Rules.matches)
 end)
 local originalForItem = Tags.forItem
 Tags.forItem = function(ref) if ref == candy.ref then error('routing test failure') end; return originalForItem(ref) end
-assertFailureRestored(function() LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100) end)
+assertFailureRestored(function() LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, nil, Rules.matches) end)
 Tags.forItem = originalForItem
 local originalMatches, matchCalls = Tags.matchesRule, 0
 Tags.matchesRule = function(...)
@@ -198,7 +209,6 @@ Tags.matchesRule = function(...)
     if matchCalls == 2 then error('routing test failure') end
     return originalMatches(...)
 end
-assertFailureRestored(function() LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100) end)
+assertFailureRestored(function() LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, nil, Rules.matches) end)
 Tags.matchesRule = originalMatches
-print('Quartermaster item routing passed: seed/food roles, packets, box/preset rules, additive picks, display-name precedence, opt-out, identities and error restoration'
-    .. (NativeQuartermasterLuaRoot and ', installed native planner capacity/carriers/leftovers.' or '; minimal planner fallback (native capacity/carriers skipped).'))
+print('Quartermaster item routing passed: seed/food roles, packets, box/preset rules, additive picks, display-name precedence, opt-out, identities, capacity/carriers/leftovers and failure safety.')

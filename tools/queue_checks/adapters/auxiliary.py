@@ -19,7 +19,7 @@ ANIMAL_CASES = {
     'combined-starved': ('combined', 'starved', 'held'),
 }
 ITEM_MODS = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS',
-             'Quartermaster', 'BravoItemDetails', 'organizedCategories_core']
+             'BravoItemDetails', 'organizedCategories_core']
 PNG = b'\x89PNG\r\n\x1a\n'
 
 

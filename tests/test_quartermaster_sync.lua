@@ -106,7 +106,7 @@ for _, nativeFirst in ipairs({true, false}) do
     waiting()
     if nativeFirst then toolkit() else native() end
     local boxes, synced = LootSorter.gatherBoxes(player)
-    assert(synced and #boxes == 1 and boxes[1].cats.Food and boxes[1].container == container,
+    assert(synced and #boxes == 1 and Rules.matches(boxes[1], {cat="Food", ref={getDisplayCategory=function() return "Food" end}}) and boxes[1].container == container,
         'both arrival orders must restore the tag-only preset destination')
 end
 
@@ -118,7 +118,7 @@ assert(synced and #boxes == 1 and boxes[1].cats.Manual, 'empty valid Toolkit rep
 -- Object-local rules do not depend on having an entry in the preset sidecar.
 object.md = {[Rules.FIELD] = {['0'] = rule}}
 boxes, synced = LootSorter.gatherBoxes(player)
-assert(synced and #boxes == 1 and boxes[1].cats.Food and LootSorter.squareHasDesignation(square),
+assert(synced and #boxes == 1 and Rules.matches(boxes[1], {cat="Food", ref={getDisplayCategory=function() return "Food" end}}) and LootSorter.squareHasDesignation(square),
     'readiness gating lost a rule-only container designation')
 
 begin(); native(); enabled = false

@@ -50,6 +50,9 @@ class QuartermasterPresets(unittest.TestCase):
             path.mkdir(parents=True, exist_ok=True)
         adapter.stage(ROOT, self.output, self.game, self.root / 'jdk', self.selection, locations, self.runtime)
 
+    def test_owned_toolkit_provides_quartermaster_without_external_mod(self):
+        self.assertEqual(adapter.MODS, ['PZSurvivorToolkit', 'organizedCategories_core'])
+
     def test_reload_seals_and_copies_only_known_global_store_files(self):
         adapter.validate(self.selection)
         (self.seed / 'client1/Lua/unrelated.txt').write_text('unrelated user data')

@@ -328,38 +328,11 @@ function Adapter.attach(picker)
     if picker.joypadConfigured then picker:configJoypad() end
 end
 
-function Adapter.install()
-    if not LootSorter or LootSorter.toolkitTagPicker then return end
-    if type(LootSorter.openPicker) ~= "function" or type(LootSorter.openPresetEditor) ~= "function" then return end
-    LootSorter.toolkitTagPicker = true
-    Rules.installClient()
-    if LootSorter.putPreset then
-        local put = LootSorter.putPreset
-        LootSorter.putPreset = function(args, ...)
-            for _, picker in ipairs({LootSorter._presetEditor or false, LootSorter._picker or false}) do
-                if picker and args.cats == picker.selectedCats then
-                    if picker.targetKind ~= "preset" or picker.toolkitTagRuleTouched or Rules.presetsSynced() then
-                        args.pzstTagRule = Tags.normalizeRule(picker.toolkitTagRule)
-                    end
-                    break
-                end
-            end
-            return put(args, ...)
-        end
+function Adapter.presetArgs(picker, args)
+    if picker.targetKind ~= "preset" or picker.toolkitTagRuleTouched or Rules.presetsSynced() then
+        args.pzstTagRule = Tags.normalizeRule(picker.toolkitTagRule)
     end
-    local open, edit = LootSorter.openPicker, LootSorter.openPresetEditor
-    LootSorter.openPicker = function(...)
-        local result = open(...)
-        Adapter.attach(LootSorter._picker)
-        return result
-    end
-    LootSorter.openPresetEditor = function(...)
-        local result = edit(...)
-        Adapter.attach(LootSorter._presetEditor)
-        return result
-    end
+    return args
 end
 
-Events.OnGameStart.Add(Adapter.install)
-Events.OnCreatePlayer.Add(Adapter.install)
 return Adapter

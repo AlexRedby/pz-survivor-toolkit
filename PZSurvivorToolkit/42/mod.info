@@ -1,7 +1,7 @@
 name=PZ Survivor Toolkit
 id=PZSurvivorToolkit
 author=AlexRedby
-modversion=0.1.103
+modversion=0.1.104
 category=features
 icon=icon.png
 poster=icon.png
@@ -18,6 +18,7 @@ description=CleanUI / Container Capacity Indicator: Aligns bars with visible inv
 description=Item Details: Restores vehicle-part condition and sorting with organizedCategories and preserves all items in large stacks. Load Toolkit before Item Details.<LINE><LINE>
 description=TV & Radio ReInvented: Keeps windows open and adds a close button. Click loaded VHS to eject; select tapes from reachable containers or drag them onto the slot. Fully watched tapes have the inventory checkmark. Configurable in Mod Options. Fixes device recognition and native macOS video paths; the separate TVRadioReinventedFix4220 is no longer needed.<LINE><LINE>
 description=Context menus: Groups known actions, removes exact duplicates and puts common actions above secondary/destructive commands using stable priorities for carried items, loot, world and vehicles. Batch operations appear once per selection while distinct targets and native single-item actions remain available.<LINE><LINE>
+description=Quartermaster: Built-in storage designations, automatic distribution, storage Manifest and ingredient fetching for vanilla/Neat Crafting. Existing Quartermaster settings, assignments and presets are retained. Disable the separate Quartermaster Workshop mod.<LINE><LINE>
 description=Item tags: Independent tags derived from organizedCategories, colored labels and native pictograms in native/CleanUI inventory, named all/any filters with exclusions and a match preview, and saved dynamic Quartermaster rules. Legacy category IDs remain unchanged for other mods. Can be disabled in Mod Options.<LINE><LINE>
 description=Inventory: Optional Grab/Put amount with one whole-number budget across the selection; favourites and equipped items are skipped. Disabled with TakeAnyAmount active. Toolkit owns category filters when Better Containers is active. Select categories from the Category header dropdown. CleanUI searches hide nonmatching items. Fixes grouped-item arrow spacing. Inventory filters can be disabled in Mod Options. Preserves marquee and Shift selection across inventory redraws and combined proximity views.<LINE><LINE>
 description=Batch clothing: Cut selected clothing from the native cut/rip submenu. Supports cotton, denim and leather with native tools and outputs; skips favourites and worn/held items. Can be disabled independently in Mod Options.<LINE><LINE>
