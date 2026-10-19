@@ -190,7 +190,7 @@ def action_coverage(logs, poses, cartid, epoch, duration):
         require(all(a['wall'] < b['wall'] and a['index'] <= b['index'] for a, b in zip(samples, samples[1:])), role + ': reordered presentation samples')
         phases = []
         for index, name in enumerate(ACTION_PHASES):
-            selected = [r for r in samples if r['index'] == index+1]
+            selected = [r for r in samples if r['index'] == index+1 and r['wall'] <= acknowledgements[index]['wall']]
             require(selected and all(windows[index]['wall'] <= r['wall'] for r in selected), role + '/' + name + ': missing phase samples')
             active = [r for r in selected if r['active'] and r['progress'] > .05]
             require(len(active) >= 2 and active[-1]['wall']-active[0]['wall'] >= 50

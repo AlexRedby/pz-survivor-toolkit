@@ -228,7 +228,7 @@ public final class CartGrip {
             float turn=angle-remaining;
             if(!Float.isFinite(turn)) return false;
             // The elbow reserve is preferred; a reachable grip can use less at the clavicle limit.
-            turn=Math.min(turn,(float)Math.toRadians(30));
+            turn=Math.min(turn,(float)Math.toRadians(35));
             if(turn>.000001f) {
                 var axis=from.cross(to,new Vector3f());
                 if(axis.lengthSquared()<.00000001f) return false;

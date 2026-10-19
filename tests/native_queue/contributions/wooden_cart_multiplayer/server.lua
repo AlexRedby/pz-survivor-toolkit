@@ -56,8 +56,8 @@ local function pollAction(now)
  print('[CART_MP_ACTION] SERVER_RECEIPT '..J.encode(row));broadcast('ActionAck',row)
  pendingAction=nil;actionStarted=false;actionIndex=actionIndex+1
  if actionIndex>#actionPhases then
-  actionsDone=true;broadcast('ActionsDone',{ok=true,phases=#actionPhases,id=cartSession.id,wall=now})
-  print('[CART_MP_ACTION] ALL_COMPLETE '..J.encode({phases=#actionPhases,id=cartSession.id,wall=now}))
+  actionsDone=true;broadcast('ActionsDone',{ok=true,phases=#actionPhases,id=cartSession.id,wall=row.wall})
+  print('[CART_MP_ACTION] ALL_COMPLETE '..J.encode({phases=#actionPhases,id=cartSession.id,wall=row.wall}))
  end
 end
 Events.OnServerStarted.Add(function()

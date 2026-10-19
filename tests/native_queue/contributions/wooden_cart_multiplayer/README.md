@@ -38,6 +38,8 @@ The base Main has mandatory static `PZ_CART_RUNTIME_FILE` and `PZ_CART_COMMAND_F
 
 Compile `ClearanceProbe.java` against the same three JARs, package with `ClearanceProbe.mf`, and attach separately to both clients before the scenario epoch. The existing source-only `../wooden_cart_motion/evidence/AttachWoodenWheelProbe.java` is the explicit attach helper; it is not duplicated here. Attach arguments are the selected client PID, built probe JAR, and that client's absolute output directory. PID ownership/checking is adapter-owned. Stop via agent argument `stop` before cleanup. The probe refuses an existing `body-clearance.jsonl`. It captures at the exit of `CartGrounding.render`, including the remote gate's early return, so an uncorrected observer pose remains measurable.
 
+The same probe writes `transition-solve.jsonl` for every wooden transition solver invocation, including cancellation recovery. It records success and nested solver refusals, with pre-solve arm geometry for failed reach. This trace is unthrottled; compare its per-frame results with the six action windows separately from the sampled presentation coverage.
+
 The candidate production JAR must expose `CartSteeringHooks.enabled/lean`, and the base's existing `states/State.pace/sprintMomentum/load/heading` plus `CartLegPace.targetSpeed` contract. Toolkit >=0.1.58 and JavaPatches >=0.1.15 alone do not guarantee those candidate APIs. Required external mods are ZombieBuddy, SaucedCarts and saucedwheelbarrow. Required video APIs are `toolkitVideoStart`, `toolkitVideoStatus`, `toolkitVideoStop` and an explicitly supplied FFmpeg executable. Missing APIs/attachments are errors, never empty diagnostics or PASS.
 
 ## Offline verification

@@ -267,6 +267,19 @@ def check_extended_analyzer():
                 rejected(probe, '\n'.join(line for line in files[probe].splitlines()
                          if not 117000 <= json.loads(line)['wallTimeMillis'] <= 118200))
             if actions:
+                # The next native action may start after Ack but before its server phase marker arrives.
+                path=root/'client1-launch.log';marker='[CART_MP_ACTION] PRESENTATION '
+                lines=files[path].splitlines()
+                ack=next(json.loads(line.split('[CART_MP_ACTION] SERVER_ACK ',1)[1]) for line in lines
+                         if '[CART_MP_ACTION] SERVER_ACK ' in line and json.loads(line.split('[CART_MP_ACTION] SERVER_ACK ',1)[1])['index']==2)
+                prior=next(json.loads(line.split(marker,1)[1]) for line in lines if marker in line
+                           and json.loads(line.split(marker,1)[1])['index']==2)
+                spill=dict(prior,wall=ack['wall']+1,active=True,pickup=False,progress=.01)
+                at=max(i for i,line in enumerate(lines) if marker in line and json.loads(line.split(marker,1)[1])['index']==2)+1
+                lines.insert(at,marker+json.dumps(spill));path.write_text('\n'.join(lines)+'\n')
+                assert analyzer['analyze'](root)['actions']['evidenceComplete']
+                path.write_text(files[path])
+                edit('client1','PRESENTATION',lambda r: changed(r,pickup=False) if r['index']==2 and r['active'] else r)
                 edit('client1', 'RECEIPT', lambda r: None if r['index']==3 else r)
                 edit('client1', 'RECEIPT', lambda r: changed(r, id=43))
                 edit('client1', 'RECEIPT', lambda r: {key: value for key, value in r.items() if key != 'id'})
@@ -501,6 +514,28 @@ assert(startCount==1,'Matching server/client native skill did not arm')
     return 'PASS (server weather/authoritative XP native snapshot, transient skill wait, close owner/wide observer native zoom, endurance; no forced sprint)'
 
 
+def check_action_windows(lua):
+    code=r"""
+for _,name in ipairs({'SaucedCarts/ContextMenu','ISUI/ISContextMenu','ISUI/ISInventoryPaneContextMenu','TimedActions/ISTimedActionQueue'}) do package.preload[name]=function() return {} end end
+package.preload.CartMPJSON=function() return {encode=function() return '{}' end} end
+local count=0
+print=function(line) if line:find('PRESENTATION',1,true) then count=count+1 end end
+getTimestampMs=function() return 1000 end
+toolkitWoodCartStatus=function() return {active=true,progress=.1} end
+local player={getPrimaryHandItem=function() end,getSecondaryHandItem=function() end}
+local actions=dofile(SOURCE)
+actions.command('ActionPhase',{index=2,phase='pickup-complete',id=42})
+actions.sample(player,'client1');assert(count==1)
+actions.command('ActionAck',{index=2,id=43,ok=true});actions.sample(player,'client1');assert(count==2,'Foreign Ack closed window')
+actions.command('ActionAck',{index=1,id=42,ok=true});actions.sample(player,'client1');assert(count==3,'Old Ack closed newer window')
+actions.command('ActionAck',{index=2,id=42,ok=true});actions.sample(player,'client1');assert(count==3,'Next action sampled under closed phase')
+actions.command('ActionPhase',{index=6,phase='pickup-repeat',id=42})
+actions.command('ActionAck',{index=6,id=42,ok=true});actions.sample(player,'client1');assert(count==4,'Final quiescence lost')
+""".replace('SOURCE',json.dumps(str(HERE/'actions.lua')))
+    subprocess.run([lua,'-e',code],check=True,capture_output=True)
+    return 'PASS (matching Ack closes completed phase; old/foreign Ack and final quiet preserved)'
+
+
 def check_java(game, jdk, patch):
     if game is None and jdk is None and patch is None:
         return 'SKIPPED (supply --game-java-dir, --jdk, --patch-jar)'
@@ -552,6 +587,18 @@ public final class ModelProbeCheck {
             if(!"null".equals(method.invoke(null,(Object)null)))throw new AssertionError("null model JSON");
         }
         var probe=Class.forName("ClearanceProbe");
+        var traceField=probe.getDeclaredField("solve");traceField.setAccessible(true);
+        var trace=(ThreadLocal<StringBuilder>)traceField.get(null);
+        var outputField=probe.getDeclaredField("solves");outputField.setAccessible(true);
+        var text=new java.io.StringWriter();outputField.set(null,new java.io.BufferedWriter(text));
+        if(ClearanceProbe.reachInput(null)!=null)throw new AssertionError("Unscoped solver diagnostic");
+        for(boolean ok:new boolean[]{true,false}) {
+            trace.set(new StringBuilder("{\"failures\":["));
+            if(!ok) {ClearanceProbe.refusal("reach", "\"bone\":\"Bip01_R_Hand\"");ClearanceProbe.refusal("transitionGrip",null);}
+            ClearanceProbe.finishSolve(ok);
+            if(trace.get()!=null)throw new AssertionError("Solver scope leaked into next frame");
+        }
+        ClearanceProbe.finishSolve(false);System.out.print(text);outputField.set(null,null);
         var family=probe.getDeclaredMethod("cartFamily",String.class,String.class);family.setAccessible(true);
         for(String model:new String[]{"ShoppingCartModel","ShoppingCartPartialModel","ShoppingCartFullModel"})
             if(!(boolean)family.invoke(null,"SaucedCarts.ShoppingCart",model))throw new AssertionError("same-family mismatch was filtered");
@@ -568,7 +615,9 @@ public final class ModelProbeCheck {
         result=subprocess.run([str(java),'-cp',classpath,'ModelProbeCheck'],capture_output=True,text=True,
             env=dict(os.environ,PZ_CART_RUNTIME_FILE=str(root/'runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'commands.txt')))
         assert result.returncode==0,result.stdout+'\n'+result.stderr
-        assert [json.loads(line) for line in result.stdout.splitlines()]==['quote"slash\\\n\r\t\x01']*2
+        parsed=[json.loads(line) for line in result.stdout.splitlines()]
+        assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
+        assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
     return 'PASS (composed keyboard fixture, render family mismatch capture and JSON escaping)'
 
 
@@ -599,6 +648,7 @@ def main():
         print('Lua: PASS (syntax and JSON values)')
         print('Placement:', check_placement(lua))
         print('Capture environment:', check_capture_environment(lua))
+        print('Action windows:', check_action_windows(lua))
     else:
         print('Lua: SKIPPED (supply --lua or install Lua/LuaJIT)')
     print('Java:', check_java(args.game_java_dir, args.jdk, args.patch_jar))

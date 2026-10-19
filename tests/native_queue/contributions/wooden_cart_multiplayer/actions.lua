@@ -82,6 +82,7 @@ function Actions.command(command,args)
  elseif command=='ActionAck' then
   assert(args.ok==true,'Server rejected action check: '..tostring(args.error))
   marker('SERVER_ACK',args)
+  if window and window.index==args.index and window.id==args.id and args.index<#phases then window=nil end
   if session then
    assert(session.mode=='audit' and args.index==session.index and args.id==session.id,'Out-of-order action acknowledgement')
    session.ack=args

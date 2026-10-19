@@ -11,6 +11,8 @@ import zombie.core.skinnedmodel.model.*;
 /** Read-only final render poses for native body/handle clearance measurements. */
 public final class ClearanceProbe {
     private static BufferedWriter output;
+    private static BufferedWriter solves;
+    private static final ThreadLocal<StringBuilder> solve = new ThreadLocal<>();
     private static long last;
     private static boolean installed;
     private static boolean cartModel(String name) {
@@ -80,6 +82,70 @@ public final class ClearanceProbe {
             }
         }
     }
+    public static void beginSolve(String method, ModelSlotRenderData slot) {
+        if(solves==null || !(slot.character instanceof zombie.characters.IsoPlayer player)) return;
+        var status=net.alexredby.pztoolkitjavapatches.CartTransition.status(player);
+        var row=new StringBuilder(2048).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
+            .append(",\"method\":").append(jsonString(method)).append(",\"id\":").append(player.getOnlineID())
+            .append(",\"local\":").append(player.isLocalPlayer())
+            .append(",\"x\":").append(player.getX()).append(",\"y\":").append(player.getY())
+            .append(",\"progress\":").append(status.rawget("progress"))
+            .append(",\"pickup\":").append(status.rawget("pickup"))
+            .append(",\"recovering\":").append(status.rawget("recovering"))
+            .append(",\"failures\":[");
+        solve.set(row);
+    }
+    public static void refusal(String method, String detail) {
+        var row=solve.get();if(row==null)return;
+        if(row.charAt(row.length()-1)!='[')row.append(',');
+        row.append("{\"method\":").append(jsonString(method));
+        if(detail!=null)row.append(',').append(detail);
+        row.append('}');
+    }
+    public static String reachInput(Object[] args) {
+        if(solve.get()==null)return null;
+        var poses=(Matrix4f[])args[0];var actor=(SkinningData)args[1];
+        var row=new StringBuilder(2048).append("\"bone\":").append(jsonString((String)args[2]))
+            .append(",\"wood\":").append(args[5]).append(",\"weight\":").append(args[6])
+            .append(",\"target\":");matrix(row,(Matrix4f)args[3]);row.append(",\"poses\":{");
+        var bone=actor.getBone((String)args[2]);boolean comma=false;
+        for(int i=0;bone!=null && i<4;i++,bone=bone.parent) {
+            if(comma)row.append(',');comma=true;
+            row.append(jsonString(bone.name)).append(':');matrix(row,poses[bone.index]);
+        }
+        return row.append('}').toString();
+    }
+    public static synchronized void finishSolve(boolean ok) throws Exception {
+        var row=solve.get();solve.remove();if(row==null || solves==null)return;
+        solves.write(row.append("],\"ok\":").append(ok).append("}\n").toString());solves.flush();
+    }
+    public static class Solve {
+        @Advice.OnMethodEnter
+        public static void enter(@Advice.Origin("#m") String method, @Advice.Argument(0) ModelSlotRenderData slot) {
+            ClearanceProbe.beginSolve(method,slot);
+        }
+        @Advice.OnMethodExit(onThrowable=Throwable.class)
+        public static void exit(@Advice.Return boolean ok, @Advice.Thrown Throwable thrown) {
+            try {
+                if(thrown!=null)ClearanceProbe.refusal("exception",null);
+                ClearanceProbe.finishSolve(ok && thrown==null);
+            } catch(Throwable e) {System.err.println("[CLEARANCE_PROBE] ERROR "+e);}
+        }
+    }
+    public static class Refusal {
+        @Advice.OnMethodExit
+        public static void exit(@Advice.Origin("#m") String method, @Advice.Return boolean ok) {
+            if(!ok)ClearanceProbe.refusal(method,null);
+        }
+    }
+    public static class Reach {
+        @Advice.OnMethodEnter
+        public static String enter(@Advice.AllArguments Object[] args) {return ClearanceProbe.reachInput(args);}
+        @Advice.OnMethodExit
+        public static void exit(@Advice.Enter String input, @Advice.Return boolean ok) {
+            if(!ok)ClearanceProbe.refusal("reach",input);
+        }
+    }
     public static class Capture {
         @Advice.OnMethodExit(suppress=Throwable.class)
         public static void exit(@Advice.Argument(0) ModelSlotRenderData slot) {
@@ -88,6 +154,7 @@ public final class ClearanceProbe {
     }
     public static synchronized void agentmain(String args,Instrumentation instrumentation) throws Exception {
         if(output!=null){output.close();output=null;}
+        if(solves!=null){solves.close();solves=null;}
         if("stop".equals(args)){System.out.println("[CLEARANCE_PROBE] stopped");return;}
         if(args==null || args.isBlank() || !Path.of(args).isAbsolute())throw new IllegalArgumentException("Agent args: absolute output directory, or stop");
         Path directory=Path.of(args);
@@ -95,10 +162,16 @@ public final class ClearanceProbe {
         Path file=directory.resolve("body-clearance.jsonl");
         if(Files.exists(file))throw new IllegalStateException("Preserve existing clearance output first");
         output=Files.newBufferedWriter(file,java.nio.file.StandardOpenOption.CREATE_NEW);last=0;
+        solves=Files.newBufferedWriter(directory.resolve("transition-solve.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);
         if(!installed){new AgentBuilder.Default().disableClassFormatChanges()
             .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
             .type(named("net.alexredby.pztoolkitjavapatches.CartGrounding"))
             .transform((b,d,l,m,p)->b.visit(Advice.to(Capture.class).on(named("render"))))
+            .type(named("net.alexredby.pztoolkitjavapatches.CartGrip"))
+            .transform((b,d,l,m,p)->b
+                .visit(Advice.to(Solve.class).on(namedOneOf("transition","authoredTransition","movingRecovery")))
+                .visit(Advice.to(Refusal.class).on(namedOneOf("nativeHeight","nativeRotation","bendTransitionTorso","groundFeet","transitionGrip")))
+                .visit(Advice.to(Reach.class).on(named("reach").and(takesArguments(7)))))
             .installOn(instrumentation);installed=true;}
         System.out.println("[CLEARANCE_PROBE] writing "+file);
     }

@@ -471,6 +471,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.27
+
+- Keep the wooden wheelbarrow grip continuous during setdown when native multiplayer position lag requires a little more shoulder reach; preserve hand targets, bone lengths and world placement.
+
 ### 0.1.26
 
 - Use heading-relative keyboard controls for shopping carts and both wheelbarrows: forward/reverse motion and continuous left/right steering, preserving native movement and collision handling.

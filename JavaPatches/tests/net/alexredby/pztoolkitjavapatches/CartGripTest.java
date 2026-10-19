@@ -371,7 +371,7 @@ public final class CartGripTest {
                 var from=before[upper].getTranslation(new Vector3f()).sub(pivot).normalize();
                 var to=poses[upper].getTranslation(new Vector3f()).sub(pivot).normalize();
                 float turn=(float)Math.toDegrees(Math.acos(Math.max(-1,Math.min(1,from.dot(to)))));
-                if(turn>30.01f) throw new AssertionError("Sprint startup clavicle limit exceeded: "+turn);
+                if(turn>35.01f) throw new AssertionError("Sprint startup clavicle limit exceeded: "+turn);
                 for(int[] link:new int[][]{{clavicle,upper},{upper,forearm},{forearm,hand}}) {
                     float old=before[link[0]].getTranslation(new Vector3f()).distance(before[link[1]].getTranslation(new Vector3f()));
                     float now=poses[link[0]].getTranslation(new Vector3f()).distance(poses[link[1]].getTranslation(new Vector3f()));
@@ -1219,6 +1219,60 @@ public final class CartGripTest {
         }
     }
 
+    private static void checkObserverSetdownReach() {
+        // Wood14 observer at p=.624692: recorded arm after native torso/feet; wrist target stays world-fixed.
+        float[][] captured={
+            {-0.9487953f, -0.20362298f, 0.24150652f, 0.0f, 0.31538776f, -0.567464f, 0.7606023f, 0.0f, -0.017830037f, 0.79782426f, 0.60262764f, 0.0f, -0.016427126f, 0.61491513f, 0.0031603873f, 1.0f},
+            {-0.29495448f, -0.9362686f, 0.19078737f, 0.0f, 0.9542375f, -0.29892772f, 0.008279979f, 0.0f, 0.049278103f, 0.18449903f, 0.9815972f, 0.0f, -0.09905384f, 0.5971824f, 0.024192333f, 1.0f},
+            {-0.28923056f, -0.92960966f, -0.22840413f, 0.0f, 0.9542376f, -0.29892772f, 0.008279994f, 0.0f, -0.0759747f, -0.21555659f, 0.9735319f, 0.0f, -0.139481f, 0.46885562f, 0.050342053f, 1.0f},
+            {-0.040389985f, -0.99234974f, -0.1166476f, 0.0f, 0.22303532f, 0.104839385f, -0.9691502f, 0.0f, 0.9739641f, -0.065158896f, 0.21709466f, 0.0f, -0.17912342f, 0.34144145f, 0.019036502f, 1.0f},
+            {0.1263721f, -0.94340503f, -0.3066218f, 0.0f, 0.09390722f, 0.319089f, -0.9430607f, 0.0f, 0.98752797f, 0.09038263f, 0.1289165f, 0.0f, -0.1730556f, 0.31565022f, -0.08863373f, 1.0f}
+        };
+        String[] names={"Bip01","Bip01_Pelvis","Bip01_Spine","Bip01_Spine1","Bip01_Neck",
+            "Bip01_R_Clavicle","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand",
+            "Bip01_L_Clavicle","Bip01_L_UpperArm","Bip01_L_Hand","Bip01_L_Foot","Bip01_R_Foot"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,2,3,4,5,6,7,4,9,10,2,2),offsets);
+        var start=new Matrix4f[names.length];
+        for(int i=0;i<start.length;i++) start[i]=new Matrix4f().translation(.01f*i,.5f,.02f*i);
+        for(int i=0;i<4;i++) start[i+5].set(captured[i]);
+        var fixed=new Matrix4f().set(captured[4]);
+        var shoulder=start[6].getTranslation(new Vector3f());
+        var direction=fixed.getTranslation(new Vector3f()).sub(shoulder).normalize();
+        Vector3f previous=null;
+        // Cross the old 30-degree limit and retain 1mm beyond the captured target in 0.1mm steps.
+        for(int sample=-1;sample<=90;sample++) {
+            var target=new Matrix4f(fixed).translateLocal(new Vector3f(direction).mul(sample<0?0:-.008f+sample*.0001f));
+            var poses=java.util.Arrays.stream(start).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.reach(poses,actor,"Bip01_R_Hand",target,new Matrix4f(),true,.8045307f))
+                throw new AssertionError("observer setdown cannot reach captured fixed wrist: sample="+sample);
+            if(!poses[8].equals(target,.000001f)) throw new AssertionError("observer setdown moved its wrist target");
+            for(int i=5;i<8;i++) {
+                float before=start[i].getTranslation(new Vector3f()).distance(start[i+1].getTranslation(new Vector3f()));
+                float after=poses[i].getTranslation(new Vector3f()).distance(poses[i+1].getTranslation(new Vector3f()));
+                if(Math.abs(before-after)>.000001f) throw new AssertionError("observer setdown stretched a link");
+            }
+            for(int i:new int[]{0,1,2,3,4,9,10,11,12,13}) if(!poses[i].equals(start[i]))
+                throw new AssertionError("observer setdown changed native root, torso, opposite arm or feet");
+            if(!poses[5].getTranslation(new Vector3f()).equals(start[5].getTranslation(new Vector3f())))
+                throw new AssertionError("observer setdown moved clavicle pivot");
+            var actual=poses[6].getTranslation(new Vector3f());
+            if(sample>0 && actual.distance(previous)>.0003f)
+                throw new AssertionError("observer setdown shoulder snapped at its rotation limit");
+            var pivot=start[5].getTranslation(new Vector3f());
+            float turn=(float)Math.toDegrees(Math.acos(Math.max(-1,Math.min(1,
+                shoulder.sub(pivot,new Vector3f()).normalize().dot(actual.sub(pivot,new Vector3f()).normalize())))));
+            if(turn>35.01f) throw new AssertionError("observer setdown clavicle limit exceeded");
+            previous=actual;
+        }
+        var rejected=java.util.Arrays.stream(start).map(Matrix4f::new).toArray(Matrix4f[]::new);
+        if(CartGrip.reach(rejected,actor,"Bip01_R_Hand",new Matrix4f().translation(5,5,5),new Matrix4f(),true,.8045307f))
+            throw new AssertionError("observer setdown accepted an unreachable wrist");
+        for(int i=0;i<start.length;i++) if(!rejected[i].equals(start[i]))
+            throw new AssertionError("rejected observer setdown changed native pose");
+    }
+
     private static void checkMovingUnreachableTargets() {
         // Native39 refused world-fixed LHand and idle-floor RFoot targets after the owner had begun walking.
         String captures="""
@@ -1395,6 +1449,7 @@ public final class CartGripTest {
         checkRecoveryPosture();
         checkRecoveryRotation();
         checkLateRecoveryReach();
+        checkObserverSetdownReach();
         checkMovingRecovery();
         checkMovingRootTranslation();
         checkMovingUnreachableTargets();
