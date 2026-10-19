@@ -332,6 +332,20 @@ public final class CartGrip {
         aim(poses,actor,thumb,pivot,from,to);
     }
 
+    private static boolean referenceThumb(Matrix4f[] poses, SkinningData actor, AnimationClip clip, String side) {
+        // Action clips and their native blend-out already contain closure; apply it only once.
+        var hand=actor.getBone("Bip01_"+side+"_Hand");
+        var thumb=actor.getBone("Bip01_"+side+"_Finger0");
+        var referenceHand=new Matrix4f();var referenceThumb=new Matrix4f();
+        if(hand==null || thumb==null || !CartGrounding.referencePose(clip,actor,hand.name,referenceHand)
+            || !CartGrounding.referencePose(clip,actor,thumb.name,referenceThumb)) return false;
+        var local=new Matrix4f(poses[hand.index]).invert().mul(poses[thumb.index]);
+        referenceHand.invert().mul(referenceThumb).setTranslation(local.m30(),local.m31(),local.m32());
+        var change=new Matrix4f(poses[hand.index]).mul(referenceHand).mul(new Matrix4f(poses[thumb.index]).invert());
+        adjust(poses,actor,thumb,change);
+        return true;
+    }
+
     // Mesh-local centers measured from the actual GPU handle rings/end planes, not the authored hand pose.
     static boolean handle(String model, boolean left, Vector3f point) {
         if(model==null) return false;
@@ -442,7 +456,9 @@ public final class CartGrip {
         if(slot.character instanceof IsoPlayer player) pressure=Math.max(pressure,(float)CartSteeringHooks.clearanceLean(player));
         // Retain the wooden cart gait's spine/clavicle motion; IK absorbs arm swing at the fixed handles.
         var poses="WheelbarrowWood".equals(model)?livePoses(actor,bodySkin,body.matrixPalette,delta,false,pressure):poses(clip,actor,delta);
-        if(poses==null || !grip(poses,actor,model,slot.character.isFemale(),delta,cart,pressure)) return false;
+        if(poses==null || "WheelbarrowWood".equals(model)
+            && (!referenceThumb(poses,actor,clip,"L") || !referenceThumb(poses,actor,clip,"R"))
+            || !grip(poses,actor,model,slot.character.isFemale(),delta,cart,pressure)) return false;
         if("WheelbarrowWood".equals(model)) {
             float runWeight=CartLegPace.runningWeight(slot.character);
             if(runWeight>0) {
@@ -632,16 +648,21 @@ public final class CartGrip {
         var poses=livePoses(actor,bodySkin,body.matrixPalette,new Matrix4f(),true);
         if(poses==null) return false;
         if(restartPose!=null && !releasePose(poses,actor,restartPose,restartWeight)) return false;
-        // The clip owns the approach; constrain hands only after they reach the handles.
-        if(restartPose==null && reachWeight<1) return true;
-        if(reachWeight>0 && !transitionGrip(poses,actor,slot.character.isFemale(),delta,cart,reachWeight,gripWeight)) return false;
+        // Blend into the same grip as held motion before the clip reaches contact.
+        if(restartPose==null && reachWeight<=0) return true;
+        if(reachWeight>0 && !transitionGrip(poses,actor,slot.character.isFemale(),delta,cart,reachWeight,gripWeight,clip)) return false;
         skinSlot(slot,owner,clip,actor,poses,true);
         return true;
     }
 
     static boolean transitionGrip(Matrix4f[] poses, SkinningData actor, boolean female, Matrix4f delta,
         Matrix4f cart, float reachWeight, float gripWeight) {
-        if(reachWeight==1 && gripWeight==1) {
+        return transitionGrip(poses,actor,female,delta,cart,reachWeight,gripWeight,null);
+    }
+
+    static boolean transitionGrip(Matrix4f[] poses, SkinningData actor, boolean female, Matrix4f delta,
+        Matrix4f cart, float reachWeight, float gripWeight, AnimationClip thumbReference) {
+        if(thumbReference==null && reachWeight==1 && gripWeight==1) {
             if(!grip(poses,actor,"WheelbarrowWood",female,delta,cart)) return false;
         } else for(String side:new String[]{"L","R"}) {
             var hand=actor.getBone("Bip01_"+side+"_Hand");
@@ -651,6 +672,7 @@ public final class CartGrip {
                 || !reach(poses,actor,hand.name,target,delta,true,reachWeight)) return false;
             var before=new Matrix4f[actor.numBones()];
             for(int i=0;i<before.length;i++) if(descendant(actor.getBoneAt(i),hand)) before[i]=new Matrix4f(poses[i]);
+            if(thumbReference!=null && !referenceThumb(poses,actor,thumbReference,side)) return false;
             closeFingers(poses,actor,side,grasp(female,"WheelbarrowWood"),true);
             for(int i=0;i<before.length;i++) if(before[i]!=null)
                 CartTransitionMath.blend(before[i],poses[i],CartTransitionMath.smooth(gripWeight),poses[i]);
@@ -714,11 +736,12 @@ public final class CartGrip {
         var actor=owner.animPlayer.getSkinningData();
         var poses=livePoses(actor,bodySkin,body.matrixPalette,new Matrix4f(),true);
         // Clear the descending shaft with a small weight shift against this frame's walking feet.
-        if(poses==null || carrying && !grip(poses,actor,"WheelbarrowWood",slot.character.isFemale(),delta,held)
+        if(poses==null || carrying && (!referenceThumb(poses,actor,clip,"L") || !referenceThumb(poses,actor,clip,"R")
+                || !grip(poses,actor,"WheelbarrowWood",slot.character.isFemale(),delta,held))
             || !releasePose(poses,actor,start,amount)
             || !carrying && clearance>0 && !groundFeet(poses,actor,null,null,0,-.18f*clearance,-.04f*clearance,.12f*clearance,true)
             || carrying && !transitionGrip(poses,actor,slot.character.isFemale(),delta,cart,
-                1-amount*(1-startReach),1-amount*(1-startGrip))) return false;
+                1-amount*(1-startReach),1-amount*(1-startGrip),clip)) return false;
         skinSlot(slot,owner,clip,actor,poses,true);
         return true;
     }

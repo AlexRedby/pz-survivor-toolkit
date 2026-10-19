@@ -13,6 +13,11 @@ import zombie.core.skinnedmodel.animation.Keyframe;
 import zombie.core.skinnedmodel.model.SkinningData;
 
 public final class CartGripTest {
+    private static final class HandoffPlayer extends zombie.characters.IsoPlayer {
+        HandoffPlayer() {super(null);}
+        @Override public zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator getAdvancedAnimator() {return null;}
+    }
+
     private static SkinningData skeleton(String[] names, List<Integer> parents,
         List<org.lwjgl.util.vector.Matrix4f> offsets) {
         var indices=new HashMap<String,Integer>();
@@ -20,10 +25,8 @@ public final class CartGripTest {
         return new SkinningData(new HashMap<>(),offsets,offsets,offsets,parents,indices);
     }
 
-    private static void checkNativeHandles() {
-        // Read-only GPU/reference-pose capture on B42.21; expected centers come from actual handle geometry.
-        String[] names={"Bip01_Spine","Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand","Bip01_L_Finger0","Bip01_L_Finger1","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_R_Finger0","Bip01_R_Finger1","Bip01_L_Thigh","Bip01_R_Thigh"};
-        float[][] nativePose={
+    private static float[][] nativeHandlePoses() {
+        return new float[][]{
             {1.4521669e-06f,0.9981916f,0.060114563f,0f,1.0000002f,-1.9386694e-06f,1.1680957e-07f,0f,2.0447396e-07f,0.060114548f,-0.99819183f,0f,-4.6785718e-07f,0.5619899f,0.010946241f,1f},
             {0.22074102f,-0.96914154f,-0.10972244f,0f,0.9438717f,0.24060604f,-0.2263077f,0f,0.245724f,-0.053608667f,0.9678573f,0f,0.099654004f,0.7496011f,0.037673183f,1f},
             {-0.23472725f,0.006653134f,-0.9720396f,0f,0.94387156f,0.24063396f,-0.22627845f,0f,0.2324011f,-0.97059363f,-0.06276309f,0f,0.12990883f,0.6167684f,0.022634603f,1f},
@@ -37,6 +40,12 @@ public final class CartGripTest {
             {-0.037896737f,-0.55513775f,-0.8308956f,0f,0.9930795f,-0.11342328f,0.030486476f,0f,-0.111166954f,-0.82398903f,0.5555941f,0f,-0.11006309f,0.6169446f,-0.1945371f,1f},
             {0.11579696f,-0.99196726f,0.050919585f,0f,-0.9932541f,-0.11596133f,-0.000285426f,0f,0.006187858f,-0.05054301f,-0.998703f,0f,0.055224918f,0.51036054f,0.010862686f,1f},
             {-0.1157871f,-0.9919687f,0.050918005f,0f,-0.9932564f,0.1159451f,0.00014129901f,0f,-0.006043833f,-0.050558247f,-0.9987031f,0f,-0.055225775f,0.51036084f,0.010862409f,1f}};
+    }
+
+    private static void checkNativeHandles() {
+        // Read-only GPU/reference-pose capture on B42.21; expected centers come from actual handle geometry.
+        String[] names={"Bip01_Spine","Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand","Bip01_L_Finger0","Bip01_L_Finger1","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_R_Finger0","Bip01_R_Finger1","Bip01_L_Thigh","Bip01_R_Thigh"};
+        float[][] nativePose=nativeHandlePoses();
         float[][] nativeCart={
             {-5.080325e-10f,-0.00022194229f,-0.0021531826f,0f,7.381783e-10f,0.0016076594f,-0.00016571165f,0f,0.104969054f,-6.051497e-08f,-1.0280073e-08f,0f,-0.0016536561f,0.0033783615f,-0.44702002f,1f},
             {76.5f,-4.1037783e-05f,-9.11952e-06f,0f,2.8023098e-05f,30.694286f,70.07218f,0f,-2.4333809e-05f,-70.07218f,30.694283f,-0f,-0.0060535767f,0.16740987f,-0.41188842f,1f},
@@ -595,6 +604,101 @@ public final class CartGripTest {
             for(int i=0;i<original.length;i++) if(!original[i].equals(full[i]))
                 throw new AssertionError("transition changed existing full-weight solver");
             if(!full[4].equals(grip,.00001f)) throw new AssertionError("full transition missed measured grip");
+        }
+    }
+
+    private static void checkAuthoredGripHandoff() throws ReflectiveOperationException {
+        String[] names={"Bip01_Spine","Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand","Bip01_L_Finger0",
+            "Bip01_L_Finger1","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_R_Finger0",
+            "Bip01_R_Finger1","Bip01_L_Thigh","Bip01_R_Thigh","Bip01_Spine1"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,2,3,3,0,6,7,8,8,0,0,0),offsets);
+        var nativePose=new Matrix4f[names.length];
+        var captured=nativeHandlePoses();
+        for(int i=0;i<captured.length;i++) nativePose[i]=new Matrix4f().set(captured[i]);
+        nativePose[13]=new Matrix4f(nativePose[0]).translate(.1f,0,0);
+        var frames=new ArrayList<Keyframe>();
+        for(int i=0;i<names.length;i++) {
+            var parent=actor.getBoneAt(i).parent;
+            var local=parent==null?new Matrix4f(nativePose[i]):new Matrix4f(nativePose[parent.index]).invert().mul(nativePose[i]);
+            var rotation=local.getUnnormalizedRotation(new Quaternionf()).normalize();
+            var frame=new Keyframe(new org.lwjgl.util.vector.Vector3f(local.m30(),local.m31(),local.m32()),
+                new org.lwjgl.util.vector.Quaternion(rotation.x,rotation.y,rotation.z,rotation.w),
+                new org.lwjgl.util.vector.Vector3f(1,1,1));
+            frame.bone=i;frame.boneName=names[i];frame.time=0;frames.add(frame);
+        }
+        var clip=new AnimationClip(1,frames,"Bob_Cart_Idle",true);
+        var cart=new Matrix4f().set(76.5f,-3.9394883e-5f,-1.4673389e-5f,0,
+            2.8023098e-5f,20.771942f,73.62592f,0,-2.4333809e-5f,-73.625916f,20.771938f,0,
+            -.0060535767f,.097179376f,-.34652624f,1);
+        // Authored samples already contain the male closure; the rendered cart may have another placement.
+        var baked=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
+        if(!CartGrip.grip(baked,actor,"WheelbarrowWood",false,new Matrix4f(),cart))
+            throw new AssertionError("authored handoff fixture grip unreachable");
+        var dynamicCart=new Matrix4f(cart).translateLocal(0,0,.01f);
+        var unsafeField=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");unsafeField.setAccessible(true);
+        var unsafe=(sun.misc.Unsafe)unsafeField.get(null);
+        var owner=new zombie.core.skinnedmodel.model.ModelInstance();
+        owner.model=(zombie.core.skinnedmodel.model.Model)unsafe.allocateInstance(zombie.core.skinnedmodel.model.Model.class);
+        owner.model.tag=actor;
+        owner.animPlayer=(zombie.core.skinnedmodel.animation.AnimationPlayer)
+            unsafe.allocateInstance(zombie.core.skinnedmodel.animation.AnimationPlayer.class);
+        var actorField=zombie.core.skinnedmodel.animation.AnimationPlayer.class.getDeclaredField("skinningData");
+        actorField.setAccessible(true);actorField.set(owner.animPlayer,actor);
+        var body=new zombie.core.skinnedmodel.model.ModelInstanceRenderData();
+        body.modelInstance=owner;body.matrixPalette=FloatBuffer.allocate(names.length*16);
+        var slot=new zombie.core.skinnedmodel.model.ModelSlotRenderData();slot.modelData.add(body);
+        var player=(HandoffPlayer)unsafe.allocateInstance(HandoffPlayer.class);
+        player.setDescriptor((zombie.characters.SurvivorDesc)unsafe.allocateInstance(zombie.characters.SurvivorDesc.class));
+        slot.character=player;
+        for(boolean female:new boolean[]{false,true}) {
+            player.setFemale(female);
+            var held=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.grip(held,actor,"WheelbarrowWood",female,new Matrix4f(),dynamicCart))
+                throw new AssertionError("normal handoff fixture grip unreachable");
+            Matrix4f[] previous=null;
+            for(float reach:new float[]{.5f,.99999f,1}) {
+                CartGrip.skin(body.matrixPalette,null,actor,actor,baked,true);body.matrixPalette.position(7);
+                if(!CartGrip.authoredTransition(slot,owner,clip,new Matrix4f(),dynamicCart,reach,1,null,0))
+                    throw new AssertionError("authored handoff rejected female="+female+" reach="+reach);
+                if(body.matrixPalette.position()!=7) throw new AssertionError("authored handoff moved palette cursor");
+                var actual=CartGrip.livePoses(actor,actor,body.matrixPalette,new Matrix4f(),true);
+                if(actual==null) throw new AssertionError("authored handoff palette invalid");
+                for(int hand:new int[]{3,8}) {
+                    var expected=new Matrix4f();
+                    if(!CartTransitionMath.blend(baked[hand],held[hand],CartTransitionMath.smooth(reach),expected)
+                        || !actual[hand].equals(expected,.00002f))
+                        throw new AssertionError("authored wrist skipped continuous reach female="+female+" reach="+reach);
+                    if(reach==1) for(int bone=hand;bone<=hand+2;bone++) {
+                        if(!actual[bone].equals(held[bone],.00002f))
+                            throw new AssertionError("authored hand differs from held endpoint: "+names[bone]+" female="+female);
+                        if(previous==null || !actual[bone].equals(previous[bone],.00003f))
+                            throw new AssertionError("authored hand snaps at full reach: "+names[bone]+" female="+female);
+                    }
+                }
+                for(int bone:new int[]{0,11,12,13}) if(!actual[bone].equals(nativePose[bone],.000002f))
+                    throw new AssertionError("authored handoff changed torso/lower body: "+names[bone]);
+                previous=java.util.Arrays.stream(actual).limit(names.length).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            }
+            // Native blend-out still carries baked closure after the action stops owning the render.
+            for(float outgoingWeight:new float[]{1,.5f,0}) {
+                var mixed=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
+                if(!CartGrip.releasePose(mixed,actor,baked,outgoingWeight))
+                    throw new AssertionError("native outgoing clip blend rejected");
+                CartGrip.skin(body.matrixPalette,null,actor,actor,mixed,true);body.matrixPalette.position(7);
+                if(!CartGrip.render(slot,owner,clip,new Matrix4f(),"WheelbarrowWood",dynamicCart))
+                    throw new AssertionError("held render rejected outgoing clip weight="+outgoingWeight);
+                if(body.matrixPalette.position()!=7) throw new AssertionError("held render moved palette cursor");
+                var actual=CartGrip.livePoses(actor,actor,body.matrixPalette,new Matrix4f(),true);
+                if(actual==null) throw new AssertionError("held render palette invalid");
+                for(int hand:new int[]{3,8}) for(int bone=hand;bone<=hand+2;bone++)
+                    if(!actual[bone].equals(held[bone],.00002f))
+                        throw new AssertionError("held grip recomposed outgoing closure: "+names[bone]
+                            +" female="+female+" outgoingWeight="+outgoingWeight);
+                for(int bone:new int[]{0,11,12,13}) if(!actual[bone].equals(nativePose[bone],.000002f))
+                    throw new AssertionError("held handoff changed torso/lower body: "+names[bone]);
+            }
         }
     }
 
@@ -1444,7 +1548,7 @@ public final class CartGripTest {
         }
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws ReflectiveOperationException {
         checkNativeHeight();
         checkRecoveryPosture();
         checkRecoveryRotation();
@@ -1455,6 +1559,7 @@ public final class CartGripTest {
         checkMovingUnreachableTargets();
         checkReach();
         checkTransitionReachContinuity();
+        checkAuthoredGripHandoff();
         checkTransitionShoulders();
         checkFingers();
         checkNativeHandles();
