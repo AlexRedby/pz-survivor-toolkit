@@ -63,7 +63,8 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         self.assertIn('assert(getTexture(', fixture)
         self.assertIn("shot('05-vanilla-inventory')", fixture)
         self.assertIn('setValue(false)', (client / 'ZZQuartermasterSetup.lua').read_text())
-        self.assertIn('height=900', (self.cache / 'options.ini').read_text())
+        self.assertIn('height=720', (self.cache / 'options.ini').read_text())  # staging preserves the prepared override
+        self.assertEqual(adapter.definitions()['item-tags']['window_size'], [1280, 900])
         self.assertEqual(self.runtime['fixture']['mods'], ['QuartermasterScreens'])
         (self.cache / 'console.txt').write_text('[QM_SCREEN] COMPLETE\n')
         self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])

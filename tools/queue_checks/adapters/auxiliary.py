@@ -34,6 +34,7 @@ def definitions():
                          'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
                                     'kinds': [kind], 'languages': languages, 'modes': ['toolkit', 'native']}
                                    for case in cases]}
+    result['item-tags']['window_size'] = [1280, 900]
     return result
 
 
@@ -139,8 +140,6 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         for cache in caches:
             helper = cache / 'mods/QuartermasterScreens'
             prepare.prepare(locations['PZSurvivorToolkit'], helper)
-            options = cache / 'options.ini'
-            options.write_text(options.read_text().replace('height=720', 'height=900'), encoding='utf-8')
             _write(helper / '42/media/lua/client/ZZQuartermasterSetup.lua', """local function setup()
  Events.OnTick.Remove(setup)
  PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ItemTags'):setValue(true)

@@ -109,6 +109,17 @@ def _locations(project, workshop, identifiers, overrides=None):
     return result
 
 
+def window_size(selection):
+    """Resolve a logical client viewport before any profile or UI is created."""
+    adapter = adapters.get(selection.get('suite'))
+    default = adapter.definitions()[selection['suite']].get('window_size', [1600, 900]) if adapter else [1600, 900]
+    size = selection.get('options', {}).get('window_size', default)
+    if (not isinstance(size, list) or len(size) != 2 or any(type(value) is not int for value in size)
+            or not 640 <= size[0] <= 7680 or not 480 <= size[1] <= 4320):
+        raise ValueError('window_size must be [width, height] integers within 640..7680 and 480..4320')
+    return list(size)
+
+
 def _validate(selection):
     coop.enabled(selection)
     suite = selection.get("suite")
@@ -177,6 +188,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     if selection.get('ports_auto') and selection.get('options', {}).get('seed_run'):
         selection = dict(selection, ports=json.loads((Path(selection['options']['seed_run']) / 'selection.json').read_text())['ports'])
     _validate(selection)
+    selection = dict(selection, window_size=window_size(selection))
     for path in (game / "projectzomboid.jar", launch_java, jdk_binary(jdk, 'java'), jdk_binary(jdk, 'javac')):
         if not path.is_file():
             raise ValueError("Missing game/JDK file: " + str(path))
@@ -265,7 +277,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     world_bytes = copy_size(template / 'state' / name for name in world['files']) if world else 0
     admission.require_disk(output, len(roles), len(roles) * (mod_bytes + fixture_bytes) + world_bytes)
     runtime = {"project": str(project), "game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
-               "java": str(launch_java), "server_name": "queue-smoke", "roles": {}}
+               "java": str(launch_java), "server_name": "queue-smoke", "window_size": selection["window_size"], "roles": {}}
     output.mkdir(parents=True)
     if selection.get('ports_auto'):
         selection = dict(selection, ports=admission.allocate_ports(output, selection) if selection['kind'] == 'mp' else [17343, 17344])
@@ -313,7 +325,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
             (cache / "Lua" / (name + ".txt")).write_text(value + "\n", encoding="utf-8")
         (cache / "mods/default.txt").write_text("VERSION = 1,\nmods\n{\n" + "".join(" mod = " + mod + ",\n" for mod in [*selection["mods"], "ActionQueueTest"]) + "}\nmaps\n{\n}\n", encoding="utf-8")
         (cache / "mods/reset-mods-42_00.txt").write_text("Keep isolated native queue fixture selection.\n", encoding="utf-8")
-        (cache / "options.ini").write_text("version=10\nwidth=1280\nheight=720\nfullScreen=false\nborderless=false\nmusicVolume=0\nsoundVolume=0\njumpScareVolume=0\nvehicleEngineVolume=0\nvoiceEnable=false\npauseOnFocusLoss=false\nlanguage=" + language + "\n", encoding="utf-8")
+        (cache / "options.ini").write_text(f"version=10\nwidth={selection['window_size'][0]}\nheight={selection['window_size'][1]}\nfullScreen=false\nborderless=false\nmusicVolume=0\nsoundVolume=0\njumpScareVolume=0\nvehicleEngineVolume=0\nvoiceEnable=false\npauseOnFocusLoss=false\nlanguage=" + language + "\n", encoding="utf-8")
         approvals = _approvals(cache, locations)
         _json(cache / "zombie-buddy/mod_approvals.json", {"formatVersion": 2, "mods": approvals})
         runtime["roles"][role] = {"cache": str(cache), "language": language}
@@ -362,6 +374,9 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     for role in roles:
         path = output / role / 'options.ini'
         settings = path.read_text()
+        for key, expected in zip(('width', 'height'), selection['window_size']):
+            if re.findall(r'^' + key + r'=(.*)$', settings, re.M) != [str(expected)]:
+                raise ValueError('Prepared window_size changed during staging: ' + role + '/' + key)
         for key, value in {'soundVolume': '0', 'musicVolume': '0', 'jumpScareVolume': '0',
                            'vehicleEngineVolume': '0', 'voiceEnable': 'false'}.items():
             settings = re.sub(r'^' + key + r'=.*\n?', '', settings, flags=re.M)

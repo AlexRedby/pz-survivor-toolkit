@@ -46,6 +46,17 @@ Preparation needs Python 3.11+, JDK 25+ and installed B42.21 game files. The mac
 
 On macOS, automated runs require AeroSpace and start on the inactive `PZ-TEST` workspace. To choose another workspace, set `"test_workspace":"NAME"` in the JSON config. The target must be hidden at launch; the runner never switches your workspace or focuses a test window. It identifies windows by the PID it launched, sets them floating and moves them before allowing the initially transparent game window to appear. Only the disposable profile contains the window agent; game files and AeroSpace configuration stay unchanged. Missing AeroSpace, failed routing, unexpected focus or a visible target workspace stop an automated run. Explicit manual fixtures use the same quiet startup, then allow you to visit their workspace for inspection. Other macOS game bytecode is rejected before window creation until its window lifecycle has been reviewed.
 
+Test windows default to a logical windowed size of 1600 by 900, independent of the monitor's physical resolution. An adapter may declare a suite default; `item-tags` uses 1280 by 900. Set `window_size` in the JSON passed to `--config` to override either default:
+
+```json
+{
+  "test_workspace": "PZ-TEST",
+  "window_size": [1280, 900]
+}
+```
+
+Batch plans use the same value in `options.window_size`. The value must be a JSON array of two integers: width 640..7680 and height 480..4320, inclusive. Booleans, fractional values and strings are rejected before profile copying or compilation. Preparation writes the resolved size into each disposable profile's `options.ini` before UI creation and records the expected size as `window_size` in `selection.json` and `runtime.json`. A suite cannot silently change it during staging. At game start, the common preflight records the actual Core logical size before readiness; a missing or mismatched observation fails the run. `report.json.window_size` keeps expected and observed sizes for each client; `report.txt` shows the same comparison. The OS may cap a window larger than its available working area; that is a mismatch, not a passing run. Choose a supported explicit size if the default does not fit. Framebuffer pixels may differ from this logical size. A large frame alone does not prove that every control is visible. Choose the required size before launch and prepare a fresh run when it changes. Manual resizing after startup is possible, but invalidates comparisons that depend on a fixed viewport and cannot establish UI coverage for the prepared size.
+
 ```sh
 python3 -m unittest discover -s tests -p 'test_queue_*.py'
 python3 tests/native_queue/health/check.py

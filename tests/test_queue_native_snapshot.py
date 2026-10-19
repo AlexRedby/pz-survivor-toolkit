@@ -74,6 +74,72 @@ class NativeSnapshotTests(unittest.TestCase):
         selection = dict(self.selection, **changes)
         return native.prepare(self.project, self.root / name, self.game, self.jdk, selection)
 
+    def assert_window_size(self, output, expected):
+        selected = report.read_json(output / 'selection.json')
+        runtime = report.read_json(output / 'runtime.json')
+        self.assertEqual(expected, selected['window_size'])
+        self.assertEqual(expected, runtime['window_size'])
+        initial = report.read_json(output / 'initial-settings.json')
+        for role in runtime['roles']:
+            settings = native._metadata(output / role / 'options.ini')
+            self.assertEqual(str(expected[0]), settings['width'])
+            self.assertEqual(str(expected[1]), settings['height'])
+            self.assertEqual('false', settings['fullScreen'])
+            self.assertEqual('false', settings['borderless'])
+            self.assertEqual((output / role / 'options.ini').read_text(), initial[role + '/options.ini'])
+
+    def test_window_size_default_is_resolved_and_sealed_before_launch(self):
+        output = self.prepare()
+        self.assert_window_size(output, [1600, 900])
+        self.assertNotIn('window_size', self.selection)
+
+    def test_explicit_window_size_applies_to_every_prepared_mp_role(self):
+        output = self.prepare(kind='mp', languages=['EN', 'RU'], options={'window_size': [2560, 1440]})
+        self.assert_window_size(output, [2560, 1440])
+
+    def test_suite_window_size_default_and_explicit_override_are_resolved(self):
+        self.assertEqual([1280, 900], native.window_size(dict(self.selection, suite='item-tags')))
+        adapter = self.fixture_adapter(lambda *_: None)
+        adapter.definitions = lambda: {'health': {'window_size': [1280, 900]}}
+        with patch.object(native.adapters, 'get', return_value=adapter):
+            default = self.prepare('suite-default')
+            explicit = self.prepare('suite-override', options={'window_size': [1920, 1200]})
+        self.assert_window_size(default, [1280, 900])
+        self.assert_window_size(explicit, [1920, 1200])
+
+    def test_invalid_window_size_refuses_before_profile_copy_compile_or_port_reservation(self):
+        invalid = (None, True, '1920x1080', {'width': 1920, 'height': 1080}, (),
+                   [], [1920], [1920, 1080, 1], [True, 1080], [1920, False],
+                   [1920.0, 1080], [1920, 1080.0], ['1920', 1080], [1920, '1080'],
+                   [639, 1080], [7681, 1080], [1920, 479], [1920, 4321])
+        for size in invalid:
+            with self.subTest(size=size), patch.object(native.shutil, 'copytree') as copy, \
+                 patch.object(admission, 'allocate_ports') as ports:
+                with self.assertRaisesRegex(ValueError, 'window_size'):
+                    self.prepare(ports_auto=True, options={'window_size': size})
+                self.assertFalse((self.root / 'run').exists())
+                copy.assert_not_called()
+                ports.assert_not_called()
+                self.compile_mock.assert_not_called()
+
+    def test_window_size_inclusive_limits_are_accepted(self):
+        for size in ([640, 480], [7680, 4320]):
+            with self.subTest(size=size):
+                self.assertEqual(size, native.window_size(dict(self.selection, options={'window_size': size})))
+
+    def test_adapter_cannot_silently_change_prepared_window_dimensions(self):
+        def stage(project, output, game, jdk, selection, locations, runtime):
+            path = output / 'client1/options.ini'
+            settings = path.read_text()
+            self.assertIn('width=1600\nheight=900\n', settings)
+            path.write_text(settings.replace('height=900\n', 'height=720\n'))
+
+        with patch.object(native.adapters, 'get', return_value=self.fixture_adapter(stage)):
+            with self.assertRaisesRegex(ValueError, 'window_size'):
+                self.prepare()
+        self.assertFalse((self.root / 'run/selection.json').exists())
+        self.assertFalse((self.root / 'run/snapshot-hashes.json').exists())
+
     def test_disk_shortage_refuses_before_profile_copy_compile_or_port_reservation(self):
         with patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=1)), \
              patch.object(native.shutil, 'copytree') as copy, patch.object(admission, 'allocate_ports') as ports:

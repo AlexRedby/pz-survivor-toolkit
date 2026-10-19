@@ -13,6 +13,27 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks import report
 
 
+class ViewportEvidenceTests(unittest.TestCase):
+    def test_all_clients_need_one_matching_startup_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selection = {'suite': 'health', 'kind': 'mp', 'window_size': [1920, 1080]}
+            for role in ('client1', 'client2'):
+                (root / (role + '-launch.log')).write_text('[QUEUE_TEST] WINDOW_SIZE width=1920 height=1080\n')
+            evidence = report.window_size_evidence(root, selection)
+            self.assertFalse(evidence['issues'])
+            self.assertEqual(evidence['observed'], {'client1': [1920, 1080], 'client2': [1920, 1080]})
+            for text in ('', '[QUEUE_TEST] WINDOW_SIZE width=1280 height=720\n',
+                         '[QUEUE_TEST] WINDOW_SIZE width=1920 height=1080\n' * 2):
+                with self.subTest(text=text):
+                    (root / 'client2-launch.log').write_text(text)
+                    self.assertTrue(report.window_size_evidence(root, selection)['issues'])
+
+    def test_legacy_snapshot_does_not_claim_observed_size(self):
+        self.assertEqual(report.window_size_evidence(Path('/unused'), {}),
+                         {'expected': None, 'observed': {}, 'issues': []})
+
+
 class QueueReportTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -23,6 +44,23 @@ class QueueReportTests(unittest.TestCase):
         self.catalog = {"suites": {"health": {"status": "ready", "cases": [
             {"id": "bandageApply", "producer": "menu", "capability": "effect", "kinds": ["sp", "mp"], "modes": ["toolkit", "native"]}]},
             "crafting": {"status": "not-migrated", "cases": []}}}
+
+    def test_wrong_or_missing_viewport_prevents_otherwise_passing_report(self):
+        root = self.fixture()
+        selection = report.read_json(root / 'selection.json')
+        selection['window_size'] = [1920, 1080]
+        report.write_json(root / 'selection.json', selection)
+        self.freeze(root)
+        path = root / 'client1-launch.log'
+        baseline = path.read_text()
+        for marker, expected in [('', 'failed'),
+                                 ('[QUEUE_TEST] WINDOW_SIZE width=1280 height=720\n', 'failed'),
+                                 ('[QUEUE_TEST] WINDOW_SIZE width=1920 height=1080\n', 'passed')]:
+            with self.subTest(marker=marker):
+                path.write_text(baseline + marker)
+                result = report.build_report(root, self.catalog)
+                self.assertEqual(result['functional']['status'], 'passed')
+                self.assertEqual(result['status'], expected)
 
     def digest(self, path):
         return report.hashlib.sha256(path.read_bytes()).hexdigest()
