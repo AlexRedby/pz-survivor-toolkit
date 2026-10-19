@@ -110,7 +110,8 @@ local function finishGroup(queue, request)
             and member.srcContainer == inventory and member.destContainer ~= inventory then
             returns[member.item:getID()] = member.destContainer
         end
-        if Toolkit.BulkFood and Toolkit.BulkFood.retainCleanup(member, current, queue) then
+        if (Toolkit.BulkFood and Toolkit.BulkFood.retainCleanup(member, current, queue))
+            or (Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.retainCleanup(member)) then
             table.insert(cleanup, 1, member)
         else
             member:forceCancel()
@@ -129,7 +130,8 @@ local function finishGroup(queue, request)
     for id, destination in pairs(returns) do
         -- Native MP replication can replace the item object while retaining its ID.
         local item = inventory:getItemById(id)
-        if item and item:getContainer() == inventory and not item:getIsCraftingConsumed()
+        if not (Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.ownsPickupCleanup(current, id))
+            and item and item:getContainer() == inventory and not item:getIsCraftingConsumed()
             and destination:isExistYet() and (containers:contains(destination) or Policy.isCarriedContainer(destination, queue.character)) then
             local action = ISInventoryTransferUtil.newInventoryTransferAction(queue.character, item, inventory, destination)
             if action.Type == "ISInventoryTransferAction" or (not isClient() and Toolkit.ActionQueueCarts and Toolkit.ActionQueueCarts.isTransfer(action)) then
@@ -170,6 +172,7 @@ ISTimedActionQueue.onCompleted = function(queue, action)
         if Toolkit.ActionQueueFire and Toolkit.ActionQueueFire.skipUnavailableReturns then
             Toolkit.ActionQueueFire.skipUnavailableReturns(queue, action)
         end
+        if Toolkit.ActionQueueFitness then Toolkit.ActionQueueFitness.skipUnavailable(queue) end
         Policy.skipUnavailableHygiene(queue)
     end
     local generators = Toolkit.ActionQueueGenerators
@@ -262,6 +265,7 @@ ISBaseTimedAction.stop = function(action)
     if Toolkit.Settings.actionQueue() and queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action then
         if Toolkit.BulkFood and Toolkit.BulkFood.missing(action) then queue.toolkitCancel = action end
         if Policy.hygieneUnavailable(action) then queue.toolkitCancel = action end
+        if Toolkit.ActionQueueFitness then Toolkit.ActionQueueFitness.canPreserveStop(action) end
         local generators, fire, health = Toolkit.ActionQueueGenerators, Toolkit.ActionQueueFire, Toolkit.ActionQueueHealth
         local fireUnavailable = fire and fire.canSkip and fire.canSkip(action)
         if (generators and generators.canSkip and generators.canSkip(action))
@@ -401,7 +405,9 @@ ISTimedActionQueue.tick = function(queue)
     if Toolkit.Settings.actionQueue() and live(queue) and queue.current == current and current.action
         and not current:isStarted() and not queue.character:getCharacterActions():contains(current.action)
         and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false)
-        and health and health.canSkip(current) and health.canPreserveStop(current) then
+        and ((health and health.canSkip(current) and health.canPreserveStop(current))
+            or (Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.canSkip(current)
+                and not Toolkit.ActionQueueAcknowledgements.capture(current))) then
         Operations.invalidate(current.toolkitQueueOperation)
         queue.toolkitGroupCancel = {action = current, token = current.toolkitQueueOperation}
         current:forceCancel()
@@ -418,4 +424,5 @@ require "PZSurvivorToolkit/ActionQueueGenerators"
 require "PZSurvivorToolkit/ActionQueueFire"
 require "PZSurvivorToolkit/ActionQueueWorld"
 require "PZSurvivorToolkit/ActionQueueHealth"
+require "PZSurvivorToolkit/ActionQueueFitness"
 return Queue

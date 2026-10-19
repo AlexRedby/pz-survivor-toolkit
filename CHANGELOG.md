@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.118
+
+- **Added:** Fitness requests show exercise-specific labels and elapsed workout time in the action queue. Waiting workouts can be reordered or canceled before preparation.
+- **Fixed:** Workout timers start when exercise begins. Natural endings and queue cancellation retain independent actions and restore exact carried equipment even after closing the fitness window; Host waits for the authoritative stop before advancing.
+
 ### 0.1.117
 
 - **Fixed:** Item Details sorting keeps the Shift-selection anchor on the same visible item or group when equipped rows are hidden. Item Details and Better Containers now share row mapping for collapsed equipment, virtual stack headers and clipped stacks.

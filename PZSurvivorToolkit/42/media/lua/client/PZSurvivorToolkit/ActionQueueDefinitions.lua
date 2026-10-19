@@ -628,6 +628,10 @@ local function details(action)
 end
 
 function Definitions.describe(action)
+    if PZSurvivorToolkit.ActionQueueFitness then
+        local ok, result = pcall(PZSurvivorToolkit.ActionQueueFitness.describe, action)
+        if ok and result then return result end
+    end
     local presentation, id = Definitions.resolve(action)
     -- Display failures (deleted targets or replaced mod getters) must not fail native enqueue.
     local titleFunction = presentation and presentation.title or title

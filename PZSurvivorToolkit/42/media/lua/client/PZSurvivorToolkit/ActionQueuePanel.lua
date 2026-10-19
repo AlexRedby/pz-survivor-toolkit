@@ -155,7 +155,11 @@ function Panel.drawRow(list, y, row, alt)
         moveReason and 0.2 or 0.8, 1, 1, 1)
     list:drawTextureScaledAspect(Panel.icon(action), iconX, y + (row.height - 24) / 2, 24, 24, 1, 1, 1, 1)
     local prefix = tostring(row.first) .. ". "
-    if current and action.action then prefix = "[" .. tostring(math.floor(action:getJobDelta() * 100)) .. "%] " end
+    if current and action.action then
+        local fitness = Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.progress(action)
+        local fraction = fitness and fitness.fraction or action:getJobDelta()
+        prefix = "[" .. tostring(math.floor(fraction * 100)) .. "%] "
+    end
     local cancelX = list:cancelX()
     local top = math.max(0, y + list:getYScroll())
     local label = prefix .. Toolkit.ActionQueue.label(action)

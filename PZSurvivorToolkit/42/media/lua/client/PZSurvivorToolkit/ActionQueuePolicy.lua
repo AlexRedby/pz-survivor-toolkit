@@ -358,6 +358,11 @@ local function nativeMatches(action, snapshot)
     end
     return true
 end
+-- Reuse the installed native/approved-mod binding contract without resolving behavior descriptors.
+function Policy.matchesNative(action)
+    local snapshot = snapshots[getmetatable(action)]
+    return snapshot ~= nil and nativeMatches(action, snapshot)
+end
 local function resources(action)
     local result = {items = {}, itemTypes = {}, targets = {}, cancelWaiting = true, interrupt = "finish-step"}
     for _, field in ipairs({"item", "gun", "magazine", "weapon", "primary", "secondary", "secondaryItem", "recipeItem", "device", "battery"}) do
@@ -928,7 +933,7 @@ function Policy.cancelOperationReason(queue, action, context)
         if member._isAddingActions or ((member.onStartFunc or member.onCancelFunc) and not auditedCraft and not resumableWorld(member) and not auditedCallbacks) or member.retriggerLastAction
             or (member.onCompleteFunc and member.onCompleteFunc ~= member.toolkitQueueSafeOnComplete
                 and not auditedCraft and not resumableWorld(member) and not auditedCallbacks)
-            or member.forceCancel ~= nativeForceCancel then return "operation_dependent" end
+            or (member.forceCancel ~= nativeForceCancel and not (contract and contract.forceCancel == member.forceCancel)) then return "operation_dependent" end
         local plannedCraft, world = craftPlan(member), deferredWorld(member)
         if member.Type == "ISQueueActionsAction" and not plannedCraft and not world and not (contract and contract.deferred) then
             return "operation_dependent"
