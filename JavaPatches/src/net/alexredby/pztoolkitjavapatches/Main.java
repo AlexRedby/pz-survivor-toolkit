@@ -531,8 +531,10 @@ public final class Main {
     public static class WoodenWorldOutline {
         @Patch.OnEnter(skipOn=true)
         public static boolean enter(@Patch.Argument(1) zombie.iso.IsoObject object) {
+            // The custom 3D cart supplies its own tint; the separate outline can flash its inventory icon.
             return Main.CART_TRANSITION_SUPPORTED && object instanceof zombie.iso.objects.IsoWorldInventoryObject world
-                && CartTransition.hidden(world.getItem());
+                && (CartTransition.hidden(world.getItem())
+                    || CartTransition.wooden(world.getItem()) && zombie.core.Core.getInstance().isOption3DGroundItem());
         }
     }
 

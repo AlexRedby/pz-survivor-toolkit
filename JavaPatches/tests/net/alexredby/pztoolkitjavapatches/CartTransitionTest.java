@@ -168,7 +168,9 @@ public final class CartTransitionTest {
         jobModels.set(job,new zombie.core.skinnedmodel.model.ItemModelRenderer[]{renderer,renderer,renderer});
         var jobRender=jobType.getDeclaredMethod("renderMain");jobRender.setAccessible(true);
         world.square=allocate(IsoGridSquare.class);
+        var core=zombie.core.Core.getInstance();boolean previous3D=core.isOption3DGroundItem();
         try {
+            core.setOption3DGroundItem(true);
             check(CartTransition.update(player,cart,true,.6),"pickup ground-pass setup refused");
             check(!CartTransition.hidden(cart),"ground disappeared before a held model rendered");
             var statesField=CartTransition.class.getDeclaredField("states");statesField.setAccessible(true);
@@ -199,12 +201,18 @@ public final class CartTransitionTest {
             nativePass(()->invoke(jobRender,job),"cached FBO job stayed hidden after cleanup");
             nativePass(()->world.render(0,0,0,null,false,false,null),"sprite pass stayed hidden after cleanup");
             nativePass(()->world.renderObjectPicker(0,0,0,null),"picker stayed hidden after cleanup");
-            nativePass(outlinePass,"outline stayed hidden after cleanup");
+            outlinePass.run();
+            for(var kind:new String[]{"SaucedCarts.ShoppingCart","SaucedWheelbarrow.WheelbarrowMetal","Base.Hammer"}) {
+                cart.kind=kind;
+                nativePass(outlinePass,"native outline changed for "+kind);
+            }
+            cart.kind="SaucedWheelbarrow.WheelbarrowWood";core.setOption3DGroundItem(false);
+            nativePass(outlinePass,"2D wooden cart lost its native outline");
             cart.world=null;
             check(CartTransition.update(player,cart,false,.6),"setdown setup refused");
             state=((java.util.Map<?,?>)statesField.get(null)).get(player);rendered.setBoolean(state,true);
             check(!CartTransition.hidden(cart),"setdown without a native world item hid a static item");
-        } finally {CartTransition.end(player);}
+        } finally {CartTransition.end(player);core.setOption3DGroundItem(previous3D);}
     }
     private static void bridge() throws Exception {
         var player=allocate(Player.class);player.inventory=allocate(ItemContainer.class);player.square=allocate(IsoGridSquare.class);

@@ -14,7 +14,7 @@ import zombie.inventory.InventoryItem;
 /** Read-only final render poses for native body/handle clearance measurements. */
 public final class ClearanceProbe {
     private static BufferedWriter output;
-    private static BufferedWriter worldOutput, tailOutput, lifecycleOutput;
+    private static BufferedWriter worldOutput, tailOutput, lifecycleOutput, outlineOutput;
     private static final java.util.WeakHashMap<zombie.characters.CharacterTimedActions.LuaTimedActionNew,Long> actionIds=new java.util.WeakHashMap<>();
     private record StoppedCart(long actionId, InventoryItem item) {}
     private static final java.util.WeakHashMap<zombie.characters.IsoGameCharacter,StoppedCart> stoppedCarts=new java.util.WeakHashMap<>();
@@ -226,14 +226,47 @@ public final class ClearanceProbe {
         }
     }
 
+    public static synchronized void outline(zombie.iso.IsoObject object,String path,int textures,boolean ready) throws Exception {
+        if(outlineOutput==null || !(object instanceof zombie.iso.objects.IsoWorldInventoryObject world))return;
+        var item=world.getItem();
+        if(item==null || !"SaucedWheelbarrow.WheelbarrowWood".equals(item.getFullType()))return;
+        outlineOutput.write("{\"wallTimeMillis\":"+System.currentTimeMillis()+",\"itemId\":"+item.getID()
+            +",\"path\":"+quoted(path)+",\"textures\":"+textures+",\"ready\":"+ready+"}\n");
+        outlineOutput.flush();
+    }
+    public static class OutlineSelectionCapture {
+        @Advice.OnMethodEnter(suppress=Throwable.class)
+        public static void enter(@Advice.Argument(1) zombie.iso.IsoObject object) {
+            try{ClearanceProbe.outline(object,"selection",0,false);}
+            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] OUTLINE ERROR "+error);}
+        }
+    }
+    public static class OutlineSpriteCapture {
+        @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
+        public static void exit(@Advice.Argument(0) zombie.iso.IsoObject object,
+            @Advice.FieldValue("textures") java.util.ArrayList<?> textures,@Advice.Thrown Throwable thrown) {
+            try{if(thrown==null)ClearanceProbe.outline(object,"sprite",textures.size(),false);}
+            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] OUTLINE ERROR "+error);}
+        }
+    }
+    public static class OutlineModelCapture {
+        @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
+        public static void exit(@Advice.Argument(0) zombie.iso.IsoObject object,
+            @Advice.Return boolean ready,@Advice.Thrown Throwable thrown) {
+            try{if(thrown==null)ClearanceProbe.outline(object,"atlas",0,ready);}
+            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] OUTLINE ERROR "+error);}
+        }
+    }
+
     private static void closeOutputs() throws Exception {
-        var body=output;var world=worldOutput;var tails=tailOutput;var lifecycle=lifecycleOutput;
-        output=null;worldOutput=null;tailOutput=null;lifecycleOutput=null;actionIds.clear();stoppedCarts.clear();nextActionId=0;
+        var body=output;var world=worldOutput;var tails=tailOutput;var lifecycle=lifecycleOutput;var outlines=outlineOutput;
+        output=null;worldOutput=null;tailOutput=null;lifecycleOutput=null;outlineOutput=null;actionIds.clear();stoppedCarts.clear();nextActionId=0;
         Exception failure=null;
         try{if(body!=null)body.close();}catch(Exception error){failure=error;}
         try{if(world!=null)world.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
         try{if(tails!=null)tails.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
         try{if(lifecycle!=null)lifecycle.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
+        try{if(outlines!=null)outlines.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
         if(failure!=null)throw failure;
     }
 
@@ -247,23 +280,32 @@ public final class ClearanceProbe {
         Path worldFile=directory.resolve("world-cart-poses.jsonl");
         Path tailFile=directory.resolve("action-tail-poses.jsonl");
         Path lifecycleFile=directory.resolve("action-lifecycle.jsonl");
-        if(Files.exists(file) || Files.exists(worldFile) || Files.exists(tailFile) || Files.exists(lifecycleFile))throw new IllegalStateException("Preserve existing clearance output first");
+        Path outlineFile=directory.resolve("cart-outlines.jsonl");
+        if(Files.exists(outlineFile) || Files.exists(file) || Files.exists(worldFile) || Files.exists(tailFile) || Files.exists(lifecycleFile))throw new IllegalStateException("Preserve existing clearance output first");
         try {
             output=Files.newBufferedWriter(file,java.nio.file.StandardOpenOption.CREATE_NEW);
             worldOutput=Files.newBufferedWriter(worldFile,java.nio.file.StandardOpenOption.CREATE_NEW);
             tailOutput=Files.newBufferedWriter(tailFile,java.nio.file.StandardOpenOption.CREATE_NEW);last=0;lastTail=0;
             lifecycleOutput=Files.newBufferedWriter(lifecycleFile,java.nio.file.StandardOpenOption.CREATE_NEW);
+            outlineOutput=Files.newBufferedWriter(outlineFile,java.nio.file.StandardOpenOption.CREATE_NEW);
             if(!installed){new AgentBuilder.Default().disableClassFormatChanges()
                 .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
                 .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
                 .type(named("net.alexredby.pztoolkitjavapatches.CartGrounding")
                     .or(named("zombie.core.skinnedmodel.model.ItemModelRenderer"))
                     .or(named("zombie.characters.CharacterTimedActions.LuaTimedActionNew"))
-                    .or(named("zombie.iso.objects.IsoWorldInventoryObject")))
+                    .or(named("zombie.iso.objects.IsoWorldInventoryObject"))
+                    .or(named("zombie.iso.fboRenderChunk.FBORenderObjectOutline$Drawer2"))
+                    .or(named("zombie.iso.fboRenderChunk.FBORenderObjectOutline")))
                 .transform((b,d,l,m,p)->d.getName().equals("net.alexredby.pztoolkitjavapatches.CartGrounding")
                     ?b.visit(Advice.to(Capture.class).on(named("render")))
                     :d.getName().equals("zombie.characters.CharacterTimedActions.LuaTimedActionNew")
                     ?b.visit(Advice.to(LifecycleCapture.class).on(takesArguments(0).and(namedOneOf("start","stop","perform","complete","interruptWaitToStart"))))
+                    :d.getName().equals("zombie.iso.fboRenderChunk.FBORenderObjectOutline")
+                    ?b.visit(Advice.to(OutlineSelectionCapture.class).on(named("renderObject")))
+                    :d.getName().equals("zombie.iso.fboRenderChunk.FBORenderObjectOutline$Drawer2")
+                    ?b.visit(Advice.to(OutlineSpriteCapture.class).on(named("initTexture")))
+                        .visit(Advice.to(OutlineModelCapture.class).on(named("initWorldInventoryObject")))
                     :d.getName().equals("zombie.iso.objects.IsoWorldInventoryObject")
                     ?b.visit(Advice.to(WorldSuppressedCapture.class).on(named("render")))
                     :b.visit(Advice.to(WorldRenderCapture.class).on(named("renderMain").and(takesArguments(9)))))

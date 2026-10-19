@@ -16,8 +16,6 @@
 
 - [ ] In game, check putting down a wooden wheelbarrow via the SaucedCarts hotkey: completion/cancellation and quick repeat, position in the adjacent square, grip, wheel and world/held handoff; separately confirm owner/server/observer in MP. Local checks do not replace the visual and network gate.
 
-- [ ] Find the source of the brief inventory-icon silhouette appearing on first selecting the cart and after putting it down, when the orange highlight turns on: the intermediate icon outline should disappear while the normal orange highlight on the 3D model remains. Reproduce first and repeated selection/put-down; defer implementation at the user's request.
-
 - [ ] Eliminate brief wide-trouser intersections with the left shaft as the character lowers into position before gripping, especially after a diagonal approach; fabric contact still occurs up to 37% of pickup. Check all skin/pants geometry at Thigh/Calf, not just the pelvis; preserve the agreed shallow crouch, foot support, knee direction and grip. Do not hide contact by moving the pelvis too far back.
 - [ ] Check wheel phase continuity during an emergency pickup/put-down reset; preserve verified ownership, load and grip recovery.
 - [ ] Extend pickup/put-down cancellation checks to Run/Sprint movement, tempo changes and releasing WASD before recovery ends. Preserve limited pose return, grip, arm lengths, wheel phase and repeat action; already checked Walk/CancelAction does not cover these variants.

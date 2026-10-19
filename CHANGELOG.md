@@ -471,6 +471,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.28
+
+- Prevent the inventory-icon silhouette from flashing when highlighting a wooden wheelbarrow in 3D. Preserve the orange model highlight and native sprite outlines when 3D ground items are disabled.
+
 ### 0.1.27
 
 - Keep the wooden wheelbarrow grip continuous during setdown when native multiplayer position lag requires a little more shoulder reach; preserve hand targets, bone lengths and world placement.

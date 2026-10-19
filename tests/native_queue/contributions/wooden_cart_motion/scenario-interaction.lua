@@ -63,6 +63,7 @@ local phase,attempt,since,sampleSince=0,0,0,0
 local mode,stage,item,initialCargo,initialCargoIDs,heldAt,droppedAt='settle','grounded'
 local interrupted,cancelAt,cancelledAt,retryStage
 local cycle,driveStage=1,0
+local selectionWorld,selectionOn
 local actionSerial,restartCount,cleanupAt=0,0,nil
 local kind='SaucedWheelbarrow.WheelbarrowWood'
 local function encode(record)
@@ -124,6 +125,7 @@ local function snapshot(now)
   IsPerformingAnAction=p:getVariableBoolean('IsPerformingAnAction'),
   ToolkitWoodCartAction=p:getVariableBoolean('ToolkitWoodCartAction'),
   ToolkitCartMotion=p:getVariableBoolean('ToolkitCartMotion'),worldAlpha=item:getWorldAlpha(),worldObjectAlpha=world and world:getAlpha(0) or -1,
+  worldOutline=world and world:isOutlineHighlight(p:getPlayerNum()) or false,
   worldX=world and world:getSquare():getX()+world:getOffX() or -1,worldY=world and world:getSquare():getY()+world:getOffY() or -1,
   worldZ=world and world:getSquare():getZ()+world:getOffZ() or -1,worldRotation=item:getWorldZRotation(),
   cargo=weight,cargoIDs=ids,cargoCount=children,x=p:getX(),y=p:getY(),z=p:getZ(),
@@ -139,6 +141,7 @@ local function reclaim()
  ISTimedActionQueue.clear(p)
  local count,_,world=worlds();assert(count<=1,'Duplicate owned cart during fixture cleanup')
  if world then
+  world:setHighlighted(p:getPlayerNum(),false,false)
   local square=world:getSquare()
   square:transmitRemoveItemFromSquare(world);square:removeWorldObject(world);item:setWorldItem(nil)
  end
@@ -270,6 +273,21 @@ local function tick()
   return
  end
  local elapsed=now-since
+ if not config.interruptions and not config.rapidRepeats and not config.wheelCycle then
+  local world=item:getWorldItem()
+  if world then
+   local age=stage=='grounded' and elapsed or stage=='dropped' and now-droppedAt or -1
+   local highlighted=age>=0 and (age<200 or age>=350) and (stage=='dropped' or age<650)
+   if world:isOutlineHighlight(p:getPlayerNum())~=highlighted then
+    world:setHighlighted(p:getPlayerNum(),highlighted,false)
+   end
+   if world~=selectionWorld or highlighted~=selectionOn then
+    selectionWorld,selectionOn=world,highlighted
+    local highlight=snapshot(now);highlight.event=highlighted and 'highlightOn' or 'highlightOff'
+    print('[WOOD_HIGHLIGHT] '..encode(highlight))
+   end
+  end
+ end
  local row=snapshot(now)
  if now-sampleSince>=25 then sampleSince=now;print('[WOOD_INTERACTION_SAMPLE] '..encode(row)) end
  assert(row.worldCount<=1 and row.woodWorldCount==row.worldCount and row.inventoryCount<=1 and row.worldCount+row.inventoryCount==1,'Cart duplicated or disappeared')
