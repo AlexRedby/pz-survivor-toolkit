@@ -41,7 +41,9 @@ local cache={}
 require=function(name)
     if name:sub(1,5)=='ISUI/' then return end
     if name=='PZSurvivorToolkit/TagVisuals' then return {get=function() return {} end} end
-    if name=='PZSurvivorToolkit/UIStyle' then return {button=function() end} end
+    if name=='PZSurvivorToolkit/UIStyle' then
+        return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua')
+    end
     if cache[name] then return cache[name] end
     cache[name]=dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua')
     return cache[name]

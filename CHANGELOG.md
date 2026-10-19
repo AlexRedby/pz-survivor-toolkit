@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.99
+
+- **Fixed:** Wishlist, tag-rule, context-menu and craft-chain labels share Unicode-safe truncation. Long labels preserve whole characters in the game's native string format, and very narrow columns no longer show an overflowing ellipsis.
+
 ### 0.1.98
 
 - **Fixed:** Closing the context-menu editor or tag-rule picker releases text-entry focus and its open dropdown, including when the feature is disabled or settings cannot be saved.

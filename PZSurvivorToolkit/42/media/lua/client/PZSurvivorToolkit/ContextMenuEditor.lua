@@ -10,7 +10,7 @@ local TagRulePicker = require "PZSurvivorToolkit/TagRulePicker"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
 local Editor = ISCollapsableWindow:derive("PZSurvivorToolkitContextMenuEditor")
 local instance
-local utf8Strings = #"é" > 1
+local fit = UIStyle.fit
 
 local function text(id)
     return getText("UI_PZSurvivorToolkit_context_" .. id)
@@ -30,20 +30,6 @@ local function choose(combo, value)
         if combo:getOptionData(index) == value then combo.selected = index; return end
     end
     combo.selected = 1
-end
-
-local function fit(label, width)
-    local manager = getTextManager()
-    if manager:MeasureStringX(UIFont.Small, label) <= width then return label end
-    -- Kahlua indexes UTF-16 characters; Lua test runtimes index UTF-8 bytes.
-    while #label > 0 and manager:MeasureStringX(UIFont.Small, label .. "...") > width do
-        local last = #label
-        if utf8Strings then
-            while last > 1 and label:byte(last) >= 128 and label:byte(last) <= 191 do last = last - 1 end
-        elseif last > 1 and label:byte(last) >= 56320 and label:byte(last) <= 57343 then last = last - 1 end
-        label = label:sub(1, last - 1)
-    end
-    return label .. "..."
 end
 
 function Editor:createChildren()

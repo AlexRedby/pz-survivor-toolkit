@@ -11,16 +11,7 @@ local Picker = ISCollapsableWindowJoypad:derive("PZSTTagRulePicker")
 PZSurvivorToolkit.TagRulePicker = Picker
 
 local function text(key) return getText("UI_PZST_TagRule" .. key) end
-local function fit(value, width)
-    if getTextManager():MeasureStringX(UIFont.Small, value) <= width then return value end
-    while #value > 0 do
-        local index = #value
-        while index > 1 and value:byte(index) >= 128 and value:byte(index) < 192 do index = index - 1 end
-        value = value:sub(1, index - 1)
-        if getTextManager():MeasureStringX(UIFont.Small, value .. "...") <= width then return value .. "..." end
-    end
-    return ""
-end
+local fit = UIStyle.fit
 local function categoryName(category) return getTextOrNull("IGUI_ItemCat_" .. category) or category end
 local function closed(owner)
     return owner and (owner.removed or (owner.isReallyVisible and not owner:isReallyVisible())

@@ -80,7 +80,8 @@ Organizer.captureLayout('Base.Book',{root={{key='group:research',label='Reading'
 require=function(name)
     if name:sub(1,5)=='ISUI/' then return end
     if name=='PZSurvivorToolkit/ContextMenus' then return Organizer end
-    if name=='PZSurvivorToolkit/UIStyle' then return {button=function() end} end
+    if name=='PZSurvivorToolkit' then return end
+    if name=='PZSurvivorToolkit/UIStyle' then return dofile(client..'UIStyle.lua') end
     if name=='PZSurvivorToolkit/TagRulePicker' then return Picker end
     if name=='PZSurvivorToolkit/ItemTags' then return Tags end
     if name=='PZSurvivorToolkit/ItemTagSchema' then return Schema end

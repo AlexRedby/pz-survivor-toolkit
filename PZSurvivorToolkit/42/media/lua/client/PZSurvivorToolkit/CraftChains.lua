@@ -1,6 +1,7 @@
 require "PZSurvivorToolkit/Settings"
 local Planner = require "PZSurvivorToolkit/CraftPlanner"
 local Recipes = require "PZSurvivorToolkit/CraftChainRecipes"
+local fit = require("PZSurvivorToolkit/UIStyle").fit
 require "ISUI/ISCollapsableWindow"
 require "ISUI/ISPanel"
 require "ISUI/ISScrollingListBox"
@@ -49,17 +50,6 @@ local function samePlan(first, second)
     for key, count in pairs(first.consumed) do if second.consumed[key] ~= count then return false end end
     for key in pairs(second.consumed) do if not first.consumed[key] then return false end end
     return true
-end
-
-local function fit(value, width)
-    if getTextManager():MeasureStringX(UIFont.Small, value) <= width then return value end
-    while #value > 0 do
-        local index = #value
-        while index > 1 and value:byte(index) >= 128 and value:byte(index) < 192 do index = index - 1 end
-        value = value:sub(1, index - 1)
-        if getTextManager():MeasureStringX(UIFont.Small, value .. "...") <= width then return value .. "..." end
-    end
-    return ""
 end
 
 local function wrap(value, width)

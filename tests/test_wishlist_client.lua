@@ -6,7 +6,12 @@ local function event()
 end
 Events = { OnServerCommand = event(), OnTick = event(), OnGameStart = event(), OnMainMenuEnter = event(),
     OnFillInventoryObjectContextMenu = event() }
-require = function() end
+PZSurvivorToolkit = {}
+require = function(name)
+    if name == "PZSurvivorToolkit/UIStyle" then
+        return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
+    end
+end
 local now, sent = 0, {}
 local notices = {}
 getText = function(key) return key end

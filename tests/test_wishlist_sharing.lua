@@ -4,7 +4,12 @@ if not NativeWishlistGameRoot then
 end
 
 -- Exercise native filtering, hit testing and selection with only rendering/Java UI doubled.
-require = function() end
+PZSurvivorToolkit = {}
+require = function(name)
+    if name == "PZSurvivorToolkit/UIStyle" then
+        return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
+    end
+end
 string.trim = function(value) return value:match("^%s*(.-)%s*$") end
 string.contains = function(value, part) return value:find(part, 1, true) ~= nil end
 UIFont = {Small = 1}

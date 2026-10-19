@@ -1,6 +1,7 @@
 require = function() end
 PZSurvivorToolkit = {}
 local style = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/UIStyle.lua")
+require = function(name) if name == "PZSurvivorToolkit/UIStyle" then return style end end
 assert(PZSurvivorToolkit.UIStyle == style)
 local fields = {"backgroundColor", "backgroundColorMouseOver", "borderColor", "textColor"}
 local function sameStyle(button, reference)

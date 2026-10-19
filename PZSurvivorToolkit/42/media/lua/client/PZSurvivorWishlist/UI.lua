@@ -1,4 +1,5 @@
 require "PZSurvivorWishlist/Client"
+local UIStyle = require "PZSurvivorToolkit/UIStyle"
 require "ISUI/ISCollapsableWindow"
 require "ISUI/ISScrollingListBox"
 require "ISUI/ISComboBox"
@@ -98,17 +99,7 @@ local function escape(window, key)
 end
 Window.onKeyRelease, Catalog.onKeyRelease, Sharing.onKeyRelease = escape, escape, escape
 
--- Cut only at UTF-8 boundaries so translated item names remain valid text.
-function UI.fit(value, width)
-    if getTextManager():MeasureStringX(FONT, value) <= width then return value end
-    while #value > 0 do
-        local index = #value
-        while index > 1 and value:byte(index) >= 128 and value:byte(index) < 192 do index = index - 1 end
-        value = value:sub(1, index - 1)
-        if getTextManager():MeasureStringX(FONT, value .. "...") <= width then return value .. "..." end
-    end
-    return ""
-end
+UI.fit = UIStyle.fit
 
 function UI.itemName(fullType)
     local script = getScriptManager():getItem(fullType)

@@ -112,6 +112,9 @@ local Planner = {plan=function(model,target,count)
     }}},consumed={Handle=count}}
 end}
 require = function(name)
+    if name=='PZSurvivorToolkit/UIStyle' then
+        return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua')
+    end
     if name=='PZSurvivorToolkit/CraftChainRecipes' then return Recipes end
     if name=='PZSurvivorToolkit/CraftPlanner' then return Planner end
 end
