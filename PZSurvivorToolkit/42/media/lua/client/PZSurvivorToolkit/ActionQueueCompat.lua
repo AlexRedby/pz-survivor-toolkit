@@ -124,22 +124,24 @@ end
 Compat.verifySources = verified
 
 local quartermasterContainers
+local CraftContainers = require "PZSurvivorToolkit/QuartermasterCraftContainers"
+local activeCraftContext = CraftContainers.active
 function Compat.matchesQuartermasterContainerGetter(previous, replacement)
     local saved = quartermasterContainers
     if not saved or saved.previous ~= previous or saved.replacement ~= replacement or LootSorter ~= saved.owner
         or not saved.owner._craftHooksAdded or not saved.owner._getContainersWrapped
         or ISTimedActionQueue ~= saved.queue or saved.queue.isPlayerDoingAction ~= saved.busy
-        or getTimestampMs ~= saved.clock or saved.owner.DBG ~= saved.debug then return false end
+        or CraftContainers.active ~= saved.active or saved.owner.DBG ~= saved.debug then return false end
     -- Only forwarding is audited; an active availability scan may call arbitrary storage helpers.
-    if saved.owner.craftFromBoxes and not saved.owner._activelyCrafting and saved.owner._craftContextUntil
-        and (type(saved.owner._craftContextUntil) ~= "number" or saved.clock() < saved.owner._craftContextUntil) then return false end
+    if saved.owner.craftFromBoxes and not saved.owner._activelyCrafting and saved.active() then return false end
     return true
 end
 function Compat.installQuartermasterCraft(install)
     local owner = LootSorter
     if owner._craftHooksAdded then return end
     local previous = ISInventoryPaneContextMenu.getContainers
-    local queue, busy, clock = ISTimedActionQueue, ISTimedActionQueue.isPlayerDoingAction, getTimestampMs
+    local queue, busy = ISTimedActionQueue, ISTimedActionQueue.isPlayerDoingAction
+    local active = activeCraftContext
     local debug = owner.DBG
     local neat = craftOwners.NC_CraftActionPanel
     local neatUnchanged = neat and NC_CraftActionPanel == neat.class
@@ -150,9 +152,10 @@ function Compat.installQuartermasterCraft(install)
     end
     install()
     local replacement = ISInventoryPaneContextMenu.getContainers
-    if LootSorter ~= owner or not owner._craftHooksAdded or not owner._getContainersWrapped then return end
+    if LootSorter ~= owner or not owner._craftHooksAdded or not owner._getContainersWrapped
+        or CraftContainers.active ~= active then return end
     quartermasterContainers = {previous = previous, replacement = replacement, owner = owner, debug = debug,
-        queue = queue, busy = busy, clock = clock}
+        queue = queue, busy = busy, active = active}
     if neatUnchanged and NC_CraftActionPanel == neat.class then
         for method, expected in pairs(neat.methods) do
             if method ~= "prerender" and method ~= "onCraftButtonClick" and neat.class[method] ~= expected then

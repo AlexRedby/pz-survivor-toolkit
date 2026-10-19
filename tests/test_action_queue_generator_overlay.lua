@@ -72,6 +72,9 @@ local function fixture(options)
     env.require = function(module)
         if loaded[module] then return loaded[module] end
         if module == 'PZSurvivorToolkit/SourceProof' then return proof
+        elseif module == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
+            loaded[module] = run(read(base .. module .. '.lua'), base .. module .. '.lua', env)
+            return loaded[module]
         elseif module == 'PZSurvivorToolkit/ActionQueueCompat' then
             loaded[module] = run(compatSource, base .. module .. '.lua', env); return loaded[module]
         elseif module == 'BGI/BGI_PowerRange' then

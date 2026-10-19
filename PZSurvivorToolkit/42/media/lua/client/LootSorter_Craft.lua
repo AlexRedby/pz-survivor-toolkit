@@ -13,21 +13,22 @@
 require "TimedActions/ISBaseTimedAction"
 require "TimedActions/ISTimedActionQueue"
 require "TimedActions/ISInventoryTransferAction"
+local Containers = require "PZSurvivorToolkit/QuartermasterCraftContainers"
+local inventoryContainers, withoutCraftContainers = Containers.inventory, Containers.withoutContext
 
 LootSorter = LootSorter or {}
 LootSorter.craft = LootSorter.craft or {}
 
 
 -- If our gather path errors and the UI hook falls back to a NORMAL craft, we must first make that
--- craft inventory-only. Just clearing _craftContextUntil isn't enough: the logic already cached the
--- box-including container set (that's why the recipe lit up), so a plain fallback would consume the
--- box-resident input in place = teleport. So: disarm injection, then re-pin the logic to the real
--- (box-free) container set and re-resolve inputs -- same as CraftTriggerAction:perform does.
+-- craft inventory-only: the logic already cached the box-including container set (that's why the
+-- recipe lit up), so a plain fallback would consume the box-resident input in place = teleport.
+-- Suppress availability injection for the whole re-pin, including input-resolution callbacks.
+-- Re-pin the logic to ordinary containers and re-resolve inputs, as CraftTriggerAction:perform does.
 function LootSorter.craft.repinInventoryOnly(logic, player)
-    LootSorter._craftContextUntil = 0
-    pcall(function()
+    pcall(withoutCraftContainers, function()
         if logic and logic.setContainers then
-            logic:setContainers(ISInventoryPaneContextMenu.getContainers(player))
+            logic:setContainers(inventoryContainers(player))
             if logic.autoPopulateInputs then logic:autoPopulateInputs() end
         end
     end)
@@ -91,7 +92,7 @@ end
 local function accessibleCounts(recipe, myInputs, player)
     local counts = {}
     pcall(function()
-        local containers = ISInventoryPaneContextMenu.getContainers(player)
+        local containers = inventoryContainers(player)
         local list = CraftRecipeManager.getAllItemsFromContainers(containers, ArrayList.new())
         for i = 0, list:size() - 1 do
             local idx = inputIndexFor(recipe, myInputs, list:get(i), player)
@@ -146,7 +147,7 @@ function LootSorter.CraftTriggerAction:perform()
         pcall(function() if self.surface then logic:setIsoObject(self.surface) end end)
         -- pin the logic to INVENTORY-ONLY (injection is off now) so it consumes the items we just
         -- hauled in -- never teleports the remainder out of a distant box
-        pcall(function() logic:setContainers(ISInventoryPaneContextMenu.getContainers(self.character)) end)
+        pcall(function() logic:setContainers(inventoryContainers(self.character)) end)
         -- re-resolve the recipe's input items against the new (inventory-only) container set, so the
         -- multi-craft plan points at the hauled items. Without this the batch plan is stale (built from
         -- the injected box set) and only the first craft has resolvable ingredients.

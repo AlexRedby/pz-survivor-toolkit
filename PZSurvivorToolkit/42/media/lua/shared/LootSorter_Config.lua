@@ -22,8 +22,6 @@ LootSorter.PRIORITY_MAX_DIGITS = 4  -- digits the designation window's priority 
 -- Timings, in milliseconds.
 LootSorter.SYNC_RETRY_MS = 4000     -- one retry after OnGameStart, in case the first request raced the
                                     -- connection (registry and preset store both)
-LootSorter.CRAFT_CONTEXT_MS = 1000  -- how long after a craft-menu interaction the container injection
-                                    -- stays live (see LootSorter_CraftMenu.lua)
 LootSorter.ADD_GRACE_MS = 30000     -- a freshly added coord refuses removal for this long, so a client
                                     -- that has not yet seen the box cannot drop it (server-side)
 LootSorter.RPC_TIMEOUT_MS = 15000   -- give up waiting for a server answer after this, and tell the

@@ -24,6 +24,10 @@ local function setup(mode)
         if name == 'PZSurvivorToolkit/SourceProof' then
             return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()
         end
+        if name == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
+            loaded[name] = fixture.project('QuartermasterCraftContainers')
+            return loaded[name]
+        end
         if name == 'SaucedCarts/Core' then loaded[name] = assert(loadstring(coreSource))()
         elseif name == 'SaucedCarts/ConsumeWithCart' then loaded[name] = assert(loadstring(consumeSource))()
         else return true end

@@ -69,6 +69,7 @@ require=function(module)
     if loaded[module]then return loaded[module]end
     local path
     if module=='PZSurvivorToolkit/SourceProof'then path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua'
+    elseif module=='PZSurvivorToolkit/QuartermasterCraftContainers'then path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'
     elseif module=='PZSurvivorToolkit/ActionQueueTidyIntent'then
         intent=assert(loadstring(read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'),'@ActionQueueTidyIntent.lua'))()
         local install=intent.install

@@ -15,6 +15,7 @@ local function derive(self, name)
     local class = {Type = name, derive = derive}; class.__index = class
     return setmetatable(class, {__index = self})
 end
+local craftContainers
 require = function() end
 -- This fixture isolates other integrations; the owned Manifest handoff has its own suite.
 LootSorter = {}
@@ -266,6 +267,10 @@ local Outfit = {
 local Gather = {build = function() return {} end, find = function(_, descriptor) return descriptor.item, 'container', descriptor.item:getContainer() end}
 local loaded = {}
 require = function(module)
+    if module == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
+        craftContainers = craftContainers or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
+        return craftContainers
+    end
     if module == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
     if loaded[module] then return loaded[module] end
     if module == 'NeatEquipment/NEQ_Outfit' then return Outfit end

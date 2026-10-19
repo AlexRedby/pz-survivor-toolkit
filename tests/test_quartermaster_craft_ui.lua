@@ -1,4 +1,10 @@
-require = function() end
+local craftContainers
+require = function(name)
+    if name == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
+        craftContainers = craftContainers or dofile(NativeQuartermasterLuaRoot .. '/client/' .. name .. '.lua')
+        return craftContainers
+    end
+end
 local function derive(self, name)
     local class = {Type = name, derive = derive}
     class.__index = class
@@ -36,7 +42,25 @@ local starts, ticks = {}, {}
 Events = {OnGameStart = {Add = function(fn) starts[#starts+1] = fn end},
     OnTick = {Add = function(fn) ticks[#ticks+1] = fn end, Remove = function(fn) assert(ticks[1] == fn) end}}
 LootSorter = {DBG = function() end}
-ISInventoryPaneContextMenu = {getContainers = function() end}
+local player, otherPlayer, storage, carried = {}, {}, {}, {}
+local busy = false
+ISTimedActionQueue = {isPlayerDoingAction = function() return busy end}
+local function containerList()
+    local values = {carried}
+    return {add=function(_,value) values[#values+1]=value end,
+        size=function() return #values end, get=function(_,i) return values[i+1] end}
+end
+ISInventoryPaneContextMenu = {getContainers = containerList}
+LootSorter.gatherBoxes = function(who) assert(who==player);return {{container=storage}} end
+local function refresh(self, callback)
+    self.containers = ISInventoryPaneContextMenu.getContainers(self.player)
+    if callback then callback() end
+    return true, nil, 'upstream-result'
+end
+ISHandCraftPanel = {updateContainers=refresh}
+NC_HandCraftPanel = {updateContainers=refresh, update=refresh}
+NC_CraftLogicPanel = {updateContainers=refresh}
+NC_CraftActionPanel = {prerender=function(self) self.rendered=true end}
 local function windowClass()
     local class = ISPanel:derive('CraftWindow')
     function class:createChildren()
@@ -98,4 +122,54 @@ for _, class in ipairs({NC_HandcraftWindow, NC_EntityWindow}) do
 end
 NC_HandcraftWindow, NC_EntityWindow = nil, nil
 for _, fn in ipairs(starts) do fn() end -- repeated optional-mod setup is harmless
-print('Quartermaster crafting UI: owned injection and real native table layout, both windows, resize, bottom/collapse and toggles passed.')
+
+-- Only the actual refresh call may expose storage, and only for its player.
+LootSorter.craftFromBoxes = true
+local function ordinary()
+    assert(ISInventoryPaneContextMenu.getContainers(player):size()==1, 'storage leaked outside craft refresh')
+end
+local actionPanel={player=player}
+NC_CraftActionPanel.prerender(actionPanel)
+assert(actionPanel.rendered, 'upstream crafting render was skipped')
+ordinary()
+for _,entry in ipairs({{ISHandCraftPanel,'updateContainers'},{NC_HandCraftPanel,'updateContainers'},
+    {NC_HandCraftPanel,'update'},{NC_CraftLogicPanel,'updateContainers'}}) do
+    local instance={player=player}
+    local a,b,c=entry[1][entry[2]](instance,function()
+        assert(craftContainers.active() and craftContainers.active(player), 'refresh lacks player scope')
+        assert(ISInventoryPaneContextMenu.getContainers(otherPlayer):size()==1, 'scope leaked to another player')
+    end)
+    assert(a==true and b==nil and c=='upstream-result','upstream return values changed')
+    assert(instance.containers:size()==2 and instance.containers:get(1)==storage,'refresh missed designated storage')
+    ordinary()
+end
+craftContainers.withContext(player,function()
+    craftContainers.withContext(otherPlayer,function()
+        assert(not craftContainers.active(player) and craftContainers.active(otherPlayer), 'nested player scope is wrong')
+    end)
+    assert(craftContainers.active(player), 'nested scope did not restore its caller')
+    assert(craftContainers.inventory(player):size()==1, 'inventory-only read retained storage context')
+    assert(craftContainers.active(player), 'inventory read destroyed outer context')
+end)
+local ok,problem=pcall(function() NC_HandCraftPanel.update({player=player},function() error('refresh failure') end) end)
+assert(not ok and tostring(problem):find('refresh failure',1,true), 'upstream error was swallowed')
+assert(not craftContainers.active(), 'failed refresh retained player scope');ordinary()
+for _,guard in ipairs({'busy','hauling','disabled'}) do
+    busy=guard=='busy';LootSorter._activelyCrafting=guard=='hauling';LootSorter.craftFromBoxes=guard~='disabled'
+    local instance={player=player};ISHandCraftPanel.updateContainers(instance)
+    assert(instance.containers:size()==1,'storage exposed while '..guard)
+end
+busy=false;LootSorter._activelyCrafting=false;LootSorter.craftFromBoxes=true
+-- The error fallback must discard cached storage even if invoked inside a refresh.
+ISBaseTimedAction=ISBaseObject
+dofile(NativeQuartermasterLuaRoot .. '/client/LootSorter_Craft.lua')
+local logic={setContainers=function(self,values) self.containers=values end,
+    autoPopulateInputs=function(self)
+        self.populated=true
+        local nested={player=player};ISHandCraftPanel.updateContainers(nested)
+        assert(nested.containers:size()==1,'fallback callback re-enabled distant storage')
+    end}
+craftContainers.withContext(player,function() LootSorter.craft.repinInventoryOnly(logic,player) end)
+assert(logic.containers:size()==1 and logic.populated, 'fallback craft retained distant ingredients')
+ordinary()
+print('Quartermaster crafting UI: header layout, toggles, scoped refreshes, player isolation, nested/error cleanup and inventory fallback passed.')

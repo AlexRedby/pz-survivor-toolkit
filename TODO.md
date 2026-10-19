@@ -6,6 +6,10 @@
 
 - [ ] Update the `tagRules` re-enable assertion in `tests/native_tags/client/ZZTagBaseline.lua`: it still expects dynamic rules to expand `own.cats.foodPerishable_fruit`, while owned Quartermaster now matches per-item rules through `own.rules`. Preserve its manual-category, toggle and exact-transfer checks; use the existing fixture-level checks before its next advanced multiplayer run.
 
+# Generator fixture initialization
+
+- [ ] Restore the owned `LootSorter` initialization in `test_action_queue_generators.lua` and `test_action_queue_generator_overlay.lua` before loading `ActionQueueCompat`. Both already fail on baseline `b82fba4` inside `installManifestTransfers` with a nil owner. Keep generator behavior checks intact; this fixture failure is not evidence of a gameplay regression.
+
 # Wooden wheelbarrow collisions
 
 - [ ] Extend relative-key manual reverse wall exits to Host multiplayer. Start with mirrored Walk exits using server-created native walls and an adequate replicated test pad; verify both clients received the geometry, exact server cart/cargo identity, owner accepted steering and observer motion with measured replication delay and pose traffic. Then extend the checked Host case to Run/Sprint approaches and both sexes/loads. Preserve the <=.02 rad opposite-yaw, <=.025 rad release and <=500 ms owner sampling budgets, manual reverse, natural rolling and native collision, without automatic backing.

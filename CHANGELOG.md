@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.116
+
+- **Changed:** Quartermaster exposes distant storage only during crafting-panel container refreshes for the requesting player. Removed the render-time global availability window; ordinary inventory queries and fallback crafting keep their normal containers, while ingredients still travel through the existing physical haul.
+
 ### 0.1.115
 
 - **Changed:** With item tags enabled, Quartermaster category and tag selections exclude broken tools, including carpentry tools. Explicit item assignments can still collect them.

@@ -6,7 +6,7 @@ local config=require 'QueueTestSelection'
 local JSON=require 'QueueHealthEvents'
 local step,phase,since,idle=1,'prepare',0,0
 local started,done=false,false
-local ids,state,authorityState,previous,receipt,position,window,owner,logic,craft,designatedAt,cleanupRetry
+local ids,state,authorityState,previous,receipt,position,window,panel,owner,logic,craft,designatedAt,cleanupRetry
 local walked,picked,crafted,notNearby,injected=false,false,false,false,false
 local toolPickup,toolReturn={},{}
 local function case()return config.cases[step]end
@@ -38,12 +38,12 @@ local function open(player)
  if case()=='vanilla'then
   window=ISXuiSkin.build(XuiManager.GetDefaultSkin(),'HandcraftWindow',ISHandcraftWindow,20,20,900,600,player,nil,'InHandCraft')
   window:initialise();window:instantiate();window:addToUIManager()
-  local panel=assert(window.handCraftPanel);logic=panel.logic;owner=assert(panel.recipePanel.craftControl)
+  panel=assert(window.handCraftPanel);logic=panel.logic;owner=assert(panel.recipePanel.craftControl)
   assert(getmetatable(owner)==ISWidgetHandCraftControl,'vanilla craft owner replaced')
  else
   ISEntityUI.OpenHandcraftWindow(player,nil,'InHandCraft',true,recipe)
   window=assert(ISEntityUI.GetWindowInstance(player:getPlayerNum(),'HandcraftWindow'))
-  local panel=assert(window.HandCraftPanel or window.handCraftPanel);logic=panel.logic;owner=assert(panel.craftActionPanel)
+  panel=assert(window.HandCraftPanel or window.handCraftPanel);logic=panel.logic;owner=assert(panel.craftActionPanel)
   assert(getmetatable(owner)==NC_CraftActionPanel,'Neat craft owner replaced')
  end
  assert(LootSorter._craftHooksAdded and LootSorter._getContainersWrapped,'owned Quartermaster craft hooks missing')
@@ -64,10 +64,12 @@ local function click(player)
  local found=false
  for _,box in ipairs(boxes)do if box.container==state.source then found=true end end
  if not found then return false end
- local containers=ISInventoryPaneContextMenu.getContainers(player)
+ assert(not sourceIn(ISInventoryPaneContextMenu.getContainers(player)),'Storage leaked to an unrelated container query')
+ panel:updateContainers(true)
+ local containers=logic:getContainers()
  if not sourceIn(containers)then return false end
  injected=true
- logic:setContainers(containers);logic:setRecipe(assert(getScriptManager():getCraftRecipe('QueueBorrowedTools')))
+ logic:setRecipe(assert(getScriptManager():getCraftRecipe('QueueBorrowedTools')))
  logic:setManualSelectInputs(false);logic:clearManualInputs();logic:autoPopulateInputs()
  if not logic:canPerformCurrentRecipe()then return false end
  assert(logic:getPossibleCraftCount(true)==1,'Storage injection does not expose exactly one craft')
@@ -131,7 +133,7 @@ local function finish()
  local bags={};for _,id in ipairs(ids.bags)do bags[#bags+1]=assert(state.root:getItemById(id))end
  ISInventoryPaneContextMenu.onUnEquip(bags,getPlayer():getPlayerNum())
  previous=authorityState;step=step+1;phase='unequip';since=getTimestampMs()
- ids,state,authorityState,receipt,window,owner,logic,craft=nil,nil,nil,nil,nil,nil,nil,nil
+ ids,state,authorityState,receipt,window,panel,owner,logic,craft=nil,nil,nil,nil,nil,nil,nil,nil,nil
  walked,picked,crafted,notNearby,injected=false,false,false,false,false;toolPickup,toolReturn={},{}
 end
 Events.OnPlayerUpdate.Add(function(player)

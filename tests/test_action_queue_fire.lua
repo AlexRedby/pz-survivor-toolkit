@@ -1,5 +1,10 @@
 if not NativeActionRoot then print('Fire native-contract checks skipped.'); return end
+local craftContainers
 require = function(module)
+    if module == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
+        craftContainers = craftContainers or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
+        return craftContainers
+    end
     if module == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
 end
 local enabled, client = true, false
@@ -305,8 +310,8 @@ if quartermasterStart then
         quartermasterOwner[name]=callback
     end
     LootSorter={};assert(not api.matchesContainerGetter(originalContainerGetter),'Quartermaster owner replacement revokes the proof');LootSorter=quartermasterOwner
-    local clock=getTimestampMs;getTimestampMs=function()return 0 end
-    assert(not api.matchesContainerGetter(originalContainerGetter),'changed Quartermaster clock revokes the shared proof');getTimestampMs=clock
+    local active=craftContainers.active;craftContainers.active=function()return false end
+    assert(not api.matchesContainerGetter(originalContainerGetter),'changed Quartermaster scope query revokes the shared proof');craftContainers.active=active
     local busy=ISTimedActionQueue.isPlayerDoingAction;ISTimedActionQueue.isPlayerDoingAction=function()return false end
     assert(not api.matchesContainerGetter(originalContainerGetter),'changed Quartermaster busy predicate revokes the shared proof');ISTimedActionQueue.isPlayerDoingAction=busy
     local matcher=PZSurvivorToolkit.ActionQueueCompat.matchesQuartermasterContainerGetter
@@ -317,13 +322,15 @@ if quartermasterStart then
     quartermasterOwner.gatherBoxes=function()error('a late storage helper must not be called while forwarding')end
     assert(api.matchesContainerGetter(originalContainerGetter),'unused Quartermaster storage helpers do not affect forwarding proof')
     assert(getter(player),'the real Quartermaster wrapper forwards without calling the untrusted storage helper')
-    quartermasterOwner.craftFromBoxes=true;quartermasterOwner._craftContextUntil=10
-    assert(not api.matchesContainerGetter(originalContainerGetter),'active Quartermaster availability injection stays opaque')
-    quartermasterOwner._craftContextUntil=-1
-    assert(api.matchesContainerGetter(originalContainerGetter),'expired Quartermaster context is a proven forwarding wrapper')
-    quartermasterOwner._craftContextUntil=10;quartermasterOwner._activelyCrafting=true
-    assert(api.matchesContainerGetter(originalContainerGetter),'Quartermaster disables availability injection while hauling/crafting')
-    quartermasterOwner.craftFromBoxes=false;quartermasterOwner._craftContextUntil=nil;quartermasterOwner._activelyCrafting=nil
+    quartermasterOwner.craftFromBoxes=true
+    craftContainers.withContext(player,function()
+        assert(not api.matchesContainerGetter(originalContainerGetter),'active Quartermaster availability injection stays opaque')
+        quartermasterOwner._activelyCrafting=true
+        assert(api.matchesContainerGetter(originalContainerGetter),'Quartermaster disables availability injection while hauling/crafting')
+        quartermasterOwner._activelyCrafting=nil
+    end)
+    assert(api.matchesContainerGetter(originalContainerGetter),'completed refresh is a proven forwarding wrapper')
+    quartermasterOwner.craftFromBoxes=false
     quartermasterOwner.gatherBoxes=gather
     assert(api.matchesContainerGetter(originalContainerGetter),'the original medical getter remains valid through the intact chain')
     print('Fire Quartermaster cold install: old/current getters, BC order and changed owner/helper protection passed.')

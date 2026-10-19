@@ -1,8 +1,9 @@
 -- Quartermaster: crafting UI integration (STABLE / injection approach).
 --
 -- A "Storage" tickbox in the craft window toggles the feature. While ON, we APPEND your in-range /
--- cross-floor designated boxes to the container set the game reads availability from
--- (ISInventoryPaneContextMenu.getContainers). The crafting logic caches that set via
+-- cross-floor designated boxes during the crafting panels' container refresh calls.
+-- Unrelated ISInventoryPaneContextMenu.getContainers callers retain their ordinary set.
+-- The crafting logic caches the availability set via
 -- NC_CraftLogicPanel:updateContainers() -> logic:setContainers(), so a single re-scan makes EVERYTHING
 -- (button greying, quantity cap, required-items list, and the recipe list) count the boxes at once --
 -- no per-widget wrapping. The logic only re-scans on init / recipe-change / after a craft, so the one
@@ -12,8 +13,7 @@
 -- containers to INVENTORY-ONLY right before crafting, so the hauled items are consumed, never teleported.
 LootSorter = LootSorter or {}
 LootSorter.craftFromBoxes = LootSorter.craftFromBoxes or false
-
-local function nowMs() return (getTimestampMs and getTimestampMs()) or 0 end
+local Containers = require "PZSurvivorToolkit/QuartermasterCraftContainers"
 
 -- shared label/tooltip for the injected "Storage" tickbox (used by both the vanilla + Neat hooks)
 local NO_SURFACE = "Quartermaster: stand near a crafting surface"
@@ -37,6 +37,7 @@ local function installContainerInjection()
     if LootSorter._getContainersWrapped then return end
     LootSorter._getContainersWrapped = true
     local orig = ISInventoryPaneContextMenu.getContainers
+    local active = Containers.active
     ISInventoryPaneContextMenu.getContainers = function(character)
         local list = orig(character)
         -- Also gate OFF while the player is doing a timed action: this covers the whole haul + the
@@ -46,7 +47,7 @@ local function installContainerInjection()
         local busy = ISTimedActionQueue and ISTimedActionQueue.isPlayerDoingAction
             and ISTimedActionQueue.isPlayerDoingAction(character)
         if list and list.add and LootSorter.craftFromBoxes and not LootSorter._activelyCrafting and not busy
-                and LootSorter._craftContextUntil and nowMs() < LootSorter._craftContextUntil then
+                and character ~= nil and active(character) then
             pcall(function()
                 -- Silent when unsynced: this runs on every container-list rebuild, so a message here
                 -- would be spam. Injecting nothing simply reads as "no boxes yet".
@@ -59,6 +60,23 @@ local function installContainerInjection()
         return list
     end
     LootSorter.DBG("getContainers injection installed")
+end
+
+local function scopeRefresh(class, method)
+    local original = class and class[method]
+    if not original then return end
+    local withContext = Containers.withContext
+    class[method] = function(self, ...)
+        return withContext(self.player, original, self, ...)
+    end
+end
+
+local function installRefreshScopes()
+    scopeRefresh(_G.ISHandCraftPanel, "updateContainers")
+    scopeRefresh(_G.NC_HandCraftPanel, "updateContainers")
+    -- Neat's movement refresh reads containers directly instead of calling updateContainers.
+    scopeRefresh(_G.NC_HandCraftPanel, "update")
+    scopeRefresh(_G.NC_CraftLogicPanel, "updateContainers")
 end
 
 local function placeTick(window)
@@ -120,13 +138,12 @@ local function installWindowTick(WindowClass, name)
     LootSorter.DBG("window tick installed: " .. name)
 end
 
--- Action panel: keep the craft context live, drain the "dirty" flag (re-scan), and intercept the craft.
+-- Action panel: drain the "dirty" flag (re-scan), and intercept the craft.
 local function installActionPanel()
     if not _G.NC_CraftActionPanel then LootSorter.DBG("craft panel hook SKIPPED: NC_CraftActionPanel not found"); return end
 
     local origPre = NC_CraftActionPanel.prerender
     function NC_CraftActionPanel:prerender()
-        if LootSorter.craftFromBoxes then LootSorter._craftContextUntil = nowMs() + LootSorter.CRAFT_CONTEXT_MS end
         -- Full display refresh once when asked (toggle flip / after craft). refreshAfterCraftBatch is
         -- Neat's own post-craft routine: updateContainers (re-scan, injection applies) + autoPopulateInputs
         -- (required-items) + sortRecipeList (the recipe list) + recipeInfoPanel:onRecipeChanged. Calling it
@@ -186,22 +203,6 @@ end
 -- Injection is shared; vanilla re-scans when ISHandCraftPanel.drawDirty is set.
 ----------------------------------------------------------------------
 local function installVanillaHooks()
-    -- keep the availability injection live while the vanilla craft window is open (the window renders
-    -- every frame it's up, so this is the reliable place for it). The "Storage" tickbox itself lives in
-    -- the craft-control widget below, NOT the title bar (so a controller can reach it).
-    if _G.ISHandcraftWindow then
-        local origPre = ISHandcraftWindow.prerender
-        function ISHandcraftWindow:prerender()
-            if origPre then origPre(self) end
-            if LootSorter.craftFromBoxes then
-                LootSorter._craftContextUntil = nowMs() + LootSorter.CRAFT_CONTEXT_MS   -- keep injection live (vanilla)
-            end
-        end
-        LootSorter.DBG("vanilla craft window hook installed: ISHandcraftWindow")
-    else
-        LootSorter.DBG("vanilla craft window hook SKIPPED: ISHandcraftWindow not found")
-    end
-
     -- Craft-control widget: the "Storage" tickbox + the craft intercept both live here.
     if _G.ISWidgetHandCraftControl then
         -- create the tickbox as a child of the widget
@@ -328,6 +329,7 @@ local function installHooks()
         .. " NC_EntityWindow=" .. tostring(_G.NC_EntityWindow ~= nil)
         .. " NC_CraftActionPanel=" .. tostring(_G.NC_CraftActionPanel ~= nil))
     installContainerInjection()
+    installRefreshScopes()
     installWindowTick(_G.NC_HandcraftWindow, "NC_HandcraftWindow")
     installWindowTick(_G.NC_EntityWindow, "NC_EntityWindow")
     installActionPanel()

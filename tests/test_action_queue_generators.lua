@@ -1,7 +1,12 @@
 if not NativeActionRoot then print('Generator native contracts SKIP.'); return end
 local f = assert(loadfile(ProjectRoot .. '/tests/support/action_queue_native.lua'))()
+local craftContainers
 require = function(name)
     if name == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
+    if name == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
+        craftContainers = craftContainers or f.project('QuartermasterCraftContainers')
+        return craftContainers
+    end
     if name == 'PZSurvivorToolkit/ActionQueueGeneratorOverlay' then
         return PZSurvivorToolkit.ActionQueueGeneratorOverlay or f.project('ActionQueueGeneratorOverlay')
     end
