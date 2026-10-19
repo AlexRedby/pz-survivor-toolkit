@@ -100,7 +100,8 @@ class PinnedItemsTests(unittest.TestCase):
                 'equippedHeaders': 1 if mode == 'clean' else 0,
                 'groupRow': 53, 'childRow': 55, 'shiftRow': 54, 'capRow': 52, 'childId': '781',
                 'exactSelection': True, 'groupSemantics': True, 'itemSemantics': True,
-                'repeatedRefresh': True, 'shiftRange': True}
+                'repeatedRefresh': True, 'shiftRange': True, 'markerGeometry': True,
+                'markerPasses': 6 if mode == 'clean' else 5}
 
     def verify_selection(self, rows):
         self.selection.update(cases=['selection'], mods=['PZSurvivorToolkit', 'EURY_CONTAINERS', 'CleanUI'])
@@ -135,6 +136,7 @@ class PinnedItemsTests(unittest.TestCase):
         rows = [self.selection_record(mode) for mode in ('clean', 'vanilla')]
         for change in ({'exactSelection': False}, {'groupSemantics': False}, {'itemSemantics': False},
                        {'repeatedRefresh': False}, {'shiftRange': False}, {'renderedChildren': 55},
+                       {'markerGeometry': False}, {'markerPasses': 0},
                        {'equippedHeaders': 0}, {'shiftRow': 53}, {'capRow': 55},
                        {'status': 'failed', 'reason': 'Selected entry differs from rendered row 63'}):
             with self.subTest(change=change):

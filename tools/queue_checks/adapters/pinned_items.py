@@ -328,7 +328,8 @@ def _verify_selection(root, selection, issues):
                 or type(row.get('equippedHeaders')) is not int
                 or mode == 'clean' and row.get('equippedHeaders', 0) < 1
                 or any(row.get(key) is not True for key in ('exactSelection', 'groupSemantics', 'itemSemantics',
-                                                          'repeatedRefresh', 'shiftRange'))
+                                                          'repeatedRefresh', 'shiftRange', 'markerGeometry'))
+                or row.get('markerPasses') != (6 if mode == 'clean' else 5)
                 or any(type(row.get(key)) is not int or row[key] < 1
                        for key in ('groupRow', 'childRow', 'shiftRow', 'capRow'))
                 or not isinstance(row.get('childId'), str) or not row['childId'].isdigit()):

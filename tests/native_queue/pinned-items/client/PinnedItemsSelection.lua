@@ -75,6 +75,8 @@ function F.start(config)
         return targetRow
     end
     local function prepare()
+        if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
+        if getPlayerInfoPanel and getPlayerInfoPanel(0) then getPlayerInfoPanel(0):setVisible(false) end
         inventory=getPlayer():getInventory()
         equipped=assert(inventory:AddItem('Base.Hammer'));equipped:setName('000 Selection equipped')
         getPlayer():setPrimaryHandItem(equipped)
@@ -89,9 +91,80 @@ function F.start(config)
         end
         assert(inventory:contains(equipped),'Equipped fixture item is not in the native inventory')
     end
+    local function markers(pane, mode)
+        local pins=require 'BetterContainers/Upgrades/PinnedItems'
+        local options=require 'BetterContainers/_Options'
+        options.showFavouritesOnPlayerInventories=true
+        for _, item in ipairs({equipped,stack[1],targets[1]}) do pins.setFavourite(item:getFullType(),true) end
+        pane.selected={};pane.firstSelect=nil
+        local texture=assert(getTexture('media/ui/BetterContainers/PinnedItemMarker.png'))
+        local passes=0
+        local function check(label, dragged)
+            local draws={}
+            local own=rawget(pane,'drawTextureScaled')
+            local original=pane.drawTextureScaled
+            pane.drawTextureScaled=function(self, tex, x, y, width, height, ...)
+                if tex==texture then draws[#draws+1]={x=x,y=y,width=width,height=height} end
+                return original(self,tex,x,y,width,height,...)
+            end
+            local ok,err=pcall(function() pane:renderdetails(dragged==true) end)
+            pane.drawTextureScaled=own
+            assert(ok,err)
+            local expected={}
+            if not dragged and options.showFavouritesOnPlayerInventories then
+                for row, value in ipairs(pane.items) do
+                    if not instanceof(value,'InventoryItem') and value.items and value.items[1]
+                        and pins.isFavourite(value.items[1]:getFullType())
+                        and not (pane.dragging~=nil and pane.dragStarted and pane.selected[row]~=nil) then
+                        expected[#expected+1]=(row-1)*pane.itemHgt+pane.headerHgt
+                    end
+                end
+            end
+            local actual={}
+            for _, draw in ipairs(draws) do actual[#actual+1]=draw.y end
+            assert(#draws==#expected, label..' marker count '..#draws..' ~= '..#expected)
+            local size=math.min(11,pane.itemHgt)
+            local itemSize=math.min(pane.itemHgt-2,32)
+            local x=pane.column2-itemSize-((pane.itemHgt-itemSize)/2)+1
+            for index, draw in ipairs(draws) do
+                assert(draw.y==expected[index], label..' marker Y '..table.concat(actual,',')..' ~= '..table.concat(expected,','))
+                assert(draw.x==x and draw.width==size and draw.height==size,label..' marker geometry changed')
+            end
+            passes=passes+1
+        end
+        render(pane)
+        check('expanded')
+        local target=groupFor(pane,targets[1])
+        local row=assert(findRow(pane,target))
+        local dragging,focus=ISMouseDrag.dragging,ISMouseDrag.draggingFocus
+        local fields={'selected','dragging','dragStarted','draggingX','draggingY'}
+        local before={}
+        for _, field in ipairs(fields) do before[field]=pane[field] end
+        pane.selected={[row]=target};pane.dragging=row;pane.dragStarted=true
+        pane.draggingX,pane.draggingY=getMouseX(),getMouseY()
+        ISMouseDrag.dragging,ISMouseDrag.draggingFocus={target},pane
+        local ok,err=pcall(function()
+            check('drag selection')
+            check('drag overlay',true)
+        end)
+        ISMouseDrag.dragging,ISMouseDrag.draggingFocus=dragging,focus
+        for _, field in ipairs(fields) do pane[field]=before[field] end
+        assert(ok,err)
+        options.showFavouritesOnPlayerInventories=false
+        check('disabled player pins')
+        options.showFavouritesOnPlayerInventories=true
+        if mode=='clean' then
+            pane.equippedCollapsed=false;render(pane);check('visible equipment')
+            pane.equippedCollapsed=true
+        end
+        for _, group in ipairs(pane.itemslist) do if group.items then pane.collapsed[group.name]=true end end
+        render(pane);check('collapsed')
+        return passes
+    end
     local function probe(mode)
         local page=getPlayerInventory(0)
         page:setVisible(true);page.isCollapsed=false;page:setPinned()
+        page:bringToTop()
         page:selectButtonForContainer(inventory)
         page:setForceSelectedContainer(inventory,60000)
         page:setX(50);page:setY(80);page:setWidth(740);page:setHeight(550)
@@ -145,11 +218,13 @@ function F.start(config)
             if row and (not lastChild or row>findRow(pane,lastChild)) then lastChild=item end
         end
         local capRow=selectAndRefresh(pane,assert(lastChild),'item')
+        local markerPasses=markers(pane,mode)
         print('[PIN_ITEMS] SELECTION {"mode":'..quote(mode)..',"status":"passed","input":"programmatic-key-predicates"'..
             ',"class":'..quote(mode=='clean' and 'CleanUI_Clean_ISInventoryPane' or clean and 'CleanUI_Vanilla_ISInventoryPane' or 'ISInventoryPane')..
             ',"stackCount":55,"renderedChildren":'..children..',"equippedHeaders":'..headers..',"equippedHidden":'..tostring(mode=='clean')..
             ',"groupRow":'..groupRow..',"childRow":'..childRow..',"shiftRow":'..shiftRow..',"capRow":'..capRow..
-            ',"childId":'..quote(actualChild:getID())..',"exactSelection":true,"groupSemantics":true,"itemSemantics":true,"repeatedRefresh":true,"shiftRange":true}')
+            ',"childId":'..quote(actualChild:getID())..',"exactSelection":true,"groupSemantics":true,"itemSemantics":true,"repeatedRefresh":true,"shiftRange":true'..
+            ',"markerPasses":'..markerPasses..',"markerGeometry":true}')
     end
     Events.OnGameStart.Add(function() started=true;nextAt=getTimestampMs()+2500 end)
     Events.OnTick.Add(function()
@@ -159,6 +234,19 @@ function F.start(config)
             if not inventory then prepare() end
             local mode=modes[modeIndex]
             if not mode then done=true;print('[PIN_ITEMS] COMPLETE selection');return end
+            if F.shotPhase then
+                -- Screenshot reads the last completed frame, not this tick's draw calls.
+                getCore():TakeFullScreenshot('pin-markers-'..mode..'-'..F.shotPhase..'.png')
+                if F.shotPhase=='collapsed' then
+                    local pane=getPlayerInventory(0).inventoryPane
+                    pane.collapsed[groupFor(pane,stack[1]).name]=false
+                    render(pane)
+                    F.shotPhase='expanded';nextAt=getTimestampMs()+750
+                else
+                    modeIndex=modeIndex+1;F.modeReady=false;F.shotPhase=nil;nextAt=getTimestampMs()+100
+                end
+                return
+            end
             if not F.modeReady then
                 if clean then CleanUI_setCleanInventoryUIEnabled(mode=='clean') end
                 F.modeReady=true;nextAt=getTimestampMs()+700;return
@@ -168,7 +256,7 @@ function F.start(config)
             if not passed then
                 print('[PIN_ITEMS] SELECTION {"mode":'..quote(mode)..',"status":"failed","reason":'..quote(reason)..'}')
             end
-            modeIndex=modeIndex+1;F.modeReady=false;nextAt=getTimestampMs()+100
+            F.shotPhase='collapsed';nextAt=getTimestampMs()+750
         end)
         if not ok then done=true;print('[PIN_ITEMS] FAIL selection '..tostring(err)) end
     end)

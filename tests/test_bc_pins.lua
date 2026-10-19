@@ -1,6 +1,5 @@
 local gate = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/000ToolkitBCPinsCompatibility.lua'
 local classesPath = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryClasses.lua'
-local function noop() end
 local function wipe(value) for key in pairs(value) do value[key] = nil end end
 local function item(name)
     return {getFullType = function() return 'Base.' .. name end, name = name}
@@ -43,8 +42,18 @@ local function setup(active)
     env._G = env
     env.instanceof = function(value, name) return name == 'InventoryItem' and value and value.getFullType ~= nil end
     env.getActivatedMods = function() return {contains = function(_, id) return active and id == 'EURY_CONTAINERS' end} end
+    w.texture = {}
+    env.getTexture = function(path)
+        assert(path == 'media/ui/BetterContainers/PinnedItemMarker.png', 'pin marker texture changed')
+        return not w.missingTexture and w.texture or nil
+    end
     local function class()
-        local value = {MAX_ITEMS_IN_STACK_TO_RENDER = 50, renderdetails = noop}
+        local value = {MAX_ITEMS_IN_STACK_TO_RENDER = 50}
+        value.renderdetails = function(pane, doDragged)
+            pane.nativeRenderCalls = (pane.nativeRenderCalls or 0) + 1
+            if not doDragged then pane.items = rowMap(pane) end
+            return 'native render result'
+        end
         value.saveSelection = function(pane, selected)
             for _, row in pairs(pane.selected) do
                 if row.getFullType then selected[row] = 'item'
@@ -101,9 +110,7 @@ local function setup(active)
             w.pins._paneVisualPatched = true
             local target = env.ISInventoryPane
             w.visualCalls[target] = (w.visualCalls[target] or 0) + 1
-            if w.visualError then error('fixture visual installer failed') end
-            local render = target.renderdetails
-            target.renderdetails = function(pane, ...) pane.markerCalls = (pane.markerCalls or 0) + 1; return render(pane, ...) end
+            error('upstream marker installer was not suppressed')
         end,
     }
     local classes, inventoryRows
@@ -128,6 +135,8 @@ local function setup(active)
     w.env = env
     w.pane = function(target, source, options)
         local pane = {source = source, itemslist = {}, items = {}, selected = {}, collapsed = {},
+            itemHgt = 32, headerHgt = 20, column2 = 100, markers = {},
+            drawTextureScaled = function(self, ...) self.markers[#self.markers + 1] = {...} end,
             inventoryPage = {onCharacter = false}, itemSortFunc = function(a, b)
                 if (a.matchesSearch == true) ~= (b.matchesSearch == true) then return a.matchesSearch == true end
                 return a.name < b.name
@@ -147,15 +156,16 @@ print('PASS BC pins inactive mod leaves dependencies and inventory classes untou
 
 w = setup(true)
 w.load()
-assert(w.pins._panePatched and w.env.PZSurvivorToolkit.BCPinCompatibility)
+assert(w.pins._panePatched and w.pins._paneVisualPatched and w.env.PZSurvivorToolkit.BCPinCompatibility)
 w.pins.installInventoryPaneSortPatch()
+w.pins.installInventoryPaneVisualPatch()
 assert(not w.temporarySortInstalled, 'upstream temporary comparator installer was not suppressed')
 assert(not next(w.visualCalls), 'Class hooks installed before later mods could replace their methods')
 w.OnGameBoot()
 local cleanRefresh, vanillaRefresh = w.clean.refreshContainer, w.vanilla.refreshContainer
 w.OnGameBoot(); w.OnGameStart(); w.callbacks[1](false); w.env.ISInventoryPane = w.vanilla; w.callbacks[1](true); w.load()
 assert(w.clean.refreshContainer == cleanRefresh and w.vanilla.refreshContainer == vanillaRefresh)
-assert(w.visualCalls[w.clean] == 1 and w.visualCalls[w.vanilla] == 1 and #w.callbacks == 1)
+assert(not next(w.visualCalls) and #w.callbacks == 1, 'upstream marker installer was not suppressed')
 assert(w.env.ISInventoryPane == w.vanilla and w.pins._paneVisualPatched)
 for _, target in ipairs({w.clean, w.vanilla}) do
     local pane = w.pane(target, {group('a'), group('b'), group('c'), group('d'), group('e')}, {lateSort = true})
@@ -164,9 +174,9 @@ for _, target in ipairs({w.clean, w.vanilla}) do
     assert(pane:refreshContainer() == 'native refresh result')
     assert(names(pane) == 'c,e,a,b,d' and pane.itemSortFunc == comparator)
     assert(#pane.itemslist == 5)
-    pane:renderdetails(false); assert(pane.markerCalls == 1)
+    assert(pane:renderdetails(false) == 'native render result' and pane.nativeRenderCalls == 1 and #pane.markers == 2)
 end
-print('PASS BC pins both classes retain comparator identity and stable priority after later sort; callbacks and visual aliases install once')
+print('PASS BC pins both classes retain comparator identity and stable priority after later sort; callbacks and owned markers install once')
 
 local pane = w.pane(w.clean, {group('a'), group('c')}, {inventoryPage = {onCharacter = true}})
 pane:refreshContainer(); assert(names(pane) == 'a,c')
@@ -278,13 +288,83 @@ pane.selected = {[2] = a}; pane:refreshContainer()
 assert(names(pane) == 'c,a' and pane.selected[2] == a and #pane.unfilteredRows == 3 and pane.restores < 8)
 print('PASS BC pins survives Toolkit-style filter reapplication without recursion or hidden-row loss')
 
-w = setup(true); w.visualError = true
-local active = w.env.ISInventoryPane
-local ok, err = pcall(function() w.load(); w.OnGameBoot() end)
-assert(not ok and tostring(err):find('fixture visual installer failed', 1, true))
-assert(w.env.ISInventoryPane == active and not w.pins._paneVisualPatched,
-    'visual installer failure leaked temporary global class or flag')
-print('PASS BC pins visual installer errors restore active global and flag before propagating')
+-- Native rendering is the authority for the visible header rows, including hidden equipment.
+for _, enhanced in ipairs({true, false}) do
+    for _, hidden in ipairs({true, false}) do
+        w = setup(true); w.load(); w.OnGameBoot(); w.showPlayer = true
+        local targetClass = enhanced and w.clean or w.vanilla
+        local separator = {name = 'equipment-header', type = 'separator', items = {}}
+        local equipment, wide, tail = group('equipment', {equipped = true}), group('wide'), group('tail')
+        for index = 1, 60 do wide.items[index + 1] = item('child-' .. index) end
+        w.favourites = {['Base.equipment'] = true, ['Base.wide'] = true, ['Base.tail'] = true, ['Base.child-1'] = true}
+        pane = w.pane(targetClass, {separator, equipment, wide, tail},
+            {fixedOrder = true, equippedCollapsed = hidden, inventoryPage = {onCharacter = true}})
+        pane.collapsed.wide = false
+        pane:refreshContainer()
+        pane.items = {tail} -- The renderer replaces this stale cache before the overlay runs.
+        pane:renderdetails(false)
+        local firstRow = hidden and 2 or 3
+        assert(#pane.markers == (hidden and 2 or 3), 'markers included hidden equipment or physical children')
+        local offset = hidden and 0 or 1
+        if not hidden then
+            assert(pane.markers[1][3] == pane.headerHgt + pane.itemHgt, 'visible equipment marker lost its rendered row')
+        end
+        assert(pane.markers[offset + 1][3] == pane.headerHgt + (firstRow - 1) * pane.itemHgt,
+            'pin marker did not follow the actual rendered header after equipment was hidden')
+        assert(pane.markers[offset + 2][3] == pane.headerHgt + (firstRow + 50) * pane.itemHgt,
+            'pin marker counted unrendered expanded-stack children')
+        for _, marker in ipairs(pane.markers) do
+            assert(marker[1] == w.texture and marker[2] == 70 and marker[4] == 11 and marker[5] == 11,
+                'upstream marker texture, horizontal position or size changed')
+            for index = 6, 9 do assert(marker[index] == 1, 'upstream marker color changed') end
+        end
+    end
+end
+print('PASS BC pin markers follow rendered headers with hidden/visible equipment, separators and capped stacks on both classes')
+
+for _, enhanced in ipairs({true, false}) do
+    w = setup(true); w.load(); w.OnGameBoot()
+    local targetClass = enhanced and w.clean or w.vanilla
+    local first, second = group('a'), group('b')
+    w.favourites = {['Base.a'] = true, ['Base.b'] = true}
+    pane = w.pane(targetClass, {first, second}, {inventoryPage = {onCharacter = true}})
+    pane:refreshContainer()
+    assert(pane:renderdetails(false) == 'native render result' and #pane.markers == 0,
+        'disabled player pins still drew markers or changed the renderer return')
+    w.showPlayer = true
+    pane:renderdetails(false); assert(#pane.markers == 2)
+    pane.markers = {}
+    assert(pane:renderdetails(true) == 'native render result' and #pane.markers == 0,
+        'dragged render drew duplicate markers or changed the renderer return')
+    pane.dragging, pane.dragStarted, pane.selected = {}, true, {[1] = first}
+    pane:renderdetails(false)
+    assert(#pane.markers == 1 and pane.markers[1][3] == pane.headerHgt + pane.itemHgt,
+        'dragging selected header was not suppressed at its rendered row')
+    pane.markers, pane.selected = {}, {[2] = first.items[1]}
+    pane.collapsed.a = false
+    pane:renderdetails(false)
+    assert(#pane.markers == 2, 'dragging physical child incorrectly suppressed its group marker')
+    pane.markers, pane.dragStarted = {}, false
+    pane:renderdetails(false); assert(#pane.markers == 2, 'pending drag suppressed markers before drag started')
+    pane.markers, pane.itemHgt = {}, 9
+    pane:renderdetails(false)
+    assert(#pane.markers == 2 and pane.markers[1][4] == 9 and pane.markers[1][2] == 93,
+        'small marker size or icon-relative x geometry changed')
+    pane.markers, pane.itemHgt = {}, 7
+    pane:renderdetails(false); assert(#pane.markers == 0, 'marker smaller than eight pixels was rendered')
+    pane.itemHgt, w.missingTexture = 32, true
+    pane:renderdetails(false); assert(#pane.markers == 0, 'missing marker texture was rendered')
+end
+print('PASS BC pin markers preserve player option, native return, drag suppression, texture and size guards on both classes')
+
+for _, flag in ipairs({'_panePatched', '_paneVisualPatched'}) do
+    w = setup(true); w.pins[flag] = true
+    local render, refresh = w.clean.renderdetails, w.clean.refreshContainer
+    w.load(); w.OnGameBoot()
+    assert(w.clean.renderdetails == render and w.clean.refreshContainer == refresh and not w.env.PZSurvivorToolkit.BCPinCompatibility,
+        'wrong load order installed duplicate sort or visual hooks')
+end
+print('PASS BC pins wrong load order preserves already installed upstream methods')
 
 w = setup(true)
 w.env.OrganizedCategories = {splitStacksByDisplayCategory = function(current)

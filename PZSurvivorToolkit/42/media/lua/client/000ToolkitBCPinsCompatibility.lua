@@ -4,13 +4,14 @@ if PZSurvivorToolkit.BCPinCompatibility then return end
 local Classes = require 'PZSurvivorToolkit/InventoryClasses'
 local Rows = require 'PZSurvivorToolkit/InventoryRows'
 local Pins = require 'BetterContainers/Upgrades/PinnedItems'
-if Pins._panePatched then
+if Pins._panePatched or Pins._paneVisualPatched then
     print('[PZSurvivorToolkit] Pin compatibility needs Toolkit before Better Containers')
     return
 end
 PZSurvivorToolkit.BCPinCompatibility = true
--- Apply pins to finished rows; a temporary comparator also hides CleanUI's weight-sort identity.
-Pins._panePatched = true
+-- Toolkit owns row ordering and marker placement; BC keeps pin state and options.
+-- A temporary comparator also hides CleanUI's weight-sort identity.
+Pins._panePatched, Pins._paneVisualPatched = true, true
 local installed = {}
 
 local function itemRow(row)
@@ -60,6 +61,26 @@ local function finishRows(pane, selected, anchor)
     Rows.restoreAnchor(pane, anchor)
 end
 
+local function drawPins(pane, doDragged)
+    if doDragged or not Pins.displayPinnedItem(pane.inventoryPage) or not pane.items then return end
+    local texture = getTexture('media/ui/BetterContainers/PinnedItemMarker.png')
+    if not texture then return end
+    local size = math.min(11, pane.itemHgt)
+    if size < 8 then return end
+    local itemSize = math.min(pane.itemHgt - 2, 32)
+    local x = pane.column2 - itemSize - (pane.itemHgt - itemSize) / 2 + 1
+    -- The renderer owns visible rows, including hidden equipment and stack limits.
+    for index, row in ipairs(pane.items) do
+        if type(row) == 'table' and row.type ~= 'separator' and not row._bcEquippedAttachedSeparator then
+            local item = row.items and row.items[1]
+            if item and item.getFullType and Pins.isFavourite(item:getFullType())
+                and not (pane.dragging ~= nil and pane.dragStarted and pane.selected and pane.selected[index] ~= nil) then
+                pane:drawTextureScaled(texture, x, (index - 1) * pane.itemHgt + pane.headerHgt, size, size, 1, 1, 1, 1)
+            end
+        end
+    end
+end
+
 local function install(class)
     if not class or installed[class] then return end
     installed[class] = true
@@ -74,12 +95,12 @@ local function install(class)
         finishRows(pane, pane:saveSelection({}), anchor)
         return result
     end
-    -- BC's marker installer accepts only the global class and otherwise skips the alternate pane.
-    local active, patched = ISInventoryPane, Pins._paneVisualPatched
-    ISInventoryPane, Pins._paneVisualPatched = class, false
-    local ok, err = pcall(Pins.installInventoryPaneVisualPatch)
-    ISInventoryPane, Pins._paneVisualPatched = active, patched or ok
-    if not ok then error(err) end
+    local render = class.renderdetails
+    class.renderdetails = function(pane, doDragged, ...)
+        local result = render(pane, doDragged, ...)
+        drawPins(pane, doDragged)
+        return result
+    end
 end
 
 local splitInstalled

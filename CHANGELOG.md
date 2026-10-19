@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.122
+
+- **Fixed:** Better Containers pin markers now follow the inventory's rendered rows, including hidden CleanUI equipment and expanded stacks. Toolkit draws the markers directly while BC retains pin settings, menus and assets; removed the global pane swap used to install BC's separate row renderer.
+
 ### 0.1.121
 
 - **Fixed:** Restored the reviewed Project Cook 1.4.10 action-queue integration, including batch completion and automatic dish returns. The new return producer keeps its operation ownership; changed configuration helpers remain protected.
