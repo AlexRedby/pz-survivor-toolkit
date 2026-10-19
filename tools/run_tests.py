@@ -32,6 +32,7 @@ EXTRA_TESTS = (
     'test_cci_compat.lua',
     'test_item_details.lua',
     'test_clothing_repair_menu.lua',
+    'test_clothing_inspection.lua',
     'test_tv_videos.lua',
     'test_vhs_ownership.lua',
     'test_vehicle_ground.lua',
@@ -188,6 +189,10 @@ def main() -> None:
             lua.globals().CCISource = args.cci_source.read_text(encoding="utf-8")
         if name == "test_clothing_repair_menu.lua" and args.native_inventory_context_menu:
             lua.globals().NativeGarmentSource = (args.native_inventory_context_menu.parent / "ISGarmentUI.lua").read_text(encoding="utf-8")
+        if name == "test_clothing_inspection.lua" and args.native_inventory_context_menu and args.native_action_root:
+            lua.globals().NativeInventoryContextMenuSource = args.native_inventory_context_menu.read_text(encoding="utf-8")
+            lua.globals().NativeGarmentSource = (args.native_inventory_context_menu.parent / "ISGarmentUI.lua").read_text(encoding="utf-8")
+            lua.globals().NativeTransferSource = (args.native_action_root / "client/TimedActions/ISInventoryTransferAction.lua").read_text(encoding="utf-8")
         if name == "test_item_details.lua" and args.item_details_source:
             for global_name, filename in (("ItemDetailsSource", "BravoItemDetails.lua"),
                                           ("ItemDetailsConfigSource", "BravoItemDetailsConfig.lua"),

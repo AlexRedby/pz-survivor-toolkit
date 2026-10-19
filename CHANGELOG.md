@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.109
+
+- **Fixed:** Inspecting clothing from storage uses the item delivered to the player's inventory in Host/multiplayer, keeping the inspection window open after transfer. Delayed cart deliveries get a bounded wait; carried-item and single-player inspection retain the native window.
+
 ### 0.1.108
 
 - **Fixed:** The action queue window remembers each local player's moved position when the native queue is replaced or disappears during the current game session.
