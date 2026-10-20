@@ -1,5 +1,5 @@
 -- Adapted from Bravo Item Details v0.0.12 by Bravo.
-local config = require("PZSurvivorToolkit/InventoryDetailOptions").config
+local Options = require "PZSurvivorToolkit/InventoryDetailOptions"
 local Details = require "PZSurvivorToolkit/InventoryDetails"
 local Rows = require "PZSurvivorToolkit/InventoryRows"
 
@@ -92,32 +92,30 @@ local Sorter = {
     },
 }
 
-Sorter.config = config
-
 local function sortFunction(item)
     if instanceof(item, "Drainable") and item:getUseDelta() > 0 then
-        return Sorter.uses[config.usesSortDir]
+        return Sorter.uses[Options.usesSortDir:getValue()]
     elseif instanceof(item, "HandWeapon") then
-        return Sorter.weapon[config.weaponSortDir]
+        return Sorter.weapon[Options.weaponSortDir:getValue()]
     elseif item:hasTag(ItemTag.SHOW_CONDITION) or item:hasTag(ItemTag.SHARPENABLE) or item:getDisplayCategory() == "Tool" then
-        return Sorter.tools[config.weaponSortDir]
+        return Sorter.tools[Options.weaponSortDir:getValue()]
     elseif Details.isConditionItem(item) then
-        return Sorter.condition[config.vehicleSortDir]
+        return Sorter.condition[Options.vehicleSortDir:getValue()]
     elseif item:getMaxAmmo() > 0 then
         return Sorter.ammo[1]
     elseif instanceof(item, "Food") and item:getHungerChange() ~= 0 then
-        return Sorter.hunger[config.foodSortDir]
+        return Sorter.hunger[Options.foodSortDir:getValue()]
     elseif item:isFluidContainer() or (instanceof(item:getWorldItem(), "IsoWorldInventoryObject") and item:getWorldItem():getFluidContainer()) then
-        return Sorter.fluid[config.fluidSortDir]
+        return Sorter.fluid[Options.fluidSortDir:getValue()]
     elseif instanceof(item, "Clothing") and not item:isCosmetic() then
-        return Sorter.clothes[config.clothesSortDir]
+        return Sorter.clothes[Options.clothesSortDir:getValue()]
     end
 end
 
 -- Called by the inventory owner after its class-specific native refresh.
 function Sorter.refresh(pane, class, anchor)
-    if not config.enableSort then return end
-    local maxSort = math.floor(tonumber(config.maxSort) or class.MAX_ITEMS_IN_STACK_TO_RENDER or 50)
+    if not Options.enableSort:getValue() then return end
+    local maxSort = math.floor(tonumber(Options.maxSort:getValue()) or class.MAX_ITEMS_IN_STACK_TO_RENDER or 50)
     if maxSort < 1 then return end
     local selected = pane:saveSelection({})
     for _, stack in ipairs(pane.itemslist) do

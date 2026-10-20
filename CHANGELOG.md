@@ -15,6 +15,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.168
+
+- **Changed:** Item Details reads the native Mod Options values directly instead of maintaining a second configuration synchronized on Apply and main-menu entry. Existing preferences, display settings and bounded stack sorting are preserved.
+- **Fixed:** Toggling loose-item highlighting no longer refreshes unrelated inventory panes, TV controls or context menus. Applying the full Toolkit options still updates the affected features.
+
 ### 0.1.167
 
 - **Fixed:** In Host, ordinary VHS insertion keeps its pending playback when the TV state or tape removal arrives before native completion. The exact started insertion waits for correlated server completion and both effects, including with the Toolkit queue disabled; explicit cancellation and native failure still clear ordinary pending work.

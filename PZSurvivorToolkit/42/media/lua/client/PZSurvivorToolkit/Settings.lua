@@ -12,10 +12,14 @@ local DEFAULT_TOGGLE_KEY = Keyboard.KEY_F8
 local DEFAULT_RADIUS = 15
 local RADIUS_BY_INDEX = { 5, 10, 15, 20 }
 
-local function notifySettingsChanged()
+local function notifyHighlightChanged()
     if Toolkit.Highlighter and Toolkit.Highlighter.settingsChanged then
         Toolkit.Highlighter.settingsChanged()
     end
+end
+
+local function notifySettingsChanged()
+    notifyHighlightChanged()
     if Toolkit.TVRadio then
         Toolkit.TVRadio.settingsChanged()
     end
@@ -289,7 +293,7 @@ function Settings.toggle()
     end
     enabledOption:setValue(not Settings.isEnabled())
     PZAPI.ModOptions:save()
-    notifySettingsChanged()
+    notifyHighlightChanged()
 end
 
 function Settings.bulkRemoveBatteries()

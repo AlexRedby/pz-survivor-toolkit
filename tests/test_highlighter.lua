@@ -660,6 +660,30 @@ test("cleanup makes progress while the game is paused", function()
     equal(w.highlighter.getStatus().clearing, false)
 end)
 
+test("highlight toggle leaves unrelated inventory, media and menu state alone", function()
+    local w = setup(nil, true)
+    local notifications = {highlight = 0, inventory = 0, media = 0, menu = 0}
+    w.highlighter.settingsChanged = function() notifications.highlight = notifications.highlight + 1 end
+    for feature, key in pairs({InventoryFilter = "inventory", TVRadio = "media", ContextMenus = "menu"}) do
+        local name = key
+        PZSurvivorToolkit[feature] = {settingsChanged = function()
+            notifications[name] = notifications[name] + 1
+        end}
+    end
+    w.settings.toggle()
+    equal(w.settings.isEnabled(), false)
+    equal(w.saves, 1)
+    equal(notifications.highlight, 1)
+    equal(notifications.inventory, 0)
+    equal(notifications.media, 0)
+    equal(notifications.menu, 0)
+    w.options:apply()
+    equal(notifications.highlight, 2)
+    equal(notifications.inventory, 1)
+    equal(notifications.media, 1)
+    equal(notifications.menu, 1)
+end)
+
 test("settings Apply notifies once after all option values are committed", function()
     local w = setup(nil, true)
     local observed = {}

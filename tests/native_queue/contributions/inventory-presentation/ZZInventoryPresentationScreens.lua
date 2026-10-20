@@ -8,7 +8,7 @@ local function shot(name)
     getCore():TakeFullScreenshot('inventory-' .. name .. '.png')
     print('[INVENTORY_SCREEN] SHOT ' .. name)
 end
-local function options() return require('PZSurvivorToolkit/InventoryDetailOptions').config end
+local function options() return require('PZSurvivorToolkit/InventoryDetailOptions') end
 local function observe(target)
     if not iconObserver then
         iconObserver = ISInventoryItem.renderItemIcon
@@ -162,7 +162,7 @@ add(function()
     for i=1,7 do
         local b=item('Base.Battery'); b:setUsedDelta(i/8); batteries[#batteries+1]=b
     end
-    local c=options(); c.showLabels=true; c.showBars=true; c.showNumeric=true; c.showNutritionist=true
+    local c=options(); c.showLabels:setValue(true); c.showBars:setValue(true); c.showNumeric:setValue(true); c.showNutritionist:setValue(true)
     local bc=require 'BetterContainers/_Options'; bc.showAdvancedDisplayCategories=false
     print('[INVENTORY_SCREEN] SETUP nativeItems=15 externalOwners=false')
     inventory(true)
@@ -184,7 +184,7 @@ local function batteryGroup()
     error('native battery stack missing')
 end
 add(function()
-    options().enableSort=false; options().maxSort='3'
+    options().enableSort:setValue(false); options().maxSort:setValue('3')
     pane:refreshContainer(); local group=batteryGroup(); pane.collapsed[group.name]=false; pane:refreshContainer()
     group=batteryGroup(); baseline={}; tail={}
     local first=group.cleanUIFirstActualIndex or 2
@@ -199,7 +199,7 @@ add(function()
     for index, row in ipairs(pane.items) do if row==selected then selectedRow=index end end
     assert(selectedRow,'physical child not in rendered rows')
     pane.selected={[selectedRow]=selected}; pane.firstSelect=selectedRow
-    options().enableSort=true; pane:refreshContainer()
+    options().enableSort:setValue(true); pane:refreshContainer()
 end)
 add(function()
     local group=batteryGroup(); local children={}

@@ -1,8 +1,8 @@
 -- Adapted from Bravo Item Details v0.0.12 by Bravo.
 -- This module only draws details. The inventory owner chooses when to invoke it
 -- and retains each inventory class's native fallback for unhandled items.
-local config = require("PZSurvivorToolkit/InventoryDetailOptions").config
-local Details = {config = config}
+local Options = require "PZSurvivorToolkit/InventoryDetailOptions"
+local Details = {}
 
 function Details.isConditionItem(item)
     local category, fullType = item:getDisplayCategory(), item:getFullType()
@@ -24,7 +24,9 @@ local function progressColor(fraction)
 end
 
 function Details.draw(pane, item, y, xoff, yoff, red, layout)
-    if not item or not (config.showLabels or config.showBars or config.showNumeric) then return false end
+    if not item then return false end
+    local showLabels, showBars, showNumeric = Options.showLabels:getValue(), Options.showBars:getValue(), Options.showNumeric:getValue()
+    if not (showLabels or showBars or showNumeric) then return false end
     local good, bad = getCore():getGoodHighlitedColor(), getCore():getBadHighlitedColor()
     local textColor = red and rgb(bad) or {r=0.6, g=0.6, b=0.8}
     local barColor = rgb(good)
@@ -53,17 +55,17 @@ function Details.draw(pane, item, y, xoff, yoff, red, layout)
         pane:drawText(value, x, textY, color.r, color.g, color.b, 0.5, pane.font)
     end
     local function label(value)
-        if config.showLabels then text(value); x = x + width(value) + 10 end
+        if showLabels then text(value); x = x + width(value) + 10 end
     end
     local function bar(fraction, color, force)
-        if config.showBars or force then
+        if showBars or force then
             reserve(80)
             pane:drawProgressBar(x, barY, 80, 3, fraction, color)
             x = x + 90
         end
     end
     local function numeric(value, maximum)
-        if config.showNumeric then
+        if showNumeric then
             x = x + width(maximum) - width(value)
             text(value)
             x = x + width(value) + 10
@@ -123,7 +125,7 @@ function Details.draw(pane, item, y, xoff, yoff, red, layout)
 
     if item:getMaxAmmo() > 0 then
         local ammoLabel = getText("Tooltip_weapon_AmmoCount") .. ":"
-        if config.showLabels then
+        if showLabels then
             local ammoItem = getScriptManager():FindItem(item:getAmmoType():getItemKey())
             if ammoItem then ammoLabel = ammoItem:getDisplayName() .. ":" end
         end
@@ -150,13 +152,13 @@ function Details.draw(pane, item, y, xoff, yoff, red, layout)
             label(cookingLabel)
             if item:isBurnt() then return true end
             bar(fraction, barColor, true)
-            if config.showNumeric then centered(round(fraction * 100) .. "%", "100%") end
+            if showNumeric then centered(round(fraction * 100) .. "%", "100%") end
             handled = true
         elseif item:getFreezingTime() > 0 then
             local fraction = item:getFreezingTime() / 100
             label(getText("IGUI_invpanel_FreezingTime") .. ":")
             bar(fraction, {r=0, g=0, b=1, a=1})
-            if config.showNumeric then centered(round(fraction * 100) .. "%", "100%") end
+            if showNumeric then centered(round(fraction * 100) .. "%", "100%") end
             handled = true
         elseif hunger ~= 0 then
             label(getText("IGUI_invpanel_Nutrition") .. ":")
@@ -164,8 +166,8 @@ function Details.draw(pane, item, y, xoff, yoff, red, layout)
             handled = true
         end
         if handled then
-            if config.showNumeric then centered(tostring(round(hunger * 100)), "-000", rgb(good)) end
-            if config.showNutritionist and getPlayer():hasTrait(CharacterTrait.NUTRITIONIST2) then
+            if showNumeric then centered(tostring(round(hunger * 100)), "-000", rgb(good)) end
+            if Options.showNutritionist:getValue() and getPlayer():hasTrait(CharacterTrait.NUTRITIONIST2) then
                 local values = {round(item:getCalories()), round(item:getCarbohydrates()), round(item:getProteins()), round(item:getLipids())}
                 if values[1] > 0 or values[2] > 0 or values[3] > 0 or values[4] > 0 then
                     local icons = {"calories", "carbs", "proteins", "lipids"}
@@ -185,7 +187,7 @@ function Details.draw(pane, item, y, xoff, yoff, red, layout)
     if item:isFluidContainer() or (instanceof(item:getWorldItem(), "IsoWorldInventoryObject") and item:getWorldItem():getFluidContainer()) then
         local fluidContainer = item:getFluidContainer() or item:getWorldItem():getFluidContainer()
         local amount, capacity = fluidContainer:getAmount(), fluidContainer:getCapacity()
-        if config.showLabels then
+        if showLabels then
             local fluidLabel = getText("Fluid_Empty") .. ": "
             if amount > 0 then
                 local fluids, names = Fluid.getAllFluids(), {}

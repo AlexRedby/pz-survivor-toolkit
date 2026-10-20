@@ -1,30 +1,49 @@
 local moduleRoot = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/'
 local function run(initialEnhanced, lateVanilla)
-    local options, config = {}, {}
-    local menuCallback
-    PZAPI = {ModOptions={getOptions=function(_, id) return options[id] end}}
-    function PZAPI.ModOptions:create(id, title)
-        local value = {dict={},title=title}
-        options[id] = value
-        function value:addDescription() end
-        function value:addTickBox(id, _, default, tooltip)
-            local option = {type='tickbox', value=default, tooltip=tooltip, getValue=function(self) return self.value end}
-            self.dict[id] = option
-            return option
+    local options = {}
+    if NativeModOptionsSource then
+        PZAPI = nil
+        assert(loadstring(NativeModOptionsSource))()
+        options = PZAPI.ModOptions.Dict
+    else
+        PZAPI = {ModOptions={getOptions=function(_, id) return options[id] end}}
+        function PZAPI.ModOptions:create(id, title)
+            local value = {dict={},title=title}
+            options[id] = value
+            function value:addDescription() end
+            function value:addTickBox(id, _, default, tooltip)
+                local option = {type='tickbox', value=default, tooltip=tooltip, getValue=function(self) return self.value end,
+                    setValue=function(self, value) self.value=value end}
+                self.dict[id] = option
+                return option
+            end
+            value.addTextEntry = value.addTickBox
+            function value:addComboBox(id)
+                local option = {type='combobox',value=1,getValue=function(self) return self.value end,
+                    setValue=function(self, value) self.value=value end}
+                function option:addItem(_, selected) if selected then self.value = 1 end end
+                self.dict[id] = option
+                return option
+            end
+            return value
         end
-        value.addTextEntry = value.addTickBox
-        function value:addComboBox(id)
-            local option = {type='combobox',value=1,getValue=function(self) return self.value end}
-            function option:addItem(_, selected) if selected then self.value = 1 end end
-            self.dict[id] = option
-            return option
-        end
-        return value
     end
-    Events = {OnMainMenuEnter={Add=function(callback) menuCallback=callback end}}
+    Events = {}
     ItemTag = {SHOW_CONDITION='ShowCondition',SHARPENABLE='Sharpenable'}
     instanceof = function(item, class) return item and ((class=='InventoryItem' and item.condition~=nil) or item.kind==class) or false end
-    luautils = {stringStarts=function(value, prefix) return value:sub(1,#prefix)==prefix end}
+    luautils = {stringStarts=function(value, prefix) return value:sub(1,#prefix)==prefix end,
+        split=function(value, separator)
+            local parts={}; for part in value:gmatch('[^'..separator..']+') do parts[#parts+1]=part end
+            return parts
+        end}
+    local function loadPersisted(text)
+        getFileReader=function()
+            local lines={}; for line in text:gmatch('[^\r\n]+') do lines[#lines+1]=line end
+            local index=0
+            return {readLine=function() index=index+1; return lines[index] end,close=function() end}
+        end
+        PZAPI.ModOptions:load()
+    end
     round = function(value, precision) local scale=10^(precision or 0); return math.floor(value*scale+0.5)/scale end
     local function color(r,g,b)
         return {getR=function() return r end,getG=function() return g end,getB=function() return b end,
@@ -108,18 +127,16 @@ local function run(initialEnhanced, lateVanilla)
     local Settings = require "PZSurvivorToolkit/InventoryDetailOptions"
     local Details = require "PZSurvivorToolkit/InventoryDetails"
     local sorter = require "PZSurvivorToolkit/InventoryDetailSort"
-    config = Settings.config
+    local function setOptions(values)
+        for name, value in pairs(values) do Settings[name]:setValue(value) end
+    end
     assert(ISInventoryPane.drawItemDetails == nativeDraw and ISInventoryPane.refreshContainer == nativeRefresh,
         'owned modules installed monkeypatches')
-    assert(config == Details.config and config == sorter.config)
-    assert(config.showNumeric and config.enableSort and config.maxSort == '50', 'defaults missing before main menu')
-    assert(options.BravoItemDetails.title == 'Toolkit Item Details', 'persisted option namespace or Toolkit title lost')
+    assert(Settings.showNumeric:getValue() and Settings.enableSort:getValue() and Settings.maxSort:getValue() == '50',
+        'defaults missing before main menu')
+    assert((options.BravoItemDetails.title or options.BravoItemDetails.name) == 'Toolkit Item Details',
+        'persisted option namespace or Toolkit title lost')
     assert(string.format(options.BravoItemDetails.dict.showNumeric.tooltip) == 'Show the numeric value (x/y or x%)')
-    options.BravoItemDetails.dict.vehicleSortDir.value=2
-    menuCallback()
-    assert(config.vehicleSortDir==2, 'main-menu application ignored persisted preferences')
-    options.BravoItemDetails.dict.vehicleSortDir.value=1
-    options.BravoItemDetails:apply()
     -- Model the inventory owner's explicit integration, including each class's
     -- own fallback and native-refresh failure propagation.
     for _,class in ipairs({enhanced,vanilla}) do
@@ -174,6 +191,24 @@ local function run(initialEnhanced, lateVanilla)
     local function equal(actual, expected, label)
         assert(#actual==#expected, label..' count: '..#actual..' expected '..#expected)
         for i,value in ipairs(expected) do assert(actual[i]==value, label..' value '..i..': '..tostring(actual[i])) end
+    end
+    if NativeModOptionsSource then
+        -- Vanilla load changes the option objects without Apply or a main-menu event.
+        loadPersisted('tickbox|BravoItemDetails|showBars|false\n'
+            ..'combobox|BravoItemDetails|vehicleSortDir|2\n'
+            ..'textentry|BravoItemDetails|maxSort|2\n')
+        local low,high,tail=item(20),item(80),item(5)
+        local view=draw(low)
+        assert(#view.bars==0 and #view.text==2, 'loaded display preference was not used by rendering')
+        view=pane({high,low,tail}); view:refreshContainer()
+        assert(view.itemslist[1].items[2]==low and view.itemslist[1].items[3]==high
+            and view.itemslist[1].items[4]==tail, 'loaded direction/limit did not preserve the bounded sort')
+        loadPersisted('tickbox|BravoItemDetails|showBars|true\n'
+            ..'combobox|BravoItemDetails|vehicleSortDir|1\n'
+            ..'textentry|BravoItemDetails|maxSort|50\n')
+        view=draw(low); assert(#view.bars==1, 'reloaded display preference remained stale')
+        view=pane({low,high}); view:refreshContainer()
+        assert(view.itemslist[1].items[2]==high, 'reloaded sort preference remained stale')
     end
     assert(Details.draw(pane({}),nil,0,0,0,false)==false, 'nil bypassed native fallback')
     local uses=item(3,'Other','Drainable')
@@ -241,21 +276,21 @@ local function run(initialEnhanced, lateVanilla)
     local hungerBound=baseline.bounds[3]
     local freshness={reservedLeft=hungerBound.x,reservedRight=hungerBound.x+#'100%'}
     rendered=draw(food,freshness); clearOf(rendered,freshness)
-    config.showLabels,config.showBars,config.showNumeric=false,false,true
+    setOptions{showLabels=false,showBars=false,showNumeric=true}
     rendered=draw(food,freshness); clearOf(rendered,freshness)
     assert(#rendered.text==0 and #rendered.bars==0 and #rendered.centers==5 and #rendered.textures==4,
         'reservation changed numeric/Nutritionist preferences')
-    config.showLabels,config.showBars,config.showNumeric=true,true,true
-    config.showNutritionist=false
+    setOptions{showLabels=true,showBars=true,showNumeric=true}
+    Settings.showNutritionist:setValue(false)
     rendered=draw(food,freshness); clearOf(rendered,freshness)
     assert(#rendered.textures==0,'Nutritionist toggle ignored')
-    config.showNutritionist=true; nutritionist=false
+    Settings.showNutritionist:setValue(true); nutritionist=false
     food.cookable,food.heat,food.cooking=true,2,5
-    config.showBars=false
+    Settings.showBars:setValue(false)
     rendered=draw(food)
     equal(rendered.text,{'IGUI_invpanel_Cooking:'},'cooking label')
     equal(rendered.bars,{0.5},'cooking bar always visible'); equal(rendered.centers,{'50%','-25'},'cooking stats')
-    config.showBars=true; food.cooking=15
+    Settings.showBars:setValue(true); food.cooking=15
     rendered=draw(food); equal(rendered.text,{'IGUI_invpanel_Burning:'},'burning label'); equal(rendered.bars,{0.5},'burning bar')
     food.cooking,food.burnt=25,true
     rendered=draw(food); equal(rendered.text,{'IGUI_invpanel_Burnt'},'burnt label'); equal(rendered.bars,{},'burnt bar')
@@ -284,15 +319,15 @@ local function run(initialEnhanced, lateVanilla)
     rendered,handled=draw(item(20,'Other')); assert(not handled and #rendered.text==0,'native details fallback lost')
     -- Preserve upstream presentation flags: gun ammo/attachments and clothing
     -- holes remain visible while any details representation is enabled.
-    config.showLabels,config.showBars,config.showNumeric=false,true,false
+    setOptions{showLabels=false,showBars=true,showNumeric=false}
     rendered=draw(weapon); equal(rendered.text,{'8/15'},'gun compact ammo'); equal(rendered.icons,{'Base.Magazine','scope','laser'},'gun compact icons')
     clothes.cosmetic=false
     rendered=draw(clothes); equal(rendered.text,{'(3)'},'clothes compact holes')
-    config.showLabels,config.showBars,config.showNumeric=false,false,false
+    setOptions{showLabels=false,showBars=false,showNumeric=false}
     for _,value in ipairs({uses,weapon,magazine,food,fluid,clothes}) do
         rendered,handled=draw(value); assert(not handled and #rendered.text==0 and #rendered.bars==0,'all-off did not use native fallback')
     end
-    config.showLabels,config.showBars,config.showNumeric=true,true,true
+    setOptions{showLabels=true,showBars=true,showNumeric=true}
     -- Comparator tiebreaks remain compatible with the upstream feature set.
     local sameA,sameB=item(50,'Other','HandWeapon'),item(50,'Other','HandWeapon')
     sameA.ammoMax,sameB.ammoMax,sameA.ammo,sameB.ammo=10,10,4,4
@@ -382,39 +417,39 @@ local function run(initialEnhanced, lateVanilla)
         view:drawItemDetails(low,0,0,0,false)
         assert(view.text[2]=='20%' and view.bars[1]==0.2,'organized vehicle condition missing')
         for _,flags in ipairs({{true,false,false},{false,true,false},{false,false,true},{false,false,false}}) do
-            config.showLabels,config.showBars,config.showNumeric=unpack(flags)
+            setOptions{showLabels=flags[1],showBars=flags[2],showNumeric=flags[3]}
             view.text,view.bars={},{}
             local before=#fallbacks
             view:drawItemDetails(high,0,0,0,false)
             assert(#view.text==(flags[1] and 1 or 0)+(flags[3] and 1 or 0) and #view.bars==(flags[2] and 1 or 0))
             if not (flags[1] or flags[2] or flags[3]) then assert(#fallbacks==before+1) end
         end
-        config.showLabels,config.showBars,config.showNumeric=true,true,true
+        setOptions{showLabels=true,showBars=true,showNumeric=true}
         local unknown=item(50,'Other'); unknown.fullType='Base.Unknown'
         local before=#fallbacks
         view:drawItemDetails(unknown,0,0,0,false)
         assert(#fallbacks==before+1 and fallbacks[#fallbacks][1]==(mode and 'enhanced' or 'vanilla'),'wrong UI native fallback')
-        config.vehicleSortDir=2
+        Settings.vehicleSortDir:setValue(2)
         view=pane({high,low}); view:refreshContainer()
         assert(view.itemslist[1].items[2]==low,'ascending vehicle setting ignored')
-        config.vehicleSortDir=1
+        Settings.vehicleSortDir:setValue(1)
         for _,limit in ipairs({'not-a-number','1.9'}) do
-            config.maxSort=limit
+            Settings.maxSort:setValue(limit)
             view=pane({low,high}); view:refreshContainer()
             assert(view.itemslist[1].items[2]==(limit=='1.9' and low or high),'sort limit validation failed')
         end
-        config.maxSort='50'
+        Settings.maxSort:setValue('50')
         for _,disabled in ipairs({'collapsed','setting','zero','negative','virtual'}) do
             view=pane({low,high})
             local beforeItems={unpack(view.itemslist[1].items)}
             if disabled=='collapsed' then view.collapsed.parts=true
-            elseif disabled=='setting' then config.enableSort=false
-            elseif disabled=='zero' then config.maxSort='0'
-            elseif disabled=='negative' then config.maxSort='-5'
+            elseif disabled=='setting' then Settings.enableSort:setValue(false)
+            elseif disabled=='zero' then Settings.maxSort:setValue('0')
+            elseif disabled=='negative' then Settings.maxSort:setValue('-5')
             else view.itemslist[1].cleanUIFirstActualIndex=1 end
             view:refreshContainer()
             for index,value in ipairs(beforeItems) do assert(view.itemslist[1].items[index]==value,'disabled sort mutated UI stack') end
-            config.enableSort,config.maxSort=true,'50'
+            setOptions{enableSort=true,maxSort='50'}
         end
         for _,category in ipairs({'mechanicsFuel','Other'}) do
             view=pane({item(20,category),item(85,category)})
@@ -429,10 +464,10 @@ local function run(initialEnhanced, lateVanilla)
             view=pane({low,high}); view:refreshContainer()
             assert(view.itemslist[1].items[2]==high,'upstream '..kind..' comparator not used')
             if kind~='Magazine' then
-                config.usesSortDir,config.weaponSortDir,config.foodSortDir,config.fluidSortDir,config.clothesSortDir=2,2,2,2,2
+                setOptions{usesSortDir=2,weaponSortDir=2,foodSortDir=2,fluidSortDir=2,clothesSortDir=2}
                 view=pane({high,low}); view:refreshContainer()
                 assert(view.itemslist[1].items[2]==low,'upstream '..kind..' ascending setting ignored')
-                config.usesSortDir,config.weaponSortDir,config.foodSortDir,config.fluidSortDir,config.clothesSortDir=1,1,1,1,1
+                setOptions{usesSortDir=1,weaponSortDir=1,foodSortDir=1,fluidSortDir=1,clothesSortDir=1}
             end
             local values={}
             for index=1,60 do

@@ -338,7 +338,7 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
         sourceCode=sourceCode:gsub('\r','')
         local real={MAX_ITEMS_IN_STACK_TO_RENDER=50,prerender=function() end,
             transferItemsByWeight=function() end,drawItemDetails=function() end}
-        local config={enableSort=true,maxSort=50}
+        local detailOptions={enableSort={getValue=function() return true end},maxSort={getValue=function() return 50 end}}
         local env=setmetatable({ISInventoryPane=real,CleanUI_Clean_ISInventoryPane=false,CleanUI_Vanilla_ISInventoryPane=false,
             CleanUI_RegisterInventoryUiToggleCallback=false,ISInventoryPageTransferHandler=false,
             ISInventoryCommonHandler_SortMenu=false,ISMouseDrag={},
@@ -364,7 +364,7 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
                 local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))
                 setfenv(chunk,env);return chunk()
             end
-            if name=='PZSurvivorToolkit/InventoryDetailOptions' then return {config=config} end
+            if name=='PZSurvivorToolkit/InventoryDetailOptions' then return detailOptions end
             if name=='PZSurvivorToolkit/InventoryCapacity' then return {} end
             if name=='PZSurvivorToolkit/InventoryDetails' then return {isConditionItem=function() return false end} end
             if name=='PZSurvivorToolkit/InventoryPlantingTooltip' or name=='PZSurvivorToolkit/InventoryMediaTooltip'
