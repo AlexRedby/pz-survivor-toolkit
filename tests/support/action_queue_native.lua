@@ -21,7 +21,7 @@ local function native(path)
     if NativeReadText then source=NativeReadText(NativeActionRoot..'/'..path)
     else local f=assert(io.open(NativeActionRoot..'/'..path));source=f:read('*a');f:close() end
     -- Stock Kahlua accepts this native suffix; Lua 5.1 used by the fixture does not.
-    assert(loadstring((source:gsub('(%d+%.%d+)f','%1'))))()
+    assert(loadstring((source:gsub('(%d+%.%d+)f','%1')), '@'..path))()
 end
 local function project(name)
     if name == 'ActionQueue' then project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end

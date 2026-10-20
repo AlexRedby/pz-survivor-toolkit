@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.128
+
+- **Changed:** Canceling a wholly unstarted operation with the verified native no-effect cancellation handler no longer treats shared resources with preceding work as a conflict. Dependencies of following operations, required cleanup, started work and custom cancellation handlers remain protected.
+
 ### 0.1.127
 
 - **Added:** The first sorting tag selected in the container editor fills empty name, icon and colour fields from that tag. An exact item supplies its own icon and its primary tag's colour, leaving the name empty. Existing values and subsequent manual edits are preserved; later selections do not change the suggestion.

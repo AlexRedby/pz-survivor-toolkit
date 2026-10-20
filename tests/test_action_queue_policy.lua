@@ -1,4 +1,20 @@
 if not NativeActionRoot then print('Policy native contracts SKIP (pass --native-action-root).');return end
+local function readNative(path)
+    if NativeReadText then return NativeReadText(path):gsub('\r','') end
+    local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')
+end
+local changedBaseSource=false
+getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+getGameFilesInput=function(path)
+    local text=readNative(NativeActionRoot..'/'..path:gsub('^media/lua/',''))
+    if changedBaseSource and path:find('ISBaseTimedAction.lua',1,true) then text=text..'-- unreviewed base source\n' end
+    local position=1
+    return {close=function()end,readLine=function()
+        if position>#text then return end
+        local boundary=text:find('\n',position,true) or #text+1
+        local line=text:sub(position,boundary-1);position=boundary+1;return line
+    end}
+end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 f.native('shared/Fluids/ISFluidContainer.lua')
 f.native('shared/Fluids/ISFluidTransferAction.lua')
@@ -37,11 +53,11 @@ local empty=f.action(ISFluidEmptyAction,{container=source,amount=5})
 local q=f.queue(head,transfer,empty)
 assert(policy.moveReason(q,empty,transfer)=='move_shared_item')
 assert(policy.moveReason(q,transfer,empty,true)=='move_shared_item')
-assert(policy.cancelOperationReason(q,empty)=='operation_shared_item')
+assert(not policy.cancelOperationReason(q,empty),'removing a pending tail cannot change the shared-resource prefix')
 local moveDecision=policy.evaluateMove(q,empty,transfer)
 assert(not moveDecision.allowed and moveDecision.blocker==transfer and moveDecision.resource==owner:getID())
 local cancelDecision=policy.evaluateCancel(q,empty,true)
-assert(not cancelDecision.allowed and cancelDecision.blocker==transfer and cancelDecision.resource==owner:getID())
+assert(cancelDecision.allowed and cancelDecision.first==3 and cancelDecision.last==3)
 local independent=vessel();local other=f.action(ISFluidEmptyAction,{container=independent})
 q=f.queue(head,transfer,other)
 assert(not policy.moveReason(q,other,transfer) and not policy.moveReason(q,transfer,other,true))
@@ -67,7 +83,7 @@ local before=ISFluidTransferAction.isValid
 ISFluidTransferAction.isValid=function() error('must not invoke native validation') end
 assert(policy.moveReason(f.queue(head,transfer,other),transfer,other,true)=='move_dependent')
 ISFluidTransferAction.isValid=before
-print('Policy native fluid resources, IDs, symmetric move/cancel, unknown lifecycle and async barriers passed.')
+print('Policy native fluid resources, IDs, directional cancellation, unknown lifecycle and async barriers passed.')
 
 -- Decision-local analysis is shared by every check, but never by later decisions or direct inspections.
 do
@@ -99,9 +115,10 @@ do
     inspections,collections={},{}
     result=policy.evaluateCancel(queue,independent)
     assert(result.allowed and result.first==3 and result.last==3)
-    for _,action in ipairs(queue.queue) do
-        assert(inspections[action]==1 and collections[action]==1,'delegated cancellation shares contracts and operation items')
-    end
+    assert(inspections[independent]==1 and collections[independent]==1,
+        'delegated cancellation analyzes the removed operation once')
+    assert(not inspections[head] and not inspections[transfer] and not collections[head] and not collections[transfer],
+        'side-effect-free pending removal does not inspect the unchanged prefix')
     independent.container=source
     inspections,collections={},{}
     result=policy.evaluateMove(queue,independent,transfer)
@@ -220,21 +237,26 @@ assert(not policy.moveReason(q,first,second,true) and not policy.moveReason(q,se
 assert(not policy.cancelOperationReason(q,first) and not policy.cancelOperationReason(q,second),
     'removing either independent waiting recipe does not change the other late selector')
 assert(policy.inspect(first).dynamicInputs['Base.Material'] and policy.inspect(first).outputTypes['Base.Product'])
-local function blocked(other,reason)
+local function blocked(other,reason,pendingTail)
     q=f.queue(head,first,other)
     assert(policy.moveReason(q,other,first)==reason and policy.moveReason(q,first,other,true)==reason)
     local cancel = reason == 'move_shared_item' and 'operation_shared_item' or 'operation_dependent'
-    assert(policy.cancelOperationReason(q,first)==cancel and policy.cancelOperationReason(q,other)==cancel)
+    assert(policy.cancelOperationReason(q,first)==cancel,'earlier resource producer/consumer remains protected against its suffix')
+    if pendingTail then
+        assert(not policy.cancelOperationReason(q,other),'native pending tail removal does not depend on the earlier craft')
+    else
+        assert(policy.cancelOperationReason(q,other)==cancel,'contracts outside pure pending removal retain conservative cancellation')
+    end
 end
 blocked(late('Base.Material','Base.Other'),'move_craft_inputs')
 blocked(late('Base.Product','Base.Other'),'move_craft_inputs')
 blocked(late('Base.Other','Base.Material'),'move_craft_inputs')
 blocked(late('Base.Other','Base.Product'),'move_craft_inputs')
-blocked(f.action(ISInventoryTransferAction,{item=f.item('Base.Material')}),'move_craft_inputs')
-blocked(f.action(ISInventoryTransferAction,{item=f.item('Base.Product')}),'move_craft_inputs')
+blocked(f.action(ISInventoryTransferAction,{item=f.item('Base.Material')}),'move_craft_inputs',true)
+blocked(f.action(ISInventoryTransferAction,{item=f.item('Base.Product')}),'move_craft_inputs',true)
 local selected=f.item('Base.Material')
 first.items=list(selected)
-blocked(f.action(ISInventoryTransferAction,{item=selected}),'move_shared_item')
+blocked(f.action(ISInventoryTransferAction,{item=selected}),'move_shared_item',true)
 first.items=nil
 local unknown=late('Base.Other','Base.Unrelated')
 unknown.craftRecipe.getScriptLines=function()return list('OnCreate = Mod.unknown,') end
@@ -472,7 +494,8 @@ local incomingB=f.action(ISInventoryTransferAction,{item=itemB,srcContainer=f.pl
 local function both(a,b,reason)
     local queue=f.queue(head,a,b)
     assert(policy.moveReason(queue,a,b,true)==reason and policy.moveReason(queue,b,a)==reason,'symmetric transfer move: '..tostring(reason))
-    assert(policy.cancelOperationReason(queue,a)==reason and policy.cancelOperationReason(queue,b)==reason,'symmetric transfer cancellation: '..tostring(reason))
+    assert(policy.cancelOperationReason(queue,a)==reason,'transfer cancellation retains suffix capacity checks: '..tostring(reason))
+    assert(not policy.cancelOperationReason(queue,b),'pending tail removal cannot invalidate earlier transfers')
 end
 both(outgoingA,outgoingB);both(incomingA,incomingB);both(outgoingA,incomingB)
 -- Equipment weight can invalidate a transfer of a different item, even with only one transfer.
@@ -648,6 +671,74 @@ instanceof=baseInstanceof
 do
     f.project('ActionQueueLabels')
     local api=f.project('ActionQueue')
+    local source,target=vessel(),vessel()
+    local prefix=f.action(ISFluidTransferAction,{source=source,target=target,amount=3,sourceStartAmount=5})
+    local waiting=f.action(ISFluidEmptyAction,{container=source,amount=5})
+    local queue=f.queue(head,prefix,waiting)
+    local emptied=0
+    source.fluidContainer.Empty=function(self)emptied=emptied+1;self.amount=0 end
+    local token=waiting.toolkitQueueOperation
+    assert(api.cancelOperation(queue,waiting) and #queue.queue==2 and queue.queue[1]==head and queue.queue[2]==prefix
+        and queue.current==head,'cancel shared-resource tail through the real queue operation without changing its prefix')
+    assert(token.toolkitCancelled and not prefix.toolkitQueueOperation.toolkitCancelled
+        and not head.toolkitQueueOperation.toolkitCancelled,'only the removed operation is invalidated')
+    assert(emptied==0 and source.fluidContainer.amount==5 and target.fluidContainer.amount==5
+        and prefix.source==source and prefix.target==target and prefix.amount==3 and prefix.sourceStartAmount==5,
+        'pending removal neither calls native completion nor spends fluid or rewrites preceding transfer data')
+    local control=f.action(ISFluidEmptyAction,{container=source,amount=5})
+    assert(control:complete() and emptied==1 and source.fluidContainer.amount==0,
+        'the unchanged native completion performs the observed resource mutation only when explicitly executed')
+    source.fluidContainer.amount=5
+    waiting=f.action(ISFluidEmptyAction,{container=source,amount=5})
+    queue=f.queue(head,prefix,waiting)
+    token=waiting.toolkitQueueOperation
+    token.toolkitStarted=true
+    assert(not api.cancelOperation(queue,waiting) and policy.cancelOperationReason(queue,waiting)=='operation_active'
+        and #queue.queue==3 and not token.toolkitCancelled,'a started token cannot claim pending removal')
+    token.toolkitStarted=nil
+    local continuation=PZSurvivorToolkit.ActionQueueOperations.attachContinuation(token,f.player)
+    assert(not api.cancelOperation(queue,waiting) and policy.cancelOperationReason(queue,waiting)=='operation_dependent'
+        and #queue.queue==3 and not token.toolkitCancelled,'a pending continuation keeps its operation intact')
+    PZSurvivorToolkit.ActionQueueOperations.finishContinuation(continuation)
+    local callbacks=0
+    waiting.onCancelFunc=function()callbacks=callbacks+1 end
+    assert(not api.cancelOperation(queue,waiting) and #queue.queue==3 and callbacks==0
+        and not token.toolkitCancelled,'unverified cancellation callbacks remain protected and are never invoked')
+    waiting.onCancelFunc=nil
+    waiting.forceCancel=function()callbacks=callbacks+1 end
+    assert(not api.cancelOperation(queue,waiting) and #queue.queue==3 and callbacks==0
+        and not token.toolkitCancelled,'a substituted forceCancel cannot grant pending removal')
+    waiting.forceCancel=nil
+    local guardedClass=ISBaseTimedAction:derive('GuardedPendingCancellation')
+    PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('fixture.pending-cancellation-callback',{
+        types={'GuardedPendingCancellation'},matches=function(action)return getmetatable(action)==guardedClass end,
+        inspect=function(action)return {items={},targets={},cancelWaiting=true,callbacksSafe=true,forceCancel=action.forceCancel}end,
+    })
+    for _,field in ipairs({'onCancelFunc','forceCancel'})do
+        local guarded=f.action(guardedClass)
+        guarded.toolkitQueueOperation=token
+        guarded[field]=function()callbacks=callbacks+1 end
+        local grouped=f.queue(head,prefix,waiting,guarded)
+        assert(policy.cancelOperationReason(grouped,waiting)=='operation_shared_item' and not api.cancelOperation(grouped,waiting)
+            and #grouped.queue==4 and callbacks==0 and not token.toolkitCancelled,
+            'every operation member must prove native no-effect removal, including audited '..field)
+    end
+    assert(not policy.cancelOperationReason(queue,waiting),'restored native cancellation permits the pending tail again')
+    queue=f.queue(head,waiting,prefix)
+    assert(policy.cancelOperationReason(queue,waiting)=='operation_shared_item' and not api.cancelOperation(queue,waiting)
+        and #queue.queue==3 and not token.toolkitCancelled,'removing an earlier shared-resource action still checks its downstream consumer')
+    local consumer=f.action(ISFluidEmptyAction,{container=target,amount=5})
+    queue=f.queue(head,prefix,consumer)
+    assert(policy.cancelOperationReason(queue,prefix)=='operation_shared_item' and not api.cancelOperation(queue,prefix)
+        and #queue.queue==3 and queue.queue[2]==prefix and queue.queue[3]==consumer
+        and not prefix.toolkitQueueOperation.toolkitCancelled and source.fluidContainer.amount==5
+        and target.fluidContainer.amount==5,'removing a pending producer still protects its downstream target consumer')
+    print('Pending cancellation: native resource effects, exact prefix, tokens, continuations, callbacks and downstream dependencies passed.')
+end
+
+do
+    f.project('ActionQueueLabels')
+    local api=f.project('ActionQueue')
     local function drink()
         local item,fluid=f.item('Base.WaterBottle'),{class='FluidContainer'}
         item.getFluidContainer=function()return fluid end
@@ -796,3 +887,32 @@ do
     instanceof,Fluid=oldInstanceof,oldFluid
     print('Drink capacity: grouped native water pickups/returns, full-weight bounds, unsafe fluids and callback barriers passed.')
 end
+
+-- Provenance is checked on a fresh policy instance, including a hook installed before its snapshot.
+for _,variant in ipairs({'foreign-force-cancel','changed-base-source','missing-source-reader'})do
+    local fresh=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
+    fresh.native('shared/Fluids/ISFluidContainer.lua')
+    fresh.native('shared/Fluids/ISFluidTransferAction.lua')
+    fresh.native('shared/Fluids/ISFluidEmptyAction.lua')
+    fresh.native('shared/TimedActions/ISTransferAction.lua')
+    fresh.native('shared/TimedActions/ISDrinkFluidAction.lua')
+    local invoked=0
+    if variant=='foreign-force-cancel'then ISBaseTimedAction.forceCancel=function()invoked=invoked+1 end end
+    changedBaseSource=variant=='changed-base-source'
+    local reader=getGameFilesInput
+    if variant=='missing-source-reader'then getGameFilesInput=nil end
+    fresh.project('ActionQueueOperations');fresh.project('ActionQueueDefinitions')
+    local guardedPolicy=fresh.project('ActionQueuePolicy')
+    local owner=fresh.item('Base.Bucket')
+    local fluid={class='FluidContainer',getOwner=function()return owner end}
+    local wrapper=setmetatable({fluidContainer=fluid,isFluidResource=false},ISFluidContainer)
+    local prefix=fresh.action(ISFluidEmptyAction,{container=wrapper})
+    local tail=fresh.action(ISFluidEmptyAction,{container=wrapper})
+    local current=fresh.action(ISReadABook,{item=fresh.item('Base.BookCarpentry1')})
+    local queue=fresh.queue(current,prefix,tail)
+    assert(guardedPolicy.cancelOperationReason(queue,tail)=='operation_shared_item' and invoked==0,
+        'unproven no-effect cancellation retains prefix protection: '..variant)
+    getGameFilesInput=reader
+end
+changedBaseSource=false
+print('Pending cancellation provenance: preinstalled foreign forceCancel, changed base source and unavailable readers remain closed.')

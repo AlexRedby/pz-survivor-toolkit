@@ -141,7 +141,8 @@ assert(health.inspect(cover).outputTypes['Base.Bandage_Test1'] and health.inspec
     and health.inspect(cover).itemTypes['Base.Scratch_Test1'],'native visual clothing effects retain finite type dependencies')
 assert(policy.moveReason(q,cover,disinfect)=='move_craft_inputs')
 assert(policy.moveReason(q,disinfect,cover,true)=='move_craft_inputs')
-assert(policy.cancelOperationReason(q,cover)=='operation_dependent')
+assert(not policy.cancelOperationReason(q,cover),'canceling a final unstarted bandage cannot change preceding disinfection')
+assert(policy.cancelOperationReason(q,disinfect)=='operation_dependent','the following treatment remains a protected dependency')
 assert(disinfect:isValid());body.covered=true;assert(not disinfect:isValid());body.covered=false
 local independent=request(part(),'HApplyBandage','Base.Bandage')
 q=f.queue(head,disinfect,independent)

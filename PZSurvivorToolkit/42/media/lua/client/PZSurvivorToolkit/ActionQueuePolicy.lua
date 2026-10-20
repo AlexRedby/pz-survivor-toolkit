@@ -19,6 +19,16 @@ local Policy = {}
 Toolkit.ActionQueuePolicy = Policy
 local Operations = Toolkit.ActionQueueOperations
 local nativeForceCancel = ISBaseTimedAction.forceCancel
+local Proof = require "PZSurvivorToolkit/SourceProof"
+local nativePendingCancelProof
+local function nativePendingCancelHasNoEffects()
+    if nativePendingCancelProof == nil then
+        if not Proof or type(getGameFilesInput) ~= "function" or type(getFilenameOfClosure) ~= "function" then return false end
+        nativePendingCancelProof = Proof.closure(nativeForceCancel, "ISBaseTimedAction.lua")
+            and Proof.matches("media/lua/shared/TimedActions/ISBaseTimedAction.lua", 3104185167, nil, true)
+    end
+    return nativePendingCancelProof and ISBaseTimedAction.forceCancel == nativeForceCancel
+end
 local nativeTransferItem = ISTransferAction and ISTransferAction.transferItem
 local transferItemGuard
 local inspect
@@ -942,12 +952,18 @@ function Policy.cancelOperationReason(queue, action, context)
     local active = first == 1 and queue.current == queue.queue[1]
     if type(token) == "table" and token.toolkitStarted and not active then return "operation_active" end
     local main, output, inputs, scrapOnly = false, false, {}, true
+    local pendingRemovalOnly = not active and nativePendingCancelHasNoEffects()
     for i = first, last do
         local member = queue.queue[i]
         if (member.action or member == queue.current or i == 1) and not (active and i == first) then
             return "operation_active"
         end
         local auditedCraft = craft(member)
+        -- The reviewed native forceCancel is empty. Removing unstarted steps
+        -- with that handler has no world effects on the preceding work.
+        -- Craft also runs cancelWaiting, so retain its existing conservative path.
+        pendingRemovalOnly = pendingRemovalOnly and member.forceCancel == nativeForceCancel
+            and not member.onCancelFunc and not auditedCraft
         local contract = inspect(member, context)
         if contract and contract.cancelOperation == false then return "operation_dependent", nil, nil, member end
         local auditedCallbacks = contract and contract.callbacksSafe
@@ -984,7 +1000,7 @@ function Policy.cancelOperationReason(queue, action, context)
     for item in pairs(type(token) == "table" and token.toolkitPickups or {}) do inputs[itemKey(item)] = true end
     local capacityCheck = {first = first, last = last}
     for i, other in ipairs(queue.queue) do
-        if i < first or i > last then
+        if i > last or (i < first and not pendingRemovalOnly) then
             if other._isAddingActions or not knownCraftInputs(other, context) then return "operation_dependent", nil, nil, other end
             for item in pairs(operationItems(other, context)) do
                 if inputs[item] then return "operation_shared_item", nil, nil, other, item end

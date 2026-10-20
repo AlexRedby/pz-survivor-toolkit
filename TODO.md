@@ -35,13 +35,22 @@
 
 These are implementation and verification gaps, not evidence that every action using the old completion path is broken. Keep working native behavior while migrating one verified family at a time.
 
+## General rules for move and cancel
+
+- [ ] Add a versioned behavior contract describing resource identity/selector scope, required state, bounded consumption/production/state changes, capacity bounds and completeness of each domain. Derive dependencies from those facts; sharing an item, type or object alone is not a denial. Keep conservative fallback for incomplete legacy contracts. Start with already audited native adapters; do not infer arbitrary mod callbacks from action names.
+- [ ] Add one read-only evaluator for the proposed order and for removal, separate from lifecycle permission. Validate affected prerequisites and downstream consumers, quantities, container ancestry/capacity and identity; preserve the queue on rejection. A user-requested reorder may change the final state; commutativity with the old order is not required. Revalidate ownership/generation and members immediately before applying an edit, then retain native execution-time validation and authoritative effects.
+- [ ] Extend operation records with prepare/body/cleanup phases and obligations activated by confirmed effects. Migrate pickup returns, mask/equipment restoration and cancellation of the remaining batch to the shared settlement path. Keep earned output, paid costs and necessary cleanup after cancellation; never recreate or roll back authoritative results. Allow independent tails only after isolation from an uncertain in-flight result is proven.
+- [ ] Register interruption capabilities through the same contract: cancel, finish the current atomic step and defer the remainder, or native stop with a validated checkpoint/resume. Generalize existing book/world handling through that interface without inventing arbitrary timer restoration or repeating already-paid work. Unknown active actions keep native cancellation and only supported boundaries may be edited.
+- [ ] Extend the existing scenario matrix with generated mixed-operation edit sequences and an independent resource/state oracle: move roundtrips and valid changed outcomes, producer/consumer removal, shared reusable resources, insufficient quantities/capacity, partial completion, cleanup, missing/replaced resources and delayed/duplicate outcomes. Assert item/resource conservation and at-most-once authoritative effects, then run representative selected-pack SP/Host cases with queue-off controls; do not try to enumerate every pair of action names.
+- [ ] Return a concrete blocking dependency to the UI (required pickup/output/state, in-flight effect or unknown contract), and keep unrelated operations editable around it. Explain a real unsafe dependency separately from missing integration coverage.
+
 - [ ] Extend live SP/MP gates for the shared lifecycle to the remaining families: unavailable target, late continuation, exact consumption and independent tail, before replacing their local completion intercepts.
 - [ ] Check the shared outcome protocol with two real MP clients during reset/death/disconnect, byte ID reuse, late and duplicate responses, and network delays; supplement the already completed boundary checks using native Java/Lua fixtures.
 - [ ] Remove the remaining family-specific bypasses after the corresponding SP/MP checks; preserve fallback for unsupported Java/server versions, resource contracts and separate medical/cart sync fixes.
 
 # Further action queue migration
 
-The executor remains `ISTimedActionQueue`. Add new families through Definitions/Policy and a precise adapter, without a general planning graph, second scheduler or reservation of future inventory. Check display and permission to change the queue separately. Only unfinished work is listed below; interfaces are described in the [features guide](docs/FEATURES.md), and check commands are in the [developer guide](docs/DEVELOPMENT.md).
+The executor remains `ISTimedActionQueue`. Add families through Definitions and the shared dependency/effect contract, keeping any dependency model read-only: it validates edits, never executes game effects, replaces the native scheduler or reserves future inventory. Check display and permission to change the queue separately. Only unfinished work is listed below; interfaces are described in the [features guide](docs/FEATURES.md), and check commands are in the [developer guide](docs/DEVELOPMENT.md).
 
 ## Active shelf reading below TV commands
 
