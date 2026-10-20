@@ -8,6 +8,10 @@ Functional changes to the repository components. For current behavior and limits
 
 Version labels come from committed component metadata, including changes made without a version bump. Parallel branches sometimes reused a label; consolidation entries identify the combined behavior. There are no release tags in this history, so these entries do not assert publication dates. Third-party mod selection is documented in the [catalog](USEFUL_MODS.md).
 
+## Selected mod set
+
+- **Added:** Vanilla Vehicles Animated and its ZombieBuddy-based Animated Vehicle Parts Fix to the B42.21 selection (47 Mod IDs / 44 Workshop items). Optional VVA submods and the outdated multiplayer synchronization addon remain disabled. SP visuals, lighting coexistence and Host animation synchronization are not yet verified.
+
 ## PZ Survivor Toolkit
 
 ### 0.1.159

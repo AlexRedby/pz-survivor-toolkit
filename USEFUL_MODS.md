@@ -263,3 +263,17 @@ Official package version 4, B42.21. Adds white rear beams only for the local dri
 Toolkit includes the complete Quartermaster `0.24.0` feature set: container sorting, category/item/tag rules, presets, priorities, overflow, crafting and the single-player storage manifest. Use **Configure sorting...** on a world container and **Distribute Loot** in inventory/loot controls. Existing designations, global presets and options keep their original storage names.
 
 The separate Workshop item `3761216758` and Mod ID `Quartermaster` are no longer selected. Disable the external mod and remove any overriding local copy when installing the updated Toolkit; keep its save data. Load Toolkit before `organizedCategories_core` and do not add bridge `3797594072`. Multiplayer designations/presets remain shared; the storage manifest remains single-player. Queue adapters retain their supported crafting/manifest boundaries and conservative restrictions on unsupported actions. See [installation](MOD_INSTALL.md#update-the-set) and [action queue](docs/FEATURES.md#action-queue).
+
+## 46 Vanilla Vehicles Animated
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3281755175) · Workshop `3281755175` · Mod `VanillaVehiclesAnimated`
+
+Reworks vanilla vehicle models into separate animated parts: doors, hoods and trunks can visibly open, and removed panels disappear instead of remaining gray. The author reports B42.21 support and allows adding/removing it on existing saves. Only the main mod is selected; transparent windows, passenger-hiding, armor patches and other optional submods remain disabled. Vehicles with independent modded models need their own support.
+
+Selected before Animated Vehicle Parts Fix and the lighting mods. In single-player, leaving a running vehicle far enough away to unload it can collapse its animated parts when returning; the related fix below targets this bug. For multiplayer, VVA alone does not continuously synchronize animations to other players. Its recommended `VASinked` addon is not selected because its author warns of B42.20 incompatibility and users report B42.21 failure. Native macOS SP visuals, compatibility with Toolkit controls/lighting and Host owner/passenger animation visibility have not been verified.
+
+## 47 Animated Vehicle Parts Fix
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3802266453) · Workshop `3802266453` · Mod `AnimatedVehiclePartsFix`
+
+Java fix for animated vehicle parts collapsing into the vehicle center after a running vehicle unloads/reloads. It also addresses missing-part ghost rendering and lights after chunk reload; it supplies no animated vehicle models itself. Requires the selected ZombieBuddy loader and saved client JAR approval. Selected after ZombieBuddy and Vanilla Vehicles Animated. [Source version 1.2.2](https://github.com/MeowWoem/PZMods-AnimatedVehiclePartsFix/blob/ade01e5b0e84128788129d9c90cd61e6a5fd991d/Sources/Java/src/io/ameno/AVPF/Patch_BaseVehicle.java) patches `BaseVehicle.adoptParts` without an SP/MP guard and rebuilds the native light list; it does not set beam intensity or range. VVA replaces vehicle models, so Toolkit light-anchor alignment still needs an in-game check. The author describes the affected bug as single-player only and says the fix is unnecessary in Host multiplayer; selecting it does not establish multiplayer animation synchronization. Native B42.21 macOS behavior and coexistence with Toolkit Java Patches, High Beams and Reverse Drive Lights have not been verified.

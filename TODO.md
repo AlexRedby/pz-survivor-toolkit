@@ -1,3 +1,7 @@
+# Vanilla vehicle visuals
+
+- [ ] After installation is requested, check the selected VVA/Animated Vehicle Parts Fix pair on macOS B42.21 in isolated full-pack SP/Host saves: removed hood/door interiors, running-engine unload/reload, Toolkit door controls and headlight/reverse-light alignment, plus a second Host player’s animation visibility. The fix rebuilds the native light list and VVA replaces vehicle models; static source review does not establish visual compatibility or MP animation synchronization.
+
 # Approved truck headlight rocker
 
 - [ ] Complete the isolated Host truck-rocker run and inspect its server power acknowledgements. The focused regressions and full-mod-set single-player visual check already cover the off/low/high sequence, all four scales, complete pull-knob/legend removal and unchanged standard/sport controls.
