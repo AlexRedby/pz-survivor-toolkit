@@ -14,6 +14,31 @@ local lifecycle = {"new", "begin", "create", "adjustMaxTime", "isValid", "isVali
 local snapshots, approved, guards, baseHooks, pins = {}, {}, {}, {}, {}
 local baseMethods={}
 local ownMethods,baselineSafe={},true
+-- These are the own methods in the pinned native files, including helpers called
+-- by other methods. Enumerating only surviving callbacks would trust a class
+-- whose effect/helper was deleted before this module loaded, or inherited instead.
+local requiredOwn={
+    [base]={"isValidStart","isValid","isUsingTimeout","update","forceComplete","forceStop","forceCancel",
+        "getJobDelta","setJobDelta","resetJobDelta","waitToStart","interruptWaitToStart","start","isStarted","stop",
+        "perform","getDuration","create","begin","setCurrentTime","setTime","adjustMaxTime","setActionAnim",
+        "setOverrideHandModels","setOverrideHandModelsString","overrideWeaponType","restoreWeaponType","setAnimVariable",
+        "addAfter","beginAddingActions","endAddingActions","getDeltaModifiers","new"},
+    [transfer]={"isValid","update","doActionAnim","startActionAnim","waitToStart","start","playSourceContainerOpenSound",
+        "playSourceContainerCloseSound","playDestContainerOpenSound","playDestContainerCloseSound","getTransferStartSoundName",
+        "getTransferCompleteSoundName","playTransferCompleteSound","stopLoopingSound","stop","forceComplete","perform",
+        "isAlreadyTransferred","floorHasRoomFor","canDropOnFloor","getNotFullFloorSquare","transferItem","setOnComplete",
+        "getTimeDelta","canMergeAction","checkQueueList","setAllowMissingItems","getExtraLogData","new"},
+    [lowlevel]={"floorHasRoomFor","canDropOnFloor","getNotFullFloorSquare","GetDropItemOffset","removeItemOnCharacter","transferItem"},
+    [drink]={"isValidStart","waitToStart","isValid","update","serverStart","animEvent","start","stop","perform",
+        "complete","updateEat","getDuration","new"},
+}
+local function ownsRequired(owner,methods)
+    for _,name in ipairs(requiredOwn[owner]) do
+        local callback=rawget(owner,name)
+        if type(callback)~="function" or methods and callback~=methods[name] then return false end
+    end
+    return true
+end
 local function unique(methods)
     local seen={}
     for name,callback in pairs(methods) do
@@ -25,14 +50,14 @@ local function unique(methods)
     return true
 end
 for name,callback in pairs(base) do if type(callback)=="function" then baseMethods[name]=callback end end
-baselineSafe=unique(baseMethods)
+baselineSafe=ownsRequired(base) and unique(baseMethods)
 local files = {[transfer] = "ISInventoryTransferAction.lua", [lowlevel] = "ISTransferAction.lua", [drink] = "ISDrinkFluidAction.lua"}
 local allowed = {[transfer] = {new=true,isValid=true,start=true,perform=true,stop=true,transferItem=true,checkQueueList=true,getNotFullFloorSquare=true},
     [lowlevel] = {transferItem=true,GetDropItemOffset=true}, [drink] = {start=true}}
 for owner in pairs(files) do
     local methods,own = {},{}
     for name, callback in pairs(owner) do if type(callback) == "function" then methods[name],own[name] = callback,true end end
-    baselineSafe=baselineSafe and unique(methods)
+    baselineSafe=baselineSafe and ownsRequired(owner) and unique(methods)
     ownMethods[owner]=own
     if owner ~= lowlevel then for _, name in ipairs(lifecycle) do methods[name] = owner[name] or false end end
     snapshots[owner], approved[owner], guards[owner] = methods, {}, {}
@@ -70,7 +95,7 @@ function Adapters.adoptMethods(owner,previous,replacement,guard)
     local count=0
     for name, callback in pairs(replacement) do
         if not allowed[owner][name] or type(callback)~="function" or snapshots[owner][name]~=previous[name]
-            or owner[name]~=callback or not origin(owner,name,previous[name]) then return false end
+            or rawget(owner,name)~=callback or not origin(owner,name,previous[name]) then return false end
         count=count+1
     end
     for name in pairs(previous) do if replacement[name]==nil then return false end end
@@ -80,7 +105,7 @@ function Adapters.adoptMethods(owner,previous,replacement,guard)
     return true
 end
 function Adapters.adoptBase(name,previous,replacement)
-    if (name~="begin" and name~="stop") or ISBaseTimedAction~=base or base[name]~=replacement
+    if (name~="begin" and name~="stop") or ISBaseTimedAction~=base or rawget(base,name)~=replacement
         or baseMethods[name]~=previous
         or not Proof.closure(previous,"ISBaseTimedAction.lua") or not Proof.closure(replacement,"ActionQueue.lua") then return false end
     for _,owner in ipairs({transfer,drink}) do
@@ -91,6 +116,7 @@ function Adapters.adoptBase(name,previous,replacement)
 end
 local function unchanged(owner,action)
     if not baselineSafe or ISBaseTimedAction~=base or ISInventoryTransferAction~=transfer or ISTransferAction~=lowlevel or ISDrinkFluidAction~=drink then return false end
+    if not ownsRequired(base,baseMethods) then return false end
     local policy=Toolkit.ActionQueuePolicy
     if not policy or type(policy.matchesNative)~="function" or not policy.matchesNative(action) then return false end
     for name,callback in pairs(baseMethods) do
@@ -98,6 +124,7 @@ local function unchanged(owner,action)
             and not (baseHooks[name]==callback and Proof.closure(callback,"ActionQueue.lua")) then return false end
     end
     for _, candidate in ipairs(owner==transfer and {transfer,lowlevel} or {drink}) do
+        if not ownsRequired(candidate,snapshots[candidate]) then return false end
         for _,guard in ipairs(guards[candidate]) do if not guarded(guard) then return false end end
         for name,callback in pairs(snapshots[candidate]) do
             if (candidate[name] or false)~=callback or name~="derive" and not origin(candidate,name,callback) then return false end

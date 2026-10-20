@@ -11,7 +11,7 @@ local function reader(text)
         local line=text:sub(position,boundary-1);position=boundary+1;return line
     end}
 end
-local function setup(changed,foreignMerge,alias)
+local function setup(changed,foreignMerge,alias,missing)
     local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
     f.native('shared/TimedActions/ISTransferAction.lua');f.native('shared/TimedActions/ISDrinkFluidAction.lua')
     f.native('shared/RadioCom/ISRadioAction.lua')
@@ -97,6 +97,12 @@ local function setup(changed,foreignMerge,alias)
         -- Java FluidContainer.removeFluidInstanceIfEmpty uses PZMath.equal's
         -- strict absolute tolerance, rather than retaining every positive double.
         if math.abs(fluid.amount)<0.0001 then fluid.amount=0 end
+    end
+    if missing then
+        local owner=assert(_G[missing.owner])
+        assert(type(rawget(owner,missing.name))=='function','fixture must remove a native own method')
+        owner[missing.name]=nil
+        if missing.inherited then assert(type(owner[missing.name])=='function','fixture must retain an inherited fallback')end
     end
     if foreignMerge then ISInventoryTransferAction.canMergeAction=function()error('foreign preloaded merge must not execute')end end
     f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
@@ -208,6 +214,23 @@ end
 for _,alias in ipairs({'drink-native','drink-base','base'})do
     local s=setup(nil,nil,alias)
     assert(not s.adapters.drink(s.drink()),'preloaded native/base method aliases cannot acquire a consumption effect: '..alias)
+end
+for _,missing in ipairs({
+    {owner='ISInventoryTransferAction',name='transferItem',adapter='transfer'},
+    {owner='ISTransferAction',name='transferItem',adapter='transfer'},
+    {owner='ISTransferAction',name='removeItemOnCharacter',adapter='transfer'},
+    {owner='ISDrinkFluidAction',name='complete',adapter='drink'},
+    {owner='ISDrinkFluidAction',name='updateEat',adapter='drink'},
+    {owner='ISInventoryTransferAction',name='start',adapter='transfer',inherited=true},
+    {owner='ISDrinkFluidAction',name='perform',adapter='drink',inherited=true},
+    {owner='ISDrinkFluidAction',name='isValid',adapter='drink',inherited=true},
+    {owner='ISBaseTimedAction',name='perform',adapter='transfer'},
+    {owner='ISBaseTimedAction',name='adjustMaxTime',adapter='drink'},
+    {owner='ISBaseTimedAction',name='create',adapter='transfer'},
+})do
+    local s=setup(nil,nil,nil,missing)
+    local action=missing.adapter=='transfer'and s.transfer()or s.drink()
+    assert(not s.adapters[missing.adapter](action),'preloaded deletion cannot acquire effects: '..missing.owner..'.'..missing.name)
 end
 do
     local s=setup();local restore=s.transfer(nil,s.root,s.bagInventory)
