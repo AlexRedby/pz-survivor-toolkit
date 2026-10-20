@@ -690,6 +690,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.37
+
+- **Fixed:** After a confirmed single-player wooden-cart emergency release, the character no longer steps forward through the stationary cart. The bounded impact episode preserves the stock backward recoil, lateral motion and obstacle collision, and clears on state or ownership changes.
+
 ### 0.1.36
 
 - **Fixed:** Wooden-cart emergency release preserves the rendered axle position and eases the handles down over 240 ms. The exact-item transition survives the native floor-inventory projection, restores pooled renderer state and clears on pickup, expiry or world exit. This presentation fix applies to single-player; stock fall motion and its remaining body overlap are unchanged.

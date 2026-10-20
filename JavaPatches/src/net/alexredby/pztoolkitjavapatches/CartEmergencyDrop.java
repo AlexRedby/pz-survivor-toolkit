@@ -84,6 +84,7 @@ public final class CartEmergencyDrop {
         long now=System.nanoTime();
         if(now<release.prepared || now-release.prepared>FRESH_NANOS) {releases.remove(item);return;}
         release.world=world;release.started=now;
+        CartImpactMotion.begin(player,item,world);
         world.invalidateRenderChunkLevel(256);
     }
 
@@ -99,6 +100,7 @@ public final class CartEmergencyDrop {
 
     @LuaMethod(name="toolkitWoodCartImpactTick",global=true)
     public static synchronized void tick() {
+        CartImpactMotion.tick();
         long now=System.nanoTime();
         held.entrySet().removeIf(e->now-e.getValue().time>FRESH_NANOS);
         var entries=releases.entrySet().iterator();
@@ -131,7 +133,7 @@ public final class CartEmergencyDrop {
 
     static synchronized void reset() {
         for(var renderer:new java.util.ArrayList<>(modified.keySet())) clear(renderer);
-        held.clear();releases.clear();
+        held.clear();releases.clear();CartImpactMotion.reset();
     }
 
     public static synchronized void clear(ItemModelRenderer renderer) {

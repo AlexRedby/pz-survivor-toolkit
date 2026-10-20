@@ -862,7 +862,7 @@ def verify(root, selection, catalog):
                      'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
                                  'partialCoverage': debug, 'selectedScenes': selected_scenes(selection)}}]}
             if case == 'impact':
-                impact = _load(intake / 'analyze-impact.py').analyze(cache, texts['client1'], selected_scenes(selection), require_natural=True, require_settle=True)
+                impact = _load(intake / 'analyze-impact.py').analyze(cache, texts['client1'], selected_scenes(selection), require_natural=True, require_settle=True, require_recoil=True)
                 _write(analysis / 'impact.json', json.dumps(impact, indent=2, allow_nan=False))
                 if not impact['functionalPass']:
                     raise ValueError('Native impact recovery failed: ' + str(impact['failures']))

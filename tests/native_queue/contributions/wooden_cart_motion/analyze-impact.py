@@ -164,7 +164,30 @@ def actual_settle(profile, start, item):
                 endpointWall=endpoint['wall'], trajectory=transition)
 
 
-def analyze(profile, text, selected=None, require_natural=False, require_settle=False):
+def emergency_recoil(rows, drop):
+    # These injected scenes travel west: decreasing X advances into the released cart.
+    # Stop at the transition to GetUp; later intentional recovery walking is a separate gate.
+    first = next(i for i, row in enumerate(rows) if row['wall'] == drop)
+    end = first
+    while end < len(rows) and rows[end]['state'] == 'CollideWithWallState':
+        end += 1
+    episode = rows[first:end]
+    assert len(episode) >= 2, 'Missing sampled collision episode after exact emergency drop'
+    assert end < len(rows) and rows[end]['state'] == 'PlayerGetUpState', 'Emergency recoil lacks native getup boundary'
+    minimum = min(row['x'] for row in episode)
+    forward = max(0, episode[0]['x']-minimum)
+    rebound = episode[-1]['x']-minimum
+    result = dict(scope='Sampled actor X motion during westbound released collision episode; no body/pose visual pass.',
+                  firstDroppedWall=drop, lastCollisionWall=episode[-1]['wall'], firstGetupWall=rows[end]['wall'],
+                  collisionSamples=len(episode), firstDroppedX=episode[0]['x'], minimumX=minimum,
+                  lastCollisionX=episode[-1]['x'], forwardIntrusionTiles=forward, backwardReboundTiles=rebound,
+                  maxForwardIntrusionTiles=.02, minBackwardReboundTiles=.5)
+    assert forward <= .02, f'Emergency actor forward intrusion {forward:.6f} exceeds .02 tile after exact drop'
+    assert rebound >= .5, f'Emergency native backward rebound {rebound:.6f} is below .5 tile before getup'
+    return result
+
+
+def analyze(profile, text, selected=None, require_natural=False, require_settle=False, require_recoil=False):
     profile = Path(profile)
     expected = CASES if selected is None else selected
     assert expected and len(set(expected)) == len(expected) and set(expected) <= set(CASES), 'Invalid impact selection'
@@ -269,6 +292,7 @@ def analyze(profile, text, selected=None, require_natural=False, require_settle=
                 assert r['primary'] == r['secondary'] == -1 and r['inventoryCount'] == 0 and not r['inInventory'], 'Released cart still held or in inventory'
                 assert r['worldCount'] == r['woodCount'] == 1 and r['worldId'] == item and r['worldExact'] and r['worldPersistent'], 'Released cart lost exact persistent world ownership'
                 assert max(abs(r[k]-dropped[0][k]) for k in ('worldX', 'worldY', 'worldZ', 'rotation')) < 1e-4, 'Dropped world cart moved'
+        recoil = emergency_recoil(rows, drop) if require_recoil and not guarded else None
         scene_tail = [r for r in tail if start <= r['wallTimeMillis'] < start + 12000]
         times = [r['wallTimeMillis'] for r in scene_tail]
         assert times == sorted(times) and times, 'Missing ordered render poses'
@@ -338,6 +362,7 @@ def analyze(profile, text, selected=None, require_natural=False, require_settle=
                               gripSamples=len(scene_grip), worldRenderSamples=len(scene_world),
                               emergencySettle=settle,
                               actualDrawSettle=measured_settle,
+                              emergencyRecoil=recoil,
                               worldWheelFloorMaxOffset=None if guarded else max(abs(world_wheel_floor(r)-dropped[0]['worldZ']) for r in scene_world),
                               releaseLatencyMs=None if guarded else drop-event,
                               reverseTravel=reverse[-1]['x']-reverse[0]['x'],

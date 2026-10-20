@@ -105,7 +105,71 @@ def actual_draw_fixture(root):
     return rows
 
 
+def recoil_motion(text, forward=0, rebound=.6):
+    def move(row):
+        t = float(row['elapsed'])
+        if t < 2080:
+            return
+        if t <= 2280:
+            delta = -forward*(t-2080)/200
+        else:
+            delta = -forward+rebound*min(1, (t-2280)/400)
+        row['x'] = float(row['x'])+delta
+    return samples(text, move)
+
+
 class ImpactTests(unittest.TestCase):
+    def test_strict_recoil_is_optional_and_accepts_bounded_native_recovery(self):
+        for sex in ('male', 'female'):
+            for load in ('empty', 'full'):
+                with self.subTest(sex=sex, load=load), tempfile.TemporaryDirectory() as path:
+                    root = Path(path)
+                    text, names = fixture(root, f'{sex}-{load}-native-impact')
+                    self.assertIsNone(analyzer.analyze(root, text, names)['cases'][0]['emergencyRecoil'])
+                    with self.assertRaisesRegex(AssertionError, 'backward rebound .* below .5'):
+                        analyzer.analyze(root, text, names, require_recoil=True)
+                    actual_draw_fixture(root)
+                    report = analyzer.analyze(root, recoil_motion(text), names, require_settle=True, require_recoil=True)
+                    measured = report['cases'][0]['emergencyRecoil']
+                    self.assertEqual(measured['firstDroppedWall'], START+2080)
+                    self.assertEqual(measured['lastCollisionWall'], START+2680)
+                    self.assertEqual(measured['firstGetupWall'], START+2720)
+                    self.assertEqual(measured['forwardIntrusionTiles'], 0)
+                    self.assertAlmostEqual(measured['backwardReboundTiles'], .6)
+                    self.assertIn('no body/pose visual pass', measured['scope'])
+
+    def test_recoil_rejects_archived_native07_forward_intrusion(self):
+        # Native07 first exact-drop -> minimum X, recorded in baseline-motion.json.
+        for name, intrusion in [('male-full-native-impact', .365234375),
+                                ('female-empty-native-impact', .5078125)]:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as path:
+                root = Path(path)
+                text, names = fixture(root, name)
+                text = recoil_motion(text, forward=intrusion)
+                # Existing ownership, render and recovery gates accepted this old motion.
+                self.assertTrue(analyzer.analyze(root, text, names)['functionalPass'])
+                with self.assertRaisesRegex(AssertionError, 'forward intrusion .* exceeds .02'):
+                    analyzer.analyze(root, text, names, require_recoil=True)
+
+    def test_recoil_bounds_exclude_getup_and_later_intentional_walk(self):
+        with tempfile.TemporaryDirectory() as path:
+            root = Path(path)
+            text, names = fixture(root)
+            # A frozen/reduced rebound cannot borrow the later successful recovery walk.
+            for amount in (0, .49):
+                with self.subTest(rebound=amount), self.assertRaisesRegex(AssertionError, 'backward rebound .* below .5'):
+                    analyzer.analyze(root, recoil_motion(text, rebound=amount), names, require_recoil=True)
+            def getup_only(row):
+                if float(row['elapsed']) >= 2720:
+                    row['x'] = float(row['x'])+.6
+            with self.assertRaisesRegex(AssertionError, 'backward rebound .* below .5'):
+                analyzer.analyze(root, samples(text, getup_only), names, require_recoil=True)
+            # The documented thresholds admit small coordinate jitter and native rebound.
+            self.assertTrue(analyzer.analyze(root, recoil_motion(text, forward=.02, rebound=.5), names,
+                                            require_recoil=True)['functionalPass'])
+            with self.assertRaisesRegex(AssertionError, 'forward intrusion .* exceeds .02'):
+                analyzer.analyze(root, recoil_motion(text, forward=.021), names, require_recoil=True)
+
     def test_strict_actual_draw_settle_is_optional_and_accepts_smooth_receipts(self):
         with tempfile.TemporaryDirectory() as path:
             root = Path(path)

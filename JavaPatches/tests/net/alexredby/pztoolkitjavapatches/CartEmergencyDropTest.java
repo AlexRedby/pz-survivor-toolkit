@@ -24,6 +24,7 @@ public final class CartEmergencyDropTest {
     private static final class Player extends IsoPlayer {
         InventoryItem primary,secondary;
         Player(){super(null,null,0,0,0);}
+        @Override public boolean isLocalPlayer(){return false;}
         @Override public InventoryItem getPrimaryHandItem(){return primary;}
         @Override public InventoryItem getSecondaryHandItem(){return secondary;}
     }
@@ -120,6 +121,8 @@ public final class CartEmergencyDropTest {
         f=fixture();CartEmergencyDrop.finish(f.player,f.cart);
         var floor=new ItemContainer("floor",null,null);floor.AddItem(f.cart);
         check(f.cart.getContainer()==floor,"native floor projection did not assign container");
+        // This assertion isolates ownership; native AddItem class loading is not the settle clock.
+        set(f.release,"started",System.nanoTime());
         CartEmergencyDrop.tick();check(releases().containsKey(f.cart),"native floor projection ended settling");
         CartEmergencyDrop.render(renderer,f.cart);check(!matrix.equals(new Matrix4f().translation(5,6,7),.000001f),"floor-projected cart stopped settling");
         CartEmergencyDrop.clear(renderer);f.cart.setContainer(new ItemContainer("inventory",null,null));
@@ -132,6 +135,8 @@ public final class CartEmergencyDropTest {
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         Field u=Unsafe.class.getDeclaredField("theUnsafe");u.setAccessible(true);unsafe=(Unsafe)u.get(null);
         check(Main.CART_TRANSITION_SUPPORTED,"unsupported local source");
+        // Class loading must finish before the real 250ms freshness window begins.
+        zombie.network.GameClient.client=false;zombie.network.GameServer.server=false;
         geometry();ownershipAndPool();
         System.out.println("CART_EMERGENCY_DROP_PASS (axle/floor continuity, freshness, exact ownership, pooled restoration, expiry and MP fallback)");
     }

@@ -417,7 +417,8 @@ public final class Main {
             @Patch.Argument(value=0, readOnly=false) float x, @Patch.Argument(value=1, readOnly=false) float y) {
             if(Main.CART_SUPPORTED) {
                 var step=CartSteeringHooks.movement(player,x,y);
-                x=step.x; y=step.y;
+                var impact=CartImpactMotion.movement(player,step.x,step.y);
+                x=impact.x; y=impact.y;
             }
         }
     }
