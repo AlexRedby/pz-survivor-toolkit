@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.148
+
+- **Fixed:** Better Containers pin markers now share the actual-icon presentation used by research and planting badges. Markers follow scaled native/CleanUI icons without a separate row renderer, stay on stack headers and avoid covering other Toolkit badges; pin settings, ordering and saved data are unchanged.
+
 ### 0.1.147
 
 - **Changed:** Pending ordinary-food actions with a captured fork or spoon use the shared queue edit contract. Safe reorder and cancellation preserve the exact selected utensil, native portion, duration and benefits; selected-tool and carried-container dependencies remain protected.

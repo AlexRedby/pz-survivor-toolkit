@@ -41,15 +41,22 @@ package.loaded['PZSurvivorToolkit/InventoryResearch'] = {
 getSpecificPlayer = function(index) assert(index == 2); return localPlayer end
 getPlayer = function() return localPlayer end
 getTexture = function(name) return {name = name, getWidth = function() return 16 end, getHeight = function() return 32 end} end
+PZSurvivorToolkit = {BCPinCompatibility = true}
+local activePins, showPins, pinned = true, true, true
+getActivatedMods = function() return {contains = function(_, id) return activePins and id == 'EURY_CONTAINERS' end} end
+package.loaded['BetterContainers/Upgrades/PinnedItems'] = {
+    displayPinnedItem = function(page) return page and showPins end,
+    isFavourite = function(fullType) return pinned and fullType == 'Base.TestSeed' end,
+}
 local Indicators = load('InventoryIndicators')
 package.loaded['PZSurvivorToolkit/InventoryIndicators'] = Indicators
 local draws = {}
-local pane = {player = 2, headerHgt = 20, height = 300,
+local pane = {player = 2, headerHgt = 20, height = 300, inventoryPage = {},
     getYScroll = function() return -10 end,
     drawTextureScaled = function(_, texture, x, y, w, h, alpha, r, g, b)
         draws[#draws + 1] = {texture = texture, x = x, y = y, width = w, height = h, color = {r,g,b}}
     end}
-local seed = {category = 'Gardening', state = state}
+local seed = {category = 'Gardening', state = state, getFullType = function() return 'Base.TestSeed' end}
 Indicators.drawIcon(pane, seed, 70, 40, 32, 32, true)
 assert(#draws == 2 and draws[1].texture == 'research')
 assert(draws[1].x == 70 and draws[1].y == 40 and draws[2].x == 90 and draws[2].y == 40)
@@ -74,6 +81,52 @@ Indicators.drawIcon(pane, {state = risk}, 103, 47, 24, 20, true)
 assert(#draws == 1 and draws[1].x == 117 and draws[1].y == 47)
 assert(draws[1].texture.name == 'media/ui/circle.png' and draws[1].color[1] == Indicators.colors.risk[1])
 print('Inventory indicators: independent options, supplied coordinates, player and visibility passed.')
+
+-- All marker combinations share actual icon bounds. A group pin cannot cover
+-- recipe/season information or leak to the physical children of an expanded stack.
+for _, research in ipairs({false, true}) do
+    for _, season in ipairs({false, true}) do
+      for _, dimension in ipairs({18, 30}) do
+        canResearch, ticks.enabled.value = research, season
+        draws = {}
+        Indicators.drawIcon(pane, seed, 87, 53, dimension, dimension, true, true)
+        assert(#draws == 1 + (research and 1 or 0) + (season and 1 or 0))
+        local pin = draws[#draws]
+        assert(pin.texture.name == 'media/ui/BetterContainers/PinnedItemMarker.png')
+        for i, draw in ipairs(draws) do
+            assert(draw.x >= 87 and draw.x + draw.width <= 87 + dimension
+                and draw.y >= 53 and draw.y + draw.height <= 53 + dimension)
+            for j = i + 1, #draws do
+                local other = draws[j]
+                assert(draw.x + draw.width <= other.x or other.x + other.width <= draw.x
+                    or draw.y + draw.height <= other.y or other.y + other.height <= draw.y, 'badges overlap')
+            end
+        end
+        draws = {}
+        Indicators.drawIcon(pane, seed, 103, 83, 30, 30, true, false)
+        assert(#draws == (research and 1 or 0) + (season and 1 or 0), 'physical child has a group pin')
+      end
+    end
+end
+draws = {}; canResearch, ticks.enabled.value = true, true
+Indicators.drawIcon(pane, seed, 70, 299, 18, 18, true, true)
+assert(#draws == 2, 'lower pin escaped the panel although the upper badges were visible')
+canResearch, ticks.enabled.value = false, false
+for _, reason in ipairs({'option', 'unpinned', 'upstream-owner', 'grid', 'clipped', 'small', 'no-mod'}) do
+    showPins, pinned, PZSurvivorToolkit.BCPinCompatibility, activePins = true, true, true, true
+    if reason == 'option' then showPins = false
+    elseif reason == 'unpinned' then pinned = false
+    elseif reason == 'upstream-owner' then PZSurvivorToolkit.BCPinCompatibility = nil
+    elseif reason == 'no-mod' then activePins = false end
+    local renderer = reason == 'no-mod' and load('InventoryIndicators') or Indicators
+    draws = {}
+    renderer.drawIcon(pane, seed, 70, reason == 'clipped' and 20 or 40,
+        reason == 'small' and 12 or 32, 32, reason ~= 'grid', true)
+    assert(#draws == 0, 'pin guard failed: ' .. reason)
+end
+showPins, pinned, activePins, PZSurvivorToolkit.BCPinCompatibility = true, true, true, true
+canResearch, ticks.enabled.value = false, true
+print('Inventory indicators: header pins, native options, owner guard and nonoverlapping badge combinations passed.')
 
 local function target()
     local value = {width = 150, height = 50, padBottom = 5, layouts = {}, nativeCalls = {}, images = {}}

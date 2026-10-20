@@ -100,35 +100,36 @@ function F.start(config)
         local texture=assert(getTexture('media/ui/BetterContainers/PinnedItemMarker.png'))
         local passes=0
         local function check(label, dragged)
-            local draws={}
+            local draws,expected={},{}
             local own=rawget(pane,'drawTextureScaled')
             local original=pane.drawTextureScaled
+            local originalIcon=ISInventoryItem.renderItemIcon
+            ISInventoryItem.renderItemIcon=function(owner,item,x,y,alpha,width,height,...)
+                local row=owner==pane and pane.items[#pane.items]
+                if owner==pane and not dragged and options.showFavouritesOnPlayerInventories
+                    and type(row)=='table' and row.items and pins.isFavourite(item:getFullType()) then
+                    local tex=item:getTex()
+                    local w,h=width or tex:getWidthOrig(),height or tex:getHeightOrig()
+                    if y+pane:getYScroll()>=pane.headerHgt and y+pane:getYScroll()+math.min(12,h/2)<=pane.height then
+                        expected[#expected+1]={x=x,y=y,width=w,height=h}
+                    end
+                end
+                return originalIcon(owner,item,x,y,alpha,width,height,...)
+            end
             pane.drawTextureScaled=function(self, tex, x, y, width, height, ...)
                 if tex==texture then draws[#draws+1]={x=x,y=y,width=width,height=height} end
                 return original(self,tex,x,y,width,height,...)
             end
             local ok,err=pcall(function() pane:renderdetails(dragged==true) end)
             pane.drawTextureScaled=own
+            ISInventoryItem.renderItemIcon=originalIcon
             assert(ok,err)
-            local expected={}
-            if not dragged and options.showFavouritesOnPlayerInventories then
-                for row, value in ipairs(pane.items) do
-                    if not instanceof(value,'InventoryItem') and value.items and value.items[1]
-                        and pins.isFavourite(value.items[1]:getFullType())
-                        and not (pane.dragging~=nil and pane.dragStarted and pane.selected[row]~=nil) then
-                        expected[#expected+1]=(row-1)*pane.itemHgt+pane.headerHgt
-                    end
-                end
-            end
-            local actual={}
-            for _, draw in ipairs(draws) do actual[#actual+1]=draw.y end
             assert(#draws==#expected, label..' marker count '..#draws..' ~= '..#expected)
-            local size=math.min(11,pane.itemHgt)
-            local itemSize=math.min(pane.itemHgt-2,32)
-            local x=pane.column2-itemSize-((pane.itemHgt-itemSize)/2)+1
             for index, draw in ipairs(draws) do
-                assert(draw.y==expected[index], label..' marker Y '..table.concat(actual,',')..' ~= '..table.concat(expected,','))
-                assert(draw.x==x and draw.width==size and draw.height==size,label..' marker geometry changed')
+                local icon=expected[index]
+                assert(draw.y==icon.y and draw.x>=icon.x and draw.x+draw.width<=icon.x+icon.width,
+                    label..' marker left its actual native header icon')
+                assert(draw.width>=8 and draw.width<=11 and draw.height==draw.width,label..' marker size changed')
             end
             passes=passes+1
         end

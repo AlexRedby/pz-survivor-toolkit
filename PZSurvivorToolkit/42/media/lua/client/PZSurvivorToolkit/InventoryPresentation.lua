@@ -39,13 +39,18 @@ end
 
 local originalIcon = ISInventoryItem.renderItemIcon
 ISInventoryItem.renderItemIcon = function(pane, item, x, y, alpha, width, height, ...)
+    local context = contexts[pane]
+    -- Native/CleanUI append the current row before drawing its icon. Capture its
+    -- identity here; the final row cache cannot identify repeated physical icons.
+    local row = context and context.details and pane.items and pane.items[#pane.items]
+    local group = type(row) == "table" and row.items ~= nil
+        and row.type ~= "separator" and not row._bcEquippedAttachedSeparator
     -- The native icon view omits alpha although DrawItemIcon requires a number.
     local result = originalIcon(pane, item, x, y, alpha or 1, width, height, ...)
-    local context = contexts[pane]
     local texture = context and item and item:getTex()
     if texture then
         if not (width and height) then width, height = texture:getWidthOrig(), texture:getHeightOrig() end
-        context.icons[#context.icons + 1] = {item = item, x = x, y = y, width = width, height = height}
+        context.icons[#context.icons + 1] = {item = item, x = x, y = y, width = width, height = height, group = group}
     end
     return result
 end
@@ -53,7 +58,7 @@ end
 local function render(pane, native, details, ...)
     local previous = contexts[pane]
     -- Dirty native redraw clears pane.items before refreshing its groups.
-    local context = {icons = {}, anchor = pane.items and pane.firstSelect and pane.items[pane.firstSelect]}
+    local context = {icons = {}, details = details, anchor = pane.items and pane.firstSelect and pane.items[pane.firstSelect]}
     contexts[pane] = context
     local ok, result = pcall(native, pane, ...)
     contexts[pane] = previous
@@ -61,7 +66,7 @@ local function render(pane, native, details, ...)
     -- Draw last so native badges cannot erase the indicators. No row projection or coordinate remapping.
     for _, icon in ipairs(context.icons) do
         Capacity.drawIcon(pane, icon.item, icon.x, icon.y, icon.width, icon.height, details)
-        Indicators.drawIcon(pane, icon.item, icon.x, icon.y, icon.width, icon.height, details)
+        Indicators.drawIcon(pane, icon.item, icon.x, icon.y, icon.width, icon.height, details, icon.group)
     end
     return result
 end

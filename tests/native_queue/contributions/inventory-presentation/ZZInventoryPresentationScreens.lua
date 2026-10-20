@@ -375,6 +375,160 @@ add(function()
     print('[INVENTORY_SCREEN] TOOLTIP_DISABLED extension=0')
     growingTooltip:removeFromUIManager(); growingTooltip:setVisible(false)
 end)
+-- Pin state/options remain BC-owned. Only forwarded native draw calls are observed.
+local Pins = require 'BetterContainers/Upgrades/PinnedItems'
+local BCOptions = require 'BetterContainers/_Options'
+local pinTexture = getTexture('media/ui/BetterContainers/PinnedItemMarker.png')
+local pinProbe, pinSamples, seedResearch, addedSeedResearch, pinBaseWidth
+local pinZoom=1
+local function pinObserve(target)
+    if target.inventoryPinObserved then return end
+    target.inventoryPinObserved=true
+    local render,draw=target.renderdetails,target.drawTextureScaled
+    target.drawTextureScaled=function(self,texture,x,y,w,h,...)
+        if pinProbe then
+            local kind=texture==pinTexture and 'pin' or texture==Research.texture() and 'research'
+                or (texture==getTexture('media/ui/circle.png') or texture==getTexture('media/ui/MP/mp_ui_star.png')) and 'season'
+            if kind then pinProbe[kind][#pinProbe[kind]+1]={x=x,y=y,w=w,h=h} end
+        end
+        return draw(self,texture,x,y,w,h,...)
+    end
+    target.renderdetails=function(self,dragged,...)
+        if dragged then return render(self,dragged,...) end
+        pinProbe={icons={},pin={},research={},season={}}
+        local result=render(self,dragged,...)
+        self.inventoryPinFrame=pinProbe
+        pinProbe=nil
+        return result
+    end
+end
+local function pinReflow()
+    pane.zoom=pinZoom
+    pane:onInventoryFontChanged()
+    indicatorReflow()
+    local expanded=false
+    for _,group in ipairs(pane.itemslist) do
+        local item=group.items and group.items[1]
+        if item and item:getFullType()=='Base.CarrotSeed' then
+            pane.collapsed[group.name]=false; expanded=true
+        end
+    end
+    assert(expanded,'native seed stack missing')
+    pane:refreshContainer(); pinObserve(pane)
+end
+local function pinCheck(name,enabled,scaled)
+    local frame=assert(pane.inventoryPinFrame,'pin render absent')
+    local expected={pin=0,research=0,season=0}
+    local headers,children,allThree,pinnedHeaders=0,0,0,0
+    for _,icon in ipairs(frame.icons) do
+        local item=icon.item
+        local seed=item:getFullType()=='Base.CarrotSeed'
+        local research=seed or item==pinSamples.research
+        local season=seed or item==pinSamples.packet
+        local header=type(icon.row)=='table' and icon.row.items~=nil
+        if header and Pins.isFavourite(item:getFullType()) then pinnedHeaders=pinnedHeaders+1 end
+        local pinned=enabled and header and Pins.isFavourite(item:getFullType())
+        local size=math.min(12,icon.width/2,icon.height/2)
+        local twoRows=false
+        if pinned and research and season then
+            local across=math.min(size,(icon.width-2)/3)
+            twoRows=across<8
+            size=twoRows and math.min(12,icon.width/2,(icon.height-1)/2) or across
+        end
+        if research then markerAt(frame.research,icon.x,icon.y,size); expected.research=expected.research+1 end
+        if season then markerAt(frame.season,icon.x+icon.width-size,icon.y,size); expected.season=expected.season+1 end
+        if pinned then
+            local pinSize=math.min(11,size)
+            if pinSize>=8 then
+                local x,y=icon.x,icon.y
+                if research then x=season and icon.x+(icon.width-pinSize)/2 or icon.x+icon.width-pinSize end
+                if twoRows then y=icon.y+icon.height-pinSize end
+                assert(y+pane:getYScroll()+pinSize<=pane.height,'pin extends below the native pane')
+                markerAt(frame.pin,x,y,pinSize); expected.pin=expected.pin+1
+                assert(x>=icon.x and y>=icon.y and x+pinSize<=icon.x+icon.width and y+pinSize<=icon.y+icon.height,
+                    'pin extends outside its native icon')
+                if research and season then
+                    local rectangles={{x=icon.x,y=icon.y,w=size,h=size},
+                        {x=icon.x+icon.width-size,y=icon.y,w=size,h=size}, {x=x,y=y,w=pinSize,h=pinSize}}
+                    for i=1,#rectangles do for j=i+1,#rectangles do
+                        local a,b=rectangles[i],rectangles[j]
+                        assert(a.x+a.w<=b.x or b.x+b.w<=a.x or a.y+a.h<=b.y or b.y+b.h<=a.y,'three badges overlap')
+                    end end
+                    allThree=allThree+1
+                end
+            end
+        end
+        if seed then
+            if header then headers=headers+1 else children=children+1 end
+            if scaled then assert(icon.width>pinBaseWidth,'native scale did not enlarge the seed icon') end
+        end
+    end
+    assert(headers==1 and children==3,'expanded native stack must have one header and three physical children')
+    assert(pinnedHeaders==4,'native pin fixture must render all four type headers')
+    for _,kind in ipairs({'pin','research','season'}) do
+        assert(#frame[kind]==expected[kind],'unexpected/duplicate '..kind..' marker')
+    end
+    if enabled then assert(allThree==1 and expected.pin==4,'all pinned headers, including all-three, must have one marker') end
+    print('[INVENTORY_SCREEN] PINS '..name..' enabled='..tostring(enabled)..' headers=4 children=3 coords=actual once=true overlap=false')
+    if name=='08-pins-clean' or name=='09-pins-clean-scaled' or name=='10-pins-vanilla' then shot(name) end
+end
+add(function()
+    assert(pinTexture and PZSurvivorToolkit.BCPinCompatibility,'owned BC pin integration missing')
+    local originalIcon=ISInventoryItem.renderItemIcon
+    ISInventoryItem.renderItemIcon=function(owner,item,x,y,alpha,width,height,...)
+        if pinProbe and owner==pane then
+            local texture=item:getTex()
+            pinProbe.icons[#pinProbe.icons+1]={item=item,x=x,y=y,width=width or texture:getWidthOrig(),
+                height=height or texture:getHeightOrig(),row=owner.items[#owner.items]}
+        end
+        return originalIcon(owner,item,x,y,alpha,width,height,...)
+    end
+    -- This synthetic eligibility overlap uses real native ScriptItem recipe metadata.
+    -- Existing scenes above independently prove ordinary native research and planting eligibility.
+    local p=getPlayer(); p:getInventory():getItems():clear()
+    local function item(id) return assert(p:getInventory():AddItem(id),'missing native pin item '..id) end
+    pinSamples={seed=item('Base.CarrotSeed'),packet=item('Base.CarrotBagSeed2'),
+        research=item('Base.BarbedWire'),plain=item('Base.CarrotBagSeed2_Empty')}
+    item('Base.CarrotSeed'); item('Base.CarrotSeed')
+    for i=0,researchRecipes:size()-1 do p:getKnownRecipes():remove(researchRecipes:get(i)) end
+    seedResearch=pinSamples.seed:getScriptItem():getResearchableRecipes()
+    addedSeedResearch=researchRecipes:get(0)
+    assert(not seedResearch:contains(addedSeedResearch),'synthetic recipe already on native seed script')
+    seedResearch:add(addedSeedResearch)
+    assert(pinSamples.seed:getScriptItem():getResearchableRecipes(p,true):size()>0,'native combined research setup not eligible')
+    local old={}; for fullType in pairs(Pins.FavouritedItems) do old[#old+1]=fullType end
+    for _,fullType in ipairs(old) do Pins.setFavourite(fullType,false) end
+    for _,sample in pairs(pinSamples) do Pins.setFavourite(sample:getFullType(),true) end
+    BCOptions.showFavouritesOnPlayerInventories=true
+    PlantingOptions.config.enabled:setValue(true)
+    local cleanOptions=assert(PZAPI.ModOptions:getOptions('CleanUI'),'native CleanUI options missing')
+    cleanOptions:getOption('uiScale'):setValue(100)
+    inventory(true)
+end)
+add(pinReflow)
+add(function()
+    for _,icon in ipairs(assert(pane.inventoryPinFrame).icons) do
+        if icon.item==pinSamples.seed then pinBaseWidth=icon.width; break end
+    end
+    assert(pinBaseWidth,'baseline native seed icon missing')
+    pinCheck('08-pins-clean',true,false)
+    pinZoom=2
+    PZAPI.ModOptions:getOptions('CleanUI'):getOption('uiScale'):setValue(140)
+end)
+add(pinReflow)
+add(function() pinCheck('09-pins-clean-scaled',true,true) end)
+add(function() inventory(false) end)
+add(pinReflow)
+add(function() pinCheck('10-pins-vanilla',true,true); BCOptions.showFavouritesOnPlayerInventories=false end)
+add(function() pinCheck('player-option-disabled',false,false); inventory(true) end)
+add(pinReflow)
+add(function()
+    pinCheck('clean-player-option-disabled',false,true)
+    seedResearch:remove(addedSeedResearch)
+    assert(not seedResearch:contains(addedSeedResearch),'synthetic native recipe was not restored')
+    for _,sample in pairs(pinSamples) do Pins.setFavourite(sample:getFullType(),false) end
+    print('[INVENTORY_SCREEN] PIN_SETUP_RESTORED nativeRecipe=true')
+end)
 add(function() print('[INVENTORY_SCREEN] COMPLETE'); done=true end)
 Events.OnMainMenuEnter.Add(function() entered=true end)
 Events.OnPreUIDraw.Add(function()

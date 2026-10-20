@@ -30,8 +30,11 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
         nativeCalls=nativeCalls+1
         if pane.fail then error('native failure') end
         if pane.dirty then pane.items={}; pane:refreshContainer(); pane.dirty=false end
-        for row, item in ipairs(pane.rows) do
-            if item ~= 'separator' then
+        pane.items={}
+        for row, entry in ipairs(pane.rows) do
+            pane.items[#pane.items+1]=entry
+            if entry ~= 'separator' then
+                local item=entry.items and entry.items[1] or entry
                 ISInventoryItem.renderItemIcon(pane,item,26,pane.headerHgt+(row-1)*pane.itemHgt,1,pane.iconSize,pane.iconSize)
             end
         end
@@ -62,7 +65,10 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
     CleanUI_RegisterInventoryUiToggleCallback=function(callback) callbacks[#callbacks+1]=callback; callback(initialEnhanced) end
     local handleDetails=true
     local lastLayout
-    modules['PZSurvivorToolkit/InventoryIndicators']={drawIcon=function() end}
+    local indicatorDraws={}
+    modules['PZSurvivorToolkit/InventoryIndicators']={drawIcon=function(_,item,x,y,w,h,details,group)
+        indicatorDraws[#indicatorDraws+1]={item=item,group=group,details=details}
+    end}
     modules['PZSurvivorToolkit/InventoryPlantingTooltip']={install=function() end}
     modules['PZSurvivorToolkit/InventoryDetails']={draw=function(_,_,_,_,_,_,layout) lastLayout=layout; return handleDetails end}
     local freshness={}
@@ -153,6 +159,19 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
     pane.fail=true; assert(not pcall(pane.renderdetails,pane,false)); pane.fail=false
     rects={}; ISInventoryItem.renderItemIcon(pane,a,0,0); assert(alpha==1 and #rects==0,'render context leaked')
     ISInventoryItem.renderItemIcon(pane,a,0,0,0); assert(alpha==0)
+    -- The same physical item can be a stack representative and its first child.
+    -- The icon callback must capture each row, not inspect the completed cache.
+    pane.rows={{items={a,a,b}},a,b}
+    for _, enhanced in ipairs({true,false}) do
+        toggle(enhanced); setmetatable(pane,{__index=ISInventoryPane})
+        indicatorDraws={}; pane:renderdetails(false)
+        assert(#indicatorDraws==3 and indicatorDraws[1].item==a and indicatorDraws[2].item==a)
+        assert(indicatorDraws[1].group and not indicatorDraws[2].group and not indicatorDraws[3].group,
+            'native header identity was reconstructed from final rows')
+        indicatorDraws={}; pane:rendericons()
+        for _,draw in ipairs(indicatorDraws) do assert(not draw.group and not draw.details) end
+        indicatorDraws={}; pane:renderdetails(true); assert(#indicatorDraws==0)
+    end
     local capacity=require 'PZSurvivorToolkit/InventoryCapacity'
     assert(capacity.ratio(inventory(12,10),{})==1 and capacity.ratio(inventory(-1,10),{})==0)
     assert(capacity.ratio(inventory(0,0),{})==nil)

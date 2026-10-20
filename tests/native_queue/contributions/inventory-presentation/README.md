@@ -43,8 +43,29 @@ growing information exactly once in each native measure/draw pass, fits the
 screen, and stops extending when the tooltip preference is disabled. The
 shared full-log audit remains mandatory.
 
-Seven screenshots are required as artifacts, including indicators in both
-modes and the growing-information tooltip. Their presence does not replace
+Appended pin scenes use BC's native `PinnedItems.setFavourite` state API and
+`showFavouritesOnPlayerInventories` option. Forwarding observers identify the
+pin texture and the current native row at each icon call. An expanded stack of
+three carrot seeds must have one pinned header and three unmarked physical
+children in both modes. Other pinned headers combine pin only, pin/research and
+pin/planting badges. For a synthetic all-three combination, the fixture adds a
+native eligible research recipe to the seed's ScriptItem metadata, verifies the
+native research API accepts it, and removes it before completion. This setup is
+separate from the ordinary native eligibility checks above.
+
+The fixture checks actual icon coordinates at normal zoom and at native 2x
+inventory zoom, with CleanUI UI scale set to 140%. All four pinned headers must
+retain their markers at both sizes. The all-three header uses research/planting
+above a centered bottom pin on small icons, and three badges across on larger
+icons. Independent rectangle checks require no overlap and keep the pin inside
+its actual icon and the pane's bottom boundary. Physical children retain only
+their research/planting badges. There must be no pins after disabling BC's player-inventory preference
+in either mode. Settings and pin state belong to the disposable profile; native
+recipe metadata is restored in memory. Drag behavior is not exercised by these
+scenes.
+
+Ten screenshots are required as artifacts, including indicators and pins in both
+modes, scaled combined badges and the growing-information tooltip. Their presence does not replace
 visual inspection for clipping or layout quality. Programmatic native UI
 callbacks do not establish physical mouse/controller, Host, English/Russian
 parity, every third-party combination or long-session coverage. `--mode native`
