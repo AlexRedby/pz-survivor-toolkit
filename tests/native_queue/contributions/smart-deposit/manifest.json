@@ -1,0 +1,13 @@
+{
+  "id": "smart-deposit",
+  "build": "42.21",
+  "mode": "SP",
+  "language": "EN",
+  "helper_mod_id": "SmartDepositNative",
+  "fixture": "ZZSmartDepositNative.lua",
+  "required_mods_in_order": ["NeatUI_Framework", "CleanUI", "PZSurvivorToolkit", "EURY_CONTAINERS", "organizedCategories_core"],
+  "excluded_mods": ["ContainerCapacityIndicator", "BravoItemDetails", "Quartermaster", "HasResearch", "SeedSeasonIndicator"],
+  "expected_screenshots": ["smart-deposit-clean-partial.png", "smart-deposit-vanilla-partial.png"],
+  "completion_marker": "[SMART_DEPOSIT] COMPLETE",
+  "failure_marker": "[SMART_DEPOSIT] FAIL"
+}

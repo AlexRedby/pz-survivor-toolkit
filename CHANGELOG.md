@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.150
+
+- **Fixed:** Smart Deposit drag feedback and execution now use the same allocation. Items that do not fit nearby storage remain visibly rejected when other selected items can be moved. Type/category/fallback routing, protected items and native transfer actions are preserved in both inventory modes.
+
 ### 0.1.149
 
 - **Fixed:** Distribution checks which carry containers can hold each item before reserving destination space. Items rejected by all roomy carriers no longer block later items from being sorted or push them into lower-priority overflow boxes.

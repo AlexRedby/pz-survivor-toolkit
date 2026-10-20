@@ -40,6 +40,7 @@ EXTRA_TESTS = (
     'test_inventory_research.lua',
     'test_inventory_planting.lua',
     'test_inventory_indicators.lua',
+    'test_smart_deposit.lua',
     'test_item_details.lua',
     'test_clothing_repair_menu.lua',
     'test_clothing_inspection.lua',

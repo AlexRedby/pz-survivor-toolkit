@@ -32,3 +32,14 @@ Toolkit owns rendering and sorting through its inventory presentation boundary;
 the separate Workshop mods must be disabled. Their original Mod Options keys
 are retained to preserve existing preferences. Neither installed source package
 contains a separate license file; attribution grants no additional rights.
+
+# Smart Deposit
+
+Toolkit's Smart Deposit routing and walking rules are adapted from the
+Build 42.21 implementation of **Better Containers**, by **Eurymachus**:
+[Steam Workshop item 3586216562](https://steamcommunity.com/sharedfiles/filedetails/?id=3586216562).
+
+Toolkit owns one allocation used by drag feedback and transfer execution.
+Better Containers remains required for proximity containers, permissions,
+category data and its other features. No Better Containers assets or saved-data
+formats are copied by this change.

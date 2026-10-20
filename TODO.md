@@ -1,7 +1,3 @@
-# Smart Deposit drag feedback
-
-- [ ] Reproduce and correct Better Containers' per-item drag feedback when only part of a selection fits nearby storage. `Proximity_SmartDeposit.lua` clears `itemNotOK` for every movable item once any destination plan exists, including overflow items. Derive preview eligibility from the same allocation as execution, preserving full-type/category/fallback routing, Stick intent and partial transfers; avoid maintaining a second routing algorithm. Gate: accepted and rejected items have distinct feedback and actual moves match the preview in the selected mod set.
-
 # In-cabin vehicle door control
 
 - [ ] Recheck the restored early red-aperture icon in the real radial menu with sufficient margins to both sector edges. The user selected the pre-angle-correction artwork; a historical in-game capture exists, but the current 64x64 export has not been captured again.

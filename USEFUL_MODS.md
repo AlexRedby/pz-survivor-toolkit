@@ -18,7 +18,7 @@ Restores fast-forward in multiplayer/co-op. Agreement can be required from all p
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3586216562) · Workshop `3586216562` · Mod `EURY_CONTAINERS`
 
-Combines nearby accessible loot, filters categories, manages container names/icons/colours/order and supports nested bags. Smart Deposit prefers matching item type, then category, then a suitable available container; otherwise the item stays with the player. Manage Containers assignments are not used.
+Combines nearby accessible loot, filters categories, manages container names/icons/colours/order and supports nested bags. Toolkit supplies Smart Deposit for its proximity view: matching item type, then category, then a suitable available container; otherwise the item stays with the player. Drag feedback marks items that cannot be placed. Manage Containers assignments are not used.
 
 - Disable built-in Advanced Display Categories; load `organizedCategories_core` last. Nested Containers Player/Loot preserves standard multiplayer restrictions.
 - With CleanUI, Toolkit owns the category filter. Use its Category header control; CleanUI search still filters results.
