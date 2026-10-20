@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.142
+
+- **Changed:** EatSmart menu goals use short English/Russian outcome labels, with the estimated percentage of remaining food in parentheses. Numeric targets remain in tooltips beside existing unavailable reasons; native portions, settings and callbacks are preserved.
+
 ### 0.1.141
 
 - **Changed:** Ordinary pending food portions use the shared queue edit model, allowing legal same-item reorder and cancellation while retaining native original-food fractions. Exact pickup, remaining-food and fullness requirements protect later actions; consuming a whole item cannot precede a dependent portion or return.
