@@ -46,12 +46,9 @@
 
 These are implementation and verification gaps, not evidence that every action using the old completion path is broken. Keep working native behavior while migrating one verified family at a time.
 
-## Remaining queue performance work
+## Queue performance delivery
 
-- Completion gates for this pass: focused native-source regressions for fresh edits, live urgent prerequisite changes and queue replacement; measure growing idle/hover/drag and tracked-action queues; inspect adjacent inventory event/render paths; bump Toolkit and deliver after reviewing current main.
-- [ ] Remove repeated expensive presentation checks while hovering a queue control or dragging across an unchanged boundary: `ActionQueuePanel.drawRow` still calls policy previews every rendered frame. Measure idle/hover/drag cost across growing queues; keep fresh authoritative checks at the actual edit and never reuse a display result as permission.
-- [ ] Avoid full urgent-action policy evaluation on every tick when no move can occur or the desired position is already reached (`ActionQueue.processPriority`). Preserve reconsideration when live prerequisites change and validate any actual move against current state.
-- [ ] Replace per-record `queue:indexOf` cleanup in Health/Fitness tick handlers with one live membership pass where applicable. Check growing tracked-action queues and cleanup on completion/reset without retaining removed actions. These repeated scans are confirmed in code; noticeable native lag from them has not been measured.
+- [ ] Finish the isolated menu-Host `bulk-reading` run with `profile_queue_hover`: exact client/server reading and returns, bounded hint frequency, clean runtime audit and unchanged source snapshot. Then remove this gate and deliver Toolkit 0.1.171 after rechecking current main. The full available 45-mod set is a partial selection of the configured 49 mods.
 
 ## General rules for move and cancel
 

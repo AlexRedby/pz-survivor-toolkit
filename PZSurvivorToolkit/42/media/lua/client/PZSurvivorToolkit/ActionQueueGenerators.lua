@@ -295,7 +295,7 @@ end
 function Generators.sharesTarget(first, second, context)
     return powerConflict(first, second, context) or powerConflict(second, first, context)
 end
-if Policy.registerTargetChecker then Policy.registerTargetChecker("generators", Generators, Generators.sharesTarget) end
+if Policy and Policy.registerTargetChecker then Policy.registerTargetChecker("generators", Generators, Generators.sharesTarget) end
 local installed
 function Generators.install()
     if installed then return end

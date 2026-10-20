@@ -871,6 +871,98 @@ sharedEditResource = function(left, right)
     return false
 end
 
+local function emptyResourceMap(value)
+    if value == nil then return true end
+    if type(value) ~= "table" or getmetatable(value) then return false end
+    for _ in pairs(value) do return false end
+    return true
+end
+
+local pairResourceMaps = {"targets", "dynamicInputs", "dynamicInputsByType", "outputTypes"}
+local spatialFields = {"generator", "charger", "object", "moveProps", "toolkitWorldTarget", "isoObject",
+    "toolkitWorldX", "toolkitGeneratorCommand", "toolkitWorldCommand", "stove", "mcwave"}
+local function plainItemFootprint(action, context, connectivity)
+    local contract = inspect(action, context)
+    if type(contract) ~= "table" or getmetatable(contract)
+        or (contract.knownInputs ~= nil and contract.knownInputs ~= true)
+        or contract.unknownOutputs or (not connectivity and contract.edit ~= nil) or contract.hands or contract.equipment
+        or type(contract.items) ~= "table" or getmetatable(contract.items)
+        or (contract.itemTypes ~= nil and (type(contract.itemTypes) ~= "table" or getmetatable(contract.itemTypes)))
+        or (not connectivity and (action.Type == "ISInventoryTransferAction" or action.Type == "ISCartTransferAction"))
+        or repairInputs(action) then return end
+    if connectivity then
+        if contract.containerOwners ~= nil and (type(contract.containerOwners) ~= "table" or getmetatable(contract.containerOwners)) then return end
+    elseif not emptyResourceMap(contract.containerOwners) then return end
+    for _, name in ipairs(pairResourceMaps) do if not emptyResourceMap(contract[name]) then return end end
+    for _, name in ipairs(spatialFields) do if action[name] ~= nil then return end end
+    return operationItems(action, context)
+end
+
+-- Only eliminate pairs whose complete legacy footprint is item IDs. Anything
+-- unknown, spatial, dynamic, projected, repairing or capacity-sensitive keeps
+-- the original ordered pair checks, including their exact diagnostic result.
+local function plainGroupItems(queue, first, last, context)
+    if not targetCheckersUnchanged() then return end
+    local items = {}
+    for index = first, last do
+        local footprint = plainItemFootprint(queue.queue[index], context)
+        if not footprint then return end
+        for item in pairs(footprint) do items[item] = true end
+    end
+    return items
+end
+
+local function mayShareGroupResource(items, other, context)
+    if not items then return true end
+    local footprint = plainItemFootprint(other, context)
+    if not footprint or not targetCheckersUnchanged() then return true end
+    for item in pairs(footprint) do if items[item] then return true end end
+    return false
+end
+
+local function connectivityFootprint(action, context)
+    local items = plainItemFootprint(action, context, true)
+    if not items then return end
+    local contract = inspect(action, context)
+    local edit = contract.edit
+    local footprint = {items = items, owners = contract.containerOwners or {}, edits = {}}
+    if edit == nil then return footprint end
+    if type(edit) ~= "table" or getmetatable(edit) or edit.version ~= 1 or edit.complete ~= true
+        or (edit.capacity ~= "unchanged" and edit.capacity ~= "external")
+        or type(edit.resources) ~= "table" or getmetatable(edit.resources) then return end
+    for index, resource in pairs(edit.resources) do
+        if type(index) ~= "number" or index < 1 or index % 1 ~= 0 or index > #edit.resources
+            or type(resource) ~= "table" or getmetatable(resource) or type(resource.domain) ~= "string"
+            or resource.key == nil or (type(resource.key) == "number" and (resource.key ~= resource.key
+                or resource.key == math.huge or resource.key == -math.huge)) then return end
+        local keys = footprint.edits[resource.domain] or {}
+        footprint.edits[resource.domain] = keys
+        keys[resource.key] = true
+    end
+    return footprint
+end
+
+local function addConnectivity(index, footprint)
+    for item in pairs(footprint.items) do index.items[item] = true end
+    for owner in pairs(footprint.owners) do index.owners[owner] = true end
+    for domain, keys in pairs(footprint.edits) do
+        local aggregate = index.edits[domain] or {}
+        index.edits[domain] = aggregate
+        for key in pairs(keys) do aggregate[key] = true end
+    end
+end
+
+local function mayConnect(index, footprint)
+    if not index or not footprint or not targetCheckersUnchanged() then return true end
+    for item in pairs(footprint.items) do if index.items[item] or index.owners[item] then return true end end
+    for owner in pairs(footprint.owners) do if index.items[owner] then return true end end
+    for domain, keys in pairs(footprint.edits) do
+        local aggregate = index.edits[domain]
+        if aggregate then for key in pairs(keys) do if aggregate[key] then return true end end end
+    end
+    return false
+end
+
 local function editComponent(queue, members, component, context)
     if not EditModel then return {status = "unhandled"} end
     local contracts = {}
@@ -883,16 +975,32 @@ local function editComponent(queue, members, component, context)
         end
         contracts[member] = contract
     end
+    -- Capacity validation remains downstream. Connectivity only names shared
+    -- items, item owners and declared edit resources; owner-owner references
+    -- alone do not connect independent transfers through the same carried bag.
+    local footprints, index = {}, nil
+    if targetCheckersUnchanged() then
+        index = {items = {}, owners = {}, edits = {}}
+        for _, member in ipairs(members) do footprints[member] = connectivityFootprint(member, context) or false end
+        for member in pairs(component) do
+            if not footprints[member] then index = nil; break end
+            addConnectivity(index, footprints[member])
+        end
+    end
     local changed = true
     while changed do
         changed = false
         for _, member in ipairs(members) do
-            if not component[member] then
+            if not component[member] and mayConnect(index, footprints[member]) then
                 for related in pairs(component) do
                     if sharedEditResource(contracts[member], contracts[related])
                         or sharedItem(member, related, context) or sharedWorldTarget(member, related, context)
                         or dynamicConflict(member, related, context) or dynamicConflict(related, member, context) then
                         component[member], changed = true, true
+                        if index then
+                            if footprints[member] then addConnectivity(index, footprints[member])
+                            else index = nil end
+                        end
                         break
                     end
                 end
@@ -1154,52 +1262,6 @@ local function editCapacityConflict(queue, edit, first, last, to, context)
                 {first = first, last = last, to = to}, context)
         end
     end
-end
-
-local function emptyResourceMap(value)
-    if value == nil then return true end
-    if type(value) ~= "table" or getmetatable(value) then return false end
-    for _ in pairs(value) do return false end
-    return true
-end
-
-local pairResourceMaps = {"targets", "containerOwners", "dynamicInputs", "dynamicInputsByType", "outputTypes"}
-local spatialFields = {"generator", "charger", "object", "moveProps", "toolkitWorldTarget", "isoObject",
-    "toolkitWorldX", "toolkitGeneratorCommand", "toolkitWorldCommand", "stove", "mcwave"}
-local function plainItemFootprint(action, context)
-    local contract = inspect(action, context)
-    if type(contract) ~= "table" or getmetatable(contract)
-        or (contract.knownInputs ~= nil and contract.knownInputs ~= true)
-        or contract.unknownOutputs or contract.edit ~= nil or contract.hands or contract.equipment
-        or type(contract.items) ~= "table" or getmetatable(contract.items)
-        or (contract.itemTypes ~= nil and (type(contract.itemTypes) ~= "table" or getmetatable(contract.itemTypes)))
-        or action.Type == "ISInventoryTransferAction" or action.Type == "ISCartTransferAction"
-        or repairInputs(action) then return end
-    for _, name in ipairs(pairResourceMaps) do if not emptyResourceMap(contract[name]) then return end end
-    for _, name in ipairs(spatialFields) do if action[name] ~= nil then return end end
-    return operationItems(action, context)
-end
-
--- Only eliminate pairs whose complete legacy footprint is item IDs. Anything
--- unknown, spatial, dynamic, projected, repairing or capacity-sensitive keeps
--- the original ordered pair checks, including their exact diagnostic result.
-local function plainGroupItems(queue, first, last, context)
-    if not targetCheckersUnchanged() then return end
-    local items = {}
-    for index = first, last do
-        local footprint = plainItemFootprint(queue.queue[index], context)
-        if not footprint then return end
-        for item in pairs(footprint) do items[item] = true end
-    end
-    return items
-end
-
-local function mayShareGroupResource(items, other, context)
-    if not items then return true end
-    local footprint = plainItemFootprint(other, context)
-    if not footprint or not targetCheckersUnchanged() then return true end
-    for item in pairs(footprint) do if items[item] then return true end end
-    return false
 end
 
 function Policy.cancelOperationReason(queue, action, context)

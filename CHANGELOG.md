@@ -20,6 +20,7 @@ Version labels come from committed component metadata, including changes made wi
 - **Fixed:** Queue hints reuse short-lived display text instead of recalculating dependencies every rendered frame. Interactions still validate current state, and hints refresh after queue changes or a short delay.
 - **Fixed:** Automatic priority skips checks when the request is already at its earliest possible position and creates edit snapshots only when attempting an actual move. Live prerequisite changes remain visible to retries.
 - **Fixed:** Medical and exercise queue bookkeeping checks membership once per relevant queue instead of searching the queue separately for every tracked action.
+- **Fixed:** Dependency analysis indexes disjoint item groups and item-only transfer components before comparing action pairs. Possible overlaps, complex effects and spatial or capacity-sensitive cases retain their existing detailed checks.
 
 ### 0.1.170
 
