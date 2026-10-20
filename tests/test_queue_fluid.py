@@ -69,7 +69,8 @@ class FluidAdapterTests(unittest.TestCase):
                         nativeDurationsUnchanged=True, contractsVerified=self.selection['mode']=='toolkit',
                         reordered=self.selection['mode']=='toolkit', moveRejected=self.selection['mode']=='toolkit',
                         cancelRejected=self.selection['mode']=='toolkit', untouchedBefore=True,
-                        returnNoopObserved=self.selection['mode']=='toolkit') if editing else None
+                        returnNoopObserved=self.selection['mode']=='toolkit', returnDontAdd=self.selection['mode']=='toolkit',
+                        returnStarted=False, returnTransactionId=0) if editing else None
             raw += [('PREPARED', prep), ('VERIFIED', receipt)]
             rows.append(dict(event='case', id=case, status='passed', reason=None, commands=commands,
                              waitingCancelVerified=cancelling, independentMoveVerified=cancelling and not bag,
@@ -422,7 +423,7 @@ class FluidAdapterTests(unittest.TestCase):
                 self.assertIs(result['outcomes'][0]['outcome']['pendingTransferEditVerified'], mode == 'toolkit')
                 self.assertIs(result['outcomes'][0]['outcome']['dependentPickupProtected'], mode == 'toolkit')
                 for field in ('anchorRunning', 'standalone', 'contractsVerified', 'reordered', 'moveRejected',
-                              'cancelRejected', 'untouchedBefore', 'returnNoopObserved', 'nativeDurationsUnchanged'):
+                              'cancelRejected', 'untouchedBefore', 'returnNoopObserved', 'returnDontAdd', 'returnStarted', 'nativeDurationsUnchanged'):
                     for fault in ('missing', 'opposite', 'integer'):
                         rows, raw = self.single(fluid.EDIT_CASE)
                         evidence = rows[1]['editEvidence']
@@ -446,6 +447,24 @@ class FluidAdapterTests(unittest.TestCase):
                     else: rows[1].pop('editEvidence')
                     with self.subTest(kind=kind, mode=mode, fault=fault):
                         self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_native_return_completion_does_not_imply_an_already_destination_noop(self):
+        for kind in ('sp', 'mp'):
+            self.selection.update(kind=kind, mode='native')
+            rows, raw = self.single(fluid.EDIT_CASE)
+            evidence = rows[1]['editEvidence']
+            self.assertIs(evidence['returnStarted'], False)
+            self.assertEqual(0, evidence['returnTransactionId'])
+            self.assertIs(evidence['returnDontAdd'], False)
+            self.assertIs(evidence['returnNoopObserved'], False)
+            self.assertEqual([], self.verify((rows, raw))['issues'])
+            # The former marker would incorrectly label an ordinary completed return as a no-op.
+            evidence['returnNoopObserved'] = not evidence['returnStarted'] and evidence['returnTransactionId'] == 0
+            self.assertTrue(self.verify((rows, raw))['issues'])
+        for value in (None, True, 1, -1):
+            rows, raw = self.single(fluid.EDIT_CASE)
+            rows[1]['editEvidence']['returnTransactionId'] = value
+            self.assertTrue(self.verify((rows, raw))['issues'])
 
     def test_fullness_requires_authority_metadata_and_actual_dispatch_moodle(self):
         for case in ('fluid-bag-full-favorite', 'fluid-root-full-favorite'):

@@ -200,7 +200,13 @@ local function finish()
  end
  if spec.edit then
   if not editEvidence then reason='edit-not-dispatched'else
-   editEvidence.returnNoopObserved=editActions.returning.started==false and editActions.returning.transactionId==0
+   -- perform() resets started and transactionId after a real transfer too. isValid's
+   -- dontAdd marker survives completion and distinguishes the already-destination no-op.
+   editEvidence.returnDontAdd=editActions.returning.dontAdd
+   editEvidence.returnStarted=editActions.returning.started
+   editEvidence.returnTransactionId=editActions.returning.transactionId
+   editEvidence.returnNoopObserved=editEvidence.returnDontAdd==true
+   if editEvidence.returnStarted~=false or editEvidence.returnTransactionId~=0 then reason='native-return-not-completed'end
    if editEvidence.returnNoopObserved~=(config.mode=='toolkit')then reason='native-return-path-differs'end
    if receipt.bottles[2].source~=(config.mode=='toolkit'and 'root'or 'bag')then reason='edited-bottle-endpoint-differs'end
   end

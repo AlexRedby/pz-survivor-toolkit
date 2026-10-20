@@ -205,11 +205,11 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
         enabled = mode == 'toolkit'
         expected_fields = {'anchorRunning', 'bottleId', 'fullWeight', 'standalone', 'pickupDuration', 'returnDuration',
                            'nativeDurationsUnchanged', 'contractsVerified', 'reordered', 'moveRejected', 'cancelRejected',
-                           'untouchedBefore', 'returnNoopObserved'}
+                           'untouchedBefore', 'returnNoopObserved', 'returnDontAdd', 'returnStarted', 'returnTransactionId'}
         if (type(evidence) is not dict or set(evidence) != expected_fields
                 or not craft._matches(evidence, dict(anchorRunning=True, bottleId=bottles[1]['id'], standalone=True,
                     nativeDurationsUnchanged=True, contractsVerified=enabled, reordered=enabled,
-                    moveRejected=enabled, cancelRejected=enabled, untouchedBefore=True, returnNoopObserved=enabled))
+                    moveRejected=enabled, cancelRejected=enabled, untouchedBefore=True, returnNoopObserved=enabled, returnDontAdd=enabled, returnStarted=False, returnTransactionId=0))
                 or not _close(evidence.get('fullWeight'), bottles[1]['weight'])
                 or any(not _number(evidence.get(field)) or
                        (evidence[field] != -1 if kind == 'mp' else evidence[field] <= 0)
