@@ -307,8 +307,8 @@ public final class CartGrip {
     private static final Grasp FEMALE_ROUND=new Grasp(.063f,.025f,-1.55f);
     private static final Grasp MALE_WOOD=new Grasp(.055f,.020f,-1.4f);
     private static final Grasp FEMALE_WOOD=new Grasp(.055f,.024f,-1.75f);
-    private static final Grasp MALE_METAL=new Grasp(.063f,.015f,-1.8f);
-    private static final Grasp FEMALE_METAL=new Grasp(.055f,.025f,-1.8f);
+    private static final Grasp MALE_METAL=new Grasp(.057f,.022f,-1.5f);
+    private static final Grasp FEMALE_METAL=new Grasp(.056f,.025f,-1.7f);
 
     static Grasp grasp(boolean female, String model) {
         if("WheelbarrowWood".equals(model)) return female?FEMALE_WOOD:MALE_WOOD;
@@ -358,7 +358,7 @@ public final class CartGrip {
         return true;
     }
 
-    // Mesh-local centers measured from the actual GPU handle rings/end planes, not the authored hand pose.
+    // Mesh-local grip stations measured from the GPU handles; keep the whole palm inside the finite shaft.
     static boolean handle(String model, boolean left, Vector3f point) {
         if(model==null) return false;
         switch(model) {
@@ -366,7 +366,7 @@ public final class CartGrip {
                 "ShoppingCartFlashlightModel", "ShoppingCartFlashlightPartialModel", "ShoppingCartFlashlightFullModel" ->
                 point.set(-150.07166f,343.47412f,left?.809756f:-.809769f);
             case "WheelbarrowWood" -> point.set(left?.00172237f:-.00172238f,.00541905f,-.00342593f);
-            case "WheelbarrowMetal" -> point.set(left?-7.409948f:-39.674755f,6.614635f,82.79839f);
+            case "WheelbarrowMetal" -> point.set(left?-7.409948f:-39.674755f,6.614635f,81.45f);
             default -> { return false; }
         }
         return true;
@@ -394,8 +394,8 @@ public final class CartGrip {
             // Diagonal underhand grip: shaft across curled fingers, palm inward/up, wrist above the handle.
             var x=down.mul(.9961947f,new Vector3f()).fma(.08715574f,inward);
             var z=inward.mul(.9961947f,new Vector3f()).fma(-.08715574f,down);
-            float beta=(float)Math.toRadians(25+10*CartSteeringMath.woodenTurnAmount(pressure));
-            x.mul(wood?(float)Math.cos(beta):.5735200f).fma(wood?-(float)Math.sin(beta):-.8191916f,axis).normalize();
+            float beta=(float)Math.toRadians(wood?25+10*CartSteeringMath.woodenTurnAmount(pressure):40);
+            x.mul((float)Math.cos(beta)).fma(-(float)Math.sin(beta),axis).normalize();
             var y=z.cross(x,new Vector3f()).normalize();z=x.cross(y,new Vector3f()).normalize();
             out.m00(x.x).m01(x.y).m02(x.z).m10(y.x).m11(y.y).m12(y.z).m20(z.x).m21(z.y).m22(z.z);
         } else {

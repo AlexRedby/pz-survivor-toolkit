@@ -771,6 +771,7 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.40
 
+- **Fixed:** Metal wheelbarrow hands grip across the shafts and farther inside their ends, with model-specific palm depth and finger closure shared by pickup, held movement and setdown.
 - **Changed:** Ported the wooden wheelbarrow gait, turning, braking, reverse and stationary pivot presentation to the metal model, with its measured handle positions, wheel size, axle and collision envelope. Both models share transition logic while retaining their own grip and elbow calibration.
 - **Fixed:** Metal wheelbarrow grip remains reachable during braking by using bounded clavicle rotation without stretching the arms. Wheel rotation, floor contact and held/world handoffs use the matching model geometry.
 
