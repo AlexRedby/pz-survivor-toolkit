@@ -10,6 +10,7 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Selected mod set
 
+- **Added:** Archery Nexus with Wilderness Progression: Archery Nexus to the B42.21 selection (49 Mod IDs / 46 Workshop items), with the base loaded before its companion. Includes crafting/progression, arrow recovery and draw endurance/strain; full-pack and Host behavior remain unverified. Existing sandbox settings are unchanged.
 - **Added:** Vanilla Vehicles Animated and its ZombieBuddy-based Animated Vehicle Parts Fix to the B42.21 selection (47 Mod IDs / 44 Workshop items). Optional VVA submods and the outdated multiplayer synchronization addon remain disabled. SP visuals, lighting coexistence and Host animation synchronization are not yet verified.
 
 ## PZ Survivor Toolkit

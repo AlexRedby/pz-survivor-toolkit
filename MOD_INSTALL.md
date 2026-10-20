@@ -88,6 +88,14 @@ For the hutch guard, also verify `hutch=true` and `[ZB] Transformed: zombie.iso.
 
 If an animal is still stuck, preserve the save and collect server/client logs around one Grab attempt before deleting or replacing it. Use the [animal-trailer regression scenarios](docs/DEVELOPMENT.md#regression-scenarios) to reproduce packet-ordering and timer issues in a disposable profile.
 
+## Archery
+
+The selected set includes [Archery Nexus](https://steamcommunity.com/sharedfiles/filedetails/?id=3617854007) (`3617854007`, `ArcheryNexus`) followed by [Wilderness Progression: Archery Nexus](https://steamcommunity.com/sharedfiles/filedetails/?id=3776221203) (`3776221203`, `WildernessProgressionArcheryNexusCompanion`). Keep both Workshop items and Mod IDs on Host and clients, with the base before the companion. Do not enable Archery Nexus Fixed or Lite alongside the companion. RadArchery and the RadBows Upgrade are not required or selected.
+
+The companion adds Archery progression, material-specific arrow crafting/recovery, bowstring wear and endurance/arm-strain costs while drawing. Its baseline Wilderness Progression sandbox settings use damage/range `1` and Normal endurance drain/muscle strain. The INI does not apply these settings to an existing world; retain that world's sandbox settings unless deliberately changing them.
+
+**Not yet gameplay-verified with this pack on B42.21.** The author includes multiplayer support but says live testing is incomplete. Before using an existing world, back it up and check crafting, firing, arrow recovery/breakage, restringing and equipment changes in a separate test profile; for Host, also check remote shots and matching arrow counts on client and server. Toolkit queue and crafting integrations are not established by selecting these mods. Repository selection alone does not install the Workshop files or alter a live profile.
+
 ## TV & Radio ReInvented
 
 The INI includes the main `TVRadio_ReInvented` mod. Toolkit fixes device recognition on EN/RU clients and the native macOS video path; do not enable the separate `TVRadioReinventedFix4220`.

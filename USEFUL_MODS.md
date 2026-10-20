@@ -277,3 +277,18 @@ Selected before Animated Vehicle Parts Fix and the lighting mods. In single-play
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3802266453) · Workshop `3802266453` · Mod `AnimatedVehiclePartsFix`
 
 Java fix for animated vehicle parts collapsing into the vehicle center after a running vehicle unloads/reloads. It also addresses missing-part ghost rendering and lights after chunk reload; it supplies no animated vehicle models itself. Requires the selected ZombieBuddy loader and saved client JAR approval. Selected after ZombieBuddy and Vanilla Vehicles Animated. [Source version 1.2.2](https://github.com/MeowWoem/PZMods-AnimatedVehiclePartsFix/blob/ade01e5b0e84128788129d9c90cd61e6a5fd991d/Sources/Java/src/io/ameno/AVPF/Patch_BaseVehicle.java) patches `BaseVehicle.adoptParts` without an SP/MP guard and rebuilds the native light list; it does not set beam intensity or range. VVA replaces vehicle models, so Toolkit light-anchor alignment still needs an in-game check. The author describes the affected bug as single-player only and says the fix is unnecessary in Host multiplayer; selecting it does not establish multiplayer animation synchronization. Native B42.21 macOS behavior and coexistence with Toolkit Java Patches, High Beams and Reverse Drive Lights have not been verified.
+
+## 48 Archery Nexus + Wilderness Progression
+
+Load the base mod before its companion:
+
+| Mod | Workshop ID | Mod ID |
+|---|---:|---|
+| [Archery Nexus](https://steamcommunity.com/sharedfiles/filedetails/?id=3617854007) | `3617854007` | `ArcheryNexus` |
+| [Wilderness Progression: Archery Nexus](https://steamcommunity.com/sharedfiles/filedetails/?id=3776221203) | `3776221203` | `WildernessProgressionArcheryNexusCompanion` |
+
+The companion preserves the base bow, visuals and sounds while adding a dedicated Archery skill, books, starting traits and practice targets. Stone, bone and iron arrowheads use knapping, carving and forging; recovered arrows retain material and condition, can break and can be dismantled for components. Bowstrings wear separately and can be replaced. Archery and Strength affect performance; Maintenance and Archery reduce wear. Drawing drains Endurance and builds arm strain; pain and exhaustion weaken shots and can force release. Nocking is automatic, with manual arrow selection and equipped-quiver priority.
+
+Baseline sandbox settings under Wilderness Progression are damage/range multipliers `1`, Endurance Drain `Normal` and Muscle Strain `Normal`. Increased Bow Hit Chance and plastic-bottle fletching default on; these are upstream defaults, not settings supplied by the selected INI. Keep the existing world's sandbox settings unless deliberately changing them.
+
+Requires both Workshop items on Host and clients. Do not combine the companion with Archery Nexus Fixed or Lite; do not add RadArchery or the RadBows Upgrade as dependencies. As checked on 20 October 2026, the companion was updated on 15 October, but its author explicitly says multiplayer live testing is incomplete. B42.21 full-pack/Host behavior, hunting, arrow conservation and Toolkit queue/crafting integrations have not been verified. Before installing into a gameplay world, use a disposable profile to check crafting, nocking/firing, hit/miss recovery, breakage, restringing, unequipping and Host synchronization. See [installation](MOD_INSTALL.md#archery).
