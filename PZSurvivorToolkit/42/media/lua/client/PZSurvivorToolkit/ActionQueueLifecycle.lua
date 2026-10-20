@@ -114,6 +114,7 @@ function Lifecycle.flush(queue)
     if mediaState == "waiting" then return "waiting", action end
     pending[queue] = nil
     if mediaState == "failed" then return "failed", action end
+    if reading and reading.completedPickup then reading.completedPickup(queue, action) end
     queue:onCompleted(action)
     return "completed", action
 end

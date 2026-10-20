@@ -395,6 +395,31 @@ class QueueReportTests(unittest.TestCase):
         self.assertEqual(result["runtime"]["status"], "unavailable")
         self.assertEqual(result["status"], "failed")
 
+    def test_general_logger_embedded_errors_remain_visible_and_mirrors_keep_counts(self):
+        root = self.fixture()
+        error = ('LOG  : General      f:0 st:0> ERROR: template "VVA_StepVan_Decor_Trunk" '
+                 'not found in: media/scripts/generated/vehicles/vehicle_stepvan.txt\n')
+        original = (root / 'client1-launch.log').read_text()
+        (root / 'client1-launch.log').write_text(error * 2 + original)
+        (root / 'client1/console.txt').write_text(error * 2)
+        logs = root / 'client1/Logs'
+        logs.mkdir()
+        (logs / 'DebugLog.txt').write_text('[20-10-26 12:00:00.000] ' + error.rstrip() + '.\n')
+        result = report.build_report(root, self.catalog)
+        self.assertEqual(result['functional']['status'], 'passed')
+        self.assertEqual(result['status'], 'needs-review')
+        self.assertEqual(result['runtime']['status'], 'unclassified-errors')
+        audit = result['runtime']['roles']['client1']
+        self.assertEqual(audit['error_count'], 2)
+        self.assertEqual(audit['unclassified_count'], 2)
+        self.assertEqual(len(audit['issues']), 1)
+        self.assertIn('VVA_StepVan_Decor_Trunk', audit['issues'][0]['message'])
+        path = root / 'non-errors.log'
+        path.write_text('LOG : General > Loading error messages: ERROR: example\n'
+                        'LOG : General > [fixture] expected ERROR: example\n'
+                        'LOG : Lua > print("ERROR: example")\n')
+        self.assertEqual(report.audit_log(path, root / 'client1')[0], [])
+
     def test_matching_controls_compare_and_unsafe_or_incomplete_controls_do_not(self):
         current = report.build_report(self.fixture("toolkit"), self.catalog)
         control = report.build_report(self.fixture("native", mode="native"), self.catalog)

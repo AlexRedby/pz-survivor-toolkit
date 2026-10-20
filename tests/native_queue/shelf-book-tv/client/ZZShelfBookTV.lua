@@ -3,6 +3,8 @@ require 'ISUI/ISInventoryPaneContextMenu'
 require 'RadioCom/ISRadioWindow'
 local Fixture=require 'QueueShelfBookTV'
 local config=require 'QueueTestSelection'
+local case=config.cases[1]
+assert(#config.cases==1 and (case=='demote-and-control' or case=='worn-bag'),'select one shelf/TV case')
 local Toolkit=PZSurvivorToolkit
 local MARK='[SHELF_TV] '
 local started,done,phase=false,false,'prepare'
@@ -10,6 +12,8 @@ local ids,state,window,panel,reader,power,insert,play,receipt,progressReceipt
 local initialPages,committedPages,seenTVStart=nil,nil,false
 local resumedLogged,powerStarted,powerSeen,insertStarted,insertSeen,playStarted,playSeen=false,false,false,false,false,false,false
 local readerOperation,resumedReader
+local pickup,pickupStarted,pickupSeen=nil,false,false
+local durationBaseline,durationObserved=nil,{}
 local since,idleSince=0,nil
 local mediaProbeInstalled,firstNilMediaLogged=false,false
 local lastMediaProbe,lastReadingProbe,lastFlushProbe
@@ -180,9 +184,32 @@ local function queuedActions()
     return out
 end
 local function observeTVEffects()
+    if durationBaseline then
+        -- Read-only diagnostics: MP may complete between ticks without exposing
+        -- a positive transfer timer, so sampling is never a success condition.
+        for name,action in pairs({pickup=pickup,insert=insert,power=power,play=play}) do
+            if queue().current==action and action:isStarted() then
+                local duration=action.maxTime
+                local transaction=name=='pickup' and isClient() and action.transactionId
+                    and getItemTransactionDuration(action.transactionId) or nil
+                local signature=tostring(duration)..'|'..tostring(transaction)
+                if durationObserved[name]~=signature then
+                    durationObserved[name]=signature
+                    print(MARK..'DURATION_OBSERVED command='..name..' queued='..durationBaseline[name]
+                        ..' effective='..tostring(duration)..' transactionDuration='..tostring(transaction))
+                end
+            end
+        end
+    end
     if power:isStarted() then powerStarted=true end
     if powerStarted and state.data:getIsTurnedOn() and not powerSeen then
         powerSeen=true;print(MARK..'POWER_EFFECT command=ToggleOnOff turnedOn=true')
+    end
+    if pickup and pickup:isStarted() then pickupStarted=true end
+    if pickupStarted and not pickupSeen and Fixture.pickupArrived(state,insert) then
+        pickupSeen=true
+        print(MARK..'PICKUP_EFFECT sourceBag='..ids.bag..' tapeId='..ids.tape..' exactTape=true root=true'
+            ..' replicaChanged='..tostring(state.pickedTape~=state.tape))
     end
     if insert:isStarted() and insert.secondaryItem and insert.secondaryItem:getID()==state.ids.tape then insertStarted=true end
     if insertStarted and state.data:hasMedia() and state.data:getMediaIndex()==state.mediaIndex
@@ -200,7 +227,8 @@ local function observationDiagnostic(q)
     local queued={}
     for _,action in ipairs(q.queue) do queued[#queued+1]=tostring(action.Type) end
     local data=state.data
-    local owner=state.tape:getContainer()
+    local observedTape=state.pickedTape or state.tape
+    local owner=observedTape:getContainer()
     local inventoryTape=getPlayer():getInventory():getItemById(ids.tape)
     print(MARK..'OBSERVATION_TIMEOUT current='..current..' queued='..table.concat(queued,',')
         ..' actionStarted='..tostring(powerStarted)..','..tostring(insertStarted)..','..tostring(playStarted)
@@ -209,7 +237,7 @@ local function observationDiagnostic(q)
         ..' turnedOn='..tostring(data:getIsTurnedOn())..' hasMedia='..tostring(data:hasMedia())
         ..' mediaIndex='..tostring(data:getMediaIndex())..' mediaType='..tostring(data:getMediaType())
         ..' playing='..tostring(data:isPlayingMedia())
-        ..' exactTapeInInventory='..tostring(inventoryTape~=nil and inventoryTape:getID()==ids.tape)
+        ..' exactTapeInInventory='..tostring(inventoryTape==observedTape and owner==getPlayer():getInventory())
         ..' exactCommandTape='..tostring(insert.secondaryItem and insert.secondaryItem:getID()==ids.tape)
         ..' tapeOwner='..tostring(owner and owner:getType() or 'none'))
 end
@@ -228,7 +256,8 @@ local function traceNativeInsertion(action)
                 ..' hasMedia='..tostring(self.deviceData:hasMedia())
                 ..' mediaIndex='..tostring(self.deviceData:getMediaIndex())
                 ..' expectedMediaIndex='..tostring(state.mediaIndex)
-                ..' exactTapeInInventory='..tostring(getPlayer():getInventory():getItemById(ids.tape)~=nil))
+                ..' exactTapeInInventory='..tostring(state.tape:getContainer()==getPlayer():getInventory()
+                    and getPlayer():getInventory():getItemById(ids.tape)==state.tape))
         end
         return result
     end
@@ -245,7 +274,40 @@ local function createTVCommands()
     window,panel=findPanel(state.tv)
     panel:toggleOnOff()
     power=assert(queue().queue[#queue().queue],'RWMMergedTV power command was not queued')
-    panel:addMediaAux(state.tape)
+    if case=='worn-bag' then
+        assert(Toolkit.Settings.improveVHSControls(),'selected VHS controls must expose worn-bag tapes')
+        getPlayerInventory(getPlayer():getPlayerNum()):refreshBackpacks()
+        assert(ISInventoryPaneContextMenu.getContainers(getPlayer()):contains(state.bagSource),
+            'native inventory menu cannot see worn bag')
+        local before=#queue().queue
+        -- Use the real VHS menu dispatch so transfer and insertion receive the
+        -- same native UI operation. Calling addMediaAux directly bypasses it.
+        panel:addMedia()
+        local menu=assert(getPlayerContextMenu(getPlayer():getPlayerNum()))
+        local option,index
+        for i,value in ipairs(menu.options) do
+            if value.target==panel and value.param1==state.tape then
+                assert(not option,'duplicate exact VHS menu option')
+                option,index=value,i
+            end
+        end
+        assert(option and option.onSelect and not option.notAvailable and not option.isDisabled,
+            'real TV VHS menu omitted exact worn-bag tape')
+        menu:prerender();assert(menu.options[index]==option,'exact VHS option moved during menu layout')
+        menu.mouseOver=index;menu:ensureVisible()
+        local scroll=menu:getScrollHeight()>menu:getScrollAreaHeight()
+        local y=menu.padTopBottom+(scroll and menu.scrollIndicatorHgt or 0)+menu:getScrollAreaHeight()/2-menu:getYScroll()
+        menu:onMouseUp(5,y)
+        for i=before+1,#queue().queue do
+            local action=queue().queue[i]
+            if action.Type=='ISInventoryTransferAction' and action.item==state.tape then
+                assert(not pickup,'duplicate native tape pickup')
+                pickup=action
+            end
+        end
+        assert(pickup and pickup.srcContainer==state.bagSource and pickup.destContainer==getPlayer():getInventory(),
+            'real menu did not enqueue exact native worn-bag pickup')
+    else panel:addMediaAux(state.tape) end
     insert=assert(queue().queue[#queue().queue],'RWMMergedTV media insertion was not queued')
     panel:togglePlayMedia()
     play=assert(queue().queue[#queue().queue],'RWMMergedTV play command was not queued')
@@ -254,6 +316,18 @@ local function createTVCommands()
         and play.Type=='ISRadioAction' and play.mode=='TogglePlayMedia','native TV command identities/order differ')
     traceNativeInsertion(insert)
     print(MARK..'COMMANDS power=ISRadioAction insert=ISDeviceMediaAction play=ISRadioAction')
+    if pickup then
+        durationBaseline=Fixture.captureDurations(pickup,insert,power,play,isClient())
+        print(MARK..'DURATIONS_QUEUED pickup='..durationBaseline.pickup..' insert='..durationBaseline.insert
+            ..' power='..durationBaseline.power..' play='..durationBaseline.play..' client='..tostring(isClient()))
+        if config.mode=='toolkit' then
+            assert(type(pickup.toolkitQueueOperation)=='table' and pickup.toolkitQueueOperation==insert.toolkitQueueOperation
+                and pickup.toolkitQueueOperation~=readerOperation and pickup.toolkitQueueOperation~=power.toolkitQueueOperation
+                and pickup.toolkitQueueOperation~=play.toolkitQueueOperation,'native VHS pickup/insertion group differs')
+        end
+        print(MARK..'PICKUP_QUEUED type=ISInventoryTransferAction sourceBag='..ids.bag..' tapeId='..ids.tape
+            ..' destination=main grouped='..tostring(config.mode=='toolkit')..' menu=true nativeDurations=true')
+    end
 end
 local function queueTV()
     assert(committedPages>initialPages and reader==queue().current,'committed reading progress/current action changed before TV queueing')
@@ -261,11 +335,13 @@ local function queueTV()
         ..' pagesBefore='..initialPages..' pagesCommitted='..committedPages)
     print(MARK..'READ started=true pagesBefore='..initialPages..' pagesCommitted='..committedPages)
     createTVCommands()
-    local actions=queuedActions();local pIndex,iIndex,playIndex
+    local actions=queuedActions();local pIndex,iIndex,playIndex,pickupIndex
     for index,action in ipairs(actions) do
-        if action==power then pIndex=index elseif action==insert then iIndex=index elseif action==play then playIndex=index end
+        if action==power then pIndex=index elseif action==insert then iIndex=index elseif action==play then playIndex=index
+        elseif action==pickup then pickupIndex=index end
     end
     assert(pIndex and iIndex and playIndex and pIndex<iIndex and iIndex<playIndex,'TV commands were not queued separately in power/insert/play order')
+    if pickup then assert(pickupIndex and pIndex<pickupIndex and pickupIndex<iIndex,'VHS pickup is not between power and insertion') end
     if config.mode=='toolkit' then
         local accepted,reason=Toolkit.ActionQueue.move(queue(),reader,play,true)
         assert(accepted,'book demotion failed: '..tostring(reason))
@@ -278,14 +354,17 @@ end
 local function finish()
     local value=Fixture.verify(state)
     if config.kind=='mp' then
-        sendClientCommand('ShelfBookTVTest','Verify',{case='demote-and-control',ids=ids})
+        sendClientCommand('ShelfBookTVTest','Verify',{case=case,ids=ids})
         phase='authority';return
     end
     assert(value.pages==ids.pages and value.exactCount==1 and value.tapeDebited
         and value.mediaTitle=='Carzone' and value.playing,'SP exact final receipt differs')
+    if state.bag then
+        print(MARK..'BAG_AUTHORITY '..Fixture.bagReceipt(state)..' actor=client1')
+    end
     print(MARK..'RETURN sameBook=true exactCount=1')
     print(MARK..'MEDIA tapeDebited=true exactTape=true mediaIndex='..value.mediaIndex..' mediaType='..value.mediaType..' title=Carzone playing=true')
-    print(MARK..'COMPLETE case=demote-and-control');done=true
+    print(MARK..'COMPLETE case='..case);done=true
 end
 
 Events.OnServerCommand.Add(function(module,command,args)
@@ -310,11 +389,11 @@ Events.OnTick.Add(function()
         if phase=='prepare' then
             if config.kind=='mp' then
                 assert(isClient(),'Host client connection not ready')
-                sendClientCommand('ShelfBookTVTest','Prepare',{case='demote-and-control'})
+                sendClientCommand('ShelfBookTVTest','Prepare',{case=case})
                 phase='prepare-wait';return
             end
             assert(not isClient() and not isServer(),'SP fixture expected')
-            state=Fixture.prepare(player);ids=state.ids;phase='start-read';return
+            state=Fixture.prepare(player,case);ids=state.ids;phase='start-read';return
         end
         if phase=='prepare-wait' then return end
         if phase=='wait-fixture' then
@@ -329,6 +408,12 @@ Events.OnTick.Add(function()
             assert(initialPages==state.ids.pages-4,'fixture book starting pages differ')
             print(MARK..'PREPARED shelfId='..ids.shelf..' bookId='..ids.book..' tv='..ids.x..','..ids.y..','..ids.z
                 ..' tapeId='..ids.tape..' mediaIndex='..ids.mediaIndex..' mediaType='..ids.mediaType..' power=electric daylight=true')
+            if state.bag then
+                assert(state.tape:getContainer()==state.bagSource and state.player:getWornItem(state.bag:canBeEquipped())==state.bag,
+                    'exact tape did not start in worn bag')
+                print(MARK..'BAG_PREPARED bagId='..ids.bag..' location='..ids.bagLocation
+                    ..' tapeId='..ids.tape..' worn=true root=true tapeInBag=true')
+            end
             ISInventoryPaneContextMenu.readItem(state.book,player:getPlayerNum())
             phase='wait-reading';since=getTimestampMs();return
         end
@@ -386,6 +471,7 @@ Events.OnTick.Add(function()
             end
             assert(seenTVStart,'queued TV power action never started')
             assert(powerSeen and insertSeen and playSeen,'TV power/insert/play actions did not each start with their matching effect')
+            if pickup then assert(pickupStarted and pickupSeen,'native worn-bag pickup did not start and transfer exact tape') end
             print(MARK..'ACTIONS powerStarted=true powered=true insertStarted=true exactTape=true playStarted=true mediaMatched=true')
             local book=exactBook()
             assert(book and book:getAlreadyReadPages()==book:getNumberOfPages(),'book did not complete after TV sequence')
@@ -405,9 +491,14 @@ Events.OnTick.Add(function()
             if not receipt then return end
             assert(receipt.ok and receipt.bookReturned and receipt.tapeRemoved and receipt.mediaIndex==state.mediaIndex
                 and receipt.mediaType==state.mediaType and receipt.tvMedia=='Carzone' and receipt.playing,'server-owned final state differs')
+            if state.bag then
+                local bagReceipt=Fixture.bagReceipt(state)
+                assert(receipt.bagReceipt==bagReceipt,'server-owned worn bag receipt differs from client')
+                print(MARK..'BAG_AUTHORITY '..bagReceipt..' actor=client1')
+            end
             print(MARK..'RETURN sameBook=true exactCount=1')
             print(MARK..'MEDIA tapeDebited=true exactTape=true mediaIndex='..receipt.mediaIndex..' mediaType='..receipt.mediaType..' title=Carzone playing=true')
-            print(MARK..'COMPLETE case=demote-and-control');done=true
+            print(MARK..'COMPLETE case='..case);done=true
         end
     end)
     if not ok then done=true;print('[QUEUE_TEST] FAIL shelf-book-tv '..tostring(err)) end

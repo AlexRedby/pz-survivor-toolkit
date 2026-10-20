@@ -62,7 +62,28 @@ function Media.capture(action)
  if not instanceof(root,'ItemContainer')then return end
  return {marker=captureMarker,action=action,tape=action.secondaryItem,data=action.deviceData,
   television=action.deviceData:getParent(),parameter=action.parameter,character=action.character,root=root,
-  mediaIndex=action.secondaryItem:getRecordedMediaIndex(),mediaType=action.secondaryItem:getMediaType()}
+  mediaIndex=action.secondaryItem:getRecordedMediaIndex(),mediaType=action.secondaryItem:getMediaType(),
+  tapeID=action.secondaryItem:getID(),fullType=action.secondaryItem:getFullType(),container=action.secondaryItem:getContainer()}
+end
+-- A completed native Host pickup replaces the client item, then rebinds direct
+-- queued-action fields by ID. Nested receipts are not part of that engine step.
+-- Reading supplies the confirmed, captured pickup; never refresh a begun insert.
+function Media.afterPickup(action,saved,pickup)
+ if not isClient()or action.action or type(saved)~='table'or saved.marker~=captureMarker
+  or saved.action~=action or saved.container==saved.root or saved.tape:getContainer()~=nil
+  or pickup.srcContainer~=saved.container or pickup.destContainer~=saved.root then return end
+ local nextRecord=Media.capture(action)
+ -- Native perform may restore its old item from the nested transfer queueList.
+ if not nextRecord or nextRecord.tape==saved.tape or pickup.item~=saved.tape and pickup.item~=nextRecord.tape
+  or nextRecord.character~=saved.character or nextRecord.root~=saved.root or nextRecord.data~=saved.data
+  or nextRecord.television~=saved.television or nextRecord.parameter~=saved.parameter
+  or nextRecord.tapeID~=saved.tapeID or nextRecord.fullType~=saved.fullType
+  or nextRecord.mediaIndex~=saved.mediaIndex or nextRecord.mediaType~=saved.mediaType
+  or nextRecord.container~=saved.root or saved.root:getItemById(saved.tapeID)~=nextRecord.tape
+  or saved.container:getItemById(saved.tapeID)or saved.data:hasMedia()then return end
+ local items,count=saved.root:getItems(),0
+ for i=0,items:size()-1 do if items:get(i):getID()==saved.tapeID then count=count+1 end end
+ if count==1 then return nextRecord end
 end
 -- Native create adjusts duration for moodles. Completion only observes the exact
 -- previously captured insertion; it grants no new permission to execute an action.

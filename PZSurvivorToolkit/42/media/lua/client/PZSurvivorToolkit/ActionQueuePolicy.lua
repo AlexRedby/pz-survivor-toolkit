@@ -1042,13 +1042,15 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
         end
         if i <= last and (not check.to or i < check.first or i > check.last) then order[#order + 1] = queue.queue[i] end
     end
-    local cartCapacity, conditionalCapacity = false, {}
+    local cartCapacity, conditionalCapacity, hasConditionalCapacity = false, {}, false
     for _, action in ipairs(order) do
         if action.Type == "ISCartTransferAction" or (carts and type(carts.involvesCart) == "function" and carts.involvesCart(action)) then cartCapacity = true end
         local contract = inspect(action, context)
-        if contract and contract.capacityRequiresEdit then conditionalCapacity[action] = true end
+        if contract and contract.capacityRequiresEdit then
+            conditionalCapacity[action], hasConditionalCapacity = true, true
+        end
     end
-    if next(conditionalCapacity) then
+    if hasConditionalCapacity then
         -- Prove all conditional weight effects in the global proposed prefix,
         -- including unchanged portions and their required pickups/returns. The
         -- selected edit's dependency component alone may contain none of them.

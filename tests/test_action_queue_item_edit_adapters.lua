@@ -1,4 +1,5 @@
 if not NativeActionRoot then print('Item edit adapters SKIP (pass --native-action-root).');return end
+next = nil -- PZ Kahlua has no global next; capacity checks must work without it.
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','') end
     local f=assert(io.open(path));local s=f:read('*a');f:close();return s:gsub('\r','')

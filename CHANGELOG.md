@@ -15,11 +15,18 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
-### 0.1.170
+### 0.1.171
 
 - **Fixed:** Queue hints reuse short-lived display text instead of recalculating dependencies every rendered frame. Interactions still validate current state, and hints refresh after queue changes or a short delay.
 - **Fixed:** Automatic priority skips checks when the request is already at its earliest possible position and creates edit snapshots only when attempting an actual move. Live prerequisite changes remain visible to retries.
 - **Fixed:** Medical and exercise queue bookkeeping checks membership once per relevant queue instead of searching the queue separately for every tracked action.
+
+### 0.1.170
+
+- **Fixed:** A VHS taken from a backpack can finish insertion after being moved ahead of active shelf reading in Host. The queue follows the replacement client item only after its exact native pickup succeeds; item identity, media contents, endpoints and dependent playback remain checked.
+- **Fixed:** Queue move/cancel capacity checks no longer call the unavailable `next()` global in the game's Kahlua runtime. Shelf returns combined with backpack pickups retain their existing capacity checks without errors while drawing or editing the queue.
+- **Fixed:** Corrected the reviewed Vanilla Vehicles Animated references for StepVan trunk decor and modern police-car bars. Existing trunk decor remains applied once; the bars use the mod's existing template. Unknown upstream versions and templates or profiles supplied by other mods keep their own behavior. Missing police-separator templates remain unresolved and visible in the logs.
+- **Development:** Added the worn-backpack VHS variant to the shelf-reading/TV checks, with exact pickup, grouping and server receipts. The shared log audit now recognizes native `LOG: General > ERROR:` records instead of reporting them as clean.
 
 ### 0.1.169
 
