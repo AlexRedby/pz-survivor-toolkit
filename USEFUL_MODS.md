@@ -8,6 +8,8 @@ Reference for the selected third-party mods, Workshop IDs, dependencies, load or
 
 Shows skills and recipes taught by VHS tapes in the native item tooltip. B41/B42 are reported; the author tested B41.78.19 and B42.20, including multiplayer. WYD series support is reported on B42; load after WYD mods. Display of already-known recipes has not been confirmed.
 
+Toolkit reads this mod's catalog and translations and draws the extra rows within native tooltip measurement and placement. The mod remains selected; its independent render wrapper is suppressed before game start.
+
 ## 2 MP Fast Forward
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3738738086) · Workshop `3738738086` · Mod `MPFastForward`

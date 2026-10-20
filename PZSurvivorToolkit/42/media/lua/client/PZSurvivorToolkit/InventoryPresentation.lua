@@ -8,6 +8,7 @@ local Details = require "PZSurvivorToolkit/InventoryDetails"
 local Sort = require "PZSurvivorToolkit/InventoryDetailSort"
 local Indicators = require "PZSurvivorToolkit/InventoryIndicators"
 local PlantingTooltip = require "PZSurvivorToolkit/InventoryPlantingTooltip"
+local MediaTooltip = require "PZSurvivorToolkit/InventoryMediaTooltip"
 local Presentation = {}
 local contexts, panes, pages = {}, {}, {}
 
@@ -118,6 +119,7 @@ end
 
 function Presentation.install()
     PlantingTooltip.install()
+    MediaTooltip.install()
     Classes.panes(installPane, true)
     installPage(CleanUI_Clean_ISInventoryPage)
     installPage(CleanUI_Vanilla_ISInventoryPage)

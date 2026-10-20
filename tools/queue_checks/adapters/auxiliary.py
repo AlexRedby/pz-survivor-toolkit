@@ -31,6 +31,7 @@ def definitions():
         ('item-tags', ['scenes'], 'sp', ['RU'], ITEM_MODS),
         ('inventory-presentation', ['scenes'], 'sp', ['EN'], INVENTORY_MODS),
         ('smart-deposit', ['partial'], 'sp', ['EN'], INVENTORY_MODS),
+        ('inventory-tooltips', ['scenes'], 'sp', ['EN'], INVENTORY_MODS + ['VHSSkillNameInTooltip', 'EURY_CLOTHINGINFO']),
         ('animal-trailer', list(ANIMAL_CASES), 'mp', ['EN'], ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit']),
     ):
         result[suite] = {'status': 'ready', 'clients': 1, 'default_mods': list(mods),
@@ -40,6 +41,7 @@ def definitions():
     result['item-tags']['window_size'] = [1280, 900]
     result['inventory-presentation']['window_size'] = [1280, 900]
     result['smart-deposit']['window_size'] = [1280, 900]
+    result['inventory-tooltips']['window_size'] = [1280, 900]
     return result
 
 
@@ -76,8 +78,10 @@ def validate(selection):
     if selection['kind'] not in case['kinds'] or len(selection['languages']) != 1 or selection['languages'][0] not in case['languages']:
         raise ValueError('Unsupported kind/language for ' + suite)
     required = set(ITEM_MODS if suite == 'item-tags' else ['ZombieBuddy', 'PZSurvivorToolkit'])
-    if suite in ('inventory-presentation', 'smart-deposit'):
+    if suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips'):
         required = set(INVENTORY_MODS)
+        if suite == 'inventory-tooltips':
+            required.update(('VHSSkillNameInTooltip', 'EURY_CLOTHINGINFO'))
         forbidden = {'ContainerCapacityIndicator', 'BravoItemDetails', 'Quartermaster', 'HasResearch', 'SeedSeasonIndicator'} & set(selection['mods'])
         if forbidden:
             raise ValueError('External inventory owners must be omitted: ' + ', '.join(sorted(forbidden)))
@@ -144,9 +148,11 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             shutil.copy2(intake / 'VideoFixture.lua', client / 'ZZVideoFixture.lua')
             config = {'output': str(cache / 'videos'), 'ffmpeg': str(_path(selection, 'ffmpeg', True))}
             _write(client / 'ToolkitVideoConfig.lua', 'return {' + ','.join(key + '=' + json.dumps(value, ensure_ascii=False) for key, value in config.items()) + '}\n')
-    elif suite in ('inventory-presentation', 'smart-deposit'):
-        identifier = json.loads((intake / 'manifest.json').read_text())['helper_mod_id']
+    elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips'):
+        manifest = json.loads((intake / 'manifest.json').read_text())
+        identifier = manifest['helper_mod_id']
         fixture['mods'] = [identifier]
+        fixture['failure_markers'] = [manifest['failure_marker']]
         for cache in caches:
             _load(intake / 'prepare.py').prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier)
     elif suite == 'item-tags':
@@ -206,6 +212,7 @@ def complete(selection, role, text):
     marker = {'video-recording': '[VIDEO_TEST] PASSED', 'item-tags': '[QM_SCREEN] COMPLETE',
               'inventory-presentation': '[INVENTORY_SCREEN] COMPLETE',
               'smart-deposit': '[SMART_DEPOSIT] COMPLETE',
+              'inventory-tooltips': '[INVENTORY_TOOLTIP] COMPLETE',
               'animal-trailer': '[ANIMAL_TRAILER] CLIENT COMPLETE'}[selection['suite']]
     return marker in text
 
@@ -295,7 +302,7 @@ def verify(root, selection, catalog):
             raise ValueError('Missing fixture completion marker')
         if suite == 'video-recording':
             evidence['clips'] = _load(intake / 'verify.py').verify(root / 'client1', _path(selection, 'ffmpeg', True), _path(selection, 'ffprobe', True))
-        elif suite in ('inventory-presentation', 'smart-deposit'):
+        elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips'):
             evidence.update(_load(intake / 'verify.py').verify(root, text))
         elif suite == 'item-tags':
             manifest = json.loads((intake / 'manifest.json').read_text())

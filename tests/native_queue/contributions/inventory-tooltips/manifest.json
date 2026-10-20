@@ -1,0 +1,23 @@
+{
+  "id": "inventory-tooltips",
+  "build": "42.21",
+  "mode": "SP",
+  "language": "EN",
+  "helper_mod_id": "InventoryTooltipNative",
+  "fixture": "ZZInventoryTooltipNative.lua",
+  "required_mods_in_order": ["NeatUI_Framework", "CleanUI", "PZSurvivorToolkit", "VHSSkillNameInTooltip", "EURY_CONTAINERS", "EURY_CLOTHINGINFO"],
+  "excluded_mods": ["ContainerCapacityIndicator", "BravoItemDetails", "Quartermaster", "HasResearch", "SeedSeasonIndicator"],
+  "expected_screenshots": ["inventory-tooltip-01-growing-large-edge.png", "inventory-tooltip-02-vhs.png", "inventory-tooltip-03-vhs-large-edge.png", "inventory-tooltip-04-clothing.png"],
+  "assertion_markers": [
+    "[INVENTORY_TOOLTIP] READY fadeClear=true",
+    "[INVENTORY_TOOLTIP] SETUP SP native=true upstreamData=true bci=true",
+    "[INVENTORY_TOOLTIP] DRAW 01-growing-large-edge native=true measure=1 draw=1 background=true fits=true font=Large",
+    "[INVENTORY_TOOLTIP] DRAW 02-vhs native=true measure=1 draw=1 background=true fits=true font=Small",
+    "[INVENTORY_TOOLTIP] DRAW 03-vhs-large-edge native=true measure=1 draw=1 background=true fits=true font=Large",
+    "[INVENTORY_TOOLTIP] CONTEXT visible=true owner=inventory hidden=true removed=true renderDelta=0",
+    "[INVENTORY_TOOLTIP] DISABLED growing=true append=0 nativeBackground=true",
+    "[INVENTORY_TOOLTIP] CLOTHING owner=BetterClothingInfo main=2 comparison=2 replaced=true extension=0 fits=true"
+  ],
+  "completion_marker": "[INVENTORY_TOOLTIP] COMPLETE",
+  "failure_marker": "[INVENTORY_TOOLTIP] FAIL"
+}

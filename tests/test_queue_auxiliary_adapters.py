@@ -103,6 +103,7 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         self.assertEqual(self.runtime['fixture']['mods'], ['InventoryPresentationScreens'])
         intake = ROOT / 'tests/native_queue/contributions/inventory-presentation'
         manifest = json.loads((intake / 'manifest.json').read_text())
+        self.assertEqual(self.runtime['fixture']['failure_markers'], [manifest['failure_marker']])
         names = manifest['expected_screenshots']
         text = '[INVENTORY_SCREEN] SETUP nativeItems=15 externalOwners=false\n'
         text += '[INVENTORY_SCREEN] SORT count=7 bound=3 tail=4 selection=true anchor=true\n'

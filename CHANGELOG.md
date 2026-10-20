@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.153
+
+- **Fixed:** VHS skill and recipe details now participate in native tooltip measurement and placement through the same extension boundary as planting information. Long lines and additional rows fit the tooltip background and follow its visibility. Show VHS Skills in Tooltip still supplies its catalog and translations, while its unrelated clothing suppression and background-alpha changes are avoided.
+
 ### 0.1.152
 
 - **Changed:** Pending portions of ordinary cookable food can be reordered or cancelled once the food and its carried outer inventory are cool enough to prevent further cooking. Native cooked hunger/fullness bonuses remain intact; hot food, dangerous raw food, fertilized eggs and callback/replacement effects keep their protection.
