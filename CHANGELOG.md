@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.134
+
+- **Changed:** Wooden-wheelbarrow standing pivots use broader authored leading/following steps with modest weight transfer. The lateral stride and root-motion budget increase together, reducing foot cadence while retaining turn speed, hand grip and wheel support. Other cart types and fast gait clips retain their existing selection.
+
 ### 0.1.133
 
 - **Fixed:** Host presets save and synchronize categories, items and tag rules as one complete snapshot, preserving existing preset identities during automatic migration. Late replies cannot restore older state, and open preset editors keep a coherent draft until save/reopen.
@@ -603,6 +607,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.33
+
+- **Changed:** Calibrated cadence and outgoing-gait clearance for the wooden wheelbarrow's authored pivot clips. Exact cart-type selection is derived locally for owners and observers without adding network fields.
 
 ### 0.1.32
 

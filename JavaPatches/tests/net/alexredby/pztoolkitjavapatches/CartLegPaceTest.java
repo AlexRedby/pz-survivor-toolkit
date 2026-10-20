@@ -116,7 +116,9 @@ public final class CartLegPaceTest {
         var other=live("defaultWalk",true,clip("Bob_StrafeNoAim_Left",1,0,0,"Translation_Data"));
         var forward=live("ToolkitCartPivotWalk",true,clip("Bob_Walk",1,0,0,"Translation_Data"));
         close(CartLegPace.woodenSideShift(List.of(other,forward)),0,"ordinary clips retain their calibrated cart position");
-        for(var side:List.of(left,right)) {
+        var woodLeft=live("ToolkitWoodCartPivotWalk",true,clip("Toolkit_WoodCartPivot_Left",1,0,0,"Translation_Data"));
+        var woodRight=live("ToolkitWoodCartPivotWalk",false,clip("Toolkit_WoodCartPivot_Right",1,0,0,"Translation_Data"));
+        for(var side:List.of(left,right,woodLeft,woodRight)) {
             side.getMainAnimationTrackAt(0).setBlendWeight(.1f);
             close(CartLegPace.woodenSideShift(List.of(side,other,forward)),-.0425,"both native Strafe directions include fade-out");
         }
@@ -520,6 +522,46 @@ public final class CartLegPaceTest {
                 close(track.getSpeedDelta(), 0, "zero speed stops every owned outgoing gait");
     }
 
+    private static void woodenPivotChecks() {
+        String wood="SaucedWheelbarrow.WheelbarrowWood";
+        for(String type:new String[]{null,wood,"SaucedWheelbarrow.WheelbarrowMetal","SaucedCarts.ShoppingCart",wood+"Other"}) {
+            String walk=wood.equals(type)?"ToolkitWoodCartPivotWalk":"ToolkitCartPivotWalk";
+            if(!CartLegPace.pivotName(type,false,false).equals(walk)
+                || !CartLegPace.pivotName(type,true,false).equals("ToolkitCartPivotRun")
+                || !CartLegPace.pivotName(type,false,true).equals("ToolkitCartPivotSprint")
+                || !CartLegPace.pivotName(type,true,true).equals("ToolkitCartPivotSprint"))
+                throw new AssertionError("exact wooden walking node selection or fast gait changed");
+        }
+        var node=node();
+        var clips=Map.of("idle",clip("idle",1,0,0,"Translation_Data"),
+            "forward",clip("forward",1,0,1,"Translation_Data"),
+            "back",clip("back",1,0,-1,"Translation_Data"),
+            "left",clip("Toolkit_WoodCartPivot_Left",1,-.75f,0,"Translation_Data"),
+            "right",clip("Toolkit_WoodCartPivot_Right",1,.75f,0,"Translation_Data"));
+        for(int degree=-180;degree<=180;degree++) {
+            float x=(float)Math.sin(Math.toRadians(degree)),y=(float)Math.cos(Math.toRadians(degree));
+            float pace=CartLegPace.scale(node,clips.get("forward"),x,y,1.04f,clips::get);
+            close(blendedSpeed(node,clips,x,y)*pace,1.04,
+                "larger authored lateral roots preserve the walking budget at "+degree);
+        }
+        var current=live("ToolkitWoodCartPivotWalk",true,clips.get("right"));
+        var outgoing=live("ToolkitWoodCartPivotWalk",false,clips.get("left"));
+        var nativeWalk=live("ToolkitCartPivotWalk",false,clips.get("forward"));
+        var upper=live("ToolkitCartWalkLeft",true,clips.get("right"));
+        for(var live:List.of(current,outgoing,nativeWalk))live.getMainAnimationTrackAt(0).setBlendFieldWeight(1);
+        CartLegPace.applySpeedTracks(List.of(current,outgoing,nativeWalk,upper),.3f,current.getName(),.6f,1);
+        close(current.getMainAnimationTrackAt(0).getSpeedDelta(),.6,"incoming wood gait uses its new pace before field refresh");
+        close(outgoing.getMainAnimationTrackAt(0).getSpeedDelta(),.6,"same named wood gait receives its current pace");
+        close(nativeWalk.getMainAnimationTrackAt(0).getSpeedDelta(),.3,"outgoing native walk retains its actual root budget");
+        close(upper.getMainAnimationTrackAt(0).getSpeedDelta(),1.1,"wood gait compensation leaves hand masks alone");
+        CartLegPace.applySpeedTracks(List.of(current,outgoing),.3f,"ToolkitCartPivotRun",1,1);
+        for(var live:List.of(current,outgoing))
+            close(live.getMainAnimationTrackAt(0).getSpeedDelta(),.4,"wood root velocity controls cadence throughout fade to Run");
+        CartLegPace.applySpeedTracks(List.of(current,outgoing),0,null,0,1);
+        for(var live:List.of(current,outgoing))
+            close(live.getMainAnimationTrackAt(0).getSpeedDelta(),0,"stopping freezes both outgoing authored roots");
+    }
+
     private static void backwardChecks(AnimNode node, Map<String, AnimationClip> clips) {
         String wood = "SaucedWheelbarrow.WheelbarrowWood";
         if (!CartLegPace.walkingReference(wood, false, -1).equals("Bob_WalkBwdNoAim1Hand"))
@@ -550,6 +592,7 @@ public final class CartLegPaceTest {
     }
 
     public static void main(String[] args) throws Exception {
+        woodenPivotChecks();
         nativePelvisBinding();
         sideClearance();
         bracingChecks();

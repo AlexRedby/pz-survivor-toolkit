@@ -120,6 +120,30 @@ for _ = 1, 10 do startup.fire("OnTick") end
 assert(observer.vars.ToolkitCartMotion, "disconnected callback continued querying remote avatars")
 print("PASS cart motion: menu preload registers native snapshots and enables remote visuals after Host connects")
 
+-- The authored lateral gate is exact-type, locally derived, and cleared with its visual owner.
+for _, localPlayer in ipairs({true, false}) do
+    local trial = setup(false, true, true)
+    local actor = trial.player(); actor.localPlayer = localPlayer
+    local held = actor:equip()
+    for _, kind in ipairs({"SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.WheelbarrowMetal", "SaucedCarts.ShoppingCart"}) do
+        held.fullType = kind
+        assert(ToolkitCartRefreshVisual(actor) == held)
+        assert(actor.vars.ToolkitCartWoodPivot == (kind == "SaucedWheelbarrow.WheelbarrowWood"),
+            "wooden pivot selection was stale or escaped its exact held type")
+    end
+    held.fullType = "SaucedWheelbarrow.WheelbarrowWood"
+    ToolkitCartRefreshVisual(actor)
+    actor:drop(); ToolkitCartRefreshVisual(actor)
+    assert(actor.vars.ToolkitCartWoodPivot == false)
+    actor:equip(); ToolkitCartRefreshVisual(actor); trial.fire("OnPlayerDeath", actor)
+    assert(actor.vars.ToolkitCartWoodPivot == false)
+    actor:equip(); ToolkitCartRefreshVisual(actor); trial.fire("OnMainMenuEnter")
+    assert(actor.vars.ToolkitCartWoodPivot == false)
+    assert(not trial.synced.ToolkitCartWoodPivot and trial.sends == 0,
+        "local exact-type gate added network traffic")
+end
+print("PASS cart motion: exact local/remote wooden pivot gate clears on cart change, drop, death and menu without syncing")
+
 local w = setup(false, true)
 local p = w.player()
 w.tick(p)
@@ -176,6 +200,7 @@ for _, condition in ipairs({"aim", "sneak", "dead", "vehicle", "actions", "injur
     else p[condition] = true end
     w.tick(p)
     assert(p.normal == 1 and not p.vars.ToolkitCartMotion, condition .. " did not restore native controls")
+    assert(p.vars.ToolkitCartWoodPivot == false, condition .. " left wooden pivot enabled")
 end
 print("PASS cart motion: aim, sneak, death, vehicle, actions, injury and stale hand state restore controls")
 

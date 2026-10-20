@@ -21,7 +21,7 @@ MP = 'wooden_cart_multiplayer'
 SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.lua', 20),
             'reversal': ('scenario-reversal.lua', 20), 'stop': ('scenario-stop.lua', 24),
             'stop-timing': ('scenario-stop.lua', 4),
-            'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
+            'pivot': ('scenario-pivot.lua', 8), 'stationary': ('scenario-stationary.lua', 20), 'maneuvers': ('scenario-maneuvers.lua', 32),
             'motion-matrix': ('scenario-motion-matrix.lua', 36),
             'obstacle-matrix': ('scenario-obstacle-matrix.lua', 72),
             'collision': ('scenario-collision.lua', 24), 'footprint': ('scenario-collision.lua', 24),
@@ -43,6 +43,7 @@ SCENE_SPECS = {
     'reverse': ('back-modifiers', 'back-arc-left', 'back-arc-right', 'u-turn-control', 'start-turn-control'),
     'reversal': ('walk-switch', 'run-switch', 'sprint-switch', 'cancel-switch', 'arc-switch'),
     'stop': ('run-stop', 'sprint-stop', 'short-release', 'run-resume-reverse', 'sprint-resume-turn', 'arc-stop'),
+    'pivot': ('pivot-left', 'pivot-right'),
     'stationary': ('left', 'right', 'cancel-restart', 'run-exit', 'sprint-sequence'),
     'maneuvers': ('idle-swap-left', 'idle-swap-right', 'moving-swap-left', 'moving-swap-right',
                   'reverse-rest', 'reverse-moving', 'uturn-left', 'uturn-right'),
@@ -831,12 +832,29 @@ def verify(root, selection, catalog):
                 ('body', [sys.executable, str(ev / 'check-hip-actual.py'), '--game-java-dir', str(game), '--mesh', str(_path(selection, 'mesh_fbx')), '--mesh-vbo', str(cache / 'WheelbarrowWood.bin'), '--capture', str(cache / 'body-clearance.jsonl'), '--output', str(analysis)]),
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
-            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat', 'hotkey', 'impact'):
+            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat', 'hotkey', 'impact', 'pivot'):
                 scene_contract = analysis / 'selected-scenes.json'
                 windows = _load(ev / 'scene_windows.py')
                 _write(scene_contract, json.dumps(windows.contract(case, selected_scenes(selection)), indent=2))
                 commands.append(('native', [sys.executable, str(ev / 'analyze-native.py'), '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis), '--scenes', str(scene_contract)]))
             evidence['analyzers'] = {name: _run(command, analysis, name) for name, command in commands}
+            if case == 'pivot':
+                command = [sys.executable, str(intake / 'analyze-pivot.py'), '--profile', str(cache),
+                    '--log', str(logs['client1']), '--output', str(analysis / 'pivot.json'), '--mesh-analysis', str(analysis)]
+                for scene in selected_scenes(selection):
+                    command += ['--scene', scene]
+                evidence['analyzers']['pivot'] = _run(command, analysis, 'pivot')
+                report = _json(analysis / 'pivot.json')
+                if not report['motionPass']:
+                    raise ValueError('Measured pivot protocol failed: ' + str(report['failures']))
+                _mesh_proof(cache)
+                evidence.update(pivot=report, analysis=str(analysis), evidenceComplete=True,
+                                selectedScenes=selected_scenes(selection), diagnosticOnly=True)
+                return {'issues': [], 'evidence': evidence, 'outcomes': [
+                    {'actor': 'client1', 'case': case, 'status': 'captured',
+                     'reason': 'Measured continuous 180-degree pivots, release and moving entry captured; cadence and visual quality require review',
+                     'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
+                                 'partialCoverage': debug, 'selectedScenes': selected_scenes(selection)}}]}
             if case == 'impact':
                 impact = _load(intake / 'analyze-impact.py').analyze(cache, texts['client1'], selected_scenes(selection))
                 _write(analysis / 'impact.json', json.dumps(impact, indent=2, allow_nan=False))

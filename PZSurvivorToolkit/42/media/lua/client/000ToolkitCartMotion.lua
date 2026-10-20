@@ -31,8 +31,11 @@ local states = setmetatable({}, {__mode = "k"})
 local blocked = setmetatable({}, {__mode = "k"})
 local visuals = setmetatable({}, {__mode = "k"})
 
-local function setVisual(player, enabled)
+local function setVisual(player, enabled, cart)
     player:setVariable("ToolkitCartMotion", enabled)
+    -- Derive this locally for owners and observers; it is not another network variable.
+    player:setVariable("ToolkitCartWoodPivot", enabled and cart ~= nil
+        and cart:getFullType() == "SaucedWheelbarrow.WheelbarrowWood")
     visuals[player] = enabled and true or nil
 end
 
@@ -97,7 +100,7 @@ end
 
 function ToolkitCartRefreshVisual(player, finishingAction, stopped)
     local cart = heldCart(player, finishingAction, stopped)
-    setVisual(player, cart ~= nil)
+    setVisual(player, cart ~= nil, cart)
     refreshRemoteModel(player, cart)
     return cart
 end

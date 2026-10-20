@@ -363,7 +363,7 @@ public final class CartSteeringHooksTest {
                     "wall guidance must remove inward speed through cadence exactly once");
             }
             field(state,"wallHeading").setDouble(state,Double.NaN);field(state,"target").setDouble(state,0);
-            var walkNode=new AnimNode();walkNode.name="ToolkitCartPivotWalk";
+            var walkNode=new AnimNode();walkNode.name=CartLegPace.pivotName(cart.getFullType(),false,false);
             walkNode.deferredBoneName=node.deferredBoneName;walkNode.deferredBoneAxis=node.deferredBoneAxis;
             walkNode.blends2d.addAll(node.blends2d);walkNode.blendTris.addAll(node.blendTris);walkNode.blend2dPicker=node.blend2dPicker;
             var movement=new AnimState();movement.nodes.add(walkNode);player.animator.animSet.states.put("movement",movement);
@@ -1065,29 +1065,40 @@ public final class CartSteeringHooksTest {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    private static AnimationClip importClip(java.nio.file.Path path) throws Exception {
+        check(java.nio.file.Files.isRegularFile(path),"missing animation clip: "+path);
+        var params=zombie.core.skinnedmodel.model.jassimp.ProcessedAiSceneParams.create();
+        params.scene=jassimp.Jassimp.importFile(path.toString(),java.util.EnumSet.of(
+            jassimp.AiPostProcessSteps.MAKE_LEFT_HANDED,jassimp.AiPostProcessSteps.REMOVE_REDUNDANT_MATERIALS));
+        params.mode=zombie.core.skinnedmodel.model.jassimp.JAssImpImporter.LoadMode.AnimationOnly;
+        params.animBonesScaleModifier=1;params.animBonesRotateModifier=null;
+        var skeleton=zombie.core.skinnedmodel.model.jassimp.ImportedSkeleton.process(
+            zombie.core.skinnedmodel.model.jassimp.ImportedSkeletonParams.create(params,params.scene.getMeshes().get(0)));
+        var clips=(Map<String,AnimationClip>)field(skeleton,"clips").get(skeleton);
+        check(clips.size()==1,"fixture animation must contain exactly one clip: "+path);
+        return clips.values().iterator().next();
+    }
+
     private static void stationaryCadence(Unsafe unsafe,Map<?,?> states) throws Exception {
         var player=(Player)unsafe.allocateInstance(Player.class);
         var cart=(InventoryContainer)unsafe.allocateInstance(InventoryContainer.class);
         player.inventory=new ItemContainer();player.primary=player.secondary=cart;cart.setContainer(player.inventory);
         type(cart,"SaucedWheelbarrow.WheelbarrowWood");player.walkSpeed=.8f;
-        var node=new AnimNode();node.name="ToolkitCartPivotWalk";
-        node.deferredBoneName="Translation_Data";node.deferredBoneAxis=BoneAxis.Y;
+        var project=java.nio.file.Path.of(System.getProperty("pz.test.project","."));
+        var media=project.resolve("PZSurvivorToolkit/42/media");
+        var node=AnimNode.Parse(media.resolve("AnimSets/player/movement/toolkit_cart_wood_pivot_walk.xml").toString());
+        check(node!=null && node.name.equals(CartLegPace.pivotName(cart.getFullType(),false,false))
+            && node.blend2dPicker!=null,"stationary regression must load the current production wooden walking node");
         var clips=new HashMap<String,AnimationClip>();
-        String[] names={"Bob_Idle","Bob_Walk","Bob_StrafeNoAim_Right","Bob_WalkBwdNoAim1Hand","Bob_StrafeNoAim_Left"};
-        float[][] roots={{0,0},{0,.944882f},{-.417323f,0},{0,-.590551f},{.417323f,0}};
-        float[][] positions={{0,0},{0,1},{1,0},{0,-1},{-1,0}};
-        for(int i=0;i<names.length;i++) {
-            var start=new Keyframe();var end=new Keyframe();start.boneName=end.boneName="Translation_Data";
-            start.position=new Vector3f();end.position=new Vector3f(roots[i][0],0,-roots[i][1]);end.time=2f/3;
-            clips.put(names[i],new AnimationClip(2f/3,List.of(start,end),names[i],true));
-            var blend=new Anim2DBlend();blend.animName=names[i];blend.posX=positions[i][0];blend.posY=positions[i][1];
-            node.blends2d.add(blend);
+        var nativeFolder=java.nio.file.Path.of("media/anims_X/Bob");
+        for(var blend:node.blends2d) {
+            var folder=blend.animName.startsWith("Toolkit_")?media.resolve("anims_X/Bob"):nativeFolder;
+            clips.put(blend.animName,importClip(folder.resolve(blend.animName+".x")));
         }
-        for(int i=1;i<=4;i++) {
-            var triangle=new Anim2DBlendTriangle();triangle.node1=node.blends2d.get(0);
-            triangle.node2=node.blends2d.get(i);triangle.node3=node.blends2d.get(i%4+1);node.blendTris.add(triangle);
-        }
-        node.blend2dPicker=new Anim2DBlendPicker();node.blend2dPicker.SetPickTriangles(node.blendTris);
+        var nativeSide=importClip(nativeFolder.resolve("Bob_StrafeNoAim_Left.x"));
+        double nativeSideSpeed=nativeSide.getTranslationLength("Translation_Data",BoneAxis.Y)/nativeSide.getDuration();
+        check(nativeSideSpeed>0,"native reference must contain measured lateral root motion");
         player.animator=new AdvancedAnimator();player.animator.animSet=new AnimationSet();
         var movement=new AnimState();movement.nodes.add(node);player.animator.animSet.states.put("movement",movement);
         var mesh=(ModelMesh)unsafe.allocateInstance(ModelMesh.class);
@@ -1112,10 +1123,13 @@ public final class CartSteeringHooksTest {
                     CartSteeringHooks.input(player,input);
                     check(Math.abs(player.stepX)==1 && player.stepY==0,
                         "stationary turns must retain the full native lateral stride");
-                    maxPace=Math.max(maxPace,player.legPace);
-                    check(player.legPace<(walkSpeed>.5?1.35:.86),
-                        "cargo must affect full-stride cadence instead of fast idle-blended shuffling");
                     double budget=nativeBudget(player,node,clips,dt);
+                    // Compare the same native movement budget after the authored stride changed length.
+                    // Raw cadence must decrease for a longer step while cargo and response stay identical.
+                    float nativeEquivalentPace=(float)(budget/dt/nativeSideSpeed);
+                    maxPace=Math.max(maxPace,nativeEquivalentPace);
+                    check(nativeEquivalentPace<(walkSpeed>.5?1.35:.86),
+                        "cargo must affect full-stride cadence instead of fast idle-blended shuffling");
                     double before=field(state,"heading").getDouble(state);float x=player.actualX,y=player.actualY;
                     Vector2 step=CartSteeringHooks.movement(player,(float)budget,0);
                     check(step.getLength()<=budget+1e-7,"stationary steering cannot invent native root distance");
@@ -1129,7 +1143,7 @@ public final class CartSteeringHooksTest {
                 check(!field(state,"stationary").getBoolean(state)
                     && Math.abs(CartSteeringMath.wrap(target-field(state,"heading").getDouble(state)))<Math.toRadians(.5),
                     "calibrated stationary root must finish at world coordinates: "+fps+"/"+sign);
-                check(maxPace>(walkSpeed>.5?1.2:.78),"full native steps must preserve the responsive turn budget");
+                check(maxPace>(walkSpeed>.5?1.2:.78),"larger full steps must preserve the responsive native turn budget");
                 if(fps==144) check(rounded,"high-FPS regression must exercise sub-ULP native root frames");
                 player.inputX=player.inputY=0;CartSteeringHooks.input(player,input);player.moving=false;
                 CartSteeringHooks.heading(player);

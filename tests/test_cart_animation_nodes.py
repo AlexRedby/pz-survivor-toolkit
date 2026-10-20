@@ -67,6 +67,7 @@ class CartAnimationNodes(unittest.TestCase):
     def test_all_tracks_are_opt_in_and_keep_existing_clip_timing(self):
         expected = {"ToolkitCart" + state + side for state in STATES for side in ("", "Left", "Right")}
         expected |= {"ToolkitCartPivot" + mode for mode in ("Walk", "Run", "Sprint")}
+        expected.add("ToolkitWoodCartPivotWalk")
         self.assertEqual(set(self.nodes), expected)
         self.assertEqual(len(list(ANIMATIONS.rglob("toolkit_cart_*.xml"))), len(expected))
         for state, folder in STATES.items():
@@ -149,6 +150,28 @@ class CartAnimationNodes(unittest.TestCase):
                 self.assertGreater(float(stop.findtext("m_blendInTime")), 0)
                 # The brief .18 tail snapped the cart back when the heavy stop straightened.
                 self.assertEqual(float(stop.findtext("m_blendOutTime")), .6)
+
+    def test_wooden_lateral_walk_changes_only_exact_type_gate_and_side_clips(self):
+        import copy
+        native = copy.deepcopy(self.nodes["ToolkitCartPivotWalk"][1])
+        wood = copy.deepcopy(self.nodes["ToolkitWoodCartPivotWalk"][1])
+        self.assertIn(("ToolkitCartWoodPivot", "BOOL", "false"), conditions(native))
+        self.assertIn(("ToolkitCartWoodPivot", "BOOL", "true"), conditions(wood))
+        self.assertEqual([b.findtext("m_AnimName") for b in wood.findall("m_2DBlends")],
+                         ["Bob_Idle", "Bob_Walk", "Bob_WalkBwdNoAim1Hand",
+                          "Toolkit_WoodCartPivot_Right", "Toolkit_WoodCartPivot_Left"])
+        wood.find("m_Name").text = native.findtext("m_Name")
+        for condition in wood.findall("m_Conditions"):
+            if condition.findtext("m_Name") == "ToolkitCartWoodPivot":
+                condition.find("m_Value").text = "false"
+        for blend in wood.findall("m_2DBlends"):
+            name = blend.find("m_AnimName")
+            name.text = name.text.replace("Toolkit_WoodCartPivot_", "Bob_StrafeNoAim_")
+        self.assertEqual(ET.tostring(wood), ET.tostring(native),
+                         "forward/backward speed, footsteps, root extraction and transitions must stay native")
+        for mode in ("Run", "Sprint"):
+            self.assertFalse(any(c.findtext("m_Name") == "ToolkitCartWoodPivot"
+                                 for c in self.nodes["ToolkitCartPivot" + mode][1].findall("m_Conditions")))
 
     def test_walk_uses_native_speed_and_injury_blending(self):
         node = self.nodes["ToolkitCartWalk"][1]

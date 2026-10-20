@@ -63,8 +63,7 @@ public final class CartLegPace {
         var animator = player.getAdvancedAnimator();
         if (animator != null && animator.getRootLayer() != null)
             applyTracks(animator.getRootLayer().getLiveAnimNodes(), pace,
-                player.isSprinting() ? "ToolkitCartPivotSprint"
-                    : player.isRunning() ? "ToolkitCartPivotRun" : "ToolkitCartPivotWalk");
+                pivotName(player));
     }
 
     static void applyTracks(Iterable<LiveAnimNode> nodes, float pace, String currentGait) {
@@ -139,7 +138,8 @@ public final class CartLegPace {
     static void applySpeedTracks(Iterable<LiveAnimNode> nodes, float speed, String currentGait, float currentPace, float stepY) {
         for (var node : nodes) {
             String name = node.getName();
-            if (!"ToolkitCartPivotWalk".equals(name) && !"ToolkitCartPivotRun".equals(name)
+            if (!"ToolkitCartPivotWalk".equals(name) && !"ToolkitWoodCartPivotWalk".equals(name)
+                && !"ToolkitCartPivotRun".equals(name)
                 && !"ToolkitCartPivotSprint".equals(name)) continue;
             // Native refreshes the current gait's directional weights after this hook.
             if (name.equals(currentGait)) {
@@ -164,6 +164,18 @@ public final class CartLegPace {
         }
     }
 
+    static String pivotName(String cartType, boolean run, boolean sprint) {
+        if (sprint) return "ToolkitCartPivotSprint";
+        if (run) return "ToolkitCartPivotRun";
+        return "SaucedWheelbarrow.WheelbarrowWood".equals(cartType)
+            ? "ToolkitWoodCartPivotWalk" : "ToolkitCartPivotWalk";
+    }
+
+    private static String pivotName(IsoPlayer player) {
+        var cart = player.getPrimaryHandItem();
+        return pivotName(cart == null ? null : cart.getFullType(), player.isRunning(), player.isSprinting());
+    }
+
     private static AnimNode pivotNode(IsoPlayer player) {
         if (player == null) return null;
         var animator = player.getAdvancedAnimator();
@@ -171,7 +183,7 @@ public final class CartLegPace {
         boolean sprint = player.isSprinting(), run = player.isRunning();
         var state = animator.animSet.states.get(sprint ? "sprint" : run ? "run" : "movement");
         if (state == null) return null;
-        String name = "ToolkitCartPivot" + (sprint ? "Sprint" : run ? "Run" : "Walk");
+        String name = pivotName(player);
         for (var node : state.nodes) if (name.equals(node.name)) return node;
         return null;
     }
@@ -241,9 +253,11 @@ public final class CartLegPace {
 
     static float woodenSideShift(Iterable<LiveAnimNode> nodes) {
         double weight=0;
-        for(var node:nodes) if("ToolkitCartPivotWalk".equals(node.getName()))
+        for(var node:nodes) if("ToolkitCartPivotWalk".equals(node.getName()) || "ToolkitWoodCartPivotWalk".equals(node.getName()))
             for(var track:node.getMainAnimationTracks()) {
-                if(!"Bob_StrafeNoAim_Left".equals(track.getName()) && !"Bob_StrafeNoAim_Right".equals(track.getName())) continue;
+                if(!"Bob_StrafeNoAim_Left".equals(track.getName()) && !"Bob_StrafeNoAim_Right".equals(track.getName())
+                    && !"Toolkit_WoodCartPivot_Left".equals(track.getName())
+                    && !"Toolkit_WoodCartPivot_Right".equals(track.getName())) continue;
                 float blend=track.getBlendWeight();
                 if(Float.isFinite(blend) && blend>0) weight+=blend;
             }
