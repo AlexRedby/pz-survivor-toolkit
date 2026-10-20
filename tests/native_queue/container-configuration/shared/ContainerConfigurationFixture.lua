@@ -1,8 +1,7 @@
 local Config=require 'PZSurvivorToolkit/QuartermasterContainerConfig'
 local Appearance=require 'PZSurvivorToolkit/ContainerAppearance'
 local Rules=require 'PZSurvivorToolkit/QuartermasterTagRules'
-local BC=require 'BetterContainers/Customize/ModData'
-local F={module='ContainerConfigurationTest',name='QM supplies',legacy='Legacy BC crate'}
+local F={module='ContainerConfigurationTest',name='QM supplies',tag='food',item='Base.Hammer'}
 F.color={r=0.25,g=0.5,b=0.75,a=1}
 function F.prepare(player)
  local origin=assert(player:getSquare())
@@ -18,9 +17,7 @@ function F.prepare(player)
  local container=assert(obj:getContainer());container:setType('crate');container:setCapacity(100);container:setExplored(true)
  obj:getModData().PZSTContainerConfigurationFixture=true
  square:AddSpecialObject(obj)
- local payload={name=F.legacy,icon={kind='item',value='Base.Screwdriver'},color={r=0.2,g=0.3,b=0.4,a=1}}
- BC.setUser(obj,player:getUsername(),payload,0);BC.setGlobal(obj,payload,0)
- local item=assert(instanceItem('Base.Hammer'))
+ local item=assert(instanceItem(F.item))
  local category=assert(item:getDisplayCategory())
  if isServer() then obj:transmitCompleteItemToClients();obj:transmitModData() end
  return obj,{x=square:getX(),y=square:getY(),z=square:getZ(),index=obj:getObjectIndex(),category=category}
@@ -31,10 +28,9 @@ function F.resolve(packet)
  local obj=square:getObjects():get(packet.index)
  if obj and obj:hasModData() and obj:getModData().PZSTContainerConfigurationFixture then return obj end
 end
-function F.legacyRead(obj,player)
+function F.blankRead(obj,player)
  local value=Appearance.read(obj,0,player)
- return value and value.name==F.legacy and value.icon and value.icon.kind=='item' and value.icon.value=='Base.Screwdriver'
-  and value.color and value.color.r==0.2 and value.color.g==0.3 and value.color.b==0.4
+ return value and not value.name and not value.icon and not value.color
 end
 local function count(set) local n=0;for _ in pairs(set or {})do n=n+1 end;return n end
 function F.receipt(obj,player,category)
@@ -47,7 +43,7 @@ function F.receipt(obj,player,category)
   ruleMode=rule.mode or '',include=rule.include or {},exclude=rule.exclude or {},revision=Rules.getBoxRevision(obj,0)}
 end
 function F.matches(receipt)
- return receipt.name==F.name and receipt.iconKind=='container' and receipt.iconValue=='crate'
+ return receipt.name==F.name and receipt.iconKind=='pzst-tag' and receipt.iconValue==F.tag
   and receipt.r==F.color.r and receipt.g==F.color.g and receipt.b==F.color.b and receipt.a==1
   and receipt.categorySelected and receipt.categoryCount==1 and receipt.itemCount==0 and receipt.presetCount==0
   and receipt.priority==6 and receipt.ruleMode=='all' and #receipt.include==2

@@ -1,7 +1,3 @@
-# Unified container configuration
-
-- [ ] Next stage: derive default name/icon/color from the chosen sorting tags using existing ItemTags labels and TagVisuals data. Keep individual manual overrides, allow returning a field to automatic, and agree deterministic behavior for mixed rules/presets; avoid copying the tag palette or overwriting custom choices.
-
 # Wooden wheelbarrow collisions
 
 - [ ] Fix observer-only wooden-cart wall penetration during the approach in Host `cart_wall_exit=left/right`. Native prediction and facing can form a pose that crosses the wall even while the owner is clear. Implement a jointly validated visual position/heading for the whole actor and held cart; keep native actor coordinates, targets, pathfinding, equipment and network traffic unchanged. Any render-only correction must reach both `ModelCameraRenderData` and `ModelSlotRenderData` before grounding/grip/wheel processing, with matching depth and safe identity/stale/geometry-reset handling.

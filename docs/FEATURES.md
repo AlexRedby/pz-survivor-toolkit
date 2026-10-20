@@ -160,7 +160,7 @@ on your back. Favorite items and items without a matching destination stay put.
 The inventory toolbar also has **Distribute Loot** for its selected container.
 For a vehicle trunk, open it in the loot window and use that window's button.
 
-Right-click a world container or its button in the loot window to open the same editor. With Better Containers enabled, it also contains **Name**, **Choose icon**, **Colour** and **Reset look**. Existing Better Containers appearance is preserved. Save applies the name, container-button icon/colour and sorting together; Cancel discards the draft. Reset look restores default appearance without clearing sorting. Appearance remains manual: choosing a sorting tag does not yet choose a name, icon or colour. Bags and other targets that cannot be sorting destinations retain their existing rename/customize controls.
+Right-click a world container or its button in the loot window to open the same editor. With Better Containers enabled, it also contains **Name**, **Choose icon**, **Colour** and **Reset look**. The first tag selected in this editor fills only empty name, icon and colour fields. Selecting an exact item uses its own icon and its primary tag's colour, without filling the name. Later selections leave these values alone; every field can still be edited manually. Opening an existing configuration does not change its appearance. Save applies appearance and sorting together; Cancel discards the draft. **Reset look** clears appearance without clearing sorting and lets the next selection suggest a fresh look. Sorting presets do not supply an appearance. Bags and other targets that cannot be sorting destinations retain their existing rename/customize controls.
 
 ### Item tags
 

@@ -91,7 +91,7 @@ def _one(text, event):
 
 
 def _expected(category):
-    return dict(name='QM supplies', iconKind='container', iconValue='crate',
+    return dict(name='QM supplies', iconKind='pzst-tag', iconValue='food',
                 r=.25, g=.5, b=.75, a=1, category=category, categorySelected=True,
                 categoryCount=1, itemCount=0, presetCount=0, priority=6, ruleMode='all',
                 include=['food', 'perishable'], exclude=['meat'], revision=1)
@@ -132,9 +132,9 @@ def verify(root, selection, catalog):
         category = prepared['category']
         if selection['kind'] == 'mp' and len(re.findall(re.escape('[STARTUP_TEST] SERVER_READY') + r'(?:\s|$)', authority)) != 1:
             raise ValueError('Missing/duplicate Host server readiness')
-        sequences = {'client1': ['LEGACY', 'SHOT', 'SHOT', 'SAVE', 'LOCAL', 'COMPLETE']}
+        sequences = {'client1': ['SHOT', 'DEFAULTS', 'SHOT', 'SAVE', 'LOCAL', 'COMPLETE']}
         if selection['kind'] == 'sp':
-            sequences['client1'] = ['PREPARED', 'LEGACY', 'SHOT', 'SHOT', 'SAVE', 'LOCAL', 'AUTHORITY', 'COMPLETE']
+            sequences['client1'] = ['PREPARED', 'SHOT', 'DEFAULTS', 'SHOT', 'SAVE', 'LOCAL', 'AUTHORITY', 'COMPLETE']
         else:
             sequences['client2'] = ['SHOT', 'OBSERVER', 'COMPLETE']
             sequences['server'] = ['PREPARED', 'AUTHORITY']
@@ -144,10 +144,11 @@ def verify(root, selection, catalog):
             if events != expected_events:
                 raise ValueError(role + ' native lifecycle missing, duplicated or reordered')
         expected = _expected(category)
-        legacy = _one(logs['client1'], 'LEGACY')
-        if (set(legacy) != {'name', 'role', 'menuClasses'} or legacy['name'] != 'Legacy BC crate'
-                or legacy['role'] != 'client1' or type(legacy['menuClasses']) is not int or legacy['menuClasses'] < 2):
-            raise ValueError('Legacy BC read or native/CleanUI menu routes absent')
+        defaults = _one(logs['client1'], 'DEFAULTS')
+        if (set(defaults) != {'tag', 'item', 'role', 'menuClasses'} or defaults['tag'] != 'food'
+                or defaults['item'] != 'Base.Hammer' or defaults['role'] != 'client1'
+                or type(defaults['menuClasses']) is not int or defaults['menuClasses'] < 2):
+            raise ValueError('Tag/item defaults or native/CleanUI menu routes absent')
         if _records(logs['client1'], 'SAVE') != [{'count': 1, 'role': 'client1'}]:
             raise ValueError('Expected exactly one unified Save callback')
         for actor, event, text in [('client1', 'LOCAL', logs['client1']), ('authority', 'AUTHORITY', authority)]:

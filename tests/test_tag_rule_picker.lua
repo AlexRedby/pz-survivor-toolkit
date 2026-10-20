@@ -1,4 +1,4 @@
-local applied, enabled = nil, true
+local applied, enabled, firstSelected = nil, true, nil
 PZSurvivorToolkit = {Settings={itemTags=function() return enabled end}}
 getText=function(key) return key end
 getTextOrNull=function() end
@@ -52,7 +52,7 @@ local Picker=dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvi
 local original={mode='all',include={'food'},exclude={}}
 local owner={getIsVisible=function() return true end,dimmer=Base:new(0,0,1,1)}
 owner.dimmer.visible=false
-local picker=Picker.open({player=0,owner=owner,rule=original,categories={'foodPerishable_ingredient','foodNonPerishable_ingredient','Tool','ModCat'},onApply=function(rule) applied=rule end})
+local picker=Picker.open({player=0,owner=owner,rule=original,categories={'foodPerishable_ingredient','foodNonPerishable_ingredient','Tool','ModCat'},onApply=function(rule,first) applied=rule;firstSelected=first end})
 assert(picker and picker.added and owner.toolkitRulePicker==picker and owner.dimmer.visible)
 assert(picker.matchCount==2 and picker.rule~=original and picker.rule.include~=original.include,'draft aliases saved rule')
 local rows={}
@@ -75,6 +75,13 @@ picker.search.value='ingredient';picker:prerender()
 assert(#picker.list.items==2 and picker.list.items[2].item.id=='ingredient','tag search failed')
 picker:apply()
 assert(applied.mode=='any' and #applied.include==2 and not picker.added and not owner.toolkitRulePicker and not owner.dimmer.visible,'apply or owner cleanup failed')
+assert(firstSelected=='tool' and applied.include[1]=='food','normalized rule sorted away actual click order')
+picker=Picker.open({rule={include={'food'},exclude={}},selectedTag='food',categories={'Tool'},
+    onApply=function(_,first) firstSelected=first end})
+picker:cycle({id='tool'});picker:cycle({id='food'});picker:apply()
+assert(firstSelected=='tool','removed initial tag still supplied the suggestion')
+picker=Picker.open({rule=original,categories={'Tool'},onApply=function(_,first) firstSelected=first end})
+picker:apply();assert(firstSelected==nil,'reapplying an old rule guessed selection order')
 picker=Picker.open({owner=owner,categories={'Tool'},onApply=function() end})
 picker.search.focused=true
 picker.group.expanded=true

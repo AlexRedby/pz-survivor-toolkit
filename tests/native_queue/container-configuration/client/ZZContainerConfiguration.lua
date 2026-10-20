@@ -2,6 +2,9 @@ local selection=require 'QueueTestSelection'
 local F=require 'ContainerConfigurationFixture'
 local Controls=require 'PZSurvivorToolkit/ContainerAppearanceControls'
 local Menus=require 'PZSurvivorToolkit/ContainerConfigurationMenus'
+local Tags=require 'PZSurvivorToolkit/ItemTags'
+local Visuals=require 'PZSurvivorToolkit/TagVisuals'
+local Helpers=require 'BetterContainers/Helpers'
 local JSON=require 'QueueHealthEvents'
 local started,done,since,nextAt,phase=false,false,0,0,'prepare'
 local packet,obj,picker,role,go,observe,finished,localReceipt
@@ -15,8 +18,33 @@ end
 local function checkControls()
  assert(picker.appearanceName and picker.appearanceIcon and picker.appearanceColor and picker.appearanceReset,'Unified appearance fields absent')
  assert(picker.listbox and picker.btnSave and picker.toolkitTagRuleButton,'Sorting fields absent')
- assert(picker.appearanceName:getInternalText()==F.legacy,'Legacy BC name missing')
- assert(picker.toolkitAppearance.icon.value=='Base.Screwdriver','Legacy BC icon missing')
+ assert(picker.appearanceName:getInternalText()=='' and not picker.toolkitAppearance.icon
+  and not picker.toolkitAppearance.color,'New fixture did not start with blank appearance')
+end
+local function sameColor(color,style)
+ return color and color.r==style.r and color.g==style.g and color.b==style.b
+end
+local function clickRow(key,tag)
+ picker:rebuild()
+ for _,row in ipairs(picker.listbox.items)do
+  if tag and row.item.tag==tag or key and row.item.key==key then
+   assert(not row.item.requiresRule,'Fixture tag unexpectedly requires a rule')
+   picker.listbox.onmousedown(picker,row.item);return
+  end
+ end
+ error('Actual sorting row missing: '..tostring(tag or key))
+end
+local function pickColor()
+ Controls.chooseColor(picker)
+ local popup=assert(picker.toolkitColorPicker)
+ popup.pickedRGB={r=F.color.r,g=F.color.g,b=F.color.b};popup:onSave()
+ assert(sameColor(picker.toolkitAppearance.color,F.color),'Native color Save did not commit draft')
+end
+local function checkTagIcon()
+ local icon=picker.toolkitAppearance.icon
+ assert(icon and icon.kind=='pzst-tag' and icon.value==F.tag,'Tag icon descriptor missing')
+ local texture=assert(Visuals.get(F.tag).texture,'Real tag texture missing')
+ assert(Helpers.getIconTexture(icon)==texture,'BC helper did not resolve persisted tag icon')
 end
 local function probeMenus()
  local page=assert(getPlayerLoot(0));page:refreshBackpacks()
@@ -68,7 +96,7 @@ local function tick()
    player:teleportTo(packet.x+1.5,packet.y+0.5,packet.z);return
   end
   obj=obj or F.resolve(packet);if not obj then return end
-  if not F.legacyRead(obj,player)then return end
+  if not F.blankRead(obj,player)then return end
   if isClient()then sendClientCommand(F.module,'Ready',{})end
   phase=role=='client1' and 'start' or 'observe'
  elseif phase=='start'then
@@ -76,8 +104,14 @@ local function tick()
   print('[CONTAINER_CONFIG_DIAG] editing local='..tostring(player:getUsername())..' specific='..tostring(getSpecificPlayer(0):getUsername())..' role='..tostring(role))
   probeMenus()
   LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker);checkControls()
-  emit('LEGACY',{name=F.legacy,role=role,menuClasses=menuClasses})
-  picker.appearanceName:setText(F.name)
+  picker:setMode('items')
+  local script=assert(getScriptManager():FindItem(F.item))
+  clickRow(script:getDisplayName())
+  local itemType=assert(LootSorter.getItemFullType(script:getDisplayName()))
+  local primary=assert(Tags.forScriptItem(assert(getScriptManager():FindItem(itemType)))[1],'Exact item primary tag missing')
+  assert(picker.appearanceName:getInternalText()=='' and picker.toolkitAppearance.icon.kind=='item'
+   and picker.toolkitAppearance.icon.value==itemType
+   and sameColor(picker.toolkitAppearance.color,Visuals.get(primary)),'Exact item defaults differ')
   Controls.chooseIcon(picker)
   assert(picker.toolkitIconPicker and #picker.toolkitIconPicker.list.items>0,'Real icon chooser absent/empty')
   phase='icon';nextAt=getTimestampMs()+1200
@@ -91,11 +125,20 @@ local function tick()
   assert(selected,'Crate absent from real BC catalogue')
   chooser.list.selected=selected;chooser:choose()
   assert(not picker.toolkitIconPicker and picker.toolkitAppearance.icon.value=='crate','Real icon callback did not commit draft')
-  Controls.chooseColor(picker)
-  local popup=assert(picker.toolkitColorPicker)
-  popup.pickedRGB={r=F.color.r,g=F.color.g,b=F.color.b}
-  popup:onSave()
-  assert(picker.toolkitAppearance.color and picker.toolkitAppearance.color.r==F.color.r,'Native color Save did not commit draft')
+  picker.appearanceName:setText('Cancelled item draft');pickColor()
+  picker:closePicker();assert(F.blankRead(obj,player),'Item draft Cancel persisted appearance')
+  LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker);checkControls()
+  clickRow(nil,F.tag)
+  assert(picker.appearanceName:getInternalText()==Tags.label(F.tag)
+   and sameColor(picker.toolkitAppearance.color,Visuals.get(F.tag)),'First tag did not seed label/color')
+  checkTagIcon()
+  clickRow(nil,'medical')
+  assert(picker.appearanceName:getInternalText()==Tags.label(F.tag)
+   and sameColor(picker.toolkitAppearance.color,Visuals.get(F.tag)),'Second tag changed initial defaults')
+  checkTagIcon()
+  picker.appearanceName:setText(F.name);pickColor()
+  assert(picker.appearanceName:getInternalText()==F.name,'Manual name override missing')
+  emit('DEFAULTS',{tag=F.tag,item=F.item,role=role,menuClasses=menuClasses})
   picker.selectedCats={[packet.category]=true};picker.selectedItems={};picker.selectedPresets={};picker.selection=picker.selectedCats;picker:setPriority(6)
   picker.toolkitTagRule={mode='all',include={'food','perishable'},exclude={'meat'}}
   picker.toolkitTagRuleTouched=true
@@ -112,8 +155,9 @@ local function tick()
   if not F.matches(localReceipt)then return end
   LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker)
   assert(picker.appearanceName:getInternalText()==F.name and picker.selectedCats[packet.category]
-   and picker.toolkitAppearance.icon.value=='crate' and picker.toolkitAppearance.color.r==F.color.r
+   and picker.toolkitAppearance.icon.value==F.tag and picker.toolkitAppearance.color.r==F.color.r
    and picker.priority==6 and picker.toolkitTagRule.include[2]=='perishable','Reopen lost unified fields')
+  checkTagIcon()
   picker.appearanceName:setText('Cancelled draft');picker:setPriority(99);picker.selectedCats={}
   picker.toolkitAppearance={};picker.toolkitAppearanceTouched=true;picker:closePicker()
   localReceipt=F.receipt(obj,player,packet.category);assert(F.matches(localReceipt),'Cancel changed stored fields')
@@ -127,7 +171,8 @@ local function tick()
   local result=F.receipt(obj,player,packet.category);if not F.matches(result)then return end
   LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker)
   assert(picker.appearanceName:getInternalText()==F.name and picker.selectedCats[packet.category]
-   and picker.toolkitAppearance.icon.value=='crate' and picker.toolkitAppearance.color.b==F.color.b,'Observer editor differs')
+   and picker.toolkitAppearance.icon.value==F.tag and picker.toolkitAppearance.color.b==F.color.b,'Observer editor differs')
+  checkTagIcon()
   phase='observer-shot';nextAt=getTimestampMs()+1200
  elseif phase=='observer-shot'then
   shot('observer')

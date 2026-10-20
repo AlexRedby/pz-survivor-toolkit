@@ -2,6 +2,7 @@ local enabled, starts, creates = true, {}, {}
 local openedRulePicker, adapter
 local scriptCatalog = {}
 local catalogReads, tagReads = 0, 0
+local appearanceSelections={}
 local ruleApi = {getBoxRevision = function(obj) return obj and obj.md.ruleRevision or 0 end,
     getBox = function() end, getPreset = function() end,
     presetsSynced = function() return true end}
@@ -14,7 +15,10 @@ require = function(name)
     if name == 'LootSorter_Categories' then return end
     if name == 'PZSurvivorToolkit/ContainerAppearanceControls' then
         return {create=function() end, layout=function(_, top) return top end,
-            close=function() end, value=function() end}
+            close=function() end, value=function() end,
+            select=function(picker,kind,key)
+                if key then appearanceSelections[#appearanceSelections+1]={picker=picker,kind=kind,key=key} end
+            end}
     end
     if name == 'PZSurvivorToolkit/ItemCategories' then return itemCategories end
     if name == 'PZSurvivorToolkit/TagVisuals' then
@@ -258,7 +262,11 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
         'partial seed tag did not open a locale-independent real-item rule draft')
     unchanged(itemPicker.selectedCats,catsBefore,'partial tag click changed exact category picks')
     unchanged(itemPicker.selectedItems,itemsBefore,'partial tag click persisted localized names')
-    openedRulePicker.onApply({mode='all',include={'seed'},exclude={}})
+    assert(openedRulePicker.selectedTag=='seed','refined row lost the explicit initial tag')
+    openedRulePicker.onApply({mode='all',include={'seed'},exclude={}},'seed')
+    local suggestion=appearanceSelections[#appearanceSelections]
+    assert(suggestion.picker==itemPicker and suggestion.kind=='tag' and suggestion.key=='seed',
+        'accepted rule did not forward first explicit tag to appearance')
     assert(itemPicker.toolkitTagRuleTouched and itemPicker.toolkitTagRule.include[1]=='seed')
     unchanged(itemPicker.selectedCats,catsBefore,'rule Apply changed manual categories')
     unchanged(itemPicker.selectedItems,itemsBefore,'rule Apply changed manual items')

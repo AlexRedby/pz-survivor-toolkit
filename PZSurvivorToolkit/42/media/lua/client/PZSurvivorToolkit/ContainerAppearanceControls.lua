@@ -49,12 +49,46 @@ end
 
 function Controls.reset(picker)
     picker.toolkitAppearance, picker.toolkitAppearanceTouched = {}, true
+    picker.toolkitAppearanceSuggested = nil
     picker.appearanceName:setText("")
     Controls.refresh(picker)
 end
 
+-- A convenience for the first positive choice in this draft, not a live binding
+-- to the designation. Later choices must also leave a deliberately empty name alone.
+function Controls.select(picker, kind, key)
+    if not picker.appearanceName or picker.toolkitTagClosed or picker.toolkitAppearanceSuggested then return end
+    if kind == "presets" or not key then return end
+    local Tags = require "PZSurvivorToolkit/ItemTags"
+    local tag, fullType
+    if kind == "tag" then tag = key
+    elseif kind == "cats" then tag = Tags.forCategory(key)[1]
+    elseif kind == "items" then
+        fullType = LootSorter.getItemFullType(key)
+        local script = fullType and getScriptManager():FindItem(fullType)
+        tag = Tags.forScriptItem(script)[1]
+    end
+    picker.toolkitAppearanceSuggested = true
+    local draft, changed = picker.toolkitAppearance, false
+    if not fullType and kind ~= "items" and tag
+        and not (picker.appearanceName:getInternalText() or ""):find("%S") then
+        picker.appearanceName:setText(Tags.label(tag)); changed = true
+    end
+    if not draft.icon and (fullType or tag) then
+        draft.icon = {kind = fullType and "item" or "pzst-tag", value = fullType or tag}
+        changed = true
+    end
+    if not draft.color and tag then
+        local style = require("PZSurvivorToolkit/TagVisuals").get(tag)
+        draft.color = {r = style.r, g = style.g, b = style.b, a = 1}
+        changed = true
+    end
+    if changed then picker.toolkitAppearanceTouched = true; Controls.refresh(picker) end
+end
+
 function Controls.create(picker)
     if picker.targetKind == "preset" or not Appearance.available() then return end
+    require("PZSurvivorToolkit/ContainerTagIcons").install()
     picker.toolkitAppearance = Appearance.read(picker.targetObj, picker.targetCI, getSpecificPlayer(picker.playerNum or 0)) or {}
     local color = picker.toolkitAppearance.color
     if color then

@@ -3,6 +3,7 @@ local Categories = require "PZSurvivorToolkit/ItemCategories"
 local Visuals = require "PZSurvivorToolkit/TagVisuals"
 local Rules = require "PZSurvivorToolkit/QuartermasterTagRuleClient"
 local RulePicker = require "PZSurvivorToolkit/TagRulePicker"
+local AppearanceControls = require "PZSurvivorToolkit/ContainerAppearanceControls"
 require "LootSorter_Categories"
 
 -- Tag projection and rule helpers. The owned Picker constructs and dispatches its UI directly.
@@ -38,13 +39,15 @@ function Adapter.selectRow(selectedCats, row, selected)
     for _, category in ipairs(row.categories) do selectedCats[category] = selected or nil end
 end
 
-function Adapter.openRule(picker, rule, onApply)
+function Adapter.openRule(picker, rule, onApply, selectedTag)
     RulePicker.open({player = getSpecificPlayer(picker.playerNum or 0), owner = picker,
+        selectedTag = selectedTag,
         rule = rule, categories = picker:activeList(), scriptItems = Adapter.catalog(picker).scriptItems,
-        title = getText("UI_PZST_QMTagRuleTitle"), onApply = function(value)
+        title = getText("UI_PZST_QMTagRuleTitle"), onApply = function(value, firstSelectedTag)
             picker.toolkitTagRule = Tags.normalizeRule(value)
             picker.toolkitTagRuleTouched = true
-            if onApply then onApply() end
+            if onApply then onApply(picker.toolkitTagRule) end
+            AppearanceControls.select(picker, "tag", firstSelectedTag)
         end})
 end
 

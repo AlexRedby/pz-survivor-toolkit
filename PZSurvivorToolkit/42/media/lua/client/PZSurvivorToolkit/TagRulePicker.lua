@@ -38,7 +38,11 @@ function Picker:cycle(row, reverse)
     local include, exclude = contains(self.rule.include, row.id), contains(self.rule.exclude, row.id)
     if include then table.remove(self.rule.include, include) end
     if exclude then table.remove(self.rule.exclude, exclude) end
-    if nextState == "Include" then self.rule.include[#self.rule.include + 1] = row.id
+    local selected = contains(self.selectionOrder, row.id)
+    if selected then table.remove(self.selectionOrder, selected) end
+    if nextState == "Include" then
+        self.rule.include[#self.rule.include + 1] = row.id
+        self.selectionOrder[#self.selectionOrder + 1] = row.id
     elseif nextState == "Exclude" then self.rule.exclude[#self.rule.exclude + 1] = row.id end
     self:refreshPreview()
 end
@@ -87,6 +91,7 @@ end
 
 function Picker:clearRule()
     self.rule = Tags.normalizeRule(nil)
+    self.selectionOrder = {}
     self.validationMessage = nil
     self:updateMode()
     self:refreshPreview()
@@ -106,7 +111,7 @@ function Picker:apply()
     if not Tags.enabled() or closed(self.owner) then self:close(); return end
     local rule = Tags.normalizeRule(self.rule)
     if not rule then return end
-    self.onApply(rule)
+    self.onApply(rule, self.selectionOrder[1])
     self:close()
 end
 
@@ -299,6 +304,7 @@ function Picker.open(options)
     local width, height = math.min(760, getCore():getScreenWidth() - 24), math.min(650, getCore():getScreenHeight() - 24)
     local picker = Picker:new((getCore():getScreenWidth() - width) / 2, (getCore():getScreenHeight() - height) / 2, width, height)
     picker.rule, picker.categories, picker.sourceItems = rule, categories, options.items
+    picker.selectionOrder = options.selectedTag and {options.selectedTag} or {}
     picker.sourceScriptItems = options.scriptItems
     picker.entries, picker.families = entries, families
     picker.owner, picker.onApply, picker.player = options.owner, options.onApply, options.player

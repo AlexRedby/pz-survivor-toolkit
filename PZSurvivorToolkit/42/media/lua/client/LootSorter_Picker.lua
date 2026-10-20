@@ -548,10 +548,13 @@ function Picker.onRowClick(picker, itemData)
     if not itemData then return end
     if TagPicker.isTagView(picker) and itemData.toolkitTagRow then
         if itemData.requiresRule then
-            TagPicker.openRule(picker, {mode = "all", include = {itemData.tag}, exclude = {}})
+            TagPicker.openRule(picker, {mode = "all", include = {itemData.tag}, exclude = {}}, nil, itemData.tag)
         else
             local checked, total = TagPicker.state(picker.selectedCats, itemData)
             TagPicker.selectRow(picker.selectedCats, itemData, checked ~= total)
+            if checked ~= total then
+                AppearanceControls.select(picker, itemData.tag and "tag" or "cats", itemData.tag or itemData.key)
+            end
             picker.needRebuild = true
         end
         return
@@ -561,19 +564,30 @@ function Picker.onRowClick(picker, itemData)
         picker.selection[key] = nil
     else
         picker.selection[key] = picker:selectionValue(key)
+        AppearanceControls.select(picker, picker.mode, key)
     end
     if picker.onlyChecked then picker.needRebuild = true end -- unticking drops it from the checked view
 end
 
 function Picker:onSelectFiltered()
     if TagPicker.isTagView(self) then
-        local include, entries = {}, self.listbox.items
+        local include, entries, candidates = {}, self.listbox.items, {}
         for _, entry in ipairs(entries) do
             if entry.item.requiresRule then include[#include + 1] = entry.item.tag end
+            local checked, total = TagPicker.state(self.selectedCats, entry.item)
+            if entry.item.requiresRule or checked ~= total then candidates[#candidates + 1] = entry.item end
         end
-        local function selectCategories()
+        local function selectCategories(rule)
             for _, entry in ipairs(entries) do
                 if not entry.item.requiresRule then TagPicker.selectRow(self.selectedCats, entry.item, true) end
+            end
+            local included = {}
+            for _, tag in ipairs(rule and rule.include or {}) do included[tag] = true end
+            for _, row in ipairs(candidates) do
+                if not row.requiresRule or included[row.tag] then
+                    AppearanceControls.select(self, row.tag and "tag" or "cats", row.tag or row.key)
+                    break
+                end
             end
             self.needRebuild = true
         end
@@ -586,6 +600,7 @@ function Picker:onSelectFiltered()
     end
     for i = 1, #self.listbox.items do
         local key = self.listbox.items[i].item.key
+        if not self.selection[key] then AppearanceControls.select(self, self.mode, key) end
         self.selection[key] = self:selectionValue(key)
     end
 end

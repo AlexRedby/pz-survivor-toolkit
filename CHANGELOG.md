@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.127
+
+- **Added:** The first sorting tag selected in the container editor fills empty name, icon and colour fields from that tag. An exact item supplies its own icon and its primary tag's colour, leaving the name empty. Existing values and subsequent manual edits are preserved; later selections do not change the suggestion.
+
 ### 0.1.126
 
 - **Added:** Active reading can be dragged below waiting operations, preserving their order and continuing from saved pages before returning the book to its original container.
