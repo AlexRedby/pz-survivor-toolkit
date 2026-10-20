@@ -44,3 +44,15 @@ if Proof.matches("media/scripts/vehicles/VVA2/Modern/Bars.txt", 684814076, id, t
     PZSurvivorToolkit.VVACompatibility = true
     print("[PZSurvivorToolkit] VVA Modern bars template compatibility active")
 end
+
+-- Upstream 7cc1115985835bb2b48d5d6b6c702ac296085270 migrated normal police
+-- separators to NormalBars_Decor, but left CarLightsRanger using the old name.
+-- The pinned apply source uses this missing leaf only for that ranger profile.
+missing, decor = "VVA_Normal_PoliceSeparator", "VVA_NormalBars_Decor"
+if Proof.matches("media/scripts/vehicles/VVA2/Normal/interiorDecor.txt", 4002040244, id, true)
+    and manager:getVehicleTemplate("Base." .. decor)
+    and not manager:getVehicleTemplate("Base." .. missing) and not VVA.IsProfileDefined(missing) then
+    VVA.addToProfile(missing, {decor})
+    PZSurvivorToolkit.VVACompatibility = true
+    print("[PZSurvivorToolkit] VVA ranger bars template compatibility active")
+end

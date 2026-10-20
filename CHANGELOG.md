@@ -15,6 +15,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.172
+
+- **Fixed:** TidyUpMeister floor returns in Host remain valid when their transfer is the first action after disabling the queue. Mode bookkeeping now runs before capturing the return receipt; later cancellation, changed item identity and changed placement still invalidate it.
+- **Fixed:** Corrected Vanilla Vehicles Animated's stale ranger-car separator reference to its existing normal police bars, following the upstream migration. Source and template checks protect unknown versions. The three modern police separator references remain unresolved and visible in the logs.
+
 ### 0.1.171
 
 - **Fixed:** A new multiplayer character reapplies the local auto-drink preference after the server connection reply, so respawning with auto-drink disabled no longer leaves the character enabled while the menu shows it disabled.

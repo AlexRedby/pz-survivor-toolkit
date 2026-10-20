@@ -80,9 +80,7 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Shared game sessions and build regression
 
-- [ ] Resolve the `test_action_queue_compat.lua` floor-return negative case (`owned floor validation accepted unsafe none queue=false`), reproduced both on `7e6738b` and the bulk-queue fix. Check the queue-disabled native return contract before changing the expectation; restore a complete compat regression run.
-
-- [ ] Resolve VVA's missing `VVA_Normal_PoliceSeparator` and `VVA_Modern_PoliceSeparator` templates (one ranger car and three modern police variants). No matching separator definitions exist in the reviewed upstream files. Establish the intended assets/parts before any correction; keep these four startup errors visible rather than installing empty aliases or inventing vehicle geometry.
+- [ ] Resolve VVA's three missing `VVA_Modern_PoliceSeparator` references on modern police variants. The upstream migration retained these alongside the new bars, but the current Separator model/node/template is absent. Establish the intended assets/parts before changing these references; do not assume the existing bars replace them or silence their errors with empty profiles.
 
 - [ ] Extend the common scenario contracts beyond equipment, fluid drinking and health-panel/direct-inventory bandaging. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
 

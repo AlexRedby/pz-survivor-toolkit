@@ -3,6 +3,7 @@ local shared = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/"
 local report = print
 local typo, decor = "VVA_StepVan_Decor_Trunk", "VVA_StepVan_Trunk_Decor"
 local modernTypo, modernDecor = "VVA_Modern_DecorBars", "VVA_ModernBars_Decor"
+local rangerOld, rangerDecor = "VVA_Normal_PoliceSeparator", "VVA_NormalBars_Decor"
 local function read(path)
     local file = assert(io.open(path, "r"), path)
     local text = file:read("*a"); file:close()
@@ -24,6 +25,7 @@ local function setup(options)
         local text = read(NativeVVASourceRoot .. "/" .. path):gsub("\r\n", "\n")
         if options.changed == path then text = text .. "\n-- unknown upstream revision\n" end
         if options.fixed and path:find("VVA_applyAnimations.lua", 1, true) then text = text:gsub(typo, decor) end
+        if options.fixedRanger and path:find("VVA_applyAnimations.lua", 1, true) then text = text:gsub(rangerOld, rangerDecor) end
         local at = 1
         w.readers = w.readers + 1
         return {readLine = function()
@@ -40,6 +42,8 @@ local function setup(options)
             if name == "Base." .. typo and options.realAlias then return {} end
             if name == "Base." .. modernDecor and options.modern then return {} end
             if name == "Base." .. modernTypo and options.realModernAlias then return {} end
+            if name == "Base." .. rangerDecor and options.ranger then return {} end
+            if name == "Base." .. rangerOld and options.realRangerAlias then return {} end
         end,
         getVehicle = function(_, name)
             -- VVA_* names are inheritance-only profiles, not native vehicle scripts.
@@ -60,6 +64,7 @@ local function setup(options)
             assert(NativeVVASourceRoot, "upstream source required")
             local text = read(NativeVVASourceRoot .. "/media/lua/shared/" .. name .. ".lua")
             if options.fixed and name == "VVA_applyAnimations" then text = text:gsub(typo, decor) end
+            if options.fixedRanger and name == "VVA_applyAnimations" then text = text:gsub(rangerOld, rangerDecor) end
             value = assert(loadstring(text, "@" .. name .. ".lua"))()
         end
         w.loaded[name] = value or true
@@ -96,8 +101,8 @@ local function tokens(text)
     table.sort(result)
     return table.concat(result, ",")
 end
-local function compare(actual, removeTypo, fixModern)
-    local affected, modernAffected, total = 0, 0, 0
+local function compare(actual, removeTypo, fixModern, fixRanger)
+    local affected, modernAffected, rangerAffected, total = 0, 0, 0, 0
     for name, text in pairs(baseline.scripts) do
         local expected, count = text:gsub("template! = " .. typo .. ",", "")
         assert(count <= 1)
@@ -117,6 +122,16 @@ local function compare(actual, removeTypo, fixModern)
                 assert(properCount == 1, name .. " lost or duplicated Modern bars")
             end
         end
+        if fixRanger then
+            local rangerCount
+            expected, rangerCount = expected:gsub("template! = " .. rangerOld .. ",", "template! = " .. rangerDecor .. ",")
+            if rangerCount > 0 then
+                assert(rangerCount == 1 and name == "Base.CarLightsRanger", "ranger correction changed another vehicle")
+                rangerAffected = rangerAffected + 1
+                local _, properCount = actual.scripts[name]:gsub("template! = " .. rangerDecor .. ",", "")
+                assert(properCount == 1, name .. " lost or duplicated ranger bars")
+            end
+        end
         assert(tokens(actual.scripts[name]) == tokens(expected), name .. " changed other vehicle data")
         assert(actual.loads[name] == 1, "vehicle script loaded more than once: " .. name)
         total = total + 1
@@ -124,6 +139,7 @@ local function compare(actual, removeTypo, fixModern)
     for name in pairs(actual.scripts) do assert(baseline.scripts[name], "extra script: " .. name) end
     assert(affected == 29, "reviewed upstream changed its affected native vehicle set: " .. affected)
     if fixModern then assert(modernAffected == 3, "reviewed Modern police vehicle set changed") end
+    if fixRanger then assert(rangerAffected == 1, "reviewed ranger vehicle set changed") end
     return total
 end
 w = setup(); dofile(module); assert(w.active()); dofile(module); w.boot()
@@ -177,4 +193,34 @@ dofile(module); w.boot(); compare(w, true, true)
 w = setup({modern = true, changed = "media/scripts/vehicles/VVA2/StepVan/TrunkFill.txt"})
 dofile(module); assert(w.active()); w.boot(); compare(w, false, true)
 report("PASS real VVA Modern bars: three exact alias replacements, one decor each; unknown/existing target guards and independence from StepVan")
+
+local rangerPath = "media/scripts/vehicles/VVA2/Normal/interiorDecor.txt"
+local rangerSource = read(NativeVVASourceRoot .. "/" .. rangerPath)
+assert(rangerSource:find("template vehicle " .. rangerDecor, 1, true)
+    and rangerSource:find("mesh = vehicles/VVA/Normal/static|decorBars", 1, true)
+    and rangerSource:find("file = VVA_Vehicles_NormalBars_decor", 1, true))
+w = setup({modern = true, ranger = true}); dofile(module); dofile(module); w.boot(); compare(w, true, true, true)
+local rangerMarkers, modernSeparators = 0, 0
+for _, message in ipairs(w.messages) do
+    if message == "[PZSurvivorToolkit] VVA ranger bars template compatibility active" then rangerMarkers = rangerMarkers + 1 end
+end
+for _, text in pairs(w.scripts) do
+    assert(not text:find("template! = " .. rangerOld .. ",", 1, true))
+    local _, count = text:gsub("template! = VVA_Modern_PoliceSeparator,", "")
+    modernSeparators = modernSeparators + count
+end
+assert(rangerMarkers == 1 and modernSeparators == 3, "ranger activation must leave the three unresolved Modern separators visible")
+assert(w.readers == w.closed)
+for _, options in ipairs({{ranger = true, changed = rangerPath}, {ranger = true, realRangerAlias = true}, {ranger = false}}) do
+    w = setup(options); dofile(module); w.boot(); compare(w, true)
+end
+w = setup({ranger = true}); vva = require("VVA_core"); vva.addToProfile(rangerOld, {rangerDecor})
+dofile(module); w.boot(); compare(w, true, false, true)
+for _, message in ipairs(w.messages) do assert(message ~= "[PZSurvivorToolkit] VVA ranger bars template compatibility active") end
+w = setup({ranger = true, fixedRanger = true}); dofile(module)
+assert(not w.active() and not w.required.VVA_core, "upstream's own ranger correction must disable the pinned compatibility")
+w.boot(); compare(w, false, false, true)
+w = setup({ranger = true, noDecor = true}); dofile(module); w.boot(); compare(w, false, false, true)
+w = setup({ranger = true, prefixed = true}); require("VVA_applyAnimations"); dofile(module); w.events[1](); compare(w, true, false, true)
+report("PASS real VVA ranger migration: only CarLightsRanger gains one existing bars decor; three Modern separators remain; source/native/profile/fixed-upstream guards passed")
 print = report
