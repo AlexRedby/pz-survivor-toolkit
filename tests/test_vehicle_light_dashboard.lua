@@ -149,8 +149,9 @@ local function nativeClick(dash)
 end
 rotary.onclick=nativeClick;rotary.target=rotaryDash
 scaleKey='1x'
-local mark={getWidthOrig=function() return 21 end,getHeightOrig=function() return 16 end}
-highTextures['media/ui/PZSurvivorToolkit/beams/standard/1x/high-mark.png']=mark
+local mark={getWidthOrig=function() return 98 end,getHeightOrig=function() return 133 end}
+rotaryDash.backgroundTex=image(745,172)
+highTextures['media/ui/PZSurvivorToolkit/beams/standard/1x/light-panel.png']=mark
 D.bind(rotaryDash)
 local rotaryClick, rotaryRender=rotary.onclick,rotary.render
 assert(rotaryClick~=nativeClick and rotaryDash.__lightKnobAngle==0,'standard has a third-position callback, begins at OFF even if Nep remembered high')
@@ -158,37 +159,36 @@ D.bind(rotaryDash)
 assert(rotary.onclick==rotaryClick and rotary.render==rotaryRender,'do not nest rotary hooks per frame')
 rotary:render()
 local label=rotaryDash.draws[1]
-assert(rotary.nativeRender and label[1]==mark and label[4]==10.5 and label[5]==8,'preserve authored knob render and draw a half-native high legend')
-assert(label[2]==rotary.x+33.25 and label[3]==rotary.y-10,'place third legend above/right within the original left faceplate')
-assert(label[6]==1 and label[7]==.72 and label[8]==.72 and label[9]==.72,'faceplate legend stays subdued neutral grey')
+assert(rotary.nativeRender and label[1]==mark and label[4]==98 and label[5]==133,'keep authored knob render and native faceplate patch dimensions')
+assert(label[2]==rotaryDash.backgroundTex.x and label[3]==rotaryDash.backgroundTex.y,'anchor printed symbols to the actual faceplate')
+assert(label[6]==1 and label[7]==nil,'preserve original neutral print colour and soft edges')
 local knobSizes={{36,24},{48,33},{66,45},{95,65}}
 local nominalScales={.75,1,1.4,2}
 for index,key in ipairs(scales) do
  scaleKey=key
  local size=sizes.standard[index]
- highTextures['media/ui/PZSurvivorToolkit/beams/standard/'..key..'/high-mark.png']={
-  getWidthOrig=function() return size[1] end,getHeightOrig=function() return size[2] end}
+ highTextures['media/ui/PZSurvivorToolkit/beams/standard/'..key..'/light-panel.png']={
+  getWidthOrig=function() return math.floor(98*nominalScales[index]+.5) end,getHeightOrig=function() return math.floor(133*nominalScales[index]+.5) end}
  rotary.width=knobSizes[index][1];rotary.height=knobSizes[index][2]
  rotary.x=66*nominalScales[index];rotary.y=130*nominalScales[index]
  rotaryDash.draws={};D.bind(rotaryDash);rotary:render()
  local scaledMark=rotaryDash.draws[1]
- assert(scaledMark[4]==size[1]*.5 and scaledMark[5]==size[2]*.5,'mark uses the active native export size')
- assert(scaledMark[2]+scaledMark[4]<=110*nominalScales[index],'high legend fits inside standard faceplate at every authored scale')
- assert(scaledMark[3]+scaledMark[5]<rotary.y,'high legend stays above rotary artwork at every authored scale')
+ assert(scaledMark[4]==math.floor(98*nominalScales[index]+.5),'patch uses active authored export size')
+ assert(scaledMark[2]==rotaryDash.backgroundTex.x and scaledMark[3]==rotaryDash.backgroundTex.y,'patch stays background-relative at every scale')
 end
 scaleKey='1x';rotary.width=48;rotary.height=33;rotary.x=12;rotary.y=34
 
 speed=4;rotary.onclick(rotaryDash);D.bind(rotaryDash)
 assert(nativeClicks==1 and deactivations==1 and activations==0 and requestedPower==true,'OFF -> LOW clears remembered high and uses native power callback exactly once')
-assert(speed==1 and speedResets==1 and rotaryDash.__lightKnobAngle==90 and not v.on,'pending native command immediately turns knob to LOW')
+assert(speed==1 and speedResets==1 and rotaryDash.__lightKnobAngle==45 and not v.on,'pending native command immediately turns knob to LOW')
 rotary.onclick(rotaryDash);rotary.onclick(rotaryDash);D.bind(rotaryDash)
 assert(nativeClicks==1 and deactivations==1 and activations==0 and requestedPower==true,'rapid clicks before ON acknowledgement send no duplicate power command or beam change')
-assert(rotaryDash.__lightKnobAngle==90 and rotaryDash.__YourDashHeadlightSwitchOn==true,'pending ON keeps the optimistic LOW selection')
+assert(rotaryDash.__lightKnobAngle==45 and rotaryDash.__YourDashHeadlightSwitchOn==true,'pending ON keeps the optimistic LOW selection')
 v.on=true;D.bind(rotaryDash)
 assert(rotaryDash.__YourDashHeadlightSwitchPending==0 and D.mode(v)=='low','acknowledged native power yields low')
 speed=3;rotary.onclick(rotaryDash);D.bind(rotaryDash)
 assert(activations==1 and nativeClicks==1 and v.on and D.mode(v)=='high','LOW -> HIGH uses Nep API without toggling native power')
-assert(speed==1 and speedResets==2 and rotaryDash.__lightKnobAngle==135,'HIGH has its own rotary position and native fast-forward behavior')
+assert(speed==1 and speedResets==2 and rotaryDash.__lightKnobAngle==90,'HIGH has its own rotary position and native fast-forward behavior')
 rotary.onclick(rotaryDash);D.bind(rotaryDash)
 assert(nativeClicks==2 and deactivations==2 and requestedPower==false and not v.data.NepHB.highBeamsOn,'HIGH -> OFF restores low beam geometry and requests native power off')
 assert(rotaryDash.__lightKnobAngle==0 and v.on,'pending native off remains at OFF before authoritative acknowledgement')
@@ -208,12 +208,12 @@ v.on=true;D.bind(rotaryDash);rotary.onclick(rotaryDash);rotary.onclick(rotaryDas
 assert(nativeClicks==expiryNative+3 and requestedPower==false and v.on,'expiry setup sends native OFF while actual power remains on')
 rotaryDash.__YourDashHeadlightSwitchPending=0
 rotary.onclick(rotaryDash);D.bind(rotaryDash)
-assert(nativeClicks==expiryNative+3 and activations==expiryHigh+2 and rotaryDash.__lightKnobAngle==135,'expired OFF resyncs to actual LOW and permits Nep HIGH without another power command')
+assert(nativeClicks==expiryNative+3 and activations==expiryHigh+2 and rotaryDash.__lightKnobAngle==90,'expired OFF resyncs to actual LOW and permits Nep HIGH without another power command')
 v.on=false;v.data.NepHB.highBeamsOn=false;rotaryDash.__YourDashHeadlightSwitchPending=0;D.bind(rotaryDash)
 -- Native key/radial power and Nep key/radial beams remain the source of truth.
-v.on=true;D.bind(rotaryDash);assert(rotaryDash.__lightKnobAngle==90,'external headlights on reflects LOW')
-v.data.NepHB.highBeamsOn=true;D.bind(rotaryDash);assert(rotaryDash.__lightKnobAngle==135,'external Nep high reflects HIGH')
-v.data.NepHB.highBeamsOn=false;D.bind(rotaryDash);assert(rotaryDash.__lightKnobAngle==90,'external Nep low reflects LOW')
+v.on=true;D.bind(rotaryDash);assert(rotaryDash.__lightKnobAngle==45,'external headlights on reflects LOW')
+v.data.NepHB.highBeamsOn=true;D.bind(rotaryDash);assert(rotaryDash.__lightKnobAngle==90,'external Nep high reflects HIGH')
+v.data.NepHB.highBeamsOn=false;D.bind(rotaryDash);assert(rotaryDash.__lightKnobAngle==45,'external Nep low reflects LOW')
 v.on=false;D.bind(rotaryDash);assert(rotaryDash.__lightKnobAngle==0,'external power off reflects OFF')
 local beforeNative,beforeHigh,beforeLow=nativeClicks,activations,deactivations
 speed=0;rotary.onclick(rotaryDash);D.bind(rotaryDash)
@@ -223,18 +223,19 @@ assert(activations==beforeHigh and not v.data.NepHB.highBeamsOn,'paused LOW clic
 v.data.NepHB.highBeamsOn=true;D.bind(rotaryDash);rotary.onclick(rotaryDash)
 assert(nativeClicks==beforeNative and deactivations==beforeLow and v.data.NepHB.highBeamsOn,'paused HIGH click cannot power off or clear high')
 speed=1;v.charge=0;D.bind(rotaryDash)
-assert(D.mode(v)=='off' and rotaryDash.__lightKnobAngle==135,'unpowered warning is off while physical selector stays HIGH')
+assert(D.mode(v)=='off' and rotaryDash.__lightKnobAngle==90,'unpowered warning is off while physical selector stays HIGH')
 v.charge=1
 -- Alarm flashes must never rotate the physical selection. The native callback
 -- still owns its optimistic cache when the driver changes power during alarm.
 rotaryDash.alarm=true;rotaryDash.__YourDashHeadlightSwitchOn=true
-v.on=false;D.bind(rotaryDash);assert(rotaryDash.__lightKnobAngle==135,'alarm dark phase preserves HIGH selection')
-v.on=true;D.bind(rotaryDash);assert(rotaryDash.__lightKnobAngle==135,'alarm bright phase preserves HIGH selection')
+v.on=false;D.bind(rotaryDash);assert(rotaryDash.__lightKnobAngle==90,'alarm dark phase preserves HIGH selection')
+v.on=true;D.bind(rotaryDash);assert(rotaryDash.__lightKnobAngle==90,'alarm bright phase preserves HIGH selection')
 rotary.onclick(rotaryDash);D.bind(rotaryDash)
 assert(nativeClicks==beforeNative+1 and rotaryDash.__YourDashHeadlightSwitchOn==false and rotaryDash.__lightKnobAngle==0,'alarm power click uses native optimistic cache')
 v.on=false;D.bind(rotaryDash);v.on=true;D.bind(rotaryDash)
 assert(rotaryDash.__lightKnobAngle==0,'alarm flashes after click preserve OFF selection')
 rotaryDash.alarm=false;rotaryDash.__YourDashHeadlightSwitchPending=0
+rotaryDash.backgroundTex=nil -- This fallback case has no heavy rocker artwork.
 for _,family in ipairs({'heavy','sport'}) do
  rotaryDash.__YourDashFamily=family;D.bind(rotaryDash)
  assert(rotary.onclick==nativeClick and rotary.render==rotaryNativeRender,'family switch restores unchanged heavy/sport controls')

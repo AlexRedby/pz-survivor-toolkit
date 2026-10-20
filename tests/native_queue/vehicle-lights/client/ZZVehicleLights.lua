@@ -5,6 +5,7 @@ local phase,since,started,done,requested=0,0,false,false,false
 local vehicle,vehicleId,recordSince,stopSince,nextAt,label,origin
 local originDebug=false
 local variantIndex,variantStep,variantSince=1,0,0
+local rotaryScale,rotaryStep=1,0
 local variants={{script="Base.PickUpTruck",family="heavy"},{script="Base.SportsCar",family="sport"}}
 local function log(text) print('[VEHICLE_LIGHTS] '..text) end
 local function clock() return getTimestampMs() end
@@ -66,11 +67,16 @@ local function dashboardCapture(name)
   assert(image.__toolkitBeamMode==expected,'dashboard does not match actual beam state')
   assert(image.__toolkitBeamWrapped,'native lamp not integrated')
  end
+ if video.rotary and dash.__YourDashFamily=='standard' then
+  local selected=module.switchMode(dash)
+  assert(dash.__lightKnobAngle==({off=0,low=45,high=90})[selected],'rotary detent does not match selected beam')
+ end
  local box=dash.backgroundTex
  log('DASHBOARD '..name..' elapsedMs='..(clock()-recordSince)..' mode='..expected..' family='..tostring(dash.__YourDashFamily)
   ..' integration='..tostring(module.installed==true)..' scale='..require('YourDash/DashboardCore').GetScaleKey()..' alpha='..tostring(image.backgroundColor.a)..' visible='..tostring(image:getIsVisible())
   ..' box='..math.floor(box:getAbsoluteX())..','..math.floor(box:getAbsoluteY())..','..math.ceil(box:getWidth())..','..math.ceil(box:getHeight())
-  ..' lamp='..math.floor(image:getAbsoluteX())..','..math.floor(image:getAbsoluteY())..','..math.ceil(image:getWidth())..','..math.ceil(image:getHeight()))
+  ..' lamp='..math.floor(image:getAbsoluteX())..','..math.floor(image:getAbsoluteY())..','..math.ceil(image:getWidth())..','..math.ceil(image:getHeight())
+  ..' angle='..tostring(dash.__lightKnobAngle))
  if video.rocker and isClient() then
   sendClientCommand('VehicleLightsTest','rockerPower',{mode=expected,on=expected~='off'})
  end
@@ -221,11 +227,28 @@ local function run()
  elseif phase==14 and clock()-since>2500 then
   capture('off_after');lightsFixtureInput(0)
   if video.dashboard and not isClient() then
-   if video.origins then
+   if video.rotary then
+    require('YourDash/DashboardCore').SetTextureSizeIndex(1)
+    phase=32;rotaryScale=1;rotaryStep=0;label='standard_scale_0.75x_off';since=clock()
+   elseif video.origins then
     headlights(true);NepHBO7.deactivateHighBeams(vehicle);lightsFixtureCamera(1.2)
     originDebug=true;label='standard_geometry';phase=31;since=clock()
    else phase=30;variantStep=0 end
   else assert(toolkitVideoStop());stopSince=clock();phase=11 end
+ elseif phase==32 and clock()-since>1800 then
+  local scales={'0.75x','1x','1.4x','2x'}
+  local mode=({'off','low','high'})[rotaryStep+1]
+  dashboardCapture('standard_scale_'..scales[rotaryScale]..'_'..mode)
+  if rotaryStep<2 then
+   rotaryClick(rotaryStep==0 and 'low' or 'high');rotaryStep=rotaryStep+1
+  else
+   rotaryClick('off');rotaryStep=0;rotaryScale=rotaryScale+1
+   if rotaryScale>4 then
+    require('YourDash/DashboardCore').SetTextureSizeIndex(2);phase=30;variantStep=0
+   else require('YourDash/DashboardCore').SetTextureSizeIndex(rotaryScale) end
+  end
+  if phase==32 then label='standard_scale_'..scales[rotaryScale]..'_'..({'off','low','high'})[rotaryStep+1] end
+  since=clock()
  elseif phase==31 and clock()-since>2500 then
   dashboardCapture('standard_geometry');headlights(false);originDebug=false;phase=30;variantStep=0
  elseif phase==30 then

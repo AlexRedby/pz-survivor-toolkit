@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build horizontal-ray variants from the installed authored dashboard sprites.
 
-Requires Pillow and NumPy. Only ray columns are remapped; native dimensions,
-colour, transparent padding, lamp housing and surrounding glow stay intact.
+Requires Pillow and NumPy. Warning variants remap only ray columns; native
+dimensions, colour, transparent padding, housing and glow stay intact. The
+standard rotary faceplate also receives native-sized repositioned legends.
 No scale is synthesized from another: every authored size is processed directly.
 """
 import argparse
@@ -18,6 +19,39 @@ PROFILES = {
     'sport': (188, 178, 78, 89, 83, -.30, 74, 99),
 }
 SCALES = ('0.75x', '1x', '1.4x', '2x')
+
+
+def rotary_panel(dashboard):
+    """Native printed legends: OFF left, LOW upper-left, HIGH above the knob.
+
+    Coordinates refer to the original 1490x344 standard faceplate. A blank
+    strip at the same height supplies the background beneath the old LOW
+    print. Extract the native grey glyph against that background, straighten
+    only its ray columns for HIGH, and retain LOW's original sloping rays.
+    """
+    scale = dashboard.width / 1490
+    x0, y0, x1, y1 = [round(n * scale) for n in (162, 220, 196, 246)]
+    width, height = x1 - x0, y1 - y0
+    source = np.asarray(dashboard.convert('RGBA'))
+    donor_x = round(126 * scale)
+    background = source[y0:y1, donor_x:donor_x + width].copy()
+    printed = source[y0:y1, x0:x1].astype(float)
+    base = background.astype(float)
+    # Native legend is neutral grey; retain its actual brightness/antialiasing.
+    alpha = np.clip((printed[:, :, :3].mean(2) - base[:, :, :3].mean(2))
+                    / (255 - base[:, :, :3].mean(2)), 0, 1)
+    low = np.full((height, width, 4), 255, dtype=np.uint8)
+    low[:, :, 3] = np.rint(alpha * 255).astype(np.uint8)
+    high = low.copy()
+    rows = np.arange(height)
+    for x in range(round(21 * scale), min(width, round(33 * scale))):
+        offset = .4 * (x - 26 * scale)
+        high[:, x, 3] = np.rint(np.interp(rows + offset, rows, low[:, x, 3], left=0, right=0))
+    panel = Image.new('RGBA', (x1, round(266 * scale)))
+    panel.paste(Image.fromarray(background), (x0, y0))
+    panel.alpha_composite(Image.fromarray(high), (x0, y0))
+    panel.alpha_composite(Image.fromarray(low), (x0 - round(42 * scale), y0 + round(18 * scale)))
+    return panel
 
 
 def straighten(image, family):
@@ -68,10 +102,9 @@ def main():
             high = straighten(image, family)
             high.save(output)
             if family == 'standard':
-                # Neutral faceplate label; the runtime tints this soft alpha.
-                mark = Image.new('RGBA', high.size, (255, 255, 255, 0))
-                mark.putalpha(high.getchannel('A'))
-                mark.save(output.with_name('high-mark.png'))
+                # Derived from this scale's actual faceplate, not warning art.
+                dashboard = Image.open(source.with_name('dash.png')).convert('RGBA')
+                rotary_panel(dashboard).save(output.with_name('light-panel.png'))
             print(f'{family}/{scale}: {image.width}x{image.height}')
 
 

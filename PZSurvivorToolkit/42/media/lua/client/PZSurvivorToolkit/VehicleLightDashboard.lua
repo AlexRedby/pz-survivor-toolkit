@@ -65,20 +65,15 @@ local function drawRotaryMark(dash, switch)
     local scale = YourDash and YourDash.GetScaleKey and YourDash.GetScaleKey()
     if not scale then return end
     if rotaryMarks[scale] == nil then
-        rotaryMarks[scale] = getTexture("media/ui/PZSurvivorToolkit/beams/standard/" .. scale .. "/high-mark.png") or false
+        rotaryMarks[scale] = getTexture("media/ui/PZSurvivorToolkit/beams/standard/" .. scale .. "/light-panel.png") or false
     end
     local mark = rotaryMarks[scale]
     if not mark then return end
-    -- Half the warning tile's authored dimensions matches the small printed
-    -- low-beam legend. Keep this neutral: it is a faceplate marking, not a lamp.
-    local width, height = mark:getWidthOrig() * .5, mark:getHeightOrig() * .5
-    -- A 135-degree HIGH detent points above/right. Its legend fits inside the
-    -- original left faceplate; a 180-degree legend would cross the panel seam.
-    local scaleFactor = switch.width / 48
-    local centerX = switch.x + switch.width * .5 + 14.5 * scaleFactor
-    local centerY = switch.y + switch.height * .5 - 22.5 * scaleFactor
-    dash:drawTextureScaled(mark, centerX - width * .5,
-        centerY - height * .5, width, height, 1, .72, .72, .72)
+    if not dash.backgroundTex then return end
+    -- Authored faceplate patch replaces the old LOW print with HIGH and adds
+    -- LOW halfway from OFF. It keeps native grain, symbol size and soft edges.
+    dash:drawTextureScaled(mark, dash.backgroundTex:getX(), dash.backgroundTex:getY(),
+        mark:getWidthOrig(), mark:getHeightOrig(), 1)
 end
 
 local function bindRotary(dash, switch)
@@ -100,7 +95,7 @@ local function bindRotary(dash, switch)
             switch.render = switch.__toolkitBeamRotaryRender
         end
         local mode = D.switchMode(dash)
-        dash.__lightKnobAngle = mode == "high" and 135 or mode == "low" and 90 or 0
+        dash.__lightKnobAngle = mode == "high" and 90 or mode == "low" and 45 or 0
     elseif switch.onclick == switch.__toolkitBeamRotaryClick then
         -- A live dashboard can change vehicle family without replacing ISImage.
         switch.onclick = switch.__toolkitBeamNativeClick

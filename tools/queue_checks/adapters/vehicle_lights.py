@@ -109,7 +109,16 @@ def verify(root, selection, catalog):
         issues.append('Missing live Pitch Black/time observation')
     if selection['options'].get('rotary'):
         clicks = re.findall(re.escape(MARKER) + r'ROTARY_CLICK (off|low|high) (off|low|high)', text)
-        if clicks != [('off', 'low'), ('low', 'high'), ('high', 'off'), ('off', 'low'), ('low', 'high')]:
+        expected = [('off', 'low'), ('low', 'high'), ('high', 'off'), ('off', 'low'), ('low', 'high')]
+        if selection['kind'] == 'sp':
+            expected += [('off', 'low'), ('low', 'high'), ('high', 'off')] * 4
+            for scale in ('0.75x', '1x', '1.4x', '2x'):
+                for mode, angle in (('off', 0), ('low', 45), ('high', 90)):
+                    if not re.search(re.escape(MARKER + 'DASHBOARD standard_scale_' + scale + '_' + mode)
+                                     + r' .*family=standard .*scale=' + re.escape(scale)
+                                     + r' .*angle=' + str(angle) + r'(?:\.0)?\s', text):
+                        issues.append('Missing standard rotary position ' + scale + ' ' + mode)
+        if clicks != expected:
             issues.append('Missing native ISImage rotary OFF/LOW/HIGH/OFF sequence')
     if selection['options'].get('rocker'):
         clicks = re.findall(re.escape(MARKER) + r'ROCKER_CLICK (off|low|high) (off|low|high)', text)
