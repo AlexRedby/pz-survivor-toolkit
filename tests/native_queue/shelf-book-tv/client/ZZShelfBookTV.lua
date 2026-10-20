@@ -213,6 +213,32 @@ local function observationDiagnostic(q)
         ..' exactCommandTape='..tostring(insert.secondaryItem and insert.secondaryItem:getID()==ids.tape)
         ..' tapeOwner='..tostring(owner and owner:getType() or 'none'))
 end
+local function traceNativeInsertion(action)
+    if config.mode~='native' then return end
+    local valid,stop,perform=action.isValid,action.stop,action.perform
+    local rejected=false
+    action.isValid=function(self,...)
+        local result=valid(self,...)
+        if not result and not rejected then
+            rejected=true
+            print(MARK..'NATIVE_INSERT_INVALID started='..tostring(self:isStarted())
+                ..' current='..tostring(queue().current==self)
+                ..' hasMedia='..tostring(self.deviceData:hasMedia())
+                ..' mediaIndex='..tostring(self.deviceData:getMediaIndex())
+                ..' expectedMediaIndex='..tostring(state.mediaIndex)
+                ..' exactTapeInInventory='..tostring(getPlayer():getInventory():getItemById(ids.tape)~=nil))
+        end
+        return result
+    end
+    action.stop=function(self,...)
+        print(MARK..'NATIVE_INSERT_STOP validityRejected='..tostring(rejected)..' queued='..#queue().queue)
+        return stop(self,...)
+    end
+    action.perform=function(self,...)
+        print(MARK..'NATIVE_INSERT_PERFORM validityRejected='..tostring(rejected)..' queued='..#queue().queue)
+        return perform(self,...)
+    end
+end
 local function createTVCommands()
     window,panel=findPanel(state.tv)
     panel:toggleOnOff()
@@ -224,6 +250,7 @@ local function createTVCommands()
     assert(power.Type=='ISRadioAction' and power.mode=='ToggleOnOff'
         and insert.Type=='ISDeviceMediaAction' and insert.secondaryItem==state.tape
         and play.Type=='ISRadioAction' and play.mode=='TogglePlayMedia','native TV command identities/order differ')
+    traceNativeInsertion(insert)
     print(MARK..'COMMANDS power=ISRadioAction insert=ISDeviceMediaAction play=ISRadioAction')
 end
 local function queueTV()

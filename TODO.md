@@ -63,6 +63,9 @@ The executor remains `ISTimedActionQueue`. Add families through Definitions and 
 
 - [ ] Extend the combined shelf-book/TV live scenario to a VHS taken from a worn bag: native pickup, grouped insertion, active reading moved below power/insert/play, exact tape debit and one book return. Run selected-pack SP/Host with matching queue-off controls and log audits. The inventory-VHS path is verified live; bag preparation/capacity, missing tape/TV/return destination, changed callbacks and same-TV conflicts currently have focused local regression coverage.
 - [ ] Diagnose the selected-pack Host control with the Toolkit queue disabled: native power and insertion finish, the exact VHS is debited and present in the TV, but the queue becomes empty before playback starts. This also reproduced before the media-order fix; distinguish native engine behavior from selected-mod interaction before changing queue-off behavior. Keep the failed native control visible in paired reports.
+  - Capture the failed insertion validity check and native stop/reset in the live control without changing their return values or dispatch order.
+  - Establish the correction's scope and explicit-cancel behavior using the unwrapped native-source regression. A general media completion guard must preserve exact tape/TV ownership, correlated server receipts and queue resets, including queue-disabled initialization; do not extend the reading-specific guard by simply removing its setting checks.
+  - Verify any runtime correction with native-source regressions and selected-pack SP/Host controls; then resume the worn-bag VHS scenario.
 
 ## Known limits of move/cancel controls
 
