@@ -27,12 +27,8 @@
 
 - [ ] After the newly selected VanillaVehiclesAnimated/AnimatedVehiclePartsFix pair is installed, recheck the blocked-handle approach against its vehicle geometry. The current SP checks use the installed 45-mod set; these two unavailable mods are excluded explicitly.
 
-- [ ] Reject wooden pickup when a native path clipped by an obstacle ends away from the actual handles; cover the callback with a regression and complete the seven SP approach scenes, including cancellation/target-loss and independent queue-tail receipts, exact ownership and native collision.
-- [ ] Verify the final clean-capture toggle against the native empty-key-binding sentinel, then retain short clips and compact checksummed evidence; remove disposable test profiles.
-
 - [ ] Extend moving cancellation to steering input/nonzero bank: blend the captured grip policy and torso into the moving endpoint before adopting its lean; verify the first recovery frame and final handoff.
 - [ ] Extend pickup clearance checks to the remaining approach angles and clothing combinations. Check all skin/pants geometry at Thigh/Calf, not just the pelvis; preserve the agreed shallow crouch, foot support, knee direction and grip.
-- [ ] Check pickup from a container and approaches to the handles from the wrong side/across obstacles, including a blocked final alignment step, cancellation/target loss during approach and an independent queued action after it. Preserve native collision, the single authoritative complete and exact itemId/XYZ.
 - [ ] For pickup/put-down, extend live checks to cancellation before MP handoff, a late network result, item loss/replacement, cart destruction, stairs, combat/fall/death and restarting after these events. Preserve verified exact IDs/load and world/held handoff; do not delay emergency instant-drop. Lua/hook regressions do not replace the native visual gate and MP owner+observer.
 
 ## Known pose defects

@@ -67,11 +67,33 @@ def analyze(text, lifecycle, scenes=None):
             assert row['route'] == ('inventory-menu' if name == 'container-equip' else 'world-menu'), 'Public pickup route changed'
         assert first['containerCount'] == int(name == 'container-equip') and first['worldCount'] == int(name != 'container-equip') and first['inventoryCount'] == 0, 'Wrong initial source container'
         assert all(math.dist((r['x'],r['y']),(first['x'],first['y'])) <= .002 for r in rows if r['wall'] <= queued['wall']), 'Actor moved before native menu request'
-        assert all(math.dist((r['x'],r['y']),(terminal['x'],terminal['y'])) <= .002 for r in rows if r['wall'] >= terminal['wall']), 'Actor moved after native terminal state'
+        # CancelAction can empty both queues synchronously while the bare walking animation blends out.
+        # Same-ms samples printed before the terminal event still describe the pre-cancel native state.
+        post_terminal=[r for r in rows if r['_order']>terminal['_order']]
+        cancel_metrics={}
+        native_terminal_wall=terminal['wall']
+        if name=='approach-cancel':
+            stops=[r for r in lifecycle if queued['wall']<=r['wallTimeMillis']<=settled['wall']
+                   and r['metaType']=='ISWalkToTimedActionF' and r['event']=='stop']
+            assert len(stops)==1 and post_terminal, 'Missing exact native cancellation stop receipt'
+            native_terminal_wall=max(native_terminal_wall,stops[0]['wallTimeMillis'])
+            assert native_terminal_wall<=post_terminal[0]['wall'], 'Native stop occurred after post-terminal sample'
+            peak=max(math.dist((r['x'],r['y']),(terminal['x'],terminal['y'])) for r in post_terminal)
+            assert peak<=.06, 'Cancelled native walking drift exceeded .06'
+            before_deadline=[r for r in post_terminal if r['wall']<=native_terminal_wall+500]
+            assert before_deadline, 'Missing native cancellation settlement deadline'
+            stable_start=before_deadline[-1]
+            assert native_terminal_wall+250<=stable_start['wall'] and settled['wall']-stable_start['wall']>=500, 'Missing final 500ms cancellation settlement window'
+            assert all(math.dist((r['x'],r['y']),(settled['x'],settled['y']))<=.002
+                       for r in post_terminal if r['_order']>=stable_start['_order']), 'Cancelled native walking did not settle by 500ms'
+            cancel_metrics=dict(nativeCancelPeakDrift=peak,nativeCancelSettledByMillis=stable_start['wall']-native_terminal_wall,
+                                nativeCancelStopWall=stops[0]['wallTimeMillis'])
+        else:
+            assert all(math.dist((r['x'],r['y']),(terminal['x'],terminal['y'])) <= .002 for r in post_terminal), 'Actor moved after native terminal state'
         for a, b in zip(rows, rows[1:]):
             assert math.dist((a['x'], a['y']), (b['x'], b['y'])) <= 8*(b['wall']-a['wall'])/1000+.03, 'Actor teleported during native approach'
         success = name in SUCCESS
-        for row in [terminal, settled] + [r for r in rows if r['wall'] >= terminal['wall']]:
+        for row in [terminal, settled] + post_terminal:
             assert row['nativeActions'] == row['luaActions'] == 0 and not row['hasPath'], 'Native queue/path leaked'
             assert row['inventoryCount'] == int(success) and row['primaryID'] == (first['id'] if success else -1), 'Terminal exact ownership differs'
             assert row['worldCount'] == int(not success and name != 'approach-target-loss') and row['containerCount'] == 0, 'Terminal source ownership differs'
@@ -90,7 +112,7 @@ def analyze(text, lifecycle, scenes=None):
             stopped = i == 0 and name == 'approach-cancel'
             assert [r['event'] for r in group] == (['start', 'stop'] if stopped else ['start', 'perform', 'complete']), 'Native lifecycle did not stop/complete exactly once'
             assert all(r['metaType'] == group[0]['metaType'] for r in group), 'Native action identity reused'
-            assert queued['wall'] <= group[0]['wallTimeMillis'] < group[-1]['wallTimeMillis'] <= terminal['wall'], 'Native action outside queue boundaries'
+            assert queued['wall'] <= group[0]['wallTimeMillis'] < group[-1]['wallTimeMillis'] <= native_terminal_wall, 'Native action outside queue boundaries'
         approach_rows = [r for r in rows if queued['wall'] < r['wall'] < terminal['wall'] and r['actionType'] == 'ISWalkToTimedActionF']
         if name != 'container-equip':
             assert len(approach_rows) >= 3 and any(r['hasPath'] for r in approach_rows), 'Native approach never became active'
@@ -125,7 +147,7 @@ def analyze(text, lifecycle, scenes=None):
         elif success and name != 'container-equip':
             assert math.dist((terminal['x'], terminal['y']), (first['goalX'], first['goalY'])) <= .002, 'Pickup started away from precise handle stance'
         summaries.append(dict(case=name, itemId=first['id'], nativeActionIds=[g[0]['nativeActionId'] for g in groups],
-                              approachResult=terminal['approachResult'], tailResult=terminal['tailResult']))
+                              approachResult=terminal['approachResult'], tailResult=terminal['tailResult'],**cancel_metrics))
     return dict(functionalPass=True, approachVerified=True, preciseStallExercised=False, failures=[], cases=summaries,
                 limit='Seven SP public-menu scenes; real native wall routing and parked-vehicle native target clipping denies off-center pickup; 45-update precise collision stall is not exercised, exact item/cargo and native lifecycle. Rendered mesh/grip and Host replication remain separate gates.')
 

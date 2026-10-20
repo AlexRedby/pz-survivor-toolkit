@@ -115,6 +115,60 @@ class ApproachChecks(unittest.TestCase):
                          for i,e in enumerate(('start','perform','complete')))
         with self.assertRaisesRegex(AssertionError,'independent tail'): analyzer.analyze(*values)
 
+    def test_cancel_accepts_captured_bare_walk_blend_same_ms_order_and_exact_native_stop(self):
+        values=self.cancel_blend_fixture()
+        report=analyzer.analyze(*values)
+        cancel=next(row for row in report['cases'] if row['case']=='approach-cancel')
+        self.assertLessEqual(cancel['nativeCancelPeakDrift'],.06)
+        self.assertGreater(cancel['nativeCancelPeakDrift'],.04)
+        self.assertEqual(cancel['nativeCancelStopWall'],184001)
+        self.assertLessEqual(cancel['nativeCancelSettledByMillis'],500)
+
+    @staticmethod
+    def cancel_blend_fixture():
+        # Native09 measured offsets from cancellation terminal, with native stop one ms later.
+        # The last pre-terminal sample shares its timestamp but still contains the active path/tail.
+        points=[(0,0.,0.),(100,.04296875,-.009765625),(200,.04296875,-.015625),
+                (467,.015625,-.013671875),(1000,.015625,-.013671875)]
+        def blend(row):
+            if row['case']!='approach-cancel' or row['elapsed']<4000: return
+            if row['elapsed']==4000:
+                if 'event' not in row:
+                    row.update(luaActions=2,nativeActions=1,hasPath=True,actionType='ISWalkToTimedActionF')
+                return
+            elapsed=row['elapsed']-4000
+            for a,b in zip(points,points[1:]):
+                if a[0]<=elapsed<=b[0]:
+                    weight=(elapsed-a[0])/(b[0]-a[0])
+                    row['x']=2+a[1]+(b[1]-a[1])*weight;row['y']=.5+a[2]+(b[2]-a[2])*weight
+                    break
+        text,lifecycle=change_rows(fixture(),blend)
+        for row in lifecycle:
+            if row['nativeActionId']==40 and row['event']=='stop': row['wallTimeMillis']=184001
+        return text,lifecycle
+
+    def test_cancel_still_rejects_renewed_work_large_drift_and_nonsettlement(self):
+        for mode in ('path','tail','drift','nonsettlement'):
+            def corrupt(row):
+                if row['case']!='approach-cancel' or row['elapsed']<=4000: return
+                if mode=='path' and row['elapsed']==4050: row['hasPath']=True
+                if mode=='tail' and row['elapsed']==4050: row.update(luaActions=1,nativeActions=1)
+                if mode=='drift' and row['elapsed']==4100: row['x']=2.07
+                if mode=='nonsettlement' and row['elapsed']==4750: row['x']+=.01
+            with self.subTest(mode=mode),self.assertRaises(AssertionError):
+                analyzer.analyze(*change_rows(self.cancel_blend_fixture(),corrupt))
+        text,lifecycle=self.cancel_blend_fixture()
+        for row in lifecycle:
+            if row['nativeActionId']==40 and row['event']=='stop': row['wallTimeMillis']=184100
+        with self.assertRaisesRegex(AssertionError,'stop occurred after post-terminal'):
+            analyzer.analyze(text,lifecycle)
+
+    def test_other_scenes_still_require_immediate_terminal_position(self):
+        values=change_rows(fixture(),lambda row: row.update(x=row['x']+.003)
+                           if row['case']=='wrong-side' and row['elapsed']==4050 else None)
+        with self.assertRaisesRegex(AssertionError,'Actor moved after native terminal'):
+            analyzer.analyze(*values)
+
     def test_cart_and_cargo_identity_and_container_route(self):
         for key,value in [('cargoID',999),('worldCount',2),('primaryID',999),('route','direct-constructor')]:
             with self.subTest(key=key):

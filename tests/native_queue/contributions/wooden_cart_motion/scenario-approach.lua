@@ -203,7 +203,7 @@ local function tick()
    end
    if tail and name~='approach-cancel' then assert(tail.result==BehaviorResult.Succeeded,'Independent tail did not complete') end
    if name=='approach-cancel' then assert(not tail:isStarted() and not tail.result,'Native full-queue cancellation consumed tail') end
-   terminalAt=now;emit('terminal',now)
+   terminalAt=getTimestampMs();emit('terminal',terminalAt)
   end
  elseif terminalAt and now-terminalAt>=1000 then
   local state=snapshot(now)
