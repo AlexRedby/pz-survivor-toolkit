@@ -53,7 +53,15 @@ local source, incomingSource = {}, {}
 for _, item in ipairs({hammer, beans, screwdriver, modItem}) do
     item.getContainer = function() return source end
 end
-source.getItems = function() return {contains = function(_, item) return item:getContainer() == source end} end
+local function transferList(values)
+    return {size=function() return #values end, get=function(_, index) return values[index+1] end,
+        contains=function(_, item)
+            for _, value in ipairs(values) do if value==item then return true end end
+            return false
+        end}
+end
+local sourceItems=transferList({hammer,beans,screwdriver,modItem})
+source.getItems = function() return sourceItems end
 local groups = {
     {cat = 'Food', name = 'beans', items = {beans, beans}, matchesSearch = false},
     {cat = 'Tool', name = 'hammer', items = {hammer, hammer}, matchesSearch = true},
@@ -150,7 +158,8 @@ pane.firstSelect = 3
 menu.options[1].callback(menu.options[1].target, menu.options[1].arg)
 assert(pane.firstSelect == nil, "category changes left a stale Shift-selection row")
 assert(pane.toolkitCategory == nil and #pane.itemslist == 4, 'clear did not restore all rows')
-pane.inventory = {getItems = function() return {contains = function(_, item) return item == hammer or item == beans end} end}
+local aggregateItems=transferList({hammer,beans})
+pane.inventory = {getItems = function() return aggregateItems end}
 pane.toolkitCategory = 'Tool'
 pane:refreshContainer()
 pane:transferItemsByWeight({beans, hammer}, source)
@@ -658,4 +667,219 @@ if OCDisplayOverrideSource then
     class.refreshContainer=originalRefresh
     groups=originalGroups
     print('Actual OC category split retains full choices/picker universe and current split projection.')
+end
+
+-- Transfer eligibility may visit every physical item in an aggregate. Its
+-- membership index belongs to this synchronous command, never the next click.
+do
+    local function fixture(nativeHandler)
+        local callbacks, pages, rawLists = {}, {}, {}
+        local physical = {}
+        local function item(category, hidden)
+            return {category=category or 'Tool', hidden=hidden,
+                getContainer=function() return physical end,
+                getDisplayCategory=function(self) return self.category end,
+                getCategory=function(self) return self.category end,
+                getFullType=function() return 'Base.Nails' end,
+                getUnequippedWeight=function() return 1 end,
+                isFavorite=function() return false end, isEquipped=function() return false end}
+        end
+        local function raw(values)
+            local list={values=values, gets=0, scans=0}
+            function list:size() return #self.values end
+            function list:get(index) self.gets=self.gets+1; return self.values[index+1] end
+            function list:contains(wanted)
+                self.scans=self.scans+1
+                for _,value in ipairs(self.values) do if value==wanted then return true end end
+                return false
+            end
+            rawLists[#rawLists+1]=list
+            return list
+        end
+        local paneClass={prerender=function() end,restoreSelection=function() end}
+        function paneClass:refreshContainer()
+            self.refreshes=(self.refreshes or 0)+1
+            self.itemslist={}
+            for _,value in ipairs(self.inventory.list.values) do
+                if not value.hidden then
+                    self.itemslist[#self.itemslist+1]={name=tostring(value),items={value,value}}
+                end
+            end
+            self:restoreSelection({})
+        end
+        function paneClass:transferItemsByWeight(values, target, ...)
+            self.transferred=values
+            return 'native-transfer',nil,select('#',...),...
+        end
+        local handler={canTransferItem=function(value) return value and not value.forbidden end}
+        for _,name in ipairs({'transferSameType','transferSameCategory','moveToFloor',
+            'getQuickTransferItems','showTransferMenu'}) do
+            handler[name]=function(page,...) return page.callback(page,...) end
+        end
+        local player={getPlayerNum=function() return 0 end}
+        local env=setmetatable({PZSurvivorToolkit={Settings={inventoryFilters=function() return true end}},
+            ISInventoryPane=paneClass,CleanUI_Clean_ISInventoryPane=false,CleanUI_Vanilla_ISInventoryPane=false,
+            CleanUI_RegisterInventoryUiToggleCallback=false,ISInventoryPageTransferHandler=handler,
+            ISInventoryCommonHandler_SortMenu=false,
+            Events={OnGameStart={Add=function(fn) callbacks[#callbacks+1]=fn end}},
+            getPlayerInventory=function() return pages[1] end,getPlayerLoot=function() return pages[2] end,
+            getSpecificPlayer=function() return player end,getPlayerHotbar=function() end,
+            isGamePaused=function() return false end,CleanUI_getTransferMethod=function() return '1' end}, {__index=_G})
+        env.require=function(name)
+            if name=='PZSurvivorToolkit/InventoryClasses' then
+                return {panes=function(install) install(paneClass) end,onToggle=function() end}
+            end
+            if name=='PZSurvivorToolkit/InventoryRows' then return {restoreSelection=function() end} end
+            if name=='PZSurvivorToolkit/InventorySearch' then return {forPane=function() end,matches=function() return true end} end
+            if name=='PZSurvivorToolkit/ItemTags' then return {enabled=function() return false end,ruleActive=function() return false end} end
+            return {}
+        end
+        for index=1,2 do
+            local inventory={list=raw({}),getItems=function(self) return self.list end,
+                getType=function() return 'proximityInv' end,isItemAllowed=function() return true end,
+                isInCharacterInventory=function() return false end,isEmpty=function(self) return self.list:size()==0 end}
+            local p=setmetatable({inventory=inventory,mode='details',items={},selected={},
+                toolkitCategory='Tool',player=0}, {__index=paneClass})
+            pages[index]={inventoryPane=p,player=0,onCharacter=index==1}
+        end
+        if nativeHandler then
+            local chunk=assert(loadstring(nativeHandler));setfenv(chunk,env);chunk()
+            handler=env.ISInventoryPageTransferHandler
+            env.ISInventoryPaneContextMenu={onMoveItemsTo=function(values) pages[1].inventoryPane.transferred=values end}
+            env.ISInventoryPage={floorContainer={[1]=pages[2].inventoryPane.inventory}}
+        end
+        local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryFilter.lua'))
+        setfenv(chunk,env);chunk();callbacks[1]()
+        local function resetCounts() for _,list in ipairs(rawLists) do list.gets,list.scans=0,0 end end
+        local function fill(page,values)
+            page.inventoryPane.inventory.list=raw(values)
+            page.inventoryPane:refreshContainer()
+            return page.inventoryPane.inventory.list
+        end
+        return {env=env,handler=handler,pages=pages,player=player,item=item,raw=raw,fill=fill,reset=resetCounts}
+    end
+    -- With no predicate, restored rows need no projection. Choices must still
+    -- read live metadata from the full refresh's physical-item references.
+    local inactive=fixture()
+    local live=inactive.item('Tool')
+    inactive.fill(inactive.pages[1],{live})
+    local inactivePane=inactive.pages[1].inventoryPane
+    inactivePane.toolkitCategory=nil
+    inactivePane:refreshContainer()
+    local noProjection={{items=false}}
+    inactivePane.itemslist=noProjection
+    live.category='Changed category'
+    inactivePane:restoreSelection({})
+    assert(inactivePane.itemslist==noProjection and inactivePane.toolkitVisibleItems==nil
+        and #inactivePane.toolkitCategories==1 and inactivePane.toolkitCategories[1].id=='Changed category',
+        'inactive restoration inspected unused projection rows or cached stale category choices')
+    local f=fixture()
+    local left,right=f.pages[1],f.pages[2]
+    local h=f.handler
+    local function allowed(value) return h.canTransferItem(value,right.inventoryPane.inventory,f.player) end
+    for _,size in ipairs({100,400,1600}) do
+        local values={}
+        for index=1,size do values[index]=f.item(index%2==0 and 'Tool' or 'Food',index==size) end
+        values[2].forbidden=true -- Native protection still runs after the filter.
+        local sourceList=f.fill(left,values)
+        local destinationItem=f.item('Food')
+        local destinationList=f.fill(right,{destinationItem})
+        left.callback=function()
+            f.reset()
+            local count=0
+            for _,value in ipairs(values) do
+                local expected=value.category=='Tool' and not value.hidden and not value.forbidden
+                assert(allowed(value)==expected,'aggregate filter or native admission changed')
+                if expected then count=count+1 end
+            end
+            assert(sourceList.gets==size and destinationList.gets==1,
+                'bulk eligibility did not build one raw membership index per pane')
+            assert(sourceList.scans==0 and destinationList.scans==0,'bulk eligibility retained linear contains calls')
+            return count,nil,'tail',nil
+        end
+        for _,name in ipairs({'transferSameType','transferSameCategory','moveToFloor',
+            'getQuickTransferItems','showTransferMenu'}) do
+            local function verify(...) assert(select('#',...)==4 and select(2,...)==nil
+                and select(3,...)=='tail' and select(4,...)==nil,'command wrapper changed return arity') end
+            verify(h[name](left))
+        end
+        f.reset()
+        local a,b,c,d=left.inventoryPane:transferItemsByWeight(values,right.inventoryPane.inventory,'argument')
+        assert(a=='native-transfer' and b==nil and c==1 and d=='argument','direct transfer return values changed')
+        -- Direct native transfer retains its own admission policy; this wrapper owns visibility only.
+        assert(#left.inventoryPane.transferred==size/2-1 and sourceList.gets==size and sourceList.scans==0,
+            'direct aggregate transfer did not filter once with indexed raw membership')
+    end
+    local old,replacement,incoming=f.item('Food'),f.item('Food',true),f.item('Tool')
+    local sourceList=f.fill(left,{old,incoming})
+    f.fill(right,{f.item('Food')})
+    left.callback=function() assert(not allowed(old) and allowed(incoming)) end
+    h.transferSameType(left)
+    sourceList.values[1]=replacement -- Same size, same list: a new command must rebuild it.
+    left.callback=function() assert(not allowed(replacement),'next command reused old aggregate membership') end
+    h.getQuickTransferItems(left)
+    assert(not allowed(replacement),'standalone eligibility reused command membership')
+    sourceList.values[1]=old
+    assert(allowed(replacement),'standalone eligibility ignored live same-count removal')
+    sourceList.values[1]=replacement
+    -- A destination filter accepts unrelated incoming items, but rejects its own hidden members.
+    assert(allowed(incoming) and not allowed(replacement),'both-pane source ownership changed')
+    f.fill(right,{incoming})
+    right.inventoryPane.toolkitCategory='Food';right.inventoryPane:refreshContainer()
+    assert(not allowed(incoming),'overlapping filtered destination lost its own source exclusion')
+    f.fill(right,{f.item('Food')});right.inventoryPane.toolkitCategory='Tool';right.inventoryPane:refreshContainer()
+    -- Nested scopes must restore their caller's index. Refresh in a child must
+    -- invalidate that caller too, even after a same-count replacement.
+    sourceList.values[1]=old
+    left.callback=function()
+        assert(not allowed(old))
+        right.callback=function() assert(not allowed(old));error('expected nested failure') end
+        local nestedOk,nestedError=pcall(h.getQuickTransferItems,right)
+        assert(not nestedOk and tostring(nestedError):find('expected nested failure',1,true))
+        local readsAfterFailure=sourceList.gets
+        assert(not allowed(old) and sourceList.gets==readsAfterFailure,
+            'nested failure did not restore its caller membership scope')
+        right.callback=function()
+            sourceList.values[1]=replacement
+            left.inventoryPane:refreshContainer()
+            assert(not allowed(replacement))
+            return 'nested',nil,'tail'
+        end
+        local a,b,c=h.showTransferMenu(right)
+        assert(a=='nested' and b==nil and c=='tail')
+        assert(not allowed(replacement),'nested refresh left the ancestor membership index stale')
+        -- Raw list replacement and size changes invalidate an index even within a command.
+        left.inventoryPane.inventory.list=f.raw({old,incoming})
+        assert(allowed(replacement),'same-size raw list replacement reused an index')
+        left.inventoryPane.inventory.list.values[3]=replacement
+        assert(not allowed(replacement),'raw list growth reused an index')
+    end
+    h.transferSameType(left)
+    left.callback=function() assert(not allowed(replacement));error('expected transfer enumeration failure') end
+    local ok,err=pcall(h.transferSameCategory,left)
+    assert(not ok and tostring(err):find('expected transfer enumeration failure',1,true),'command swallowed its error')
+    left.inventoryPane.inventory.list.values[3]=nil
+    assert(allowed(replacement),'failed command leaked its membership scope')
+    print('Transfer membership checks passed: linear 100/400/1600 reads, visibility, freshness, nested scopes and errors.')
+    if CleanUIInventoryTransferHandlerSource then
+        local native=fixture(CleanUIInventoryTransferHandlerSource)
+        local sourcePage,targetPage=native.pages[1],native.pages[2]
+        local selected,hidden,rejected=native.item('Tool'),native.item('Tool',true),native.item('Food')
+        local source=native.fill(sourcePage,{selected,hidden,rejected})
+        native.fill(targetPage,{native.item('Food')})
+        -- Same-type preview and dispatch use the real upstream admission/iteration paths.
+        native.reset()
+        local preview=native.handler.getQuickTransferItems(sourcePage,'type')
+        assert(#preview==1 and preview[1]==selected and source.scans==0,
+            'real CleanUI quick preview bypassed the scoped physical filter')
+        native.handler.transferSameType(sourcePage)
+        assert(#sourcePage.inventoryPane.transferred==1 and sourcePage.inventoryPane.transferred[1]==selected,
+            'real CleanUI same-type dispatch changed selected physical items')
+        native.handler.moveToFloor(sourcePage)
+        assert(#sourcePage.inventoryPane.transferred==1 and sourcePage.inventoryPane.transferred[1]==selected,
+            'real CleanUI floor dispatch included hidden or rejected items')
+        native.handler.showTransferMenu(sourcePage,0,0)
+        assert(source.scans==0,'real CleanUI transfer menu retained per-item membership scans')
+        print('Actual CleanUI transfer handler preview, command, floor and menu integration passed.')
+    end
 end

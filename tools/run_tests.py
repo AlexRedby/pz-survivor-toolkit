@@ -301,6 +301,10 @@ def main() -> None:
                 lua.globals()["NativeNavigator" + suffix] = (args.navigator_source / (source_name + ".lua")).read_text(encoding="utf-8")
         if name in ("test_inventory_filter.lua", "test_inventory_search.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua", "test_inventory_transfer_operations.lua") and args.cleanui_inventory_pane:
             lua.globals().CleanUIInventoryPaneSource = args.cleanui_inventory_pane.read_text(encoding="utf-8")
+            if name == "test_inventory_filter.lua":
+                handler = args.cleanui_inventory_pane.parent / "ISInventoryPageTransferHandler.lua"
+                if handler.is_file():
+                    lua.globals().CleanUIInventoryTransferHandlerSource = handler.read_text(encoding="utf-8")
             if name == "test_inventory_transfer_operations.lua":
                 vanilla = args.cleanui_inventory_pane.parent.parent / "CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua"
                 lua.globals().CleanUIVanillaInventoryPaneSource = vanilla.read_text(encoding="utf-8")

@@ -15,6 +15,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.176
+
+- **Fixed:** Filtered bulk transfers and CleanUI transfer previews index raw container membership once per synchronous enumeration instead of scanning the whole container for each candidate. Hidden aggregate items remain excluded, incoming items remain accepted and later commands read fresh contents; native transfer checks are preserved.
+- **Fixed:** Inventory refresh no longer builds and discards a visible-row projection when no category, tag or search filter is active. Category and tag choices still follow current item metadata.
+
 ### 0.1.175
 
 - **Fixed:** Source-origin checks reuse the compile-time filename of loaded Lua functions instead of querying it repeatedly for every queued action. The bounded cache follows the original filename accessor; replacements, live callbacks, item state, capacities and file checksums retain their independent checks.
