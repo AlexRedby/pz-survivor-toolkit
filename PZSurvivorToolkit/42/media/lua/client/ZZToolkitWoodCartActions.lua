@@ -27,7 +27,13 @@ ISCartPickupAction.FromWorldItem = function(character, world)
     local perform = walk.perform
     walk.perform = function(self)
         local action = ISCartPickupAction:new(character, x, y, z, id)
-        if action:findWorldItem() == world then self:addAfter(action) end
+        if action:findWorldItem() == world then
+            if transitions.wooden(world:getItem()) then
+                local current = toolkitWoodCartStance and toolkitWoodCartStance(character, world)
+                if not current or math.abs(character:getZ() - z) > .002 or character:DistToSquared(current.x, current.y) > .002 * .002 then return perform(self) end
+            end
+            self:addAfter(action)
+        end
         return perform(self)
     end
     return walk

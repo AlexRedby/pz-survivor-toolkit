@@ -25,7 +25,9 @@
 
 ## Pickup and put-down
 
-- [ ] Finish the SP approach checks with a calibrated native collision boundary for blocked precise handle alignment; require cancellation/target-loss and independent queue-tail receipts, exact ownership and native collision.
+- [ ] After the newly selected VanillaVehiclesAnimated/AnimatedVehiclePartsFix pair is installed, recheck the blocked-handle approach against its vehicle geometry. The current SP checks use the installed 45-mod set; these two unavailable mods are excluded explicitly.
+
+- [ ] Reject wooden pickup when a native path clipped by an obstacle ends away from the actual handles; cover the callback with a regression and complete the seven SP approach scenes, including cancellation/target-loss and independent queue-tail receipts, exact ownership and native collision.
 - [ ] Verify the final clean-capture toggle against the native empty-key-binding sentinel, then retain short clips and compact checksummed evidence; remove disposable test profiles.
 
 - [ ] Extend moving cancellation to steering input/nonzero bank: blend the captured grip policy and torso into the moving endpoint before adopting its lean; verify the first recovery frame and final handoff.

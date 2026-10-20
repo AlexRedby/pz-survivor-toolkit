@@ -14,7 +14,7 @@ local cases={{name='container-equip'},{name='wrong-side'},{name='wall-detour'},
  {name='precise-blocked'},{name='approach-cancel'},{name='approach-target-loss'},{name='approach-tail-success'}}
 cases=CartLabSelectScenes(cases)
 local index,since,sampled,mode=0,0,0,'prepare'
-local item,bag,cargoID,cargoWeight,approach,tail,stance,queuedAt,terminalAt,changed,calibration,calibrationAt
+local item,bag,cargoID,cargoWeight,approach,tail,stance,queuedAt,terminalAt,changed
 local wallX,wallY=math.floor(area.x),math.floor(area.y)
 local cartX,cartY=area.x,area.y
 local vehicleLayout,collisionX
@@ -55,73 +55,6 @@ local function ground(x,y)
  stance=assert(toolkitWoodCartStance(p,world),'Missing wooden handle stance')
 end
 -- Native ground placement end.
--- Native calibration begin. No callbacks, movement overrides or synthetic Path2.
-local function calibrationRow(now,event)
- local action,path=calibration.action,p:getPathFindBehavior2()
- local started=action:isStarted() and true or false
- local row={wall=now,event=event,round=calibration.round,x=p:getX(),y=p:getY(),
-  collisionKind='vehicle',collisionX=collisionX,vehicleState=cartLabVehicleState(),
-  goalX=calibration.goalX,goalY=calibration.goalY,nativeTargetX=path:getTargetX(),nativeTargetY=path:getTargetY(),
-  started=started,hasPath=p:hasPath(),actionType=action.Type,
-  result=action.result==BehaviorResult.Failed and 'Failed' or action.result==BehaviorResult.Succeeded and 'Succeeded' or 'Working'}
- assert(#calibration.rows<4096,'Native calibration evidence limit')
- calibration.rows[#calibration.rows+1]=row
- if event~='sample' or now-(calibration.loggedAt or 0)>=100 then
-  print('[CART_APPROACH_CALIBRATION_STEP] '..encode(row));calibration.loggedAt=now
- end
- if started then
-  assert(row.nativeTargetX==row.goalX and row.nativeTargetY==row.goalY,'Native calibration target clipped by planner: '..encode(row))
- end
- return row
-end
-local function startCalibrationRound(now)
- assert(empty(),'Native calibration round requires drained queue')
- calibration.round=calibration.round+1
- assert(calibration.round<=32,'Production path did not encounter a precise collision in 32 rounds')
- local x,y=p:getX(),p:getY()
- ground(wallX+2,wallY+.5)
- ground(cartX+x-.03-stance.x,cartY+y-stance.y)
- local location=Vector3f.new(stance.x,stance.y,area.z)
- local stepX,stepY=x-location:x(),y-location:y()
- assert(stepX>.002 and stepX<=.032 and math.abs(stepY)<=.002,'Native calibration placement exceeded .03 step: x='..x..' goalX='..location:x()..' y='..y..' goalY='..location:y())
- assert(location:x()>collisionX+.002,'Production path reached vehicle body without a precise collision')
- calibration.goalX,calibration.goalY=location:x(),location:y()
- calibration.roundAt=now;calibration.blockedAt=nil;calibration.blockedUntil=nil;calibration.anchorX=nil;calibration.anchorY=nil
- -- Exactly the production approach class and helper marker, with no pickup callback.
- local action=ISWalkToTimedActionF:new(p,location);action.toolkitWoodCartItem=item
- assert(action.perform==ISWalkToTimedActionF.perform and not action.onCompleteFunc and not action.additionalTest,'Calibration must retain native action methods')
- calibration.action=action;calibrationRow(now,'queued');ISTimedActionQueue.add(action)
-end
-local function calibrate(now)
- if calibration.nextRound then calibration.nextRound=nil;startCalibrationRound(now);return false end
- assert(now-calibrationAt<30000 and now-calibration.roundAt<4000,'Native production-path calibration timed out')
- area.checkPosition(p,item)
- assert(#queue()<=1 and (not queue()[1] or queue()[1]==calibration.action),'Native calibration queued an unexpected action')
- local terminal=empty();local row=calibrationRow(now,terminal and 'terminal' or 'sample')
- local distance=math.sqrt((row.x-row.goalX)^2+(row.y-row.goalY)^2)
- if not terminal then
-  if row.result~='Working' then return false end -- native stop/complete may be draining this frame
-  if row.hasPath and distance>.002 and distance<=.06 then
-   if not calibration.anchorX or math.abs(row.x-calibration.anchorX)>.002 or math.abs(row.y-calibration.anchorY)>.002 then
-    calibration.anchorX,calibration.anchorY,calibration.blockedAt=row.x,row.y,now
-   end
-   calibration.blockedUntil=now
-  else calibration.anchorX=nil;calibration.blockedAt=nil;calibration.blockedUntil=nil end
-  return false
- end
- assert(row.started,'Native calibration terminated before start: '..encode(row))
- if row.result=='Succeeded' then
-  assert(distance<=.002,'Native calibration succeeded away from original target: '..encode(row))
-  calibration.nextRound=true;return false
- end
- assert(row.result=='Failed' and distance>.002 and distance<=.06 and calibration.blockedAt
-  and calibration.blockedUntil-calibration.blockedAt>=500 and math.abs(row.x-calibration.anchorX)<=.002
-  and math.abs(row.y-calibration.anchorY)<=.002,'Planner-only/short native calibration failure: '..encode(row))
- assert(calibration.startX-row.x>=.2,'Native calibration did not move toward vehicle')
- calibration.endX,calibration.endY=row.x,row.y
- return true
-end
--- Native calibration end.
 local function snapshot(now)
  local contents=item:getInventory():getItems()
  assert(contents:size()==1 and contents:get(0):getID()==cargoID and contents:get(0):getFullType()=='Base.Log'
@@ -139,6 +72,7 @@ local function snapshot(now)
  local row={case=cases[index].name,start=since,wall=now,elapsed=now-since,id=item:getID(),cargoID=cargoID,cargoWeight=cargoWeight,
   inventoryCount=inv,worldCount=worlds,containerCount=nested,removed=removed,primaryID=a and a:getID() or -1,secondaryID=b and b:getID() or -1,
   x=p:getX(),y=p:getY(),z=p:getZ(),startX=startX,startY=startY,goalX=stance and stance.x or startX,goalY=stance and stance.y or startY,
+  nativeTargetX=p:getPathFindBehavior2():getTargetX(),nativeTargetY=p:getPathFindBehavior2():getTargetY(),
   tailX=tailX or startX,tailY=tailY or startY,wallX=wallX,wallY=wallY,cartX=cartX,cartY=cartY,
   collisionKind=vehicleLayout and 'vehicle' or '',collisionX=collisionX or wallX,vehicleState=vehicleLayout and cartLabVehicleState() or '',
   luaActions=#queue(),nativeActions=p:getCharacterActions():size(),hasPath=p:hasPath(),actionType=current and current.Type or '',
@@ -184,7 +118,7 @@ local function prepare()
  local held=p:getPrimaryHandItem();if held then p:removeFromHands(held);SaucedCarts.clearCartPose(p);p:getInventory():Remove(held) end
  item=assert(instanceItem('SaucedWheelbarrow.WheelbarrowWood'));local child=assert(item:getInventory():AddItem('Base.Log'))
  child:setActualWeight(1);child:setCustomWeight(true);cargoID,cargoWeight=child:getID(),child:getActualWeight()
- bag=nil;approach=nil;tail=nil;terminalAt=nil;queuedAt=nil;changed=false;removed=false;sampled=0;stance=nil;tailX=nil;tailY=nil;calibration=nil
+ bag=nil;approach=nil;tail=nil;terminalAt=nil;queuedAt=nil;changed=false;removed=false;sampled=0;stance=nil;tailX=nil;tailY=nil
  local name=cases[index].name
  relocate(wallX+2.5,wallY+.5)
  if name=='container-equip' then
@@ -194,7 +128,9 @@ local function prepare()
   assert(config.vehicles==true and area.setVehicle and area.clearVehicles and cartLabVehicleState,'Native parked vehicle fixture required')
   vehicleLayout=area.setVehicle(p,0);collisionX=vehicleLayout.x+vehicleLayout.width
   relocate(collisionX+.9,vehicleLayout.y)
-  calibrationAt=getTimestampMs();calibration={rows={},round=0,startX=p:getX()};startCalibrationRound(calibrationAt);mode='calibrate';return
+  ground(collisionX+1,vehicleLayout.y)
+  ground(cartX+collisionX+.10-stance.x,cartY+vehicleLayout.y-stance.y)
+  assert(math.abs(stance.x-(collisionX+.10))<.002 and math.abs(stance.y-vehicleLayout.y)<.002,'Blocked vehicle handle placement differs from request')
  else
   if name=='wall-detour' then
    local walls={};for y=wallY-1,wallY+1 do walls[#walls+1]={x=wallX+1,y=y,axis='W'} end
@@ -221,25 +157,10 @@ local function nextCase()
 end
 local function tick()
  local now=getTimestampMs();local name=cases[index].name
- if mode=='calibrate' then
-  if not calibrate(now) then return end
-  mode='calibrate-stop';calibrationAt=now;return
- elseif mode=='calibrate-stop' then
-  assert(now-calibrationAt<2000,'Production-path calibration did not settle')
-  if p:isPlayerMoving() or now-calibrationAt<300 then return end
-  assert(empty() and math.abs(p:getX()-calibration.endX)<.002 and math.abs(p:getY()-calibration.endY)<.002,
-   'Actor drifted after production-path calibration')
-  assert(math.abs(stance.x-calibration.goalX)<.00001 and math.abs(stance.y-calibration.goalY)<.00001,'Calibrated target changed')
-  ready(now);return
- elseif mode=='settle' then
+ if mode=='settle' then
   if now<since then return end
   assert(toolkitVideoStart(config.videoRoot..'/'..name..'-0',config.ffmpeg),'Video start rejected')
   since=getTimestampMs();mode='record';print('[WOOD_BANK] CASE '..name..' attempt=0 wall='..since)
-  if calibration then
-   for _,row in ipairs(calibration.rows) do
-    row.case=name;row.start=since;print('[CART_APPROACH_CALIBRATION] '..encode(row))
-   end
-  end
   emit('prepared',since);return
  end
  local video=toolkitVideoStatus();assert(video.state~='failed','Approach video failed: '..tostring(video.error))
@@ -275,7 +196,11 @@ local function tick()
    local state=snapshot(now)
    if success then assert(state.inventoryCount==1 and state.worldCount==0 and state.primaryID==item:getID() and state.secondaryID==item:getID(),'Pickup failed exact ownership')
    else assert(state.inventoryCount==0 and state.primaryID==-1 and state.secondaryID==-1,'Failed/cancelled approach equipped cart') end
-   if name=='precise-blocked' then assert(approach.result==BehaviorResult.Failed,'Native collision did not reject final alignment') end
+   if name=='precise-blocked' then
+    local path=p:getPathFindBehavior2();local dx,dy=path:getTargetX()-stance.x,path:getTargetY()-stance.y
+    assert(approach.result==BehaviorResult.Succeeded and dx*dx+dy*dy>.002*.002,'Native planner clipping was not exercised')
+    assert(p:DistToSquared(stance.x,stance.y)>.002*.002 and p:DistToSquared(path:getTargetX(),path:getTargetY())<=.06*.06,'Invalid native clipped arrival')
+   end
    if tail and name~='approach-cancel' then assert(tail.result==BehaviorResult.Succeeded,'Independent tail did not complete') end
    if name=='approach-cancel' then assert(not tail:isStarted() and not tail.result,'Native full-queue cancellation consumed tail') end
    terminalAt=now;emit('terminal',now)

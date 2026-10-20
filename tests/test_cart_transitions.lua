@@ -176,6 +176,7 @@ local function setup(server, enabled, bridge)
     function p:DistTo() error("integer DistTo overload truncates fractional stance coordinates") end
     function p:DistToSquared() return (self.distance or 1)^2 end
     function p:getPlayerNum() return 0 end
+    function p:getZ() return self.z or 0 end
     function p:isHandItem(item) return self.primary == item or self.secondary == item end
     function p:getPathFindBehavior2() return {cancel = function() end} end
     function p:setPath2() end
@@ -588,7 +589,7 @@ w.world = nil; missing:perform(); assert(#w.added == 0)
 w.world = world
 local orderedWalk = ISCartPickupAction.FromWorldItem(p, world)
 local nextCommand = {Type = "AnotherQueuedCommand"}
-w.queue = {orderedWalk, nextCommand}; orderedWalk:perform()
+w.queue = {orderedWalk, nextCommand}; p.distance = 0; orderedWalk:perform()
 assert(w.startedNext == w.added[1] and w.queue[1] == w.added[1] and w.queue[2] == nextCommand,
     "pickup must run before commands already queued after the approach")
 w.queue = nil
@@ -762,3 +763,34 @@ assert(getmetatable(serverPickup) == ToolkitWoodCartPickup and serverPickup.maxT
     "server reconstruction changed the client action class, duration or identity")
 require = originalRequire
 print("PASS server pickup reconstructs the authored action without probing client render models")
+
+-- Native08: engine clips a vehicle-obstructed requested X=10822.4541015625 to X=10822.4599609375.
+-- A successful native walk must still check the current original handle stance before queuing pickup.
+for _, outcome in ipairs({"native-clipped", "exact", "target-moved", "different-floor"}) do
+    local state=setup(false,true,true)
+    local cart,player=state.item(),state.p;local target=state.worldFor(cart)
+    local goalX,goalY=10822.4541015625,10142.5
+    toolkitWoodCartStance=function() return {x=goalX,y=goalY,faceX=goalX+1,faceY=goalY,aligned=true} end
+    function player:DistToSquared(x,y) return (self.x-x)^2+(self.y-y)^2 end
+    player.x,player.y=goalX+1,goalY
+    local approach=ISCartPickupAction.FromWorldItem(player,target)
+    assert(approach.Type=="ISWalkToTimedActionF")
+    player.x=outcome=="native-clipped" and 10822.4599609375 or goalX
+    if outcome=="target-moved" then goalX=goalX+.05 end
+    if outcome=="different-floor" then player.z=1 end
+    approach.result="Succeeded"
+    local independent={Type="AnotherQueuedCommand"};state.queue={approach,independent}
+    approach:perform()
+    if outcome=="exact" then
+        assert(#state.added==1 and state.added[1].itemId==cart:getID()
+            and state.queue[1]==state.added[1] and state.queue[2]==independent,
+            "exact original stance lost its pickup or independent tail")
+    else
+        assert(#state.added==0 and state.startedNext==independent and state.queue[1]==independent,
+            "clipped/moved/different-floor stance queued an off-center pickup or consumed the independent tail")
+        assert(approach.performed==1 and cart:getWorldItem()==target and player.primary==nil and player.secondary==nil,
+            "denied pickup changed native completion, cart ownership or hands")
+    end
+end
+require=originalRequire
+print("PASS native clipped target cannot queue off-center pickup; exact current stance keeps pickup and independent tail")

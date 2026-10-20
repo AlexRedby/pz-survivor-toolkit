@@ -14,6 +14,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.162
+
+- **Fixed:** Wooden wheelbarrow pickup now requires the player to reach the actual handle position before starting the lift. A path shortened by a nearby obstacle leaves the cart on the ground instead of starting from a misaligned stance.
+
 ### 0.1.161
 
 - **Fixed:** CleanUI inventory transfers retain one operation per drag through deferred enqueueing. Native transfer batching works again, avoiding expensive per-item queue checks while a batch runs. Separate drags remain separate; native transfer timing, capacity checks and multiplayer item authority are preserved.
