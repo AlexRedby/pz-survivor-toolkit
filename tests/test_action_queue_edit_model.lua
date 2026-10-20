@@ -213,3 +213,143 @@ for _, initial in ipairs(initialStates) do
 end
 assert(checked == 7800)
 print('Declarative edit model: ' .. checked .. ' independent oracle move/removal cases, legal differing outcomes, identities, bounds and malformed contracts passed.')
+
+-- Numeric caps preserve captured endpoints; scales explicitly describe a different operation.
+local function numeric(value, effect, predicate)
+    local e = entry({}, {resource('numeric', target, {amount = value}, predicate and {predicate} or nil,
+        effect and {effect} or nil, {amount = {min = 0, max = 1}})})
+    e.edit.capacity = 'external'
+    return e
+end
+local function exact(value, expected)
+    return numeric(value, nil, {field = 'amount', equal = expected})
+end
+status({numeric(1, {field = 'amount', cap = .5}), numeric(1, {field = 'amount', cap = .5}), exact(1, .5)}, 'allowed')
+status({numeric(1, {field = 'amount', scale = .5}), numeric(1, {field = 'amount', scale = .5}), exact(1, .25)}, 'allowed')
+status({numeric(.25, {field = 'amount', cap = .5}), exact(.25, .25)}, 'allowed')
+status({numeric(1, {field = 'amount', scale = 0}), exact(1, 0)}, 'allowed')
+status({numeric(.5, nil, {field = 'amount', above = .5})}, 'denied', 'edit_resource_amount')
+status({numeric(.5, nil, {field = 'amount', above = .25, min = .5, max = .5})}, 'allowed')
+status({numeric(.5, nil, {field = 'amount', above = .25, min = 0, max = .75})}, 'allowed')
+local access = entry({}, {resource('location', target, {location = opaque}, {{field = 'location', oneOf = {false, opaque, 'root'}}})})
+status({access}, 'allowed')
+access.edit.resources[1].facts.location = another
+status({access}, 'denied', 'edit_required_state')
+assert(hiddenCalls == 0, 'membership never invokes opaque metamethods')
+local invalidPredicates = {
+    {field = 'amount', oneOf = {}}, {field = 'amount', oneOf = false},
+    {field = 'amount', oneOf = {[2] = .5}}, {field = 'amount', oneOf = {.5, function()error('never execute')end}},
+    {field = 'amount', oneOf = {math.huge}}, {field = 'amount', oneOf = {0/0}},
+    {field = 'amount', oneOf = setmetatable({.5}, {__index = function()error('never read')end})},
+    {field = 'amount', oneOf = {.5}, equal = .5}, {field = 'amount', oneOf = {.5}, min = 0},
+    {field = 'amount', oneOf = {.5}, above = 0}, {field = 'amount', equal = .5, above = 0},
+    {field = 'amount', above = false}, {field = 'amount', above = math.huge}, {field = 'amount', above = 0/0},
+    {field = 'amount', above = 1, max = 1}, {field = 'amount', above = 1, max = 0},
+    {field = 'amount', above = 0, min = 2, max = 1},
+}
+for _, predicate in ipairs(invalidPredicates) do
+    local e = numeric(.5, nil, predicate)
+    status({e}, 'unhandled', 'edit_unknown')
+    e.snapshotOnly = true; status({e}, 'unhandled', 'edit_unknown')
+end
+local invalidEffects = {
+    {field = 'amount', cap = math.huge}, {field = 'amount', cap = 0/0}, {field = 'amount', cap = false},
+    {field = 'amount', cap = .5, delta = 0}, {field = 'amount', cap = .5, scale = 1},
+    {field = 'amount', scale = -1}, {field = 'amount', scale = math.huge},
+    {field = 'amount', scale = 0/0}, {field = 'amount', scale = false},
+    {field = 'amount', scale = 1, set = .5}, {field = 'missing', scale = 1},
+}
+for _, effect in ipairs(invalidEffects) do
+    local e = numeric(.5, effect)
+    status({e}, 'unhandled', 'edit_unknown')
+    e.snapshotOnly = true; status({e}, 'unhandled', 'edit_unknown')
+end
+for _, operation in ipairs({'scale', 'cap'}) do
+    local e = entry({}, {resource('numeric', target, {amount = 'unknown'}, nil, {{field = 'amount', [operation] = .5}})})
+    status({e}, 'unhandled', 'edit_unknown')
+    e.snapshotOnly = true; status({e}, 'unhandled', 'edit_unknown')
+end
+local overflow = entry({}, {resource('numeric', target, {amount = 1e308}, nil, {{field = 'amount', scale = 1e308}})})
+status({overflow}, 'unhandled', 'edit_unknown')
+overflow.snapshotOnly = true; status({overflow}, 'unhandled', 'edit_unknown')
+local deltaOverflow = amount(1e308, 1e308); deltaOverflow.snapshotOnly = true
+status({deltaOverflow}, 'unhandled', 'edit_unknown')
+local removedCap = numeric(.5, {field = 'amount', cap = 0}, {field = 'amount', above = .75})
+removedCap.snapshotOnly = true
+status({removedCap, exact(.5, .5)}, 'allowed')
+status({numeric(.5, {field = 'amount', cap = -1})}, 'denied', 'edit_resource_amount')
+-- A finite operand can overflow only after a preceding action changes the projected value.
+local large = entry({}, {resource('large', target, {amount = 1}, nil, {{field = 'amount', set = 1e308}})})
+local multiply = entry({}, {resource('large', target, {amount = 1}, nil, {{field = 'amount', scale = 2}})})
+status({large, multiply}, 'unhandled', 'edit_unknown')
+
+-- This second oracle executes direct numeric/location commands; it never decodes effects or predicates.
+local numericKey = {}
+local function numericExecute(initial, commands)
+    local value, location = initial.amount, initial.location
+    for _, command in ipairs(commands) do
+        local kind = command.kind
+        if kind == 'capturedHalf' or kind == 'halfCurrent' or kind == 'empty' then
+            if value <= 0 or (location ~= 'root' and location ~= 'bag') then return end
+            if kind == 'capturedHalf' then if value > .5 then value = .5 end
+            elseif kind == 'halfCurrent' then value = value / 2
+            else value = 0 end
+        elseif kind == 'nonempty' then if value <= 0 then return end
+        elseif kind == 'accessible' then if location ~= 'root' and location ~= 'bag' then return end
+        elseif kind == 'root' then location = 'root'
+        elseif kind == 'floor' then location = 'floor'
+        else error('unknown direct oracle command') end
+    end
+    return {amount = value, location = location}
+end
+local function numericDeclaration(initial, command)
+    local kind, predicates, effects = command.kind, {}, {}
+    if kind == 'capturedHalf' or kind == 'halfCurrent' or kind == 'empty' then
+        predicates = {{field = 'amount', above = 0}, {field = 'location', oneOf = {'root', 'bag'}}}
+        if kind == 'capturedHalf' then effects = {{field = 'amount', cap = .5}}
+        elseif kind == 'halfCurrent' then effects = {{field = 'amount', scale = .5}}
+        else effects = {{field = 'amount', set = 0}} end
+    elseif kind == 'nonempty' then predicates = {{field = 'amount', above = 0, min = 0, max = 1}}
+    elseif kind == 'accessible' then predicates = {{field = 'location', oneOf = {'root', 'bag'}}}
+    else effects = {{field = 'location', set = kind}} end
+    local e = entry(command, {resource('numeric-location', numericKey, {amount = initial.amount, location = initial.location},
+        predicates, effects, {amount = {min = 0, max = 1}})})
+    e.edit.capacity = 'external'
+    return e
+end
+local numericChecked = 0
+local function numericCheck(initial, commands)
+    local entries = {}
+    for i, command in ipairs(commands) do entries[i] = numericDeclaration(initial, command) end
+    local before = fingerprint(entries)
+    local expected = numericExecute(initial, commands)
+    status(entries, expected and 'allowed' or 'denied')
+    assert(fingerprint(entries) == before, 'numeric/location projection mutated input')
+    if expected then
+        local probe = entry({}, {resource('numeric-location', numericKey, {amount = initial.amount, location = initial.location},
+            {{field = 'amount', equal = expected.amount}, {field = 'location', equal = expected.location}})})
+        entries[#entries + 1] = probe
+        status(entries, 'allowed')
+    end
+    numericChecked = numericChecked + 1
+end
+local numericKinds = {'capturedHalf', 'halfCurrent', 'empty', 'nonempty', 'accessible', 'root', 'floor'}
+for _, initial in ipairs({{amount = 0, location = 'root'}, {amount = .25, location = 'bag'},
+    {amount = .5, location = 'floor'}, {amount = 1, location = 'root'}}) do
+    for ai, a in ipairs(numericKinds) do for bi, b in ipairs(numericKinds) do
+        local commands = {{kind = a}, {kind = b}, {kind = numericKinds[(ai + bi) % #numericKinds + 1]}}
+        numericCheck(initial, commands)
+        for from = 1, 3 do
+            local rest = {}
+            for i = 1, 3 do if i ~= from then rest[#rest + 1] = commands[i] end end
+            numericCheck(initial, rest)
+            for to = 1, 3 do
+                local moved = {}
+                for _, command in ipairs(rest) do moved[#moved + 1] = command end
+                table.insert(moved, to, commands[from]); numericCheck(initial, moved)
+            end
+        end
+    end end
+end
+assert(numericChecked == 2548)
+print('Declarative numeric/location extension: ' .. numericChecked .. ' independent move/removal cases, strict thresholds, membership, captured caps, scales and external capacity passed.')

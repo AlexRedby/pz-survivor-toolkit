@@ -63,6 +63,23 @@ class FluidScenarioTests(unittest.TestCase):
                 self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
                                  self.row(recorded, scenario='move-independent', kind=kind, mode=mode)['status'])
 
+    def test_pending_transfer_case_selects_matched_controls_and_requires_its_own_evidence(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                selected, _ = scenarios.select(self.suite, 'success-queued,move-dependent', 'drink-transfers', kind, mode)
+                self.assertEqual([fluid.EDIT_CASE], selected)
+                recorded = self.recorded(kind, mode)
+                for scenario in ('success-queued', 'move-dependent'):
+                    row = self.row(recorded, action='drink-transfers', scenario=scenario, kind=kind, mode=mode)
+                    self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable', row['status'])
+                if mode == 'native': continue
+                for field in ('pendingTransferEditVerified', 'dependentPickupProtected'):
+                    bad = copy.deepcopy(recorded)
+                    record = next(record for record in bad['coverage'] if record['case'] == fluid.EDIT_CASE)
+                    record['outcome'][field] = 1
+                    scenario = 'success-queued' if field == 'pendingTransferEditVerified' else 'move-dependent'
+                    self.assertNotEqual('passed', self.row(bad, action='drink-transfers', scenario=scenario, kind=kind)['status'])
+
     def test_historical_and_partial_receipts_do_not_gain_new_coverage(self):
         recorded = self.recorded()
         for fault in ('missing', 'wrong-type', 'missing-case', 'runtime', 'mod'):

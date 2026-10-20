@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.135
+
+- **Changed:** Pending clean-water drinking and single-item transfers between carried containers use the shared queue edit model. Legal return/pickup orders may change the final container; removing a pickup required by a later drink remains blocked.
+- **Fixed:** Modeled queue edits retain a separate capacity check using full current item weights. Native SP drink endpoints and Host consumption uncertainty are preserved; edits do not reserve future resources, alter portions or replay native effects.
+
 ### 0.1.134
 
 - **Changed:** Wooden-wheelbarrow standing pivots use broader authored leading/following steps with modest weight transfer. The lateral stride and root-motion budget increase together, reducing foot cadence while retaining turn speed, hand grip and wheel support. Other cart types and fast gait clips retain their existing selection.
@@ -26,6 +31,7 @@ Version labels come from committed component metadata, including changes made wi
 ### 0.1.131
 
 - **Changed:** Bulk clothing, electronics and battery menus share one native recipe lookup per selected item and one reachable-container snapshot per menu build. Each command retains its own first viable recipe, exact selected items and toggle; clicking still revalidates inputs and tools before queuing native actions.
+
 
 ### 0.1.130
 

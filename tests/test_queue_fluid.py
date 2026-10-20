@@ -28,6 +28,7 @@ class FluidAdapterTests(unittest.TestCase):
         raw = []
         for index, case in enumerate(cases):
             base, bag = 100 + index * 10, case.startswith('fluid-bag')
+            editing = case == fluid.EDIT_CASE
             favorite = case.endswith('-favorite')
             full = '-full-' in case
             thirst = .04 if '-smart-low-' in case else .2 if '-smart-' in case else .8
@@ -36,34 +37,43 @@ class FluidAdapterTests(unittest.TestCase):
             elif '-quarter-' in case or '-same-serial-' in case: menu, portion = 'quarter', .25
             elif '-smart-' in case: menu, portion = 'smart', thirst / .5
             elif '-sip-' in case: menu, portion = 'sip', .01
-            targets = [0, 1, 2] if '-cancel-' in case else [0, 0] if '-same-' in case else [0, 1] if '-pair-' in case else [1] if '-second-' in case else [0]
+            targets = [0, 1] if editing else [0, 1, 2] if '-cancel-' in case else [0, 0] if '-same-' in case else [0, 1] if '-pair-' in case else [1] if '-second-' in case else [0]
             cancelling = '-cancel-' in case and self.selection['mode'] == 'toolkit'
             prep = dict(case=case, bagId=base, bagType='Base.Bag_ALICEpack_Army', thirst=thirst,
                         foodTimer=4000 if full else 0, foodLevel=3 if full else 0,
                         bottles=[dict(id=base + n + 1, amount=1.0, favorite=favorite,
-                                      source='bag' if bag else 'root', thirstChange=-.5) for n in range(3 if '-cancel-' in case else 2)])
+                                      source='root' if editing and n == 0 else 'bag' if bag else 'root', thirstChange=-.5,
+                                      **({'weight': 1.1} if editing else {})) for n in range(3 if '-cancel-' in case else 2)])
             amounts = [1.0] * len(prep['bottles'])
             commands = []
             for position, n in enumerate(targets):
                 cancelled = cancelling and position == 1
                 dispatch_amount = amounts[n] if '-serial-' in case else 1.0
                 commands.append(dict(id=prep['bottles'][n]['id'], menu=menu, portion=portion,
-                                     pickupObserved=bag and not cancelled, drinkProgress=not cancelled, nativeDuration=460, menuDispatched=True,
+                                     pickupObserved=bag and not (editing and position == 0) and not cancelled, drinkProgress=not cancelled, nativeDuration=460, menuDispatched=not (editing and position == 1),
                                      dispatchThirst=thirst, foodLevel=prep['foodLevel'], backpackWorn=True,
                                      queueEmptyBefore=position == 0 or '-serial-' in case,
                                      previousDrinkPending=position > 0 and '-serial-' not in case,
-                                     dispatchAmount=dispatch_amount, dispatchSource='bag' if bag else 'root', cancelled=cancelled))
+                                     dispatchAmount=dispatch_amount, dispatchSource='root' if editing and position == 0 else 'bag' if bag else 'root', cancelled=cancelled))
                 if not cancelled:
                     base_amount = amounts[n] if self.selection['kind'] == 'mp' and '-queued-' in case else dispatch_amount
                     amounts[n] = base_amount * (1 - portion)
             receipt = dict(case=case, bagId=base, bagType=prep['bagType'], thirst=max(0, thirst - .5 * sum(1 - amount for amount in amounts)), foodLevel=prep['foodLevel'],
                            bottles=[dict(id=bottle['id'], amount=amounts[n],
-                                         favorite=favorite, source=bottle['source'], count=1)
+                                         favorite=favorite, source=('root' if n == 0 or self.selection['mode'] == 'toolkit' else 'bag') if editing else bottle['source'], count=1,
+                                         **({'weight': 1.1 - (1 - amounts[n])} if editing else {}))
                                     for n, bottle in enumerate(prep['bottles'])])
+            edit = dict(anchorRunning=True, bottleId=prep['bottles'][1]['id'], fullWeight=1.1, standalone=True,
+                        pickupDuration=-1 if self.selection['kind'] == 'mp' else 52.8,
+                        returnDuration=-1 if self.selection['kind'] == 'mp' else 52.8,
+                        nativeDurationsUnchanged=True, contractsVerified=self.selection['mode']=='toolkit',
+                        reordered=self.selection['mode']=='toolkit', moveRejected=self.selection['mode']=='toolkit',
+                        cancelRejected=self.selection['mode']=='toolkit', untouchedBefore=True,
+                        returnNoopObserved=self.selection['mode']=='toolkit') if editing else None
             raw += [('PREPARED', prep), ('VERIFIED', receipt)]
             rows.append(dict(event='case', id=case, status='passed', reason=None, commands=commands,
                              waitingCancelVerified=cancelling, independentMoveVerified=cancelling and not bag,
-                             **copy.deepcopy({key: value for key, value in receipt.items() if key != 'case'})))
+                             **({'editEvidence': edit} if editing else {}), **copy.deepcopy({key: value for key, value in receipt.items() if key != 'case'})))
         rows.append(dict(event='complete', cases=cases, expected=len(cases), performed=len(cases), failed=0, skipped=0))
         return ([dict(row, suite='fluid', kind=self.selection['kind'], mode=self.selection['mode'], actor='client1')
                  for row in rows], raw)
@@ -84,7 +94,7 @@ class FluidAdapterTests(unittest.TestCase):
         return self.evidence()
 
     def test_matrix_accepts_sp_host_native_and_toolkit(self):
-        self.assertEqual(18, len(fluid.CASES))
+        self.assertEqual(19, len(fluid.CASES))
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
                 self.selection.update(kind=kind, mode=mode)
@@ -398,6 +408,44 @@ class FluidAdapterTests(unittest.TestCase):
         rows, raw = self.single()
         rows[1]['commands'][0]['dispatchThirst'] = True
         self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_pending_transfer_edits_require_native_contracts_negative_controls_and_distinct_endpoints(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode)
+                rows, raw = self.single(fluid.EDIT_CASE)
+                result = self.verify((rows, raw))
+                self.assertEqual([], result['issues'])
+                self.assertEqual('root' if mode == 'toolkit' else 'bag', raw[1][1]['bottles'][1]['source'])
+                self.assertEqual([.5, .5], [bottle['amount'] for bottle in raw[1][1]['bottles']])
+                self.assertEqual([False, True], [command['pickupObserved'] for command in rows[1]['commands']])
+                self.assertIs(result['outcomes'][0]['outcome']['pendingTransferEditVerified'], mode == 'toolkit')
+                self.assertIs(result['outcomes'][0]['outcome']['dependentPickupProtected'], mode == 'toolkit')
+                for field in ('anchorRunning', 'standalone', 'contractsVerified', 'reordered', 'moveRejected',
+                              'cancelRejected', 'untouchedBefore', 'returnNoopObserved', 'nativeDurationsUnchanged'):
+                    for fault in ('missing', 'opposite', 'integer'):
+                        rows, raw = self.single(fluid.EDIT_CASE)
+                        evidence = rows[1]['editEvidence']
+                        if fault == 'missing': evidence.pop(field)
+                        elif fault == 'opposite': evidence[field] = not evidence[field]
+                        else: evidence[field] = int(evidence[field])
+                        with self.subTest(kind=kind, mode=mode, field=field, fault=fault):
+                            self.assertTrue(self.verify((rows, raw))['issues'])
+                for fault in ('wrong-id', 'full-weight', 'final-weight', 'final-endpoint', 'portion', 'native-menu',
+                              'anchor-container', 'transfer-duration', 'drink-progress', 'missing-evidence'):
+                    rows, raw = self.single(fluid.EDIT_CASE)
+                    if fault == 'wrong-id': rows[1]['editEvidence']['bottleId'] = raw[0][1]['bottles'][0]['id']
+                    elif fault == 'full-weight': rows[1]['editEvidence']['fullWeight'] = .6
+                    elif fault == 'final-weight': rows[1]['bottles'][1]['weight'] = raw[1][1]['bottles'][1]['weight'] = 1.1
+                    elif fault == 'final-endpoint': rows[1]['bottles'][1]['source'] = raw[1][1]['bottles'][1]['source'] = 'bag' if mode == 'toolkit' else 'root'
+                    elif fault == 'portion': rows[1]['commands'][1]['portion'] = .25
+                    elif fault == 'native-menu': rows[1]['commands'][1]['menuDispatched'] = True
+                    elif fault == 'anchor-container': rows[1]['commands'][0]['dispatchSource'] = 'bag'
+                    elif fault == 'transfer-duration': rows[1]['editEvidence']['pickupDuration'] = 0
+                    elif fault == 'drink-progress': rows[1]['commands'][1]['drinkProgress'] = False
+                    else: rows[1].pop('editEvidence')
+                    with self.subTest(kind=kind, mode=mode, fault=fault):
+                        self.assertTrue(self.verify((rows, raw))['issues'])
 
     def test_fullness_requires_authority_metadata_and_actual_dispatch_moodle(self):
         for case in ('fluid-bag-full-favorite', 'fluid-root-full-favorite'):

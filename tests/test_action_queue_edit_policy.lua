@@ -30,7 +30,7 @@ local inspectionHook
 local function stateContract(action)
     if inspectionHook then inspectionHook(action) end
     local result={items={},itemTypes={},targets=action.declaredOnly and {} or {[action.target]=true},cancelWaiting=true,
-        edit={version=action.version or 1,complete=true,capacity='unchanged',resources={{
+        edit={version=action.version or 1,complete=true,capacity=action.externalCapacity and 'external' or 'unchanged',resources={{
             domain='fixture',key=action.target,facts={on=action.target.on},
             requires=action.needsOn and {{field='on',equal=true}} or {},
             effects=action.value~=nil and {{field='on',set=action.value}} or {},
@@ -152,4 +152,34 @@ queue=f.queue(head,on,use)
 decision=policy.evaluateMove(queue,on,use,true)
 ISTimedActionQueue.queues[f.player]={}
 assert(not policy.editUnchanged(queue,decision.snapshot),'a replaced owner queue revokes its old edit snapshot')
+-- Location/effect approval must never bypass the separate conservative weight gate,
+-- including a single later transfer which is outside the edited resource component.
+do
+    local root=f.player.inventory
+    f.player.class='IsoPlayer'
+    root.class='ItemContainer'
+    root.getType=function()return 'inventory'end
+    root.getContainingItem=function()end
+    root.getParent=function()end
+    root.getAcceptItemFunction=function()end
+    root.getOnlyAcceptCategory=function()end
+    root.getCapacityWeight=function()return root.load or 0 end
+    root.getEffectiveCapacity=function()return 50 end
+    local bag=f.item('Base.Bag_DuffelBag');bag.class='InventoryContainer'
+    local container={class='ItemContainer',getType=function()return 'bag'end,
+        getContainingItem=function()return bag end,getParent=function()end,getAcceptItemFunction=function()end,
+        getCapacityWeight=function()return 0 end,getEffectiveCapacity=function()return 50 end}
+    local item=f.item('Base.Nails')
+    item.getType=function()return 'Nails'end
+    item.getUnequippedWeight=function()return 2 end
+    local transfer=f.action(ISInventoryTransferAction,{item=item,srcContainer=root,destContainer=container})
+    local first,second=command(false),command(true)
+    first.externalCapacity,second.externalCapacity=true,true
+    queue=f.queue(head,first,second,transfer)
+    assert(policy.evaluateMove(queue,second,first).reason=='container_capacity'
+        and policy.evaluateCancel(queue,first,true).reason=='container_capacity',
+        'an external contract does not prove the unknown weight effects of its prefix, even at empty loads')
+    assert(not Queue.move(queue,second,first) and queue.queue[2]==first,
+        'an external capacity requirement cannot be bypassed by a successful state projection')
+end
 print('Queue edit policy: changed outcomes, downstream prerequisites, removal, fallback, native execution and stale edits passed.')

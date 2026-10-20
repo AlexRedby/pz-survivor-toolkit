@@ -2,10 +2,12 @@ require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'TimedActions/ISDrinkFluidAction'
 require 'TimedActions/ISWearClothing'
 require 'TimedActions/ISUnequipAction'
+require 'TimedActions/ISInventoryTransferAction'
 local Fixture=require 'QueueFluidFixture'
 local Checks=require 'QueueScenarioChecks'
 local Queue=require 'PZSurvivorToolkit/ActionQueue'
 local Policy=require 'PZSurvivorToolkit/ActionQueuePolicy'
+local Operations=require 'PZSurvivorToolkit/ActionQueueOperations'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local started,done=false,false
@@ -15,6 +17,7 @@ local previousAuthority,previousBag,lastCurrent
 local commands,observations={},{}
 local waitingCancelVerified=false
 local independentMoveVerified=false
+local editEvidence,editActions
 local function case()return config.cases[step]end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function emit(row)
@@ -116,6 +119,66 @@ local function cancelWaiting()
  commands[2].cancelled=true;waitingCancelVerified=true
  trace('waiting-cancel',{id=commands[2].id,removed=#removed,retained=#retained})
 end
+local function enqueueEditedBottle(player)
+ local root,bag=player:getInventory(),state.bag:getItemContainer()
+ local bottle=assert(root:getItemById(ids.bottles[2].id))
+ local anchor=observations[1].drink
+ assert(queue().current==anchor and anchor:isStarted()and anchor:getJobDelta()>0,'edit anchor must be the real first drink')
+ assert(bottle:getContainer()==bag and bottle:isFavorite()and bottle:getFluidContainer():getAmount()==ids.bottles[2].amount,
+  'waiting bottle changed before dispatch')
+ local pickup=ISInventoryTransferAction:new(player,bottle,bag,root)
+ local drink=ISDrinkFluidAction:new(player,bottle,.5)
+ local returning=ISInventoryTransferAction:new(player,bottle,root,bag)
+ for _,action in ipairs({pickup,drink,returning})do ISTimedActionQueue.add(action)end
+ local function standalone(action)
+  local first,last=Operations.bounds(queue(),action)
+  return first==last and first==queue():indexOf(action)
+ end
+ assert(standalone(pickup)and standalone(drink)and standalone(returning),'native explicit work must have separate operation tokens')
+ editActions={pickup=pickup,drink=drink,returning=returning}
+ local original=Checks.snapshot(queue())
+ editEvidence={anchorRunning=true,bottleId=bottle:getID(),fullWeight=bottle:getUnequippedWeight(),standalone=true,
+  pickupDuration=pickup.maxTime,returnDuration=returning.maxTime,nativeDurationsUnchanged=false,
+  contractsVerified=false,reordered=false,moveRejected=false,cancelRejected=false,untouchedBefore=false}
+ commands[2]={queueEmptyBefore=false,previousDrinkPending=true,backpackWorn=player:getClothingItem_Back()==state.bag,
+  dispatchAmount=bottle:getFluidContainer():getAmount(),dispatchSource='bag',cancelled=false,id=bottle:getID(),menu='half',
+  pickupObserved=false,drinkProgress=false,menuDispatched=false,portion=.5,nativeDuration=drink.maxTime,
+  dispatchThirst=player:getStats():get(CharacterStat.THIRST),foodLevel=player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)}
+ observations[2]={actions={pickup,drink,returning},pickup=pickup,drink=drink}
+ if config.mode=='toolkit'then
+  for _,action in ipairs({pickup,drink,returning})do
+   local contract=Policy.inspect(action);assert(contract and contract.edit,'real native action lacks the declarative edit contract')
+  end
+  editEvidence.contractsVerified=true
+  local decision=Policy.evaluateMove(queue(),returning,pickup,false)
+  assert(decision.allowed,'native return-before-pickup must be legal '..tostring(decision.reason))
+  assert(Queue.move(queue(),returning,pickup,false),'native standalone return move failed')
+  local expected={}
+  for _,action in ipairs(original)do if action~=returning then expected[#expected+1]=action end end
+  for index,action in ipairs(expected)do if action==pickup then table.insert(expected,index,returning);break end end
+  Checks.unchanged(queue(),expected);editEvidence.reordered=true
+  local before=Checks.snapshot(queue())
+  local denied=Policy.evaluateMove(queue(),pickup,drink,true)
+  assert(not denied.allowed and denied.reason=='edit_required_state',
+   'pickup-after-drink must fail the native root-location prerequisite '..tostring(denied.reason))
+  local ok,reason=Queue.move(queue(),pickup,drink,true)
+  assert(not ok and reason==denied.reason,'API accepted the invalid pickup order');Checks.unchanged(queue(),before)
+  editEvidence.moveRejected=true
+  denied=Policy.evaluateCancel(queue(),pickup,true)
+  assert(not denied.allowed and denied.reason=='edit_required_state',
+   'removing the last pickup must fail the native root-location prerequisite '..tostring(denied.reason))
+  ok,reason=Queue.cancelOperation(queue(),pickup)
+  assert(not ok and reason==denied.reason,'API removed the last required pickup');Checks.unchanged(queue(),before)
+  editEvidence.cancelRejected=true
+ else Checks.unchanged(queue(),original)end
+ assert(bottle:getContainer()==bag and bottle:getFluidContainer():getAmount()==commands[2].dispatchAmount
+  and bottle:getUnequippedWeight()==editEvidence.fullWeight and bottle:isFavorite(),'queue edits changed native bottle state')
+ editEvidence.untouchedBefore=true
+ assert(pickup.maxTime==editEvidence.pickupDuration and returning.maxTime==editEvidence.returnDuration and drink.maxTime==460,
+  'edits changed native durations')
+ editEvidence.nativeDurationsUnchanged=true
+ trace('edit-dispatch',editEvidence)
+end
 local function finish()
  local reason
  for index,bottle in ipairs(receipt.bottles)do
@@ -135,9 +198,16 @@ local function finish()
    reason='portion-consumption-differs'
   end
  end
+ if spec.edit then
+  if not editEvidence then reason='edit-not-dispatched'else
+   editEvidence.returnNoopObserved=editActions.returning.started==false and editActions.returning.transactionId==0
+   if editEvidence.returnNoopObserved~=(config.mode=='toolkit')then reason='native-return-path-differs'end
+   if receipt.bottles[2].source~=(config.mode=='toolkit'and 'root'or 'bag')then reason='edited-bottle-endpoint-differs'end
+  end
+ end
  if receipt.thirst>=ids.thirst-.00001 then reason='thirst-not-reduced'end
  local row={event='case',id=case(),status=reason and 'failed'or 'passed',reason=reason,commands=commands,
-  waitingCancelVerified=waitingCancelVerified,independentMoveVerified=independentMoveVerified}
+  waitingCancelVerified=waitingCancelVerified,independentMoveVerified=independentMoveVerified,editEvidence=editEvidence}
  for key,value in pairs(receipt)do row[key]=value end
  emit(row);if reason then failed=failed+1 end
  step=step+1
@@ -147,7 +217,7 @@ local function finish()
  end
  previousAuthority=authorityState;previousBag=state.bag
  ids,state,authorityState,receipt,lastCurrent=nil,nil,nil,nil,nil
- commands,observations={},{};waitingCancelVerified=false;independentMoveVerified=false
+ commands,observations={},{};waitingCancelVerified=false;independentMoveVerified=false;editEvidence,editActions=nil,nil
  ISTimedActionQueue.add(ISUnequipAction:new(getPlayer(),previousBag,50))
  phase='unequipped';since=getTimestampMs()
 end
@@ -199,7 +269,11 @@ Events.OnTick.Add(function()
      assert(bottle:isFavorite()==spec.favorite,'drink bottle lost favorite flag')
     end
    end
+   if spec.edit and not editEvidence and current==observations[1].drink and current:isStarted()and current:getJobDelta()>0 then
+    enqueueEditedBottle(player)
+   end
    if idle>=10 then
+    assert(not spec.edit or editEvidence,'native drink anchor ended before edit dispatch')
     if spec.serial and #commands<#spec.targets then enqueue(player,spec.targets[#commands+1]);idle=0
     else phase='receipt';request('Verify')end
    end

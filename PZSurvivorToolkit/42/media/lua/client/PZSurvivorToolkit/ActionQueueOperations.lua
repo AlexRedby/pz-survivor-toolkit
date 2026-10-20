@@ -367,9 +367,15 @@ function Operations.bounds(queue, action)
 end
 
 local canMerge = ISInventoryTransferAction.canMergeAction
-ISInventoryTransferAction.canMergeAction = function(action, following)
+local function operationCanMerge(action, following)
     if following and action.toolkitQueueOperation ~= following.toolkitQueueOperation then return false end
     return canMerge(action, following)
+end
+ISInventoryTransferAction.canMergeAction = operationCanMerge
+
+-- Read-only provenance for adapters loaded after this boundary was installed.
+function Operations.transferMergeDelegate(callback)
+    if callback == operationCanMerge and ISInventoryTransferAction.canMergeAction == operationCanMerge then return canMerge end
 end
 
 local function wrap(class, method, fresh)

@@ -22,6 +22,7 @@ local nativeForceCancel = ISBaseTimedAction.forceCancel
 local Proof = require "PZSurvivorToolkit/SourceProof"
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
+local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
 local nativePendingCancelProof
 local function nativePendingCancelHasNoEffects()
     if nativePendingCancelProof == nil then
@@ -342,6 +343,8 @@ function Policy.adoptTransferItemHelper(previous, replacement, helpersUnchanged)
         or type(ISTransferAction) ~= "table" or ISTransferAction.transferItem ~= replacement
         or not helpersUnchanged() then return false end
     nativeTransferItem, transferItemGuard = replacement, helpersUnchanged
+    if ItemEditAdapters then ItemEditAdapters.adoptMethods(ISTransferAction,
+        {transferItem = previous}, {transferItem = replacement}, helpersUnchanged) end
     return true
 end
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform", "complete",
@@ -434,6 +437,7 @@ function Policy.adoptTransferHooks(previous, replacement, guard)
     if preparation then preparation.perform = replacement.perform end
     transferMethodsAdopted = true
     transferHelperGuards[#transferHelperGuards + 1] = guard
+    if ItemEditAdapters then ItemEditAdapters.adoptMethods(ISInventoryTransferAction, previous, replacement, guard) end
     return true
 end
 
@@ -466,6 +470,8 @@ function Policy.adoptConsumeStarts(previous, helpersUnchanged)
         local snapshot = snapshots[class]
         snapshot.methods.start, snapshot.startHelperGuard = class.start, helpersUnchanged
     end
+    if ItemEditAdapters then ItemEditAdapters.adoptMethods(ISDrinkFluidAction,
+        {start = previous[ISDrinkFluidAction]}, {start = ISDrinkFluidAction.start}, helpersUnchanged) end
     return true
 end
 
@@ -475,6 +481,8 @@ function Policy.adoptTransferQueueObserver(previous,replacement)
     if not snapshot or snapshot.helpers.checkQueueList~=previous or ISInventoryTransferAction.checkQueueList~=replacement
         or not intent or not intent.isQueueObserver(previous,replacement) then return false end
     snapshot.helpers.checkQueueList=replacement
+    if ItemEditAdapters then ItemEditAdapters.adoptMethods(ISInventoryTransferAction,
+        {checkQueueList=previous}, {checkQueueList=replacement}, function()return intent.isQueueObserver(previous,replacement)end) end
     return true
 end
 
@@ -485,6 +493,10 @@ function Policy.adoptTransferFloorHelper(previous, replacement)
         or type(previous) ~= "function" or type(replacement) ~= "function" then return false end
     -- The native transfer ignores the helper's square for a non-floor destination.
     transferFloorHelper = {previous = previous, replacement = replacement}
+    if ItemEditAdapters then ItemEditAdapters.adoptMethods(ISInventoryTransferAction,
+        {getNotFullFloorSquare = previous}, {getNotFullFloorSquare = replacement}, function()
+            return ISInventoryTransferAction.getNotFullFloorSquare == replacement
+        end) end
     return true
 end
 
@@ -505,6 +517,7 @@ function Policy.adoptTransferMethods(previous, replacement, helpersUnchanged)
     end
     transferMethodsAdopted = true
     transferHelperGuards[#transferHelperGuards + 1] = helpersUnchanged
+    if ItemEditAdapters then ItemEditAdapters.adoptMethods(ISInventoryTransferAction, previous, replacement, helpersUnchanged) end
     return true
 end
 
@@ -548,6 +561,7 @@ local function transferResources(action)
     for _, container in pairs({source = action.srcContainer, destination = action.destContainer}) do
         Policy.addContainerResources(result, container)
     end
+    if ItemEditAdapters then result.edit = ItemEditAdapters.transfer(action) end
     return result
 end
 Policy.transferResources = transferResources
@@ -669,7 +683,13 @@ end
 function Policy.installContracts()
     registerNative("ISDrinkFluidAction", function(action)
         local result = itemResources(action)
-        if result and action.fluidContainer and action.fluidContainer == action.item:getFluidContainer() then return result end
+        if result and action.fluidContainer and action.fluidContainer == action.item:getFluidContainer() then
+            if action.item:getContainer() ~= action.character:getInventory() then
+                Policy.addContainerResources(result, action.item:getContainer())
+            end
+            if ItemEditAdapters then result.edit = ItemEditAdapters.drink(action) end
+            return result
+        end
     end, {"updateEat", "setOverrideHandModels"})
     registerNative("ISEatFoodAction", function(action)
         local Food = Toolkit.BulkFood
@@ -832,14 +852,16 @@ local function proposedEdit(queue, first, last, to, context)
             end
         end
     end
+    local externalCapacity = false
     for member in pairs(component) do
         local contract, token = contracts[member], member.toolkitQueueOperation
         if member.character ~= queue.character or (type(token) == "table" and token.toolkitCancelled) then
             return {status = "denied", reason = "unavailable", blocker = member}
         end
-        if not contract.edit or contract.edit.capacity ~= "unchanged" then
+        if not contract.edit or (contract.edit.capacity ~= "unchanged" and contract.edit.capacity ~= "external") then
             return {status = "unhandled", reason = "edit_unknown", blocker = member}
         end
+        externalCapacity = externalCapacity or contract.edit.capacity == "external"
         if member == queue.current or member.action or (type(token) == "table" and token.toolkitStarted) then
             -- Live state already includes an unknown fraction of an in-flight
             -- effect. Never project that action again from the live snapshot.
@@ -861,6 +883,7 @@ local function proposedEdit(queue, first, last, to, context)
         end
     end
     local result = EditModel.evaluate(entries)
+    result.externalCapacity = externalCapacity
     -- A declared contract with an unsupported schema is not permission to use
     -- a less complete legacy footprint. No valid proof was obtained for it.
     if result.status == "unhandled" then result.status = "denied" end
@@ -1032,6 +1055,21 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
     check.blocker = nil
 end
 
+local function editCapacityConflict(queue, edit, first, last, to, context)
+    if not edit.externalCapacity then return end
+    -- The item projection proves locations/amounts, not available weight. Even a
+    -- successful projection must scan every later transfer at full current
+    -- weight: cancelling a drink must not spend its hypothetical weight loss.
+    for index, member in ipairs(queue.queue) do
+        -- A pure pending removal cannot change an earlier transfer. Only later
+        -- transfers need the bound; this also leaves safe tail removal free.
+        if (to or index > last) and (member.Type == "ISInventoryTransferAction" or member.Type == "ISCartTransferAction") then
+            return transferCapacityConflict(queue, member, member, #queue.queue,
+                {first = first, last = last, to = to}, context)
+        end
+    end
+end
+
 function Policy.cancelOperationReason(queue, action, context)
     context = context or {contracts = {}, items = {}}
     context.editFallback = nil
@@ -1092,7 +1130,11 @@ function Policy.cancelOperationReason(queue, action, context)
     end
     if pendingRemovalOnly then
         local edit = proposedEdit(queue, first, last, nil, context)
-        if edit.status == "allowed" then return nil, first, last end
+        if edit.status == "allowed" then
+            local capacity = editCapacityConflict(queue, edit, first, last, nil, context)
+            if capacity then return "container_capacity", nil, nil, action, capacity end
+            return nil, first, last
+        end
         if edit.status == "denied" then return edit.reason, nil, nil, edit.blocker, edit.resource end
         context.editFallback = edit
     end
@@ -1230,6 +1272,8 @@ function Policy.moveReason(queue, action, target, after, context)
         local edit = proposedEdit(queue, first, last, to, context)
         if edit.status == "denied" then return edit.reason, nil, nil, nil, nil, edit.blocker, edit.resource end
         if edit.status == "allowed" then
+            local capacity = editCapacityConflict(queue, edit, first, last, to, context)
+            if capacity then return "container_capacity", nil, nil, nil, nil, action, capacity end
             if first < to then to = to - (last - first + 1) end
             return nil, to, first, last, false
         end
@@ -1259,6 +1303,7 @@ Policy.operationItems = operationItems
 
 function Policy.replaceStop(previous, replacement)
     if EditAdapters then EditAdapters.adoptBase("stop", previous, replacement) end
+    if ItemEditAdapters then ItemEditAdapters.adoptBase("stop", previous, replacement) end
     for _, snapshot in pairs(snapshots) do
         if snapshot.methods.stop == previous then snapshot.methods.stop = replacement end
     end
@@ -1271,6 +1316,7 @@ end
 
 function Policy.adoptBegin(previous, replacement)
     if EditAdapters then EditAdapters.adoptBase("begin", previous, replacement) end
+    if ItemEditAdapters then ItemEditAdapters.adoptBase("begin", previous, replacement) end
 end
 
 local function editSnapshot(queue)

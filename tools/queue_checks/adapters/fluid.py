@@ -7,13 +7,14 @@ import shutil
 
 from . import craft
 
+EDIT_CASE = 'fluid-bag-edit-pickup-return-favorite'
 CASES = ['fluid-bag', 'fluid-root', 'fluid-bag-favorite', 'fluid-root-favorite',
          'fluid-bag-all-favorite', 'fluid-bag-quarter-favorite', 'fluid-bag-smart-favorite',
          'fluid-bag-sip-favorite', 'fluid-bag-second-favorite', 'fluid-bag-pair-queued-favorite',
          'fluid-bag-pair-serial-favorite', 'fluid-bag-smart-low-favorite',
          'fluid-bag-full-favorite', 'fluid-root-full-favorite',
          'fluid-bag-same-serial-favorite', 'fluid-root-same-queued-favorite',
-         'fluid-root-cancel-waiting-favorite', 'fluid-bag-cancel-waiting-favorite']
+         'fluid-root-cancel-waiting-favorite', 'fluid-bag-cancel-waiting-favorite', EDIT_CASE]
 MODS = craft.MODS + ['Drink_Smart']
 RECEIPT_KEYS = {'bagId', 'bagType', 'thirst', 'bottles', 'foodLevel'}
 BAG_TYPE = 'Base.Bag_ALICEpack_Army'
@@ -22,7 +23,7 @@ BAG_TYPE = 'Base.Bag_ALICEpack_Army'
 def definitions():
     groups = {
         'drink-portions': ('Native portions from root or a worn military backpack; favorite bottles, queued halves and serial quarters with native SP/Host semantics and waiting cancellation.',
-                           [case for case in CASES if '-smart-' not in case and '-sip-' not in case]),
+                           [case for case in CASES if '-smart-' not in case and '-sip-' not in case and case != EDIT_CASE]),
         'drink-smart': ('Drink Smart from a worn military backpack with favorite bottles at normal and low thirst.',
                         [case for case in CASES if '-smart-' in case]),
         'drink-sip': ('Drink Smart sip from a worn military backpack with favorite bottles.',
@@ -40,6 +41,14 @@ def definitions():
             checks['cancel-waiting'] = {case: {'waitingCancelVerified': True, 'effectsVerified': True} for case in cases if '-cancel-' in case}
             checks['move-independent'] = {'fluid-root-cancel-waiting-favorite': {'independentMoveVerified': True, 'effectsVerified': True}}
         actions[name] = {'scope': scope, 'mods': MODS, 'checks': checks}
+    actions['drink-transfers'] = {
+        'scope': 'A real running drink anchors standalone pickup/drink/return actions for another favorite bottle. Toolkit moves an already-destination return before pickup, rejects removal/reordering of the required pickup, and preserves native costs; disabled controls retain the original order and finish in the bag.',
+        'mods': MODS, 'toolkit_only': ['success-queued'], 'checks': {
+            'success-empty': {EDIT_CASE: {'emptyStartVerified': True, 'effectsVerified': True, 'wornBagVerified': True}},
+            'success-queued': {EDIT_CASE: {'pendingTransferEditVerified': True, 'effectsVerified': True}},
+            'move-dependent': {EDIT_CASE: {'dependentPickupProtected': True, 'effectsVerified': True}},
+            'server-authority': {EDIT_CASE: {'serverAuthorityVerified': True, 'effectsVerified': True}},
+        }}
     return {'fluid': {'status': 'ready', 'clients': 1, 'default_mods': MODS, 'scenario_actions': actions,
                       'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
                                  'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['native', 'toolkit']}
@@ -98,13 +107,14 @@ def _commands(case):
     menu = next((name for name in ('all', 'quarter', 'smart', 'sip') if name in case.split('-')), 'half')
     if '-same-serial-' in case: menu = 'quarter'
     portion = {'half': .5, 'all': 1, 'quarter': .25, 'sip': .01}.get(menu)
-    targets = [0, 1, 2] if '-cancel-' in case else [0, 0] if '-same-' in case else [0, 1] if '-pair-' in case else [1] if '-second-' in case else [0]
+    targets = [0, 1] if case == EDIT_CASE else [0, 1, 2] if '-cancel-' in case else [0, 0] if '-same-' in case else [0, 1] if '-pair-' in case else [1] if '-second-' in case else [0]
     return menu, portion, targets
 
 
 def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
     issues = []
     bag, favorite = case.startswith('fluid-bag'), case.endswith('-favorite')
+    editing = case == EDIT_CASE
     full = '-full-' in case
     food_level = 3 if full else 0
     source = 'bag' if bag else 'root'
@@ -116,19 +126,21 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
             or not craft._matches(prep, dict(case=case, bagType=BAG_TYPE, foodTimer=4000 if full else 0, foodLevel=food_level))
             or not _close(prep.get('thirst'), initial_thirst, .00001)
             or type(bottles) is not list or len(bottles) != count
-            or any(type(bottle) is not dict or set(bottle) != {'id', 'amount', 'favorite', 'source', 'thirstChange'}
-                   or not craft._matches(bottle, dict(source=source, favorite=favorite))
+            or any(type(bottle) is not dict or set(bottle) != {'id', 'amount', 'favorite', 'source', 'thirstChange'} | ({'weight'} if editing else set())
+                   or not craft._matches(bottle, dict(source='root' if editing and index == 0 else source, favorite=favorite))
                    or not _close(bottle.get('amount'), 1) or not _number(bottle.get('thirstChange'))
-                   or bottle['thirstChange'] >= 0 for bottle in bottles)
+                   or bottle['thirstChange'] >= 0 or (editing and (not _number(bottle.get('weight')) or bottle['weight'] <= bottle['amount']))
+                   for index, bottle in enumerate(bottles))
             or not craft._ids([prep.get('bagId')] + [bottle.get('id') for bottle in bottles], count + 1)):
         return ['Fluid preparation identity/state differs: ' + case]
     final = receipt.get('bottles')
     if (set(receipt) != RECEIPT_KEYS | {'case'} or not craft._matches(receipt, dict(case=case, bagId=prep['bagId'], bagType=BAG_TYPE, foodLevel=food_level))
             or not craft._matches(row, {key: receipt.get(key) for key in RECEIPT_KEYS})
             or type(final) is not list or len(final) != count
-            or any(type(bottle) is not dict or set(bottle) != {'id', 'amount', 'favorite', 'source', 'count'}
+            or any(type(bottle) is not dict or set(bottle) != {'id', 'amount', 'favorite', 'source', 'count'} | ({'weight'} if editing else set())
                    or not craft._matches(bottle, dict(id=original['id'], favorite=favorite, count=1))
                    or not _number(bottle.get('amount')) or bottle['amount'] < 0
+                   or (editing and not _close(bottle.get('weight'), original['weight'] - original['amount'] + bottle['amount']))
                    for bottle, original in zip(final, bottles))):
         return ['Fluid authority/client identity or conservation differs: ' + case]
     thirst = receipt.get('thirst')
@@ -147,8 +159,8 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
             cancelled = cancelling and position == 1
             if (type(command) is not dict or set(command) != {'id', 'menu', 'portion', 'nativeDuration', 'pickupObserved', 'drinkProgress', 'menuDispatched', 'dispatchThirst', 'foodLevel', 'queueEmptyBefore', 'previousDrinkPending', 'backpackWorn', 'dispatchAmount', 'dispatchSource', 'cancelled'}
                     or not craft._matches(command, dict(id=bottles[target]['id'], menu=menu, nativeDuration=460,
-                                                        pickupObserved=bag and not cancelled, drinkProgress=not cancelled, menuDispatched=True, foodLevel=food_level,
-                                                        dispatchSource=source, cancelled=cancelled,
+                                                        pickupObserved=bag and not (editing and position == 0) and not cancelled, drinkProgress=not cancelled, menuDispatched=not (editing and position == 1), foodLevel=food_level,
+                                                        dispatchSource='root' if editing and position == 0 else source, cancelled=cancelled,
                                                         queueEmptyBefore=position == 0 or '-serial-' in case,
                                                         previousDrinkPending=position > 0 and '-serial-' not in case, backpackWorn=True))
                     or not _number(command.get('dispatchThirst')) or not 0 <= command['dispatchThirst'] <= 1):
@@ -179,7 +191,8 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
             if not _close(bottle['amount'], original['amount']) or bottle.get('source') != source:
                 issues.append('Fluid unselected bottle changed: ' + case)
             continue
-        if bottle.get('source') not in (('bag', 'root') if bag else ('root',)):
+        expected_endpoints = (('root',) if index == 0 or mode == 'toolkit' else ('bag',)) if editing else (('bag', 'root') if bag else ('root',))
+        if bottle.get('source') not in expected_endpoints:
             issues.append('Fluid selected bottle endpoint differs: ' + case)
         if index not in amounts:
             continue
@@ -187,6 +200,21 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
         # Native 100ms drinkFluid events can use progress >1 before complete; allow at most 10mL extra debit.
         if not max(0, expected_amount - tolerances[index]) <= bottle['amount'] <= expected_amount + .0001:
             issues.append('Fluid bounded water debit/endpoint differs: ' + case)
+    if editing:
+        evidence = row.get('editEvidence')
+        enabled = mode == 'toolkit'
+        expected_fields = {'anchorRunning', 'bottleId', 'fullWeight', 'standalone', 'pickupDuration', 'returnDuration',
+                           'nativeDurationsUnchanged', 'contractsVerified', 'reordered', 'moveRejected', 'cancelRejected',
+                           'untouchedBefore', 'returnNoopObserved'}
+        if (type(evidence) is not dict or set(evidence) != expected_fields
+                or not craft._matches(evidence, dict(anchorRunning=True, bottleId=bottles[1]['id'], standalone=True,
+                    nativeDurationsUnchanged=True, contractsVerified=enabled, reordered=enabled,
+                    moveRejected=enabled, cancelRejected=enabled, untouchedBefore=True, returnNoopObserved=enabled))
+                or not _close(evidence.get('fullWeight'), bottles[1]['weight'])
+                or any(not _number(evidence.get(field)) or
+                       (evidence[field] != -1 if kind == 'mp' else evidence[field] <= 0)
+                       for field in ('pickupDuration', 'returnDuration'))):
+            issues.append('Fluid declarative pending transfer edit evidence differs: ' + case)
     return issues
 
 
@@ -224,13 +252,15 @@ def verify(root, selection, catalog):
         prepared_bottles = prep.get('bottles')
         identities += [prep.get('bagId')] + ([bottle.get('id') if type(bottle) is dict else None
                                              for bottle in prepared_bottles] if type(prepared_bottles) is list else [None, None])
-        outcome = {key: row.get(key) for key in RECEIPT_KEYS | {'commands'}}
+        outcome = {key: row.get(key) for key in RECEIPT_KEYS | {'commands', 'editEvidence'}}
         outcome.update(emptyStartVerified=not case_issues, effectsVerified=not case_issues, wornBagVerified=not case_issues,
                        independentRequestsQueued=not case_issues and case == 'fluid-bag-pair-queued-favorite',
                        sameBottleRequestsVerified=not case_issues and '-same-' in case,
                        waitingCancelVerified=not case_issues and '-cancel-' in case and selection['mode']=='toolkit',
                        independentMoveVerified=not case_issues and case=='fluid-root-cancel-waiting-favorite' and selection['mode']=='toolkit',
-                       serverAuthorityVerified=not case_issues and selection['kind'] == 'mp')
+                       serverAuthorityVerified=not case_issues and selection['kind'] == 'mp',
+                       pendingTransferEditVerified=not case_issues and case==EDIT_CASE and selection['mode']=='toolkit',
+                       dependentPickupProtected=not case_issues and case==EDIT_CASE and selection['mode']=='toolkit')
         outcomes.append(dict(actor='client1', case=case, outcome=outcome))
     if not craft._ids(identities):
         issues.append('Fluid fixture identities overlap between cases')
@@ -241,4 +271,5 @@ def verify(root, selection, catalog):
     return {'issues': issues, 'outcomes': outcomes, 'evidence': {'limits': [
         'Fixture invokes real drink menu callbacks; physical mouse input is not covered.',
         'Requested portions allow at most 10mL native progress overshoot; raw remaining volumes are retained.',
+        'The pending transfer case uses native standalone constructors behind a running menu drink; Toolkit and disabled controls intentionally end in different containers.',
         'Fresh one-client SP/Host with exact bottle receipts; no concurrent-client or WAN coverage.']}}
