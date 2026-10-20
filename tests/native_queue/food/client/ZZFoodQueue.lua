@@ -31,28 +31,35 @@ end
 Events.OnServerCommand.Add(function(module,command,value)
  if module~='FoodTest'then return end
  assert(command~='Failed',value.error)
- if command=='Prepared'then ids=value elseif command=='Verified'then receipt=value end
+ if command=='Prepared'then
+  ids=value;print('[FOOD_TEST] PREPARATION_RECEIVED '..JSON.encode({case=case(),phase=phase,ids=value}))
+ elseif command=='Verified'then receipt=value end
 end)
 Events.OnGameStart.Add(function()
  started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false)
  getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false);getPlayer():setGhostMode(true)
 end)
 local function items()return assert(Fixture.items(getPlayer(),ids),'current exact food identities missing')end
-local function preparationDiagnostic(player)
- local value={case=case(),idsReceived=ids~=nil}
+local function preparationDiagnostic(player,final)
+ local value={case=case(),idsReceived=ids~=nil,final=final,elapsedMs=getTimestampMs()-since,
+  onlineId=player:getOnlineID()}
  if ids then
   value.expected=ids
+  value.snapshot=Fixture.snapshot(player,ids)
   local root=player:getInventory()
-  for _,kind in ipairs({'bag','food','anchor'})do
-   local item=root:getItemById(ids[kind..'Id'])
-   local row={present=item~=nil};value[kind]=row
-   if item then
-    row.id,row.type,row.root=item:getID(),item:getFullType(),item:getContainer()==root
-    if instanceof(item,'Food')then
-     row.baseHunger,row.remaining=tostring(item:getBaseHunger()),tostring(item:getHungChange())
-     row.weight,row.replacement=tostring(item:getActualWeight()),tostring(item:getReplaceOnUseFullType())
+  for _,kind in ipairs({'bag','food','anchor','fork','spoon'})do
+   local expectedId=ids[kind..'Id']
+   if expectedId then
+    local item=root:getItemById(expectedId)
+    local row={present=item~=nil};value[kind]=row
+    if item then
+     row.id,row.type,row.root=item:getID(),item:getFullType(),item:getContainer()==root
+     if instanceof(item,'Food')then
+      row.baseHunger,row.remaining=tostring(item:getBaseHunger()),tostring(item:getHungChange())
+      row.weight,row.replacement=tostring(item:getActualWeight()),tostring(item:getReplaceOnUseFullType())
+     end
+     local fluid=item:getFluidContainer();if fluid then row.fluidAmount=tostring(fluid:getAmount())end
     end
-    local fluid=item:getFluidContainer();if fluid then row.fluidAmount=tostring(fluid:getAmount())end
    end
   end
  end
@@ -258,9 +265,12 @@ Events.OnTick.Add(function()
  local ok,problem=pcall(function()
   local player=getPlayer();getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
   if phase=='prepared'and not preparationLogged and getTimestampMs()-since>10000 then
-   preparationLogged=true;preparationDiagnostic(player)
+   preparationLogged=true;preparationDiagnostic(player,false)
   end
-  if getTimestampMs()-since>120000 then error('food phase timeout '..phase)end
+  if getTimestampMs()-since>120000 then
+   if phase=='prepared'then preparationDiagnostic(player,true)end
+   error('food phase timeout '..phase)
+  end
   idle=not player:hasTimedActions()and #queue().queue==0 and idle+1 or 0
   if phase=='unequipped'then if idle<10 then return end;assert(not player:isEquipped(previousBag),'food bag still worn');phase='prepare'end
   if phase=='prepare'then
@@ -268,6 +278,8 @@ Events.OnTick.Add(function()
    spec=Fixture.scenario(case());phase='prepared';preparationLogged=false;request('Prepare');return
   elseif phase=='prepared'and ids then
    state=Fixture.resolve(player,ids);if not state then return end
+   print('[FOOD_TEST] PREPARATION_RESOLVED '..JSON.encode({case=case(),elapsedMs=getTimestampMs()-since,
+    snapshot=Fixture.snapshot(player,ids)}))
    player:getStats():set(CharacterStat.HUNGER,ids.hunger);player:getStats():set(CharacterStat.THIRST,ids.thirst)
    player:getBodyDamage():setHealthFromFoodTimer(0);player:getMoodles():Update()
    if isClient()then syncPlayerStats(player,SyncPlayerStatsPacket.getBitMaskForStat(CharacterStat.HUNGER)+SyncPlayerStatsPacket.getBitMaskForStat(CharacterStat.THIRST))end

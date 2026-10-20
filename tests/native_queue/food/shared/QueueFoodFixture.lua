@@ -90,7 +90,9 @@ function Fixture.snapshot(player,ids)
  return result
 end
 function Fixture.prepare(player,case,previous)
- player:setAutoDrink(false)
+ -- Host player-state packets can overwrite setAutoDrink after preparation.
+ -- Disable the isolated process option too, before publishing thirsty actors' water.
+ getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
  local root=player:getInventory()
  if previous then
   assert(previous.player==player and previous.verified,'unverified previous food fixture')

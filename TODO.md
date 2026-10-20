@@ -77,8 +77,6 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Shared game sessions and build regression
 
-- [ ] Diagnose the intermittent Host food-fixture preparation timeout before dispatch. Use `PREPARATION_WAIT` evidence to distinguish a missing Prepared receipt from missing exact items or divergent food/fluid state. Preserve strict identity/amount checks and the failed control report; an identical successful retry does not establish the cause.
-
 - [ ] Extend the common scenario contracts beyond equipment, fluid drinking and health-panel/direct-inventory bandaging. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
 
 - [ ] Cart chat: integrate the published combined SP cart matrices and collision cases after their native checks are complete. Keep independent cold controls; separately measure an explicit full regression profile (the estimated 17 startup cycles instead of 29 are not yet confirmed).

@@ -1,6 +1,7 @@
 """Reject invented native-food progress, wrong portions and client-only effects."""
 import copy
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -145,6 +146,52 @@ assert(command.progress and not command.pickupObserved)
 """
         result = subprocess.run([lua, '-', str(helper)], input=script, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_preparation_disables_process_auto_drink_before_exposing_water(self):
+        lua = shutil.which('luajit')
+        if not lua:
+            self.skipTest('LuaJIT is required to execute food preparation')
+        script = r"""
+local Fixture=assert(loadfile(arg[1]))()
+for _,coreBefore in ipairs({false,true})do
+ for _,playerBefore in ipairs({false,true})do
+  local coreEnabled,playerEnabled=coreBefore,playerBefore
+  local stop,reads={},0
+  getCore=function()return {setOptionAutoDrink=function(_,value)coreEnabled=value end}end
+  local player={setAutoDrink=function(_,value)playerEnabled=value end,
+   getInventory=function()
+    reads=reads+1
+    assert(not coreEnabled and not playerEnabled,'water exposed with auto-drink enabled')
+    error(stop)
+   end}
+  -- Execute the real preparation prologue and stop before allocating native items.
+  local ok,problem=pcall(Fixture.prepare,player,'food-root-move-same-portions')
+  assert(not ok and problem==stop and reads==1)
+ end
+end
+"""
+        result = subprocess.run(
+            [lua, '-', str(ROOT / 'tests/native_queue/food/shared/QueueFoodFixture.lua')],
+            input=script, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_installed_engine_auto_drink_guard(self):
+        game, jdk = os.environ.get('PZ_NATIVE_GAME'), os.environ.get('PZ_NATIVE_JDK')
+        if not game or not jdk:
+            self.skipTest('Set PZ_NATIVE_GAME and PZ_NATIVE_JDK to run native auto-drink checks headlessly')
+        jar = Path(game) / 'projectzomboid.jar'
+        with tempfile.TemporaryDirectory() as directory:
+            source = ROOT / 'tests/native_queue/support/FoodAutoDrinkChecks.java'
+            compiled = subprocess.run(
+                [str(Path(jdk) / 'bin/javac'), '-d', directory, '-cp', str(jar), str(source)],
+                text=True, capture_output=True, timeout=60)
+            self.assertEqual(0, compiled.returncode, compiled.stdout + compiled.stderr)
+            result = subprocess.run(
+                [str(Path(jdk) / 'bin/java'), '-Djava.awt.headless=true',
+                 '-cp', directory + os.pathsep + str(jar), 'zombie.characters.FoodAutoDrinkChecks'],
+                text=True, capture_output=True, timeout=60)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertIn('FOOD_AUTO_DRINK_CHECKS_PASS', result.stdout)
 
     def test_deletion_guard_rejects_moved_stale_or_unconsumed_original_with_precise_proof(self):
         lua = shutil.which('luajit')
