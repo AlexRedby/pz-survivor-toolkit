@@ -28,8 +28,6 @@
 
 ## Known pose defects
 
-- [ ] Rework the blocked-wall stance and its transitions to show sustained effort with planted feet and steady hands/cart. Capture the current contact/held-input/release/reverse baseline, then stabilize native contact classification without changing accepted physical movement or automatic backing.
-- [ ] Author and blend a wooden-cart pushing stance; preserve hand grip, foot support, body/handle clearance and normal wall sliding. Gate short before/after recordings plus collision, identity and pose regressions; geometry alone does not close the visual defect.
 - [ ] Replicate only the effort state within the existing cart pose budget, then check owner/observer contact and release in Host. Keep the existing observer approach-penetration defect separate.
 - [ ] Review rapid left/right steering response with the user before changing the established angular inertia: at Run/Sprint, a 300 ms opposite press can still produce net yaw in the previous direction. Keep measured response latency separate from unexpected stuck/wrong-way steering; preserve smooth bank transitions and wheel rolling if retuning is agreed.
 - [ ] Remove rendered fore-aft cart jumps during Walk side-clearance acquisition, Run/Sprint entry, rapid slaloms and stopping. Preserve native leg motion, the preferred straight pose and minimum hand/body clearance. Check monotonic-time wheel/handle trajectories and recordings, including startup and release; a clearance-only change or passing grip probes is insufficient.

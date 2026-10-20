@@ -473,6 +473,8 @@ def check_capture_environment(lua):
     assert 'p.getNetworkCharacterAI().updateXpChecker();' in bridge
     assert 'INetworkPacket.send(p,zombie.network.PacketTypes.PacketType.PlayerXp,p)' in bridge
     assert 'worldExistedAtStartup' in bridge and 'zombie.network.CoopSlave.instance==null' in bridge
+    assert 'cartMPBrace(p,setup.cartId,setup.wallX,setup.y)' in client
+    assert "assert(type(brace)=='string','Native brace diagnostics missing for exact fixture owner/cart')" in client
     assert client.index('if count~=961 then return end')<client.index('position(p,setup.x,setup.y,setup.z)')
     assert "padFloors=padReady and setup.size*setup.size or 0,padWalls=wallSide and 49 or 0,padVersion=setup.bankVersion" in client
     code="""
@@ -558,6 +560,32 @@ def check_java(game, jdk, patch):
         checks=root/'ModelProbeCheck.java'
         checks.write_text(r'''
 public final class ModelProbeCheck {
+    private static final class BracePlayer extends zombie.characters.IsoPlayer {
+        boolean local=true,dead;
+        String user="client1";
+        short online;
+        zombie.inventory.InventoryItem primary,secondary;
+        zombie.inventory.ItemContainer inventory;
+        zombie.iso.IsoGridSquare square;
+        BracePlayer(){super(null,null,0,0,0);}
+        @Override public boolean isLocalPlayer(){return local;}
+        @Override public boolean isDead(){return dead;}
+        @Override public String getUsername(){return user;}
+        @Override public short getOnlineID(){return online;}
+        @Override public zombie.inventory.InventoryItem getPrimaryHandItem(){return primary;}
+        @Override public zombie.inventory.InventoryItem getSecondaryHandItem(){return secondary;}
+        @Override public zombie.inventory.ItemContainer getInventory(){return inventory;}
+        @Override public zombie.iso.IsoGridSquare getCurrentSquare(){return square;}
+    }
+    private static final class BraceItem extends zombie.inventory.InventoryItem {
+        int identity;
+        String type;
+        zombie.inventory.ItemContainer container;
+        BraceItem(){super("SaucedWheelbarrow","WheelbarrowWood","WheelbarrowWood",(String)null);}
+        @Override public int getID(){return identity;}
+        @Override public String getFullType(){return type;}
+        @Override public zombie.inventory.ItemContainer getContainer(){return container;}
+    }
     public static void main(String[] args) throws Exception {
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         var main=Class.forName("net.alexredby.cartlab.Main");
@@ -580,6 +608,39 @@ public final class ModelProbeCheck {
         } finally {
             zombie.network.GameServer.server=previousServer;zombie.network.GameClient.client=previousClient;
             zombie.network.GameServer.serverName=previousName;zombie.network.CoopSlave.instance=previousCoop;fresh.setBoolean(null,previousWorld);
+        }
+        var ownerGuard=main.getDeclaredMethod("mpBraceOwner",zombie.characters.IsoPlayer.class,int.class);ownerGuard.setAccessible(true);
+        var previousPlayer=zombie.characters.IsoPlayer.getInstance();var previousConnection=zombie.network.GameClient.connection;
+        boolean previousHandshake=zombie.network.GameClient.instance.connected;
+        var owner=(BracePlayer)unsafe.allocateInstance(BracePlayer.class);owner.local=true;owner.user="client1";
+        owner.square=(zombie.iso.IsoGridSquare)unsafe.allocateInstance(zombie.iso.IsoGridSquare.class);
+        owner.inventory=(zombie.inventory.ItemContainer)unsafe.allocateInstance(zombie.inventory.ItemContainer.class);
+        var cart=(BraceItem)unsafe.allocateInstance(BraceItem.class);cart.identity=42;cart.type="SaucedWheelbarrow.WheelbarrowWood";cart.container=owner.inventory;
+        owner.primary=owner.secondary=cart;
+        try {
+            zombie.network.GameClient.client=true;zombie.network.GameServer.server=false;zombie.network.GameClient.instance.connected=true;
+            zombie.characters.IsoPlayer.setInstance(owner);
+            zombie.network.GameClient.connection=(zombie.core.raknet.UdpConnection)unsafe.allocateInstance(zombie.core.raknet.UdpConnection.class);
+            if(zombie.network.GameClient.connection.isFullyConnected())throw new AssertionError("Expected native Host transport flag false");
+            if(!(boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Armed exact owner blocked by native Host transport flag");
+            zombie.network.GameClient.instance.connected=false;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Disconnected client sampled");zombie.network.GameClient.instance.connected=true;
+            if((boolean)ownerGuard.invoke(null,owner,43) || (boolean)ownerGuard.invoke(null,null,42))throw new AssertionError("Foreign cart/null owner sampled");
+            owner.local=false;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Remote actor sampled");owner.local=true;
+            owner.user="client2";if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Observer sampled");owner.user="client1";
+            owner.dead=true;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Dead owner sampled");owner.dead=false;
+            owner.online=-1;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Offline actor sampled");owner.online=0;
+            var square=owner.square;owner.square=null;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Unloaded owner sampled");owner.square=square;
+            owner.secondary=null;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Unequipped cart sampled");owner.secondary=cart;
+            cart.container=null;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Non-owned cart sampled");cart.container=owner.inventory;
+            cart.type="SaucedWheelbarrow.WheelbarrowMetal";if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Foreign cart type sampled");cart.type="SaucedWheelbarrow.WheelbarrowWood";
+            zombie.characters.IsoPlayer.setInstance(null);if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Different local instance sampled");zombie.characters.IsoPlayer.setInstance(owner);
+            zombie.network.GameServer.server=true;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Server sampled as local owner");
+            zombie.network.GameServer.server=false;zombie.network.GameClient.client=false;
+            if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Single-player actor sampled");
+        } finally {
+            zombie.characters.IsoPlayer.setInstance(previousPlayer);zombie.network.GameClient.connection=previousConnection;
+            zombie.network.GameClient.instance.connected=previousHandshake;
+            zombie.network.GameServer.server=previousServer;zombie.network.GameClient.client=previousClient;
         }
         String raw="quote\"slash\\\n\r\t"+(char)1;
         for(String[] target:new String[][]{{"ClearanceProbe","jsonString"},{"net.alexredby.cartlab.Main","mpJsonString"}}) {
@@ -619,7 +680,7 @@ public final class ModelProbeCheck {
         parsed=[json.loads(line) for line in result.stdout.splitlines()]
         assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
         assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
-    return 'PASS (composed keyboard fixture, render family mismatch capture and JSON escaping)'
+    return 'PASS (composed keyboard fixture, native Host read-only brace ownership/lifecycle guard, render family mismatch capture and JSON escaping)'
 
 
 def main():

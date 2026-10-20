@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.140
+
+- **Changed:** A wooden wheelbarrow held against an obstacle uses a planted pushing stance with staggered feet, a slight forward body lean and smooth contact/release blends. The same pose is available to other players through the existing cart synchronization.
+
 ### 0.1.139
 
 - **Fixed:** Quartermaster distribution respects organizedCategories' enabled Stick protection. Quantity transfers preserve the original selection's intent before filtering or limiting items, so a mixed selection reduced to one item cannot bypass Stick. Deliberate single-row/stack transfers and live Stick opt-out retain their existing behavior.
@@ -630,6 +634,11 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.34
+
+- **Fixed:** Tiny accepted coordinate changes no longer repeatedly release wooden-cart pushing effort at a blocked obstacle. Forward contact is checked independently from the exhausted root-motion budget; releasing input, reversing or clearing the obstacle releases the stance. Native movement/collision and manual reverse are preserved.
+- **Changed:** Cart pose synchronization carries an effort flag in its existing packet fields and rate budget; remote catch-up retains its required locomotion before entering the planted pose.
 
 ### 0.1.33
 

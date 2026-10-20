@@ -68,7 +68,8 @@ local function wallSample(p,now,elapsed)
   assert(fields[key]=='true' or fields[key]=='false','Invalid native footprint '..key);row[key]=fields[key]=='true'
  end
  if wallSide=='front' then
-  local brace=cartMPBrace(setup.wallX,setup.y)
+  local brace=cartMPBrace(p,setup.cartId,setup.wallX,setup.y)
+  assert(type(brace)=='string','Native brace diagnostics missing for exact fixture owner/cart')
   for key,value in brace:gmatch('(%w+)=([^ ]+)') do
    if key=='brace' then row.brace=tonumber(value)
    else assert(value=='true' or value=='false','Invalid native brace '..key);row[key]=value=='true' end

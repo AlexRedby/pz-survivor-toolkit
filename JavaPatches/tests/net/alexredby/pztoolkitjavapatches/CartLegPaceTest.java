@@ -562,6 +562,39 @@ public final class CartLegPaceTest {
             close(live.getMainAnimationTrackAt(0).getSpeedDelta(),0,"stopping freezes both outgoing authored roots");
     }
 
+    private static void fastBraceClearance() {
+        var body=clip("Toolkit_WoodCartBrace",1,0,0,"Translation_Data");
+        for(String gait:new String[]{"Run","Sprint"}) {
+            float offset=gait.equals("Run")?-.12f:-.05f;
+            var outgoing=live("ToolkitCartPivot"+gait,false,body);
+            var brace=live("ToolkitWoodCartBrace"+gait,true,body);
+            var idle=live("ToolkitWoodCartBrace",true,body);
+            var hand=live("ToolkitWoodCartBraceLeft",true,body);
+            idle.getMainAnimationTrackAt(0).setBlendWeight(1);
+            hand.getMainAnimationTrackAt(0).setBlendWeight(1);
+            for(int frame=0;frame<=100;frame++) {
+                float weight=frame/100f;
+                outgoing.getMainAnimationTrackAt(0).setBlendWeight(1-weight);
+                brace.getMainAnimationTrackAt(0).setBlendWeight(weight);
+                close(CartLegPace.woodenGaitShift(List.of(outgoing,brace,idle,hand)),offset,
+                    gait+" -> held brace preserves the complete native gait clearance throughout blending");
+            }
+            outgoing.getMainAnimationTrackAt(0).setBlendWeight(0);
+            brace.setActive(false);
+            float previous=offset;
+            for(int frame=0;frame<=100;frame++) {
+                float weight=1-frame/100f;
+                brace.getMainAnimationTrackAt(0).setBlendWeight(weight);
+                float shift=CartLegPace.woodenGaitShift(List.of(brace,idle,hand));
+                close(shift,offset*weight,gait+" brace fade to Idle follows its actual inactive track weight");
+                if(shift<previous-1e-6 || shift-previous>Math.abs(offset)/100+1e-6)
+                    throw new AssertionError(gait+" brace clearance snapped during the native fade");
+                previous=shift;
+            }
+            close(previous,0,gait+" brace fade releases the exact ordinary Idle placement");
+        }
+    }
+
     private static void backwardChecks(AnimNode node, Map<String, AnimationClip> clips) {
         String wood = "SaucedWheelbarrow.WheelbarrowWood";
         if (!CartLegPace.walkingReference(wood, false, -1).equals("Bob_WalkBwdNoAim1Hand"))
@@ -592,6 +625,7 @@ public final class CartLegPaceTest {
     }
 
     public static void main(String[] args) throws Exception {
+        fastBraceClearance();
         woodenPivotChecks();
         nativePelvisBinding();
         sideClearance();

@@ -1,10 +1,20 @@
+    private static boolean mpBraceOwner(IsoPlayer player,int cartId) {
+        var item=player==null?null:player.getPrimaryHandItem();
+        // Native menu Host can report isFullyConnected=false after authoritative fixture arming.
+        // This read-only sample belongs to the exact live local owner and server-issued held cart.
+        return zombie.network.GameClient.client && !zombie.network.GameServer.server
+            && zombie.network.GameClient.connection!=null && zombie.network.GameClient.instance.connected && player!=null
+            && player==IsoPlayer.getInstance() && player.isLocalPlayer() && !player.isDead()
+            && "client1".equals(player.getUsername()) && player.getOnlineID()>=0 && player.getCurrentSquare()!=null
+            && item!=null && item.getID()==cartId && item==player.getSecondaryHandItem()
+            && "SaucedWheelbarrow.WheelbarrowWood".equals(item.getFullType())
+            && player.getInventory()!=null && item.getContainer()==player.getInventory();
+    }
+
     @LuaMethod(name="cartMPBrace", global=true)
-    public static String mpBrace(double wallX,double y) throws Exception {
-        var player=IsoPlayer.getInstance();
-        if(!zombie.network.GameClient.client || zombie.network.GameServer.server || player==null
-            || !player.isLocalPlayer() || !"client1".equals(player.getUsername())
-            || zombie.network.GameClient.connection==null || !zombie.network.GameClient.connection.isFullyConnected())
-            throw new IllegalStateException("Connected native MP fixture owner required");
+    public static String mpBrace(IsoPlayer player,int cartId,double wallX,double y) throws Exception {
+        if(!mpBraceOwner(player,cartId))
+            throw new IllegalStateException("Live native MP fixture owner and exact held cart required");
         int z=(int)Math.floor(player.getZ());
         float x=(float)wallX,fy=(float)y;
         if(!Float.isFinite(x+fy) || z<=0 || Math.abs(x-player.getX())>16 || Math.abs(fy-player.getY())>16)

@@ -285,8 +285,8 @@ public final class CartLegPace {
         double shift = 0;
         for (var node : nodes) {
             float offset;
-            if ("ToolkitCartPivotRun".equals(node.getName())) offset = -.12f;
-            else if ("ToolkitCartPivotSprint".equals(node.getName())) offset = -.05f;
+            if ("ToolkitCartPivotRun".equals(node.getName()) || "ToolkitWoodCartBraceRun".equals(node.getName())) offset = -.12f;
+            else if ("ToolkitCartPivotSprint".equals(node.getName()) || "ToolkitWoodCartBraceSprint".equals(node.getName())) offset = -.05f;
             else offset=0;
             if(offset!=0) for (var track : node.getMainAnimationTracks()) {
                 float blend = track.getBlendWeight();

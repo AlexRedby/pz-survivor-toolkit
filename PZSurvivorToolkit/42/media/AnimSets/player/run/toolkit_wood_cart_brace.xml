@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <animNode>
-	<m_Name>ToolkitWoodCartBrace</m_Name>
+	<m_Name>ToolkitWoodCartBraceRun</m_Name>
 	<m_AnimName>Toolkit_WoodCartBrace</m_AnimName>
 	<m_Priority>12</m_Priority>
 	<m_ConditionPriority>301</m_ConditionPriority>
