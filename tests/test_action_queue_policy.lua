@@ -1,4 +1,5 @@
 if not NativeActionRoot then print('Policy native contracts SKIP (pass --native-action-root).');return end
+next = nil -- PZ Kahlua has no global next; capacity checks must work without it.
 local function readNative(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','') end
     local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')
