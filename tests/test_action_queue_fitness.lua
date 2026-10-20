@@ -564,6 +564,34 @@ do
     end
     fitnessPrune();ipairs=nativeIpairs
     assert(scans==0,'empty fitness registry must not scan the queue')
+    local single
+    single,q=request('squats',10);table.remove(q.queue,1);q.current=single
+    local tail=head()
+    for i=1,4096 do q.queue[#q.queue+1]=tail end
+    local function checkPrefix(expected)
+        scans,visits=0,0
+        ipairs=function(values)
+            local iterator,state,index=nativeIpairs(values)
+            if values~=q.queue then return iterator,state,index end
+            scans=scans+1
+            return function(...)
+                local key,value=iterator(...)
+                if key then visits=visits+1 end
+                return key,value
+            end,state,index
+        end
+        fitnessPrune();ipairs=nativeIpairs
+        assert(scans==1 and visits==expected,'fitness pruning must stop at the last sought member')
+    end
+    checkPrefix(1);assert(fitnessQueue.isManaged(single),'tracked current fitness action lost ownership')
+    panel('squats',10):onClick({internal='OK'})
+    local second=table.remove(q.queue);table.insert(q.queue,2,second);checkPrefix(2)
+    assert(fitnessQueue.isManaged(single) and fitnessQueue.isManaged(second),'tracked fitness prefix lost ownership')
+    panel('squats',10):onClick({internal='OK'})
+    local missing=table.remove(q.queue)
+    checkPrefix(#q.queue)
+    assert(not fitnessQueue.isManaged(missing) and fitnessQueue.isManaged(second),
+        'missing fitness member needs a full scan and must not remove a live member')
     ISTimedActionQueue.queues[unrelatedOwner]=nil
     print('PASS fitness pruning has one linear queue pass and no empty-registry scans')
 end

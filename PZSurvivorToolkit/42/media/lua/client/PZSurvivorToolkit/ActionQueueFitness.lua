@@ -354,13 +354,25 @@ Events.OnTick.Add(function()
  local queues
  for action,record in pairs(records) do
   local queue=ISTimedActionQueue.queues[record.saved.player]
-  local members=queues and queues[queue]
-  if queue and not members then
-   members={}
-   for _,queued in ipairs(queue.queue) do members[queued]=true end
-   queues=queues or {};queues[queue]=members
+  if not queue then records[action]=nil
+  else
+   queues=queues or {}
+   local group=queues[queue]
+   if not group then group={pending={},remaining=0};queues[queue]=group end
+   group.pending[action],group.remaining=true,group.remaining+1
   end
-  if not members or not members[action] then records[action]=nil end
+ end
+ if queues then
+  for queue,group in pairs(queues) do
+   -- Stop after the last tracked member, rather than scanning an unrelated tail.
+   for _,action in ipairs(queue.queue) do
+    if group.pending[action] then
+     group.pending[action],group.remaining=nil,group.remaining-1
+     if group.remaining==0 then break end
+    end
+   end
+   for action in pairs(group.pending) do records[action]=nil end
+  end
  end
 end)
 if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() records={} end) end

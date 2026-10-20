@@ -752,6 +752,32 @@ do
     end
     pruneHealth();ipairs=nativeIpairs
     assert(scans==0,'empty medical registry must not scan the queue')
+    local single=request(wound,'HApplyBandage','Base.Bandage')
+    queue=f.queue(single)
+    for i=1,4096 do queue.queue[#queue.queue+1]=book end
+    local function checkPrefix(expected)
+        scans,visits=0,0
+        ipairs=function(values)
+            local iterator,state,index=nativeIpairs(values)
+            if values~=queue.queue then return iterator,state,index end
+            scans=scans+1
+            return function(...)
+                local key,value=iterator(...)
+                if key then visits=visits+1 end
+                return key,value
+            end,state,index
+        end
+        pruneHealth();ipairs=nativeIpairs
+        assert(scans==1 and visits==expected,'medical pruning must stop at the last sought member')
+    end
+    checkPrefix(1);assert(adapter.inspect(single),'tracked current medical action lost ownership')
+    local second=request(wound,'HApplyBandage','Base.Bandage')
+    table.insert(queue.queue,2,second);checkPrefix(2)
+    assert(adapter.inspect(single) and adapter.inspect(second),'tracked medical prefix lost ownership')
+    local missing=request(wound,'HApplyBandage','Base.Bandage')
+    checkPrefix(#queue.queue)
+    assert(not adapter.inspect(missing) and adapter.inspect(second),
+        'missing medical member needs a full scan and must not remove a live member')
     ISTimedActionQueue.queues[unrelatedOwner]=nil
     queue=priorQueue;ISTimedActionQueue.queues[f.player]=queue
 end

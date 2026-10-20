@@ -773,18 +773,28 @@ function Health.install()
         local queues, live
         for action, saved in pairs(records) do
             local queue = ISTimedActionQueue.queues[action.character]
-            local members = queues and queues[queue]
-            if queue and not members then
-                members = {}
-                for _, queued in ipairs(queue.queue) do members[queued] = true end
-                queues = queues or {}
-                queues[queue] = members
-            end
-            if not members or not members[action] then records[action] = nil
+            if not queue then records[action] = nil
             else
-                live = live or {}
-                if saved.handler then live[saved.handler] = true end
-                if saved.origin then live[saved.origin.handler] = true end
+                queues = queues or {}
+                local group = queues[queue]
+                if not group then group = {pending = {}, remaining = 0}; queues[queue] = group end
+                group.pending[action], group.remaining = saved, group.remaining + 1
+            end
+        end
+        if queues then
+            for queue, group in pairs(queues) do
+                -- A short tracked prefix must not scan an unrelated long tail.
+                for _, action in ipairs(queue.queue) do
+                    local saved = group.pending[action]
+                    if saved then
+                        group.pending[action], group.remaining = nil, group.remaining - 1
+                        live = live or {}
+                        if saved.handler then live[saved.handler] = true end
+                        if saved.origin then live[saved.origin.handler] = true end
+                        if group.remaining == 0 then break end
+                    end
+                end
+                for action in pairs(group.pending) do records[action] = nil end
             end
         end
         for handler in pairs(droppedSupplies) do if not live or not live[handler] then droppedSupplies[handler] = nil end end
