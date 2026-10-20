@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.144
+
+- **Fixed:** Seed Season Indicator no longer replaces inventory categories or category sorting with seasonal labels. Toolkit tags retain their normal categories; planting-season icons and detailed tooltips keep the mod's existing knowledge checks and settings.
+
 ### 0.1.143
 
 - **Fixed:** Crafting from storage counts each physical item once when ordinary reachable containers and designated boxes overlap. The quantity limit and fetch plan share one source snapshot, so aliases cannot inflate availability or reserve the same item twice. Crafting refreshes no longer append an already accessible designated container again.

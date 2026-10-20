@@ -13,7 +13,7 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent.parent
 
-TAG_TESTS = ("test_item_tags.lua", "test_tag_visuals.lua", "test_inventory_tags.lua", "test_quartermaster_tags.lua", "test_tag_rule_picker.lua", "test_quartermaster_tag_rules.lua", "test_quartermaster_sync.lua", "test_quartermaster_preset_codec.lua", "test_quartermaster_preset_storage.lua", "test_quartermaster_preset_transactions.lua", "test_quartermaster_item_routing.lua", "test_tag_filter_presets.lua", "test_tag_filter_presets_menu.lua", "native_tags/check_reconnect.lua", "native_tags/check_sort_receipts.lua", "native_tags/check_barrier.lua")
+TAG_TESTS = ("test_seed_season_compat.lua", "test_item_tags.lua", "test_tag_visuals.lua", "test_inventory_tags.lua", "test_quartermaster_tags.lua", "test_tag_rule_picker.lua", "test_quartermaster_tag_rules.lua", "test_quartermaster_sync.lua", "test_quartermaster_preset_codec.lua", "test_quartermaster_preset_storage.lua", "test_quartermaster_preset_transactions.lua", "test_quartermaster_item_routing.lua", "test_tag_filter_presets.lua", "test_tag_filter_presets_menu.lua", "native_tags/check_reconnect.lua", "native_tags/check_sort_receipts.lua", "native_tags/check_barrier.lua")
 ACTION_TESTS = ("test_source_proof.lua", "test_drink_fluid.lua", "test_animal_info.lua", "test_action_queue_animals.lua", "test_ui_style.lua", "test_ui_text_fit.lua", "test_sidebar_tools.lua", "test_inventory_classes.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua", "test_bulk_dismantle.lua", "test_bulk_food.lua", "test_packaged_food.lua", "test_food_cart_compat.lua", "test_bulk_firearms.lua", "test_medicine_moodles.lua", "test_navigator.lua", "test_quantity_transfers.lua", "test_action_queue.lua", "test_action_queue_lifecycle.lua", "test_queue_equipment_floor.lua", "test_queue_equipment_bulk.lua", "test_queue_craft_fixture.lua", "test_queue_craft_ui_fixture.lua", "test_queue_engine_fixture.lua", "test_queue_fire_fixture.lua", "test_queue_fire_tidy.lua", "test_queue_equipment_authority.lua", "test_queue_equipment_slots.lua", "test_queue_equipment_postprocess.lua", "test_action_queue_acknowledgements.lua", "test_action_queue_operations.lua", "test_action_queue_world.lua", "test_action_queue_dismantle.lua", "test_action_queue_targets.lua", "test_action_queue_labels.lua", "test_action_queue_craft.lua", "test_action_queue_batches.lua", "test_action_queue_batch_controller.lua", "test_action_queue_appliances.lua", "test_action_queue_fuel.lua", "test_action_queue_wreck.lua", "test_action_queue_repair.lua", "test_action_queue_policy.lua", "test_action_queue_hygiene.lua", "test_action_queue_compat.lua", "test_action_queue_grab_compat.lua", "test_action_queue_tidy_intent.lua", "test_action_queue_manifest.lua", "test_action_queue_health.lua", "test_action_queue_dispatch.lua", "test_action_queue_generators.lua", "test_action_queue_generator_overlay.lua", "test_action_queue_carts.lua", "test_action_queue_fire.lua", "test_action_queue_priority.lua", "test_set_stove_state.lua", "test_craft_planner.lua", "test_craft_chain_recipes.lua", "test_craft_chains.lua", "test_mpff_compat.lua", "test_bc_filter_compat.lua", "test_context_menu_rules.lua", "test_context_menus.lua", "test_context_menu_profile.lua", "test_context_menu_profile_storage.lua", "test_context_menu_profile_failures.lua", "test_context_menu_editor.lua")
 ACTION_TESTS += ("test_action_queue_media.lua", "test_bc_pins.lua", "test_action_queue_fitness.lua", "test_crafting_controls.lua")
 ACTION_TESTS += ("test_action_queue_edit_model.lua", "test_action_queue_edit_adapters.lua", "test_action_queue_edit_policy.lua")
@@ -86,6 +86,7 @@ def main() -> None:
                         help="test against an extracted vanilla PZAPI/ModOptions.lua")
     parser.add_argument("--cleanui-inventory-pane", type=Path, help="test against CleanUI ISInventoryPane.lua")
     parser.add_argument("--native-inventory-pane", type=Path, help="test against vanilla ISInventoryPane.lua")
+    parser.add_argument("--seed-season-source", type=Path, help="Seed Season Indicator client SeedSeasonIndicator.lua for actual-source compatibility checks")
     parser.add_argument("--tv-source", type=Path, help="test VHS controls against TVRadio Reinvented RWMMergedTV.lua")
     parser.add_argument("--native-radio-root", type=Path, help="vanilla media/lua/client directory for RWMMedia and ISItemDropBox checks")
     parser.add_argument("--navigator-source", type=Path, help="NavigatorRadio source directory for upstream render/input checks")
@@ -103,6 +104,8 @@ def main() -> None:
     parser.add_argument("--saucedcarts-source", type=Path, help="SaucedCarts shared module directory for server hook checks")
     parser.add_argument("--wheelbarrow-source", type=Path, help="SaucedWheelbarrow registration init.lua for spawn checks")
     args = parser.parse_args()
+    if args.seed_season_source is not None and not args.seed_season_source.is_file():
+        parser.error("--seed-season-source must be an existing SeedSeasonIndicator.lua: " + str(args.seed_season_source))
     quartermaster_root = ROOT / "PZSurvivorToolkit/42/media/lua"
     available = set(TAG_TESTS) | set(ACTION_TESTS) | set(EXTRA_TESTS)
     available.update(path.name for path in (ROOT / "tests").glob("test_wishlist_*.lua"))
@@ -149,6 +152,8 @@ def main() -> None:
             continue
         check = LuaRuntime(unpack_returned_tuples=True)
         check.globals().ProjectRoot = str(ROOT)
+        if name == "test_seed_season_compat.lua" and args.seed_season_source:
+            check.globals().SeedSeasonSource = args.seed_season_source.read_text(encoding="utf-8")
         if name == "test_inventory_tags.lua" and args.native_inventory_pane:
             check.globals().NativeInventoryPaneSource = args.native_inventory_pane.read_text(encoding="utf-8")
         if name == "test_inventory_tags.lua" and args.cleanui_inventory_pane:
