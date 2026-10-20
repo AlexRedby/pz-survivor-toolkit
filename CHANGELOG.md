@@ -15,6 +15,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.174
+
+- **Fixed:** Removed three obsolete modern police separator references from the reviewed Vanilla Vehicles Animated profiles after validating and applying their existing bars template. The missing references previously produced startup errors without changing the parsed vehicles. Vehicle parameters and the single existing bars model are preserved; unknown source versions and templates or profiles provided by other mods remain untouched.
+
 ### 0.1.173
 
 - **Fixed:** Queue hints reuse short-lived display text instead of recalculating dependencies every rendered frame. Interactions still validate current state, and hints refresh after queue changes or a short delay.

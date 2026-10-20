@@ -3,6 +3,7 @@ local shared = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/"
 local report = print
 local typo, decor = "VVA_StepVan_Decor_Trunk", "VVA_StepVan_Trunk_Decor"
 local modernTypo, modernDecor = "VVA_Modern_DecorBars", "VVA_ModernBars_Decor"
+local modernSeparator = "VVA_Modern_PoliceSeparator"
 local rangerOld, rangerDecor = "VVA_Normal_PoliceSeparator", "VVA_NormalBars_Decor"
 local function read(path)
     local file = assert(io.open(path, "r"), path)
@@ -13,6 +14,7 @@ end
 local function setup(options)
     options = options or {}
     local w = {loaded = {}, scripts = {}, loads = {}, events = {}, messages = {}, required = {}, readers = 0, closed = 0}
+    w.sourceRewritten = options.fixed or options.fixedRanger
     PZSurvivorToolkit = nil
     getActivatedMods = function() return {contains = function(_, id)
         return options.active ~= false and id == (options.prefixed and "\\VanillaVehiclesAnimated" or "VanillaVehiclesAnimated")
@@ -42,6 +44,7 @@ local function setup(options)
             if name == "Base." .. typo and options.realAlias then return {} end
             if name == "Base." .. modernDecor and options.modern then return {} end
             if name == "Base." .. modernTypo and options.realModernAlias then return {} end
+            if name == "Base." .. modernSeparator and options.realModernSeparator then return {} end
             if name == "Base." .. rangerDecor and options.ranger then return {} end
             if name == "Base." .. rangerOld and options.realRangerAlias then return {} end
         end,
@@ -92,17 +95,23 @@ end
 local trunkSource = read(NativeVVASourceRoot .. "/media/scripts/vehicles/VVA2/StepVan/TrunkFill.txt")
 assert(trunkSource:find("template vehicle " .. decor, 1, true) and not trunkSource:find(typo, 1, true))
 local baseline = setup(); baseline.boot()
-local function tokens(text)
+local function tokens(text, sourceRewritten)
+    -- Compare the complete ordered declarations, including their block structure.
+    if not sourceRewritten then return text:gsub("%s+", "") end
     local result = {}
     for token in text:gmatch("[^,{}]+") do
         token = token:gsub("%s+", ""):gsub(";", "")
         if token ~= "" then result[#result + 1] = token end
     end
+    -- A simulated upstream rename changes its plus-table keys and pairs order.
+    -- Compatibility runs use the unchanged input and must preserve order exactly.
     table.sort(result)
     return table.concat(result, ",")
 end
-local function compare(actual, removeTypo, fixModern, fixRanger)
-    local affected, modernAffected, rangerAffected, total = 0, 0, 0, 0
+local policeVehicles = {['Base.ModernCarLightsCityLouisvillePD'] = true,
+    ['Base.ModernCarLightsMeadeSheriff'] = true, ['Base.ModernCarLightsWestPoint'] = true}
+local function compare(actual, removeTypo, fixModern, fixRanger, removeSeparator)
+    local affected, modernAffected, rangerAffected, separatorsRemoved, total = 0, 0, 0, 0, 0
     for name, text in pairs(baseline.scripts) do
         local expected, count = text:gsub("template! = " .. typo .. ",", "")
         assert(count <= 1)
@@ -132,7 +141,15 @@ local function compare(actual, removeTypo, fixModern, fixRanger)
                 assert(properCount == 1, name .. " lost or duplicated ranger bars")
             end
         end
-        assert(tokens(actual.scripts[name]) == tokens(expected), name .. " changed other vehicle data")
+        if removeSeparator then
+            local separatorCount
+            expected, separatorCount = expected:gsub("template! = " .. modernSeparator .. ",", "")
+            if separatorCount > 0 then
+                assert(separatorCount == 1 and policeVehicles[name], "separator cleanup affected another vehicle")
+                separatorsRemoved = separatorsRemoved + 1
+            end
+        end
+        assert(tokens(actual.scripts[name], actual.sourceRewritten) == tokens(expected, actual.sourceRewritten), name .. " changed other vehicle declarations or their order")
         assert(actual.loads[name] == 1, "vehicle script loaded more than once: " .. name)
         total = total + 1
     end
@@ -140,6 +157,7 @@ local function compare(actual, removeTypo, fixModern, fixRanger)
     assert(affected == 29, "reviewed upstream changed its affected native vehicle set: " .. affected)
     if fixModern then assert(modernAffected == 3, "reviewed Modern police vehicle set changed") end
     if fixRanger then assert(rangerAffected == 1, "reviewed ranger vehicle set changed") end
+    if removeSeparator then assert(separatorsRemoved == 3, "reviewed obsolete separator vehicle set changed") end
     return total
 end
 w = setup(); dofile(module); assert(w.active()); dofile(module); w.boot()
@@ -175,13 +193,13 @@ local barsPath = "media/scripts/vehicles/VVA2/Modern/Bars.txt"
 local barsSource = read(NativeVVASourceRoot .. "/" .. barsPath)
 assert(barsSource:find("template vehicle " .. modernDecor, 1, true)
     and barsSource:find("model DecorBars", 1, true) and barsSource:find("file = VVA_Vehicles_ModernBars_decor", 1, true))
-w = setup({modern = true}); dofile(module); assert(w.active()); dofile(module); w.boot(); compare(w, true, true)
+w = setup({modern = true}); dofile(module); assert(w.active()); dofile(module); w.boot(); compare(w, true, true, false, true)
 local separators = 0
 for _, text in pairs(w.scripts) do
     local _, count = text:gsub("template! = VVA_[%w]+_PoliceSeparator,", "")
     separators = separators + count
 end
-assert(separators == 4, "unresolved PoliceSeparator leaves must remain visible")
+assert(separators == 1, "only the unrelated normal separator must remain without its ranger correction")
 local modernMarkers = 0
 for _, message in ipairs(w.messages) do if message == "[PZSurvivorToolkit] VVA Modern bars template compatibility active" then modernMarkers = modernMarkers + 1 end end
 assert(modernMarkers == 1)
@@ -191,7 +209,7 @@ end
 w = setup({modern = true}); vva = require("VVA_core"); vva.addToProfile(modernTypo, {modernDecor})
 dofile(module); w.boot(); compare(w, true, true)
 w = setup({modern = true, changed = "media/scripts/vehicles/VVA2/StepVan/TrunkFill.txt"})
-dofile(module); assert(w.active()); w.boot(); compare(w, false, true)
+dofile(module); assert(w.active()); w.boot(); compare(w, false, true, false, true)
 report("PASS real VVA Modern bars: three exact alias replacements, one decor each; unknown/existing target guards and independence from StepVan")
 
 local rangerPath = "media/scripts/vehicles/VVA2/Normal/interiorDecor.txt"
@@ -199,7 +217,7 @@ local rangerSource = read(NativeVVASourceRoot .. "/" .. rangerPath)
 assert(rangerSource:find("template vehicle " .. rangerDecor, 1, true)
     and rangerSource:find("mesh = vehicles/VVA/Normal/static|decorBars", 1, true)
     and rangerSource:find("file = VVA_Vehicles_NormalBars_decor", 1, true))
-w = setup({modern = true, ranger = true}); dofile(module); dofile(module); w.boot(); compare(w, true, true, true)
+w = setup({modern = true, ranger = true}); dofile(module); dofile(module); w.boot(); compare(w, true, true, true, true)
 local rangerMarkers, modernSeparators = 0, 0
 for _, message in ipairs(w.messages) do
     if message == "[PZSurvivorToolkit] VVA ranger bars template compatibility active" then rangerMarkers = rangerMarkers + 1 end
@@ -209,7 +227,7 @@ for _, text in pairs(w.scripts) do
     local _, count = text:gsub("template! = VVA_Modern_PoliceSeparator,", "")
     modernSeparators = modernSeparators + count
 end
-assert(rangerMarkers == 1 and modernSeparators == 3, "ranger activation must leave the three unresolved Modern separators visible")
+assert(rangerMarkers == 1 and modernSeparators == 0, "combined corrections must remove only the proven stale references")
 assert(w.readers == w.closed)
 for _, options in ipairs({{ranger = true, changed = rangerPath}, {ranger = true, realRangerAlias = true}, {ranger = false}}) do
     w = setup(options); dofile(module); w.boot(); compare(w, true)
@@ -222,5 +240,38 @@ assert(not w.active() and not w.required.VVA_core, "upstream's own ranger correc
 w.boot(); compare(w, false, false, true)
 w = setup({ranger = true, noDecor = true}); dofile(module); w.boot(); compare(w, false, false, true)
 w = setup({ranger = true, prefixed = true}); require("VVA_applyAnimations"); dofile(module); w.events[1](); compare(w, true, false, true)
-report("PASS real VVA ranger migration: only CarLightsRanger gains one existing bars decor; three Modern separators remain; source/native/profile/fixed-upstream guards passed")
+report("PASS real VVA ranger migration: only CarLightsRanger gains one existing bars decor; source/native/profile/fixed-upstream guards passed")
+
+local cleanupMarker = "[PZSurvivorToolkit] VVA obsolete Modern separator cleanup active"
+w = setup({modern = true, prefixed = true}); require("VVA_applyAnimations"); dofile(module); dofile(module)
+w.events[1](); compare(w, true, true, false, true)
+local cleanupMarkers = 0
+for _, message in ipairs(w.messages) do if message == cleanupMarker then cleanupMarkers = cleanupMarkers + 1 end end
+assert(cleanupMarkers == 1, "obsolete separator cleanup marker must be emitted once")
+for _, options in ipairs({{modern = false}, {modern = true, changed = barsPath},
+    {modern = true, changed = "media/lua/shared/VVA_core.lua"},
+    {modern = true, changed = "media/lua/shared/VVA_applyAnimations.lua"},
+    {modern = true, realModernAlias = true}, {modern = true, realModernSeparator = true}}) do
+    w = setup(options); dofile(module); w.boot()
+    local core = require("VVA_core")
+    assert(not core.IsProfileDefined(modernSeparator), "unproven cleanup registered an empty separator profile")
+    local sourceChanged = options.changed == "media/lua/shared/VVA_core.lua" or options.changed == "media/lua/shared/VVA_applyAnimations.lua"
+    compare(w, not sourceChanged, options.realModernSeparator == true)
+    for _, message in ipairs(w.messages) do assert(message ~= cleanupMarker) end
+end
+for _, profile in ipairs({modernSeparator, modernTypo}) do
+    w = setup({modern = true}); vva = require("VVA_core")
+    vva.addToProfile(profile, {"OtherModTemplate"})
+    dofile(module); w.boot()
+    for name in pairs(policeVehicles) do
+        assert(w.scripts[name]:find("template! = OtherModTemplate,", 1, true), "opaque existing profile was changed")
+        if profile == modernTypo then
+            assert(w.scripts[name]:find("template! = " .. modernSeparator .. ",", 1, true), "opaque bars alias permitted separator cleanup")
+        else
+            assert(not w.scripts[name]:find("template! = " .. modernSeparator .. ",", 1, true))
+        end
+    end
+    for _, message in ipairs(w.messages) do assert(message ~= cleanupMarker) end
+end
+report("PASS obsolete Modern separator cleanup: exactly three police leaves removed with declaration order preserved; one bars each; unknown sources, missing targets and opaque/native profiles preserved")
 print = report

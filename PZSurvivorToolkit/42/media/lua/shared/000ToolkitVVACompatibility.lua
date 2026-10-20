@@ -37,12 +37,25 @@ end
 -- Unlike the redundant StepVan leaf, the misspelled Modern leaf has not applied
 -- its decor yet. Resolve it to the existing, source-verified bars template.
 missing, decor = "VVA_Modern_DecorBars", "VVA_ModernBars_Decor"
+local modernBarsInstalled = false
 if Proof.matches("media/scripts/vehicles/VVA2/Modern/Bars.txt", 684814076, id, true)
     and manager:getVehicleTemplate("Base." .. decor)
     and not manager:getVehicleTemplate("Base." .. missing) and not VVA.IsProfileDefined(missing) then
     VVA.addToProfile(missing, {decor})
+    modernBarsInstalled = true
     PZSurvivorToolkit.VVACompatibility = true
     print("[PZSurvivorToolkit] VVA Modern bars template compatibility active")
+end
+
+-- The pinned police profile still requests an obsolete missing separator after
+-- its existing bars decor. Native Load only logs and skips that absent leaf.
+-- Keep the current loaded state: remove that reference only when this invocation
+-- installed our verified bars alias, never on the strength of an opaque profile.
+missing = "VVA_Modern_PoliceSeparator"
+if modernBarsInstalled and not manager:getVehicleTemplate("Base." .. missing)
+    and not VVA.IsProfileDefined(missing) then
+    VVA.addToProfile(missing, {})
+    print("[PZSurvivorToolkit] VVA obsolete Modern separator cleanup active")
 end
 
 -- Upstream 7cc1115985835bb2b48d5d6b6c702ac296085270 migrated normal police
