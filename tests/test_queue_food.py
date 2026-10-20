@@ -30,19 +30,23 @@ class FoodAdapterTests(unittest.TestCase):
         for index, case in enumerate(cases):
             bag, enabled, depletion = case == food.BAG_CASE, self.selection['mode'] == 'toolkit', case == food.DEPLETION_CASE
             smart, utensil, cookable = case in food.SMART_CASES, case in food.UTENSIL_CASES, case in food.COOKABLE_CASES
+            replacement = case in food.REPLACEMENT_CASES
+            thermal = cookable or replacement
             cooked = case in (food.COOKED_MOVE_CASE, food.COOKED_CANCEL_CASE)
-            base_hunger = -.3 if cooked else -.24 if cookable else -.5 if utensil else -.4
-            cancel = case in (food.CANCEL_CASE, food.SMART_CANCEL_CASE, food.UTENSIL_CANCEL_CASE, food.COOKED_CANCEL_CASE, food.RAW_CANCEL_CASE) and enabled
+            base_hunger = -.1 if replacement else -.3 if cooked else -.24 if cookable else -.5 if utensil else -.4
+            cancel = case in (food.CANCEL_CASE, food.SMART_CANCEL_CASE, food.UTENSIL_CANCEL_CASE, food.COOKED_CANCEL_CASE, food.RAW_CANCEL_CASE, food.REPLACEMENT_CANCEL_CASE) and enabled
             base = 100 + 10 * index
             prep = dict(case=case, bagId=base, bagType='Base.Bag_ALICEpack_Army', bagCount=1,
-                        foodId=base + 1, foodType='Base.ChickenFillet' if cooked else 'Base.Cabbage' if cookable else 'Base.OatsRaw' if utensil else 'Base.Cereal',
+                        foodId=base + 1, foodType='Base.BreadSlices' if replacement else 'Base.ChickenFillet' if cooked else 'Base.Cabbage' if cookable else 'Base.OatsRaw' if utensil else 'Base.Cereal',
                         baseHunger=base_hunger, remaining=-.3 if smart else base_hunger,
                         source='bag' if bag else 'root', foodCount=1, foodTypeCount=1, deleted=False,
                         anchorId=base + 2, anchorType='Base.WaterBottle', anchorAmount=1.0,
                         anchorCount=1, anchorThirstChange=-.5, hunger=.2 if smart else .8, thirst=.8, foodTimer=0, foodLevel=0)
-            if cookable:
+            if thermal:
                 prep.update(cookable=True, cooked=cooked, burnt=False, rotten=False, fertilized=False,
                             heat=1, inventoryTemperature=1)
+            if replacement:
+                prep.update(replacementType='Base.Toast', replacementCount=0, cookingTime=0)
             if utensil:
                 prep.update(forkId=base + 3, forkType='Base.Fork', forkCount=1,
                             forkSource='bag' if case == food.UTENSIL_MOVE_CASE else 'root',
@@ -50,7 +54,7 @@ class FoodAdapterTests(unittest.TestCase):
                             spoonId=base + 4, spoonType='Base.Spoon', spoonCount=1,
                             spoonSource='root' if case == food.UTENSIL_MOVE_CASE else 'bag', spoonCondition=5)
             fraction = (.125 if cancel else .75) if utensil else (.375 if cancel else .5) if smart else 1 if depletion else .5 if bag else .25 if cancel else .75
-            receipt = {key: value for key, value in prep.items() if key in food.RECEIPT_KEYS | (food.UTENSIL_RECEIPT_KEYS if utensil else set()) | (food.COOKABLE_RECEIPT_KEYS if cookable else set())}
+            receipt = {key: value for key, value in prep.items() if key in food.RECEIPT_KEYS | (food.UTENSIL_RECEIPT_KEYS if utensil else set()) | (food.COOKABLE_RECEIPT_KEYS if thermal else set()) | (food.REPLACEMENT_RECEIPT_KEYS if replacement else set())}
             receipt.update(remaining=prep['remaining'] - prep['baseHunger'] * fraction if smart else prep['baseHunger'] * (1 - fraction), source='deleted' if depletion else 'root' if not bag or enabled else 'bag',
                            foodCount=0 if depletion else 1, foodTypeCount=0 if depletion else 1, deleted=depletion,
                            anchorAmount=.5, anchorThirstChange=-.25, hunger=prep['hunger'] + prep['baseHunger'] * fraction * (1.3 if cooked else 1),
@@ -59,7 +63,7 @@ class FoodAdapterTests(unittest.TestCase):
                              dispatchSource=prep['source'], menuDispatched=not bag, nativeDuration=464 if portion == 1 else 232,
                              progress=not (cancel and n == 0), cancelled=cancel and n == 0, pickupObserved=bag)
                         for n, portion in enumerate([.625, .125] if utensil else [.125, .375] if smart else [.25, 1] if depletion else [.5] if bag else [.5, .25])]
-            if cookable:
+            if thermal:
                 for command in commands:
                     command.update(cooked=cooked, dispatchHeat=1)
             if utensil:
@@ -71,7 +75,7 @@ class FoodAdapterTests(unittest.TestCase):
                 for command, goal in zip(commands, (15, 5)):
                     command.update(smartGoal=goal, dispatchHunger=prep['hunger'])
             edit = dict(emptyStart=True, anchorRunning=True, anchorProgress=True, anchorDuration=460,
-                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE, food.COOKED_MOVE_CASE, food.RAW_MOVE_CASE),
+                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE, food.COOKED_MOVE_CASE, food.RAW_MOVE_CASE, food.REPLACEMENT_MOVE_CASE),
                         waitingCancel=cancel, moveRejected=enabled and (bag or depletion), cancelRejected=enabled and bag,
                         manualPickup=bag, untouchedBefore=True, nativeDurationsUnchanged=True,
                         order=[1] if bag else [1, 2] if depletion else [2] if cancel else [2, 1] if enabled else [1, 2])
@@ -525,7 +529,7 @@ end
                             self.assertTrue(self.verify((rows, raw))['issues'])
 
     def test_cookable_state_flags_and_temperature_cannot_be_forged(self):
-        for case in food.COOKABLE_CASES:
+        for case in (*food.COOKABLE_CASES, *food.REPLACEMENT_CASES):
             cooked = case in (food.COOKED_MOVE_CASE, food.COOKED_CANCEL_CASE)
             for field, wrong in [('cookable', False), ('cooked', not cooked), ('burnt', True),
                                  ('rotten', True), ('fertilized', True), ('inventoryTemperature', 1.01),
@@ -562,7 +566,7 @@ end
     def test_cookable_hunger_portion_duration_and_command_state_are_strict(self):
         for mode in ('native', 'toolkit'):
             self.selection['mode'] = mode
-            for case in food.COOKABLE_CASES:
+            for case in (*food.COOKABLE_CASES, *food.REPLACEMENT_CASES):
                 cooked = case in (food.COOKED_MOVE_CASE, food.COOKED_CANCEL_CASE)
                 for field, wrong in [('cooked', not cooked), ('cooked', 1), ('cooked', 'true'),
                                      ('dispatchHeat', -.001), ('dispatchHeat', 1.6001), ('dispatchHeat', True),
@@ -581,15 +585,80 @@ end
                 for fault in ('wrong-hunger-multiplier', 'cooked-multiplier-on-remaining', 'remaining-fraction'):
                     rows, raw = self.single(case)
                     prep = raw[0][1]
-                    portion = .25 if mode == 'toolkit' and case in (food.COOKED_CANCEL_CASE, food.RAW_CANCEL_CASE) else .75
+                    portion = .25 if mode == 'toolkit' and case in (food.COOKED_CANCEL_CASE, food.RAW_CANCEL_CASE, food.REPLACEMENT_CANCEL_CASE) else .75
                     for record in (rows[1], rows[1]['client'], raw[1][1]):
                         if fault == 'wrong-hunger-multiplier':
-                            record['hunger'] = .8 + prep['baseHunger'] * portion * (1 if cooked else 1.3)
+                            # Bread's quarter portion needs a larger wrong debit to exceed native actor drift tolerance.
+                            multiplier = 2 if case in food.REPLACEMENT_CASES else 1 if cooked else 1.3
+                            record['hunger'] = .8 + prep['baseHunger'] * portion * multiplier
                         elif fault == 'cooked-multiplier-on-remaining':
                             record['remaining'] = prep['baseHunger'] * (1 - portion) * 1.3
                         else:
                             record['remaining'] = prep['baseHunger'] * .5 * .75
                     with self.subTest(mode=mode, case=case, fault=fault):
+                        self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_cold_cooking_replacement_preserves_original_bread_and_existing_toast_count(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode)
+                for case in food.REPLACEMENT_CASES:
+                    rows, raw = self.single(case)
+                    prep, receipt = raw[0][1], raw[1][1]
+                    cancelled = mode == 'toolkit' and case == food.REPLACEMENT_CANCEL_CASE
+                    with self.subTest(kind=kind, mode=mode, case=case):
+                        self.assertEqual([], self.verify((rows, raw))['issues'])
+                        self.assertEqual('Base.BreadSlices', prep['foodType'])
+                        self.assertEqual(prep['foodId'], receipt['foodId'])
+                        self.assertEqual((1, 1, False), (receipt['foodCount'], receipt['foodTypeCount'], receipt['deleted']))
+                        self.assertAlmostEqual(-.075 if cancelled else -.025, receipt['remaining'])
+                        self.assertAlmostEqual(.775 if cancelled else .725, receipt['hunger'])
+                        self.assertAlmostEqual(.55, receipt['thirst'])
+                        self.assertEqual([.5, .25], [c['portion'] for c in rows[1]['commands']])
+                        self.assertEqual([232, 232], [c['nativeDuration'] for c in rows[1]['commands']])
+                        self.assertEqual([2] if cancelled else [2, 1] if mode == 'toolkit' else [1, 2], rows[1]['editEvidence']['order'])
+                        self.assertEqual(('Base.Toast', 0, 0), tuple(receipt[key] for key in ('replacementType', 'replacementCount', 'cookingTime')))
+                    for record in (prep, rows[1], rows[1]['client'], receipt): record['replacementCount'] = 3
+                    self.assertEqual([], self.verify((rows, raw))['issues'], 'preexisting Toast must be conserved')
+
+    def test_cooking_replacement_evidence_cannot_hide_replacement_or_cooking(self):
+        for case in food.REPLACEMENT_CASES:
+            for field, wrong in [('replacementType', 'Base.BreadSlices'), ('replacementType', False),
+                                 ('replacementCount', -1), ('replacementCount', True), ('replacementCount', 0.0),
+                                 ('replacementCount', '0'), ('cookingTime', .00001), ('cookingTime', True),
+                                 ('cookingTime', '0'), ('cookingTime', float('nan'))]:
+                rows, raw = self.single(case)
+                for record in (raw[0][1], rows[1], rows[1]['client'], raw[1][1]): record[field] = wrong
+                with self.subTest(case=case, field=field, wrong=wrong):
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+            for field, wrong in [('foodId', 999), ('foodType', 'Base.Toast'), ('foodCount', 0),
+                                 ('foodTypeCount', 0), ('deleted', True), ('replacementCount', 1),
+                                 ('replacementType', 'Base.Cereal'), ('cookingTime', 1),
+                                 ('hunger', .7025), ('remaining', -.0325), ('thirst', .475)]:
+                rows, raw = self.single(case)
+                for record in (rows[1], rows[1]['client'], raw[1][1]): record[field] = wrong
+                with self.subTest(case=case, effect=field):
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+            for field in food.REPLACEMENT_RECEIPT_KEYS:
+                for location in ('prepared', 'receipt', 'row', 'client'):
+                    rows, raw = self.single(case)
+                    record = {'prepared': raw[0][1], 'receipt': raw[1][1], 'row': rows[1], 'client': rows[1]['client']}[location]
+                    record.pop(field)
+                    with self.subTest(case=case, location=location, missing=field):
+                        self.assertTrue(self.verify((rows, raw))['issues'])
+            for field in ('replacementType', 'replacementCount', 'cookingTime'):
+                rows, raw = self.single(case)
+                rows[1]['commands'][0][field] = 0
+                with self.subTest(case=case, extra_command=field): self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_cooking_replacement_receipt_fields_are_only_accepted_for_replacement_cases(self):
+        for case in (food.MOVE_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE, food.RAW_MOVE_CASE):
+            for field in food.REPLACEMENT_RECEIPT_KEYS:
+                for location in ('prepared', 'receipt', 'row', 'client'):
+                    rows, raw = self.single(case)
+                    record = {'prepared': raw[0][1], 'receipt': raw[1][1], 'row': rows[1], 'client': rows[1]['client']}[location]
+                    record[field] = 0
+                    with self.subTest(case=case, extra=field, location=location):
                         self.assertTrue(self.verify((rows, raw))['issues'])
 
     def test_cookable_fields_are_only_accepted_for_registered_cookable_cases(self):

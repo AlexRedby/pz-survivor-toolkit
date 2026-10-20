@@ -187,6 +187,11 @@ local function dispatch()
    assert(action.item:isCooked()==command.cooked and action.item:getHeat()>=0 and action.item:getHeat()<=1.6,
     'edit changed stable cooking state')
   end
+  if spec.replacement then
+   local outputs=action.item:getReplaceOnCooked()
+   assert(outputs and outputs:size()==1 and outputs:get(0)==ids.replacementType and action.item:getCookingTime()==ids.cookingTime,
+    'edit changed native cooking replacement')
+  end
  end
  evidence.untouchedBefore=true;evidence.nativeDurationsUnchanged=true
 end

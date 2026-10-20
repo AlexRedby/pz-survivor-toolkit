@@ -319,7 +319,7 @@ function Adapters.food(action)
     if not script or script:isCantEat() or script:getOpeningRecipe() or script:getOnBreak()
         or script:getReplaceOnUse() or script:getReplaceOnDeplete() or item:getReplaceOnUse()
         or item:getOnEat() or item:getOnCooked() or item:getReplaceOnRotten()
-        or cookedOutputs and not cookedOutputs:isEmpty()
+        or cookedOutputs and not cookedOutputs:isEmpty() and not item:isCookable()
         or item:getRequireInHandOrInventory() or item:getCustomMenuOption()
         or item:hasTag(ItemTag.SMOKABLE) or not item:isDisappearOnUse() or item:isKeepOnDeplete()
         or item:getUses()~=1 or item:getFluidContainer() or item:isTainted() or item:getPoisonPower()~=0
@@ -329,6 +329,7 @@ function Adapters.food(action)
         -- Hot food keeps cooking slowly even after pickup. Native temperature
         -- follows the outermost container; every supported carried transfer
         -- keeps that container equal to this player's inventory.
+        -- Cooking replacements are unreachable throughout this cold range.
         local heat,ambient=item:getHeat(),action.character:getInventory():getTemperature()
         if not finite(heat) or heat<0 or heat>1.6 or not finite(ambient) or ambient<0 or ambient>1.6
             or item:isFertilized() or not ItemTag.ALREADY_COOKED

@@ -21,7 +21,10 @@ COOKED_CANCEL_CASE = 'food-cooked-cancel-first-portion'
 RAW_MOVE_CASE = 'food-raw-cookable-move-portions'
 RAW_CANCEL_CASE = 'food-raw-cookable-cancel-first-portion'
 COOKABLE_CASES = (COOKED_MOVE_CASE, COOKED_CANCEL_CASE, RAW_MOVE_CASE, RAW_CANCEL_CASE)
-CASES = [MOVE_CASE, CANCEL_CASE, BAG_CASE, DEPLETION_CASE, *SMART_CASES, *UTENSIL_CASES, *COOKABLE_CASES]
+REPLACEMENT_MOVE_CASE = 'food-cooking-replacement-move-portions'
+REPLACEMENT_CANCEL_CASE = 'food-cooking-replacement-cancel-first-portion'
+REPLACEMENT_CASES = (REPLACEMENT_MOVE_CASE, REPLACEMENT_CANCEL_CASE)
+CASES = [MOVE_CASE, CANCEL_CASE, BAG_CASE, DEPLETION_CASE, *SMART_CASES, *UTENSIL_CASES, *COOKABLE_CASES, *REPLACEMENT_CASES]
 # The full selected installation. Locked EatSmart debug logging leaves native completion unchanged.
 MODS = next(line.split('=', 1)[1].split(';') for line in
             (Path(__file__).resolve().parents[3] / 'SurvivorQoL-selected.ini').read_text().splitlines()
@@ -34,6 +37,7 @@ UTENSIL_RECEIPT_KEYS = {'forkId', 'forkType', 'forkSource', 'forkCondition', 'fo
 UTENSIL_COMMAND_KEYS = {'useUtensil', 'utensilId', 'forkId', 'spoonId'}
 COOKABLE_RECEIPT_KEYS = {'cookable', 'cooked', 'burnt', 'rotten', 'fertilized', 'heat', 'inventoryTemperature'}
 COOKABLE_COMMAND_KEYS = {'cooked', 'dispatchHeat'}
+REPLACEMENT_RECEIPT_KEYS = {'replacementType', 'replacementCount', 'cookingTime'}
 FLAGS = {'emptyStart', 'anchorRunning', 'anchorProgress', 'anchorDuration', 'contractsVerified',
          'reordered', 'waitingCancel', 'moveRejected', 'cancelRejected', 'manualPickup',
          'untouchedBefore', 'nativeDurationsUnchanged', 'order'}
@@ -77,6 +81,14 @@ def definitions():
                 'move-independent': {case: edited[case] for case in (COOKED_MOVE_CASE, RAW_MOVE_CASE)},
                 'cancel-waiting': {case: edited[case] for case in (COOKED_CANCEL_CASE, RAW_CANCEL_CASE)},
                 'server-authority': {case: {'effectsVerified': True, 'serverAuthorityVerified': True} for case in COOKABLE_CASES}}},
+        'eat-cooking-replacement': {
+            'scope': 'Cold raw Base.BreadSlices with native ReplaceOnCooked=Base.Toast retains its exact original item and original-food fractions .5 then .25 behind a clean-water drink. Native durations stay 232. Move the second first or cancel the first; native controls retain both. Cooking time stays zero and no Toast is added. No active or hot cooking, cooking callbacks, utensils, active eating cancellation or physical menu input.',
+            'mods': MODS, 'checks': {
+                'success-queued': {case: common[case] for case in REPLACEMENT_CASES},
+                'repeat-same': {case: common[case] for case in REPLACEMENT_CASES},
+                'move-independent': {REPLACEMENT_MOVE_CASE: edited[REPLACEMENT_MOVE_CASE]},
+                'cancel-waiting': {REPLACEMENT_CANCEL_CASE: edited[REPLACEMENT_CANCEL_CASE]},
+                'server-authority': {case: {'effectsVerified': True, 'serverAuthorityVerified': True} for case in REPLACEMENT_CASES}}},
         'eat-transfers': {
             'scope': 'A native manual cereal grab and standalone half-eat/return pending behind a real drink. Move an already-destination return before pickup; deny pickup removal and pickup-after-eat. Native controls retain pickup/eat/return and finish in the bag.',
             'mods': MODS, 'checks': {
@@ -134,16 +146,20 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
     issues = []
     bag, enabled, depletion = case == BAG_CASE, mode == 'toolkit', case == DEPLETION_CASE
     smart, utensil, cookable = case in SMART_CASES, case in UTENSIL_CASES, case in COOKABLE_CASES
+    replacement = case in REPLACEMENT_CASES
+    thermal = cookable or replacement
     cooked = case in (COOKED_MOVE_CASE, COOKED_CANCEL_CASE)
-    base_hunger = -.3 if cooked else -.24 if cookable else -.5 if utensil else -.4
-    food_type = 'Base.ChickenFillet' if cooked else 'Base.Cabbage' if cookable else 'Base.OatsRaw' if utensil else 'Base.Cereal'
-    receipt_keys = RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if utensil else set()) | (COOKABLE_RECEIPT_KEYS if cookable else set())
+    base_hunger = -.1 if replacement else -.3 if cooked else -.24 if cookable else -.5 if utensil else -.4
+    food_type = 'Base.BreadSlices' if replacement else 'Base.ChickenFillet' if cooked else 'Base.Cabbage' if cookable else 'Base.OatsRaw' if utensil else 'Base.Cereal'
+    receipt_keys = RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if utensil else set()) | (COOKABLE_RECEIPT_KEYS if thermal else set()) | (REPLACEMENT_RECEIPT_KEYS if replacement else set())
     identity_keys = ('bagId', 'foodId', 'anchorId') + (('forkId', 'spoonId') if utensil else ())
     if not utensil and UTENSIL_RECEIPT_KEYS & set(row):
         return ['Food unexpected utensil evidence: ' + case]
-    if not cookable and COOKABLE_RECEIPT_KEYS & set(row):
+    if not thermal and COOKABLE_RECEIPT_KEYS & set(row):
         return ['Food unexpected cookable evidence: ' + case]
-    cancelled = case in (CANCEL_CASE, SMART_CANCEL_CASE, UTENSIL_CANCEL_CASE, COOKED_CANCEL_CASE, RAW_CANCEL_CASE) and enabled
+    if not replacement and REPLACEMENT_RECEIPT_KEYS & set(row):
+        return ['Food unexpected cooking replacement evidence: ' + case]
+    cancelled = case in (CANCEL_CASE, SMART_CANCEL_CASE, UTENSIL_CANCEL_CASE, COOKED_CANCEL_CASE, RAW_CANCEL_CASE, REPLACEMENT_CANCEL_CASE) and enabled
     if (set(prep) != receipt_keys | {'foodTimer', 'foodLevel'}
             or not craft._matches(prep, dict(case=case, bagType=fluid.BAG_TYPE, bagCount=1, foodType=food_type,
                 source='bag' if bag else 'root', foodCount=1, deleted=False, anchorType='Base.WaterBottle', anchorCount=1,
@@ -155,10 +171,14 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
             or type(prep.get('foodTypeCount')) is not int or prep['foodTypeCount'] < 1
             or not fluid._number(prep.get('anchorThirstChange')) or prep['anchorThirstChange'] >= 0):
         return ['Food preparation identity/state differs: ' + case]
-    if cookable and (not craft._matches(prep, dict(cookable=True, cooked=cooked, burnt=False, rotten=False,
+    if thermal and (not craft._matches(prep, dict(cookable=True, cooked=cooked, burnt=False, rotten=False,
                                                 fertilized=False, inventoryTemperature=1))
                      or not fluid._close(prep.get('heat'), 1)):
         return ['Food preparation cookable state differs: ' + case]
+    if replacement and (prep.get('replacementType') != 'Base.Toast'
+                        or type(prep.get('replacementCount')) is not int or prep['replacementCount'] < 0
+                        or not fluid._number(prep.get('cookingTime')) or prep['cookingTime'] != 0):
+        return ['Food preparation cooking replacement state differs: ' + case]
     if utensil and (not craft._matches(prep, dict(forkType='Base.Fork', spoonType='Base.Spoon',
             forkSource='bag' if case == UTENSIL_MOVE_CASE else 'root',
             spoonSource='root' if case == UTENSIL_MOVE_CASE else 'bag', forkCount=1, spoonCount=1))
@@ -179,7 +199,7 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
             or not craft._matches(row, receipt) or type(row.get('client')) is not dict
             or set(row['client']) != receipt_keys
             or not craft._matches(row['client'], {key: receipt[key] for key in receipt_keys - {'hunger', 'thirst'}})
-            or cookable and (not fluid._number(receipt.get('heat')) or not 0 <= receipt['heat'] <= 1.6)
+            or thermal and (not fluid._number(receipt.get('heat')) or not 0 <= receipt['heat'] <= 1.6)
             or any(not fluid._close(row['client'].get(field), receipt.get(field), .01) for field in ('hunger', 'thirst'))
             or not fluid._close(receipt.get('remaining'), expected_remaining)
             or not fluid._number(receipt.get('anchorAmount')) or not .49 <= receipt['anchorAmount'] <= .5001
@@ -207,14 +227,14 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
             if utensil:
                 expected.update(useUtensil=True, utensilId=prep['forkId' if case == UTENSIL_MOVE_CASE else 'spoonId'],
                                 forkId=prep['forkId'] if case == UTENSIL_MOVE_CASE else -1, spoonId=prep['spoonId'])
-            if cookable:
+            if thermal:
                 expected['cooked'] = cooked
             if smart:
                 expected.pop('portion')
                 expected['smartGoal'] = 15 if index == 0 else 5
-            if (type(command) is not dict or set(command) != COMMAND_KEYS | ({'smartGoal', 'dispatchHunger'} if smart else set()) | (UTENSIL_COMMAND_KEYS if utensil else set()) | (COOKABLE_COMMAND_KEYS if cookable else set())
+            if (type(command) is not dict or set(command) != COMMAND_KEYS | ({'smartGoal', 'dispatchHunger'} if smart else set()) | (UTENSIL_COMMAND_KEYS if utensil else set()) | (COOKABLE_COMMAND_KEYS if thermal else set())
                     or not craft._matches(command, {key: value for key, value in expected.items() if key != 'smartGoal'})
-                    or cookable and (not fluid._number(command.get('dispatchHeat')) or not 0 <= command['dispatchHeat'] <= 1.6)
+                    or thermal and (not fluid._number(command.get('dispatchHeat')) or not 0 <= command['dispatchHeat'] <= 1.6)
                     or smart and (not fluid._number(command.get('smartGoal'))
                                   or command['smartGoal'] != expected['smartGoal']
                                   or not fluid._close(command.get('dispatchHunger'), prep['hunger'], .01)
@@ -223,7 +243,7 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
                 issues.append('Food native target/original portion/progress/duration differs: ' + case)
     evidence = row.get('editEvidence')
     expected = dict(emptyStart=True, anchorRunning=True, anchorProgress=True, anchorDuration=460,
-        contractsVerified=enabled, reordered=enabled and case in (MOVE_CASE, BAG_CASE, SMART_MOVE_CASE, UTENSIL_MOVE_CASE, COOKED_MOVE_CASE, RAW_MOVE_CASE), waitingCancel=cancelled,
+        contractsVerified=enabled, reordered=enabled and case in (MOVE_CASE, BAG_CASE, SMART_MOVE_CASE, UTENSIL_MOVE_CASE, COOKED_MOVE_CASE, RAW_MOVE_CASE, REPLACEMENT_MOVE_CASE), waitingCancel=cancelled,
         moveRejected=enabled and (bag or depletion), cancelRejected=enabled and bag, manualPickup=bag,
         untouchedBefore=True, nativeDurationsUnchanged=True,
         order=[1] if bag else [1, 2] if depletion else [2] if cancelled else [2, 1] if enabled else [1, 2])
@@ -274,7 +294,7 @@ def verify(root, selection, catalog):
         issues.extend(case_issues)
         identities += [prep.get(field) for field in ('bagId', 'foodId', 'anchorId', 'forkId', 'spoonId')
                        if case in UTENSIL_CASES or field not in ('forkId', 'spoonId')]
-        outcome = {key: row.get(key) for key in RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if case in UTENSIL_CASES else set()) | (COOKABLE_RECEIPT_KEYS if case in COOKABLE_CASES else set()) | {'commands', 'editEvidence', 'client'}}
+        outcome = {key: row.get(key) for key in RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if case in UTENSIL_CASES else set()) | (COOKABLE_RECEIPT_KEYS if case in (*COOKABLE_CASES, *REPLACEMENT_CASES) else set()) | (REPLACEMENT_RECEIPT_KEYS if case in REPLACEMENT_CASES else set()) | {'commands', 'editEvidence', 'client'}}
         outcome.update(effectsVerified=not case_issues, pendingRequestsVerified=not case_issues, pendingEditsVerified=not case_issues and selection['mode'] == 'toolkit',
                        serverAuthorityVerified=not case_issues and selection['kind'] == 'mp')
         outcomes.append(dict(actor='client1', case=case, outcome=outcome))
@@ -287,4 +307,5 @@ def verify(root, selection, catalog):
     return {'issues': issues, 'outcomes': outcomes, 'evidence': {'limits': [
         'Base.Cereal native/public EatSmart, Base.OatsRaw native utensils, cooked Base.ChickenFillet and raw cookable Base.Cabbage pending edits only; full selected mod set, real native actions and durations.',
         'Callback-driven menu dispatch does not establish physical input or visual correctness.',
-        'No OnEat, replacement food, smoking, utensil transfers, active eating cancellation or WAN coverage.']}}
+        'Cold Base.BreadSlices keeps ReplaceOnCooked dormant with zero cooking time and unchanged Base.Toast count; no active or hot cooking or callback coverage.',
+        'No OnEat, smoking, utensil transfers, active eating cancellation or WAN coverage.']}}

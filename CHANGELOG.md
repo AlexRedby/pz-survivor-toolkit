@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.155
+
+- **Changed:** Pending portions of cold food with a native cooking replacement, such as bread slices that can become toast, can be reordered or cancelled while the carried food cannot keep cooking. Original item identity, portions and cooking metadata stay intact; hot food and consumption replacements remain protected.
+
 ### 0.1.154
 
 - **Fixed:** Better Clothing Info's main tooltip and comparison now use one measured frame for context-menu, controller and anchored placement. Its clothing details, comparison and settings remain upstream. The native per-item “No Recipes” marker is visible again and disappears when cleared.

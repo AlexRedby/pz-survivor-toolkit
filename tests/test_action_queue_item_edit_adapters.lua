@@ -574,7 +574,7 @@ do
     food.cooked=false
     assert(not s.adapters.food(action),'dangerous raw cookable food remains protected')
     food.cooked=true
-    for _,spec in ipairs({{'getOnCooked','custom.callback'},{'getReplaceOnCooked',{isEmpty=function()return false end}},
+    for _,spec in ipairs({{'getOnCooked','custom.callback'},
         {'getOnEat','custom.callback'},{'getReplaceOnRotten','Base.Rotten'},{'isRotten',true},{'isBurnt',true},
         {'getPoisonPower',1},{'isTainted',true}})do
         local name,value=spec[1],spec[2];local previous=food[name];food[name]=function()return value end
@@ -594,6 +594,82 @@ do
     assert(not s.adapters.food(action),'cold cookable support retains live native helper proof')
     ISEatFoodAction.isEatingRemaining=before
     assert(s.adapters.food(action),'restoring the exact helper restores the cold cookable contract')
+end
+do
+    -- ReplaceOnCooked is dormant only while the ordinary cookable item stays
+    -- cold. It must not replace exact-item identity or change original portions.
+    for _,cooked in ipairs({false,true})do
+        local s=setup();local food=s.food();food.cookable=true;food.cooked=cooked;food.base=-.1;food.hunger=-.1
+        local outputs={isEmpty=function()return false end,size=function()return 1 end,
+            get=function()error('inspection must not materialize dormant cooked replacements')end}
+        food.getReplaceOnCooked=function()return outputs end
+        local half,quarter=s.eat(food,.5),s.eat(food,.25)
+        local function entry(action,kind)return {action=action,edit=assert(s.adapters[kind or 'food'](action))}end
+        local a,b=entry(half),entry(quarter);local resource=a.edit.resources[1]
+        assert(resource.key==food:getID()and resource.facts.item==food and #a.edit.resources==2,
+            'dormant cooked outputs retain only the exact original food and actor resources')
+        assert(resource.effects[1].deplete.amount==.05+.00001
+            and resource.effects[2].deplete.amount==.05-.00001
+            and a.edit.resources[2].effects[1].delta==(cooked and 33800 or 13000)*(.05+.01+.00001)+1,
+            'dormant cooked outputs preserve the existing raw debit and raw/cooked fullness bound')
+        local returning=s.transfer(food,s.root,s.bagInventory);local tail=entry(returning,'transfer')
+        assert(s.model.evaluate({a,b,tail}).status=='allowed','cold replacement food retains the .025 original-food tail')
+        assert(s.model.evaluate({b,a,tail}).status=='allowed','dormant replacement food portions commute before returning')
+        a.snapshotOnly=true
+        assert(s.model.evaluate({a,b,tail}).status=='allowed','cancelling a replacement-food portion preserves the original item')
+        a.snapshotOnly=nil
+        local whole=entry(s.eat(food,1))
+        assert(s.model.evaluate({whole,tail}).status=='denied','eating the whole original food cannot promise its later transfer')
+        assert(s.model.evaluate({whole,b}).status=='denied','cooked outputs do not rescue a depleted exact original food')
+        food.container=s.bagInventory
+        local pickup=s.transfer(food,s.bagInventory,s.root);local first=entry(pickup,'transfer')
+        a,b,tail=entry(half),entry(quarter),entry(returning,'transfer')
+        assert(s.model.evaluate({first,b,a,tail}).status=='allowed','cold replacement food supports carried pickup and return')
+        assert(s.model.evaluate({b,first,tail}).status=='denied','dormant replacement food still requires direct root before eating')
+        first.snapshotOnly=true
+        assert(s.model.evaluate({first,b}).status=='denied','cancelling its pickup cannot make replacement food reachable for eating')
+        s.water.container=s.root;local head=s.drink();head.action={}
+        local q=s.f.queue(head,pickup,half,quarter,returning)
+        assert(s.policy.evaluateMove(q,quarter,half,false).allowed,'Policy moves cold replacement-food original portions')
+        assert(s.policy.evaluateCancel(q,half).allowed,'Policy cancels an ordinary cold replacement-food portion')
+        assert(not s.policy.evaluateCancel(q,pickup).allowed,'Policy retains the required replacement-food pickup')
+        assert(food.hunger==-.1 and food.base==-.1 and food:getReplaceOnCooked()==outputs
+            and half.item==food and quarter.item==food and half.percentage==.5 and quarter.percentage==.25,
+            'inspection preserves dormant replacement configuration, exact food and captured fractions')
+        food.heat=1.600001
+        assert(not s.adapters.food(half),'hot replacement food cannot use the dormant output exception')
+        food.heat=1;s.root.temperature=1.600001
+        assert(not s.adapters.food(half),'a hot outer inventory can activate cooked replacements later')
+        s.root.temperature=1;food.cookable=false
+        assert(not s.adapters.food(half),'noncookable cooked-output metadata has no audited dormant transition contract')
+        food.cookable=true;food.fertilized=true
+        assert(not s.adapters.food(half),'replacement output permission cannot bypass native hatch protection')
+        food.fertilized=false
+        if not cooked then
+            food.tags={[ItemTag.ALREADY_COOKED]=true}
+            assert(not s.adapters.food(half),'replacement output permission cannot bypass forced native cooked state')
+            food.tags=nil
+            food.isbDangerousUncooked=function()return true end
+            assert(not s.adapters.food(half),'dormant replacement metadata does not make dangerous raw food safe')
+            food.isbDangerousUncooked=function()return false end
+        end
+        for _,spec in ipairs({{'getOnCooked','custom.callback'},{'getOnEat','custom.callback'},
+            {'getReplaceOnUse','Base.Bowl'},{'getReplaceOnRotten','Base.Rotten'},
+            {'getPoisonPower',1},{'isTainted',true},{'isRotten',true},{'isBurnt',true}})do
+            local name,value=spec[1],spec[2];local previous=food[name];food[name]=function()return value end
+            assert(not s.adapters.food(half),'dormant cooked output permission preserves existing effect guard: '..name)
+            food[name]=previous
+        end
+        local script=food:getScriptItem();local previous=script.getReplaceOnDeplete
+        script.getReplaceOnDeplete=function()return 'Base.Bowl'end
+        assert(not s.adapters.food(half),'dormant cooked outputs cannot authorize a depletion replacement')
+        script.getReplaceOnDeplete=previous
+        local native=ISEatFoodAction.isEatingRemaining
+        ISEatFoodAction.isEatingRemaining=function()error('unreviewed replacement-food helper must not execute')end
+        assert(not s.adapters.food(half),'cold replacement support retains native helper identity proof')
+        ISEatFoodAction.isEatingRemaining=native
+        assert(s.adapters.food(half),'restoring the exact native helper restores the dormant replacement contract')
+    end
 end
 do
     -- EatSmart and other native producers capture arbitrary fractions of the
@@ -836,4 +912,4 @@ do
         end
     end
 end
-print('Food edit adapters: original portions, cold cookable state, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')
+print('Food edit adapters: original portions, cold cookable state and dormant cooked replacements, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')
