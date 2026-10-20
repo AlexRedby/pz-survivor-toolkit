@@ -199,6 +199,11 @@ public final class CartGrip {
 
     static boolean reach(Matrix4f[] poses, SkinningData actor, String handName, Matrix4f target,
         Matrix4f bodyDelta, boolean wood, float policyWeight) {
+        return reach(poses,actor,handName,target,bodyDelta,wood,policyWeight,false);
+    }
+
+    private static boolean reach(Matrix4f[] poses, SkinningData actor, String handName, Matrix4f target,
+        Matrix4f bodyDelta, boolean wood, float policyWeight, boolean preserveFootMotion) {
         if(!Float.isFinite(policyWeight) || policyWeight<0 || policyWeight>1) return false;
         var hand=actor.getBone(handName);
         if(hand==null || hand.parent==null || hand.parent.parent==null) return false;
@@ -246,8 +251,14 @@ public final class CartGrip {
         if(handName.equals("Bip01_L_Foot") || handName.equals("Bip01_R_Foot")) {
             var toe=actor.getBone(handName.replace("_Foot","_Toe0"));
             if(toe==null || toe.parent!=hand) return false;
-            // A shifted hip can put the native knee behind the new leg axis; bend toward the toes.
-            poses[toe.index].getTranslation(bend).sub(wrist);bend.y=0;
+            if(preserveFootMotion) {
+                // Native Run/Sprint calves flex around thigh-local +Y. Toe-off can turn the
+                // horizontal toe projection backwards without reversing that anatomical hinge.
+                axis.cross(poses[upper.index].transformDirection(new Vector3f(0,1,0)),bend);
+            } else {
+                // A shifted squat hip can put the knee behind the new leg axis; face the planted toes.
+                poses[toe.index].getTranslation(bend).sub(wrist);bend.y=0;
+            }
         }
         if(bodyDelta!=null) {
             var nativeBend=policyWeight<1?new Vector3f(bend).fma(-bend.dot(axis),axis):null;
@@ -506,7 +517,7 @@ public final class CartGrip {
         // Shift weight behind/between the low handles while keeping the torso rigid and both feet planted.
         if(shiftX!=0 || shiftY!=0 || shiftZ!=0) for(int i=0;i<actor.numBones();i++) poses[i].translateLocal(shiftX,shiftY,shiftZ);
         for(int i=0;i<sides.length;i++) if(targets[i]!=null) {
-            if(!reach(poses,actor,"Bip01_"+sides[i]+"_Foot",targets[i],null,false)) return false;
+            if(!reach(poses,actor,"Bip01_"+sides[i]+"_Foot",targets[i],null,false,1,preserveFootMotion)) return false;
         }
         return true;
     }

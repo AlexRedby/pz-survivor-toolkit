@@ -735,6 +735,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.39
+
+- **Fixed:** Cancelling wooden-wheelbarrow setdown while running now returns the handles to the current movement pose, avoiding the jump from an idle endpoint. Moving pickup recovery preserves the knee's forward bend when a lifted toe changes direction.
+
 ### 0.1.38
 
 - **Fixed:** The male character's right trouser leg no longer clips the wooden wheelbarrow handle during the checked single-player emergency wall-fall transition. A short, smoothly blended knee adjustment preserves the foot, pelvis, actor root, stationary cart and native backward recoil. Female poses and Host behavior are unchanged.

@@ -61,7 +61,7 @@ public final class ClearanceProbe {
             row.append(",\"cartModel\":").append(carts>0).append(",\"cartModelCount\":").append(carts)
                 .append(",\"bones\":{");
             boolean comma=false;
-            for(String side:new String[]{"L","R"})for(String part:new String[]{"UpperArm","Forearm","Hand"}) {
+            for(String side:new String[]{"L","R"})for(String part:new String[]{"UpperArm","Forearm","Hand","Thigh","Calf","Toe0"}) {
                 String name="Bip01_"+side+"_"+part;Integer index=skin.boneIndices.get(name);
                 if(index==null)throw new AssertionError("Missing tail bone "+name);
                 if(comma)row.append(',');comma=true;row.append(quoted(name)).append(':');matrix(row,pose(body,skin,index));
@@ -76,7 +76,8 @@ public final class ClearanceProbe {
                 String name=entry.getKey();
                 if(java.util.Set.of("Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand",
                     "Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_Spine","Bip01_Head",
-                    "Bip01_L_Foot","Bip01_R_Foot").contains(name))continue;
+                    "Bip01_L_Foot","Bip01_R_Foot","Bip01_L_Thigh","Bip01_R_Thigh",
+                    "Bip01_L_Calf","Bip01_R_Calf","Bip01_L_Toe0","Bip01_R_Toe0").contains(name))continue;
                 row.append(',').append(quoted(name)).append(':');matrix(row,pose(body,skin,entry.getValue()));
             }
             row.append("},\"tracks\":[");comma=false;

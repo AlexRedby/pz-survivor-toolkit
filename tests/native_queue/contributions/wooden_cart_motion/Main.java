@@ -14,6 +14,43 @@ public final class Main {
     public static int drive = -1, gait;
     private static long lastCommand;
     private static int heldKey = -1;
+    private static boolean captureUIHidden;
+
+    private static boolean captureUIWorld() {
+        return "true".equals(System.getenv("PZ_CART_TEST_PAD"))
+            && zombie.iso.IsoWorld.instance!=null
+            && "CartTestArea".equals(zombie.iso.IsoWorld.instance.getWorld())
+            && !zombie.network.GameClient.client && !zombie.network.GameServer.server;
+    }
+
+    @LuaMethod(name="cartLabCaptureUIKeyBound", global=true)
+    public static boolean captureUIKeyBound(int key) {
+        return Core.getInstance().getKeyBinding(key)!=Core.KEYBINDING_EMPTY;
+    }
+
+    @LuaMethod(name="cartLabCaptureUIVisible", global=true)
+    public static boolean captureUIVisible() {return zombie.ui.UIManager.visibleAllUi;}
+
+    @LuaMethod(name="cartLabCaptureUIRender", global=true)
+    public static void captureUIRender(boolean hidden) {
+        if(hidden && !captureUIWorld())throw new IllegalStateException("Disposable single-player CartTestArea pad required");
+        captureUIHidden=hidden;
+        // Do not reuse a UI texture drawn before this capture toggle.
+        zombie.ui.UIManager.uiTextureContentsValid=false;
+    }
+
+    // Advice is inlined into UIManager, which cannot access this class's private state.
+    public static boolean hideCaptureUIRender() {
+        if(!captureUIWorld())captureUIHidden=false;
+        return captureUIHidden;
+    }
+
+    /** Render-only fixture gate: native update, key events and public menu callbacks stay active. */
+    @Patch(className="zombie.ui.UIManager", methodName="render", warmUp=true)
+    public static class CaptureUIRender {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter() { return Main.hideCaptureUIRender(); }
+    }
 
     @Patch(className="zombie.iso.IsoChunkMap", methodName="CalcChunkWidth", warmUp=true)
     public static class PadChunks {

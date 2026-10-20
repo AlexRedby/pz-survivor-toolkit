@@ -13,25 +13,31 @@ spec=importlib.util.spec_from_file_location('cart_interruption',path)
 analyzer=importlib.util.module_from_spec(spec);spec.loader.exec_module(analyzer)
 
 
-def fixture(matrix=False):
+def fixture(matrix=False, fast=False):
     lines=['[WOOD_BANK] RUN_STARTED'];life=[];body=[];grip=[];world=[];draws=[];tail=[]
-    cases=analyzer.MATRIX_CASES if matrix else analyzer.CASES
+    cases=analyzer.FAST_CASES if fast else analyzer.MATRIX_CASES if matrix else analyzer.CASES
     for index,name in enumerate(cases):
         parts=name.split('-');action,phase,route=parts[-3:];owned=action=='drop'
-        female=matrix and parts[0]=='female';full=not matrix or parts[1]=='full'
+        female=(matrix or fast) and parts[0]=='female';full=not (matrix or fast) or parts[1]=='full'
         start=100000+index*25000;request=6000 if owned else 1500
-        sustained=matrix and route=='walk';release=request+925
-        retry=request+(1425 if sustained else 950);end=10500 if owned else 5000
+        sustained=matrix and route=='walk' or fast and route!='reset'
+        early_release=fast and route in ('runrelease','sprintrelease')
+        pace_change=fast and route in ('runsprint','sprintwalk')
+        release=request+(175 if early_release else 925);change=request+175
+        retry=request+(2425 if fast else 1425 if sustained else 950);end=10500 if owned else 5000
         events={0:'prepared',700:'pickupQueued',request:'cancelRequested',request+25:'cancelled',retry:'retryQueued',
                 **({4000:'pickedUp',5100:'dropQueued',10500:'dropped'} if owned else {5000:'pickedUp',6100:'dropQueued',9500:'dropped'})}
         if sustained: events[release]='movementReleased'
+        if pace_change: events[change]='paceChanged'
         lines.append(f'[WOOD_BANK] CASE {name} attempt=0 wall={start}')
         for elapsed in range(0,20001,25):
             cancelled=request+25<=elapsed<retry
             held=4000<=elapsed<10500 if owned else 5000<=elapsed<9500
             current=('pickup' if 700<=elapsed<4000 else 'drop' if 5100<=elapsed<10500 else '') if owned else ('pickup' if 700<=elapsed<5000 else 'drop' if 6100<=elapsed<9500 else '')
             if cancelled or request<elapsed<=retry: current=''
-            recovering=cancelled and elapsed<request+425
+            recovering=cancelled and elapsed<request+425 and not (fast and route=='reset')
+            gait=(2 if route.startswith('sprint') else 1) if fast and sustained and request<=elapsed<=release else 0
+            if pace_change and change<elapsed<=release: gait=2 if route=='runsprint' else 0
             recovery_progress=max(0,analyzer.THRESHOLDS[phase]*(1-(elapsed-request-25)/400))
             row=dict(case=name,start=start,wall=start+elapsed,elapsed=elapsed,id=index+1,
                 stage='cancelled' if cancelled else 'other',heldID=index+1 if held else -1,secondaryID=index+1 if held else -1,
@@ -39,14 +45,15 @@ def fixture(matrix=False):
                 actionType=analyzer.TYPES.get(current,''),progress=analyzer.THRESHOLDS[phase] if elapsed==request else .2,
                 female=female,cargo=50 if full else 0,cargoIDs='stable' if full else '',cargoCount=int(full),
                 x=max(0,min(elapsed-request,release-request))*.00004 if sustained else 0,y=0,z=7,
-                driveCommand=int(sustained and request<=elapsed<=release),condition=100,worldAlpha=1,worldX=1,worldY=2,worldZ=7,worldRotation=135,worldObjectAlpha=1,
+                driveCommand=int(sustained and request<=elapsed<=release),gaitCommand=gait,sprintSkill=10 if fast else 0,run=gait==1,sprint=gait==2,condition=100,worldAlpha=1,worldX=1,worldY=2,worldZ=7,worldRotation=135,worldObjectAlpha=1,
                 nativeActions=int(bool(current)),luaActions=int(bool(current)),active=bool(current),recovering=recovering,presentationProgress=recovery_progress if recovering else .2,rendered=bool(current) or recovering,
                 ToolkitWoodCartAction=bool(current),PerformingAction='ToolkitWoodCart' if current else '',IsPerformingAnAction=bool(current),
                 ToolkitCartMotion=held and not current)
             lines.append('[WOOD_INTERACTION_SAMPLE] '+json.dumps(row))
             if elapsed in events:
                 receipt=dict(row,event=events[elapsed])
-                if events[elapsed]=='movementReleased': receipt['driveCommand']=0
+                if events[elapsed]=='movementReleased': receipt.update(driveCommand=0,gaitCommand=0)
+                if events[elapsed]=='paceChanged': receipt['gaitCommand']=2 if route=='runsprint' else 0
                 lines.append('[WOOD_INTERACTION_EVENT] '+json.dumps(receipt))
             if request-75<=elapsed<retry:
                 cart_matrix=[76.5,0,0,0,0,76.5,0,0,0,0,76.5,0,0,.097179376,0,1]
@@ -100,6 +107,47 @@ def native_toe_off_frame():
 
 
 class CancellationChecks(unittest.TestCase):
+    def test_valid_fast_cancel_and_reset_bank(self):
+        result=analyzer.analyze(*fixture(fast=True),fast=True)
+        self.assertTrue(result['functionalPass'],result['failures'])
+        self.assertEqual(len(result['cases']),14)
+        self.assertEqual(sum(r['forcedPresentationReset'] for r in result['cases']),2)
+
+    def test_fast_bank_requires_real_gait_and_release_during_recovery(self):
+        values=fixture(fast=True)
+        for failure in ('no-sprint','late-release','no-recovery','no-pace-change'):
+            with self.subTest(failure=failure):
+                def corrupt(row):
+                    if failure=='no-sprint' and row['case']=='male-full-pickup-contact-sprint': row['sprint']=False
+                    if failure=='late-release' and row['case']=='male-full-pickup-contact-runrelease' and row.get('event')=='movementReleased':
+                        row['elapsed']+=200;row['wall']+=200
+                    if failure=='no-recovery' and row['case']=='male-full-pickup-contact-runrelease' and row.get('event')=='movementReleased': row['recovering']=False
+                    if failure=='no-pace-change' and row['case']=='female-empty-pickup-late-runsprint': row['gaitCommand']=1
+                try: report=analyzer.analyze(*edit_records(values,corrupt),fast=True)
+                except AssertionError: continue
+                self.assertFalse(report['functionalPass'])
+
+    def test_forced_reset_still_requires_wheel_continuity_and_no_recovery(self):
+        values=fixture(fast=True)
+        target='male-full-pickup-late-reset'
+        start=100000+analyzer.FAST_CASES.index(target)*25000
+        broken=list(values);broken[5]=json.loads(json.dumps(values[5]))
+        for row in broken[5]:
+            if start+1525<=row['wall']<start+1600: row['phase']=.5
+        report=analyzer.analyze(*broken,fast=True)
+        self.assertFalse(report['functionalPass'])
+        self.assertTrue(any('wheel phase' in str(r) for r in report['failures']))
+        def recover(row):
+            if row['case']==target and row.get('stage')=='cancelled': row['recovering']=True
+        with self.assertRaisesRegex(AssertionError,'Forced reset'):
+            analyzer.analyze(*edit_records(values,recover),fast=True)
+
+    def test_fast_wheel_evidence_must_cover_release_and_settled_tail(self):
+        values=list(fixture(fast=True));values[5]=[
+            r for r in values[5] if (r['wall']-100000)%25000 <= (6000 if analyzer.FAST_CASES[(r['wall']-100000)//25000].split('-')[2]=='drop' else 1500)+699]
+        with self.assertRaisesRegex(AssertionError,'Wheel draw tail'):
+            analyzer.analyze(*values,fast=True)
+
     def test_native_toe_off_keeps_forward_local_knee_hinge(self):
         frame=native_toe_off_frame()
         self.assertLess(analyzer.shared['knee_direction'](frame)[0],-.1)
@@ -200,6 +248,25 @@ class CancellationChecks(unittest.TestCase):
                     elif failure=='only-during': row['x']=max(0,min(elapsed,400))*.00004
                     else: row['x']=max(0,min(elapsed-650,275))*.00004
                 self.assert_rejected(edit_records(values,corrupt),matrix=True)
+
+    def test_pose_step_uses_exact_elapsed_time_and_still_rejects_native_endpoint_jump(self):
+        # Real native Sprint moved a wrist .09130752 m over 31 ms; the old Run endpoint jumped .12 m in 17 ms.
+        for distance,elapsed,accepted in ((.09130752,31,True),(.12,17,False)):
+            with self.subTest(distance=distance,elapsed=elapsed):
+                values=list(fixture());values[6]=json.loads(json.dumps(values[6]))
+                frames=values[6];index=8
+                frames[index]['wallTimeMillis']=frames[index-1]['wallTimeMillis']+elapsed
+                first_case_end=125000
+                for frame in frames[index:]:
+                    if frame['wallTimeMillis']>=first_case_end: break
+                    # Translate the complete arm so segment lengths stay valid and isolate the discontinuity gate.
+                    for part in ('UpperArm','Forearm','Hand'):
+                        frame['bones']['Bip01_L_'+part][14]+=distance
+                report=analyzer.analyze(*values)
+                self.assertEqual(report['functionalPass'],accepted,report['failures'])
+                case=report['cases'][0]
+                self.assertGreater(case['maxBoneSteps']['Bip01_L_Hand'],.07)
+                self.assertEqual(case['maxBoneStepsAt60Hz']['Bip01_L_Hand']<=.07,accepted)
 
     def test_recovery_rejects_stretched_arm(self):
         for matrix in (False,True):

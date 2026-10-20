@@ -13,6 +13,15 @@ rolling = runpy.run_path(str(Path(__file__).with_name('analyze-wheel-cycle.py'))
 CASES = tuple(f'{action}-{phase}-{route}' for action in ('pickup', 'drop')
               for phase in ('early', 'contact', 'late') for route in ('cancel', 'walk'))
 MATRIX_CASES = tuple(f'{sex}-{load}-{case}' for sex in ('male', 'female') for load in ('empty', 'full') for case in CASES)
+FAST_CASES = (
+    'male-full-pickup-early-run', 'male-full-drop-contact-run',
+    'male-full-pickup-contact-sprint', 'male-full-drop-late-sprint',
+    'female-empty-pickup-late-run', 'female-empty-drop-early-run',
+    'female-empty-pickup-early-sprint', 'female-empty-drop-contact-sprint',
+    'male-full-pickup-contact-runrelease', 'male-full-drop-contact-sprintrelease',
+    'female-empty-pickup-late-runsprint', 'female-empty-drop-late-sprintwalk',
+    'male-full-pickup-late-reset', 'female-empty-drop-contact-reset',
+)
 TYPES = {'pickup': 'ToolkitWoodCartPickup', 'drop': 'ToolkitWoodCartSetdown'}
 THRESHOLDS = {'early': .15, 'contact': .55, 'late': .88}
 
@@ -33,11 +42,15 @@ def moving_knee_angles(frame):
     return angles
 
 
-def analyze(text, lifecycle, body, grip, world, draws, pose_tail, matrix=False):
+def analyze(text, lifecycle, body, grip, world, draws, pose_tail, matrix=False, fast=False, scenes=None):
+    assert not (matrix and fast), 'Select one cancellation bank'
     assert '[WOOD_BANK] RUN_STARTED' in text, 'Missing cancellation run boundary'
     log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
     completed = re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+)', log)
-    cases = MATRIX_CASES if matrix else CASES
+    cases = FAST_CASES if fast else MATRIX_CASES if matrix else CASES
+    if scenes is not None:
+        assert scenes and len(set(scenes)) == len(scenes) and set(scenes) <= set(cases), 'Invalid selected cancellation scenes'
+        cases = tuple(name for name in cases if name in scenes)
     assert len(completed) == len(cases) and {name for name, _ in completed} == set(cases), 'Missing/duplicate cancellation cases'
     assert re.search(r'\[WOOD_BANK\] ALL_COMPLETE cases=' + str(len(cases)) + r'(?:\s|$)', log), 'Cancellation run incomplete'
     assert '[WOOD_BANK] FAIL' not in log, 'Cancellation scenario failed'
@@ -59,7 +72,8 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, matrix=False):
         expected = ['prepared', 'pickupQueued']
         if action == 'drop': expected += ['pickedUp', 'dropQueued']
         expected += ['cancelRequested', 'cancelled']
-        if matrix and route == 'walk': expected += ['movementReleased']
+        if fast and route in ('runsprint', 'sprintwalk'): expected += ['paceChanged']
+        if matrix and route == 'walk' or fast and route != 'reset': expected += ['movementReleased']
         expected += ['retryQueued']
         expected += ['pickedUp', 'dropQueued', 'dropped'] if action == 'pickup' else ['dropped']
         assert [r['event'] for r in receipts] == expected, 'Missing/reordered cancellation events: ' + name
@@ -68,7 +82,8 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, matrix=False):
         assert TYPES[action] == request['actionType'] and THRESHOLDS[phase] <= request['progress'] < THRESHOLDS[phase]+.1, 'Wrong cancellation phase: ' + name
         assert 0 <= cancelled['wall']-request['wall'] < 1000 and retry['wall']-cancelled['wall'] >= 850, 'Missing cancellation/retry tail'
         first = receipts[0]
-        if matrix:
+        if fast: assert all(r['sprintSkill'] == 10 for r in rows + receipts), 'Native Sprint eligibility not configured'
+        if matrix or fast:
             sex, load = name.split('-')[:2]
             assert all(r['female'] is (sex == 'female') for r in rows + receipts), 'Wrong actor sex: ' + name
             assert (first['cargo'] > 0 and first['cargoCount'] > 0 if load == 'full'
@@ -104,15 +119,36 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, matrix=False):
         stop = native[1]['wallTimeMillis']
         assert request['wall'] <= stop <= cancelled['wall'], 'Native stop outside cancellation window'
         movement = {}
-        if matrix and route == 'walk':
+        if matrix and route == 'walk' or fast and route != 'reset':
             released = lookup['movementReleased']
-            assert released['wall'] - cancelled['wall'] >= 900 and retry['wall'] - released['wall'] >= 450, 'Missing sustained movement/settled window'
+            early_release = fast and route in ('runrelease', 'sprintrelease')
+            release_delay = released['wall'] - cancelled['wall']
+            assert (150 <= release_delay < 300 if early_release else release_delay >= 900), 'Wrong movement release timing: ' + name
+            assert retry['wall'] - released['wall'] >= (1000 if fast else 450), 'Missing settled movement tail'
+            if fast: assert retry['wall'] - cancelled['wall'] >= 2400, 'Missing fast cancellation settling window'
             # A tick samples the pressed key before emitting its release event at the same timestamp.
             released_order = record_order[id(released)]
             driven = [r for r in tail if record_order[id(r)] < released_order]
-            assert driven and all(r['driveCommand'] == 1 for r in driven), 'Movement released during recovery: ' + name
+            assert driven and all(r['driveCommand'] == 1 for r in driven), 'Movement released before receipt: ' + name
             assert released['driveCommand'] == 0 and all(r['driveCommand'] == 0 for r in tail if record_order[id(r)] > released_order), 'Movement did not release: ' + name
-            for label, lower, upper in [('recovery', stop, stop+400), ('restored', stop+650, released['wall'])]:
+            if fast:
+                initial_gait = 2 if route.startswith('sprint') else 1
+                changed = lookup.get('paceChanged')
+                changed_order = record_order[id(changed)] if changed else released_order
+                initial = [r for r in driven if record_order[id(r)] < changed_order]
+                assert initial and all(r['gaitCommand'] == initial_gait for r in initial), 'Wrong initial gait command: ' + name
+                assert any(r['sprint'] if initial_gait == 2 else r['run'] for r in initial), 'Requested native gait never engaged: ' + name
+                if changed:
+                    target_gait = 2 if route == 'runsprint' else 0
+                    assert 150 <= changed['wall'] - cancelled['wall'] < 300 and changed['driveCommand'] == 1, 'Wrong moving pace-change timing'
+                    after = [r for r in driven if record_order[id(r)] > changed_order]
+                    assert changed['gaitCommand'] == target_gait and after and all(r['gaitCommand'] == target_gait for r in after), 'Wrong changed gait command'
+                    assert any(r['sprint'] if target_gait == 2 else not r['run'] and not r['sprint'] for r in after), 'Changed native gait never engaged'
+                assert released['gaitCommand'] == 0, 'Gait held after movement release'
+                if early_release: assert released.get('recovering'), 'Early movement release missed recovery'
+            windows = [('recovery', stop, min(stop+400, released['wall']))]
+            if not early_release: windows.append(('restored', stop+650, released['wall']))
+            for label, lower, upper in windows:
                 window = [r for r in driven if lower <= r['wall'] <= upper]
                 assert len(window) >= 3, 'Missing movement samples: ' + name
                 distance = math.dist([window[0]['x'], window[0]['y']], [window[-1]['x'], window[-1]['y']])
@@ -126,26 +162,34 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, matrix=False):
                        cancellationLatencyMs=cancelled['wall']-request['wall'], tailSamples=len(tail), movement=movement)
         recovery = [r for r in tail if r.get('recovering')]
         settled = [r for r in tail if r['wall'] >= stop+650]
-        assert len(recovery) >= 3 and len(settled) >= 5, 'Missing bounded recovery and settled tail: '+name
-        assert recovery[0]['wall']-stop <= 100 and recovery[-1]['wall']-stop <= 650, 'Recovery exceeded bounded window'
-        progress = [r['presentationProgress'] for r in recovery]
-        if any(b>a+.00001 for a,b in zip(progress,progress[1:])) or max(progress)-min(progress)<min(.05,request['progress']*.5):
-            failures.append((name,'recovery did not reverse the interrupted timeline'))
+        reset = fast and route == 'reset'
+        assert len(settled) >= 5, 'Missing settled cancellation tail: '+name
+        if reset:
+            assert not recovery, 'Forced reset retained recovery lease: '+name
+        else:
+            assert len(recovery) >= 3, 'Missing bounded recovery: '+name
+            assert recovery[0]['wall']-stop <= 100 and recovery[-1]['wall']-stop <= 650, 'Recovery exceeded bounded window'
+            progress = [r['presentationProgress'] for r in recovery]
+            if any(b>a+.00001 for a,b in zip(progress,progress[1:])) or max(progress)-min(progress)<min(.05,request['progress']*.5):
+                failures.append((name,'recovery did not reverse the interrupted timeline'))
         if any(r.get('recovering') or r['rendered'] for r in settled): failures.append((name,'recovery presentation leaked after deadline'))
-        first_frames = [r for r in body if r.get('afterStopActionId') == native[0]['nativeActionId']]
-        assert len(first_frames) == 1, 'Missing unique first post-stop render receipt'
-        first_frame = first_frames[0]
-        before = [r for r in body if stop-100 <= r['wallTimeMillis'] < stop]
-        assert before and 0 <= first_frame['wallTimeMillis']-stop <= 100, 'Missing first stop-boundary poses'
-        before = max(before,key=lambda r:r['wallTimeMillis'])
-        first_cart_step = math.dist(before['cart'][12:15],first_frame['cart'][12:15])
-        if first_cart_step>.035: failures.append((name,'cart jumped on the first recovery frame'))
+        first_cart_step = first_render_delay = None
+        if not reset:
+            first_frames = [r for r in body if r.get('afterStopActionId') == native[0]['nativeActionId']]
+            assert len(first_frames) == 1, 'Missing unique first post-stop render receipt'
+            first_frame = first_frames[0]
+            before = [r for r in body if stop-100 <= r['wallTimeMillis'] < stop]
+            assert before and 0 <= first_frame['wallTimeMillis']-stop <= 100, 'Missing first stop-boundary poses'
+            before = max(before,key=lambda r:r['wallTimeMillis'])
+            first_cart_step = math.dist(before['cart'][12:15],first_frame['cart'][12:15])
+            first_render_delay = first_frame['wallTimeMillis']-stop
+            if first_cart_step>.035: failures.append((name,'cart jumped on the first recovery frame'))
         frames = [r for r in pose_tail if stop-100 <= r['wallTimeMillis'] <= stop+700]
         assert len(frames)>=10 and frames[0]['wallTimeMillis']<=stop and frames[-1]['wallTimeMillis']>=stop+650, 'Incomplete recovery body window'
         assert all(0 < b['wallTimeMillis']-a['wallTimeMillis'] <= 100 for a,b in zip(frames,frames[1:])), 'Recovery pose sampling gap'
         if any(r['cartModelCount'] not in (0,1) for r in frames):
             failures.append((name,'duplicate cart visual model during recovery'))
-        motion = {}
+        motion, normalized_motion = {}, {}
         for bone in ('Bip01_Spine','Bip01_L_Hand','Bip01_R_Hand'):
             positions=[]
             for frame in frames:
@@ -153,8 +197,13 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, matrix=False):
                 bone_matrix=frame['bones'][bone]
                 assert len(bone_matrix)==16, 'Missing recovery bone matrix'
                 positions.append(bone_matrix[12:15])
-            motion[bone]=max(math.dist(a,b) for a,b in zip(positions,positions[1:]))
-        if motion['Bip01_Spine']>.05 or max(motion[b] for b in ('Bip01_L_Hand','Bip01_R_Hand'))>.07:
+            distances=[math.dist(a,b) for a,b in zip(positions,positions[1:])]
+            motion[bone]=max(distances)
+            # The probe can sample at 17/33/50 ms; compare equal-time motion, not unequal frame gaps.
+            # Preserve the original 60-Hz budgets and retain raw distances in the report.
+            normalized_motion[bone]=max(distance*(1000/60)/(b['wallTimeMillis']-a['wallTimeMillis'])
+                                        for distance,a,b in zip(distances,frames,frames[1:]))
+        if not reset and (normalized_motion['Bip01_Spine']>.05 or max(normalized_motion[b] for b in ('Bip01_L_Hand','Bip01_R_Hand'))>.07):
             failures.append((name,'abrupt body/hand pose step during recovery'))
         arm_drift = 0
         for side in 'LR':
@@ -165,20 +214,25 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, matrix=False):
         if arm_drift > .005: failures.append((name,'arm segment stretched during recovery'))
         wheel_rows=sorted((r for r in draws if stop-100 <= r['wall'] < retry['wall']),key=lambda r:r['wall'])
         assert len(wheel_rows)>=10 and wheel_rows[0]['wall']<=stop and wheel_rows[-1]['wall']>=stop+650, 'Incomplete actual wheel draw window'
+        if fast:
+            assert retry['wall']-wheel_rows[-1]['wall'] <= 100, 'Wheel draw tail missing before retry: '+name
+            assert all(0 <= b['wall']-a['wall'] <= 100 for a,b in zip(wheel_rows,wheel_rows[1:])), 'Wheel draw sampling gap: '+name
         assert all(r['source']!='world' or r['itemId']==first['id'] for r in wheel_rows), 'Foreign cart wheel draw'
         wheel=rolling(wheel_rows)
         if wheel['maxResidual']>.004: failures.append((name,'wheel phase did not follow cancelled cart movement/pitch'))
-        knee_frames=[r for r in body if stop<=r['wallTimeMillis']<=stop+600]
+        knee_frames=[r for r in (pose_tail if reset else body) if stop<=r['wallTimeMillis']<=stop+600]
         assert len(knee_frames)>=3, 'Missing recovery knee coverage'
-        knee_measure = moving_knee_angles if route == 'walk' else shared['knee_direction']
+        moving = route == 'walk' or fast and route != 'reset'
+        knee_measure = moving_knee_angles if moving else shared['knee_direction']
         knees=[v for r in knee_frames for v in knee_measure(r)]
         if min(knees)<-.0001: failures.append((name,'recovery knee bent backwards'))
-        summary.update(recoverySamples=len(recovery),lastRecoveryMs=recovery[-1]['wall']-stop,
-                       firstRenderDelayMs=first_frame['wallTimeMillis']-stop,firstCartStep=first_cart_step,
-                       maxBoneSteps=motion,maxArmLengthDrift=arm_drift,wheel=wheel,kneeSamples=len(knee_frames),
-                       kneeMeasure='local-flexion-radians' if route == 'walk' else 'foot-plane-offset',minKneeMeasure=min(knees))
+        summary.update(recoverySamples=len(recovery),lastRecoveryMs=recovery[-1]['wall']-stop if recovery else None,
+                       forcedPresentationReset=reset, firstRenderDelayMs=first_render_delay,firstCartStep=first_cart_step,
+                       maxBoneSteps=motion,maxBoneStepsAt60Hz=normalized_motion,maxArmLengthDrift=arm_drift,wheel=wheel,kneeSamples=len(knee_frames),
+                       kneeMeasure='local-flexion-radians' if moving else 'foot-plane-offset',minKneeMeasure=min(knees))
         if owned:
-            restored=[r for r in body if stop+650 <= r['wallTimeMillis'] < retry['wall']]
+            restored_after = lookup['movementReleased']['wall']+1000 if fast and not reset else stop+650
+            restored=[r for r in body if restored_after <= r['wallTimeMillis'] < retry['wall']]
             assert len(restored)>=5, 'Missing restored held endpoint'
             ys=[r['cart'][13] for r in restored]
             summary['cartYRange']=[min(ys),max(ys)]
@@ -195,7 +249,7 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, matrix=False):
         assert dropped['worldCount']==1 and dropped['inventoryCount']==0 and rows[-1]['wall']-dropped['wall']>=1000, 'Missing successful retry/end state'
         summaries.append(summary)
     return dict(functionalPass=not failures, recoveryVerified=not failures, wheelCoverageVerified=not failures, failures=failures, cases=summaries,
-        limit='SP ordinary cancellation through CancelAction and injected movement keys, before transfer. Bounded presentation/body/wheel checks accompany native stop and exact-item retry. Videos and full geometry require separate review; MP and exceptional interruptions remain separate.')
+        limit=('SP pairwise Run/Sprint, early key release, pace changes and public presentation-reset coverage. Reset is injected directly and does not prove combat/fall/Host behavior. ' if fast else '') + 'SP ordinary cancellation through CancelAction and injected movement keys, before transfer. Bounded presentation/body/wheel checks accompany native stop and exact-item retry. Videos and full geometry require separate review; MP and exceptional interruptions remain separate.')
 
 
 def main():
@@ -203,14 +257,17 @@ def main():
     parser.add_argument('--profile',type=Path,required=True)
     parser.add_argument('--log',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
-    parser.add_argument('--matrix',action='store_true')
+    parser.add_argument('--scene',action='append')
+    bank=parser.add_mutually_exclusive_group()
+    bank.add_argument('--matrix',action='store_true')
+    bank.add_argument('--fast',action='store_true')
     args=parser.parse_args()
     assert not args.output.exists(), 'Refuse to overwrite report'
     def read(name): return [decode(line) for line in (args.profile/name).read_text().splitlines()]
     try:
         result=analyze(args.log.read_text(errors='replace'), read('action-lifecycle.jsonl'),
                        read('body-clearance.jsonl'),read('wood-grip-poses.jsonl'),read('world-cart-poses.jsonl'),
-                       read('wheel-roll-draws.jsonl'),read('action-tail-poses.jsonl'),matrix=args.matrix)
+                       read('wheel-roll-draws.jsonl'),read('action-tail-poses.jsonl'),matrix=args.matrix,fast=args.fast,scenes=args.scene)
     except (AssertionError, ValueError, KeyError, OSError) as error:
         result=dict(functionalPass=False,recoveryVerified=False,wheelCoverageVerified=False,
                     failures=[str(error)],cases=[])

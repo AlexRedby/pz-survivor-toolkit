@@ -483,6 +483,9 @@ public final class CartTransition {
         }
         var clip=ModelManager.instance.getAnimationClip("Bob_Cart_Idle");
         if(clip==null) return false;
+        if(state.recovering && !state.movingRecovery && player.isJustMoved() && state.recoveryPose!=null) {
+            state.movingRecovery=true;state.movementProgress=state.progress;
+        }
         boolean cartModelPresent=false;
         for(var data:slot.modelData) {
             var instance=data.modelInstance;
@@ -491,7 +494,10 @@ public final class CartTransition {
             var held=new Matrix4f();var delta=new Matrix4f();
             if(!CartGrounding.rigid(data,clip,held)) continue;
             CartGrounding.lowerHandles(held,"WheelbarrowWood");
-            if(!CartGrounding.alignWood(held,0,0,delta)) continue;
+            // Follow native gait clearance so ordinary rendering does not shift both handles after recovery.
+            // Keep the captured neutral bank/grip policy; changing it needs a separate source-pose blend.
+            float gait=state.movingRecovery && !state.pickup?CartLegPace.woodenGaitShift(player):0;
+            if(!CartGrounding.alignWood(held,0,gait,delta)) continue;
             var model=model(state.item);
             if(model==null) continue;
             if(state.placement==null) state.placement=dropPlacement(slot,held,model,state.item);
@@ -499,9 +505,6 @@ public final class CartTransition {
             var ground=new Matrix4f();
             if(!CartTransitionMath.worldToActor(state.placement,model,slot.x,slot.y,slot.z,slot.animPlayerAngle,ground)) continue;
             var phase=CartTransitionMath.progress(state.progress,!state.pickup);
-            if(state.recovering && !state.movingRecovery && player.isJustMoved() && state.recoveryPose!=null) {
-                state.movingRecovery=true;state.movementProgress=state.progress;
-            }
             float release=state.movingRecovery?(float)CartTransitionMath.recoveryRelease(state.progress,state.movementProgress,state.authored && state.pickup):1;
             var transform=new Matrix4f();
             if(!CartTransitionMath.blend(ground,held,phase.lift(),transform)) continue;

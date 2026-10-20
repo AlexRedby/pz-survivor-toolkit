@@ -33,6 +33,7 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'wall-fast-manual-exit': ('scenario-collision.lua', 32),
             'impact': ('scenario-collision.lua', 8),
             'wheel': ('scenario-interaction.lua', 1), 'interaction': ('scenario-interaction.lua', 4),
+            'approach': ('scenario-approach.lua', 7), 'interruption-fast': ('scenario-interaction.lua', 14),
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
             'repeat': ('scenario-interaction.lua', 12), 'hotkey': ('scenario-interaction.lua', 12), 'manual': ('bootstrap.lua', 0),
             'path': ('scenario-path.lua', 24), 'variants': ('scenario-variants.lua', 3),
@@ -97,6 +98,16 @@ def scene_names(case):
     if case in ('repeat', 'hotkey'):
         return [sex + '-' + load + '-' + spec for sex in ('male', 'female')
                 for load in ('empty', 'full') for spec in ('complete-chain', 'pickup-restart', 'drop-restart')]
+    if case == 'approach':
+        return ['container-equip', 'wrong-side', 'wall-detour', 'precise-blocked', 'approach-cancel', 'approach-target-loss', 'approach-tail-success']
+    if case == 'interruption-fast':
+        return ['male-full-pickup-early-run', 'male-full-drop-contact-run',
+                'male-full-pickup-contact-sprint', 'male-full-drop-late-sprint',
+                'female-empty-pickup-late-run', 'female-empty-drop-early-run',
+                'female-empty-pickup-early-sprint', 'female-empty-drop-contact-sprint',
+                'male-full-pickup-contact-runrelease', 'male-full-drop-contact-sprintrelease',
+                'female-empty-pickup-late-runsprint', 'female-empty-drop-late-sprintwalk',
+                'male-full-pickup-late-reset', 'female-empty-drop-contact-reset']
     if case in ('interruption', 'interruption-matrix'):
         prefixes = ('male-full-', 'male-empty-', 'female-full-', 'female-empty-') if case.endswith('-matrix') else ('',)
         return [prefix + action + '-' + phase + '-' + route for prefix in prefixes
@@ -161,6 +172,9 @@ def validate(selection):
     if 'cart_authored_clip' in selection.get('options', {}):
         if suite != SP or type(selection['options']['cart_authored_clip']) is not bool:
             raise ValueError('cart_authored_clip requires an SP boolean pilot selection')
+    if 'cart_hide_ui' in selection.get('options', {}):
+        if suite != SP or type(selection['options']['cart_hide_ui']) is not bool:
+            raise ValueError('cart_hide_ui requires an SP boolean selection')
     for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown'):
         if flag in selection.get('options', {}) and (suite != MP or type(selection['options'][flag]) is not bool):
             raise ValueError(flag + ' requires an MP boolean selection')
@@ -320,7 +334,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 'classpath': str(classes) + os.pathsep + classpath, 'class': 'AttachWoodenWheelProbe',
                 'ready': '[CART_MP] CONNECTED' if selection['suite'] == MP else '[CART_ADAPTER] PROBE_ATTACH_READY'})
         if selection['suite'] == SP:
-            motion = dict(disposable=True, ffmpeg=config['ffmpeg'], videoRoot=videos[role], area=AREA)
+            motion = dict(disposable=True, ffmpeg=config['ffmpeg'], videoRoot=videos[role], area=AREA,
+                          hideUI=selection.get('options', {}).get('cart_hide_ui', not manual))
             if 'cart_authored_clip' in selection.get('options', {}):
                 motion['authoredClip'] = selection['options']['cart_authored_clip']
             if 'cart_scenes' in selection.get('options', {}):
@@ -333,7 +348,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             if selection['cases'][0] == 'wall-fast-manual-exit': motion['wallFastManualExit']=True
             if selection['cases'][0] == 'impact': motion['impact']=True
             if selection['cases'][0] == 'vehicles': motion['vehicles']=True
-            if selection['cases'][0] in ('interruption', 'interruption-matrix'): motion['interruptions']=True
+            if selection['cases'][0] in ('interruption', 'interruption-matrix', 'interruption-fast'): motion['interruptions']=True
+            if selection['cases'][0] == 'interruption-fast': motion['fastInterruptions']=True
             if selection['cases'][0] == 'interruption-matrix': motion['interruptionMatrix']=True
             if selection['cases'][0] in ('repeat', 'hotkey'): motion['rapidRepeats']=True
             if selection['cases'][0] == 'hotkey':
@@ -497,10 +513,10 @@ def _debug_coverage(cache, text, selection):
                 if any(type(r['result']) is not bool for r in selected):
                     raise ValueError('Invalid selected-scene grip result: ' + name)
                 row['gripFailures'] = sum(not r['result'] for r in selected)
-        if bank in ('interaction', 'wheel', 'interruption', 'interruption-matrix', 'repeat', 'hotkey'):
+        if bank in ('interaction', 'wheel', 'interruption', 'interruption-matrix', 'interruption-fast', 'approach', 'repeat', 'hotkey'):
             row['actionCoverage'] = _debug_action_coverage(log, name, start, seconds, probes)
         result.append(row)
-    _mesh_proof(cache, moving=bank not in ('interaction', 'wheel', 'interruption', 'interruption-matrix', 'repeat', 'hotkey'))
+    _mesh_proof(cache, moving=bank not in ('interaction', 'wheel', 'interruption', 'interruption-matrix', 'interruption-fast', 'approach', 'repeat', 'hotkey'))
     return result
 
 
@@ -823,6 +839,22 @@ def verify(root, selection, catalog):
                  'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
                              'functionalPass': True, 'partialCoverage': debug,
                              'selectedScenes': selected_scenes(selection)}}]}
+        if selection['suite'] == SP and selection['cases'] == ['approach']:
+            command = [sys.executable, str(intake / 'analyze-approach.py'), '--profile', str(root / 'client1'),
+                       '--log', str(logs['client1']), '--output', str(analysis / 'approach.json')]
+            if debug:
+                for scene in selected_scenes(selection): command += ['--scene', scene]
+            evidence['analyzers'] = {'approach': _run(command, analysis, 'approach')}
+            evidence['approach'] = _json(analysis / 'approach.json')
+            if not all(evidence['approach'].get(key) for key in ('functionalPass', 'approachVerified')):
+                raise ValueError('Approach verification failed: ' + str(evidence['approach'].get('failures')))
+            evidence.update(analysis=str(analysis), evidenceComplete=True, selectedScenes=selected_scenes(selection),
+                            scope='SP public-menu approach lifecycle and exact ownership; rendered geometry remains separate')
+            return {'issues': [], 'evidence': evidence, 'outcomes': [
+                {'actor': 'client1', 'case': 'approach', 'status': 'captured',
+                 'reason': 'Native approach, ownership and independent-tail receipts verified for the selected scenes',
+                 'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
+                             'functionalPass': True, 'partialCoverage': debug, 'approachVerified': True}}]}
         if selection['suite'] == MP:
             report = _load(intake / 'analyze.py').analyze(root)
             evidence['comparison'] = report
@@ -838,7 +870,7 @@ def verify(root, selection, catalog):
                 ('body', [sys.executable, str(ev / 'check-hip-actual.py'), '--game-java-dir', str(game), '--mesh', str(_path(selection, 'mesh_fbx')), '--mesh-vbo', str(cache / 'WheelbarrowWood.bin'), '--capture', str(cache / 'body-clearance.jsonl'), '--output', str(analysis)]),
             ]
             commands.append(('pants', commands[1][1] + ['--pants']))
-            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat', 'hotkey', 'impact', 'pivot'):
+            if case not in ('interaction', 'interruption', 'interruption-matrix', 'interruption-fast', 'approach', 'wheel', 'repeat', 'hotkey', 'impact', 'pivot'):
                 scene_contract = analysis / 'selected-scenes.json'
                 windows = _load(ev / 'scene_windows.py')
                 _write(scene_contract, json.dumps(windows.contract(case, selected_scenes(selection)), indent=2))
@@ -882,8 +914,16 @@ def verify(root, selection, catalog):
                      'reason': 'Natural bare Run/Sprint wall controls, guarded cart contact and separately injected cart recovery; visual review remains separate',
                      'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
                                  'partialCoverage': debug, 'nativeRecoveryVerified': True}}]}
+            if debug and case == 'interruption-fast':
+                command = [sys.executable, str(intake / 'analyze-interruption.py'), '--fast', '--profile', str(cache),
+                           '--log', str(logs['client1']), '--output', str(analysis / 'interruption.json')]
+                for scene in selected_scenes(selection): command += ['--scene', scene]
+                evidence['analyzers'][case] = _run(command, analysis, case)
+                evidence['interruption'] = _json(analysis / 'interruption.json')
+                if not all(evidence['interruption'].get(key) for key in ('functionalPass', 'recoveryVerified', 'wheelCoverageVerified')):
+                    raise ValueError('Selected fast cancellation failed: ' + str(evidence['interruption'].get('failures')))
             if debug:
-                if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat', 'hotkey'):
+                if case not in ('interaction', 'interruption', 'interruption-matrix', 'interruption-fast', 'approach', 'wheel', 'repeat', 'hotkey'):
                     _coverage(cache, texts['client1'], len(selected_scenes(selection)), _json(analysis / 'native-metrics.json'))
                 evidence.update(scope='selected-scenes', selectedScenes=selected_scenes(selection),
                                 fullSceneCount=SP_CASES[case][1], diagnosticOnly=True, evidenceComplete=True,
@@ -908,9 +948,9 @@ def verify(root, selection, catalog):
                 if not all(evidence['repeat'].get(key) for key in ('functionalPass', 'clockVerified', 'recoveryVerified', 'wheelCoverageVerified')):
                     raise ValueError('Rapid repeat verification failed: ' + str(evidence['repeat']['failures']))
                 evidence['nativeMotionNotApplicable'] = True
-            elif case in ('interruption', 'interruption-matrix'):
+            elif case in ('interruption', 'interruption-matrix', 'interruption-fast'):
                 evidence['analyzers'][case] = _run([sys.executable, str(intake / 'analyze-interruption.py'),
-                    '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'interruption.json')] + (['--matrix'] if case == 'interruption-matrix' else []), analysis, case)
+                    '--profile', str(cache), '--log', str(logs['client1']), '--output', str(analysis / 'interruption.json')] + (['--matrix'] if case == 'interruption-matrix' else ['--fast'] if case == 'interruption-fast' else []), analysis, case)
                 evidence['interruption'] = _json(analysis / 'interruption.json')
                 if not all(evidence['interruption'].get(key) for key in ('functionalPass','recoveryVerified','wheelCoverageVerified')):
                     raise ValueError('Interruption verification failed: ' + str(evidence['interruption']['failures']))
@@ -960,7 +1000,7 @@ def verify(root, selection, catalog):
                 motion = _load(intake / 'analyze-reversal.py').analyze(texts['client1'])
                 evidence['motion'] = motion
                 _write(analysis / 'reversal-motion.json', json.dumps(motion, indent=2, allow_nan=False))
-            if case not in ('interaction', 'interruption', 'interruption-matrix', 'wheel', 'repeat', 'hotkey'):
+            if case not in ('interaction', 'interruption', 'interruption-matrix', 'interruption-fast', 'approach', 'wheel', 'repeat', 'hotkey'):
                 _coverage(cache, texts['client1'], SP_CASES[case][1], metrics)
                 evidence['nativeSelectedScenes'] = selected_scenes(selection)
             evidence['evidenceComplete'] = True

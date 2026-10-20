@@ -1529,12 +1529,9 @@ public final class CartGripTest {
                         throw new AssertionError("captured pickup clearance shift stretched a leg link");
                 }
                 if(clearance>0) {
-                    var hip=free[foot-2].getTranslation(new Vector3f());
-                    var axis=free[foot].getTranslation(new Vector3f()).sub(hip).normalize();
-                    var bend=free[foot-1].getTranslation(new Vector3f()).sub(hip);
-                    var toe=free[foot+1].getTranslation(new Vector3f()).sub(free[foot].getTranslation(new Vector3f()));toe.y=0;
-                    bend.fma(-bend.dot(axis),axis);toe.fma(-toe.dot(axis),axis);
-                    if(bend.dot(toe)<=0) throw new AssertionError("captured pickup clearance shift inverted a walking knee");
+                    var relative=new Matrix4f(free[foot-2]).invert().mul(free[foot-1]);
+                    double flexion=Math.atan2(relative.m20()-relative.m02(),relative.m00()+relative.m22());
+                    if(flexion<-.0001) throw new AssertionError("captured pickup clearance shift inverted a walking knee");
                 }
             }
             for(int upper=0;upper<10;upper++)
@@ -1548,6 +1545,65 @@ public final class CartGripTest {
         }
     }
 
+    private static void checkMovingToeOffKnees() {
+        // Native01 male/full sprint, after the setdown recovery ended: 1792516229754 / 1792516229806.
+        // Both feet cross their horizontal toe direction while the native calf hinges remain forward.
+        String captures="""
+            -0.004217811,-0.88537914,-0.4648228,0,-0.99997395,0.0057173297,-0.0018164888,0,0.0042790207,0.4648117,-0.8853947,0,0.049448144,0.49696115,-0.049741548,1
+            -0.0044222176,-0.49512842,0.86880416,0,-0.99997395,0.005717337,-0.0018164963,0,-0.0040674377,-0.86878896,-0.49514002,0,0.048446435,0.28668368,-0.16013695,1
+            -0.00013502123,-0.37822857,0.92570764,0,-0.998805,-0.045045104,-0.018536093,0,0.048708655,-0.9246042,-0.37776855,0,0.047531728,0.1842708,0.019567374,1
+            0.0002591759,-0.9257014,-0.37822127,0,-0.99999195,-0.00019451603,-0.00021250919,0,0.00013625351,0.3782269,-0.9257083,0,0.050759602,0.09810492,0.05498094,1
+            0.038780868,-0.9745243,0.220804,0,-0.9986967,-0.03061682,0.04031744,0,-0.03252099,-0.22208427,-0.97447526,0,-0.060849935,0.5025504,-0.048599422,1
+            0.049203135,-0.77379096,0.6314979,0,-0.9986966,-0.03061682,0.04031744,0,-0.011858449,-0.6326662,-0.7743169,0,-0.05163948,0.27110094,0.0038415072,1
+            -0.050286222,-0.7094818,0.7029045,0,-0.9972029,0.074352935,0.003725879,0,-0.054903634,-0.7007593,-0.71126175,0,-0.041462272,0.111049205,0.1344612,1
+            0.028678406,-0.9147339,-0.4029905,0,-0.9992559,-0.01618427,-0.034379557,0,0.024938913,0.4036781,-0.91454816,0,-0.04839798,0.018102795,0.13314883,1
+            -0.00423678,-0.87026477,-0.49256986,0,-0.99998695,0.0053007603,-0.0007637739,0,0.0032749027,0.49255955,-0.87027395,0,0.05190391,0.5095029,-0.043402184,1
+            -0.004674867,-0.7945711,0.6071556,0,-0.999987,0.0053007603,-0.0007637851,0,-0.002611692,-0.60715145,-0.79458416,0,0.050897703,0.3028151,-0.16038753,1
+            -0.0006963129,-0.76245576,0.6470421,0,-0.9970693,-0.04897981,-0.058790475,0,0.076516844,-0.6451869,-0.7601859,0,0.04993074,0.1384652,-0.034802835,1
+            -0.0006291568,-0.6470432,-0.7624556,0,-1.0000008,0.00093897805,2.8148293e-05,0,0.00069694634,0.76245546,-0.6470426,0,0.05496977,0.045748487,-0.043018106,1
+            0.026950948,-0.9757718,0.21709342,0,-0.99910605,-0.019270033,0.037417702,0,-0.032328665,-0.21791556,-0.97543293,0,-0.058402047,0.51427144,-0.040982082,1
+            0.04143381,-0.6065845,0.79393107,0,-0.999106,-0.01927004,0.037417687,0,-0.0073983492,-0.7947786,-0.6068543,0,-0.05200119,0.28252566,0.010577587,1
+            -0.055308875,-0.42989692,0.90117747,0,-0.99802727,0.050419882,-0.037202008,0,-0.029444415,-0.90146303,-0.4318497,0,-0.043430977,0.15705909,0.1747951,1
+            0.029201495,-0.99311674,-0.113390654,0,-0.9989,-0.024854045,-0.039569084,0,0.03647735,0.114414394,-0.9927618,0,-0.049003266,0.06905323,0.20501137,1
+            """;
+        String[] names={"Bip01_L_Thigh","Bip01_L_Calf","Bip01_L_Foot","Bip01_L_Toe0",
+            "Bip01_R_Thigh","Bip01_R_Calf","Bip01_R_Foot","Bip01_R_Toe0"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,2,-1,4,5,6),offsets);
+        var lines=captures.strip().split("\\n");
+        var nativeFrames=new Matrix4f[2][names.length];
+        for(int frame=0;frame<2;frame++) for(int i=0;i<names.length;i++) {
+            var cells=lines[frame*names.length+i].strip().split(",");var values=new float[16];
+            for(int j=0;j<16;j++) values[j]=Float.parseFloat(cells[j]);
+            nativeFrames[frame][i]=new Matrix4f().set(values);
+        }
+        for(int foot:new int[]{2,6}) {
+            float before=nativeFrames[0][foot+1].m32()-nativeFrames[0][foot].m32();
+            float after=nativeFrames[1][foot+1].m32()-nativeFrames[1][foot].m32();
+            if(before*after>=0) throw new AssertionError("captured sprint toe-off did not cross the horizontal toe pole");
+        }
+        for(var nativePose:nativeFrames) for(float clearance:new float[]{0,.01f,.1f,.2f,.24f}) {
+            var poses=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.groundFeet(poses,actor,null,null,0,-.18f*clearance,-.04f*clearance,.12f*clearance,true))
+                throw new AssertionError("captured sprint clearance solve refused");
+            if(clearance==0) for(int i=0;i<poses.length;i++)
+                if(!poses[i].equals(nativePose[i])) throw new AssertionError("zero clearance changed a native sprint leg");
+            for(int foot:new int[]{2,6}) {
+                if(!poses[foot].equals(nativePose[foot],.00001f) || !poses[foot+1].equals(nativePose[foot+1],.00001f))
+                    throw new AssertionError("moving knee correction changed the native airborne foot/toe target");
+                for(int upper:new int[]{foot-2,foot-1}) {
+                    float before=nativePose[upper].getTranslation(new Vector3f()).distance(nativePose[upper+1].getTranslation(new Vector3f()));
+                    float after=poses[upper].getTranslation(new Vector3f()).distance(poses[upper+1].getTranslation(new Vector3f()));
+                    if(Math.abs(before-after)>.00001f) throw new AssertionError("moving knee correction stretched a native leg");
+                }
+                var relative=new Matrix4f(poses[foot-2]).invert().mul(poses[foot-1]);
+                double flexion=Math.atan2(relative.m20()-relative.m02(),relative.m00()+relative.m22());
+                if(flexion<-.0001) throw new AssertionError("sprint toe-off reversed anatomical knee flexion: "+flexion);
+            }
+        }
+    }
+
     public static void main(String[] args) throws ReflectiveOperationException {
         checkNativeHeight();
         checkRecoveryPosture();
@@ -1555,6 +1611,7 @@ public final class CartGripTest {
         checkLateRecoveryReach();
         checkObserverSetdownReach();
         checkMovingRecovery();
+        checkMovingToeOffKnees();
         checkMovingRootTranslation();
         checkMovingUnreachableTargets();
         checkReach();

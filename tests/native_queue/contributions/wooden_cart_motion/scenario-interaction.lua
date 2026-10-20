@@ -49,6 +49,22 @@ if config.interruptions then
   end
  end
 end
+if config.fastInterruptions then
+ cases={}
+ local specs={
+  {'male','full','pickup','early','run'}, {'male','full','drop','contact','run'},
+  {'male','full','pickup','contact','sprint'}, {'male','full','drop','late','sprint'},
+  {'female','empty','pickup','late','run'}, {'female','empty','drop','early','run'},
+  {'female','empty','pickup','early','sprint'}, {'female','empty','drop','contact','sprint'},
+  {'male','full','pickup','contact','runrelease'}, {'male','full','drop','contact','sprintrelease'},
+  {'female','empty','pickup','late','runsprint'}, {'female','empty','drop','late','sprintwalk'},
+  {'male','full','pickup','late','reset'}, {'female','empty','drop','contact','reset'},
+ }
+ for _,v in ipairs(specs) do
+  cases[#cases+1]={name=table.concat(v,'-'),female=v[1]=='female',full=v[2]=='full',yaw=135,
+   interrupt=v[3],threshold=({early=.15,contact=.55,late=.88})[v[4]],route=v[5]}
+ end
+end
 if config.rapidRepeats then
  cases={}
  for _,variant in ipairs({{name='male-empty',female=false,full=false},{name='male-full',female=false,full=true},
@@ -62,7 +78,8 @@ cases=CartLabSelectScenes(cases)
 local phase,attempt,since,sampleSince=0,0,0,0
 local mode,stage,item,initialCargo,initialCargoIDs,heldAt,droppedAt='settle','grounded'
 local interrupted,cancelAt,cancelledAt,retryStage
-local cycle,driveStage=1,0
+local cycle,driveStage,gaitStage=1,0,0
+local paceChanged=false
 local selectionWorld,selectionOn
 local actionSerial,restartCount,cleanupAt=0,0,nil
 local hotkeyAction,hotkeyStarted,hotkeyCode,hotkeyReleaseAt
@@ -115,10 +132,10 @@ local function snapshot(now)
  local count,woodCount,world=worlds()
  local weight,ids,children=cargo()
  assert(math.abs(weight-initialCargo)<.001 and ids==initialCargoIDs,'Cargo changed during interaction')
- assert(CartTestArea.contains(p:getX(),p:getY(),p:getZ()) and math.abs(p:getX()-CartTestArea.x)<4 and math.abs(p:getY()-CartTestArea.y)<4,'Interaction left checked local pad')
+ assert(CartTestArea.contains(p:getX(),p:getY(),p:getZ()) and math.abs(p:getX()-CartTestArea.x)<(config.fastInterruptions and 6 or 4) and math.abs(p:getY()-CartTestArea.y)<(config.fastInterruptions and 6 or 4),'Interaction left checked local pad')
  local status=toolkitWoodCartStatus and toolkitWoodCartStatus(p) or {}
  return {case=cases[phase].name,start=since,wall=now,elapsed=now-since,id=item:getID(),stage=stage,female=p:isFemale(),driveCommand=driveStage,
-  cycle=cycle,driveStage=driveStage,actionSerial=actionSerial,restartCount=restartCount,heldID=handID(p:getPrimaryHandItem()),secondaryID=handID(p:getSecondaryHandItem()),
+  cycle=cycle,driveStage=driveStage,gaitCommand=gaitStage,sprintSkill=p:getPerkLevel(Perks.Sprinting),run=p:isRunning(),sprint=p:isSprinting(),actionSerial=actionSerial,restartCount=restartCount,heldID=handID(p:getPrimaryHandItem()),secondaryID=handID(p:getSecondaryHandItem()),
   worldID=world and world:getItem():getID() or -1,worldCount=count,woodWorldCount=woodCount,inventoryCount=inventoryCount(),
   actionType=action and action.Type or '',progress=action and action:getJobDelta() or 0,condition=item:getCondition(),
   nativeActions=p:getCharacterActions():size(),luaActions=#queue.queue,
@@ -150,6 +167,11 @@ local function reclaim()
  p:setPrimaryHandItem(item);p:setSecondaryHandItem(item);SaucedCarts.applyCartPose(p)
 end
 local function prepare()
+ if config.fastInterruptions then
+  -- As in the movement bank, use the native skill eligibility for sprinting with a heavy cart.
+  p:setPerkLevelDebug(Perks.Sprinting,10);p:getXp():setXPToLevel(Perks.Sprinting,10)
+  assert(p:getPerkLevel(Perks.Sprinting)==10,'Wrong Sprinting skill')
+ end
  reclaim()
  if p:isFemale()~=cases[phase].female then
   p:setFemale(cases[phase].female);p:getDescriptor():setFemale(cases[phase].female);p:resetModel()
@@ -185,7 +207,7 @@ local function prepare()
   p:ensureOnTile();p:setCurrentSquareFromPosition();p:setMovingSquareNow()
  end
  stage,heldAt,droppedAt='grounded',nil,nil
- cycle,driveStage=1,0
+ cycle,driveStage,gaitStage=1,0,0;paceChanged=false;cartLabDrive(0);cartLabGait(0)
  actionSerial,restartCount,cleanupAt=0,0,nil
  interrupted,cancelAt,cancelledAt,retryStage=false,nil,nil,nil
  p:getStats():reset(CharacterStat.ENDURANCE)
@@ -334,23 +356,38 @@ local function tick()
   local action=assert(ISTimedActionQueue.getTimedActionQueue(p).queue[1],'Cancellation action missing')
   assert(action.action and not action.action:finished() and row.progress<c.threshold+.1,'Cancellation missed unfinished native window')
   interrupted=true;cancelAt=now;retryStage=stage;stage='cancelling';event('cancelRequested',now)
-  if c.route=='cancel' then
+  if c.route=='reset' then
+   -- Exercise the public forced presentation-reset path, not a fabricated combat/fall event.
+   assert(toolkitWoodCartEnd,'Missing emergency presentation reset');toolkitWoodCartEnd(p);ISTimedActionQueue.clear(p)
+  elseif c.route=='cancel' then
    assert(CancelAction,'Native cancel handler missing');CancelAction(p:getPlayerNum())
-  else driveStage=1;cartLabDrive(1) end
+  else
+   gaitStage=config.fastInterruptions and (c.route:sub(1,6)=='sprint' and 2 or 1) or 0
+   cartLabGait(gaitStage);driveStage=1;cartLabDrive(1)
+  end
   return
  end
  if stage=='cancelling' then
   assert(now-cancelAt<1000,'Native cancellation did not clear the action')
   if row.nativeActions==0 and row.luaActions==0 then
-   if not config.interruptionMatrix then driveStage=0;cartLabDrive(0) end
+   if not config.interruptionMatrix and not config.fastInterruptions then driveStage=0;cartLabDrive(0) end
    cancelledAt=now;stage='cancelled';event('cancelled',now)
   end
   return
  elseif stage=='cancelled' then
+  if config.fastInterruptions and c.route~='reset' then
+   if not paceChanged and (c.route=='runsprint' or c.route=='sprintwalk') and now-cancelledAt>=150 then
+    paceChanged=true;gaitStage=c.route=='runsprint' and 2 or 0;cartLabGait(gaitStage);event('paceChanged',now)
+   end
+   local releaseAfter=(c.route=='runrelease' or c.route=='sprintrelease') and 150 or 900
+   if driveStage~=0 and now-cancelledAt>=releaseAfter then
+    driveStage=0;gaitStage=0;cartLabDrive(0);cartLabGait(0);event('movementReleased',now)
+   end
+  end
   if config.interruptionMatrix and c.route=='walk' and driveStage~=0 and now-cancelledAt>=900 then
    driveStage=0;cartLabDrive(0);event('movementReleased',now)
   end
-  if now-cancelledAt<(config.interruptionMatrix and c.route=='walk' and 1400 or 900) then return end
+  if now-cancelledAt<(config.fastInterruptions and 2400 or config.interruptionMatrix and c.route=='walk' and 1400 or 900) then return end
   event('retryQueued',now)
   if retryStage=='pickup' then
    stage='pickup';ISTimedActionQueue.add(ISCartPickupAction.FromWorldItem(p,assert(item:getWorldItem())))

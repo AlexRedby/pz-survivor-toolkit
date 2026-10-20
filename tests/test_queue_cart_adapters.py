@@ -94,6 +94,20 @@ class CartAdapterTests(unittest.TestCase):
         self.assertIn('toggleToSprint=false', (self.output / 'client1/options.ini').read_text())
         self.assertEqual(self.runtime['roles']['client1']['env']['PZ_CART_TEST_PAD'], 'true')
 
+    def test_clean_capture_defaults_and_override(self):
+        for case, override, expected in [('reverse',None,True),('manual',None,False),('reverse',False,False),('manual',True,True)]:
+            with self.subTest(case=case,override=override):
+                shutil.rmtree(self.output);self.output.mkdir();self.runtime.pop('fixture',None);self.role('client1')
+                self.selection['cases']=[case]
+                if override is None: self.options.pop('cart_hide_ui',None)
+                else: self.options['cart_hide_ui']=override
+                self.stage()
+                text=Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+                self.assertIn('["hideUI"]='+str(expected).lower(),text)
+        for invalid in (1,'false',None):
+            self.options['cart_hide_ui']=invalid
+            with self.assertRaisesRegex(ValueError,'cart_hide_ui'): carts.validate(self.selection)
+
     def test_manual_sp_stage_only_bootstraps_without_autonomous_scenarios_or_probes(self):
         self.selection['cases'] = ['manual']
         compiler = self.stage()
@@ -512,8 +526,8 @@ class CartAdapterTests(unittest.TestCase):
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'pivot', 'stationary', 'maneuvers', 'motion-matrix', 'obstacle-matrix', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'native-e'])
-        for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 16), ('wall-fast-manual-exit', 32), ('impact', 8), ('wheel', 1), ('interaction', 4), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'pivot', 'stationary', 'maneuvers', 'motion-matrix', 'obstacle-matrix', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'approach', 'interruption-fast', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'native-e'])
+        for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 16), ('wall-fast-manual-exit', 32), ('impact', 8), ('wheel', 1), ('interaction', 4), ('approach', 7), ('interruption-fast', 14), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
                 self.output.mkdir()
@@ -521,7 +535,7 @@ class CartAdapterTests(unittest.TestCase):
                 self.selection['cases'] = [case]
                 self.stage()
                 text = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
-                source='stop' if case=='stop-timing' else 'collision' if case in ('collision','footprint','impact','brace','fast-slide','wall-exit','wall-manual-exit','wall-fast-manual-exit') else 'interaction' if case in ('interruption','interruption-matrix','wheel','repeat') else case
+                source='stop' if case=='stop-timing' else 'collision' if case in ('collision','footprint','impact','brace','fast-slide','wall-exit','wall-manual-exit','wall-fast-manual-exit') else 'interaction' if case in ('interruption','interruption-matrix','interruption-fast','wheel','repeat') else case
                 self.assertIn((ROOT / f'tests/native_queue/contributions/wooden_cart_motion/scenario-{source}.lua').read_text(), text)
                 if case in ('collision','footprint','brace','fast-slide','wall-exit','wall-manual-exit','wall-fast-manual-exit'): self.assertIn('["footprint"]=true',text)
                 if case == 'fast-slide': self.assertIn('["fastSlide"]=true',text)
@@ -530,7 +544,8 @@ class CartAdapterTests(unittest.TestCase):
                 if case == 'wall-fast-manual-exit': self.assertIn('["wallFastManualExit"]=true',text)
                 if case == 'impact': self.assertIn('["impact"]=true',text)
                 if case == 'wheel': self.assertIn('["wheelCycle"]=true',text)
-                if case in ('interruption', 'interruption-matrix'): self.assertIn('["interruptions"]=true',text)
+                if case in ('interruption', 'interruption-matrix', 'interruption-fast'): self.assertIn('["interruptions"]=true',text)
+                if case == 'interruption-fast': self.assertIn('["fastInterruptions"]=true',text)
                 if case == 'interruption-matrix': self.assertIn('["interruptionMatrix"]=true',text)
                 if case == 'repeat': self.assertIn('["rapidRepeats"]=true',text)
                 if case == 'stop-timing': self.assertIn('["stopTiming"]=true',text)
@@ -621,11 +636,117 @@ class CartAdapterTests(unittest.TestCase):
             self.assertTrue(result['issues'])
             self.assertEqual(result['outcomes'][0]['status'], 'failed')
 
+    @staticmethod
+    def one_cart_scene(text, name):
+        first=text.index('[WOOD_BANK] CASE '+name+' ')
+        last=text.index('\n',text.index('[WOOD_BANK] COMPLETE '+name+' ',first))
+        cleanup='[CART_APPROACH] CLEANUP_COMPLETE\n' if '[CART_APPROACH] CLEANUP_COMPLETE' in text else ''
+        return '[WOOD_BANK] RUN_STARTED\n'+text[first:last]+'\n'+cleanup+'[WOOD_BANK] ALL_COMPLETE cases=1\n'
+
+    def test_approach_full_bank_runs_its_verifier_without_held_geometry_dependencies(self):
+        self.selection['cases']=['approach']
+        fixture=carts._load(ROOT/'tests/test_cart_approach_edges.py')
+        text,lifecycle=fixture.fixture();cache=self.output/'client1'
+        (self.output/'client1-launch.log').write_text(text)
+        (cache/'action-lifecycle.jsonl').write_text('\n'.join(map(json.dumps,lifecycle)))
+        original_run=carts._run
+        with patch.object(carts,'_videos',return_value=[]) as videos, \
+             patch.object(carts,'_run',wraps=original_run) as analyzer, \
+             patch.object(carts,'_debug_coverage',side_effect=AssertionError('approach must bypass held geometry')):
+            result=carts.verify(self.output,self.selection,{})
+            self.assertFalse(result['issues'],result)
+            videos.assert_called_once();analyzer.assert_called_once()
+            command=analyzer.call_args.args[0]
+            self.assertEqual(Path(command[1]).name,'analyze-approach.py')
+            self.assertNotIn('--scene',command)
+            self.assertEqual(set(result['evidence']['analyzers']),{'approach'})
+            self.assertEqual(len(result['evidence']['approach']['cases']),7)
+            outcome=result['outcomes'][0]
+            self.assertEqual(outcome['status'],'captured')
+            self.assertTrue(outcome['outcome']['functionalPass'] and outcome['outcome']['approachVerified'])
+            self.assertFalse(outcome['outcome']['partialCoverage'] or outcome['outcome']['animationEquivalencePass'])
+            self.assertFalse((cache/'body-clearance.jsonl').exists())
+            self.assertFalse((cache/'wood-grip-poses.jsonl').exists())
+            self.assertFalse((self.output/'runtime.json').exists())
+            # The adapter must execute the verifier and propagate its failure, not just trust ALL_COMPLETE.
+            (cache/'action-lifecycle.jsonl').write_text('\n'.join(map(json.dumps,lifecycle[:-1])))
+            failed=carts.verify(self.output,self.selection,{})
+            self.assertTrue(failed['issues'])
+            self.assertFalse(failed['evidence']['approach']['functionalPass'])
+            self.assertEqual(failed['outcomes'][0]['status'],'failed')
+
+    def test_selected_failed_approach_runs_scene_verifier_and_marks_partial_without_held_phases(self):
+        name='precise-blocked';self.selection['cases']=['approach'];self.options['cart_scenes']=[name]
+        fixture=carts._load(ROOT/'tests/test_cart_approach_edges.py')
+        text,lifecycle=fixture.fixture();cache=self.output/'client1'
+        (self.output/'client1-launch.log').write_text(self.one_cart_scene(text,name))
+        start=100000+fixture.analyzer.CASES.index(name)*20000
+        selected=[row for row in lifecycle if start<=row['wallTimeMillis']<start+20000]
+        (cache/'action-lifecycle.jsonl').write_text('\n'.join(map(json.dumps,selected)))
+        original_run=carts._run
+        with patch.object(carts,'_videos',return_value=[]),patch.object(carts,'_run',wraps=original_run) as analyzer, \
+             patch.object(carts,'_debug_coverage',side_effect=AssertionError('failure-only scene has no held phase')):
+            result=carts.verify(self.output,self.selection,{})
+            self.assertFalse(result['issues'],result)
+            analyzer.assert_called_once();command=analyzer.call_args.args[0]
+            self.assertEqual(command[command.index('--scene'):],['--scene',name])
+            self.assertEqual(set(result['evidence']['analyzers']),{'approach'})
+            self.assertEqual([row['case'] for row in result['evidence']['approach']['cases']],[name])
+            self.assertEqual(result['evidence']['selectedScenes'],[name])
+            outcome=result['outcomes'][0]
+            self.assertEqual(outcome['status'],'captured')
+            self.assertTrue(outcome['outcome']['partialCoverage'] and outcome['outcome']['approachVerified'])
+            self.assertFalse(outcome['outcome']['animationEquivalencePass'])
+            self.assertFalse((cache/'body-clearance.jsonl').exists())
+            self.assertFalse((cache/'wood-grip-poses.jsonl').exists())
+            selected[-1]['event']='complete'
+            (cache/'action-lifecycle.jsonl').write_text('\n'.join(map(json.dumps,selected)))
+            failed=carts.verify(self.output,self.selection,{})
+            self.assertTrue(failed['issues'])
+            self.assertFalse(failed['evidence']['approach']['approachVerified'])
+            self.assertEqual(failed['outcomes'][0]['status'],'failed')
+            self.assertTrue(failed['outcomes'][0]['outcome']['partialCoverage'])
+
+    def test_selected_fast_interruption_runs_fast_scene_gates_before_debug_capture(self):
+        name='male-full-pickup-contact-sprint'
+        self.selection['cases']=['interruption-fast'];self.options['cart_scenes']=[name]
+        fixture=carts._load(ROOT/'tests/test_cart_interruption.py')
+        text,lifecycle,body,grip,world,draws,tail=fixture.fixture(fast=True)
+        (self.output/'client1-launch.log').write_text(self.one_cart_scene(text,name))
+        (self.output/'runtime.json').write_text(json.dumps(self.runtime));cache=self.output/'client1'
+        for filename,rows in [('action-lifecycle.jsonl',lifecycle),('body-clearance.jsonl',body),
+                              ('wood-grip-poses.jsonl',grip),('world-cart-poses.jsonl',world),
+                              ('wheel-roll-draws.jsonl',draws),('action-tail-poses.jsonl',tail)]:
+            (cache/filename).write_text('\n'.join(map(json.dumps,rows)))
+        original_run=carts._run;commands={}
+        def run(command,directory,bank):
+            commands[bank]=command
+            return original_run(command,directory,bank) if bank=='interruption-fast' else {'exit_code':0}
+        with patch.object(carts,'_run',side_effect=run),patch.object(carts,'_videos',return_value=[]), \
+             patch.object(carts,'_debug_coverage',return_value=[{'scene':name}]) as coverage:
+            result=carts.verify(self.output,self.selection,{})
+            self.assertFalse(result['issues'],result)
+            self.assertEqual(set(commands),{'aabb','body','pants','interruption-fast'})
+            self.assertIn('--fast',commands['interruption-fast'])
+            self.assertEqual(commands['interruption-fast'][-2:],['--scene',name])
+            self.assertTrue(result['evidence']['interruption']['functionalPass'])
+            self.assertTrue(result['outcomes'][0]['outcome']['partialCoverage'])
+            self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+            coverage.assert_called_once()
+            # A native completed action cannot be accepted as cancellation merely because this is debug mode.
+            start=100000+fixture.analyzer.FAST_CASES.index(name)*25000
+            row=next(row for row in lifecycle if start<=row['wallTimeMillis']<start+20000 and row['event']=='stop')
+            row['event']='complete';coverage.reset_mock()
+            (cache/'action-lifecycle.jsonl').write_text('\n'.join(map(json.dumps,lifecycle)))
+            failed=carts.verify(self.output,self.selection,{})
+            self.assertTrue(failed['issues']);self.assertEqual(failed['outcomes'][0]['status'],'failed')
+            coverage.assert_not_called()
+
     def test_interruption_adapter_requires_native_stop_retry_and_first_render_receipts(self):
-        for case, matrix in [('interruption', False), ('interruption-matrix', True)]:
+        for case, matrix in [('interruption', False), ('interruption-matrix', True), ('interruption-fast', False)]:
             self.selection['cases'] = [case]
             fixture = carts._load(ROOT / 'tests/test_cart_interruption.py')
-            text, lifecycle, body, grip, world, draws, tail = fixture.fixture(matrix=matrix)
+            text, lifecycle, body, grip, world, draws, tail = fixture.fixture(matrix=matrix,fast=case=='interruption-fast')
             cache = self.output / 'client1'
             (self.output / 'client1-launch.log').write_text(text)
             (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
@@ -763,7 +884,7 @@ class CartAdapterTests(unittest.TestCase):
             marker='cases=CartLabSelectScenes(cases)'
             body=text[start:text.index(marker,start)+len(marker)]
             flags=dict(disposable=True,footprint=bank in ('collision','footprint','brace','fast-slide','wall-exit','wall-manual-exit','wall-fast-manual-exit'),vehicles=bank=='vehicles',brace=bank=='brace',fastSlide=bank=='fast-slide',wallExit=bank in ('wall-exit','wall-manual-exit','wall-fast-manual-exit'),wallManualExit=bank in ('wall-manual-exit','wall-fast-manual-exit'),wallFastManualExit=bank=='wall-fast-manual-exit',
-                       wheelCycle=bank=='wheel',interruptions=bank in ('interruption','interruption-matrix'),
+                       wheelCycle=bank=='wheel',interruptions=bank in ('interruption','interruption-matrix','interruption-fast'),fastInterruptions=bank=='interruption-fast',
                        interruptionMatrix=bank=='interruption-matrix',rapidRepeats=bank in ('repeat','hotkey'),stopTiming=bank=='stop-timing',impact=bank=='impact')
             from queue_checks.native import _lua
             for chosen in (None,[full[-1],full[0]] if count>1 else [full[0]]):
