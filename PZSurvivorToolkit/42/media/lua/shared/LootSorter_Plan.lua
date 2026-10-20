@@ -13,8 +13,8 @@
 --              Injected so the pure planner never calls the engine directly -- in-game it wraps
 --              ItemContainer:isItemAllowed (so a Key Ring / wallet / ammo strap won't be used as a
 --              general haul bag); tests pass a stub. Defaults to "accept everything" when omitted, so
---              existing callers/tests are unaffected. It is a pure READ: it gates WHICH carrier an item
---              may go in, never the space/weight math (that only mutates on actual placement).
+--              existing callers/tests are unaffected. It is a pure READ: eligibility is captured
+--              before destination reservation and reused when placing items into carry-loads.
 --   acceptsDestination = optional function(box, item) -> bool : may this destination hold this item?
 --              Called only for matching boxes with enough planned space, with the original records.
 --              Defaults to accepting all destinations. This does not change designation matching;
@@ -59,21 +59,24 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
     acceptsDestination = acceptsDestination or function() return true end
     boxes = inPreferenceOrder(boxes)
     -- 1) assign each item to a same-category box WITH ROOM, cascading to further same-cat boxes.
-    -- An item heavier than the biggest carrier can never be carried, so it must NOT reserve box
-    -- space -- otherwise it starves a smaller same-category item that could actually be hauled.
-    local byBox, boxUsed, leftover = {}, {}, {}
+    -- Only items with a roomy, accepting carrier may reserve destination space.
+    -- Otherwise an impossible haul can block later items or force them into overflow boxes.
+    local byBox, boxUsed, leftover, carrierChoices = {}, {}, {}, {}
     -- why leftover items couldn't be placed, so the caller can show a clear message:
-    --   carry   = too heavy / no room in the player's carriers (inventory)
+    --   carry   = no carrier has both enough room and permission to hold the item
     --   full    = a box IS designated for it, but every matching box is full or rejects it
     --   nomatch = no designated box for this item's category/name at all
     local reasons = { carry = 0, full = 0, nomatch = 0 }
     local function addLeftover(it, why) leftover[#leftover + 1] = it; reasons[why] = (reasons[why] or 0) + 1 end
     for _, b in ipairs(boxes) do boxUsed[b] = b.used or 0 end
-    local maxCarrier = 0
-    for _, c in ipairs(carriers) do if (c.space or 0) > maxCarrier then maxCarrier = c.space end end
     for _, it in ipairs(items) do
+        local choices = {}
+        for ci, c in ipairs(carriers) do
+            if (c.space or 0) >= it.weight and accepts(c.ref, it.ref) then choices[#choices + 1] = ci end
+        end
+        carrierChoices[it] = choices
         local dest = nil
-        if it.weight <= maxCarrier then                  -- only route items that can actually be carried
+        if #choices > 0 then
             -- pass 1: a box that names THIS item (by display name) wins over any category box
             if it.name then
                 for _, b in ipairs(boxes) do             -- boxes nearest-first
@@ -97,8 +100,8 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
             boxUsed[dest] = boxUsed[dest] + it.weight
             byBox[dest] = byBox[dest] or {}
             table.insert(byBox[dest], it)
-        elseif it.weight > maxCarrier then
-            addLeftover(it, "carry")                     -- can't be carried (too heavy / carriers full)
+        elseif #choices == 0 then
+            addLeftover(it, "carry")
         else
             -- carryable but unplaced: distinguish "matching box(es) full" from "no matching box at all"
             local matched = false
@@ -128,11 +131,10 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
             local it, b = plan[pidx].item, plan[pidx].box
             local w = it.weight
             local placed = false
-            for ci, c in ipairs(carriers) do             -- bags first, main last
-                -- room check first (cheap) so the injected accepts() -- a possible engine read -- only
-                -- runs when this carrier could take the item. accepts() gates eligibility ONLY; the
-                -- space/weight bookkeeping below is untouched by it.
-                if free[ci] >= w and accepts(c.ref, it.ref) then
+            -- Preserve bags-first order; only remaining space changes between loads.
+            for _, ci in ipairs(carrierChoices[it]) do
+                local c = carriers[ci]
+                if free[ci] >= w then
                     local addEff = w * c.factor
                     if (not anyLoaded) or (loadEff + addEff) <= budget then
                         perBox[b] = perBox[b] or {}

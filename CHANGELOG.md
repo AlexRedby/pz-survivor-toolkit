@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.149
+
+- **Fixed:** Distribution checks which carry containers can hold each item before reserving destination space. Items rejected by all roomy carriers no longer block later items from being sorted or push them into lower-priority overflow boxes.
+
 ### 0.1.148
 
 - **Fixed:** Better Containers pin markers now share the actual-icon presentation used by research and planting badges. Markers follow scaled native/CleanUI icons without a separate row renderer, stay on stack headers and avoid covering other Toolkit badges; pin settings, ordering and saved data are unchanged.

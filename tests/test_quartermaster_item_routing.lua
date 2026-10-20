@@ -240,6 +240,42 @@ do
 end
 
 do
+    -- The roomy bag rejects the loose seeds, while main inventory has no room.
+    -- Those seeds must not reserve the only destination slot ahead of the packet.
+    local small = box(seedRule); small.capacity = 1
+    local bag, main = {ref = {}, factor = .1, space = 2}, {ref = {}, factor = 1, space = .5}
+    local function accepts(ref, itemRef)
+        return ref == main.ref or itemRef == full.ref
+    end
+    destinations, plan = checkPlan({sunflower, full}, {small}, {bag, main}, 2, accepts)
+    assert(not destinations[sunflower] and destinations[full] == small,
+        'uncarryable item reserved destination space ahead of a carryable item')
+    assert(#plan.leftover == 1 and plan.leftover[1] == sunflower
+        and plan.leftoverReasons.carry == 1 and plan.leftoverReasons.full == 0,
+        'carrier-ineligible item must be accounted for once as carry, not full')
+    assert(#plan.trips == 1 and plan.trips[1].perBox[small][1].carrier == bag,
+        'carryable item lost its admissible carrier')
+
+    -- The same phantom reservation must not push the packet to a lower-priority box.
+    local overflow = box(seedRule); small.priority, overflow.priority = 10, 0
+    destinations, plan = checkPlan({sunflower, full}, {small, overflow}, {bag, main}, 2, accepts)
+    assert(destinations[full] == small and not destinations[sunflower] and #plan.leftover == 1,
+        'uncarryable item forced a later item into an overflow destination')
+
+    -- A new trip restores carrier space; it must retain the same item restrictions.
+    bag.space = 1
+    local second = item('Base.CarrotBagSeed2', 'farmingSeed', 'Second packet')
+    destinations, plan = checkPlan({sunflower, full, second}, {seeds}, {bag, main}, 2,
+        function(ref, itemRef) return ref == main.ref or itemRef ~= sunflower.ref end)
+    assert(destinations[full] == seeds and destinations[second] == seeds and not destinations[sunflower]
+        and #plan.trips == 2 and #plan.leftover == 1, 'carrier eligibility was lost between trips')
+    for _, trip in ipairs(plan.trips) do
+        assert(#trip.perBox[seeds] == 1 and trip.perBox[seeds][1].carrier == bag,
+            'new trip exceeded carrier space or selected an ineligible carrier')
+    end
+end
+
+do
     local rejected, allowed = box(seedRule), box(seedRule)
     rejected.priority, rejected.dist, allowed.dist = 10, 10, 1
     local function admits(destination, record)
