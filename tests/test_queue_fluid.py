@@ -63,14 +63,14 @@ class FluidAdapterTests(unittest.TestCase):
                                          favorite=favorite, source=('root' if n == 0 or self.selection['mode'] == 'toolkit' else 'bag') if editing else bottle['source'], count=1,
                                          **({'weight': 1.1 - (1 - amounts[n])} if editing else {}))
                                     for n, bottle in enumerate(prep['bottles'])])
-            edit = dict(anchorRunning=True, bottleId=prep['bottles'][1]['id'], fullWeight=1.1, standalone=True,
+            edit = dict(anchorRunning=True, bottleId=prep['bottles'][1]['id'], fullWeight=1.1, standalone=True, manualPickupDispatched=True,
                         pickupDuration=-1 if self.selection['kind'] == 'mp' else 52.8,
                         returnDuration=-1 if self.selection['kind'] == 'mp' else 52.8,
                         nativeDurationsUnchanged=True, contractsVerified=self.selection['mode']=='toolkit',
                         reordered=self.selection['mode']=='toolkit', moveRejected=self.selection['mode']=='toolkit',
                         cancelRejected=self.selection['mode']=='toolkit', untouchedBefore=True,
                         returnNoopObserved=self.selection['mode']=='toolkit', returnDontAdd=self.selection['mode']=='toolkit' or self.selection['kind']=='mp',
-                        returnStarted=False, returnTransactionId=0, returnBoundaryObserved=True, returnCompleted=True,
+                        returnStarted=False, returnTransactionId=0, returnBoundaryObserved=True, returnCompleted=True, returnObservationFailed=False,
                         returnBefore='bag' if self.selection['mode']=='toolkit' else 'root', returnAfter='bag') if editing else None
             raw += [('PREPARED', prep), ('VERIFIED', receipt)]
             rows.append(dict(event='case', id=case, status='passed', reason=None, commands=commands,
@@ -423,8 +423,8 @@ class FluidAdapterTests(unittest.TestCase):
                 self.assertEqual([False, True], [command['pickupObserved'] for command in rows[1]['commands']])
                 self.assertIs(result['outcomes'][0]['outcome']['pendingTransferEditVerified'], mode == 'toolkit')
                 self.assertIs(result['outcomes'][0]['outcome']['dependentPickupProtected'], mode == 'toolkit')
-                for field in ('anchorRunning', 'standalone', 'contractsVerified', 'reordered', 'moveRejected',
-                              'cancelRejected', 'untouchedBefore', 'returnNoopObserved', 'returnStarted', 'returnBoundaryObserved', 'returnCompleted', 'nativeDurationsUnchanged'):
+                for field in ('anchorRunning', 'standalone', 'manualPickupDispatched', 'contractsVerified', 'reordered', 'moveRejected',
+                              'cancelRejected', 'untouchedBefore', 'returnNoopObserved', 'returnStarted', 'returnBoundaryObserved', 'returnCompleted', 'returnObservationFailed', 'nativeDurationsUnchanged'):
                     for fault in ('missing', 'opposite', 'integer'):
                         rows, raw = self.single(fluid.EDIT_CASE)
                         evidence = rows[1]['editEvidence']
@@ -434,7 +434,7 @@ class FluidAdapterTests(unittest.TestCase):
                         with self.subTest(kind=kind, mode=mode, field=field, fault=fault):
                             self.assertTrue(self.verify((rows, raw))['issues'])
                 for fault in ('wrong-id', 'full-weight', 'final-weight', 'final-endpoint', 'portion', 'native-menu',
-                              'anchor-container', 'transfer-duration', 'drink-progress', 'return-before', 'return-after', 'missing-evidence'):
+                              'anchor-container', 'transfer-duration', 'drink-progress', 'return-before', 'return-after', 'unknown-boundary', 'missing-evidence'):
                     rows, raw = self.single(fluid.EDIT_CASE)
                     if fault == 'wrong-id': rows[1]['editEvidence']['bottleId'] = raw[0][1]['bottles'][0]['id']
                     elif fault == 'full-weight': rows[1]['editEvidence']['fullWeight'] = .6
@@ -447,6 +447,7 @@ class FluidAdapterTests(unittest.TestCase):
                     elif fault == 'drink-progress': rows[1]['commands'][1]['drinkProgress'] = False
                     elif fault == 'return-before': rows[1]['editEvidence']['returnBefore'] = 'root' if mode == 'toolkit' else 'bag'
                     elif fault == 'return-after': rows[1]['editEvidence']['returnAfter'] = 'root'
+                    elif fault == 'unknown-boundary': rows[1]['editEvidence']['returnBefore'] = 'unknown'
                     else: rows[1].pop('editEvidence')
                     with self.subTest(kind=kind, mode=mode, fault=fault):
                         self.assertTrue(self.verify((rows, raw))['issues'])

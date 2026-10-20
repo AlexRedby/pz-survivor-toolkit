@@ -355,6 +355,53 @@ if NativeWishlistWorkshopRoot then
     assert(s.adapters.transfer(pending),'restoring the exact public owner/helpers restores the proof')
 else print('Actual selected P4 transfer/offset pair SKIP (pass --wishlist-workshop-root).')end
 do
+    -- Execute the live fixture's observer around actual native queue completion
+    -- and transfer perform(), including Host's replacement InventoryItem proxy.
+    local source=read(ProjectRoot..'/tests/native_queue/fluid/client/ZZFluidQueue.lua')
+    local observerSource=assert(source:match('(local function observeReturn.-)\nlocal function enqueueEditedBottle'))
+    local observeReturn=assert(loadstring(observerSource..'\nreturn observeReturn'))()
+    for _,mode in ipairs({'normal','noop','missing','wrong-type','lookup-error','missing-before'})do
+        local s=setup();local currentBottle=s.water
+        local returning=s.transfer(nil,s.root,s.bagInventory)
+        local anchor=s.f.action(ISBaseTimedAction)
+        local q=s.f.queue(anchor,returning)
+        s.bag.getItemContainer=function()return s.bagInventory end
+        s.root.getItemById=function(_,id)
+            if mode=='lookup-error'then error('unavailable inventory snapshot')end
+            if id==s.bag:getID()then return s.bag end
+            if id==s.water:getID()then return currentBottle end
+        end
+        local evidence={returnObservationFailed=false}
+        observeReturn(q,returning,s.f.player,s.water,s.bag,evidence)
+        s.water.container=mode=='noop'and s.bagInventory or s.root
+        if mode=='missing-before'then currentBottle=nil end
+        returning.isValidStart=function()return true end
+        returning.begin=function(self)self.started=true end -- Java action dispatch boundary
+        q:onCompleted(anchor)
+        assert(q.current==returning and q.queue[1]==returning,'observer must delegate the native handoff even with no readable endpoint')
+        local replacement=s.item();replacement.id=s.water.id;replacement.container=s.bagInventory
+        if mode=='wrong-type'then replacement.getFullType=function()return 'Base.Unrelated'end end
+        currentBottle=replacement
+        if mode=='missing'then currentBottle=nil end
+        s.water.container=nil -- stale Host proxy no longer belongs to either inventory
+        isClient=function()return true end
+        removeItemTransaction=function()end
+        returning.action={stopTimedActionAnim=function()end,setLoopedAction=function()end,setWaitForFinished=function()end}
+        returning:perform()
+        assert(q.current==nil and #q.queue==0 and returning.started==false and returning.transactionId==0,
+            'observational failures must never interrupt actual native transfer completion')
+        assert(evidence.returnCompleted==true,'the observer must retain actual native completion')
+        if mode=='normal'or mode=='noop'then
+            assert(not evidence.returnObservationFailed and evidence.returnBoundaryObserved)
+            assert(evidence.returnBefore==(mode=='noop'and 'bag'or 'root')and evidence.returnAfter=='bag',
+                'boundaries must use the current exact bottle ID, not its stale Host proxy')
+        else
+            assert(evidence.returnObservationFailed and (evidence.returnBefore=='unknown'or evidence.returnAfter=='unknown'),
+                'missing, mismatched or unreadable current identity must fail evidence rather than certify a no-op')
+        end
+    end
+end
+do
     local s=setup('ISDrinkFluidAction.lua');assert(not s.adapters.drink(s.drink()))
 end
 print('Item edit adapters: native idempotent transfers, captured SP water ratios, conservative Host intervals, source/helper and location guards passed.')

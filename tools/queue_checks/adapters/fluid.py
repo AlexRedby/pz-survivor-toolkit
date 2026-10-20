@@ -42,7 +42,7 @@ def definitions():
             checks['move-independent'] = {'fluid-root-cancel-waiting-favorite': {'independentMoveVerified': True, 'effectsVerified': True}}
         actions[name] = {'scope': scope, 'mods': MODS, 'checks': checks}
     actions['drink-transfers'] = {
-        'scope': 'A real running drink anchors standalone pickup/drink/return actions for another favorite bottle. Toolkit moves an already-destination return before pickup, rejects removal/reordering of the required pickup, and preserves native costs; disabled controls retain the original order and finish in the bag.',
+        'scope': 'A real running drink anchors a native manual grab and standalone drink/return actions for another favorite bottle. Toolkit moves an already-destination return before pickup, rejects removal/reordering of the required pickup, and preserves native costs; disabled controls retain the original order and finish in the bag.',
         'mods': MODS, 'toolkit_only': ['success-queued'], 'checks': {
             'success-empty': {EDIT_CASE: {'emptyStartVerified': True, 'effectsVerified': True, 'wornBagVerified': True}},
             'success-queued': {EDIT_CASE: {'pendingTransferEditVerified': True, 'effectsVerified': True}},
@@ -203,15 +203,16 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
     if editing:
         evidence = row.get('editEvidence')
         enabled = mode == 'toolkit'
-        expected_fields = {'anchorRunning', 'bottleId', 'fullWeight', 'standalone', 'pickupDuration', 'returnDuration',
+        expected_fields = {'anchorRunning', 'bottleId', 'fullWeight', 'standalone', 'manualPickupDispatched', 'pickupDuration', 'returnDuration',
                            'nativeDurationsUnchanged', 'contractsVerified', 'reordered', 'moveRejected', 'cancelRejected',
                            'untouchedBefore', 'returnNoopObserved', 'returnDontAdd', 'returnStarted', 'returnTransactionId',
-                           'returnBoundaryObserved', 'returnCompleted', 'returnBefore', 'returnAfter'}
+                           'returnBoundaryObserved', 'returnCompleted', 'returnBefore', 'returnAfter', 'returnObservationFailed'}
         if (type(evidence) is not dict or set(evidence) != expected_fields
-                or not craft._matches(evidence, dict(anchorRunning=True, bottleId=bottles[1]['id'], standalone=True,
+                or not craft._matches(evidence, dict(anchorRunning=True, bottleId=bottles[1]['id'], standalone=True, manualPickupDispatched=True,
                     nativeDurationsUnchanged=True, contractsVerified=enabled, reordered=enabled,
                     moveRejected=enabled, cancelRejected=enabled, untouchedBefore=True, returnNoopObserved=enabled, returnStarted=False, returnTransactionId=0,
-                    returnBoundaryObserved=True, returnCompleted=True, returnBefore='bag' if enabled else 'root', returnAfter='bag'))
+                    returnBoundaryObserved=True, returnCompleted=True, returnObservationFailed=False,
+                    returnBefore='bag' if enabled else 'root', returnAfter='bag'))
                 or type(evidence.get('returnDontAdd')) is not bool
                 or not _close(evidence.get('fullWeight'), bottles[1]['weight'])
                 or any(not _number(evidence.get(field)) or
@@ -274,5 +275,5 @@ def verify(root, selection, catalog):
     return {'issues': issues, 'outcomes': outcomes, 'evidence': {'limits': [
         'Fixture invokes real drink menu callbacks; physical mouse input is not covered.',
         'Requested portions allow at most 10mL native progress overshoot; raw remaining volumes are retained.',
-        'The pending transfer case uses native standalone constructors behind a running menu drink; Toolkit and disabled controls intentionally end in different containers.',
+        'The pending transfer case uses a native manual grab and standalone drink/return behind a running menu drink; Toolkit and disabled controls intentionally end in different containers.',
         'Fresh one-client SP/Host with exact bottle receipts; no concurrent-client or WAN coverage.']}}

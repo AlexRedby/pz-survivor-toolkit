@@ -120,13 +120,24 @@ local function cancelWaiting()
  trace('waiting-cancel',{id=commands[2].id,removed=#removed,retained=#retained})
 end
 -- Observe queue completion boundaries, leaving every native action callback untouched.
-local function observeReturn(observedQueue,returning,bottle,root,bag,evidence)
+local function observeReturn(observedQueue,returning,player,bottle,bag,evidence)
  local previous,previousRaw=observedQueue.onCompleted,rawget(observedQueue,'onCompleted')
+ local bottleId,bottleType,bagId,bagType=bottle:getID(),bottle:getFullType(),bag:getID(),bag:getFullType()
  local pendingBefore
  local function endpoint()
-  local container=bottle:getContainer()
-  assert(container==root or container==bag,'return boundary reached an unrelated container')
-  return container==root and 'root'or 'bag'
+  -- Host transactions can replace InventoryItem Java objects. Resolve current IDs,
+  -- and never let an observational failure interrupt native queue advancement.
+  local ok,value=pcall(function()
+   local root=player:getInventory()
+   local currentBag,currentBottle=root:getItemById(bagId),root:getItemById(bottleId)
+   if not currentBag or currentBag:getID()~=bagId or currentBag:getFullType()~=bagType
+    or currentBag:getContainer()~=root or not currentBottle or currentBottle:getID()~=bottleId
+    or currentBottle:getFullType()~=bottleType then return 'unknown'end
+   local container=currentBottle:getContainer()
+   return container==root and 'root'or container==currentBag:getItemContainer()and 'bag'or 'unknown'
+  end)
+  if not ok or value=='unknown'then evidence.returnObservationFailed=true;return 'unknown'end
+  return value
  end
  local observer
  observer=function(self,action)
@@ -139,9 +150,9 @@ local function observeReturn(observedQueue,returning,bottle,root,bag,evidence)
    evidence.returnBefore=pendingBefore;evidence.returnBoundaryObserved=true
   end
   if completing and self:indexOf(returning)==-1 then
-   assert(pendingBefore,'return completion lacked its queue handoff boundary')
-   evidence.returnBefore=pendingBefore;evidence.returnAfter=after
-   evidence.returnBoundaryObserved=true;evidence.returnCompleted=true
+   if not pendingBefore then evidence.returnObservationFailed=true end
+   evidence.returnBefore=pendingBefore or 'unknown';evidence.returnAfter=after
+   evidence.returnBoundaryObserved=pendingBefore~=nil;evidence.returnCompleted=true
   end
   return result
  end
@@ -155,10 +166,16 @@ local function enqueueEditedBottle(player)
  assert(queue().current==anchor and anchor:isStarted()and anchor:getJobDelta()>0,'edit anchor must be the real first drink')
  assert(bottle:getContainer()==bag and bottle:isFavorite()and bottle:getFluidContainer():getAmount()==ids.bottles[2].amount,
   'waiting bottle changed before dispatch')
- local pickup=ISInventoryTransferAction:new(player,bottle,bag,root)
+ local beforePickup=Checks.snapshot(queue())
+ Operations.run(ISInventoryPaneContextMenu.onGrabItems,{bottle},player:getPlayerNum())
+ assert(#queue().queue==#beforePickup+1,'manual pickup must enqueue exactly one native action')
+ for index,action in ipairs(beforePickup)do assert(queue().queue[index]==action,'manual pickup changed earlier work')end
+ local pickup=queue().queue[#queue().queue]
+ assert(pickup.Type=='ISInventoryTransferAction'and pickup.item==bottle and pickup.srcContainer==bag and pickup.destContainer==root,
+  'manual grab did not dispatch the exact native bottle pickup')
  local drink=ISDrinkFluidAction:new(player,bottle,.5)
  local returning=ISInventoryTransferAction:new(player,bottle,root,bag)
- for _,action in ipairs({pickup,drink,returning})do ISTimedActionQueue.add(action)end
+ for _,action in ipairs({drink,returning})do ISTimedActionQueue.add(action)end
  local function standalone(action)
   local first,last=Operations.bounds(queue(),action)
   return first==last and first==queue():indexOf(action)
@@ -166,7 +183,8 @@ local function enqueueEditedBottle(player)
  assert(standalone(pickup)and standalone(drink)and standalone(returning),'native explicit work must have separate operation tokens')
  editActions={pickup=pickup,drink=drink,returning=returning}
  local original=Checks.snapshot(queue())
- editEvidence={anchorRunning=true,bottleId=bottle:getID(),fullWeight=bottle:getUnequippedWeight(),standalone=true,
+ editEvidence={anchorRunning=true,bottleId=bottle:getID(),fullWeight=bottle:getUnequippedWeight(),standalone=true,manualPickupDispatched=true,
+  returnObservationFailed=false,
   pickupDuration=pickup.maxTime,returnDuration=returning.maxTime,nativeDurationsUnchanged=false,
   contractsVerified=false,reordered=false,moveRejected=false,cancelRejected=false,untouchedBefore=false}
  commands[2]={queueEmptyBefore=false,previousDrinkPending=true,backpackWorn=player:getClothingItem_Back()==state.bag,
@@ -206,7 +224,7 @@ local function enqueueEditedBottle(player)
  assert(pickup.maxTime==editEvidence.pickupDuration and returning.maxTime==editEvidence.returnDuration and drink.maxTime==460,
   'edits changed native durations')
  editEvidence.nativeDurationsUnchanged=true
- editObserver=observeReturn(queue(),returning,bottle,root,bag,editEvidence)
+ editObserver=observeReturn(queue(),returning,player,bottle,state.bag,editEvidence)
  trace('edit-dispatch',editEvidence)
 end
 local function finish()
@@ -237,7 +255,7 @@ local function finish()
    editEvidence.returnTransactionId=editActions.returning.transactionId
    editEvidence.returnNoopObserved=editEvidence.returnBoundaryObserved==true and editEvidence.returnCompleted==true
     and editEvidence.returnBefore=='bag'and editEvidence.returnAfter=='bag'
-   if not editEvidence.returnBoundaryObserved or not editEvidence.returnCompleted
+   if editEvidence.returnObservationFailed or not editEvidence.returnBoundaryObserved or not editEvidence.returnCompleted
     or editEvidence.returnBefore~=(config.mode=='toolkit'and 'bag'or 'root')or editEvidence.returnAfter~='bag'then
     reason='native-return-transition-differs'
    end
