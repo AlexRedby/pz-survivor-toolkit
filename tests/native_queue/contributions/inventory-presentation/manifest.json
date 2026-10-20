@@ -29,7 +29,9 @@
     "inventory-07-growing-tooltip.png",
     "inventory-08-pins-clean.png",
     "inventory-09-pins-clean-scaled.png",
-    "inventory-10-pins-vanilla.png"
+    "inventory-10-pins-vanilla.png",
+    "inventory-11-wishlist-clean.png",
+    "inventory-12-wishlist-vanilla.png"
   ],
   "assertion_markers": [
     "[INVENTORY_SCREEN] INDICATOR_SETUP nativeItems=4 recipe=unknown season=known status=best",
@@ -45,7 +47,12 @@
     "[INVENTORY_SCREEN] PINS 10-pins-vanilla enabled=true headers=4 children=3 coords=actual once=true overlap=false",
     "[INVENTORY_SCREEN] PINS player-option-disabled enabled=false headers=4 children=3 coords=actual once=true overlap=false",
     "[INVENTORY_SCREEN] PINS clean-player-option-disabled enabled=false headers=4 children=3 coords=actual once=true overlap=false",
-    "[INVENTORY_SCREEN] PIN_SETUP_RESTORED nativeRecipe=true"
+    "[INVENTORY_SCREEN] PIN_SETUP_RESTORED nativeRecipe=true",
+    "[INVENTORY_SCREEN] WISHLIST clean calls=1 borders=1 target=visible bounds=true",
+    "[INVENTORY_SCREEN] WISHLIST vanilla calls=1 borders=1 target=visible bounds=true",
+    "[INVENTORY_SCREEN] WISHLIST clean-again calls=1 borders=1 target=visible bounds=true",
+    "[INVENTORY_SCREEN] WISHLIST rows-disabled calls=1 borders=0 target=visible bounds=true",
+    "[INVENTORY_SCREEN] WISHLIST_SETUP_RESTORED state=true rows=true renderer=true"
   ],
   "completion_marker": "[INVENTORY_SCREEN] COMPLETE",
   "failure_marker": "[INVENTORY_SCREEN] FAIL"

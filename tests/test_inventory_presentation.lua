@@ -3,7 +3,9 @@ local root = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/'
 local function run(initialEnhanced, lateVanilla, withFreshness)
     local magazineEnabled, callbacks, modules = true, {}, {}
     getActivatedMods=function() return {contains=function(_, id) return withFreshness and id=='EURY_CONTAINERS' end} end
-    instanceof=function(item,kind) return kind=='Food' and item.food end
+    instanceof=function(item,kind)
+        return type(item)=='table' and ((kind=='Food' and item.food) or (kind=='InventoryItem' and item.getFullType~=nil))
+    end
     getTextManager=function() return {MeasureStringX=function() return 28 end} end
     PZAPI = {ModOptions={create=function(_, id)
         assert(id == 'ContainerCapacityIndicator', 'persisted preferences must keep their key')
@@ -23,7 +25,18 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
         getCurrentAmmoCount=function() return ammo end, getAmmoType=function() return '9mm' end}
     local weapon = {IsWeapon=function() return true end, getMaxAmmo=magazine.getMaxAmmo,
         getCurrentAmmoCount=magazine.getCurrentAmmoCount, getAmmoType=magazine.getAmmoType}
-    for _,item in ipairs({a,b,magazine,weapon}) do item.getTex=function() return texture end end
+    for index,item in ipairs({a,b,magazine,weapon}) do
+        item.getTex=function() return texture end
+        item.getFullType=function() return 'Base.Item'..index end
+    end
+    local wishlistEnabled=false
+    local wishlistBorders={}
+    PZSurvivorWishlist={
+        Client={isWanted=function(player,fullType) return player==1 and fullType==b:getFullType() end},
+        Settings={rowsEnabled=function() return wishlistEnabled end, color=function() return {r=.25,g=.85,b=.75} end}}
+    Events={OnFillInventoryObjectContextMenu={Add=function() end}}
+    modules['PZSurvivorWishlist/Client']=PZSurvivorWishlist.Client
+    modules['PZSurvivorWishlist/Settings']=PZSurvivorWishlist.Settings
     local alpha, nativeCalls, fallbacks, sorts = nil, 0, 0, 0
     ISInventoryItem = {renderItemIcon=function(_,_,_,_,value) alpha=value end}
     local function nativeRender(pane)
@@ -35,7 +48,9 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
             pane.items[#pane.items+1]=entry
             if entry ~= 'separator' then
                 local item=entry.items and entry.items[1] or entry
-                ISInventoryItem.renderItemIcon(pane,item,26,pane.headerHgt+(row-1)*pane.itemHgt,1,pane.iconSize,pane.iconSize)
+                if item:getTex() then
+                    ISInventoryItem.renderItemIcon(pane,item,26,pane.headerHgt+(row-1)*pane.itemHgt,1,pane.iconSize,pane.iconSize)
+                end
             end
         end
         return 'rendered'
@@ -79,7 +94,7 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
     modules['PZSurvivorToolkit/InventoryDetailSort']={refresh=function(_,_,anchor) sorts=sorts+1; assert(anchor==a) end}
     require=function(name)
         if modules[name] then return modules[name] end
-        if not name:match('^PZSurvivorToolkit/') then return end
+        if not name:match('^PZSurvivorToolkit/') and name~='PZSurvivorWishlist/Inventory' then return end
         if not modules[name] then modules[name]=dofile(root..name..'.lua') end
         return modules[name]
     end
@@ -90,7 +105,13 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
     local rects={}
     local pane={rows={a,'separator',b,magazine,weapon},height=500,headerHgt=20,itemHgt=46,iconSize=44,player=1,column3=330,font='Small',
         items={a},firstSelect=1,getYScroll=function(self) return self.scroll or 0 end,
-        drawRect=function(_,...) rects[#rects+1]={...} end,drawRectBorder=function() end}
+        getHeight=function(self) return self.height end,getWidth=function() return 400 end,
+        drawRect=function(_,...) rects[#rects+1]={...} end,
+        drawRectBorder=function(_,x,y,w,h,alpha,r,g,b)
+            if alpha==.7 and r==.25 and g==.85 and b==.75 then
+                wishlistBorders[#wishlistBorders+1]={y=y,h=h}
+            end
+        end}
     local function backgrounds()
         local values={}
         for _,rect in ipairs(rects) do if rect[4]==4 then values[#values+1]=rect end end
@@ -171,6 +192,30 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
         indicatorDraws={}; pane:rendericons()
         for _,draw in ipairs(indicatorDraws) do assert(not draw.group and not draw.details) end
         indicatorDraws={}; pane:renderdetails(true); assert(#indicatorDraws==0)
+    end
+    -- Full-row Wishlist overlays share the class lifecycle, not the icon stream.
+    -- A mixed header matches through b even when its representative a is not wanted.
+    wishlistEnabled=true
+    for _,enhanced in ipairs({true,false,true}) do
+        toggle(enhanced); presenter.install(); setmetatable(pane,{__index=ISInventoryPane})
+        pane.rows={{items={a,a,b}},a,b}; pane.scroll=-5
+        wishlistBorders={}; local before=nativeCalls
+        pane:renderdetails(false)
+        assert(nativeCalls==before+1 and #wishlistBorders==2,'Wishlist missing or duplicated across class changes')
+        assert(wishlistBorders[1].y==25 and wishlistBorders[1].h==41,'Wishlist covered the fixed header')
+        assert(wishlistBorders[2].y==112 and wishlistBorders[2].h==46)
+        local getter=b.getTex; b.getTex=function() end
+        wishlistBorders={}; pane:renderdetails(false); assert(#wishlistBorders==2,'textureless wanted row lost its highlight')
+        b.getTex=getter
+        pane.dragging=true; pane.dragStarted=true; pane.selected={[3]=true}
+        wishlistBorders={}; pane:renderdetails(false); assert(#wishlistBorders==1,'dragged row highlighted at its old position')
+        pane.dragging=nil; pane.dragStarted=nil; pane.selected=nil
+        wishlistBorders={}; pane:renderdetails(true); assert(#wishlistBorders==0,'drag preview highlighted')
+        pane:rendericons(); assert(#wishlistBorders==0,'icon grid received full-row highlights')
+        wishlistEnabled=false; pane:renderdetails(false); assert(#wishlistBorders==0,'disabled Wishlist still highlighted')
+        wishlistEnabled=true
+        pane.fail=true; assert(not pcall(pane.renderdetails,pane,false)); pane.fail=false
+        assert(#wishlistBorders==0,'failed native render decorated stale rows')
     end
     local capacity=require 'PZSurvivorToolkit/InventoryCapacity'
     assert(capacity.ratio(inventory(12,10),{})==1 and capacity.ratio(inventory(-1,10),{})==0)

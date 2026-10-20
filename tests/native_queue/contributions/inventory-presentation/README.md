@@ -64,7 +64,17 @@ in either mode. Settings and pin state belong to the disposable profile; native
 recipe metadata is restored in memory. Drag behavior is not exercised by these
 scenes.
 
-Ten screenshots are required as artifacts, including indicators and pins in both
+Appended Wishlist scenes temporarily replace only the disposable client's wanted
+membership with the actual empty seed packet's type. Forwarding observers call
+the real Wishlist renderer and require exactly one invocation and one border on
+its visible native row in CleanUI, vanilla, and CleanUI again. The border must
+match that row and stay inside the pane content and scrollbar boundary. Turning
+off Wishlist's Rows preference removes the border while the shared presentation
+pass still calls the renderer once. The original wanted membership, Rows
+preference and renderer callback are restored before completion. These scenes
+cover row presentation rather than Wishlist service synchronization or dragging.
+
+Twelve screenshots are required as artifacts, including indicators, pins and Wishlist highlights in both
 modes, scaled combined badges and the growing-information tooltip. Their presence does not replace
 visual inspection for clipping or layout quality. Programmatic native UI
 callbacks do not establish physical mouse/controller, Host, English/Russian

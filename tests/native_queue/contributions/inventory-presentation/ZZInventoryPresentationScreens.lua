@@ -529,6 +529,94 @@ add(function()
     for _,sample in pairs(pinSamples) do Pins.setFavourite(sample:getFullType(),false) end
     print('[INVENTORY_SCREEN] PIN_SETUP_RESTORED nativeRecipe=true')
 end)
+-- Wishlist state is isolated here; the real renderer and native pane rows remain in use.
+local WishlistInventory = require 'PZSurvivorWishlist/Inventory'
+local WishlistClient = require 'PZSurvivorWishlist/Client'
+local WishlistSettings = require 'PZSurvivorWishlist/Settings'
+local wishlistProbe, wishlistWanted, wishlistRows, wishlistRowsBefore, wishlistDraw
+local function wishlistObserve(target)
+    if target.inventoryWishlistObserved then return end
+    target.inventoryWishlistObserved=true
+    local render,border=target.renderdetails,target.drawRectBorder
+    target.drawRectBorder=function(self,x,y,w,h,a,r,g,b,...)
+        local colour=WishlistSettings.color()
+        if wishlistProbe and a==0.7 and r==colour.r and g==colour.g and b==colour.b then
+            wishlistProbe.borders[#wishlistProbe.borders+1]={x=x,y=y,w=w,h=h}
+        end
+        return border(self,x,y,w,h,a,r,g,b,...)
+    end
+    target.renderdetails=function(self,dragged,...)
+        if dragged then return render(self,dragged,...) end
+        wishlistProbe={calls=0,borders={}}
+        local result=render(self,dragged,...)
+        self.inventoryWishlistFrame=wishlistProbe
+        wishlistProbe=nil
+        return result
+    end
+end
+local function wishlistReflow()
+    pane.zoom=1; pane:onInventoryFontChanged()
+    indicatorReflow()
+    wishlistObserve(pane)
+end
+local function wishlistCheck(name,enabled)
+    local frame=assert(pane.inventoryWishlistFrame,'Wishlist native render absent')
+    assert(frame.calls==1,'Wishlist renderer must run once per native details pass')
+    local index
+    for i,row in ipairs(pane.items) do
+        local matches=row==pinSamples.plain
+        if type(row)=='table' and row.items then
+            for _,item in ipairs(row.items) do if item==pinSamples.plain then matches=true end end
+        end
+        if matches then assert(not index,'Wishlist target has duplicate native rows'); index=i end
+    end
+    assert(index,'Wishlist target missing from native rows')
+    local scroll=pane:getYScroll()
+    local top=(index-1)*pane.itemHgt+pane.headerHgt
+    assert(top+scroll>=pane.headerHgt and top+pane.itemHgt+scroll<=pane:getHeight(),
+        'Wishlist target must be fully visible in the native pane')
+    assert(#frame.borders==(enabled and 1 or 0),'Wishlist border missing, duplicated or enabled with Rows off')
+    if enabled then
+        local rect=frame.borders[1]
+        local right=pane:getWidth()
+        if pane.vscroll and pane.vscroll:getHeight()<pane:getScrollHeight() then right=right-pane.vscroll:getWidth() end
+        assert(rect.x>=0 and rect.w>0 and rect.x+rect.w<=right,'Wishlist border outside native pane width')
+        assert(rect.y==top and rect.h==pane.itemHgt,'Wishlist border does not match its actual native row')
+        assert(rect.y+scroll>=pane.headerHgt and rect.y+rect.h+scroll<=pane:getHeight(),
+            'Wishlist border extends outside native pane content')
+    end
+    print('[INVENTORY_SCREEN] WISHLIST '..name..' calls=1 borders='..#frame.borders..' target=visible bounds=true')
+end
+add(function()
+    local state=WishlistClient.state(0)
+    wishlistWanted=state.wanted
+    state.wanted={[pinSamples.plain:getFullType()]=true}
+    wishlistRows=PZAPI.ModOptions:getOptions('PZSurvivorWishlist'):getOption('Rows')
+    wishlistRowsBefore=wishlistRows:getValue(); wishlistRows:setValue(true)
+    wishlistDraw=WishlistInventory.draw
+    WishlistInventory.draw=function(owner,...)
+        if wishlistProbe and owner==pane then wishlistProbe.calls=wishlistProbe.calls+1 end
+        return wishlistDraw(owner,...)
+    end
+    inventory(true)
+end)
+add(wishlistReflow)
+add(function() wishlistCheck('clean',true); shot('11-wishlist-clean') end)
+add(function() inventory(false) end)
+add(wishlistReflow)
+add(function() wishlistCheck('vanilla',true); shot('12-wishlist-vanilla') end)
+add(function() inventory(true) end)
+add(wishlistReflow)
+add(function() wishlistCheck('clean-again',true); wishlistRows:setValue(false) end)
+add(function()
+    wishlistCheck('rows-disabled',false)
+    WishlistClient.state(0).wanted=wishlistWanted
+    wishlistRows:setValue(wishlistRowsBefore)
+    WishlistInventory.draw=wishlistDraw
+    assert(WishlistClient.state(0).wanted==wishlistWanted and wishlistRows:getValue()==wishlistRowsBefore,
+        'Wishlist fixture state was not restored')
+    print('[INVENTORY_SCREEN] WISHLIST_SETUP_RESTORED state=true rows=true renderer=true')
+end)
 add(function() print('[INVENTORY_SCREEN] COMPLETE'); done=true end)
 Events.OnMainMenuEnter.Add(function() entered=true end)
 Events.OnPreUIDraw.Add(function()

@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.158
+
+- **Changed:** Wishlist row highlights now use Toolkit's shared inventory presentation boundary, removing their separate pane and CleanUI mode-switch hooks. Mixed-stack matching, full-row clipping, drag exclusions and saved settings are preserved.
+
 ### 0.1.157
 
 - **Fixed:** Inventory search, exact categories and tag filters now match each physical item before building visible stacks. Same-name items with different individual categories no longer disappear together or satisfy different parts of one search. Category choices, selection and outgoing bulk transfers follow the resulting view in native and CleanUI inventories.

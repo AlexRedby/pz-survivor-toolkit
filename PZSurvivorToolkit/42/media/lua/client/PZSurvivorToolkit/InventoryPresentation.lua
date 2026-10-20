@@ -7,6 +7,7 @@ local Capacity = require "PZSurvivorToolkit/InventoryCapacity"
 local Details = require "PZSurvivorToolkit/InventoryDetails"
 local Sort = require "PZSurvivorToolkit/InventoryDetailSort"
 local Indicators = require "PZSurvivorToolkit/InventoryIndicators"
+local Wishlist = require "PZSurvivorWishlist/Inventory"
 local PlantingTooltip = require "PZSurvivorToolkit/InventoryPlantingTooltip"
 local MediaTooltip = require "PZSurvivorToolkit/InventoryMediaTooltip"
 local ClothingTooltip = require "PZSurvivorToolkit/InventoryClothingTooltip"
@@ -70,6 +71,9 @@ local function render(pane, native, details, ...)
         Capacity.drawIcon(pane, icon.item, icon.x, icon.y, icon.width, icon.height, details)
         Indicators.drawIcon(pane, icon.item, icon.x, icon.y, icon.width, icon.height, details, icon.group)
     end
+    -- Wishlist decorates full rows, including mixed stacks and items without an
+    -- icon. Keep its row projection separate from individual icon presenters.
+    if details then Wishlist.draw(pane) end
     return result
 end
 

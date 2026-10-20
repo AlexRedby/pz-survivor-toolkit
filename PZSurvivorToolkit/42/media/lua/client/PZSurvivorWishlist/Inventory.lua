@@ -1,12 +1,9 @@
 require "PZSurvivorWishlist/Client"
 require "PZSurvivorWishlist/Settings"
-require "ISUI/ISInventoryPane"
-local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 
 local W = PZSurvivorWishlist
 local Inventory = {}
 W.Inventory = Inventory
-local wrapped = {}
 
 local function wanted(playerNum, row)
     if instanceof(row, "InventoryItem") then return W.Client.isWanted(playerNum, row:getFullType()) end
@@ -46,21 +43,6 @@ function Inventory.draw(pane)
     end
 end
 
-local function install(class)
-    if not class or not class.renderdetails or wrapped[class] then return end
-    local original = class.renderdetails
-    wrapped[class] = true
-    class.renderdetails = function(self, doDragged, ...)
-        local result = original(self, doDragged, ...)
-        if not doDragged then Inventory.draw(self) end
-        return result
-    end
-end
-
-function Inventory.install()
-    InventoryClasses.panes(install)
-end
-
 local function context(playerNum, menu, items)
     local types = {}
     for _, selection in ipairs(items) do
@@ -97,8 +79,4 @@ local function context(playerNum, menu, items)
 end
 
 Events.OnFillInventoryObjectContextMenu.Add(context)
-Events.OnGameStart.Add(function()
-    Inventory.install()
-    InventoryClasses.onToggle(Inventory.install)
-end)
 return Inventory

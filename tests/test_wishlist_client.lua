@@ -70,15 +70,7 @@ PZSurvivorWishlist.Settings = { rowsEnabled = function() return rowsEnabled end,
 instanceof = function(item, name) return type(item) == "table" and item.class == name end
 getText = function(key) return key end
 local function item(fullType) return { class = "InventoryItem", getFullType = function() return fullType end } end
-local calls = 0
-local function native() calls = calls + 1; return "native" end
-ISInventoryPane = { renderdetails = native }
-CleanUI_Clean_ISInventoryPane = ISInventoryPane
-CleanUI_Vanilla_ISInventoryPane = { renderdetails = native }
-local gameStart, inventoryStart = Events.OnGameStart
-Events.OnGameStart = {Add = function(callback) inventoryStart = callback end}
 dofile(base .. "Inventory.lua")
-Events.OnGameStart = gameStart
 local I = PZSurvivorWishlist.Inventory
 C.receive(0, snapshot(2, other))
 local hammer, nails = item("Base.Hammer"), item("Base.Nails")
@@ -87,21 +79,9 @@ local pane = {player=0,items={ {items={hammer,hammer,nails}},nails,hammer },item
     getYScroll=function()return -5 end,getHeight=function()return 90 end,getWidth=function()return 100 end,
     drawRect=function()end,drawRectBorder=function(_,x,y,w,h)draw[#draw+1]={y=y,h=h}end}
 assert(#I.marks(pane) == 2)
-I.install(); local wrapped = ISInventoryPane.renderdetails; I.install(); assert(wrapped == ISInventoryPane.renderdetails)
-assert(ISInventoryPane.renderdetails(pane, false) == "native" and calls == 1 and #draw == 2)
+I.draw(pane); assert(#draw == 2)
 assert(draw[1].y == 21 and draw[1].h == 15, "row overlay clipped below fixed header")
-draw = {};CleanUI_Vanilla_ISInventoryPane.renderdetails(pane,false);assert(#draw == 2)
-local toggled
-CleanUI_RegisterInventoryUiToggleCallback = function(callback) toggled = callback end
-inventoryStart()
-assert(toggled == I.install, "subscribe to CleanUI after game start")
-ISInventoryPane = {renderdetails = native}
-toggled(); local replacement = ISInventoryPane.renderdetails; toggled()
-draw = {}; local beforeToggle = calls
-assert(ISInventoryPane.renderdetails(pane, false) == "native" and calls == beforeToggle + 1 and #draw == 2,
-    "a new active inventory class gets exactly one Wishlist overlay")
-assert(ISInventoryPane.renderdetails == replacement and CleanUI_Clean_ISInventoryPane.renderdetails == wrapped)
-rowsEnabled = false;draw={};ISInventoryPane.renderdetails(pane,false);assert(#draw==0)
+rowsEnabled = false;draw={};I.draw(pane);assert(#draw==0)
 rowsEnabled = true;pane.dragging=true;pane.dragStarted=true;pane.selected={[3]=true};assert(#I.marks(pane)==1)
 local captured, options = nil, {}
 local menu={addOption=function(_,label,target,callback)
@@ -111,7 +91,7 @@ Events.OnFillInventoryObjectContextMenu.fire(0,menu,{hammer,{items={hammer,hamme
 local originalAdd=C.addItems
 C.addItems=function(number,entries)assert(number==0 and #entries==2)end
 captured.callback(captured.target);C.addItems=originalAdd
-print("PASS wishlist inventory: mixed stacks, clipped rows, both CleanUI classes, toggle and deduplicated menu")
+print("PASS wishlist inventory: mixed stacks, clipped rows, settings, drag exclusion and deduplicated menu")
 
 -- Single-type actions refer to the displayed list, not all highlighted/shared lists.
 Events.OnFillInventoryObjectContextMenu.fire(0,menu,{{items={hammer,hammer}}})
