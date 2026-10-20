@@ -468,6 +468,69 @@ do
     assert(not s.policy.evaluateCancel(q,half).reason,'ordinary pending food can be cancelled')
 end
 do
+    -- EatSmart and other native producers capture arbitrary fractions of the
+    -- original food. Reordering does not recalculate their nutrition target.
+    for _,client in ipairs({false,true})do
+        local s=setup();isClient=function()return client end
+        PZMath={clamp_01=function(value)return math.max(0,math.min(1,value))end}
+        local food=s.food();food.hunger=-.2
+        local small,quarter,last=s.eat(food,.1875),s.eat(food,.25),s.eat(food,.1)
+        local function entry(action)return {action=action,edit=assert(s.adapters.food(action))}end
+        local a,b,c=entry(small),entry(quarter),entry(last)
+        local returning=s.transfer(food,s.root,s.bagInventory)
+        local transfer={action=returning,edit=assert(s.adapters.transfer(returning))}
+        assert(s.model.evaluate({a,b,transfer}).status=='allowed',
+            'partially eaten food retains .025 after original-food .1875 and .25 portions')
+        assert(s.model.evaluate({b,a,transfer}).status=='allowed','captured original fractions commute before the native tail')
+        assert(s.model.evaluate({a,b,c,transfer}).status=='denied',
+            'a further original .1 portion consumes the tail and invalidates the exact-item transfer')
+        c.snapshotOnly=true
+        assert(s.model.evaluate({a,b,c,transfer}).status=='allowed','cancelling the pending portion preserves the item')
+        s.water.container=s.root
+        local anchor=s.drink();anchor.action={}
+        local q=s.f.queue(anchor,small,quarter,returning)
+        assert(s.policy.evaluateMove(q,small,quarter,true).allowed,'policy can reorder non-menu original-food fractions')
+        assert(s.policy.evaluateCancel(q,small).allowed,'policy can cancel an arbitrary pending native fraction')
+        assert(small.percentage==.1875 and quarter.percentage==.25 and food.hunger==-.2,
+            'inspection and editing decisions preserve the captured fraction and food')
+        -- Crossing .01 may remove the entire food; uncertainty at the exact
+        -- boundary must not certify a downstream consumer or transfer.
+        for _,case in ipairs({{.0851,'allowed',false},{.085,'denied'},{.0849,'denied',true}})do
+            food.hunger=-case[1]
+            if case[3]~=nil then assert(small:isEatingRemaining(food)==case[3])end
+            -- The transfer contract snapshots the same live food amount.
+            transfer.edit=assert(s.adapters.transfer(returning))
+            assert(s.model.evaluate({entry(small),transfer}).status==case[2],
+                'arbitrary fraction must retain the conservative native .01 tail boundary')
+        end
+    end
+end
+do
+    local s=setup();local food=s.food();local action=s.eat(food,.5)
+    for _,portion in ipairs({.1875,1/3,.999,1e-300,1})do
+        action.percentage=portion
+        assert(s.adapters.food(action),'every finite native fraction in (0,1] has the same audited effect owner')
+    end
+    action.percentage=1e-300 -- Java float conversion may underflow to zero.
+    local returning=s.transfer(food,s.root,s.bagInventory)
+    local function afterTiny()
+        return s.model.evaluate({{action=action,edit=assert(s.adapters.food(action))},
+            {action=returning,edit=assert(s.adapters.transfer(returning))}}).status
+    end
+    assert(afterTiny()=='allowed','underflow-sized percentage retains a comfortably nonempty food')
+    food.hunger=-.010005
+    assert(afterTiny()=='denied','float/tail uncertainty must not promise survival just above .01')
+    food.hunger=-.009995
+    assert(afterTiny()=='denied','native tail can consume sub-.01 food even when its float percentage is zero')
+    food.hunger=-.4
+    for _,portion in ipairs({0,-.1,1.000001,math.huge,-math.huge,0/0,'0.25',false,{}})do
+        action.percentage=portion
+        assert(not s.adapters.food(action),'malformed or out-of-range native food fraction must stay protected')
+    end
+    action.percentage=nil
+    assert(not s.adapters.food(action),'a missing captured fraction is not a constructor default during inspection')
+end
+do
     local s=setup();local food=s.food();local a=s.eat(food,.25)
     local function project(...)
         local entries={};for _,action in ipairs({...})do entries[#entries+1]={action=action,edit=assert(s.adapters.food(action))}end

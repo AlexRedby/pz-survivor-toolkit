@@ -10,7 +10,10 @@ MOVE_CASE = 'food-root-move-same-portions'
 CANCEL_CASE = 'food-root-cancel-first-portion'
 BAG_CASE = 'food-bag-edit-pickup-return'
 DEPLETION_CASE = 'food-root-depletion'
-CASES = [MOVE_CASE, CANCEL_CASE, BAG_CASE, DEPLETION_CASE]
+SMART_MOVE_CASE = 'food-smart-move-portions'
+SMART_CANCEL_CASE = 'food-smart-cancel-first-portion'
+SMART_CASES = (SMART_MOVE_CASE, SMART_CANCEL_CASE)
+CASES = [MOVE_CASE, CANCEL_CASE, BAG_CASE, DEPLETION_CASE, *SMART_CASES]
 # The full selected installation. Locked EatSmart debug logging leaves native completion unchanged.
 MODS = next(line.split('=', 1)[1].split(';') for line in
             (Path(__file__).resolve().parents[3] / 'SurvivorQoL-selected.ini').read_text().splitlines()
@@ -37,6 +40,14 @@ def definitions():
             'move-dependent': {DEPLETION_CASE: edited[DEPLETION_CASE]},
             'cancel-waiting': {CANCEL_CASE: edited[CANCEL_CASE]},
             'server-authority': {case: {'effectsVerified': True, 'serverAuthorityVerified': True} for case in (MOVE_CASE, CANCEL_CASE, DEPLETION_CASE)}}},
+        'eat-smart-portions': {
+            'scope': 'Partly eaten Base.Cereal dispatched through public EatSmart ES_subMenuEat options with hunger goals 15 then 5. Both original-food fractions wait behind one clean-water drink; move the second first or cancel the first. Native controls execute both in original order. No physical menu input, OnEat, replacements, utensils or smoking.',
+            'mods': MODS, 'checks': {
+                'success-queued': {case: common[case] for case in SMART_CASES},
+                'repeat-same': {case: common[case] for case in SMART_CASES},
+                'move-independent': {SMART_MOVE_CASE: edited[SMART_MOVE_CASE]},
+                'cancel-waiting': {SMART_CANCEL_CASE: edited[SMART_CANCEL_CASE]},
+                'server-authority': {case: {'effectsVerified': True, 'serverAuthorityVerified': True} for case in SMART_CASES}}},
         'eat-transfers': {
             'scope': 'A native manual cereal grab and standalone half-eat/return pending behind a real drink. Move an already-destination return before pickup; deny pickup removal and pickup-after-eat. Native controls retain pickup/eat/return and finish in the bag.',
             'mods': MODS, 'checks': {
@@ -93,22 +104,28 @@ def _authority(text):
 def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
     issues = []
     bag, enabled, depletion = case == BAG_CASE, mode == 'toolkit', case == DEPLETION_CASE
-    cancelled = case == CANCEL_CASE and enabled
+    smart = case in SMART_CASES
+    cancelled = case in (CANCEL_CASE, SMART_CANCEL_CASE) and enabled
     if (set(prep) != RECEIPT_KEYS | {'foodTimer', 'foodLevel'}
             or not craft._matches(prep, dict(case=case, bagType=fluid.BAG_TYPE, bagCount=1, foodType='Base.Cereal',
                 source='bag' if bag else 'root', foodCount=1, deleted=False, anchorType='Base.WaterBottle', anchorCount=1,
                 foodTimer=0, foodLevel=0))
             or not craft._ids([prep.get(key) for key in ('bagId', 'foodId', 'anchorId')], 3)
             or any(not fluid._close(prep.get(key), value) for key, value in
-                   dict(baseHunger=-.4, remaining=-.4, anchorAmount=1, hunger=.8, thirst=.8).items())
+                   dict(baseHunger=-.4, remaining=-.3 if smart else -.4, anchorAmount=1,
+                        hunger=.2 if smart else .8, thirst=.8).items())
             or type(prep.get('foodTypeCount')) is not int or prep['foodTypeCount'] < 1
             or not fluid._number(prep.get('anchorThirstChange')) or prep['anchorThirstChange'] >= 0):
         return ['Food preparation identity/state differs: ' + case]
     fixed = {key: prep[key] for key in RECEIPT_KEYS - {'remaining', 'source', 'hunger', 'thirst', 'anchorAmount', 'foodCount', 'foodTypeCount', 'deleted', 'anchorThirstChange'}}
     fixed.update(source='deleted' if depletion else 'root' if not bag or enabled else 'bag',
                  foodCount=0 if depletion else 1, foodTypeCount=prep['foodTypeCount'] - int(depletion), deleted=depletion)
-    portion = 1 if depletion else .5 if bag else .25 if cancelled else .75
-    expected_remaining = prep['baseHunger'] * (1 - portion)
+    portion = (.375 if cancelled else .5) if smart else 1 if depletion else .5 if bag else .25 if cancelled else .75
+    commands = row.get('commands')
+    if (smart and type(commands) is list and len(commands) == 2
+            and all(type(command) is dict and fluid._number(command.get('portion')) for command in commands)):
+        portion = sum(command['portion'] for index, command in enumerate(commands) if not (cancelled and index == 0))
+    expected_remaining = prep['remaining'] - prep['baseHunger'] * portion if smart else prep['baseHunger'] * (1 - portion)
     if (set(receipt) != RECEIPT_KEYS or not craft._matches(receipt, fixed)
             or not craft._matches(row, receipt) or type(row.get('client')) is not dict
             or set(row['client']) != RECEIPT_KEYS
@@ -125,8 +142,7 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
         issues.append('Food hunger or clean-water anchor effect differs: ' + case)
     if not craft._matches(row, dict(status='passed', reason=None)):
         issues.append('Food native status differs: ' + case)
-    commands = row.get('commands')
-    portions = [.25, 1] if depletion else [.5] if bag else [.5, .25]
+    portions = [.125, .375] if smart else [.25, 1] if depletion else [.5] if bag else [.5, .25]
     if type(commands) is not list or len(commands) != len(portions):
         issues.append('Food native command count differs: ' + case)
     else:
@@ -135,11 +151,20 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
             expected = dict(id=prep['foodId'], portion=fraction, baseHunger=prep['baseHunger'], dispatchRemaining=prep['remaining'],
                 dispatchSource='bag' if bag else 'root', menuDispatched=not bag, nativeDuration=464 if fraction == 1 else 232,
                 progress=not cancel, cancelled=cancel, pickupObserved=bag)
-            if type(command) is not dict or set(command) != COMMAND_KEYS or not craft._matches(command, expected):
+            if smart:
+                expected.pop('portion')
+                expected['smartGoal'] = 15 if index == 0 else 5
+            if (type(command) is not dict or set(command) != COMMAND_KEYS | ({'smartGoal', 'dispatchHunger'} if smart else set())
+                    or not craft._matches(command, {key: value for key, value in expected.items() if key != 'smartGoal'})
+                    or smart and (not fluid._number(command.get('smartGoal'))
+                                  or command['smartGoal'] != expected['smartGoal']
+                                  or not fluid._close(command.get('dispatchHunger'), prep['hunger'], .01)
+                                  or not fluid._close(command.get('portion'),
+                                      (command['dispatchHunger'] - expected['smartGoal'] / 100) / -prep['baseHunger'], 1e-6))):
                 issues.append('Food native target/original portion/progress/duration differs: ' + case)
     evidence = row.get('editEvidence')
     expected = dict(emptyStart=True, anchorRunning=True, anchorProgress=True, anchorDuration=460,
-        contractsVerified=enabled, reordered=enabled and case in (MOVE_CASE, BAG_CASE), waitingCancel=cancelled,
+        contractsVerified=enabled, reordered=enabled and case in (MOVE_CASE, BAG_CASE, SMART_MOVE_CASE), waitingCancel=cancelled,
         moveRejected=enabled and (bag or depletion), cancelRejected=enabled and bag, manualPickup=bag,
         untouchedBefore=True, nativeDurationsUnchanged=True,
         order=[1] if bag else [1, 2] if depletion else [2] if cancelled else [2, 1] if enabled else [1, 2])
@@ -200,6 +225,6 @@ def verify(root, selection, catalog):
     for outcome in outcomes:
         outcome.update(status='failed' if issues else 'passed', reason='; '.join(issues))
     return {'issues': issues, 'outcomes': outcomes, 'evidence': {'limits': [
-        'Ordinary Base.Cereal pending edits only; full selected mod set, real native actions and durations.',
+        'Base.Cereal native and public EatSmart pending edits only; full selected mod set, real native actions and durations.',
         'Callback-driven menu dispatch does not establish physical input or visual correctness.',
         'No OnEat, replacement food, smoking, utensils, active eating cancellation or WAN coverage.']}}

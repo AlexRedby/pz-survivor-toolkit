@@ -320,7 +320,7 @@ function Adapters.food(action)
     local base=-item:getBaseHunger()
     local portion=action.percentage
     if not facts or not facts.foodLower or not finite(base) or base<=0 or facts.foodUpper>base+0.000001
-        or (portion~=0.25 and portion~=0.5 and portion~=1) then return end
+        or not finite(portion) or portion<=0 or portion>1 then return end
     local actor=fullness(action.character)
     if not actor then return end
     local debit=base*portion

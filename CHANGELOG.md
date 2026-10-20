@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.145
+
+- **Changed:** Pending ordinary-food actions with any valid native portion, including EatSmart-calculated amounts, can be reordered or cancelled when their remaining-food, location and fullness dependencies permit it. Captured portions keep their original-food meaning; depleted items and required returns stay protected.
+
 ### 0.1.144
 
 - **Fixed:** Seed Season Indicator no longer replaces inventory categories or category sorting with seasonal labels. Toolkit tags retain their normal categories; planting-season icons and detailed tooltips keep the mod's existing knowledge checks and settings.

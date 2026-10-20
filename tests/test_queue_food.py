@@ -29,24 +29,28 @@ class FoodAdapterTests(unittest.TestCase):
         raw = []
         for index, case in enumerate(cases):
             bag, enabled, depletion = case == food.BAG_CASE, self.selection['mode'] == 'toolkit', case == food.DEPLETION_CASE
-            cancel = case == food.CANCEL_CASE and enabled
+            smart = case in food.SMART_CASES
+            cancel = case in (food.CANCEL_CASE, food.SMART_CANCEL_CASE) and enabled
             base = 100 + 10 * index
             prep = dict(case=case, bagId=base, bagType='Base.Bag_ALICEpack_Army', bagCount=1,
-                        foodId=base + 1, foodType='Base.Cereal', baseHunger=-.4, remaining=-.4,
+                        foodId=base + 1, foodType='Base.Cereal', baseHunger=-.4, remaining=-.3 if smart else -.4,
                         source='bag' if bag else 'root', foodCount=1, foodTypeCount=1, deleted=False,
                         anchorId=base + 2, anchorType='Base.WaterBottle', anchorAmount=1.0,
-                        anchorCount=1, anchorThirstChange=-.5, hunger=.8, thirst=.8, foodTimer=0, foodLevel=0)
-            fraction = 1 if depletion else .5 if bag else .25 if cancel else .75
+                        anchorCount=1, anchorThirstChange=-.5, hunger=.2 if smart else .8, thirst=.8, foodTimer=0, foodLevel=0)
+            fraction = (.375 if cancel else .5) if smart else 1 if depletion else .5 if bag else .25 if cancel else .75
             receipt = {key: value for key, value in prep.items() if key in food.RECEIPT_KEYS}
-            receipt.update(remaining=-.4 * (1 - fraction), source='deleted' if depletion else 'root' if not bag or enabled else 'bag',
+            receipt.update(remaining=prep['remaining'] + .4 * fraction if smart else -.4 * (1 - fraction), source='deleted' if depletion else 'root' if not bag or enabled else 'bag',
                            foodCount=0 if depletion else 1, foodTypeCount=0 if depletion else 1, deleted=depletion,
-                           anchorAmount=.5, anchorThirstChange=-.25, hunger=.8 - .4 * fraction, thirst=.55)
-            commands = [dict(id=base + 1, portion=portion, baseHunger=-.4, dispatchRemaining=-.4,
+                           anchorAmount=.5, anchorThirstChange=-.25, hunger=prep['hunger'] - .4 * fraction, thirst=.55)
+            commands = [dict(id=base + 1, portion=portion, baseHunger=-.4, dispatchRemaining=prep['remaining'],
                              dispatchSource=prep['source'], menuDispatched=not bag, nativeDuration=464 if portion == 1 else 232,
                              progress=not (cancel and n == 0), cancelled=cancel and n == 0, pickupObserved=bag)
-                        for n, portion in enumerate([.25, 1] if depletion else [.5] if bag else [.5, .25])]
+                        for n, portion in enumerate([.125, .375] if smart else [.25, 1] if depletion else [.5] if bag else [.5, .25])]
+            if smart:
+                for command, goal in zip(commands, (15, 5)):
+                    command.update(smartGoal=goal, dispatchHunger=prep['hunger'])
             edit = dict(emptyStart=True, anchorRunning=True, anchorProgress=True, anchorDuration=460,
-                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE),
+                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE),
                         waitingCancel=cancel, moveRejected=enabled and (bag or depletion), cancelRejected=enabled and bag,
                         manualPickup=bag, untouchedBefore=True, nativeDurationsUnchanged=True,
                         order=[1] if bag else [1, 2] if depletion else [2] if cancel else [2, 1] if enabled else [1, 2])
@@ -312,6 +316,58 @@ end
                     else: rows[1]['client']['foodCount'] = 1
                     with self.subTest(kind=kind, mode=mode, fault=fault):
                         self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_smart_portions_use_public_goals_and_original_food_not_remaining(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode)
+                for case in food.SMART_CASES:
+                    rows, raw = self.single(case)
+                    self.assertEqual([], self.verify((rows, raw))['issues'])
+                    self.assertEqual([.125, .375], [c['portion'] for c in rows[1]['commands']])
+                    self.assertEqual([15, 5], [c['smartGoal'] for c in rows[1]['commands']])
+                    expected = -.15 if mode == 'toolkit' and case == food.SMART_CANCEL_CASE else -.1
+                    self.assertAlmostEqual(expected, raw[1][1]['remaining'])
+                    for fault in ('missing-goal', 'wrong-goal', 'boolean-goal', 'string-goal',
+                                  'missing-hunger', 'boolean-hunger', 'unrelated-hunger', 'wrong-formula',
+                                  'remainder-fraction', 'double-fraction', 'fake-menu', 'fake-action',
+                                  'not-started', 'wrong-order', 'wrong-effect'):
+                        rows, raw = self.single(case)
+                        command = rows[1]['commands'][1]
+                        if fault == 'missing-goal': command.pop('smartGoal')
+                        elif fault == 'wrong-goal': command['smartGoal'] = 15
+                        elif fault == 'boolean-goal': command['smartGoal'] = True
+                        elif fault == 'string-goal': command['smartGoal'] = '5'
+                        elif fault == 'missing-hunger': command.pop('dispatchHunger')
+                        elif fault == 'boolean-hunger': command['dispatchHunger'] = True
+                        elif fault == 'unrelated-hunger': command['dispatchHunger'] = .7
+                        elif fault == 'wrong-formula': command['portion'] += .00001
+                        elif fault == 'remainder-fraction': command['portion'] = .5
+                        elif fault == 'double-fraction':
+                            for record in (rows[1], rows[1]['client'], raw[1][1]):
+                                record['remaining'] = -.3 + .3 * (.375 if mode == 'toolkit' and case == food.SMART_CANCEL_CASE else .5)
+                        elif fault == 'fake-menu': command['menuDispatched'] = False
+                        elif fault == 'fake-action': command['nativeDuration'] = 1
+                        elif fault == 'not-started': command['progress'] = False
+                        elif fault == 'wrong-order': rows[1]['editEvidence']['order'] = [1]
+                        else:
+                            for record in (rows[1], rows[1]['client'], raw[1][1]): record['hunger'] += .1
+                        with self.subTest(kind=kind, mode=mode, case=case, fault=fault):
+                            self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_smart_native_float_and_hunger_drift_keep_measured_original_fractions(self):
+        for mode in ('native', 'toolkit'):
+            self.selection['mode'] = mode
+            for case in food.SMART_CASES:
+                rows, raw = self.single(case)
+                for command in rows[1]['commands']:
+                    command['dispatchHunger'] += .0002
+                    command['portion'] = (command['dispatchHunger'] - command['smartGoal'] / 100) / .4 + .00000001
+                portions = sum(command['portion'] for index, command in enumerate(rows[1]['commands'])
+                               if not (mode == 'toolkit' and case == food.SMART_CANCEL_CASE and index == 0))
+                for record in (rows[1], rows[1]['client'], raw[1][1]):
+                    record.update(remaining=-.3 + .4 * portions, hunger=.2 - .4 * portions)
+                self.assertEqual([], self.verify((rows, raw))['issues'])
 
     def test_cancelled_first_portion_never_started_or_consumed(self):
         for mode in ('native', 'toolkit'):

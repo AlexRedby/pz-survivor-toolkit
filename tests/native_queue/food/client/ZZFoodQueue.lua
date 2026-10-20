@@ -43,13 +43,39 @@ local function capture(callback)
  ISTimedActionQueue.add=function(action)actions[#actions+1]=action;return add(action)end
  local ok,problem=pcall(callback);ISTimedActionQueue.add=add;assert(ok,problem);return actions
 end
-local function eat(portion,menu)
+local function smartOption(player,food,goal)
+ local options=assert(PZAPI.ModOptions:getOptions('EatSmart'))
+ local enabled,target=options:getOption('2'),options:getOption('3')
+ local oldEnabled,oldTarget=enabled:getValue(),target:getValue()
+ enabled:setValue(true);target:setValue(goal)
+ local menu=ISContextMenu.get(player:getPlayerNum(),0,0)
+ local ok,problem=pcall(ES_subMenuEat,menu,{food},{food},player:getPlayerNum(),player)
+ enabled:setValue(oldEnabled);target:setValue(oldTarget);menu:setVisible(false)
+ assert(ok,problem)
+ local hunger=player:getStats():get(CharacterStat.HUNGER)
+ local fraction=(hunger-goal/100)/-food:getBaseHunger()
+ local found
+ for _,option in ipairs(menu.options)do
+  if option.ES_EatSmart and option.onSelect and not option.notAvailable and not option.param5
+   and type(option.param1)=='number'and math.abs(option.param1-fraction)<.000001 then
+   assert(not found,'ambiguous EatSmart hunger option');found=option
+  end
+ end
+ assert(found and found.target[1]==food and found.param2==player:getPlayerNum(),'EatSmart goal unavailable')
+ return found,hunger
+end
+local function eat(portion,menu,smartGoal)
  local player=getPlayer();local food=items().food
+ local option,dispatchHunger
+ if smartGoal then option,dispatchHunger=smartOption(player,food,smartGoal);portion=option.param1 end
  local command={id=food:getID(),portion=portion,baseHunger=food:getBaseHunger(),dispatchRemaining=food:getHungChange(),
   dispatchSource=food:getContainer()==player:getInventory()and 'root'or 'bag',menuDispatched=menu,
   nativeDuration=0,progress=false,cancelled=false,pickupObserved=false}
+ if smartGoal then command.smartGoal=smartGoal;command.dispatchHunger=dispatchHunger end
  local actions=capture(function()
-  if menu then Operations.run(ISInventoryPaneContextMenu.eatItem,food,portion,player:getPlayerNum())
+  if option then
+   Operations.run(option.onSelect,option.target,option.param1,option.param2,option.param3,option.param4,option.param5)
+  elseif menu then Operations.run(ISInventoryPaneContextMenu.eatItem,food,portion,player:getPlayerNum())
   else ISTimedActionQueue.add(ISEatFoodAction:new(player,food,portion))end
  end)
  assert(#actions==1 and actions[1].Type=='ISEatFoodAction'and actions[1].item:getID()==ids.foodId,
@@ -119,7 +145,8 @@ local function dispatch()
   assert(pickup.maxTime==evidence.pickupDuration and returning.maxTime==evidence.returnDuration,'transfer duration changed')
   observeReturn(returning)
  else
-  local half=eat(spec.depletion and .25 or .5,true);local quarter=eat(spec.depletion and 1 or .25,true)
+  local half=eat(spec.depletion and .25 or .5,true,spec.smart and 15 or nil)
+  local quarter=eat(spec.depletion and 1 or .25,true,spec.smart and 5 or nil)
   if config.mode=='toolkit'then
    for _,action in ipairs({half,quarter})do local contract=Policy.inspect(action);assert(contract and contract.edit,'ordinary food contract missing')end
    evidence.contractsVerified=true

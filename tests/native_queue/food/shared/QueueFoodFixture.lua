@@ -2,7 +2,10 @@
 local Fixture={bagType='Base.Bag_ALICEpack_Army',foodType='Base.Cereal',anchorType='Base.WaterBottle'}
 local function finite(value)return type(value)=='number'and value==value and value~=math.huge and value~=-math.huge end
 function Fixture.scenario(case)
- return {bag=case=='food-bag-edit-pickup-return',cancel=case=='food-root-cancel-first-portion',depletion=case=='food-root-depletion'}
+ return {bag=case=='food-bag-edit-pickup-return',
+  cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion',
+  smart=case=='food-smart-move-portions'or case=='food-smart-cancel-first-portion',
+  depletion=case=='food-root-depletion'}
 end
 local function count(container,id,fullType)
  local n=0;local items=container:getItems()
@@ -60,7 +63,16 @@ function Fixture.prepare(player,case,previous)
   and not food:hasTag(ItemTag.SMOKABLE),'fixture must be ordinary unreplaced food')
  local anchor=assert(root:AddItem(Fixture.anchorType));local fluid=assert(anchor:getFluidContainer())
  fluid:Empty();fluid:addFluid(Fluid.Water,1)
- player:getStats():set(CharacterStat.HUNGER,.8);player:getStats():set(CharacterStat.THIRST,.8)
+ -- Native Eat uses this helper for remaining hunger/nutrients. Prepare before
+ -- publication without Eat's premature SyncItemFields for an unknown client ID.
+ if spec.smart then
+  local base=food:getBaseHunger()
+  assert(not food:isCustomWeight(),'partial food fixture needs native derived weight')
+  food:multiplyFoodValues(.75)
+  assert(food:getContainer()==root and food:getBaseHunger()==base and math.abs(food:getHungChange()-base*.75)<.00001,
+   'native partial-food preparation failed')
+ end
+ player:getStats():set(CharacterStat.HUNGER,spec.smart and .2 or .8);player:getStats():set(CharacterStat.THIRST,.8)
  player:getBodyDamage():setHealthFromFoodTimer(0);player:getMoodles():Update()
  if isServer()then sendAddItemToContainer(root,bag);if not spec.bag then sendAddItemToContainer(root,food)end;sendAddItemToContainer(root,anchor)end
  local ids={case=case,bagId=bag:getID(),foodId=food:getID(),anchorId=anchor:getID()}
