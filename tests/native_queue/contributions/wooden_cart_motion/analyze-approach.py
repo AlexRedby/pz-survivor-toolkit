@@ -13,12 +13,22 @@ TYPES = {'ISWalkToTimedActionF', 'ToolkitWoodCartPickup', 'ISCartEquipAction'}
 
 def verify_calibration(calibration, first, lifecycle):
     prefix='Native production-path calibration: '
+    assert first['collisionKind']=='vehicle', prefix+'wrong collision fixture'
+    state=first['vehicleState']
+    match=re.fullmatch(r'id=(\d+) z=([-+\d.Ee]+) static=true active=false bodyBlocked=true crossBlocked=true hull=([-+\d.Ee,]+)',state)
+    assert match and float(match[2])==first['z'], prefix+'missing native static vehicle/map proof'
+    hull=[float(v) for v in match[3].split(',')]
+    assert len(hull)==8 and all(math.isfinite(v) for v in hull), prefix+'invalid native vehicle hull'
+    assert abs(max(hull[::2])-first['collisionX'])<=.002, prefix+'vehicle collision edge differs from hull'
+    assert abs(max(hull[1::2])+min(hull[1::2])-2*first['y'])<=.002, prefix+'approach did not target vehicle side center'
     assert 6 <= len(calibration) <= 4096, prefix+'missing bounded evidence'
     assert 0 < calibration[-1]['wall']-calibration[0]['wall'] < 30000 and calibration[-1]['wall'] < first['wall'], prefix+'unbounded timing'
-    assert calibration[0]['x']-calibration[-1]['x'] >= .2, prefix+'never moved toward wall'
+    assert calibration[0]['x']-calibration[-1]['x'] >= .2, prefix+'never moved toward vehicle'
     rounds={}
     for row in calibration:
         rounds.setdefault(row['round'],[]).append(row)
+        assert row['collisionKind']=='vehicle' and row['vehicleState']==state and row['collisionX']==first['collisionX'], prefix+'native vehicle pose changed'
+        assert row['x']>=first['collisionX']-.002, prefix+'actor entered vehicle body'
         assert row['actionType']=='ISWalkToTimedActionF', prefix+'wrong native action'
         if row['started']:
             assert row['nativeTargetX']==row['goalX'] and row['nativeTargetY']==row['goalY'], prefix+'planner clipped target'
@@ -130,7 +140,7 @@ def analyze(text, lifecycle, scenes=None):
             assert terminal['approachResult'] == 'Failed' and .002 < math.dist((terminal['x'], terminal['y']), (first['goalX'], first['goalY'])) <= .06, 'Blocked final alignment was not exercised'
             close = [r for r in approach_rows if .002 < math.dist((r['x'], r['y']), (first['goalX'], first['goalY'])) <= .06]
             assert len(close) >= 3 and close[-1]['wall']-close[0]['wall'] >= 300, 'Missing real blocked precise-arrival window'
-            assert all(r['x'] >= first['wallX'] for r in selected), 'Native wall collision crossed wall'
+            assert all(r['vehicleState']==first['vehicleState'] and r['collisionKind']=='vehicle' and r['collisionX']==first['collisionX'] and r['x']>=first['collisionX']-.002 for r in selected), 'Native parked vehicle collision/pose changed'
         elif name == 'wall-detour':
             crossing = first['wallX']+1
             assert first['startX'] < crossing < first['goalX'], 'Detour wall did not divide start/target'
@@ -156,7 +166,7 @@ def analyze(text, lifecycle, scenes=None):
         summaries.append(dict(case=name, itemId=first['id'], nativeActionIds=[g[0]['nativeActionId'] for g in groups],
                               approachResult=terminal['approachResult'], tailResult=terminal['tailResult']))
     return dict(functionalPass=True, approachVerified=True, failures=[], cases=summaries,
-                limit='Seven SP public-menu scenes; real native wall routing and calibrated blocked final alignment, exact item/cargo and native lifecycle. Rendered mesh/grip and Host replication remain separate gates.')
+                limit='Seven SP public-menu scenes; real native wall routing and parked-vehicle polygon blocked final alignment, exact item/cargo and native lifecycle. Rendered mesh/grip and Host replication remain separate gates.')
 
 
 def main():

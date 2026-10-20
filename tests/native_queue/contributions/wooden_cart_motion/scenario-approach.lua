@@ -17,6 +17,7 @@ local index,since,sampled,mode=0,0,0,'prepare'
 local item,bag,cargoID,cargoWeight,approach,tail,stance,queuedAt,terminalAt,changed,calibration,calibrationAt
 local wallX,wallY=math.floor(area.x),math.floor(area.y)
 local cartX,cartY=area.x,area.y
+local vehicleLayout,collisionX
 local tailX,tailY,startX,startY,removed=nil,nil,0,0,false
 local function queue() return ISTimedActionQueue.getTimedActionQueue(p).queue end
 local function empty() return #queue()==0 and p:getCharacterActions():isEmpty() and not p:hasPath() end
@@ -39,20 +40,27 @@ local function removeWorld(value)
  local world=value and value:getWorldItem()
  if world then local sq=assert(world:getSquare());sq:transmitRemoveItemFromSquare(world);sq:removeWorldObject(world);value:setWorldItem(nil) end
 end
+-- Native ground placement begin. Constructor zero offsets mean random, so restore explicit fixture placement.
 local function ground(x,y)
- cartX,cartY=x,y
  removeWorld(item)
  local container=item:getContainer();if container then container:Remove(item) end
  local sq=assert(getCell():getGridSquare(math.floor(x),math.floor(y),area.z))
- sq:AddWorldInventoryItem(item,x-math.floor(x),y-math.floor(y),0,true);item:setWorldZRotation(135)
+ local offX,offY=x-math.floor(x),y-math.floor(y)
+ sq:AddWorldInventoryItem(item,offX,offY,0,true)
+ local world=assert(item:getWorldItem());world:setOffX(offX);world:setOffY(offY)
+ cartX,cartY=world:getWorldPosX(),world:getWorldPosY()
+ assert(math.abs(cartX-x)<.002 and math.abs(cartY-y)<.002,'Native world cart placement differs from request')
+ item:setWorldZRotation(135)
  assert(SaucedCarts.markDropPersistent(item));SaucedCarts.updateCartVisual(item,p,true)
- stance=assert(toolkitWoodCartStance(p,assert(item:getWorldItem())),'Missing wooden handle stance')
+ stance=assert(toolkitWoodCartStance(p,world),'Missing wooden handle stance')
 end
+-- Native ground placement end.
 -- Native calibration begin. No callbacks, movement overrides or synthetic Path2.
 local function calibrationRow(now,event)
  local action,path=calibration.action,p:getPathFindBehavior2()
  local started=action:isStarted() and true or false
  local row={wall=now,event=event,round=calibration.round,x=p:getX(),y=p:getY(),
+  collisionKind='vehicle',collisionX=collisionX,vehicleState=cartLabVehicleState(),
   goalX=calibration.goalX,goalY=calibration.goalY,nativeTargetX=path:getTargetX(),nativeTargetY=path:getTargetY(),
   started=started,hasPath=p:hasPath(),actionType=action.Type,
   result=action.result==BehaviorResult.Failed and 'Failed' or action.result==BehaviorResult.Succeeded and 'Succeeded' or 'Working'}
@@ -74,7 +82,9 @@ local function startCalibrationRound(now)
  ground(wallX+2,wallY+.5)
  ground(cartX+x-.03-stance.x,cartY+y-stance.y)
  local location=Vector3f.new(stance.x,stance.y,area.z)
- assert(location:x()>wallX+.002,'Production path crossed wall without a precise collision')
+ local stepX,stepY=x-location:x(),y-location:y()
+ assert(stepX>.002 and stepX<=.032 and math.abs(stepY)<=.002,'Native calibration placement exceeded .03 step: x='..x..' goalX='..location:x()..' y='..y..' goalY='..location:y())
+ assert(location:x()>collisionX+.002,'Production path reached vehicle body without a precise collision')
  calibration.goalX,calibration.goalY=location:x(),location:y()
  calibration.roundAt=now;calibration.blockedAt=nil;calibration.blockedUntil=nil;calibration.anchorX=nil;calibration.anchorY=nil
  -- Exactly the production approach class and helper marker, with no pickup callback.
@@ -107,7 +117,7 @@ local function calibrate(now)
  assert(row.result=='Failed' and distance>.002 and distance<=.06 and calibration.blockedAt
   and calibration.blockedUntil-calibration.blockedAt>=500 and math.abs(row.x-calibration.anchorX)<=.002
   and math.abs(row.y-calibration.anchorY)<=.002,'Planner-only/short native calibration failure: '..encode(row))
- assert(calibration.startX-row.x>=.2,'Native calibration did not move toward wall')
+ assert(calibration.startX-row.x>=.2,'Native calibration did not move toward vehicle')
  calibration.endX,calibration.endY=row.x,row.y
  return true
 end
@@ -130,6 +140,7 @@ local function snapshot(now)
   inventoryCount=inv,worldCount=worlds,containerCount=nested,removed=removed,primaryID=a and a:getID() or -1,secondaryID=b and b:getID() or -1,
   x=p:getX(),y=p:getY(),z=p:getZ(),startX=startX,startY=startY,goalX=stance and stance.x or startX,goalY=stance and stance.y or startY,
   tailX=tailX or startX,tailY=tailY or startY,wallX=wallX,wallY=wallY,cartX=cartX,cartY=cartY,
+  collisionKind=vehicleLayout and 'vehicle' or '',collisionX=collisionX or wallX,vehicleState=vehicleLayout and cartLabVehicleState() or '',
   luaActions=#queue(),nativeActions=p:getCharacterActions():size(),hasPath=p:hasPath(),actionType=current and current.Type or '',
   approachResult=approach and approach.result==BehaviorResult.Failed and 'Failed' or approach and approach.result==BehaviorResult.Succeeded and 'Succeeded' or '',
   tailResult=tail and tail.result==BehaviorResult.Succeeded and 'Succeeded' or '',
@@ -162,7 +173,7 @@ local function cleanup()
  cartLabDrive(0);cartLabGait(0);p:removeFromHands(item);SaucedCarts.clearCartPose(p)
  removeWorld(item);local c=item and item:getContainer();if c then c:Remove(item) end
  if bag then removeWorld(bag);bag=nil end
- item=nil;area.clearObstacles(p);area.check(p)
+ item=nil;if area.hasVehicles() then area.clearVehicles(p) end;vehicleLayout=nil;collisionX=nil;area.clearObstacles(p);area.check(p)
 end
 local function ready(now)
  startX,startY=p:getX(),p:getY();mode='settle';since=now+1200
@@ -180,8 +191,9 @@ local function prepare()
   bag=assert(instanceItem('Base.Bag_DuffelBagTINT'));bag:getInventory():AddItem(item)
   p:getCurrentSquare():AddWorldInventoryItem(bag,.6,.6,0,true)
  elseif name=='precise-blocked' then
-  local walls={};for y=wallY-3,wallY+3 do walls[#walls+1]={x=wallX,y=y,axis='W'} end
-  area.setObstacles(p,walls);relocate(wallX+1,wallY+.5)
+  assert(config.vehicles==true and area.setVehicle and area.clearVehicles and cartLabVehicleState,'Native parked vehicle fixture required')
+  vehicleLayout=area.setVehicle(p,0);collisionX=vehicleLayout.x+vehicleLayout.width
+  relocate(collisionX+.9,vehicleLayout.y)
   calibrationAt=getTimestampMs();calibration={rows={},round=0,startX=p:getX()};startCalibrationRound(calibrationAt);mode='calibrate';return
  else
   if name=='wall-detour' then

@@ -145,6 +145,16 @@ class CartAdapterTests(unittest.TestCase):
                 self.assertTrue(carts.complete(self.selection, 'client1', f'[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases={count}\n'))
                 self.assertFalse(carts.complete(self.selection, 'client1', '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] ALL_COMPLETE cases=12\n'))
 
+    def test_approach_bank_stages_native_vehicle_polygon_for_precise_collision(self):
+        self.selection['cases'] = ['approach']
+        self.stage()
+        runtime = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+        self.assertIn('["vehicles"]=true', runtime)
+        intake = ROOT/'tests/native_queue/contributions/wooden_cart_motion'
+        self.assertIn((intake/'vehicles.lua').read_text(), runtime)
+        self.assertIn((intake/'scenario-approach.lua').read_text(), runtime)
+        self.assertLess(runtime.index((intake/'vehicles.lua').read_text()), runtime.index((intake/'scenario-approach.lua').read_text()))
+
     def test_vehicle_bank_stages_only_owned_vehicle_fixture_and_exact_scenes(self):
         self.selection['cases'] = ['vehicles']
         self.stage()

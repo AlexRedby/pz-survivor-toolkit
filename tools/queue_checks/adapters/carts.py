@@ -347,7 +347,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             if selection['cases'][0] in ('wall-manual-exit','wall-fast-manual-exit'): motion['wallManualExit']=True
             if selection['cases'][0] == 'wall-fast-manual-exit': motion['wallFastManualExit']=True
             if selection['cases'][0] == 'impact': motion['impact']=True
-            if selection['cases'][0] == 'vehicles': motion['vehicles']=True
+            if selection['cases'][0] in ('vehicles', 'approach'): motion['vehicles']=True
             if selection['cases'][0] in ('interruption', 'interruption-matrix', 'interruption-fast'): motion['interruptions']=True
             if selection['cases'][0] == 'interruption-fast': motion['fastInterruptions']=True
             if selection['cases'][0] == 'interruption-matrix': motion['interruptionMatrix']=True
@@ -359,7 +359,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             if selection['cases'][0] == 'stop-timing': motion['stopTiming']=True
             runtime_source = 'CartMotionConfig=' + _lua(motion) + '\n(function()\n' + (sp / 'scene-selection.lua').read_text() + '\nend)()\nif not CartAdapterBootstrapped then\nCartAdapterBootstrapped=true\n'
             runtime_source += '(function()\n' + (sp / 'test-area.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'obstacles.lua').read_text() + '\nend)();\n(function()\n' + (sp / 'bootstrap.lua').read_text() + '\nend)()'
-            if selection['cases'][0] == 'vehicles':
+            if selection['cases'][0] in ('vehicles', 'approach'):
                 runtime_source += ';\n(function()\n' + (sp / 'vehicles.lua').read_text() + '\nend)()'
             runtime_source += '\nend\n' if manual else '\nelse\n(function()\n' + (sp / SP_CASES[selection['cases'][0]][0]).read_text() + '\nend)()\nend\n'
             _write(runtime_lua, runtime_source)

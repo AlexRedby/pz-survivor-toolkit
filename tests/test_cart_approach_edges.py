@@ -9,6 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT/'tests/native_queue/contributions/wooden_cart_motion'
+VEHICLE_STATE='id=42 z=7.0 static=true active=false bodyBlocked=true crossBlocked=true hull=-2.0,-1.5,-0.27,-1.5,-0.27,2.5,-2.0,2.5'
 spec = importlib.util.spec_from_file_location('cart_approach', SOURCE/'analyze-approach.py')
 analyzer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(analyzer)
@@ -38,6 +39,7 @@ def fixture():
                 x = .03
             return dict(case=name, start=start, wall=start+elapsed, elapsed=elapsed, id=item,
                         cargoID=100+item, cargoWeight=1., z=7,
+                        collisionKind='vehicle' if name=='precise-blocked' else '',collisionX=-.27,vehicleState=VEHICLE_STATE if name=='precise-blocked' else '',
                         inventoryCount=int(owned), worldCount=int(not owned and not lost and name != 'container-equip'),
                         containerCount=int(not owned and name == 'container-equip'), removed=lost,
                         primaryID=item if owned else -1, secondaryID=item if owned else -1,
@@ -62,7 +64,7 @@ def fixture():
                 for elapsed,event in times:
                     x=initial if failed else max(goal,initial-.03*elapsed/125)
                     lines.append('[CART_APPROACH_CALIBRATION] '+json.dumps(dict(case=name,start=start,round=number,
-                        wall=begin+elapsed,x=x,y=.5,goalX=goal,goalY=.5,nativeTargetX=goal,nativeTargetY=.5,
+                        wall=begin+elapsed,x=x,y=.5,collisionKind='vehicle',collisionX=-.27,vehicleState=VEHICLE_STATE,goalX=goal,goalY=.5,nativeTargetX=goal,nativeTargetY=.5,
                         started=event!='queued',hasPath=event=='sample',actionType='ISWalkToTimedActionF',event=event,
                         result=('Failed' if failed else 'Succeeded') if event=='terminal' else 'Working')))
                 for event,when in [('start',1)]+([('stop',824)] if failed else [('perform',149),('complete',149)]):
@@ -140,7 +142,7 @@ class ApproachChecks(unittest.TestCase):
 
     def test_blocked_requires_real_production_path_calibration_before_public_approach(self):
         text,lifecycle=fixture()
-        for mode in ('missing','wrong-action','clipped-target','no-rejection','short-rejection','jump','wrong-goal'):
+        for mode in ('missing','wrong-action','clipped-target','no-rejection','short-rejection','jump','wrong-goal','vehicle-moved','missing-map-proof'):
             lines=[]
             for line in text.splitlines():
                 if line.startswith('[CART_APPROACH_CALIBRATION] '):
@@ -151,6 +153,8 @@ class ApproachChecks(unittest.TestCase):
                     if mode=='no-rejection' and row['round']==11: row['hasPath']=False
                     if mode=='short-rejection' and row['round']==11: row['wall']=157500+(row['wall']-157500)//2
                     if mode=='jump' and row['round']==2: row['x']+=.02
+                    if mode=='vehicle-moved' and row['round']==2: row['vehicleState']=row['vehicleState'].replace('-0.27','-0.26')
+                    if mode=='missing-map-proof': row['vehicleState']=row['vehicleState'].replace('bodyBlocked=true','bodyBlocked=false')
                     line='[CART_APPROACH_CALIBRATION] '+json.dumps(row)
                 lines.append(line)
             values=('\n'.join(lines),lifecycle)
@@ -168,7 +172,7 @@ class ApproachChecks(unittest.TestCase):
         body=source.split('-- Native calibration begin.',1)[1].split('-- Native calibration end.',1)[0]
         body=body.split('\n',1)[1]
         script=r'''
-            wallX=0;wallY=0;calibrationAt=0;calibration={rows={},round=0,startX=1};now=0
+            wallX=0;wallY=0;collisionX=0;calibrationAt=0;calibration={rows={},round=0,startX=1};now=0
             local pending={};local originalPerform=function() end
             BehaviorResult={Succeeded='Succeeded',Failed='Failed',Working='Working'}
             p={x=1,path=false,getX=function(self) return self.x end,getY=function() return .5 end,
@@ -178,6 +182,7 @@ class ApproachChecks(unittest.TestCase):
             function empty() return #pending==0 and not p.path end
             function queue() return pending end
             function encode() return '{}' end
+            function cartLabVehicleState() return 'owned vehicle' end
             function ground(x,y) cartX=x;cartY=y;stance={x=x,y=y} end
             Vector3f={new=function(x,y,z) return {x=function() return x end,y=function() return y end} end}
             area={z=7,checkPosition=function() end}
@@ -201,6 +206,42 @@ class ApproachChecks(unittest.TestCase):
             pending={action};action.result=BehaviorResult.Working;p.path=true
             path.getTargetX=function() return calibration.goalX+.02 end
             assert(not pcall(calibrate,225)) -- native planner clipping must never calibrate the helper
+            -- Reproduce native06's first integer placement randomization, then fractional placement.
+            -- The live pre-queue guard must reject it before any native action can start.
+            pending={};p.path=false;local calls=0
+            ground=function(x,y) calls=calls+1;cartX=x;cartY=y;stance={x=x+(calls==1 and .15 or 0),y=y} end
+            local before=calibration.action
+            assert(not pcall(startCalibrationRound,250) and #pending==0 and calibration.action==before)
+        '''
+        result=subprocess.run([shutil.which('luajit'),'-'],input=script,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'),'Requires LuaJIT')
+    def test_native_ground_zero_offset_randomization_is_corrected_before_stance_and_telemetry(self):
+        source=(SOURCE/'scenario-approach.lua').read_text()
+        body=source.split('-- Native ground placement begin.',1)[1].split('-- Native ground placement end.',1)[0].split('\n',1)[1]
+        script=r'''
+            p={};area={z=7};cartX=0;cartY=0;local world
+            item={getWorldItem=function() return world end,getContainer=function() return nil end,
+                setWorldZRotation=function(_,angle) assert(angle==135) end}
+            function removeWorld() world=nil end
+            local square={AddWorldInventoryItem=function(_,value,x,y,z,flag)
+                assert(value==item and flag)
+                -- Actual IsoWorldInventoryObject constructor semantics: exactly zero means random offset.
+                world={xoff=x==0 and .153 or x,yoff=y==0 and .487 or y,
+                    setOffX=function(self,value) self.xoff=value end,setOffY=function(self,value) self.yoff=value end,
+                    getWorldPosX=function(self) return squareX+self.xoff end,getWorldPosY=function(self) return squareY+self.yoff end}
+            end}
+            function getCell() return {getGridSquare=function(_,x,y,z) squareX=x;squareY=y;return square end} end
+            SaucedCarts={markDropPersistent=function() return true end,updateCartVisual=function() end}
+            function toolkitWoodCartStance(_,value) return {x=value:getWorldPosX()+.4,y=value:getWorldPosY()+.45} end
+        '''+body+r'''
+            ground(10827,10142.5)
+            assert(cartX==10827 and cartY==10142.5 and world.xoff==0)
+            assert(stance.x==cartX+.4 and stance.y==cartY+.45)
+            ground(10827.25,10142)
+            assert(cartX==10827.25 and cartY==10142 and world.yoff==0)
+            assert(stance.x==cartX+.4 and stance.y==cartY+.45)
         '''
         result=subprocess.run([shutil.which('luajit'),'-'],input=script,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
