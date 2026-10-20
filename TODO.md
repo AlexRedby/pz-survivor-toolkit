@@ -1,5 +1,6 @@
 # Metal wheelbarrow animation port
 
+- [ ] Refine the remaining overlap between the stock mitten skin and metal shafts without changing the accepted arm/cart motion. Evaluate the full hand triangles: the finite-shaft palm/thumb/finger anchors pass, but coarse bridge faces still intersect the shaft.
 - [ ] Complete an isolated Host owner/observer run for the metal wheelbarrow with the installed mod set and at least 2048 MiB Java heap per process. Check motion, pickup/setdown, cancellation/retry, exact cart/cargo identity and both clients' presentation; review short recordings. A startup failure is not functional coverage.
 - [ ] After the Host gate, rebase on current main, recheck Toolkit/Java component versions and push the port to main. Keep trimmed Host clips and remove the disposable profile.
 
