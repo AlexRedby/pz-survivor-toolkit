@@ -502,11 +502,14 @@ public final class Main {
         }
         @Patch.OnExit
         public static void exit(@Patch.This zombie.core.skinnedmodel.model.ItemModelRenderer renderer,
-            @Patch.Argument(0) zombie.inventory.InventoryItem item) {
+            @Patch.Argument(0) zombie.inventory.InventoryItem item,
+            @Patch.Argument(7) zombie.scripting.objects.ModelScript script) {
             if(Main.CART_TRANSITION_SUPPORTED && CartTransition.wheelbarrow(item)) {
                 var transform=Accessor.tryGet(renderer,"transform",(org.joml.Matrix4f)null);
                 if(transform!=null) {
                     transform.scale(.85f);
+                    if(script!=null && item.getWorldItem()!=null && item.getWorldItem().getItem()==item)
+                        CartWorldSupport.apply(item.getFullType(),transform,script.scale*item.worldScale);
                     if(Main.CART_WHEEL_SUPPORTED) CartWheelWorld.snapshot(renderer,item,transform);
                 }
             }

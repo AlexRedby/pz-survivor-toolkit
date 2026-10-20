@@ -5,6 +5,7 @@ local originalRequire = require
 local function setup(server, enabled, bridge)
     local w = {added = {}, ended = 0, presented = 0, equipped = 0}
     ToolkitCartRefreshVisual = nil
+    toolkitWoodCartFace = nil
     isServer = function() return server end
     isClient = function() return not server end
     getActivatedMods = function() return {contains = function(_, name) return enabled and name == "SaucedCarts" end} end
@@ -277,6 +278,20 @@ w.world = world
 p.turning = true; assert(pickup:waitToStart() and p.faceX == 1.8 and p.faceY == 2.8)
 p.turning = false; w.aligned = false
 assert(pickup:waitToStart(), "stale native twist must not start pickup before the body faces the handles")
+local completedFace = false
+local faceCalls = 0
+toolkitWoodCartFace = function(character, itemWorld)
+    assert(character == p and itemWorld == world, "pickup facing completion borrowed another actor or cart")
+    faceCalls = faceCalls + 1
+    return completedFace
+end
+assert(pickup:waitToStart() and faceCalls == 1, "incomplete body facing started pickup")
+completedFace = true
+assert(not pickup:waitToStart() and faceCalls == 2, "completed body facing did not release the native wait")
+p.turning = true
+assert(pickup:waitToStart(), "body completion bypassed an active native turn")
+p.turning = false
+toolkitWoodCartFace = nil
 w.aligned = true; assert(not pickup:waitToStart(), "aligned body should start pickup without an extra delay")
 p.vars.ToolkitCartMotion = true
 pickup:start(); pickup:update()

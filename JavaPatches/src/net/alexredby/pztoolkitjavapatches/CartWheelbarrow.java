@@ -49,8 +49,12 @@ final class CartWheelbarrow {
     }
     static CartWheelbarrow forItem(InventoryItem item) {return item==null?null:forType(item.getFullType());}
     String model() {return model;}
-    // Metal handles sit higher: match its authored clip while preserving the shared leg/foot pose.
-    float pickupHingeDegrees() {return this==METAL?42:60;}
+    // Match the authored pose to the handles after all three ground supports are seated.
+    float pickupHingeDegrees() {return this==METAL?65:60;}
+    float pickupLowering() {return this==METAL?.08f:.03f;}
+    // Metal grip ends sit .09 actor units farther forward than the wooden ones.
+    // Approach deeper between its shafts instead of reaching from behind them.
+    float pickupStanceBack() {return this==METAL?-.03f:.06f;}
     float centerX() {return centerX;}
     float centerY() {return centerY;}
     float centerZ() {return centerZ;}

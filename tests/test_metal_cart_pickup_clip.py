@@ -1,4 +1,4 @@
-"""Metal pickup reduces the hinge without changing planted legs or losing the measured grips."""
+"""Grounded metal pickup keeps its feet planted and reaches rigidly with natural knees."""
 import json
 import math
 import re
@@ -28,18 +28,19 @@ class MetalPickupClipTests(unittest.TestCase):
         cls.clip = (ROOT / 'PZSurvivorToolkit/42/media/anims_X/Bob/Toolkit_MetalCart_Pickup.x').read_text()
         _, cls.parents = baker.template_parts(cls.clip)
 
-    def test_keeps_all_lower_body_samples_and_body_endpoints_exact(self):
+    def test_preserves_foot_targets_and_body_endpoints(self):
         self.assertEqual([r['time'] for r in self.metal], [r['time'] for r in self.wood])
-        self.assertEqual(self.metal[0], self.wood[0], 'pickup approach must start at the accepted native pose')
+        self.assertEqual(self.metal[0], self.wood[0], 'pickup starts at the accepted native pose')
         for old, new in zip(self.wood, self.metal):
             for bone in self.parents:
-                if not retarget.upper_body(bone, self.parents):
-                    self.assertEqual(new['bones'][bone], old['bones'][bone], (old['time'], bone))
+                if any(retarget.descendant(bone, f'Bip01_{s}_Foot', self.parents) for s in ('L', 'R')):
+                    self.assertLess(max(abs(a-b) for a,b in zip(new['bones'][bone], old['bones'][bone])),
+                                    .000001, (old['time'], bone, 'planted foot moved'))
         for bone in self.parents:
             if not any(retarget.descendant(bone, f'Bip01_{s}_Clavicle', self.parents) for s in ('L', 'R')):
                 self.assertEqual(self.metal[-1]['bones'][bone], self.wood[-1]['bones'][bone], bone)
 
-    def test_reduces_only_the_existing_hinge_envelope_and_preserves_rigid_links(self):
+    def test_grounded_body_envelope_preserves_rigid_links(self):
         torso = retarget.torso_poses(self.wood, self.parents)
         for old, new, expected in zip(self.wood, self.metal, torso):
             for bone in ('Bip01_Spine', 'Bip01_Spine1', 'Bip01_Neck', 'Bip01_Head'):
@@ -55,14 +56,15 @@ class MetalPickupClipTests(unittest.TestCase):
         peak = next(i for i, r in enumerate(self.metal) if .44 <= r['time'] <= .48)
         angles = [math.degrees(math.atan2(-rows[peak]['bones']['Bip01_Spine'][2],
                                          rows[peak]['bones']['Bip01_Spine'][1])) for rows in (self.wood, self.metal)]
-        self.assertAlmostEqual(angles[0] - angles[1], 18, places=5)
-        self.assertLess(angles[1], 47)
+        self.assertAlmostEqual(angles[1] - angles[0], 5, places=5)
+        self.assertAlmostEqual(self.wood[peak]['bones']['Bip01_Spine'][13] -
+                               self.metal[peak]['bones']['Bip01_Spine'][13], .05, places=6)
 
     def test_contacts_measured_metal_ground_and_held_handles_with_unlocked_elbows(self):
-        # Independent native01 post-grounding observations, not values computed by the generator target.
+        # Shared cylindrical tire/feet support, followed by the .09 actor-unit approach advance.
         peak = next(r for r in self.metal if .44 <= r['time'] <= .48)
-        expected = {'L': (.17458296, .39120993, -.05802308),
-                    'R': (-.17289883, .39121008, -.058022946)}
+        expected = {'L': (.17458296, .25217247, .04884455),
+                    'R': (-.17289874, .25217244, .04884465)}
         held = {'L': (.17488745, .5312701, -.083618924),
                 'R': (-.17256463, .53127027, -.083618864)}
         for side in ('L', 'R'):
@@ -74,6 +76,43 @@ class MetalPickupClipTests(unittest.TestCase):
             flex = math.degrees(math.acos(max(-1, min(1, (d*d-a*a-b*b)/(2*a*b)))))
             self.assertGreater(flex, 15, 'avoid a locked elbow')
             self.assertLess(flex, 50, 'metal pickup should keep the arms straighter than the wood source')
+
+    def test_partial_reach_is_applied_only_by_the_live_body_solver(self):
+        torso = retarget.torso_poses(self.wood, self.parents)
+        for posed, baseline in zip(self.metal, torso):
+            if posed['time'] >= .44:
+                continue
+            for bone in self.parents:
+                if any(retarget.descendant(bone, f'Bip01_{s}_Clavicle', self.parents) for s in ('L', 'R')):
+                    self.assertLess(max(abs(a-b) for a,b in zip(posed['bones'][bone], baseline['bones'][bone])),
+                                    .000001, (posed['time'], bone, 'partial reach was baked twice'))
+
+    def test_knees_follow_planted_toes_and_clavicles_stay_bounded(self):
+        torso = retarget.torso_poses(self.wood, self.parents)
+        def vector(a, b):
+            return [x-y for x,y in zip(a,b)]
+        def dot(a, b):
+            return sum(x*y for x,y in zip(a,b))
+        def length(a):
+            return math.sqrt(dot(a,a))
+        def project(a, axis):
+            return [x-dot(a,axis)*y for x,y in zip(a,axis)]
+        for posed, baseline in zip(self.metal[1:-1], torso[1:-1]):
+            for side in ('L','R'):
+                p = lambda name: position(posed['bones'][f'Bip01_{side}_{name}'])
+                b = lambda name: position(baseline['bones'][f'Bip01_{side}_{name}'])
+                axis = vector(p('Foot'),p('Thigh'))
+                axis = [x/length(axis) for x in axis]
+                knee = project(vector(p('Calf'),p('Thigh')),axis)
+                toes = vector(p('Toe0'),p('Foot'))
+                toes[1] = 0
+                toes = project(toes,axis)
+                self.assertGreater(dot(knee,toes)/length(knee)/length(toes), .999,
+                                   (posed['time'],side,'reversed knee'))
+                before = vector(b('UpperArm'),b('Clavicle'))
+                after = vector(p('UpperArm'),p('Clavicle'))
+                angle = math.degrees(math.acos(max(-1,min(1,dot(before,after)/length(before)/length(after)))))
+                self.assertLess(angle,35.01,(posed['time'],side,'clavicle limit'))
 
     def test_native_clip_matches_all_editable_poses(self):
         self.assertEqual(baker.bake(self.clip, self.metal, 'Toolkit_MetalCart_Pickup'), self.clip)

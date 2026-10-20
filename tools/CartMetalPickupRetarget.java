@@ -13,7 +13,7 @@ import zombie.core.skinnedmodel.model.SkinningData;
 
 /** Offline adapter for the current runtime IK; binary input/output belongs to retarget_metal_cart_pickup.py. */
 public final class CartMetalPickupRetarget {
-    // Actual native01 ground-contact model matrix, actor coordinates, including stance and model scale.
+    // Native01 actor-space ground capture before the shared tire/feet correction.
     private static final Matrix4f GROUND=new Matrix4f().set(.009175257f,0,-2.7708507e-9f,0,
         0,.009175259f,0,0,2.770851e-9f,0,.009175259f,0,.216849f,.28893805f,-.8419868f,1);
     // Native Bob_Cart_Idle thumb bases relative to Hand, from the retained native05 full-closure capture.
@@ -48,17 +48,36 @@ public final class CartMetalPickupRetarget {
             // Profile HELD already includes8deg lowering and cylindrical floor alignment.
             // It matches native01 y=.22126661; lowering/alignment must not run twice.
             var profile=CartWheelbarrow.METAL;var held=profile.held(new Matrix4f());
+            // GROUND was captured with the original .06 stance; move its actor-relative
+            // position by the exact approach delta without moving the world cart.
+            var ground=new Matrix4f(GROUND);
+            if(!CartWorldSupport.apply("SaucedWheelbarrow.WheelbarrowMetal",ground,1))
+                throw new AssertionError("metal ground support rejected");
+            // Actor-space capture includes native item placement height after model calibration.
+            ground.translateLocal(0,.00175f*2.44949f/1.5f,.06f-profile.pickupStanceBack());
             int frames=input.readInt();output.writeInt(frames);int contacts=0;
             for(int frame=0;frame<frames;frame++) {
                 double time=input.readDouble();var phase=CartTransitionMath.progress(time,false);
                 var poses=new Matrix4f[count];
                 for(int i=0;i<count;i++) {var values=new float[16];for(int j=0;j<16;j++) values[j]=(float)input.readDouble();poses[i]=new Matrix4f().set(values);}
+                // Match groundFeet: keep the source foot targets and solve each rigid
+                // leg after the additional metal lowering and exact center correction.
+                float lowering=(float)(.05*phase.balance());
+                float shiftX=(float)(((.216849-.21714664)-(-.005859375+.0060535767))*phase.center());
+                if(lowering>0 || shiftX!=0) for(String side:new String[]{"L","R"}) {
+                    var foot=actor.getBone("Bip01_"+side+"_Foot");
+                    var target=new Matrix4f(poses[foot.index]).translateLocal(-shiftX,lowering,0);
+                    if(!CartGrip.reach(poses,actor,foot.name,target,null,false))
+                        throw new AssertionError("metal squat refused frame="+frame+" time="+time);
+                }
                 var cart=new Matrix4f();
-                if(!CartTransitionMath.blend(GROUND,held,phase.lift(),cart)) throw new AssertionError("cart blend rejected");
+                if(!CartTransitionMath.blend(ground,held,phase.lift(),cart)) throw new AssertionError("cart blend rejected");
                 var axle=profile.center(new Vector3f());
-                var center=GROUND.transformPosition(axle,new Vector3f()).lerp(held.transformPosition(axle,new Vector3f()),(float)phase.lift());
+                var center=ground.transformPosition(axle,new Vector3f()).lerp(held.transformPosition(axle,new Vector3f()),(float)phase.lift());
                 cart.translateLocal(center.sub(cart.transformPosition(axle,new Vector3f())));
-                if(phase.reach()>0) {
+                // The live authored path applies acquisition once for the actual
+                // body/sex. Baking partial reach here would apply it a second time.
+                if(phase.reach()==1) {
                     for(String side:new String[]{"L","R"}) nativeThumb(poses,actor,side,CartTransitionMath.smooth(phase.grip()));
                     if(!CartGrip.transitionGrip(poses,actor,false,new Matrix4f(),cart,(float)phase.reach(),(float)phase.grip(),null,"WheelbarrowMetal"))
                         throw new AssertionError("metal IK refused frame="+frame+" time="+time);

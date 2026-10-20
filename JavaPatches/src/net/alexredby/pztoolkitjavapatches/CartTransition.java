@@ -34,6 +34,12 @@ public final class CartTransition {
     private static final double RESTART_BLEND_NANOS = 350_000_000.0;
     // Start behind the handle ends rather than clearing the shafts with a large pelvis-only retreat.
     private static final float STANCE_BACK = .06f;
+    // The grounded metal cart must rise with a restarted setdown before the old
+    // crouch releases; the previous low hand path is otherwise beyond arm reach.
+    static float restartCartWeight(CartWheelbarrow profile,boolean pickup,float bodyWeight) {
+        return profile==CartWheelbarrow.METAL && !pickup?bodyWeight*bodyWeight:bodyWeight;
+    }
+
     private static final class State {
         InventoryItem item;
         long action;
@@ -74,7 +80,9 @@ public final class CartTransition {
         var attachment = script.getAttachmentById("world");
         if (attachment != null) ModelInstanceRenderData.makeAttachmentTransform(attachment,result).invert();
         ModelInstanceRenderData.postMultiplyMeshTransform(result,model.mesh);
-        return result.scale(script.scale);
+        result.scale(script.scale);
+        CartWorldSupport.apply(item.getFullType(),result,item.worldScale*.85f);
+        return result;
     }
 
     static CartTransitionMath.Placement placement(InventoryItem item, IsoWorldInventoryObject world) {
@@ -97,12 +105,12 @@ public final class CartTransition {
         if(!CartTransitionMath.worldToActor(pose,model,target.x(),target.y(),player.getZ(),target.slotAngle(),ground)) return null;
         var axle=profile.center(new Vector3f());
         var difference=ground.transformPosition(axle,new Vector3f()).sub(held.transformPosition(axle,new Vector3f()));
-        difference.z+=STANCE_BACK;
+        difference.z+=profile.pickupStanceBack();
         float c=(float)Math.cos(target.slotAngle()),s=(float)Math.sin(target.slotAngle());
         float x=target.x()-1.5f*(c*difference.x+s*difference.z);
         float y=target.y()+1.5f*(-s*difference.x+c*difference.z);
         var result=LuaManager.platform.newTable();
-        result.rawset("x",(double)x);result.rawset("y",(double)y);
+        result.rawset("x",(double)x);result.rawset("y",(double)y);result.rawset("angle",(double)target.slotAngle());
         double heading=target.slotAngle()-Math.PI/2;
         result.rawset("faceX",player.getX()+Math.cos(heading));
         result.rawset("faceY",player.getY()+Math.sin(heading));
@@ -110,6 +118,14 @@ public final class CartTransition {
         result.rawset("aligned",animation!=null && !player.isTurning()
             && Math.abs(CartSteeringMath.wrap(animation.getRenderedAngle()-target.slotAngle()))<Math.toRadians(1));
         return result;
+    }
+
+    @LuaMethod(name="toolkitWoodCartFace", global=true)
+    public static boolean face(IsoPlayer player,IsoWorldInventoryObject world) {
+        if(player==null) return false;
+        var target=stance(player,world);
+        return target!=null && CartPickupApproach.face(player,world,((Number)target.rawget("x")).floatValue(),
+            ((Number)target.rawget("y")).floatValue(),((Number)target.rawget("angle")).floatValue());
     }
 
     static boolean authoredClip(IsoPlayer player, boolean retirementSupported) {
@@ -521,7 +537,7 @@ public final class CartTransition {
                 && !CartTransitionMath.blend(held,state.recoveryCart,release,transform)) {end(player);return false;}
             double restartAge=System.nanoTime()-state.restartStart;
             float restart=state.restartPose==null?0:1-(float)CartTransitionMath.smooth(restartAge/RESTART_BLEND_NANOS);
-            float cartRestart=restart;
+            float cartRestart=restartCartWeight(profile,state.pickup,restart);
             if(state.pickup && state.restartPose!=null) {
                 // Let the hip clear the shafts before lowering the cart after an interrupted pickup.
                 double u=Math.max(0,Math.min(1,restartAge/400_000_000.0));
@@ -552,7 +568,7 @@ public final class CartTransition {
                 state.referenceRotation=reference==null?null:new Quaternionf(reference.rotation());
             }
             // Keep the knee bend and hip hinge in one continuous descent, without an early sink/rebound.
-            float lowering=(float)(-.03*phase.balance());
+            float lowering=(float)(-profile.pickupLowering()*phase.balance());
             // A restarted pickup releases the old grip while its clip begins the approach again.
             float reach=state.pickup?(float)phase.reach():(float)phase.reach()*(1-restart)+state.restartReach*restart;
             float grip=state.pickup?(float)phase.grip():(float)phase.grip()*(1-restart)+state.restartGrip*restart;
@@ -600,7 +616,8 @@ public final class CartTransition {
     }
 
     static CartTransitionMath.Placement dropPlacement(ModelSlotRenderData slot, Matrix4f held, Matrix4f model, InventoryItem item) {
-        return dropPlacement(held,model,slot.x,slot.y,slot.z,slot.animPlayerAngle,item.worldScale,STANCE_BACK,CartWheelbarrow.forItem(item));
+        var profile=CartWheelbarrow.forItem(item);
+        return dropPlacement(held,model,slot.x,slot.y,slot.z,slot.animPlayerAngle,item.worldScale,profile.pickupStanceBack(),profile);
     }
 
     static CartTransitionMath.Placement dropPlacement(Matrix4f held, Matrix4f model, float x, float y, float z, float angle, float scale) {
@@ -636,7 +653,7 @@ public final class CartTransition {
         var direction=player.getForwardDirection();
         var profile=CartWheelbarrow.forItem(item);
         var pose=dropPlacement(profile.held(new Matrix4f()),model,player.getX(),player.getY(),player.getZ(),
-            direction.getDirection()+(float)Math.PI/2,item.worldScale,STANCE_BACK,profile);
+            direction.getDirection()+(float)Math.PI/2,item.worldScale,profile.pickupStanceBack(),profile);
         if(pose==null || target(player,pose.x(),pose.y(),player.getZ())==null) return null;
         var result=LuaManager.platform.newTable();
         result.rawset("x",(double)pose.x());result.rawset("y",(double)pose.y());

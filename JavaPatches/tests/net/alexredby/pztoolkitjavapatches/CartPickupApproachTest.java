@@ -31,6 +31,12 @@ public final class CartPickupApproachTest {
         PathFindBehavior2 path;
         zombie.vehicles.BaseVehicle vehicle;
         int protection,moves;
+        boolean turning,wantsTurn;
+        zombie.core.skinnedmodel.animation.AnimationPlayer animation;
+        @Override public boolean isTurning(){return turning;}
+        @Override public boolean shouldBeTurning(){return wantsTurn;}
+        @Override public zombie.core.skinnedmodel.animation.AnimationPlayer getAnimationPlayer(){return animation;}
+        @Override public boolean hasAnimationPlayer(){return animation!=null;}
         float x=10,y=20,nextX=10,nextY=20;
         @Override public float getX(){return x;}
         @Override public float getY(){return y;}
@@ -164,12 +170,74 @@ public final class CartPickupApproachTest {
         check(!CartPickupApproach.suppressDeferred(f.player) && f.player.isDeferredMovementEnabled(),
             "finished pickup retained movement suppression");
     }
+    private static Fixture facing() throws Exception {
+        var f=fixture("SaucedWheelbarrow.WheelbarrowMetal");
+        f.table.getMetatable().rawset("Type","ToolkitWoodCartPickup");f.table.rawset("itemId",(double)f.cart.getID());
+        f.player.animation=allocate(zombie.core.skinnedmodel.animation.AnimationPlayer.class);
+        field(f.player.animation,"targetDir",new zombie.iso.Vector2());
+        field(f.player,"forwardDirection",new zombie.iso.Vector2());
+        f.player.animation.setMaxTwistAngle((float)Math.toRadians(45));
+        f.player.setTargetAndCurrentDirection((float)Math.cos(1.3847381-Math.PI/2),(float)Math.sin(1.3847381-Math.PI/2));
+        return f;
+    }
+    private static void facingCompletion() throws Exception {
+        var f=facing();float target=(float)Math.PI/2;
+        float before=f.player.animation.getRenderedAngle();boolean aligned=false;
+        for(int i=0;i<60;i++) {
+            aligned=CartPickupApproach.face(f.player,f.world,10,20,target);
+            float now=f.player.animation.getRenderedAngle();
+            check(now>=before && now-before<=.030001f,"idle facing snapped or rotated away from handles");
+            check(f.player.x==10 && f.player.y==20 && f.player.moves==0,"facing completion moved actor");
+            check(Math.abs(f.player.getForwardDirectionX()-1)<.00001 && Math.abs(f.player.getForwardDirectionY())<.00001,
+                "bounded completion lost full native facing request");
+            before=now;if(aligned)break;
+        }
+        check(aligned && Math.abs(target-before)<Math.toRadians(1),"recorded yaw270 idle remainder did not finish");
+        for(int guard=0;guard<12;guard++) {
+            f=facing();
+            switch(guard) {
+                case 0 -> f.player.turning=true;
+                case 1 -> f.player.wantsTurn=true;
+                case 2 -> f.player.x+=.003f;
+                case 3 -> f.table.rawset("itemId",(double)f.cart.getID()+1);
+                case 4 -> f.cart.world=null;
+                case 5 -> f.table.getMetatable().rawset("Type","ISWalkToTimedActionF");
+                case 6 -> f.player.protection=1;
+                case 7 -> f.action.forceStop=true;
+                case 8 -> f.player.protection=2;
+                case 9 -> f.player.actions.clear();
+                case 10 -> f.player.animation.setMaxTwistAngle(.01f);
+                case 11 -> f.world.square=null;
+            }
+            before=f.player.animation.getRenderedAngle();
+            check(!CartPickupApproach.face(f.player,f.world,10,20,target)
+                && f.player.animation.getRenderedAngle()==before,"facing completion bypassed native/action/position gate "+guard);
+        }
+        f=facing();
+        f.player.animation.setMaxTwistAngle(target-f.player.animation.getRenderedAngle()-.005f);
+        before=f.player.animation.getRenderedAngle();
+        CartPickupApproach.face(f.player,f.world,10,20,target);
+        check(f.player.animation.getRenderedAngle()>before,"native one-degree excess-twist dead zone remained stuck");
+        var time=zombie.GameTime.getInstance();float saved=time.getTrueMultiplier();
+        try {
+            time.setMultiplier(100);f=facing();before=f.player.animation.getRenderedAngle();
+            CartPickupApproach.face(f.player,f.world,10,20,target);
+            check(f.player.animation.getRenderedAngle()-before<=.030001f,"fast game speed snapped final facing");
+            time.setMultiplier(0);f=facing();before=f.player.animation.getRenderedAngle();
+            check(!CartPickupApproach.face(f.player,f.world,10,20,target)
+                && f.player.animation.getRenderedAngle()==before,"paused game advanced facing");
+        } finally {time.setMultiplier(saved);}
+        var method=CartTransition.class.getMethod("face",IsoPlayer.class,IsoWorldInventoryObject.class);
+        var exposed=method.getAnnotation(se.krka.kahlua.integration.annotations.LuaMethod.class);
+        check(exposed!=null && exposed.global() && exposed.name().equals("toolkitWoodCartFace"),"pickup face bridge is not exposed to Lua");
+    }
+
     public static void main(String[] args) throws Exception {
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         var field=Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);unsafe=(Unsafe)field.get(null);
         me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches",CartPickupApproachTest.class.getClassLoader());
         check(Main.CART_TRANSITION_SUPPORTED && Main.COMPLETION_SUPPORTED,"native cart approach fixture is unsupported");
-        arrival("SaucedWheelbarrow.WheelbarrowWood");arrival("SaucedWheelbarrow.WheelbarrowMetal");scopeAndCleanup();
+        arrival("SaucedWheelbarrow.WheelbarrowWood");arrival("SaucedWheelbarrow.WheelbarrowMetal");scopeAndCleanup();facingCompletion();
         System.out.println("CART_PICKUP_APPROACH_PASS");
     }
 }

@@ -62,7 +62,11 @@ public final class ClearanceProbe {
                 .append(",\"female\":").append(slot.character.isFemale())
                 .append(",\"impact\":").append(impact)
                 .append(",\"slotX\":").append(slot.x).append(",\"slotY\":").append(slot.y)
-                .append(",\"slotZ\":").append(slot.z).append(",\"slotAngle\":").append(slot.animPlayerAngle);
+                .append(",\"slotZ\":").append(slot.z).append(",\"slotAngle\":").append(slot.animPlayerAngle)
+                .append(",\"isTurning\":").append(slot.character.isTurning())
+                .append(",\"shouldBeTurning\":").append(slot.character.shouldBeTurning())
+                .append(",\"maxTwistAngle\":").append(body.modelInstance.animPlayer.getMaxTwistAngle())
+                .append(",\"targetAngle\":").append(body.modelInstance.animPlayer.getTargetAngle());
             for(String name:new String[]{"PerformingAction","Weapon","RightHandMask","LeftHandMask"})
                 row.append(',').append(quoted(name)).append(':').append(quoted(slot.character.getVariableString(name)));
             long carts=slot.modelData.stream().filter(d->d.modelInstance!=null

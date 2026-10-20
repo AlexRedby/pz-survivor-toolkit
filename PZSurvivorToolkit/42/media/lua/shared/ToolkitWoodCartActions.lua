@@ -73,6 +73,9 @@ function ToolkitWoodCartPickup:waitToStart()
         local stance = toolkitWoodCartStance(self.character, world)
         if stance then
             self.character:faceLocationF(stance.faceX, stance.faceY)
+            if not stance.aligned and toolkitWoodCartFace then
+                stance.aligned = toolkitWoodCartFace(self.character, world)
+            end
             -- Native shouldBeTurning can still read the previous twist on the first face request.
             return not stance.aligned or self.character:shouldBeTurning()
         end

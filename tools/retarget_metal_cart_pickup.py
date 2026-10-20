@@ -20,6 +20,10 @@ import cart_clip_bake as baker
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIP = 'Toolkit_MetalCart_Pickup'
+HINGE_DEGREES = 65
+EXTRA_CROUCH = .05
+# Source wood ground-held translation versus the measured metal pair.
+CENTER_SHIFT_X = (.216849 - .21714664) - (-.005859375 + .0060535767)
 
 
 def smooth(t):
@@ -59,10 +63,10 @@ def pivot_x(point, angle):
 
 
 def torso_poses(samples, parents):
-    """Undo18 degrees of old hinge and its arm counterrotation; keep native leg branches exact."""
+    """Retain the accepted foot targets while lowering the body to grounded metal handles."""
     result = copy.deepcopy(samples)
     for sample in result:
-        amount = math.radians(18) * hinge(sample['time'])
+        amount = math.radians(60 - HINGE_DEGREES) * hinge(sample['time'])
         if not amount:
             continue
         poses = sample['bones']
@@ -78,6 +82,13 @@ def torso_poses(samples, parents):
             for bone in poses:
                 if descendant(bone, upper, parents):
                     poses[bone] = baker.multiply(hang, poses[bone])
+    for sample in result:
+        lift = smooth((sample['time'] - .48) / .52)
+        balance = smooth(sample['time'] / .44) * math.sqrt(1 - lift)
+        center = smooth(sample['time'] / .10) * (1 - lift)
+        for pose in sample['bones'].values():
+            pose[12] += CENTER_SHIFT_X * center
+            pose[13] -= EXTRA_CROUCH * balance
     return result
 
 
@@ -87,7 +98,9 @@ def solve(samples, parents, game, jdk, patch_jar):
     with tempfile.TemporaryDirectory(prefix='cart-metal-retarget-') as directory:
         work = Path(directory)
         subprocess.run([str(jdk / 'bin/javac'), '--release', '17', '-cp', classpath,
-                        '-d', str(work), str(ROOT / 'tools/CartMetalPickupRetarget.java')], check=True)
+                        '-d', str(work), str(ROOT / 'tools/CartMetalPickupRetarget.java'),
+                        str(ROOT / 'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartWheelbarrow.java'),
+                        str(ROOT / 'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartWorldSupport.java')], check=True)
         with (work / 'input.bin').open('wb') as stream:
             stream.write(struct.pack('>ii', 0x434d5052, len(names)))
             for name in names:
@@ -113,11 +126,29 @@ def solve(samples, parents, game, jdk, patch_jar):
         for name in names:
             matrix = list(struct.unpack_from('>16f', data, offset))
             offset += 64
-            # Runtime IK touches clavicle/arm chains only; retain exact editable
-            # torso/leg values rather than adding an unrelated float conversion.
-            if sample['time'] > 0 and any(descendant(name, f'Bip01_{s}_Clavicle', parents) for s in ('L', 'R')):
+            # Keep editable torso values exact; current runtime IK restores planted
+            # feet and solves the rigid leg and arm chains.
+            if sample['time'] > 0 and any(descendant(name, f'Bip01_{s}_{branch}', parents)
+                    for s in ('L', 'R') for branch in (('Clavicle', 'Thigh') if sample['time'] < 1 else ('Clavicle',))):
                 sample['bones'][name] = matrix
     return result
+
+
+def verify_native(clip, game, jdk, patch_jar):
+    """Catch double acquisition and restart overreach between native animation keys."""
+    classpath = os.pathsep.join(str(p) for p in (patch_jar, game / 'projectzomboid.jar', game / 'ZombieBuddy.jar'))
+    with tempfile.TemporaryDirectory(prefix='cart-metal-replay-') as directory:
+        work = Path(directory)
+        candidate = work / f'{CLIP}.x'
+        candidate.write_text(clip)
+        sources = [ROOT / 'tools/CartMetalPickupReplay.java'] + [
+            ROOT / f'JavaPatches/src/net/alexredby/pztoolkitjavapatches/{name}.java'
+            for name in ('CartTransition', 'CartWheelbarrow', 'CartWorldSupport')]
+        subprocess.run([str(jdk / 'bin/javac'), '--release', '17', '-cp', classpath,
+                        '-d', str(work), *map(str, sources)], check=True)
+        subprocess.run([str(jdk / 'bin/java'), '-Djava.awt.headless=true',
+                        f'-Djava.library.path={game}', '-cp', os.pathsep.join((str(work), classpath)),
+                        'net.alexredby.pztoolkitjavapatches.CartMetalPickupReplay', str(candidate)], check=True)
 
 
 def main():
@@ -145,6 +176,7 @@ def main():
         poses = solve(torso_poses(source, parents), parents, args.game, args.jdk, args.patch_jar)
         outputs = {args.output_json: json.dumps(poses, separators=(',', ':')) + '\n',
                    args.output_x: baker.bake(template, poses, CLIP)}
+        verify_native(outputs[args.output_x], args.game, args.jdk, args.patch_jar)
         for path, content in outputs.items():
             if args.check:
                 if path.read_text() != content:
@@ -153,7 +185,7 @@ def main():
                 path.write_text(content)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
-    print(f'METAL_PICKUP_{"REPRODUCED" if args.check else "GENERATED"} samples={len(poses)} hinge=42 runtimeIK=true')
+    print(f'METAL_PICKUP_{"REPRODUCED" if args.check else "GENERATED"} samples={len(poses)} hinge={HINGE_DEGREES} extraCrouch={EXTRA_CROUCH} runtimeIK=true')
 
 
 if __name__ == '__main__':

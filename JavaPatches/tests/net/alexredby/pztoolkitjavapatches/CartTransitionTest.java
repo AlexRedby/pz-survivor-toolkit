@@ -895,18 +895,19 @@ public final class CartTransitionTest {
         var profile=CartWheelbarrow.METAL;
         // Native world scale paired with the calibrated .85 hand attachment.
         var model=new Matrix4f().scale(.0091743395f/.85f);
+        check(CartWorldSupport.apply("SaucedWheelbarrow.WheelbarrowMetal",model,.85f),"metal world support refused");
         for(float bank:new float[]{(float)Math.toRadians(-7),0,(float)Math.toRadians(7)})
             for(float gait:new float[]{0,-.24f}) for(float angle:new float[]{0,.3f,1.57f,3.14f,4.7f,6.1f}) {
             var held=profile.held(new Matrix4f());
             check(CartGrounding.alignWheelbarrow(held,profile,bank,Math.abs(bank),gait,new Matrix4f()),"metal held pose refused");
-            var pose=CartTransition.dropPlacement(held,model,10.25f,20.75f,2,angle,1,.06f,profile);
+            var pose=CartTransition.dropPlacement(held,model,10.25f,20.75f,2,angle,1,profile.pickupStanceBack(),profile);
             check(pose!=null && pose.xRotation()==0 && pose.yRotation()==0,"metal drop lost native planar placement");
             var ground=new Matrix4f();
             check(CartTransitionMath.worldToActor(pose,model,10.25f,20.75f,2,angle,ground),"metal landing did not project");
             var offset=ground.transformPosition(profile.center(new org.joml.Vector3f()))
                 .sub(held.transformPosition(profile.center(new org.joml.Vector3f())));
             close(offset.x,0,"metal drop moved the axle sideways");
-            close(offset.z,-.06f,"metal drop lost the handle stance offset");
+            close(offset.z,.03f,"metal drop must match the deeper pickup stance at every heading");
             close(pose.worldScale(),.85f,"metal drop changed native hand/world scale");
         }
     }
