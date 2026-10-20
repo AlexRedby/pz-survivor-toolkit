@@ -5,8 +5,7 @@
 
 # Wooden wheelbarrow collisions
 
-- [ ] Validate the prepared observer-only wooden-cart correction in both full-load Walk Host wall exits with the selected mod pack. Unlock the Mac before launching: AeroSpace cannot route the test windows while the desktop is locked. Require clear owner and observer meshes/wheel support, matched actual camera/slot/depth, preserved hands/feet/rolling, bounded correction/release without jumps, exact cart/cargo identity, unchanged native coordinates/targets/pathfinding and the existing pose sender budget. Inspect short recordings and frame pacing before merging; passing headless geometry/render checks alone does not complete this gate.
-- [ ] After the observer wall gate, extend relative-key manual reverse Host wall exits to Run/Sprint approaches, the male model and empty carts. Preserve the <=.02 rad opposite-yaw, <=.025 rad release and <=500 ms owner sampling budgets, manual reverse, natural rolling and native collision, without automatic backing.
+- [ ] Extend relative-key manual reverse Host wall exits to Run/Sprint approaches and the remaining sex/load combinations, including empty carts. Preserve the <=.02 rad opposite-yaw, <=.025 rad release and <=500 ms owner sampling budgets, manual reverse, natural rolling and native collision, without automatic backing.
 - [ ] On the next shared cart-native run, obtain the standard path report with same-tick CancelAction/terminal accounting fixed: the saved 24 routes were checked in separate analysis; leave the original report unchanged. The shared visual gate remains open due to wide-trouser contact with the left handle and unclassified font messages.
 
 # Natural wooden wheelbarrow animation
@@ -15,7 +14,7 @@
 
 - [ ] Verify the current vanilla conditions for a natural sprint collision/fall with the wooden cart and expose a short impact/get-up recording for user review. The existing `native-impact` fixture injects `collideWithWall`; it checks emergency release/recovery, not the natural trigger or probability. Keep stock impact/get-up clips and exact cart/cargo identity; add a real collision control before claiming natural fall coverage.
 - [ ] Extend live checks of forward/backward transitions at the reverse 130°/140° boundary and during collision, state reset and cart replacement; the math and hook regressions for these cases already exist. The full visual gate remains open until the pose defects below are resolved.
-- [ ] Extend collision checks to load changes, falling/combat/releasing the cart and safe state reset. Preserve exact cart/cargo identity, native collision and manual reverse. The movement/doorway matrix does not verify these interruption paths or the known Host observer defect.
+- [ ] Extend collision checks to load changes, falling/combat/releasing the cart and safe state reset. Preserve exact cart/cargo identity, native collision and manual reverse. The movement/doorway matrix does not verify these interruption paths or Run/Sprint observer clearance.
 
 ## Pickup and put-down
 
