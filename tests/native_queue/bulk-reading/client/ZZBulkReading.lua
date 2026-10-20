@@ -23,7 +23,23 @@ local function wrap(owner,name,label)
 end
 local function profile()
  local panel=PZSurvivorToolkit.ActionQueuePanel
- wrap(panel,'drawRow');wrap(panel,'update')
+ wrap(panel,'drawRow')
+ if selection.options and selection.options.profile_queue_hover then
+  local update=panel.update
+  panel.update=function(self,...)
+   local result=measure('update',update,self,...)
+   local list=self.list
+   -- Drive native widget hit testing without moving the user's physical mouse.
+   -- Only the isolated fixture's own queue list is affected; no edits are issued.
+   if not list.bulkReadingHover then
+    list.bulkReadingHover=true
+    list.isMouseOver=function()return phase=='running'end
+    list.getMouseX=function()return list:cancelX()+12 end
+    list.getMouseY=function()return list:topOfItem(list.items[2]and 2 or 1)+16 end
+   end
+   return result
+  end
+ else wrap(panel,'update')end
  local refresh=panel.refresh;Events.OnTickEvenPaused.Remove(refresh)
  panel.refresh=function(...)return measure('refresh',refresh,...)end;Events.OnTickEvenPaused.Add(panel.refresh)
  local policy=PZSurvivorToolkit.ActionQueuePolicy

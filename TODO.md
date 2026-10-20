@@ -46,6 +46,13 @@
 
 These are implementation and verification gaps, not evidence that every action using the old completion path is broken. Keep working native behavior while migrating one verified family at a time.
 
+## Remaining queue performance work
+
+- Completion gates for this pass: focused native-source regressions for fresh edits, live urgent prerequisite changes and queue replacement; measure growing idle/hover/drag and tracked-action queues; inspect adjacent inventory event/render paths; bump Toolkit and deliver after reviewing current main.
+- [ ] Remove repeated expensive presentation checks while hovering a queue control or dragging across an unchanged boundary: `ActionQueuePanel.drawRow` still calls policy previews every rendered frame. Measure idle/hover/drag cost across growing queues; keep fresh authoritative checks at the actual edit and never reuse a display result as permission.
+- [ ] Avoid full urgent-action policy evaluation on every tick when no move can occur or the desired position is already reached (`ActionQueue.processPriority`). Preserve reconsideration when live prerequisites change and validate any actual move against current state.
+- [ ] Replace per-record `queue:indexOf` cleanup in Health/Fitness tick handlers with one live membership pass where applicable. Check growing tracked-action queues and cleanup on completion/reset without retaining removed actions. These repeated scans are confirmed in code; noticeable native lag from them has not been measured.
+
 ## General rules for move and cancel
 
 - [ ] Extend the version-1 edit contract to remaining food variants (hot/state-changing items, custom callbacks, complete consumption that creates replacement items and custom/evolved weights), other fluid actions, world-container pickup/return and craft inputs. Describe exact identity versus late selector scope, bounded native effects and complete resource domains; retain legacy protection for missing contracts. Do not infer semantics from action names or treat same-item access alone as a dependency.

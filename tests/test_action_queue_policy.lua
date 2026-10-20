@@ -889,6 +889,119 @@ do
     print('Drink capacity: grouped native water pickups/returns, full-weight bounds, unsafe fluids and callback barriers passed.')
 end
 
+-- The negative broad phase skips only proven-disjoint plain item footprints.
+-- Compare every result with the original pair path, forced by an unregistered
+-- wrapper, and count the eliminated product for growing native book groups.
+do
+    local toolkit=PZSurvivorToolkit
+    local oldWorld,oldGenerators,oldCraft=toolkit.ActionQueueWorld,toolkit.ActionQueueGenerators,toolkit.ActionQueueCraft
+    local pairsChecked,repairsChecked=0,0
+    local world={sharesTarget=function()pairsChecked=pairsChecked+1 end}
+    local generators={sharesTarget=function()pairsChecked=pairsChecked+1 end}
+    toolkit.ActionQueueWorld,toolkit.ActionQueueGenerators=world,generators
+    toolkit.ActionQueueCraft={supports=function()return false end,collectItems=function()end,
+        repairInputs=function(action)repairsChecked=repairsChecked+1;return action.fixtureRepair end}
+    local originalWorld,originalGenerator=world.sharesTarget,generators.sharesTarget
+    local function legacy(enabled)
+        world.sharesTarget=enabled and function(...)return originalWorld(...)end or originalWorld
+    end
+    local function books(count)
+        local values={head}
+        local selected,crossed={},{}
+        local firstToken,secondToken={},{}
+        for _,group in ipairs({selected,crossed})do
+            for i=1,count do
+                local action=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')})
+                action.toolkitQueueOperation=group==selected and firstToken or secondToken
+                group[i]=action;values[#values+1]=action
+            end
+        end
+        return f.queue(unpack(values)),selected,crossed
+    end
+    local queue,selected,crossed=books(3)
+    assert(policy.previewMove(queue,crossed[1],selected[1]).reason==nil and pairsChecked>0,
+        'helpers present before registration must retain the pair path')
+    assert(policy.registerTargetChecker('world',world,originalWorld))
+    assert(policy.registerTargetChecker('generators',generators,originalGenerator))
+    for _,count in ipairs({4,16,48,120})do
+        queue,selected,crossed=books(count)
+        pairsChecked,repairsChecked=0,0
+        local savedNext=next;next=nil
+        local move=policy.previewMove(queue,crossed[1],selected[1])
+        local cancel=policy.previewCancel(queue,selected[1],true)
+        next=savedNext
+        assert(not move.reason and not cancel.reason and pairsChecked==0 and repairsChecked<=4*count,
+            'independent groups must use linear footprint work without any pair checks or next global')
+        legacy(true);pairsChecked=0
+        local oldMove=policy.previewMove(queue,crossed[1],selected[1])
+        local oldCancel=policy.previewCancel(queue,selected[1],true)
+        legacy(false)
+        assert(not oldMove.reason and not oldCancel.reason and pairsChecked==4*count*count,
+            'unregistered helper retains both original ordered group products')
+    end
+    local fixture=ISBaseTimedAction:derive('PlainFootprintFixture')
+    toolkit.ActionQueueDefinitions.registerBehavior('fixture.plain-footprint',{
+        types={'PlainFootprintFixture'},matches=function(action)return getmetatable(action)==fixture end,
+        inspect=function(action)return action.fixtureContract end})
+    local function plain()
+        local action=f.action(fixture,{item=f.item('Base.Fixture')})
+        action.fixtureContract={items={[action.item:getID()]=true},itemTypes={['Base.Fixture']=true},
+            targets={},knownInputs=true,cancelWaiting=true}
+        return action
+    end
+    local target={class='IsoObject'}
+    local variants={
+        function(a,b)b.item.id=a.item.id;b.fixtureContract.items={[a.item.id]=true}end,
+        function(a,b)a.fixtureContract.containerOwners={[b.item.id]=true}end,
+        function(a,b)a.fixtureContract.targets[target]=true;b.fixtureContract.targets[target]=true end,
+        function(a,b)a.fixtureContract.dynamicInputs={['Base.Fixture']=true}end,
+        function(a,b)a.fixtureContract.dynamicInputsByType={Fixture=true}end,
+        function(a,b)a.fixtureContract.outputTypes={['Base.Fixture']=true}end,
+        function(a,b)a.fixtureContract.unknownOutputs=true;b.fixtureContract.dynamicInputs={['Base.Fixture']=true}end,
+        function(a,b)a.fixtureContract.hands=f.player;b.fixtureContract.equipment=f.player end,
+        function(a,b)a.fixtureContract.edit={resources={{domain='fixture',key=target}}}
+            b.fixtureContract.edit={resources={{domain='fixture',key=target}}}end,
+        function(a,b)a.object=target;b.object=target end,
+        function(a,b)a.fixtureRepair={}end,
+        function(a,b)setmetatable(a.fixtureContract.items,{})end,
+        function(a,b)setmetatable(a.fixtureContract.itemTypes,{})end,
+        function(a,b)setmetatable(a.fixtureContract,{})end,
+    }
+    for index,change in ipairs(variants)do
+        local a,b=plain(),plain();change(a,b)
+        local owner=f.queue(head,a,b)
+        local move=policy.previewMove(owner,a,b,true)
+        local cancel=policy.previewCancel(owner,a,true)
+        legacy(true)
+        local oldMove=policy.previewMove(owner,a,b,true)
+        local oldCancel=policy.previewCancel(owner,a,true)
+        legacy(false)
+        for _,field in ipairs({'reason','blocker','resource','to','first','last','preempt'})do
+            assert(move[field]==oldMove[field] and cancel[field]==oldCancel[field],
+                'broad phase must preserve exact legacy '..field..' for guarded variant '..index)
+        end
+    end
+    queue,selected,crossed=books(2)
+    local hidden={}
+    world.sharesTarget=function()return hidden end
+    assert(not policy.registerTargetChecker('world',world,world.sharesTarget),'late re-registration cannot authorize an override')
+    local denied=policy.previewMove(queue,crossed[1],selected[1])
+    assert(denied.reason=='move_dependent' and denied.blocker==selected[1] and denied.resource==true,
+        'changed world helper must retain its exact denial and first blocker')
+    world.sharesTarget=originalWorld
+    generators.sharesTarget=function()return hidden end
+    assert(not policy.registerTargetChecker('generators',generators,generators.sharesTarget))
+    denied=policy.previewCancel(queue,selected[1],true)
+    assert(denied.reason=='operation_dependent' and denied.blocker==crossed[1] and denied.resource==hidden,
+        'changed generator helper must retain its exact denial and first blocker')
+    generators.sharesTarget=originalGenerator
+    toolkit.ActionQueueWorld={sharesTarget=originalWorld}
+    pairsChecked=0;policy.previewMove(queue,crossed[1],selected[1])
+    assert(pairsChecked>0,'replaced helper owner must retain the pair path even with the same callback')
+    toolkit.ActionQueueWorld,toolkit.ActionQueueGenerators,toolkit.ActionQueueCraft=oldWorld,oldGenerators,oldCraft
+end
+print('Policy negative broad phase: linear independent groups, unchanged pair diagnostics, resource guards and helper provenance passed.')
+
 -- Provenance is checked on a fresh policy instance, including a hook installed before its snapshot.
 for _,variant in ipairs({'foreign-force-cancel','changed-base-source','missing-source-reader'})do
     local fresh=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()

@@ -255,17 +255,29 @@ processPriority = function(queue, preempt)
     if not Toolkit.Settings.actionQueue() or not live(queue) or queue.toolkitCancel or queue.toolkitGroupCancel
         or not queue.current or queue.character:isPlayerMoving() or queue.character:pressedMovement(false) then return end
     local currentToken = queue.current.toolkitQueueOperation
-    for _, action in ipairs(queue.queue) do
+    local activeLast = 1
+    while currentToken and queue.queue[activeLast + 1]
+        and queue.queue[activeLast + 1].toolkitQueueOperation == currentToken do activeLast = activeLast + 1 end
+    for index, action in ipairs(queue.queue) do
         local token = action.toolkitQueueOperation
         if token ~= currentToken and not (token and token.toolkitCancelled)
             and (action.toolkitQueuePriority == "urgent" or (token and token.toolkitPriority == "urgent")) then
-            local decision = Policy.evaluatePriority(queue, action, preempt)
+            local decision
+            if index == activeLast + 1 and (not preempt or activeLast > 1
+                or (currentToken and currentToken.toolkitPriority == "urgent")
+                or (queue.current.Type ~= "ISReadABook" and not resumableWorld(queue.current))) then
+                -- Already at the earliest boundary and the active operation
+                -- cannot be interrupted. Resource checks cannot improve its place.
+                decision = {after = true}
+            else
+                decision = Policy.priorityIntent(queue, action, preempt)
+            end
             local reason = decision.reason or (decision.after and "move_active" or nil)
             if type(token) == "table" and token.toolkitPriorityReason ~= reason then
                 Policy.record("priority", action, decision)
             end
             if type(token) == "table" then token.toolkitPriorityReason = reason end
-            if decision.allowed and decision.to ~= decision.first then Queue.move(queue, action, decision.target, decision.after) end
+            if decision.candidate then Queue.move(queue, action, decision.target, decision.after) end
             return
         end
     end

@@ -703,6 +703,58 @@ assert(not policy.isCarriedContainer(bag,f.player),'a removed or foreign bag can
 local pending=request(wound,'HApplyBandage','Base.Bandage')
 table.insert(queue.queue,pending);pruneHealth();assert(adapter.inspect(pending),'queued ownership survives pruning')
 queue:removeFromQueue(pending);pruneHealth();assert(not adapter.inspect(pending),'removed ownership is released even while its Lua action remains referenced')
+do
+    clearHealth()
+    local priorQueue=queue
+    local tracked={}
+    queue=f.queue(book)
+    for i=1,64 do
+        tracked[i]=request(wound,'HApplyBandage','Base.Bandage')
+        table.insert(queue.queue,tracked[i])
+    end
+    local unrelatedOwner={}
+    local unrelated={queue={book}}
+    ISTimedActionQueue.queues[unrelatedOwner]=unrelated
+    local scans,visits,foreignScans=0,0,0
+    local nativeIpairs,nativeNext=ipairs,next
+    ipairs=function(values)
+        local iterator,state,index=nativeIpairs(values)
+        if values==unrelated.queue then foreignScans=foreignScans+1 end
+        if values~=queue.queue then return iterator,state,index end
+        scans=scans+1
+        return function(...)
+            local key,value=iterator(...)
+            if key then visits=visits+1 end
+            return key,value
+        end,state,index
+    end
+    next=nil -- Kahlua has no next global.
+    pruneHealth()
+    next,ipairs=nativeNext,nativeIpairs
+    assert(scans==1 and visits==#queue.queue and foreignScans==0,
+        'medical pruning must visit its live queue once and skip unrelated player queues')
+    for _,action in ipairs(tracked) do assert(adapter.inspect(action),'linear pruning lost queued medical ownership') end
+    local oldQueue=queue
+    queue=f.queue(book,tracked[1])
+    pruneHealth()
+    assert(oldQueue.queue[2]==tracked[1] and adapter.inspect(tracked[1]) and not adapter.inspect(tracked[2]),
+        'queue replacement must retain only actions in the current registered queue')
+    table.remove(queue.queue,2);pruneHealth()
+    assert(not adapter.inspect(tracked[1]),'completed medical action retained ownership after the next tick')
+    local changedOwner=request(wound,'HApplyBandage','Base.Bandage')
+    table.insert(queue.queue,changedOwner)
+    changedOwner.character=unrelatedOwner
+    pruneHealth();changedOwner.character=f.player
+    assert(not adapter.inspect(changedOwner),'medical pruning must resolve the action current character queue')
+    scans,visits=0,0;ipairs=function(values)
+        if values==queue.queue then scans=scans+1 end
+        return nativeIpairs(values)
+    end
+    pruneHealth();ipairs=nativeIpairs
+    assert(scans==0,'empty medical registry must not scan the queue')
+    ISTimedActionQueue.queues[unrelatedOwner]=nil
+    queue=priorQueue;ISTimedActionQueue.queues[f.player]=queue
+end
 pending=request(wound,'HApplyBandage','Base.Bandage');table.insert(queue.queue,pending)
 clearHealth();assert(not adapter.inspect(pending),'main menu releases all medical ownership records')
 local online

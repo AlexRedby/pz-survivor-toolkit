@@ -15,6 +15,12 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.170
+
+- **Fixed:** Queue hints reuse short-lived display text instead of recalculating dependencies every rendered frame. Interactions still validate current state, and hints refresh after queue changes or a short delay.
+- **Fixed:** Automatic priority skips checks when the request is already at its earliest possible position and creates edit snapshots only when attempting an actual move. Live prerequisite changes remain visible to retries.
+- **Fixed:** Medical and exercise queue bookkeeping checks membership once per relevant queue instead of searching the queue separately for every tracked action.
+
 ### 0.1.169
 
 - **Fixed:** Long action queues, including magazines read from a container, no longer repeatedly inspect the whole queue while drawing every visible row. Move/cancel hints are calculated for the hovered control; actual edits still validate fresh state.

@@ -69,6 +69,10 @@ def verify(root, selection, catalog):
             raise ValueError('Insufficient idle/running frame samples')
         if [row['count'] for row in profile['enqueue']] != list(range(5, 16)):
             raise ValueError('Missing bulk or incremental enqueue observation')
+        if selection.get('options', {}).get('profile_queue_hover'):
+            previews = profile.get('calls', {}).get('running', {}).get('previewCancel', {}).get('calls', 0)
+            if previews < 10 or previews * 3 >= profile['frames']['running']['samples']:
+                raise ValueError('Hovered hints were absent or still evaluated near rendering frequency')
         evidence = {'receipt': authority, 'profile': profile,
                     'limits': ['Native menu callbacks, not physical input; one client; intervals are not GPU FPS.']}
     except (OSError, KeyError, ValueError, TypeError) as error:

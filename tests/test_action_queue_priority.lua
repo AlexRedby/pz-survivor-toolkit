@@ -174,6 +174,59 @@ assert(q.current == active and not active.action.stopping and q.queue[2] == acti
 finish(); assert(q.current == activeTail and q.queue[2] == urgent)
 finish(); assert(q.current == urgent and q.queue[2] == tail)
 
+-- An urgent request already at the active whole-operation boundary needs no
+-- policy work. Grow the unrelated tail without increasing edit validation.
+do
+    local policy=PZSurvivorToolkit.ActionQueuePolicy
+    local preview,evaluate=policy.priorityIntent,policy.evaluateMove
+    local retries,edits=0,0
+    policy.priorityIntent=function(...) retries=retries+1;return preview(...) end
+    policy.evaluateMove=function(...) edits=edits+1;return evaluate(...) end
+    for _,count in ipairs({10,30,60,120}) do
+        reset()
+        operations.run(function() active=ordinary('active');activeTail=ordinary('active-tail') end)
+        object=stove();ISWorldObjectContextMenu.onToggleStove(nil,object,0)
+        urgent=q.queue[3]
+        for i=1,count do ordinary('tail-'..i) end
+        retries,edits=0,0
+        for tick=1,100 do q:tick() end
+        assert(q.current==active and q.queue[2]==activeTail and q.queue[3]==urgent and retries==0 and edits==0,
+            'already-positioned urgent work must not repeatedly validate an impossible move')
+    end
+    policy.priorityIntent,policy.evaluateMove=preview,evaluate
+end
+
+-- Failed automatic attempts choose an intent without edit snapshots. A live
+-- prerequisite change must be noticed on the next tick, even without queue edits.
+do
+    reset();book=reading();object=stove()
+    local timestamp=getTimestampMs
+    getTimestampMs=function() return 0 end
+    local item={class='InventoryItem',getID=function() return 999 end,
+        getFullType=function() return 'Base.Test' end,getContainer=function() return player.inventory end}
+    local transfer=ISInventoryTransferAction:new(player,item,nil,nil)
+    transfer.srcContainer,transfer.destContainer=player.inventory,{}
+    ISTimedActionQueue.add(transfer)
+    local check=transfer.checkQueueList
+    transfer.checkQueueList=function() error('unverified helper must not run') end
+    ISWorldObjectContextMenu.onToggleStove(nil,object,0);urgent=q.queue[3]
+    local policy=PZSurvivorToolkit.ActionQueuePolicy
+    local evaluate=policy.evaluateMove
+    local edits=0
+    policy.evaluateMove=function(...) edits=edits+1;return evaluate(...) end
+    local intent=policy.priorityIntent(q,urgent,true)
+    assert(intent.reason and not intent.candidate and not intent.snapshot and not intent.allowed)
+    for tick=1,30 do q:tick() end
+    assert(edits==0 and q.queue[3]==urgent and not book.action.stopping,
+        'denied automatic retries must not build mutation snapshots')
+    transfer.checkQueueList=check
+    q:tick()
+    assert(edits==2 and q.queue[2]==urgent and book.action.stopping,
+        'freshly permitted work must still pass both live move validations before mutation')
+    policy.evaluateMove=evaluate
+    getTimestampMs=timestamp
+end
+
 -- User cancellation, death, movement and disabled settings suppress an in-flight automatic resume.
 for _, mode in ipairs({'clear', 'death', 'movement', 'disabled'}) do
     reset(); book = reading(); ordinary('tail'); object = stove(); ISWorldObjectContextMenu.onToggleStove(nil, object, 0)

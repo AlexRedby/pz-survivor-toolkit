@@ -6,4 +6,6 @@ The authority creates 15 individually identified ordinary magazines in an adjace
 
 The profile records enqueue times, queue panel/policy calls and `OnTickEvenPaused` intervals before and during reading. These intervals describe the game callback cadence, not GPU FPS. Compare the same game, mod set, fixture and resource conditions before/after a change. No fixed timing threshold is asserted across machines.
 
+Add `"profile_queue_hover":true` to the options file to keep the isolated queue list's cancel control hovered through native widget hit testing. This exercises hint refreshes under real rendering without moving the physical mouse or issuing cancel commands; it is synthetic hover coverage.
+
 This is native menu callback dispatch, not physical mouse-input coverage. It checks ordinary magazines from one dresser and one client, not every literature type or bulk action family. The focused queue tests separately check shared enqueue scaling, deferred expansion, UI controls and live edit validation.

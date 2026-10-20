@@ -1006,8 +1006,11 @@ b.addActionsFunction=function() error('changed world callback must never expand'
 list:onMouseUp(x,y);assert(#q.queue==4, 'release rechecks a world command callback')
 print('Queue view: operation header/child crosses, callback and member revalidation, group drag, dynamic expansion, native scroll geometry and snapshot lifecycle passed.')
 -- Idle rendering never asks edit policy for authority, even with many separate
--- operations. Hover previews are fresh hints; press/release still validate live.
+-- operations. Repeated hover frames reuse text; press/release still validate live.
 do
+    local timestamp=getTimestampMs
+    local previewClock=1000
+    getTimestampMs=function() return previewClock end
     local policy=PZSurvivorToolkit.ActionQueuePolicy
     local saved,counts,lastPreview={},{}
     for _,name in ipairs({'evaluateMove','evaluateCancel','previewMove','previewCancel','editUnchanged'}) do
@@ -1052,6 +1055,15 @@ do
     assert(lastPreview and not lastPreview.reason and lastPreview.allowed==nil and lastPreview.snapshot==nil,
         'a display preview must never carry mutation authority or an edit snapshot')
     assert(target.tooltip:find('queue_cancel_operation_tip',1,true))
+    for frame=1,60 do draw(view) end
+    assert(counts.previewCancel==1,'stationary hover must not repeat dependency checks at rendering frequency')
+    local text=viewList.previewText
+    assert(text and not text.allowed and not text.snapshot and not text.blocker and not text.resource,
+        'only presentation text and its interaction keys may survive a render')
+    previewClock=previewClock+249;draw(view)
+    assert(counts.previewCancel==1,'a still-current hint must be reused')
+    previewClock=previewClock+1;draw(view)
+    assert(counts.previewCancel==2,'external changes receive a bounded hint refresh without queue invalidation')
     local targetAction=target.item
     targetAction.onCancelFunc=function() error('stale preview must not authorize this callback') end
     viewList:onMouseDown(x,y)
@@ -1077,8 +1089,10 @@ do
     viewList.mouseInside=false;counts={};draw(view)
     assert(not next(counts),'a stale drag target outside the list must not trigger a preview')
     viewList:clearGesture()
+    assert(not viewList.previewText,'clearing a gesture releases presentation identities too')
     for name,callback in pairs(saved) do policy[name]=callback end
     operations.bounds=bounds
+    getTimestampMs=timestamp
 end
 print('Queue UI performance: idle rows skip permissions/bounds, real hovered controls use snapshot-free previews, and clicks revalidate live changes.')
 -- Audited world work uses the native build stop/transaction path and resumes after urgent work.

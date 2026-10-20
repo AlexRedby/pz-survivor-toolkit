@@ -38,6 +38,28 @@ local transferItemGuard
 local inspect
 local ordinaryTransfer
 local sharedEditResource
+local targetCheckers = {}
+local targetModules = {world = "ActionQueueWorld", generators = "ActionQueueGenerators"}
+
+-- Owned modules register their original helper at definition time. A later
+-- override or module replacement cannot silently extend this negative proof.
+function Policy.registerTargetChecker(kind, owner, callback)
+    local name = targetModules[kind]
+    if not name or targetCheckers[kind] or type(owner) ~= "table" or owner ~= Toolkit[name]
+        or type(callback) ~= "function" or owner.sharesTarget ~= callback then return false end
+    targetCheckers[kind] = {owner = owner, callback = callback}
+    return true
+end
+
+local function targetCheckersUnchanged()
+    for kind, name in pairs(targetModules) do
+        local owner, saved = Toolkit[name], targetCheckers[kind]
+        if owner and owner.sharesTarget then
+            if not saved or saved.owner ~= owner or saved.callback ~= owner.sharesTarget then return false end
+        elseif saved then return false end
+    end
+    return true
+end
 
 local function craft(action)
     return Toolkit.ActionQueueCraft and Toolkit.ActionQueueCraft.supports(action)
@@ -1132,6 +1154,52 @@ local function editCapacityConflict(queue, edit, first, last, to, context)
     end
 end
 
+local function emptyResourceMap(value)
+    if value == nil then return true end
+    if type(value) ~= "table" or getmetatable(value) then return false end
+    for _ in pairs(value) do return false end
+    return true
+end
+
+local pairResourceMaps = {"targets", "containerOwners", "dynamicInputs", "dynamicInputsByType", "outputTypes"}
+local spatialFields = {"generator", "charger", "object", "moveProps", "toolkitWorldTarget", "isoObject",
+    "toolkitWorldX", "toolkitGeneratorCommand", "toolkitWorldCommand", "stove", "mcwave"}
+local function plainItemFootprint(action, context)
+    local contract = inspect(action, context)
+    if type(contract) ~= "table" or getmetatable(contract)
+        or (contract.knownInputs ~= nil and contract.knownInputs ~= true)
+        or contract.unknownOutputs or contract.edit ~= nil or contract.hands or contract.equipment
+        or type(contract.items) ~= "table" or getmetatable(contract.items)
+        or (contract.itemTypes ~= nil and (type(contract.itemTypes) ~= "table" or getmetatable(contract.itemTypes)))
+        or action.Type == "ISInventoryTransferAction" or action.Type == "ISCartTransferAction"
+        or repairInputs(action) then return end
+    for _, name in ipairs(pairResourceMaps) do if not emptyResourceMap(contract[name]) then return end end
+    for _, name in ipairs(spatialFields) do if action[name] ~= nil then return end end
+    return operationItems(action, context)
+end
+
+-- Only eliminate pairs whose complete legacy footprint is item IDs. Anything
+-- unknown, spatial, dynamic, projected, repairing or capacity-sensitive keeps
+-- the original ordered pair checks, including their exact diagnostic result.
+local function plainGroupItems(queue, first, last, context)
+    if not targetCheckersUnchanged() then return end
+    local items = {}
+    for index = first, last do
+        local footprint = plainItemFootprint(queue.queue[index], context)
+        if not footprint then return end
+        for item in pairs(footprint) do items[item] = true end
+    end
+    return items
+end
+
+local function mayShareGroupResource(items, other, context)
+    if not items then return true end
+    local footprint = plainItemFootprint(other, context)
+    if not footprint or not targetCheckersUnchanged() then return true end
+    for item in pairs(footprint) do if items[item] then return true end end
+    return false
+end
+
 function Policy.cancelOperationReason(queue, action, context)
     context = context or {contracts = {}, items = {}}
     context.editFallback = nil
@@ -1202,20 +1270,23 @@ function Policy.cancelOperationReason(queue, action, context)
     end
     for item in pairs(type(token) == "table" and token.toolkitPickups or {}) do inputs[itemKey(item)] = true end
     local capacityCheck = {first = first, last = last}
+    local groupItems = plainGroupItems(queue, first, last, context)
     for i, other in ipairs(queue.queue) do
         if i > last or (i < first and not pendingRemovalOnly) then
             if other._isAddingActions or not knownCraftInputs(other, context) then return "operation_dependent", nil, nil, other end
             for item in pairs(operationItems(other, context)) do
                 if inputs[item] then return "operation_shared_item", nil, nil, other, item end
             end
-            for j = first, last do
-                local item = sharedItem(queue.queue[j], other, context)
-                if item then return "operation_shared_item", nil, nil, other, item end
-                local conflict = sharedWorldTarget(queue.queue[j], other, context) or dynamicConflict(queue.queue[j], other, context)
-                    or dynamicConflict(other, queue.queue[j], context)
-                if conflict then return "operation_dependent", nil, nil, other, conflict end
-                local capacity = transferCapacityConflict(queue, queue.queue[j], other, #queue.queue, capacityCheck, context)
-                if capacity then return "container_capacity", nil, nil, other, capacity end
+            if mayShareGroupResource(groupItems, other, context) then
+                for j = first, last do
+                    local item = sharedItem(queue.queue[j], other, context)
+                    if item then return "operation_shared_item", nil, nil, other, item end
+                    local conflict = sharedWorldTarget(queue.queue[j], other, context) or dynamicConflict(queue.queue[j], other, context)
+                        or dynamicConflict(other, queue.queue[j], context)
+                    if conflict then return "operation_dependent", nil, nil, other, conflict end
+                    local capacity = transferCapacityConflict(queue, queue.queue[j], other, #queue.queue, capacityCheck, context)
+                    if capacity then return "container_capacity", nil, nil, other, capacity end
+                end
             end
             -- shortcut: output requirements of arbitrary later actions are unknown; add verified adapters to allow them.
             if output and i > last then
@@ -1341,6 +1412,7 @@ function Policy.moveReason(queue, action, target, after, context)
         end
         context.editFallback = edit
     end
+    local groupItems = plainGroupItems(queue, first, last, context)
     for i = math.min(first, to), math.min(#queue.queue, math.max(last, to - 1)) do
         if i < first or i > last then
             local crossed = queue.queue[i]
@@ -1348,9 +1420,11 @@ function Policy.moveReason(queue, action, target, after, context)
             if not knownCraftInputs(crossed, context) and not repairInputs(crossed) then
                 return craft(crossed) and "move_craft_inputs" or "move_dependent", nil, nil, nil, nil, crossed
             end
-            for j = first, last do
-                local reason, resource = moveConflict(queue, queue.queue[j], crossed, math.max(last, to - 1), capacityCheck, context)
-                if reason then return reason, nil, nil, nil, nil, crossed, resource end
+            if mayShareGroupResource(groupItems, crossed, context) then
+                for j = first, last do
+                    local reason, resource = moveConflict(queue, queue.queue[j], crossed, math.max(last, to - 1), capacityCheck, context)
+                    if reason then return reason, nil, nil, nil, nil, crossed, resource end
+                end
             end
         end
     end
@@ -1422,11 +1496,12 @@ end
 
 -- Presentation only: no edit snapshot or authority to mutate the queue. Callers
 -- must evaluate again at the actual move/cancel boundary, with fresh live facts.
-function Policy.previewMove(queue, action, target, after)
-    local context = {contracts = {}, items = {}}
+function Policy.previewMove(queue, action, target, after, context)
+    context = context or {contracts = {}, items = {}}
     local reason, to, first, last, preempt, blocker, resource = Policy.moveReason(queue, action, target, after, context)
     reason, blocker, resource = editDenial(reason, blocker, resource, context)
-    return {reason = reason, blocker = blocker, resource = resource}
+    return {reason = reason, blocker = blocker, resource = resource,
+        to = to, first = first, last = last, preempt = preempt}
 end
 
 function Policy.previewCancel(queue, action, whole)
@@ -1461,19 +1536,32 @@ function Policy.evaluateCancel(queue, action, whole)
         mode = queue and action == queue.current and "active" or "pending", blocker = blocker, resource = resource, snapshot = snapshot}
 end
 
-function Policy.evaluatePriority(queue, action, preempt)
+local function priorityDecision(queue, action, preempt, decide)
     if not queue or not queue.current or queue.queue[1] ~= queue.current then return {allowed = false, reason = "unavailable"} end
     local _, activeLast = Operations.bounds(queue, queue.current)
     if not activeLast then return {allowed = false, reason = "operation_dependent"} end
     local activeToken = queue.current.toolkitQueueOperation
     local context = {contracts = {}, items = {}}
-    if preempt and activeLast == 1 and not (activeToken and activeToken.toolkitPriority == "urgent") then
-        local decision = Policy.evaluateMove(queue, action, queue.current, false, context)
-        if decision.allowed then decision.target = queue.current; return decision end
+    if preempt and activeLast == 1 and not (activeToken and activeToken.toolkitPriority == "urgent")
+        and (queue.current.Type == "ISReadABook" or resumableWorld(queue.current)) then
+        local decision = decide(queue, action, queue.current, false, context)
+        if not decision.reason then decision.target = queue.current; return decision end
     end
     local target = queue.queue[activeLast]
-    local decision = Policy.evaluateMove(queue, action, target, true, context)
+    local decision = decide(queue, action, target, true, context)
     decision.target, decision.after = target, true
+    return decision
+end
+
+function Policy.evaluatePriority(queue, action, preempt)
+    return priorityDecision(queue, action, preempt, Policy.evaluateMove)
+end
+
+-- A tick only chooses a possible move. Authority and its edit snapshot belong
+-- to Queue.move immediately before mutation, not every unsuccessful retry.
+function Policy.priorityIntent(queue, action, preempt)
+    local decision = priorityDecision(queue, action, preempt, Policy.previewMove)
+    decision.candidate = not decision.reason and decision.to ~= decision.first
     return decision
 end
 

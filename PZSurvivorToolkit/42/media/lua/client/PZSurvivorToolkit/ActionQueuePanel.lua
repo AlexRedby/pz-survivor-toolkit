@@ -26,6 +26,31 @@ local function cancelDecision(queue, action, whole)
     return {allowed = reason == nil, reason = reason}
 end
 
+-- Keep only short-lived display text, never a permission, resource or snapshot.
+-- The clock refreshes hints for external state changes without repeating their
+-- dependency analysis at render frequency. Press/release always evaluate live.
+local function preview(list, kind, action, target, after, whole)
+    local queue = list.parent.queue
+    local now = getTimestampMs and getTimestampMs()
+    local saved = list.previewText
+    if now and saved and now >= saved.at and now - saved.at < 250
+        and saved.queue == queue and saved.current == queue.current and saved.count == #queue.queue
+        and saved.generation == queue.toolkitOperationGeneration
+        and saved.cancel == queue.toolkitCancel and saved.groupCancel == queue.toolkitGroupCancel
+        and saved.kind == kind and saved.action == action and saved.target == target
+        and saved.after == after and saved.whole == whole then return saved end
+    local result = kind == "move" and moveDecision(queue, action, target, after)
+        or cancelDecision(queue, action, whole)
+    local text = {reason = result.reason, details = Toolkit.ActionQueueLabels.decisionDetails(result)}
+    if now then
+        text.at, text.queue, text.current, text.count = now, queue, queue.current, #queue.queue
+        text.generation, text.cancel, text.groupCancel = queue.toolkitOperationGeneration, queue.toolkitCancel, queue.toolkitGroupCancel
+        text.kind, text.action, text.target, text.after, text.whole = kind, action, target, after, whole
+        list.previewText = text
+    end
+    return text
+end
+
 function List:cancelX()
     return self.width - 40
 end
@@ -41,6 +66,7 @@ function List:clearGesture()
     self.pressedToggle = nil
     self.pressedOperation = nil
     self.dropRow = nil
+    self.previewText = nil
 end
 
 function List:onMouseDown(x, y)
@@ -153,7 +179,7 @@ function Panel.drawRow(list, y, row, alt)
     local cancelX = list:cancelX()
     local hover = hovered and list:getMouseX() >= cancelX
     local toggleHover = hovered and row.header and list:getMouseX() < 22
-    local moveResult = hovered and not hover and not toggleHover and not list.dragging and moveDecision(queue, action)
+    local moveResult = hovered and not hover and not toggleHover and not list.dragging and preview(list, "move", action)
     local moveReason = moveResult and moveResult.reason
     local description = Toolkit.ActionQueueLabels.describe(action)
     local iconX, textX = row.header and 42 or 22, row.header and 72 or 52
@@ -202,7 +228,7 @@ function Panel.drawRow(list, y, row, alt)
     list:repaintStencilRect(textX, top, right - textX, clipHeight)
     local reason
     local operationCancel = row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item))
-    local cancelResult = hover and not list.dragging and cancelDecision(queue, operationCancel and row.item or action, operationCancel)
+    local cancelResult = hover and not list.dragging and preview(list, "cancel", operationCancel and row.item or action, nil, nil, operationCancel)
     reason = cancelResult and cancelResult.reason
     list:drawRect(cancelX, y + 3, 24, row.height - 6, hover and 0.4 or 0.15, 0.7, 0.3, 0.3)
     list:drawTextureScaledAspect(list.cancelTexture, cancelX + 4, y + (row.height - 16) / 2, 16, 16,
@@ -213,7 +239,8 @@ function Panel.drawRow(list, y, row, alt)
     row.tooltip = (row.task and row.task .. " <LINE> " or "")
         .. (remaining and remaining .. " <LINE> " or "") .. label
         .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. hint)
-    local decisionDetails = hovered and Toolkit.ActionQueueLabels.decisionDetails(hover and cancelResult or moveResult)
+    local hintResult = hovered and (hover and cancelResult or moveResult)
+    local decisionDetails = hintResult and hintResult.details
     if decisionDetails then row.tooltip = row.tooltip .. " <LINE> " .. decisionDetails end
     local token = row.operation or action.toolkitQueueOperation
     if token and token.toolkitPriorityReason then
@@ -230,11 +257,11 @@ function Panel.drawRow(list, y, row, alt)
     local neighbor = list.items[row.index + (list.dropAfter and 1 or -1)]
     local boundary = list.dropAfter and row.last == dropLast or not list.dropAfter and row.first == dropFirst
     if dropFirst and boundary and (not neighbor or neighbor.first < dropFirst or neighbor.first > dropLast) then
-        local dropResult = moveDecision(queue, list.dragAction, list.dropTarget, list.dropAfter)
+        local dropResult = preview(list, "move", list.dragAction, list.dropTarget, list.dropAfter)
         local blocked = dropResult.reason
         if blocked then
             row.tooltip = row.tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. blocked)
-            local blockedDetails = Toolkit.ActionQueueLabels.decisionDetails(dropResult)
+            local blockedDetails = dropResult.details
             if blockedDetails then row.tooltip = row.tooltip .. " <LINE> " .. blockedDetails end
         end
         list:drawRect(0, y + (list.dropAfter and row.height - 2 or 0), cancelX + 24, 2, 1,

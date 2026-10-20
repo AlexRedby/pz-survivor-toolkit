@@ -770,16 +770,24 @@ function Health.install()
     end, true)
     Events.OnTick.Add(function()
         -- Kahlua ignores weak tables; keep proofs only while their actions remain queued.
-        for action in pairs(records) do
+        local queues, live
+        for action, saved in pairs(records) do
             local queue = ISTimedActionQueue.queues[action.character]
-            if not queue or queue:indexOf(action) == -1 then records[action] = nil end
+            local members = queues and queues[queue]
+            if queue and not members then
+                members = {}
+                for _, queued in ipairs(queue.queue) do members[queued] = true end
+                queues = queues or {}
+                queues[queue] = members
+            end
+            if not members or not members[action] then records[action] = nil
+            else
+                live = live or {}
+                if saved.handler then live[saved.handler] = true end
+                if saved.origin then live[saved.origin.handler] = true end
+            end
         end
-        local live = {}
-        for _, saved in pairs(records) do
-            if saved.handler then live[saved.handler] = true end
-            if saved.origin then live[saved.origin.handler] = true end
-        end
-        for handler in pairs(droppedSupplies) do if not live[handler] then droppedSupplies[handler] = nil end end
+        for handler in pairs(droppedSupplies) do if not live or not live[handler] then droppedSupplies[handler] = nil end end
     end)
     if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() records, droppedSupplies = {}, {} end) end
     installInventoryProducer()

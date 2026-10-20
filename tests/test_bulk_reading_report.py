@@ -41,3 +41,14 @@ class BulkReadingReportTests(unittest.TestCase):
             server.write_text(prepared + event('AUTHORITY', receipt))
             (root / 'client1-launch.log').write_text(client.replace(bulk_reading.MARKER + 'COMPLETE\n', ''))
             self.assertTrue(bulk_reading.verify(root, selection, {})['issues'])
+            selection['options'] = {'profile_queue_hover': True}
+            (root / 'client1-launch.log').write_text(client)
+            self.assertTrue(bulk_reading.verify(root, selection, {})['issues'])
+            profile['calls'] = {'running': {'previewCancel': {'calls': 20}}}
+            client = event('LOCAL', receipt) + event('PROFILE', profile) + bulk_reading.MARKER + 'COMPLETE\n'
+            (root / 'client1-launch.log').write_text(client)
+            self.assertFalse(bulk_reading.verify(root, selection, {})['issues'])
+            profile['calls']['running']['previewCancel']['calls'] = 200
+            (root / 'client1-launch.log').write_text(event('LOCAL', receipt) + event('PROFILE', profile)
+                                                  + bulk_reading.MARKER + 'COMPLETE\n')
+            self.assertTrue(bulk_reading.verify(root, selection, {})['issues'])
