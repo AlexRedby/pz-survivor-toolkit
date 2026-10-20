@@ -65,7 +65,8 @@ Events.OnTick.Add(CartLabCaptureUITick)
 Events.OnMainMenuEnter.Add(CartLabCaptureUIRestore)
 -- Capture UI state end.
 if config.authoredClip~=nil then player:setVariable('ToolkitWoodCartClipPilot',config.authoredClip) end
-if config.authoredClip~=false then assert(cartLabClipInfo('Toolkit_WoodCart_Pickup')~='missing','Authored cart clip missing') end
+local authoredClip=expectedCart=='SaucedWheelbarrow.WheelbarrowMetal' and 'Toolkit_MetalCart_Pickup' or 'Toolkit_WoodCart_Pickup'
+if config.authoredClip~=false then assert(cartLabClipInfo(authoredClip)~='missing','Authored cart clip missing: '..authoredClip) end
 player:setGodMod(true);player:setNoClip(false,true)
 local cart=player:getPrimaryHandItem()
 local finished=true

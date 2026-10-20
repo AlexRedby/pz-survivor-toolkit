@@ -108,7 +108,8 @@ public final class CartTransitionTest {
             if("ToolkitWoodCartClipPilot".equals(name)) {
                 clipPilot=value;clipPilotAbsent=false;clipPilotWrites++;return null;
             }
-            check("ToolkitWoodCartClipPickup".equals(name),"unexpected boolean presentation variable: "+name);
+            check("ToolkitWoodCartClipPickup".equals(name) || "ToolkitMetalCartClip".equals(name),
+                "unexpected boolean presentation variable: "+name);
             if(booleanVariables==null) booleanVariables=new java.util.HashMap<>();booleanVariables.put(name,value);return null;
         }
         @Override public float getVariableFloat(String name,float fallback){
@@ -381,19 +382,22 @@ public final class CartTransitionTest {
         track.currentClip=new zombie.core.skinnedmodel.animation.AnimationClip(2,java.util.List.of(),"ClockFixture",false);
         track.animLayer=layer;track.trackTimeToVariable="ToolkitWoodCartClipTime";track.looping=false;track.setSpeedDelta(0);
         var tick=track.getClass().getDeclaredMethod("TickCurrentTime",float.class);tick.setAccessible(true);
-        for(boolean pickup:new boolean[]{true,false}) {
+        for(boolean metal:new boolean[]{false,true}) for(boolean pickup:new boolean[]{true,false}) {
             var fixture=recovery(pickup);var player=fixture.player;
             try {
                 check(!(Boolean)value(state(player),"authored"),"clip pilot enabled without actor opt-in");
                 check(!player.variables.containsKey("ToolkitWoodCartClipTime") && player.booleanVariables==null,
                     "default presentation published pilot animation variables");
                 CartTransition.end(player);player.clipPilot=true;
+                fixture.cart.kind="SaucedWheelbarrow.Wheelbarrow"+(metal?"Metal":"Wood");
+                fixture.cart.model="Wheelbarrow"+(metal?"Metal":"Wood");
                 character.set(layer,player);track.reverse=!pickup;
                 for(float progress:new float[]{-.1f,0,.25f,.75f,1,1.1f}) {
                     check(CartTransition.update(player,fixture.cart,pickup,progress),"authored clock update refused");
                     float clamped=Math.max(0,Math.min(1,progress));
                     close(player.variables.get("ToolkitWoodCartClipTime"),clamped,"clip clock did not clamp job delta");
                     check(player.booleanVariables.get("ToolkitWoodCartClipPickup")==pickup,"clip direction changed");
+                    check(player.booleanVariables.get("ToolkitMetalCartClip")==metal,"wrong model selected for authored body clip");
                     invoke(tick,track,.2f);
                     close(track.getCurrentTimeValue(),2*clamped,"native clock ignored normalized progress at zero speed");
                     close(track.getCurrentTrackTime(),2*(pickup?clamped:1-clamped),"native reverse sampled wrong clip time");
@@ -688,14 +692,14 @@ public final class CartTransitionTest {
         tick.setAccessible(true);
         var find=zombie.core.skinnedmodel.advancedanimation.AnimLayer.class.getDeclaredMethod("findLiveNode",
             zombie.core.skinnedmodel.advancedanimation.AnimNode.class);find.setAccessible(true);
-        for(boolean pickup:new boolean[]{true,false}) {
+        for(String prefix:new String[]{"ToolkitWoodCartClip","ToolkitMetalCartClip"}) for(boolean pickup:new boolean[]{true,false}) {
             var player=allocate(Player.class);player.setVariable("ToolkitWoodCartClipTime",.55f);
             var layer=allocate(zombie.core.skinnedmodel.advancedanimation.AnimLayer.class);
             var character=layer.getClass().getDeclaredField("character");character.setAccessible(true);character.set(layer,player);
             var nodes=new java.util.ArrayList<zombie.core.skinnedmodel.advancedanimation.LiveAnimNode>();
             var nodesField=layer.getClass().getDeclaredField("liveAnimNodes");nodesField.setAccessible(true);nodesField.set(layer,nodes);
             var source=new zombie.core.skinnedmodel.advancedanimation.AnimNode();
-            source.name=pickup?"ToolkitWoodCartClipPickup":"ToolkitWoodCartClipSetdown";
+            source.name=prefix+(pickup?"Pickup":"Setdown");
             source.parentState=new zombie.core.skinnedmodel.advancedanimation.AnimState();source.parentState.name="actions";
             var unrelatedSource=new zombie.core.skinnedmodel.advancedanimation.AnimNode();
             unrelatedSource.name="UnrelatedAction";unrelatedSource.parentState=source.parentState;

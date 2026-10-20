@@ -13,7 +13,9 @@ CASES = tuple(f'{sex}-{load}-{spec}' for sex in ('male', 'female') for load in (
               for spec in ('complete-chain', 'pickup-restart', 'drop-restart'))
 TYPES = {'pickup': 'ToolkitWoodCartPickup', 'drop': 'ToolkitWoodCartSetdown'}
 ARM_BONES = tuple('Bip01_'+side+'_'+part for side in 'LR' for part in ('UpperArm','Forearm','Hand'))
-CLIP = 'Toolkit_WoodCart_Pickup'
+CLIPS = {'SaucedWheelbarrow.WheelbarrowWood': 'Toolkit_WoodCart_Pickup',
+         'SaucedWheelbarrow.WheelbarrowMetal': 'Toolkit_MetalCart_Pickup'}
+CLIP = CLIPS['SaucedWheelbarrow.WheelbarrowWood']
 CLOCK = 'ToolkitWoodCartClipTime'
 
 
@@ -21,11 +23,15 @@ def matrix(value):
     assert len(value) == 16 and all(type(v) in (int, float) and math.isfinite(v) for v in value), 'Invalid pose matrix'
 
 
-def tracks(frame):
+def tracks(frame, cart_type='SaucedWheelbarrow.WheelbarrowWood'):
+    """Select only the authored clip belonging to an exact captured item type."""
+    assert cart_type in CLIPS, 'Unsupported captured repeat cart type'
+    clip = CLIPS[cart_type]
     finite(frame)
     found = {}
     for track in frame['tracks']:
-        if track['name'] != CLIP:
+        if track['name'] != clip:
+            assert track['name'] not in CLIPS.values() and track.get('clockBinding') != CLOCK, 'Wrong cart clip for captured cart type'
             continue
         identity = track['trackId']
         assert type(identity) is int and identity >= 0 and identity not in found, 'Invalid/duplicate clip track identity'
@@ -68,10 +74,15 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, *, hotkey=Fals
         expected += ['dropped','finalCleanup']
         assert [r['event'] for r in receipts] == expected, 'Missing/reordered rapid action receipts'
         first = receipts[0]
+        cart_type = first['cartType']
+        assert cart_type in CLIPS, 'Unsupported captured repeat cart type'
+        clip = CLIPS[cart_type]
+        assert cart_type == 'SaucedWheelbarrow.WheelbarrowWood', 'Full repeat analysis requires wooden wheel calibration; use tracks() for metal clip evidence'
         assert first['cargoCount'] > 0 and first['cargo'] > 0 if load == 'full' else first['cargoCount'] == first['cargo'] == 0, 'Wrong repeat cargo variant'
         for row in rows + receipts:
             finite(row)
             assert row['female'] is (sex == 'female'), 'Wrong repeat body model'
+            assert row['cartType'] == cart_type, 'Repeat cart type changed'
             assert row['wall']-row['start'] == row['elapsed'] and 0 <= row['elapsed'] <= 20500, 'Repeat clocks disagree'
             assert (row['id'],row['cargoIDs'],row['cargoCount'],row['condition']) == (first['id'],first['cargoIDs'],first['cargoCount'],first['condition']) and abs(row['cargo']-first['cargo']) < .001, 'Repeat item/cargo/condition changed'
             assert row['worldCount'] in (0,1) and row['inventoryCount'] in (0,1) and row['worldCount']+row['inventoryCount'] == 1 and row['woodWorldCount'] == row['worldCount'], 'Repeat item lost or duplicated'
@@ -91,10 +102,10 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, *, hotkey=Fals
         assert all(0 < b['wallTimeMillis']-a['wallTimeMillis'] <= 100 for a,b in zip(frames,frames[1:])), 'Repeat track/body sampling gap'
         for frame in frames:
             assert frame['cartModelCount'] in (0,1), 'Duplicate repeat cart model'
-            tracks(frame)
+            tracks(frame, cart_type)
             for bone in ('Bip01_Spine',)+ARM_BONES:
                 matrix(frame['bones'][bone])
-        assert all(f['cartModelCount'] == 0 and not any(t['weight']*t['field'] > .0001 for t in tracks(f).values()) for f in frames if f['wallTimeMillis'] >= final['wall']), 'Final native cart model/clip cleanup incomplete'
+        assert all(f['cartModelCount'] == 0 and not any(t['weight']*t['field'] > .0001 for t in tracks(f, cart_type).values()) for f in frames if f['wallTimeMillis'] >= final['wall']), 'Final native cart model/clip cleanup incomplete'
         native = [r for r in lifecycle if start <= r['wallTimeMillis'] <= start+20000 and r['metaType'] in types.values()]
         queued = [r for r in receipts if r['event'] == 'actionQueued']
         terminals = [r for r in receipts if r['event'] in ('actionCompleted','cancelCleared')]
@@ -173,7 +184,7 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, *, hotkey=Fals
                 seam_samples = len(seam)
             before = [r for r in frames if retired-100 <= r['wallTimeMillis'] < retired]
             assert before, 'Missing pre-retirement clip pose'
-            old_candidates = tracks(before[-1])
+            old_candidates = tracks(before[-1], cart_type)
             old = {i:t for i,t in old_candidates.items() if t['clockBinding'] == CLOCK and t['reverse'] is (plan[index][0] == 'drop')}
             assert len(old) == 1, 'Missing unique retiring clock-bound clip'
             old_id = next(iter(old))
@@ -181,7 +192,7 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, *, hotkey=Fals
             for frame in frames:
                 if not fresh <= frame['wallTimeMillis'] <= retired+200:
                     continue
-                current = tracks(frame)
+                current = tracks(frame, cart_type)
                 newer = [(i,t) for i,t in current.items() if i != old_id and t['clockBinding'] == CLOCK and t['reverse'] is (plan[index+1][0] == 'drop')]
                 if old_id in current and current[old_id]['weight']*current[old_id]['field'] > .0001 and newer:
                     assert len(newer) == 1 and current[old_id]['clockBinding'] is None, 'Retired clip still bound to fresh clock'
@@ -191,9 +202,9 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, *, hotkey=Fals
             fresh_progress = new_track['time']/new_track['duration']
             if new_track['reverse']: fresh_progress = 1-fresh_progress
             assert 0 <= fresh_progress <= .2, 'Fresh clip clock did not reset'
-            old_times = [tracks(f)[old_id]['time'] for f in frames if f['wallTimeMillis'] >= overlap[0][0]['wallTimeMillis'] and old_id in tracks(f)]
+            old_times = [tracks(f, cart_type)[old_id]['time'] for f in frames if f['wallTimeMillis'] >= overlap[0][0]['wallTimeMillis'] and old_id in tracks(f, cart_type)]
             assert max(old_times)-min(old_times) <= .005, 'Retired clip clock reset/advanced with replacement'
-            new_times = [tracks(f)[new_id]['time'] for f in frames if fresh <= f['wallTimeMillis'] <= native_groups[index+1][-1]['wallTimeMillis'] and new_id in tracks(f)]
+            new_times = [tracks(f, cart_type)[new_id]['time'] for f in frames if fresh <= f['wallTimeMillis'] <= native_groups[index+1][-1]['wallTimeMillis'] and new_id in tracks(f, cart_type)]
             assert new_times and max(new_times)-min(new_times) > .1*new_track['duration'], 'Fresh clock did not progress independently'
             window = [f for f in frames if retired-100 <= f['wallTimeMillis'] <= fresh+300]
             motion = {bone:max(math.dist(a['bones'][bone][12:15],b['bones'][bone][12:15]) for a,b in zip(window,window[1:])) for bone in ('Bip01_Spine','Bip01_L_Hand','Bip01_R_Hand')}
@@ -219,7 +230,7 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, *, hotkey=Fals
         assert wheel['maxResidual'] <= .004 and wheel['worldDraws'] > 0 and wheel['heldDraws'] > 0, 'Repeat wheel phase/ownership handoff failed'
         renders = [r for r in world if final['wall'] <= r['wallTimeMillis'] <= start+20000 and r['itemId'] == first['id']]
         assert renders and all(r.get('renderStatus') == 'Ready' and r.get('alpha',0) >= .99 and not r.get('transitionHidden') for r in renders), 'Missing final visible world cart'
-        summaries.append(dict(case=name,itemId=first['id'],nativeActionIds=[g[0]['nativeActionId'] for g in native_groups],transitions=transitions,wheel=wheel))
+        summaries.append(dict(case=name,cartType=cart_type,clip=clip,itemId=first['id'],nativeActionIds=[g[0]['nativeActionId'] for g in native_groups],transitions=transitions,wheel=wheel))
     return dict(functionalPass=True,clockVerified=True,recoveryVerified=True,wheelCoverageVerified=True,failures=[],cases=summaries,
                 limit='Twelve isolated SP scenes with two contact/late same-action cancellations or a four-action immediate chain. Sampled native clock overlap, pose steps and rolling are bounded gates; full mesh clearance and visual review remain separate.')
 

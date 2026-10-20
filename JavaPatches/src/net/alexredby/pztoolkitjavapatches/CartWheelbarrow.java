@@ -49,6 +49,8 @@ final class CartWheelbarrow {
     }
     static CartWheelbarrow forItem(InventoryItem item) {return item==null?null:forType(item.getFullType());}
     String model() {return model;}
+    // Metal handles sit higher: match its authored clip while preserving the shared leg/foot pose.
+    float pickupHingeDegrees() {return this==METAL?42:60;}
     float centerX() {return centerX;}
     float centerY() {return centerY;}
     float centerZ() {return centerZ;}

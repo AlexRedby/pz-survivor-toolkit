@@ -166,6 +166,7 @@ public final class CartTransition {
         if(state.authored) {
             player.setVariable("ToolkitWoodCartClipTime",state.progress);
             player.setVariable("ToolkitWoodCartClipPickup",state.pickup);
+            player.setVariable("ToolkitMetalCartClip",CartWheelbarrow.forItem(state.item)==CartWheelbarrow.METAL);
         }
     }
 
@@ -177,7 +178,8 @@ public final class CartTransition {
     }
 
     static boolean retireAuthoredNode(LiveAnimNode node, boolean pickup) {
-        if(!("ToolkitWoodCartClip"+(pickup?"Pickup":"Setdown")).equals(node.getSourceNode().name)) return false;
+        String direction=pickup?"Pickup":"Setdown",name=node.getSourceNode().name;
+        if(!("ToolkitWoodCartClip"+direction).equals(name) && !("ToolkitMetalCartClip"+direction).equals(name)) return false;
         try {
             if(CLIP_RETIRING==null) throw new IllegalStateException("Native cart clip retirement unavailable");
             if(CLIP_RETIRING.getBoolean(node)) return false;
@@ -462,6 +464,7 @@ public final class CartTransition {
         if(state!=null) retireAuthored(player,state);
         player.clearVariable("ToolkitWoodCartPoseX");player.clearVariable("ToolkitWoodCartPoseY");
         player.clearVariable("ToolkitWoodCartClipTime");player.clearVariable("ToolkitWoodCartClipPickup");
+        player.clearVariable("ToolkitMetalCartClip");
         if(state!=null && state.visualModel!=null && state.visualModel==player.overridePrimaryHandModel) {
             player.overridePrimaryHandModel=null;player.resetEquippedHandsModels();
         }
@@ -562,7 +565,7 @@ public final class CartTransition {
                     reach,grip,state.restartPose,restart,profile.model())
                 :CartGrip.transition(slot,instance.parent,delta,transform,(float)phase.reach(),(float)phase.grip(),
                     (float)phase.lift(),(ground.m30()-held.m30())*(float)phase.center(),lowering,.16f*(float)phase.balance(),
-                    (float)Math.toRadians(60*phase.hinge()),baseHeight,baseRotation,profile.model());
+                    (float)Math.toRadians(profile.pickupHingeDegrees()*phase.hinge()),baseHeight,baseRotation,profile.model());
             if(state.recovering && !state.ik) {end(player);return false;}
             if(state.ik && !state.movingRecovery) {
                 state.recoveryPose=CartGrip.capture(instance.parent.animPlayer.getSkinningData(),state.recoveryPose);

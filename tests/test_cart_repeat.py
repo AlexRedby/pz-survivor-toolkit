@@ -33,7 +33,7 @@ def fixture():
             action=plan[current][0] if current is not None else ''
             selected=serial if serial is not None else max([i+1 for i,q in enumerate(queues) if q<=elapsed] or [0])
             return dict(case=name,start=start,wall=start+elapsed,elapsed=elapsed,id=item,actionSerial=selected,
-                        female=sex=='female',cargo=50 if load=='full' else 0,cargoCount=int(load=='full'),cargoIDs='stable' if load=='full' else '',condition=100,
+                        cartType='SaucedWheelbarrow.WheelbarrowWood',female=sex=='female',cargo=50 if load=='full' else 0,cargoCount=int(load=='full'),cargoIDs='stable' if load=='full' else '',condition=100,
                         worldCount=int(not owned),woodWorldCount=int(not owned),worldID=-1 if owned else item,inventoryCount=int(owned),
                         heldID=item if owned else -1,secondaryID=item if owned else -1,worldAlpha=1,
                         nativeActions=int(bool(action)),luaActions=int(bool(action)),actionType=analyzer.TYPES.get(action,''),progress=phases[current]*(elapsed-beginnings[current])/2000 if current is not None else 0,
@@ -98,6 +98,43 @@ class RepeatChecks(unittest.TestCase):
         self.assertTrue(all(result[k] for k in ('functionalPass','clockVerified','recoveryVerified','wheelCoverageVerified')))
         self.assertEqual(len(result['cases']),12)
         self.assertEqual(len(result['cases'][0]['transitions']),3)
+
+    def test_metal_track_selector_requires_its_exact_cart_type_and_distinct_clip(self):
+        frame=copy.deepcopy(next(frame for frame in self.values[6] if frame['tracks']))
+        frame['tracks'][0]['name']='Toolkit_MetalCart_Pickup'
+        selected=analyzer.tracks(frame,'SaucedWheelbarrow.WheelbarrowMetal')
+        self.assertEqual(list(selected.values()),frame['tracks'])
+
+    def test_track_selector_rejects_wrong_clip_even_beside_correct_track(self):
+        for cart_type,wrong_clip in [('SaucedWheelbarrow.WheelbarrowMetal','Toolkit_WoodCart_Pickup'),
+                                     ('SaucedWheelbarrow.WheelbarrowWood','Toolkit_MetalCart_Pickup')]:
+            with self.subTest(cart_type=cart_type):
+                frame=copy.deepcopy(next(frame for frame in self.values[6] if frame['tracks']))
+                frame['tracks'][0]['name']=analyzer.CLIPS[cart_type]
+                frame['tracks'].append(dict(frame['tracks'][0],name=wrong_clip,trackId=99999))
+                with self.assertRaisesRegex(AssertionError,'Wrong cart clip'):
+                    analyzer.tracks(frame,cart_type)
+
+    def test_arbitrary_clock_bound_clip_cannot_impersonate_cart_clip(self):
+        frame=copy.deepcopy(next(frame for frame in self.values[6] if frame['tracks']))
+        frame['tracks'][0]['name']='Unrelated_Pickup'
+        for cart_type in analyzer.CLIPS:
+            with self.subTest(cart_type=cart_type), self.assertRaisesRegex(AssertionError,'Wrong cart clip'):
+                analyzer.tracks(frame,cart_type)
+        with self.assertRaisesRegex(AssertionError,'Unsupported captured'):
+            analyzer.tracks(frame,'Unrelated_Pickup')
+
+    def test_full_metal_repeat_cannot_claim_wooden_wheel_proof(self):
+        values=edit_log(self.values,lambda row: row.update(cartType='SaucedWheelbarrow.WheelbarrowMetal'))
+        self.assert_rejected(values,'wooden wheel calibration')
+
+    def test_captured_cart_type_must_be_supported_and_stable(self):
+        values=edit_log(self.values,lambda row: row.update(cartType='SaucedCarts.ShoppingCart'))
+        self.assert_rejected(values,'Unsupported captured')
+        def corrupt(row):
+            if row['case']==analyzer.CASES[0] and row['elapsed']==1000:
+                row['cartType']='SaucedWheelbarrow.WheelbarrowMetal'
+        self.assert_rejected(edit_log(self.values,corrupt),'cart type changed')
 
     def test_stable_action_rejects_one_missing_authored_ik_frame(self):
         for field in ('active','authored','rendered','ik'):
