@@ -199,8 +199,8 @@ class QuartermasterBackpack(unittest.TestCase):
         self.root = Path(temporary.name)
         self.selection = dict(suite=distribution.SUITE, cases=['backpack'], kind='sp', mode='toolkit',
                               clients=1, languages=['EN'], mods=distribution.MODS, options={})
-        self.prepared = {'ids': [101, 102, 103, 104, 105]}
-        self.result = dict(self.prepared, moved=1, retained=3, backpackWorn=True, menuDispatched=True,
+        self.prepared = {'ids': [101, 102, 103, 104, 105, 106]}
+        self.result = dict(self.prepared, moved=1, retained=4, backpackWorn=True, stuckRetained=True, menuDispatched=True,
                            toolbarVisible=True, sourceBag=True, transfer=True, rejectedDestinationSkipped=True)
 
     def write(self, prepared=None, result=None, complete='[QM_BACKPACK] COMPLETE\n'):
@@ -232,21 +232,21 @@ class QuartermasterBackpack(unittest.TestCase):
         self.assertFalse(distribution.complete(dict(self.selection, cases=['sort']), 'client1', text))
         for key in self.result:
             wrong = dict(self.result)
-            wrong[key] = [101, 102, 103, 104, 999] if key == 'ids' else 2 if key == 'moved' else 4 if key == 'retained' else False
+            wrong[key] = [101, 102, 103, 104, 105, 999] if key == 'ids' else 2 if key == 'moved' else 5 if key == 'retained' else False
             with self.subTest(key=key):
                 self.write(result=wrong)
                 self.assertTrue(distribution.verify(self.root, self.selection, {})['issues'])
         for wrong in (dict(self.result, moved=True), dict(self.result, transfer=1),
-                      dict(self.result, ids=[True, 102, 103, 104, 105]), dict(self.result, extra=True)):
+                      dict(self.result, ids=[True, 102, 103, 104, 105, 106]), dict(self.result, extra=True)):
             self.write(result=wrong)
             self.assertTrue(distribution.verify(self.root, self.selection, {})['issues'])
 
     def test_backpack_rejects_invalid_identities_duplicate_records_and_missing_gate(self):
-        for ids in ([101, 102, 103, 104], [101, 102, 103, 104, 104], [True, 102, 103, 104, 105],
-                    [101.0, 102, 103, 104, 105], '101,102,103,104,105'):
+        for ids in ([101, 102, 103, 104, 105], [101, 102, 103, 104, 105, 105], [True, 102, 103, 104, 105, 106],
+                    [101.0, 102, 103, 104, 105, 106], '101,102,103,104,105,106'):
             with self.subTest(ids=ids):
                 self.write(prepared={'ids': ids}, result=dict(self.result, ids=ids))
-                self.assertIn('five unique integers', distribution.verify(self.root, self.selection, {})['issues'][0])
+                self.assertIn('six unique integers', distribution.verify(self.root, self.selection, {})['issues'][0])
         original = self.write()
         rows = original.splitlines(keepends=True)
         invalid = [original.replace(row, '') for row in rows]

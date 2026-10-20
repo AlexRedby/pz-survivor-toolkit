@@ -5,6 +5,7 @@ require "TimedActions/ISInventoryTransferAction"
 local TagRules = require "PZSurvivorToolkit/QuartermasterTagRules"
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Categories = require "PZSurvivorToolkit/ItemCategories"
+local TransferProtection = require "PZSurvivorToolkit/InventoryTransferProtection"
 
 LootSorter = LootSorter or {}
 -- diagnostic trace: silent unless LootSorter.DEBUG is set or the game runs in -debug mode
@@ -515,18 +516,19 @@ function LootSorter.sort(sourceContainer, playerNum)
         end
 
         -- Build plain-data records (engine -> data) for the PURE planner.
-        -- Skip items the player is using/protecting: equipped in-hand, favorited, or attached to the
+        -- Skip items the player is using/protecting: equipped in-hand, favorited, stuck, or attached to the
         -- hotbar (a holstered pistol, sheathed knife, clipped flashlight, etc.) -- so distributing your
         -- own inventory never sweeps your belt/holster gear. (Worn clothing / back-bags live in a
-        -- separate container and aren't scanned here anyway.) Mirrors vanilla's own transfer filter.
+        -- separate container and aren't scanned here anyway.) Also respects optional OC Stick protection.
         local hotbar = nil
         pcall(function() hotbar = getPlayerHotbar(playerNum) end)
         local itemRecs = {}
-        local skippedInUse = {}   -- items excluded here (equipped/favorited/hotbar); logged so they're not invisible
+        local skippedInUse = {}   -- protected/in-use items; logged so they're not invisible
         local items = sourceContainer:getItems()
         for i = 0, items:size() - 1 do
             local it = items:get(i)
             if it and not it:isEquipped() and not it:isFavorite()
+                   and TransferProtection.allowsAutomatic(it)
                    and not (hotbar and hotbar:isInHotbar(it)) then
                 -- Measure items with the SAME metric the engine's container room-check uses
                 -- (getActualWeight, not getWeight), so the planner's "does it fit?" matches reality
@@ -556,7 +558,7 @@ function LootSorter.sort(sourceContainer, playerNum)
             for i, r in ipairs(itemRecs) do names[i] = ("%s(%.2f)"):format(r.name or "?", r.weight or 0) end
             LootSorter.DBG(("run #%d items (%d): %s"):format(runId, #itemRecs, table.concat(names, ", ")))
             if #skippedInUse > 0 then   -- account for items deliberately left as "in use" (not leftovers)
-                LootSorter.DBG(("run #%d skipped %d in-use item(s) (equipped/favorited/hotbar): %s"):format(
+                LootSorter.DBG(("run #%d skipped %d protected/in-use item(s) (equipped/favorited/stuck/hotbar): %s"):format(
                     runId, #skippedInUse, table.concat(skippedInUse, ", ")))
             end
         end

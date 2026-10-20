@@ -64,10 +64,10 @@ def _backpack(root, selection):
             raise ValueError('Backpack preparation/result/completion missing, duplicated or reordered')
         prepared, receipt = [json.loads(value) for _, value in records[:2]]
         ids = prepared.get('ids') if type(prepared) is dict else None
-        if (type(ids) is not list or len(ids) != 5 or any(type(value) is not int for value in ids)
-                or len(set(ids)) != 5 or set(prepared) != {'ids'}):
-            raise ValueError('Backpack item identities are not five unique integers')
-        expected = dict(ids=ids, moved=1, retained=3, backpackWorn=True, menuDispatched=True,
+        if (type(ids) is not list or len(ids) != 6 or any(type(value) is not int for value in ids)
+                or len(set(ids)) != 6 or set(prepared) != {'ids'}):
+            raise ValueError('Backpack item identities are not six unique integers')
+        expected = dict(ids=ids, moved=1, retained=4, backpackWorn=True, stuckRetained=True, menuDispatched=True,
                         toolbarVisible=True, sourceBag=True, transfer=True, rejectedDestinationSkipped=True)
         if (type(receipt) is not dict or set(receipt) != set(expected)
                 or any(type(receipt[key]) is not type(value) or receipt[key] != value

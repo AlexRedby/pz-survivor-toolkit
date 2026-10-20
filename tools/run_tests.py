@@ -93,6 +93,7 @@ def main() -> None:
     parser.add_argument("--medicine-framework-source", type=Path, help="installed MF_ISMoodle.lua")
     parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
+    parser.add_argument("--oc-stick-source", type=Path, help="organizedCategories_itemStick.lua for Quantity transfer protection checks")
     parser.add_argument("--native-inventory-context-menu", type=Path, help="vanilla inventory callbacks and sibling garment inspection UI")
     parser.add_argument("--native-action-root", type=Path, help="vanilla media/lua for queue/base/read contracts")
     parser.add_argument("--wishlist-game-root", type=Path, help="game Java directory for native wishlist menu callbacks")
@@ -256,6 +257,8 @@ def main() -> None:
             lua.globals().NativeMPFFServerSource = (args.mpff_source / "server/MPFastForward_Server.lua").read_text(encoding="utf-8")
         if name == "test_bc_filter_compat.lua" and args.bc_filter_source:
             lua.globals().NativeBCFilterSource = args.bc_filter_source.read_text(encoding="utf-8")
+        if name == "test_quantity_transfers.lua" and args.oc_stick_source:
+            lua.globals().OCItemStickSource = args.oc_stick_source.read_text(encoding="utf-8")
         if name in ("test_action_queue_operations.lua", "test_quantity_transfers.lua") and args.native_inventory_context_menu:
             lua.globals().NativeInventoryContextMenuSource = args.native_inventory_context_menu.read_text(encoding="utf-8")
             if name == "test_quantity_transfers.lua":

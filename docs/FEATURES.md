@@ -34,7 +34,7 @@
 - **Unload selected magazines and firearms** extends native unloading with **One item / Unload selected (N)**. Supports loose magazines and firearms with integral magazines, including mixed selections. Chambered rounds and magazines inserted into weapons keep their separate native actions.
 - **Remove attachments from selected weapons** adds **Remove all parts from selected weapons (N)** beside the existing per-part choices. Uses the native detachable-part checks and tool requirements, preserving each part's identity.
 - The dismantling, clothing, battery and weapon bulk features have their own Mod Options switches. They skip favourites and worn/held items at selection, bind exact selected IDs, and stop the remaining queue on cancellation or stale targets. Native weapon callbacks and queue hooks retain Tidy Up Meister's existing transfer and equipment policies when that mod is active; they do not force an additional return to the previous hand item.
-- **Grab/Put amount** accepts one positive whole-number budget for the entire selected batch. It captures exact items and destination, rechecks reachability and character identity on confirmation, and uses native transfer actions. Favourites, equipped items and heavy forced-drop objects are skipped. Rejected pickups stop their own batch without cancelling another client's same-numbered transaction. The independent switch is hidden with TakeAnyAmount active.
+- **Grab/Put amount** accepts one positive whole-number budget for the entire selected batch. It captures exact items and destination, rechecks reachability and character identity on confirmation, and uses native transfer actions. Favourites, equipped items and heavy forced-drop objects are skipped. With organizedCategories Stick enabled, a mixed selection also skips stuck items; deliberately selecting one row/stack permits its transfer. The original selection determines that exception even when the requested quantity is one. Rejected pickups stop their own batch without cancelling another client's same-numbered transaction. The independent switch is hidden with TakeAnyAmount active.
 
 ## Context menus
 
@@ -156,7 +156,9 @@ The original implementation and assets are credited in the
 To distribute carried loot, configure destination containers with **Configure container...**,
 open the source bag in your inventory, then right-click an item inside it and choose
 **Distribute Loot**. The command sorts eligible items from that bag; you can keep it
-on your back. Favorite items and items without a matching destination stay put.
+on your back. Favorite items, items protected by enabled organizedCategories Stick,
+and items without a matching destination stay put. Pinning an item or item type
+controls its display order; it does not protect it from transfer.
 The inventory toolbar also has **Distribute Loot** for its selected container.
 For a vehicle trunk, open it in the loot window and use that window's button.
 

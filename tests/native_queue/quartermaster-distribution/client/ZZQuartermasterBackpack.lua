@@ -100,12 +100,16 @@ local function tick()
   rejectedBox:getContainer():setOnlyAcceptCategory('Food')
   bag=assert(root:AddItem('Base.Bag_Schoolbag'))
   items={assert(bag:getInventory():AddItem('Base.Thread')),assert(bag:getInventory():AddItem('Base.Thread')),
-   assert(bag:getInventory():AddItem('Base.LargeStone')),assert(root:AddItem('Base.Thread'))}
+   assert(bag:getInventory():AddItem('Base.LargeStone')),assert(root:AddItem('Base.Thread')),
+   assert(bag:getInventory():AddItem('Base.Thread'))}
   local script=items[1]:getScriptItem();local lootCategory=script:getDisplayCategory()
   assert(lootCategory=='Material','Thread script no longer has its loot-safe category')
   assert(Tags.matches(Tags.forScriptItem(script),{'tailoring','material'}),'Thread catalog tags disagree with inventory category')
   assert(script:getDisplayCategory()==lootCategory,'catalog tags changed native loot category')
   items[2]:setFavorite(true);ids={}
+  assert(OrganizedCategories.isItemStickingEnabled(),'Stick protection must be enabled')
+  OrganizedCategories.toggleItemsStuck(0,{items[5]})
+  assert(OrganizedCategories.isItemStuck(items[5]),'native Stick command did not protect the extra Thread')
   for _,item in ipairs(items)do ids[#ids+1]=item:getID()end
   ids[#ids+1]=bag:getID();print('[QM_BACKPACK] PREPARED '..JSON.encode({ids=ids}))
   ISTimedActionQueue.add(ISWearClothing:new(player,bag,50));phase='configure'
@@ -165,11 +169,12 @@ local function tick()
    assert(item:getContainer()==(i==1 and box:getContainer()or i==4 and root or bag:getInventory()),'wrong final item container')
   end
   assert(items[2]:isFavorite()and bag:getContainer()==root and player:getClothingItem_Back()==bag,'favorite/equipment state lost')
+  assert(OrganizedCategories.isItemStuck(items[5]),'distribution cleared Stick protection')
   for id,count in pairs(original)do assert(carried[id]==count,'pre-existing inventory changed')end
   assert(transferred and sourceBag and dispatched,'missing native distribution progress')
   assert(rejectedBox:getContainer():getItems():size()==0,'native-rejected destination received items')
   rejectedDestinationSkipped=true
-  print('[QM_BACKPACK] RESULT '..JSON.encode({ids=ids,moved=1,retained=3,backpackWorn=true,
+  print('[QM_BACKPACK] RESULT '..JSON.encode({ids=ids,moved=1,retained=4,backpackWorn=true,stuckRetained=true,
    menuDispatched=dispatched,toolbarVisible=true,sourceBag=sourceBag,transfer=transferred,rejectedDestinationSkipped=rejectedDestinationSkipped}))
   phase='cleanup'
  elseif phase=='cleanup'then
