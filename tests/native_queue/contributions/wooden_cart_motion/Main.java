@@ -120,11 +120,142 @@ public final class Main {
             +" itemPhase="+phase.invoke(null,item);
     }
 
+    // Opt-in provenance only; these fields never participate in movement or action state.
+    private static boolean impactWatching;
+    private static IsoPlayer impactActor;
+    private static long naturalImpactEvents, injectedImpactEvents, otherImpactEvents;
+    private static String lastImpactOrigin="none";
+    private static final java.util.ArrayList<String> impactReceipts=new java.util.ArrayList<>();
+
+    @LuaMethod(name="cartLabImpactWatch", global=true)
+    public static synchronized void impactWatch(boolean enabled) {
+        if(enabled) {
+            var p=IsoPlayer.getInstance();
+            if(p==null || !p.isLocalPlayer()) throw new IllegalStateException("Impact watch requires a local player");
+            impactActor=p;
+            naturalImpactEvents=injectedImpactEvents=otherImpactEvents=0;
+            lastImpactOrigin="none";impactReceipts.clear();
+        }
+        impactWatching=enabled;
+        var row=impactFields(impactActor);
+        row.put("kind","watch");row.put("origin","watch-control");
+        row.put("movingObjectSha256",classFingerprint(zombie.iso.IsoMovingObject.class));
+        row.put("actionContextSha256",classFingerprint(zombie.characters.action.ActionContext.class));
+        System.out.println("[CART_NATURAL_HIT] "+impactJson(row));
+    }
+
+    @LuaMethod(name="cartLabNaturalImpact", global=true)
+    public static synchronized String naturalImpact() {
+        var out=new StringBuilder();
+        for(var entry:impactFields(IsoPlayer.getInstance()).entrySet()) {
+            if(out.length()>0) out.append(' ');
+            out.append(entry.getKey()).append('=').append(impactToken(entry.getValue()));
+        }
+        return out.toString();
+    }
+
+    /** Reading receipts never clears counters or game events. */
+    @LuaMethod(name="cartLabImpactReceipts", global=true)
+    public static synchronized String impactReceipts() { return "["+String.join(",",impactReceipts)+"]"; }
+
+    private static java.util.LinkedHashMap<String,Object> impactFields(IsoPlayer p) {
+        var row=new java.util.LinkedHashMap<String,Object>();
+        row.put("timeMs",System.currentTimeMillis());row.put("watch",impactWatching);
+        row.put("actor",p!=null && p==impactActor);row.put("local",p!=null && p.isLocalPlayer());
+        row.put("state",p==null || p.getCurrentState()==null?"none":p.getCurrentState().getClass().getSimpleName());
+        row.put("action",p==null?"none":p.getActionStateName());
+        row.put("run",p!=null && p.isRunning());row.put("sprint",p!=null && p.isSprinting());
+        row.put("ignore",p!=null && p.getIgnoreMovement());row.put("getup",p!=null && p.isGettingUp());
+        row.put("hit",p!=null && p.hasHitReaction());row.put("knocked",p!=null && p.isKnockedDown());
+        row.put("ragdoll",p!=null && p.isRagdollSimulationActive());
+        row.put("primary",p==null || p.getPrimaryHandItem()==null?-1:p.getPrimaryHandItem().getID());
+        row.put("secondary",p==null || p.getSecondaryHandItem()==null?-1:p.getSecondaryHandItem().getID());
+        row.put("dir",p==null?"none":p.getDir().name());
+        row.put("wallType",p==null || p.getCurrentSquare()==null?-1:p.getCurrentSquare().getWallType());
+        row.put("collidedN",p!=null && p.isCollidedN());row.put("collidedS",p!=null && p.isCollidedS());
+        row.put("collidedE",p!=null && p.isCollidedE());row.put("collidedW",p!=null && p.isCollidedW());
+        row.put("collidedDoor",p!=null && p.isCollidedWithDoor());
+        row.put("collideType",p==null?"none":p.getCollideType());
+        row.put("naturalEvents",naturalImpactEvents);row.put("injectedEvents",injectedImpactEvents);
+        row.put("otherEvents",otherImpactEvents);row.put("origin",lastImpactOrigin);
+        return row;
+    }
+
+    // The one-String overload delegates to (layer,event); observe this exact overload once.
+    @Patch(className="zombie.characters.action.ActionContext", methodName="reportEvent", warmUp=true, strictMatch=true)
+    public static class ImpactEventReceipt {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.characters.action.ActionContext context,
+            @Patch.Argument(0) String layer, @Patch.Argument(1) String event) {
+            Main.observeImpact(context,layer,event);
+        }
+    }
+
+    public static synchronized void observeImpact(zombie.characters.action.ActionContext context,String layer,String event) {
+        if(!impactWatching || !"collideWithWall".equals(event) || impactActor==null
+            || context.getOwner()!=impactActor || !impactActor.isLocalPlayer()) return;
+        var stack=StackWalker.getInstance().walk(frames->frames
+            .map(frame->frame.getClassName()+"."+frame.getMethodName()).toList());
+        String origin=impactOrigin(stack);
+        if("native-checkHitWall".equals(origin)) naturalImpactEvents++;
+        else if("injected-cartLabWallEvent".equals(origin)) injectedImpactEvents++;
+        else otherImpactEvents++;
+        lastImpactOrigin=origin;
+        var row=impactFields(impactActor);
+        row.put("kind","event");row.put("event",event);row.put("layer",layer==null?"none":layer);
+        row.put("stack",String.join(";",stack));
+        String receipt=impactJson(row);impactReceipts.add(receipt);
+        System.out.println("[CART_NATURAL_HIT] "+receipt);
+    }
+
+    static String impactOrigin(java.util.List<String> stack) {
+        // An injected wrapper must not become natural merely by running during native update.
+        if(stack.contains(Main.class.getName()+".wallEvent")) return "injected-cartLabWallEvent";
+        if(stack.contains("zombie.iso.IsoMovingObject.checkHitWall")) return "native-checkHitWall";
+        return "other";
+    }
+
+    private static String impactToken(Object value) {
+        return value==null || value.toString().isEmpty()?"none":value.toString().replaceAll("\\s+","_");
+    }
+
+    private static String impactJson(java.util.Map<String,Object> row) {
+        var out=new StringBuilder("{");
+        for(var entry:row.entrySet()) {
+            if(out.length()>1) out.append(',');
+            out.append(impactQuote(entry.getKey())).append(':');
+            Object value=entry.getValue();
+            out.append(value instanceof Number || value instanceof Boolean?value:impactQuote(value==null?"none":value.toString()));
+        }
+        return out.append('}').toString();
+    }
+
+    private static String impactQuote(String value) {
+        var out=new StringBuilder("\"");
+        for(int i=0;i<value.length();i++) {
+            char c=value.charAt(i);
+            if(c=='\\' || c=='\"') out.append('\\').append(c);
+            else if(c<32) out.append(String.format("\\u%04x",(int)c));
+            else out.append(c);
+        }
+        return out.append('\"').toString();
+    }
+
+    private static String classFingerprint(Class<?> type) {
+        try(var stream=type.getResourceAsStream("/"+type.getName().replace('.','/')+".class")) {
+            if(stream==null) return "missing";
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(stream.readAllBytes()));
+        } catch(java.io.IOException | java.security.NoSuchAlgorithmException failure) {
+            return "unavailable-"+failure.getClass().getSimpleName();
+        }
+    }
+
     @LuaMethod(name="cartLabWallEvent", global=true)
     public static void wallEvent() {
         var p=IsoPlayer.getInstance();
         if(!p.isSprinting() || !"sprint".equals(p.getActionStateName()))
             throw new IllegalStateException("Native wall event requires an actual Sprint state");
+        // Explicit injected control; receipts distinguish this stack from vanilla checkHitWall.
         p.getActionContext().reportEvent("collideWithWall");
     }
 

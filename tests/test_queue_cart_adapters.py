@@ -1173,6 +1173,29 @@ end
                     carts._videos(self.output, self.selection, 'client1', invalid)
             decode.assert_not_called()
 
+    def test_impact_requires_separate_natural_control_videos_before_decode(self):
+        self.selection['cases'] = ['impact']
+        self.selection['options']['cart_scenes'] = ['male-full-sprint-wall', 'male-full-native-impact']
+        videos = self.output / 'client1/videos'
+        videos.mkdir()
+        controls, scenes = [], []
+        for index, name in enumerate(['natural-run-wall', 'natural-sprint-wall', *self.selection['options']['cart_scenes']]):
+            path = videos / f'{index}.mp4'
+            path.write_bytes(b'video')
+            if index < 2:
+                controls.append(f'[CART_NATURAL_CONTROL] COMPLETE spec={name} wall=100 file={path} frames=240 seconds=8.0')
+            else:
+                scenes.append(f'[WOOD_BANK] COMPLETE {name} wall=100 file={path} frames=240 seconds=8.0')
+        probe = SimpleNamespace(stdout=json.dumps({'streams': [dict(codec_type='video', codec_name='h264', nb_read_frames='240', duration='8.0')]}))
+        with patch.object(carts.subprocess, 'run', return_value=probe) as decode:
+            text = '[WOOD_BANK] RUN_STARTED\n' + '\n'.join(controls + scenes)
+            self.assertEqual(len(carts._videos(self.output, self.selection, 'client1', text)), 4)
+            decode.reset_mock()
+            for invalid in [scenes, controls[::-1]+scenes, controls+controls[:1]+scenes]:
+                with self.assertRaisesRegex(ValueError, 'natural impact control videos'):
+                    carts._videos(self.output, self.selection, 'client1', '\n'.join(invalid))
+            decode.assert_not_called()
+
     def test_stop_uses_selected_original_log_and_retains_failed_motion_diagnostics(self):
         self.selection['cases'] = ['stop']
         fixture = carts._load(ROOT / 'tests/test_cart_stop_analyzer.py')

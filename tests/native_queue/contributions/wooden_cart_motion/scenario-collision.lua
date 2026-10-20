@@ -26,6 +26,7 @@ assert(not p:isDead() and CartTestArea and CartTestArea.ready,'Wait for BOOTSTRA
 assert(CartLabKey and CartLabHUD and cartLabDrive and cartLabGait and cartLabBank and cartLabRamp and cartLabTracks and cartLabReversal and cartLabStationary and cartLabPoseHeading and cartLabHeading and cartLabWheelPhase and CartTestArea.setObstacles and toolkitVideoStart and toolkitVideoStatus and toolkitVideoStop,'CartLab/video bridge missing')
 assert(not footprint or cartLabFootprint,'Footprint diagnostics missing')
 assert(not brace or cartLabBrace,'Brace/native wall diagnostics missing')
+assert(not config.impact or cartLabImpactWatch and cartLabNaturalImpact,'Natural impact provenance diagnostics missing')
 if WoodPrototypeTick then Events.OnTick.Remove(WoodPrototypeTick) end
 cartLabDrive(0);cartLabGait(0);setGameSpeed(1)
 p:setFemale(false);p:getDescriptor():setFemale(false)
@@ -122,7 +123,7 @@ if config.impact then
  for _,female in ipairs({false,true}) do for _,full in ipairs({false,true}) do
   for _,spec in ipairs({'sprint-wall','native-impact'}) do
    cases[#cases+1]={female=female,full=full,spec=spec,startYaw=math.pi/4,
-    steps={{1000,2,5},{6000,0,0},{7000,0,7},{spec=='native-impact' and 8000 or 9500,0,0}},
+    steps={{1000,2,1},{6000,0,0},{7000,0,4},{spec=='native-impact' and 8000 or 9500,0,0}},
     name=(female and 'female-' or 'male-')..(full and 'full-' or 'empty-')..spec}
   end
  end end
@@ -143,6 +144,9 @@ local phase,since,stage,taken=0,0,0,{}
 local mode,attempt,videoSince='layout',0,0
 local wallX,southY,gapY=math.floor(CartTestArea.x)-(config.impact and 6 or footprint and 3 or 1),math.floor(CartTestArea.y)+2,math.floor(CartTestArea.y)
 local controls,controlIndex,controlResults={'wall','corner','passage'},0,{}
+if config.impact then controls[#controls+1]='natural-run-wall';controls[#controls+1]='natural-sprint-wall' end
+local naturalStopped=false
+local function naturalControl(spec) return spec=='natural-run-wall' or spec=='natural-sprint-wall' end
 if footprint and not config.impact then controls[#controls+1]='wall-slide-left';controls[#controls+1]='wall-slide-right' end
 local function controlDrive(spec) return (spec=='corner' or spec=='wall-slide-left') and 2 or spec=='wall-slide-right' and 1 or 5 end
 local function controlHeading(spec) return spec=='wall-slide-right' and -math.pi*.75 or (spec=='corner' or spec=='wall-slide-left') and math.pi*.75 or math.pi end
@@ -245,6 +249,7 @@ local function nextCase()
  cartLabDrive(0);cartLabGait(0);phase=phase+1;stage=0;taken={};attempt=0
  if phase>#cases then
   CartTestArea.clearObstacles(p)
+  if config.impact then cartLabImpactWatch(false) end
   print('[CART_COLLISION] CLEANUP_COMPLETE')
   print('[WOOD_BANK] ALL_COMPLETE cases='..#cases)
   cartLabDrive(-1);Events.OnTick.Remove(WoodPrototypeTick);WoodPrototypeTick=nil
@@ -256,7 +261,7 @@ local function nextCase()
  if p:isFemale()~=c.female then p:setFemale(c.female);p:getDescriptor():setFemale(c.female);p:resetModel() end
  wood(c.full or false);if c.bare then CartLabKey(Keyboard.KEY_F7) end
  if relativeManual then c.item=p:getPrimaryHandItem();c.cargoIds=cargo(c.item);c.cargoWeight=c.item:getInventory():getCapacityWeight();c.drive=0 end
- if config.impact then c.item=p:getPrimaryHandItem() end
+ if config.impact then c.item=p:getPrimaryHandItem();cartLabImpactWatch(true) end
  pose();p:getStats():reset(CharacterStat.ENDURANCE)
  mode='layout';since=getTimestampMs()+1800
 end
@@ -284,7 +289,7 @@ local function layout(kind,shortWall)
  end
 end
 local function nextControl()
- cartLabDrive(0);cartLabGait(0);controlIndex=controlIndex+1
+ cartLabDrive(0);cartLabGait(0);if config.impact then cartLabImpactWatch(false) end;controlIndex=controlIndex+1
  if controlIndex>#controls then nextCase();return end
  pose(CartTestArea.x,CartTestArea.y,controlHeading(controls[controlIndex]))
  mode='control-layout';since=getTimestampMs()+1800
@@ -326,10 +331,44 @@ local function tick()
   CartTestArea.check(p);now=getTimestampMs();controlStart=now;controlSample=0;mode='control-drive'
   local spec=controls[controlIndex]
   print('[CART_COLLISION_CONTROL] START spec='..spec..' wall='..now..' x='..p:getX()..' y='..p:getY()..' wallX='..wallX..' southY='..southY..' gapY='..gapY)
+  if naturalControl(spec) then
+   assert(not p:getPrimaryHandItem() and not p:getSecondaryHandItem(),'Natural control must have bare hands')
+   sprinting(10);p:getStats():reset(CharacterStat.ENDURANCE)
+   cartLabImpactWatch(true);naturalStopped=false
+   assert(toolkitVideoStart(videoRoot..'/'..spec,ffmpeg),'Natural control video start rejected')
+   controlStart=getTimestampMs();controlSample=0
+   print('[CART_NATURAL_CONTROL] START spec='..spec..' wall='..controlStart..' x='..p:getX()..' y='..p:getY()..' wallX='..wallX)
+   cartLabGait(spec=='natural-sprint-wall' and 2 or 1)
+  end
   cartLabDrive(controlDrive(spec));return
+ end
+ if mode=='control-finish' then
+  local video=toolkitVideoStatus();assert(video.state~='failed','Natural control encoder failed: '..tostring(video.error))
+  if video.state=='completed' then
+   print('[CART_NATURAL_CONTROL] COMPLETE spec='..controls[controlIndex]..' wall='..controlStart..' file='..tostring(video.file)..' frames='..tostring(video.frames)..' seconds='..tostring(video.seconds))
+   nextControl()
+  end
+  return
  end
  if mode=='control-drive' then
   local spec=controls[controlIndex]
+  if naturalControl(spec) then
+   local status=cartLabNaturalImpact();local elapsed=now-controlStart
+   if now-controlSample>=25 then
+    controlSample=now
+    print('[CART_NATURAL_SAMPLE] spec='..spec..' wall='..now..' elapsed='..elapsed..' x='..p:getX()..' y='..p:getY()..' '..status..' tracks='..cartLabTracks())
+   end
+   if not naturalStopped and (status:match('naturalEvents=1') or elapsed>=4000) then
+    naturalStopped=true;cartLabDrive(0);cartLabGait(0)
+    print('[CART_NATURAL_CONTROL] INPUT_STOP spec='..spec..' wall='..now..' elapsed='..elapsed)
+   end
+   assert(toolkitVideoStatus().state~='failed','Natural control video failed')
+   if elapsed>=8000 then
+    assert(naturalStopped,'Natural control input not released')
+    assert(toolkitVideoStop(),'Natural control video stop rejected');mode='control-finish'
+   end
+   return
+  end
   if now-controlSample>=25 then
    controlSample=now
    print('[CART_COLLISION_CONTROL_SAMPLE] spec='..spec..' wall='..now..' elapsed='..(now-controlStart)..' x='..p:getX()..' y='..p:getY()..' heading='..cartLabHeading()..' drive='..controlDrive(spec)
@@ -393,6 +432,7 @@ local function tick()
   if config.impact then
    print('[CART_IMPACT_SAMPLE] case='..c.name..' wall='..now..' elapsed='..elapsed
     ..' x='..p:getX()..' y='..p:getY()..' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' '..cartLabSafety(c.item,CartTestArea.x,CartTestArea.y))
+   print('[CART_NATURAL_CART] case='..c.name..' wall='..now..' elapsed='..elapsed..' drive='..tostring(c.steps[stage] and c.steps[stage][3] or 0)..' '..cartLabNaturalImpact()..' footprint='..(p:getPrimaryHandItem()==c.item and cartLabFootprint() or 'inactive'))
   else
    print('[WOOD_BANK_SAMPLE] case='..c.name..' wall='..now..' elapsed='..elapsed..' x='..p:getX()..' y='..p:getY()
    ..' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' skill='..p:getPerkLevel(Perks.Sprinting)..' speed='..p:getVariableFloat('WalkSpeed',0)

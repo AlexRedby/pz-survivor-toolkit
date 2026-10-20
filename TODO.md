@@ -12,9 +12,8 @@
 
 ## Maneuvers and transitions
 
-- [ ] Verify the current vanilla conditions for a natural sprint collision/fall with the wooden cart and expose a short impact/get-up recording for user review. The existing `native-impact` fixture injects `collideWithWall`; it checks emergency release/recovery, not the natural trigger or probability. Keep stock impact/get-up clips and exact cart/cargo identity; add a real collision control before claiming natural fall coverage.
 - [ ] Extend live checks of forward/backward transitions at the reverse 130°/140° boundary and during collision, state reset and cart replacement; the math and hook regressions for these cases already exist. The full visual gate remains open until the pose defects below are resolved.
-- [ ] Extend collision checks to load changes, falling/combat/releasing the cart and safe state reset. Preserve exact cart/cargo identity, native collision and manual reverse. The movement/doorway matrix does not verify these interruption paths or Run/Sprint observer clearance.
+- [ ] Extend collision interruption checks to load changes, combat/releasing the cart, Host fall/recovery and safe state reset. Preserve exact cart/cargo identity, native collision and manual reverse. The movement/doorway matrix does not verify these interruption paths or Run/Sprint observer clearance.
 
 ## Pickup and put-down
 
@@ -26,6 +25,7 @@
 
 ## Known pose defects
 
+- [ ] Smooth the held-to-world cart placement during emergency wall-fall release: the injected recovery clip shows an abrupt cart relocation and brief leg/body overlap near release. Preserve immediate authoritative drop, exact cart/cargo identity and stock impact/get-up; do not delay emergency release to wait for a normal put-down animation.
 - [ ] Review rapid left/right steering response with the user before changing the established angular inertia: at Run/Sprint, a 300 ms opposite press can still produce net yaw in the previous direction. Keep measured response latency separate from unexpected stuck/wrong-way steering; preserve smooth bank transitions and wheel rolling if retuning is agreed.
 - [ ] Remove rendered fore-aft cart jumps during Walk side-clearance acquisition, Run/Sprint entry, rapid slaloms and stopping. Preserve native leg motion, the preferred straight pose and minimum hand/body clearance. Check monotonic-time wheel/handle trajectories and recordings, including startup and release; a clearance-only change or passing grip probes is insufficient.
 - [ ] Remove rare contact between wide jeans and the handles in the original straight pose, near it and at the start of the reverse arc, preserving the preferred hand and torso position. Contact remains in some zero-lean phases and nearby; also check the short Walk -> Cart Idle transition while equipping. Include Walk with a full load alongside a vehicle at 45° to the right: the left handle touches the trousers at about 4.18 s in scene `male-full-vehicle-yaw45-slide-right` in capture `cart-vehicles-20261018/native05`.

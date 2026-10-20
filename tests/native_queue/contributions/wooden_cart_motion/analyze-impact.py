@@ -46,7 +46,7 @@ def world_wheel_floor(row):
     return row['z'] + (1.5/2.44949)*lowest
 
 
-def analyze(profile, text, selected=None):
+def analyze(profile, text, selected=None, require_natural=False):
     profile = Path(profile)
     expected = CASES if selected is None else selected
     assert expected and len(set(expected)) == len(expected) and set(expected) <= set(CASES), 'Invalid impact selection'
@@ -210,7 +210,207 @@ def analyze(profile, text, selected=None):
                               releaseLatencyMs=None if guarded else drop-event,
                               reverseTravel=reverse[-1]['x']-reverse[0]['x'],
                               eventSource='none' if guarded else 'native-action-event'))
-    return dict(functionalPass=True, failures=[], cases=summaries,
+    natural = analyze_natural(profile, log, tail, complete) if require_natural else None
+    return dict(functionalPass=True, failures=[], cases=summaries, naturalImpact=natural,
                 limits=['Native event scenes inject collideWithWall while actually Sprinting; they do not prove a natural impact trigger.',
                         'World wheel-floor offset is diagnostic until calibrated against native stock world rendering and video.',
                         'Body/cloth clearance and visual animation quality remain separate diagnostics.'])
+
+NATURAL_CONTROLS = ('natural-run-wall', 'natural-sprint-wall')
+NATIVE_BOOLEANS = ('watch', 'actor', 'local', 'run', 'sprint', 'ignore', 'getup', 'hit',
+                   'knocked', 'ragdoll', 'collidedN', 'collidedS', 'collidedE', 'collidedW', 'collidedDoor')
+NATIVE_NUMBERS = ('timeMs', 'primary', 'secondary', 'wallType', 'naturalEvents', 'injectedEvents', 'otherEvents')
+COUNTERS = ('naturalEvents', 'injectedEvents', 'otherEvents')
+
+
+def natural_row(row, token=False):
+    row = dict(row)
+    for key in NATIVE_BOOLEANS:
+        if token:
+            assert row.get(key) in ('true', 'false'), 'Invalid native boolean ' + key
+            row[key] = row[key] == 'true'
+        else:
+            assert type(row.get(key)) is bool, 'Invalid receipt boolean ' + key
+    for key in NATIVE_NUMBERS:
+        assert not isinstance(row.get(key), bool), 'Invalid native number ' + key
+        row[key] = float(row[key])
+        assert math.isfinite(row[key]) and row[key].is_integer(), 'Invalid native number ' + key
+    assert all(row[k] >= 0 for k in COUNTERS), 'Negative event counter'
+    assert row['watch'] and row['actor'] and row['local'], 'Wrong native observation actor/watch'
+    assert row.get('state') and row.get('action') and row.get('dir') and row.get('origin'), 'Incomplete native observation'
+    return row
+
+
+def native_receipts(log):
+    receipts = []
+    for order, line in enumerate(log.splitlines()):
+        if '[CART_NATURAL_HIT] ' in line:
+            row = json.loads(line.split('[CART_NATURAL_HIT] ', 1)[1])
+            assert row.get('kind') in ('watch', 'event'), 'Unknown native receipt'
+            # A disabled watch is a boundary, not an observation of a live actor.
+            if row.get('kind') == 'watch' and row.get('watch') is False:
+                assert type(row.get('timeMs')) in (int, float) and math.isfinite(row['timeMs']), 'Invalid watch end'
+            else:
+                row = natural_row(row)
+            row['_logOrder'] = order
+            receipts.append(row)
+    assert receipts and all(a['timeMs'] <= b['timeMs'] for a, b in zip(receipts, receipts[1:])), 'Missing/ordered provenance receipts'
+    return receipts
+
+
+def observation_window(receipts, rows, start, end):
+    starts = [r for r in receipts if r['kind'] == 'watch' and r.get('watch') is True and r['timeMs'] <= start]
+    assert starts and 0 <= start-starts[-1]['timeMs'] <= 5000, 'Missing bounded active watch'
+    watch = starts[-1]
+    assert all(watch[k] == 0 for k in COUNTERS) and watch['origin'] == 'watch-control', 'Watch counters not reset'
+    for key in ('movingObjectSha256', 'actionContextSha256'):
+        assert re.fullmatch('[a-f0-9]{64}', watch.get(key, '')), 'Missing watched class fingerprint'
+    boundaries = [r for r in receipts if r['kind'] == 'watch' and r['_logOrder'] > watch['_logOrder']]
+    boundary = boundaries[0] if boundaries else None
+    assert boundary is None or boundary['timeMs'] >= end, 'Native watch ended during observation'
+    events = [r for r in receipts if r['kind'] == 'event' and watch['_logOrder'] < r['_logOrder']
+              and (boundary is None or r['_logOrder'] < boundary['_logOrder'])]
+    # A watch spans setup as well as the bounded capture. An event in setup cannot be hidden.
+    assert all(start <= e['timeMs'] <= end for e in events), 'Impact outside captured observation'
+    counts = dict.fromkeys(COUNTERS, 0)
+    origins = {'native-checkHitWall': 'naturalEvents', 'injected-cartLabWallEvent': 'injectedEvents', 'other': 'otherEvents'}
+    for event in events:
+        assert event.get('event') == 'collideWithWall' and event.get('origin') in origins, 'Invalid wall event provenance'
+        stack = event.get('stack', '').split(';')
+        native = 'zombie.iso.IsoMovingObject.checkHitWall' in stack
+        injected = any(s.endswith('.Main.wallEvent') or s == 'Main.wallEvent' for s in stack)
+        origin = event['origin']
+        assert (origin == 'injected-cartLabWallEvent') == injected, 'Injected stack provenance mismatch'
+        assert (origin == 'native-checkHitWall') == (native and not injected), 'Natural stack provenance mismatch'
+        counts[origins[origin]] += 1
+        assert all(event[k] == counts[k] for k in COUNTERS), 'Event receipt counter mismatch'
+    for row in rows:
+        # Clock equality is resolved by emitted log order, never by relaxing counters.
+        elapsed_events = [e for e in events if (e['timeMs'], e['_logOrder']) < (row['timeMs'], row['_logOrder'])]
+        for origin, key in origins.items():
+            assert row[key] == sum(e['origin'] == origin for e in elapsed_events), 'Sample/receipt provenance mismatch'
+        expected_origin = elapsed_events[-1]['origin'] if elapsed_events else 'none'
+        assert row['origin'] == expected_origin, 'Sample origin mismatch'
+    return events, {k: watch[k] for k in ('movingObjectSha256', 'actionContextSha256')}
+
+
+def observation_samples(log, marker, key, name, start, duration):
+    rows = []
+    for order, line in enumerate(log.splitlines()):
+        if marker not in line:
+            continue
+        raw = fields(line.split(marker, 1)[1])
+        if raw.get(key) != name:
+            continue
+        row = natural_row(raw, token=True)
+        row['_logOrder'] = order
+        for number in ('wall', 'elapsed'):
+            row[number] = float(row[number])
+            assert math.isfinite(row[number]), 'Nonfinite natural sample clock'
+        assert start <= row['wall'] <= start+duration+250, 'Natural sample outside bounded window'
+        assert abs(row['wall']-start-row['elapsed']) < 5 and abs(row['timeMs']-row['wall']) <= 100, 'Misaligned natural clock'
+        rows.append(row)
+    assert len(rows) >= duration/60 and rows[0]['elapsed'] <= 150 and duration-200 <= rows[-1]['elapsed'] <= duration+250, 'Incomplete natural observation window'
+    assert all(0 < b['wall']-a['wall'] <= 150 and 0 < b['timeMs']-a['timeMs'] <= 150 for a, b in zip(rows, rows[1:])), 'Natural sample coverage gap'
+    return rows
+
+
+def natural_render(tail, rows, start, end):
+    poses = [r for r in tail if start <= r['wallTimeMillis'] <= end]
+    times = [r['wallTimeMillis'] for r in poses]
+    assert times and times == sorted(times) and all(0 < b-a <= 150 for a, b in zip(times, times[1:])), 'Natural render coverage gap'
+    for row in rows:
+        covered(times, row['wall'], 'Missing natural rendered phase')
+    for pose in poses:
+        assert BONEMAP <= pose.get('bones', {}).keys(), 'Missing natural render bones'
+        assert all(len(m) == 16 and all(type(v) in (int, float) and math.isfinite(v) for v in m) for m in pose['bones'].values()), 'Invalid natural render bones'
+        assert pose.get('tracks') and all(isinstance(t.get('name'), str) and type(t.get('weight')) in (int, float) and math.isfinite(t['weight']) for t in pose['tracks']), 'Invalid natural rendered tracks'
+        assert pose.get('cartModel') is False and pose.get('cartModelCount') == 0, 'Bare control renders a held cart'
+    return poses
+
+
+def analyze_natural(profile, log, tail, complete):
+    receipts = native_receipts(log)
+    starts = [fields(line.split('[CART_NATURAL_CONTROL] START ', 1)[1]) for line in log.splitlines() if '[CART_NATURAL_CONTROL] START ' in line]
+    finishes = [fields(line.split('[CART_NATURAL_CONTROL] COMPLETE ', 1)[1]) for line in log.splitlines() if '[CART_NATURAL_CONTROL] COMPLETE ' in line]
+    assert [r.get('spec') for r in starts] == list(NATURAL_CONTROLS) == [r.get('spec') for r in finishes], 'Missing/reordered natural controls'
+    controls = []
+    for begin, finish in zip(starts, finishes):
+        name, start = begin['spec'], float(begin['wall'])
+        assert math.isfinite(start) and finish['wall'] == begin['wall'], 'Wrong completed natural attempt'
+        assert finish.get('file') not in (None, 'nil', 'none', '') and float(finish['frames']) > 0 and math.isfinite(float(finish['seconds'])) and float(finish['seconds']) >= 7.5, 'Incomplete natural control video'
+        rows = observation_samples(log, '[CART_NATURAL_SAMPLE] ', 'spec', name, start, 8000)
+        for row in rows:
+            for coord in ('x', 'y'):
+                row[coord] = float(row[coord])
+                assert math.isfinite(row[coord]), 'Nonfinite natural control position'
+        events, fingerprints = observation_window(receipts, rows, start, rows[-1]['timeMs'])
+        assert all(r['primary'] == r['secondary'] == -1 for r in rows), 'Natural control is not bare hands'
+        wall_x, initial_x = float(begin['wallX']), float(begin['x'])
+        assert all(math.isfinite(v) for v in (wall_x, initial_x)) and initial_x-wall_x > 2 and initial_x-rows[-1]['x'] > 1, 'No measured bare approach to wall'
+        sprint = name == 'natural-sprint-wall'
+        gait = 'sprint' if sprint else 'run'
+        approach = [r for r in rows if r[gait] and r['action'] == gait and r['dir'] == 'W']
+        assert len(approach) >= 2, 'No actual bare '+gait+' approach'
+        stops = [fields(line.split('[CART_NATURAL_CONTROL] INPUT_STOP ', 1)[1]) for line in log.splitlines() if '[CART_NATURAL_CONTROL] INPUT_STOP ' in line]
+        stops = [r for r in stops if r.get('spec') == name]
+        assert len(stops) == 1, 'Missing/repeated natural input stop'
+        stop = float(stops[0]['wall'])
+        assert math.isfinite(stop) and abs(stop-start-float(stops[0]['elapsed'])) < 5, 'Invalid natural input stop clock'
+        protected = [r for r in rows if r['state'] in PROTECTED]
+        poses = natural_render(tail, rows, start, rows[-1]['wall'])
+        if sprint:
+            assert len(events) == 1 and events[0]['origin'] == 'native-checkHitWall', 'Missing exact natural sprint event'
+            event = events[0]
+            assert event['sprint'] and event['dir'] == 'W' and event['collidedW'] and int(event['wallType']) & 4, 'Natural event lacks native sprint/W wall collision'
+            assert event['primary'] == event['secondary'] == -1, 'Natural event actor held an item'
+            assert approach[0]['timeMs'] < event['timeMs'] and event['timeMs'] <= stop <= event['timeMs']+150, 'Natural event/input stop order'
+            phases = [r['state'] for i, r in enumerate(protected) if i == 0 or r['state'] != protected[i-1]['state']]
+            assert phases == ['CollideWithWallState', 'PlayerGetUpState'], 'Missing/incorrect natural collision/getup episode'
+            assert all(r['state'] in PROTECTED for r in rows if protected[0]['wall'] <= r['wall'] <= protected[-1]['wall']), 'Discontinuous natural recovery'
+            assert event['timeMs']-100 <= protected[0]['wall'] <= event['timeMs']+500 and protected[-1]['wall'] <= event['timeMs']+5000, 'Unbounded natural recovery'
+            for state, clip in (('CollideWithWallState', 'Bob_SprintIntoWall'), ('PlayerGetUpState', 'Bob_GetUp_Back')):
+                phase = [r for r in protected if r['state'] == state]
+                rendered = [p for p in poses if phase[0]['wall']-150 <= p['wallTimeMillis'] <= phase[-1]['wall']+150]
+                assert any(t['name'] == clip and t['weight'] > .2 for p in rendered for t in p['tracks']), 'Missing natural rendered '+clip
+        else:
+            assert not events and not protected and not any(r['sprint'] for r in rows), 'Bare Run unexpectedly fell/impacted'
+            assert any(r['collidedW'] and r['dir'] == 'W' and int(r['wallType']) & 4 for r in rows), 'Bare Run never reached directional wall collision'
+            assert 4000 <= stop-start <= 4150, 'Bare Run input stop is not bounded'
+        quiet = [r for r in rows if r['elapsed'] >= 7000]
+        assert quiet and all(r['action'] == 'idle' and r['state'] not in PROTECTED and not any(r[k] for k in ('run', 'sprint', 'ignore', 'getup', 'ragdoll', 'hit', 'knocked')) for r in quiet), 'Natural control failed final idle recovery'
+        assert max(math.hypot(r['x']-quiet[0]['x'], r['y']-quiet[0]['y']) for r in quiet) < .02, 'Natural idle control moved'
+        controls.append(dict(control=name, samples=len(rows), renderSamples=len(poses), eventSource=events[0]['origin'] if events else 'none', protectedStates=sorted({r['state'] for r in protected}), fingerprints=fingerprints))
+    cart = []
+    for name, start in complete:
+        start = int(start)
+        rows = observation_samples(log, '[CART_NATURAL_CART] ', 'case', name, start, 12000)
+        events, fingerprints = observation_window(receipts, rows, start, rows[-1]['timeMs'])
+        ownership_samples = [fields(line.split('[CART_IMPACT_SAMPLE] ', 1)[1]) for line in log.splitlines()
+                             if '[CART_IMPACT_SAMPLE] ' in line]
+        ownership_samples = {float(r['wall']): r for r in ownership_samples if r.get('case') == name}
+        shared = ('state', 'action', 'run', 'sprint', 'ignore', 'getup', 'hit', 'knocked', 'ragdoll', 'primary', 'secondary')
+        for row in rows:
+            owner = ownership_samples.get(row['wall'])
+            assert owner is not None, 'Natural cart observation lacks matched ownership sample'
+            for key in shared:
+                expected = owner[key] == 'true' if key in NATIVE_BOOLEANS else float(owner[key]) if key in ('primary', 'secondary') else owner[key]
+                assert row[key] == expected, 'Natural cart/ownership state mismatch: '+key
+        guarded = name.endswith('sprint-wall')
+        if guarded:
+            assert not events and all(r['state'] not in PROTECTED for r in rows), 'Guarded cart unexpectedly received native wall event'
+            quiet = [r for r in rows if 5000 <= r['elapsed'] < 5800]
+            # cartBlocked resets on zero root displacement; Sprint may remain requested.
+            # Stationary brace/pace/wheel and exact ownership gates above prove the stop.
+            assert quiet and all(r.get('clear') == 'true' and r.get('recovering') == 'false' and not any(r[k] for k in ('collidedN', 'collidedS', 'collidedE', 'collidedW', 'collidedDoor')) for r in quiet), 'Cart frontal guard did not stop before body contact'
+            assert all(r.get('footprint', '').startswith('front=') and math.isfinite(float(r['footprint'].split('=', 1)[1])) and float(r['footprint'].split('=', 1)[1]) > 0 for r in quiet), 'Missing front footprint evidence'
+            assert any(r.get('drive') == '1' and r['sprint'] and r['action'] == 'sprint' for r in rows if 1000 <= r['elapsed'] < 2000), 'Missing actual cart forward sprint'
+            assert any(r.get('drive') == '4' and r['state'] == 'PlayerMovementState' and r['action'] == 'movement' and not r['run'] and not r['sprint'] for r in rows if 7500 <= r['elapsed'] <= 9400), 'Missing cart reverse recovery'
+        else:
+            assert len(events) == 1 and events[0]['origin'] == 'injected-cartLabWallEvent', 'Cart release was not explicitly injected'
+            injected = [fields(line.split('[CART_IMPACT_EVENT] ', 1)[1]) for line in log.splitlines() if '[CART_IMPACT_EVENT] ' in line]
+            injected = [r for r in injected if r.get('case') == name]
+            assert len(injected) == 1 and abs(events[0]['timeMs']-float(injected[0]['wall'])) <= 100, 'Injected release receipt does not match action event'
+        cart.append(dict(case=name, samples=len(rows), eventSource='none' if guarded else 'injected-cartLabWallEvent', fingerprints=fingerprints))
+    return dict(functionalPass=True, controls=controls, cases=cart,
+                scope='Bare vanilla Run/Sprint wall controls, cart frontal guard, and explicitly injected cart release; selected cases only.')

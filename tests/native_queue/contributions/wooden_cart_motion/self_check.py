@@ -20,7 +20,7 @@ def check_manifest():
     assert manifest["live_after_parameterization"] == "reverse_only_2026-10-16"
     assert manifest["exclusive_native_process"] is True
     assert manifest["sources"] == {
-        "java": "Main.java", "kahlua_checks": "KahluaChecks.java", "test_area": "test-area.lua",
+        "java": "Main.java", "kahlua_checks": "KahluaChecks.java", "impact_watch_checks": "ImpactWatchChecks.java", "test_area": "test-area.lua",
         "bootstrap": "bootstrap.lua", "scenario": "scenario-clips.lua", "reverse_scenario": "scenario-reverse.lua", "reverse_analyzer": "analyze-reverse.py", "reversal_scenario": "scenario-reversal.lua", "stop_scenario": "scenario-stop.lua", "stop_analyzer": "analyze-stop.py",
         "evidence": "evidence/README.md",
         "motion_matrix_scenario": "scenario-motion-matrix.lua", "motion_matrix_analyzer": "analyze-motion-matrix.py",
@@ -51,7 +51,7 @@ def check_manifest():
     axes = manifest["scenario"]["axes"]
     assert len(axes["sex"]) * len(axes["cargo"]) * len(axes["spec"]) == 16
     assert set(manifest["criteria"]) == {"completion", "grip", "geometry", "native_pose", "floor", "gait", "diagnostics"}
-    allowed = {"Main.java", "KahluaChecks.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py", "obstacles.lua", "scenario-collision.lua", "analyze-collision.py", "analyze-footprint.py"}
+    allowed = {"Main.java", "KahluaChecks.java", "ImpactWatchChecks.java", "test-area.lua", "bootstrap.lua", "scenario-clips.lua", "manifest.json", "README.md", "self_check.py", "scenario-reverse.lua", "analyze-reverse.py", "scenario-reversal.lua", "analyze-reversal.py", "scenario-stop.lua", "analyze-stop.py", "scenario-stationary.lua", "analyze-stationary.py", "scenario-maneuvers.lua", "analyze-maneuvers.py", "obstacles.lua", "scenario-collision.lua", "analyze-collision.py", "analyze-footprint.py"}
     allowed |= {"scenario-interaction.lua", "analyze-interaction.py", "analyze-interruption.py", "analyze-repeat.py",
                 "analyze-wheel-cycle.py", "scenario-path.lua", "analyze-path.py", "scene-selection.lua", "analyze-impact.py", "analyze-stop-timing.py", "vehicles.lua", "scenario-vehicles.lua", "analyze-vehicles.py", "analyze-brace.py"}
     allowed |= {"scenario-controls.lua", "scenario-variants.lua", "scenario-native-e.lua", "scenario-pivot.lua", "analyze-pivot.py",
@@ -268,7 +268,7 @@ def check_java(game, jdk, patch):
     jars = [game / name for name in ("projectzomboid.jar", "ZombieBuddy.jar")] + [patch.resolve()]
     assert all(path.is_file() for path in jars), "Local game/ZombieBuddy and candidate patch JARs required"
     with tempfile.TemporaryDirectory(prefix="wooden-cart-compile-") as output:
-        subprocess.run([str(compiler), "--release", "17", "-cp", os.pathsep.join(map(str, jars)), "-d", output, str(HERE / "Main.java"), str(HERE / "KahluaChecks.java")], check=True)
+        subprocess.run([str(compiler), "--release", "17", "-cp", os.pathsep.join(map(str, jars)), "-d", output, str(HERE / "Main.java"), str(HERE / "KahluaChecks.java"), str(HERE / "ImpactWatchChecks.java")], check=True)
         assert (Path(output) / "net/alexredby/cartlab/Main.class").is_file()
         runtime = jdk / "bin" / ("java.exe" if os.name == "nt" else "java")
         for pad in ('false', 'true'):
@@ -276,7 +276,20 @@ def check_java(game, jdk, patch):
                            check=True, cwd=game, env=dict(os.environ, PZ_CART_TEST_PAD=pad,
                             PZ_CART_RUNTIME_FILE=str(Path(output)/'runtime.lua'),
                             PZ_CART_COMMAND_FILE=str(Path(output)/'commands.txt')))
-    return "PASS (compile, chunk-window bounds/guard and stock Kahlua obstacle checks; native game not launched)"
+        impact = subprocess.run([str(runtime), "-cp", os.pathsep.join([output, *map(str, jars)]),
+                                 "net.alexredby.cartlab.ImpactWatchChecks"],
+                                check=True, cwd=game, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                env=dict(os.environ, PZ_CART_TEST_PAD='false',
+                                         PZ_CART_RUNTIME_FILE=str(Path(output)/'runtime.lua'),
+                                         PZ_CART_COMMAND_FILE=str(Path(output)/'commands.txt')))
+        print(impact.stdout, end="")
+        json_rows = [line.removeprefix('IMPACT_JSON_CHECK ') for line in impact.stdout.splitlines()
+                     if line.startswith('IMPACT_JSON_CHECK ')]
+        assert len(json_rows) == 1, "Expected exactly one impact JSON roundtrip row"
+        assert json.loads(json_rows[0]) == {'text': 'quote" slash\\ line\n', 'count': 2, 'flag': True}, "Impact receipt JSON escaped incorrectly"
+        assert 'CART_IMPACT_WATCH_CHECK_PASS' in impact.stdout, "Impact provenance checks did not complete"
+        print("CART_IMPACT_JSON_PARSE_PASS")
+    return "PASS (compile, chunk-window bounds/guard, stock Kahlua obstacles, impact provenance/schema and JSON roundtrip; native game not launched)"
 
 
 def main():

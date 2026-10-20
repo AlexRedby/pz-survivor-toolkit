@@ -386,6 +386,12 @@ def _videos(root, selection, role, text):
             raise ValueError('Expected one final MP video receipt')
         item = json.loads(rows[0]); records = [(role, '0', item['file'], str(item['frames']), str(item['seconds']))]
     expected = 1 if selection['suite'] == MP else len(selected_scenes(selection))
+    if selection['suite'] == SP and selection['cases'] == ['impact']:
+        controls = re.findall(r'\[CART_NATURAL_CONTROL\] COMPLETE spec=(\S+) wall=(\d+) file=(.+?) frames=(\d+) seconds=([\d.]+)', text)
+        if [row[0] for row in controls] != ['natural-run-wall', 'natural-sprint-wall']:
+            raise ValueError('Missing, duplicate or reordered natural impact control videos')
+        records = controls + records
+        expected += 2
     if selection['suite'] == SP and selection['cases'] == ['controls'] and [row[0] for row in records] != selected_scenes(selection):
         raise ValueError('Missing, duplicate or reordered controls videos')
     if len(records) != expected or len({row[2] for row in records}) != expected:
@@ -856,14 +862,14 @@ def verify(root, selection, catalog):
                      'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
                                  'partialCoverage': debug, 'selectedScenes': selected_scenes(selection)}}]}
             if case == 'impact':
-                impact = _load(intake / 'analyze-impact.py').analyze(cache, texts['client1'], selected_scenes(selection))
+                impact = _load(intake / 'analyze-impact.py').analyze(cache, texts['client1'], selected_scenes(selection), require_natural=True)
                 _write(analysis / 'impact.json', json.dumps(impact, indent=2, allow_nan=False))
                 if not impact['functionalPass']:
                     raise ValueError('Native impact recovery failed: ' + str(impact['failures']))
                 evidence.update(impact=impact, analysis=str(analysis), evidenceComplete=True)
                 return {'issues': [], 'evidence': evidence, 'outcomes': [
                     {'actor': 'client1', 'case': case, 'status': 'captured',
-                     'reason': 'Guarded Sprint contact and explicitly injected native collision event; visual review remains separate',
+                     'reason': 'Natural bare Run/Sprint wall controls, guarded cart contact and separately injected cart recovery; visual review remains separate',
                      'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
                                  'partialCoverage': debug, 'nativeRecoveryVerified': True}}]}
             if debug:
