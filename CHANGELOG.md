@@ -591,6 +591,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.32
+
+- **Fixed:** Wooden carts keep a consistent collision-constrained path while aligning with a wall. Established contact preserves tangential travel and accepts only the inward movement made safe by the planned turn, preventing alternating sidesteps without changing manual reverse or wall clearance. Contact steering follows the native animation movement budget, avoiding residual sidestep flicker when deferred motion and the current frame have different durations.
+
 ### 0.1.31
 
 - **Fixed:** Wooden wheelbarrow steering no longer accumulates yaw from rounded world coordinates after releasing the keys. Manual wall exits keep the requested turn direction while collision checks limit travel and rotation. Forward wall sliding finishes aligning with the wall and releases guidance when steering away or releasing forward movement.

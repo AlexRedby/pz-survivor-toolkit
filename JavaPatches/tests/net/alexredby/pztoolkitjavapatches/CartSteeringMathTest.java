@@ -91,6 +91,60 @@ public final class CartSteeringMathTest {
         close(CartSteeringMath.acceptedTurn(0, 0, .02, .01), 0, "invalid axle cannot steer");
     }
 
+    private static void wallClockChecks() {
+        double cadence=.7,motionScale=1.6,worldSpeed=cadence*motionScale,normalDt=1.0/60;
+        close(CartSteeringMath.wallStepSeconds(worldSpeed*normalDt,cadence,motionScale,normalDt),normalDt,
+            "steady wall cadence keeps the original steering interval and includes native motion scale");
+        close(CartSteeringMath.wallStepSeconds(0,cadence,motionScale,normalDt),0,"zero root budget cannot advance wall yaw");
+        close(CartSteeringMath.wallStepSeconds(Double.NaN,cadence,motionScale,normalDt),0,"invalid root budget cannot advance wall yaw");
+        close(CartSteeringMath.wallStepSeconds(1,cadence,motionScale,normalDt),.1,"deferred wall clock keeps the existing interval cap");
+        for(double speed:new double[]{0,-1,Double.NaN,Double.POSITIVE_INFINITY,1e-12})
+            close(CartSteeringMath.wallStepSeconds(.02,speed,motionScale,normalDt),normalDt,
+                "missing or vanishing native cadence falls back to current time");
+        for(double scale:new double[]{0,-1,Double.NaN,Double.POSITIVE_INFINITY})
+            close(CartSteeringMath.wallStepSeconds(.02,cadence,scale,normalDt),normalDt,
+                "invalid motion scale falls back without introducing a new movement budget");
+        close(CartSteeringMath.wallStepSeconds(.02,0,motionScale,Double.NaN),0,"nonfinite fallback time is safe");
+        close(CartSteeringMath.wallStepSeconds(.02,0,motionScale,-1),0,"negative fallback time is safe");
+        close(CartSteeringMath.wallStepSeconds(.02,0,motionScale,1),.1,"fallback time retains the existing cap");
+        // native01 Walk-slide grounding rows 62.20-62.55s: root distance follows the preceding animator interval.
+        double[] currentDt={.016669,.021717,.011625,.016658,.025816,.007516,.016668,.016667};
+        for(int sign:new int[]{-1,1}) for(int load:new int[]{0,1}) {
+            double heading=0,referenceHeading=0,wrongHeading=0,rate=0,referenceRate=0,wrongRate=0;
+            double previousCurvature=0,previousWrongCurvature=0;
+            int trend=0,wrongTrend=0,curvatureReversals=0,wrongCurvatureReversals=0;
+            double axle=1.13599443394,target=sign*Math.PI/4;
+            for(int frame=0;frame<160;frame++) {
+                int index=frame%currentDt.length;
+                double producerDt=currentDt[(index+currentDt.length-1)%currentDt.length];
+                double distance=worldSpeed*producerDt;
+                double seconds=CartSteeringMath.wallStepSeconds(distance,cadence,motionScale,currentDt[index]);
+                var step=CartSteeringMath.woodenStep(heading,target,distance,seconds,load,axle,rate,false,new CartSteeringMath.Step());
+                var reference=CartSteeringMath.woodenStep(referenceHeading,target,distance,producerDt,load,axle,referenceRate,false,
+                    new CartSteeringMath.Step());
+                var wrong=CartSteeringMath.woodenStep(wrongHeading,target,distance,currentDt[index],load,axle,wrongRate,false,
+                    new CartSteeringMath.Step());
+                close(step.turn(),reference.turn(),"deferred root cadence preserves spatial yaw against its producer-interval reference");
+                close(step.x(),reference.x(),"deferred root cadence preserves rolling X");
+                close(step.y(),reference.y(),"deferred root cadence preserves rolling Y");
+                check(step.turn()*sign>=0,"a continuous wall guide must not reverse its yaw");
+                double curvature=Math.abs(step.turn())/distance,wrongCurvature=Math.abs(wrong.turn())/distance;
+                int nextTrend=Math.abs(curvature-previousCurvature)>.01?(curvature>previousCurvature?1:-1):0;
+                int nextWrongTrend=Math.abs(wrongCurvature-previousWrongCurvature)>.01?(wrongCurvature>previousWrongCurvature?1:-1):0;
+                if(nextTrend!=0) {if(trend!=0 && trend!=nextTrend) curvatureReversals++;trend=nextTrend;}
+                if(nextWrongTrend!=0) {if(wrongTrend!=0 && wrongTrend!=nextWrongTrend) wrongCurvatureReversals++;wrongTrend=nextWrongTrend;}
+                previousCurvature=curvature;previousWrongCurvature=wrongCurvature;
+                heading=CartSteeringMath.wrap(heading+step.turn());referenceHeading=CartSteeringMath.wrap(referenceHeading+reference.turn());
+                wrongHeading=CartSteeringMath.wrap(wrongHeading+wrong.turn());
+                // The next guide rate must use the same spatial interval, rather than reintroducing wall-clock jitter.
+                rate=step.turn()/seconds;referenceRate=reference.turn()/producerDt;wrongRate=wrong.turn()/currentDt[index];
+            }
+            check(curvatureReversals<=1,"wall curvature may accelerate then settle, without repeated clock-induced reversals");
+            check(wrongCurvatureReversals>5,"lagged-budget regression must expose the original current-dt curvature chatter");
+            close(heading,target,"irregular native cadence still completes the guided turn");
+        }
+    }
+
     private static void woodenArc() {
         double axle=1.0224308175;
         for(int load:new int[]{0,1}) for(int sign:new int[]{-1,1}) {
@@ -299,6 +353,7 @@ public final class CartSteeringMathTest {
         check(CartSteeringMath.reversing(0,Math.PI),"opposite input requests reverse, not an instant U-turn");
         wheelbarrowChecks();
         woodenArc();
+        wallClockChecks();
         woodenTransitions();
         var reverse = CartSteeringMath.step(0, Math.PI, 0.03, 1.0 / 60, 0);
         close(reverse.x(), -0.03, "reverse escapes head-on wall");

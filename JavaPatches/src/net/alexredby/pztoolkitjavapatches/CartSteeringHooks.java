@@ -6,6 +6,7 @@ import zombie.ai.states.CollideWithWallState;
 import zombie.characters.IsoGameCharacter;
 import zombie.characters.IsoPlayer;
 import zombie.characters.CharacterInputMode;
+import zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator;
 import zombie.inventory.ItemContainer;
 import zombie.inventory.types.InventoryContainer;
 import zombie.iso.Vector2;
@@ -29,7 +30,7 @@ public final class CartSteeringHooks {
         boolean wheelRendered, stationary, stationaryRoot, cartBlocked, recovering, path, relative;
         double footprintFront=CartFootprint.WALK_FRONT;
         double slideTurn=Double.NaN;
-        double wallHeading=Double.NaN, wallNormalX, wallNormalY, wallTurnRate;
+        double wallHeading=Double.NaN, wallNormalX, wallNormalY, wallTurnRate, wallStepSeconds;
         boolean moving, pending, sprintMomentum, sprintRequested, hasInput, wantsMove, braking, brakeSeen, fastMoving;
         boolean sprintMoving, momentumSprint;
         final CartSteeringMath.Step requested = new CartSteeringMath.Step();
@@ -338,6 +339,9 @@ public final class CartSteeringHooks {
             && CartFootprint.followWall(query,state.startX,state.startY,state.heading,state.target,state.wallHeading,
                 state.wallNormalX,state.wallNormalY,state.footprintFront,state.relative);
         if(!guided) state.wallHeading=Double.NaN;
+        // Deferred native movement may belong to an earlier animation update. Align contact
+        // yaw with its travelled budget, rather than a different current-frame time interval.
+        state.wallStepSeconds=guided && state.relative?CartSteeringMath.wallStepSeconds(distance,state.visualSpeed,AdvancedAnimator.motionScale,dt):dt;
         double rollingTarget=guided?state.wallHeading:state.reversal.braking?state.brakeTarget
             :state.wantsMove?state.target:state.heading+(state.reversal.direction<0?Math.PI:0);
         if(state.stationaryRoot) {
@@ -347,7 +351,7 @@ public final class CartSteeringHooks {
             state.stationaryRate=dt>0?state.requested.turn()/dt:0;
         } else if(wooden(player)) CartSteeringMath.woodenStep(state.heading,
                 rollingTarget, distance,
-                GameTime.getInstance().getRealworldSecondsSinceLastUpdate(),state.load,axle(player),
+                guided?state.wallStepSeconds:GameTime.getInstance().getRealworldSecondsSinceLastUpdate(),state.load,axle(player),
                 guided?state.wallTurnRate:state.turnRate,state.reversal.direction<0,state.requested);
         else CartSteeringMath.step(state.heading,
                 state.relative || state.moving ? state.target : state.heading, distance,
@@ -367,6 +371,10 @@ public final class CartSteeringHooks {
                 double reverse=Math.min(0,state.result.x*Math.cos(state.heading)+state.result.y*Math.sin(state.heading));
                 state.result.set((float)(reverse*Math.cos(state.heading)),(float)(reverse*Math.sin(state.heading)));
                 state.cartBlocked=reverse==0;
+            } else if(guided && steered) {
+                var contact=CartFootprint.contactStep(query,state.startX,state.startY,state.heading,
+                    state.result.x,state.result.y,state.requested.turn(),state.wallNormalX,state.wallNormalY,state.footprintFront);
+                state.result.set((float)contact.x(),(float)contact.y());state.slideTurn=contact.turn();
             } else {
                 double fraction=steered?CartFootprint.rigidLimit(query,state.startX,state.startY,state.heading,
                     state.result.x,state.result.y,state.heading+state.requested.turn(),state.footprintFront)
@@ -582,7 +590,7 @@ public final class CartSteeringHooks {
             : wheelbarrow(player) && dt>0 ? Math.max(-.10,Math.min(.10,Math.signum(travel)*acceptedTurn/dt*.065)) : 0;
         state.turnRate=dt>0?acceptedTurn/dt:0;
         // Contact alignment has its own rate; releasing steering must still stop free/reverse yaw.
-        state.wallTurnRate=Double.isFinite(state.wallHeading)?state.turnRate:0;
+        state.wallTurnRate=Double.isFinite(state.wallHeading) && state.wallStepSeconds>0?acceptedTurn/state.wallStepSeconds:0;
         if(blocked) state.stationaryRate=0;
         if(wooden(player)) state.lean=state.bank.update(bank,dt);
         else state.lean+=(bank-state.lean)*(1-Math.exp(-dt/.08));

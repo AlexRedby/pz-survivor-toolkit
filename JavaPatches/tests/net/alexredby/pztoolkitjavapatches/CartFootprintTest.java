@@ -201,6 +201,151 @@ public final class CartFootprintTest {
             }
     }
 
+    private record WallWalk(int contactFrames,int acquisitions,int releases,int sideFlips,double progress,double heading) {}
+
+    /** Exercise the relative Forward feedback loop, rather than only a single slide or guide predicate. */
+    private static WallWalk relativeWallWalk(double axle,int normal,int direction,double distance) {
+        double origin=10825.5,y=10142.5,front=CartFootprint.WALK_FRONT,dt=1.0/60;
+        double heading=normal>0?direction*.6:Math.PI-direction*.6;
+        double tangent=direction*Math.PI/2;
+        double x=(float)(origin+normal*(1.7-(front-.28)*Math.cos(.6)-.00001));
+        CartFootprint.Query wall=(x1,y1,x2,y2)->
+            Math.max(normal*(x1-origin),normal*(x2-origin))+.3>=2;
+        for(int retreat=0;!CartFootprint.clear(wall,x,y,heading,front) && retreat<4;retreat++)
+            x=Math.nextAfter((float)x,normal>0?Double.NEGATIVE_INFINITY:Double.POSITIVE_INFINITY);
+        String context=normal+"/"+direction+"/"+distance;
+        check(CartFootprint.clear(wall,x,y,heading,front),"relative wall Walk must start clear: "+context);
+        double startY=y,wallHeading=Double.NaN,wallRate=0;
+        int contactFrames=0,acquisitions=0,releases=0,sideFlips=0,previousSide=0;
+        for(int frame=0;frame<600;frame++) {
+            boolean hadGuide=Double.isFinite(wallHeading);
+            // Forward with released steering follows accepted yaw, while contact alignment keeps its own rate.
+            double target=heading;
+            boolean guided=hadGuide && CartFootprint.followWall(wall,x,y,heading,target,wallHeading,normal,0,front,true);
+            if(hadGuide && !guided) releases++;
+            if(!guided) wallHeading=Double.NaN;
+            var requested=CartSteeringMath.woodenStep(heading,guided?wallHeading:target,distance,dt,0,axle,
+                guided?wallRate:0,false,new CartSteeringMath.Step());
+            double dx=(float)requested.x(),dy=(float)requested.y(),turn=requested.turn();
+            if(guided) {
+                double inward=Math.max(0,dx*normal),rounding=Math.ulp((float)x);
+                var contact=CartFootprint.contactStep(wall,x,y,heading,dx,dy,turn,normal,0,front);
+                check(contact!=null,"established relative contact must return a checked step: "+context+" frame="+frame);
+                dx=contact.x();dy=contact.y();turn=contact.turn();contactFrames++;
+                check(dx*normal<=inward+rounding && dx*normal>=-rounding,
+                    "contact alignment may accept requested inward travel but must not invent advance or automatic backoff: "+context+" frame="+frame);
+            } else {
+                double fraction=CartFootprint.rigidLimit(wall,x,y,heading,dx,dy,heading+turn,front);
+                var slide=CartFootprint.steeredSlide(wall,x,y,heading,dx,dy,front,fraction,turn);
+                if(slide==null) {dx*=fraction;dy*=fraction;turn*=fraction;}
+                else {
+                    dx=slide.x();dy=slide.y();turn=slide.turn();
+                    if(CartFootprint.pressingWall(target,slide.target(),slide.normalX(),slide.normalY())) {
+                        wallHeading=slide.target();acquisitions++;
+                    }
+                }
+            }
+            // Native commits root XY as floats before the post-update yaw and gait hooks run.
+            double actualX=(float)(x+dx)-x,actualY=(float)(y+dy)-y;
+            double planned=dx*dx+dy*dy;
+            turn*=planned>0?Math.max(0,Math.min(1,(actualX*dx+actualY*dy)/planned)):0;
+            double allowed=CartFootprint.rigidLimit(wall,x,y,heading,actualX,actualY,heading+turn,front);
+            actualX=(float)(x+actualX*allowed)-x;actualY=(float)(y+actualY*allowed)-y;turn*=allowed;
+            check(CartFootprint.rigidLimit(wall,x,y,heading,actualX,actualY,heading+turn,front)==1,
+                "every relative wall Walk step needs float-coordinate swept clearance: "+context+" frame="+frame);
+            check(turn*normal*direction>=-1e-12,"relative contact alignment must not reverse yaw: "+context+" frame="+frame);
+            x+=actualX;y+=actualY;heading=CartSteeringMath.wrap(heading+turn);
+            wallRate=Double.isFinite(wallHeading)?turn/dt:0;
+            double length=Math.hypot(actualX,actualY);
+            if(length>1e-6) {
+                double stepX=.8*(-actualX*Math.sin(heading)+actualY*Math.cos(heading))/length;
+                // One world-coordinate ULP can perturb an almost-forward gait; catch the large opposite Strafe changes.
+                int side=Math.abs(stepX)>.1?(stepX>0?1:-1):0;
+                if(side!=0) {if(previousSide!=0 && side!=previousSide) sideFlips++;previousSide=side;}
+            }
+        }
+        return new WallWalk(contactFrames,acquisitions,releases,sideFlips,(y-startY)*direction,
+            Math.abs(CartSteeringMath.wrap(tangent-heading)));
+    }
+
+    private static void relativeWallWalkChecks(double axle) {
+        for(int normal:new int[]{-1,1}) for(int direction:new int[]{-1,1}) for(double distance:new double[]{.02,.023}) {
+            String context=normal+"/"+direction+"/"+distance;
+            var walk=relativeWallWalk(axle,normal,direction,distance);
+            System.out.println("CART_WALL_WALK "+context+" "+walk);
+            check(walk.contactFrames()>20 && walk.progress()>2,"relative wall Walk must exercise sustained moving contact: "+context+" "+walk);
+            // As yaw accelerates, handle rotation can overtake tangent translation and cross local sideways zero once.
+            // Repeated reversals are the shaking regression, rather than that single geometric crossover.
+            check(walk.sideFlips()<=1,"relative wall Walk must not repeatedly reverse native Strafe directions: "+context+" "+walk);
+            check(walk.acquisitions()==1 && walk.releases()==0,
+                "relative wall Walk must retain the same straight-wall contact throughout alignment: "+context+" "+walk);
+            check(walk.heading()<.01,"relative wall Walk must finish its gradual tangent alignment: "+context+" "+walk);
+        }
+    }
+
+    private static void contactRoundingChecks(double axle) {
+        double originX=10825.5,originY=10142.5,front=CartFootprint.WALK_FRONT,dt=1.0/60;
+        for(double angle:new double[]{-.7,-.3,.3,.7,2.4}) {
+            double nx=-Math.sin(angle),ny=Math.cos(angle),tx=Math.cos(angle),ty=Math.sin(angle);
+            double offset=1.7-(front-.28)*Math.sin(.6)-.0001;
+            double x=(float)(originX+offset*nx),y=(float)(originY+offset*ny),heading=angle+.6,rate=0;
+            CartFootprint.Query wall=(x1,y1,x2,y2)->Math.max((x1-originX)*nx+(y1-originY)*ny,
+                (x2-originX)*nx+(y2-originY)*ny)+.3>=2;
+            for(int retreat=0;!CartFootprint.clear(wall,x,y,heading,front) && retreat<4;retreat++) {
+                x=Math.nextAfter((float)x,nx>0?Double.NEGATIVE_INFINITY:Double.POSITIVE_INFINITY);
+                y=Math.nextAfter((float)y,ny>0?Double.NEGATIVE_INFINITY:Double.POSITIVE_INFINITY);
+            }
+            check(CartFootprint.clear(wall,x,y,heading,front),"diagonal contact must start clear: "+angle);
+            for(int frame=0;frame<120;frame++) {
+                var request=CartSteeringMath.woodenStep(heading,angle,.02,dt,0,axle,rate,false,new CartSteeringMath.Step());
+                var contact=CartFootprint.contactStep(wall,x,y,heading,request.x(),request.y(),request.turn(),nx,ny,front);
+                double rounding=Math.ulp((float)x)+Math.ulp((float)y);
+                double inward=Math.max(0,request.x()*nx+request.y()*ny);
+                check(contact!=null && Double.isFinite(contact.x()+contact.y()+contact.turn()),
+                    "diagonal contact must return finite movement: "+angle+" frame="+frame);
+                check(contact.x()*nx+contact.y()*ny<=inward+rounding && contact.x()*nx+contact.y()*ny>=-rounding,
+                    "diagonal rounding must not invent inward progress or automatic backoff: "+angle+" frame="+frame);
+                check(Math.abs((contact.x()-request.x())*tx+(contact.y()-request.y())*ty)<=rounding,
+                    "diagonal contact must preserve its full tangent within native coordinate precision: "+angle+" frame="+frame);
+                check(CartFootprint.rigidLimit(wall,x,y,heading,contact.x(),contact.y(),heading+contact.turn(),front)==1,
+                    "diagonal contact must retain the complete rounded swept clearance: "+angle+" frame="+frame);
+                x+=contact.x();y+=contact.y();heading=CartSteeringMath.wrap(heading+contact.turn());rate=contact.turn()/dt;
+            }
+        }
+    }
+
+    private static void contactCornerChecks(double axle) {
+        double originX=10825.5,originY=10142.5,dt=1.0/60;
+        for(double front:new double[]{CartFootprint.WALK_FRONT,CartFootprint.FAST_FRONT})
+            for(int normal:new int[]{-1,1}) for(int direction:new int[]{-1,1}) {
+                double heading=normal>0?direction*.7:Math.PI-direction*.7,tangent=direction*Math.PI/2;
+                double x=(float)(originX+normal*(1.7-(front-.28)*Math.cos(.7)-.0001)),y=(float)originY;
+                var request=CartSteeringMath.woodenStep(heading,tangent,.02,dt,0,axle,0,false,new CartSteeringMath.Step());
+                double along=(float)(y+request.y())-y;
+                // The established wall stays beside the cart; a second wall blocks only the yaw sweep at its nose.
+                double ceiling=(front-.28)*Math.sin(.7)+along*direction+.3+.0002;
+                CartFootprint.Query corner=(x1,y1,x2,y2)->
+                    Math.max(normal*(x1-originX),normal*(x2-originX))+.3>=2
+                    || Math.max(direction*(y1-originY),direction*(y2-originY))+.3>=ceiling;
+                for(int retreat=0;!CartFootprint.clear(corner,x,y,heading,front) && retreat<4;retreat++)
+                    x=Math.nextAfter((float)x,normal>0?Double.NEGATIVE_INFINITY:Double.POSITIVE_INFINITY);
+                String context=front+"/"+normal+"/"+direction;
+                check(CartFootprint.clear(corner,x,y,heading,front),"corner contact must start clear: "+context);
+                check(CartFootprint.followWall(corner,x,y,heading,heading,tangent,normal,0,front,true),
+                    "corner fallback must start with a valid established Forward wall guide: "+context);
+                check(CartFootprint.rigidLimit(corner,x,y,heading,0,along,heading,front)==1,
+                    "corner must leave the full tangent clear without yaw: "+context);
+                check(CartFootprint.rigidLimit(corner,x,y,heading,0,along,heading+request.turn(),front)<1,
+                    "corner regression must exercise the yaw-blocked fallback: "+context);
+                var contact=CartFootprint.contactStep(corner,x,y,heading,request.x(),request.y(),request.turn(),normal,0,front);
+                check(contact!=null && contact.turn()==0 && Math.abs(contact.y()-along)<=Math.ulp((float)y),
+                    "blocked yaw must preserve clear tangent travel: "+context+" "+contact);
+                check(contact.x()==0,"corner fallback must not invent inward travel or automatic reverse: "+context);
+                check(CartFootprint.rigidLimit(corner,x,y,heading,contact.x(),contact.y(),heading,front)==1,
+                    "corner fallback must retain the complete swept clearance: "+context);
+            }
+    }
+
     public static void main(String[] args) {
         CartFootprint.Query empty=(x1,y1,x2,y2)->false;
         double axle=CartSteeringMath.woodenAxle(0,0);
@@ -208,6 +353,9 @@ public final class CartFootprintTest {
         relativeReverseContactChecks(axle);
         relativeBlockedTurnContactChecks(axle);
         relativeWallGuideChecks();
+        relativeWallWalkChecks(axle);
+        contactRoundingChecks(axle);
+        contactCornerChecks(axle);
         for(double heading:new double[]{0,.3,Math.PI/2,Math.PI,-Math.PI/2}) {
             for(double dx:new double[]{-.2,0,.2}) for(double dy:new double[]{-.2,0,.2})
                 check(CartFootprint.limit(empty,10825.5,10142.5,heading,dx,dy,axle,1.62)==1,

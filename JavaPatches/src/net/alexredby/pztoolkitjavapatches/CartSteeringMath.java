@@ -175,6 +175,16 @@ public final class CartSteeringMath {
         return 1.0084944326-1.5*woodenShift(bank,gaitShift);
     }
 
+    /** Spatial clock for an established wall guide; native root distance already includes the animator motion scale. */
+    static double wallStepSeconds(double distance,double clipSpeed,double motionScale,double currentDt) {
+        if(!Double.isFinite(distance) || distance<=0) return 0;
+        double nativeSpeed=clipSpeed*motionScale;
+        if(Double.isFinite(clipSpeed) && clipSpeed>0 && Double.isFinite(motionScale) && motionScale>0
+            && Double.isFinite(nativeSpeed) && nativeSpeed>1e-6)
+            return Math.min(.1,distance/nativeSpeed);
+        return Double.isFinite(currentDt)?Math.max(0,Math.min(.1,currentDt)):0;
+    }
+
     static Step woodenStep(double heading, double target, double distance, double seconds,
                            double load, double axle, double previousRate, Step result) {
         return woodenStep(heading,target,distance,seconds,load,axle,previousRate,reversing(heading,target),result);

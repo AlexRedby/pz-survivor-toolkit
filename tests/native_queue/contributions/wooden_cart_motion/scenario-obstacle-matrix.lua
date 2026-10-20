@@ -98,7 +98,7 @@ end
 local function setup()
  c.fastDoor=c.spec=='door-open' and c.gait>0
  phases={{0,0,0},{800,nil,1},{c.fastDoor and 3000 or 6800,0,0},{c.fastDoor and 4000 or 8000,0,4},{13000,0,0}}
- c.quietSince=nil;c.quietX=nil;c.quietY=nil;c.quietHeading=nil
+ c.quietSince=nil;c.quietX=nil;c.quietY=nil;c.quietHeading=nil;c.poseRetries=0
  -- Change this disposable process only; never persist the user's mod settings.
  if PZAPI and PZAPI.ModOptions then
   local options=PZAPI.ModOptions:getOptions('MiniHealthPlus')
@@ -161,6 +161,14 @@ local function tick()
   if now<since then return end
   local ready,why=pcall(area.check,p)
   if not ready then assert(now-since<6000,'Pad did not reload: '..tostring(why));return end
+  -- Equipping after the bare controls can consume one outgoing deferred root step.
+  -- Restore only before capture, then wait again; never move the actor during a recorded case.
+  local dx,dy=p:getX()-c.layout.startX,p:getY()-c.layout.startY
+  if dx*dx+dy*dy>.025*.025 or math.abs(math.sin((cartLabSteeringHeading()-c.layout.heading)/2))>math.sin(.05/2) then
+   c.poseRetries=c.poseRetries+1;assert(c.poseRetries<=2,'Obstacle start pose did not settle')
+   pose(c.spec);since=now+600
+   print('[WOOD_BANK] PREPARE_REPOSE '..c.name..' retry='..c.poseRetries);return
+  end
   assert(toolkitVideoStart(config.videoRoot..'/'..c.name..'-'..attempt,config.ffmpeg),'Video start rejected')
   recordStart=getTimestampMs();lastSample=-1;stage=1;c.openReleased=false;mode='record'
   print('[WOOD_BANK] CASE '..c.name..' attempt='..attempt..' wall='..recordStart);emit('LAYOUT',c.layout)

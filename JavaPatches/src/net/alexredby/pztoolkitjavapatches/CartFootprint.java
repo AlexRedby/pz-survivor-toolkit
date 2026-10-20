@@ -94,16 +94,16 @@ final class CartFootprint {
 
     /** Shorten only the supplied displacement, using its actual rolling yaw after native sliding. */
     static double limit(Query query,double x,double y,double heading,double dx,double dy,double axle,double front) {
-        return limit(query,x,y,heading,dx,dy,axle,front,CartSteeringMath.acceptedTurn(heading,axle,dx,dy),true);
+        return limit(query,x,y,heading,dx,dy,axle,front,CartSteeringMath.acceptedTurn(heading,axle,dx,dy),true,false);
     }
 
     /** Native routes own displacement and facing independently, including turns without root motion. */
     static double rigidLimit(Query query,double x,double y,double heading,double dx,double dy,double target,double front) {
-        return limit(query,x,y,heading,dx,dy,0,front,CartSteeringMath.wrap(target-heading),false);
+        return limit(query,x,y,heading,dx,dy,0,front,CartSteeringMath.wrap(target-heading),false,false);
     }
 
     private static double limit(Query query,double x,double y,double heading,double dx,double dy,
-                                double axle,double front,double turn,boolean rolling) {
+                                double axle,double front,double turn,boolean rolling,boolean wholeStep) {
         double distance=Math.hypot(dx,dy);
         if(!Double.isFinite(x+y+distance+turn+heading+front) || rolling && !(axle>0)) return 0;
         if(!clear(query,x,y,heading,front)) return 0;
@@ -114,6 +114,7 @@ final class CartFootprint {
         for(int step=1;step<=steps;step++) {
             double next=step/(double)steps;
             if(!sweep(query,x,y,heading,dx,dy,axle,front,previous,next,turn,rolling)) {
+                if(wholeStep) return 0;
                 double low=previous,high=next;
                 for(int i=0;i<12;i++) {
                     double mid=(low+high)/2;
@@ -147,6 +148,49 @@ final class CartFootprint {
     }
 
     record Slide(double x,double y,double turn,double target,double normalX,double normalY) {}
+
+    /** Preserve the full tangent while filling only the space opened by the planned yaw. */
+    static Slide contactStep(Query query,double x,double y,double heading,double dx,double dy,
+                             double turn,double normalX,double normalY,double front) {
+        double inward=Math.max(0,dx*normalX+dy*normalY);
+        double tx=dx-inward*normalX,ty=dy-inward*normalY;
+        var full=contactRounded(x,y,tx,ty,inward,turn,normalX,normalY);
+        if(contactClear(query,x,y,heading,full,front)) return full;
+        var tangent=contactRounded(x,y,tx,ty,0,turn,normalX,normalY);
+        if(!contactClear(query,x,y,heading,tangent,front)) {
+            // A corner can stop yaw while leaving tangent travel available.
+            tangent=contactRounded(x,y,tx,ty,0,0,normalX,normalY);
+            double allowed=rigidLimit(query,x,y,heading,tangent.x(),tangent.y(),heading,front);
+            tangent=contactRounded(x,y,tangent.x()*allowed,tangent.y()*allowed,0,0,normalX,normalY);
+            return contactClear(query,x,y,heading,tangent,front)?tangent:new Slide(0,0,0,heading,normalX,normalY);
+        }
+        double low=0,high=inward;
+        for(int i=0;i<12;i++) {
+            double mid=(low+high)/2;
+            var candidate=contactRounded(x,y,tx,ty,mid,turn,normalX,normalY);
+            if(contactClear(query,x,y,heading,candidate,front)) {low=mid;tangent=candidate;}
+            else high=mid;
+        }
+        return tangent;
+    }
+
+    private static boolean contactClear(Query query,double x,double y,double heading,Slide step,double front) {
+        // The outer normal search needs only acceptance; do not bisect a rejected path again.
+        return limit(query,x,y,heading,step.x(),step.y(),0,front,CartSteeringMath.wrap(step.turn()),false,true)==1;
+    }
+
+    private static Slide contactRounded(double x,double y,double tx,double ty,double inward,
+                                        double turn,double nx,double ny) {
+        double sx=(float)(x+tx+inward*nx)-x,sy=(float)(y+ty+inward*ny)-y;
+        // Nearest float rounding must not invent additional inward movement.
+        if(sx*nx+sy*ny>inward+1e-12) {
+            double outwardX=Math.nextAfter((float)(x+sx),nx>0?Double.NEGATIVE_INFINITY:Double.POSITIVE_INFINITY)-x;
+            double outwardY=Math.nextAfter((float)(y+sy),ny>0?Double.NEGATIVE_INFINITY:Double.POSITIVE_INFINITY)-y;
+            if(Math.abs((outwardX-sx)*nx)>=Math.abs((outwardY-sy)*ny)) sx=outwardX;
+            else sy=outwardY;
+        }
+        return new Slide(sx,sy,turn,Math.atan2(sy,sx),nx,ny);
+    }
 
     /** Relative keys own yaw; blocked steering may stop while clear tangent travel continues. */
     static Slide steeredSlide(Query query,double x,double y,double heading,double dx,double dy,
