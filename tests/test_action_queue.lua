@@ -3,7 +3,11 @@ local function hasEntry(value)
     return false
 end
 -- Native Lua queue/base/book callbacks; Java lifecycle is exercised by the MP smoke.
-require = function() end
+require = function(name)
+    if name == 'PZSurvivorToolkit/InventoryClasses' then
+        return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
+    end
+end
 local enabled, activePlayer = true, nil
 PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
 getSpecificPlayer = function() return activePlayer end

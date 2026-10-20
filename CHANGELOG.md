@@ -14,6 +14,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.161
+
+- **Fixed:** CleanUI inventory transfers retain one operation per drag through deferred enqueueing. Native transfer batching works again, avoiding expensive per-item queue checks while a batch runs. Separate drags remain separate; native transfer timing, capacity checks and multiplayer item authority are preserved.
+
 ### 0.1.160
 
 - **Changed:** The standard dashboard headlight knob uses evenly spaced off/low/high positions: low sits halfway between off and the original on position, with high at the original on position. Matching soft grey faceplate symbols replace the previous layout at every dashboard scale. Clicking retains the native power acknowledgement path and High Beams selection.

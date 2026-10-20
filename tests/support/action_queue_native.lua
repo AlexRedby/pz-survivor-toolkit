@@ -1,5 +1,6 @@
 -- Shared setup for new native-source policy fixtures; native execution/Java state remains explicit per test.
 require = function(module)
+    if module == 'PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua') end
     if module == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
 end
 local function derive(self, name)

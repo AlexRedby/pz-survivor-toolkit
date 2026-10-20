@@ -1,6 +1,7 @@
 if not NativeActionRoot then print('Fire native-contract checks skipped.'); return end
 local craftContainers
 require = function(module)
+    if module == 'PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua') end
     if module == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
         craftContainers = craftContainers or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
         return craftContainers

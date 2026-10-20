@@ -3,7 +3,11 @@ if not NativeActionRoot then
     print('Action queue world-target checks skipped (pass --native-action-root media/lua).')
     return
 end
-require = function() end
+require = function(name)
+    if name == 'PZSurvivorToolkit/InventoryClasses' then
+        return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
+    end
+end
 getText = function(key) return key end
 PZSurvivorToolkit = {Settings = {actionQueue = function() return true end}}
 local function derive(self, name)
@@ -12,7 +16,7 @@ local function derive(self, name)
     return setmetatable(t, {__index = self})
 end
 ISBaseObject = {derive = derive}
-Events = {OnTick = {Add = function() end}}
+Events = {OnTick = {Add = function() end}, OnGameStart = {Add = function() end}}
 Events.OnServerCommand = {Add = function() end}
 for _, name in ipairs({'ClimbThroughWindowState', 'ClimbOverFenceState', 'ClimbOverWallState',
     'ClimbSheetRopeState', 'ClimbDownSheetRopeState', 'CloseWindowState', 'OpenWindowState'}) do

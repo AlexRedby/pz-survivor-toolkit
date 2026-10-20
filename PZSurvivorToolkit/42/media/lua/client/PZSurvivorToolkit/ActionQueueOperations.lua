@@ -7,6 +7,7 @@ require "ISUI/ISContextMenu"
 require "ISUI/ISButton"
 require "ISUI/ISInventoryPaneContextMenu"
 require "ISUI/ISInventoryPane"
+local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 
 local Operations = {}
 PZSurvivorToolkit.ActionQueueOperations = Operations
@@ -399,5 +400,37 @@ wrap(ISButton, "onJoypadDown")
 wrap(ISInventoryPane, "onMouseUp")
 wrap(ISInventoryPane, "onMouseDoubleClick")
 wrap(ISInventoryPaneContextMenu, "readItem", true)
+
+local transferPanes = {}
+local function installTransferPane(class)
+    if not class or transferPanes[class] or type(class.transferItemsByWeight) ~= "function" then return end
+    transferPanes[class] = true
+    local transfer = class.transferItemsByWeight
+    class.transferItemsByWeight = function(...)
+        local util = ISInventoryTransferUtil
+        local create = util.newInventoryTransferAction
+        -- CleanUI constructs the selected transfers now, but enqueues them next tick.
+        -- Capture this command before its scope ends, without changing deferred execution.
+        util.newInventoryTransferAction = function(...)
+            local results = pack(create(...))
+            if results[1] then Operations.adopt(results[1]) end
+            return unpack(results, 1, results.n)
+        end
+        local results = pack(pcall(Operations.run, transfer, ...))
+        -- Keep the current factory's identity outside this command: other adapters
+        -- use its native provenance when checking unrelated actions.
+        util.newInventoryTransferAction = create
+        if not results[1] then error(results[2], 0) end
+        return unpack(results, 2, results.n)
+    end
+end
+
+local function installTransferPanes()
+    InventoryClasses.panes(installTransferPane)
+end
+Events.OnGameStart.Add(function()
+    installTransferPanes()
+    InventoryClasses.onToggle(installTransferPanes)
+end)
 
 return Operations

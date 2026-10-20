@@ -2,7 +2,11 @@ if not NativeActionRoot then
     print('World queue native-contract checks skipped (pass --native-action-root media/lua).')
     return
 end
-require = function() end
+require = function(name)
+    if name == 'PZSurvivorToolkit/InventoryClasses' then
+        return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
+    end
+end
 local enabled = true
 PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
 local function derive(self, name)

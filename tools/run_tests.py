@@ -18,7 +18,7 @@ ACTION_TESTS = ("test_vehicle_light_dashboard.lua", "test_vehicle_lighting.lua",
 ACTION_TESTS += ("test_action_queue_media.lua", "test_bc_pins.lua", "test_action_queue_fitness.lua", "test_crafting_controls.lua")
 ACTION_TESTS += ("test_action_queue_edit_model.lua", "test_action_queue_edit_adapters.lua", "test_action_queue_edit_policy.lua")
 ACTION_TESTS += ("test_action_queue_item_edit_adapters.lua", "test_food_eatsmart_compat.lua", "test_food_goal_labels.lua")
-ACTION_TESTS += ("test_inventory_search.lua",)
+ACTION_TESTS += ("test_inventory_search.lua", "test_inventory_transfer_operations.lua")
 EXTRA_TESTS = (
     'test_container_tag_icons.lua',
     'test_container_appearance_controls.lua',
@@ -294,8 +294,11 @@ def main() -> None:
             for suffix in ("Config", "Render", "Drag"):
                 source_name = "NavigatorMonitorDrag" if suffix == "Drag" else "Monitor" + suffix
                 lua.globals()["NativeNavigator" + suffix] = (args.navigator_source / (source_name + ".lua")).read_text(encoding="utf-8")
-        if name in ("test_inventory_filter.lua", "test_inventory_search.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua") and args.cleanui_inventory_pane:
+        if name in ("test_inventory_filter.lua", "test_inventory_search.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua", "test_inventory_transfer_operations.lua") and args.cleanui_inventory_pane:
             lua.globals().CleanUIInventoryPaneSource = args.cleanui_inventory_pane.read_text(encoding="utf-8")
+            if name == "test_inventory_transfer_operations.lua":
+                vanilla = args.cleanui_inventory_pane.parent.parent / "CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua"
+                lua.globals().CleanUIVanillaInventoryPaneSource = vanilla.read_text(encoding="utf-8")
         if name in ("test_inventory_filter.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua") and args.native_inventory_pane:
             lua.globals().NativeInventoryPaneSource = args.native_inventory_pane.read_text(encoding="utf-8")
         lua.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))

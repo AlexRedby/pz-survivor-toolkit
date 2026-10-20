@@ -2,7 +2,11 @@ if not NativeActionRoot then
     print('Repair reorder native-contract checks skipped (pass --native-action-root media/lua).')
     return
 end
-require = function() end
+require = function(name)
+    if name == 'PZSurvivorToolkit/InventoryClasses' then
+        return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
+    end
+end
 getText = function(key) return key end
 local function derive(self, name)
     local class = {Type = name, derive = derive}; class.__index = class

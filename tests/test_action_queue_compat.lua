@@ -16,7 +16,11 @@ local function derive(self, name)
     return setmetatable(class, {__index = self})
 end
 local craftContainers
-require = function() end
+require = function(name)
+    if name == 'PZSurvivorToolkit/InventoryClasses' then
+        return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
+    end
+end
 -- This fixture isolates other integrations; the owned Manifest handoff has its own suite.
 LootSorter = {}
 ISBaseObject = {derive = derive}
