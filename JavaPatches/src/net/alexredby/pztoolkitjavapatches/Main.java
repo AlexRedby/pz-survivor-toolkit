@@ -493,6 +493,10 @@ public final class Main {
 
     @Patch(className="zombie.core.skinnedmodel.model.ItemModelRenderer", methodName="init")
     public static class WoodenWorldScale {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.core.skinnedmodel.model.ItemModelRenderer renderer) {
+            if(Main.CART_TRANSITION_SUPPORTED) CartEmergencyDrop.clear(renderer);
+        }
         @Patch.OnExit
         public static void exit(@Patch.This zombie.core.skinnedmodel.model.ItemModelRenderer renderer,
             @Patch.Argument(0) zombie.inventory.InventoryItem item) {
@@ -519,9 +523,14 @@ public final class Main {
         }
         @Patch.OnExit
         public static void exit(@Patch.This zombie.core.skinnedmodel.model.ItemModelRenderer renderer,
+            @Patch.Argument(0) zombie.inventory.InventoryItem item,
             @Patch.Local("toolkitHiddenWorldCart") boolean hidden,
             @Patch.Return(readOnly=false) zombie.core.skinnedmodel.model.ItemModelRenderer.RenderStatus result) {
             if(hidden) result=zombie.core.skinnedmodel.model.ItemModelRenderer.RenderStatus.NoModel;
+            if(Main.CART_TRANSITION_SUPPORTED) {
+                if(result==zombie.core.skinnedmodel.model.ItemModelRenderer.RenderStatus.Ready) CartEmergencyDrop.render(renderer,item);
+                else CartEmergencyDrop.clear(renderer);
+            }
             if(Main.CART_WHEEL_SUPPORTED && Main.CART_TRANSITION_SUPPORTED) {
                 if(result==zombie.core.skinnedmodel.model.ItemModelRenderer.RenderStatus.Ready) CartWheelWorld.ready(renderer);
                 else CartWheelWorld.clear(renderer);
@@ -533,6 +542,7 @@ public final class Main {
     public static class WoodenWorldWheelReset {
         @Patch.OnEnter
         public static void enter(@Patch.This zombie.core.skinnedmodel.model.ItemModelRenderer renderer) {
+            if(Main.CART_TRANSITION_SUPPORTED) CartEmergencyDrop.clear(renderer);
             if(Main.CART_WHEEL_SUPPORTED && Main.CART_TRANSITION_SUPPORTED) CartWheelWorld.clear(renderer);
         }
     }

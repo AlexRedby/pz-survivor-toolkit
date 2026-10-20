@@ -347,6 +347,7 @@ public final class CartGroundingTest {
   }
  }
  public static void main(String[] args) throws Exception {
+        zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
   remoteFillModel();
   nativeExportPose();
   rigidPose();

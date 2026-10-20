@@ -244,6 +244,7 @@ public final class CartGrounding {
                 // A failed arm solve must not replace the grounded cart with the moving hand attachment.
                 CartGrip.render(slot,instance.parent,clip,state.delta,name,transform);
                 data.xfrm.set(transform).transpose();
+                if("WheelbarrowWood".equals(name)) CartEmergencyDrop.capture(player,slot,transform);
                 CartWheelSpin.prepare(slot,player.isLocalPlayer()?CartSteeringHooks.wheelPhase(player,slot,transform)
                     :CartWheelSpin.follow(player.getPrimaryHandItem(),slot.x,slot.y,slot.animPlayerAngle,transform));
             } else {

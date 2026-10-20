@@ -451,7 +451,7 @@ public final class CartTransition {
 
     private static void end(IsoPlayer player, boolean preserveCancelled) {
         if(player==null) {
-            CartMotionSync.clearAll();CartActionSync.clearAll();
+            CartMotionSync.clearAll();CartActionSync.clearAll();CartEmergencyDrop.reset();
             for(var owner:new java.util.ArrayList<>(states.keySet())) end(owner);
             cancelled.clear();
             return;
@@ -597,6 +597,10 @@ public final class CartTransition {
     }
 
     static CartTransitionMath.Placement dropPlacement(Matrix4f held, Matrix4f model, float x, float y, float z, float angle, float scale) {
+        return dropPlacement(held,model,x,y,z,angle,scale,STANCE_BACK);
+    }
+
+    static CartTransitionMath.Placement dropPlacement(Matrix4f held, Matrix4f model, float x, float y, float z, float angle, float scale, float stanceBack) {
         var pose=CartTransitionMath.actorToWorldPlacement(held,model,x,y,z,angle);
         if(pose==null) return null;
         var relative=new Matrix4f().rotationY(angle+(float)Math.PI).mul(held).mul(new Matrix4f(model).invert());
@@ -607,7 +611,7 @@ public final class CartTransition {
         if(!CartTransitionMath.worldToActor(groundPose,model,x,y,z,angle,ground)) return null;
         var axle=new Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z);
         var difference=held.transformPosition(axle,new Vector3f()).sub(ground.transformPosition(axle,new Vector3f()));
-        difference.z-=STANCE_BACK;
+        difference.z-=stanceBack;
         float c=(float)Math.cos(angle),s=(float)Math.sin(angle);
         return new CartTransitionMath.Placement(pose.x()-1.5f*(c*difference.x+s*difference.z),
             pose.y()+1.5f*(-s*difference.x+c*difference.z),z+.00175f,0,yaw,0,scale*.85f);
@@ -658,7 +662,7 @@ public final class CartTransition {
         return target.AddWorldInventoryItem(item,ox,oy,0,true);
     }
 
-    private static IsoGridSquare target(IsoPlayer player, float x, float y, float z) {
+    static IsoGridSquare target(IsoPlayer player, float x, float y, float z) {
         var square=player.getCurrentSquare();
         if(square==null || square.HasStairs() || IsoWorld.instance==null || IsoWorld.instance.currentCell==null) return null;
         var target=IsoWorld.instance.currentCell.getGridSquare((int)Math.floor(x),(int)Math.floor(y),(int)z);

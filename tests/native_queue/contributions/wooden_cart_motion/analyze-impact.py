@@ -14,6 +14,11 @@ BOOLS = ('run', 'sprint', 'enabled', 'steering', 'hit', 'knocked', 'getup', 'rag
 NUMBERS = ('wall', 'elapsed', 'x', 'y', 'stepX', 'stepY', 'pace', 'brace', 'id', 'primary', 'secondary',
            'cargo', 'itemPhase', 'inventoryCount', 'worldCount', 'woodCount', 'worldId', 'worldX', 'worldY', 'worldZ', 'rotation')
 BONEMAP = {'Bip01_Spine', 'Bip01_L_Hand', 'Bip01_R_Hand', 'Bip01_L_Foot', 'Bip01_R_Foot'}
+SETTLE_MS = 240
+# Mesh-local measurements shared with CartWheelSpin.CENTER and CartGrip.handle("WheelbarrowWood").
+CART_POINTS = {'axle': (-6.642862e-6, -.0041269097, -.0010569958),
+               'leftHandle': (.00172237, .00541905, -.00342593),
+               'rightHandle': (-.00172238, .00541905, -.00342593)}
 
 
 def fields(text):
@@ -46,7 +51,120 @@ def world_wheel_floor(row):
     return row['z'] + (1.5/2.44949)*lowest
 
 
-def analyze(profile, text, selected=None, require_natural=False):
+def matrix_point(matrix, point):
+    return [sum(matrix[j*4+i]*value for j, value in enumerate((*point, 1))) for i in range(3)]
+
+
+def world_cart_points(row):
+    # Native composition is Rx * Ry * Rz * transform, then the world camera's tile projection.
+    ax, ay, az = map(math.radians, row['angle'])
+    cx, sx, cy, sy, cz, sz = math.cos(ax), math.sin(ax), math.cos(ay), math.sin(ay), math.cos(az), math.sin(az)
+    result = {}
+    for name, point in CART_POINTS.items():
+        x, y, z = matrix_point(row['transform'], point)
+        x, y = cz*x-sz*y, sz*x+cz*y
+        x, z = cy*x+sy*z, -sy*x+cy*z
+        y, z = cx*y-sx*z, sx*y+cx*z
+        result[name] = [row['x']+1.5*x, row['y']-1.5*z, row['z']+(1.5/2.44949)*y]
+    return result
+
+
+def held_cart_points(row):
+    c, s = math.cos(row['slotAngle']), math.sin(row['slotAngle'])
+    result = {}
+    for name, point in CART_POINTS.items():
+        x, y, z = matrix_point(row['cart'], point)
+        result[name] = [row['slotX']-1.5*(c*x+s*z), row['slotY']+1.5*(-s*x+c*z),
+                        None if 'slotZ' not in row else row['slotZ']+(1.5/2.44949)*y]
+    return result
+
+
+def settle_diagnostics(profile, start, drop, scene_world):
+    first = scene_world[0]
+    trajectory = [r for r in scene_world if r['wallTimeMillis'] < drop+SETTLE_MS]
+    settled = [r for r in scene_world if r['wallTimeMillis'] >= drop+SETTLE_MS]
+    if settled:
+        trajectory.append(settled[0])
+    result = dict(evidenceKind='Prepared render matrices; actual GL draw is not proved.',
+                  staticFromWallTimeMillis=drop+SETTLE_MS, lastHeld=None, handoffDelta=None,
+                  firstWorld=dict(wallTimeMillis=first['wallTimeMillis'], points=world_cart_points(first)),
+                  trajectory=[dict(wallTimeMillis=r['wallTimeMillis'], elapsedSinceDropMs=r['wallTimeMillis']-drop,
+                                   points=world_cart_points(r)) for r in trajectory], missingEvidence=[])
+    path = profile / 'body-clearance.jsonl'
+    if not path.is_file() or not path.read_text().strip():
+        result['missingEvidence'].append('body-clearance.jsonl: no held mesh preparation evidence')
+        return result
+    held = [r for r in read_rows(path) if start <= r['wallTimeMillis'] < min(drop, first['wallTimeMillis'])]
+    if not held:
+        result['missingEvidence'].append('body-clearance.jsonl: no held pose before sampled release/first world pose')
+        return result
+    before = max(held, key=lambda r: r['wallTimeMillis'])
+    assert len(before['cart']) == 16 and all(type(v) in (int, float) and math.isfinite(v)
+        for v in before['cart']+[before[k] for k in ('slotX', 'slotY', 'slotAngle')]), 'Invalid held diagnostic pose'
+    if 'slotZ' in before:
+        assert type(before['slotZ']) in (int, float) and math.isfinite(before['slotZ']), 'Invalid held diagnostic height'
+    source = held_cart_points(before)
+    result['lastHeld'] = dict(wallTimeMillis=before['wallTimeMillis'],
+                             gapToFirstWorldMs=first['wallTimeMillis']-before['wallTimeMillis'], points=source)
+    result['handoffDelta'] = {name: dict(xy=math.dist(source[name][:2], result['firstWorld']['points'][name][:2]),
+        z=None if source[name][2] is None else result['firstWorld']['points'][name][2]-source[name][2]) for name in CART_POINTS}
+    if 'slotZ' not in before:
+        result['missingEvidence'].append('body-clearance.jsonl: slotZ absent; held vertical handoff cannot be measured')
+    if 'itemId' not in before:
+        result['missingEvidence'].append('body-clearance.jsonl: itemId absent; held pose association uses the isolated scene window')
+    return result
+
+
+def actual_settle(profile, start, item):
+    path = profile / 'wheel-roll-draws.jsonl'
+    assert path.is_file(), 'Missing actual split draw receipts: wheel-roll-draws.jsonl'
+    receipts = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    rows = []
+    for row in receipts:
+        assert type(row.get('wall')) in (int, float) and math.isfinite(row['wall']), 'Invalid actual draw clock'
+        if not start <= row['wall'] < start+12000:
+            continue
+        assert row.get('source') in ('held', 'world'), 'Unknown actual draw source'
+        assert len(row['cart']) == 16 and all(type(v) in (int, float) and math.isfinite(v)
+            for v in row['cart']+[row[k] for k in ('x', 'y', 'angle', 'phase')]), 'Invalid actual draw pose'
+        if row['source'] == 'world':
+            assert row.get('itemId') == item, 'Foreign actual world cart draw'
+        points = held_cart_points(dict(cart=row['cart'], slotX=row['x'], slotY=row['y'], slotAngle=row['angle']))
+        rows.append(dict(wall=row['wall'], source=row['source'], points=points))
+    assert all(a['wall'] <= b['wall'] for a, b in zip(rows, rows[1:])), 'Unordered actual split draws'
+    world = [r for r in rows if r['source'] == 'world']
+    assert world, 'Missing actual released world draw'
+    first = world[0]
+    held = [r for r in rows if r['source'] == 'held' and r['wall'] < first['wall']]
+    assert held and first['wall']-held[-1]['wall'] <= 150, 'Missing recent actual held draw before world handoff'
+    before = held[-1]
+    jumps = {name: math.dist(before['points'][name][:2], first['points'][name][:2]) for name in CART_POINTS}
+    assert max(jumps.values()) <= .03, 'Actual held-to-world point jump exceeds .03 tile'
+    # Millisecond clocks can repeat across render passes; use the last receipt for each distinct clock.
+    distinct = list({r['wall']: r for r in world}.values())
+    early = [r for r in distinct if r['wall'] < first['wall']+240]
+    assert len(early) >= 5, 'Insufficient actual settle draw timestamps before 240ms'
+    endpoint = next((r for r in distinct if r['wall'] > first['wall']+300), None)
+    assert endpoint is not None, 'Missing actual settled endpoint after 300ms'
+    transition = [r for r in distinct if r['wall'] <= first['wall']+300]+[endpoint]
+    drift = max(math.dist(r['points']['axle'][:2], first['points']['axle'][:2]) for r in transition)
+    assert drift <= .01, 'Actual settle axle drift exceeds .01 tile'
+    speed = max((math.dist(b['points'][name][:2], a['points'][name][:2])*1000/(b['wall']-a['wall'])
+                 for a, b in zip(transition, transition[1:]) for name in ('leftHandle', 'rightHandle')), default=0)
+    assert speed <= 2, 'Actual settle handle step exceeds 2 tiles/s'
+    middle = [r for r in distinct if 80 <= r['wall']-first['wall'] <= 120]
+    assert middle, 'Missing actual settle draw at 80..120ms'
+    remaining = max(math.dist(r['points'][name][:2], endpoint['points'][name][:2])
+                    for r in middle for name in ('leftHandle', 'rightHandle'))
+    assert remaining >= .02, 'Actual Sprint settle completed before 80..120ms'
+    return dict(scope='Actual split-draw XY handoff and bounded cart settle; no body/pose visual pass.',
+                heldWall=before['wall'], firstWorldWall=first['wall'], handoffGapMs=first['wall']-before['wall'],
+                handoffJumpXY=jumps, earlyWorldTimestamps=len(early), axleDriftXY=drift,
+                maxHandleStepTilesPerSecond=speed, middleHandleDistanceToEndpointXY=remaining,
+                endpointWall=endpoint['wall'], trajectory=transition)
+
+
+def analyze(profile, text, selected=None, require_natural=False, require_settle=False):
     profile = Path(profile)
     expected = CASES if selected is None else selected
     assert expected and len(set(expected)) == len(expected) and set(expected) <= set(CASES), 'Invalid impact selection'
@@ -163,6 +281,8 @@ def analyze(profile, text, selected=None, require_natural=False):
             if drop is not None and r['wallTimeMillis'] >= drop+100:
                 assert r.get('cartModel') is False and r.get('cartModelCount') == 0, 'Held cart model survived release'
         scene_world = []
+        settle = None
+        measured_settle = None
         if not guarded:
             impact_poses = [r for r in scene_tail if event <= r['wallTimeMillis'] < event + 2000]
             assert any(t['name'] == 'Bob_SprintIntoWall' and t['weight'] > .2 for r in impact_poses for t in r['tracks']), 'Missing native impact clip'
@@ -175,13 +295,23 @@ def analyze(profile, text, selected=None, require_natural=False):
                 assert all(type(v) in (int, float) and math.isfinite(v) for v in r['transform'] + r['angle'] + [r[k] for k in ('x', 'y', 'z', 'alpha')]), 'Nonfinite world render pose'
                 assert r['alpha'] > 0 and r['wallTimeMillis'] >= drop-100, 'World render invisible or predates release'
                 assert max(abs(r[k]-scene_world[0][k]) for k in ('x', 'y', 'z')) < .001, 'World render moved with actor'
-                assert max(abs(a-b) for a, b in zip(r['transform']+r['angle'], scene_world[0]['transform']+scene_world[0]['angle'])) < .001, 'World cart mesh leapt during recovery'
                 assert max(abs(r[k]-dropped[0]['world'+k.upper()]) for k in ('x', 'y', 'z')) < .05, 'World cart floats away from drop location'
             world_times = [r['wallTimeMillis'] for r in scene_world]
             assert world_times == sorted(world_times), 'Unordered world render poses'
             assert all(b-a <= 150 for a, b in zip(world_times, world_times[1:])), 'World render coverage gap'
             for r in dropped:
                 covered(world_times, r['wall'], 'Missing rendered released phase')
+            # World ownership and renderer anchors stay fixed during the short cart-only settle.
+            # Euler folding changes representation, so compare composed axle/handle world points.
+            settled = [r for r in scene_world if r['wallTimeMillis'] >= drop+SETTLE_MS]
+            assert settled, 'Missing settled world mesh'
+            reference = world_cart_points(settled[0])
+            for r in settled:
+                points = world_cart_points(r)
+                assert max(abs(a-b) for name in CART_POINTS for a, b in zip(points[name], reference[name])) < .001, 'World cart mesh leapt during recovery'
+            settle = settle_diagnostics(profile, start, drop, scene_world)
+            if require_settle:
+                measured_settle = actual_settle(profile, start, item)
         reverse = [r for r in rows if 7500 <= r['elapsed'] <= 9400]
         assert reverse[-1]['x']-reverse[0]['x'] > .2, 'Native walk/control did not restore movement'
         active = [r for r in rows if 1000 <= r['elapsed'] < 1900 or guarded and 7800 <= r['elapsed'] < 9200]
@@ -206,6 +336,8 @@ def analyze(profile, text, selected=None, require_natural=False):
         summaries.append(dict(case=name, samples=len(rows), protectedSamples=len(protected),
                               protectedStates=sorted({r['state'] for r in protected}), renderSamples=len(scene_tail),
                               gripSamples=len(scene_grip), worldRenderSamples=len(scene_world),
+                              emergencySettle=settle,
+                              actualDrawSettle=measured_settle,
                               worldWheelFloorMaxOffset=None if guarded else max(abs(world_wheel_floor(r)-dropped[0]['worldZ']) for r in scene_world),
                               releaseLatencyMs=None if guarded else drop-event,
                               reverseTravel=reverse[-1]['x']-reverse[0]['x'],

@@ -1196,6 +1196,24 @@ end
                     carts._videos(self.output, self.selection, 'client1', '\n'.join(invalid))
             decode.assert_not_called()
 
+    def test_sp_impact_requires_actual_settle_and_propagates_rejection(self):
+        self.selection['cases'] = ['impact']
+        self.selection['options']['cart_scenes'] = ['male-full-native-impact']
+        (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
+        (self.output / 'client1/console.txt').write_text('complete fixture')
+        with patch.object(carts, 'complete', return_value=True), patch.object(carts, '_videos', return_value=[]), \
+                patch.object(carts, '_run', return_value={'exit_code': 0}), patch.object(carts, '_load') as load:
+            analyze = load.return_value.analyze
+            analyze.return_value = {'functionalPass': True, 'failures': []}
+            result = carts.verify(self.output, self.selection, {})
+            self.assertEqual(result['issues'], [])
+            self.assertEqual(analyze.call_args.kwargs, {'require_natural': True, 'require_settle': True})
+            self.assertFalse(result['outcomes'][0]['outcome']['animationEquivalencePass'])
+            analyze.side_effect = AssertionError('Actual settle handle step exceeds 2 tiles/s')
+            result = carts.verify(self.output, self.selection, {})
+            self.assertTrue(any('handle step exceeds' in issue for issue in result['issues']))
+            self.assertEqual(result['outcomes'][0]['status'], 'failed')
+
     def test_stop_uses_selected_original_log_and_retains_failed_motion_diagnostics(self):
         self.selection['cases'] = ['stop']
         fixture = carts._load(ROOT / 'tests/test_cart_stop_analyzer.py')

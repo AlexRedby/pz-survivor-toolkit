@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.151
+
+- **Fixed:** Single-player wooden-cart emergency release starts from the last displayed held pose and finishes a short cart-only settling transition. Native instant-drop, exact cart/cargo ownership and the existing Host request remain authoritative.
+
 ### 0.1.150
 
 - **Fixed:** Smart Deposit drag feedback and execution now use the same allocation. Items that do not fit nearby storage remain visibly rejected when other selected items can be moved. Type/category/fallback routing, protected items and native transfer actions are preserved in both inventory modes.
@@ -677,6 +681,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.36
+
+- **Fixed:** Wooden-cart emergency release preserves the rendered axle position and eases the handles down over 240 ms. The exact-item transition survives the native floor-inventory projection, restores pooled renderer state and clears on pickup, expiry or world exit. This presentation fix applies to single-player; stock fall motion and its remaining body overlap are unchanged.
 
 ### 0.1.35
 

@@ -2,6 +2,7 @@
 import csv
 import importlib.util
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -85,7 +86,139 @@ def fixture(root, name='male-empty-native-impact'):
     return '\n'.join(lines), [name]
 
 
+def actual_draw_fixture(root):
+    def cart(angle):
+        c, s, scale = math.cos(angle), math.sin(angle), 76.5
+        matrix = [scale, 0, 0, 0, 0, scale*c, scale*s, 0, 0, -scale*s, scale*c, 0, 0, 0, 0, 1.]
+        axle = analyzer.CART_POINTS['axle']
+        transformed = analyzer.matrix_point(matrix, axle)
+        for i in range(3): matrix[12+i] = scale*axle[i]-transformed[i]
+        return matrix
+    first = START+2080
+    rows = [dict(source='held', wall=first-20, itemId=-1, x=10.5, y=20, angle=math.pi, phase=0, cart=cart(.18))]
+    for t in range(0, 401, 20):
+        u = min(t/240, 1)
+        smooth = u*u*u*(10+u*(-15+6*u))
+        rows.append(dict(source='world', wall=first+t, itemId=1, x=10.5, y=20, angle=math.pi,
+                         phase=0, cart=cart(.18*(1-smooth))))
+    write_json(root, 'wheel-roll-draws.jsonl', rows)
+    return rows
+
+
 class ImpactTests(unittest.TestCase):
+    def test_strict_actual_draw_settle_is_optional_and_accepts_smooth_receipts(self):
+        with tempfile.TemporaryDirectory() as path:
+            root = Path(path)
+            text, names = fixture(root)
+            self.assertTrue(analyzer.analyze(root, text, names)['functionalPass'])
+            with self.assertRaisesRegex(AssertionError, 'Missing actual split draw receipts'):
+                analyzer.analyze(root, text, names, require_settle=True)
+            actual_draw_fixture(root)
+            measured = analyzer.analyze(root, text, names, require_settle=True)['cases'][0]['actualDrawSettle']
+            self.assertEqual(measured['handoffGapMs'], 20)
+            self.assertLess(measured['maxHandleStepTilesPerSecond'], 2)
+            self.assertGreater(measured['middleHandleDistanceToEndpointXY'], .02)
+            self.assertLess(measured['axleDriftXY'], .00001)
+
+    def test_actual_draw_settle_rejects_native03_one_frame_flip_and_other_defects(self):
+        for defect, message in [('native03 flip', 'handle step exceeds'), ('wrong item', 'Foreign actual'),
+                                ('stale held', 'Missing recent actual held'), ('handoff jump', 'point jump exceeds'),
+                                ('axle drift', 'axle drift exceeds'), ('too few timestamps', 'Insufficient actual'),
+                                ('early completion', 'completed before'), ('missing middle', 'draw at 80..120'),
+                                ('missing endpoint', 'endpoint after 300'), ('nonfinite', 'Invalid actual draw pose')]:
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as path:
+                root = Path(path)
+                text, names = fixture(root)
+                rows = actual_draw_fixture(root)
+                first, ground = rows[1]['wall'], rows[-1]['cart'][:]
+                if defect == 'native03 flip':
+                    # Observed native03 shape: held-matching first draw, ground on the next draw 9ms later.
+                    for row in rows[2:]: row['cart'] = ground[:]
+                    rows[2]['wall'] = first+9
+                elif defect == 'wrong item': rows[2]['itemId'] = 2
+                elif defect == 'stale held': rows[0]['wall'] = first-151
+                elif defect == 'handoff jump': rows[0]['x'] += .04
+                elif defect == 'axle drift': rows[2]['x'] += .02
+                elif defect == 'too few timestamps': rows = rows[:1]+[r for r in rows[1:] if r['wall']-first in (0, 100, 200, 320, 400)]
+                elif defect == 'early completion':
+                    # Small changes obey the speed limit but still finish well before the required mid-window.
+                    source = rows[0]['cart']
+                    for row in rows:
+                        row['cart'] = [a+(b-a)*.01 for a, b in zip(ground, source)]
+                elif defect == 'missing middle': rows = [r for r in rows if not 80 <= r['wall']-first <= 120]
+                elif defect == 'missing endpoint': rows = [r for r in rows if r['wall']-first <= 300]
+                else: rows[1]['cart'][0] = float('nan')
+                write_json(root, 'wheel-roll-draws.jsonl', rows)
+                with self.assertRaisesRegex(AssertionError, message):
+                    analyzer.analyze(root, text, names, require_settle=True)
+
+    def test_mesh_points_compose_native_euler_before_world_projection(self):
+        row = dict(x=10, y=20, z=7, angle=[90, 90, 90], transform=MATRIX[:])
+        for name, point in analyzer.CART_POINTS.items():
+            expected = [10+1.5*point[2], 20-1.5*point[0], 7-(1.5/2.44949)*point[1]]
+            for actual, value in zip(analyzer.world_cart_points(row)[name], expected):
+                self.assertAlmostEqual(actual, value)
+
+    def test_early_cart_only_settle_preserves_all_static_world_anchors(self):
+        with tempfile.TemporaryDirectory() as path:
+            root = Path(path)
+            text, names = fixture(root)
+            rows = [json.loads(line) for line in (root/'world-cart-poses.jsonl').read_text().splitlines()]
+            drop = rows[0]['wallTimeMillis']
+            for row in rows:
+                row['transform'][13] = .1*max(0, 1-(row['wallTimeMillis']-drop)/240)
+            write_json(root, 'world-cart-poses.jsonl', rows)
+            report = analyzer.analyze(root, text, names)
+            settle = report['cases'][0]['emergencySettle']
+            self.assertEqual(settle['staticFromWallTimeMillis'], drop+240)
+            self.assertEqual(settle['trajectory'][-1]['wallTimeMillis'], drop+240)
+            self.assertEqual(settle['trajectory'][0]['points'].keys(), analyzer.CART_POINTS.keys())
+            self.assertGreater(settle['trajectory'][0]['points']['leftHandle'][2],
+                               settle['trajectory'][-1]['points']['leftHandle'][2])
+            self.assertIsNone(settle['lastHeld'])
+            self.assertTrue(any('no held mesh' in s for s in settle['missingEvidence']))
+            rows[0]['transform'][0] = float('nan')
+            write_json(root, 'world-cart-poses.jsonl', rows)
+            with self.assertRaisesRegex(AssertionError, 'Nonfinite world render pose'):
+                analyzer.analyze(root, text, names)
+
+    def test_composed_static_mesh_allows_euler_folding_but_rejects_late_change(self):
+        with tempfile.TemporaryDirectory() as path:
+            root = Path(path)
+            text, names = fixture(root)
+            rows = [json.loads(line) for line in (root/'world-cart-poses.jsonl').read_text().splitlines()]
+            for i, row in enumerate(rows):
+                if i % 2:
+                    row['angle'] = [0, 0, 90]
+                else:
+                    # The same Rz(90) folded into the column-major root matrix.
+                    row['transform'] = [0, 1., 0, 0, -1., 0, 0, 0, 0, 0, 1., 0, 0, 0, 0, 1.]
+            write_json(root, 'world-cart-poses.jsonl', rows)
+            self.assertTrue(analyzer.analyze(root, text, names)['functionalPass'])
+            rows[7]['transform'][12] += .1
+            write_json(root, 'world-cart-poses.jsonl', rows)
+            with self.assertRaisesRegex(AssertionError, 'World cart mesh leapt'):
+                analyzer.analyze(root, text, names)
+
+    def test_handoff_diagnostics_report_measured_points_and_missing_source_fields(self):
+        with tempfile.TemporaryDirectory() as path:
+            root = Path(path)
+            text, names = fixture(root)
+            held = dict(wallTimeMillis=START+2040, slotX=10, slotY=20, slotAngle=analyzer.math.pi, cart=MATRIX[:])
+            write_json(root, 'body-clearance.jsonl', [held])
+            settle = analyzer.analyze(root, text, names)['cases'][0]['emergencySettle']
+            self.assertEqual(settle['lastHeld']['gapToFirstWorldMs'], 40)
+            for delta in settle['handoffDelta'].values():
+                self.assertAlmostEqual(delta['xy'], .5)
+                self.assertIsNone(delta['z'])
+            self.assertTrue(any('slotZ absent' in s for s in settle['missingEvidence']))
+            self.assertTrue(any('itemId absent' in s for s in settle['missingEvidence']))
+            held.update(slotZ=7, itemId=1)
+            write_json(root, 'body-clearance.jsonl', [held])
+            settle = analyzer.analyze(root, text, names)['cases'][0]['emergencySettle']
+            self.assertEqual(settle['missingEvidence'], [])
+            self.assertTrue(all(abs(delta['z']) < 1e-10 for delta in settle['handoffDelta'].values()))
+
     def test_world_floor_uses_native_column_major_matrix_and_euler_order(self):
         row = dict(z=7, angle=[0, 0, 0], transform=MATRIX[:])
         row['transform'][13] = 10
