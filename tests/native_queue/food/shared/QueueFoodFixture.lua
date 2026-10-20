@@ -1,12 +1,14 @@
--- Ordinary exact-ID cereal portions. Native Eat uses original base hunger, not remaining fractions.
+-- Ordinary exact-ID food portions. Native Eat uses original base hunger, not remaining fractions.
 local Fixture={bagType='Base.Bag_ALICEpack_Army',foodType='Base.Cereal',anchorType='Base.WaterBottle'}
 local function finite(value)return type(value)=='number'and value==value and value~=math.huge and value~=-math.huge end
 function Fixture.scenario(case)
  return {bag=case=='food-bag-edit-pickup-return',
-  cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion',
+  cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion'or case=='food-utensil-cancel-first-portion',
   smart=case=='food-smart-move-portions'or case=='food-smart-cancel-first-portion',
+  utensil=case=='food-utensil-move-portions'or case=='food-utensil-cancel-first-portion',
   depletion=case=='food-root-depletion'}
 end
+local function foodType(case)return Fixture.scenario(case).utensil and 'Base.OatsRaw'or Fixture.foodType end
 local function count(container,id,fullType)
  local n=0;local items=container:getItems()
  for i=0,items:size()-1 do local item=items:get(i)
@@ -20,8 +22,16 @@ function Fixture.items(player,ids,allowDeleted)
  local food=root:getItemById(ids.foodId);local anchor=root:getItemById(ids.anchorId)
  if not bag or bag:getFullType()~=Fixture.bagType or bag:getContainer()~=root
   or not food and not(allowDeleted and Fixture.scenario(ids.case).depletion)
-  or food and food:getFullType()~=Fixture.foodType or not anchor or anchor:getFullType()~=Fixture.anchorType then return end
- return {bag=bag,food=food,anchor=anchor}
+  or food and food:getFullType()~=foodType(ids.case) or not anchor or anchor:getFullType()~=Fixture.anchorType then return end
+ local result={bag=bag,food=food,anchor=anchor}
+ if Fixture.scenario(ids.case).utensil then
+  for _,kind in ipairs({'fork','spoon'})do
+   local item=root:getItemById(ids[kind..'Id'])
+   if not instanceof(item,'HandWeapon')or item:getFullType()~=(kind=='fork'and 'Base.Fork'or 'Base.Spoon')then return end
+   result[kind]=item
+  end
+ end
+ return result
 end
 function Fixture.snapshot(player,ids)
  local state=Fixture.items(player,ids,true);if not state then return end
@@ -30,11 +40,21 @@ function Fixture.snapshot(player,ids)
  if food and(not finite(food:getBaseHunger())or not finite(food:getHungChange()))then return end
  local source=not food and 'deleted'or food:getContainer()==root and 'root'or food:getContainer()==state.bag:getItemContainer()and 'bag'
  if not source or anchor:getContainer()~=root then return end
- return {case=ids.case,bagId=ids.bagId,bagType=state.bag:getFullType(),foodId=ids.foodId,foodType=food and food:getFullType()or ids.foodType,
+ local result={case=ids.case,bagId=ids.bagId,bagType=state.bag:getFullType(),foodId=ids.foodId,foodType=food and food:getFullType()or ids.foodType,
   baseHunger=food and food:getBaseHunger()or ids.baseHunger,remaining=food and food:getHungChange()or 0,source=source,
-  foodCount=count(root,ids.foodId),foodTypeCount=count(root,nil,Fixture.foodType),deleted=not food,
+  foodCount=count(root,ids.foodId),foodTypeCount=count(root,nil,foodType(ids.case)),deleted=not food,
   anchorId=ids.anchorId,anchorType=anchor:getFullType(),anchorAmount=anchor:getFluidContainer():getAmount(),anchorCount=count(root,ids.anchorId),anchorThirstChange=anchor:getFluidContainer():getProperties():getThirstChange(),
   hunger=player:getStats():get(CharacterStat.HUNGER),thirst=player:getStats():get(CharacterStat.THIRST),bagCount=count(root,ids.bagId)}
+ for _,kind in ipairs({'fork','spoon'})do
+  local item=state[kind]
+  if item then
+   local source=item:getContainer()==root and 'root'or item:getContainer()==state.bag:getItemContainer()and 'bag'
+   if not source then return end
+   result[kind..'Id'],result[kind..'Type']=item:getID(),item:getFullType()
+   result[kind..'Source'],result[kind..'Condition'],result[kind..'Count']=source,item:getCondition(),count(root,item:getID())
+  end
+ end
+ return result
 end
 function Fixture.prepare(player,case,previous)
  player:setAutoDrink(false)
@@ -44,6 +64,7 @@ function Fixture.prepare(player,case,previous)
   local old=assert(Fixture.items(player,previous.ids,true),'previous fixture identities missing')
   assert(not player:isEquipped(old.bag)and count(root,old.bag:getID())==1,'previous bag equipped/duplicated')
   local cleanup={old.anchor}
+  if old.fork then cleanup[#cleanup+1]=old.fork;cleanup[#cleanup+1]=old.spoon end
   if old.food then cleanup[#cleanup+1]=old.food else
    assert(previous.receipt and previous.receipt.deleted and previous.receipt.foodCount==0
     and count(root,previous.ids.foodId)==0,'previous missing food was not verified deleted')
@@ -56,13 +77,22 @@ function Fixture.prepare(player,case,previous)
   root:Remove(old.bag);if isServer()then sendRemoveItemFromContainer(root,old.bag)end
  end
  local spec=Fixture.scenario(case);local bag=assert(root:AddItem(Fixture.bagType))
- local food=assert((spec.bag and bag:getItemContainer()or root):AddItem(Fixture.foodType))
+ local food=assert((spec.bag and bag:getItemContainer()or root):AddItem(foodType(case)))
  assert(instanceof(food,'Food')and food:getBaseHunger()<-.04 and food:getHungChange()==food:getBaseHunger()
   and not food:getOnEat()and not food:getReplaceOnUse()
   and (not food:getRequireInHandOrInventory()or food:getRequireInHandOrInventory():isEmpty())
   and not food:hasTag(ItemTag.SMOKABLE),'fixture must be ordinary unreplaced food')
  local anchor=assert(root:AddItem(Fixture.anchorType));local fluid=assert(anchor:getFluidContainer())
  fluid:Empty();fluid:addFluid(Fluid.Water,1)
+ local fork,spoon
+ if spec.utensil then
+  -- Fork wins even over a root spoon; a broken fork is skipped by the native
+  -- constructor and leaves the bag spoon selected for the cancellation case.
+  fork=assert((spec.cancel and root or bag:getItemContainer()):AddItem('Base.Fork'))
+  spoon=assert((spec.cancel and bag:getItemContainer()or root):AddItem('Base.Spoon'))
+  if spec.cancel then fork:setCondition(0)end
+  assert(spoon:getCondition()>0 and (spec.cancel or fork:getCondition()>0),'utensil fixture condition differs')
+ end
  -- Native Eat uses this helper for remaining hunger/nutrients. Prepare before
  -- publication without Eat's premature SyncItemFields for an unknown client ID.
  if spec.smart then
@@ -74,8 +104,12 @@ function Fixture.prepare(player,case,previous)
  end
  player:getStats():set(CharacterStat.HUNGER,spec.smart and .2 or .8);player:getStats():set(CharacterStat.THIRST,.8)
  player:getBodyDamage():setHealthFromFoodTimer(0);player:getMoodles():Update()
- if isServer()then sendAddItemToContainer(root,bag);if not spec.bag then sendAddItemToContainer(root,food)end;sendAddItemToContainer(root,anchor)end
+ if isServer()then
+  sendAddItemToContainer(root,bag);if not spec.bag then sendAddItemToContainer(root,food)end;sendAddItemToContainer(root,anchor)
+  if spec.utensil then sendAddItemToContainer(root,spec.cancel and fork or spoon)end
+ end
  local ids={case=case,bagId=bag:getID(),foodId=food:getID(),anchorId=anchor:getID()}
+ if spec.utensil then ids.forkId,ids.spoonId=fork:getID(),spoon:getID()end
  local initial=assert(Fixture.snapshot(player,ids));initial.foodTimer=0;initial.foodLevel=player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)
  assert(root:getItemById(food:getID())==food,'prepared original food reference differs from exact root item')
  return {player=player,case=case,ids=initial,originalFood=food}
@@ -119,6 +153,14 @@ function Fixture.verify(state)
  local depletion=Fixture.scenario(state.case).depletion
  if value.foodCount~=(depletion and 0 or 1)or value.bagCount~=1 or value.anchorCount~=1
   or value.foodTypeCount~=state.ids.foodTypeCount-(depletion and 1 or 0)then return nil,'food fixture identity count differs'end
+ if Fixture.scenario(state.case).utensil then
+  for _,kind in ipairs({'fork','spoon'})do
+   for _,suffix in ipairs({'Id','Type','Source','Condition','Count'})do
+    local field=kind..suffix
+    if value[field]~=state.ids[field]then return nil,'food utensil changed: '..field end
+   end
+  end
+ end
  if depletion then
   local reason,proof=Fixture.checkDeletion(state,value)
   print('[FOOD_TEST] DELETION_PROOF '..require('QueueHealthEvents').encode(proof))

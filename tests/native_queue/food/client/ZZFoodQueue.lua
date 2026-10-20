@@ -80,7 +80,14 @@ local function eat(portion,menu,smartGoal)
  end)
  assert(#actions==1 and actions[1].Type=='ISEatFoodAction'and actions[1].item:getID()==ids.foodId,
   'ordinary native eat must be exactly one action')
- local action=actions[1];assert(not action.useUtensil and action.percentage==portion,'unexpected utensil/portion')
+ local action=actions[1];assert(action.useUtensil==spec.utensil and action.percentage==portion,'unexpected utensil/portion')
+ if spec.utensil then
+  local current=items();local selected=spec.cancel and current.spoon or current.fork
+  local second=action:getSecondItem()
+  assert(second and second:getID()==selected:getID(),'native selected utensil differs')
+  command.useUtensil,command.utensilId=true,second:getID()
+  command.forkId,command.spoonId=action.fork and action.fork:getID()or -1,action.spoon and action.spoon:getID()or -1
+ end
  command.nativeDuration=action.maxTime;assert(action.maxTime==action:getDuration()and action.maxTime==(portion==1 and 464 or 232),'native eat duration differs')
  commands[#commands+1]=command;observed[#observed+1]={eat=action,actions=actions}
  return action
@@ -145,8 +152,8 @@ local function dispatch()
   assert(pickup.maxTime==evidence.pickupDuration and returning.maxTime==evidence.returnDuration,'transfer duration changed')
   observeReturn(returning)
  else
-  local half=eat(spec.depletion and .25 or .5,true,spec.smart and 15 or nil)
-  local quarter=eat(spec.depletion and 1 or .25,true,spec.smart and 5 or nil)
+  local half=eat(spec.utensil and .625 or spec.depletion and .25 or .5,true,spec.smart and 15 or nil)
+  local quarter=eat(spec.utensil and .125 or spec.depletion and 1 or .25,true,spec.smart and 5 or nil)
   if config.mode=='toolkit'then
    for _,action in ipairs({half,quarter})do local contract=Policy.inspect(action);assert(contract and contract.edit,'ordinary food contract missing')end
    evidence.contractsVerified=true
@@ -165,6 +172,17 @@ local function dispatch()
  end
  local fresh=items();assert(fresh.food:getHungChange()==ids.remaining and fresh.food:getBaseHunger()==ids.baseHunger
   and fresh.food:getContainer()==(spec.bag and fresh.bag:getItemContainer()or player:getInventory()),'edit touched pending food')
+ for index,value in ipairs(observed)do
+  local action,command=value.eat,commands[index]
+  assert(action.maxTime==command.nativeDuration and action.percentage==command.portion
+   and action.useUtensil==spec.utensil,'edit changed native eating duration, portion or utensil flag')
+  if spec.utensil then
+   local selected=action:getSecondItem()
+   assert(selected and selected:getID()==command.utensilId
+    and (action.fork and action.fork:getID()or -1)==command.forkId
+    and (action.spoon and action.spoon:getID()or -1)==command.spoonId,'edit changed captured native cutlery')
+  end
+ end
  evidence.untouchedBefore=true;evidence.nativeDurationsUnchanged=true
 end
 local function clientReady()

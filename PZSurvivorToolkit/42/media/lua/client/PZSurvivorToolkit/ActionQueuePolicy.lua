@@ -710,8 +710,12 @@ function Policy.installContracts()
             local result=resources(action)
             result.edit,result.capacityNonIncreasing=edit,true
             result.targets[action.character]=true
-            if action.item:getContainer()~=action.character:getInventory() then
-                Policy.addContainerResources(result,action.item:getContainer())
+            for _,resource in ipairs(edit.resources) do
+                if resource.domain=="item" then
+                    local item=resource.facts.item
+                    result.items[itemKey(item)],result.itemTypes[item:getFullType()]=true,true
+                    Policy.addContainerResources(result,item:getContainer())
+                end
             end
             return result
         end

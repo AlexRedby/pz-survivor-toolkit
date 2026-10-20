@@ -29,28 +29,40 @@ class FoodAdapterTests(unittest.TestCase):
         raw = []
         for index, case in enumerate(cases):
             bag, enabled, depletion = case == food.BAG_CASE, self.selection['mode'] == 'toolkit', case == food.DEPLETION_CASE
-            smart = case in food.SMART_CASES
-            cancel = case in (food.CANCEL_CASE, food.SMART_CANCEL_CASE) and enabled
+            smart, utensil = case in food.SMART_CASES, case in food.UTENSIL_CASES
+            cancel = case in (food.CANCEL_CASE, food.SMART_CANCEL_CASE, food.UTENSIL_CANCEL_CASE) and enabled
             base = 100 + 10 * index
             prep = dict(case=case, bagId=base, bagType='Base.Bag_ALICEpack_Army', bagCount=1,
-                        foodId=base + 1, foodType='Base.Cereal', baseHunger=-.4, remaining=-.3 if smart else -.4,
+                        foodId=base + 1, foodType='Base.OatsRaw' if utensil else 'Base.Cereal',
+                        baseHunger=-.5 if utensil else -.4, remaining=-.5 if utensil else -.3 if smart else -.4,
                         source='bag' if bag else 'root', foodCount=1, foodTypeCount=1, deleted=False,
                         anchorId=base + 2, anchorType='Base.WaterBottle', anchorAmount=1.0,
                         anchorCount=1, anchorThirstChange=-.5, hunger=.2 if smart else .8, thirst=.8, foodTimer=0, foodLevel=0)
-            fraction = (.375 if cancel else .5) if smart else 1 if depletion else .5 if bag else .25 if cancel else .75
-            receipt = {key: value for key, value in prep.items() if key in food.RECEIPT_KEYS}
-            receipt.update(remaining=prep['remaining'] + .4 * fraction if smart else -.4 * (1 - fraction), source='deleted' if depletion else 'root' if not bag or enabled else 'bag',
+            if utensil:
+                prep.update(forkId=base + 3, forkType='Base.Fork', forkCount=1,
+                            forkSource='bag' if case == food.UTENSIL_MOVE_CASE else 'root',
+                            forkCondition=5 if case == food.UTENSIL_MOVE_CASE else 0,
+                            spoonId=base + 4, spoonType='Base.Spoon', spoonCount=1,
+                            spoonSource='root' if case == food.UTENSIL_MOVE_CASE else 'bag', spoonCondition=5)
+            fraction = (.125 if cancel else .75) if utensil else (.375 if cancel else .5) if smart else 1 if depletion else .5 if bag else .25 if cancel else .75
+            receipt = {key: value for key, value in prep.items() if key in food.RECEIPT_KEYS | (food.UTENSIL_RECEIPT_KEYS if utensil else set())}
+            receipt.update(remaining=prep['remaining'] - prep['baseHunger'] * fraction if smart else prep['baseHunger'] * (1 - fraction), source='deleted' if depletion else 'root' if not bag or enabled else 'bag',
                            foodCount=0 if depletion else 1, foodTypeCount=0 if depletion else 1, deleted=depletion,
-                           anchorAmount=.5, anchorThirstChange=-.25, hunger=prep['hunger'] - .4 * fraction, thirst=.55)
-            commands = [dict(id=base + 1, portion=portion, baseHunger=-.4, dispatchRemaining=prep['remaining'],
+                           anchorAmount=.5, anchorThirstChange=-.25, hunger=prep['hunger'] + prep['baseHunger'] * fraction, thirst=.55)
+            commands = [dict(id=base + 1, portion=portion, baseHunger=prep['baseHunger'], dispatchRemaining=prep['remaining'],
                              dispatchSource=prep['source'], menuDispatched=not bag, nativeDuration=464 if portion == 1 else 232,
                              progress=not (cancel and n == 0), cancelled=cancel and n == 0, pickupObserved=bag)
-                        for n, portion in enumerate([.125, .375] if smart else [.25, 1] if depletion else [.5] if bag else [.5, .25])]
+                        for n, portion in enumerate([.625, .125] if utensil else [.125, .375] if smart else [.25, 1] if depletion else [.5] if bag else [.5, .25])]
+            if utensil:
+                for command in commands:
+                    command.update(useUtensil=True,
+                                   utensilId=prep['forkId' if case == food.UTENSIL_MOVE_CASE else 'spoonId'],
+                                   forkId=prep['forkId'] if case == food.UTENSIL_MOVE_CASE else -1, spoonId=prep['spoonId'])
             if smart:
                 for command, goal in zip(commands, (15, 5)):
                     command.update(smartGoal=goal, dispatchHunger=prep['hunger'])
             edit = dict(emptyStart=True, anchorRunning=True, anchorProgress=True, anchorDuration=460,
-                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE),
+                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE),
                         waitingCancel=cancel, moveRejected=enabled and (bag or depletion), cancelRejected=enabled and bag,
                         manualPickup=bag, untouchedBefore=True, nativeDurationsUnchanged=True,
                         order=[1] if bag else [1, 2] if depletion else [2] if cancel else [2, 1] if enabled else [1, 2])
@@ -368,6 +380,90 @@ end
                 for record in (rows[1], rows[1]['client'], raw[1][1]):
                     record.update(remaining=-.3 + .4 * portions, hunger=.2 - .4 * portions)
                 self.assertEqual([], self.verify((rows, raw))['issues'])
+
+    def test_utensil_contract_keeps_captured_bag_tool_and_native_duration(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode)
+                for case in food.UTENSIL_CASES:
+                    rows, raw = self.single(case)
+                    self.assertEqual([], self.verify((rows, raw))['issues'])
+                    prep, receipt = raw[0][1], raw[1][1]
+                    self.assertEqual([.625, .125], [c['portion'] for c in rows[1]['commands']])
+                    self.assertEqual([232, 232], [c['nativeDuration'] for c in rows[1]['commands']])
+                    selected = 'forkId' if case == food.UTENSIL_MOVE_CASE else 'spoonId'
+                    self.assertEqual('bag', prep[selected.replace('Id', 'Source')])
+                    self.assertEqual([prep[selected]] * 2, [c['utensilId'] for c in rows[1]['commands']])
+                    cancelled = mode == 'toolkit' and case == food.UTENSIL_CANCEL_CASE
+                    self.assertAlmostEqual(-.4375 if cancelled else -.125, receipt['remaining'])
+                    self.assertAlmostEqual(.7375 if cancelled else .425, receipt['hunger'])
+                    self.assertEqual([2] if cancelled else [2, 1] if mode == 'toolkit' else [1, 2],
+                                     rows[1]['editEvidence']['order'])
+                    for field in food.UTENSIL_RECEIPT_KEYS:
+                        self.assertEqual(prep[field], receipt[field])
+                        rows, raw = self.single(case)
+                        raw[1][1].pop(field)
+                        with self.subTest(kind=kind, mode=mode, case=case, missing=field):
+                            self.assertTrue(self.verify((rows, raw))['issues'])
+                    for field in food.UTENSIL_COMMAND_KEYS:
+                        rows, raw = self.single(case)
+                        rows[1]['commands'][0].pop(field)
+                        with self.subTest(kind=kind, mode=mode, case=case, missing=field):
+                            self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_utensil_identity_selection_condition_and_conservation_tampering_is_rejected(self):
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for case in food.UTENSIL_CASES:
+                for field, wrong in [('forkType', 'Base.Spoon'), ('spoonType', 'Base.Fork'),
+                                     ('forkSource', 'floor'), ('spoonSource', 'floor'),
+                                     ('forkCondition', 0 if case == food.UTENSIL_MOVE_CASE else 1),
+                                     ('spoonCondition', 0), ('forkCount', 2), ('spoonCount', 0),
+                                     ('forkId', 999), ('spoonId', 999),
+                                     ('remaining', -.4), ('hunger', .8), ('foodCount', 0)]:
+                    rows, raw = self.single(case)
+                    for record in (rows[1], rows[1]['client'], raw[1][1]): record[field] = wrong
+                    with self.subTest(kind=kind, case=case, field=field):
+                        self.assertTrue(self.verify((rows, raw))['issues'])
+                for field, wrong in [('useUtensil', False), ('useUtensil', 1), ('useUtensil', 'true'),
+                                     ('utensilId', 999), ('forkId', 999), ('spoonId', -1),
+                                     ('nativeDuration', 464), ('pickupObserved', True), ('portion', .5)]:
+                    rows, raw = self.single(case)
+                    rows[1]['commands'][0][field] = wrong
+                    with self.subTest(kind=kind, case=case, field=field, wrong=wrong):
+                        self.assertTrue(self.verify((rows, raw))['issues'])
+                rows, raw = self.single(case)
+                command = rows[1]['commands'][0]
+                command['utensilId'] = raw[0][1]['spoonId' if case == food.UTENSIL_MOVE_CASE else 'forkId']
+                self.assertTrue(self.verify((rows, raw))['issues'], 'native selector must retain the captured valid bag tool')
+                rows, raw = self.single(case)
+                rows[1]['commands'][0]['forkId'] = -1 if case == food.UTENSIL_MOVE_CASE else raw[0][1]['forkId']
+                self.assertTrue(self.verify((rows, raw))['issues'], 'constructor fork ref must exclude the broken fork')
+                for field in ('forkId', 'spoonId', 'forkCondition', 'spoonCondition', 'forkSource', 'spoonSource'):
+                    rows, raw = self.single(case)
+                    rows[1]['client'][field] = 999
+                    with self.subTest(kind=kind, case=case, client_only=field):
+                        self.assertTrue(self.verify((rows, raw))['issues'])
+                for field, wrong in [('forkCondition', True), ('spoonCondition', 0),
+                                     ('forkSource', 'root' if case == food.UTENSIL_MOVE_CASE else 'bag'),
+                                     ('spoonSource', 'bag' if case == food.UTENSIL_MOVE_CASE else 'root'),
+                                     ('forkCount', True), ('spoonId', 100)]:
+                    rows, raw = self.single(case)
+                    for record in (raw[0][1], rows[1], rows[1]['client'], raw[1][1]): record[field] = wrong
+                    with self.subTest(kind=kind, case=case, prepared=field):
+                        self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_utensil_fields_are_only_accepted_for_registered_utensil_cases(self):
+        for case in (food.MOVE_CASE, food.SMART_MOVE_CASE):
+            for field in food.UTENSIL_RECEIPT_KEYS:
+                rows, raw = self.single(case)
+                for record in (raw[0][1], rows[1], rows[1]['client'], raw[1][1]): record[field] = 1
+                with self.subTest(case=case, receipt=field): self.assertTrue(self.verify((rows, raw))['issues'])
+                rows, raw = self.single(case); rows[1][field] = 1
+                with self.subTest(case=case, row_only=field): self.assertTrue(self.verify((rows, raw))['issues'])
+            for field in food.UTENSIL_COMMAND_KEYS:
+                rows, raw = self.single(case); rows[1]['commands'][0][field] = 1
+                with self.subTest(case=case, command=field): self.assertTrue(self.verify((rows, raw))['issues'])
 
     def test_cancelled_first_portion_never_started_or_consumed(self):
         for mode in ('native', 'toolkit'):

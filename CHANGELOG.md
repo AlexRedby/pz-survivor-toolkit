@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.147
+
+- **Changed:** Pending ordinary-food actions with a captured fork or spoon use the shared queue edit contract. Safe reorder and cancellation preserve the exact selected utensil, native portion, duration and benefits; selected-tool and carried-container dependencies remain protected.
+
 ### 0.1.146
 
 - **Changed:** Research and planting indicators now use Toolkit's shared inventory presentation in both CleanUI modes. Research availability follows native character knowledge and skills; planting information is implemented from native farming data, retaining known-season badges, growth details, crop images and saved preferences without modifying item categories.

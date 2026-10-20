@@ -20,6 +20,7 @@ local function setup(changed,foreignMerge,alias,missing)
     elseif alias=='drink-base' then ISDrinkFluidAction.complete=ISBaseTimedAction.perform
     elseif alias=='base' then ISBaseTimedAction.perform=ISBaseTimedAction.stop end
     isClient,isServer=function()return false end,function()return false end
+    isDebugEnabled=function()return false end
     getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
     getGameFilesInput=function(path)
         local text=read(NativeActionRoot..'/'..path:gsub('^media/lua/',''))
@@ -49,7 +50,7 @@ local function setup(changed,foreignMerge,alias,missing)
     ISLogSystem={logAction=function()end};ItemPicker={updateOverlaySprite=function()end}
     local baseInstanceof=instanceof
     instanceof=function(value,kind)return baseInstanceof(value,kind)or type(value)=='table'and
-        (kind=='IsoGameCharacter'and value.class=='IsoPlayer'or kind=='InventoryItem'and value.class=='Food')end
+        (kind=='IsoGameCharacter'and value.class=='IsoPlayer'or kind=='InventoryItem'and (value.class=='Food'or value.class=='HandWeapon'))end
     local knownItems={}
     local function container(owner)
         local c={class='ItemContainer',owner=owner}
@@ -101,6 +102,28 @@ local function setup(changed,foreignMerge,alias,missing)
             getReplaceOnUse=function()end,getReplaceOnDeplete=function()end}
         value.getScriptItem=function()return script end
         return value
+    end
+    local function utensil(kind,location)
+        local value=item();value.class='HandWeapon';value.container=location or root;value.utensil=kind
+        value.getType=function()return kind end;value.getFullType=function()return 'Base.'..kind end
+        value.hasTag=function(self,tag)return self.utensil=='Spoon'and tag==ItemTag.SPOON or self.utensil=='Fork'and tag==ItemTag.FORK end
+        value.isBroken=function(self)return self.broken or false end
+        return value
+    end
+    -- The real native Lua constructor supplies predicateNotBroken. Keep the
+    -- inventory fixture explicit: root entries precede the one carried bag.
+    local function carriedMatch(predicate)
+        for _,location in ipairs({root,bagInventory})do
+            for _,value in ipairs(knownItems)do
+                if value.container==location and predicate(value)then return value end
+            end
+        end
+    end
+    root.getFirstTagEvalRecurse=function(_,tag,predicate)
+        return carriedMatch(function(value)return value.hasTag and value:hasTag(tag)and predicate(value)end)
+    end
+    root.getFirstTypeEvalRecurse=function(_,kind,predicate)
+        return carriedMatch(function(value)return value:getFullType()==kind and predicate(value)end)
     end
     local properties={getThirstChange=function()return -0.1 end}
     for _,name in ipairs({'getFatigueChange','getHungerChange','getStressChange','getUnhappyChange','getCalories','getCarbohydrates',
@@ -156,7 +179,7 @@ local function setup(changed,foreignMerge,alias,missing)
         assert(action:isValid());action:perform();action.action=nil
     end
     return {f=f,adapters=adapters,model=model,policy=policy,root=root,bag=bag,bagInventory=bagInventory,water=water,fluid=fluid,
-        properties=properties,item=item,food=food,eat=eat,damage=damage,transfer=transfer,drink=drink,runTransfer=runTransfer,drinks=function()return drinks end}
+        properties=properties,item=item,food=food,utensil=utensil,eat=eat,damage=damage,transfer=transfer,drink=drink,runTransfer=runTransfer,drinks=function()return drinks end}
 end
 do
     local s=setup();local pickup=s.transfer();local restore=s.transfer(nil,s.root,s.bagInventory)
@@ -581,6 +604,131 @@ do
         s=setup(nil,nil,nil,{owner='ISEatFoodAction',name=name})
         assert(not s.adapters.food(s.eat(s.food())),'deleted native food effect/helper cannot inherit permission: '..name)
         assert(s.adapters.drink(s.drink()),'unknown food callbacks do not revoke unrelated native water contracts')
+    end
+end
+-- These use the installed native constructor and getSecondItem/getDuration,
+-- while the production adapter and Policy own every edit decision.
+do
+    for _,kind in ipairs({'Can','Candrink','2hand','Plate','2handbowl','EatBox','2handforced','plate'})do
+        local s=setup();local food=s.food();food.getEatType=function()return kind end
+        local spoon=s.utensil('Spoon',s.bagInventory);local fork=s.utensil('Fork')
+        local action=s.eat(food,.8)
+        local selected=kind=='2handbowl'and spoon or (kind=='Can'or kind=='Candrink'or kind=='2hand'or kind=='Plate')and fork or nil
+        assert(action.spoon==spoon and action.fork==fork,'the actual constructor captures both available utensils')
+        assert(action:getSecondItem()==selected and action.useUtensil==(selected~=nil),'native EatType selection must stay exact: '..kind)
+        local duration=action.maxTime
+        assert(duration==(selected and 232 or 464),'native large-portion duration preserves the captured utensil benefit')
+        local edit=assert(s.adapters.food(action));local resources=edit.resources
+        if selected then
+            local resource=assert(resources[3]);assert(resource.domain=='item'and resource.key==selected:getID()
+                and resource.facts.item==selected and #resource.effects==0,'only the exact selected utensil is a read-only resource')
+            assert(not resources[4],'unused captured cutlery must not become a resource')
+        else
+            assert(not resources[3],'animation-independent captured cutlery adds no item dependency')
+        end
+        local contract=assert(s.policy.inspect(action))
+        assert(contract.items[food:getID()]and (not selected or contract.items[selected:getID()]))
+        if selected~=fork then assert(not contract.items[fork:getID()],'unused fork is not a policy dependency')end
+        if selected~=spoon then assert(not contract.items[spoon:getID()],'unused spoon is not a policy dependency')end
+        if selected==spoon then
+            assert(contract.containerOwners and contract.containerOwners[s.bag:getID()],'selected carried-bag ancestry is linked')
+        end
+        local calls=0;s.f.player.Eat=function(_,exact,portion,useUtensil)
+            assert(exact==food and portion==.8 and useUtensil==(selected~=nil));calls=calls+1
+        end
+        assert(calls==0 and action.maxTime==duration and action.percentage==.8,'inspection preserves native captured duration and percentage')
+        assert(action:complete()and calls==1,'real native completion retains its captured utensil boolean')
+    end
+end
+do
+    local s=setup();local food=s.food();food.getEatType=function()return '2handbowl'end
+    local empty=s.eat(food,.5)
+    assert(empty.fork==nil and empty.spoon==nil and empty.useUtensil==false and s.adapters.food(empty),
+        'native empty captured references preserve ordinary utensil-free eating')
+    local fork=s.utensil('Fork');local action=s.eat(food,.5)
+    assert(action.fork==fork and action.spoon==nil and action.useUtensil==false)
+    assert(s.adapters.food(action)and #s.adapters.food(action).resources==2,'a bowl cannot substitute its remembered fork for a missing spoon')
+    local spoon=s.utensil('Spoon');food.getEatType=function()return 'Can'end
+    fork.broken=true;action=s.eat(food,.5)
+    assert(action.fork==nil and action.spoon==spoon and action.useUtensil==true,'native constructor skips broken forks and falls back to spoon')
+    assert(s.adapters.food(action))
+end
+do
+    local s=setup();local food=s.food();food.getEatType=function()return 'Can'end
+    local fork=s.utensil('Fork',s.bagInventory);local action=s.eat(food,.25)
+    local pickup=s.transfer(fork,s.bagInventory,s.root);local returning=s.transfer(fork,s.root,s.bagInventory)
+    local function entry(value,adapter)return {action=value,edit=assert(s.adapters[adapter or 'food'](value))}end
+    local eatEntry,pickupEntry,returnEntry=entry(action),entry(pickup,'transfer'),entry(returning,'transfer')
+    assert(s.model.evaluate({eatEntry,pickupEntry,returnEntry}).status=='allowed','cutlery may remain in its captured carried bag when eating')
+    assert(s.model.evaluate({pickupEntry,eatEntry,returnEntry}).status=='allowed','pickup to root preserves the exact selected cutlery')
+    assert(s.model.evaluate({pickupEntry,returnEntry,eatEntry}).status=='allowed','putting the selected utensil back before eating preserves native behavior')
+    pickupEntry.snapshotOnly=true
+    assert(s.model.evaluate({pickupEntry,eatEntry}).status=='allowed','cancelling an unnecessary utensil pickup leaves valid carried cutlery')
+    pickupEntry.snapshotOnly=nil
+    s.water.container=s.root;local anchor=s.drink();anchor.action={}
+    local q=s.f.queue(anchor,pickup,action,returning)
+    assert(s.policy.evaluateMove(q,action,pickup,false).allowed,'Policy can move eating before a bag/root utensil transfer')
+    assert(s.policy.evaluateMove(q,returning,action,false).allowed,'Policy can return cutlery before its captured eating action')
+    assert(s.policy.evaluateCancel(q,pickup).allowed,'Policy can cancel the unnecessary cutlery pickup')
+    assert(s.policy.evaluateCancel(q,action).allowed,'ordinary pending utensil eating remains cancellable')
+    local other=s.utensil('Fork');local duration=action.maxTime
+    s.runTransfer(pickup)
+    s.root.getFirstTagEvalRecurse=function()error('inspection must never reselect cutlery')end
+    s.root.getFirstTypeEvalRecurse=s.root.getFirstTagEvalRecurse
+    local edit=assert(s.adapters.food(action))
+    assert(edit.resources[3].facts.item==fork and action.fork==fork and action.fork~=other
+        and action.maxTime==duration and action.useUtensil==true,'moving captured cutlery cannot switch to another available fork or recalculate duration')
+end
+do
+    local s=setup();local food=s.food();food.getEatType=function()return 'Can'end
+    local fork=s.utensil('Fork');local action=s.eat(food,.5)
+    assert(s.adapters.food(action))
+    for _,value in ipairs({false,0,'true',{}})do
+        action.useUtensil=value;assert(not s.adapters.food(action),'selected cutlery requires the exact native boolean')
+    end
+    action.useUtensil=nil;assert(not s.adapters.food(action));action.useUtensil=true
+    action.fork=nil;assert(not s.adapters.food(action),'a true boolean cannot invent a missing captured utensil');action.fork=fork
+    food.getEatType=function()return '2handbowl'end;action.spoon=false
+    assert(not s.adapters.food(action),'a false captured bowl-spoon reference cannot claim the native utensil benefit')
+    action.spoon={};assert(not s.adapters.food(action),'a malformed captured bowl-spoon reference cannot claim the native utensil benefit')
+    action.spoon=nil;food.getEatType=function()return 'Can'end
+    for _,field in ipairs({'broken','consumed'})do
+        fork[field]=true;assert(not s.adapters.food(action),'invalid selected utensil must fail closed: '..field);fork[field]=nil
+    end
+    local original=s.f.player.isEquipped;s.f.player.isEquipped=function(_,item)return item==fork end
+    assert(not s.adapters.food(action),'selected equipped cutlery is outside the ordinary leaf contract');s.f.player.isEquipped=original
+    original=fork.getEquipParent;fork.getEquipParent=function()return s.f.player end
+    assert(not s.adapters.food(action),'an equip-parent reference cannot masquerade as loose cutlery');fork.getEquipParent=original
+    fork.container=nil;assert(not s.adapters.food(action),'missing exact utensil cannot be replaced by the old reference');fork.container=s.root
+    local foreign={class='ItemContainer',getType=function()return 'crate'end,isExistYet=function()return true end,
+        getAcceptItemFunction=function()end,getOnlyAcceptCategory=function()end,getContainingItem=function()end}
+    fork.container=foreign;assert(not s.adapters.food(action),'foreign-world cutlery is not carried ancestry');fork.container=s.root
+    local lookup=s.root.getItemById;s.root.getItemById=function(_,id)if id==fork.id then return s.utensil('Fork')end;return lookup(s.root,id)end
+    assert(not s.adapters.food(action),'the selected ID must resolve to the exact captured item');s.root.getItemById=lookup
+    fork.class='InventoryItem';assert(not s.adapters.food(action),'arbitrary tagged inventory objects are not native HandWeapon cutlery');fork.class='HandWeapon'
+    fork.id=.5;assert(not s.adapters.food(action),'malformed selected identity cannot enter the shared resource model')
+end
+do
+    for _,mode in ipairs({'selected-tool','container-owner','unused-tool'})do
+        local s=setup();local food=s.food();food.getEatType=function()return 'Can'end
+        local fork=s.utensil('Fork',s.bagInventory);local spoon=s.utensil('Spoon')
+        local action=s.eat(food,.25);local exact=mode=='selected-tool'and fork or mode=='container-owner'and s.bag or spoon
+        local unknownClass=ISBaseTimedAction:derive('UnreviewedCutleryOperation')
+        local unknown=s.f.action(unknownClass,{item=exact})
+        PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('fixture.cutlery-operation',{
+            types={'UnreviewedCutleryOperation'},matches=function(value)return value==unknown end,
+            inspect=function()return {items={[exact:getID()]=true},itemTypes={},targets={},cancelWaiting=true}end,
+        })
+        s.water.container=s.root;local anchor=s.drink();anchor.action={}
+        local q=s.f.queue(anchor,action,unknown)
+        local decision=s.policy.evaluateCancel(q,action)
+        if mode=='unused-tool'then
+            assert(decision.allowed,'a known unrelated operation on unused remembered cutlery does not join the eating component')
+        else
+            assert(s.policy.cancelOperationReason(q,action)=='operation_shared_item'
+                and not decision.allowed and decision.reason=='edit_unknown'and decision.blocker==unknown,
+                'unmodeled selected-tool/container-owner effects retain exact dependency protection: '..mode)
+        end
     end
 end
 print('Food edit adapters: original portions, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')

@@ -296,15 +296,24 @@ function Adapters.drink(action)
 end
 
 function Adapters.food(action)
-    if not pending(action,eat) or action.useUtensil~=false or not instanceof(action.container,"ItemContainer")
+    if not pending(action,eat) or not instanceof(action.container,"ItemContainer")
         or action.carLighter or action.openFlame or action.fromRelaunch or not leaf(action.item,action.character)
         or not instanceof(action.item,"Food") or not ancestry(action.item:getContainer(),action.character) then return end
     local item=action.item
-    -- Constructors remember available cutlery even for foods whose animation
-    -- never uses it. Only reject a captured utensil that the audited helper uses.
+    -- Use the constructor's captured reference, never a fresh inventory search.
+    -- Native getSecondItem/start select only one of the two remembered utensils.
     local kind=item:getEatType()
-    if kind=="2handbowl" and action.spoon
-        or (kind=="Can" or kind=="Candrink" or kind=="2hand" or kind=="Plate") and (action.fork or action.spoon) then return end
+    local utensil
+    if kind=="2handbowl" then utensil=action.spoon
+    elseif kind=="Can" or kind=="Candrink" or kind=="2hand" or kind=="Plate" then utensil=action.fork or action.spoon end
+    if action.useUtensil~=(utensil~=nil) then return end
+    local utensilFacts
+    if utensil~=nil then
+        if not instanceof(utensil,"HandWeapon") or not leaf(utensil,action.character) or utensil:isBroken()
+            or not ancestry(utensil:getContainer(),action.character) then return end
+        utensilFacts=itemFacts(utensil)
+        if not utensilFacts then return end
+    end
     local script=item:getScriptItem()
     local cookedOutputs=item:getReplaceOnCooked()
     if not script or script:isCantEat() or script:getOpeningRecipe() or script:getOnBreak()
@@ -334,9 +343,17 @@ function Adapters.food(action)
     -- the timer bonus. The extra .01 covers the native final-tail rounding.
     local multiplier=item:isCooked() and 33800 or 13000
     actor.effects={{field="foodTimerUpper",delta=multiplier*(debit+0.01+margin)+1},{field="foodTimerUpper",cap=11000}}
-    return {version=1,complete=true,capacity="external",resources={
+    local resources={
         {domain="item",key=item:getID(),facts=facts,
             requires={{field="location",equal=action.character:getInventory()},{field="foodLower",above=0}},effects=effects,
-            bounds={foodLower={min=0},foodUpper={min=0}}},actor}}
+            bounds={foodLower={min=0},foodUpper={min=0}}},actor}
+    if utensil then
+        -- Native Eat receives a boolean: it neither consumes nor equips cutlery.
+        -- Keep the exact selected tool reachable; a bag/root transfer can commute
+        -- without changing the captured duration or mood benefit.
+        resources[#resources+1]={domain="item",key=utensil:getID(),facts=utensilFacts,
+            requires={{field="location",oneOf={utensilFacts.location,action.character:getInventory()}}},effects={}}
+    end
+    return {version=1,complete=true,capacity="external",resources=resources}
 end
 return Adapters
