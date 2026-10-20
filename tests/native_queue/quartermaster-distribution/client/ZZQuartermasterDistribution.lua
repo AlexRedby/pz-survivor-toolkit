@@ -6,6 +6,7 @@ local JSON=require 'QueueHealthEvents'
 local started,done,since,phase=false,false,0,'prepare'
 local state,packet,boxes,point,saved,receipt,cleaned,arrived,designatedAt
 local designationPicker
+local pasteRevision,pasteReceipt
 local cleanupRetry=0
 local playerUpdates=0
 local stagingWalk,stagingComplete,stagingTarget
@@ -33,7 +34,8 @@ Events.OnPlayerUpdate.Add(function(player)
 end)
 Events.OnServerCommand.Add(function(module,command,value)
  if module~='QuartermasterDistributionTest'then return end
- if command=='Prepared'then packet=value elseif command=='Verified'then receipt=value elseif command=='Cleaned'then cleaned=true end
+ if command=='Prepared'then packet=value elseif command=='Verified'then receipt=value
+ elseif command=='PasteVerified'then pasteReceipt=value elseif command=='Cleaned'then cleaned=true end
 end)
 Events.OnGameStart.Add(function()
  started=true;since=getTimestampMs();getPlayer():setGodMod(true);getPlayer():setGhostMode(true)
@@ -66,13 +68,24 @@ local function tick()
   if LootSorter._picker==designationPicker then return end
   assert(LootSorter.getBoxPriority(boxes[2],0)==5,'item editor lost accepted designation')
   LootSorter.copyDesignation(boxes[2],0)
-  assert(LootSorter.pasteDesignation(boxes[3],0),'copy/paste did not start')
-  assert(LootSorter.getBoxPriority(boxes[3],0)==5,'copy/paste lost priority')
   stageWalk(point.x+4)
-  phase='configure'
- elseif phase=='configure'then
+  phase='paste'
+ elseif phase=='paste'then
   if not stageArrived()then return end
   arrived=arrived or getTimestampMs();if getTimestampMs()-arrived<500 then return end
+  pasteRevision=Rules.getBoxRevision(boxes[3],0)
+  assert(LootSorter.pasteDesignation(boxes[3],0),'copy/paste did not start')
+  phase='pasted'
+ elseif phase=='pasted'then
+  if Rules.getBoxRevision(boxes[3],0)<=pasteRevision then return end
+  assert(LootSorter.getBoxPriority(boxes[3],0)==5,'copy/paste lost priority')
+  if isClient()then sendClientCommand('QuartermasterDistributionTest','VerifyPaste',{})
+  else pasteReceipt=Fixture.pasteReceipt(boxes)end
+  phase='configure'
+ elseif phase=='configure'then
+  if not pasteReceipt then return end
+  assert(pasteReceipt.revision==pasteRevision+1,'paste was not one authoritative revision')
+  print('[QM_DISTRIBUTION] PASTE '..JSON.encode(pasteReceipt))
   LootSorter.openPicker(boxes[3],0,0)
   designationPicker=assert(LootSorter._picker)
   designationPicker.selectedItems={};designationPicker.priority=7

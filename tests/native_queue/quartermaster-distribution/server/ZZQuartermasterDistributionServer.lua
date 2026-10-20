@@ -9,6 +9,11 @@ Events.OnClientCommand.Add(function(module,command,player,args)
   if command=='Prepare'then
    assert(not state and not preparing,'duplicate distribution preparation')
    preparing={player=player,point=args,since=getTimestampMs()}
+  elseif command=='VerifyPaste'then
+   assert(state,'paste verification before preparation')
+   local result=Fixture.pasteReceipt(state.boxes)
+   print('[QM_DISTRIBUTION] PASTE_AUTHORITY '..JSON.encode(result))
+   sendServerCommand(player,module,'PasteVerified',result)
   elseif command=='Verify'then assert(state and not pending,'invalid distribution verification');pending=getTimestampMs()
   else
    assert(command=='Cleanup'and state.verified,'cleanup before verified effects')

@@ -66,6 +66,19 @@ function Fixture.resolve(packet)
  for _,id in ipairs(packet.ids)do if not boxes[1]:getContainer():getItemById(id)then return end end
  return boxes
 end
+function Fixture.pasteReceipt(boxes)
+ local source,target=boxes[2]:getModData(),boxes[3]:getModData()
+ local expected=assert(source.LSBoxItems and source.LSBoxItems['0'],'source designation missing')
+ local actual=assert(target.LSBoxItems and target.LSBoxItems['0'],'pasted item designation missing')
+ local count=0
+ for key,value in pairs(expected)do count=count+1;assert(actual[key]==value,'paste changed selected item')end
+ for key in pairs(actual)do assert(expected[key],'paste added an item')end
+ assert(count==1 and target.LSBoxPriority and target.LSBoxPriority['0']==5,'paste lost selection/priority')
+ assert(not(target.PZSTQuartermasterTagRules and target.PZSTQuartermasterTagRules['0']),'native-only paste gained a rule')
+ local revision=assert(target.PZSTQuartermasterTagRulesRevisions and target.PZSTQuartermasterTagRulesRevisions['0'],
+  'paste bypassed authority revision')
+ return {revision=revision,priority=5,items=count}
+end
 function Fixture.receipt(player,boxes,ids,original)
  local pools={counts(boxes[1]:getContainer()),counts(boxes[2]:getContainer()),counts(boxes[3]:getContainer()),counts(player:getInventory())}
  local rows={}

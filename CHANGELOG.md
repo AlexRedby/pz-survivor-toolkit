@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.132
+
+- **Fixed:** Pasting container sorting settings saves categories, items, preset links, priority and tag rules together through the editor's authority checks. Stale or denied pastes leave the destination unchanged; its name, icon and colour are preserved. Removed the separate client publication of container data.
+
 ### 0.1.131
 
 - **Changed:** Bulk clothing, electronics and battery menus share one native recipe lookup per selected item and one reachable-container snapshot per menu build. Each command retains its own first viable recipe, exact selected items and toggle; clicking still revalidates inputs and tools before queuing native actions.

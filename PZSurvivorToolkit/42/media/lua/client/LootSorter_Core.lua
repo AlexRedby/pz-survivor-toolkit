@@ -274,22 +274,18 @@ function LootSorter.copyDesignation(obj, ci)
 end
 
 -- Replaces rather than merges. Capture the request now: another Copy may replace the clipboard
--- before the server accepts its rule. Never temporarily expose this snapshot as the global clipboard.
+-- before the server accepts it. The complete sorting snapshot shares the editor's authority;
+-- appearance stays absent so a paste preserves the destination's name, icon and color.
 function LootSorter.pasteDesignation(obj, ci)
     if not LootSorter.clipboard then return false end
     local snapshot = LootSorter.snapshotDesignation(LootSorter.clipboard)
-    if not Tags.ruleActive(snapshot.pzstTagRule) and not TagRules.getBox(obj, ci) then
-        LootSorter.setBoxDesignation(obj, ci, snapshot)
-        return true
-    end
     local player = getSpecificPlayer(0)
+    local revision = TagRules.getBoxRevision(obj, ci)
     TagRules.saveBox(obj, ci, snapshot.pzstTagRule, player, function(verdict)
-        if verdict == "ok" then
-            LootSorter.setBoxDesignation(obj, ci, snapshot)
-        elseif LootSorter.notify then
+        if verdict ~= "ok" and LootSorter.notify then
             LootSorter.notify(player, getText("UI_PZST_QMTagRuleFailed", tostring(verdict)))
         end
-    end)
+    end, revision, snapshot)
     return true
 end
 

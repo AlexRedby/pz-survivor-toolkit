@@ -1,3 +1,8 @@
+# Host preset consistency
+
+- [ ] Publish and read preset selections and tag rules as one coherent Host snapshot. Separate `LootSorter_Presets` and `PZSTQuartermasterTagRules` updates currently combine a newly edited preset with its old rule while `arePresetsSynced()` remains true; generation matching does not distinguish edits. Preserve existing world presets, SP paired storage and generation-bound links. Verify both delivery orders, edits and delete/recreate without exposing mixed versions to sorting or editors.
+- [ ] Remove client-side whole-object publication from `pruneDeadPresetLinks`, which currently mutates container ModData during storage discovery. Let the authority own cleanup, or retain unresolved links if deletion has no useful purpose. Preserve generation isolation and never delete links based on an incomplete or stale client snapshot; scanning must not overwrite concurrent container settings.
+
 # Wooden wheelbarrow collisions
 
 - [ ] Fix observer-only wooden-cart wall penetration during the approach in Host `cart_wall_exit=left/right`. Native prediction and facing can form a pose that crosses the wall even while the owner is clear. Implement a jointly validated visual position/heading for the whole actor and held cart; keep native actor coordinates, targets, pathfinding, equipment and network traffic unchanged. Any render-only correction must reach both `ModelCameraRenderData` and `ModelSlotRenderData` before grounding/grip/wheel processing, with matching depth and safe identity/stale/geometry-reset handling.

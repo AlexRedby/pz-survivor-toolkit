@@ -53,6 +53,7 @@ local object = {md = {}, getSquare = function() return square end, getObjectInde
     transmitModData = function(self) self.transmits = (self.transmits or 0) + 1 end}
 object.getModData = function(self) return self.md end
 object.hasModData = function() return true end
+instanceof = function(value, kind) return value == object and kind == 'IsoObject' end
 square.getObjects = function() return list({object}) end
 getCell = function() return {getGridSquare = function(_, x,y,z) if x == 10 and y == 20 and z == 0 then return square end end} end
 local safe = true
@@ -308,15 +309,16 @@ do
     local originalData, originalClipboard, originalTransmit = object.md, LootSorter.clipboard, object.transmitModData
     local originalAdd, originalRemove, originalNotify = LootSorter.addCoord, LootSorter.removeCoords, LootSorter.notify
     local publications, added, removed, notified = 0, 0, 0, 0
-    local expectedClipboard, expectCleared
+    local appearance = {name = 'Existing', icon = {kind = 'item', value = 'Base.Axe'}, color = {r = 1, g = 0, b = 0}}
     LootSorter.addCoord = function() added = added + 1 end
     LootSorter.removeCoords = function() removed = removed + 1 end
     LootSorter.notify = function() notified = notified + 1 end
     local function baseline()
-        object.md = {LSBox = {['0'] = {Original = true}}, LSBoxItems = {['0'] = {OriginalItem = true}},
+        object.md = {LSBox = {['0'] = {Original = true}, ['1'] = {OtherContainer = true}}, LSBoxItems = {['0'] = {OriginalItem = true}},
             LSBoxPresets = {['0'] = {OriginalPreset = 12}}, LSBoxPriority = {['0'] = 8},
             [Rules.FIELD] = {['0'] = {mode = 'all', include = {'electrical'}, exclude = {}}},
-            [Rules.REVISIONS] = {['0'] = 1}}
+            [Rules.REVISIONS] = {['0'] = 1}, BetterContainers = {customize = {_global = appearance}},
+            crate_customContainerName = 'Existing', unrelated = 'untouched'}
     end
     local function respond(verdict)
         for _, fn in ipairs(Events.OnServerCommand.handlers) do
@@ -325,31 +327,33 @@ do
     end
     object.transmitModData = function(self)
         publications = publications + 1
-        assert(LootSorter.clipboard == expectedClipboard, 'native transmit observed a temporary global clipboard')
-        assert(Rules.getBoxRevision(self, 0) == 2, 'native transmit preceded the accepted rule revision')
-        if expectCleared then
-            assert(not Rules.getBox(self, 0) and not self.md.LSBox['0'] and not self.md.LSBoxItems['0']
-                and not self.md.LSBoxPresets['0'] and not self.md.LSBoxPriority['0'], 'empty paste did not replace all layers')
-        else
-            assert(Rules.getBox(self, 0).include[1] == 'food' and self.md.LSBox['0'].ClipboardA
-                and not self.md.LSBox['0'].Original and self.md.LSBoxItems['0'].ItemA
-                and self.md.LSBoxPresets['0'].Pantry == 41 and self.md.LSBoxPriority['0'] == 3,
-                'native paste published mixed or partial designation layers')
-        end
     end
     baseline()
     LootSorter.clipboard = {cats = {ClipboardA = true}, items = {ItemA = true}, presets = {Pantry = 41},
         priority = 3, pzstTagRule = {mode = 'all', include = {'food'}, exclude = {'perishable'}}}
     local clipboardA = LootSorter.clipboard
     assert(LootSorter.pasteDesignation(object, 0) and publications == 0 and object.md.LSBox['0'].Original,
-        'paste wrote native selections before authority accepted its rule')
+        'paste wrote native selections before authority accepted its configuration')
+    assert(sent.baseRevision == 1 and sent.configuration and sent.configuration.cats.ClipboardA and sent.configuration.items.ItemA
+        and sent.configuration.presets.Pantry == 41 and sent.configuration.priority == 3
+        and sent.rule.include[1] == 'food' and sent.configuration.appearance == nil,
+        'paste did not submit the complete sorting-only configuration with its captured revision')
     clipboardA.cats.ClipboardA, clipboardA.items.ItemA, clipboardA.presets.Pantry = nil, nil, 42
     clipboardA.pzstTagRule.include[1], clipboardA.pzstTagRule.exclude[1] = 'electrical', 'meat'
-    expectedClipboard = {cats = {ClipboardB = true}, items = {ItemB = true}, presets = {}, priority = 9}
+    local expectedClipboard = {cats = {ClipboardB = true}, items = {ItemB = true}, presets = {}, priority = 9}
     LootSorter.clipboard = expectedClipboard
+    object.md.unrelated = 'changed while pending'
     respond('ok')
-    assert(publications == 1 and added == 1 and removed == 0 and LootSorter.clipboard == expectedClipboard,
-        'accepted paste did not publish exactly once while preserving current clipboard')
+    assert(Rules.getBoxRevision(object, 0) == 2 and Rules.getBox(object, 0).include[1] == 'food'
+        and object.md.LSBox['0'].ClipboardA and not object.md.LSBox['0'].Original and object.md.LSBoxItems['0'].ItemA
+        and object.md.LSBoxPresets['0'].Pantry == 41 and object.md.LSBoxPriority['0'] == 3,
+        'accepted paste did not mirror every sorting layer from its detached snapshot')
+    assert(publications == 0 and added == 0 and removed == 0 and LootSorter.clipboard == expectedClipboard,
+        'accepted paste republished client data or changed the current clipboard')
+    assert(object.md.LSBox['1'].OtherContainer and object.md.unrelated == 'changed while pending'
+        and object.md.crate_customContainerName == 'Existing' and object.md.BetterContainers.customize._global == appearance
+        and appearance.name == 'Existing' and appearance.icon.value == 'Base.Axe' and appearance.color.r == 1,
+        'sorting-only paste changed another compartment, live data or existing name/icon/color')
 
     local copied = LootSorter.copyDesignation(object, 0)
     object.md.LSBox['0'].ClipboardA, object.md.LSBoxItems['0'].ItemA, object.md.LSBoxPresets['0'].Pantry = nil, nil, 42
@@ -369,7 +373,7 @@ do
             clock = clock + 16000
             for _, fn in ipairs(Events.OnTick.handlers) do fn() end
         else respond(verdict) end
-        assert(publications == 1 and added == 1 and removed == 0 and object.md.LSBox['0'].Original
+        assert(publications == 0 and added == 0 and removed == 0 and object.md.LSBox['0'].Original
             and not object.md.LSBox['0'].Refused and object.md.LSBoxItems['0'].OriginalItem
             and object.md.LSBoxPresets['0'].OriginalPreset == 12 and object.md.LSBoxPriority['0'] == 8
             and Rules.getBoxRevision(object, 0) == 1 and Rules.getBox(object, 0).include[1] == 'electrical',
@@ -381,12 +385,26 @@ do
     assert(LootSorter.hasClipboardContent() and LootSorter.describeClipboard() == 'UI_PZST_QMTagRule',
         'rule-only clipboard was hidden or described as empty')
     baseline()
-    expectedClipboard, expectCleared = {}, true
+    expectedClipboard = {}
     LootSorter.clipboard = expectedClipboard
     assert(not LootSorter.hasClipboardContent() and LootSorter.describeClipboard() == 'empty')
-    assert(LootSorter.pasteDesignation(object, 0) and publications == 1, 'empty paste skipped authoritative rule clear')
+    assert(LootSorter.pasteDesignation(object, 0) and publications == 0 and sent.configuration,
+        'empty paste skipped authoritative configuration clear')
     respond('ok')
-    assert(publications == 2 and added == 1 and removed == 1, 'cleared designation did not remove its coordinate once')
+    assert(not Rules.getBox(object, 0) and not object.md.LSBox['0'] and not object.md.LSBoxItems['0']
+        and not object.md.LSBoxPresets['0'] and not object.md.LSBoxPriority['0'] and Rules.getBoxRevision(object, 0) == 2,
+        'empty paste did not clear every sorting layer through authority')
+    baseline()
+    object.md[Rules.FIELD] = nil
+    LootSorter.clipboard = {cats = {NativeOnly = true}, presets = {GenerationBound = 41}}
+    assert(LootSorter.pasteDesignation(object, 0) and sent.baseRevision == 1 and sent.configuration.cats.NativeOnly
+        and object.md.LSBox['0'].Original and not Tags.ruleActive(sent.rule),
+        'native-only paste bypassed authority or failed to send an empty rule')
+    respond('ok')
+    assert(object.md.LSBox['0'].NativeOnly and object.md.LSBoxPresets['0'].GenerationBound == 41
+        and not Rules.getBox(object, 0) and Rules.getBoxRevision(object, 0) == 2,
+        'native-only paste did not mirror the authoritative replacement')
+    assert(publications == 0 and added == 0 and removed == 0, 'paste performed a second client publication or index update')
     LootSorter.clipboard = nil
     assert(not LootSorter.pasteDesignation(object, 0) and LootSorter.describeClipboard() == nil)
     object.md, LootSorter.clipboard, object.transmitModData = originalData, originalClipboard, originalTransmit
