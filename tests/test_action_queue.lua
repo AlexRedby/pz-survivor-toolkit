@@ -168,6 +168,7 @@ assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivo
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueue.lua'))()
 local api = PZSurvivorToolkit.ActionQueue
+assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueReading.lua"))()
 if NativeQuartermasterLuaRoot then
     for reload = 0, 3 do
         if reload == 3 then
@@ -493,7 +494,7 @@ b.forceCancel = nil
 assert(api.move(q,c,b) and q.queue == nativeQueue and q.queue[2] == c and q.queue[3] == b)
 assert(q.current == a and a.action == originalCurrent and not b.action and not c.action)
 assert(api.move(q,c,b,true) and q.queue[2] == b and q.queue[3] == c)
-assert(not api.move(q,a,c), 'cannot drag an active operation')
+assert(not api.move(q,a,c), 'active reading cannot cross another copy with shared native book progress')
 local pickup, read, restore = leaf(p,'pickup'),book(p),leaf(p,'return')
 pickup.Type,restore.Type='ISInventoryTransferAction','ISInventoryTransferAction'
 pickup.item,restore.item=read.item,read.item
@@ -1244,6 +1245,103 @@ local function borrowed(item, container)
     item.getContainer=function(self) return self.container end
     item.getIsCraftingConsumed=function(self) return self.consumed==true end
     return item
+end
+-- Drag active shelf reading down once: preserve the intervening command order and return.
+do
+    local function scenario()
+        local character=player()
+        local read=book(character)
+        local shelf=sourceContainer()
+        borrowed(read.item,character.inventory)
+        local returned=transfer(character,read.item,character.inventory,shelf)
+        returned.allowMissingItems=true
+        local queue
+        operations.run(function() queue=ISTimedActionQueue.add(read);ISTimedActionQueue.add(returned) end)
+        local power,insert,play=leaf(character,'power'),leaf(character,'insert'),leaf(character,'play')
+        ISTimedActionQueue.add(power);ISTimedActionQueue.add(insert);ISTimedActionQueue.add(play)
+        frame(character);character.pages=37
+        return character,queue,read,returned,power,insert,play,shelf
+    end
+    local character,queue,read,returned,power,insert,play,shelf=scenario()
+    refresh();panel=ui[#ui];panel:update();list=panel.list
+    assert(list.items[1].header and not api.moveReason(queue,read),'active reading header must be draggable')
+    drag(1,#list.items,true)
+    assert(queue.current==read and queue.queue[2]==power and queue.queue[3]==insert
+        and queue.queue[4]==play and queue.queue[5]==returned and queue.toolkitResume==play)
+    assert(not api.move(queue,read,power),'stop in progress rejects a second edit')
+    queue:tick();assert(queue.current==read and #queue.queue==5,'no construction before native removal')
+    frame(character)
+    local resumed=queue.queue[4]
+    assert(queue.current==power and resumed~=read and resumed.item==read.item and resumed.startPage==37
+        and resumed.toolkitQueueOperation==returned.toolkitQueueOperation and queue.queue[5]==returned)
+    local first,last=operations.bounds(queue,resumed)
+    assert(first==4 and last==5,'resumed reading and shelf return stay one contiguous operation')
+    for _,command in ipairs({power,insert,play}) do
+        assert(queue.current==command);command.action.done=true;frame(character)
+    end
+    assert(queue.current==resumed and read.item:getContainer()==character.inventory,'return cannot run before continued reading')
+    resumed.action.done=true;frame(character)
+    assert(queue.current==returned);returned.action.done=true;frame(character)
+    assert(#queue.queue==0 and read.item:getContainer()==shelf,'return the original book once')
+
+    for _,mode in ipairs({'missing-book','missing-shelf','changed-callback'}) do
+        character,queue,read,returned,power,insert,play,shelf=scenario()
+        assert(api.move(queue,read,play,true));frame(character)
+        local resumed=queue.queue[4]
+        if mode=='missing-shelf' then shelf.gone=true
+        else character.inventory.items[read.item:getID()]=nil;read.item.container=nil end
+        if mode=='changed-callback' then
+            resumed.onCompleteFunc=function()error('unknown callback must not be suppressed')end
+            queue.queue={play,resumed,returned};queue.current=play
+            PZSurvivorToolkit.ActionQueueReading.skipUnavailable(queue)
+            assert(queue.queue[2]==resumed,'unknown callback preserves native failure behavior')
+        else
+            for _,command in ipairs({power,insert,play}) do command.action.done=true;frame(character) end
+            if mode=='missing-book' then assert(#queue.queue==0,'missing book skips only marked read/return without recreation')
+            else
+                assert(queue.current==resumed);resumed.action.done=true;frame(character)
+                assert(#queue.queue==0 and read.item:getContainer()==character.inventory,'lost shelf keeps book carried')
+            end
+        end
+    end
+
+    -- Dropping above a target crosses only earlier whole operations; dropping on oneself is a no-op.
+    character,queue,read,returned,power,insert,play=scenario()
+    assert(api.move(queue,read,returned,true) and not queue.toolkitCancel)
+    assert(api.move(queue,read,play,false));frame(character)
+    assert(queue.queue[1]==power and queue.queue[2]==insert and queue.queue[3].item==read.item
+        and queue.queue[4]==returned and queue.queue[5]==play)
+    for _,mode in ipairs({'callback','shared-book','linked-tape','split','started','unknown'}) do
+        character,queue,read,returned,power,insert,play=scenario()
+        if mode=='callback' then returned.onCompleteFunc=function()end
+        elseif mode=='shared-book' then local copy=book(character);copy.toolkitQueueOperation=insert.toolkitQueueOperation;queue.queue[4]=copy
+        elseif mode=='linked-tape' then insert.item=read.item
+        elseif mode=='split' then play.toolkitQueueOperation=read.toolkitQueueOperation
+        elseif mode=='started' then insert.action={}
+        elseif mode=='unknown' then insert.Type='UnknownDeviceAction' end
+        assert(not api.move(queue,read,play,true) and queue.current==read and not queue.toolkitCancel,
+            'demotion must reject '..mode)
+    end
+    -- A Host receipt gates reconstruction, and a changed reader constructor cannot be invoked late.
+    local ack=PZSurvivorToolkit.ActionQueueAcknowledgements
+    for _,outcome in ipairs({'canceled','completed','rejected','changed-constructor'}) do
+        character,queue,read,returned,power,insert,play=scenario()
+        local receipt={state='started'}
+        PZSurvivorToolkit.ActionQueueAcknowledgements={capture=function(action)if action==read then return receipt end end,
+            state=function()return receipt.state end,reset=function()end}
+        assert(api.move(queue,read,play,true));frame(character)
+        assert(queue.current==read and #queue.queue==5)
+        local constructor=ISReadABook.new
+        if outcome=='changed-constructor' then ISReadABook.new=function()error('changed constructor must not run')end end
+        receipt.state=outcome=='changed-constructor' and 'canceled' or outcome
+        queue:tick();ISReadABook.new=constructor
+        assert(queue.current==power and queue.queue[2]==insert and queue.queue[3]==play)
+        if outcome=='canceled' then assert(#queue.queue==5 and queue.queue[4].item==read.item and queue.queue[5]==returned)
+        else assert(#queue.queue==4 and queue.queue[4]==returned,'terminal action cannot be replayed') end
+        queue:tick();assert(queue.current==power,'duplicate terminal must not replay or advance')
+    end
+    PZSurvivorToolkit.ActionQueueAcknowledgements=ack
+    print('Active reading demotion: UI drag, ordered range, saved pages, shelf return, dependencies and Host terminal races passed.')
 end
 -- Walking must not erase a successful native transfer's deferred completion boundary.
 do

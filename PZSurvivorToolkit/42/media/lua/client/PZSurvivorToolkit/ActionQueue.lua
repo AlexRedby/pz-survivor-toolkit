@@ -174,6 +174,7 @@ ISTimedActionQueue.onCompleted = function(queue, action)
         end
         if Toolkit.ActionQueueFitness then Toolkit.ActionQueueFitness.skipUnavailable(queue) end
         Policy.skipUnavailableHygiene(queue)
+        if Toolkit.ActionQueueReading then Toolkit.ActionQueueReading.skipUnavailable(queue) end
     end
     local generators = Toolkit.ActionQueueGenerators
     local fire = Toolkit.ActionQueueFire
@@ -206,6 +207,7 @@ function Queue.move(queue, action, target, after)
     if not decision.allowed then return false, decision.reason end
     local to, first, last, preempt = decision.to, decision.first, decision.last, decision.preempt
     if to == first then return true end
+    if decision.demote then Toolkit.ActionQueueReading.capture(queue, first, last) end
     local world = Toolkit.ActionQueueWorld
     local acknowledgement = preempt and world and world.buildAcknowledgement and world.buildAcknowledgement(queue.current)
     local moved = {}
@@ -366,11 +368,13 @@ ISTimedActionQueue.tick = function(queue)
             local resumeAfter = queue.toolkitResume
             clearStop(queue)
             local index = resumeAfter and queue:indexOf(resumeAfter)
-            if state == "canceled" and index and index > 1 then
+            if state == "canceled" and index and index > 1
+                and (action.Type ~= "ISReadABook" or stoppable(action)) then
                 local resumed = action.Type == "ISReadABook" and ISReadABook:new(queue.character, action.item)
                     or Toolkit.ActionQueueWorld.resume(action, wait.acknowledgement)
                 if resumed then
                     resumed.toolkitQueueOperation = action.toolkitQueueOperation
+                    if Toolkit.ActionQueueReading then Toolkit.ActionQueueReading.resumed(action, resumed) end
                     table.insert(queue.queue, index + 1, resumed)
                 end
             end
@@ -388,6 +392,7 @@ ISTimedActionQueue.tick = function(queue)
                         or Toolkit.ActionQueueWorld.resume(action)
                     if resumed then
                         resumed.toolkitQueueOperation = action.toolkitQueueOperation
+                        if Toolkit.ActionQueueReading then Toolkit.ActionQueueReading.resumed(action, resumed) end
                         table.insert(queue.queue, index + 1, resumed)
                     end
                 end
@@ -425,4 +430,7 @@ require "PZSurvivorToolkit/ActionQueueFire"
 require "PZSurvivorToolkit/ActionQueueWorld"
 require "PZSurvivorToolkit/ActionQueueHealth"
 require "PZSurvivorToolkit/ActionQueueFitness"
+require "PZSurvivorToolkit/ActionQueueReading"
+require "PZSurvivorToolkit/ActionQueueMedia"
+if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.install() end
 return Queue

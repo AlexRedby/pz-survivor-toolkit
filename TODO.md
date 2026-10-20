@@ -47,6 +47,11 @@ These are implementation and verification gaps, not evidence that every action u
 
 The executor remains `ISTimedActionQueue`. Add new families through Definitions/Policy and a precise adapter, without a general planning graph, second scheduler or reservation of future inventory. Check display and permission to change the queue separately. Only unfinished work is listed below; interfaces are described in the [features guide](docs/FEATURES.md), and check commands are in the [developer guide](docs/DEVELOPMENT.md).
 
+## Active shelf reading below TV commands
+
+- [ ] Extend the combined shelf-book/TV live scenario to a VHS taken from a worn bag: native pickup, grouped insertion, active reading moved below power/insert/play, exact tape debit and one book return. Run selected-pack SP/Host with matching queue-off controls and log audits. The inventory-VHS path is verified live; bag preparation/capacity, missing tape/TV/return destination, changed callbacks and same-TV conflicts currently have focused local regression coverage.
+- [ ] Diagnose the selected-pack Host control with the Toolkit queue disabled: native power and insertion finish, the exact VHS is debited and present in the TV, but the queue becomes empty before playback starts. This also reproduced before the media-order fix; distinguish native engine behavior from selected-mod interaction before changing queue-off behavior. Keep the failed native control visible in paired reports.
+
 ## Known limits of move/cancel controls
 
 These operations can execute normally while some queue controls remain disabled. The work below is to prove safe edits; real shared dependencies and required cleanup must remain protected. Current behavior is described in the [action queue limits](docs/FEATURES.md#supported-actions-and-limits).

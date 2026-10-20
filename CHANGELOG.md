@@ -10,6 +10,12 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.126
+
+- **Added:** Active reading can be dragged below waiting operations, preserving their order and continuing from saved pages before returning the book to its original container.
+- **Changed:** Reviewed world-TV VHS insertion supports queue edits with exact tape/device dependencies. TV power, insertion and playback retain their required order; shelf-reading moves check capacity without relying on future freed space.
+- **Fixed:** In Host, VHS insertion promoted above reading tolerates its expected media/tape replication arriving before native completion, then waits for the confirmed result before advancing. After native completion, unavailable media or a bounded replication timeout skips linked playback while retaining independent reading; an unconfirmed active action retains native cancellation.
+
 ### 0.1.125
 
 - **Changed:** World containers have one **Configure container...** editor for sorting, name, icon and colour. It reuses Better Containers' existing appearance data and icon catalogue; supported container menus no longer offer separate rename/customize paths. Bags keep their existing controls.

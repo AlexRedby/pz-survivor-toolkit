@@ -6,7 +6,8 @@ MODULES = {'fitness': 'fitness', 'vehicle-wishlist': 'vehicle_wishlist', 'pinned
            'craft-ui': 'craft_ui', 'fluid': 'fluid', 'inventory-grab': 'inventory_grab', 'forge': 'forge',
            'container-configuration': 'container_configuration',
            'video-recording': 'auxiliary', 'item-tags': 'auxiliary', 'quartermaster-presets': 'quartermaster', 'quartermaster-transfers': 'quartermaster', 'quartermaster-distribution': 'quartermaster_distribution', 'quartermaster-crafting': 'quartermaster_crafting', 'animal-trailer': 'auxiliary',
-           'wooden_cart_motion': 'carts', 'wooden_cart_multiplayer': 'carts'}
+           'wooden_cart_motion': 'carts', 'wooden_cart_multiplayer': 'carts',
+           'shelf-book-tv': 'shelf_book_tv'}
 
 
 def get(suite):

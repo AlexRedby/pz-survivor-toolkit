@@ -76,6 +76,16 @@ function Lifecycle.current(character)
     if state and state.depth > 0 and owned(queue, state.action) then return state.action end
 end
 
+-- A native callback has finished, but its owned Lua continuation has not advanced.
+-- UI cancellation may still revoke this work after Java removes its action.
+function Lifecycle.deferredAction(queue)
+    local state = queue and pending[queue]
+    if state and owned(queue, state.action) and Toolkit.Settings.actionQueue()
+        and not state.failed and state.requested and state.depth == 0 and state.perform
+        and (not state.needsComplete or state.complete)
+        and not queue.character:getCharacterActions():contains(state.native) then return state.action end
+end
+
 -- Existing queue tick calls this before native tick; native removal is the final completion gate.
 function Lifecycle.flush(queue)
     local state = pending[queue]
@@ -87,8 +97,15 @@ function Lifecycle.flush(queue)
     end
     if state.depth > 0 or not state.perform or state.needsComplete and not state.complete
         or queue.character:getCharacterActions():contains(state.native) then return "waiting", action end
+    if state.failed or not state.requested then
+        pending[queue] = nil
+        return "failed", action
+    end
+    local reading = Toolkit.ActionQueueReading
+    local mediaState = reading and reading.mediaCompletionState and reading.mediaCompletionState(queue, action)
+    if mediaState == "waiting" then return "waiting", action end
     pending[queue] = nil
-    if state.failed or not state.requested then return "failed", action end
+    if mediaState == "failed" then return "failed", action end
     queue:onCompleted(action)
     return "completed", action
 end

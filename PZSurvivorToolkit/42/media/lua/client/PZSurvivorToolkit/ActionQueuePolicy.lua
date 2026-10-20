@@ -803,6 +803,18 @@ local function boundedWaterDrink(action, character, source)
     return type(thirst) == "number" and thirst <= 0 and thirst > -math.huge
 end
 
+local function fixedWorldContainer(container)
+    if not instanceof(container, "ItemContainer") or container:getContainingItem()
+        or not container:isExistYet() or container:getAcceptItemFunction() ~= nil
+        or container:getOnlyAcceptCategory() ~= nil then return end
+    local kind, parent = container:getType(), container:getParent()
+    if kind == "floor" or kind == "proximityInv" or kind == "twistInv_corpses"
+        or not instanceof(parent, "IsoObject") or not parent:getSquare() then return end
+    for i = 0, parent:getContainerCount() - 1 do
+        if parent:getContainerByIndex(i) == container then return {container} end
+    end
+end
+
 local function transferCapacityConflict(queue, a, b, last, check, context)
     local carts = Toolkit.ActionQueueCarts
     local function transfer(action)
@@ -862,7 +874,13 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
         if transfer(action) then
             local destination, source, seen = action.destContainer, action.srcContainer, {}
             local destinations = carriedContainers(destination, character)
-            if action.character ~= character or not carriedContainer(source, character)
+            local sourceCarried = carriedContainer(source, character)
+            local destinationCarried = destinations ~= nil
+            -- Active shelf reading may move its world return past a tape pickup. Bound both
+            -- endpoints at their current loads, without spending space from future returns.
+            if check.readDemotion then destinations = destinations or fixedWorldContainer(destination) end
+            if action.character ~= character or (not sourceCarried
+                and not (check.readDemotion and fixedWorldContainer(source)))
                 or not destinations then return check.blocker end
             local function add(item)
                 if not instanceof(item, "InventoryItem") or instanceof(item, "InventoryContainer") then return false end
@@ -872,7 +890,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
                 if kind == "CandleLit" or kind == "Lantern_HurricaneLit" then return false end
                 local weight = item:getUnequippedWeight()
                 if not finiteWeight(weight) then return false end
-                incoming[root] = incoming[root] + weight
+                if destinationCarried then incoming[root] = incoming[root] + weight end
                 for _, container in ipairs(destinations) do
                     if container ~= root then
                         incoming[container] = (incoming[container] or 0) + weight
@@ -899,7 +917,10 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
             for _, batch in ipairs(action.queueList or {}) do
                 for _, item in ipairs(batch.items or {}) do if not add(item) then return check.blocker end end
             end
-        elseif not capacityNeutral[action.Type] and not boundedWaterDrink(action, character, source) then
+        elseif not capacityNeutral[action.Type] and not boundedWaterDrink(action, character, source)
+            and not (check.readDemotion and source == "native.ISRadioAction"
+                and instanceof(action.device, "IsoTelevision"))
+            and not (check.readDemotion and source == "native.device-media-insert" and contract.capacityNonIncreasing == true) then
             -- shortcut: other actions may change carried weight; add verified weight effects before crossing their prefix.
             return check.blocker
         end
@@ -992,6 +1013,54 @@ function Policy.cancelOperationReason(queue, action, context)
     return nil, first, last
 end
 
+local function moveConflict(queue, member, crossed, crossedLast, capacityCheck, context)
+    local item = sharedItem(member, crossed, context)
+    if item then return "move_shared_item", item end
+    local dynamic = dynamicConflict(member, crossed, context) or dynamicConflict(crossed, member, context)
+    if dynamic then return "move_craft_inputs", dynamic end
+    if not repairCanCross(member, crossed, context) or not repairCanCross(crossed, member, context) then
+        return "move_craft_inputs"
+    end
+    local target = sharedWorldTarget(member, crossed, context)
+    if target then return "move_dependent", target end
+    local capacity = transferCapacityConflict(queue, member, crossed, crossedLast, capacityCheck, context)
+    if capacity then return "container_capacity", capacity end
+end
+
+-- Lowering a reader promotes the intervening range without changing its internal order.
+-- Keep the native current action in slot 1 until stop/removal; Queue.move reconstructs it
+-- after that range, immediately before its still-owned returns/cleanup.
+local function demoteReading(queue, first, last, targetFirst, targetLast, after, context)
+    local current = queue.current
+    if first ~= 1 or queue.queue[1] ~= current or not current or current.Type ~= "ISReadABook"
+        or Policy.cancelReason(queue, current, context) then return "move_active" end
+    for i = first, last do
+        local member = queue.queue[i]
+        if (member ~= current and member.action) or member._isAddingActions
+            or not knownCraftInputs(member, context) then return "move_dependent" end
+    end
+    if targetFirst == first then return nil, first, first, last end
+    local rangeFirst, rangeLast = last + 1, after and targetLast or targetFirst - 1
+    if rangeLast < rangeFirst then return nil, first, first, last end
+    local capacityCheck = {first = rangeFirst, last = rangeLast, to = 1, readDemotion = true}
+    for i = rangeFirst, rangeLast do
+        local member = queue.queue[i]
+        local opFirst, opLast = Operations.bounds(queue, member)
+        if not opFirst or opFirst < rangeFirst or opLast > rangeLast or member.action
+            or member._isAddingActions or (not knownCraftInputs(member, context) and not repairInputs(member)) then
+            return "move_dependent", nil, nil, nil, nil, member
+        end
+        if member.Type == "ISReadABook" and member.item:getFullType() == current.item:getFullType() then
+            return "move_shared_book", nil, nil, nil, nil, member
+        end
+        for j = first, last do
+            local reason, resource = moveConflict(queue, member, queue.queue[j], rangeLast, capacityCheck, context)
+            if reason then return reason, nil, nil, nil, nil, queue.queue[j], resource end
+        end
+    end
+    return nil, 1, rangeFirst, rangeLast, true, nil, nil, true
+end
+
 function Policy.moveReason(queue, action, target, after, context)
     context = context or {contracts = {}, items = {}}
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
@@ -1000,6 +1069,9 @@ function Policy.moveReason(queue, action, target, after, context)
     local first, last = Operations.bounds(queue, action)
     local targetFirst, targetLast = Operations.bounds(queue, target or action)
     if not first or not targetFirst then return "move_dependent" end
+    if first == 1 then
+        return demoteReading(queue, first, last, targetFirst, targetLast, after, context)
+    end
     for i = first, last do
         local member = queue.queue[i]
         if member.action or member == queue.current or i == 1 then return "move_active" end
@@ -1035,17 +1107,8 @@ function Policy.moveReason(queue, action, target, after, context)
                 return craft(crossed) and "move_craft_inputs" or "move_dependent", nil, nil, nil, nil, crossed
             end
             for j = first, last do
-                local item = sharedItem(queue.queue[j], crossed, context)
-                if item then return "move_shared_item", nil, nil, nil, nil, crossed, item end
-                local dynamic = dynamicConflict(queue.queue[j], crossed, context) or dynamicConflict(crossed, queue.queue[j], context)
-                if dynamic then return "move_craft_inputs", nil, nil, nil, nil, crossed, dynamic end
-                if not repairCanCross(queue.queue[j], crossed, context) or not repairCanCross(crossed, queue.queue[j], context) then
-                    return "move_craft_inputs", nil, nil, nil, nil, crossed
-                end
-                local target = sharedWorldTarget(queue.queue[j], crossed, context)
-                if target then return "move_dependent", nil, nil, nil, nil, crossed, target end
-                local capacity = transferCapacityConflict(queue, queue.queue[j], crossed, math.max(last, to - 1), capacityCheck, context)
-                if capacity then return "container_capacity", nil, nil, nil, nil, crossed, capacity end
+                local reason, resource = moveConflict(queue, queue.queue[j], crossed, math.max(last, to - 1), capacityCheck, context)
+                if reason then return reason, nil, nil, nil, nil, crossed, resource end
             end
         end
     end
@@ -1070,9 +1133,9 @@ function Policy.replaceStop(previous, replacement)
 end
 
 function Policy.evaluateMove(queue, action, target, after, context)
-    local reason, to, first, last, preempt, blocker, resource = Policy.moveReason(queue, action, target, after, context)
+    local reason, to, first, last, preempt, blocker, resource, demote = Policy.moveReason(queue, action, target, after, context)
     return {allowed = reason == nil, reason = reason, to = to, first = first, last = last,
-        mode = preempt and "audited-resume" or "move", preempt = preempt, blocker = blocker, resource = resource}
+        mode = preempt and "audited-resume" or "move", preempt = preempt, demote = demote, blocker = blocker, resource = resource}
 end
 
 function Policy.evaluateCancel(queue, action, whole)
