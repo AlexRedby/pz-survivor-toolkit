@@ -6,8 +6,18 @@
   "helper_mod_id": "InventoryPresentationScreens",
   "fixture": "ZZInventoryPresentationScreens.lua",
   "required_mods_in_order": ["NeatUI_Framework", "CleanUI", "PZSurvivorToolkit", "EURY_CONTAINERS", "organizedCategories_core"],
-  "excluded_mods": ["ContainerCapacityIndicator", "BravoItemDetails", "Quartermaster"],
-  "expected_screenshots": ["inventory-01-clean.png", "inventory-02-vanilla.png", "inventory-03-clean-again.png", "inventory-04-sort.png"],
+  "excluded_mods": ["ContainerCapacityIndicator", "BravoItemDetails", "Quartermaster", "HasResearch", "SeedSeasonIndicator"],
+  "expected_screenshots": ["inventory-01-clean.png", "inventory-02-vanilla.png", "inventory-03-clean-again.png", "inventory-04-sort.png", "inventory-05-indicators-clean.png", "inventory-06-indicators-vanilla.png", "inventory-07-growing-tooltip.png"],
+  "assertion_markers": [
+    "[INVENTORY_SCREEN] INDICATOR_SETUP nativeItems=4 recipe=unknown season=known status=best",
+    "[INVENTORY_SCREEN] INDICATORS 05-indicators-clean research=true season=true coords=actual once=true empty=false",
+    "[INVENTORY_SCREEN] INDICATORS 06-indicators-vanilla research=true season=true coords=actual once=true empty=false",
+    "[INVENTORY_SCREEN] INDICATORS learned research=false season=true coords=actual once=true empty=false",
+    "[INVENTORY_SCREEN] INDICATORS seasons-disabled research=false season=false coords=actual once=true empty=false",
+    "[INVENTORY_SCREEN] INDICATORS option-disabled research=false season=false coords=actual once=true empty=false",
+    "[INVENTORY_SCREEN] TOOLTIP native=true measure=1 draw=1 fits=true",
+    "[INVENTORY_SCREEN] TOOLTIP_DISABLED extension=0"
+  ],
   "completion_marker": "[INVENTORY_SCREEN] COMPLETE",
   "failure_marker": "[INVENTORY_SCREEN] FAIL"
 }

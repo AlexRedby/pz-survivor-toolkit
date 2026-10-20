@@ -102,11 +102,9 @@ Compares clothing protection, condition, holes and insulation with equipped item
 
 Rain and snow clean blood from the world, clothing and vehicles; ash and animal droppings can be enabled separately. Cleanup types, speed and weather threshold are configurable. By default it works only outdoors during sufficiently heavy precipitation. No required dependencies are listed. Natural-rain cleanup, vehicle-blood cleanup and re-equipping have not been verified on B42.21; recent reports describe problems, but neither cause is confirmed.
 
-## 18 Has Research
+## 18 Research indicator: Toolkit
 
-[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3567695139) · Workshop `3567695139` · Mod `HasResearch`
-
-Shows whether an item can teach a recipe. No required dependencies are listed. B42 is reported; reports mention B42.20 Stable and B42.19 multiplayer. B42.21 use has not been verified.
+Toolkit marks items with recipes the current character can research, using native knowledge and skill requirements. The separate `HasResearch` mod (`3567695139`) is no longer selected; disable it when updating.
 
 ## 19 Neat Building
 
@@ -180,11 +178,9 @@ Configurable quick-action panel for items and crafting/building recipes. Tab tog
 
 Reworks TV, radio, car stereo, walkie-talkie and CD interfaces and adds channel videos/VHS. B41/B42 are reported. Toolkit handles device recognition and adds VHS controls; see [TV & Radio ReInvented](docs/FEATURES.md#tv--radio-reinvented). The separate [42.20 fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3796050675) (`3796050675`, `TVRadioReinventedFix4220`) is no longer required with the current Toolkit.
 
-## 31 Seed Season Indicator
+## 31 Planting information: Toolkit
 
-[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3734639991) · Workshop `3734639991` · Mod `SeedSeasonIndicator`
-
-Shows planting season, water and growing time on seeds. The character must learn season information from a seed packet; seasonal labels disappear when `PlantGrowingSeasons` is off. Settings are under `Options > Mods > Seed Season Indicator`. Package version `1.4.2` targets Build 42; Russian translation is available. Seed-season labels with current B42.21 settings have not been verified.
+Toolkit displays known planting seasons on seeds and full packets, plus water requirements, growth time and planting months in tooltips. It reads native farming definitions; empty packets and unknown seasons have no indicator. `PlantGrowingSeasons` controls availability. Settings are under **Options > Mods > Toolkit: Planting information**, preserving previous preferences. Disable the separate `SeedSeasonIndicator` mod (`3734639991`); its code and assets are not included.
 
 ## 32 organizedCategories
 

@@ -16,6 +16,7 @@ def verify(root, text):
                manifest['completion_marker']]
     markers += ['[INVENTORY_SCREEN] DRAW ' + name + ' details=once bag=icons magazine=icons button=1 nativeTypes=true'
                 for name in ('01-clean', '02-vanilla', '03-clean-again')]
+    markers += manifest['assertion_markers']
     for marker in markers:
         if text.count(marker) != 1:
             raise ValueError('Missing/duplicate assertion evidence: ' + marker)

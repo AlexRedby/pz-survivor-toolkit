@@ -62,6 +62,8 @@ local function run(initialEnhanced, lateVanilla, withFreshness)
     CleanUI_RegisterInventoryUiToggleCallback=function(callback) callbacks[#callbacks+1]=callback; callback(initialEnhanced) end
     local handleDetails=true
     local lastLayout
+    modules['PZSurvivorToolkit/InventoryIndicators']={drawIcon=function() end}
+    modules['PZSurvivorToolkit/InventoryPlantingTooltip']={install=function() end}
     modules['PZSurvivorToolkit/InventoryDetails']={draw=function(_,_,_,_,_,_,layout) lastLayout=layout; return handleDetails end}
     local freshness={}
     freshness.install=function() freshness._installed=true end

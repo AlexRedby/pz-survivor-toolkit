@@ -9,7 +9,9 @@ HERE = Path(__file__).resolve().parent
 
 def prepare(toolkit_source, output):
     source = Path(toolkit_source)
-    for name in ("InventoryPresentation", "InventoryCapacity", "InventoryDetails", "InventoryDetailSort"):
+    for name in ("InventoryPresentation", "InventoryCapacity", "InventoryDetails", "InventoryDetailSort",
+                 "InventoryIndicators", "InventoryResearch", "InventoryPlanting", "InventoryPlantingOptions",
+                 "InventoryPlantingTooltip"):
         if not (source / "42/media/lua/client/PZSurvivorToolkit" / (name + ".lua")).is_file():
             raise ValueError("Missing owned module: " + name)
     manifest = json.loads((HERE / "manifest.json").read_text())

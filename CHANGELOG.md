@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.146
+
+- **Changed:** Research and planting indicators now use Toolkit's shared inventory presentation in both CleanUI modes. Research availability follows native character knowledge and skills; planting information is implemented from native farming data, retaining known-season badges, growth details, crop images and saved preferences without modifying item categories.
+- **Changed:** Removed the separate HasResearch and SeedSeasonIndicator mods from the selected set. Disable them in existing profiles when updating; planting settings now appear under Toolkit.
+
 ### 0.1.145
 
 - **Changed:** Pending ordinary-food actions with any valid native portion, including EatSmart-calculated amounts, can be reordered or cancelled when their remaining-food, location and fullness dependencies permit it. Captured portions keep their original-food meaning; depleted items and required returns stay protected.

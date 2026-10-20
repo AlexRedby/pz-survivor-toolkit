@@ -102,9 +102,11 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         self.assertEqual(helper.read_bytes(), (ROOT / 'tests/native_queue/contributions/inventory-presentation/ZZInventoryPresentationScreens.lua').read_bytes())
         self.assertEqual(self.runtime['fixture']['mods'], ['InventoryPresentationScreens'])
         intake = ROOT / 'tests/native_queue/contributions/inventory-presentation'
-        names = json.loads((intake / 'manifest.json').read_text())['expected_screenshots']
+        manifest = json.loads((intake / 'manifest.json').read_text())
+        names = manifest['expected_screenshots']
         text = '[INVENTORY_SCREEN] SETUP nativeItems=15 externalOwners=false\n'
         text += '[INVENTORY_SCREEN] SORT count=7 bound=3 tail=4 selection=true anchor=true\n'
+        text += '\n'.join(manifest['assertion_markers']) + '\n'
         screenshots = self.cache / 'Screenshots'
         screenshots.mkdir()
         for index, name in enumerate(names):
@@ -119,10 +121,15 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         self.assertFalse(adapter.verify(self.output, self.selection, {})['issues'])
         console.write_text(text.replace('tail=4', 'tail=0'))
         self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
+        for marker in manifest['assertion_markers']:
+            console.write_text(text.replace(marker, ''))
+            self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
+            console.write_text(text + marker + '\n')
+            self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
         console.write_text(text)
         (screenshots / names[-1]).unlink()
         self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
-        for identifier in ('BravoItemDetails', 'ContainerCapacityIndicator'):
+        for identifier in manifest['excluded_mods']:
             with self.assertRaisesRegex(ValueError, 'External inventory owners'):
                 adapter.validate(dict(self.selection, mods=self.selection['mods'] + [identifier]))
 

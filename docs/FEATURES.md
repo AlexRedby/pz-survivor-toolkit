@@ -144,6 +144,10 @@ Toolkit supplies container/bag capacity bars, loose-magazine fill segments and e
 
 Capacity bars use the player's effective capacity and follow the actual inventory icons, including nested bags, expanded stacks and scaled icons. They remain available on container buttons and in icon views when switching between CleanUI's enhanced and vanilla inventories. **Options > Mods > Toolkit: Container Capacity** controls magazine segments.
 
+In details view, a research badge marks items with recipes the current character can research, respecting native knowledge and skills. Seeds and full seed packets show known planting seasons: a green star for the best month, a green circle in season, yellow for a risky month and red outside the season. Learn the crop's season information first; empty packets are excluded. Turning off `PlantGrowingSeasons` hides planting information.
+
+Seed tooltips also show water requirements, growth time at the current farming-speed setting, planting/best/risky months and the crop image. **Options > Mods > Toolkit: Planting information** independently controls badges and tooltips, optional unsuitable months and a star for crops without a defined best month. Previous Seed Season Indicator preferences are preserved. Disable the separate **HasResearch** and **SeedSeasonIndicator** mods. Item categories and tag filtering keep their existing meanings.
+
 ### Quartermaster
 
 Toolkit includes Quartermaster's storage designations, automatic distribution,

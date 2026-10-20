@@ -76,7 +76,7 @@ def validate(selection):
     required = set(ITEM_MODS if suite == 'item-tags' else ['ZombieBuddy', 'PZSurvivorToolkit'])
     if suite == 'inventory-presentation':
         required = set(INVENTORY_MODS)
-        forbidden = {'ContainerCapacityIndicator', 'BravoItemDetails', 'Quartermaster'} & set(selection['mods'])
+        forbidden = {'ContainerCapacityIndicator', 'BravoItemDetails', 'Quartermaster', 'HasResearch', 'SeedSeasonIndicator'} & set(selection['mods'])
         if forbidden:
             raise ValueError('External inventory owners must be omitted: ' + ', '.join(sorted(forbidden)))
     if suite == 'video-recording':

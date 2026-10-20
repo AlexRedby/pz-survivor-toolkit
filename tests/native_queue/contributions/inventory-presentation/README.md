@@ -10,8 +10,9 @@ python3 tools/check_action_queue.py run /tmp/inventory-presentation-fresh \
   --workshop "$PZ_WORKSHOP"
 ```
 
-The selected set omits the separate `ContainerCapacityIndicator` and
-`BravoItemDetails` mods. The fixture rejects those external owners. The normal
+The selected set omits the separate `ContainerCapacityIndicator`,
+`BravoItemDetails`, `Quartermaster`, `HasResearch` and `SeedSeasonIndicator` mods.
+The fixture rejects those external owners. The normal
 source/mod snapshot guards and selected-pack lock validation apply.
 
 Defaults are 1280x900 and the runner's normal `PZ-TEST` workspace. Optional
@@ -28,9 +29,22 @@ native detail values and exactly one overlay per rendered icon. A native
 container button must render its bar once. The expanded physical battery stack
 then exercises a three-item sort prefix while preserving four tail items,
 physical-child selection and the Shift anchor. All physical child IDs remain
-unique. The shared full-log audit remains mandatory.
+unique.
 
-Four screenshots are required as artifacts. Their presence does not replace
+Later scenes replace that inventory with native carrot seeds, a full and empty
+seed packet, and barbed wire. Real recipe knowledge, Maintenance level 1 and
+the native `getResearchableRecipes` API establish research eligibility; native
+carrot data, known growing-season recipe and June establish planting status.
+Forwarding draw observers require one badge at each actual icon coordinate in
+both CleanUI modes, with no marker on the empty packet. Learning the research
+recipes removes its marker. Disabling native growing seasons or the saved
+indicator preference removes planting markers. A native `ISToolTipInv` shows
+growing information exactly once in each native measure/draw pass, fits the
+screen, and stops extending when the tooltip preference is disabled. The
+shared full-log audit remains mandatory.
+
+Seven screenshots are required as artifacts, including indicators in both
+modes and the growing-information tooltip. Their presence does not replace
 visual inspection for clipping or layout quality. Programmatic native UI
 callbacks do not establish physical mouse/controller, Host, English/Russian
 parity, every third-party combination or long-session coverage. `--mode native`

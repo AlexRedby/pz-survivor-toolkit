@@ -136,7 +136,7 @@ local function check(name)
 end
 add(function()
     assert(not isClient() and not isServer(), 'SP required')
-    for _, id in ipairs({'BravoItemDetails','ContainerCapacityIndicator','Quartermaster'}) do
+    for _, id in ipairs({'BravoItemDetails','ContainerCapacityIndicator','Quartermaster','HasResearch','SeedSeasonIndicator'}) do
         assert(not getActivatedMods():contains(id), 'external owner enabled: ' .. id)
     end
     local p=getPlayer(); p:setGodMod(true); p:setGhostMode(true); p:setAutoDrink(false)
@@ -215,6 +215,165 @@ add(function()
     assert(found and pane.items[pane.firstSelect]==selected,'selection/Shift anchor lost native item')
     print('[INVENTORY_SCREEN] SORT count=7 bound=3 tail=4 selection=true anchor=true')
     shot('04-sort')
+end)
+-- A separate native inventory makes every owned research/season badge identifiable.
+local indicatorProbe, indicatorSamples, researchRecipes, growingTooltip, tooltipProbe
+local Research = require 'PZSurvivorToolkit/InventoryResearch'
+local Planting = require 'PZSurvivorToolkit/InventoryPlanting'
+local PlantingOptions = require 'PZSurvivorToolkit/InventoryPlantingOptions'
+local PlantingTooltip = require 'PZSurvivorToolkit/InventoryPlantingTooltip'
+local function indicatorObserve(target)
+    if target.inventoryIndicatorObserved then return end
+    target.inventoryIndicatorObserved=true
+    local render, draw = target.renderdetails, target.drawTextureScaled
+    target.drawTextureScaled = function(self, texture, x, y, width, height, alpha, r, g, b, ...)
+        if indicatorProbe then
+            if texture==Research.texture() then
+                indicatorProbe.research[#indicatorProbe.research+1]={x=x,y=y,w=width,h=height,texture=texture,r=r,g=g,b=b}
+            elseif texture==getTexture('media/ui/circle.png') or texture==getTexture('media/ui/MP/mp_ui_star.png') then
+                indicatorProbe.season[#indicatorProbe.season+1]={x=x,y=y,w=width,h=height,texture=texture,r=r,g=g,b=b}
+            end
+        end
+        return draw(self,texture,x,y,width,height,alpha,r,g,b,...)
+    end
+    target.renderdetails=function(self, dragged, ...)
+        if dragged then return render(self,dragged,...) end
+        indicatorProbe={icons={},research={},season={}}
+        local result=render(self,dragged,...)
+        self.inventoryIndicatorFrame=indicatorProbe
+        indicatorProbe=nil
+        return result
+    end
+end
+local function indicatorReflow()
+    pane:setWidth(1150); pane:setHeight(720); pane.smoothScrollY=nil; pane.smoothScrollTargetY=nil; pane:setYScroll(0)
+    pane:setMode('details'); pane:refreshContainer()
+    for _,group in ipairs(pane.itemslist) do pane.collapsed[group.name]=true end
+    if page.cleanUIApplyScaleSettings then page:cleanUIApplyScaleSettings(true) end
+    pane:onResize(); pane:refreshContainer()
+    indicatorObserve(pane)
+end
+local function markerAt(draws,x,y,size,best)
+    local count=0
+    for _,draw in ipairs(draws) do
+        if draw.x==x and draw.y==y and draw.w==size and draw.h==size then
+            if best then
+                assert(draw.texture==getTexture('media/ui/MP/mp_ui_star.png') and draw.r==0.25 and draw.g==0.95 and draw.b==0.40,
+                    'native best month must draw its green star')
+            end
+            count=count+1
+        end
+    end
+    assert(count==1,'badge must draw once at actual native icon coordinates')
+end
+local function indicatorCheck(name,research,season)
+    local frame=assert(pane.inventoryIndicatorFrame,'indicator render absent')
+    local researchCount,seasonCount,seen=0,0,{}
+    for _,icon in ipairs(frame.icons) do
+        seen[icon.item]=true
+        local size=math.min(12,icon.width/2,icon.height/2)
+        if icon.item==indicatorSamples.research and research then
+            markerAt(frame.research,icon.x,icon.y,size); researchCount=researchCount+1
+        end
+        if (icon.item==indicatorSamples.seed or icon.item==indicatorSamples.packet) and season then
+            markerAt(frame.season,icon.x+icon.width-size,icon.y,size,true); seasonCount=seasonCount+1
+        end
+    end
+    for _,item in pairs(indicatorSamples) do assert(seen[item],'fixture item not rendered: '..item:getFullType()) end
+    assert(#frame.research==researchCount and #frame.season==seasonCount,'unexpected/duplicate indicator or empty packet marked')
+    print('[INVENTORY_SCREEN] INDICATORS '..name..' research='..tostring(research)..' season='..tostring(season)..' coords=actual once=true empty=false')
+    if name=='05-indicators-clean' or name=='06-indicators-vanilla' then shot(name) end
+end
+add(function()
+    local nativeIcon=ISInventoryItem.renderItemIcon
+    ISInventoryItem.renderItemIcon=function(owner,item,x,y,alpha,width,height,...)
+        if indicatorProbe and owner==pane then
+            local texture=item:getTex()
+            indicatorProbe.icons[#indicatorProbe.icons+1]={item=item,x=x,y=y,
+                width=width or texture:getWidthOrig(),height=height or texture:getHeightOrig()}
+        end
+        return nativeIcon(owner,item,x,y,alpha,width,height,...)
+    end
+    local p=getPlayer(); p:getInventory():getItems():clear()
+    local function item(id) return assert(p:getInventory():AddItem(id),'missing native indicator item '..id) end
+    indicatorSamples={seed=item('Base.CarrotSeed'),packet=item('Base.CarrotBagSeed2'),
+        empty=item('Base.CarrotBagSeed2_Empty'),research=item('Base.BarbedWire')}
+    p:setKnowAllRecipes(false); p:setPerkLevelDebug(Perks.Maintenance,1); p:setPerkLevelDebug(Perks.MetalWelding,0)
+    researchRecipes=indicatorSamples.research:getScriptItem():getResearchableRecipes()
+    assert(researchRecipes:size()>0,'native research source missing')
+    for i=0,researchRecipes:size()-1 do p:getKnownRecipes():remove(researchRecipes:get(i)) end
+    assert(indicatorSamples.research:getScriptItem():getResearchableRecipes(p,true):size()>0,'research skill/knowledge setup not eligible')
+    local crop,props=Planting.resolve(indicatorSamples.seed)
+    assert(crop=='Carrots' and props.seasonRecipe,'native carrot crop unresolved')
+    p:learnRecipe(props.seasonRecipe)
+    getGameTime():setMonth(5)
+    getSandboxOptions():getOptionByName('PlantGrowingSeasons'):setValue(true)
+    PlantingOptions.config.enabled:setValue(true); PlantingOptions.config.tooltip:setValue(true)
+    PlantingOptions.config.badMonth:setValue(true)
+    assert(Planting.describe(p,indicatorSamples.seed,false).status=='best','native June carrot month not best')
+    assert(Planting.describe(p,indicatorSamples.packet,false),'full packet has no native growing information')
+    assert(not Planting.describe(p,indicatorSamples.empty,false),'empty packet is not a planting input')
+    print('[INVENTORY_SCREEN] INDICATOR_SETUP nativeItems=4 recipe=unknown season=known status=best')
+    inventory(true)
+end)
+add(indicatorReflow)
+add(function() indicatorCheck('05-indicators-clean',true,true) end)
+add(function() inventory(false) end)
+add(indicatorReflow)
+add(function() indicatorCheck('06-indicators-vanilla',true,true) end)
+add(function()
+    for i=0,researchRecipes:size()-1 do getPlayer():learnRecipe(researchRecipes:get(i)) end
+    assert(indicatorSamples.research:getScriptItem():getResearchableRecipes(getPlayer(),true):size()==0,'native recipe did not become known')
+end)
+add(function() indicatorCheck('learned',false,true) end)
+add(function() getSandboxOptions():getOptionByName('PlantGrowingSeasons'):setValue(false) end)
+add(function() indicatorCheck('seasons-disabled',false,false) end)
+add(function()
+    getSandboxOptions():getOptionByName('PlantGrowingSeasons'):setValue(true)
+    PlantingOptions.config.enabled:setValue(false)
+end)
+add(function() indicatorCheck('option-disabled',false,false) end)
+add(function()
+    PlantingOptions.config.enabled:setValue(true)
+    local append=PlantingTooltip.append
+    PlantingTooltip.append=function(target,state)
+        local before=target:getHeight()
+        local result=append(target,state)
+        if growingTooltip and target==growingTooltip.tooltip then
+            tooltipProbe.calls=tooltipProbe.calls+1
+            assert(target:getHeight()>before,'growing tooltip added no layout height')
+            assert(target:getWidth()<=getCore():getScreenWidth(),'growing tooltip wider than screen')
+            assert(state.crop=='Carrots' and state.status=='best','tooltip lost native crop context')
+            assert(state.texture and getTexture(state.texture),'native carrot crop texture absent')
+        end
+        return result
+    end
+    growingTooltip=ISToolTipInv:new(indicatorSamples.seed)
+    growingTooltip:initialise(); growingTooltip:setCharacter(getPlayer()); growingTooltip.followMouse=false
+    growingTooltip:setX(500); growingTooltip:setY(200)
+    local render=growingTooltip.render
+    growingTooltip.render=function(self,...)
+        tooltipProbe={calls=0}
+        local result=render(self,...)
+        self.inventoryGrowingCalls=tooltipProbe.calls
+        tooltipProbe=nil
+        return result
+    end
+    growingTooltip:addToUIManager(); growingTooltip:setVisible(true)
+end)
+add(function()
+    assert(growingTooltip.inventoryGrowingCalls==2,'expected one growing extension in each native measure/draw pass')
+    assert(growingTooltip:getHeight()<getCore():getScreenHeight(),'growing tooltip taller than screen')
+    assert(growingTooltip:getX()>=0 and growingTooltip:getX()+growingTooltip:getWidth()<getCore():getScreenWidth(),'growing tooltip clipped horizontally')
+    assert(growingTooltip:getY()>=0 and growingTooltip:getY()+growingTooltip:getHeight()<getCore():getScreenHeight(),'growing tooltip clipped vertically')
+    print('[INVENTORY_SCREEN] TOOLTIP native=true measure=1 draw=1 fits=true')
+    shot('07-growing-tooltip')
+    PlantingOptions.config.tooltip:setValue(false)
+end)
+add(function()
+    assert(growingTooltip.inventoryGrowingCalls==0,'disabled growing tooltip still extended')
+    print('[INVENTORY_SCREEN] TOOLTIP_DISABLED extension=0')
+    growingTooltip:removeFromUIManager(); growingTooltip:setVisible(false)
 end)
 add(function() print('[INVENTORY_SCREEN] COMPLETE'); done=true end)
 Events.OnMainMenuEnter.Add(function() entered=true end)

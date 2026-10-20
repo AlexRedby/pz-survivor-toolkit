@@ -6,6 +6,8 @@ local Classes = require "PZSurvivorToolkit/InventoryClasses"
 local Capacity = require "PZSurvivorToolkit/InventoryCapacity"
 local Details = require "PZSurvivorToolkit/InventoryDetails"
 local Sort = require "PZSurvivorToolkit/InventoryDetailSort"
+local Indicators = require "PZSurvivorToolkit/InventoryIndicators"
+local PlantingTooltip = require "PZSurvivorToolkit/InventoryPlantingTooltip"
 local Presentation = {}
 local contexts, panes, pages = {}, {}, {}
 
@@ -59,6 +61,7 @@ local function render(pane, native, details, ...)
     -- Draw last so native badges cannot erase the indicators. No row projection or coordinate remapping.
     for _, icon in ipairs(context.icons) do
         Capacity.drawIcon(pane, icon.item, icon.x, icon.y, icon.width, icon.height, details)
+        Indicators.drawIcon(pane, icon.item, icon.x, icon.y, icon.width, icon.height, details)
     end
     return result
 end
@@ -109,6 +112,7 @@ local function installPage(class)
 end
 
 function Presentation.install()
+    PlantingTooltip.install()
     Classes.panes(installPane, true)
     installPage(CleanUI_Clean_ISInventoryPage)
     installPage(CleanUI_Vanilla_ISInventoryPage)
