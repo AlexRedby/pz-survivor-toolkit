@@ -72,6 +72,7 @@ local function eat(portion,menu,smartGoal)
   dispatchSource=food:getContainer()==player:getInventory()and 'root'or 'bag',menuDispatched=menu,
   nativeDuration=0,progress=false,cancelled=false,pickupObserved=false}
  if smartGoal then command.smartGoal=smartGoal;command.dispatchHunger=dispatchHunger end
+ if spec.cookable then command.cooked,command.dispatchHeat=food:isCooked(),food:getHeat()end
  local actions=capture(function()
   if option then
    Operations.run(option.onSelect,option.target,option.param1,option.param2,option.param3,option.param4,option.param5)
@@ -181,6 +182,10 @@ local function dispatch()
    assert(selected and selected:getID()==command.utensilId
     and (action.fork and action.fork:getID()or -1)==command.forkId
     and (action.spoon and action.spoon:getID()or -1)==command.spoonId,'edit changed captured native cutlery')
+  end
+  if spec.cookable then
+   assert(action.item:isCooked()==command.cooked and action.item:getHeat()>=0 and action.item:getHeat()<=1.6,
+    'edit changed stable cooking state')
   end
  end
  evidence.untouchedBefore=true;evidence.nativeDurationsUnchanged=true

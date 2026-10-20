@@ -51,6 +51,10 @@ class FoodScenarioTests(unittest.TestCase):
                 self.assertEqual(list(food.UTENSIL_CASES), scenarios.select(self.suite, 'repeat-same', 'eat-utensils', kind, mode)[0])
                 self.assertEqual([food.UTENSIL_MOVE_CASE], scenarios.select(self.suite, 'move-independent', 'eat-utensils', kind, mode)[0])
                 self.assertEqual([food.UTENSIL_CANCEL_CASE], scenarios.select(self.suite, 'cancel-waiting', 'eat-utensils', kind, mode)[0])
+                self.assertEqual(list(food.COOKABLE_CASES), scenarios.select(self.suite, 'success-queued', 'eat-cookable', kind, mode)[0])
+                self.assertEqual(list(food.COOKABLE_CASES), scenarios.select(self.suite, 'repeat-same', 'eat-cookable', kind, mode)[0])
+                self.assertEqual([food.COOKED_MOVE_CASE, food.RAW_MOVE_CASE], scenarios.select(self.suite, 'move-independent', 'eat-cookable', kind, mode)[0])
+                self.assertEqual([food.COOKED_CANCEL_CASE, food.RAW_CANCEL_CASE], scenarios.select(self.suite, 'cancel-waiting', 'eat-cookable', kind, mode)[0])
         with self.assertRaisesRegex(ValueError, 'not implemented'):
             scenarios.select(self.suite, 'cancel-active', 'eat-portions', 'sp', 'toolkit')
 
@@ -58,16 +62,17 @@ class FoodScenarioTests(unittest.TestCase):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
                 recorded = self.recorded(kind, mode)
-                for action in ('eat-portions', 'eat-transfers', 'eat-smart-portions', 'eat-utensils'):
+                for action in ('eat-portions', 'eat-transfers', 'eat-smart-portions', 'eat-utensils', 'eat-cookable'):
                     self.assertEqual('passed', self.row(recorded, action, 'success-queued', kind, mode)['status'])
                     self.assertEqual('passed' if kind == 'mp' else 'not-applicable',
                                      self.row(recorded, action, 'server-authority', kind, mode)['status'])
-                for action in ('eat-portions', 'eat-smart-portions', 'eat-utensils'):
+                for action in ('eat-portions', 'eat-smart-portions', 'eat-utensils', 'eat-cookable'):
                     self.assertEqual('passed', self.row(recorded, action, 'repeat-same', kind, mode)['status'])
                 for action, scenario in [('eat-portions', 'move-independent'), ('eat-portions', 'cancel-waiting'),
                                          ('eat-transfers', 'move-dependent'), ('eat-portions', 'move-dependent'),
                                          ('eat-smart-portions', 'move-independent'), ('eat-smart-portions', 'cancel-waiting'),
-                                         ('eat-utensils', 'move-independent'), ('eat-utensils', 'cancel-waiting')]:
+                                         ('eat-utensils', 'move-independent'), ('eat-utensils', 'cancel-waiting'),
+                                         ('eat-cookable', 'move-independent'), ('eat-cookable', 'cancel-waiting')]:
                     self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
                                      self.row(recorded, action, scenario, kind, mode)['status'])
 
@@ -117,6 +122,30 @@ class FoodScenarioTests(unittest.TestCase):
         for row in changed['coverage']:
             if row['case'] in food.UTENSIL_CASES: row['outcome']['pendingRequestsVerified'] = 1
         self.assertNotEqual('passed', self.row(changed, 'eat-utensils', 'repeat-same')['status'])
+
+    def test_cookable_scope_requires_all_four_cases_and_preserves_other_food_coverage(self):
+        cookable = self.suite['scenario_actions']['eat-cookable']
+        self.assertEqual({'success-queued', 'repeat-same', 'move-independent', 'cancel-waiting', 'server-authority'},
+                         set(cookable['checks']))
+        for phrase in ('Base.ChickenFillet', 'Base.Cabbage', '.5 then .25', '232', '1.3 multiplier', 'No utensils'):
+            self.assertIn(phrase, cookable['scope'])
+        for action in ('eat-portions', 'eat-transfers', 'eat-smart-portions', 'eat-utensils'):
+            self.assertFalse(set(food.COOKABLE_CASES) & {case for binding in
+                             self.suite['scenario_actions'][action]['checks'].values() for case in binding})
+        for scenario in ('move-dependent', 'cancel-active', 'presentation', 'physical-input'):
+            with self.subTest(scenario=scenario), self.assertRaisesRegex(ValueError, 'not implemented'):
+                scenarios.select(self.suite, scenario, 'eat-cookable', 'sp', 'toolkit')
+        original = self.recorded()
+        for case in food.COOKABLE_CASES:
+            changed = copy.deepcopy(original)
+            changed['coverage'] = [row for row in changed['coverage'] if row['case'] != case]
+            self.assertNotEqual('passed', self.row(changed, 'eat-cookable', 'success-queued')['status'])
+            for action in ('eat-portions', 'eat-transfers', 'eat-smart-portions', 'eat-utensils'):
+                self.assertEqual('passed', self.row(changed, action, 'success-queued')['status'])
+        changed = copy.deepcopy(original)
+        for row in changed['coverage']:
+            if row['case'] in food.COOKABLE_CASES: row['outcome']['pendingRequestsVerified'] = 1
+        self.assertNotEqual('passed', self.row(changed, 'eat-cookable', 'repeat-same')['status'])
 
     def test_partial_claims_wrong_types_or_unselected_mods_do_not_gain_passes(self):
         original = self.recorded()

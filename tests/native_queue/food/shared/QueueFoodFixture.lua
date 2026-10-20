@@ -3,12 +3,19 @@ local Fixture={bagType='Base.Bag_ALICEpack_Army',foodType='Base.Cereal',anchorTy
 local function finite(value)return type(value)=='number'and value==value and value~=math.huge and value~=-math.huge end
 function Fixture.scenario(case)
  return {bag=case=='food-bag-edit-pickup-return',
-  cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion'or case=='food-utensil-cancel-first-portion',
+  cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion'or case=='food-utensil-cancel-first-portion'
+   or case=='food-cooked-cancel-first-portion'or case=='food-raw-cookable-cancel-first-portion',
   smart=case=='food-smart-move-portions'or case=='food-smart-cancel-first-portion',
   utensil=case=='food-utensil-move-portions'or case=='food-utensil-cancel-first-portion',
+  cooked=case=='food-cooked-move-portions'or case=='food-cooked-cancel-first-portion',
+  cookable=case=='food-cooked-move-portions'or case=='food-cooked-cancel-first-portion'
+   or case=='food-raw-cookable-move-portions'or case=='food-raw-cookable-cancel-first-portion',
   depletion=case=='food-root-depletion'}
 end
-local function foodType(case)return Fixture.scenario(case).utensil and 'Base.OatsRaw'or Fixture.foodType end
+local function foodType(case)
+ local spec=Fixture.scenario(case)
+ return spec.cookable and (spec.cooked and 'Base.ChickenFillet'or 'Base.Cabbage')or spec.utensil and 'Base.OatsRaw'or Fixture.foodType
+end
 local function count(container,id,fullType)
  local n=0;local items=container:getItems()
  for i=0,items:size()-1 do local item=items:get(i)
@@ -45,6 +52,12 @@ function Fixture.snapshot(player,ids)
   foodCount=count(root,ids.foodId),foodTypeCount=count(root,nil,foodType(ids.case)),deleted=not food,
   anchorId=ids.anchorId,anchorType=anchor:getFullType(),anchorAmount=anchor:getFluidContainer():getAmount(),anchorCount=count(root,ids.anchorId),anchorThirstChange=anchor:getFluidContainer():getProperties():getThirstChange(),
   hunger=player:getStats():get(CharacterStat.HUNGER),thirst=player:getStats():get(CharacterStat.THIRST),bagCount=count(root,ids.bagId)}
+ if Fixture.scenario(ids.case).cookable then
+  if not food or not finite(food:getHeat())or not finite(root:getTemperature())then return end
+  result.cookable,result.cooked=food:isCookable(),food:isCooked()
+  result.burnt,result.rotten,result.fertilized=food:isBurnt(),food:isRotten(),food:isFertilized()
+  result.heat,result.inventoryTemperature=food:getHeat(),root:getTemperature()
+ end
  for _,kind in ipairs({'fork','spoon'})do
   local item=state[kind]
   if item then
@@ -82,6 +95,14 @@ function Fixture.prepare(player,case,previous)
   and not food:getOnEat()and not food:getReplaceOnUse()
   and (not food:getRequireInHandOrInventory()or food:getRequireInHandOrInventory():isEmpty())
   and not food:hasTag(ItemTag.SMOKABLE),'fixture must be ordinary unreplaced food')
+ if spec.cookable then
+  -- These scripts have no cooking callback/replacement or special cooked
+  -- mutation. Native setCooked also establishes the minimum cooking time.
+  food:setCooked(spec.cooked);food:setHeat(1)
+  assert(food:isCookable()and food:isCooked()==spec.cooked and not food:isBurnt()and not food:isRotten()
+   and not food:isFertilized()and not food:getOnCooked()and root:getTemperature()==1,
+   'cold carried cookable fixture differs')
+ end
  local anchor=assert(root:AddItem(Fixture.anchorType));local fluid=assert(anchor:getFluidContainer())
  fluid:Empty();fluid:addFluid(Fluid.Water,1)
  local fork,spoon
@@ -160,6 +181,12 @@ function Fixture.verify(state)
     if value[field]~=state.ids[field]then return nil,'food utensil changed: '..field end
    end
   end
+ end
+ if Fixture.scenario(state.case).cookable then
+  for _,field in ipairs({'cookable','cooked','burnt','rotten','fertilized','inventoryTemperature'})do
+   if value[field]~=state.ids[field]then return nil,'cookable food state changed: '..field end
+  end
+  if value.heat<0 or value.heat>1.6 then return nil,'cookable food left the cold range'end
  end
  if depletion then
   local reason,proof=Fixture.checkDeletion(state,value)

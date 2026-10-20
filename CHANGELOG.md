@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.152
+
+- **Changed:** Pending portions of ordinary cookable food can be reordered or cancelled once the food and its carried outer inventory are cool enough to prevent further cooking. Native cooked hunger/fullness bonuses remain intact; hot food, dangerous raw food, fertilized eggs and callback/replacement effects keep their protection.
+
 ### 0.1.151
 
 - **Fixed:** Single-player wooden-cart emergency release starts from the last displayed held pose and finishes a short cart-only settling transition. Native instant-drop, exact cart/cargo ownership and the existing Host request remain authoritative.

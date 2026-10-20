@@ -30,7 +30,7 @@ local function setup(changed,foreignMerge,alias,missing)
     getModFileReader=function(_,path)return reader(read(ProjectRoot..'/PZSurvivorToolkit/42/'..path))end
     getTimestampMs=function()return 1 end;getCore=function()return {getGameMode=function()return 'Sandbox'end}end
     CharacterTrait={DEXTROUS=1,ALL_THUMBS=2};MoodleType={FOOD_EATEN=1};Fluid={Water={}}
-    ItemTag={SMOKABLE='smokable',SPOON='spoon',FORK='fork'}
+    ItemTag={SMOKABLE='smokable',SPOON='spoon',FORK='fork',ALREADY_COOKED='alreadycooked'}
     ItemContainer={floatingPointCorrection=function(value)return math.floor(value*100+0.5)/100 end}
     round=function(value)return value end
     f.player.class='IsoPlayer'
@@ -53,7 +53,8 @@ local function setup(changed,foreignMerge,alias,missing)
         (kind=='IsoGameCharacter'and value.class=='IsoPlayer'or kind=='InventoryItem'and (value.class=='Food'or value.class=='HandWeapon'))end
     local knownItems={}
     local function container(owner)
-        local c={class='ItemContainer',owner=owner}
+        local c={class='ItemContainer',owner=owner,temperature=1}
+        c.getTemperature=function(self)return self.temperature end
         c.getContainingItem=function(self)return self.owner end;c.getType=function(self)return self.owner and 'bag'or 'none'end
         c.getParent=function(self)return not self.owner and f.player or nil end
         c.isInCharacterInventory=function()return true end;c.isExistYet=function()return true end
@@ -91,12 +92,18 @@ local function setup(changed,foreignMerge,alias,missing)
         local value=item();value.class='Food';value.fluid=nil;value.container=root;value.hunger=-0.4;value.base=-0.4
         value.getFullType=function()return 'Base.Cereal'end;value.getType=function()return 'Cereal'end
         value.getEatType=function()return 'EatBox'end;value.getCustomEatSound=function()end
-        value.getHungChange=function(self)return self.hunger end;value.getHungerChange=value.getHungChange
-        value.getBaseHunger=function(self)return self.base end;value.hasTag=function()return false end
+        value.getHungChange=function(self)return self.hunger end
+        value.getHungerChange=function(self)return self.hunger*(self:isCooked()and 1.3 or 1)end
+        value.getBaseHunger=function(self)return self.base end
+        value.hasTag=function(self,tag)return self.tags and self.tags[tag]or false end
+        value.heat=1;value.getHeat=function(self)return self.heat end
+        value.isCooked=function(self)return self.cooked or false end
+        value.isCookable=function(self)return self.cookable or false end
+        value.isFertilized=function(self)return self.fertilized or false end
         value.getEatTime=function()return 0 end;value.getUses=function()return 1 end
         value.isDisappearOnUse=function()return true end
         for _,name in ipairs({'getReplaceOnUse','getOnEat','getOnCooked','getReplaceOnCooked','getReplaceOnRotten','getRequireInHandOrInventory','getCustomMenuOption'})do value[name]=function()end end
-        for _,name in ipairs({'isKeepOnDeplete','isTainted','isAlcoholic','isBurnt','isRotten','isbDangerousUncooked','isCooked','isCookable'})do value[name]=function()return false end end
+        for _,name in ipairs({'isKeepOnDeplete','isTainted','isAlcoholic','isBurnt','isRotten','isbDangerousUncooked'})do value[name]=function()return false end end
         value.getPoisonPower=function()return 0 end;value.getReduceInfectionPower=function()return 0 end
         local script={isCantEat=function()return false end,getOpeningRecipe=function()end,getOnBreak=function()end,
             getReplaceOnUse=function()end,getReplaceOnDeplete=function()end}
@@ -491,6 +498,104 @@ do
     assert(not s.policy.evaluateCancel(q,half).reason,'ordinary pending food can be cancelled')
 end
 do
+    -- Cookable food keeps the same original-food depletion contract while its
+    -- native outermost carried inventory and residual heat cannot cook or burn it.
+    for _,cooked in ipairs({false,true})do
+        local s=setup();local food=s.food();food.cookable=true;food.cooked=cooked
+        food.base=cooked and -.3 or -.24;food.hunger=food.base
+        local half,quarter=s.eat(food,.5),s.eat(food,.25)
+        local function entry(action,kind)return {action=action,edit=assert(s.adapters[kind or 'food'](action))}end
+        local a,b=entry(half),entry(quarter)
+        local debit=-food.base*.5;local margin=.00001
+        assert(a.edit.resources[1].effects[1].deplete.amount==debit+margin
+            and a.edit.resources[1].effects[1].deplete.minimum==.01+margin
+            and a.edit.resources[1].effects[2].deplete.amount==debit-margin
+            and a.edit.resources[1].effects[2].deplete.minimum==.01-margin,
+            'cookable food retains the raw original-food debit and native tail uncertainty')
+        local multiplier=cooked and 33800 or 13000
+        assert(a.edit.resources[2].effects[1].delta==multiplier*(debit+.01+margin)+1
+            and a.edit.resources[2].effects[2].cap==11000,
+            'cooked and raw food retain their exact conservative fullness bounds')
+        assert(s.model.evaluate({a,b}).status==(cooked and 'denied'or 'allowed'),
+            'a large cooked first portion conservatively fills the actor before the second native action')
+        assert(s.model.evaluate({b,a}).status=='allowed','cold cookable original portions can change order')
+        local returning=s.transfer(food,s.root,s.bagInventory)
+        local tail=entry(returning,'transfer')
+        assert(s.model.evaluate({b,tail}).status=='allowed','a surviving cookable portion can return to its carried bag')
+        local whole=entry(s.eat(food,1))
+        assert(s.model.evaluate({whole,tail}).status=='denied','whole cookable consumption removes the exact transferred item')
+        whole.snapshotOnly=true
+        assert(s.model.evaluate({whole,tail}).status=='allowed','cancelling whole cookable consumption retains transfer existence')
+        food.container=s.bagInventory
+        s.bagInventory.temperature=math.huge
+        local pickup=s.transfer(food,s.bagInventory,s.root)
+        local first=entry(pickup,'transfer')
+        a,b,tail=entry(half),entry(quarter),entry(returning,'transfer')
+        assert(s.model.evaluate({first,b,tail}).status=='allowed',
+            'native outermost inventory ignores even a hot nested carried bag temperature')
+        assert(s.model.evaluate({b,first,tail}).status=='denied','cookable food still needs direct root inventory before eating')
+        first.snapshotOnly=true
+        assert(s.model.evaluate({first,b}).status=='denied','cancelling a required cookable pickup cannot certify eating from its bag')
+        s.water.container=s.root;local head=s.drink();head.action={}
+        local q=s.f.queue(head,pickup,half,quarter,returning)
+        assert(s.policy.evaluateMove(q,quarter,half,false).allowed,'Policy reorders cold raw/cooked captured portions after pickup')
+        assert(s.policy.evaluateCancel(q,quarter).allowed,'Policy cancels a pending cold raw/cooked portion')
+        assert(not s.policy.evaluateCancel(q,pickup).allowed,'Policy preserves the required cookable pickup')
+        assert(food.hunger==food.base and half.percentage==.5 and quarter.percentage==.25,
+            'cookable inspection never changes hunger, temperature or captured portions')
+    end
+end
+do
+    local s=setup();local food=s.food();food.cookable=true;local action=s.eat(food,.5)
+    for _,boundary in ipairs({0,1,1.3,1.6})do
+        food.heat=boundary;s.root.temperature=boundary
+        assert(s.adapters.food(action),'finite cold/warm heat and outer inventory boundaries are inclusive')
+    end
+    for _,field in ipairs({'heat','temperature'})do
+        for _,value in ipairs({-.000001,1.600001,math.huge,-math.huge,0/0,'1',false,{}})do
+            food.heat=1;s.root.temperature=1
+            if field=='heat'then food.heat=value else s.root.temperature=value end
+            assert(not s.adapters.food(action),'unknown or cooking-capable native thermal state is protected: '..field)
+        end
+        food.heat=1;s.root.temperature=1
+        if field=='heat'then food.heat=nil else s.root.temperature=nil end
+        assert(not s.adapters.food(action),'missing native thermal state must fail closed: '..field)
+    end
+    food.heat=1;s.root.temperature=1
+    food.tags={[ItemTag.ALREADY_COOKED]=true}
+    assert(not s.adapters.food(action),'an uncooked ALREADY_COOKED item changes state on native update even while cold')
+    food.cooked=true
+    assert(s.adapters.food(action),'a consistent already-cooked item has stable cold native state')
+    food.fertilized=true
+    assert(not s.adapters.food(action),'fertilized food may hatch during native update independently of cooking')
+    food.fertilized=false;food.tags=nil
+    food.isbDangerousUncooked=function()return true end
+    assert(s.adapters.food(action),'already cooked dangerous-raw food is safe inside the cold contract')
+    food.cooked=false
+    assert(not s.adapters.food(action),'dangerous raw cookable food remains protected')
+    food.cooked=true
+    for _,spec in ipairs({{'getOnCooked','custom.callback'},{'getReplaceOnCooked',{isEmpty=function()return false end}},
+        {'getOnEat','custom.callback'},{'getReplaceOnRotten','Base.Rotten'},{'isRotten',true},{'isBurnt',true},
+        {'getPoisonPower',1},{'isTainted',true}})do
+        local name,value=spec[1],spec[2];local previous=food[name];food[name]=function()return value end
+        assert(not s.adapters.food(action),'cold cookable food cannot bypass existing hazard/effect guard: '..name)
+        food[name]=previous
+    end
+    food.container=s.bagInventory;s.root.temperature=2
+    local pickup=s.transfer(food,s.bagInventory,s.root)
+    assert(s.adapters.transfer(pickup)and not s.adapters.food(action),
+        'a carried transfer alone cannot certify cold food against a hot outer root inventory')
+    s.water.container=s.root;local head=s.drink();head.action={}
+    local q=s.f.queue(head,pickup,action)
+    assert(not s.policy.evaluateMove(q,action,pickup,false).allowed,'Policy does not use an unmodelled hot food consumer to cross its pickup')
+    s.root.temperature=1
+    local before=ISEatFoodAction.isEatingRemaining
+    ISEatFoodAction.isEatingRemaining=function()error('modified cookable helper must never execute')end
+    assert(not s.adapters.food(action),'cold cookable support retains live native helper proof')
+    ISEatFoodAction.isEatingRemaining=before
+    assert(s.adapters.food(action),'restoring the exact helper restores the cold cookable contract')
+end
+do
     -- EatSmart and other native producers capture arbitrary fractions of the
     -- original food. Reordering does not recalculate their nutrition target.
     for _,client in ipairs({false,true})do
@@ -584,7 +689,7 @@ do
         {'getRequireInHandOrInventory',{}},{'isKeepOnDeplete',true},{'isDisappearOnUse',false},
         {'isTainted',true},{'getPoisonPower',1},{'isAlcoholic',true},{'getReduceInfectionPower',1},
         {'isRotten',true},{'isBurnt',true},{'isbDangerousUncooked',true},{'hasTag',true},
-        {'isCookable',true},{'getOnCooked','custom.callback'},{'getReplaceOnRotten','Base.Rotten'}})do
+        {'getOnCooked','custom.callback'},{'getReplaceOnRotten','Base.Rotten'}})do
         local name,value=spec[1],spec[2];local before=food[name];food[name]=function()return value end
         assert(not s.adapters.food(a),'unknown food effects must be protected: '..name);food[name]=before
     end
@@ -731,4 +836,4 @@ do
         end
     end
 end
-print('Food edit adapters: original portions, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')
+print('Food edit adapters: original portions, cold cookable state, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')
