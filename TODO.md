@@ -1,3 +1,8 @@
+# In-cabin vehicle door control
+
+- [ ] Recheck the restored early red-aperture icon in the real radial menu with sufficient margins to both sector edges. The user selected the pre-angle-correction artwork; a historical in-game capture exists, but the current 64x64 export has not been captured again.
+- [ ] Inspect passenger expanded/retracted controls and dashboard scaling in game; the current live scenario covers the stationary driver and programmatic callbacks.
+
 # Wooden wheelbarrow collisions
 
 - [ ] Fix observer-only wooden-cart wall penetration during the approach in Host `cart_wall_exit=left/right`. Native prediction and facing can form a pose that crosses the wall even while the owner is clear. Implement a jointly validated visual position/heading for the whole actor and held cart; keep native actor coordinates, targets, pathfinding, equipment and network traffic unchanged. Any render-only correction must reach both `ModelCameraRenderData` and `ModelSlotRenderData` before grounding/grip/wheel processing, with matching depth and safe identity/stale/geometry-reset handling.

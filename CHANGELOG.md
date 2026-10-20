@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.138
+
+- **Added:** Close an open door from the occupied seat through the vehicle radial menu (`V`) or a dashboard button. The radial uses the selected blue-door icon with a red closing arrow and artwork inset within its 64x64 canvas. The dashboard uses the native door pictogram. The filled, rounded dashboard button matches the size and hover opacity of Realistic Dashboard seat/sleep shortcuts on driver and passenger panels; it is ochre when available and grey when closed or pending. Uses the native door action and synchronization without leaving or switching seats.
+
 ### 0.1.137
 
 - **Fixed:** Quartermaster skips matching containers that cannot accept an item while planning the haul, so a restricted or unavailable destination no longer hides the next suitable box. Explicit-item precedence, priority and planned capacity are retained; transfers still recheck the destination when executed.

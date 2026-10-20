@@ -42,6 +42,8 @@ EXTRA_TESTS = (
     'test_tv_videos.lua',
     'test_vhs_ownership.lua',
     'test_vehicle_ground.lua',
+    'test_vehicle_doors.lua',
+    'test_vehicle_door_dashboard.lua',
     'test_tv_controls.lua',
     'native_tags/check_transfer_source.lua',
     'native_tags/check_placement.lua',
@@ -176,6 +178,8 @@ def main() -> None:
             continue
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
+        if name == "test_vehicle_doors.lua" and args.native_action_root:
+            lua.globals().NativeActionRoot = str(args.native_action_root)
         if name == "test_quartermaster_craft_ui.lua":
             lua.globals().NativePZLuaRoot = str(args.native_action_root)
             lua.globals().NativeQuartermasterLuaRoot = str(quartermaster_root)
