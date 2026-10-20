@@ -302,6 +302,17 @@ public final class CartSteeringHooks {
         return distance<=Math.max(1e-6,2*Math.max(Math.ulp(x),Math.ulp(y)));
     }
 
+    static boolean braceTravel(float x,float y,double accepted) {
+        return Double.isFinite(accepted) && accepted>=0
+            && accepted<=Math.max(1e-6,2*Math.max(Math.ulp(x),Math.ulp(y)));
+    }
+
+    /** Cosmetic contact tolerates coordinate jitter; accepted movement and collision results stay untouched. */
+    static boolean braceContact(CartFootprint.Query query,float x,float y,double heading,double dx,double dy,
+                                double axle,double front,double accepted,boolean forward) {
+        return forward && braceTravel(x,y,accepted) && blockedProbe(query,x,y,heading,dx,dy,axle,front);
+    }
+
     /**
      * Hook 1: at IsoPlayer.moveUnmodded(FF)V entry, replace its two arguments with
      * this returned vector. Continue the original method, including slowFactor.
@@ -505,7 +516,7 @@ public final class CartSteeringHooks {
         }
         state=state(player);
         state.visualSpeed=-1;
-        if(state.path) { pathHeading(player,state);publish(player,state);return; }
+        if(state.path) { player.setVariable("ToolkitCartBrace",false);pathHeading(player,state);publish(player,state);return; }
         player.setVariable("ToolkitCartPivot",true);
         double desired = Math.atan2(player.getForwardDirectionY(), player.getForwardDirectionX());
         state=state(player);
@@ -598,16 +609,23 @@ public final class CartSteeringHooks {
         if(state.relative && keyboard(player)) relativeTarget(player,state);
         else if(!state.hasInput && (!wooden(player) || !state.stationaryRoot)) state.target = state.moving ? desired : state.heading;
         state.hasInput=false;
-        boolean hardStop=false;
+        boolean hardStop=false,effort=false;
+        boolean forward=state.wantsMove && state.reversal.direction>0
+            && (!state.relative || keyboard(player) && travel(player)>0);
         if(wooden(player) && state.wantsMove && !state.stationaryRoot && !state.reversal.active
-            && !state.braking && state.actualDistance<1e-6 && (blocked || state.brace>0)
-            && player.getCurrentSquare()!=null) {
+            && !state.braking && player.getCurrentSquare()!=null
+            && (state.actualDistance<1e-6 && (blocked || state.brace>0)
+                || forward && braceTravel(player.getX(),player.getY(),state.actualDistance))) {
             // Query the intended step even at zero root speed; this never moves the player or wheel.
             CartSteeringMath.woodenStep(state.heading,state.target,.03,1.0/60,state.load,axle(player),
                 state.turnRate,state.reversal.direction<0,state.braceProbe);
-            hardStop=blockedProbe(CartFootprint.world(player),player.getX(),player.getY(),state.heading,
+            var query=CartFootprint.world(player);
+            effort=braceContact(query,player.getX(),player.getY(),state.heading,
+                state.braceProbe.x(),state.braceProbe.y(),axle(player),state.footprintFront,state.actualDistance,forward);
+            hardStop=effort || state.actualDistance<1e-6 && blockedProbe(query,player.getX(),player.getY(),state.heading,
                 state.braceProbe.x(),state.braceProbe.y(),axle(player),state.footprintFront);
         }
+        player.setVariable("ToolkitCartBrace",effort);
         state.brace=Math.max(0,Math.min(1,state.brace+(hardStop?dt:-dt)/.16));
         boolean bracePose=state.brace>0 && state.wantsMove && !state.stationaryRoot && !state.reversal.active;
         double length = Math.hypot(actualX, actualY);
@@ -743,6 +761,7 @@ public final class CartSteeringHooks {
         CartMotionSync.reset(player);
         CartLegPace.cancelBrake(player,true);
         states.remove(player);
+        player.setVariable("ToolkitCartBrace",false);
         player.setVariable("ToolkitCartWoodBrake",false);
         player.setVariable("ToolkitCartBrakeSprint",false);
         player.clearVariable("ToolkitCartLegPace");

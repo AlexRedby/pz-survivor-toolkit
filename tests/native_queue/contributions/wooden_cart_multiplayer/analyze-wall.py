@@ -12,6 +12,15 @@ PHASES = [('idle', 0), ('walk', 1000), ('reverse', 9500), ('reverse-turn', 12000
 WINDOWS = {'idle': (100, 800), 'walk': (1500, 9300), 'reverse': (10500, 11800),
            'reverse-turn': (12300, 15300), 'reverse-stop': (15700, 15900),
            'forward-turn': (16300, 20800), 'forward-out': (21300, 25800), 'settled': SETTLED}
+FRONT_DURATION = 18000
+FRONT_SETTLED = (17300, FRONT_DURATION)
+FRONT_PHASES = [('idle', 0), ('walk', 1000), ('release', 6500), ('reverse', 7500),
+                ('reverse-stop', 10000), ('restart', 10800), ('settled', 15500)]
+FRONT_WINDOWS = {'idle': (100, 800), 'contact': (5000, 6300), 'release': (6800, 7300),
+                 'reverse': (7800, 9800), 'restart': (11100, 12000),
+                 'contact-again': (14500, 15300), 'settled': FRONT_SETTLED}
+BRACE_TRACK = 'Toolkit_WoodCartBrace'
+FEET = tuple(f'Bip01_{side}_{part}' for side in 'LR' for part in ('Foot', 'Toe0'))
 PAD_KEYS = ('minX', 'minY', 'z', 'size', 'margin', 'bankVersion', 'elevated', 'vegetationFree',
             'floorSprite', 'wallSprite', 'wallSide', 'wallX', 'wallMinY', 'wallMaxY', 'ownedWalls', 'initialHeading')
 
@@ -20,12 +29,98 @@ def wrap(value):
     return math.atan2(math.sin(value), math.cos(value))
 
 
+def front_evidence(states, inputs, poses, measured, cartid, wall_x, epoch, covered, require, number, gait, stopped_pose):
+    def pick(rows, key, interval, label, minimum=5):
+        return covered(rows, key, interval, label, minimum)
+    def flags(row):
+        fields = row.get('pose', '').split(',')
+        require(len(fields) == 13 and fields[0] == '1' and fields[1] == str(cartid)
+                and fields[2].isdigit() and int(fields[2]) > 0 and fields[3].isdigit(),
+                'Front brace requires version 1 pose with exactly 13 fields')
+        value = int(fields[3])
+        require(0 <= value <= 15 and (value & 8 == 0 or value & 7 == 1), 'Invalid front brace flags')
+        return value
+    def tracks(row):
+        values = row.get('trackProgress')
+        require(isinstance(values, list) and all(isinstance(t, dict) and isinstance(t.get('name'), str)
+                and all(number(t.get(k)) for k in ('time', 'duration', 'weight')) and t['duration'] > 0
+                and 0 <= t['time'] <= t['duration'] + .01 and t['weight'] >= 0 for t in values),
+                'Missing/malformed native front track progression')
+        return values
+    payloads = {}
+    for role, rows in states.items():
+        for row in rows:
+            flags(row)
+            serial = int(row['pose'].split(',')[2])
+            require(serial not in payloads or payloads[serial] == row['pose'], 'Same pose serial changed across roles')
+            payloads[serial] = row['pose']
+            if role != 'server':
+                require(type(row.get('brace')) is bool, role + ': missing actual ToolkitCartBrace boolean')
+                tracks(row)
+    for row in inputs:
+        require(number(row.get('brace')) and 0 <= row['brace'] <= 1
+                and type(row.get('nativeBlocked')) is bool and row['nativeBlocked']
+                and type(row.get('wantsMove')) is bool, 'Missing/malformed front brace native diagnostics')
+    summaries = []
+    for role in ('client1', 'client2'):
+        baseline = pick(poses[role], 'wallTimeMillis', (200, 800), role + '/standing')
+        def feet(frame):
+            require(all(name in frame['bones'] for name in FEET), role + ': missing rendered foot/toe bones')
+            require(all(all(abs(frame['bones'][name][i] - expected) <= 1e-5 for i, expected in ((3, 0), (7, 0), (11, 0), (15, 1))) for name in FEET),
+                    role + ': invalid rendered foot/toe matrix')
+            return {name: frame['bones'][name][12:15] for name in FEET}
+        standing = {name: [statistics.median(feet(f)[name][axis] for f in baseline) for axis in range(3)] for name in FEET}
+        for interval in ((5000, 6300), (14500, 15300)):
+            quiet = pick(states[role], 'wall', interval, role + '/front-contact')
+            frames = pick(poses[role], 'wallTimeMillis', interval, role + '/front-contact/render')
+            require(stopped_pose(quiet, .015), role + ': blocked brace moves root, heading or steps')
+            require(all(r['brace'] and flags(r) & 8 for r in quiet), role + ': blocked contact lacks replicated brace')
+            require(all(any(t.get('name') == BRACE_TRACK and number(t.get('weight')) and t['weight'] > .5
+                            for t in tracks(r)) for r in quiet), role + ': native brace track missing')
+            offset = max(abs(feet(f)[name][1] - standing[name][1]) for f in frames for name in FEET)
+            jitter = max(math.sqrt(sum((max(feet(f)[name][a] for f in frames) - min(feet(f)[name][a] for f in frames)) ** 2 for a in range(3))) for name in FEET)
+            require(offset <= .025 and jitter <= .012, role + ': blocked feet are raised or unplanted')
+            summaries.append(dict(role=role, window=list(interval), samples=len(quiet), renderFrames=len(frames), footOffsetFromStanding=offset, footPositionRangeXYZ=jitter))
+        for interval in ((6800, 7300), (8000, 9800), FRONT_SETTLED):
+            quiet = pick(states[role], 'wall', interval, role + '/brace-release')
+            require(all(not r['brace'] and flags(r) & 8 == 0 for r in quiet), role + ': brace remains latched after release/reverse')
+            require(all(not any(t.get('name') == BRACE_TRACK and number(t.get('weight')) and t['weight'] > .1
+                                for t in tracks(r)) for r in quiet), role + ': brace track remains after release/reverse')
+    for interval in ((6800, 7300), (8000, 9800), FRONT_SETTLED):
+        arrivals = pick(states['server'], 'wall', interval, 'server/brace-release')
+        require(all(flags(r) & 8 == 0 for r in arrivals), 'Server brace flag remains after release/reverse')
+    for interval in ((5000, 6300), (14500, 15300)):
+        arrivals = pick(states['server'], 'wall', interval, 'server/front-contact')
+        require(all(flags(r) & 8 for r in arrivals), 'Server brace flag missing')
+        contact = pick(inputs, 'wall', interval, 'owner/front-native-contact')
+        # ToolkitCartBrace is the live intended-step collision result; cartBlocked can reset at zero root budget.
+        require(all(r['drive'] == 1 and r['wantsMove'] and r['brace'] >= .95 for r in contact), 'Owner lacks sustained blocked forward intent')
+        require(any(f['minX'] <= wall_x + .65 for f in measured['client1'] if interval[0] <= f['elapsed'] <= interval[1]), 'Frontal stance never reaches wall contact')
+    for interval in ((6800, 7300), FRONT_SETTLED):
+        release = pick(inputs, 'wall', interval, 'owner/front-release')
+        require(all(r['drive'] == 0 and not r['wantsMove'] and r['brace'] < .05 for r in release), 'Owner release leaves brace intent latched')
+    require(all(r['stepY'] >= 0 for r in states['client1'] if r['wall'] < epoch + 7500), 'Automatic reverse occurred before manual front reverse')
+    reverse = pick(states['client1'], 'wall', (7800, 9800), 'owner/front-reverse')
+    gait(reverse, 'Bob_WalkBwdNoAim1Hand', True)
+    require(reverse[-1]['x'] - reverse[0]['x'] > .3, 'Manual reverse fails to leave front wall')
+    restart = pick(states['client1'], 'wall', (11100, 12000), 'owner/front-restart')
+    gait(restart, 'Bob_Walk')
+    require(restart[0]['x'] - restart[-1]['x'] > .1, 'Forward restart fails to return toward wall')
+    stop = pick(states['client1'], 'wall', (10300, 10600), 'owner/front-reverse-stop', minimum=2)
+    require(stopped_pose(stop, .05), 'Front manual reverse did not stop before restart')
+    return dict(verified=True, contact=summaries, payloadVersion=1, payloadFields=13, flagBit=8,
+                scope='Actual native brace track and rendered foot/toe stability on both clients; authoritative native wall/forward intent on owner')
+
+
 def analyze(profile, selection, common):
     require, parse, number = (common[k] for k in ('require', 'parse', 'number'))
     profile = Path(profile)
     options = selection.get('options', {})
     side = options.get('cart_wall_exit')
-    require(side in ('left', 'right') and type(side) is str, 'cart_wall_exit must be left or right')
+    require(side in ('left', 'right', 'front') and type(side) is str, 'cart_wall_exit must be left, right or front')
+    front = side == 'front'
+    duration, settled_window = (FRONT_DURATION, FRONT_SETTLED) if front else (DURATION, SETTLED)
+    phases_plan, windows = (FRONT_PHASES, FRONT_WINDOWS) if front else (PHASES, WINDOWS)
     require(options.get('mp_host') is True, 'Wall bank requires native Host')
     require(options.get('cart_variant', 'wooden-wheelbarrow') == 'wooden-wheelbarrow', 'Wall bank requires wooden-wheelbarrow')
     require(all(options.get(k, False) is False for k in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown'))
@@ -52,7 +147,7 @@ def analyze(profile, selection, common):
             and pad.get('z') == 7 and pad.get('elevated') is True and pad.get('vegetationFree') is True
             and pad.get('floorSprite') == 'carpentry_02_57' and pad.get('wallSprite') == 'walls_exterior_wooden_01_0'
             and pad.get('wallSide') == side and pad.get('ownedWalls') == 49
-            and abs(pad['initialHeading']-sign*3*math.pi/4) < 1e-6
+            and abs(pad['initialHeading']-(math.pi if front else sign*3*math.pi/4)) < 1e-6
             and pad['wallX'] == pad['minX']+31-3 and pad['wallMinY'] == pad['minY']+31-24
             and pad['wallMaxY'] == pad['minY']+31+24, 'Invalid authoritative native wall/pad geometry')
     for role in ('client1', 'client2'):
@@ -71,14 +166,14 @@ def analyze(profile, selection, common):
                 and events[1].get('cartActions', False) is False
                 and all(type(events[2].get(k)) is int and events[2][k] == v for k,v in {'expected':1,'performed':1,'failed':0,'skipped':0}.items()), role + ': unsuccessful capture receipt')
         phases = re.findall(r'\[CART_MP\] PHASE ([a-z-]+) wall=(\d+) elapsed=(\d+)', logs[role])
-        require([p[0] for p in phases] == [p[0] for p in PHASES], role + ': phase sequence differs')
-        require(all(t <= int(p[2]) <= t+600 and int(p[1])-epoch == int(p[2]) for p,(_,t) in zip(phases, PHASES)), role + ': phase timing differs')
+        require([p[0] for p in phases] == [p[0] for p in phases_plan], role + ': phase sequence differs')
+        require(all(t <= int(p[2]) <= t+600 and int(p[1])-epoch == int(p[2]) for p,(_,t) in zip(phases, phases_plan)), role + ': phase timing differs')
     armed = records('server', '[CART_MP_WALL] ARMED ')
     require(len(armed) == 2 and {r.get('actor') for r in armed} == {'client1', 'client2'}
             and all(r.get('floors') == 3969 and r.get('walls') == 49 and r.get('bankVersion') == 4
                     and number(r.get('wall')) and r['wall'] < epoch for r in armed), 'Missing authoritative pre-epoch wall acknowledgements')
     cleanup = one('server', '[CART_MP_WALL] CLEANUP ')
-    require(cleanup.get('walls') == 49 and number(cleanup.get('wall')) and epoch+DURATION <= cleanup['wall'] <= epoch+DURATION+5000,
+    require(cleanup.get('walls') == 49 and number(cleanup.get('wall')) and epoch+duration <= cleanup['wall'] <= epoch+duration+5000,
             'Missing bounded server wall cleanup')
     for role in ('client1', 'client2'):
         row = one(role, '[CART_MP_WALL] CLEANUP_READY ')
@@ -110,7 +205,7 @@ def analyze(profile, selection, common):
     for role, rows in raw.items():
         require(all(r['user'] == 'client1' for r in rows if r['id'] == identity)
                 and all(r['id'] == identity for r in rows if r['user'] == 'client1'), role + ': owner identity changed')
-        states[role] = covered([r for r in rows if r['id'] == identity], 'wall', (0,DURATION), role+'/active')
+        states[role] = covered([r for r in rows if r['id'] == identity], 'wall', (0,duration), role+'/active')
         for r in states[role]:
             require(r['primary'] == r['secondary'] == cartid and r['item'] == spec['cartType']
                     and r.get('cargoCount') == 1 and r.get('cargoID') == spec['cargoID']
@@ -127,10 +222,10 @@ def analyze(profile, selection, common):
             if role == 'client1': require(r['enabled'], 'Owner patch disabled')
     require(len(sexes) == 1, 'Owner sex changed across roles/window')
     initial=covered(states['client1'],'wall',(0,800),'owner/initial')
-    require(all(abs(r['x']-(pad['wallX']+2.8))<.05 and abs(r['y']-(pad['minY']+31.5))<.05
+    require(all(abs(r['x']-(pad['wallX']+(1.8 if front else 2.8)))<.05 and abs(r['y']-(pad['minY']+31.5))<.05
                 and abs(wrap(r['heading']-pad['initialHeading']))<.04 for r in initial), 'Owner initial wall pose differs')
     inputs = records('client1', '[CART_MP_WALL] INPUT ')
-    inputs = covered(inputs, 'wall', (0,DURATION), 'owner/manual-input')
+    inputs = covered(inputs, 'wall', (0,duration), 'owner/manual-input')
     for r in inputs:
         require(number(r.get('elapsed')) and r['elapsed'] == r['wall']-epoch and number(r.get('acceptedHeading'))
                 and type(r.get('drive')) is int and r.get('gait') == 0 and r.get('id') == cartid
@@ -142,11 +237,11 @@ def analyze(profile, selection, common):
         native=min(states['client1'],key=lambda s:abs(s['wall']-r['wall']))
         require(abs(wrap(native['heading']-r['acceptedHeading']))<=.08+3*abs(native['wall']-r['wall'])/1000, 'Manual accepted heading disagrees with owner native state')
     turns=[]
-    drives=[0,1,4,6 if sign==1 else 7,0,5 if sign==1 else 8,5 if sign==1 else 8,0]
-    for i, ((name,start),(_,end)) in enumerate(zip(PHASES, PHASES[1:]+[('end',DURATION)])):
+    drives=[0,1,0,4,0,1,0] if front else [0,1,4,6 if sign==1 else 7,0,5 if sign==1 else 8,5 if sign==1 else 8,0]
+    for i, ((name,start),(_,end)) in enumerate(zip(phases_plan, phases_plan[1:]+[('end',duration)])):
         rows=[r for r in inputs if start+min(100,(end-start)/4) <= r['elapsed'] < end-min(100,(end-start)/4)]
         require(rows and all(r.get('stage') == name for r in rows), name + ': missing/wrong input stage')
-        if i not in (3,5,6):
+        if front or i not in (3,5,6):
             require(all(r['drive'] == drives[i] for r in rows), name + ': unexpected physical drive (automatic reverse or steering)')
             continue
         straight=4 if i==3 else 1
@@ -167,7 +262,7 @@ def analyze(profile, selection, common):
     footprint=importlib.util.module_from_spec(module);module.loader.exec_module(footprint)
     measured={}; meshsha={}
     for role, rows in poses.items():
-        frames=covered(rows, 'wallTimeMillis', (0,DURATION), role+'/render')
+        frames=covered(rows, 'wallTimeMillis', (0,duration), role+'/render')
         require(not (profile/role/'wood-wheel-mesh-error.json').exists(), role+': native mesh probe failed')
         vertices,sha=footprint.mesh(profile/role);meshsha[role]=sha
         later=profile/role/'wood-wheel-mesh-phase-proof.json'
@@ -205,37 +300,42 @@ def analyze(profile, selection, common):
             require(isinstance(entries,list) and all(isinstance(c,dict) and isinstance(c.get('name'),str) and all(number(c.get(k)) for k in ('time','duration','weight')) and c['duration']>0 and 0<=c['time']<=c['duration']+.01 and c['weight']>=0 for c in entries), 'Missing/malformed native track progression')
             clips.extend((r['wall'],c) for c in entries if c['name']==name and c['weight']>.1)
         require(any(t1>t0 and abs(b['time']-a['time'])>.001 for (t0,a),(t1,b) in zip(clips,clips[1:])), 'Native '+name+' animation time never advances')
-    contact=window(8000,9300)
-    require(sign*(contact[-1]['y']-contact[0]['y'])>.15 and max(r['x'] for r in contact)-min(r['x'] for r in contact)<.15
-            and any(r['blocked'] for r in inputs if 8000<=r['elapsed']<=9300)
-            and any(f['minX']<=pad['wallX']+.65 for f in measured['client1'] if 8000<=f['elapsed']<=9300), 'Accepted wall contact/slide not demonstrated')
-    require(all(r['stepY']>=0 for r in states['client1'] if r['wall']<epoch+9500), 'Automatic reverse occurred before explicit reverse input')
-    gait(contact,'Bob_Walk')
-    for a,b in ((10500,11800),(12300,15300)):
-        reverse=window(a,b);gait(reverse,'Bob_WalkBwdNoAim1Hand',True)
-        backward=-sum((b['x']-a['x'])*math.cos(a['heading'])+(b['y']-a['y'])*math.sin(a['heading']) for a,b in zip(reverse,reverse[1:]))
-        require(backward>.1, 'Reverse stage has no measured backward travel')
-    arc=window(12000,15300)
-    require(arc[-1]['x']-arc[0]['x']>.15, 'Manual reverse arc creates no outward clearance')
     def stopped_pose(rows,distance):
         yaw=[wrap(r['heading']-rows[0]['heading']) for r in rows]
         return (travel(rows)<distance and max(yaw)-min(yaw)<=.025
                 and all(abs(r['stepX'])<.01 and abs(r['stepY'])<.01 for r in rows))
-    stopped=covered(states['client1'],'wall',(15700,15900),'reverse stop',minimum=2)
-    require(stopped_pose(stopped,.05), 'Manual reverse did not stop before forward input')
-    out=window(23000,25800);gait(out,'Bob_Walk')
-    require(out[-1]['x']-out[0]['x']>.3 and all(r['stepY']>0 for r in out), 'Final forward departure missing')
-    clear=[f for f in measured['client1'] if 24500<=f['elapsed']<=25800]
-    require(clear and min(f['minX'] for f in clear)>=pad['wallX']+.35, 'Full mesh/wheel never clears wall')
-    settled=window(*SETTLED)
-    require(stopped_pose(settled,.1), 'Final release did not settle')
+    brace_evidence = None
+    if front:
+        brace_evidence = front_evidence(states, inputs, poses, measured, cartid, pad['wallX'], epoch, covered, require, number, gait, stopped_pose)
+        settled=window(*settled_window)
+    else:
+        contact=window(8000,9300)
+        require(sign*(contact[-1]['y']-contact[0]['y'])>.15 and max(r['x'] for r in contact)-min(r['x'] for r in contact)<.15
+                and any(r['blocked'] for r in inputs if 8000<=r['elapsed']<=9300)
+                and any(f['minX']<=pad['wallX']+.65 for f in measured['client1'] if 8000<=f['elapsed']<=9300), 'Accepted wall contact/slide not demonstrated')
+        require(all(r['stepY']>=0 for r in states['client1'] if r['wall']<epoch+9500), 'Automatic reverse occurred before explicit reverse input')
+        gait(contact,'Bob_Walk')
+        for a,b in ((10500,11800),(12300,15300)):
+            reverse=window(a,b);gait(reverse,'Bob_WalkBwdNoAim1Hand',True)
+            backward=-sum((b['x']-a['x'])*math.cos(a['heading'])+(b['y']-a['y'])*math.sin(a['heading']) for a,b in zip(reverse,reverse[1:]))
+            require(backward>.1, 'Reverse stage has no measured backward travel')
+        arc=window(12000,15300)
+        require(arc[-1]['x']-arc[0]['x']>.15, 'Manual reverse arc creates no outward clearance')
+        stopped=covered(states['client1'],'wall',(15700,15900),'reverse stop',minimum=2)
+        require(stopped_pose(stopped,.05), 'Manual reverse did not stop before forward input')
+        out=window(23000,25800);gait(out,'Bob_Walk')
+        require(out[-1]['x']-out[0]['x']>.3 and all(r['stepY']>0 for r in out), 'Final forward departure missing')
+        clear=[f for f in measured['client1'] if 24500<=f['elapsed']<=25800]
+        require(clear and min(f['minX'] for f in clear)>=pad['wallX']+.35, 'Full mesh/wheel never clears wall')
+        settled=window(*settled_window)
+        require(stopped_pose(settled,.1), 'Final release did not settle')
     final_delta={}
     for role in common['ROLES']:
-        quiet=covered(states[role],'wall',SETTLED,role+'/final settle')
+        quiet=covered(states[role],'wall',settled_window,role+'/final settle')
         require(stopped_pose(quiet,.1) and all(not r['run'] and not r['sprint'] for r in quiet), role+': final native position did not settle')
         final_delta[role]=math.dist((quiet[-1]['x'],quiet[-1]['y']),(settled[-1]['x'],settled[-1]['y']))
     phases={}
-    for name,interval in WINDOWS.items():
+    for name,interval in windows.items():
         if name=='reverse-stop':continue # 500 ms stop is checked from input; 200 ms cannot contain five 100 ms state samples.
         phases[name]={}
         for role in ('client1','client2'):
@@ -276,8 +376,8 @@ def analyze(profile, selection, common):
             if not allrows or row!=allrows[-1]:allrows.append(row)
         require(all(number(r.get('wall')) and all(type(r.get(k)) is int and r[k]>=0 for k in ('packets','serializedBytes')) for r in allrows), role+': invalid traffic counter')
         require(all(b['wall']>a['wall'] and b['packets']>=a['packets'] and b['serializedBytes']>=a['serializedBytes'] for a,b in zip(allrows,allrows[1:])), role+': traffic counter reset/regression')
-        rows=[r for r in allrows if epoch<=r['wall']<=epoch+DURATION]
-        require(len(rows)>=2 and rows[0]['wall']<=epoch+1500 and rows[-1]['wall']>=epoch+DURATION-1500, role+': traffic window incomplete')
+        rows=[r for r in allrows if epoch<=r['wall']<=epoch+duration]
+        require(len(rows)>=2 and rows[0]['wall']<=epoch+1500 and rows[-1]['wall']>=epoch+duration-1500, role+': traffic window incomplete')
         a,b=rows[0],rows[-1];packets=b['packets']-a['packets'];bytecount=b['serializedBytes']-a['serializedBytes']
         require((packets==0) == (bytecount==0), role+': packet/serialized-byte counters disagree')
         if role=='client1':require(packets>0, 'Owner emitted no measured pose traffic')
@@ -287,7 +387,7 @@ def analyze(profile, selection, common):
     delay=lags['client2']['firstSeenDelayMsMedian']
     owner_frame_gap=max(b['wallTimeMillis']-a['wallTimeMillis'] for a,b in zip(poses['client1'],poses['client1'][1:]))
     for remote in poses['client2']:
-        if not epoch+1000<=remote['wallTimeMillis']<=epoch+DURATION-1000:continue
+        if not epoch+1000<=remote['wallTimeMillis']<=epoch+duration-1000:continue
         local=min(poses['client1'],key=lambda r:abs(r['wallTimeMillis']-(remote['wallTimeMillis']-delay)))
         if abs(local['wallTimeMillis']-(remote['wallTimeMillis']-delay))>owner_frame_gap:continue
         rs=min(states['client2'],key=lambda r:abs(r['wall']-remote['wallTimeMillis']))
@@ -295,10 +395,14 @@ def analyze(profile, selection, common):
         delayed.append(dict(bank=abs(rs['bank']-ls['bank']),wheel=abs(common['wheel'](remote)-common['wheel'](local)),
                             **{s:abs(common['palm'](remote,s)-common['palm'](local,s)) for s in 'LR'}))
     require(len(delayed)>=5, 'Delayed render diagnostics lack matched owner frames')
-    return dict(evidenceComplete=True,ownerOnlineID=identity,cartID=cartid,epoch=epoch,cartVariant='wooden-wheelbarrow',
+    result = dict(evidenceComplete=True,ownerOnlineID=identity,cartID=cartid,epoch=epoch,cartVariant='wooden-wheelbarrow',
         actualSex='female' if next(iter(sexes)) else 'male',wallSide=side,checkedPad=pad,cargo=spec,phases=phases,manualTurns=turns,
         sampledOwnerFootprint=dict(sampledPass=True,tolerance=.005,meshSha256=meshsha['client1'],minClearance=min(f['minX']-pad['wallX'] for f in measured['client1'])),
         observerFootprint=dict(minClearance=min(f['minX']-pad['wallX'] for f in measured['client2']),scope='Remote rendered mesh diagnostics; not authoritative physical collision'),
         poseReplication=lags,finalPositionDeltaFromOwner=final_delta,traffic=dict(roles=traffic,senderIntervalMs=interval,scope='ToolkitCartPose/ToolkitCartActionPose serialized VariableSyncPacket counters; setup excluded; not UDP or total network traffic'),
         delayedRenderDiagnostics=dict(pairs=len(delayed),measuredDelayMs=delay,maxDifference={k:max(r[k] for r in delayed) for k in delayed[0]},scope='Descriptive sampled delay alignment; no animation equivalence threshold'),
         scope='Bounded full-load Walk-first Host manual reverse exit, actual reported sex only. Sampled native mesh plus continuous wheel support against finite W wall; between-frame collision and visual animation equivalence remain unsupported. Native gait time progression is checked independently of descriptive remote render diagnostics.')
+
+    if front:
+        result.update(brace=brace_evidence, scope='Bounded full-load frontal Host brace, release, manual reverse and restart with owner/observer planted-foot and native-track gates. Observer wall penetration remains a separate reported defect; no whole-animation or between-frame collision equivalence is asserted.')
+    return result

@@ -14,7 +14,8 @@ return function(player)
   local wall
   if wallSide then
    area.wallSide=wallSide;area.wallSprite='walls_exterior_wooden_01_0';area.wallX=x-3;area.wallMinY=y-24;area.wallMaxY=y+24;area.ownedWalls=49
-   area.initialHeading=(wallSide=='left' and .75 or -.75)*math.pi;area.x=area.wallX+2.8
+   area.initialHeading=(wallSide=='front' and 1 or wallSide=='left' and .75 or -.75)*math.pi
+   area.x=area.wallX+(wallSide=='front' and 1.8 or 2.8)
    wall=require 'CartMPWall';wall.preflight(area)
   end
   -- addFloor creates neighbouring empty squares too; validate that halo before the first write.

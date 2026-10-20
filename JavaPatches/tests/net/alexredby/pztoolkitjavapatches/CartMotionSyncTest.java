@@ -5,6 +5,7 @@ public final class CartMotionSyncTest {
         short id;
         float x,y,z;
         boolean moving;
+        zombie.inventory.InventoryItem held;
         zombie.characters.NetworkPlayerAI network;
         java.util.Map<String,Float> floats;
         java.util.Map<String,Boolean> booleans;
@@ -19,7 +20,7 @@ public final class CartMotionSyncTest {
         @Override public boolean isPlayerMoving(){return moving;}
         @Override public zombie.characters.NetworkPlayerAI getNetworkCharacterAI(){return network;}
         @Override public zombie.ai.State getCurrentState(){return null;}
-        @Override public zombie.inventory.InventoryItem getPrimaryHandItem(){return null;}
+        @Override public zombie.inventory.InventoryItem getPrimaryHandItem(){return held;}
         @Override public zombie.core.skinnedmodel.advancedanimation.AdvancedAnimator getAdvancedAnimator(){return null;}
         @Override public zombie.core.skinnedmodel.advancedanimation.IAnimationVariableSlot setVariable(String key,float value){
             if(floats==null) floats=new java.util.HashMap<>();floats.put(key,value);return null;
@@ -171,6 +172,46 @@ public final class CartMotionSyncTest {
         CartMotionSync.reset(player);
         check(remote.locomotion==null && !remote.owned,"native cleanup retained borrowed locomotion after action/identity reset");
     }
+    @SuppressWarnings("unchecked")
+    private static void effortReplication() throws Exception {
+        var field=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);
+        var unsafe=(sun.misc.Unsafe)field.get(null);
+        var player=(Player)unsafe.allocateInstance(Player.class);
+        var cart=(zombie.inventory.types.InventoryContainer)unsafe.allocateInstance(zombie.inventory.types.InventoryContainer.class);
+        cart.setModule("SaucedWheelbarrow");cart.setType("WheelbarrowWood");player.held=cart;
+        var effort=new CartMotionSync.Pose(123,1,9,0,0,0,0,0,0,0,0,0);
+        check(effort.equals(CartMotionSync.parse(effort.encode())),"reserved brace flag lost its bounded v1 roundtrip");
+        check(effort.encode().split(",",-1).length==13,"effort added a protocol field");
+        for(int flags:new int[]{8,10,11,12,13,14,15,16,-1}) {
+            var invalid=new CartMotionSync.Pose(123,1,flags,0,0,0,0,0,0,0,0,0);
+            check(!invalid.valid() && CartMotionSync.parse(invalid.encode())==null,"accepted invalid effort flag combination "+flags);
+        }
+        for(int flags=0;flags<=7;flags++)
+            check(CartMotionSync.parse(new CartMotionSync.Pose(123,1,flags,0,0,0,0,0,0,0,0,0).encode())!=null,
+                "existing v1 flag combination changed");
+        var remote=new CartMotionSync.Remote();remote.receive(effort.encode(),0);remote.owned=true;
+        CartMotionSync.applyLocomotion(player,remote,0);
+        check(Boolean.TRUE.equals(player.booleans.get("ToolkitCartBrace")),"remote wood did not retain explicit owner effort");
+        var stopped=new CartMotionSync.Pose(123,2,1,0,0,0,0,0,0,0,0,0);
+        remote.receive(stopped.encode(),1);CartMotionSync.applyLocomotion(player,remote,1);
+        check(Boolean.FALSE.equals(player.booleans.get("ToolkitCartBrace")),"ordinary idle inferred effort or retained release");
+        remote.receive(effort.encode(),2);cart.setType("WheelbarrowMetal");CartMotionSync.applyLocomotion(player,remote,2);
+        check(Boolean.FALSE.equals(player.booleans.get("ToolkitCartBrace")),"wood effort escaped its exact held cart type");
+        cart.setType("WheelbarrowWood");player.network=(zombie.characters.NetworkPlayerAI)unsafe.allocateInstance(zombie.characters.NetworkPlayerAI.class);
+        player.x=10;player.y=20;player.moving=true;player.network.targetX=11;player.network.targetY=20;
+        CartMotionSync.applyLocomotion(player,remote,2);
+        check(Boolean.FALSE.equals(player.booleans.get("ToolkitCartBrace")),"effort starved required native remote catch-up");
+        player.moving=false;CartMotionSync.applyLocomotion(player,remote,3);
+        check(Boolean.TRUE.equals(player.booleans.get("ToolkitCartBrace")),"arrived observer failed to resume owner effort");
+        var remotes=CartMotionSync.class.getDeclaredField("remotes");remotes.setAccessible(true);
+        ((java.util.Map<Player,CartMotionSync.Remote>)remotes.get(null)).put(player,remote);
+        CartMotionSync.reset(player);
+        check(Boolean.FALSE.equals(player.booleans.get("ToolkitCartBrace")),"reset retained remote effort");
+        var sender=new CartMotionSync.Sender();var identity=new Object();sender.next(stopped,identity,0);
+        check(!sender.due(effort,identity,CartMotionSync.CHANGE_NANOS-1)
+            && sender.due(effort,identity,CartMotionSync.CHANGE_NANOS),"effort bypassed existing snapshot rate");
+    }
+
     public static void main(String[] args) throws Exception {
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         var pose=new CartMotionSync.Pose(123,1,7,.25f,-.8f,1.25f,.7f,.85f,-.12f,.14f,-.085f,1);
@@ -231,6 +272,7 @@ public final class CartMotionSyncTest {
         var restarted=new CartMotionSync.Sender();
         remote.receive(restarted.next(pose,item,1),CartMotionSync.STALE_NANOS+5);
         check(remote.matches(123,CartMotionSync.STALE_NANOS+5),"sender reset serial failed after ordered release");
+        effortReplication();
         lifecycle();
         connection();
         nativeCatchup();

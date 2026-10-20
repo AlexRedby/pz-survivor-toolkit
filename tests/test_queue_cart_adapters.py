@@ -456,7 +456,7 @@ class CartAdapterTests(unittest.TestCase):
         self.options.update(cart_wall_exit='left', mp_host=True)
         with self.assertRaisesRegex(ValueError, 'native MP Host'): carts.validate(self.selection)
         self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
-        for side in ('left', 'right'):
+        for side in ('left', 'right', 'front'):
             self.options['cart_wall_exit']=side
             carts.validate(self.selection)
         for value in ('LEFT', None, True, [], {}):

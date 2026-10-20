@@ -36,6 +36,16 @@ for _,name in ipairs({'Base.Tshirt_DefaultTEXTURE_TINT','Base.Trousers_JeanBaggy
 end
 p:resetModel()
 
+-- Change this disposable process only; never persist the user's mod settings.
+if PZAPI and PZAPI.ModOptions then
+ local options=PZAPI.ModOptions:getOptions('MiniHealthPlus')
+ local option=options and options:getOption('DisableMod')
+ if option and option:getValue()~=true then
+  option:setValue(true)
+  if TwisTonFire_MHP_RefreshModOptions then TwisTonFire_MHP_RefreshModOptions() end
+ end
+end
+
 CartTestArea.check(p)
 local climate=getClimateManager()
 for _,index in ipairs({ClimateManager.FLOAT_FOG_INTENSITY,ClimateManager.FLOAT_PRECIPITATION_INTENSITY,ClimateManager.FLOAT_CLOUD_INTENSITY}) do
@@ -122,8 +132,8 @@ if brace then
  for _,female in ipairs({false,true}) do for _,full in ipairs({false,true}) do
   for _,spec in ipairs({'wall-release','wall-restart'}) do
    cases[#cases+1]={female=female,full=full,spec=spec,startYaw=math.pi/4,
-    steps=spec=='wall-release' and {{1000,0,5},{14000,0,0}}
-     or {{1000,0,5},{6500,0,0},{7500,0,7},{10000,0,0},{10800,0,5},{15500,0,0}},
+    steps=spec=='wall-release' and {{1000,0,1},{14000,0,0}}
+     or {{1000,0,1},{6500,0,0},{7500,0,4},{10000,0,0},{10800,0,1},{15500,0,0}},
     name=(female and 'female-' or 'male-')..(full and 'full-' or 'empty-')..spec}
   end
  end end
@@ -394,12 +404,12 @@ local function tick()
  end
  if brace and c.spec=='wall-release' and elapsed>=8000 then
   if not taken.remove then
-   assert(stage==1 and c.steps[stage][3]==5,'Wall removal must retain forward input')
+   assert(stage==1 and c.steps[stage][3]==1,'Wall removal must retain forward input')
    local count=0;for _ in pairs(CartTestArea.obstacles) do count=count+1 end
    assert(count==3,'Unexpected owned wall count before removal')
    local state=cartLabBrace(wallX,CartTestArea.y)
    assert(state:match('nativeBlocked=true'),'Native wall missing before guarded removal')
-   print('[CART_BRACE_REMOVE] case='..c.name..' phase=before wall='..now..' elapsed='..elapsed..' owned='..count..' drive=5 '..state)
+   print('[CART_BRACE_REMOVE] case='..c.name..' phase=before wall='..now..' elapsed='..elapsed..' owned='..count..' drive=1 '..state)
    CartTestArea.clearObstacles(p)
    for _ in pairs(CartTestArea.obstacles) do error('Owned wall survived removal') end
    taken.remove=now
@@ -408,7 +418,7 @@ local function tick()
    local state=cartLabBrace(wallX,CartTestArea.y)
    if state:match('nativeBlocked=false') then
     local observed=getTimestampMs()
-    print('[CART_BRACE_REMOVE] case='..c.name..' phase=after wall='..observed..' elapsed='..(observed-since)..' owned=0 drive=5 '..state)
+    print('[CART_BRACE_REMOVE] case='..c.name..' phase=after wall='..observed..' elapsed='..(observed-since)..' owned=0 drive=1 '..state)
     taken.clear=true
    else assert(now-taken.remove<=1000,'Native wall removal did not become query-clear') end
   end
@@ -425,7 +435,7 @@ local function tick()
  end
  while stage<#c.steps and elapsed>=c.steps[stage+1][1] do
   stage=stage+1;local step=c.steps[stage]
-  if footprint and not wallExit and (not brace and stage==#c.steps-1 or brace and c.spec=='wall-restart' and stage==3) then step[3]=reverseDrive() end
+  if footprint and not wallExit and not brace and stage==#c.steps-1 then step[3]=reverseDrive() end
   if step[2]~=nil then cartLabGait(step[2]) end
   if relativeManual then c.drive=nil;relativeDrive(c) else cartLabDrive(step[3]) end
   print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait='..tostring(step[2])..' drive='..step[3])

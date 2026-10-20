@@ -166,8 +166,8 @@ def validate(selection):
             raise ValueError(flag + ' requires an MP boolean selection')
     options = selection.get('options', {})
     if 'cart_wall_exit' in options:
-        if suite != MP or options.get('mp_host') is not True or options['cart_wall_exit'] not in ('left', 'right'):
-            raise ValueError('cart_wall_exit requires left/right in a native MP Host selection')
+        if suite != MP or options.get('mp_host') is not True or options['cart_wall_exit'] not in ('left', 'right', 'front'):
+            raise ValueError('cart_wall_exit requires left/right/front in a native MP Host selection')
         if (options.get('cart_variant', 'wooden-wheelbarrow') != 'wooden-wheelbarrow'
                 or any(options.get(flag, False) is not False for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown'))
                 or 'cart_hotkey_key' in options):

@@ -139,7 +139,7 @@ Events.OnClientCommand.Add(function(module,command,p,args)
     print('[CART_MP] START epoch='..epoch)
    end
   elseif wallSide and command=='WallDone' then
-   assert(epoch and getTimestampMs()-epoch>=29000 and armed[user] and not wallDone[user],'Unexpected wall completion')
+   assert(epoch and getTimestampMs()-epoch>=(wallSide=='front' and 18000 or 29000) and armed[user] and not wallDone[user],'Unexpected wall completion')
    wallDone[user]=true
    if wallDone.client1 and wallDone.client2 then
     assert(not wallCleaned,'Duplicate wall cleanup');local count=wallBank.cleanup();assert(count==49,'Native wall ownership cleanup mismatch')

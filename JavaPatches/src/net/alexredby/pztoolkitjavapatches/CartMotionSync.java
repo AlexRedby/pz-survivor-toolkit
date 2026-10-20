@@ -17,7 +17,7 @@ public final class CartMotionSync {
     static record Pose(int cart, long serial, int flags, float x, float y, float pace, float speed,
                        float brakeRate, float lean, float pressure, float side, float fast) {
         boolean valid() {
-            return serial>0 && flags>=0 && flags<=7 && Float.isFinite(x) && Float.isFinite(y)
+            return serial>0 && flags>=0 && flags<=15 && ((flags&8)==0 || (flags&7)==1) && Float.isFinite(x) && Float.isFinite(y)
                 && Float.isFinite(pace) && Float.isFinite(speed) && Float.isFinite(brakeRate)
                 && Float.isFinite(lean) && Float.isFinite(pressure) && Float.isFinite(side) && Float.isFinite(fast)
                 && Math.abs(x)<=1 && Math.abs(y)<=1 && pace>=0 && pace<=2.5f && (speed==-1 || speed>=0 && speed<=50)
@@ -118,7 +118,8 @@ public final class CartMotionSync {
         if(!CartSteeringHooks.enabled(player)) { reset(player);return; }
         int flags=(player.getVariableBoolean("ToolkitCartPivot")?1:0)
             |(player.getVariableBoolean("ToolkitCartWoodBrake")?2:0)
-            |(player.getVariableBoolean("ToolkitCartBrakeSprint")?4:0);
+            |(player.getVariableBoolean("ToolkitCartBrakeSprint")?4:0)
+            |(player.getVariableBoolean("ToolkitCartBrace")?8:0);
         var brake=CartLegPace.brakeTrack(player);
         var pose=new Pose(player.getPrimaryHandItem().getID(),1,flags,
             player.getVariableFloat("ToolkitCartStepX",0),player.getVariableFloat("ToolkitCartStepY",0),
@@ -196,6 +197,9 @@ public final class CartMotionSync {
         player.setVariable("ToolkitCartStepX",x);player.setVariable("ToolkitCartStepY",y);
         player.setVariable("ToolkitCartWoodBrake",(remote.pose.flags&2)!=0);
         player.setVariable("ToolkitCartBrakeSprint",(remote.pose.flags&4)!=0);
+        // A stationary effort pose must not consume the locomotion native remote catch-up still needs.
+        player.setVariable("ToolkitCartBrace",!catchup && (remote.pose.flags&8)!=0
+            && CartTransition.wooden(player.getPrimaryHandItem()));
         if(budget!=null) {
             if(CartTransition.wooden(player.getPrimaryHandItem()) && (remote.pose.flags&2)==0 && budget.speed>=0)
                 CartLegPace.applySpeed(player,speed,x,y);
@@ -207,6 +211,7 @@ public final class CartMotionSync {
 
     private static void clear(IsoPlayer player,Remote remote) {
         remote.locomotion=null;
+        player.setVariable("ToolkitCartBrace",false);
         if(!remote.owned) return;
         remote.owned=false;remote.facing=false;remote.item=null;
         player.setVariable("ToolkitCartPivot",false);

@@ -107,6 +107,33 @@ public final class CartFootprintTest {
             "an overlapped cart retains its existing backward escape");
     }
 
+    private static void effortContactChecks(double axle) {
+        for(float origin:new float[]{8192f,10825.5f}) {
+            float x=origin,y=10142.5f;double front=CartFootprint.WALK_FRONT,nose=x+front-.28;
+            boolean[] closed={true};
+            CartFootprint.Query wall=(x1,y1,x2,y2)->closed[0] && Math.max(x1,x2)>=nose+.0003;
+            for(int frame=0;frame<240;frame++) {
+                double accepted=frame%2==0?0:Math.ulp(x);
+                check(CartSteeringHooks.braceContact(wall,x,y,0,.03,0,axle,front,accepted,true),
+                    "continuous forward contact must keep effort through zero/one-ULP accepted jitter");
+            }
+            closed[0]=false;
+            check(!CartSteeringHooks.braceContact(wall,x,y,0,.03,0,axle,front,0,true),
+                "opening the obstacle releases effort even with a static zero-root stance");
+            closed[0]=true;
+            check(!CartSteeringHooks.braceContact(wall,x,y,0,.03,0,axle,front,.012,true),
+                "real accepted tangent/partial travel must not enter a stationary effort pose");
+            check(!CartSteeringHooks.braceContact(wall,x,y,0,-.03,0,axle,front,0,false)
+                && !CartSteeringHooks.braceContact(wall,x,y,0,.03,0,axle,front,0,false),
+                "reverse, released input, braking and stationary-turn gates release forward effort");
+            check(!CartSteeringHooks.braceContact(wall,x,y,0,.03,0,axle,front,Double.NaN,true),
+                "invalid accepted distance cannot invent contact effort");
+            var tiny=CartSteeringMath.step(0,0,Math.ulp(x),1./60,0);
+            check(!CartSteeringHooks.blockedStep(tiny,x,y,0),
+                "cosmetic contact tolerance must not redefine an accepted one-ULP physical step as blocked");
+        }
+    }
+
     private static void relativeReverseContactChecks(double axle) {
         double dt=1.0/60,front=CartFootprint.WALK_FRONT;
         for(double origin:new double[]{0,8192,10825.5,16384}) for(int normal:new int[]{-1,1})
@@ -350,6 +377,7 @@ public final class CartFootprintTest {
         CartFootprint.Query empty=(x1,y1,x2,y2)->false;
         double axle=CartSteeringMath.woodenAxle(0,0);
         blockedProbeChecks(axle);
+        effortContactChecks(axle);
         relativeReverseContactChecks(axle);
         relativeBlockedTurnContactChecks(axle);
         relativeWallGuideChecks();

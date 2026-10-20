@@ -17,7 +17,7 @@ FEET=tuple(f'Bip01_{side}_{part}' for side in ('L','R') for part in ('Foot','Toe
 
 
 def steps(name):
-    return [(1000,0,5),(14000,0,0)] if name.endswith('wall-release') else [(1000,0,5),(6500,0,0),(7500,0,7),(10000,0,0),(10800,0,5),(15500,0,0)]
+    return [(1000,0,1),(14000,0,0)] if name.endswith('wall-release') else [(1000,0,1),(6500,0,0),(7500,0,4),(10000,0,0),(10800,0,1),(15500,0,0)]
 
 
 def finite(raw,keys):
@@ -155,7 +155,7 @@ def analyze(text,profile,selected=None):
         if name.endswith('wall-release'):
             assert len(removals)==2 and [r['phase'] for r in removals]==['before','after'],'Missing guarded brace removal receipts'
             before,after=removals;assert 8000<=before['elapsed']<=8500 and 0<=after['wall']-before['wall']<=1000,'Invalid native wall removal timing'
-            assert all(abs(r['wall']-start-r['elapsed'])<=5 and r['drive']==5 and r['wantsMove'] for r in removals),'Removal changed held forward input'
+            assert all(abs(r['wall']-start-r['elapsed'])<=5 and r['drive']==1 and r['wantsMove'] for r in removals),'Removal changed held forward input'
             assert before['owned']==layout['ownedWalls'] and after['owned']==0 and before['nativeBlocked'] and not after['nativeBlocked'],'Removal lacks actual owned native wall transition'
             removal=before['wall']
         else:assert not removals,'Restart must retain standing wall'

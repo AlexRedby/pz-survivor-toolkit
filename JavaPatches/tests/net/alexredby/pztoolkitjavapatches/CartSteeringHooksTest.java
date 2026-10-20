@@ -48,7 +48,7 @@ public final class CartSteeringHooksTest {
     // Skip world/renderer constructors, as the existing NativeChecks fixture does.
     private static final class Player extends IsoPlayer {
         int blocked;
-        boolean pivot, woodBrake, brakeSprint, moving, run, sprint, pathActive, npc;
+        boolean pivot, brace, woodBrake, brakeSprint, moving, run, sprint, pathActive, npc;
         boolean keyboard,aim,autoWalk;
         Keys keys;
         // The existing world-direction cases describe the preserved absolute analog-input contract.
@@ -112,7 +112,7 @@ public final class CartSteeringHooksTest {
         @Override public zombie.ai.astar.AStarPathFinderResult getFinder() { return finder; }
         @Override public boolean getVariableBoolean(String name) {
             return switch(name) {case "ToolkitCartMotion"->blocked!=10;case "ToolkitCartPivot"->pivot;
-                case "ToolkitCartWoodBrake"->woodBrake;case "ToolkitCartBrakeSprint"->brakeSprint;default->false;};
+                case "ToolkitCartBrace"->brace;case "ToolkitCartWoodBrake"->woodBrake;case "ToolkitCartBrakeSprint"->brakeSprint;default->false;};
         }
         @Override public InventoryItem getPrimaryHandItem() { return primary; }
         @Override public InventoryItem getSecondaryHandItem() { return secondary; }
@@ -127,6 +127,7 @@ public final class CartSteeringHooksTest {
         @Override public void setTargetAndCurrentDirection(float x, float y) {}
         @Override public IAnimationVariableSlot setVariable(String name, boolean value) {
             if (name.equals("ToolkitCartPivot")) pivot = value;
+            if (name.equals("ToolkitCartBrace")) brace = value;
             if (name.equals("ToolkitCartWoodBrake")) woodBrake = value;
             if (name.equals("ToolkitCartBrakeSprint")) brakeSprint = value;
             return null;
@@ -581,6 +582,7 @@ public final class CartSteeringHooksTest {
             "missing native clips must leave cadence without a root override");
         field(manual,"braking").setBoolean(manual,true);
         field(manual,"stationaryRoot").setBoolean(manual,true);
+        player.brace=true;
         var reversal=(CartSteeringMath.Reversal)field(manual,"reversal").get(manual);
         reversal.request(-1,false);
         player.pathActive=true;player.inputX=-.5f;player.inputY=.5f;
@@ -590,6 +592,7 @@ public final class CartSteeringHooksTest {
         check(path!=manual && field(path,"path").getBoolean(path)
             && !field(path,"braking").getBoolean(path) && !field(path,"stationaryRoot").getBoolean(path),
             "native path must discard manual brake, stationary turn and reversal state");
+        check(!player.brace,"native path handoff retained a manual effort stance");
         check(input.isRunning() && input.sprinting && !field(path,"hasInput").getBoolean(path),
             "path mode must leave native gait untouched and ignore keyboard steering");
         player.moving=true;
@@ -1187,8 +1190,9 @@ public final class CartSteeringHooksTest {
             "heading must consume intent without replacing the newly acquired state");
         nativeInput.sprinting=false;CartSteeringHooks.input(player,nativeInput);
         check(!intent.getBoolean(captured),"native eligibility denial must clear Sprint intent");
-        player.blocked=1;nativeInput.sprinting=true;CartSteeringHooks.input(player,nativeInput);
+        player.brace=true;player.blocked=1;nativeInput.sprinting=true;CartSteeringHooks.input(player,nativeInput);
         check(!states.containsKey(player),"ineligible input must release state rather than retain Sprint intent");
+        check(!player.brace,"death/protected reset retained the effort animation gate");
         player.blocked=0;
         for(String kind:new String[]{"SaucedWheelbarrow.WheelbarrowWood","SaucedWheelbarrow.WheelbarrowMetal","SaucedCarts.ShoppingCart"}) {
             type(cart,kind);

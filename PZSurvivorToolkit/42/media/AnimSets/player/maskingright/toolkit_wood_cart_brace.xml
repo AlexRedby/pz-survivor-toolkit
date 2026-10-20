@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='utf-8'?>
+<animNode>
+	<m_Name>ToolkitWoodCartBraceRight</m_Name>
+	<m_AnimName>Toolkit_WoodCartBrace</m_AnimName>
+	<m_Priority>12</m_Priority>
+	<m_ConditionPriority>301</m_ConditionPriority>
+	<m_BlendTime>0.18</m_BlendTime>
+	<m_SpeedScale>1</m_SpeedScale>
+	<m_Looped>true</m_Looped>
+	<m_SyncTrackingEnabled>false</m_SyncTrackingEnabled>
+	<m_useDeferredMovement>false</m_useDeferredMovement>
+	<m_useDeferedRotation>false</m_useDeferedRotation>
+	<m_maxTorsoTwist>0</m_maxTorsoTwist>
+	<m_Conditions><m_Name>ToolkitCartMotion</m_Name><m_Type>BOOL</m_Type><m_Value>true</m_Value></m_Conditions>
+	<m_Conditions><m_Name>ToolkitCartBrace</m_Name><m_Type>BOOL</m_Type><m_Value>true</m_Value></m_Conditions>
+	<m_Conditions><m_Name>RightHandMask</m_Name><m_Type>STRING</m_Type><m_Value>holdingcartright</m_Value></m_Conditions>
+	<m_SubStateBoneWeights><boneName>Bip01_Spine</boneName><weight>1</weight><includeDescendants>false</includeDescendants></m_SubStateBoneWeights>
+	<m_SubStateBoneWeights><boneName>Bip01_Spine1</boneName><weight>1</weight><includeDescendants>false</includeDescendants></m_SubStateBoneWeights>
+	<m_SubStateBoneWeights><boneName>Bip01_R_Clavicle</boneName><weight>1</weight><includeDescendants>true</includeDescendants></m_SubStateBoneWeights>
+	<m_SubStateBoneWeights><boneName>Bip01_Prop1</boneName><weight>1</weight><includeDescendants>true</includeDescendants></m_SubStateBoneWeights>
+</animNode>

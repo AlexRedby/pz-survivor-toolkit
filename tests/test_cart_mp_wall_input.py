@@ -32,6 +32,13 @@ class WallInput(unittest.TestCase):
           end
           assert(steps[2][2]==1 and steps[3][2]==4 and steps[5][2]==0 and steps[8][2]==0)
         end
+        local front=M.steps('front')
+        local expected={{0,0},{1000,1},{6500,0},{7500,4},{10000,0},{10800,1},{15500,0}}
+        assert(#front==#expected)
+        for i,step in ipairs(front) do
+          assert(step[1]==expected[i][1] and step[2]==expected[i][2] and step[3]==0)
+          for _,heading in ipairs({0,math.pi/2,math.pi}) do assert(M.drive('front',step,{},heading)==step[2]) end
+        end
         assert(not pcall(M.steps,'invalid'))
         """
         subprocess.run([LUA,'-e',code],check=True,capture_output=True,text=True)

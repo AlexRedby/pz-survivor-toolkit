@@ -144,14 +144,14 @@ assert(floorCount==3969 and wallAdds==49 and wall.receipt(area).ready and next==
 ''')
 
     def test_both_sides_native_receipts_and_owned_only_cleanup(self):
-        for side in ('left', 'right'):
+        for side in ('left', 'right', 'front'):
             with self.subTest(side=side):
                 self.run_lua("config.options.cart_wall_exit=" + json.dumps(side) + r'''
 local area=place(player)
 assert(area.bankVersion==4 and area.size==63 and area.minX==-31 and area.minY==-31 and area.z==7)
 assert(area.wallX==-3 and area.wallMinY==-24 and area.wallMaxY==24 and area.ownedWalls==49 and area.wallSprite==wallSprite)
-assert(area.x==area.wallX+2.8 and area.y==.5 and area.wallSide==config.options.cart_wall_exit)
-assert(area.initialHeading==(area.wallSide=='left' and .75 or -.75)*math.pi)
+assert(area.x==area.wallX+(area.wallSide=='front' and 1.8 or 2.8) and area.y==.5 and area.wallSide==config.options.cart_wall_exit)
+assert(area.initialHeading==(area.wallSide=='front' and 1 or area.wallSide=='left' and .75 or -.75)*math.pi)
 assert(floorCount==3969 and wallAdds==49 and next==nil)
 local before=writes
 assert(not pcall(wall.preflight,area) and writes==before,'Owned guard failed without next')

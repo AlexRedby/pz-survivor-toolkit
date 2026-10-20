@@ -5,17 +5,17 @@ local owned={}
 local spriteName='walls_exterior_wooden_01_0'
 local function guard()
  assert(config.kind=='mp' and config.options and config.options.mp_host==true
-  and (config.options.cart_wall_exit=='left' or config.options.cart_wall_exit=='right')
+  and (config.options.cart_wall_exit=='left' or config.options.cart_wall_exit=='right' or config.options.cart_wall_exit=='front')
   and isServer() and not isClient() and cartMPPadHost(),
   'Cart MP wall requires fresh disposable queue-smoke Host')
 end
 local function descriptor(area)
  assert(type(area)=='table' and area.bankVersion==4 and area.size==63 and area.z==7 and area.margin==2
   and area.elevated==true and area.floorSprite=='carpentry_02_57' and area.ownedWalls==49 and area.wallSprite==spriteName
-  and (area.wallSide=='left' or area.wallSide=='right'),'Invalid cart MP wall descriptor')
+  and (area.wallSide=='left' or area.wallSide=='right' or area.wallSide=='front'),'Invalid cart MP wall descriptor')
  local cx,cy=area.minX+31,area.minY+31
  assert(cx%1==0 and cy%1==0 and area.wallX==cx-3 and area.wallMinY==cy-24 and area.wallMaxY==cy+24
-  and area.initialHeading==(area.wallSide=='left' and .75 or -.75)*math.pi,'Invalid cart MP wall geometry')
+  and area.initialHeading==(area.wallSide=='front' and 1 or area.wallSide=='left' and .75 or -.75)*math.pi,'Invalid cart MP wall geometry')
 end
 local function flags(sprite)
  local properties=sprite and sprite:getProperties()
@@ -33,7 +33,7 @@ end
 -- Placement calls this before creating even the first floor.
 function M.preflight(area)
  guard();descriptor(area)
- assert(area.x==area.wallX+2.8 and area.y==area.minY+31.5,'Invalid cart MP wall owner origin')
+ assert(area.x==area.wallX+(area.wallSide=='front' and 1.8 or 2.8) and area.y==area.minY+31.5,'Invalid cart MP wall owner origin')
  assert(area.wallSide==config.options.cart_wall_exit,'Cart MP wall side disagrees with selection')
  for _ in pairs(owned) do error('Cart MP wall fixtures already owned',0) end
  assert(flags(getSprite(spriteName)),'Cart MP native wooden wall sprite collision flags disagree')

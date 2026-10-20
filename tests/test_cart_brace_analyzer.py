@@ -44,16 +44,16 @@ def fixture(profile):
             commands=[e for e in events if e[0]<=t];drive=commands[-1][2] if commands else 0
             knots=[(0,1.8),(1000,1.8),(3000,1.13),(8000,1.13),(14000,-.9),(18000,-.9)] if release else [(0,1.8),(1000,1.8),(3000,1.13),(7500,1.13),(10000,2),(10800,2),(13500,1.13),(18000,1.13)]
             x=lerp(t,knots);distance=abs(x-last);wheel+=(x-last)/a.collision.WHEEL_RADIUS;last=x
-            reverse=drive==7;direction=-1 if reverse else 1;moving=distance>0
+            reverse=drive==4;direction=-1 if reverse else 1;moving=distance>0
             clip='Bob_WalkBwdNoAim1Hand' if reverse else 'Bob_Walk' if moving else 'Bob_Idle'
             cadence=(lerp(t,[(8000,0),(8100,.15),(8200,.3),(8300,.43),(8400,.49),(8500,.5)]) if release and 8000<=t<14000 else .5 if moving else 0)
             state=f'heading:{math.pi},target:{math.pi},stationary:false,stationaryRoot:false,actualDistance:{distance},axle:1,rootTracks:{clip}@1/{t/1000}/1;'
             lines.append(f'[WOOD_BANK_SAMPLE] case={name} wall={start+t} elapsed={t} x={x} y=10.5 run=false sprint=false skill=10 speed=.5 drive={drive} requestedGait=0 stepX=0 stepY={int(moving)} pace={cadence/.5} wheelPhase={wheel} bank=0 reversal=direction:{direction},requested:{direction if drive else 0},active:false,braking:false,neutral:0,actualDistance:{distance},brakeTarget:0 ramp=speed:{cadence},heading:{math.pi} stationary={state} tracks={clip}=1@1;')
-            blocked=drive==5 and not moving and (not release or t<8000);blend=1 if blocked else 0;nativeBlocked=not release or t<8000
+            blocked=drive==1 and not moving and (not release or t<8000);blend=1 if blocked else 0;nativeBlocked=not release or t<8000
             lines.append(f'[CART_FOOTPRINT_STATE] case={name} wall={start+t} elapsed={t} front=1.26 blocked={str(blocked).lower()} clear=true recovering=false')
             lines.append(f'[CART_BRACE_SAMPLE] case={name} wall={start+t} elapsed={t} brace={blend} nativeBlocked={str(nativeBlocked).lower()} wantsMove={str(drive!=0).lower()}')
             if release and t==8000:
-                for phase,owned,native in [('before',3,'true'),('after',0,'false')]:lines.append(f'[CART_BRACE_REMOVE] case={name} phase={phase} wall={start+t} elapsed={t} owned={owned} drive=5 brace=1 nativeBlocked={native} wantsMove=true')
+                for phase,owned,native in [('before',3,'true'),('after',0,'false')]:lines.append(f'[CART_BRACE_REMOVE] case={name} phase={phase} wall={start+t} elapsed={t} owned={owned} drive=1 brace=1 nativeBlocked={native} wantsMove=true')
             for at,gait,key in events:
                 if t==at:lines.append(f'[WOOD_RAMP_EVENT] case={name} elapsed={at} gait={gait} drive={key}')
             bones={}
@@ -102,7 +102,7 @@ class BraceAnalyzerTests(unittest.TestCase):
         for marker in ('[CART_COLLISION_CONTROL]','[CART_BRACE_SAMPLE]','[CART_FOOTPRINT_STATE]','[CART_BRACE_REMOVE]','[WOOD_BANK] ALL_COMPLETE'):
             with self.subTest(marker=marker),self.assertRaises(AssertionError):self.report('\n'.join(l for l in self.log.splitlines() if marker not in l))
     def test_fake_removal_wrong_owned_object_and_changed_input_fail(self):
-        for old,new in [('phase=after wall=','phase=before wall='),('owned=0 drive=5','owned=1 drive=5'),('owned=0 drive=5','owned=0 drive=0'),('owned=3 drive=5 brace=1 nativeBlocked=true','owned=3 drive=5 brace=1 nativeBlocked=false')]:
+        for old,new in [('phase=after wall=','phase=before wall='),('owned=0 drive=1','owned=1 drive=1'),('owned=0 drive=1','owned=0 drive=0'),('owned=3 drive=1 brace=1 nativeBlocked=true','owned=3 drive=1 brace=1 nativeBlocked=false')]:
             with self.subTest(new=new),self.assertRaises(AssertionError):self.report(self.log.replace(old,new))
     def test_brace_scalar_cannot_hide_a_raised_or_moving_foot(self):
         name='female-full-wall-release'

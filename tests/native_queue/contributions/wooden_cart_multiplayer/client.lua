@@ -46,7 +46,7 @@ local function position(p,x,y,z)
 end
 local prepared,armed,stopped,finishedAt,actionsFinished,padSince,padReady=false,false,false,nil,false,nil,false
 local extended=wallSide or config.options and config.options.cart_fast_motion
-local duration=wallSide and 29000 or extended and 26000 or 15000
+local duration=wallSide=='front' and 18000 or wallSide and 29000 or extended and 26000 or 15000
 local steps={{0,0,0,'idle'},{2000,1,0,'walk'},{5000,8,0,'turn'},{8000,0,0,'stop'},{10000,4,2,'reverse'},{12000,0,0,'stop-back'}}
 if extended and not wallSide then
  steps[#steps+1]={15000,1,1,'run'};steps[#steps+1]={16500,5,2,'sprint-turn'}
@@ -66,6 +66,13 @@ local function wallSample(p,now,elapsed)
   actions=p:getCharacterActions():size(),path=p:hasPath(),front=tonumber(fields.front)}
  for _,key in ipairs({'blocked','recovering','clear'}) do
   assert(fields[key]=='true' or fields[key]=='false','Invalid native footprint '..key);row[key]=fields[key]=='true'
+ end
+ if wallSide=='front' then
+  local brace=cartMPBrace(setup.wallX,setup.y)
+  for key,value in brace:gmatch('(%w+)=([^ ]+)') do
+   if key=='brace' then row.brace=tonumber(value)
+   else assert(value=='true' or value=='false','Invalid native brace '..key);row[key]=value=='true' end
+  end
  end
  assert(item:getContainer()==p:getInventory() and count==1 and row.secondary==row.id and row.worldID==-1,'Wall cart ownership changed')
  assert(row.queue==0 and row.actions==0 and not row.path,'Wall route enqueued an action/path')

@@ -1,7 +1,11 @@
 -- Physical relative-key inputs; a released steering key stays released for its stage.
 local M={}
 function M.steps(side)
- assert(side=='left' or side=='right','Unknown wall side')
+ assert(side=='left' or side=='right' or side=='front','Unknown wall side')
+ if side=='front' then
+  return {{0,0,0,'idle'},{1000,1,0,'walk'},{6500,0,0,'release'},{7500,4,0,'reverse'},
+   {10000,0,0,'reverse-stop'},{10800,1,0,'restart'},{15500,0,0,'settled'}}
+ end
  local left=side=='left'
  return {{0,0,0,'idle'},{1000,1,0,'walk'},{9500,4,0,'reverse'},
   {12000,left and 6 or 7,0,'reverse-turn'},{15500,0,0,'reverse-stop'},

@@ -10,6 +10,8 @@ The scenario lasts 15 seconds: idle 0–2, walk 2–5, turn 5–8, stop 8–10, 
 
 `cart_variant` selects `wooden-wheelbarrow` (default), `shopping-cart` or `metal-wheelbarrow`, with authoritative exact cart/cargo IDs and actual held/rendered model checks. `cart_fast_motion=true` extends motion to26 seconds, adding native Run, Sprint-turn and stop gates inside the checked pad bounds. It seeds the fixture owner's Sprinting XP on the server and waits for the native client snapshot; it does not force Sprint animation flags. `cart_actions=true` appends six wooden pickup/setdown completion, cancellation and repeat phases through native menu callbacks. These options are frozen selection inputs.
 
+`cart_wall_exit="front"` selects an 18-second full-load frontal brace bank on the same disposable native Host wall/pad: forward at 1s, release at 6.5s, manual reverse at 7.5s, stop at 10s, restart at 10.8s, final release at 15.5s. It requires version 1, 13-field pose payloads with flag bit 8 and actual `ToolkitCartBrace`/`Toolkit_WoodCartBrace` on owner and observer, planted rendered feet/toes at both contacts, and removal of brace after release/reverse. The existing left/right sliding-wall gates remain unchanged. Observer approach penetration stays visible in the separate footprint diagnostics; a brace result does not close that defect.
+
 ## Adapter contract
 
 Use the existing common `queue_checks.native.prepare` and `queue_checks.runner.run` unchanged, under their exclusive native lock and existing-process checks. The registered common adapter owns inputs, dependencies, fresh disposable profiles, mod approvals, preparation/fingerprints, process lifecycle, attaching probes before the epoch, artifact capture and cleanup.

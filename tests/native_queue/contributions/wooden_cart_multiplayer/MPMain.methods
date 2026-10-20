@@ -1,3 +1,30 @@
+    @LuaMethod(name="cartMPBrace", global=true)
+    public static String mpBrace(double wallX,double y) throws Exception {
+        var player=IsoPlayer.getInstance();
+        if(!zombie.network.GameClient.client || zombie.network.GameServer.server || player==null
+            || !player.isLocalPlayer() || !"client1".equals(player.getUsername())
+            || zombie.network.GameClient.connection==null || !zombie.network.GameClient.connection.isFullyConnected())
+            throw new IllegalStateException("Connected native MP fixture owner required");
+        int z=(int)Math.floor(player.getZ());
+        float x=(float)wallX,fy=(float)y;
+        if(!Float.isFinite(x+fy) || z<=0 || Math.abs(x-player.getX())>16 || Math.abs(fy-player.getY())>16)
+            throw new IllegalArgumentException("Loaded local upper-pad wall query required");
+        var cell=player.getCell();
+        if(cell.getGridSquare((int)Math.floor(x-.5),(int)Math.floor(fy),z)==null
+            || cell.getGridSquare((int)Math.floor(x+.5),(int)Math.floor(fy),z)==null)
+            throw new IllegalStateException("Wall query squares must remain loaded");
+        var hooks=Class.forName("net.alexredby.pztoolkitjavapatches.CartSteeringHooks");
+        var states=hooks.getDeclaredField("states");states.setAccessible(true);
+        Object state=((java.util.Map<?,?>)states.get(null)).get(player);
+        if(state==null) throw new IllegalStateException("Cart state required");
+        var amount=state.getClass().getDeclaredField("brace");amount.setAccessible(true);
+        var intent=state.getClass().getDeclaredField("wantsMove");intent.setAccessible(true);
+        double value=amount.getDouble(state);
+        if(!Double.isFinite(value) || value<0 || value>1) throw new IllegalStateException("Invalid brace amount");
+        boolean blocked=zombie.pathfind.PolygonalMap2.instance.lineClearCollide(x+.5f,fy,x-.5f,fy,z,null,zombie.pathfind.PolygonalMap2.LCC_ZERO);
+        return "brace="+value+" nativeBlocked="+blocked+" wantsMove="+intent.getBoolean(state);
+    }
+
     private static String mpJsonString(String value) {
         if(value==null)return "null";
         var out=new StringBuilder("\"");
@@ -84,6 +111,7 @@
             .append(",\"cargoCount\":").append(cargoCount)
             .append(",\"cargoID\":").append(cargoCount==1?cargo.getItems().get(0).getID():-1)
             .append(",\"cargoWeight\":").append(cargo==null?0:cargo.getCapacityWeight())
+            .append(",\"brace\":").append(p.getVariableBoolean("ToolkitCartBrace"))
             .append(",\"motion\":").append(p.getVariableBoolean("ToolkitCartMotion"))
             .append(",\"visualEnabled\":").append(net.alexredby.pztoolkitjavapatches.CartMotionSync.visualEnabled(p))
             .append(",\"poseRegistered\":").append(zombie.network.packets.VariableSyncPacket.syncedVariables.contains("ToolkitCartPose"))
