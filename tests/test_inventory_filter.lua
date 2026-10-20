@@ -325,7 +325,7 @@ ScriptManager={instance={getCraftRecipe=function()
         getOutputs=function() return javaList({{getPossibleResultItems=function() return javaList({emptyPacket:getScriptItem()}) end}}) end}
 end}}
 -- Optional source-backed integration: real native/CleanUI refresh plus our real
--- Item Details wrapper, which performs the second restoreSelection call.
+-- owned presentation/sort boundary, which performs the second restoreSelection call.
 for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventoryPaneSource or false}) do
     if sourceCode then
         sourceCode=sourceCode:gsub('\r','')
@@ -337,8 +337,9 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
             ISInventoryCommonHandler_SortMenu=false,ISMouseDrag={},
             getSpecificPlayer=function() return {} end,getPlayerHotbar=function() return {} end,
             instanceof=function(value) return value and value.testItem end,
-            getActivatedMods=function() return {contains=function(_,id) return id=='BravoItemDetails' end} end,
-            PZAPI={ModOptions={getOptions=function() end}}}, {__index=_G})
+            getActivatedMods=function() return {contains=function() return false end} end,
+            ISInventoryItem={renderItemIcon=function() end},ISInventoryPage=false,
+            CleanUI_Clean_ISInventoryPage=false,CleanUI_Vanilla_ISInventoryPage=false}, {__index=_G})
         env._G=env
         env.CleanUI_isValidInventoryContainerReference=function(inv) return inv~=nil end
         env.CleanUI_captureSelectionAnchor=function() end
@@ -351,16 +352,15 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
         local starts={}
         env.Events={OnGameStart={Add=function(fn) starts[#starts+1]=fn end}}
         env.require=function(name)
-            if name=='PZSurvivorToolkit/InventoryClasses' or name=='PZSurvivorToolkit/InventoryRows' then
+            if name=='PZSurvivorToolkit/InventoryClasses' or name=='PZSurvivorToolkit/InventoryRows'
+                or name=='PZSurvivorToolkit/InventoryDetailSort' then
                 local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))
                 setfenv(chunk,env);return chunk()
             end
-            if name=='BravoItemDetailsConfig' then
-                env.PZAPI.ModOptions.getOptions=function() return {dict={showNumeric={}}} end
-                return config
-            end
-            if name=='BravoItemDetailsSorter' then return {} end
-            if name=='BravoItemDetails' or name=='ISUI/ISInventoryPane' or name=='PZAPI/ModOptions' then return end
+            if name=='PZSurvivorToolkit/InventoryDetailOptions' then return {config=config} end
+            if name=='PZSurvivorToolkit/InventoryCapacity' then return {} end
+            if name=='PZSurvivorToolkit/InventoryDetails' then return {isConditionItem=function() return false end} end
+            if name=='ISUI/ISInventoryPane' or name=='ISUI/ISInventoryPage' then return end
             return require(name)
         end
         for _,name in ipairs({'saveSelection','restoreSelection','refreshContainer'}) do
@@ -375,7 +375,7 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
             local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..path))
             setfenv(chunk,env);return chunk()
         end
-        loadProduct('000ToolkitItemDetailsCompatibility.lua')
+        loadProduct('PZSurvivorToolkit/InventoryPresentation.lua')
         loadProduct('PZSurvivorToolkit/InventoryFilter.lua')
         starts[1]()
         local objects={}

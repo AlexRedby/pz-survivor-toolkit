@@ -23,7 +23,7 @@ List Lua tests with `.venv/bin/python tools/run_tests.py --list`. Select one or 
 
 Add `--game "$PZ_GAME"` (the directory containing `projectzomboid.jar`) to supply native Lua inputs from one installation. For example, `.venv/bin/python tools/run_tests.py --game "$PZ_GAME" --test test_inventory_tags --test test_vehicle_ground` reads the selected tests' native inventory and vehicle sources. This also supplies Mod Options, radio, action and Wishlist paths when their checks are selected. Individual source-path options override these defaults; locked integration checks retain their source-consistency requirements. Only selected tests read their inputs, and a missing required file fails instead of silently skipping it. Third-party source paths remain explicit or come from `--pack-lock`.
 
-The CCI regression can also run against the installed third-party source with `--cci-source /path/to/ContainerCapacityIndicator.lua`. VHS menu, sorting, drop validation and live toggle checks run by default; add `--tv-source /path/to/RWMMergedTV.lua --game "$PZ_GAME"` to also exercise the upstream window and native media actions and drag parser.
+VHS menu, sorting, drop validation and live toggle checks run by default; add `--tv-source /path/to/RWMMergedTV.lua --game "$PZ_GAME"` to also exercise the upstream window and native media actions and drag parser.
 
 The TV video source check runs the upstream catalog and original initialization without a separate video list. `python3 JavaPatches/build.py --test TVVideoPathChecks` checks the macOS path correction before native cache lookup, including failed-cache precedence and close/eviction keys; it does not decode video or prove GPU playback.
 
@@ -81,6 +81,14 @@ Run `.venv/bin/python tools/audit_action_queue.py --native-root /path/to/media/l
 For local debugging, call `PZSurvivorToolkit.ActionQueuePolicy.setDiagnostics(true)` in the Lua console, exercise a move/cancel/priority request, and inspect `getDiagnostics()` on the same object. It retains at most 64 decision records in memory, including adapter, item IDs/types, source and blocker; it sends nothing externally. `setDiagnostics(false)` clears and disables it. Pending family migrations and their completion gates are in [TODO.md](../TODO.md).
 
 Kahlua omits the standard Lua `next` global; use `pairs` and model its absence in Lua 5.1 tests. It logs failed assertions even when `pcall` catches them and does not provide reliable weak-table cleanup. Unsupported inspection paths should return unknown/protected resources without throwing. Explicitly release completed operation records, listeners and closed UI owners; include repeated queue and window lifecycle checks when changing ownership.
+
+## Inventory presentation
+
+`InventoryPresentation` is the single Toolkit installation boundary for capacity icons/buttons, expanded item details and stack ordering. It installs once on each CleanUI/native inventory class, including classes created during a mode switch. The renderer supplies actual icon coordinates and texture dimensions; capacity indicators never reconstruct rows, replace drawing methods or adjust scroll offsets. Dirty redraw captures the physical Shift anchor before native code clears its old rows.
+
+`InventoryCapacity` draws bars and magazine segments. `InventoryDetails.draw` returns whether it handled the item; the boundary retains each class's native fallback. `InventoryDetailSort.refresh` owns bounded, lossless stack sorting after native refresh. Both detail modules read `InventoryDetailOptions`; the original Bravo/CCI Mod Options namespaces are retained only for persisted preferences, not runtime dependencies. Better Containers keeps its freshness renderer and settings; the presentation boundary tracks its public installer and gives item details the exact percentage column to avoid. Keep new display behavior in these presenters instead of adding another capture adapter.
+
+Run `tools/run_tests.py --test test_inventory_presentation --test test_item_details` for focused checks. The [inventory presentation fixture](../tests/native_queue/contributions/inventory-presentation/README.md) exercises native objects and both inventory modes without the external CCI/Item Details mods and produces screenshots for inspection.
 
 ## Inventory selection
 

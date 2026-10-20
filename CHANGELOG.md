@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.136
+
+- **Changed:** Toolkit now owns Container Capacity Indicator and Item Details: capacity bars, magazine segments, expanded item values and bounded stack sorting share one presentation boundary for CleanUI and native inventories. Removed both separate Workshop mods from the selected set; existing display/sort preferences are retained.
+- **Fixed:** Capacity indicators follow actual scaled or texture-sized icons, and a dirty inventory redraw retains the physical Shift-selection anchor while reordering an expanded stack. Expanded food details no longer overlap Better Containers freshness percentages.
+
 ### 0.1.135
 
 - **Changed:** Pending clean-water drinking and single-item transfers between carried containers use the shared queue edit model. Legal return/pickup orders may change the final container; removing a pickup required by a later drink remains blocked.

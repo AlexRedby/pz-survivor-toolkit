@@ -370,8 +370,6 @@ class PrepareInstall(unittest.TestCase):
 
     def test_adapter_order_is_checked_before_build_and_preserves_previous_set(self):
         for before, after in (('CleanUI', 'PZSurvivorToolkit'),
-                              ('PZSurvivorToolkit', 'ContainerCapacityIndicator'),
-                              ('PZSurvivorToolkit', 'BravoItemDetails'),
                               ('PZSurvivorToolkit', 'EURY_CONTAINERS'),
                               ('PZSurvivorToolkit', 'MPFastForward'),
                               ('ZombieBuddy', 'PZToolkitJavaPatches'),
@@ -379,8 +377,6 @@ class PrepareInstall(unittest.TestCase):
                               ('PZSurvivorToolkit', 'organizedCategories_core')):
             with self.subTest(before=before, after=after):
                 ordered = list(dict.fromkeys([after, before, *prepare_install.MOD_IDS]))
-                if before == 'CleanUI':
-                    ordered.append('ContainerCapacityIndicator')
                 (self.root / prepare_install.INI_NAME).write_text('Mods=' + ';'.join(ordered) + '\n')
                 with self.assertRaisesRegex(ValueError, f'load order requires {before} before {after}'):
                     prepare_install.prepare(self.root)
@@ -389,7 +385,7 @@ class PrepareInstall(unittest.TestCase):
 
     def test_absent_optional_mods_and_unrelated_order_remain_allowed(self):
         for mods in (list(reversed(prepare_install.MOD_IDS)),
-                     ['PZSurvivorToolkit', 'CleanUI', 'PZToolkitJavaPatches']):
+                     ['PZSurvivorToolkit', 'MoodleFramework', 'PZToolkitJavaPatches']):
             with self.subTest(mods=mods):
                 (self.root / prepare_install.INI_NAME).write_text('Mods=' + ';'.join(mods) + '\n')
                 prepare_install.prepare(self.root)

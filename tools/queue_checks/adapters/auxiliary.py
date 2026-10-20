@@ -19,7 +19,8 @@ ANIMAL_CASES = {
     'combined-starved': ('combined', 'starved', 'held'),
 }
 ITEM_MODS = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS',
-             'BravoItemDetails', 'organizedCategories_core']
+             'organizedCategories_core']
+INVENTORY_MODS = list(ITEM_MODS)
 PNG = b'\x89PNG\r\n\x1a\n'
 
 
@@ -28,6 +29,7 @@ def definitions():
     for suite, cases, kind, languages, mods in (
         ('video-recording', ['captures'], 'sp', ['EN', 'RU'], ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit']),
         ('item-tags', ['scenes'], 'sp', ['RU'], ITEM_MODS),
+        ('inventory-presentation', ['scenes'], 'sp', ['EN'], INVENTORY_MODS),
         ('animal-trailer', list(ANIMAL_CASES), 'mp', ['EN'], ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit']),
     ):
         result[suite] = {'status': 'ready', 'clients': 1, 'default_mods': list(mods),
@@ -35,6 +37,7 @@ def definitions():
                                     'kinds': [kind], 'languages': languages, 'modes': ['toolkit', 'native']}
                                    for case in cases]}
     result['item-tags']['window_size'] = [1280, 900]
+    result['inventory-presentation']['window_size'] = [1280, 900]
     return result
 
 
@@ -71,6 +74,11 @@ def validate(selection):
     if selection['kind'] not in case['kinds'] or len(selection['languages']) != 1 or selection['languages'][0] not in case['languages']:
         raise ValueError('Unsupported kind/language for ' + suite)
     required = set(ITEM_MODS if suite == 'item-tags' else ['ZombieBuddy', 'PZSurvivorToolkit'])
+    if suite == 'inventory-presentation':
+        required = set(INVENTORY_MODS)
+        forbidden = {'ContainerCapacityIndicator', 'BravoItemDetails', 'Quartermaster'} & set(selection['mods'])
+        if forbidden:
+            raise ValueError('External inventory owners must be omitted: ' + ', '.join(sorted(forbidden)))
     if suite == 'video-recording':
         required.add('PZToolkitJavaPatches')
         for key in ('ffmpeg', 'ffprobe'):
@@ -134,6 +142,10 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             shutil.copy2(intake / 'VideoFixture.lua', client / 'ZZVideoFixture.lua')
             config = {'output': str(cache / 'videos'), 'ffmpeg': str(_path(selection, 'ffmpeg', True))}
             _write(client / 'ToolkitVideoConfig.lua', 'return {' + ','.join(key + '=' + json.dumps(value, ensure_ascii=False) for key, value in config.items()) + '}\n')
+    elif suite == 'inventory-presentation':
+        fixture['mods'] = ['InventoryPresentationScreens']
+        for cache in caches:
+            _load(intake / 'prepare.py').prepare(locations['PZSurvivorToolkit'], cache / 'mods/InventoryPresentationScreens')
     elif suite == 'item-tags':
         fixture['mods'] = ['QuartermasterScreens']
         prepare = _load(intake / 'prepare.py')
@@ -189,6 +201,7 @@ def complete(selection, role, text):
         return bool(re.search(r'\[QUEUE_SESSION\] COMPLETE case=' + re.escape(selection['cases'][-1]) + ' epoch=' +
                               str(len(selection['cases'])) + ' actor=' + re.escape(role) + r' cases=' + str(len(selection['cases'])) + r'(?:\s|$)', text))
     marker = {'video-recording': '[VIDEO_TEST] PASSED', 'item-tags': '[QM_SCREEN] COMPLETE',
+              'inventory-presentation': '[INVENTORY_SCREEN] COMPLETE',
               'animal-trailer': '[ANIMAL_TRAILER] CLIENT COMPLETE'}[selection['suite']]
     return marker in text
 
@@ -278,6 +291,8 @@ def verify(root, selection, catalog):
             raise ValueError('Missing fixture completion marker')
         if suite == 'video-recording':
             evidence['clips'] = _load(intake / 'verify.py').verify(root / 'client1', _path(selection, 'ffmpeg', True), _path(selection, 'ffprobe', True))
+        elif suite == 'inventory-presentation':
+            evidence.update(_load(intake / 'verify.py').verify(root, text))
         elif suite == 'item-tags':
             manifest = json.loads((intake / 'manifest.json').read_text())
             if '[QM_SCREEN] FAIL' in text or 'KahluaException' in text:

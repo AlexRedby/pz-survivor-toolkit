@@ -138,11 +138,11 @@ Water consumption remains native: this does not enable drinking from backpacks, 
 Carried bags and ordinary bags on the ground are supported. To access a bag inside a crate, first take the whole bag into your inventory, open it, then put it back. Removing Better Containers' restriction does not fix the network address of such nested containers; the protection remains enabled.
 
 
-### CleanUI / Container Capacity Indicator
+### Inventory presentation
 
-When using both mods, load them in this order: **NeatUI Framework, CleanUI, PZ Survivor Toolkit, Container Capacity Indicator**. Toolkit aligns CCI bars with CleanUI's visible inventory icons, including equipment headers, hidden equipment, expanded stacks and scaled icons. CCI keeps its own capacity calculations, colours and magazine setting. Toolkit preserves its item and container-button bars when CleanUI switches between enhanced and vanilla inventories, including icon views; it also supplies the alpha omitted by B42's native icon renderer. Without that pair, the adapter does nothing. If CCI loads before Toolkit, the adapter logs the required order and leaves its renderer unchanged.
+Toolkit supplies container/bag capacity bars, loose-magazine fill segments and expanded item details. Load **NeatUI Framework**, then **CleanUI**, then **PZ Survivor Toolkit**. Disable the separate **Container Capacity Indicator** and **Item Details** mods; their functionality is now built in. Existing display and sorting preferences are preserved.
 
-With **Better Containers**, Toolkit owns category filters, preserving its proximity and container features. Keep Toolkit before Better Containers and MP Fast Forward; malformed speed commands are rejected before they reach MP Fast Forward. The selected INI already sets this order.
+Capacity bars use the player's effective capacity and follow the actual inventory icons, including nested bags, expanded stacks and scaled icons. They remain available on container buttons and in icon views when switching between CleanUI's enhanced and vanilla inventories. **Options > Mods > Toolkit: Container Capacity** controls magazine segments.
 
 ### Quartermaster
 
@@ -186,9 +186,9 @@ Container-editor writes use the acting player's server-validated location, exact
 
 ### Item Details
 
-With **Item Details** enabled, Toolkit restores condition display and sorting for vehicle parts categorized by **organizedCategories**. Expanded stacks retain every item when they exceed Item Details' sorting limit: the configured prefix is sorted and the remaining items stay in the list. Sorting and display preferences remain in **Options > Mods > Item Details**.
+Expanded rows show remaining uses; condition, head condition and sharpness; ammunition including a chambered round and weapon attachments; food, cooking/freezing and Nutritionist values; fluid contents and quantities; clothing condition and holes. Ordinary native details remain the fallback for other items. Vehicle parts also work with **organizedCategories**.
 
-Load **CleanUI**, then **PZSurvivorToolkit**, then **BravoItemDetails**; keep **organizedCategories_core** last. The selected INI already includes this order. The compatibility fix lives in Toolkit; keep the official Workshop files unchanged on the server and clients. Native Item Details scenarios cover single-player; multiplayer and the complete selected mod set remain unverified.
+Configure labels, bars, numeric values, Nutritionist details and stack sorting under **Options > Mods > Toolkit Item Details**. The old Item Details preference keys remain valid. Sorting uses the configured direction for each item family and sorts only the configured prefix of an expanded stack; all remaining items, physical selections and Shift-selection anchors stay intact. The native visible-child limit is unchanged. With Better Containers, food details leave space for its freshness percentage.
 
 ### TV & Radio ReInvented
 

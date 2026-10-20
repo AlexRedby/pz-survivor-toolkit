@@ -13,7 +13,7 @@ Quality-of-life mods for **Project Zomboid Build 42**: inventory tools, bulk act
 
 Current versions come from component metadata; see the [changelog](CHANGELOG.md) for recorded changes.
 
-The [selected set](SurvivorQoL-selected.ini) requires both local mod folders on the server and every client: **47 Mod IDs / 44 Workshop items**, targeting **B42.21**. Wishlist and the complete Quartermaster feature set, including crafting and the storage manifest, are included in Toolkit; existing lists, sorting designations, presets and settings are preserved. Disable the separate Quartermaster mod when updating. Other game builds are outside the Java patches' supported scope.
+The [selected set](SurvivorQoL-selected.ini) requires both local mod folders on the server and every client: **45 Mod IDs / 42 Workshop items**, targeting **B42.21**. Wishlist and the complete Quartermaster feature set, including crafting and the storage manifest, are included in Toolkit; existing lists, sorting designations, presets and settings are preserved. Container Capacity Indicator and Item Details are also built in, with existing preferences preserved. Disable those separate mods and Quartermaster when updating. Other game builds are outside the Java patches' supported scope.
 
 ## Installation
 

@@ -4,7 +4,7 @@
 
 The common runner stages this B42.21 RU/SP fixture through `tools/queue_checks/adapters/auxiliary.py`, with exact scene assertions and screenshots. It uses the current Toolkit and listed UI mods; pass `--mods selected` with a pack lock to run the complete set. Verification belongs in per-run reports. UI handler calls are programmatic; this scenario does not cover English, multiplayer or physical input.
 
-`manifest.json` lists the six required mod IDs, their load order, five screenshot names, and log markers. Quartermaster is owned by Toolkit; the separate Workshop mod must be disabled. The runner must obtain the selected mods from local sources; this contribution contains no game or Workshop assets, Java launcher, profile, logs, or captures.
+`manifest.json` lists the five required mod IDs, their load order, five screenshot names, and log markers. Quartermaster is owned by Toolkit; the separate Workshop mod must be disabled. The runner must obtain the selected mods from local sources; this contribution contains no game or Workshop assets, Java launcher, profile, logs, or captures.
 
 From the repository root, prepare a new helper mod directory:
 

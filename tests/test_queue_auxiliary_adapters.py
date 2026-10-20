@@ -84,7 +84,7 @@ class AuxiliaryAdapterTests(unittest.TestCase):
 
     def test_locked_pack_uses_actual_ini_order_but_still_requires_all_tag_dependencies(self):
         mods = list(adapter.ITEM_MODS)
-        a, b = mods.index('PZSurvivorToolkit'), mods.index('BravoItemDetails')
+        a, b = mods.index('PZSurvivorToolkit'), mods.index('organizedCategories_core')
         mods[a], mods[b] = mods[b], mods[a]
         self.selection.update(suite='item-tags', cases=['scenes'], languages=['RU'], mods=mods)
         with self.assertRaisesRegex(ValueError, 'load order'):
@@ -94,6 +94,37 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         self.selection['mods'].remove('PZSurvivorToolkit')
         with self.assertRaisesRegex(ValueError, 'Required fixture mods missing'):
             adapter.validate(self.selection)
+
+    def test_inventory_stage_and_verifier_require_native_receipts_and_each_capture(self):
+        self.selection.update(suite='inventory-presentation', cases=['scenes'], languages=['EN'], mods=list(adapter.INVENTORY_MODS))
+        self.stage({'PZSurvivorToolkit': ROOT / 'PZSurvivorToolkit'})
+        helper = self.cache / 'mods/InventoryPresentationScreens/42/media/lua/client/ZZInventoryPresentationScreens.lua'
+        self.assertEqual(helper.read_bytes(), (ROOT / 'tests/native_queue/contributions/inventory-presentation/ZZInventoryPresentationScreens.lua').read_bytes())
+        self.assertEqual(self.runtime['fixture']['mods'], ['InventoryPresentationScreens'])
+        intake = ROOT / 'tests/native_queue/contributions/inventory-presentation'
+        names = json.loads((intake / 'manifest.json').read_text())['expected_screenshots']
+        text = '[INVENTORY_SCREEN] SETUP nativeItems=15 externalOwners=false\n'
+        text += '[INVENTORY_SCREEN] SORT count=7 bound=3 tail=4 selection=true anchor=true\n'
+        screenshots = self.cache / 'Screenshots'
+        screenshots.mkdir()
+        for index, name in enumerate(names):
+            scene = name.removeprefix('inventory-').removesuffix('.png')
+            if index < 3:
+                text += '[INVENTORY_SCREEN] DRAW ' + scene + ' details=once bag=icons magazine=icons button=1 nativeTypes=true\n'
+            text += '[INVENTORY_SCREEN] SHOT ' + scene + '\n'
+            (screenshots / name).write_bytes(adapter.PNG)
+        text += '[INVENTORY_SCREEN] COMPLETE\n'
+        console = self.cache / 'console.txt'
+        console.write_text(text)
+        self.assertFalse(adapter.verify(self.output, self.selection, {})['issues'])
+        console.write_text(text.replace('tail=4', 'tail=0'))
+        self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
+        console.write_text(text)
+        (screenshots / names[-1]).unlink()
+        self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
+        for identifier in ('BravoItemDetails', 'ContainerCapacityIndicator'):
+            with self.assertRaisesRegex(ValueError, 'External inventory owners'):
+                adapter.validate(dict(self.selection, mods=self.selection['mods'] + [identifier]))
 
     def test_animal_stage_uses_exact_builder_and_identical_shared_connect_config(self):
         self.selection.update(suite='animal-trailer', cases=['equipment-fixed'], kind='mp')

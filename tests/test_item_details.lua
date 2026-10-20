@@ -1,10 +1,10 @@
-local adapter = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/000ToolkitItemDetailsCompatibility.lua'
+local moduleRoot = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/'
 local function run(initialEnhanced, lateVanilla)
-    local active, options, config = {}, {}, {}
-    getActivatedMods = function() return {contains=function(_, id) return active[id] end} end
+    local options, config = {}, {}
+    local menuCallback
     PZAPI = {ModOptions={getOptions=function(_, id) return options[id] end}}
-    function PZAPI.ModOptions:create(id)
-        local value = {dict={}}
+    function PZAPI.ModOptions:create(id, title)
+        local value = {dict={},title=title}
         options[id] = value
         function value:addDescription() end
         function value:addTickBox(id, _, default, tooltip)
@@ -21,11 +21,11 @@ local function run(initialEnhanced, lateVanilla)
         end
         return value
     end
-    Events = {OnMainMenuEnter={Add=function() end}}
+    Events = {OnMainMenuEnter={Add=function(callback) menuCallback=callback end}}
     ItemTag = {SHOW_CONDITION='ShowCondition',SHARPENABLE='Sharpenable'}
     instanceof = function(item, class) return item and ((class=='InventoryItem' and item.condition~=nil) or item.kind==class) or false end
     luautils = {stringStarts=function(value, prefix) return value:sub(1,#prefix)==prefix end}
-    round = function(value) return math.floor(value+0.5) end
+    round = function(value, precision) local scale=10^(precision or 0); return math.floor(value*scale+0.5)/scale end
     local function color(r,g,b)
         return {getR=function() return r end,getG=function() return g end,getB=function() return b end,
             interp=function(_, _, _, target) target.getR,target.getG,target.getB=function() return r end,function() return g end,function() return b end end}
@@ -40,17 +40,30 @@ local function run(initialEnhanced, lateVanilla)
         return {condition=condition, category=category or 'mechanicsVehiclePart',kind=kind,uses=condition,
             getDisplayCategory=function(self) return self.category end,getFullType=function(self) return self.fullType or 'Base.NormalTire1' end,
             hasTag=function(self, tag) return self.tags and self.tags[tag] or false end,
-            getUseDelta=function() return 0.1 end,getCurrentUses=function(self) return self.uses end,getMaxUses=function() return 100 end,
+            getUseDelta=function() return 0.1 end,getCurrentUses=function(self) return self.uses end,getMaxUses=function(self) return self.maxUses or 100 end,
             getCondition=function(self) return self.condition end,getCurrentCondition=function(self) return self.condition end,
-            hasHeadCondition=function() return false end,hasSharpness=function() return false end,
-            getMaxAmmo=function(self) return self.ammoMax or 0 end,getCurrentAmmoCount=function(self) return self.condition end,
-            getWorldItem=function() end,isFluidContainer=function(self) return self.fluid~=nil end,
-            getFluidContainer=function(self) return self.fluid and {getAmount=function() return self.condition end} end,
-            getHungerChange=function(self) return self.hunger or 0 end,isCosmetic=function() return false end,
-            getHolesNumber=function() return 0 end,isRoundChambered=function() return false end,
-            getAllWeaponParts=function() return {size=function() return 0 end} end,isContainsClip=function() return false end}
+            hasHeadCondition=function(self) return self.head~=nil end,hasSharpness=function(self) return self.sharp~=nil end,
+            getHeadCondition=function(self) return self.head end,getHeadConditionMax=function() return 10 end,
+            getSharpness=function(self) return self.sharp end,
+            getMaxAmmo=function(self) return self.ammoMax or 0 end,getCurrentAmmoCount=function(self) return self.ammo or self.condition end,
+            getMagazineType=function() return 'Base.Magazine' end,
+            getAmmoType=function() return {getItemKey=function() return 'Base.Bullets9mm' end} end,
+            getWorldItem=function(self) return self.worldItem end,isFluidContainer=function(self) return self.fluid~=nil end,
+            getFluidContainer=function(self) return self.fluid and {getAmount=function() return self.amount or self.condition end,
+                getCapacity=function() return 100 end,getColor=function() return color(0,0,1) end,
+                contains=function(_,value) return value.id=='water' or value.id=='milk' end} end,
+            getHungerChange=function(self) return self.hunger or 0 end,isCosmetic=function(self) return self.cosmetic or false end,
+            getHolesNumber=function(self) return self.holes or 0 end,isRoundChambered=function(self) return self.chambered or false end,
+            isIsCookable=function(self) return self.cookable or false end,isFrozen=function() return false end,
+            getHeat=function(self) return self.heat or 1 end,getCookingTime=function(self) return self.cooking or 0 end,
+            getMinutesToCook=function() return 10 end,getMinutesToBurn=function() return 20 end,
+            isBurnt=function(self) return self.burnt or false end,getFreezingTime=function(self) return self.freezing or 0 end,
+            getCalories=function() return 312.3 end,getCarbohydrates=function() return 12.5 end,
+            getProteins=function() return 5.2 end,getLipids=function() return 2.9 end,
+            getAllWeaponParts=function(self) local parts=self.parts or {}; return {size=function() return #parts end,get=function(_,index) return parts[index+1] end} end,
+            isContainsClip=function(self) return self.clip or false end}
     end
-    local nativeCalls, fallbacks, officialLoads = 0, {}, 0
+    local nativeCalls, fallbacks = 0, {}
     local function class(label)
         return {MAX_ITEMS_IN_STACK_TO_RENDER=50,
             drawItemDetails=function(_, value) fallbacks[#fallbacks+1]={label,value}; return label end,
@@ -85,103 +98,214 @@ local function run(initialEnhanced, lateVanilla)
         ISInventoryPane=value and enhanced or vanilla
         for _, callback in ipairs(callbacks) do callback() end
     end
-    local function loadConfig()
-        if ItemDetailsConfigSource then
-            config = assert(loadstring(ItemDetailsConfigSource))()
-        else
-            local settings=PZAPI.ModOptions:create('BravoItemDetails')
-            settings:addTickBox('showNumeric',nil,true,'Show the numeric value (x/y or x%)')
-            config={showLabels=true,showBars=true,showNumeric=true,enableSort=true,maxSort='50',
-                usesSortDir=1,weaponSortDir=1,vehicleSortDir=1,clothesSortDir=1,foodSortDir=1,fluidSortDir=1}
-        end
-        return config
-    end
-    local sorter
-    local function loadSorter()
-        if ItemDetailsSorterSource then return assert(loadstring(ItemDetailsSorterSource))() end
-        local function directions(property, reversed)
-            return {function(a,b) return reversed and a[property]<b[property] or (not reversed and a[property]>b[property]) end,
-                function(a,b) return reversed and a[property]>b[property] or (not reversed and a[property]<b[property]) end}
-        end
-        return {condition=directions('condition'),uses=directions('uses'),weapon=directions('condition'),
-            tools=directions('condition'),ammo=directions('condition'),hunger=directions('hunger',true),
-            fluid=directions('condition'),clothes=directions('condition')}
-    end
     local loaded = {}
     require = function(name)
-        if name == "PZSurvivorToolkit/InventoryClasses" or name == "PZSurvivorToolkit/InventoryRows" then
-            return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
-        end
-        if loaded[name] then return loaded[name] end
-        if name=='BravoItemDetailsConfig' then loaded[name]=loadConfig()
-        elseif name=='BravoItemDetailsSorter' then sorter=loadSorter(); loaded[name]=sorter
-        elseif name=='BravoItemDetails' then
-            officialLoads=officialLoads+1
-            if ItemDetailsSource then assert(loadstring(ItemDetailsSource))()
-            else
-                local native=ISInventoryPane.drawItemDetails
-                function ISInventoryPane:drawItemDetails(value, ...)
-                    if value and (value.category=='VehicleMaintenance' or value.tags) and config.showNumeric then
-                        self:drawText(value.condition..'%')
-                    else native(self,value,...) end
-                end
-                local refresh=ISInventoryPane.refreshContainer
-                function ISInventoryPane:refreshContainer(...)
-                    refresh(self,...)
-                    if not config.enableSort then return end
-                    local limit=tonumber(config.maxSort) or 50
-                    for _,stack in ipairs(self.itemslist) do
-                        if stack.items[1] and stack.items[1].category=='VehicleMaintenance' and not self.collapsed[stack.name] then
-                            local items=stack.items
-                            table.remove(items,1)
-                            local prefix={}
-                            for index=1,math.min(limit,#items) do prefix[index]=items[index] end
-                            table.sort(prefix,sorter.condition[config.vehicleSortDir])
-                            table.insert(prefix,1,prefix[1])
-                            for index=limit+1,#items-limit do prefix[#prefix+1]=items[index] end
-                            stack.items=prefix
-                        end
-                    end
-                end
-            end
-            loaded[name]=true
-        else return end
+        if name == "PZAPI/ModOptions" then return end
+        if not loaded[name] then loaded[name] = dofile(moduleRoot .. name .. ".lua") end
         return loaded[name]
+    end
+    local nativeDraw, nativeRefresh = ISInventoryPane.drawItemDetails, ISInventoryPane.refreshContainer
+    local Settings = require "PZSurvivorToolkit/InventoryDetailOptions"
+    local Details = require "PZSurvivorToolkit/InventoryDetails"
+    local sorter = require "PZSurvivorToolkit/InventoryDetailSort"
+    config = Settings.config
+    assert(ISInventoryPane.drawItemDetails == nativeDraw and ISInventoryPane.refreshContainer == nativeRefresh,
+        'owned modules installed monkeypatches')
+    assert(config == Details.config and config == sorter.config)
+    assert(config.showNumeric and config.enableSort and config.maxSort == '50', 'defaults missing before main menu')
+    assert(options.BravoItemDetails.title == 'Toolkit Item Details', 'persisted option namespace or Toolkit title lost')
+    assert(string.format(options.BravoItemDetails.dict.showNumeric.tooltip) == 'Show the numeric value (x/y or x%)')
+    options.BravoItemDetails.dict.vehicleSortDir.value=2
+    menuCallback()
+    assert(config.vehicleSortDir==2, 'main-menu application ignored persisted preferences')
+    options.BravoItemDetails.dict.vehicleSortDir.value=1
+    options.BravoItemDetails:apply()
+    -- Model the inventory owner's explicit integration, including each class's
+    -- own fallback and native-refresh failure propagation.
+    for _,class in ipairs({enhanced,vanilla}) do
+        local draw,refresh=class.drawItemDetails,class.refreshContainer
+        class.drawItemDetails=function(view,value,...)
+            if Details.draw(view,value,...) then return end
+            return draw(view,value,...)
+        end
+        class.refreshContainer=function(view,...)
+            local anchor=view.items and view.firstSelect and view.items[view.firstSelect]
+            local result=refresh(view,...)
+            sorter.refresh(view,class,anchor)
+            return result
+        end
     end
     local function pane(items)
         local stack={name='parts',items={items[1]},cleanUIDisplayItem=items[1],count=#items+1}
         for _,value in ipairs(items) do stack.items[#stack.items+1]=value end
         return setmetatable({itemslist={stack},collapsed={},selected={},headerHgt=20,itemHgt=32,fontHgt=20,font='Small',
-            text={},bars={},drawText=function(self,text) self.text[#self.text+1]=text end,
-            drawProgressBar=function(self,_,_,_,_,fraction) self.bars[#self.bars+1]=fraction end}, {__index=ISInventoryPane})
+            text={},bars={},centers={},textures={},icons={},bounds={},drawText=function(self,text,x)
+                self.text[#self.text+1]=text; self.bounds[#self.bounds+1]={kind='text',x=x,width=#text}
+            end,
+            drawTextCentre=function(self,text,x)
+                self.centers[#self.centers+1]=text; self.bounds[#self.bounds+1]={kind='center',x=x-#text/2,width=#text}
+            end,
+            drawTextureScaled=function(self,texture,x,_,width)
+                self.textures[#self.textures+1]=texture; self.bounds[#self.bounds+1]={kind='texture',x=x,width=width}
+            end,
+            drawProgressBar=function(self,x,_,width,_,fraction)
+                self.bars[#self.bars+1]=fraction; self.bounds[#self.bounds+1]={kind='bar',x=x,width=width}
+            end}, {__index=ISInventoryPane})
     end
-    if ItemDetailsUpstreamCheck then
-        require('BravoItemDetailsConfig'); require('BravoItemDetailsSorter'); require('BravoItemDetails')
-        if options.BravoItemDetails.apply then options.BravoItemDetails:apply() end
-        local values={}
-        for index=1,60 do values[index]=item(index,ItemDetailsUpstreamCheck=='tail' and 'VehicleMaintenance' or nil) end
-        local view=pane(values)
-        if ItemDetailsUpstreamCheck=='tail' then
-            view:refreshContainer()
-            assert(#view.itemslist[1].items==61,'upstream lost the large-stack tail')
-        else
-            view:drawItemDetails(values[1],0,0,0,false)
-            assert(#view.bars>0 or view.text[1]=='1%','upstream omitted organizedCategories vehicle condition')
+    local nutritionist = false
+    CharacterTrait = {NUTRITIONIST2='Nutritionist2'}
+    getPlayer=function() return {hasTrait=function(_,trait) return nutritionist and trait==CharacterTrait.NUTRITIONIST2 end} end
+    getTexture=function(path) return path end
+    ScriptManager={instance={getItem=function(_,id) return id end}}
+    getScriptManager=function() return {FindItem=function(_,id)
+        assert(id=='Base.Bullets9mm'); return {getDisplayName=function() return '9mm Rounds' end}
+    end} end
+    ISInventoryItem={renderScriptItemIcon=function(view,value) view.icons[#view.icons+1]=value end,
+        renderItemIcon=function(view,value) view.icons[#view.icons+1]=value end}
+    local water={id='water',getDisplayName=function() return 'Water' end}
+    local milk={id='milk',getDisplayName=function() return 'Milk' end}
+    local blood={id='blood',getDisplayName=function() return 'Blood' end}
+    Fluid={getAllFluids=function() return {size=function() return 3 end,get=function(_,i) return ({water,milk,blood})[i+1] end} end}
+    local function draw(value,layout)
+        local view=pane({value})
+        local handled=Details.draw(view,value,0,0,0,false,layout)
+        return view,handled
+    end
+    local function equal(actual, expected, label)
+        assert(#actual==#expected, label..' count: '..#actual..' expected '..#expected)
+        for i,value in ipairs(expected) do assert(actual[i]==value, label..' value '..i..': '..tostring(actual[i])) end
+    end
+    assert(Details.draw(pane({}),nil,0,0,0,false)==false, 'nil bypassed native fallback')
+    local uses=item(3,'Other','Drainable')
+    uses.maxUses=8
+    local rendered,handled=draw(uses)
+    assert(handled); equal(rendered.text,{'IGUI_invpanel_Remaining:','3/8'},'uses')
+    equal(rendered.bars,{3/8},'uses bar')
+    uses.maxUses,uses.uses=200,99
+    rendered=draw(uses); equal(rendered.text,{'IGUI_invpanel_Remaining:','50%'},'large uses')
+    local weapon=item(80,'Other','HandWeapon')
+    weapon.head,weapon.sharp,weapon.ammoMax,weapon.ammo,weapon.chambered=5,0.75,15,7,true
+    weapon.clip,weapon.parts=true,{'scope','laser'}
+    rendered=draw(weapon)
+    equal(rendered.text,{'Tooltip_weapon_Condition:','80%','IGUI_health_Head:','50%','Tooltip_weapon_Sharpness:','75%','8/15'},'weapon details')
+    equal(rendered.bars,{0.8,0.5,0.75},'weapon bars')
+    equal(rendered.icons,{'Base.Magazine','scope','laser'},'weapon icons')
+    local magazine=item(5,'Other','Magazine'); magazine.ammoMax=15
+    rendered=draw(magazine)
+    equal(rendered.text,{'9mm Rounds:','5/15'},'magazine')
+    local food=item(100,'Other','Food'); food.hunger=-0.25
+    rendered=draw(food)
+    equal(rendered.text,{'IGUI_invpanel_Nutrition:'},'food label')
+    equal(rendered.centers,{'-25'},'hunger'); equal(rendered.bars,{0.25},'hunger bar')
+    assert(#rendered.textures==0,'Nutritionist shown without trait')
+    nutritionist=true
+    rendered=draw(food)
+    equal(rendered.centers,{'-25','312','13','5','3'},'nutrition stats')
+    equal(rendered.textures,{'media/ui/PZSurvivorToolkit/item-details/calories.png','media/ui/PZSurvivorToolkit/item-details/carbs.png',
+        'media/ui/PZSurvivorToolkit/item-details/proteins.png','media/ui/PZSurvivorToolkit/item-details/lipids.png'},'nutrition icons')
+    -- BC owns a permanent "100%" slot on expanded perishable food rows.
+    -- Reserve each baseline field in turn, including icons and the progress bar,
+    -- so a layout change cannot solve hunger while leaving another collision.
+    local baseline=rendered
+    assert(baseline.bounds[1].x==70 and baseline.bounds[2].x==104 and baseline.bounds[2].width==80
+        and baseline.bounds[3].x==194.5 and baseline.bounds[4].x==208,
+        'unreserved food coordinates changed')
+    local function clearOf(view,layout)
+        for _,bound in ipairs(view.bounds) do
+            assert(bound.x+bound.width<=layout.reservedLeft or bound.x>=layout.reservedRight,
+                bound.kind..' overlapped the reserved freshness field')
         end
-        return
     end
-    local originalDraw, originalRefresh = ISInventoryPane.drawItemDetails, ISInventoryPane.refreshContainer
-    dofile(adapter)
-    assert(ISInventoryPane.drawItemDetails==originalDraw and ISInventoryPane.refreshContainer==originalRefresh and officialLoads==0)
-    active.BravoItemDetails=true
-    options.BravoItemDetails={}
-    dofile(adapter)
-    assert(ISInventoryPane.drawItemDetails==originalDraw and ISInventoryPane.refreshContainer==originalRefresh and officialLoads==0)
-    options.BravoItemDetails=nil
-    dofile(adapter)
-    if options.BravoItemDetails.apply then options.BravoItemDetails:apply() end
-    assert(officialLoads==1 and #callbacks==1)
-    assert(string.format(options.BravoItemDetails.dict.showNumeric.tooltip)=='Show the numeric value (x/y or x%)')
+    for _,bound in ipairs(baseline.bounds) do
+        local midpoint=bound.x+bound.width/2
+        local layout={reservedLeft=midpoint-2,reservedRight=midpoint+2}
+        local shifted=draw(food,layout)
+        clearOf(shifted,layout)
+        equal(shifted.text,baseline.text,'reserved food labels')
+        equal(shifted.bars,baseline.bars,'reserved nutrition bar')
+        equal(shifted.centers,baseline.centers,'reserved nutrition values')
+        equal(shifted.textures,baseline.textures,'reserved nutrition icons')
+    end
+    local getCalories=food.getCalories
+    food.getCalories=function() return 1234567 end
+    local oversized=draw(food)
+    local largeValue=oversized.bounds[5]
+    local narrowSlot={reservedLeft=largeValue.x,reservedRight=largeValue.x+4}
+    clearOf(draw(food,narrowSlot),narrowSlot)
+    food.getCalories=getCalories
+    local unchanged=draw(food)
+    for index,bound in ipairs(baseline.bounds) do
+        assert(unchanged.bounds[index].x==bound.x and unchanged.bounds[index].width==bound.width,
+            'layout omitted changed the original coordinates')
+    end
+    local hungerBound=baseline.bounds[3]
+    local freshness={reservedLeft=hungerBound.x,reservedRight=hungerBound.x+#'100%'}
+    rendered=draw(food,freshness); clearOf(rendered,freshness)
+    config.showLabels,config.showBars,config.showNumeric=false,false,true
+    rendered=draw(food,freshness); clearOf(rendered,freshness)
+    assert(#rendered.text==0 and #rendered.bars==0 and #rendered.centers==5 and #rendered.textures==4,
+        'reservation changed numeric/Nutritionist preferences')
+    config.showLabels,config.showBars,config.showNumeric=true,true,true
+    config.showNutritionist=false
+    rendered=draw(food,freshness); clearOf(rendered,freshness)
+    assert(#rendered.textures==0,'Nutritionist toggle ignored')
+    config.showNutritionist=true; nutritionist=false
+    food.cookable,food.heat,food.cooking=true,2,5
+    config.showBars=false
+    rendered=draw(food)
+    equal(rendered.text,{'IGUI_invpanel_Cooking:'},'cooking label')
+    equal(rendered.bars,{0.5},'cooking bar always visible'); equal(rendered.centers,{'50%','-25'},'cooking stats')
+    config.showBars=true; food.cooking=15
+    rendered=draw(food); equal(rendered.text,{'IGUI_invpanel_Burning:'},'burning label'); equal(rendered.bars,{0.5},'burning bar')
+    food.cooking,food.burnt=25,true
+    rendered=draw(food); equal(rendered.text,{'IGUI_invpanel_Burnt'},'burnt label'); equal(rendered.bars,{},'burnt bar')
+    food.cookable,food.burnt,food.freezing=false,false,20
+    rendered=draw(food); equal(rendered.text,{'IGUI_invpanel_FreezingTime:'},'freezing label')
+    equal(rendered.bars,{0.2},'freezing bar'); equal(rendered.centers,{'20%','-25'},'freezing stats')
+    food.freezing,food.hunger=0,0
+    rendered,handled=draw(food); assert(not handled and #rendered.text==0,'unhandled food bypassed native fallback')
+    local fluid=item(100,'Other','Fluid'); fluid.fluid,fluid.amount=true,12.345
+    rendered=draw(fluid); equal(rendered.text,{'Water/Milk:','12.35/100.00'},'fluid blend')
+    fluid.amount=0
+    rendered=draw(fluid); equal(rendered.text,{'Fluid_Empty: ','0.00/100.00'},'empty fluid')
+    fluid.amount=12.345
+    local ground=item(100,'Other')
+    ground.worldItem={kind='IsoWorldInventoryObject',getFluidContainer=function() return fluid:getFluidContainer() end}
+    rendered=draw(ground); equal(rendered.text,{'Water/Milk:','12.35/100.00'},'world fluid')
+    local clothes=item(40,'Other','Clothing'); clothes.holes=3
+    rendered=draw(clothes); equal(rendered.text,{'IGUI_invpanel_Condition:','40%','(3)'},'clothing')
+    clothes.cosmetic=true
+    rendered,handled=draw(clothes); assert(not handled,'cosmetic clothing bypassed native fallback')
+    for _,fullType in ipairs({'Base.PetrolCan','Base.JerryCan'}) do
+        local value=item(100,'VehicleMaintenance'); value.fullType=fullType
+        rendered,handled=draw(value); assert(not handled,'fuel can acquired vehicle condition details')
+    end
+    -- Generic native branches (melting/drying/etc.) must retain their renderer.
+    rendered,handled=draw(item(20,'Other')); assert(not handled and #rendered.text==0,'native details fallback lost')
+    -- Preserve upstream presentation flags: gun ammo/attachments and clothing
+    -- holes remain visible while any details representation is enabled.
+    config.showLabels,config.showBars,config.showNumeric=false,true,false
+    rendered=draw(weapon); equal(rendered.text,{'8/15'},'gun compact ammo'); equal(rendered.icons,{'Base.Magazine','scope','laser'},'gun compact icons')
+    clothes.cosmetic=false
+    rendered=draw(clothes); equal(rendered.text,{'(3)'},'clothes compact holes')
+    config.showLabels,config.showBars,config.showNumeric=false,false,false
+    for _,value in ipairs({uses,weapon,magazine,food,fluid,clothes}) do
+        rendered,handled=draw(value); assert(not handled and #rendered.text==0 and #rendered.bars==0,'all-off did not use native fallback')
+    end
+    config.showLabels,config.showBars,config.showNumeric=true,true,true
+    -- Comparator tiebreaks remain compatible with the upstream feature set.
+    local sameA,sameB=item(50,'Other','HandWeapon'),item(50,'Other','HandWeapon')
+    sameA.ammoMax,sameB.ammoMax,sameA.ammo,sameB.ammo=10,10,4,4
+    sameA.chambered=true
+    assert(sorter.weapon[1](sameA,sameB) and sorter.weapon[2](sameB,sameA),'chambered-round sort lost')
+    sameA.chambered=false; sameA.parts={'scope'}
+    assert(sorter.weapon[1](sameA,sameB),'attachment sort tiebreak lost')
+    sameA.ammoMax,sameB.ammoMax,sameA.head,sameB.head=0,0,8,5
+    assert(sorter.tools[1](sameA,sameB) and sorter.tools[2](sameB,sameA),'head sort tiebreak lost')
+    sameA.head,sameB.head,sameA.sharp,sameB.sharp=5,5,0.9,0.5
+    assert(sorter.weapon[1](sameA,sameB) and sorter.weapon[2](sameB,sameA),'sharpness sort tiebreak lost')
+    sameA.holes,sameB.holes=2,1
+    assert(sorter.clothes[1](sameA,sameB) and sorter.clothes[2](sameB,sameA),'holes sort tiebreak lost')
     for _,mode in ipairs({true,false,true,false}) do
         toggle(mode)
         for _,size in ipairs({2,49,50,51,60,100,101,150}) do
@@ -334,9 +458,9 @@ local function run(initialEnhanced, lateVanilla)
         for index,value in ipairs(before) do assert(view.itemslist[1].items[index]==value,'failed comparator mutated the real-item list') end
         sorter.condition[1]=compare
     end
-    assert(officialLoads==1,'Item Details reloaded during UI switches')
+    assert(#callbacks==0, 'owned modules registered UI toggle hooks')
 end
 run(true)
 run(false)
 run(true,true)
-print('Item Details organized categories and stack-tail checks passed.')
+print('Owned Item Details rendering, settings, selection and lossless sorting checks passed.')

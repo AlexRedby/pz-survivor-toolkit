@@ -166,71 +166,65 @@ Compact injury and bandage panel with optional muscle strain, treatment actions 
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3437629766) · Workshop `3437629766` · Mod `CleanUI`
 
-Compact inventory/loot windows with search, quick transfers and configurable layout. Requires [NeatUI Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3508537032) (`3508537032`, `NeatUI_Framework`); load Framework first. The author lists compatibility with Proximity Inventory; other inventory replacements may conflict.
+Compact inventory/loot windows with search, quick transfers and configurable layout. Toolkit supplies capacity/magazine indicators and expanded Item Details; do not enable their separate Workshop mods. Requires [NeatUI Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3508537032) (`3508537032`, `NeatUI_Framework`); load Framework first. The author lists compatibility with Proximity Inventory; other inventory replacements may conflict.
 
-## 29 Container Capacity Indicator
-
-[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3789660055) · Workshop `3789660055` · Mod `ContainerCapacityIndicator`
-
-Adds container/bag fill bars, including nested bags, and optional magazine fill segments. Client UI; no dependencies. Load in this order: `NeatUI_Framework;CleanUI;PZSurvivorToolkit;ContainerCapacityIndicator`. Toolkit v0.1.12 supplies CleanUI mode switching.
-
-## 30 The Shortcut
+## 29 The Shortcut
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3470659758) · Workshop `3470659758` · Mod `TheShortcut`
 
 Configurable quick-action panel for items and crafting/building recipes. Tab toggles it by default; mouse wheel changes pages. Requires [NeatUI Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3508537032) (`3508537032`, `NeatUI_Framework`); load Framework first. Gamepad controls are absent and large panels may affect FPS. The author lists version `1.2.18` for B42.21; compatibility with CleanUI, Neat Crafting and Neat Building is unconfirmed.
 
-## 31 TV & Radio ReInvented
+## 30 TV & Radio ReInvented
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3420581050) · Workshop `3420581050` · Mod `TVRadio_ReInvented`
 
 Reworks TV, radio, car stereo, walkie-talkie and CD interfaces and adds channel videos/VHS. B41/B42 are reported. Toolkit handles device recognition and adds VHS controls; see [TV & Radio ReInvented](docs/FEATURES.md#tv--radio-reinvented). The separate [42.20 fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3796050675) (`3796050675`, `TVRadioReinventedFix4220`) is no longer required with the current Toolkit.
 
-## 32 Seed Season Indicator
+## 31 Seed Season Indicator
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3734639991) · Workshop `3734639991` · Mod `SeedSeasonIndicator`
 
 Shows planting season, water and growing time on seeds. The character must learn season information from a seed packet; seasonal labels disappear when `PlantGrowingSeasons` is off. Settings are under `Options > Mods > Seed Season Indicator`. Package version `1.4.2` targets Build 42; Russian translation is available. Seed-season labels with current B42.21 settings have not been verified.
 
-## 33 organizedCategories
+## 32 organizedCategories
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3370707195) · Workshop `3370707195` · Mod `organizedCategories_core`
 
 Splits broad item categories and supports UI changes, CleanUI, pinning, renaming and container assignment. Load last; do not enable another classifier. Keep built-in Loot Safety enabled to preserve original loot types for ScriptItems. Full mod folder is required. Local distribution requires the same version for all players; local copies need manual updates.
 
-## 34 Transfer a Specified Quantity: Toolkit
+## 33 Transfer a Specified Quantity: Toolkit
 
 Toolkit provides **Grab amount / Put amount** via the native number-entry window. See [quantity transfers](docs/FEATURES.md#bulk-actions). The former [Take Any Amount B42MP](https://steamcommunity.com/sharedfiles/filedetails/?id=3389115640) (`TakeAnyAmount`) is not required.
 
-## 35 Medicine Indicators: Toolkit + Moodle Framework
+## 34 Medicine Indicators: Toolkit + Moodle Framework
 
 Toolkit provides eight medicine indicators using the selected Moodle Framework (`3396446795`, `MoodleFramework`). See [medicine indicators](docs/FEATURES.md#medicine-indicators). The old [Medicine Moodles B42.20 port](https://steamcommunity.com/sharedfiles/filedetails/?id=3778856579) (`MedicineMoodlesB42`) is not required.
 
-## 36 Realistic Dashboard & Gauges
+## 35 Realistic Dashboard & Gauges
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3635591071) · Workshop `3635591071` · Mod `RealisticDash`
 
 Dashboard controls cover windows, locks, radio, air conditioning, seat selection and sleep. No external library is reported. Load before Navigator. Passenger dashboard and other vehicle types have not been verified. Toolkit dashboard integration is documented under [Navigator](docs/FEATURES.md#navigator).
 
-## 37 Navigator
+## 36 Navigator
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3708816224) · Workshop `3708816224` · Mod `Navigator`
 
 Plans road routes and provides turn prompts; requires the mod's Navigator or Navigator Micro radio. No external library is reported. Load after Realistic Dashboard (`RealisticDash;Navigator`) and before `organizedCategories_core`. Voice, long drives, rerouting, custom maps and other vehicle mods remain unverified. Toolkit dashboard integration is documented under [Navigator](docs/FEATURES.md#navigator). The separate TheShortcut panel can overlap the dashboard.
 
-## 38 Toolkit Action Queues and Context Menus
+## 37 Toolkit Action Queues and Context Menus
 
 Toolkit action queue, bulk actions and context-menu grouping/rules are described under [bulk actions](docs/FEATURES.md#bulk-actions), [context menus](docs/FEATURES.md#context-menus) and [action queue](docs/FEATURES.md#action-queue). Crafting-plan behavior and limits are in [crafting plans](docs/FEATURES.md#crafting-plans).
 
-## 39 Survivor Wishlist
+## 38 Survivor Wishlist
 
 Survivor Wishlist usage, settings, persistence and multiplayer behavior are documented in [Survivor Wishlist](docs/FEATURES.md#survivor-wishlist). No Workshop item is required; install the prepared repository mod on server and clients.
 
-## 40 Toolkit Java Patches
+## 39 Toolkit Java Patches
 
 Toolkit Java Patches v0.1.15 patches B42.21 client vehicle/zombie behavior, server media/build acknowledgements and the reproduced vehicle ownership handoff race. It also includes animal/equipment, hutch, native string-property and fluid-name guards. It is experimental; unrelated causes of persistent vehicle desync remain outside the confirmed fix. Follow the canonical [Java Patches build and installation guide](JavaPatches/README.md), including the [optional vehicle diagnostic flag](JavaPatches/README.md#vehicle-authority-recovery-and-diagnostic-logs); ZombieBuddy 2.3.4+ is required on server and clients. The separately published [MP Vanilla Animal Trailer Sync Fix](https://steamcommunity.com/sharedfiles/filedetails/?id=3801615436) (`3801615436`, `AnimalTrailerSyncMPFix`) addresses the server's one-animal-per-update timer issue and requires JAR approval when prompted.
 
-## 41 SaucedCarts, SaucedWheelbarrow and Wheelbarrow Craft
+## 40 SaucedCarts, SaucedWheelbarrow and Wheelbarrow Craft
 
 Load in this order:
 
@@ -242,13 +236,13 @@ Load in this order:
 
 SaucedCarts adds pushable shopping carts; SaucedWheelbarrow adds wooden/metal wheelbarrows; Craft adds recipes and requires both preceding mods. Both wheelbarrow recipes require Welding 3, welding mask, pipes and blowtorch fuel; wooden also requires three planks, metal a metal sheet. Preserve the complete mod folder. Wheelbarrows share outdoor spawns with carts; default weights are equal, and natural spawns occur only in unexplored areas. SaucedCarts conflicts with `TMC_Trolley`. Tidy Up Meister may leave a cart on the ground after a tool action; use Push Cart again. Toolkit integration details are in [SaucedCarts](docs/FEATURES.md#saucedcarts).
 
-## 42 Zombie Visibility Fix + Stair-O-Vision
+## 41 Zombie Visibility Fix + Stair-O-Vision
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3814073243) · Workshop `3814073243` · Mod `ZombieVisibilityFix`
 
 Reveals qualifying zombies hidden by B42 viewcone visibility; Stair-O-Vision is included and separately configurable. No ZombieBuddy or Java patch is required. The server must include the mod although its logic runs on clients; keep files matched. Defaults leave the toggle unbound and enable sub-tile precision, stair visibility and zombie vision; Hard Mode defaults off. Compatibility with Peek a View's stair rendering has not been checked.
 
-## 43 Plumbed Sink Mains Water Fix
+## 42 Plumbed Sink Mains Water Fix
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3764655475) · Workshop `3764655475` · Mod `PlumbedSinkMainsFix`
 

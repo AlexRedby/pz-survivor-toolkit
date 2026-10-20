@@ -27,7 +27,7 @@ PLANTING_TYPES = dict(sunflower='Base.SunflowerSeeds', candy='Base.Candycane', c
                       potato='Base.Potato', lemongrass='Base.LemonGrass', hemp='Base.HempBundle')
 PLANTING_SEEDS = {'sunflower', 'carrot', 'fullPacket', 'potato', 'lemongrass'}
 INTEGRATION = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS',
-               'BravoItemDetails', 'organizedCategories_core']
+               'organizedCategories_core']
 
 
 def stage_sources(source, source_ref=None):
@@ -51,8 +51,8 @@ def stage_sources(source, source_ref=None):
 
 def integration_mods(source, selected=False):
     identifiers = mod_ids(metadata(source / 'SurvivorQoL-selected.ini').get('Mods'))
-    # Historical product refs may still select the external Quartermaster.
-    return identifiers if selected else [id for id in identifiers if id in (*INTEGRATION, 'Quartermaster')]
+    # Historical product refs may still select external Quartermaster/Item Details.
+    return identifiers if selected else [id for id in identifiers if id in (*INTEGRATION, 'Quartermaster', 'BravoItemDetails')]
 
 
 def main():

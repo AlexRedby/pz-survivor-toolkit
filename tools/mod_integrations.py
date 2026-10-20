@@ -19,17 +19,6 @@ INTEGRATIONS = {
             'test_inventory_tags.lua', 'test_inventory_filter.lua', 'test_inventory_layout.lua',
             'test_inventory_interaction.lua')},
     },
-    'ContainerCapacityIndicator': {
-        'owners': ['client/PZSurvivorToolkit/InventoryClasses.lua', 'client/000ToolkitCCICompatibility.lua'],
-        'option': 'cci_source', 'root': 'media/lua/client', 'argument': 'ContainerCapacityIndicator.lua',
-        'tests': {'test_cci_compat.lua': ['ContainerCapacityIndicator.lua']},
-    },
-    'BravoItemDetails': {
-        'owners': ['client/PZSurvivorToolkit/InventoryClasses.lua', 'client/000ToolkitItemDetailsCompatibility.lua'],
-        'option': 'item_details_source', 'root': 'media/lua/client',
-        'tests': {'test_item_details.lua': ['BravoItemDetails.lua', 'BravoItemDetailsConfig.lua',
-                                          'BravoItemDetailsSorter.lua']},
-    },
     'Navigator': {
         'owners': ['client/PZSurvivorToolkit/Navigator.lua'],
         'option': 'navigator_source', 'root': 'media/lua/client/NavigatorRadio',

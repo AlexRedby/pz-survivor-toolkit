@@ -1,0 +1,13 @@
+{
+  "id": "inventory-presentation",
+  "build": "42.21",
+  "mode": "SP",
+  "language": "EN",
+  "helper_mod_id": "InventoryPresentationScreens",
+  "fixture": "ZZInventoryPresentationScreens.lua",
+  "required_mods_in_order": ["NeatUI_Framework", "CleanUI", "PZSurvivorToolkit", "EURY_CONTAINERS", "organizedCategories_core"],
+  "excluded_mods": ["ContainerCapacityIndicator", "BravoItemDetails", "Quartermaster"],
+  "expected_screenshots": ["inventory-01-clean.png", "inventory-02-vanilla.png", "inventory-03-clean-again.png", "inventory-04-sort.png"],
+  "completion_marker": "[INVENTORY_SCREEN] COMPLETE",
+  "failure_marker": "[INVENTORY_SCREEN] FAIL"
+}

@@ -64,7 +64,7 @@ class LuaRunner(unittest.TestCase):
 
     def test_selection_skips_unrelated_sources_and_full_syntax_scan(self):
         self.invoke("--test", "test_tv_controls", "--test", "test_wishlist_model.lua",
-                    "--cci-source", "/nonexistent/unrelated-source.lua")
+                    "--mpff-source", "/nonexistent/unrelated-source")
         self.assertEqual([name for name, _ in self.executions],
                          ["test_tv_controls.lua", "test_wishlist_model.lua"])
 

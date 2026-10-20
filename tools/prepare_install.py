@@ -22,8 +22,7 @@ MOD_IDS = ("PZSurvivorToolkit", "PZToolkitJavaPatches")
 INI_NAME = "SurvivorQoL-selected.ini"
 LOAD_ORDER = (
     ("ZombieBuddy", "PZToolkitJavaPatches"),
-    ("PZSurvivorToolkit", "ContainerCapacityIndicator"),
-    ("PZSurvivorToolkit", "BravoItemDetails"),
+    ("CleanUI", "PZSurvivorToolkit"),
     ("PZSurvivorToolkit", "EURY_CONTAINERS"),
     ("PZSurvivorToolkit", "MPFastForward"),
     ("RealisticDash", "Navigator"),
@@ -49,8 +48,7 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
     missing = set(MOD_IDS) - selected
     if missing:
         raise ValueError("INI is missing required local mod IDs: " + ", ".join(sorted(missing)))
-    edges = LOAD_ORDER + ((("CleanUI", "PZSurvivorToolkit"),) if "ContainerCapacityIndicator" in selected else ())
-    for before, after in edges:
+    for before, after in LOAD_ORDER:
         if before in selected and after in selected and ordered.index(before) > ordered.index(after):
             raise ValueError(f"INI load order requires {before} before {after}")
     workshop = ini.get("WorkshopItems", "").split(";")

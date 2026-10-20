@@ -35,7 +35,7 @@ EXTRA_TESTS = (
     'test_cart_test_area.lua',
     'test_cart_obstacles.lua',
     'test_auto_drink.lua',
-    'test_cci_compat.lua',
+    'test_inventory_presentation.lua',
     'test_item_details.lua',
     'test_clothing_repair_menu.lua',
     'test_clothing_inspection.lua',
@@ -81,8 +81,6 @@ def main() -> None:
                         help='directory containing projectzomboid.jar; supplies native Lua paths, and must match --pack-lock when used')
     parser.add_argument("--native-mod-options", type=Path,
                         help="test against an extracted vanilla PZAPI/ModOptions.lua")
-    parser.add_argument("--cci-source", type=Path, help="test against ContainerCapacityIndicator.lua")
-    parser.add_argument("--item-details-source", type=Path, help="Item Details media/lua/client directory")
     parser.add_argument("--cleanui-inventory-pane", type=Path, help="test against CleanUI ISInventoryPane.lua")
     parser.add_argument("--native-inventory-pane", type=Path, help="test against vanilla ISInventoryPane.lua")
     parser.add_argument("--tv-source", type=Path, help="test VHS controls against TVRadio Reinvented RWMMergedTV.lua")
@@ -201,19 +199,12 @@ def main() -> None:
             lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
         if name == "test_cart_spawns.lua" and args.wheelbarrow_source:
             lua.globals().WheelbarrowSource = str(args.wheelbarrow_source)
-        if name == "test_cci_compat.lua" and args.cci_source:
-            lua.globals().CCISource = args.cci_source.read_text(encoding="utf-8")
         if name == "test_clothing_repair_menu.lua" and args.native_inventory_context_menu:
             lua.globals().NativeGarmentSource = (args.native_inventory_context_menu.parent / "ISGarmentUI.lua").read_text(encoding="utf-8")
         if name == "test_clothing_inspection.lua" and args.native_inventory_context_menu and args.native_action_root:
             lua.globals().NativeInventoryContextMenuSource = args.native_inventory_context_menu.read_text(encoding="utf-8")
             lua.globals().NativeGarmentSource = (args.native_inventory_context_menu.parent / "ISGarmentUI.lua").read_text(encoding="utf-8")
             lua.globals().NativeTransferSource = (args.native_action_root / "client/TimedActions/ISInventoryTransferAction.lua").read_text(encoding="utf-8")
-        if name == "test_item_details.lua" and args.item_details_source:
-            for global_name, filename in (("ItemDetailsSource", "BravoItemDetails.lua"),
-                                          ("ItemDetailsConfigSource", "BravoItemDetailsConfig.lua"),
-                                          ("ItemDetailsSorterSource", "BravoItemDetailsSorter.lua")):
-                lua.globals()[global_name] = (args.item_details_source / filename).read_text(encoding="utf-8")
         if name in ("test_tv_videos.lua", "test_tv_controls.lua") and args.tv_source:
             lua.globals().TVSource = args.tv_source.read_text(encoding="utf-8")
         if name == "test_tv_controls.lua":
