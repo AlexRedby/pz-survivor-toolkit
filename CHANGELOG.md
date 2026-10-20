@@ -14,6 +14,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.163
+
+- **Changed:** Live context menus and editor previews now share explicit per-pass state instead of switching shared temporary variables. Existing grouping, scoped rules, saved preferences and native option ownership are preserved.
+
 ### 0.1.162
 
 - **Fixed:** Wooden wheelbarrow pickup now requires the player to reach the actual handle position before starting the lift. A path shortened by a nearby obstacle leaves the cart on the ground instead of starting from a misaligned stance.

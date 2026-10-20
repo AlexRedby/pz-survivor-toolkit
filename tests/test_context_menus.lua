@@ -187,6 +187,36 @@ menu:prerender(); same(menu,actions)
 assert(menu.toolkitContextState == nil and menu.nativeRendered, 'failed grouping leaves native rendering usable')
 Organizer.reset()
 print('PASS partial grouping failure restores every native action')
+
+-- A failed copied preview must release the native mutation guard and leave other item rules independent.
+do
+    local failedScope, nextScope = 'Base.PreviewFailure', 'Base.AfterPreviewFailure'
+    local dropKey = 'callback:ISInventoryPaneContextMenu.onDropItems'
+    local wearKey = 'callback:ISInventoryPaneContextMenu.onWearItems'
+    Organizer.setOverride(dropKey, 'hidden', failedScope)
+    Organizer.setOverride(wearKey, 'equipment', nextScope)
+    menu, actions = build(); menu.toolkitContextItemType = failedScope; menu:prerender()
+    local originalState = menu.toolkitContextState
+    local rules = require 'PZSurvivorToolkit/ContextMenuRules'
+    local classify = rules.classify
+    rules.classify = function() error('preview classification failure') end
+    local ok, failure = pcall(Organizer.renderPreview, failedScope, failedScope)
+    rules.classify = classify
+    assert(not ok and tostring(failure):find('preview classification failure', 1, true), 'preview failure was not reported')
+    assert(menu.toolkitContextState == originalState and not anchor(menu, 'equipment'), 'failed preview changed its live source')
+    menu, actions = build(); menu.toolkitContextItemType = nextScope; menu:prerender()
+    assert(menu.toolkitContextState and group(menu, 'equipment').options[1] == actions[3], 'preview failure blocked native organization or leaked its scope')
+    local retainedDrop = false
+    for _, option in ipairs(menu.options) do if option == actions[5] then retainedDrop = true end end
+    assert(retainedDrop, 'another item inherited the failed preview hiding rule')
+    menu:addOption('Late action after preview failure', nil, function() end)
+    assert(menu.toolkitContextState == nil and menu.options[3] == actions[3], 'preview failure left native mutation suppression active')
+    local recovered = Organizer.renderPreview(failedScope, failedScope)
+    assert(#recovered.root > 0, 'retry did not recover the failed preview')
+    for _, row in ipairs(recovered.root) do assert(row.key ~= dropKey, 'retry lost the failed preview item rules') end
+    Organizer.reset()
+end
+print('PASS failed preview releases native hooks and preserves independent item scopes')
 print('Context menu organization checks passed (actual classifier, menu/file boundaries are doubles).')
 
 Organizer.setOverride('callback:ISInventoryPaneContextMenu.onEatItems','consume')
