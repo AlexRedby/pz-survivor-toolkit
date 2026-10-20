@@ -12,11 +12,12 @@ except ImportError:
 INTEGRATIONS = {
     'CleanUI': {
         'owners': ['client/PZSurvivorToolkit/InventoryClasses.lua', 'client/PZSurvivorToolkit/InventoryFilter.lua',
+                   'client/PZSurvivorToolkit/InventorySearch.lua',
                    'client/PZSurvivorToolkit/InventoryLayout.lua', 'client/PZSurvivorToolkit/InventoryInteraction.lua',
                    'client/PZSurvivorToolkit/InventoryTags.lua'],
         'option': 'cleanui_inventory_pane', 'root': 'media/lua/client/ISUI', 'argument': 'ISInventoryPane.lua',
         'tests': {name: ['ISInventoryPane.lua'] for name in (
-            'test_inventory_tags.lua', 'test_inventory_filter.lua', 'test_inventory_layout.lua',
+            'test_inventory_tags.lua', 'test_inventory_filter.lua', 'test_inventory_search.lua', 'test_inventory_layout.lua',
             'test_inventory_interaction.lua')},
     },
     'Navigator': {

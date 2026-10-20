@@ -1,6 +1,7 @@
 local pickerOptions, presetMenuOptions
 require = function(name)
-    if name == "PZSurvivorToolkit/InventoryClasses" or name == "PZSurvivorToolkit/InventoryRows" then
+    if name == "PZSurvivorToolkit/InventoryClasses" or name == "PZSurvivorToolkit/InventoryRows"
+        or name == "PZSurvivorToolkit/InventorySearch" then
         return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
     end
     if name == "PZSurvivorToolkit/TagFilterPresetsMenu" then return {add=function(_,options) presetMenuOptions=options end} end
@@ -22,8 +23,9 @@ PZSurvivorToolkit = {Settings = {inventoryFilters = function() return enabled en
 local starts, toggles = {}, {}
 Events = {OnGameStart = {Add = function(fn) starts[#starts + 1] = fn end}}
 CleanUI_RegisterInventoryUiToggleCallback = function(fn) toggles[#toggles + 1] = fn; fn() end
-getText = function(key) return key end
+getText = function(key) return key == 'IGUI_ItemCat_Tool' and 'Tools' or key end
 getTextOrNull = function(key) if key == 'IGUI_ItemCat_Tool' then return 'Tools' end end
+getSpecificPlayer = function() return {} end
 JoypadState = {players = {}}
 local function button()
     return setmetatable({}, {__index = function(_, name)
@@ -62,6 +64,9 @@ for _, group in ipairs(groups) do
     for _, item in ipairs(group.items) do
         item.getDisplayCategory = function() return group.cat end
         item.getCategory = item.getDisplayCategory
+        item.getName = function() return group.name end
+        item.getDisplayName = item.getName
+        item.getType = item.getName
         item.getUnequippedWeight = function() return 1 end
     end
 end
@@ -126,7 +131,7 @@ assert(not ISInventoryPageTransferHandler.canTransferItem(nil, {}, player))
 assert(ISInventoryPageTransferHandler.canTransferItem(hammer, {}, nil), "CleanUI hover passes no player")
 assert(ISInventoryPageTransferHandler.takeSameType == ISInventoryPageTransferHandler.transferSameType)
 assert(ISInventoryPageTransferHandler.takeSameCategory == ISInventoryPageTransferHandler.transferSameCategory)
-groups[2].matchesSearch = false
+pane.searchText = 'missing'
 pane:refreshContainer()
 assert(#pane.itemslist == 0 and next(pane.selected) == nil, 'zero matches must be empty')
 pane.searchMode, pane.searchText, pane.searchCategoryText = 'category', nil, 'missing'
@@ -273,12 +278,12 @@ pane.toolkitTagRule=nil;pane.toolkitCategory='ModCategory';pane:restoreSelection
 assert(#pane.itemslist==1 and pane.itemslist[1]==groups[4], 'reused rows ignored exact category')
 pane.toolkitCategory=nil;pane.toolkitTag='food';pane:restoreSelection({})
 assert(#pane.itemslist==1 and pane.itemslist[1]==groups[1], 'reused rows ignored single tag')
-pane.toolkitTag=nil;pane.searchMode,pane.searchText='name','hammer';pane:restoreSelection({})
+pane.toolkitTag=nil;pane.searchMode,pane.searchText='name','missing';pane:restoreSelection({})
 assert(#pane.itemslist==0, 'reused rows ignored name search')
-groups[2].matchesSearch=true;pane:restoreSelection({})
-assert(#pane.itemslist==1 and pane.itemslist[1]==groups[2], 'reused rows ignored changed search matches')
+pane.searchText='hammer';pane:restoreSelection({})
+assert(#pane.itemslist==1 and pane.itemslist[1]==groups[2], 'reused rows ignored changed search query')
 pane.searchMode,pane.searchCategoryText='category','tools';pane:restoreSelection({})
-assert(#pane.itemslist==1, 'reused rows ignored category search')
+assert(#pane.itemslist==2, 'reused rows ignored category search')
 pane.searchMode='both';pane:restoreSelection({})
 assert(#pane.itemslist==1, 'reused rows ignored combined search mode')
 enabled=false;pane:restoreSelection({})
@@ -305,6 +310,8 @@ local function plantingItem(fullType, category, recipe)
     item.getDisplayCategory = function(self) return self.category end
     item.getCategory = item.getDisplayCategory
     item.getName = function() return 'Shared planting display name' end
+    item.getDisplayName = item.getName
+    item.getType = function() return fullType:match('%.(.+)$') end
     item.getUnequippedWeight = function() return 1 end
     item.getEquippedWeight = function() return 0.5 end
     item.getContainer = function() return source end
@@ -353,13 +360,15 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
         env.Events={OnGameStart={Add=function(fn) starts[#starts+1]=fn end}}
         env.require=function(name)
             if name=='PZSurvivorToolkit/InventoryClasses' or name=='PZSurvivorToolkit/InventoryRows'
-                or name=='PZSurvivorToolkit/InventoryDetailSort' then
+                or name=='PZSurvivorToolkit/InventoryDetailSort' or name=='PZSurvivorToolkit/InventorySearch' then
                 local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))
                 setfenv(chunk,env);return chunk()
             end
             if name=='PZSurvivorToolkit/InventoryDetailOptions' then return {config=config} end
             if name=='PZSurvivorToolkit/InventoryCapacity' then return {} end
             if name=='PZSurvivorToolkit/InventoryDetails' then return {isConditionItem=function() return false end} end
+            if name=='PZSurvivorToolkit/InventoryPlantingTooltip' or name=='PZSurvivorToolkit/InventoryMediaTooltip'
+                or name=='PZSurvivorToolkit/InventoryClothingTooltip' then return {install=function() end} end
             if name=='ISUI/ISInventoryPane' or name=='ISUI/ISInventoryPage' then return end
             return require(name)
         end
@@ -383,6 +392,8 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
             {'Battery','craftingElectrical_material'},{'Beans','foodNonPerishable_cannedJarred'}}) do
             local item={testItem=true}
             item.getName=function() return spec[1] end
+            item.getDisplayName=item.getName
+            item.getType=item.getName
             item.getDisplayCategory=function() return spec[2] end
             item.getCategory=item.getDisplayCategory
             item.isHidden=function() return false end
@@ -515,3 +526,136 @@ for _,option in ipairs(root.options) do
 end
 groups=originalGroups
 print('Item-aware inventory checks passed: mixed native/virtual stacks, packet state, exact categories, dynamic rules and dropdowns.')
+
+-- CleanUI groups equal display names before OC splits per-instance categories.
+-- The cached group match may describe a different physical child than the
+-- category/tag rule, so visibility must test all conditions on the same item.
+local function renamedItem(typeName, category)
+    local item={category=category}
+    item.getName=function() return 'Shared display name' end
+    item.getDisplayName=item.getName
+    item.getType=function() return typeName end
+    item.getDisplayCategory=function(self) return self.category end
+    item.getCategory=item.getDisplayCategory
+    item.getUnequippedWeight=function() return 1 end
+    item.getContainer=function() return source end
+    return item
+end
+local red=renamedItem('RedNail','Tool')
+local blue=renamedItem('BlueNail','Food')
+local mixedCategories={name='Shared display name',cat='Tool',items={red,red,blue},count=3,
+    realCount=2,weight=2,matchesSearch=true,firstItem=red,cleanUIDisplayItem=red}
+groups={mixedCategories}
+pane.collapsed[mixedCategories.name]=true
+pane.toolkitTag,pane.toolkitTagRule=nil,nil
+pane.searchText,pane.searchCategoryText=nil,nil
+pane.toolkitCategory='Food'
+pane.saved={[red]='group'}
+pane:refreshContainer()
+local foodRow=pane.itemslist[1]
+assert(#pane.itemslist==1 and foodRow.items[1]==blue and foodRow.items[2]==blue and foodRow.cat=='Food',
+    'exact category used the original mixed-stack header instead of each item')
+assert(pane.selected[1]==foodRow and not pane.toolkitVisibleItems[red] and pane.toolkitVisibleItems[blue],
+    'exact-category projection lost group selection or retained a hidden item')
+local categorySet={}
+for _,entry in ipairs(pane.toolkitCategories) do categorySet[entry.id]=true end
+assert(categorySet.Tool and categorySet.Food and #pane.toolkitCategories==2,
+    'category choices omitted a physical child category from the source stack')
+pane.toolkitCategory=nil
+pane.searchMode,pane.searchCategoryText='category','food'
+pane:restoreSelection({})
+assert(#pane.itemslist==1 and pane.itemslist[1].items[1]==blue and not pane.toolkitVisibleItems[red],
+    'category search kept a nonmatching child through the shared group match')
+pane.searchMode,pane.searchText='both','RedNail'
+pane:restoreSelection({})
+assert(#pane.itemslist==0 and next(pane.selected)==nil,
+    'combined search matched name and category on different children')
+pane.searchMode,pane.searchCategoryText='name',nil
+pane.toolkitTag='food'
+pane:restoreSelection({})
+assert(#pane.itemslist==0,'search and tag rule matched different children')
+pane.toolkitTag=nil
+mixedCategories.matchesSearch=false
+pane:restoreSelection({})
+assert(#pane.itemslist==1 and pane.itemslist[1].items[1]==red and not pane.toolkitVisibleItems[blue],
+    'name search trusted a stale group match or kept a different script type')
+pane:transferItemsByWeight({red,blue},source)
+assert(#pane.transferred==1 and pane.transferred[1]==red,'mixed-stack search transferred a rejected child')
+pane.searchText=nil;pane.toolkitCategory='Food';pane:restoreSelection({})
+assert(pane.itemslist[1].items[1]==blue,'repeated restore lost a previously hidden category')
+pane.toolkitCategory='Tool';pane:restoreSelection({})
+assert(pane.itemslist[1].items[1]==red and #pane.toolkitUnfilteredRows==1 and #mixedCategories.items==3
+    and mixedCategories.items[1]==red and mixedCategories.cat=='Tool',
+    'repeated item predicates mutated the source universe or lost the original header')
+
+-- OC can split a CleanUI virtual stack into a headerless row while resetting
+-- the optimization flag. Its explicit physical start remains authoritative.
+mixedCategories.cleanUILargeStackOptimized=false
+mixedCategories.cleanUIFirstActualIndex=1
+mixedCategories.items={red,blue}
+pane.toolkitCategory=nil;pane.searchMode,pane.searchText='name','RedNail'
+pane:refreshContainer()
+assert(#pane.itemslist==1 and #pane.itemslist[1].items==1 and pane.itemslist[1].items[1]==red
+    and pane.itemslist[1].cleanUIFirstActualIndex==1,
+    'headerless OC row skipped its first physical item or gained a dummy header')
+pane.searchText=nil;pane.toolkitCategory='Food';pane:restoreSelection(pane.saved)
+assert(#pane.itemslist[1].items==1 and pane.itemslist[1].items[1]==blue and pane.selected[1]==pane.itemslist[1],
+    'headerless category projection lost the changed group header selection')
+pane.toolkitCategory=nil;pane:restoreSelection({})
+assert(pane.itemslist[1]==mixedCategories and #mixedCategories.items==2,
+    'clearing headerless projection did not restore the unfiltered stack')
+groups=originalGroups
+print('Mixed-category search checks passed: one physical predicate, source choices, selection and OC headerless rows.')
+
+-- Exercise the real late category split: it replaces the filtered row array
+-- after the native restore, so display identity cannot own the full universe.
+if OCDisplayOverrideSource then
+    local first=assert(OCDisplayOverrideSource:find('local function itemDisplayCategory(item)',1,true))
+    local last=assert(OCDisplayOverrideSource:find('-- refreshContainer also fires',first,true))
+    local environment=setmetatable({OrganizedCategories={},
+        instanceof=function(item) return type(item)=='table' and item.getDisplayCategory~=nil end}, {__index=_G})
+    local chunk=assert(loadstring('local luaStr=tostring; local persistEnabled=function() return true end\n'..
+        'local function tableHasEntries(t) return t and next(t)~=nil end; local sessionInstanceOverrides={}\n'..
+        OCDisplayOverrideSource:sub(first,last-1)..'\nreturn OrganizedCategories.splitStacksByDisplayCategory'))
+    setfenv(chunk,environment)
+    local split=chunk()
+    local excluded=renamedItem('ExcludedType','medicalTreatment')
+    excluded.getName=function() return 'Excluded display name' end
+    excluded.getDisplayName=excluded.getName
+    local shared={name='Shared display name',cat='Tool',items={red,red,blue},count=3,realCount=2,
+        firstItem=red,cleanUIDisplayItem=red,cleanUIFirstActualIndex=2}
+    groups={shared,{name='Excluded display name',cat='medicalTreatment',items={excluded,excluded},count=2}}
+    pane.toolkitTag,pane.toolkitTagRule,pane.toolkitCategory=nil,nil,nil
+    pane.searchMode,pane.searchText,pane.searchCategoryText='name','Shared display name',nil
+    pane.saved={}
+    local originalRefresh=class.refreshContainer
+    class.refreshContainer=function(self,...)
+        local result=originalRefresh(self,...)
+        split(self)
+        return result
+    end
+    pane:refreshContainer()
+    assert(#pane.toolkitCategories==3 and #pane.itemslist==2 and pane.itemslist~=pane.toolkitFilteredRows,
+        'Actual OC fixture did not replace the filtered mixed-category row array')
+    local firstSplit,secondSplit=pane.itemslist[1],pane.itemslist[2]
+    for pass=1,2 do
+        pane:restoreSelection({})
+        local choices={}
+        for _,entry in ipairs(pane.toolkitCategories) do choices[entry.id]=true end
+        assert(choices.Tool and choices.Food and choices.medicalTreatment and #pane.toolkitCategories==3,
+            'Late OC split caused a repeated restore to discard the excluded category universe')
+        assert(#pane.itemslist==2 and pane.itemslist[1]==firstSplit and pane.itemslist[2]==secondSplit,
+            'Full-universe recovery discarded OC split group identity or order')
+        assert(not pane.toolkitVisibleItems[excluded],'Full-universe recovery made a rejected item visible')
+    end
+    root=rootMenu()
+    for _,option in ipairs(root.options) do if option.name=='UI_PZST_TagRule' then combined=option end end
+    combined.callback(combined.target)
+    local preview={}
+    for _,item in ipairs(pickerOptions.items) do preview[item]=true end
+    assert(#pickerOptions.items==3 and preview[red] and preview[blue] and preview[excluded],
+        'Combined picker lost excluded source items after a late OC category split')
+    class.refreshContainer=originalRefresh
+    groups=originalGroups
+    print('Actual OC category split retains full choices/picker universe and current split projection.')
+end

@@ -146,7 +146,7 @@ class ModIntegrations(unittest.TestCase):
         ini.write_text(ini.read_text().strip() + ';CleanUI\n')
         self.lock_sources()
         cases = [('CleanUI', 'cleanui_inventory_pane', pane,
-                  {'test_inventory_tags.lua', 'test_inventory_filter.lua', 'test_inventory_layout.lua',
+                  {'test_inventory_tags.lua', 'test_inventory_filter.lua', 'test_inventory_search.lua', 'test_inventory_layout.lua',
                    'test_inventory_interaction.lua'})]
         for id, option, source, checks in cases:
             with self.subTest(id=id):

@@ -339,8 +339,43 @@ def _verify_selection(root, selection, issues):
             issues.append('Inventory selection offsets do not prove capped-stack and Shift ordering')
     if not complete(selection, 'client1', text) or MARKER + 'FAIL ' in text:
         issues.append('Missing inventory selection completion or fatal fixture marker')
+    filters = _records(text, 'FILTERING', issues)
+    if [row.get('mode') for row in filters] != expected:
+        issues.append('Missing, duplicate or out-of-order physical filtering classes')
+    provider = 'organizedCategories_core' if 'organizedCategories_core' in selection.get('mods', []) else 'native-instance'
+    for row in filters:
+        mode = row.get('mode')
+        left, right = row.get('leftId'), row.get('rightId')
+        checks = row.get('checks')
+        cases = ['exact-right', 'exact-left', 'tag-left']
+        if mode == 'clean':
+            cases += ['search-name', 'search-shared', 'search-category', 'search-both-disjoint', 'search-both-match']
+        cases += ['clear']
+        if (row.get('status') != 'passed' or row.get('provider') != provider
+                or row.get('searchInput') != ('CleanUI.searchContainer' if mode == 'clean' else 'unsupported')
+                or row.get('sameName') is not True or row.get('distinctTypes') is not True
+                or type(row.get('sourceCategoryCount')) is not int or row['sourceCategoryCount'] < 3
+                or any(not isinstance(value, str) or not value.isdigit() for value in (left, right)) or left == right
+                or type(row.get('itemCountBefore')) is not int or row['itemCountBefore'] < 2
+                or type(row.get('itemCountAfter')) is not int or row['itemCountAfter'] != row['itemCountBefore']
+                or not isinstance(checks, list) or any(not isinstance(check, dict) for check in checks)
+                or [check.get('case') for check in checks] != cases):
+            issues.append('Invalid physical filtering receipt for ' + str(mode))
+            continue
+        expected_visible = {'exact-right': [right], 'exact-left': [left], 'tag-left': [left],
+                            'search-name': [left], 'search-shared': [left, right],
+                            'search-category': [right], 'search-both-disjoint': [],
+                            'search-both-match': [right], 'clear': [left, right]}
+        for check in checks:
+            name = check['case']
+            if (check.get('visible') != expected_visible[name] or check.get('transferVisible') != expected_visible[name]
+                    or check.get('categoryUniverse') is not True
+                    or check.get('repeatedRestore') is not True
+                    or name == 'exact-right' and check.get('selectionPreserved') is not True):
+                issues.append('Physical filtering ' + str(mode) + ' failed ' + name + ' visibility, transfer or selection evidence')
     return {'outcomes': [{'actor': 'client1', 'case': 'selection',
                           'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
-            'evidence': {'selection': rows, 'limits': [
+            'evidence': {'selection': rows, 'filtering': filters, 'limits': [
                 'Real SP player panes and native callbacks; Shift uses temporary key predicates, not physical input. '
-                'No Host, controller or natural long-session selection coverage.']}}
+                'CleanUI vanilla/native panes check category and tags; search is exercised only through CleanUI.searchContainer. '
+                'Transfer visibility is checked without moving items. No Host, controller or natural long-session selection coverage.']}}

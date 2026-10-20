@@ -1,5 +1,6 @@
 local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 local Rows = require "PZSurvivorToolkit/InventoryRows"
+local Search = require "PZSurvivorToolkit/InventorySearch"
 require "PZSurvivorToolkit/Settings"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
 local Tags = require "PZSurvivorToolkit/ItemTags"
@@ -17,9 +18,7 @@ local function categoryName(category)
 end
 
 local function hasSearch(pane)
-    local mode = pane.searchMode or "name"
-    return (mode ~= "category" and pane.searchText and pane.searchText ~= "")
-        or (mode ~= "name" and pane.searchCategoryText and pane.searchCategoryText ~= "")
+    return Search.forPane(pane) ~= nil
 end
 
 local function tagRule(pane)
@@ -38,12 +37,12 @@ local function visibleForTransfer(pane, item)
     return not fromPane or pane.toolkitVisibleItems[item] == true
 end
 
-local function filterGroup(group, rule, itemTags)
+local function filterGroup(group, accepts)
     local items = {}
-    local first = group.cleanUILargeStackOptimized and 1 or 2
+    local first = group.cleanUIFirstActualIndex or (group.cleanUILargeStackOptimized and 1 or 2)
     for index = first, #group.items do
         local item = group.items[index]
-        if Tags.matchesRule(itemTags[item], rule) then
+        if accepts(item) then
             items[#items + 1] = item
         end
     end
@@ -58,6 +57,7 @@ local function filterGroup(group, rule, itemTags)
         if group.equipped then equippedWeight = equippedWeight + item:getEquippedWeight() end
     end
     copy.firstItem, copy.cleanUIDisplayItem = items[1], items[1]
+    copy.cat = items[1]:getDisplayCategory() or items[1]:getCategory()
     copy.realCount, copy.count, copy.weight, copy.equippedWeight = #items, #items + 1, weight, equippedWeight
     copy.cleanUIStackCountSuffix = " (" .. #items .. ")"
     copy.cleanUIWeightText, copy.cleanUITooltipWeight = nil, nil
@@ -76,38 +76,56 @@ local function applyFilter(pane, selected)
     pane.toolkitUnfilteredRows = pane.itemslist
     pane.toolkitVisibleItems = nil
     if not Toolkit.Settings.inventoryFilters() then return end
+    -- Choices belong to the full refresh, not a later split/pinned projection.
+    -- Keep physical references so changed instance categories are still live.
+    if not pane.toolkitFilterItems then
+        local items, seen = {}, {}
+        for _, group in ipairs(pane.itemslist) do
+            for _, item in ipairs(group.items or {}) do
+                if not seen[item] then items[#items + 1], seen[item] = item, true end
+            end
+        end
+        pane.toolkitFilterItems = items
+    end
     local categories, kept, visible, equipped, itemTags = {}, {}, {}, false, {}
-    local search = hasSearch(pane)
+    local tagsEnabled = Tags.enabled()
+    local function tagsFor(item)
+        if not itemTags[item] then itemTags[item] = Tags.forItem(item) end
+        return itemTags[item]
+    end
+    for _, item in ipairs(pane.toolkitFilterItems) do
+        local category = item:getDisplayCategory() or item:getCategory()
+        if category then categories[category] = true end
+        if tagsEnabled then
+            for _, id in ipairs(tagsFor(item)) do pane.toolkitTags[id] = true end
+        end
+    end
+    local search = Search.forPane(pane)
     local filterTags = tagFilterActive(pane)
+    local active = pane.toolkitCategory or filterTags or search
+    local rule = filterTags and tagRule(pane)
+    local function accepts(item)
+        local category = item:getDisplayCategory() or item:getCategory()
+        return (not pane.toolkitCategory or category == pane.toolkitCategory)
+            and Search.matches(search, item)
+            and (not filterTags or Tags.matchesRule(tagsFor(item), rule))
+    end
     local remappedSelection
     for _, group in ipairs(pane.itemslist) do
         if group.type ~= "separator" then
-            local category = group.cat
-            if category then categories[category] = true end
-            if Tags.enabled() then
-                for _, item in ipairs(group.items) do
-                    if not itemTags[item] then
-                        itemTags[item] = Tags.forItem(item)
-                        for _, id in ipairs(itemTags[item]) do pane.toolkitTags[id] = true end
+            local shown = group
+            if active then shown = filterGroup(group, accepts) end
+            if shown then
+                kept[group] = shown
+                if shown ~= group and selected and selected[group.items[1]] == "group" then
+                    if not remappedSelection then
+                        remappedSelection = {}
+                        for item, state in pairs(selected) do remappedSelection[item] = state end
                     end
+                    remappedSelection[shown.items[1]] = "group"
                 end
-            end
-            if (not pane.toolkitCategory or category == pane.toolkitCategory)
-                and (not search or group.matchesSearch) then
-                local shown = group
-                if filterTags then shown = filterGroup(group, tagRule(pane), itemTags) end
-                if shown then
-                    kept[group] = shown
-                    if shown ~= group and selected and selected[group.items[1]] == "group" then
-                        if not remappedSelection then
-                            remappedSelection = {}
-                            for item, state in pairs(selected) do remappedSelection[item] = state end
-                        end
-                        remappedSelection[shown.items[1]] = "group"
-                    end
-                    equipped = equipped or group.equipped
-                    for _, item in ipairs(shown.items) do visible[item] = true end
-                end
+                equipped = equipped or group.equipped
+                for _, item in ipairs(shown.items) do visible[item] = true end
             end
         end
     end
@@ -115,7 +133,7 @@ local function applyFilter(pane, selected)
         pane.toolkitCategories[#pane.toolkitCategories + 1] = {id = category, name = categoryName(category)}
     end
     table.sort(pane.toolkitCategories, function(a, b) return a.name < b.name end)
-    if not pane.toolkitCategory and not tagFilterActive(pane) and not search then return end
+    if not active then return end
     pane.toolkitVisibleItems = visible
     local rows = {}
     for _, group in ipairs(pane.itemslist) do
@@ -153,15 +171,9 @@ end
 
 local function showTagRule(pane)
     pane:refreshContainer()
-    local categories, items, seen = {}, {}, {}
+    local categories, items = {}, {}
     for _, entry in ipairs(pane.toolkitCategories) do categories[#categories + 1] = entry.id end
-    for _, group in ipairs(pane.toolkitUnfilteredRows or pane.itemslist) do
-        if group.type ~= "separator" then
-            for _, item in ipairs(group.items) do
-                if not seen[item] then items[#items + 1], seen[item] = item, true end
-            end
-        end
-    end
+    for _, item in ipairs(pane.toolkitFilterItems or {}) do items[#items + 1] = item end
     TagRulePicker.open({player=pane.player, owner=pane, rule=tagRule(pane), categories=categories, items=items,
         onApply=function(rule) selectRule(pane, rule) end})
 end
@@ -241,6 +253,11 @@ end
 local function install(class)
     if not class or patched[class] then return end
     patched[class] = true
+    local refresh = class.refreshContainer
+    class.refreshContainer = function(self, ...)
+        self.toolkitFilterItems = nil
+        return refresh(self, ...)
+    end
     local restore, prerender, transfer = class.restoreSelection, class.prerender, class.transferItemsByWeight
     class.restoreSelection = function(self, selected)
         local saved = applyFilter(self, selected) or selected

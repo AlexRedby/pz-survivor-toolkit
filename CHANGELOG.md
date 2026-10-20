@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.157
+
+- **Fixed:** Inventory search, exact categories and tag filters now match each physical item before building visible stacks. Same-name items with different individual categories no longer disappear together or satisfy different parts of one search. Category choices, selection and outgoing bulk transfers follow the resulting view in native and CleanUI inventories.
+
 ### 0.1.156
 
 - **Changed:** The heavy Realistic Dashboard replaces its pull knob and printed label with a Polaris-style three-position headlight rocker. Its upper/lower halves step between off, low and high; distinct raised edges and recess shadows show the selection at every dashboard scale. Native headlight power commands, pending acknowledgements and external hotkey/radial changes remain authoritative.

@@ -103,9 +103,29 @@ class PinnedItemsTests(unittest.TestCase):
                 'repeatedRefresh': True, 'shiftRange': True, 'markerGeometry': True,
                 'markerPasses': 6 if mode == 'clean' else 5}
 
-    def verify_selection(self, rows):
-        self.selection.update(cases=['selection'], mods=['PZSurvivorToolkit', 'EURY_CONTAINERS', 'CleanUI'])
+    def filtering_record(self, mode, provider='native-instance'):
+        visible = {'exact-right': ['682'], 'exact-left': ['681'], 'tag-left': ['681'],
+                   'search-name': ['681'], 'search-shared': ['681', '682'], 'search-category': ['682'],
+                   'search-both-disjoint': [], 'search-both-match': ['682'], 'clear': ['681', '682']}
+        cases = ['exact-right', 'exact-left', 'tag-left']
+        if mode == 'clean':
+            cases += ['search-name', 'search-shared', 'search-category', 'search-both-disjoint', 'search-both-match']
+        cases += ['clear']
+        return {'mode': mode, 'status': 'passed', 'provider': provider,
+                'searchInput': 'CleanUI.searchContainer' if mode == 'clean' else 'unsupported',
+                'leftId': '681', 'rightId': '682', 'sameName': True, 'distinctTypes': True,
+                'sourceCategoryCount': 3,
+                'itemCountBefore': 60, 'itemCountAfter': 60,
+                'checks': [{'case': name, 'visible': visible[name], 'transferVisible': list(visible[name]),
+                            'categoryUniverse': True, 'repeatedRestore': True, 'selectionPreserved': name == 'exact-right'}
+                           for name in cases]}
+
+    def verify_selection(self, rows, filters=None, mods=None):
+        self.selection.update(cases=['selection'], mods=mods or ['PZSurvivorToolkit', 'EURY_CONTAINERS', 'CleanUI'])
+        if filters is None:
+            filters = [self.filtering_record(row['mode']) for row in rows]
         log = ''.join('[PIN_ITEMS] SELECTION ' + json.dumps(row) + '\n' for row in rows)
+        log += ''.join('[PIN_ITEMS] FILTERING ' + json.dumps(row) + '\n' for row in filters)
         (self.root / 'client1-launch.log').write_text(log + '[PIN_ITEMS] COMPLETE selection\n')
         return pinned_items.verify(self.root, self.selection, {})
 
@@ -129,7 +149,8 @@ class PinnedItemsTests(unittest.TestCase):
         self.selection['mods'].remove('CleanUI')
         native = dict(rows[1], **{'class': 'ISInventoryPane'})
         (self.root / 'client1-launch.log').write_text(
-            '[PIN_ITEMS] SELECTION ' + json.dumps(native) + '\n[PIN_ITEMS] COMPLETE selection\n')
+            '[PIN_ITEMS] SELECTION ' + json.dumps(native) + '\n' +
+            '[PIN_ITEMS] FILTERING ' + json.dumps(self.filtering_record('vanilla')) + '\n[PIN_ITEMS] COMPLETE selection\n')
         self.assertEqual([], pinned_items.verify(self.root, self.selection, {})['issues'])
 
     def test_inventory_selection_rejects_lost_semantics_and_wrong_visible_rows(self):
@@ -143,6 +164,43 @@ class PinnedItemsTests(unittest.TestCase):
                 result = self.verify_selection([dict(rows[0], **change), rows[1]])
                 self.assertTrue(result['issues'])
                 self.assertEqual('failed', result['outcomes'][0]['status'])
+
+    def test_inventory_filtering_requires_physical_receipts_for_each_class(self):
+        rows = [self.selection_record(mode) for mode in ('clean', 'vanilla')]
+        filters = [self.filtering_record(mode) for mode in ('clean', 'vanilla')]
+        result = self.verify_selection(rows, filters)
+        self.assertEqual([], result['issues'])
+        self.assertEqual(filters, result['evidence']['filtering'])
+        for wrong in ([], filters[:1], filters[::-1], filters + filters[-1:]):
+            with self.subTest(filters=wrong):
+                self.assertTrue(self.verify_selection(rows, wrong)['issues'])
+        mods = ['PZSurvivorToolkit', 'EURY_CONTAINERS', 'CleanUI', 'organizedCategories_core']
+        self.assertTrue(self.verify_selection(rows, filters, mods)['issues'])
+        organized = [self.filtering_record(mode, 'organizedCategories_core') for mode in ('clean', 'vanilla')]
+        self.assertEqual([], self.verify_selection(rows, organized, mods)['issues'])
+
+    def test_inventory_filtering_rejects_cross_child_matches_lost_universe_and_bad_selection(self):
+        rows = [self.selection_record(mode) for mode in ('clean', 'vanilla')]
+        for case, change in (('search-both-disjoint', {'visible': ['681']}),
+                             ('search-name', {'transferVisible': ['681', '682']}),
+                             ('clear', {'visible': ['681']}),
+                             ('exact-left', {'categoryUniverse': False}),
+                             ('search-shared', {'repeatedRestore': False}),
+                             ('exact-right', {'selectionPreserved': False})):
+            with self.subTest(case=case, change=change):
+                filters = [self.filtering_record(mode) for mode in ('clean', 'vanilla')]
+                next(check for check in filters[0]['checks'] if check['case'] == case).update(change)
+                result = self.verify_selection(rows, filters)
+                self.assertTrue(result['issues'])
+                self.assertEqual('failed', result['outcomes'][0]['status'])
+        for change in ({'leftId': '682'}, {'rightId': None}, {'itemCountAfter': 59},
+                       {'checks': []}, {'status': 'failed'}, {'sameName': False}, {'sourceCategoryCount': 2}):
+            with self.subTest(change=change):
+                filters = [dict(self.filtering_record('clean'), **change), self.filtering_record('vanilla')]
+                self.assertTrue(self.verify_selection(rows, filters)['issues'])
+        filters = [self.filtering_record(mode) for mode in ('clean', 'vanilla')]
+        filters[1]['searchInput'] = 'CleanUI.searchContainer'
+        self.assertTrue(self.verify_selection(rows, filters)['issues'])
     def test_verifier_accepts_ordered_scenes_and_rejects_missing_duplicate_and_bad_records(self):
         rows = [self.record(scene) for scene in pinned_items.SCENES]
         self.assertEqual([], self.verify(rows)['issues'])

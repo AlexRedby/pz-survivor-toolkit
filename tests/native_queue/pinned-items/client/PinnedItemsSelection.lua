@@ -1,6 +1,7 @@
 -- Real native panes and row construction; only keyboard predicates are injected.
 local F = {}
 local quote = require('PinnedItemsFixture').quote
+local filtering = require 'PinnedItemsFiltering'
 
 function F.start(config)
     local clean = getActivatedMods():contains('CleanUI')
@@ -219,6 +220,7 @@ function F.start(config)
             if row and (not lastChild or row>findRow(pane,lastChild)) then lastChild=item end
         end
         local capRow=selectAndRefresh(pane,assert(lastChild),'item')
+        filtering.probe(pane,mode)
         local markerPasses=markers(pane,mode)
         print('[PIN_ITEMS] SELECTION {"mode":'..quote(mode)..',"status":"passed","input":"programmatic-key-predicates"'..
             ',"class":'..quote(mode=='clean' and 'CleanUI_Clean_ISInventoryPane' or clean and 'CleanUI_Vanilla_ISInventoryPane' or 'ISInventoryPane')..
@@ -237,13 +239,19 @@ function F.start(config)
             if not mode then done=true;print('[PIN_ITEMS] COMPLETE selection');return end
             if F.shotPhase then
                 -- Screenshot reads the last completed frame, not this tick's draw calls.
-                getCore():TakeFullScreenshot('pin-markers-'..mode..'-'..F.shotPhase..'.png')
+                local filename=F.shotPhase=='filter' and 'pin-filter-'..mode..'.png'
+                    or 'pin-markers-'..mode..'-'..F.shotPhase..'.png'
+                getCore():TakeFullScreenshot(filename)
                 if F.shotPhase=='collapsed' then
                     local pane=getPlayerInventory(0).inventoryPane
                     pane.collapsed[groupFor(pane,stack[1]).name]=false
                     render(pane)
                     F.shotPhase='expanded';nextAt=getTimestampMs()+750
+                elseif F.shotPhase=='expanded' then
+                    filtering.snapshot(getPlayerInventory(0).inventoryPane,mode)
+                    F.shotPhase='filter';nextAt=getTimestampMs()+750
                 else
+                    filtering.clear(getPlayerInventory(0).inventoryPane)
                     modeIndex=modeIndex+1;F.modeReady=false;F.shotPhase=nil;nextAt=getTimestampMs()+100
                 end
                 return
@@ -252,10 +260,14 @@ function F.start(config)
                 if clean then CleanUI_setCleanInventoryUIEnabled(mode=='clean') end
                 F.modeReady=true;nextAt=getTimestampMs()+700;return
             end
-            -- Preserve the failing baseline receipt and continue the other native class.
+            -- Stop on the original failure before scheduling marker screenshots
+            -- against a partially filtered fixture.
             local passed,reason=pcall(probe,mode)
             if not passed then
                 print('[PIN_ITEMS] SELECTION {"mode":'..quote(mode)..',"status":"failed","reason":'..quote(reason)..'}')
+                done=true
+                print('[PIN_ITEMS] FAIL selection '..tostring(reason))
+                return
             end
             F.shotPhase='collapsed';nextAt=getTimestampMs()+750
         end)
