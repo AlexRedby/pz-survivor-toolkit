@@ -81,7 +81,13 @@ local availableCats = {'OC_Food', 'OC_FoodPerishable', 'OC_Electrical', 'OC_Food
 adapter = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/QuartermasterTags.lua')
 assert(#starts == 0 and #creates == 0 and adapter.attach == nil,
     'tag helpers installed lifecycle hooks or retained per-instance attachment')
-local createFixture = dofile(ProjectRoot .. '/tests/support/quartermaster_picker_source.lua')
+local createSourceFixture = dofile(ProjectRoot .. '/tests/support/quartermaster_picker_source.lua')
+local function createFixture(...)
+    local fixture = createSourceFixture(...)
+    dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/LootSorter_Presets.lua')
+    LootSorter.arePresetsSynced = function() return true end
+    return fixture
+end
 local fixture = createFixture(control, ruleApi, {categories = function() return availableCats end,
     scriptItems = function() catalogReads = catalogReads + 1; return scriptCatalog end,
     cats = storedCats, items = storedItems})
@@ -456,3 +462,56 @@ local function checkSaveContract()
     print('Owned Quartermaster picker Save contract passed: complete publication, asynchronous verdicts and owner guards.')
 end
 checkSaveContract()
+
+
+-- The picker projects dead links privately; scans and merely opening/rendering the editor do not
+-- publish a stale client object. Copy remains a lossless snapshot of the stored designation.
+do
+    local fixture = createFixture(control, ruleApi)
+    local obj, store, synced = fixture.object, {}, true
+    local originalIsClient = isClient
+    obj.md.LSBoxPresets = {['0'] = {Pantry = 10, Missing = 30, Valid = 20, Legacy = true}}
+    LootSorter.getPresetStore = function() return store end
+    LootSorter.arePresetsSynced = function() return synced end
+    local p = fixture.open()
+    fixture.save(p)
+    assert(p.selectedPresets.Pantry == 10 and p.selectedPresets.Missing == 30
+        and fixture.pendingRule().configuration.presets.Pantry == 10,
+        'SP picker removed world links absent from the per-machine library')
+    fixture.reply('stale')
+    isClient = function() return true end
+    synced = false
+    p = fixture.open()
+    assert(p.selectedPresets.Pantry == 10 and p.selectedPresets.Missing == 30
+        and p.btnModePreset.title == 'Presets (4)', 'unsynced picker discarded stored preset links')
+    store = {Pantry = {gen = 11}, Valid = {gen = 20}, Legacy = {gen = 40}}
+    synced = true
+    p.btnModePreset.onclick(p); p:prerender()
+    assert(not p.selectedPresets.Pantry and not p.selectedPresets.Missing
+        and p.selectedPresets.Valid == 20 and p.selectedPresets.Legacy == true
+        and p.btnModePreset.title == 'Presets (2)', 'picker did not resolve links after synchronization')
+    assert(find(p, 'Pantry') and find(p, 'Valid'), 'link projection hid an available preset row')
+    p.onlyChecked, p.needRebuild = true, true
+    p:prerender()
+    assert(not find(p, 'Pantry') and find(p, 'Valid') and find(p, 'Legacy'),
+        'Only Checked retained a different preset generation')
+    assert(#fixture.publications == 0 and fixture.coordinates() == 0
+        and obj.md.LSBoxPresets['0'].Pantry == 10 and obj.md.LSBoxPresets['0'].Missing == 30,
+        'picker read published or mutated the stored designation')
+    local copied = LootSorter.copyDesignation(obj, 0)
+    assert(copied.presets.Pantry == 10 and copied.presets.Missing == 30,
+        'read-side projection changed lossless Copy sorting')
+    -- Save can run before another prerender after a new snapshot arrives.
+    p.selectedPresets.Pantry = 10
+    fixture.save(p)
+    local pending = assert(fixture.pendingRule()).configuration
+    assert(not pending.presets.Pantry and not pending.presets.Missing and pending.presets.Valid == 20,
+        'Save submitted links excluded by checked/count projection')
+    assert(obj.md.LSBoxPresets['0'].Pantry == 10 and #fixture.publications == 0,
+        'Save cleaned object links before authority acceptance')
+    fixture.reply('ok')
+    assert(not obj.md.LSBoxPresets['0'].Pantry and obj.md.LSBoxPresets['0'].Valid == 20
+        and #fixture.publications == 1, 'ordinary accepted Save did not own link cleanup')
+    isClient = originalIsClient
+end
+print('Quartermaster preset-link view passed: delayed sync, generations, checked/count/save consistency, read-only projection and lossless Copy.')

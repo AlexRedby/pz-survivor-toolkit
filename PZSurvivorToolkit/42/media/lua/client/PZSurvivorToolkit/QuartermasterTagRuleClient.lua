@@ -53,16 +53,6 @@ Events.OnTick.Add(function()
         pending[token] = nil; request.callback("timeout")
     end
 end)
-Events.OnReceiveGlobalModData.Add(function(key, value)
-    if type(value) ~= "table" then return end
-    if key == Rules.STORE then Rules.received = value.presets or {}
-    elseif key ~= "LootSorter_Presets" then return end
-    local picker = LootSorter and LootSorter._presetEditor
-    if picker and not picker.toolkitTagRuleTouched then
-        local presets = key == "LootSorter_Presets" and value.presets or LootSorter.getPresetStore()
-        picker.toolkitTagRule = Rules.getPreset(picker.presetName, presets and presets[picker.presetName])
-    end
-end)
 Events.OnGameStart.Add(function()
     pending = {}
 end)

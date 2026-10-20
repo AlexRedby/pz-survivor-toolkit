@@ -1,5 +1,11 @@
-local Fixture={}
+local Fixture={presetName='PZST distribution preset'}
+local Presets=require 'PZSurvivorToolkit/QuartermasterPresets'
+local Rules=require 'PZSurvivorToolkit/QuartermasterTagRules'
 local kinds={'Base.Nails','Base.Apple','Base.LargeStone','Base.Apple'}
+function Fixture.empty(values)
+ for _ in pairs(values)do return false end
+ return true
+end
 function Fixture.place(player)
  local origin=player:getCurrentSquare()
  for radius=2,16 do for dx=-radius,radius do for dy=-radius,radius do
@@ -94,11 +100,18 @@ function Fixture.receipt(player,boxes,ids,original)
   for id,count in pairs(pools[4])do assert(original[id]==count,'distribution left carried items')end
  end
  -- Confirm the editor's complete field write on both the actor and Host authority, including
- -- clearing the pasted item designation while retaining the accepted tag rule.
+ -- clearing the pasted item designation while retaining the accepted rule (a linked preset in Host).
  local md2,md3=boxes[2]:getModData(),boxes[3]:getModData()
  local item=boxes[2]:getContainer():getItemById(ids[1])
  local items2=md2.LSBoxItems and md2.LSBoxItems['0']
- local rule=md3.PZSTQuartermasterTagRules and md3.PZSTQuartermasterTagRules['0']
+ local rule=Rules.getBox(boxes[3],0)
+ if isClient() or isServer()then
+  local preset=Presets.native()[Fixture.presetName]
+  local links=md3.LSBoxPresets and md3.LSBoxPresets['0']
+  if not preset or preset.rev~=2 or not links or links[Fixture.presetName]~=preset.gen
+   or not Fixture.empty(preset.cats) or not Fixture.empty(preset.items) or rule then return nil,'awaiting complete linked preset' end
+  rule=Rules.getPreset(Fixture.presetName,preset)
+ end
  if not items2 or not items2[item:getDisplayName()] or not md2.LSBoxPriority or md2.LSBoxPriority['0']~=5
   or (md3.LSBoxItems and md3.LSBoxItems['0']) or not md3.LSBoxPriority or md3.LSBoxPriority['0']~=7
   or not rule or rule.mode~='all' or #rule.include~=2 or rule.include[1]~='food' or rule.include[2]~='perishable'
@@ -108,6 +121,10 @@ function Fixture.receipt(player,boxes,ids,original)
  return {items=rows,moved=2,retained=2,favorite=true}
 end
 function Fixture.cleanup(state)
+ if isServer()then
+  local preset=assert(Presets.native()[Fixture.presetName])
+  assert(LootSorter.serverFns.removePreset(state.player,{name=Fixture.presetName,baseGen=preset.gen})=='ok')
+ end
  for _,box in ipairs(state.boxes)do
   assert(box:getModData().PZSTDistributionFixture,'refusing foreign crate cleanup')
   box:getSquare():transmitRemoveItemFromSquare(box)

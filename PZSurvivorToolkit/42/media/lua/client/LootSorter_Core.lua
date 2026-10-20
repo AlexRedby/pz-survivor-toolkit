@@ -128,45 +128,6 @@ function LootSorter.getBoxPresets(obj, ci)
     return md.LSBoxPresets[tostring(ci)]
 end
 
--- Drop links that no longer resolve, using the same predicate as resolution so a link can't be too
--- dead to sort with but too alive to clean up.
-local function pruneDeadPresetLinks(sq)
-    -- MP only. There the store is the server's, shared and saved with the world, so a preset's
-    -- absence is authoritative. In SP the store is a per-machine file while the links are per-world,
-    -- so absence proves nothing and deleting on it can't be undone.
-    if not isClient() then return end
-    if not LootSorter.arePresetsSynced() then return end
-    local store = LootSorter.getPresetStore()
-    -- An empty store is indistinguishable from one that never arrived, and deleting on that basis
-    -- can't be undone.
-    local storeHasAny = false
-    for _ in pairs(store) do storeHasAny = true; break end
-    if not storeHasAny then return end
-    local objs = sq:getObjects()
-    for i = 0, objs:size() - 1 do
-        local obj = objs:get(i)
-        if obj and obj.hasModData and obj:hasModData() then
-            local md = obj:getModData()
-            local dropped = false
-            if md.LSBoxPresets then
-                for _, links in pairs(md.LSBoxPresets) do
-                    if type(links) == "table" then
-                        for name, link in pairs(links) do
-                            if not LootSorter.linkResolves(store[name], link) then
-                                links[name] = nil; dropped = true
-                            end
-                        end
-                    end
-                end
-            end
-            if dropped then
-                if obj.transmitModData then obj:transmitModData() end
-                LootSorter.DBG("dropped dead preset link(s) on a box")
-            end
-        end
-    end
-end
-
 -- Ask the server to add or drop this tile's coord. Uses the raw predicate, not the preset-resolved
 -- one: a client whose preset store hasn't synced yet resolves a presets-only box to nothing, and
 -- would tell the server to drop a box that does exist.
@@ -410,6 +371,9 @@ end
 ----------------------------------------------------------------------
 
 -- Find designated boxes near the player using the coord index (NOT a world scan).
+-- The raw index conservatively retains preset-linked candidates even when their links no longer
+-- resolve. Resolution ignores those links; scanning must not rewrite an object's ModData from a
+-- client snapshot. An ordinary configuration save owns any cleanup of that container's links.
 -- For each registered coord within range: verify a designated box is still on that tile (reading
 -- its categories live off the object's ModData), collect it, and self-heal coords whose box is gone.
 -- Boxes are ordered floor-first (current floor before any other) then by chebyshev x/y -- reaching
@@ -453,14 +417,13 @@ local function gatherBoxes(player)
             if cheb <= R and adz <= ZR then        -- range filter (cheap); skip far coords (keep them)
                 local sq = cell:getGridSquare(sx, sy, sz)
                 -- Skip a safehouse we may not loot BEFORE anything else touches the square: not ours
-                -- to read, prune, or self-heal. Dropping the coord here would delete another player's
+                -- to read or self-heal. Dropping the coord here would delete another player's
                 -- box from the index for everyone.
                 if sq and not LootSorter.canLootSquare(sq, player) then
                     sq = nil
                 end
                 if sq then                         -- loaded -> verify the box is still there
                     checked = checked + 1
-                    pruneDeadPresetLinks(sq)       -- before resolving, so the result reflects the prune
                     local found = findDesignatedOnSquare(sq, player)
                     if #found > 0 then
                         local dist = adz * zPenalty + cheb

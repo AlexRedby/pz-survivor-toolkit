@@ -1,8 +1,9 @@
 local Tags = require "PZSurvivorToolkit/ItemTags"
+local Presets = require "PZSurvivorToolkit/QuartermasterPresets"
 
 local Rules = {}
 PZSurvivorToolkit.QuartermasterTagRules = Rules
-local FIELD, STORE = "PZSTQuartermasterTagRules", "PZSTQuartermasterTagRules"
+local FIELD = "PZSTQuartermasterTagRules"
 local REVISIONS = FIELD .. "Revisions"
 
 local function copy(rule)
@@ -20,17 +21,11 @@ function Rules.getBoxRevision(obj, ci)
 end
 
 function Rules.presetsSynced()
-    return not isClient() or Rules.received ~= nil
+    return Presets.synced()
 end
 
 function Rules.presetStore()
-    if isClient() then return Rules.received or {} end
-    if isServer() then
-        local store = ModData.getOrCreate(STORE)
-        store.presets = store.presets or {}
-        return store.presets
-    end
-    return require("PZSurvivorToolkit/QuartermasterPresets").rules()
+    return Presets.rules()
 end
 
 function Rules.getPreset(name, preset)
@@ -68,5 +63,5 @@ function Rules.matches(box, item)
     return false
 end
 
-Rules.FIELD, Rules.STORE, Rules.REVISIONS = FIELD, STORE, REVISIONS
+Rules.FIELD, Rules.REVISIONS = FIELD, REVISIONS
 return Rules

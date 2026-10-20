@@ -5,7 +5,7 @@ local Rules=require 'PZSurvivorToolkit/QuartermasterTagRuleClient'
 local JSON=require 'QueueHealthEvents'
 local started,done,since,phase=false,false,0,'prepare'
 local state,packet,boxes,point,saved,receipt,cleaned,arrived,designatedAt
-local designationPicker
+local designationPicker,presetEditor,presetGeneration
 local pasteRevision,pasteReceipt
 local cleanupRetry=0
 local playerUpdates=0
@@ -86,16 +86,52 @@ local function tick()
   if not pasteReceipt then return end
   assert(pasteReceipt.revision==pasteRevision+1,'paste was not one authoritative revision')
   print('[QM_DISTRIBUTION] PASTE '..JSON.encode(pasteReceipt))
+  if isClient()then
+   saved=false
+   LootSorter.putPreset({name=Fixture.presetName,cats={Food=true},items={},expectExisting=false,
+    pzstTagRule={mode='all',include={'electrical'},exclude={}}},function(verdict)
+     assert(verdict=='ok','Host preset creation refused');saved=true
+    end)
+   phase='preset-created'
+  else phase='configure-target'end
+ elseif phase=='preset-created'then
+  local preset=LootSorter.getPresetStore()[Fixture.presetName]
+  if not saved or not preset then return end
+  local rule=assert(Rules.getPreset(Fixture.presetName,preset),'new preset missing its matching rule')
+  assert(preset.rev==1 and preset.cats.Food and rule.include[1]=='electrical','initial preset snapshot differs')
+  presetGeneration=preset.gen
+  LootSorter.openPresetEditor(Fixture.presetName,0)
+  presetEditor=assert(LootSorter._presetEditor)
+  presetEditor.selectedCats={};presetEditor.selectedItems={}
+  presetEditor.toolkitTagRule={mode='all',include={'food','perishable'},exclude={'meat'}}
+  presetEditor.toolkitTagRuleTouched=true
+  presetEditor.btnSave.onclick(presetEditor)
+  phase='preset-edited'
+ elseif phase=='preset-edited'then
+  if LootSorter._presetEditor==presetEditor then return end
+  local preset=LootSorter.getPresetStore()[Fixture.presetName]
+  if not preset or preset.rev~=2 then return end
+  local rule=assert(Rules.getPreset(Fixture.presetName,preset),'edited preset missing matching rule')
+  assert(preset.gen==presetGeneration and Fixture.empty(preset.cats) and Fixture.empty(preset.items)
+   and rule.include[1]=='food' and rule.include[2]=='perishable' and rule.exclude[1]=='meat',
+   'preset edit combined old selections with new rule')
+  print('[QM_DISTRIBUTION] PRESET_SNAPSHOT '..JSON.encode({generation=preset.gen,revision=preset.rev,matching=true}))
+  phase='configure-target'
+ elseif phase=='configure-target'then
   LootSorter.openPicker(boxes[3],0,0)
   designationPicker=assert(LootSorter._picker)
   designationPicker.selectedItems={};designationPicker.priority=7
-  designationPicker.toolkitTagRule={mode='all',include={'food','perishable'},exclude={'meat'}}
-  designationPicker.toolkitTagRuleTouched=true
+  if isClient()then designationPicker.selectedPresets={[Fixture.presetName]=presetGeneration}
+  else
+   designationPicker.toolkitTagRule={mode='all',include={'food','perishable'},exclude={'meat'}}
+   designationPicker.toolkitTagRuleTouched=true
+  end
   designationPicker.btnSave.onclick(designationPicker)
   phase='return'
  elseif phase=='return'then
   if LootSorter._picker==designationPicker then return end
-  assert(Rules.getBox(boxes[3],0) and not LootSorter.getBoxItems(boxes[3],0)
+  assert((isClient() and LootSorter.getBoxPresets(boxes[3],0)[Fixture.presetName]==presetGeneration
+   or not isClient() and Rules.getBox(boxes[3],0)) and not LootSorter.getBoxItems(boxes[3],0)
    and LootSorter.getBoxPriority(boxes[3],0)==7,'editor lost accepted designation')
   saved=true;designatedAt=getTimestampMs()
   stageWalk(point.x)
@@ -138,7 +174,7 @@ local function tick()
   LootSorter.setBoxItems(boxes[2],0,{})
   saved=false;Rules.saveBox(boxes[3],0,{mode='all',include={},exclude={}},player,function(verdict)
    assert(verdict=='ok','tag cleanup rejected');saved=true
-  end)
+  end,nil,{cats={},items={},presets={},priority=0})
   phase='cleanup'
  elseif phase=='cleanup'then
   if not saved then return end

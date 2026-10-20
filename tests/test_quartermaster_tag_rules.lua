@@ -121,8 +121,9 @@ assert(#boxes == 1 and Rules.matches(boxes[1],record('Food')) and boxes[1].conta
     'private gather missed rule-only box')
 boxes = LootSorter.gatherBoxesOrWarn(player)
 assert(#boxes == 1 and Rules.matches(boxes[1],record('Food')), 'sorter gather missed rule-only box')
-mode='client'; Rules.received={}; LootSorter._receivedRegistry=moddata.LootSorter_Registry
-LootSorter._receivedPresets=presets()
+local Presets = require 'PZSurvivorToolkit/QuartermasterPresets'
+mode='client'; LootSorter._receivedRegistry=moddata.LootSorter_Registry
+assert(Presets.receive({schema=1,revision=0,presets=presets(),rules={}}))
 safe=false
 boxes=LootSorter.gatherBoxes(player)
 assert(#boxes==0 and not object.md.LSBox, 'rule lookup touched forbidden safehouse before permission gate')

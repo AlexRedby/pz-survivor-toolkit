@@ -34,6 +34,22 @@ local IDLE_BG   = { r = 0.20, g = 0.20, b = 0.20, a = 0.9 }
 local function tickTex() return getTexture("media/ui/inventoryPanes/Tickbox_Tick.png") end
 local function countSet(t) local n = 0; if t then for _, v in pairs(t) do if v then n = n + 1 end end end return n end
 
+-- Keep checked rows, counts and Save on the same effective link selection. This changes only the
+-- editor draft: reads must not publish an object's ModData. In SP the library is per-machine while
+-- links belong to a world, so an absent library preset cannot justify clearing a world link.
+-- Before the initial snapshot arrives on a Host client,
+-- absence is unknown, so retain every saved link until synchronization can resolve it reliably.
+function Picker:resolvePresetSelection()
+    if self.targetKind == "preset" or not isClient() or not LootSorter.arePresetsSynced() then return end
+    local presets = LootSorter.getPresetStore()
+    for name, link in pairs(self.selectedPresets) do
+        if not LootSorter.linkResolves(presets[name], link) then
+            self.selectedPresets[name] = nil
+            self.needRebuild = true
+        end
+    end
+end
+
 -- the list source for the active mode (categories vs item display names)
 function Picker:activeList()
     if self.mode == "items" then return LootSorter.getItemNames()
@@ -439,6 +455,7 @@ function Picker:rebuild()
 end
 
 function Picker:prerender()
+    self:resolvePresetSelection()
     local enabled = Tags.enabled()
     if self.toolkitTagsEnabled ~= enabled then
         self.toolkitTagsEnabled, self.needRebuild = enabled, true
@@ -954,6 +971,7 @@ function Picker:onSave()
         return
     end
     if self.toolkitTagSaving then return end
+    self:resolvePresetSelection()
     local obj, ci = self.targetObj, self.targetCI
     local snapshot = LootSorter.snapshotDesignation({cats = self.selectedCats, items = self.selectedItems,
         presets = self.selectedPresets, priority = self.priority, pzstTagRule = self.toolkitTagRule})

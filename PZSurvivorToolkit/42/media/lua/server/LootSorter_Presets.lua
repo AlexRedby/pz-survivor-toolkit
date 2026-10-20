@@ -9,37 +9,7 @@
 LootSorter = LootSorter or {}
 
 local Tags = require "PZSurvivorToolkit/ItemTags"
-local Rules = require "PZSurvivorToolkit/QuartermasterTagRules"
 local Presets = require "PZSurvivorToolkit/QuartermasterPresets"
-local MOD_DATA_KEY = "LootSorter_Presets"
-
-local function worldStore()
-    local store = ModData.getOrCreate(MOD_DATA_KEY)
-    store.presets = store.presets or {}
-    return store
-end
-
-local function transmit()
-    pcall(function() ModData.transmit(MOD_DATA_KEY) end)
-end
-
-local function worldRules()
-    local store = ModData.getOrCreate(Rules.STORE)
-    store.presets = store.presets or {}
-    return store.presets
-end
-
--- Both selections and tag rules belong to this command. SP commits their drafts together;
--- a Host retains the existing two world ModData stores and their wire formats.
-local function mutate(fn)
-    if not isServer() then return Presets.transaction(fn) end
-    local verdict, detail, nativeChanged, rulesChanged = fn(worldStore().presets, worldRules())
-    if verdict == "ok" then
-        if nativeChanged then transmit() end
-        if rulesChanged then ModData.transmit(Rules.STORE) end
-    end
-    return verdict, detail
-end
 
 -- Only string -> true survives, so a malformed or hostile packet can't put arbitrary values in a
 -- table every client will read.
@@ -64,7 +34,7 @@ LootSorter.putPreset = LootSorter.serverFn("putPreset", function(player, args)
     end
     local name = type(args) == "table" and args.name
     if type(name) ~= "string" or name == "" then return "ok" end
-    return mutate(function(presets, rules)
+    return Presets.transaction(function(presets, rules)
         local existing = presets[name]
         local verdict = LootSorter.presetWriteVerdict(existing, args.expectExisting or false,
             args.baseRev or 0, args.baseGen)
@@ -103,7 +73,7 @@ end)
 LootSorter.removePreset = LootSorter.serverFn("removePreset", function(player, args)
     local name = type(args) == "table" and args.name
     if type(name) ~= "string" or name == "" then return "ok" end
-    return mutate(function(presets, rules)
+    return Presets.transaction(function(presets, rules)
         local verdict = LootSorter.presetDeleteVerdict(presets[name], args.baseGen)
         if verdict ~= "ok" and verdict ~= "gone" then
             LootSorter.DBG(("preset %s delete refused: %s"):format(name, verdict))
@@ -116,18 +86,17 @@ LootSorter.removePreset = LootSorter.serverFn("removePreset", function(player, a
     end)
 end)
 
--- isServer, not isAuthority, to match mutate above: single-player's store is the file,
+-- isServer, not isAuthority: single-player's store is the file,
 -- so creating the world table there would leave an empty one in the save and report a count of 0
 -- however many presets the file holds.
 if isServer() then
     -- Make sure the table exists (and so is saved with the world) before anyone writes a preset.
     LootSorter.addOrReplaceHandler(Events.OnInitGlobalModData, "_presetStoreInit", function()
-        local store = worldStore()
-        worldRules()
+        local presets = Presets.native()
         local count = 0
-        for _ in pairs(store.presets) do count = count + 1 end
+        for _ in pairs(presets) do count = count + 1 end
         LootSorter.DBG("preset store ready, " .. count .. " preset(s)")
-        transmit()
+        Presets.publish()
     end)
 end
 

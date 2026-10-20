@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.133
+
+- **Fixed:** Host presets save and synchronize categories, items and tag rules as one complete snapshot, preserving existing preset identities during automatic migration. Late replies cannot restore older state, and open preset editors keep a coherent draft until save/reopen.
+- **Fixed:** Storage discovery no longer rewrites container data while removing obsolete preset links. The Host container editor excludes unresolved links from its selection and cleans them through ordinary Save; SP retains world links absent from the local preset library.
+
 ### 0.1.132
 
 - **Fixed:** Pasting container sorting settings saves categories, items, preset links, priority and tag rules together through the editor's authority checks. Stale or denied pastes leave the destination unchanged; its name, icon and colour are preserved. Removed the separate client publication of container data.

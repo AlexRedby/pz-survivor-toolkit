@@ -65,6 +65,7 @@ for _, file in ipairs({'shared/LootSorter_Util.lua', 'shared/LootSorter_Presets.
     dofile(NativeQuartermasterLuaRoot .. '/' .. file)
 end
 local Rules = require 'PZSurvivorToolkit/QuartermasterTagRules'
+local Presets = require 'PZSurvivorToolkit/QuartermasterPresets'
 local synced, request = LootSorter.arePresetsSynced, LootSorter.requestPresets
 dofile(root .. 'client/PZSurvivorToolkit/QuartermasterTagRuleClient.lua')
 assert(LootSorter.arePresetsSynced == synced and LootSorter.requestPresets == request,
@@ -77,61 +78,84 @@ local function begin()
     fire('OnReceiveGlobalModData', 'LootSorter_Registry', {boxes = {['10,20,0'] = true}})
     requests, objectTransmits, removals = {}, 0, 0
 end
-local function native()
-    fire('OnReceiveGlobalModData', 'LootSorter_Presets',
-        {presets = {Pantry = {cats = {}, items = {}, gen = 100, rev = 1}}})
+local function snapshot(revision, cats, tagRule, generation)
+    return {schema = 1, revision = revision, presets = {Pantry = {
+        cats = cats or {}, items = {}, gen = generation or 100, rev = revision + 1}},
+        rules = {Pantry = {gen = generation or 100, rule = tagRule or rule}}}
 end
-local function toolkit(presets)
-    fire('OnReceiveGlobalModData', Rules.STORE, {presets = presets or {Pantry = {gen = 100, rule = rule}}})
+local function receive(value)
+    fire('OnReceiveGlobalModData', Presets.STORE, value)
 end
-local function bothRequested()
-    assert((requests.LootSorter_Presets or 0) > 0 and (requests[Rules.STORE] or 0) > 0,
-        'native retry did not request both preset stores')
+local function requested()
+    assert((requests[Presets.STORE] or 0) > 0 and requests.PZSTQuartermasterTagRules == nil,
+        'retry must request only the complete preset snapshot')
 end
 local function waiting()
     local boxes, synced = LootSorter.gatherBoxes(player)
-    assert(#boxes == 0 and synced == false, 'partially received presets reported fully synced')
-    assert(LootSorter.gatherBoxesOrWarn(player) == nil, 'native private gather bypassed readiness')
+    assert(#boxes == 0 and synced == false, 'incomplete presets reported fully synced')
+    assert(LootSorter.gatherBoxesOrWarn(player) == nil, 'private gather bypassed readiness')
     assert(object.md.LSBoxPresets['0'].Pantry == 100 and objectTransmits == 0 and removals == 0,
-        'waiting for rules pruned a designation')
-    bothRequested()
+        'waiting for presets changed a designation')
+    requested()
 end
 for _, nativeFirst in ipairs({true, false}) do
     begin()
-    if nativeFirst then native() else toolkit() end
+    -- Old independent messages in either order cannot become the new authoritative snapshot.
+    local function native() receive({presets = snapshot(0).presets}) end
+    local function sidecar() fire('OnReceiveGlobalModData', 'PZSTQuartermasterTagRules', {presets = snapshot(0).rules}) end
+    if nativeFirst then native(); sidecar() else sidecar(); native() end
     waiting()
-    -- The existing native gather retry must keep requesting both stores while either is missing.
-    requests = {}
-    waiting()
-    requests = {}
-    clock = clock + LootSorter.SYNC_RETRY_MS
-    fire('OnTick')
-    bothRequested()
-    if nativeFirst then toolkit() else native() end
+    requests = {}; clock = clock + LootSorter.SYNC_RETRY_MS; fire('OnTick'); requested()
+    receive(snapshot(0))
     local boxes, synced = LootSorter.gatherBoxes(player)
-    assert(synced and #boxes == 1 and Rules.matches(boxes[1], {cat="Food", ref={getDisplayCategory=function() return "Food" end}}) and boxes[1].container == container,
-        'both arrival orders must restore the tag-only preset destination')
+    assert(synced and #boxes == 1 and Rules.matches(boxes[1], {cat='Food', ref={getDisplayCategory=function() return 'Food' end}})
+        and boxes[1].container == container, 'complete snapshot lost tag-only preset destination')
 end
 
-begin(); native(); toolkit({})
-object.md.LSBox = {['0'] = {Manual = true}}
-local boxes, synced = LootSorter.gatherBoxes(player)
-assert(synced and #boxes == 1 and boxes[1].cats.Manual, 'empty valid Toolkit reply blocked native selections')
+-- Replacing a snapshot cannot mix a new category with the old tag rule, nor alter an open draft.
+local draftRule = rule
+LootSorter._presetEditor = {presetName='Pantry', presetRev=1, presetGen=100,
+    selectedCats={Original=true}, toolkitTagRule=draftRule}
+LootSorter._picker = {}
+local medical = {mode='all',include={'medical'},exclude={}}
+local oldPresets, oldRules = LootSorter.getPresetStore(), Rules.presetStore()
+receive(snapshot(1, {Electrical=true}, medical))
+assert(LootSorter.arePresetsSynced() and LootSorter.getPresetStore().Pantry.rev == 2
+    and LootSorter.getPresetStore().Pantry.cats.Electrical
+    and Rules.getPreset('Pantry', LootSorter.getPresetStore().Pantry).include[1] == 'medical', 'mixed updated preset')
+assert(oldPresets.Pantry.rev == 1 and oldRules.Pantry.rule.include[1] == 'food', 'new receipt mutated old snapshot')
+assert(LootSorter._picker.needRebuild and LootSorter._presetEditor.toolkitTagRule == draftRule
+    and LootSorter._presetEditor.selectedCats.Original and LootSorter._presetEditor.presetRev == 1,
+    'receipt mixed an open editor draft with newer fields')
+fire('OnReceiveGlobalModData', 'PZSTQuartermasterTagRules', {presets = snapshot(0).rules})
+receive(snapshot(0)); receive(snapshot(1, {Stale=true}))
+assert(LootSorter.getPresetStore().Pantry.cats.Electrical and Rules.presetStore().Pantry.rule.include[1] == 'medical',
+    'old/duplicate/sidecar receipt changed a committed snapshot')
+receive({schema=1,revision=2,presets={}})
+assert(LootSorter.getPresetStore().Pantry.rev == 2, 'partial snapshot replaced coherent data')
 
--- Object-local rules do not depend on having an entry in the preset sidecar.
+-- Delete/recreate keeps old generation links inert without writing objects during discovery.
+receive({schema=1,revision=2,presets={},rules={}})
+local boxes, synced = LootSorter.gatherBoxes(player)
+assert(synced and #boxes == 0 and object.md.LSBoxPresets['0'].Pantry == 100 and objectTransmits == 0,
+    'deleted preset remained effective or scanning changed its links')
+receive(snapshot(3, {}, rule, 200))
+boxes, synced = LootSorter.gatherBoxes(player)
+assert(synced and #boxes == 0 and object.md.LSBoxPresets['0'].Pantry == 100 and objectTransmits == 0,
+    'recreated preset retargeted or pruned the old generation')
+
+-- Empty snapshots are ready, object rules remain independent, and tags opt-out needs no sidecar.
+receive({schema=1,revision=4,presets={},rules={}})
 object.md = {[Rules.FIELD] = {['0'] = rule}}
 boxes, synced = LootSorter.gatherBoxes(player)
-assert(synced and #boxes == 1 and Rules.matches(boxes[1], {cat="Food", ref={getDisplayCategory=function() return "Food" end}}) and LootSorter.squareHasDesignation(square),
-    'readiness gating lost a rule-only container designation')
-
-begin(); native(); enabled = false
-object.md.LSBox = {['0'] = {Manual = true}}
+assert(synced and #boxes == 1 and Rules.matches(boxes[1], {cat='Food', ref={getDisplayCategory=function() return 'Food' end}})
+    and LootSorter.squareHasDesignation(square), 'empty presets lost a local rule')
+begin(); enabled = false; waiting(); receive(snapshot(0))
+object.md.LSBox = {['0'] = {Manual=true}}
 boxes, synced = LootSorter.gatherBoxes(player)
-assert(synced and #boxes == 1 and boxes[1].cats.Manual and not Rules.presetsSynced(),
-    'disabled tags must retain native readiness without a Toolkit reply')
-LootSorter._receivedPresets = nil
-boxes, synced = LootSorter.gatherBoxes(player)
-assert(not synced and #boxes == 0, 'disabled tags bypassed native readiness')
+assert(synced and #boxes == 1 and boxes[1].cats.Manual and Rules.presetsSynced(), 'disabled tags lost native selections')
+begin(); waiting(); receive(snapshot(0))
+assert(LootSorter.arePresetsSynced(), 'new world could not restart its revision sequence')
 client = false
 assert(LootSorter.arePresetsSynced(), 'single-player acquired a network prerequisite')
-print('Quartermaster sync passed: real Core/PresetSync, both arrival orders, native retry, empty reply, local rules and opt-out.')
+print('Quartermaster sync passed: complete snapshots, obsolete/out-of-order replies, draft isolation, empty stores, generations and read-only discovery.')

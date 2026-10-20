@@ -55,8 +55,8 @@ end
 function LootSorter.linkResolves(preset, link)
     if not preset or not link then return false end
     if link == true or preset.gen == nil then return true end
-    -- Normalised like the two verdicts do: both sides cross a wire, and this is the predicate the
-    -- prune DELETES on, so a type difference must not read as a different preset.
+    -- Normalised like the two verdicts do: links cross a wire, so a type difference must not read
+    -- as a different preset in resolution or the container editor.
     return tonumber(link) == tonumber(preset.gen)
 end
 

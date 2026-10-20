@@ -14,8 +14,14 @@ Events = setmetatable({}, {__index = function(self, key)
     local event = {Add = function() end, Remove = function() end}; rawset(self, key, event); return event
 end})
 local data, writes, short, readback, readFailure = {}, 0, false, false, nil
+local publications = {}
 ModData = {getOrCreate = function(key) data[key] = data[key] or {}; return data[key] end,
-    transmit = function() end, request = function() end}
+    transmit = function(key)
+        assert(key == 'LootSorter_Presets', 'Host published an independent rule sidecar')
+        local store = data[key]
+        assert(store.schema == 1 and store.presets and store.rules and store.revision >= 0)
+        publications[#publications + 1] = {presets=store.presets,rules=store.rules,revision=store.revision}
+    end, request = function() end}
 getFileReader = function(path, create)
     if path == readFailure then error('readback unavailable') end
     if not disk[path] and create then disk[path] = '' end
@@ -113,9 +119,32 @@ assert(LootSorter.removePreset({name='Pantry',baseGen=41}) == 'ok' and writes ==
 assert(not reload().Pantry and not Rules.presetStore().Pantry, 'delete lost pair coherence on restart')
 before = writes
 server = true
+-- Existing Host worlds migrate once without changing preset identity or touching SP files.
+data.LootSorter_Presets = {presets={Legacy={cats={Food=true},items={['Tin opener']=true},gen=41,rev=7,createdBy='owner'},
+    Recreated={cats={},items={},gen=42,rev=1}}}
+data.PZSTQuartermasterTagRules = {presets={Legacy={gen=41,rule=any},Recreated={gen=40,rule=all},Gone={gen=99,rule=all}}}
+assert(Presets.native().Legacy.gen == 41 and Presets.native().Legacy.rev == 7
+    and Presets.native().Legacy.createdBy == 'owner' and Presets.native().Legacy.items['Tin opener'])
+assert(Rules.getPreset('Legacy', Presets.native().Legacy).mode == 'any'
+    and not Rules.presetStore().Recreated and not Rules.presetStore().Gone and writes == before)
+assert(data.LootSorter_Presets.schema == 1 and data.LootSorter_Presets.revision == 0 and #publications == 0)
 assert(LootSorter.serverFns.putPreset(player, {name='Server',cats={},items={},pzstTagRule=all}) == 'ok')
 assert(data.LootSorter_Presets.presets.Server and Rules.presetStore().Server and writes == before, 'MP authority accessed SP files')
+assert(#publications == 1 and publications[1].presets.Server and publications[1].rules.Server,
+    'Host save did not publish a complete pair exactly once')
 local serverPreset = data.LootSorter_Presets.presets.Server
+local hostNative, hostRules, hostRevision = Presets.native(), Presets.rules(), data.LootSorter_Presets.revision
+assert(Presets.transaction(function(native, rules)
+    native.Server.rev, rules.Server.gen = 999, 999
+    return 'stale'
+end) == 'stale')
+assert(not pcall(Presets.transaction, function(native, rules)
+    native.Server.rev, rules.Server.gen = 999, 999
+    error('failed Host draft')
+end))
+assert(Presets.native() == hostNative and Presets.rules() == hostRules
+    and data.LootSorter_Presets.revision == hostRevision and #publications == 1,
+    'refused/failed Host mutation leaked partial drafts')
 for _, malformed in ipairs({true, {gen=serverPreset.gen}, {gen=serverPreset.gen, rule={mode='invalid'}}}) do
     Rules.presetStore().Server = malformed
     assert(LootSorter.serverFns.putPreset(player, {name='Server', cats={}, items={},
@@ -123,7 +152,22 @@ for _, malformed in ipairs({true, {gen=serverPreset.gen}, {gen=serverPreset.gen,
     assert(not Rules.presetStore().Server and writes == before, 'native edit retained a malformed rule sidecar')
     serverPreset = data.LootSorter_Presets.presets.Server
 end
+-- An explicit clear/delete stays cleared on a fresh service load despite retained legacy data.
+assert(LootSorter.serverFns.putPreset(player, {name='Legacy',cats={},items={},expectExisting=true,
+    baseRev=7,baseGen=41,pzstTagRule={mode='all',include={},exclude={}}}) == 'ok')
+assert(not Rules.presetStore().Legacy and data.PZSTQuartermasterTagRules.presets.Legacy)
+local Restarted = assert(loadfile(shared .. 'PZSurvivorToolkit/QuartermasterPresets.lua'))()
+assert(Restarted.native().Legacy.rev == 8 and not Restarted.rules().Legacy, 'restart remigrated an old rule')
+assert(LootSorter.serverFns.removePreset(player,{name='Legacy',baseGen=41}) == 'ok')
+assert(not Restarted.native().Legacy and not Restarted.rules().Legacy)
+assert(LootSorter.serverFns.putPreset(player,{name='Legacy',cats={Electrical=true},items={},pzstTagRule=all}) == 'ok')
+assert(Restarted.native().Legacy.gen ~= 41 and not LootSorter.linkResolves(Restarted.native().Legacy,41))
+assert(data.PZSTQuartermasterTagRules.presets.Legacy.gen == 41 and writes == before, 'legacy/SP storage was modified')
+for index, publication in ipairs(publications) do
+    assert(publication.revision == index, 'successful Host publications skipped or repeated a revision')
+end
 client, server = true, false
-Rules.received = {Client={gen=1,rule=all}}
-assert(Rules.presetStore().Client and writes == before)
+assert(Presets.receive({schema=1,revision=0,presets={Client={gen=1,cats={},items={}}},rules={Client={gen=1,rule=all}}}))
+assert(Rules.presetStore().Client and LootSorter.getPresetStore().Client and writes == before)
+assert(not pcall(Presets.transaction, function() return 'ok' end), 'client could mutate authoritative store')
 print('Quartermaster preset transactions passed: direct owned put/remove, private drafts, one pair commit, fullType translation, generations/revisions/owner, conflicts, partial/ambiguous failure recovery and MP isolation.')
