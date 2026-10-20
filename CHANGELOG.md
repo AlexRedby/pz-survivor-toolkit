@@ -15,6 +15,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.174
+
+- **Fixed:** Source-origin checks reuse the compile-time filename of loaded Lua functions instead of querying it repeatedly for every queued action. The bounded cache follows the original filename accessor; replacements, live callbacks, item state, capacities and file checksums retain their independent checks.
+
 ### 0.1.173
 
 - **Fixed:** Queue hints reuse short-lived display text instead of recalculating dependencies every rendered frame. Interactions still validate current state, and hints refresh after queue changes or a short delay.

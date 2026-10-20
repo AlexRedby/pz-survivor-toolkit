@@ -52,7 +52,8 @@ These are implementation and verification gaps, not evidence that every action u
 
 ## Remaining cost of queue hints
 
-- [ ] Profile the remaining cancellation-preview cost in the real Host queue and reduce repeated work while retaining fresh authoritative checks on press/release. The locked-desktop `pz-queue-perf-current-host01` run completed all 15 reads and exact client/server returns with a clean audit; hint frequency was bounded (2,236 previews over 31,320 running frame samples), but each actual preview still averaged about 31 ms and peaked at 81 ms. The synthetic hover check measures callback/tick intervals, not GPU FPS; it used the available 45-mod subset of the configured 49 mods.
+- [ ] Remove repeated loaded-function filename lookups from source-origin checks, keyed by callback and the current filename accessor. Keep errors retryable, file checksums fresh and all live callback/resource/capacity guards intact.
+- [ ] Verify origin reuse, accessor/callback replacement, native Kahlua compatibility and authoritative cancellation safety; compare a native hover profile against `pz-queue-perf-current-host01` (31 ms mean/81 ms peak per actual preview, 2,236 previews over 31,320 samples). Preserve exact read/return receipts and clean runtime/source audit, then bump Toolkit and deliver. The native selection has 45 of the configured 49 mods; callback intervals are not GPU FPS.
 
 ## General rules for move and cancel
 
