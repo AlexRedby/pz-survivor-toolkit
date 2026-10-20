@@ -1,11 +1,11 @@
 -- The native collector concatenates each container's item list without deduplicating aliases.
 -- Exercise the owned engine through its public count and queue entrypoints with that contract.
 local root = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/'
-local craftContainers
+local modules = {}
 require = function(name)
-    if name == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
-        craftContainers = craftContainers or dofile(root .. 'client/' .. name .. '.lua')
-        return craftContainers
+    if name == 'PZSurvivorToolkit/QuartermasterCraftContainers' or name == 'PZSurvivorToolkit/QuartermasterCraftState' then
+        modules[name] = modules[name] or dofile(root .. 'client/' .. name .. '.lua')
+        return modules[name]
     end
 end
 local function list(values)

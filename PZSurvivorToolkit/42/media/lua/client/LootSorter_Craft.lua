@@ -14,6 +14,7 @@ require "TimedActions/ISBaseTimedAction"
 require "TimedActions/ISTimedActionQueue"
 require "TimedActions/ISInventoryTransferAction"
 local Containers = require "PZSurvivorToolkit/QuartermasterCraftContainers"
+local CraftState = require "PZSurvivorToolkit/QuartermasterCraftState"
 local inventoryContainers, withoutCraftContainers = Containers.inventory, Containers.withoutContext
 
 LootSorter = LootSorter or {}
@@ -197,7 +198,7 @@ function LootSorter.CraftTriggerAction:perform()
         end
     end)
     LootSorter._activelyCrafting = false   -- re-enable injection; Neat's end-of-batch refresh re-adds boxes.
-    -- NOTE: deliberately do NOT set _craftDirty here. This runs BEFORE the queued craft actions, and a
+    -- NOTE: deliberately do NOT invalidate availability here. This runs BEFORE the queued craft actions, and a
     -- refresh now would updateContainers -> re-inject boxes -> undo the inventory-only pin, so the batch
     -- would see far-away boxes and consume nothing. Neat re-adds the boxes to the display after the batch.
     ISBaseTimedAction.perform(self)
@@ -205,7 +206,7 @@ end
 
 function LootSorter.CraftTriggerAction:stop()
     LootSorter._activelyCrafting = false   -- cancelled/interrupted: don't leave injection disabled
-    LootSorter._craftDirty = true          -- re-sync the craft UI after a cancel too
+    CraftState.invalidate()               -- re-sync each craft UI after a cancel too
     ISBaseTimedAction.stop(self)
 end
 

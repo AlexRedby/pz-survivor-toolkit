@@ -1,8 +1,11 @@
-local craftContainers
+local craftContainers, craftState
 require = function(name)
     if name == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
         craftContainers = craftContainers or dofile(NativeQuartermasterLuaRoot .. '/client/' .. name .. '.lua')
         return craftContainers
+    elseif name == 'PZSurvivorToolkit/QuartermasterCraftState' then
+        craftState = craftState or dofile(NativeQuartermasterLuaRoot .. '/client/' .. name .. '.lua')
+        return craftState
     end
 end
 local function derive(self, name)
@@ -60,10 +63,20 @@ local function refresh(self, callback)
     if callback then callback() end
     return true, nil, 'upstream-result'
 end
-ISHandCraftPanel = {updateContainers=refresh}
+-- Use the game's update/refresh policy for native invalidation below; simple scope
+-- probes without logic still use the forwarding callback contract.
+dofile(NativePZLuaRoot .. '/client/Entity/ISUI/CraftRecipe/ISHandCraftPanel.lua')
+local nativeContainers = ISHandCraftPanel.updateContainers
+ISHandCraftPanel.updateContainers = function(self, ...)
+    if self.logic then return nativeContainers(self, ...) end
+    return refresh(self, ...)
+end
+ISPanel.update = function(self) self.nativeUpdates = (self.nativeUpdates or 0) + 1 end
 NC_HandCraftPanel = {updateContainers=refresh, update=refresh}
 NC_CraftLogicPanel = {updateContainers=refresh}
 NC_CraftActionPanel = {prerender=function(self) self.rendered=true end}
+ISWidgetHandCraftControl = ISPanel:derive('ISWidgetHandCraftControl')
+ISWidgetHandCraftControl.createChildren = function() end
 local function windowClass()
     local class = ISPanel:derive('CraftWindow')
     function class:createChildren()
@@ -97,12 +110,14 @@ for _, fn in ipairs(starts) do fn() end
 local wrapped = NC_HandcraftWindow.prerender
 for _, fn in ipairs(starts) do fn() end
 assert(wrapped == NC_HandcraftWindow.prerender, 'installation duplicated')
+local setMode
 for _, class in ipairs({NC_HandcraftWindow, NC_EntityWindow}) do
     for _, bottom in ipairs({false, true}) do
         local window = class:new(20, 40, 900, 600)
         window.bottom = bottom; window:createChildren()
         local tick, header = window.qmTick, window.header
         local callback, tooltip = tick.callback, tick.tooltip
+        setMode = function(value) callback(tick.target, 1, value) end
         for _, size in ipairs({{900,600,32},{500,450,40},{900,40,40},{1100,700,24}}) do
             window.headerHeight = size[3]
             header.buttonColumn.minimumWidth = 120 -- mirrors Neat's applyHeaderMetrics
@@ -118,13 +133,119 @@ for _, class in ipairs({NC_HandcraftWindow, NC_EntityWindow}) do
             assert(window.rendered and tick.callback == callback and tick.tooltip == tooltip)
         end
         callback(tick.target, 1, true); window:prerender()
-        assert(LootSorter.craftFromBoxes and LootSorter._craftDirty and tick.selected)
+        assert(LootSorter.craftFromBoxes and tick.selected)
         callback(tick.target, 1, false); window:prerender()
         assert(not LootSorter.craftFromBoxes and not tick.selected)
     end
 end
 NC_HandcraftWindow, NC_EntityWindow = nil, nil
 for _, fn in ipairs(starts) do fn() end -- repeated optional-mod setup is harmless
+
+-- A mode change belongs to every open crafting view, not the first renderer.
+local function neatPanel()
+    return {player=player, refreshes=0, logic={isCraftActionInProgress=function() return false end},
+        refreshAfterCraftBatch=function(self)
+            self.refreshes = self.refreshes + 1
+            if self.fail then error('fixture refresh failed') end
+        end}
+end
+local first, second = neatPanel(), neatPanel()
+-- Exercise the real checkbox callback retained from the installed window class.
+-- The last loop ended with Storage disabled.
+setMode(true)
+NC_CraftActionPanel.prerender(first); NC_CraftActionPanel.prerender(second)
+assert(first.refreshes == 1 and second.refreshes == 1, 'one crafting window consumed another window refresh')
+NC_CraftActionPanel.prerender(first); NC_CraftActionPanel.prerender(second)
+assert(first.refreshes == 1 and second.refreshes == 1, 'unchanged windows refreshed every frame')
+setMode(true); NC_CraftActionPanel.prerender(first)
+assert(first.refreshes == 1, 'unchanged mode invalidated crafting')
+setMode(false)
+busy = true; NC_CraftActionPanel.prerender(first)
+assert(first.refreshes == 1, 'availability refreshed during a queued haul')
+busy = false; LootSorter._activelyCrafting = true; NC_CraftActionPanel.prerender(first)
+assert(first.refreshes == 1, 'availability refreshed during a craft handoff')
+LootSorter._activelyCrafting = false
+first.logic.isCraftActionInProgress = function() return true end
+NC_CraftActionPanel.prerender(first)
+assert(first.refreshes == 1, 'availability refreshed during native crafting')
+first.logic.isCraftActionInProgress = function() return false end
+first.fail = true; NC_CraftActionPanel.prerender(first)
+assert(first.refreshes == 2, 'failed refresh was not attempted')
+first.fail = false; NC_CraftActionPanel.prerender(first)
+NC_CraftActionPanel.prerender(second)
+assert(first.refreshes == 3 and second.refreshes == 2, 'pending refresh was lost to busy state or failure')
+
+-- Native panels use the actual B42 update, refreshRecipeList and container routines.
+local function nativePanel()
+    local panel = {player=player, updateTimer=0, craftBench={getRecipes=function() return {} end},
+        populated=0, containerReads=0, nativeUpdates=0,
+        recipesPanel={recipeListPanel={recipeListPanel={items={}}}, updateContainers=function() end},
+        inventoryPanel={updateContainers=function() end}, tooltipLogic={setContainers=function() end}}
+    panel.logic = {isCraftActionInProgress=function() return panel.crafting == true end,
+        setContainers=function(_, values)
+            panel.containerReads = panel.containerReads + 1; panel.containers = values; return true
+        end,
+        setRecipes=function() end,
+        autoPopulateInputs=function()
+            panel.populated = panel.populated + 1
+            if panel.fail then error('fixture input refresh failed') end
+        end}
+    return setmetatable(panel, {__index=ISHandCraftPanel})
+end
+local nativeFirst, nativeSecond = nativePanel(), nativePanel()
+setMode(true)
+ISHandCraftPanel.drawDirty = true
+nativeFirst:update(); nativeSecond:update()
+assert(nativeFirst.populated == 1 and nativeSecond.populated == 1,
+    'native invalidation duplicated a native refresh or skipped the second panel')
+assert(nativeFirst.containers:size() == 2 and nativeSecond.containers:size() == 2,
+    'native recipe refresh did not use storage availability scope')
+nativeFirst:update(); nativeSecond:update()
+assert(nativeFirst.populated == 1 and nativeSecond.populated == 1 and nativeFirst.nativeUpdates == 2,
+    'native update was skipped or unchanged crafting refreshed repeatedly')
+setMode(false); busy=true; nativeFirst:update()
+assert(nativeFirst.populated == 1, 'native availability refreshed during queued actions')
+busy=false; nativeFirst.fail=true; nativeFirst:update()
+nativeFirst.fail=false; nativeFirst:update(); nativeSecond:update()
+assert(nativeFirst.populated == 3 and nativeSecond.populated == 2,
+    'native pending update did not survive busy state or input failure')
+assert(nativeFirst.containers:size() == 1 and nativeSecond.containers:size() == 1,
+    'disabling storage retained distant native ingredients')
+
+-- MainOptions invokes onChangeApply before writing option.value. Startup uses
+-- the same owner but reads the persisted option after ModOptions:load().
+local options, saved = {}, true
+local function option(value)
+    return {value=value, getValue=function(self) return self.value end,
+        setValue=function(self, newValue) self.value=newValue end}
+end
+local owner = {addSlider=function(_, id, _, _, _, _, default) options[id]=option(default) end,
+    addTickBox=function(_, id, _, default) options[id]=option(default); return options[id] end,
+    getOption=function(_, id) return options[id] end}
+PZAPI = {ModOptions={create=function(_, id) assert(id=='LootSorter'); return owner end,
+    getOptions=function(_, id) assert(id=='LootSorter'); return owner end,
+    load=function() options.craftFromBoxes.value=saved end}}
+dofile(NativeQuartermasterLuaRoot .. '/client/LootSorter_Options.lua')
+starts[#starts]()
+assert(LootSorter.craftFromBoxes and options.craftFromBoxes:getValue(), 'persisted craft mode was not loaded')
+NC_CraftActionPanel.prerender(first); NC_CraftActionPanel.prerender(second)
+local beforeFirst, beforeSecond = first.refreshes, second.refreshes
+options.craftFromBoxes:onChangeApply(false)
+assert(not LootSorter.craftFromBoxes, 'Options Apply read the old checkbox value')
+options.craftFromBoxes.value = false
+NC_CraftActionPanel.prerender(first); NC_CraftActionPanel.prerender(second)
+assert(first.refreshes == beforeFirst+1 and second.refreshes == beforeSecond+1,
+    'Options Apply did not invalidate both crafting views')
+setMode(true)
+assert(options.craftFromBoxes:getValue(), 'craft window change did not mirror the saved option')
+LootSorter.applyOptions()
+assert(LootSorter.craftFromBoxes, 'distribution settings overwrote the live crafting mode')
+local nativeControl = ISWidgetHandCraftControl:new(0, 0, 100, 100)
+nativeControl:createChildren()
+nativeControl.qmTick.callback(nativeControl, 1, false)
+nativeControl:prerender()
+assert(not LootSorter.craftFromBoxes and not options.craftFromBoxes:getValue() and not nativeControl.qmTick.selected,
+    'native Storage checkbox did not share the live preference')
 
 -- Only the actual refresh call may expose storage, and only for its player.
 LootSorter.craftFromBoxes = true
@@ -178,7 +299,16 @@ end
 busy=false;LootSorter._activelyCrafting=false;LootSorter.craftFromBoxes=true
 -- The error fallback must discard cached storage even if invoked inside a refresh.
 ISBaseTimedAction=ISBaseObject
+ISBaseTimedAction.stop = function(self) self.stopped = true end
+ISBaseTimedAction.perform = function(self) self.performed = true end
 dofile(NativeQuartermasterLuaRoot .. '/client/LootSorter_Craft.lua')
+NC_CraftActionPanel.prerender(first); NC_CraftActionPanel.prerender(second)
+beforeFirst, beforeSecond = first.refreshes, second.refreshes
+local cancelled = {}
+LootSorter.CraftTriggerAction.stop(cancelled)
+NC_CraftActionPanel.prerender(first); NC_CraftActionPanel.prerender(second)
+assert(cancelled.stopped and first.refreshes == beforeFirst+1 and second.refreshes == beforeSecond+1,
+    'cancelled haul did not invalidate every crafting view or skipped native stop')
 local logic={setContainers=function(self,values) self.containers=values end,
     autoPopulateInputs=function(self)
         self.populated=true
@@ -188,4 +318,16 @@ local logic={setContainers=function(self,values) self.containers=values end,
 craftContainers.withContext(player,function() LootSorter.craft.repinInventoryOnly(logic,player) end)
 assert(logic.containers:size()==1 and logic.populated, 'fallback craft retained distant ingredients')
 ordinary()
-print('Quartermaster crafting UI: header layout, toggles, scoped refreshes, player isolation, nested/error cleanup and inventory fallback passed.')
+local revision = craftState.revision()
+logic.getPossibleCraftCount = function() return 1 end
+LootSorter.notify = function() end
+local crafted
+local trigger = {character=player, logic=logic, qty=1,
+    craftFn=function(qty)
+        assert(qty==1 and logic.containers:size()==1, 'craft trigger lost ordinary ingredient sources')
+        crafted = true
+    end}
+LootSorter.CraftTriggerAction.perform(trigger)
+assert(crafted and trigger.performed and craftState.revision()==revision and not LootSorter._activelyCrafting,
+    'successful craft handoff invalidated availability before the native batch')
+print('Quartermaster crafting UI: per-window refresh, settings, busy/error retry, cancellation, layout and inventory-only handoff passed.')

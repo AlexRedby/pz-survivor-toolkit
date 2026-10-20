@@ -4,6 +4,7 @@
 -- MAX_LEVELS / MAX_LOAD_FRACTION at the start of each sort, so changes take effect on the next
 -- distribution.
 LootSorter = LootSorter or {}
+local CraftState = require "PZSurvivorToolkit/QuartermasterCraftState"
 
 if PZAPI and PZAPI.ModOptions and not LootSorter._optionsAdded then
     LootSorter._optionsAdded = true
@@ -42,15 +43,13 @@ if PZAPI and PZAPI.ModOptions and not LootSorter._optionsAdded then
     function LootSorter.applyCraftOption()
         local o = PZAPI.ModOptions and PZAPI.ModOptions:getOptions("LootSorter")
         local c = o and o:getOption("craftFromBoxes")
-        if c then LootSorter.craftFromBoxes = c:getValue() and true or false end
+        if c then CraftState.setEnabled(c:getValue()) end
     end
     -- MainOptions calls onChangeApply BEFORE it writes the new value into option.value, so use the
     -- value it passes here. Re-reading getValue() would return the OLD value -- the option applied one
     -- step behind (enabling it in the options screen appeared to do nothing).
     craftOpt.onChangeApply = function(_opt, value)
-        LootSorter.craftFromBoxes = value and true or false
-        LootSorter._craftDirty = true
-        if _G.ISHandCraftPanel then ISHandCraftPanel.drawDirty = true end
+        CraftState.setEnabled(value)
     end
 
     -- Load persisted values at session start. MainOptions only calls :load() when its panel is

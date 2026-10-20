@@ -14,6 +14,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.164
+
+- **Changed:** Quartermaster's Storage controls and Mod Options share one owner for the crafting preference and availability updates. Each native/Neat crafting window refreshes independently after a change or cancelled haul; pending updates wait for active hauling/crafting to finish and survive a failed refresh. Control placement, saved settings and physical ingredient fetching are preserved.
+
 ### 0.1.163
 
 - **Changed:** Live context menus and editor previews now share explicit per-pass state instead of switching shared temporary variables. Existing grouping, scoped rules, saved preferences and native option ownership are preserved.

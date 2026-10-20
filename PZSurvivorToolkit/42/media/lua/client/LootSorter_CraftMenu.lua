@@ -7,29 +7,24 @@
 -- NC_CraftLogicPanel:updateContainers() -> logic:setContainers(), so a single re-scan makes EVERYTHING
 -- (button greying, quantity cap, required-items list, and the recipe list) count the boxes at once --
 -- no per-widget wrapping. The logic only re-scans on init / recipe-change / after a craft, so the one
--- missing trigger was: re-scan when the tickbox flips. We do that via a "dirty" flag the panel drains.
+-- missing trigger was: re-scan when the tickbox flips. Each panel observes the shared revision.
 --
 -- Physical haul preserved: pressing craft runs the gather engine; the craft trigger sets the logic's
 -- containers to INVENTORY-ONLY right before crafting, so the hauled items are consumed, never teleported.
 LootSorter = LootSorter or {}
-LootSorter.craftFromBoxes = LootSorter.craftFromBoxes or false
 local Containers = require "PZSurvivorToolkit/QuartermasterCraftContainers"
+local CraftState = require "PZSurvivorToolkit/QuartermasterCraftState"
 
 -- shared label/tooltip for the injected "Storage" tickbox (used by both the vanilla + Neat hooks)
 local NO_SURFACE = "Quartermaster: stand near a crafting surface"
 local STORAGE_LABEL = "Quartermaster: Storage"
 local STORAGE_TOOLTIP = "Craft from your designated storage boxes: the character hauls the ingredients over, then crafts. It fetches everything the batch needs in one trip, so a large batch can leave you overburdened."
 
--- Flip the feature flag, mark for a re-scan, AND mirror the value into the Mod Options tickbox so the
--- in-menu "Storage" checkbox and the settings-menu fallback stay in sync (and the choice persists).
-local function setCraftFromBoxes(on)
-    LootSorter.craftFromBoxes = on and true or false
-    LootSorter._craftDirty = true
-    pcall(function()
-        local o = PZAPI and PZAPI.ModOptions and PZAPI.ModOptions:getOptions("LootSorter")
-        local c = o and o:getOption("craftFromBoxes")
-        if c then c:setValue(LootSorter.craftFromBoxes) end
-    end)
+local function idle(panel)
+    if LootSorter._activelyCrafting then return false end
+    if ISTimedActionQueue and ISTimedActionQueue.isPlayerDoingAction
+            and ISTimedActionQueue.isPlayerDoingAction(panel.player) then return false end
+    return not (panel.logic and panel.logic.isCraftActionInProgress and panel.logic:isCraftActionInProgress())
 end
 
 -- append the designated boxes to the availability container set (see header)
@@ -111,7 +106,7 @@ local function installWindowTick(WindowClass, name)
     function WindowClass:createChildren()
         if origCreate then origCreate(self) end
         local t = ISTickBox:new(0, 0, 90, 18, "", self, function(_t, _idx, selected)
-            setCraftFromBoxes(selected)            -- sets flag + _craftDirty + mirrors to Mod Options
+            CraftState.setEnabled(selected)
             LootSorter.DBG("craftFromBoxes -> " .. tostring(LootSorter.craftFromBoxes))
         end)
         t:initialise(); t:instantiate()
@@ -138,7 +133,7 @@ local function installWindowTick(WindowClass, name)
     LootSorter.DBG("window tick installed: " .. name)
 end
 
--- Action panel: drain the "dirty" flag (re-scan), and intercept the craft.
+-- Action panel: observe availability changes independently, and intercept the craft.
 local function installActionPanel()
     if not _G.NC_CraftActionPanel then LootSorter.DBG("craft panel hook SKIPPED: NC_CraftActionPanel not found"); return end
 
@@ -148,13 +143,19 @@ local function installActionPanel()
         -- Neat's own post-craft routine: updateContainers (re-scan, injection applies) + autoPopulateInputs
         -- (required-items) + sortRecipeList (the recipe list) + recipeInfoPanel:onRecipeChanged. Calling it
         -- here mimics a reselect, so everything updates without navigating away and back.
-        if LootSorter._craftDirty then
-            LootSorter._craftDirty = false
-            if self.refreshAfterCraftBatch then
-                pcall(function() self:refreshAfterCraftBatch() end)
-            elseif self.HandCraftPanel and self.HandCraftPanel.updateContainers then
-                pcall(function() self.HandCraftPanel:updateContainers() end)
-            end
+        local revision = CraftState.revision()
+        if (self.qmCraftRevision or 0) < revision and idle(self) then
+            local ok, refreshed = pcall(function()
+                if self.refreshAfterCraftBatch then
+                    self:refreshAfterCraftBatch()
+                elseif self.HandCraftPanel and self.HandCraftPanel.updateContainers then
+                    self.HandCraftPanel:updateContainers()
+                else
+                    return false
+                end
+                return true
+            end)
+            if ok and refreshed then self.qmCraftRevision = revision end
         end
         if origPre then origPre(self) end
     end
@@ -200,9 +201,31 @@ end
 
 ----------------------------------------------------------------------
 -- Vanilla B42 crafting (no Neat): tickbox on the window + craft intercept.
--- Injection is shared; vanilla re-scans when ISHandCraftPanel.drawDirty is set.
+-- Injection is shared; each panel refreshes after a preference change or cancellation.
 ----------------------------------------------------------------------
 local function installVanillaHooks()
+    local originalUpdate = ISHandCraftPanel and ISHandCraftPanel.update
+    if originalUpdate then
+        local function pack(...) return {n = select("#", ...), ...} end
+        function ISHandCraftPanel:update(...)
+            local revision = CraftState.revision()
+            local nativeDirty = ISHandCraftPanel.drawDirty
+            local result = pack(originalUpdate(self, ...))
+            if (self.qmCraftRevision or 0) < revision and idle(self) then
+                -- Native update already refreshes containers and inputs when it drains drawDirty.
+                -- Acknowledge that work; leave the game's own flag and timer untouched.
+                local refreshed = nativeDirty and not ISHandCraftPanel.drawDirty
+                if not refreshed then
+                    refreshed = pcall(function()
+                        self:refreshRecipeList()
+                        self.logic:autoPopulateInputs()
+                    end)
+                end
+                if refreshed then self.qmCraftRevision = revision end
+            end
+            return unpack(result, 1, result.n)
+        end
+    end
     -- Craft-control widget: the "Storage" tickbox + the craft intercept both live here.
     if _G.ISWidgetHandCraftControl then
         -- create the tickbox as a child of the widget
@@ -211,8 +234,7 @@ local function installVanillaHooks()
             if origCreate then origCreate(self) end
             pcall(function()
                 local t = ISTickBox:new(0, 0, 90, 18, "", self, function(_t, _idx, selected)
-                    setCraftFromBoxes(selected)    -- sets flag + _craftDirty + mirrors to Mod Options
-                    if _G.ISHandCraftPanel then ISHandCraftPanel.drawDirty = true end  -- force vanilla re-scan
+                    CraftState.setEnabled(selected)
                     LootSorter.DBG("craftFromBoxes -> " .. tostring(LootSorter.craftFromBoxes))
                 end)
                 t:initialise(); t:instantiate()
