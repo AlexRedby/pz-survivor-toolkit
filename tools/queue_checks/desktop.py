@@ -1,4 +1,4 @@
-"""Keep this run's GUI clients on their assigned AeroSpace workspace."""
+"""Release owned GUI clients after the explicitly selected desktop policy."""
 from pathlib import Path
 import re
 import shutil
@@ -8,13 +8,22 @@ import time
 
 class Desktop:
     def __init__(self, selection):
-        self.workspace = selection.get('options', {}).get('test_workspace', 'PZ-TEST')
+        options = selection.get('options', {})
+        self.mode = options.get('desktop_mode', 'aerospace')
+        if self.mode not in ('aerospace', 'current'):
+            raise ValueError('desktop_mode must be aerospace or current')
+        self.evidence = {'mode': self.mode, 'workspace': None, 'windows': {}}
+        if self.mode == 'current':
+            # No workspace placement is promised in this opt-in mode.
+            self.evidence['glfw_handles'] = {}
+            return
+        self.workspace = options.get('test_workspace', 'PZ-TEST')
         if not isinstance(self.workspace, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', self.workspace):
             raise ValueError('test_workspace must be a workspace name using letters, digits, - or _')
         self.binary = shutil.which('aerospace')
         if not self.binary:
             raise RuntimeError('AeroSpace is required for isolated macOS native tests; no game launched')
-        self.evidence = {'workspace': self.workspace, 'windows': {}, 'version': self.call('--version').strip()}
+        self.evidence.update(workspace=self.workspace, version=self.call('--version').strip())
 
     def call(self, *args):
         try:
@@ -49,17 +58,28 @@ class Desktop:
     def route(self, process, cache, log):
         deadline = time.monotonic() + 30
         while True:
-            rows = self.owned(process)
+            if process.poll() is not None:
+                raise RuntimeError('Owned client exited before window acknowledgement')
+            rows = self.owned(process) if self.mode == 'aerospace' else {}
             text = Path(log).read_text(errors='replace')
             ready = re.findall(r'\[QUEUE_TEST\] WINDOW_ROUTING_READY pid=(\d+) glfw=(\d+)', text)
-            if rows and ready:
+            if ready:
                 pid, handle = ready[-1]
                 if pid != str(process.pid):
                     raise RuntimeError('Window routing request is outside the owned client PID')
-                break
+                if rows or self.mode == 'current':
+                    break
             if time.monotonic() >= deadline:
-                raise RuntimeError('Owned client window was not detected by AeroSpace within 30 seconds')
+                if self.mode == 'aerospace':
+                    raise RuntimeError('Owned client window was not detected by AeroSpace within 30 seconds')
+                raise RuntimeError('Owned client GLFW window was not ready within 30 seconds')
             time.sleep(0.1)
+        if self.mode == 'current':
+            if process.poll() is not None:
+                raise RuntimeError('Owned client exited before window acknowledgement')
+            (Path(cache) / 'Lua/test-window-routed.txt').write_text(pid + ':' + handle + '\n')
+            self.evidence['glfw_handles'][pid] = handle
+            return
         for window in rows:
             # Revalidate the process and exact ID before every mutation; never act on global focus.
             if window not in self.owned(process):
@@ -76,6 +96,10 @@ class Desktop:
         self.evidence['windows'][str(process.pid)] = list(placed)
 
     def check(self, process):
+        if self.mode == 'current':
+            if process.poll() is not None:
+                raise RuntimeError('Owned client exited during current-desktop run')
+            return
         # Observation is allowed; only window ownership and placement define isolation.
         rows = self.owned(process)
         expected = self.evidence['windows'].get(str(process.pid), [])

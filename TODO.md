@@ -50,9 +50,9 @@
 
 These are implementation and verification gaps, not evidence that every action using the old completion path is broken. Keep working native behavior while migrating one verified family at a time.
 
-## Queue performance delivery
+## Remaining cost of queue hints
 
-- [ ] Rerun isolated menu-Host `bulk-reading` with `profile_queue_hover` when owned-window routing works: exact client/server reading and returns, bounded hint frequency, clean runtime audit and unchanged source snapshot. Both `pz-queue-perf-hover-host01` and `host02` stopped before Host because AeroSpace detected no owned client window within 30 seconds; neither is gameplay verification. The available 45-mod set is a partial selection of the configured 49 mods. The related native-source logic, model/capacity, growth and UI regressions passed.
+- [ ] Profile the remaining cancellation-preview cost in the real Host queue and reduce repeated work while retaining fresh authoritative checks on press/release. The locked-desktop `pz-queue-perf-current-host01` run completed all 15 reads and exact client/server returns with a clean audit; hint frequency was bounded (2,236 previews over 31,320 running frame samples), but each actual preview still averaged about 31 ms and peaked at 81 ms. The synthetic hover check measures callback/tick intervals, not GPU FPS; it used the available 45-mod subset of the configured 49 mods.
 
 ## General rules for move and cancel
 
