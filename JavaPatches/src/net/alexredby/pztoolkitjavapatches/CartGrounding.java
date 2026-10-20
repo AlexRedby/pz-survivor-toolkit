@@ -220,6 +220,7 @@ public final class CartGrounding {
     }
 
     public static void render(ModelSlotRenderData slot) {
+        if(Main.CART_TRANSITION_SUPPORTED) CartImpactPose.render(slot);
         CartWheelSpin.prepare(slot,Double.NaN);
         if(CartTransition.render(slot)) return;
         if(!(slot.character instanceof IsoPlayer player) || !CartMotionSync.visualEnabled(player)) return;

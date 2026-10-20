@@ -138,6 +138,7 @@ public final class ClearanceProbeCheck {
             throw new AssertionError("pickup stop receipt did not come from the real empty-hand lifecycle branch");
     }
     public static void main(String[] args) throws Exception {
+        zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
         var target=Class.forName("net.alexredby.pztoolkitjavapatches.CartGrounding");
         if(new ByteBuddy().redefine(target).visit(Advice.to(ClearanceProbe.Capture.class)
             .on(named("render"))).make().getBytes().length==0)throw new AssertionError("empty instrumentation");

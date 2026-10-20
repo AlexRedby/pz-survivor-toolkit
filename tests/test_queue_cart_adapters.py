@@ -1201,8 +1201,15 @@ end
         self.selection['options']['cart_scenes'] = ['male-full-native-impact']
         (self.output / 'runtime.json').write_text(json.dumps(self.runtime))
         (self.output / 'client1/console.txt').write_text('complete fixture')
+        mesh_pass, mesh_exit = True, 0
+        def run(command, directory, name):
+            if name == 'impact-clearance':
+                self.assertIn('male-full-native-impact', command)
+                (directory / 'impact-clearance.json').write_text(json.dumps({'meshPass': mesh_pass}))
+                return {'exit_code': mesh_exit}
+            return {'exit_code': 0}
         with patch.object(carts, 'complete', return_value=True), patch.object(carts, '_videos', return_value=[]), \
-                patch.object(carts, '_run', return_value={'exit_code': 0}), patch.object(carts, '_load') as load:
+                patch.object(carts, '_run', side_effect=run), patch.object(carts, '_load') as load:
             analyze = load.return_value.analyze
             analyze.return_value = {'functionalPass': True, 'failures': []}
             result = carts.verify(self.output, self.selection, {})
@@ -1215,6 +1222,13 @@ end
                     analyze.side_effect = AssertionError(error)
                     result = carts.verify(self.output, self.selection, {})
                     self.assertTrue(any(error in issue for issue in result['issues']))
+                    self.assertEqual(result['outcomes'][0]['status'], 'failed')
+
+            analyze.side_effect = None
+            for mesh_pass, mesh_exit in ((False, 1), (False, 0), (True, 1), (None, 0)):
+                with self.subTest(mesh_pass=mesh_pass, mesh_exit=mesh_exit):
+                    result = carts.verify(self.output, self.selection, {})
+                    self.assertTrue(any('leg/handle clearance failed' in issue for issue in result['issues']))
                     self.assertEqual(result['outcomes'][0]['status'], 'failed')
 
     def test_stop_uses_selected_original_log_and_retains_failed_motion_diagnostics(self):

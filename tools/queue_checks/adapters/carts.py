@@ -866,7 +866,17 @@ def verify(root, selection, catalog):
                 _write(analysis / 'impact.json', json.dumps(impact, indent=2, allow_nan=False))
                 if not impact['functionalPass']:
                     raise ValueError('Native impact recovery failed: ' + str(impact['failures']))
-                evidence.update(impact=impact, analysis=str(analysis), evidenceComplete=True)
+                command = [sys.executable, str(ev / 'check-impact-clearance.py'), '--profile', str(cache),
+                    '--game-java-dir', str(game), '--mesh', str(_path(selection, 'mesh_fbx')),
+                    '--output', str(analysis / 'impact-clearance.json')]
+                for scene in selected_scenes(selection):
+                    command += ['--scene', scene]
+                evidence['analyzers']['impact-clearance'] = _run(command, analysis, 'impact-clearance')
+                clearance = _json(analysis / 'impact-clearance.json')
+                expected_mesh = any(scene.endswith('-native-impact') for scene in selected_scenes(selection))
+                if evidence['analyzers']['impact-clearance']['exit_code'] != 0 or (expected_mesh and clearance['meshPass'] is not True):
+                    raise ValueError('Released cart leg/handle clearance failed; see impact-clearance.json')
+                evidence.update(impact=impact, impactClearance=clearance, analysis=str(analysis), evidenceComplete=True)
                 return {'issues': [], 'evidence': evidence, 'outcomes': [
                     {'actor': 'client1', 'case': case, 'status': 'captured',
                      'reason': 'Natural bare Run/Sprint wall controls, guarded cart contact and separately injected cart recovery; visual review remains separate',

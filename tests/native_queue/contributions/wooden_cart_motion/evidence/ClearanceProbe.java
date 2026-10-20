@@ -48,7 +48,12 @@ public final class ClearanceProbe {
         for(var body:slot.modelData) {
             if(body.modelInstance==null || body.modelInstance.parent!=null || body.matrixPalette==null
                 || !(body.modelInstance.model.tag instanceof SkinningData skin))continue;
-            var row=new StringBuilder(4096).append("{\"wallTimeMillis\":").append(System.currentTimeMillis());
+            boolean impact=slot.character.isCurrentState(zombie.ai.states.CollideWithWallState.instance());
+            var row=new StringBuilder(impact?16384:4096).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
+                .append(",\"female\":").append(slot.character.isFemale())
+                .append(",\"impact\":").append(impact)
+                .append(",\"slotX\":").append(slot.x).append(",\"slotY\":").append(slot.y)
+                .append(",\"slotZ\":").append(slot.z).append(",\"slotAngle\":").append(slot.animPlayerAngle);
             for(String name:new String[]{"PerformingAction","Weapon","RightHandMask","LeftHandMask"})
                 row.append(',').append(quoted(name)).append(':').append(quoted(slot.character.getVariableString(name)));
             long carts=slot.modelData.stream().filter(d->d.modelInstance!=null
@@ -65,6 +70,14 @@ public final class ClearanceProbe {
                 Integer index=skin.boneIndices.get(name);
                 if(index==null)throw new AssertionError("Missing recovery bone "+name);
                 if(comma)row.append(',');comma=true;row.append(quoted(name)).append(':');matrix(row,pose(body,skin,index));
+            }
+            // Skinning needs every influencing bone, including thighs and pelvis after the cart leaves the hands.
+            if(impact)for(var entry:skin.boneIndices.entrySet()) {
+                String name=entry.getKey();
+                if(java.util.Set.of("Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand",
+                    "Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_Spine","Bip01_Head",
+                    "Bip01_L_Foot","Bip01_R_Foot").contains(name))continue;
+                row.append(',').append(quoted(name)).append(':');matrix(row,pose(body,skin,entry.getValue()));
             }
             row.append("},\"tracks\":[");comma=false;
             for(var track:body.modelInstance.animPlayer.getMultiTrack().getTracks()) {

@@ -81,6 +81,7 @@ public final class CartImpactMotionTest {
     private static void wovenMovement()throws Exception{
         var f=fixture();CartImpactMotion.begin(f.player,f.cart,f.world);
         check(contacts().containsKey(f.player),"confirmed contact not registered");
+        check(CartImpactMotion.poseAgeNanos(f.player)>=0,"confirmed contact has no pose lease");
         f.player.moveUnmodded(.25f,.1f);
         close(f.player.getNextX(),10.03,"woven native hook allowed forward root step");
         close(f.player.getNextY(),20.1,"woven native hook changed lateral step");
@@ -124,6 +125,7 @@ public final class CartImpactMotionTest {
                 case 12 -> f.world.x+=.05f;
                 case 13 -> f.cart.setWorldZRotation(30);
             }
+            check(CartImpactMotion.poseAgeNanos(f.player)==-1,"invalid episode retained pose lease "+bad);
             var step=CartImpactMotion.movement(f.player,.2f,.1f);
             close(step.x,.2,"invalid episode changed input "+bad);close(step.y,.1,"invalid episode changed lateral "+bad);
             check(!contacts().containsKey(f.player),"invalid episode retained "+bad);

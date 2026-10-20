@@ -107,6 +107,7 @@ def main():
     args = parser.parse_args()
     geometry()
     subprocess.run([sys.executable, str(HERE / 'test_analyzer.py')], check=True)
+    subprocess.run([sys.executable, str(HERE / 'test_impact_clearance.py')], check=True)
     with tempfile.TemporaryDirectory(prefix='wood-evidence-check-') as temp:
         output = Path(temp)
         for path in HERE.glob('*.py'):

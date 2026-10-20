@@ -694,6 +694,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.38
+
+- **Fixed:** The male character's right trouser leg no longer clips the wooden wheelbarrow handle during the checked single-player emergency wall-fall transition. A short, smoothly blended knee adjustment preserves the foot, pelvis, actor root, stationary cart and native backward recoil. Female poses and Host behavior are unchanged.
+
 ### 0.1.37
 
 - **Fixed:** After a confirmed single-player wooden-cart emergency release, the character no longer steps forward through the stationary cart. The bounded impact episode preserves the stock backward recoil, lateral motion and obstacle collision, and clears on state or ownership changes.

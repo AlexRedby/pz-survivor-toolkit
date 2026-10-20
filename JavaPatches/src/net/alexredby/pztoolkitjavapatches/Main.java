@@ -469,6 +469,7 @@ public final class Main {
         public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot,
             @Patch.Argument(0) zombie.core.skinnedmodel.ModelManager.ModelSlot source) {
             if(Main.CART_OBSERVER_SUPPORTED) CartObserverRender.bind(slot,source);
+            if(Main.CART_TRANSITION_SUPPORTED) CartImpactPose.bind(slot,source);
         }
     }
 
@@ -477,6 +478,7 @@ public final class Main {
         @Patch.OnExit
         public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot) {
             if(Main.CART_OBSERVER_SUPPORTED) CartObserverRender.release(slot);
+            CartImpactPose.release(slot);
         }
     }
 

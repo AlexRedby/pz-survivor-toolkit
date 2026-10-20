@@ -70,6 +70,13 @@ public final class CartImpactMotion {
         return clip(x,y,player.getNextX(),player.getNextY(),contact.x,contact.y,contact.nx,contact.ny,out);
     }
 
+    // Producer-only snapshot; render workers must not inspect mutable player or world state.
+    static synchronized long poseAgeNanos(IsoPlayer player) {
+        var contact=contacts.get(player);
+        long now=System.nanoTime();
+        return contact!=null && valid(player,contact,now)?now-contact.started:-1;
+    }
+
     static synchronized void tick() {
         long now=System.nanoTime();
         contacts.entrySet().removeIf(entry->!valid(entry.getKey(),entry.getValue(),now));
