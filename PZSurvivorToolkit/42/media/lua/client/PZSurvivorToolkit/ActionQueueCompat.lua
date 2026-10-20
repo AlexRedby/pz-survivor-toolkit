@@ -30,7 +30,8 @@ local washWalkHelper
 local tidyClassUnchanged, tidyActionUnchanged
 local tidyFloorPage, tidyFloorGetter
 local tidyFloorValid
-local repairedFloors = setmetatable({}, {__mode = "k"})
+-- Queued actions only; prune explicitly because Kahlua ignores weak-key modes.
+local repairedFloors = {}
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform",
     "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceStop", "forceCancel"}
 local projectCookActionSources = {
@@ -86,7 +87,7 @@ local function pack(...) return {n = select("#", ...), ...} end
 
 function Compat.prune()
     local pending = false
-    for _, registry in ipairs({records, sessions}) do
+    for _, registry in ipairs({records, sessions, repairedFloors}) do
         for _ in pairs(registry) do pending = true; break end
         if pending then break end
     end
@@ -98,6 +99,7 @@ function Compat.prune()
         end
     end
     for action in pairs(records) do if not queued[action] then records[action] = nil end end
+    for action in pairs(repairedFloors) do if not queued[action] then repairedFloors[action] = nil end end
     for character, session in pairs(sessions) do
         if character:isDead() or ISTimedActionQueue.queues[character] ~= session.queue
             or (session.queue.toolkitOperationGeneration or 0) ~= session.generation then
@@ -112,6 +114,7 @@ Events.OnTick.Add(Compat.prune)
 if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
     worldGeneration = worldGeneration + 1
     for action in pairs(records) do records[action] = nil end
+    for action in pairs(repairedFloors) do repairedFloors[action] = nil end
     for character in pairs(sessions) do sessions[character] = nil end
 end) end
 

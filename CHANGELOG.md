@@ -18,6 +18,7 @@ Version labels come from committed component metadata, including changes made wi
 ### 0.1.175
 
 - **Fixed:** Source-origin checks reuse the compile-time filename of loaded Lua functions instead of querying it repeatedly for every queued action. The bounded cache follows the original filename accessor; replacements, live callbacks, item state, capacities and file checksums retain their independent checks.
+- **Fixed:** Multiplayer acknowledgement tracking retains only the current receipt per local player slot, while pending late results remain independently correlated. Completed floor-placement repair records are removed through queue and main-menu cleanup; neither registry relies on unsupported weak-table collection.
 
 ### 0.1.174
 

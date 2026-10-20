@@ -3,7 +3,9 @@ require 'TimedActions/ISTimedActionQueue'
 
 local Acknowledgements = {}
 PZSurvivorToolkit.ActionQueueAcknowledgements = Acknowledgements
-local records = setmetatable({}, {__mode = 'k'})
+-- Only a local slot's current action can capture a receipt. Late terminal
+-- observation owns its separate record in pending, without retaining all actions.
+local records = {}
 local seen, pending = {}, {}
 
 local function current(queue, action)
@@ -42,17 +44,19 @@ local function receive(module, command, args)
         local action = queue.current
         if current(queue, action) and character:getOnlineID() == args.player
             and action.toolkitNativeTransaction == args.transaction and action.toolkitNativeKind == args.kind then
-            local record = records[action]
-            if record and record.native ~= action.action then records[action], record = nil, nil end
+            local player = character:getPlayerNum()
+            local entry = records[player]
+            local record = entry and entry.action == action and entry.record
+            if record and record.native ~= action.action then records[player], record = nil, nil end
             if args.state == 'started' then
-                local player = character:getPlayerNum()
                 local previous = seen[player] or {}
                 if record or previous[args.transaction] == args.token then return end
                 previous[args.transaction], seen[player] = args.token, previous
-                records[action] = {queue = queue, native = action.action, generation = queue.toolkitOperationGeneration or 0,
+                record = {queue = queue, native = action.action, generation = queue.toolkitOperationGeneration or 0,
                     token = args.token, transaction = args.transaction, kind = args.kind, state = 'started'}
+                records[player] = {action = action, record = record}
                 pending[player] = pending[player] or {}
-                pending[player][args.transaction] = {action = action, record = records[action]}
+                pending[player][args.transaction] = {action = action, record = record}
             end
             return
         end
@@ -60,6 +64,9 @@ local function receive(module, command, args)
 end
 
 function Acknowledgements.reset(queue)
+    for player, entry in pairs(records) do
+        if entry.record.queue == queue then records[player] = nil end
+    end
     for _, transactions in pairs(pending) do
         for id, entry in pairs(transactions) do
             if entry.record.queue == queue then transactions[id] = nil end
@@ -68,7 +75,9 @@ function Acknowledgements.reset(queue)
 end
 
 function Acknowledgements.capture(action)
-    local record = records[action]
+    local character = action and action.character
+    local entry = character and records[character:getPlayerNum()]
+    local record = entry and entry.action == action and entry.record
     if record and current(record.queue, action)
         and record.native == action.action
         and record.generation == (record.queue.toolkitOperationGeneration or 0)

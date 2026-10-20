@@ -652,6 +652,28 @@ do
     -- Even reusing the same player/queue with its original generation must not revive an old callback.
     stale.onCompleteFunc(unpack(stale.onCompleteArgs))
     assert(#queue.queue==1 and queue.queue[1]==later, 'a new world cannot revive an already pruned source callback')
+    -- Floor repair receipts can outlive all other compatibility registries.
+    -- Inspect entries directly, without relying on Lua's weak-key GC behavior.
+    local floorRepairs=compat.fixtureFloorRepairs
+    for _, lifecycle in ipairs({'completed','dead','replacement','world','menu'}) do
+        reset()
+        for _,callback in ipairs(events.OnMainMenuEnter or {}) do callback() end
+        local repaired={character=player}
+        queue.queue,queue.current={repaired},repaired
+        floorRepairs[repaired]={queue=queue,character=player}
+        assert(count(records)==0 and count(sessions)==0,
+            'floor-only cleanup must exercise prune without another registry keeping it active')
+        compat.prune()
+        assert(floorRepairs[repaired], 'queued floor placement must retain its repair receipt')
+        if lifecycle=='completed' then queue.queue,queue.current={},nil
+        elseif lifecycle=='dead' then dead=true
+        elseif lifecycle=='replacement' then ISTimedActionQueue.queues[player]={queue={},character=player}
+        elseif lifecycle=='world' then ISTimedActionQueue.queues={}
+        else for _,callback in ipairs(events.OnMainMenuEnter or {}) do callback() end end
+        if lifecycle~='menu' then compat.prune() end
+        assert(not floorRepairs[repaired], lifecycle..' must release departed floor placement receipts')
+        ISTimedActionQueue.queues[player]=queue; dead=false
+    end
     reset(); dirty=item(bag,1)
 end
 local transfer = wash(dirty); local unrelated = tail()
@@ -1657,6 +1679,7 @@ do
             assert(old:getContainer()==(staleFloor and floor or nil),'repair mutated the stale source proxy')
             local replica
             if staleFloor then
+                assert(compat.fixtureFloorRepairs[placementAction], 'actual Host floor repair must own its queued receipt')
                 -- Native MP removes the held proxy and receives a new world replica before relocation starts.
                 returned:perform();live.container=nil
                 replica=worldItem(live:getID());floor.values={};floorLoot.worldItems={replica}
@@ -1669,6 +1692,8 @@ do
                 assert(not definitions.inspect(placementAction),'mixed floor validation widened opaque queue rights')
             end
             drain();assert((replica or live):getContainer()==floor and TidyFixture.restoring[player]==nil)
+            compat.prune()
+            assert(not compat.fixtureFloorRepairs[placementAction], 'completed Host placement must release its repair receipt')
             isClient,isMultiplayer=client,multi
         end
     end

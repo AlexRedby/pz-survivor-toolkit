@@ -50,11 +50,6 @@
 
 These are implementation and verification gaps, not evidence that every action using the old completion path is broken. Keep working native behavior while migrating one verified family at a time.
 
-## Remaining cost of queue hints
-
-- [ ] Remove repeated loaded-function filename lookups from source-origin checks, keyed by callback and the current filename accessor. Keep errors retryable, file checksums fresh and all live callback/resource/capacity guards intact.
-- [ ] Verify origin reuse, accessor/callback replacement, native Kahlua compatibility and authoritative cancellation safety; compare a native hover profile against `pz-queue-perf-current-host01` (31 ms mean/81 ms peak per actual preview, 2,236 previews over 31,320 samples). Preserve exact read/return receipts and clean runtime/source audit, then bump Toolkit and deliver. The native selection has 45 of the configured 49 mods; callback intervals are not GPU FPS.
-
 ## General rules for move and cancel
 
 - [ ] Extend the version-1 edit contract to remaining food variants (hot/state-changing items, custom callbacks, complete consumption that creates replacement items and custom/evolved weights), other fluid actions, world-container pickup/return and craft inputs. Describe exact identity versus late selector scope, bounded native effects and complete resource domains; retain legacy protection for missing contracts. Do not infer semantics from action names or treat same-item access alone as a dependency.
