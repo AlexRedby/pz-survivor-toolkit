@@ -28,7 +28,6 @@
 
 ## Known pose defects
 
-- [ ] Replicate only the effort state within the existing cart pose budget, then check owner/observer contact and release in Host. Keep the existing observer approach-penetration defect separate.
 - [ ] Review rapid left/right steering response with the user before changing the established angular inertia: at Run/Sprint, a 300 ms opposite press can still produce net yaw in the previous direction. Keep measured response latency separate from unexpected stuck/wrong-way steering; preserve smooth bank transitions and wheel rolling if retuning is agreed.
 - [ ] Remove rendered fore-aft cart jumps during Walk side-clearance acquisition, Run/Sprint entry, rapid slaloms and stopping. Preserve native leg motion, the preferred straight pose and minimum hand/body clearance. Check monotonic-time wheel/handle trajectories and recordings, including startup and release; a clearance-only change or passing grip probes is insufficient.
 - [ ] Remove rare contact between wide jeans and the handles in the original straight pose, near it and at the start of the reverse arc, preserving the preferred hand and torso position. Contact remains in some zero-lean phases and nearby; also check the short Walk -> Cart Idle transition while equipping. Include Walk with a full load alongside a vehicle at 45° to the right: the left handle touches the trousers at about 4.18 s in scene `male-full-vehicle-yaw45-slide-right` in capture `cart-vehicles-20261018/native05`.

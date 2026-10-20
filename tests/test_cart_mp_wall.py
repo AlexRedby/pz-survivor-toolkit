@@ -260,6 +260,19 @@ class CartMPFrontBraceTests(unittest.TestCase):
         self.assertEqual(report['manualTurns'],[])
         self.assertIn('separate reported defect',report['scope'])
 
+    def test_release_window_covers_native_sampling_jitter_without_lowering_minimum(self):
+        expected={'client1':[6782,6896,6996,7096,7200,7313],
+                  'server':[6817,6917,7020,7120,7321]}
+        for role,times in expected.items():
+            rows=[r for r in self.rows(role,'[CART_MP_STATE] ') if 6750<=r['wall']-self.epoch<=7400]
+            remove={id(r) for r in rows[len(times):]}
+            self.logs[role]=[e for e in self.logs[role] if not (isinstance(e,tuple) and e[0]=='[CART_MP_STATE] ' and id(e[1]) in remove)]
+            for row,t in zip(rows,times):row['wall']=self.epoch+t
+        self.assertTrue(self.analyze()['brace']['verified'])
+        self.assertEqual(self.analyze()['phases']['release']['client1']['samples'],6)
+        self.logs['server']=[e for e in self.logs['server'] if not (isinstance(e,tuple) and e[0]=='[CART_MP_STATE] ' and e[1]['wall']==self.epoch+7020)]
+        with self.assertRaisesRegex(ValueError,'server/brace-release: insufficient samples'):self.analyze()
+
     def test_owner_and_observer_require_actual_brace_and_native_track(self):
         for role,key,value in (('client1','brace',False),('client2','brace',False),('client2','brace','true'),
                                ('client1','trackProgress',[]),('client2','trackProgress',[])):

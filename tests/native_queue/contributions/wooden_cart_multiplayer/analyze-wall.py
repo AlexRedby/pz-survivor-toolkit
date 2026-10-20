@@ -14,9 +14,11 @@ WINDOWS = {'idle': (100, 800), 'walk': (1500, 9300), 'reverse': (10500, 11800),
            'forward-turn': (16300, 20800), 'forward-out': (21300, 25800), 'settled': SETTLED}
 FRONT_DURATION = 18000
 FRONT_SETTLED = (17300, FRONT_DURATION)
+# Keep five native samples despite100..200ms cadence, after release blend and before manual reverse.
+FRONT_RELEASE = (6750, 7400)
 FRONT_PHASES = [('idle', 0), ('walk', 1000), ('release', 6500), ('reverse', 7500),
                 ('reverse-stop', 10000), ('restart', 10800), ('settled', 15500)]
-FRONT_WINDOWS = {'idle': (100, 800), 'contact': (5000, 6300), 'release': (6800, 7300),
+FRONT_WINDOWS = {'idle': (100, 800), 'contact': (5000, 6300), 'release': FRONT_RELEASE,
                  'reverse': (7800, 9800), 'restart': (11100, 12000),
                  'contact-again': (14500, 15300), 'settled': FRONT_SETTLED}
 BRACE_TRACK = 'Toolkit_WoodCartBrace'
@@ -81,12 +83,12 @@ def front_evidence(states, inputs, poses, measured, cartid, wall_x, epoch, cover
             jitter = max(math.sqrt(sum((max(feet(f)[name][a] for f in frames) - min(feet(f)[name][a] for f in frames)) ** 2 for a in range(3))) for name in FEET)
             require(offset <= .025 and jitter <= .012, role + ': blocked feet are raised or unplanted')
             summaries.append(dict(role=role, window=list(interval), samples=len(quiet), renderFrames=len(frames), footOffsetFromStanding=offset, footPositionRangeXYZ=jitter))
-        for interval in ((6800, 7300), (8000, 9800), FRONT_SETTLED):
+        for interval in (FRONT_RELEASE, (8000, 9800), FRONT_SETTLED):
             quiet = pick(states[role], 'wall', interval, role + '/brace-release')
             require(all(not r['brace'] and flags(r) & 8 == 0 for r in quiet), role + ': brace remains latched after release/reverse')
             require(all(not any(t.get('name') == BRACE_TRACK and number(t.get('weight')) and t['weight'] > .1
                                 for t in tracks(r)) for r in quiet), role + ': brace track remains after release/reverse')
-    for interval in ((6800, 7300), (8000, 9800), FRONT_SETTLED):
+    for interval in (FRONT_RELEASE, (8000, 9800), FRONT_SETTLED):
         arrivals = pick(states['server'], 'wall', interval, 'server/brace-release')
         require(all(flags(r) & 8 == 0 for r in arrivals), 'Server brace flag remains after release/reverse')
     for interval in ((5000, 6300), (14500, 15300)):
@@ -96,7 +98,7 @@ def front_evidence(states, inputs, poses, measured, cartid, wall_x, epoch, cover
         # ToolkitCartBrace is the live intended-step collision result; cartBlocked can reset at zero root budget.
         require(all(r['drive'] == 1 and r['wantsMove'] and r['brace'] >= .95 for r in contact), 'Owner lacks sustained blocked forward intent')
         require(any(f['minX'] <= wall_x + .65 for f in measured['client1'] if interval[0] <= f['elapsed'] <= interval[1]), 'Frontal stance never reaches wall contact')
-    for interval in ((6800, 7300), FRONT_SETTLED):
+    for interval in (FRONT_RELEASE, FRONT_SETTLED):
         release = pick(inputs, 'wall', interval, 'owner/front-release')
         require(all(r['drive'] == 0 and not r['wantsMove'] and r['brace'] < .05 for r in release), 'Owner release leaves brace intent latched')
     require(all(r['stepY'] >= 0 for r in states['client1'] if r['wall'] < epoch + 7500), 'Automatic reverse occurred before manual front reverse')
