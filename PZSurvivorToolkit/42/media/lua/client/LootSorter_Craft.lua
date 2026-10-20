@@ -21,7 +21,7 @@ LootSorter.craft = LootSorter.craft or {}
 
 
 -- If our gather path errors and the UI hook falls back to a NORMAL craft, we must first make that
--- craft inventory-only: the logic already cached the box-including container set (that's why the
+-- craft use ordinary reachable sources: the logic already cached the box-including set (that's why the
 -- recipe lit up), so a plain fallback would consume the box-resident input in place = teleport.
 -- Suppress availability injection for the whole re-pin, including input-resolution callbacks.
 -- Re-pin the logic to ordinary containers and re-resolve inputs, as CraftTriggerAction:perform does.
@@ -87,19 +87,53 @@ local function skipItem(it)
     return skip
 end
 
--- Count matching items per input across the player's currently-accessible containers (what vanilla
--- already "sees" for crafting: inventory + reachable nearby containers).
-local function accessibleCounts(recipe, myInputs, player)
-    local counts = {}
+-- Ordinary crafting containers and designated storage overlap. Build both the
+-- quantity limit and fetch plan from the same physical-item partition: ordinary
+-- sources first, then previously unseen storage items in nearest-box order.
+local function collectSources(recipe, myInputs, player, boxes)
+    local access, available, seen = {}, {}, {}
+    local boxItems, boxMatch = {}, {}
+    local needsOrigin = false
+    local function count(counts, idx)
+        if idx then counts[idx] = (counts[idx] or 0) + 1 end
+    end
     pcall(function()
         local containers = inventoryContainers(player)
         local list = CraftRecipeManager.getAllItemsFromContainers(containers, ArrayList.new())
         for i = 0, list:size() - 1 do
-            local idx = inputIndexFor(recipe, myInputs, list:get(i), player)
-            if idx then counts[idx] = (counts[idx] or 0) + 1 end
+            local item = list:get(i)
+            if not seen[item] then
+                seen[item] = true
+                local idx = inputIndexFor(recipe, myInputs, item, player)
+                count(access, idx)
+                count(available, idx)
+                if idx then
+                    local source = item:getContainer()
+                    if source and not source:isInCharacterInventory(player) then needsOrigin = true end
+                end
+            end
         end
     end)
-    return counts
+    for _, box in ipairs(boxes or {}) do
+        local items, matches = {}, {}
+        pcall(function()
+            local list = box.container:getItems()
+            for i = 0, list:size() - 1 do
+                local item = list:get(i)
+                if not seen[item] then
+                    seen[item] = true
+                    local idx = not skipItem(item) and inputIndexFor(recipe, myInputs, item, player)
+                    if idx then
+                        items[#items + 1] = item
+                        matches[#matches + 1] = idx
+                        count(available, idx)
+                    end
+                end
+            end
+        end)
+        boxItems[#boxItems + 1], boxMatch[#boxMatch + 1] = items, matches
+    end
+    return access, available, boxItems, boxMatch, needsOrigin
 end
 
 -- Max crafts the recipe supports given (accessible items + the given designated boxes).
@@ -109,25 +143,13 @@ function LootSorter.craft.maxCraftable(recipe, player, boxes)
     local myInputs = itemInputs(recipe)
     if #myInputs == 0 then return 0 end
 
-    local avail = accessibleCounts(recipe, myInputs, player)
-    for _, b in ipairs(boxes or {}) do
-        pcall(function()
-            local items = b.container:getItems()
-            for i = 0, items:size() - 1 do
-                local it = items:get(i)
-                if not skipItem(it) then
-                    local idx = inputIndexFor(recipe, myInputs, it, player)
-                    if idx then avail[idx] = (avail[idx] or 0) + 1 end
-                end
-            end
-        end)
-    end
+    local _, avail = collectSources(recipe, myInputs, player, boxes)
 
     return LootSorter.craftPlan.maxCraftable(myInputs, avail)   -- pure math (unit-tested)
 end
 
--- The craft trigger: queued AFTER the fetch transfers, so by the time it runs the ingredients are in
--- the player's inventory. It asks the game how many crafts are actually possible now and starts them.
+-- The craft trigger: queued AFTER the fetch transfers and any return walk, so hauled ingredients
+-- and the original nearby sources are reachable. Ask the game how many crafts are possible now.
 -- (HandcraftStartMultiple checks availability at CREATION time and is all-or-nothing on qty, so we
 -- must call it here -- post-fetch -- and cap qty to getPossibleCraftCount.)
 LootSorter.CraftTriggerAction = ISBaseTimedAction:derive("LootSorterCraftTriggerAction")
@@ -137,7 +159,7 @@ function LootSorter.CraftTriggerAction:update() end
 function LootSorter.CraftTriggerAction:start() end
 
 function LootSorter.CraftTriggerAction:perform()
-    LootSorter._activelyCrafting = true    -- injection OFF for the craft: count/consume the carried items only
+    LootSorter._activelyCrafting = true    -- injection OFF: use ordinary reachable sources for the craft
     pcall(function()
         local logic, qty = self.logic, self.qty or 1
         -- the row's logic may currently point at a different selected recipe -> pin it to ours
@@ -145,10 +167,10 @@ function LootSorter.CraftTriggerAction:perform()
         -- surface recipe: pin the captured table (we've walked back to it) so the craft targets it,
         -- not whatever surface the panel's per-frame FindCraftSurface last found near the boxes
         pcall(function() if self.surface then logic:setIsoObject(self.surface) end end)
-        -- pin the logic to INVENTORY-ONLY (injection is off now) so it consumes the items we just
-        -- hauled in -- never teleports the remainder out of a distant box
+        -- Pin the logic to ordinary reachable sources, including the items we just hauled in;
+        -- never teleport the remainder out of a distant box.
         pcall(function() logic:setContainers(inventoryContainers(self.character)) end)
-        -- re-resolve the recipe's input items against the new (inventory-only) container set, so the
+        -- re-resolve the recipe's input items against the ordinary reachable container set, so the
         -- multi-craft plan points at the hauled items. Without this the batch plan is stale (built from
         -- the injected box set) and only the first craft has resolvable ingredients.
         pcall(function() if logic.autoPopulateInputs then logic:autoPopulateInputs() end end)
@@ -228,8 +250,8 @@ function LootSorter.craft.gatherAndCraft(player, recipe, logic, qty, craftFn, su
 
     if LootSorter.applyOptions then pcall(LootSorter.applyOptions) end   -- live range/floor settings (parity with sort)
 
-    -- Turn OFF the craft-UI box injection for the shortfall calc, so it's measured against REAL inventory
-    -- and the craft consumes the carried items (never teleports out of a distant box). The whole body is
+    -- Turn OFF craft-UI box injection for the shortfall calculation, so ordinary reachable sources
+    -- are separate from items that must be hauled from storage. The whole body is
     -- pcall-wrapped so a throw in gatherBoxes/plan/queueing can NEVER leave _activelyCrafting stuck true
     -- (which would silently disable injection -- the whole feature -- for the rest of the session).
     LootSorter._activelyCrafting = true
@@ -237,24 +259,8 @@ function LootSorter.craft.gatherAndCraft(player, recipe, logic, qty, craftFn, su
         local boxes = LootSorter.gatherBoxesOrWarn(player)
         if not boxes then return end
 
-        -- Reduce boxes to the plain-data shape the pure planner wants: for each box, a parallel array of
-        -- the actual items plus a match array (input index each item satisfies, or false). Then plan.
-        local access = accessibleCounts(recipe, myInputs, player)
-        local boxItems, boxMatch = {}, {}
-        for _, b in ipairs(boxes) do
-            local items, match = {}, {}
-            pcall(function()
-                local list = b.container:getItems()
-                for i = 0, list:size() - 1 do
-                    local it = list:get(i)
-                    items[#items + 1] = it
-                    if skipItem(it) then match[#match + 1] = false
-                    else match[#match + 1] = inputIndexFor(recipe, myInputs, it, player) or false end
-                end
-            end)
-            boxItems[#boxItems + 1] = items
-            boxMatch[#boxMatch + 1] = match
-        end
+        local access, _, boxItems, boxMatch, needsOrigin = collectSources(recipe, myInputs, player, boxes)
+        local returnSquare = surface and craftSquare or needsOrigin and player:getCurrentSquare()
 
         local result = LootSorter.craftPlan.plan(myInputs, qty, access, boxMatch)   -- pure (unit-tested)
 
@@ -278,10 +284,10 @@ function LootSorter.craft.gatherAndCraft(player, recipe, logic, qty, craftFn, su
             end
         end
 
-        -- surface recipe: walk back to the exact tile we crafted from (fast-forward-safe), so the table
-        -- is adjacent again when the craft fires
-        if surface and craftSquare then
-            ISTimedActionQueue.add(LootSorter.WalkAction:new(player, craftSquare))
+        -- Ordinary world ingredients stay at the starting location. Restore that
+        -- reach after fetching, just as a surface craft returns to its workbench.
+        if returnSquare and (surface or #result.trips > 0) then
+            ISTimedActionQueue.add(LootSorter.WalkAction:new(player, returnSquare))
         end
 
         -- finally the craft trigger (runs once the fetch + walk-back above have completed)

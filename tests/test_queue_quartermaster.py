@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import quartermaster as adapter
 from queue_checks.adapters import quartermaster_distribution as distribution
+from queue_checks.adapters import quartermaster_crafting as crafting
 
 
 class QuartermasterPresets(unittest.TestCase):
@@ -190,6 +191,25 @@ class QuartermasterPresets(unittest.TestCase):
             with self.subTest(rows=rows):
                 write(rows)
                 self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
+
+
+class QuartermasterCrafting(unittest.TestCase):
+    def test_shared_fixture_dependencies_are_sealed_and_staged_for_each_role(self):
+        selection = dict(suite=crafting.SUITE, cases=['vanilla', 'neat'], kind='mp', mode='toolkit',
+                         clients=1, languages=['EN'], mods=crafting.MODS, options={})
+        sources = crafting.sources(ROOT, selection)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            runtime = {'roles': {role: {'cache': str(output / role)} for role in ('client1', 'server')}}
+            crafting.stage(ROOT, output, None, None, selection, {}, runtime)
+            for name in ('QueueCraftUIFixture.lua', 'QueueCookEvolvedFixture.lua'):
+                source = ROOT / 'tests/native_queue/craft-ui/shared' / name
+                with self.subTest(module=name):
+                    self.assertIn(source, sources, 'shared fixture dependency is missing from the sealed inputs')
+                    for role in runtime['roles']:
+                        staged = output / role / 'mods/ActionQueueTest/42/media/lua/shared' / name
+                        self.assertTrue(staged.is_file(), 'shared fixture dependency is missing for ' + role)
+                        self.assertEqual(source.read_bytes(), staged.read_bytes())
 
 
 class QuartermasterBackpack(unittest.TestCase):

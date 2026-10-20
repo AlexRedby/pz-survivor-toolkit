@@ -53,7 +53,7 @@ local function installContainerInjection()
                 -- would be spam. Injecting nothing simply reads as "no boxes yet".
                 local boxes = LootSorter.gatherBoxes(character)
                 for _, b in ipairs(boxes) do
-                    if b.container then list:add(b.container) end
+                    if b.container and not list:contains(b.container) then list:add(b.container) end
                 end
             end)
         end

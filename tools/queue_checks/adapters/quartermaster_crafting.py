@@ -10,6 +10,7 @@ SUITE = 'quartermaster-crafting'
 CASES = ['vanilla', 'neat']
 MODS = craft.MODS + ['organizedCategories_core', 'NeatUI_Framework', 'Neat_Crafting']
 MARKER = '[QM_CRAFT] '
+SHARED_FIXTURES = ('QueueCraftUIFixture.lua', 'QueueCookEvolvedFixture.lua')
 RECEIPT_KEYS = {'materialIds', 'consumed', 'outputIds', 'outputs', 'resources', 'toolsReturned',
                 'bookId', 'tailRead', 'sourceConsumed', 'source'}
 
@@ -33,7 +34,8 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted((root / SUITE).rglob('*.lua')), root / 'craft-ui/shared/QueueCraftUIFixture.lua',
+    return [*sorted((root / SUITE).rglob('*.lua')),
+            *(root / 'craft-ui/shared' / name for name in SHARED_FIXTURES),
             *sorted((root / 'craft/scripts').rglob('*.txt')), root / 'health/shared/QueueHealthEvents.lua',
             *sorted((root / 'startup').rglob('*.lua'))]
 
@@ -43,7 +45,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     craft.stage_common(project, output, game, jdk, selection, locations, runtime)
     for role in runtime['roles'].values():
         target = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua/shared'
-        shutil.copy2(Path(project) / 'tests/native_queue/craft-ui/shared/QueueCraftUIFixture.lua', target)
+        for name in SHARED_FIXTURES:
+            shutil.copy2(Path(project) / 'tests/native_queue/craft-ui/shared' / name, target)
     runtime['fixture']['failure_markers'] = [MARKER + 'FAIL ']
 
 

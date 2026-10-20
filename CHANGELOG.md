@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.143
+
+- **Fixed:** Crafting from storage counts each physical item once when ordinary reachable containers and designated boxes overlap. The quantity limit and fetch plan share one source snapshot, so aliases cannot inflate availability or reserve the same item twice. Crafting refreshes no longer append an already accessible designated container again.
+- **Fixed:** When a handcraft depends on nearby world ingredients as well as fetched storage items, the haul returns to the starting location before crafting, restoring access to those original ingredients.
+
 ### 0.1.142
 
 - **Changed:** EatSmart menu goals use short English/Russian outcome labels, with the estimated percentage of remaining food in parentheses. Numeric targets remain in tooltips beside existing unavailable reasons; native portions, settings and callbacks are preserved.

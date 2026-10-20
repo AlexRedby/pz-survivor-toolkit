@@ -24,6 +24,7 @@ EXTRA_TESTS = (
     'test_quartermaster_container_config.lua',
     'test_container_configuration_menus.lua',
     'test_quartermaster_craft_ui.lua',
+    'test_quartermaster_craft_sources.lua',
     'test_highlighter.lua',
     'test_saucedcarts_compat.lua',
     'test_cart_spawns.lua',

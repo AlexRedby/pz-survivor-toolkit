@@ -45,9 +45,12 @@ LootSorter = {DBG = function() end}
 local player, otherPlayer, storage, carried = {}, {}, {}, {}
 local busy = false
 ISTimedActionQueue = {isPlayerDoingAction = function() return busy end}
+local ordinaryContainers = {carried}
 local function containerList()
-    local values = {carried}
+    local values = {}
+    for _, value in ipairs(ordinaryContainers) do values[#values + 1] = value end
     return {add=function(_,value) values[#values+1]=value end,
+        contains=function(_,value) for _,entry in ipairs(values) do if entry==value then return true end end;return false end,
         size=function() return #values end, get=function(_,i) return values[i+1] end}
 end
 ISInventoryPaneContextMenu = {getContainers = containerList}
@@ -143,6 +146,19 @@ for _,entry in ipairs({{ISHandCraftPanel,'updateContainers'},{NC_HandCraftPanel,
     assert(instance.containers:size()==2 and instance.containers:get(1)==storage,'refresh missed designated storage')
     ordinary()
 end
+-- A designated box can already be in ordinary reach; repeated registry entries
+-- must not expose its physical items a second time to native crafting logic.
+ordinaryContainers = {carried, storage}
+local originalGather = LootSorter.gatherBoxes
+LootSorter.gatherBoxes = function() return {{container=storage},{container=storage}} end
+local overlapping = {player=player}
+ISHandCraftPanel.updateContainers(overlapping)
+assert(overlapping.containers:size()==2 and overlapping.containers:get(0)==carried
+    and overlapping.containers:get(1)==storage, 'availability duplicated an already accessible storage container')
+ordinaryContainers = {carried}
+ISHandCraftPanel.updateContainers(overlapping)
+assert(overlapping.containers:size()==2, 'availability duplicated a repeated remote storage container')
+LootSorter.gatherBoxes = originalGather
 craftContainers.withContext(player,function()
     craftContainers.withContext(otherPlayer,function()
         assert(not craftContainers.active(player) and craftContainers.active(otherPlayer), 'nested player scope is wrong')
