@@ -64,11 +64,11 @@ local function box(rule, manual, named, links, presets)
         capacity = 100, used = 0, dist = 1}
 end
 local carrier = {ref = {}, factor = 1, space = 100}
-local function checkPlan(items, boxes, carriers, budget, accepts)
+local function checkPlan(items, boxes, carriers, budget, accepts, acceptsDestination)
     local categories, categoryTables, knownItems, knownBoxes = {}, {}, {}, {}
     for _, record in ipairs(items) do categories[record], knownItems[record] = record.cat, true end
     for _, record in ipairs(boxes) do categoryTables[record], knownBoxes[record] = record.cats, true end
-    local plan = LootSorter.planTrips(items, boxes, carriers or {carrier}, budget or 100, accepts, Rules.matches)
+    local plan = LootSorter.planTrips(items, boxes, carriers or {carrier}, budget or 100, accepts, Rules.matches, acceptsDestination)
     for _, record in ipairs(items) do assert(record.cat == categories[record], 'planner left a transient item category') end
     for _, record in ipairs(boxes) do assert(record.cats == categoryTables[record], 'planner replaced original category-table identity') end
     local destinations = {}
@@ -239,6 +239,59 @@ do
         'carrier rejection was bypassed or lost leftover records')
 end
 
+do
+    local rejected, allowed = box(seedRule), box(seedRule)
+    rejected.priority, rejected.dist, allowed.dist = 10, 10, 1
+    local function admits(destination, record)
+        assert((destination == rejected or destination == allowed) and record == sunflower,
+            'destination callback received cloned or unexpected records')
+        return destination == allowed
+    end
+    destinations = checkPlan({sunflower}, {allowed, rejected}, nil, nil, nil, admits)
+    assert(destinations[sunflower] == allowed, 'rejected priority destination prevented fallback')
+    rejected.priority, rejected.dist, allowed.dist = 0, 1, 10
+    destinations = checkPlan({sunflower}, {rejected, allowed}, nil, nil, nil, admits)
+    assert(destinations[sunflower] == allowed, 'rejected nearest destination prevented fallback')
+    destinations = checkPlan({sunflower}, {rejected, allowed})
+    assert(destinations[sunflower] == rejected, 'omitting destination admission changed legacy routing')
+
+    local namedRejected = box(nil, {}, {[sunflower.name] = true})
+    local namedAllowed = box(nil, {}, {[sunflower.name] = true})
+    local categoryAllowed = box(seedRule)
+    namedRejected.priority, namedAllowed.dist, categoryAllowed.dist = 10, 10, 1
+    local function admitsNamed(destination, record)
+        assert(record == sunflower and (destination == namedRejected or destination == namedAllowed or destination == categoryAllowed),
+            'explicit destination callback received cloned or unexpected records')
+        return destination ~= namedRejected
+    end
+    destinations = checkPlan({sunflower}, {categoryAllowed, namedRejected, namedAllowed}, nil, nil, nil, admitsNamed)
+    assert(destinations[sunflower] == namedAllowed, 'explicit fallback lost precedence over a nearer category destination')
+    destinations = checkPlan({sunflower}, {namedRejected, categoryAllowed}, nil, nil, nil, admitsNamed)
+    assert(destinations[sunflower] == categoryAllowed, 'rejected explicit destination prevented category fallback')
+
+    local calls = 0
+    destinations, plan = checkPlan({sunflower, candy}, {rejected}, nil, nil, nil, function(destination, record)
+        assert(destination == rejected and record == sunflower, 'admission ran for an unmatched item')
+        calls = calls + 1
+        return false
+    end)
+    assert(next(destinations) == nil and calls == 1 and #plan.leftover == 2
+        and plan.leftoverReasons.full == 1 and plan.leftoverReasons.nomatch == 1,
+        'destination rejection changed matching or leftover reasons')
+
+    local small = box(seedRule); small.capacity = 1
+    destinations, plan = checkPlan({sunflower, full}, {small}, nil, nil, nil, function(destination, record)
+        assert(destination == small and (record == sunflower or record == full), 'unexpected destination admission records')
+        return record == full
+    end)
+    assert(not destinations[sunflower] and destinations[full] == small and plan.leftoverReasons.full == 1,
+        'rejected item reserved destination space needed by an allowed item')
+    small.capacity, calls = 0, 0
+    destinations, plan = checkPlan({sunflower}, {small}, nil, nil, nil, function() calls = calls + 1; return true end)
+    assert(next(destinations) == nil and calls == 0 and plan.leftoverReasons.full == 1,
+        'destination admission bypassed planned capacity or ran before its cheap space check')
+end
+
 local function assertFailureRestored(callback)
     local originalSunflower, originalCandy, originalCats = sunflower.cat, candy.cat, seeds.cats
     local ok, failure = pcall(callback)
@@ -261,4 +314,4 @@ Tags.matchesRule = function(...)
 end
 assertFailureRestored(function() LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, nil, Rules.matches) end)
 Tags.matchesRule = originalMatches
-print('Quartermaster item routing passed: seed/food roles, packets, broken tools, repair, box/preset rules, additive picks, display-name precedence, opt-out, identities, capacity/carriers/leftovers and failure safety.')
+print('Quartermaster item routing passed: seed/food roles, packets, broken tools, repair, box/preset rules, additive picks, display-name precedence, opt-out, identities, destination admission, capacity/carriers/leftovers and failure safety.')

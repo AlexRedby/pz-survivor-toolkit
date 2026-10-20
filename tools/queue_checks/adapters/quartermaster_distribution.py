@@ -68,12 +68,12 @@ def _backpack(root, selection):
                 or len(set(ids)) != 5 or set(prepared) != {'ids'}):
             raise ValueError('Backpack item identities are not five unique integers')
         expected = dict(ids=ids, moved=1, retained=3, backpackWorn=True, menuDispatched=True,
-                        toolbarVisible=True, sourceBag=True, transfer=True)
+                        toolbarVisible=True, sourceBag=True, transfer=True, rejectedDestinationSkipped=True)
         if (type(receipt) is not dict or set(receipt) != set(expected)
                 or any(type(receipt[key]) is not type(value) or receipt[key] != value
                        for key, value in expected.items())
                 or any(type(value) is not int for value in receipt['ids'])):
-            raise ValueError('Backpack exact menu/source/movement/transfer effects differ')
+            raise ValueError('Backpack exact menu/source/movement/transfer/rejected-destination effects differ')
         if not complete(selection, 'client1', text) or records[2][1].strip() or '[QM_BACKPACK] FAIL ' in text:
             raise ValueError('Backpack completion gate missing or fixture failed')
     except (OSError, ValueError, KeyError, TypeError) as error:

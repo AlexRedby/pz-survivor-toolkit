@@ -604,7 +604,17 @@ function LootSorter.sort(sourceContainer, playerNum)
             local ok, v = pcall(function() return carrierRef:isItemAllowed(itemRef) end)
             return (not ok) or v == true
         end
-        local plan = LootSorter.planTrips(itemRecs, boxRecs, carrierRecs, budget, accepts, TagRules.matches)
+        -- Designations choose a destination only among containers that can actually accept the
+        -- item. Native hasRoomFor includes isItemAllowed and the current character/container
+        -- limits; the planner separately reserves space across all assigned items. Do not check
+        -- reachability here: the haul walks to each destination before the action rechecks it.
+        local function acceptsDestination(box, item)
+            local ok, allowed = pcall(function()
+                return not box.container:isInside(item.ref) and box.container:hasRoomFor(player, item.ref)
+            end)
+            return ok and allowed == true
+        end
+        local plan = LootSorter.planTrips(itemRecs, boxRecs, carrierRecs, budget, accepts, TagRules.matches, acceptsDestination)
         local selfPlaced
         plan.trips, selfPlaced = LootSorter.stripSelfPlacements(plan.trips, sourceContainer)
         if selfPlaced > 0 then
@@ -707,7 +717,7 @@ function LootSorter.sort(sourceContainer, playerNum)
         else
             -- nothing could be placed: report why (combine if more than one reason applies)
             local parts = {}
-            if full > 0    then parts[#parts + 1] = "designated boxes are full" end
+            if full > 0    then parts[#parts + 1] = "no designated box can accept them" end
             if carry > 0   then parts[#parts + 1] = "no room in your inventory to carry" end
             if nomatch > 0 then parts[#parts + 1] = "nothing matches your designated boxes" end
             local msg = table.concat(parts, "; ")

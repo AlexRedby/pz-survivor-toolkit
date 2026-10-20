@@ -201,7 +201,7 @@ class QuartermasterBackpack(unittest.TestCase):
                               clients=1, languages=['EN'], mods=distribution.MODS, options={})
         self.prepared = {'ids': [101, 102, 103, 104, 105]}
         self.result = dict(self.prepared, moved=1, retained=3, backpackWorn=True, menuDispatched=True,
-                           toolbarVisible=True, sourceBag=True, transfer=True)
+                           toolbarVisible=True, sourceBag=True, transfer=True, rejectedDestinationSkipped=True)
 
     def write(self, prepared=None, result=None, complete='[QM_BACKPACK] COMPLETE\n'):
         text = ('[QM_BACKPACK] PREPARED ' + json.dumps(self.prepared if prepared is None else prepared) + '\n'
@@ -257,6 +257,15 @@ class QuartermasterBackpack(unittest.TestCase):
         for text in invalid:
             with self.subTest(text=text):
                 (self.root / 'client1-launch.log').write_text(text)
+                self.assertTrue(distribution.verify(self.root, self.selection, {})['issues'])
+
+    def test_backpack_requires_explicit_native_rejected_destination_gate(self):
+        missing = dict(self.result)
+        del missing['rejectedDestinationSkipped']
+        for result in (missing, dict(self.result, rejectedDestinationSkipped=False),
+                       dict(self.result, rejectedDestinationSkipped=1)):
+            with self.subTest(result=result):
+                self.write(result=result)
                 self.assertTrue(distribution.verify(self.root, self.selection, {})['issues'])
 
     def test_sort_receipt_and_completion_remain_unchanged(self):

@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.137
+
+- **Fixed:** Quartermaster skips matching containers that cannot accept an item while planning the haul, so a restricted or unavailable destination no longer hides the next suitable box. Explicit-item precedence, priority and planned capacity are retained; transfers still recheck the destination when executed.
+
 ### 0.1.136
 
 - **Changed:** Toolkit now owns Container Capacity Indicator and Item Details: capacity bars, magazine segments, expanded item values and bounded stack sorting share one presentation boundary for CleanUI and native inventories. Removed both separate Workshop mods from the selected set; existing display/sort preferences are retained.

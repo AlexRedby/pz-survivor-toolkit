@@ -7,8 +7,8 @@ local Tags=require 'PZSurvivorToolkit/ItemTags'
 local Rules=require 'PZSurvivorToolkit/QuartermasterTagRuleClient'
 local JSON=require 'QueueHealthEvents'
 local started,done,since,phase=false,false,0,'prepare'
-local point,box,bag,items,ids,original,designatedAt,quietSince
-local transferred,dispatched,sourceBag=false,false,false
+local point,box,rejectedBox,bag,items,ids,original,designatedAt,quietSince
+local transferred,dispatched,sourceBag,rejectedDestinationSkipped=false,false,false,false
 local updates=0
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function counts(container,result)
@@ -33,6 +33,14 @@ local function showBag()
  page:setVisible(true);page.isCollapsed=false;page:setMaxDrawHeight(page.height)
  local pane=page.inventoryPane;pane:refreshContainer();pane:prerender()
  return page,pane
+end
+local function checkDestinationQueue()
+ local q=queue()
+ local function check(action)
+  assert(not action or action.destContainer~=rejectedBox:getContainer(),'native-rejected destination was queued')
+ end
+ check(q.current)
+ for _,action in ipairs(q.queue)do check(action)end
 end
 local function dispatch(player)
  local page,pane=showBag()
@@ -66,6 +74,7 @@ local function dispatch(player)
  local before=LootSorter._sortRunSeq or 0
  menu:onMouseUp(5,y)
  assert((LootSorter._sortRunSeq or 0)>before and #queue().queue>0,'context option did not start distribution')
+ checkDestinationQueue()
  dispatched=true
 end
 local function tick()
@@ -80,11 +89,15 @@ local function tick()
   end
   original=counts(root);assert(not player:getClothingItem_Back(),'fresh fixture already has a worn bag')
   point=Fixture.place(player)
-  local square=assert(getCell():getGridSquare(point.x+1,point.y,point.z))
-  box=IsoThumpable.new(getCell(),square,'carpentry_01_16',false,{})
-  box:setBlockAllTheSquare(true);box:setIsContainer(true)
-  box:getContainer():setType('crate');box:getContainer():setCapacity(100);box:getContainer():setExplored(true)
-  box:getModData().PZSTDistributionFixture=true;square:AddSpecialObject(box)
+  for index,offset in ipairs({{1,0},{0,1}})do
+   local square=assert(getCell():getGridSquare(point.x+offset[1],point.y+offset[2],point.z))
+   local target=IsoThumpable.new(getCell(),square,'carpentry_01_16',false,{})
+   target:setBlockAllTheSquare(true);target:setIsContainer(true)
+   target:getContainer():setType('crate');target:getContainer():setCapacity(100);target:getContainer():setExplored(true)
+   target:getModData().PZSTDistributionFixture=true;square:AddSpecialObject(target)
+   if index==1 then box=target else rejectedBox=target end
+  end
+  rejectedBox:getContainer():setOnlyAcceptCategory('Food')
   bag=assert(root:AddItem('Base.Bag_Schoolbag'))
   items={assert(bag:getInventory():AddItem('Base.Thread')),assert(bag:getInventory():AddItem('Base.Thread')),
    assert(bag:getInventory():AddItem('Base.LargeStone')),assert(root:AddItem('Base.Thread'))}
@@ -103,40 +116,66 @@ local function tick()
   showBag()
   assert(items[1]:getDisplayCategory()=='craftingTailoring_material','Thread has unexpected category '..tostring(items[1]:getDisplayCategory()))
   assert(Tags.matches(Tags.forItem(items[1]),{'tailoring'})and not Tags.matches(Tags.forItem(items[3]),{'tailoring'}),'invalid tailoring fixture items')
-  LootSorter.openPicker(box,0,0);local picker=assert(LootSorter._picker)
-  picker.toolkitTagRule={mode='all',include={'tailoring'},exclude={}};picker.toolkitTagRuleTouched=true
-  picker.btnSave.onclick(picker)
-  assert(not LootSorter._picker and Rules.getBox(box,0)and Rules.getBox(box,0).include[1]=='tailoring','tailoring designation did not save')
+  for _,target in ipairs({box,rejectedBox})do
+   local name=target==box and 'allowed' or 'native-rejected'
+   local square,current=target:getSquare(),player:getCurrentSquare()
+   local location=square:getX()..','..square:getY()..','..square:getZ()
+   assert(current:getZ()==square:getZ()and math.abs(current:getX()-square:getX())<=1
+    and math.abs(current:getY()-square:getY())<=1 and not current:isBlockedTo(square),
+    name..' crate outside native designation access at '..location)
+   LootSorter.openPicker(target,0,0);local picker=assert(LootSorter._picker)
+   picker.toolkitTagRule={mode='all',include={'tailoring'},exclude={}};picker.toolkitTagRuleTouched=true
+   picker.priority=target==rejectedBox and 5 or 0
+   picker.btnSave.onclick(picker)
+   local saved,revision=Rules.getBox(target,0),Rules.getBoxRevision(target,0)
+   assert(not LootSorter._picker and saved and saved.include[1]=='tailoring',name..' tailoring designation did not save at '..location
+    ..' revision='..tostring(revision)..' pickerOpen='..tostring(LootSorter._picker==picker))
+   print('[QM_BACKPACK] DESIGNATED '..JSON.encode({target=name,location=location,revision=revision}))
+  end
   designatedAt=getTimestampMs();phase='ready'
  elseif phase=='ready'then
   if not LootSorter.isRegistrySynced()or not LootSorter.arePresetsSynced()then return end
-  local found=false
-  for _,entry in ipairs(LootSorter.gatherBoxes(player)or {})do if entry.obj==box then found=true end end
-  if not found then return end
+  local found,rejectedFound=false,false
+  for _,entry in ipairs(LootSorter.gatherBoxes(player)or {})do
+   if entry.obj==box then found=true end
+   if entry.obj==rejectedBox then rejectedFound=true end
+  end
+  if not found or not rejectedFound then return end
+  assert(LootSorter.getBoxPriority(rejectedBox,0)>LootSorter.getBoxPriority(box,0),'native-rejected crate must win priority before admission')
+  assert(AdjacentFreeTileFinder.Find(rejectedBox:getSquare(),player),'native-rejected crate is unreachable')
+  local rejected=rejectedBox:getContainer()
+  assert(rejected:isItemAllowed(items[1])==false,'Food-only crate unexpectedly admits Thread')
+  -- hasRoomFor also tests native admission; check weight room separately to isolate rejection.
+  assert(rejected:getEffectiveCapacity(player)*LootSorter.BOX_FILL_FRACTION-rejected:getCapacityWeight()>items[1]:getActualWeight(),
+   'native-rejected crate lacks positive weight room')
+  assert(box:getContainer():isItemAllowed(items[1])and box:getContainer():hasRoomFor(player,items[1]),'allowed crate cannot receive Thread')
   dispatch(player);phase='sorting'
  elseif phase=='sorting'then
+  checkDestinationQueue()
   local current=queue().current
   if current and current.Type=='LootSorterDeposit'and current:isStarted()and current:getJobDelta()>0 then
-   assert(current.srcContainer==bag:getInventory()and current.destContainer==box:getContainer(),'wrong transfer endpoints')
+   assert(current.item==items[1]and current.srcContainer==bag:getInventory()and current.destContainer==box:getContainer(),'wrong transfer item/endpoints')
    sourceBag=true;transferred=true
   end
   if #queue().queue>0 or player:hasTimedActions()then quietSince=nil;return end
   quietSince=quietSince or getTimestampMs();if getTimestampMs()-quietSince<1000 then return end
-  local carried,dest=counts(root),counts(box:getContainer())
+  local carried,dest,rejected=counts(root),counts(box:getContainer()),counts(rejectedBox:getContainer())
   for i,item in ipairs(items)do
-   local id=ids[i];assert((carried[id]or 0)+(dest[id]or 0)==1,'lost/duplicated fixture item')
+   local id=ids[i];assert((carried[id]or 0)+(dest[id]or 0)+(rejected[id]or 0)==1,'lost/duplicated fixture item')
    assert(item:getContainer()==(i==1 and box:getContainer()or i==4 and root or bag:getInventory()),'wrong final item container')
   end
   assert(items[2]:isFavorite()and bag:getContainer()==root and player:getClothingItem_Back()==bag,'favorite/equipment state lost')
   for id,count in pairs(original)do assert(carried[id]==count,'pre-existing inventory changed')end
   assert(transferred and sourceBag and dispatched,'missing native distribution progress')
+  assert(rejectedBox:getContainer():getItems():size()==0,'native-rejected destination received items')
+  rejectedDestinationSkipped=true
   print('[QM_BACKPACK] RESULT '..JSON.encode({ids=ids,moved=1,retained=3,backpackWorn=true,
-   menuDispatched=dispatched,toolbarVisible=true,sourceBag=sourceBag,transfer=transferred}))
+   menuDispatched=dispatched,toolbarVisible=true,sourceBag=sourceBag,transfer=transferred,rejectedDestinationSkipped=rejectedDestinationSkipped}))
   phase='cleanup'
  elseif phase=='cleanup'then
   if getTimestampMs()-designatedAt<LootSorter.ADD_GRACE_MS+1000 then return end
-  Fixture.cleanup({boxes={box}})
-  LootSorter.removeCoords({keys={(point.x+1)..','..point.y..','..point.z}})
+  Fixture.cleanup({boxes={box,rejectedBox}})
+  LootSorter.removeCoords({keys={(point.x+1)..','..point.y..','..point.z,point.x..','..(point.y+1)..','..point.z}})
   print('[QM_BACKPACK] COMPLETE');done=true
  end
 end

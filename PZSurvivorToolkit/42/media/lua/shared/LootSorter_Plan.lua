@@ -15,6 +15,10 @@
 --              general haul bag); tests pass a stub. Defaults to "accept everything" when omitted, so
 --              existing callers/tests are unaffected. It is a pure READ: it gates WHICH carrier an item
 --              may go in, never the space/weight math (that only mutates on actual placement).
+--   acceptsDestination = optional function(box, item) -> bool : may this destination hold this item?
+--              Called only for matching boxes with enough planned space, with the original records.
+--              Defaults to accepting all destinations. This does not change designation matching;
+--              matching boxes that reject an item count as unavailable ("full"), not "nomatch".
 --
 -- Output:
 --   { trips = { { perBox = {[boxRec]={ {item=itemRec, carrier=carrierRec}, ...}}, visit = {boxRec,...} }, ... },
@@ -49,9 +53,10 @@ local function inPreferenceOrder(boxes)
     return ordered
 end
 
-function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches)
+function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, acceptsDestination)
     accepts = accepts or function() return true end
     matches = matches or function(box, item) return item.cat and box.cats and box.cats[item.cat] end
+    acceptsDestination = acceptsDestination or function() return true end
     boxes = inPreferenceOrder(boxes)
     -- 1) assign each item to a same-category box WITH ROOM, cascading to further same-cat boxes.
     -- An item heavier than the biggest carrier can never be carried, so it must NOT reserve box
@@ -59,7 +64,7 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches)
     local byBox, boxUsed, leftover = {}, {}, {}
     -- why leftover items couldn't be placed, so the caller can show a clear message:
     --   carry   = too heavy / no room in the player's carriers (inventory)
-    --   full    = a box IS designated for it, but every matching box is full
+    --   full    = a box IS designated for it, but every matching box is full or rejects it
     --   nomatch = no designated box for this item's category/name at all
     local reasons = { carry = 0, full = 0, nomatch = 0 }
     local function addLeftover(it, why) leftover[#leftover + 1] = it; reasons[why] = (reasons[why] or 0) + 1 end
@@ -72,7 +77,8 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches)
             -- pass 1: a box that names THIS item (by display name) wins over any category box
             if it.name then
                 for _, b in ipairs(boxes) do             -- boxes nearest-first
-                    if b.items and b.items[it.name] and (boxUsed[b] + it.weight) <= b.capacity then
+                    if b.items and b.items[it.name] and (boxUsed[b] + it.weight) <= b.capacity
+                        and acceptsDestination(b, it) then
                         dest = b; break
                     end
                 end
@@ -80,7 +86,8 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches)
             -- pass 2: otherwise fall back to a same-category box (cascading to further same-cat boxes)
             if not dest then
                 for _, b in ipairs(boxes) do
-                    if matches(b, it) and (boxUsed[b] + it.weight) <= b.capacity then
+                    if matches(b, it) and (boxUsed[b] + it.weight) <= b.capacity
+                        and acceptsDestination(b, it) then
                         dest = b; break
                     end
                 end
