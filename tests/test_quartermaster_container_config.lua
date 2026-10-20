@@ -4,7 +4,7 @@ require = function(name)
     if loaded[name] then return loaded[name] end
     local fn = loadfile(root .. 'shared/' .. name .. '.lua')
     if not fn then return originalRequire(name) end
-    loaded[name] = fn()
+    loaded[name] = fn() or true
     return loaded[name]
 end
 local function list(values)
@@ -32,12 +32,16 @@ PZSurvivorToolkit = {}
 Events = {}
 for _, name in ipairs({'OnClientCommand', 'OnServerCommand', 'OnTick', 'OnReceiveGlobalModData', 'OnGameStart'}) do
     local handlers = {}; Events[name] = {handlers = handlers, Add = function(fn) handlers[#handlers + 1] = fn end}
+    Events[name].Remove = function(fn)
+        for i = #handlers, 1, -1 do if handlers[i] == fn then table.remove(handlers, i) end end
+    end
 end
 instanceof = function(obj, kind) return obj.kind == kind end
 local square = {getX = function() return 10 end, getY = function() return 20 end, getZ = function() return 0 end}
 local current = {getX = function() return 10 end, getY = function() return 19 end, getZ = function() return 0 end,
     isBlockedTo = function(self) return self.blocked end}
 local player = {getUsername = function() return 'survivor' end, getCurrentSquare = function() return current end}
+getSpecificPlayer = function() return player end
 local object = {kind = 'IsoObject', md = {}, getSquare = function() return square end, getObjectIndex = function() return 0 end,
     getContainerCount = function() return 2 end, getModData = function(self) return self.md end}
 local containers = {}
@@ -50,7 +54,8 @@ local safe, interact = true, true
 SafeHouse = {isSafehouseAllowLoot = function() return safe end, isSafehouseAllowInteract = function() return interact end}
 local registry = {}
 ModData = {getOrCreate = function() return registry end, transmit = function() end}
-LootSorter = {squareHasDesignation = function() return object.md.LSBox and object.md.LSBox['0'] ~= nil end}
+LootSorter = {RPC_TIMEOUT_MS = 15000, RPC_SWEEP_MS = 5000}
+object.hasModData = function() return true end
 -- BC's public API contract is injected; production must call it rather than own its storage policy.
 local calls = {get = 0, user = 0, global = 0}
 local function node(md, owner, ci, create)
@@ -165,13 +170,19 @@ local bc = clone(object.md.BetterContainers)
 assert(Rules.applyBox(player, args()) == 'ok' and same(bc, object.md.BetterContainers), 'legacy tag-only save changed appearance')
 -- Accepted acknowledgements mirror only selected fields, against current ModData, without publishing.
 mode = 'client'; baseline(); local sent, verdict
-sendClientCommand = function(_, _, _, packet) sent = packet end
+dofile(root .. 'shared/LootSorter_Rpc.lua')
+sendClientCommand = function(selected, module, command, packet)
+    assert(selected == player and module == 'Quartermaster' and command == 'saveBox')
+    sent = packet
+end
 local submitted = {cats = {Food = true}, presets = {Pantry = 41}, appearance = {name = 'Client'}}
 Rules.saveBox(object, 0, rule, player, function(value) verdict = value end, 3, submitted)
 submitted.cats.Food = nil; submitted.appearance.name = 'changed'
 object.md.unrelated.untouched = 99
 local function respond(value, revision)
-    for _, fn in ipairs(Events.OnServerCommand.handlers) do fn('PZSTQuartermasterTags', 'saved', {token = sent.token, verdict = value, revision = revision}) end
+    for _, fn in ipairs(Events.OnServerCommand.handlers) do
+        fn('Quartermaster', 'rpcResult', {rpcToken = sent.rpcToken, verdict = value, detail = {revision = revision}})
+    end
 end
 local previousPublications = publications
 respond('ok', 4)

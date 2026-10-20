@@ -20,6 +20,7 @@ ACTION_TESTS += ("test_action_queue_edit_model.lua", "test_action_queue_edit_ada
 ACTION_TESTS += ("test_action_queue_item_edit_adapters.lua", "test_food_eatsmart_compat.lua", "test_food_goal_labels.lua")
 ACTION_TESTS += ("test_inventory_search.lua", "test_inventory_transfer_operations.lua")
 EXTRA_TESTS = (
+    'test_quartermaster_rpc.lua',
     'test_container_tag_icons.lua',
     'test_container_appearance_controls.lua',
     'test_quartermaster_container_config.lua',

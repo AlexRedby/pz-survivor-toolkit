@@ -1,7 +1,7 @@
+require "LootSorter_Rpc"
 local Rules = require "PZSurvivorToolkit/QuartermasterTagRules"
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Config = require "PZSurvivorToolkit/QuartermasterContainerConfig"
-local MODULE, nextToken, pending = "PZSTQuartermasterTags", 0, {}
 
 function Rules.saveBox(obj, ci, value, player, onDone, baseRevision, configuration)
     local rule = Tags.normalizeRule(value)
@@ -12,14 +12,11 @@ function Rules.saveBox(obj, ci, value, player, onDone, baseRevision, configurati
     local args = {x = square:getX(), y = square:getY(), z = square:getZ(),
         object = obj:getObjectIndex(), ci = ci, rule = rule, baseRevision = baseRevision or Rules.getBoxRevision(obj, ci),
         configuration = config}
-    if not isClient() then
-        local ok, verdict, revision = pcall(Rules.applyBox, player, args)
-        onDone(ok and verdict or "invalid", revision)
-        return
-    end
-    nextToken = nextToken + 1
-    args.token = nextToken
-    pending[nextToken] = {sent = getTimestampMs(), callback = function(verdict, revision)
+    local client = isClient()
+    LootSorter.callServer("saveBox", args, function(verdict, detail)
+        local revision = type(detail) == "table" and detail.revision or nil
+        if verdict == nil then verdict = "timeout" end
+        if not client then onDone(verdict, revision); return end
         if verdict == "ok" and (obj:getSquare() ~= square or obj:getObjectIndex() ~= args.object) then verdict = "missing" end
         if verdict == "ok" and (type(revision) ~= "number" or revision ~= args.baseRevision + 1) then verdict = "invalid" end
         if verdict == "ok" and Rules.getBoxRevision(obj, ci) > revision then verdict = "stale" end
@@ -33,27 +30,6 @@ function Rules.saveBox(obj, ci, value, player, onDone, baseRevision, configurati
             md[Rules.REVISIONS][tostring(ci)] = revision
         end
         onDone(verdict, revision)
-    end}
-    sendClientCommand(player, MODULE, "saveBox", args)
+    end, player)
 end
-
-Events.OnServerCommand.Add(function(module, command, args)
-    if module ~= MODULE or command ~= "saved" or type(args) ~= "table" then return end
-    local request = pending[args.token]
-    if request then pending[args.token] = nil; request.callback(args.verdict, args.revision) end
-end)
-Events.OnTick.Add(function()
-    if not isClient() then return end
-    local now, expired = getTimestampMs(), {}
-    for token, request in pairs(pending) do
-        if now - request.sent > 15000 then expired[#expired + 1] = token end
-    end
-    for _, token in ipairs(expired) do
-        local request = pending[token]
-        pending[token] = nil; request.callback("timeout")
-    end
-end)
-Events.OnGameStart.Add(function()
-    pending = {}
-end)
 return Rules

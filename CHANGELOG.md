@@ -14,6 +14,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.166
+
+- **Changed:** Container configuration saves now use Quartermaster's existing command transport instead of a separate request/reply and timeout loop. Player identity, access checks, revision conflicts and accepted-field updates are preserved; request tokens no longer modify caller-owned arguments.
+
 ### 0.1.165
 
 - **Changed:** The sport dashboard headlight button cycles off, low, high and off on successive releases. It keeps the original bulb symbol, six-dot grip and momentary press effect, with the dashboard indicator showing the beam mode. Power steps retain native commands and acknowledgement handling; selecting high does not toggle headlight power.

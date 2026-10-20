@@ -52,7 +52,7 @@ square.getObjects = function() return list({object}) end
 getCell = function() return {getGridSquare = function(_, x, y, z)
     if x == 10 and y == 20 and z == 0 then return square end
 end} end
-LootSorter = {DBG = function() end, SYNC_RETRY_MS = 4000,
+LootSorter = {DBG = function() end, SYNC_RETRY_MS = 4000, RPC_TIMEOUT_MS = 15000, RPC_SWEEP_MS = 5000,
     getCategories = function() return {'Food'} end,
     canLootSquare = function() return true end,
     removeCoords = function() removals = removals + 1 end,

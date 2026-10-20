@@ -1,7 +1,7 @@
+require "LootSorter_Rpc"
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Rules = require "PZSurvivorToolkit/QuartermasterTagRules"
 local Config = require "PZSurvivorToolkit/QuartermasterContainerConfig"
-local MODULE = "PZSTQuartermasterTags"
 
 local function integer(value)
     return type(value) == "number" and value == math.floor(value) and math.abs(value) < 10000000
@@ -59,13 +59,8 @@ function Rules.applyBox(player, args)
     return "ok", revision + 1
 end
 
-Events.OnClientCommand.Add(function(module, command, player, args)
-    if module ~= MODULE or command ~= "saveBox" or isClient() then return end
-    local verdict = "invalid"
-    local ok, result, revision = pcall(Rules.applyBox, player, args)
-    if ok then verdict = result end
-    if player and type(args) == "table" and integer(args.token) then
-        sendServerCommand(player, MODULE, "saved", {token = args.token, verdict = verdict, revision = revision})
-    end
+LootSorter.serverFn("saveBox", function(player, args)
+    local ok, verdict, revision = pcall(Rules.applyBox, player, args)
+    return ok and verdict or "invalid", {revision = revision}
 end)
 return Rules

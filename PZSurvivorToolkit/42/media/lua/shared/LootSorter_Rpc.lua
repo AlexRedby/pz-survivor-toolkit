@@ -27,12 +27,12 @@ LootSorter.serverFns = LootSorter.serverFns or {}
 
 -- fn(player, args) -> verdict, detail
 --   verdict: "ok" on success, anything else is a refusal the caller can act on
---   detail:  optional table describing the refusal, passed to the callback with the verdict
+--   detail:  optional result table, passed to the callback with the verdict
 -- Returns the caller, so the work and the way to invoke it are one declaration instead of two that
 -- have to be kept in step.
 function LootSorter.serverFn(name, fn)
     LootSorter.serverFns[name] = fn
-    return function(args, onDone) LootSorter.callServer(name, args, onDone) end
+    return function(args, onDone, player) LootSorter.callServer(name, args, onDone, player) end
 end
 
 -- Callbacks waiting on an answer, keyed by a token that rides out with the command and back with the
@@ -43,8 +43,9 @@ end
 LootSorter._rpcPending = {}
 local nextToken = 0
 
-function LootSorter.callServer(name, args, onDone)
-    local player = getSpecificPlayer(0)
+-- UI callers can supply their player; existing callers use the primary local player.
+function LootSorter.callServer(name, args, onDone, player)
+    player = player or getSpecificPlayer(0)
 
     if LootSorter.isAuthority() then
         local fn = LootSorter.serverFns[name]
@@ -55,13 +56,16 @@ function LootSorter.callServer(name, args, onDone)
     end
 
     if not player then if onDone then onDone(nil) end return end
-    args = args or {}
+    -- Tokens belong to this request, never to a caller's retained draft or reusable arguments.
+    local packet = {}
+    for key, value in pairs(args or {}) do packet[key] = value end
+    packet.rpcToken = nil
     if onDone then
         nextToken = nextToken + 1
-        args.rpcToken = nextToken
+        packet.rpcToken = nextToken
         LootSorter._rpcPending[nextToken] = { onDone = onDone, sentAt = getTimestampMs() }
     end
-    pcall(function() sendClientCommand(player, COMMAND_MODULE, name, args) end)
+    pcall(function() sendClientCommand(player, COMMAND_MODULE, name, packet) end)
 end
 
 -- Authoritative side: run the function and answer. Answers on success too -- a reply that only came

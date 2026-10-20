@@ -6,7 +6,7 @@ require = function(name)
     local file = root .. 'shared/' .. name .. '.lua'
     local fn = loadfile(file)
     if not fn then return oldRequire(name) end
-    loaded[name] = fn()
+    loaded[name] = fn() or true
     return loaded[name]
 end
 local mode, enabled, disk, clock = 'sp', true, {}, 100
@@ -20,6 +20,9 @@ Events = {}
 for _, name in ipairs({'OnGameStart','OnCreatePlayer','OnObjectAdded','OnInitGlobalModData','OnClientCommand','OnServerCommand','OnTick','OnReceiveGlobalModData'}) do
     local e = event(); Events[name] = e
     e.Add = function(fn) e.handlers[#e.handlers + 1] = fn end
+    e.Remove = function(fn)
+        for i = #e.handlers, 1, -1 do if e.handlers[i] == fn then table.remove(e.handlers, i) end end
+    end
 end
 local moddata = {}
 ModData = {getOrCreate = function(key) moddata[key] = moddata[key] or {}; return moddata[key] end,
@@ -67,14 +70,8 @@ LootSorter = {serverFns = {}, getCategories = function() return categories end,
     getItemFullType = function(value) return value end}
 local function presets() return LootSorter.getPresetStore() end
 LootSorter.isAuthority = function() return not isClient() end
-LootSorter.serverFn = function(name, fn)
-    LootSorter.serverFns[name] = fn
-    return function(args, done)
-        local verdict, detail = fn(player, args)
-        if done then done(verdict, detail) end
-        return verdict, detail
-    end
-end
+LootSorter.RPC_TIMEOUT_MS, LootSorter.RPC_SWEEP_MS = 15000, 5000
+require 'LootSorter_Rpc'
 dofile(root .. 'shared/LootSorter_Presets.lua')
 dofile(root .. 'shared/LootSorter_Util.lua')
 dofile(root .. 'shared/LootSorter_Plan.lua')
@@ -273,10 +270,19 @@ do
 end
 -- Client commands carry the selected authenticated player; failures and timeouts leave caller in control.
 mode='client'; local sent, callback
-sendClientCommand=function(authenticated,module,command,packet) assert(authenticated==player); sent=packet end
+-- A fresh client process installs the shared transport's client sweep.
+dofile(root .. 'shared/LootSorter_Rpc.lua')
+sendClientCommand=function(authenticated,module,command,packet)
+    assert(authenticated==player and module=='Quartermaster' and command=='saveBox'); sent=packet
+end
+local function reply(verdict, revision)
+    for _, fn in ipairs(Events.OnServerCommand.handlers) do
+        fn('Quartermaster','rpcResult',{rpcToken=sent.rpcToken,verdict=verdict,detail={revision=revision}})
+    end
+end
 Rules.saveBox(object,0,rule,player,function(verdict) callback=verdict end)
 assert(sent and callback==nil)
-for _, fn in ipairs(Events.OnServerCommand.handlers) do fn('PZSTQuartermasterTags','saved',{token=sent.token,verdict='denied'}) end
+reply('denied')
 assert(callback=='denied')
 object.md[Rules.FIELD] = nil
 callback=nil
@@ -284,22 +290,20 @@ Rules.saveBox(object,0,rule,player,function(verdict)
     callback=verdict
     assert(Rules.getBox(object,0), 'native save could transmit before accepted server rule reached object ModData')
 end)
-for _, fn in ipairs(Events.OnServerCommand.handlers) do fn('PZSTQuartermasterTags','saved',{token=sent.token,verdict='ok',revision=sent.baseRevision+1}) end
+reply('ok',sent.baseRevision+1)
 assert(callback=='ok' and Rules.getBox(object,0).include[1]=='food')
 callback=nil
 object.md[Rules.REVISIONS]['0']=7
 Rules.saveBox(object,0,rule,player,function(verdict) callback=verdict end)
 object.md[Rules.REVISIONS]['0']=9
 object.md[Rules.FIELD]['0']={mode='all',include={'electrical'},exclude={}}
-for _, fn in ipairs(Events.OnServerCommand.handlers) do fn('PZSTQuartermasterTags','saved',{token=sent.token,verdict='ok',revision=8}) end
+reply('ok',8)
 assert(callback=='stale' and Rules.getBoxRevision(object,0)==9 and Rules.getBox(object,0).include[1]=='electrical',
     'older successful reply overwrote newer observed object rule/revision')
 for _, malformed in ipairs({'10', 10.5, math.huge, 0/0, false}) do
     callback=nil
     Rules.saveBox(object,0,rule,player,function(verdict) callback=verdict end)
-    for _, fn in ipairs(Events.OnServerCommand.handlers) do
-        fn('PZSTQuartermasterTags','saved',{token=sent.token,verdict='ok',revision=malformed})
-    end
+    reply('ok',malformed)
     assert(callback=='invalid' and Rules.getBoxRevision(object,0)==9, 'malformed reply revision was accepted')
 end
 callback=nil; Rules.saveBox(object,0,rule,player,function(verdict) callback=verdict end)
@@ -322,9 +326,7 @@ do
             crate_customContainerName = 'Existing', unrelated = 'untouched'}
     end
     local function respond(verdict)
-        for _, fn in ipairs(Events.OnServerCommand.handlers) do
-            fn('PZSTQuartermasterTags', 'saved', {token = sent.token, verdict = verdict, revision = sent.baseRevision + 1})
-        end
+        reply(verdict, sent.baseRevision+1)
     end
     object.transmitModData = function(self)
         publications = publications + 1
