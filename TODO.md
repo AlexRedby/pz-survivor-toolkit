@@ -48,7 +48,7 @@ These are implementation and verification gaps, not evidence that every action u
 
 ## Queue performance delivery
 
-- [ ] Finish the isolated menu-Host `bulk-reading` run with `profile_queue_hover`: exact client/server reading and returns, bounded hint frequency, clean runtime audit and unchanged source snapshot. Then remove this gate and deliver Toolkit 0.1.171 after rechecking current main. The full available 45-mod set is a partial selection of the configured 49 mods.
+- [ ] Rerun isolated menu-Host `bulk-reading` with `profile_queue_hover` when owned-window routing works: exact client/server reading and returns, bounded hint frequency, clean runtime audit and unchanged source snapshot. Both `pz-queue-perf-hover-host01` and `host02` stopped before Host because AeroSpace detected no owned client window within 30 seconds; neither is gameplay verification. The available 45-mod set is a partial selection of the configured 49 mods. The related native-source logic, model/capacity, growth and UI regressions passed.
 
 ## General rules for move and cancel
 
