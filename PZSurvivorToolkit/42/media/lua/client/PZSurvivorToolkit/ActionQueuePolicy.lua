@@ -20,6 +20,8 @@ Toolkit.ActionQueuePolicy = Policy
 local Operations = Toolkit.ActionQueueOperations
 local nativeForceCancel = ISBaseTimedAction.forceCancel
 local Proof = require "PZSurvivorToolkit/SourceProof"
+local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
+local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
 local nativePendingCancelProof
 local function nativePendingCancelHasNoEffects()
     if nativePendingCancelProof == nil then
@@ -33,6 +35,7 @@ local nativeTransferItem = ISTransferAction and ISTransferAction.transferItem
 local transferItemGuard
 local inspect
 local ordinaryTransfer
+local sharedEditResource
 
 local function craft(action)
     return Toolkit.ActionQueueCraft and Toolkit.ActionQueueCraft.supports(action)
@@ -168,6 +171,7 @@ local function sharedWorldTarget(a, b, context)
     end
     local left, right = inspect and inspect(a, context), inspect and inspect(b, context)
     if left and right then
+        if sharedEditResource and sharedEditResource(left, right) then return true end
         for target in pairs(left.targets or {}) do if right.targets and right.targets[target] then return target end end
         if left.hands and left.hands == right.hands then return left.hands end
         if (left.equipment and left.equipment == right.hands) or (right.equipment and right.equipment == left.hands) then return left.equipment or right.equipment end
@@ -583,6 +587,7 @@ local function radioResources(action)
     local result = resources(action)
     local target = action.device or action.deviceData
     if target and not instanceof(target, "InventoryItem") then result.targets[target] = true end
+    if EditAdapters then result.edit = EditAdapters.radio(action) end
     return result
 end
 local function dryItem(item)
@@ -775,6 +780,93 @@ inspect = function(action, context)
 end
 Policy.inspect = inspect
 
+-- Expand the changed operations to their whole dependency component, including
+-- an unchanged prefix and downstream users. The model may prove a different
+-- final state legal; it does not require the old and new orders to commute.
+-- Incomplete components retain the existing conservative resource policy.
+sharedEditResource = function(left, right)
+    left, right = left.edit, right.edit
+    if type(left) ~= "table" or type(right) ~= "table" or getmetatable(left) or getmetatable(right)
+        or type(left.resources) ~= "table" or type(right.resources) ~= "table"
+        or getmetatable(left.resources) or getmetatable(right.resources) then return false end
+    for _, a in pairs(left.resources) do
+        for _, b in pairs(right.resources) do
+            if type(a) == "table" and type(b) == "table" and not getmetatable(a) and not getmetatable(b)
+                and type(a.domain) == "string" and a.domain == b.domain and a.key ~= nil and rawequal(a.key, b.key) then return true end
+        end
+    end
+    return false
+end
+
+local function proposedEdit(queue, first, last, to, context)
+    if not EditModel then return {status = "unhandled"} end
+    local selected, component, contracts = {}, {}, {}
+    for i = first, last do
+        local member = queue.queue[i]
+        local contract = inspect(member, context)
+        if not contract or not contract.edit then return {status = "unhandled"} end
+        selected[member], component[member] = true, true
+    end
+    for _, member in ipairs(queue.queue) do
+        local contract = inspect(member, context)
+        -- Unknown callbacks/selectors can reach resources outside their reported
+        -- footprint. They cannot be dismissed as an independent empty action.
+        if not contract or contract.knownInputs == false or contract.unknownOutputs then
+            return {status = "unhandled", reason = "edit_unknown", blocker = member}
+        end
+        contracts[member] = contract
+    end
+    local changed = true
+    while changed do
+        changed = false
+        for _, member in ipairs(queue.queue) do
+            if not component[member] then
+                for related in pairs(component) do
+                    if sharedEditResource(contracts[member], contracts[related])
+                        or sharedItem(member, related, context) or sharedWorldTarget(member, related, context)
+                        or dynamicConflict(member, related, context) or dynamicConflict(related, member, context) then
+                        component[member], changed = true, true
+                        break
+                    end
+                end
+            end
+        end
+    end
+    for member in pairs(component) do
+        local contract, token = contracts[member], member.toolkitQueueOperation
+        if member.character ~= queue.character or (type(token) == "table" and token.toolkitCancelled) then
+            return {status = "denied", reason = "unavailable", blocker = member}
+        end
+        if not contract.edit or contract.edit.capacity ~= "unchanged" then
+            return {status = "unhandled", reason = "edit_unknown", blocker = member}
+        end
+        if member == queue.current or member.action or (type(token) == "table" and token.toolkitStarted) then
+            -- Live state already includes an unknown fraction of an in-flight
+            -- effect. Never project that action again from the live snapshot.
+            return {status = "unhandled", reason = "edit_in_flight", blocker = member}
+        end
+    end
+    local entries = {}
+    local function add(member)
+        if component[member] then entries[#entries + 1] = {action = member, edit = contracts[member].edit} end
+    end
+    for i = 1, #queue.queue + 1 do
+        if i == to then for j = first, last do add(queue.queue[j]) end end
+        if i <= #queue.queue and not selected[queue.queue[i]] then add(queue.queue[i]) end
+    end
+    if not to then
+        for i = first, last do
+            local member = queue.queue[i]
+            entries[#entries + 1] = {action = member, edit = contracts[member].edit, snapshotOnly = true}
+        end
+    end
+    local result = EditModel.evaluate(entries)
+    -- A declared contract with an unsupported schema is not permission to use
+    -- a less complete legacy footprint. No valid proof was obtained for it.
+    if result.status == "unhandled" then result.status = "denied" end
+    return result
+end
+
 local capacityNeutral = {ISReadABook = true, ISWalkToTimedAction = true, ISWalkToTimedActionF = true, ISPathFindAction = true}
 local function carriedContainer(container, character)
     return carriedContainers(container, character) ~= nil
@@ -942,6 +1034,7 @@ end
 
 function Policy.cancelOperationReason(queue, action, context)
     context = context or {contracts = {}, items = {}}
+    context.editFallback = nil
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 then return "unavailable" end
     if queue.toolkitCancel or queue.toolkitGroupCancel then return "stopping" end
@@ -996,6 +1089,12 @@ function Policy.cancelOperationReason(queue, action, context)
         elseif not preparationCanFinish(current, context) then
             return "operation_active"
         end
+    end
+    if pendingRemovalOnly then
+        local edit = proposedEdit(queue, first, last, nil, context)
+        if edit.status == "allowed" then return nil, first, last end
+        if edit.status == "denied" then return edit.reason, nil, nil, edit.blocker, edit.resource end
+        context.editFallback = edit
     end
     for item in pairs(type(token) == "table" and token.toolkitPickups or {}) do inputs[itemKey(item)] = true end
     local capacityCheck = {first = first, last = last}
@@ -1079,6 +1178,7 @@ end
 
 function Policy.moveReason(queue, action, target, after, context)
     context = context or {contracts = {}, items = {}}
+    context.editFallback = nil
     if not Toolkit.Settings.actionQueue() or not queue or not live(queue)
         or queue:indexOf(action) == -1 or queue:indexOf(target or action) == -1 then return "unavailable" end
     if queue.toolkitCancel or queue.toolkitGroupCancel then return "stopping" end
@@ -1115,6 +1215,26 @@ function Policy.moveReason(queue, action, target, after, context)
         end
     end
     local capacityCheck = {first = first, last = last, to = to}
+    -- Structural/callback guards apply even when the declarative model proves
+    -- resource conditions. An incomplete contract never upgrades these gates.
+    for i = math.min(first, to), math.min(#queue.queue, math.max(last, to - 1)) do
+        if i < first or i > last then
+            local crossed = queue.queue[i]
+            if crossed._isAddingActions then return "move_dependent", nil, nil, nil, nil, crossed end
+            if not knownCraftInputs(crossed, context) and not repairInputs(crossed) then
+                return craft(crossed) and "move_craft_inputs" or "move_dependent", nil, nil, nil, nil, crossed
+            end
+        end
+    end
+    if not preempt then
+        local edit = proposedEdit(queue, first, last, to, context)
+        if edit.status == "denied" then return edit.reason, nil, nil, nil, nil, edit.blocker, edit.resource end
+        if edit.status == "allowed" then
+            if first < to then to = to - (last - first + 1) end
+            return nil, to, first, last, false
+        end
+        context.editFallback = edit
+    end
     for i = math.min(first, to), math.min(#queue.queue, math.max(last, to - 1)) do
         if i < first or i > last then
             local crossed = queue.queue[i]
@@ -1138,6 +1258,7 @@ Policy.resumableWorld, Policy.preparationCanFinish = resumableWorld, preparation
 Policy.operationItems = operationItems
 
 function Policy.replaceStop(previous, replacement)
+    if EditAdapters then EditAdapters.adoptBase("stop", previous, replacement) end
     for _, snapshot in pairs(snapshots) do
         if snapshot.methods.stop == previous then snapshot.methods.stop = replacement end
     end
@@ -1148,18 +1269,70 @@ function Policy.replaceStop(previous, replacement)
     end
 end
 
+function Policy.adoptBegin(previous, replacement)
+    if EditAdapters then EditAdapters.adoptBase("begin", previous, replacement) end
+end
+
+local function editSnapshot(queue)
+    if not queue then return end
+    local snapshot = {owner = queue.character, members = {}, list = queue.queue, current = queue.current,
+        generation = queue.toolkitOperationGeneration, cancel = queue.toolkitCancel, groupCancel = queue.toolkitGroupCancel}
+    for i, member in ipairs(queue.queue) do
+        local token = member.toolkitQueueOperation
+        snapshot.members[i] = {member = member, action = member.action, owner = member.character, token = token,
+            started = type(token) == "table" and token.toolkitStarted,
+            cancelled = type(token) == "table" and token.toolkitCancelled}
+    end
+    return snapshot
+end
+
+function Policy.editUnchanged(queue, snapshot)
+    if not snapshot or not queue or not live(queue) or not Toolkit.Settings.actionQueue()
+        or ISTimedActionQueue.queues[queue.character] ~= queue
+        or queue.character ~= snapshot.owner or queue.queue ~= snapshot.list or queue.current ~= snapshot.current
+        or queue.toolkitOperationGeneration ~= snapshot.generation or queue.toolkitCancel ~= snapshot.cancel
+        or queue.toolkitGroupCancel ~= snapshot.groupCancel or #queue.queue ~= #snapshot.members then return false end
+    for i, record in ipairs(snapshot.members) do
+        local member, token = queue.queue[i], record.token
+        if member ~= record.member or member.action ~= record.action or member.character ~= record.owner
+            or member.toolkitQueueOperation ~= token
+            or (type(token) == "table" and (token.toolkitStarted ~= record.started
+                or token.toolkitCancelled ~= record.cancelled)) then return false end
+    end
+    return true
+end
+
+local resourceDenials = {move_shared_item = true, move_craft_inputs = true, move_dependent = true,
+    operation_shared_item = true, operation_dependent = true, container_capacity = true}
+local function editDenial(reason, blocker, resource, context)
+    local edit = context.editFallback
+    if resourceDenials[reason] and edit and edit.reason then
+        return edit.reason, edit.blocker or blocker, edit.resource or resource
+    end
+    return reason, blocker, resource
+end
+
 function Policy.evaluateMove(queue, action, target, after, context)
+    context = context or {contracts = {}, items = {}}
+    local snapshot = editSnapshot(queue)
     local reason, to, first, last, preempt, blocker, resource, demote = Policy.moveReason(queue, action, target, after, context)
+    reason, blocker, resource = editDenial(reason, blocker, resource, context)
+    if not reason and not Policy.editUnchanged(queue, snapshot) then reason = "unavailable" end
     return {allowed = reason == nil, reason = reason, to = to, first = first, last = last,
-        mode = preempt and "audited-resume" or "move", preempt = preempt, demote = demote, blocker = blocker, resource = resource}
+        mode = preempt and "audited-resume" or "move", preempt = preempt, demote = demote,
+        blocker = blocker, resource = resource, snapshot = snapshot}
 end
 
 function Policy.evaluateCancel(queue, action, whole)
+    local context = {contracts = {}, items = {}}
+    local snapshot = editSnapshot(queue)
     local reason, first, last, blocker, resource
-    if whole then reason, first, last, blocker, resource = Policy.cancelOperationReason(queue, action)
-    else reason, first, last, blocker, resource = Policy.cancelReason(queue, action) end
+    if whole then reason, first, last, blocker, resource = Policy.cancelOperationReason(queue, action, context)
+    else reason, first, last, blocker, resource = Policy.cancelReason(queue, action, context) end
+    reason, blocker, resource = editDenial(reason, blocker, resource, context)
+    if not reason and not Policy.editUnchanged(queue, snapshot) then reason = "unavailable" end
     return {allowed = reason == nil, reason = reason, first = first, last = last,
-        mode = queue and action == queue.current and "active" or "pending", blocker = blocker, resource = resource}
+        mode = queue and action == queue.current and "active" or "pending", blocker = blocker, resource = resource, snapshot = snapshot}
 end
 
 function Policy.evaluatePriority(queue, action, preempt)

@@ -10,6 +10,12 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.130
+
+- **Changed:** Pending volume, channel and microphone settings for a fixed world radio/TV can be reordered or cancelled even when they share a device. Native commands still apply each effect; the chosen order may deliberately change the final setting. Power, playback and unverified dependencies remain protected.
+- **Added:** A shared versioned resource-effect contract checks the proposed queue and its downstream prerequisites. Unsupported contracts retain conservative protection, with separate required-state, resource, capacity and unknown-effect explanations.
+- **Fixed:** Queue commands revalidate current ownership, operation members, generation, conditions and callbacks immediately before changing the queue, rejecting stale UI decisions without removing work.
+
 ### 0.1.129
 
 - **Fixed:** Toolkit refreshes dependent features once after Mod Options applies all new values. Removed early per-option notifications that repeated refreshes with stale or partially applied settings; the highlight hotkey still takes effect immediately.

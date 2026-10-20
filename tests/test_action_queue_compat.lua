@@ -313,6 +313,7 @@ fixturePolicy.live=function(queue) return not queue.character:isDead() end
 fixturePolicy.stoppable=function() return false end
 fixturePolicy.resumableWorld=function() return false end
 fixturePolicy.replaceStop=function() end
+fixturePolicy.adoptBegin=function() end
 fixturePolicy.inspect=definitions.inspect
 PZSurvivorToolkit.ActionQueueLabels={label=function() end}
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()

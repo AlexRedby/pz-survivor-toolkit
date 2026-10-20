@@ -44,6 +44,7 @@ ISBaseTimedAction.begin = function(action)
     if type(token) == "table" then token.toolkitStarted = true end
     return begin(action)
 end
+Policy.adoptBegin(begin, ISBaseTimedAction.begin)
 
 function Queue.cancel(queue, action)
     local decision = Policy.evaluateCancel(queue, action)
@@ -54,6 +55,9 @@ function Queue.cancel(queue, action)
     local contract = Policy.inspect(action)
     if contract and contract.cancelWaiting and not stoppable(action) then return Queue.cancelOperation(queue, action) end
     local first, last = Operations.bounds(queue, action)
+    if not Policy.editUnchanged(queue, decision.snapshot) then return false, "unavailable" end
+    decision = Policy.evaluateCancel(queue, action)
+    if not decision.allowed then return false, decision.reason end
     if first == last and Operations.invalidate then Operations.invalidate(action.toolkitQueueOperation) end
     if action == queue.current then
         return Toolkit.ActionQueueLifecycle.requestStop(queue, action, "cancel", "action")
@@ -76,6 +80,10 @@ function Queue.cancelOperation(queue, action, expected)
             if queue.queue[first + i - 1] ~= member then return false, "unavailable" end
         end
     end
+    if not Policy.editUnchanged(queue, decision.snapshot) then return false, "unavailable" end
+    decision = Policy.evaluateCancel(queue, action, true)
+    if not decision.allowed then return false, decision.reason end
+    if decision.first ~= first or decision.last ~= last then return false, "unavailable" end
     if Operations.invalidate then Operations.invalidate(action.toolkitQueueOperation) end
     if Batch then Batch.cancel(action) end
     if first == 1 and queue.current == queue.queue[1] then
@@ -205,11 +213,15 @@ function Queue.move(queue, action, target, after)
     local decision = Policy.evaluateMove(queue, action, target, after)
     Policy.record("move", action, decision)
     if not decision.allowed then return false, decision.reason end
+    if not Policy.editUnchanged(queue, decision.snapshot) then return false, "unavailable" end
+    decision = Policy.evaluateMove(queue, action, target, after)
+    if not decision.allowed then return false, decision.reason end
     local to, first, last, preempt = decision.to, decision.first, decision.last, decision.preempt
     if to == first then return true end
     if decision.demote then Toolkit.ActionQueueReading.capture(queue, first, last) end
     local world = Toolkit.ActionQueueWorld
     local acknowledgement = preempt and world and world.buildAcknowledgement and world.buildAcknowledgement(queue.current)
+    if not Policy.editUnchanged(queue, decision.snapshot) then return false, "unavailable" end
     local moved = {}
     for i = first, last do moved[#moved + 1] = table.remove(queue.queue, first) end
     if preempt then to = 2 end

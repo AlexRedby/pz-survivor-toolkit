@@ -135,6 +135,7 @@ do
     assert(policy.cancelReason(f.queue(head,opaque),opaque)=='dependent' and inspections[opaque]==1,
         'a negative contract is analyzed once even across cancellation fallback checks')
     independent.container=vessel()
+    ISTimedActionQueue.queues[f.player]=queue
     local getOwner=independent.container.fluidContainer.getOwner
     independent.container.fluidContainer.getOwner=function()error('removed fluid owner')end
     inspections={}
