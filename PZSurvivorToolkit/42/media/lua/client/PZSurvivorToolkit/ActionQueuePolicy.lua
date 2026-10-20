@@ -477,8 +477,11 @@ function Policy.adoptConsumeStarts(previous, helpersUnchanged)
         local snapshot = snapshots[class]
         snapshot.methods.start, snapshot.startHelperGuard = class.start, helpersUnchanged
     end
-    if ItemEditAdapters then ItemEditAdapters.adoptMethods(ISDrinkFluidAction,
-        {start = previous[ISDrinkFluidAction]}, {start = ISDrinkFluidAction.start}, helpersUnchanged) end
+    if ItemEditAdapters then
+        for _,class in ipairs(classes) do
+            ItemEditAdapters.adoptMethods(class,{start = previous[class]}, {start = class.start}, helpersUnchanged)
+        end
+    end
     return true
 end
 
@@ -695,10 +698,23 @@ function Policy.installContracts()
                 Policy.addContainerResources(result, action.item:getContainer())
             end
             if ItemEditAdapters then result.edit = ItemEditAdapters.drink(action) end
+            if ItemEditAdapters and not ItemEditAdapters.fullnessNeutralDrink(action) then
+                result.targets[action.character]=true
+            end
             return result
         end
     end, {"updateEat", "setOverrideHandModels"})
     registerNative("ISEatFoodAction", function(action)
+        local edit=ItemEditAdapters and ItemEditAdapters.food(action)
+        if edit then
+            local result=resources(action)
+            result.edit,result.capacityNonIncreasing=edit,true
+            result.targets[action.character]=true
+            if action.item:getContainer()~=action.character:getInventory() then
+                Policy.addContainerResources(result,action.item:getContainer())
+            end
+            return result
+        end
         local Food = Toolkit.BulkFood
         if not Food or not Food.isEat(action) then return end
         local result = resources(action)
@@ -1050,6 +1066,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
                 for _, item in ipairs(batch.items or {}) do if not add(item) then return check.blocker end end
             end
         elseif not capacityNeutral[action.Type] and not boundedWaterDrink(action, character, source)
+            and not (source == "native.ISEatFoodAction" and contract.edit and contract.capacityNonIncreasing == true)
             and not (check.readDemotion and source == "native.ISRadioAction"
                 and instanceof(action.device, "IsoTelevision"))
             and not (check.readDemotion and source == "native.device-media-insert" and contract.capacityNonIncreasing == true) then

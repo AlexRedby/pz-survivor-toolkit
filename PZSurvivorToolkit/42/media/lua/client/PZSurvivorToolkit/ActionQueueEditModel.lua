@@ -34,7 +34,7 @@ local entryFields = {action = true, edit = true, active = true, snapshotOnly = t
 local editFields = {version = true, complete = true, capacity = true, resources = true}
 local resourceFields = {domain = true, key = true, facts = true, requires = true, effects = true, bounds = true}
 local predicateFields = {field = true, equal = true, oneOf = true, min = true, max = true, above = true}
-local effectFields = {field = true, set = true, delta = true, toggle = true, cap = true, scale = true}
+local effectFields = {field = true, set = true, delta = true, toggle = true, cap = true, scale = true, deplete = true}
 local boundFields = {min = true, max = true, reason = true}
 local boundReasons = {edit_resource_amount = true, edit_capacity = true}
 local function named(field)
@@ -76,7 +76,12 @@ local function numericEffect(effect, value)
     local projected
     if effect.delta ~= nil then projected = value + effect.delta
     elseif effect.cap ~= nil then projected = math.min(value, effect.cap)
-    elseif effect.scale ~= nil then projected = value * effect.scale end
+    elseif effect.scale ~= nil then projected = value * effect.scale
+    elseif effect.deplete ~= nil then
+        projected = value - effect.deplete.amount
+        if not finite(projected) then return end
+        if projected < effect.deplete.minimum then projected = 0 end
+    end
     if finite(projected) then return projected end
 end
 
@@ -151,10 +156,14 @@ function Model.evaluate(entries)
                 if not fields(effect, effectFields) or not named(effect.field) then return result("unhandled", "edit_unknown", entry, key) end
                 local operations = (effect.set ~= nil and 1 or 0) + (effect.delta ~= nil and 1 or 0)
                     + (effect.toggle ~= nil and 1 or 0) + (effect.cap ~= nil and 1 or 0) + (effect.scale ~= nil and 1 or 0)
+                    + (effect.deplete ~= nil and 1 or 0)
                 if operations ~= 1 or (effect.set ~= nil and not scalar(effect.set))
                     or (effect.delta ~= nil and not finite(effect.delta)) or (effect.toggle ~= nil and effect.toggle ~= true)
                     or (effect.cap ~= nil and not finite(effect.cap))
-                    or (effect.scale ~= nil and (not finite(effect.scale) or effect.scale < 0)) then
+                    or (effect.scale ~= nil and (not finite(effect.scale) or effect.scale < 0))
+                    or (effect.deplete ~= nil and (not fields(effect.deplete, {amount=true,minimum=true})
+                        or not finite(effect.deplete.amount) or effect.deplete.amount < 0
+                        or not finite(effect.deplete.minimum) or effect.deplete.minimum < 0)) then
                     return result("unhandled", "edit_unknown", entry, key, effect.field)
                 end
             end
@@ -173,7 +182,7 @@ function Model.evaluate(entries)
             end
             for _, effect in ipairs(step.effects) do
                 local value = facts[effect.field]
-                local numeric = effect.delta ~= nil or effect.cap ~= nil or effect.scale ~= nil
+                local numeric = effect.delta ~= nil or effect.cap ~= nil or effect.scale ~= nil or effect.deplete ~= nil
                 if value == nil or (numeric and numericEffect(effect, value) == nil)
                     or (effect.toggle and type(value) ~= "boolean")
                     or (effect.set ~= nil and step.snapshot.bounds[effect.field] and not finite(effect.set)) then
@@ -214,7 +223,7 @@ function Model.evaluate(entries)
                 local facts, key = step.snapshot.facts, step.snapshot.key
                 for _, effect in ipairs(step.effects) do
                     local field, value = effect.field, effect.set
-                    if effect.delta ~= nil or effect.cap ~= nil or effect.scale ~= nil then
+                    if effect.delta ~= nil or effect.cap ~= nil or effect.scale ~= nil or effect.deplete ~= nil then
                         value = numericEffect(effect, facts[field])
                         if value == nil then return result("unhandled", "edit_unknown", step.entry, key, field) end
                     elseif effect.toggle then

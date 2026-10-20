@@ -10,6 +10,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.141
+
+- **Changed:** Ordinary pending food portions use the shared queue edit model, allowing legal same-item reorder and cancellation while retaining native original-food fractions. Exact pickup, remaining-food and fullness requirements protect later actions; consuming a whole item cannot precede a dependent portion or return.
+- **Fixed:** Food and nutritious drinks share the character's fullness dependency. Unknown food callbacks, cooking/replacement effects and required equipment remain protected; projected consumption never grants extra container capacity or replays native effects.
+
 ### 0.1.140
 
 - **Changed:** A wooden wheelbarrow held against an obstacle uses a planted pushing stance with staggered feet, a slight forward body lean and smooth contact/release blends. The same pose is available to other players through the existing cart synchronization.

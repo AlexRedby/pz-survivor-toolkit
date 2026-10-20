@@ -353,3 +353,37 @@ for _, initial in ipairs({{amount = 0, location = 'root'}, {amount = .25, locati
 end
 assert(numericChecked == 2548)
 print('Declarative numeric/location extension: ' .. numericChecked .. ' independent move/removal cases, strict thresholds, membership, captured caps, scales and external capacity passed.')
+-- Saturating consumption with a minimum surviving remainder is a numeric
+-- primitive; it models no game callback and validates both operand fields.
+do
+    local function consume(value,debit,minimum)
+        return entry({}, {resource('stock',target,{count=value},{{field='count',above=0}},
+            {{field='count',deplete={amount=debit,minimum=minimum}}},{count={min=0}})})
+    end
+    local follow=entry({}, {resource('stock',target,{},{{field='count',above=0}})})
+    status({consume(4,3,1),follow},'allowed')
+    status({consume(4,3.1,1),follow},'denied','edit_resource_amount')
+    status({consume(4,10,0)},'allowed')
+    for _,bad in ipairs({false,{}, {amount=-1,minimum=0},{amount=1,minimum=-1},
+        {amount=1/0,minimum=0},{amount=1,minimum=0/0},{amount=1,minimum=0,run=true},
+        setmetatable({amount=1,minimum=0},{})})do
+        local e=consume(4,1,1);e.edit.resources[1].effects[1].deplete=bad
+        status({e},'unhandled','edit_unknown')
+    end
+    -- Independent discrete oracle: quarter units, two item identities, moves
+    -- and removals; proposed sequences need to be legal, not commutative.
+    local checked=0
+    for stock=1,8 do for x=1,8 do for y=1,8 do
+        for _,sequence in ipairs({{x,y},{y,x},{x},{y}})do
+            local remaining,valid=stock,true;local entries={}
+            for _,debit in ipairs(sequence)do
+                if remaining<=0 then valid=false end
+                remaining=math.max(0,remaining-debit)
+                entries[#entries+1]=consume(stock,debit,1)
+            end
+            status(entries,valid and 'allowed'or 'denied');checked=checked+1
+        end
+    end end end
+    assert(checked==2048)
+    print('Depletion oracle passed '..checked..' projected edit sequences.')
+end

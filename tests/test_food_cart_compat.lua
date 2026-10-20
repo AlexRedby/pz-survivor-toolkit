@@ -20,6 +20,10 @@ local function setup(mode)
     LootSorter = {} -- Unrelated owned transfer integration has no hooks in this presentation fixture.
     local loaded = {}
     require = function(name)
+        -- This fixture exercises legacy owned-food presentation; the complete
+        -- edit-adapter/native-state fixture covers dependency projection.
+        if name == 'PZSurvivorToolkit/ActionQueueItemEditAdapters' or name == 'PZSurvivorToolkit/ActionQueueEditModel'
+            or name == 'PZSurvivorToolkit/ActionQueueEditAdapters' then return nil end
         if loaded[name] then return loaded[name] end
         if name == 'PZSurvivorToolkit/SourceProof' then
             return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()

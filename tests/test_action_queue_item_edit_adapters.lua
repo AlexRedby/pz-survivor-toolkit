@@ -14,6 +14,7 @@ end
 local function setup(changed,foreignMerge,alias,missing)
     local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
     f.native('shared/TimedActions/ISTransferAction.lua');f.native('shared/TimedActions/ISDrinkFluidAction.lua')
+    f.native('shared/TimedActions/ISEatFoodAction.lua')
     f.native('shared/RadioCom/ISRadioAction.lua')
     if alias=='drink-native' then ISDrinkFluidAction.complete=ISDrinkFluidAction.isValid
     elseif alias=='drink-base' then ISDrinkFluidAction.complete=ISBaseTimedAction.perform
@@ -28,6 +29,7 @@ local function setup(changed,foreignMerge,alias,missing)
     getModFileReader=function(_,path)return reader(read(ProjectRoot..'/PZSurvivorToolkit/42/'..path))end
     getTimestampMs=function()return 1 end;getCore=function()return {getGameMode=function()return 'Sandbox'end}end
     CharacterTrait={DEXTROUS=1,ALL_THUMBS=2};MoodleType={FOOD_EATEN=1};Fluid={Water={}}
+    ItemTag={SMOKABLE='smokable',SPOON='spoon',FORK='fork'}
     ItemContainer={floatingPointCorrection=function(value)return math.floor(value*100+0.5)/100 end}
     round=function(value)return value end
     f.player.class='IsoPlayer'
@@ -36,13 +38,18 @@ local function setup(changed,foreignMerge,alias,missing)
     f.player.setIsFarming=function()end;f.player.getVehicle=function()end
     f.player.getOverlaySprite=function()end
     f.player.getMoodles=function()return {getMoodleLevel=function()return 0 end}end
+    local damage={timer=0}
+    damage.getHealthFromFoodTimer=function(self)return self.timer end
+    damage.getStandardHealthFromFoodTime=function()return 1800 end
+    f.player.getBodyDamage=function()return damage end
     f.player.getEmitter=function()return {isPlaying=function()return false end,playSound=function()return 1 end}end
     local square={TreatAsSolidFloor=function()return true end,isSolid=function()return false end,isSolidTrans=function()return false end,
         getTotalWeightOfItemsOnFloor=function()return 0 end}
     f.player.getCurrentSquare=function()return square end
     ISLogSystem={logAction=function()end};ItemPicker={updateOverlaySprite=function()end}
     local baseInstanceof=instanceof
-    instanceof=function(value,kind)return baseInstanceof(value,kind)or type(value)=='table'and kind=='IsoGameCharacter'and value.class=='IsoPlayer'end
+    instanceof=function(value,kind)return baseInstanceof(value,kind)or type(value)=='table'and
+        (kind=='IsoGameCharacter'and value.class=='IsoPlayer'or kind=='InventoryItem'and value.class=='Food')end
     local knownItems={}
     local function container(owner)
         local c={class='ItemContainer',owner=owner}
@@ -56,6 +63,7 @@ local function setup(changed,foreignMerge,alias,missing)
         c.hasRoomFor=function()return true end;c.isRemoveItemAllowed=function()return true end;c.isItemAllowed=function()return true end
         c.isInside=function()return false end;c.getPutSound=function()end
         c.setDrawDirty=function()end;c.setHasBeenLooted=function()end
+        c.getFirstTagEvalRecurse=function()end;c.getFirstTypeEvalRecurse=function()end
         c.DoRemoveItem=function(_,item)item.container=nil end;c.AddItem=function(self,item)item.container=self;return item end
         return c
     end
@@ -78,6 +86,22 @@ local function setup(changed,foreignMerge,alias,missing)
         return value
     end
     local water=item()
+    local function food()
+        local value=item();value.class='Food';value.fluid=nil;value.container=root;value.hunger=-0.4;value.base=-0.4
+        value.getFullType=function()return 'Base.Cereal'end;value.getType=function()return 'Cereal'end
+        value.getEatType=function()return 'EatBox'end;value.getCustomEatSound=function()end
+        value.getHungChange=function(self)return self.hunger end;value.getHungerChange=value.getHungChange
+        value.getBaseHunger=function(self)return self.base end;value.hasTag=function()return false end
+        value.getEatTime=function()return 0 end;value.getUses=function()return 1 end
+        value.isDisappearOnUse=function()return true end
+        for _,name in ipairs({'getReplaceOnUse','getOnEat','getOnCooked','getReplaceOnCooked','getReplaceOnRotten','getRequireInHandOrInventory','getCustomMenuOption'})do value[name]=function()end end
+        for _,name in ipairs({'isKeepOnDeplete','isTainted','isAlcoholic','isBurnt','isRotten','isbDangerousUncooked','isCooked','isCookable'})do value[name]=function()return false end end
+        value.getPoisonPower=function()return 0 end;value.getReduceInfectionPower=function()return 0 end
+        local script={isCantEat=function()return false end,getOpeningRecipe=function()end,getOnBreak=function()end,
+            getReplaceOnUse=function()end,getReplaceOnDeplete=function()end}
+        value.getScriptItem=function()return script end
+        return value
+    end
     local properties={getThirstChange=function()return -0.1 end}
     for _,name in ipairs({'getFatigueChange','getHungerChange','getStressChange','getUnhappyChange','getCalories','getCarbohydrates',
         'getLipids','getProteins','getAlcohol','getPoison','getFluReduction','getPainReduction','getEnduranceChange','getFoodSicknessChange'})do
@@ -123,13 +147,16 @@ local function setup(changed,foreignMerge,alias,missing)
     local function drink(percentage)
         local action=ISDrinkFluidAction:new(f.player,water,percentage or 0.5);action.toolkitQueueOperation={};return action
     end
+    local function eat(value,percentage)
+        local action=ISEatFoodAction:new(f.player,value,percentage or 0.5);action.toolkitQueueOperation={};return action
+    end
     local function runTransfer(action)
         local q=f.queue(action);q.onCompleted=function()end
         action.action={stopTimedActionAnim=function()end,setLoopedAction=function()end,setTime=function()end}
         assert(action:isValid());action:perform();action.action=nil
     end
     return {f=f,adapters=adapters,model=model,policy=policy,root=root,bag=bag,bagInventory=bagInventory,water=water,fluid=fluid,
-        properties=properties,item=item,transfer=transfer,drink=drink,runTransfer=runTransfer,drinks=function()return drinks end}
+        properties=properties,item=item,food=food,eat=eat,damage=damage,transfer=transfer,drink=drink,runTransfer=runTransfer,drinks=function()return drinks end}
 end
 do
     local s=setup();local pickup=s.transfer();local restore=s.transfer(nil,s.root,s.bagInventory)
@@ -292,7 +319,7 @@ do
     assert(s.policy.adoptTransferItemHelper(native,wrapped,guard)and s.adapters.transfer(action),'approved lowlevel delegate retains transfer proof')
     live=false;assert(not s.adapters.transfer(action),'an older delegate guard cannot be dropped by later adoption')
     live=true
-    s.f.native('shared/TimedActions/ISEatFoodAction.lua');s.policy.installContracts()
+    s.policy.installContracts()
     local starts={[ISEatFoodAction]=ISEatFoodAction.start,[ISDrinkFluidAction]=ISDrinkFluidAction.start}
     for owner,callback in pairs(starts)do owner.start=function(...)return callback(...)end end
     assert(s.policy.adoptConsumeStarts(starts,guard))
@@ -405,3 +432,92 @@ do
     local s=setup('ISDrinkFluidAction.lua');assert(not s.adapters.drink(s.drink()))
 end
 print('Item edit adapters: native idempotent transfers, captured SP water ratios, conservative Host intervals, source/helper and location guards passed.')
+-- Food uses original-food portions and shares existence with transfers. These
+-- checks execute native constructors/completion and the real policy, never Eat
+-- from inspection or a synthetic whole-item conflict rule.
+do
+    local s=setup();local food=s.food();local half,quarter=s.eat(food,.5),s.eat(food,.25)
+    local function entry(action)return {action=action,edit=assert(s.adapters.food(action))}end
+    local a,b=entry(half),entry(quarter)
+    assert(s.model.evaluate({a,b}).status=='allowed')
+    assert(s.model.evaluate({b,a}).status=='allowed','different original portions can change order')
+    a.snapshotOnly=true;assert(s.model.evaluate({b,a}).status=='allowed','cancelling a portion leaves more food')
+    a.snapshotOnly=nil
+    local whole=entry(s.eat(food,1))
+    assert(s.model.evaluate({whole,b}).status=='denied','whole-food consumption cannot precede a dependent portion')
+    local returning=s.transfer(food,s.root,s.bagInventory)
+    assert(s.model.evaluate({whole,{action=returning,edit=assert(s.adapters.transfer(returning))}}).status=='denied',
+        'native removal invalidates downstream exact-item transfers')
+    assert(s.model.evaluate({b,{action=returning,edit=assert(s.adapters.transfer(returning))}}).status=='allowed')
+    food.container=s.bagInventory
+    local pickup=s.transfer(food,s.bagInventory,s.root)
+    assert(s.model.evaluate({{action=pickup,edit=assert(s.adapters.transfer(pickup))},entry(quarter)}).status=='allowed')
+    assert(s.model.evaluate({entry(quarter),{action=pickup,edit=assert(s.adapters.transfer(pickup))}}).status=='denied')
+    food.container=s.root
+    -- Inspection cannot consume or update hunger. Real native complete is still the effect owner.
+    local effects=0
+    s.f.player.Eat=function(_,exact,portion,utensil)
+        assert(exact==food and portion==.25 and utensil==false);effects=effects+1
+    end
+    assert(s.adapters.food(quarter));assert(effects==0)
+    assert(quarter:complete());assert(effects==1)
+    s.water.container=s.root
+    local anchor=s.drink();anchor.action={}
+    local q=s.f.queue(anchor,half,quarter)
+    assert(not s.policy.evaluateMove(q,half,quarter,true).reason,'actual policy uses resource proof for same-item portions')
+    assert(not s.policy.evaluateCancel(q,half).reason,'ordinary pending food can be cancelled')
+end
+do
+    local s=setup();local food=s.food();local a=s.eat(food,.25)
+    local function project(...)
+        local entries={};for _,action in ipairs({...})do entries[#entries+1]={action=action,edit=assert(s.adapters.food(action))}end
+        return s.model.evaluate(entries)
+    end
+    food.hunger=-.11
+    assert(project(a,s.eat(food,.25)).status=='denied','near-empty native tail cannot promise another portion')
+    s.damage.timer=3600
+    assert(project(a).status=='allowed','native fullness threshold is strict and checked before eating')
+    assert(project(a,s.eat(food,.25)).status=='denied')
+    s.damage.timer=3601
+    assert(project(a).status=='denied','already full actor cannot start eating')
+    s.damage.timer=-.5
+    assert(project(a).status=='allowed','native timer decay may overshoot zero')
+    s.damage.timer=11001;assert(not s.adapters.food(a),'do not invent a reduction of an above-cap external timer')
+    s.damage.timer=3500;s.water.container=s.root
+    local drink=s.drink()
+    local decision=s.model.evaluate({{action=a,edit=assert(s.adapters.food(a))},{action=drink,edit=assert(s.adapters.drink(drink))}})
+    assert(decision.status=='denied'and decision.field=='foodTimerUpper','native water shares the changing fullness prerequisite')
+    s.damage.timer=0;food.hunger=-.4
+    s.properties.getHungerChange=function()return -.1 end
+    local mixed=s.drink();local anchor=s.f.action(ISReadABook,{item=s.item()})
+    local q=s.f.queue(anchor,mixed,a)
+    assert(not s.policy.evaluateMove(q,a,mixed,false).allowed,'unmodelled nutritious drinking cannot hide actor fullness effects')
+    s.properties.getHungerChange=function()return 0 end
+    for _,spec in ipairs({
+        {'getOnEat','custom.callback'},{'getReplaceOnUse','Base.Bowl'},{'getUses',2},
+        {'getRequireInHandOrInventory',{}},{'isKeepOnDeplete',true},{'isDisappearOnUse',false},
+        {'isTainted',true},{'getPoisonPower',1},{'isAlcoholic',true},{'getReduceInfectionPower',1},
+        {'isRotten',true},{'isBurnt',true},{'isbDangerousUncooked',true},{'hasTag',true},
+        {'isCookable',true},{'getOnCooked','custom.callback'},{'getReplaceOnRotten','Base.Rotten'}})do
+        local name,value=spec[1],spec[2];local before=food[name];food[name]=function()return value end
+        assert(not s.adapters.food(a),'unknown food effects must be protected: '..name);food[name]=before
+    end
+    for _,name in ipairs({'complete','serverStop','getRequiredItem','isEatingRemaining'})do
+        local before=ISEatFoodAction[name];ISEatFoodAction[name]=function()error('foreign callback must never execute')end
+        assert(not s.adapters.food(a));ISEatFoodAction[name]=before
+    end
+    a.action={};assert(not s.adapters.food(a));a.action=nil
+    a.spoon={};assert(s.adapters.food(a),'unused carried cutlery does not block ordinary food')
+    local previous=food.getEatType;food.getEatType=function()return 'Can'end
+    assert(not s.adapters.food(a));food.getEatType=previous;a.spoon=nil
+    a.onCompleteFunc=function()error('unknown callback')end;assert(not s.adapters.food(a))
+end
+do
+    local s=setup('ISEatFoodAction.lua');assert(not s.adapters.food(s.eat(s.food())))
+    for _,name in ipairs({'complete','serverStop','getRequiredItem','isEatingRemaining'})do
+        s=setup(nil,nil,nil,{owner='ISEatFoodAction',name=name})
+        assert(not s.adapters.food(s.eat(s.food())),'deleted native food effect/helper cannot inherit permission: '..name)
+        assert(s.adapters.drink(s.drink()),'unknown food callbacks do not revoke unrelated native water contracts')
+    end
+end
+print('Food edit adapters: original portions, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')

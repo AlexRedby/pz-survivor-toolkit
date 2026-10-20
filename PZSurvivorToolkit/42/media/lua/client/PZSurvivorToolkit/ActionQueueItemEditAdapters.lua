@@ -1,19 +1,21 @@
 require "TimedActions/ISInventoryTransferAction"
 require "TimedActions/ISTransferAction"
 require "TimedActions/ISDrinkFluidAction"
+require "TimedActions/ISEatFoodAction"
 local Proof = require "PZSurvivorToolkit/SourceProof"
 local Toolkit = PZSurvivorToolkit
 local Adapters = {}
 Toolkit.ActionQueueItemEditAdapters = Adapters
 local base = ISBaseTimedAction
 local transfer, lowlevel, drink = ISInventoryTransferAction, ISTransferAction, ISDrinkFluidAction
+local eat = ISEatFoodAction
 local operations=Toolkit.ActionQueueOperations
 local mergeDelegate=operations and operations.transferMergeDelegate
 local lifecycle = {"new", "begin", "create", "adjustMaxTime", "isValid", "isValidStart", "waitToStart", "start", "update", "stop",
     "perform", "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceComplete", "forceStop", "forceCancel", "invoke"}
 local snapshots, approved, guards, baseHooks, pins = {}, {}, {}, {}, {}
 local baseMethods={}
-local ownMethods,baselineSafe={},true
+local ownMethods,ownerSafe,baselineSafe={},{},true
 -- These are the own methods in the pinned native files, including helpers called
 -- by other methods. Enumerating only surviving callbacks would trust a class
 -- whose effect/helper was deleted before this module loaded, or inherited instead.
@@ -31,6 +33,8 @@ local requiredOwn={
     [lowlevel]={"floorHasRoomFor","canDropOnFloor","getNotFullFloorSquare","GetDropItemOffset","removeItemOnCharacter","transferItem"},
     [drink]={"isValidStart","waitToStart","isValid","update","serverStart","animEvent","start","stop","perform",
         "complete","updateEat","getDuration","new"},
+    [eat]={"isValidStart","waitToStart","isValid","update","start","stop","serverStop","perform","complete",
+        "getRequiredItem","eat","getDuration","getSecondItem","isEatingRemaining","new"},
 }
 local function ownsRequired(owner,methods)
     for _,name in ipairs(requiredOwn[owner]) do
@@ -51,13 +55,13 @@ local function unique(methods)
 end
 for name,callback in pairs(base) do if type(callback)=="function" then baseMethods[name]=callback end end
 baselineSafe=ownsRequired(base) and unique(baseMethods)
-local files = {[transfer] = "ISInventoryTransferAction.lua", [lowlevel] = "ISTransferAction.lua", [drink] = "ISDrinkFluidAction.lua"}
+local files = {[transfer] = "ISInventoryTransferAction.lua", [lowlevel] = "ISTransferAction.lua", [drink] = "ISDrinkFluidAction.lua", [eat] = "ISEatFoodAction.lua"}
 local allowed = {[transfer] = {new=true,isValid=true,start=true,perform=true,stop=true,transferItem=true,checkQueueList=true,getNotFullFloorSquare=true},
-    [lowlevel] = {transferItem=true,GetDropItemOffset=true}, [drink] = {start=true}}
+    [lowlevel] = {transferItem=true,GetDropItemOffset=true}, [drink] = {start=true}, [eat] = {start=true}}
 for owner in pairs(files) do
     local methods,own = {},{}
     for name, callback in pairs(owner) do if type(callback) == "function" then methods[name],own[name] = callback,true end end
-    baselineSafe=baselineSafe and ownsRequired(owner) and unique(methods)
+    ownerSafe[owner]=ownsRequired(owner) and unique(methods)
     ownMethods[owner]=own
     if owner ~= lowlevel then for _, name in ipairs(lifecycle) do methods[name] = owner[name] or false end end
     snapshots[owner], approved[owner], guards[owner] = methods, {}, {}
@@ -108,14 +112,15 @@ function Adapters.adoptBase(name,previous,replacement)
     if (name~="begin" and name~="stop") or ISBaseTimedAction~=base or rawget(base,name)~=replacement
         or baseMethods[name]~=previous
         or not Proof.closure(previous,"ISBaseTimedAction.lua") or not Proof.closure(replacement,"ActionQueue.lua") then return false end
-    for _,owner in ipairs({transfer,drink}) do
+    for _,owner in ipairs({transfer,drink,eat}) do
         if snapshots[owner][name]==previous and owner[name]==replacement then snapshots[owner][name]=replacement end
     end
     baseHooks[name],baseMethods[name]=replacement,replacement
     return true
 end
 local function unchanged(owner,action)
-    if not baselineSafe or ISBaseTimedAction~=base or ISInventoryTransferAction~=transfer or ISTransferAction~=lowlevel or ISDrinkFluidAction~=drink then return false end
+    if not baselineSafe or ISBaseTimedAction~=base or ISInventoryTransferAction~=transfer or ISTransferAction~=lowlevel
+        or ISDrinkFluidAction~=drink or ISEatFoodAction~=eat then return false end
     if not ownsRequired(base,baseMethods) then return false end
     local policy=Toolkit.ActionQueuePolicy
     if not policy or type(policy.matchesNative)~="function" or not policy.matchesNative(action) then return false end
@@ -123,8 +128,8 @@ local function unchanged(owner,action)
         if base[name]~=callback or name~="derive" and not Proof.closure(callback,"ISBaseTimedAction.lua")
             and not (baseHooks[name]==callback and Proof.closure(callback,"ActionQueue.lua")) then return false end
     end
-    for _, candidate in ipairs(owner==transfer and {transfer,lowlevel} or {drink}) do
-        if not ownsRequired(candidate,snapshots[candidate]) then return false end
+    for _, candidate in ipairs(owner==transfer and {transfer,lowlevel} or {owner}) do
+        if not ownerSafe[candidate] or not ownsRequired(candidate,snapshots[candidate]) then return false end
         for _,guard in ipairs(guards[candidate]) do if not guarded(guard) then return false end end
         for name,callback in pairs(snapshots[candidate]) do
             if (candidate[name] or false)~=callback or name~="derive" and not origin(candidate,name,callback) then return false end
@@ -154,6 +159,8 @@ local function pending(action,owner)
     if owner==transfer then
         if not pinned("media/lua/client/TimedActions/ISInventoryTransferAction.lua",3739549534)
             or not pinned("media/lua/shared/TimedActions/ISTransferAction.lua",798240932) then return false end
+    elseif owner==eat then
+        if not pinned("media/lua/shared/TimedActions/ISEatFoodAction.lua",178315973) then return false end
     elseif not pinned("media/lua/shared/TimedActions/ISDrinkFluidAction.lua",3564665289) then return false end
     return unchanged(owner,action)
 end
@@ -189,6 +196,10 @@ local function itemFacts(item)
         if not instanceof(fluid,"FluidContainer") or fluid:getOwner()~=item then return end
         facts.fluid=fluid
     end
+    if instanceof(item,"Food") then
+        local amount=-item:getHungChange()
+        if finite(amount) and amount>0 then facts.foodLower,facts.foodUpper=amount,amount end
+    end
     return facts
 end
 local function singleton(value)
@@ -213,18 +224,44 @@ function Adapters.transfer(action)
     local facts=itemFacts(action.item)
     if not facts or facts.location~=action.srcContainer and facts.location~=action.destContainer then return end
     -- Ancestry owner mutations remain linked by Policy.transferResources.containerOwners.
+    local requires={{field="location",oneOf={action.srcContainer,action.destContainer}}}
+    if facts.foodLower then requires[#requires+1]={field="foodLower",above=0} end
     return {version=1,complete=true,capacity="external",resources={{domain="item",key=action.item:getID(),facts=facts,
-        requires={{field="location",oneOf={action.srcContainer,action.destContainer}}},effects={{field="location",set=action.destContainer}}}}}
+        requires=requires,effects={{field="location",set=action.destContainer}}}}}
+end
+local function fullness(player)
+    local damage=player:getBodyDamage()
+    local timer,standard=damage:getHealthFromFoodTimer(),damage:getStandardHealthFromFoodTime()
+    if not finite(timer) or timer>11000 or not finite(standard) or standard<=0 then return end
+    -- Native decay can overshoot zero and leave a small negative timer.
+    return {domain="actor",key=player,facts={foodTimerUpper=math.max(0,timer)},
+        requires={{field="foodTimerUpper",max=2*standard}},effects={}}
 end
 local zeroProperties={"getFatigueChange","getHungerChange","getStressChange","getUnhappyChange","getCalories","getCarbohydrates",
     "getLipids","getProteins","getAlcohol","getPoison","getFluReduction","getPainReduction","getEnduranceChange","getFoodSicknessChange"}
+local function cleanWater(fluid)
+    if not instanceof(fluid,"FluidContainer") or not Fluid or not Fluid.Water or not fluid:isPureFluid(Fluid.Water)
+        or fluid:isTainted() or fluid:isPoisonous() then return false end
+    local properties=fluid:getProperties()
+    for _,name in ipairs(zeroProperties) do if properties[name](properties)~=0 then return false end end
+    local thirst=properties:getThirstChange()
+    return finite(thirst) and thirst<=0
+end
+function Adapters.fullnessNeutralDrink(action)
+    -- An already-running clean-water action changes no fullness. Other fluid
+    -- consumption must join the actor dependency component even without a
+    -- supported edit contract of its own.
+    return type(action)=="table" and getmetatable(action)==drink and action.useUtensil==false
+        and pinned("media/lua/shared/TimedActions/ISDrinkFluidAction.lua",3564665289)
+        and pinned("media/lua/shared/TimedActions/ISBaseTimedAction.lua",3104185167)
+        and unchanged(drink,action) and cleanWater(action.fluidContainer)
+end
 function Adapters.drink(action)
     if not pending(action,drink) or action.useUtensil~=false or not leaf(action.item,action.character)
         or not ancestry(action.item:getContainer(),action.character) or not Fluid or not Fluid.Water then return end
     local facts=itemFacts(action.item)
     local fluid=action.fluidContainer
-    if not facts or facts.fluid~=fluid or not instanceof(fluid,"FluidContainer") or not fluid:isPureFluid(Fluid.Water)
-        or fluid:isTainted() or fluid:isPoisonous() then return end
+    if not facts or facts.fluid~=fluid or not cleanWater(fluid) then return end
     local amount,capacity,ratio=fluid:getAmount(),fluid:getCapacity(),fluid:getFilledRatio()
     if not finite(amount) or not finite(capacity) or not finite(ratio) or capacity<=0 or amount<=0 or amount>capacity
         or ratio<=0 or ratio>1 or math.abs(amount/capacity-ratio)>0.000001 then return end
@@ -234,10 +271,6 @@ function Adapters.drink(action)
     if action.percentage<=0 or action.startRatio<=0 or action.consumedRatio~=0 or action.endRatio>ratio or ratio>action.startRatio
         or action.endRatio~=action.startRatio*(1-action.percentage)
         or action.targetConsumedRatio~=action.startRatio-action.endRatio then return end
-    local properties=fluid:getProperties()
-    for _,name in ipairs(zeroProperties) do if properties[name](properties)~=0 then return end end
-    local thirst=properties:getThirstChange()
-    if not finite(thirst) or thirst>0 then return end
     local resources={{domain="item",key=action.item:getID(),facts=facts,
         requires={{field="location",equal=action.character:getInventory()},{field="fluid",equal=fluid}},effects={}}}
     local effects
@@ -255,9 +288,55 @@ function Adapters.drink(action)
     resources[#resources+1]={domain="fluid",key=fluid,facts={amountLower=amount,amountUpper=amount},
         requires={{field="amountLower",above=0}},effects=effects,bounds={amountLower={min=0,max=capacity},amountUpper={min=0,max=capacity}}}
     if Proof.closure(drink.isValidStart,"ISDrinkFluidAction.lua") then
-        resources[#resources+1]={domain="actor",key=action.character,facts={canDrink=action.character:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)<3},
-            requires={{field="canDrink",equal=true}},effects={}}
+        local actor=fullness(action.character)
+        if not actor then return end
+        resources[#resources+1]=actor
     end
     return {version=1,complete=true,capacity="external",resources=resources}
+end
+
+function Adapters.food(action)
+    if not pending(action,eat) or action.useUtensil~=false or not instanceof(action.container,"ItemContainer")
+        or action.carLighter or action.openFlame or action.fromRelaunch or not leaf(action.item,action.character)
+        or not instanceof(action.item,"Food") or not ancestry(action.item:getContainer(),action.character) then return end
+    local item=action.item
+    -- Constructors remember available cutlery even for foods whose animation
+    -- never uses it. Only reject a captured utensil that the audited helper uses.
+    local kind=item:getEatType()
+    if kind=="2handbowl" and action.spoon
+        or (kind=="Can" or kind=="Candrink" or kind=="2hand" or kind=="Plate") and (action.fork or action.spoon) then return end
+    local script=item:getScriptItem()
+    local cookedOutputs=item:getReplaceOnCooked()
+    if not script or script:isCantEat() or script:getOpeningRecipe() or script:getOnBreak()
+        or script:getReplaceOnUse() or script:getReplaceOnDeplete() or item:getReplaceOnUse()
+        or item:getOnEat() or item:getOnCooked() or item:getReplaceOnRotten()
+        or cookedOutputs and not cookedOutputs:isEmpty() or item:isCookable()
+        or item:getRequireInHandOrInventory() or item:getCustomMenuOption()
+        or item:hasTag(ItemTag.SMOKABLE) or not item:isDisappearOnUse() or item:isKeepOnDeplete()
+        or item:getUses()~=1 or item:getFluidContainer() or item:isTainted() or item:getPoisonPower()~=0
+        or item:isAlcoholic() or item:getReduceInfectionPower()~=0 or item:isBurnt() or item:isRotten()
+        or item:isbDangerousUncooked() and not item:isCooked() then return end
+    local facts=itemFacts(item)
+    local base=-item:getBaseHunger()
+    local portion=action.percentage
+    if not facts or not facts.foodLower or not finite(base) or base<=0 or facts.foodUpper>base+0.000001
+        or (portion~=0.25 and portion~=0.5 and portion~=1) then return end
+    local actor=fullness(action.character)
+    if not actor then return end
+    local debit=base*portion
+    -- Java float division/multiplication and the strict native .01 tail test
+    -- are enclosed, not rounded into a promise that an item survives.
+    local margin=0.00001*math.max(1,base)
+    local effects={{field="foodLower",deplete={amount=debit+margin,minimum=0.01+margin}},
+        {field="foodUpper",deplete={amount=math.max(0,debit-margin),minimum=0.01-margin}}}
+    -- Food timers only grow at minimum hunger. Ignoring that condition and
+    -- decay is conservative; cooked food has a 1.3 multiplier and doubles
+    -- the timer bonus. The extra .01 covers the native final-tail rounding.
+    local multiplier=item:isCooked() and 33800 or 13000
+    actor.effects={{field="foodTimerUpper",delta=multiplier*(debit+0.01+margin)+1},{field="foodTimerUpper",cap=11000}}
+    return {version=1,complete=true,capacity="external",resources={
+        {domain="item",key=item:getID(),facts=facts,
+            requires={{field="location",equal=action.character:getInventory()},{field="foodLower",above=0}},effects=effects,
+            bounds={foodLower={min=0},foodUpper={min=0}}},actor}}
 end
 return Adapters
