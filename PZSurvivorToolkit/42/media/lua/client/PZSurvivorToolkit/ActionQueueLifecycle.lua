@@ -125,14 +125,18 @@ if getFilenameOfClosure then
     local ok, filename = pcall(getFilenameOfClosure, commandStart)
     nativeCommand = ok and type(filename) == "string" and filename:match("([^/\\]+)$") == "ISQueueActionsAction.lua"
 end
+local operations = Toolkit.ActionQueueOperations
 ISQueueActionsAction.start = function(action)
     if not nativeCommand or not Toolkit.Settings.actionQueue() then return commandStart(action) end
     action:beginAddingActions()
-    action.addActionsFunction(action.character, unpack(action.args))
+    if operations then
+        operations.runWith(action.toolkitQueueOperation, action.addActionsFunction, action.character, unpack(action.args))
+    else
+        action.addActionsFunction(action.character, unpack(action.args))
+    end
     action:endAddingActions()
     action:forceComplete()
 end
-local operations = Toolkit.ActionQueueOperations
 if operations then operations.adoptCommandLifecycle("start", commandStart, ISQueueActionsAction.start) end
 
 return Lifecycle

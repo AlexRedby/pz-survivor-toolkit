@@ -12,14 +12,14 @@ Toolkit.ActionQueuePanel = Panel
 
 local function moveDecision(queue, action, target, after)
     local policy = Toolkit.ActionQueuePolicy
-    if policy and policy.evaluateMove then return policy.evaluateMove(queue, action, target, after) end
+    if policy and policy.previewMove then return policy.previewMove(queue, action, target, after) end
     local reason = Toolkit.ActionQueue.moveReason(queue, action, target, after)
     return {allowed = reason == nil, reason = reason}
 end
 
 local function cancelDecision(queue, action, whole)
     local policy = Toolkit.ActionQueuePolicy
-    if policy and policy.evaluateCancel then return policy.evaluateCancel(queue, action, whole) end
+    if policy and policy.previewCancel then return policy.previewCancel(queue, action, whole) end
     local reason
     if whole then reason = Toolkit.ActionQueue.cancelOperationReason(queue, action)
     else reason = Toolkit.ActionQueue.cancelReason(queue, action) end
@@ -40,6 +40,7 @@ function List:clearGesture()
     self.pressedCancel, self.dragAction, self.dragging, self.dropTarget = nil, nil, nil, nil
     self.pressedToggle = nil
     self.pressedOperation = nil
+    self.dropRow = nil
 end
 
 function List:onMouseDown(x, y)
@@ -76,6 +77,7 @@ function List:onMouseMove(dx, dy)
     self.dragging = self.dragging or math.abs(x - self.dragX) + math.abs(y - self.dragY) > 5
     local row = self:rowUnderMouse(x, y)
     self.dropTarget = row and row.item
+    self.dropRow = row
     self.dropAfter = row and y > self:topOfItem(row.index) + row.height / 2
 end
 
@@ -133,8 +135,8 @@ function Panel.drawRow(list, y, row, alt)
         return y + row.height
     end
     local action, queue = row.item, list.parent.queue
-    if row.header and queue.current and queue:indexOf(queue.current) >= row.first
-        and queue:indexOf(queue.current) <= row.last then
+    if row.header and list.parent.currentIndex and list.parent.currentIndex >= row.first
+        and list.parent.currentIndex <= row.last then
         action = queue.current
     end
     local current = queue.current == action
@@ -144,8 +146,16 @@ function Panel.drawRow(list, y, row, alt)
     elseif alt then
         list:drawRect(0, y, list.width, row.height, 0.15, 0.5, 0.5, 0.5)
     end
-    local moveResult = moveDecision(queue, action)
-    local moveReason = moveResult.reason
+    -- mouseoverselected can outlive a mouse leave or scroll. Use native hit
+    -- testing plus current content coordinates before doing any policy work.
+    local mouseRow = list:isMouseOver() and list:rowUnderMouse(list:getMouseX(), list:getMouseY())
+    local hovered = mouseRow == row
+    local cancelX = list:cancelX()
+    local hover = hovered and list:getMouseX() >= cancelX
+    local toggleHover = hovered and row.header and list:getMouseX() < 22
+    local moveResult = hovered and not hover and not toggleHover and not list.dragging and moveDecision(queue, action)
+    local moveReason = moveResult and moveResult.reason
+    local description = Toolkit.ActionQueueLabels.describe(action)
     local iconX, textX = row.header and 42 or 22, row.header and 72 or 52
     if row.header then
         list:drawText(list.parent.expanded[row.operation] and "-" or "+", 7, y + (row.height - 14) / 2,
@@ -153,16 +163,15 @@ function Panel.drawRow(list, y, row, alt)
     end
     list:drawTextureScaledAspect(list.dragTexture, row.header and 23 or 3, y + (row.height - 16) / 2, 14, 16,
         moveReason and 0.2 or 0.8, 1, 1, 1)
-    list:drawTextureScaledAspect(Panel.icon(action), iconX, y + (row.height - 24) / 2, 24, 24, 1, 1, 1, 1)
+    list:drawTextureScaledAspect(description.icon(), iconX, y + (row.height - 24) / 2, 24, 24, 1, 1, 1, 1)
     local prefix = tostring(row.first) .. ". "
     if current and action.action then
         local fitness = Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.progress(action)
         local fraction = fitness and fitness.fraction or action:getJobDelta()
         prefix = "[" .. tostring(math.floor(fraction * 100)) .. "%] "
     end
-    local cancelX = list:cancelX()
     local top = math.max(0, y + list:getYScroll())
-    local label = prefix .. Toolkit.ActionQueue.label(action)
+    local label = prefix .. description.title .. (description.target and ": " .. description.target or "")
     local remaining, count
     local right = cancelX - 4
     local clipHeight = math.min(row.height, list.height - top)
@@ -193,34 +202,30 @@ function Panel.drawRow(list, y, row, alt)
     list:repaintStencilRect(textX, top, right - textX, clipHeight)
     local reason
     local operationCancel = row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item))
-    local cancelResult = cancelDecision(queue, operationCancel and row.item or action, operationCancel)
-    reason = cancelResult.reason
-    local hover = list.mouseoverselected == row.index and list:getMouseX() >= cancelX
+    local cancelResult = hover and not list.dragging and cancelDecision(queue, operationCancel and row.item or action, operationCancel)
+    reason = cancelResult and cancelResult.reason
     list:drawRect(cancelX, y + 3, 24, row.height - 6, hover and 0.4 or 0.15, 0.7, 0.3, 0.3)
     list:drawTextureScaledAspect(list.cancelTexture, cancelX + 4, y + (row.height - 16) / 2, 16, 16,
         reason and 0.2 or 1, 1, 1, 1)
-    local toggleHover = row.header and list:getMouseX() < 22
     local hint = toggleHover and (list.parent.expanded[row.operation] and (batch and "collapse_batch_tip" or "collapse_tip")
         or (batch and "expand_batch_tip" or "expand_tip"))
         or (hover and (reason or (operationCancel and "cancel_operation_tip" or "cancel_tip")) or (moveReason or "drag_tip"))
     row.tooltip = (row.task and row.task .. " <LINE> " or "")
         .. (remaining and remaining .. " <LINE> " or "") .. label
         .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_" .. hint)
-    local decisionDetails = Toolkit.ActionQueueLabels.decisionDetails(hover and cancelResult or moveResult)
+    local decisionDetails = hovered and Toolkit.ActionQueueLabels.decisionDetails(hover and cancelResult or moveResult)
     if decisionDetails then row.tooltip = row.tooltip .. " <LINE> " .. decisionDetails end
     local token = row.operation or action.toolkitQueueOperation
     if token and token.toolkitPriorityReason then
         row.tooltip = row.tooltip .. " <LINE> " .. Toolkit.ActionQueueLabels.priorityWaiting(token.toolkitPriorityReason)
     end
-    local details = Toolkit.ActionQueueLabels.describe(action).details
-    if details then row.tooltip = row.tooltip .. " <LINE> " .. details end
-    local first, last = Toolkit.ActionQueueOperations.bounds(queue, action)
-    if not batch and first and last > first then
-        row.tooltip = row.tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_group", last - first + 1)
+    if hovered and description.details then row.tooltip = row.tooltip .. " <LINE> " .. description.details end
+    if hovered and not batch and row.groupLast > row.groupFirst then
+        row.tooltip = row.tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_group", row.groupLast - row.groupFirst + 1)
     end
     local dropFirst, dropLast
-    if list.dragging and list.dropTarget then
-        dropFirst, dropLast = Toolkit.ActionQueueOperations.bounds(queue, list.dropTarget)
+    if list.dragging and list.dropRow and mouseRow == list.dropRow then
+        dropFirst, dropLast = list.dropRow.groupFirst, list.dropRow.groupLast
     end
     local neighbor = list.items[row.index + (list.dropAfter and 1 or -1)]
     local boundary = list.dropAfter and row.last == dropLast or not list.dropAfter and row.first == dropFirst
@@ -245,6 +250,7 @@ function Panel:update()
     local selectedHeader = row and row.header
     self.expanded = self.expanded or {}
     local rows, live = {}, {}
+    self.currentIndex = nil
     local i, tasks = 1, 0
     while i <= #self.queue.queue do
         local action = self.queue.queue[i]
@@ -253,16 +259,20 @@ function Panel:update()
         while token and last < #self.queue.queue and self.queue.queue[last + 1].toolkitQueueOperation == token do
             last = last + 1
         end
+        for index = i, last do
+            if self.queue.queue[index] == self.queue.current then self.currentIndex = index end
+        end
         if token then live[token] = true end
         local batch = Toolkit.ActionQueueBatch.progress(self.queue, action)
         local grouped = last > i or batch and (batch.lazy or batch.total and batch.total > 1 or batch.completed > 0)
         if grouped then
             rows[#rows + 1] = {item = action, operation = token, header = true, first = i, last = last,
-                task = Panel.taskTitle(self.queue, i, last)}
+                groupFirst = i, groupLast = last, task = Panel.taskTitle(self.queue, i, last)}
         end
         if not grouped or self.expanded[token] then
             for index = i, last do
-                rows[#rows + 1] = {item = self.queue.queue[index], operation = token, first = index, last = index}
+                rows[#rows + 1] = {item = self.queue.queue[index], operation = token, first = index, last = index,
+                    groupFirst = i, groupLast = last}
             end
         end
         tasks = tasks + 1
@@ -288,6 +298,7 @@ function Panel:update()
             self.list:addItem("", nextRow.item)
             local added = self.list.items[index]
             added.operation, added.header, added.first, added.last = nextRow.operation, nextRow.header, nextRow.first, nextRow.last
+            added.groupFirst, added.groupLast = nextRow.groupFirst, nextRow.groupLast
             added.index, added.task = index, nextRow.task
             if nextRow.header then added.height = self.list.itemheight + getTextManager():getFontHeight(UIFont.Small) + 2 end
             height = height + added.height

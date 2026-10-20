@@ -15,6 +15,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.169
+
+- **Fixed:** Long action queues, including magazines read from a container, no longer repeatedly inspect the whole queue while drawing every visible row. Move/cancel hints are calculated for the hovered control; actual edits still validate fresh state.
+- **Fixed:** Bulk and deferred commands update their operation titles incrementally instead of rescanning the queue after every addition. Transfers also reuse their fixed heading while waiting behind other work, including CleanUI's deferred drops. Individual operation boundaries, native action execution and transfer batching are preserved.
+
 ### 0.1.168
 
 - **Changed:** Item Details reads the native Mod Options values directly instead of maintaining a second configuration synchronized on Apply and main-menu entry. Existing preferences, display settings and bounded stack sorting are preserved.

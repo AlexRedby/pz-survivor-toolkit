@@ -352,7 +352,7 @@ local function adopt(action)
             record.expanded = true
             if live(record) and matches(self) then
                 self:beginAddingActions()
-                scoped(record, callback, self.character, unpack(self.args))
+                Operations.runWith(record.token, scoped, record, callback, self.character, unpack(self.args))
                 self:endAddingActions()
             end
             -- The source may have lost its target; native's empty-command path clears unrelated work.
@@ -437,6 +437,7 @@ scoped = function(context, callback, ...)
             if adopt(action) == false then return end
             local results = pack(insert(target, unpack(args, 1, args.n)))
             if rememberTidy then rememberTidy(action) end
+            Operations.invalidateTitle(action)
             return unpack(results, 1, results.n)
         end
         return insert(target, unpack(args, 1, args.n))

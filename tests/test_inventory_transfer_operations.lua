@@ -220,4 +220,93 @@ local unrelated = nativeFactory(player, items(1)[1], player.inventory, trunk)
 ISTimedActionQueue.add(unrelated)
 drop(clean, 15); tick()
 assert(unrelated.toolkitQueueOperation ~= queue.queue[3].toolkitQueueOperation, 'error must not leak the operation scope')
+
+-- A transfer drag waiting behind native reading retains its unmerged members.
+-- Repeated header display must not describe all those unchanged transfers again.
+getText = getText or function(key) return key end
+local definitions = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua')
+local describe, bounds, descriptions, searches = definitions.describe, operations.bounds, 0, 0
+definitions.describe = function(...) descriptions = descriptions + 1; return describe(...) end
+operations.bounds = function(...) searches = searches + 1; return bounds(...) end
+for _, class in ipairs({clean, vanilla}) do
+    for _, drags in ipairs({1, 3}) do
+        resetQueue(); queue.current.Type = 'ISReadABook'
+        local perDrag, tokens = 60 / drags, {}
+        descriptions, searches = 0, 0
+        for drag = 1, drags do drop(class, perDrag) end
+        if class == clean then
+            assert(#queue.queue == 1, 'CleanUI must still defer transfer execution')
+            tick()
+        end
+        assert(#queue.queue == 61, 'waiting transfers must not be eagerly merged or executed')
+        assert(descriptions == 60 and searches == 0, 'deferred/synchronous flush must contribute each transfer title once without searches')
+        for drag = 1, drags do
+            local first = 2 + (drag - 1) * perDrag
+            local token = queue.queue[first].toolkitQueueOperation
+            assert(not tokens[token], 'separate drags must keep separate tokens')
+            tokens[token] = true
+        end
+        descriptions = 0
+        for frame = 1, 100 do
+            for drag = 1, drags do
+                local first = 2 + (drag - 1) * perDrag
+                assert(definitions.taskTitle(queue, first, first + perDrag - 1)
+                    == 'UI_PZSurvivorToolkit_queue_action_transfer')
+            end
+        end
+        assert(descriptions == 0, 'waiting transfer headers repeated per-item descriptions')
+        -- Use actual native merge after its normal wait, including its item-list mutation.
+        local transferred = 0
+        for drag = 1, drags do
+            local first = queue.queue[drag + 1]
+            first:checkQueueList()
+            local count = 0
+            for _, group in ipairs(first.queueList) do count = count + #group.items end
+            assert(count == perDrag, 'native merge crossed the next drag boundary or lost an item')
+            transferred = transferred + count
+        end
+        assert(transferred == 60 and #queue.queue == drags + 1)
+        descriptions = 0
+        for drag = 1, drags do definitions.taskTitle(queue, drag + 1, drag + 1) end
+        assert(descriptions == 0, 'same-action native merge invalidated the fixed transfer heading')
+        if drags == 1 then
+            local primary = {character = player, Type = 'ISReadABook'}
+            -- Native completion/deferred additions use the same runWith enqueue path.
+            operations.runWith(queue.queue[2].toolkitQueueOperation, ISTimedActionQueue.add, primary)
+            assert(definitions.taskTitle(queue, 2, 3) == 'ContextMenu_Read',
+                'a newly queued primary action failed to upgrade a saved transfer title')
+            queue:removeFromQueue(primary)
+            assert(definitions.taskTitle(queue, 2, 2) == 'ContextMenu_Read',
+                'removing primary work changed the existing retained-primary-title behavior')
+        end
+    end
+end
+
+-- A transfer carrying a custom recipe title must still upgrade a fixed transfer
+-- heading to mixed; removing it must restore the fixed title on the next display.
+resetQueue()
+local plain = nativeFactory(player, items(1)[1], player.inventory, trunk)
+ISTimedActionQueue.add(plain)
+local custom = nativeFactory(player, items(1)[1], player.inventory, trunk)
+custom.craftRecipe = {class = 'CraftRecipe', getName = function() return 'custom' end,
+    getTranslationName = function() return 'Custom transfer' end}
+operations.runWith(plain.toolkitQueueOperation, ISTimedActionQueue.add, custom)
+assert(definitions.taskTitle(queue, 2, 3) == 'UI_PZSurvivorToolkit_queue_mixed',
+    'fixed-transfer shortcut hid a custom incoming title')
+queue:removeFromQueue(custom)
+assert(definitions.taskTitle(queue, 2, 2) == 'UI_PZSurvivorToolkit_queue_action_transfer',
+    'mixed rank-2 heading did not refresh after membership changed')
+
+-- Preparation-only mixed headings still follow remaining membership without enqueue.
+do
+    local token = {}
+    local walk = {Type = 'ISWalkToTimedAction', toolkitQueueOperation = token}
+    local equip = {Type = 'ISEquipWeaponAction', toolkitQueueOperation = token, twoHands = true}
+    local view = {queue = {walk, equip, equip}}
+    assert(definitions.taskTitle(view, 1, 3, true) == 'UI_PZSurvivorToolkit_queue_mixed')
+    table.remove(view.queue, 1)
+    assert(definitions.taskTitle(view, 1, 2) == 'ContextMenu_Equip_Two_Hands',
+        'lower-rank optimization froze a preparation-only mixed heading')
+end
+definitions.describe, operations.bounds = describe, bounds
 print('Inventory transfer operation checks passed: real CleanUI deferred/synchronous drops, native merge, separate drags and factory restoration.')

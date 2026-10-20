@@ -651,28 +651,101 @@ function Definitions.describe(action)
         end}
 end
 
-function Definitions.taskTitle(queue, first, last, refresh)
-    local token = queue.queue[first] and queue.queue[first].toolkitQueueOperation
-    local saved = token and token.presentation
-    if saved and saved.rank == 3 and not refresh then return saved.title end
-    local text, signature, mixed, priority
-    for i = first, last do
-        local action = queue.queue[i]
-        local description = Definitions.describe(action)
-        local rank = description.role == "preparation" or description.role == "return"
-        rank = rank and 1 or action.Type == "ISInventoryTransferAction" and 2 or 3
-        if not priority or rank >= priority then
-            local kind = description.signature or action.Type or description.title
-            if not priority or rank > priority then
-                text, signature, mixed, priority = description.title, kind, false, rank
-            elseif kind ~= signature then mixed = true end
+local function contributeTitle(summary, action, index)
+    local description = Definitions.describe(action)
+    local preparation = description.role == "preparation" or description.role == "return"
+    local rank = preparation and 1 or action.Type == "ISInventoryTransferAction" and 2 or 3
+    if not summary.rank or rank >= summary.rank then
+        local kind = description.signature or action.Type or description.title
+        if not summary.rank or rank > summary.rank then
+            summary.text, summary.signature, summary.mixed = description.title, kind, false
+            summary.rank, summary.priorityIndex = rank, index
+        else
+            if kind ~= summary.signature then summary.mixed = true end
+            if index < summary.priorityIndex then
+                summary.text, summary.signature, summary.priorityIndex = description.title, kind, index
+            end
         end
     end
-    text = mixed and getText("UI_PZSurvivorToolkit_queue_mixed") or text
-    if token and (not saved or priority >= saved.rank) then
-        token.presentation = {title = text, signature = signature, rank = priority}
+end
+
+local function saveTitle(token, summary)
+    local text = summary.mixed and getText("UI_PZSurvivorToolkit_queue_mixed") or summary.text
+    local saved = token and token.presentation
+    if saved then saved.dirty = nil end
+    if token and (not saved or summary.rank >= saved.rank) then
+        token.presentation = {title = text, signature = summary.signature, rank = summary.rank}
     end
     return token and token.presentation.title or text
+end
+
+local function titleAppendState(queue, first, last, summary, context)
+    if context then
+        context[queue] = {token = queue.queue[first].toolkitQueueOperation,
+            first = first, last = last, head = queue.queue[first], tail = queue.queue[last],
+            count = #queue.queue, summary = summary}
+    end
+end
+
+local transferTitleKey = prefix .. "transfer"
+local function fixedTransferTitle(saved)
+    return saved and saved.rank == 2 and saved.signature == transferTitleKey
+        and saved.title == getText(transferTitleKey)
+end
+
+function Definitions.invalidateTaskTitle(action)
+    local token = action and action.toolkitQueueOperation
+    local saved = token and token.presentation
+    if not saved or saved.rank == 3 then return end
+    if fixedTransferTitle(saved) and action.Type == "ISInventoryTransferAction" then
+        local description = Definitions.describe(action)
+        if description.signature == transferTitleKey and description.title == getText(transferTitleKey) then return end
+    end
+    saved.dirty = true
+end
+
+-- Enqueue already knows the insertion position. Reuse only the title contribution
+-- of a contiguous range from this same synchronous command, never policy/resource facts.
+function Definitions.appendTaskTitle(queue, action, index, previousCount, context)
+    if #queue.queue ~= previousCount + 1 or queue.queue[index] ~= action then return false end
+    local token, state = action.toolkitQueueOperation, context and context[queue]
+    if not token then return false end
+    local first, last, summary
+    if state and state.token == token and state.count == previousCount
+        and index >= state.first and index <= state.last + 1
+        and queue.queue[state.first + (index <= state.first and 1 or 0)] == state.head
+        and queue.queue[state.last + (index <= state.last and 1 or 0)] == state.tail then
+        first, last, summary = math.min(state.first, index), state.last + 1, state.summary
+        if index <= summary.priorityIndex then summary.priorityIndex = summary.priorityIndex + 1 end
+    elseif fixedTransferTitle(token.presentation) and action.Type == "ISInventoryTransferAction" then
+        -- Deferred inventory panes may flush outside Operations.run. A fixed-title
+        -- native transfer cannot change this saved rank-2 heading, even after merge.
+        -- Inspect only the new action so custom/mixed titles still rebuild normally.
+        local description = Definitions.describe(action)
+        return description.signature == transferTitleKey and description.title == getText(transferTitleKey)
+    elseif not token.presentation
+        and (not queue.queue[index - 1] or queue.queue[index - 1].toolkitQueueOperation ~= token)
+        and (not queue.queue[index + 1] or queue.queue[index + 1].toolkitQueueOperation ~= token) then
+        first, last, summary = index, index, {}
+    else
+        return false
+    end
+    contributeTitle(summary, action, index)
+    saveTitle(token, summary)
+    titleAppendState(queue, first, last, summary, context)
+    return true
+end
+
+function Definitions.taskTitle(queue, first, last, refresh, context)
+    local token = queue.queue[first] and queue.queue[first].toolkitQueueOperation
+    local saved = token and token.presentation
+    if saved and not saved.dirty and not refresh and (saved.rank == 3 or fixedTransferTitle(saved)) then return saved.title end
+    local summary = {}
+    for i = first, last do
+        contributeTitle(summary, queue.queue[i], i)
+    end
+    if first <= last then titleAppendState(queue, first, last, summary, context) end
+    return saveTitle(token, summary)
 end
 
 function Definitions.resourceLabel(resource)

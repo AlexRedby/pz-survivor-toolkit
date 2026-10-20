@@ -350,7 +350,7 @@ compatSource,proofSeams=compatSource:gsub('local carts=ready%.SaucedCartsTransfe
     'local carts=Toolkit.ActionQueueCarts')
 assert(proofSeams==1,'late-hook fixture must replace only the Carts proof capture')
 local compat = assert(loadstring((compatSource:gsub('\nreturn Compat',
-    '\nCompat.fixtureRegistries = {records, sessions}\nCompat.fixtureRepairTidyFloor = repairTidyFloor\nreturn Compat'))))()
+    '\nCompat.fixtureRegistries = {records, sessions}\nCompat.fixtureRepairTidyFloor = repairTidyFloor\nCompat.fixtureScoped = scoped\nreturn Compat'))))()
 assert(not compat.isInstalled('MPFastForward'),'server wrapper waits for the server loading boundary')
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/server/000_PZSurvivorToolkitReadCompat.lua'))()
 for name, available in pairs({WS=WS~=nil, NEQ_Dresser=NEQ_Dresser~=nil, TidyFixture=TidyFixture~=nil,
@@ -446,6 +446,101 @@ end
 local function tail()
     local action = ISBaseTimedAction:new(player); ISTimedActionQueue.add(action); return action
 end
+-- The actual audited source-scope table.insert hook must upgrade a previously
+-- saved transfer heading even though it bypasses native enqueue callbacks.
+do
+    reset()
+    local transfer = ISInventoryTransferAction:new(player, item(inventory, 19001), inventory, inventory)
+    ISTimedActionQueue.add(transfer)
+    local token = transfer.toolkitQueueOperation
+    assert(definitions.taskTitle(queue, 1, 1) == 'UI_PZSurvivorToolkit_queue_action_transfer')
+    local readAction = ISReadABook:new(player, item(inventory, 19002))
+    readAction.toolkitQueueOperation = token
+    compat.fixtureScoped({id = 'WashFix', token = token, character = player, queue = queue,
+        generation = queue.toolkitOperationGeneration or 0}, function()
+        table.insert(queue.queue, readAction)
+    end)
+    assert(queue.queue[2] == readAction and definitions.taskTitle(queue, 1, 2) == 'ContextMenu_Read',
+        'direct audited primary insertion failed to upgrade a saved transfer heading')
+    reset()
+    transfer = ISInventoryTransferAction:new(player, item(inventory, 19003), inventory, inventory)
+    ISTimedActionQueue.add(transfer)
+    token = transfer.toolkitQueueOperation
+    local custom = ISInventoryTransferAction:new(player, item(inventory, 19004), inventory, inventory)
+    custom.toolkitQueueOperation = token
+    custom.craftRecipe = {class = 'CraftRecipe', getName = function() return 'direct' end,
+        getTranslationName = function() return 'Direct custom transfer' end}
+    compat.fixtureScoped({id = 'WashFix', token = token, character = player, queue = queue,
+        generation = queue.toolkitOperationGeneration or 0}, function()
+        table.insert(queue.queue, 2, custom)
+    end)
+    assert(definitions.taskTitle(queue, 1, 2) == 'UI_PZSurvivorToolkit_queue_mixed',
+        'direct audited custom insertion failed to refresh a saved transfer heading')
+    reset()
+    transfer = ISInventoryTransferAction:new(player, item(inventory, 19005), inventory, inventory)
+    ISTimedActionQueue.add(transfer)
+    token = transfer.toolkitQueueOperation
+    local preparation = ISBaseTimedAction:new(player)
+    preparation.Type, preparation.toolkitQueueOperation = 'ISWalkToTimedAction', token
+    compat.fixtureScoped({id = 'WashFix', token = token, character = player, queue = queue,
+        generation = queue.toolkitOperationGeneration or 0}, function() table.insert(queue.queue, preparation) end)
+    assert(token.presentation.dirty)
+    queue:removeFromQueue(transfer)
+    assert(definitions.taskTitle(queue, 1, 1) == 'UI_PZSurvivorToolkit_queue_action_transfer'
+        and not token.presentation.dirty, 'retaining a higher saved title must still clear lazy invalidation')
+    reset()
+    local describe, bounds = definitions.describe, operations.bounds
+    local descriptions, searches = 0, 0
+    definitions.describe = function(...) descriptions = descriptions + 1; return describe(...) end
+    operations.bounds = function(...) searches = searches + 1; return bounds(...) end
+    for _, count in ipairs({10, 30, 60, 120}) do
+        reset(); tail()
+        descriptions, searches = 0, 0
+        local group = {}
+        operations.runWith(group, function()
+            compat.fixtureScoped({id = 'WashFix', token = group, character = player, queue = queue,
+                generation = queue.toolkitOperationGeneration or 0}, function()
+                for i = 1, count do
+                    ISTimedActionQueue.add(ISInventoryTransferAction:new(player,
+                        item(inventory, 19100 + i), inventory, inventory))
+                end
+            end)
+        end)
+        assert(#queue.queue == count + 1 and descriptions == 2 * count - 1 and searches == 0,
+            'nested ordinary source adds must not rebuild their growing title range')
+        descriptions = 0
+        compat.fixtureScoped({id = 'WashFix', token = group, character = player, queue = queue,
+            generation = queue.toolkitOperationGeneration or 0}, function()
+            for i = 1, count do
+                local direct = ISInventoryTransferAction:new(player, item(inventory, 19300 + i), inventory, inventory)
+                direct.toolkitQueueOperation = group
+                table.insert(queue.queue, direct)
+            end
+        end)
+        assert(descriptions == count and searches == 0, 'raw fixed transfers must inspect only their new member')
+        descriptions = 0
+        for frame = 1, 100 do definitions.taskTitle(queue, 2, #queue.queue) end
+        assert(descriptions == 0, 'raw fixed transfer additions must retain their fixed heading')
+        compat.fixtureScoped({id = 'WashFix', token = group, character = player, queue = queue,
+            generation = queue.toolkitOperationGeneration or 0}, function()
+            for i = 1, count do
+                local direct = ISReadABook:new(player, item(inventory, 19500 + i))
+                direct.toolkitQueueOperation = group
+                table.insert(queue.queue, direct)
+            end
+        end)
+        assert(descriptions == 0 and group.presentation.dirty, 'raw primary additions must invalidate lazily')
+        assert(definitions.taskTitle(queue, 2, #queue.queue) == 'ContextMenu_Read')
+        assert(descriptions == 3 * count and not group.presentation.dirty and searches == 0,
+            'raw primary additions must rebuild their heading once')
+        descriptions = 0
+        for frame = 1, 100 do definitions.taskTitle(queue, 2, #queue.queue) end
+        assert(descriptions == 0, 'a refreshed direct-primary heading must not rebuild each frame')
+    end
+    definitions.describe, operations.bounds = describe, bounds
+    reset()
+end
+print('Audited direct queue insertion: primary/custom title upgrades and linear raw/native additions passed.')
 do
     local ordinary=ISInventoryTransferAction:new(player,item(inventory,22),inventory,inventory)
     assert(fixturePolicy.isOrdinaryTransfer(ordinary),'reviewed Better Containers allows ordinary transfers')

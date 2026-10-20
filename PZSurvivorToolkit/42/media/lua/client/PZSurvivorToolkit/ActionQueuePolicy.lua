@@ -1420,6 +1420,24 @@ local function editDenial(reason, blocker, resource, context)
     return reason, blocker, resource
 end
 
+-- Presentation only: no edit snapshot or authority to mutate the queue. Callers
+-- must evaluate again at the actual move/cancel boundary, with fresh live facts.
+function Policy.previewMove(queue, action, target, after)
+    local context = {contracts = {}, items = {}}
+    local reason, to, first, last, preempt, blocker, resource = Policy.moveReason(queue, action, target, after, context)
+    reason, blocker, resource = editDenial(reason, blocker, resource, context)
+    return {reason = reason, blocker = blocker, resource = resource}
+end
+
+function Policy.previewCancel(queue, action, whole)
+    local context = {contracts = {}, items = {}}
+    local reason, first, last, blocker, resource
+    if whole then reason, first, last, blocker, resource = Policy.cancelOperationReason(queue, action, context)
+    else reason, first, last, blocker, resource = Policy.cancelReason(queue, action, context) end
+    reason, blocker, resource = editDenial(reason, blocker, resource, context)
+    return {reason = reason, blocker = blocker, resource = resource}
+end
+
 function Policy.evaluateMove(queue, action, target, after, context)
     context = context or {contracts = {}, items = {}}
     local snapshot = editSnapshot(queue)

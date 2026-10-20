@@ -667,6 +667,7 @@ function widget:setYScroll(v) self.scroll=v end
 function widget:setScrollHeight(v) self.scrollHeight=v end
 function widget:clear() self.items={} end
 function widget:isMouseOverScrollBar() return self.overScrollbar==true end
+function widget:isMouseOver() return self.mouseInside~=false end
 function widget:getMouseX() return self.mouseX or 0 end
 function widget:getMouseY() return self.mouseY or 0 end
 function widget:drawRect(...) self.drawnRects=self.drawnRects or {};self.drawnRects[#self.drawnRects+1]={...} end
@@ -763,9 +764,13 @@ assert(list.items[2].task=='ContextMenu_Read', 'heading remains separate from th
 assert(list.scrollHeight==list.itemheight*3+16, 'native scroll extent includes the taller operation header before restoring the scroll offset')
 list.drawnTextures={};list.doDrawItem(list,list:topOfItem(2),list.items[2],false)
 assert(list.drawnTextures[#list.drawnTextures]=='close-icon', 'operation headers expose whole-operation cancellation')
+list.mouseX,list.mouseY=30,list:topOfItem(2)+16
+list.doDrawItem(list,list:topOfItem(2),list.items[2],false)
 assert(list.items[2].tooltip:find('queue_remaining(2)',1,true) and list.items[2].tooltip:find('queue_group(2)',1,true))
 local function dropLine(target,after,expected)
     list.dragAction,list.dragging,list.dropTarget,list.dropAfter=d,true,list.items[target].item,after
+    list.dropRow=list.items[target]
+    list.mouseX,list.mouseY=30,list:topOfItem(target)+(after and list.items[target].height-2 or 2)
     list.drawnRects={}
     for index, row in ipairs(list.items) do list.doDrawItem(list,list:topOfItem(index),row,false) end
     local lines={}
@@ -952,7 +957,7 @@ pickup,read,restore=preparation(p,'ISInventoryTransferAction'),book(p),preparati
 pickup.item,restore.item=read.item,read.item
 operations.run(function() ISTimedActionQueue.add(pickup);ISTimedActionQueue.add(read);ISTimedActionQueue.add(restore) end)
 ISTimedActionQueue.add(d);refresh();panel=ui[#ui];panel:update();list=panel.list
-list.mouseoverselected,list.mouseX=2,list:cancelX()+12
+list.mouseoverselected,list.mouseX,list.mouseY=2,list:cancelX()+12,list:topOfItem(2)+16
 list.doDrawItem(list,list:topOfItem(2),list.items[2],false)
 assert(list.items[2].tooltip:find('queue_cancel_operation_tip',1,true), 'header tooltip describes the whole operation')
 toggle(2);assert(#list.items==6 and api.cancelReason(q,pickup)=='dependent')
@@ -978,7 +983,7 @@ click(headerIndex);assert(#q.queue==2, 'current identities still cancel after a 
 -- A single verified recipe placeholder has an operation cross without exposing ordinary craft removal.
 b=craftPlaceholder();ISTimedActionQueue.add(b);panel:update()
 assert(not list.items[3].header and api.cancelReason(q,b)=='dependent')
-list.mouseoverselected,list.mouseX=3,list:cancelX()+12
+list.mouseoverselected,list.mouseX,list.mouseY=3,list:cancelX()+12,list:topOfItem(3)+16
 list.doDrawItem(list,list:topOfItem(3),list.items[3],false)
 assert(list.items[3].tooltip:find('queue_cancel_operation_tip',1,true))
 click(3);assert(#q.queue==2 and q.queue[2]==d)
@@ -1000,6 +1005,82 @@ x,y=list:cancelX()+12,list:topOfItem(4)+16;list:onMouseDown(x,y)
 b.addActionsFunction=function() error('changed world callback must never expand') end
 list:onMouseUp(x,y);assert(#q.queue==4, 'release rechecks a world command callback')
 print('Queue view: operation header/child crosses, callback and member revalidation, group drag, dynamic expansion, native scroll geometry and snapshot lifecycle passed.')
+-- Idle rendering never asks edit policy for authority, even with many separate
+-- operations. Hover previews are fresh hints; press/release still validate live.
+do
+    local policy=PZSurvivorToolkit.ActionQueuePolicy
+    local saved,counts,lastPreview={},{}
+    for _,name in ipairs({'evaluateMove','evaluateCancel','previewMove','previewCancel','editUnchanged'}) do
+        local callback=policy[name];saved[name]=callback
+        policy[name]=function(...)
+            counts[name]=(counts[name] or 0)+1
+            local result=callback(...)
+            if name=='previewMove' or name=='previewCancel' then lastPreview=result end
+            return result
+        end
+    end
+    local bounds=operations.bounds
+    operations.bounds=function(...) counts.bounds=(counts.bounds or 0)+1;return bounds(...) end
+    local function draw(view)
+        local y=0
+        for _,row in ipairs(view.list.items) do y=view.list.doDrawItem(view.list,y,row,false) end
+    end
+    local view,viewQueue
+    for _,size in ipairs({5,60}) do
+        local owner=player()
+        for index=1,size do operations.run(function()
+            for step=1,3 do ISTimedActionQueue.add(book(owner)) end
+        end) end
+        viewQueue=ISTimedActionQueue.getTimedActionQueue(owner)
+        refresh();view=ui[#ui];view:update()
+        view.list.mouseX,view.list.mouseY,view.list.mouseoverselected=-10,-10,2
+        counts={}
+        for update=1,3 do view:update();draw(view) end
+        assert(not next(counts),'unhovered rows must perform zero policy, authority-snapshot or operation-bounds work at any queue length')
+    end
+    local viewList=view.list
+    local target=viewList.items[2]
+    local x,y=viewList:cancelX()+12,viewList:topOfItem(2)+16
+    viewList.mouseX,viewList.mouseY,viewList.mouseoverselected=x,y,2
+    viewList.mouseInside=false;counts={};draw(view)
+    assert(not next(counts),'stale mouseoverselected outside the list must not trigger previews')
+    viewList.mouseInside=true;viewList.mouseX=-1;draw(view)
+    assert(not next(counts),'coordinates outside the content must not trigger previews')
+    viewList.mouseX=x;viewList.scroll=-viewList:topOfItem(2);counts={};draw(view)
+    assert(counts.previewCancel==1 and not counts.previewMove and not counts.evaluateCancel and not counts.editUnchanged,
+        'only the hovered cancel control previews, including scrolled rows')
+    assert(lastPreview and not lastPreview.reason and lastPreview.allowed==nil and lastPreview.snapshot==nil,
+        'a display preview must never carry mutation authority or an edit snapshot')
+    assert(target.tooltip:find('queue_cancel_operation_tip',1,true))
+    local targetAction=target.item
+    targetAction.onCancelFunc=function() error('stale preview must not authorize this callback') end
+    viewList:onMouseDown(x,y)
+    assert(not viewList.pressedOperation,'mouse-down rechecks live callbacks after an allowed preview')
+    targetAction.onCancelFunc=nil
+    viewList:onMouseDown(x,y);assert(viewList.pressedOperation)
+    targetAction.onCancelFunc=function() error('changed callback must not execute') end
+    local remaining=#viewQueue.queue
+    counts={};viewList:onMouseUp(x,y)
+    assert(#viewQueue.queue==remaining and counts.evaluateCancel==1,
+        'mouse-up uses authoritative evaluation again after a previously permitted press')
+    targetAction.onCancelFunc=nil
+    counts={};viewList.mouseX=30;draw(view)
+    assert(counts.previewMove==1 and not counts.previewCancel and not counts.evaluateMove,
+        'hovering the body previews movement without cancel or authoritative evaluation')
+    counts={};viewList.mouseX=10;draw(view)
+    assert(not next(counts),'hovering an expand toggle needs no edit decision')
+    viewList.dragAction=viewList.items[3].item;viewList.dragX,viewList.dragY=30,0
+    viewList.mouseX,viewList.mouseY=30,y;viewList:onMouseMove(0,1)
+    counts={};draw(view)
+    assert(counts.previewMove==1 and not counts.previewCancel and not counts.evaluateMove,
+        'a drag previews its actual operation boundary once without authoritative snapshots')
+    viewList.mouseInside=false;counts={};draw(view)
+    assert(not next(counts),'a stale drag target outside the list must not trigger a preview')
+    viewList:clearGesture()
+    for name,callback in pairs(saved) do policy[name]=callback end
+    operations.bounds=bounds
+end
+print('Queue UI performance: idle rows skip permissions/bounds, real hovered controls use snapshot-free previews, and clicks revalidate live changes.')
 -- Audited world work uses the native build stop/transaction path and resumes after urgent work.
 load('client/BuildingObjects/TimedActions/ISBuildAction.lua')
 local oldWorld = PZSurvivorToolkit.ActionQueueWorld
@@ -1060,6 +1141,7 @@ assert(api.moveReason(q,b,a)=="move_world_transaction" and not api.move(q,b,a))
 assert(q.queue[1]==a and q.queue[2]==b and not q.toolkitCancel and not a.action.stopped)
 refresh();panel=ui[#ui];panel:update();list=panel.list
 list.dragAction,list.dragging,list.dropTarget,list.dropAfter=b,true,a,false
+list.dropRow=list.items[1];list.mouseX,list.mouseY=30,2
 list.doDrawItem(list,0,list.items[1],false)
 assert(list.items[1].tooltip:find("queue_move_world_transaction",1,true), "blocked drop must explain the actual target restriction")
 list:clearGesture()

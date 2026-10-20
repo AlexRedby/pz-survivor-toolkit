@@ -81,6 +81,8 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Shared game sessions and build regression
 
+- [ ] Resolve the `test_action_queue_compat.lua` floor-return negative case (`owned floor validation accepted unsafe none queue=false`), reproduced both on `7e6738b` and the bulk-queue fix. Check the queue-disabled native return contract before changing the expectation; restore a complete compat regression run.
+
 - [ ] Resolve the upstream VanillaVehiclesAnimated startup template mismatch: `VVA_applyAnimations.lua` requests `VVA_StepVan_Decor_Trunk`, while `TrunkFill.txt` defines `VVA_StepVan_Trunk_Decor`. Workshop, frozen source and staged client match byte for byte; keep this new full-pack error visible rather than treating it as the old baseline.
 
 - [ ] Extend the common scenario contracts beyond equipment, fluid drinking and health-panel/direct-inventory bandaging. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
