@@ -20,6 +20,7 @@
   "UI_PZST_FoodGoal_ProteinBalance": "Protein balance",
   "UI_PZST_FoodGoal_ProteinDeficit": "Protein deficit",
   "UI_PZST_FoodGoal_Target": "Target: %1",
+  "UI_PZST_BeamDashboard_Push": "Click: off -> low -> high -> off",
   "UI_PZST_BeamDashboard_Rocker": "Top: one step towards high beam. Bottom: one step towards off.",
   "UI_PZST_BeamDashboard_Rotary": "Click: off -> low -> high -> off",
   "UI_PZST_BeamDashboard_off": "Headlights off",

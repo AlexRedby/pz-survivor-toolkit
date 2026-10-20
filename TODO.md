@@ -1,3 +1,7 @@
+# Sport headlight push-button cycle
+
+- [ ] Run the isolated sport push-button SP/Host checks when the shared desktop test slot is available. Inspect off/low/high/off releases, held/released appearance at all four scales and server power acknowledgements. Current focused regressions cover the cycle and ACK guards; native launch was blocked at admission. Keep the VVA-pair coexistence gate below separate from the available 45-mod test subset.
+
 # Vanilla vehicle visuals
 
 - [ ] After installation is requested, check the selected VVA/Animated Vehicle Parts Fix pair on macOS B42.21 in isolated full-pack SP/Host saves: removed hood/door interiors, running-engine unload/reload, Toolkit door controls and headlight/reverse-light alignment, plus a second Host player’s animation visibility. The fix rebuilds the native light list and VVA replaces vehicle models; static source review does not establish visual compatibility or MP animation synchronization.

@@ -6,6 +6,7 @@ local vehicle,vehicleId,recordSince,stopSince,nextAt,label,origin
 local originDebug=false
 local variantIndex,variantStep,variantSince=1,0,0
 local rotaryScale,rotaryStep=1,0
+local pushHeld
 local variants={{script="Base.PickUpTruck",family="heavy"},{script="Base.SportsCar",family="sport"}}
 local function log(text) print('[VEHICLE_LIGHTS] '..text) end
 local function clock() return getTimestampMs() end
@@ -80,6 +81,14 @@ local function dashboardCapture(name)
  if video.rocker and isClient() then
   sendClientCommand('VehicleLightsTest','rockerPower',{mode=expected,on=expected~='off'})
  end
+ if video.push and dash.__YourDashFamily=='sport' then
+  local control=assert(dash.lightsTex)
+  assert(control.texture==dash.__light_knob,'sport button must retain its original artwork')
+  assert(control.width==dash.__light_knob:getWidthOrig() and control.height==dash.__light_knob:getHeightOrig(),'sport button bounds changed')
+  log('PUSH_VIEW '..name..' pressed='..tostring(control.__pressed)
+   ..' button='..math.floor(control:getAbsoluteX())..','..math.floor(control:getAbsoluteY())..','..math.ceil(control.width)..','..math.ceil(control.height))
+  if isClient() then sendClientCommand('VehicleLightsTest','rockerPower',{mode=expected,on=expected~='off'}) end
+ end
 end
 local function capture(name)
  local total=0
@@ -116,6 +125,26 @@ local function rockerClick(expected, upper)
  assert(PZSurvivorToolkit.VehicleLightDashboard.switchMode(dash)==expected,'wrong rocker click result')
  log('ROCKER_CLICK '..before..' '..expected)
 end
+local function pushDown()
+ local dash=assert(getPlayerVehicleDashboard(0))
+ assert(dash.__YourDashFamily=='sport','push fixture requires sport')
+ local control=assert(dash.lightsTex)
+ assert(control.onclick==control.__toolkitBeamPushClick,'push click not bound')
+ local before=PZSurvivorToolkit.VehicleLightDashboard.switchMode(dash)
+ control:onMouseDown(control.width*.5,control.height*.5)
+ assert(control.__pressed,'native press effect not active')
+ assert(PZSurvivorToolkit.VehicleLightDashboard.switchMode(dash)==before,'button changes mode before release')
+ return control
+end
+local function pushUp(control,expected)
+ local dash=assert(getPlayerVehicleDashboard(0))
+ local before=PZSurvivorToolkit.VehicleLightDashboard.switchMode(dash)
+ control:onMouseUp(control.width*.5,control.height*.5)
+ assert(not control.__pressed,'native press effect did not release')
+ assert(PZSurvivorToolkit.VehicleLightDashboard.switchMode(dash)==expected,'wrong push-button result')
+ log('PUSH_CLICK '..before..' '..expected)
+end
+local function pushClick(expected) pushUp(pushDown(),expected) end
 local function headlights(value)
  vehicle:setHeadlightsOn(value)
  if isClient() then sendClientCommand(getPlayer(),'vehicle','setHeadlightsOn',{vehicle=vehicle:getId(),on=value}) end
@@ -124,7 +153,7 @@ Events.OnServerCommand.Add(function(module,command,args)
  if module=='VehicleLightsTest' and command=='vehicle' then vehicleId=args.id end
  if module=='VehicleLightsTest' and command=='rockerPower' then
   assert(args.on==(args.mode~='off'),'server power acknowledgement mismatch')
-  log('HOST_ROCKER_POWER '..args.mode..' on='..tostring(args.on))
+  log((video.push and 'HOST_PUSH_POWER ' or 'HOST_ROCKER_POWER ')..args.mode..' on='..tostring(args.on))
  end
 end)
 Events.OnGameStart.Add(function() started=true;since=clock() end)
@@ -145,7 +174,7 @@ local function run()
   p:setGodMod(true);p:setGhostMode(true);p:setAutoDrink(false)
   assert(not p:hasTrait(CharacterTrait.NIGHT_VISION),'Fixture must not have night vision')
   local x,y,dir=F.position(p);origin={x=x,y=y,dir=dir}
-  if isClient() then sendClientCommand('VehicleLightsTest','prepare',origin) else vehicle=F.prepare(p,x,y,dir) end
+  if isClient() then sendClientCommand('VehicleLightsTest','prepare',origin) else vehicle=F.prepare(p,x,y,dir,video.push and 'Base.SportsCar' or nil) end
   p:teleportTo(x+2,y+2,0)
   phase=1;since=clock()
  elseif phase==1 then
@@ -179,14 +208,15 @@ local function run()
   assert(getClimateMoon():getMoonFloat()==0,'Moonless night required')
   recordSince=clock();phase=3;since=clock()
  elseif phase==3 and clock()-since>2500 then
-  capture('off');if video.rotary then rotaryClick('low') elseif video.rocker and isClient() then rockerClick('low',true) else headlights(true);NepHBO7.deactivateHighBeams(vehicle) end;label='original_low';phase=20;since=clock()
+  capture('off');if video.push then pushClick('low') elseif video.rotary then rotaryClick('low') elseif video.rocker and isClient() then rockerClick('low',true) else headlights(true);NepHBO7.deactivateHighBeams(vehicle) end;label='original_low';phase=20;since=clock()
  elseif phase==20 and clock()-since>3000 then
-  capture('original_low');if video.rotary then rotaryClick('high') elseif video.rocker and isClient() then rockerClick('high',true) else NepHBO7.toggleHighBeam(vehicle) end;label='original_high';phase=21;since=clock()
+  capture('original_low');if video.push then pushClick('high') elseif video.rotary then rotaryClick('high') elseif video.rocker and isClient() then rockerClick('high',true) else NepHBO7.toggleHighBeam(vehicle) end;label='original_high';phase=21;since=clock()
  elseif phase==21 and clock()-since>3000 then
   capture('original_high')
   if video.dashboardCompare then assert(PZSurvivorToolkit.VehicleLightDashboard.installDeferred);PZSurvivorToolkit.VehicleLightDashboard.installDeferred() end
   PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('VehicleBeamShape'):setValue(true)
-  if video.rotary then rotaryClick('off');label='rotary_off';phase=22
+  if video.push then pushClick('off');label='push_off';phase=22
+  elseif video.rotary then rotaryClick('off');label='rotary_off';phase=22
   elseif video.rocker and isClient() then rockerClick('low',false);label='heavy_return_low';phase=23
   else NepHBO7.deactivateHighBeams(vehicle);label='low';phase=4 end;since=clock()
  elseif phase==23 and clock()-since>2500 then
@@ -194,9 +224,10 @@ local function run()
  elseif phase==24 and clock()-since>2500 then
   dashboardCapture('heavy_off');headlights(true);NepHBO7.deactivateHighBeams(vehicle);label='low';phase=4;since=clock()
  elseif phase==22 and clock()-since>2200 then
-  dashboardCapture('rotary_off');rotaryClick('low');label='low';phase=4;since=clock()
+  if video.push then dashboardCapture('push_off');pushClick('low') else dashboardCapture('rotary_off');rotaryClick('low') end
+  label='low';phase=4;since=clock()
  elseif phase==4 and clock()-since>3000 then
-  capture('low');if video.rotary then rotaryClick('high') else NepHBO7.toggleHighBeam(vehicle) end;label='high';phase=5;since=clock()
+  capture('low');if video.push then pushClick('high') elseif video.rotary then rotaryClick('high') else NepHBO7.toggleHighBeam(vehicle) end;label='high';phase=5;since=clock()
  elseif phase==5 and clock()-since>3000 then
   capture('high');NepHBO7.deactivateHighBeams(vehicle);lightsFixtureInput(1);label='reverse_low';phase=6;since=clock()
  elseif phase==6 then
@@ -227,9 +258,9 @@ local function run()
  elseif phase==14 and clock()-since>2500 then
   capture('off_after');lightsFixtureInput(0)
   if video.dashboard and not isClient() then
-   if video.rotary then
+   if video.rotary or video.push then
     require('YourDash/DashboardCore').SetTextureSizeIndex(1)
-    phase=32;rotaryScale=1;rotaryStep=0;label='standard_scale_0.75x_off';since=clock()
+    phase=32;rotaryScale=1;rotaryStep=0;label=(video.push and 'sport' or 'standard')..'_scale_0.75x_off';since=clock()
    elseif video.origins then
     headlights(true);NepHBO7.deactivateHighBeams(vehicle);lightsFixtureCamera(1.2)
     originDebug=true;label='standard_geometry';phase=31;since=clock()
@@ -238,7 +269,10 @@ local function run()
  elseif phase==32 and clock()-since>1800 then
   local scales={'0.75x','1x','1.4x','2x'}
   local mode=({'off','low','high'})[rotaryStep+1]
-  dashboardCapture('standard_scale_'..scales[rotaryScale]..'_'..mode)
+  dashboardCapture((video.push and 'sport' or 'standard')..'_scale_'..scales[rotaryScale]..'_'..mode)
+  if video.push then
+   pushHeld=pushDown();phase=33;since=clock();return
+  end
   if rotaryStep<2 then
    rotaryClick(rotaryStep==0 and 'low' or 'high');rotaryStep=rotaryStep+1
   else
@@ -248,6 +282,21 @@ local function run()
    else require('YourDash/DashboardCore').SetTextureSizeIndex(rotaryScale) end
   end
   if phase==32 then label='standard_scale_'..scales[rotaryScale]..'_'..({'off','low','high'})[rotaryStep+1] end
+  since=clock()
+ elseif phase==33 and clock()-since>650 then
+  local scales={'0.75x','1x','1.4x','2x'}
+  local modes={'off','low','high'}
+  dashboardCapture('sport_scale_'..scales[rotaryScale]..'_pressed_'..modes[rotaryStep+1])
+  pushUp(pushHeld,modes[(rotaryStep+1)%3+1]);pushHeld=nil
+  phase=32
+  if rotaryStep<2 then rotaryStep=rotaryStep+1
+  else
+   rotaryStep=0;rotaryScale=rotaryScale+1
+   if rotaryScale>4 then
+    require('YourDash/DashboardCore').SetTextureSizeIndex(2);phase=30;variantStep=0
+   else require('YourDash/DashboardCore').SetTextureSizeIndex(rotaryScale) end
+  end
+  if phase==32 then label='sport_scale_'..scales[rotaryScale]..'_'..modes[rotaryStep+1] end
   since=clock()
  elseif phase==31 and clock()-since>2500 then
   dashboardCapture('standard_geometry');headlights(false);originDebug=false;phase=30;variantStep=0

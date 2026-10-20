@@ -14,6 +14,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.165
+
+- **Changed:** The sport dashboard headlight button cycles off, low, high and off on successive releases. It keeps the original bulb symbol, six-dot grip and momentary press effect, with the dashboard indicator showing the beam mode. Power steps retain native commands and acknowledgement handling; selecting high does not toggle headlight power.
+
 ### 0.1.164
 
 - **Changed:** Quartermaster's Storage controls and Mod Options share one owner for the crafting preference and availability updates. Each native/Neat crafting window refreshes independently after a change or cancelled haul; pending updates wait for active hauling/crafting to finish and survive a failed refresh. Control placement, saved settings and physical ingredient fetching are preserved.

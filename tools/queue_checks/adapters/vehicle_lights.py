@@ -62,7 +62,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             'origins': selection['options'].get('origins', False),
             'dashboardCompare': selection['options'].get('dashboard_compare', False),
             'rotary': selection['options'].get('rotary', False),
-            'rocker': selection['options'].get('rocker', False)}) + '\n')
+            'rocker': selection['options'].get('rocker', False),
+            'push': selection['options'].get('push', False)}) + '\n')
         helper = cache / 'mods/VehicleLightsFixture'; jar = helper / '42/media/java/VehicleLightsFixture.jar'
         jar.parent.mkdir(parents=True)
         with zipfile.ZipFile(jar, 'x', zipfile.ZIP_DEFLATED) as archive:
@@ -120,6 +121,20 @@ def verify(root, selection, catalog):
                         issues.append('Missing standard rotary position ' + scale + ' ' + mode)
         if clicks != expected:
             issues.append('Missing native ISImage rotary OFF/LOW/HIGH/OFF sequence')
+    if selection['options'].get('push'):
+        expected = [('off', 'low'), ('low', 'high'), ('high', 'off'), ('off', 'low'), ('low', 'high')]
+        if selection['kind'] == 'sp':
+            expected += [('off', 'low'), ('low', 'high'), ('high', 'off')] * 4
+            for scale in ('0.75x', '1x', '1.4x', '2x'):
+                for mode in ('off', 'low', 'high'):
+                    for name, pressed in ((mode, 'false'), ('pressed_' + mode, 'true')):
+                        if not re.search(re.escape(MARKER + 'PUSH_VIEW sport_scale_' + scale + '_' + name)
+                                         + ' pressed=' + pressed + ' ', text):
+                            issues.append('Missing sport press/release view ' + scale + ' ' + name)
+        elif any(MARKER + 'HOST_PUSH_POWER ' + mode + ' on=' not in text for mode in ('off', 'low', 'high')):
+            issues.append('Missing sport server headlight power acknowledgement')
+        if re.findall(re.escape(MARKER) + r'PUSH_CLICK (off|low|high) (off|low|high)', text) != expected:
+            issues.append('Missing sport native click cycle')
     if selection['options'].get('rocker'):
         clicks = re.findall(re.escape(MARKER) + r'ROCKER_CLICK (off|low|high) (off|low|high)', text)
         if clicks != [('off', 'low'), ('low', 'high'), ('high', 'low'), ('low', 'off')]:

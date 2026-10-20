@@ -20,6 +20,7 @@
   "UI_PZST_FoodGoal_ProteinBalance": "Баланс белка",
   "UI_PZST_FoodGoal_ProteinDeficit": "Дефицит белка",
   "UI_PZST_FoodGoal_Target": "Цель: %1",
+  "UI_PZST_BeamDashboard_Push": "Нажатие: выключено -> ближний -> дальний -> выключено",
   "UI_PZST_BeamDashboard_Rocker": "Верх: на одно положение к дальнему свету. Низ: на одно положение к выключению.",
   "UI_PZST_BeamDashboard_Rotary": "Нажатие: выключено -> ближний -> дальний -> выключено",
   "UI_PZST_BeamDashboard_off": "Фары выключены",

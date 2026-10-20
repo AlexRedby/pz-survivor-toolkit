@@ -12,7 +12,7 @@ function D.mode(vehicle)
     return data and data.NepHB and data.NepHB.highBeamsOn == true and "high" or "low"
 end
 
--- The rotary position is the driver's selection, independent of battery power
+-- The switch mode is the driver's selection, independent of battery power
 -- and alarm flashes. YourDash also holds optimistic power changes until the
 -- native command is acknowledged; reuse that state rather than inventing one.
 function D.switchMode(dash)
@@ -35,8 +35,14 @@ local function rotaryAvailable(dash)
         and type(NepHBO7.deactivateHighBeams) == "function"
 end
 
-function D.onClickRotary(dash, original, ...)
-    if not rotaryAvailable(dash) then return original(dash, ...) end
+local function pushAvailable(dash)
+    return dash.__YourDashFamily == "sport" and NepHBO7
+        and type(NepHBO7.activateHighBeams) == "function"
+        and type(NepHBO7.deactivateHighBeams) == "function"
+end
+
+function D.onClickCycle(dash, original, ...)
+    if not rotaryAvailable(dash) and not pushAvailable(dash) then return original(dash, ...) end
     if not dash.vehicle or getGameSpeed() == 0 then return end
     local mode = D.switchMode(dash)
     -- Native power toggles read actual headlights, not YourDash's optimistic
@@ -57,6 +63,30 @@ function D.onClickRotary(dash, original, ...)
         NepHBO7.deactivateHighBeams(dash.vehicle)
         return original(dash, ...)
     end
+end
+
+function D.onClickRotary(dash, original, ...)
+    if not rotaryAvailable(dash) then return original(dash, ...) end
+    return D.onClickCycle(dash, original, ...)
+end
+
+local function releasePush(switch)
+    if switch.onclick == switch.__toolkitBeamPushClick then
+        switch.onclick = switch.__toolkitBeamPushNativeClick
+    end
+end
+
+local function bindPush(dash, switch)
+    if not pushAvailable(dash) then releasePush(switch); return end
+    if switch.onclick ~= switch.__toolkitBeamPushClick then
+        switch.__toolkitBeamPushNativeClick = switch.onclick
+        switch.__toolkitBeamPushClick = function(target, ...)
+            return D.onClickCycle(target, switch.__toolkitBeamPushNativeClick, ...)
+        end
+        switch.onclick = switch.__toolkitBeamPushClick
+    end
+    -- Keep the original bulb, six-dot grip, bounds, render and mouse handlers.
+    -- YourDash owns the momentary press; only the released click changes mode.
 end
 
 local rotaryMarks = {}
@@ -307,7 +337,9 @@ function D.bind(dash)
     if realistic and dash.lightsTex and dash.lightsTex ~= image then
         local switch = dash.lightsTex
         if dash.__YourDashFamily ~= "heavy" then releaseRocker(dash, switch) end
+        if dash.__YourDashFamily ~= "sport" then releasePush(switch) end
         bindRotary(dash, switch)
+        bindPush(dash, switch)
         bindRocker(dash, switch)
         if not switch.__toolkitBeamSwitchWrapped then
             switch.__toolkitBeamSwitchWrapped = true
@@ -323,6 +355,9 @@ function D.bind(dash)
         if realistic and rotaryAvailable(dash) then
             dash.lightsTex.mouseovertext = dash.lightsTex.mouseovertext
                 .. " <LINE> " .. getText("UI_PZST_BeamDashboard_Rotary")
+        elseif realistic and pushAvailable(dash) then
+            dash.lightsTex.mouseovertext = dash.lightsTex.mouseovertext
+                .. " <LINE> " .. getText("UI_PZST_BeamDashboard_Push")
         elseif realistic and rockerArt(dash) then
             dash.lightsTex.mouseovertext = dash.lightsTex.mouseovertext
                 .. " <LINE> " .. getText("UI_PZST_BeamDashboard_Rocker")

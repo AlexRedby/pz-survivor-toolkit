@@ -238,7 +238,12 @@ rotaryDash.alarm=false;rotaryDash.__YourDashHeadlightSwitchPending=0
 rotaryDash.backgroundTex=nil -- This fallback case has no heavy rocker artwork.
 for _,family in ipairs({'heavy','sport'}) do
  rotaryDash.__YourDashFamily=family;D.bind(rotaryDash)
- assert(rotary.onclick==nativeClick and rotary.render==rotaryNativeRender,'family switch restores unchanged heavy/sport controls')
+ assert(rotary.render==rotaryNativeRender,'family switch restores native heavy/sport rendering')
+ if family=='sport' then
+  assert(rotary.onclick==rotary.__toolkitBeamPushClick and rotary.__toolkitBeamPushNativeClick==nativeClick,'standard to sport installs the push cycle around the native callback')
+ else
+  assert(rotary.onclick==nativeClick,'heavy without rocker art retains native callback')
+ end
 end
 rotaryDash.__YourDashFamily='standard';D.bind(rotaryDash)
 assert(rotary.onclick~=nativeClick,'returning to STANDARD reinstalls rotary control')
@@ -247,6 +252,103 @@ assert(rotary.onclick==nativeClick and rotary.render==rotaryNativeRender,'missin
 NepHBO7=originalApi
 rotaryDash.vehicle=nil;D.onClickRotary(rotaryDash,nativeClick)
 assert(nativeClicks==beforeNative+1,'detached standard control performs no action')
+-- The sport button cycles through the same three selections, while its native
+-- image, bulb/six-dot panel and momentary press/release rendering stay intact.
+v.on=false;v.data.NepHB.highBeamsOn=true;speed=1
+local push=image(94,89);local pushTexture=push.texture
+local pushPanel=image(735,180);local pushPanelTexture=pushPanel.texture
+local pushPanelRender=pushPanel.render
+local pushImageUp=push.onMouseUp
+function push:onMouseDown(x,y) self.pressed=true;return true end
+function push:onMouseUp(x,y)
+ self.pressed=false;self.releaseX=x;self.releaseY=y
+ return pushImageUp(self,x,y)
+end
+function push:render()
+ self.nativeRender=true
+ self.paintedWidth=self.width*(self.pressed and .9 or 1)
+ self.renderTexture=self.texture
+end
+local pushNativeRender,pushNativeDown,pushNativeUp=push.render,push.onMouseDown,push.onMouseUp
+local sport={vehicle=v,character={},lightsTex=push,warnLightTex=image(94,89),backgroundTex=pushPanel,
+ __YourDashFamily='sport',__lightKnobAngle=17,_YourDashGetHeadlightSwitchState=rotaryDash._YourDashGetHeadlightSwitchState}
+push.onclick=nativeClick;push.target=sport
+D.bind(sport)
+local pushClick,pushPre=push.onclick,push.prerender
+D.bind(sport)
+assert(push.onclick==pushClick and push.prerender==pushPre and pushClick==push.__toolkitBeamPushClick,'repeated sport binding does not nest the cycle callback')
+assert(push.__toolkitBeamPushNativeClick==nativeClick and push.target==sport,'sport wrapper retains native callback and ISImage target')
+assert(push.render==pushNativeRender and push.onMouseDown==pushNativeDown and push.onMouseUp==pushNativeUp,'sport preserves native render and press/release handlers')
+assert(push.texture==pushTexture and push.x==12 and push.y==34 and push.width==94 and push.height==89,'sport preserves native button texture, position and hitbox')
+assert(pushPanel.render==pushPanelRender and pushPanel.texture==pushPanelTexture and sport.__lightKnobAngle==17,'sport preserves bulb/six-dot artwork without rotary panel or angle changes')
+local function sportClick()
+ push:onMouseDown(23,37);push:prerender();push:render()
+ assert(push.pressed and math.abs(push.paintedWidth-84.6)<.0001 and push.renderTexture==pushTexture,'native sport press keeps its momentary rendering')
+ push:onMouseUp(23,37);D.bind(sport);push:render()
+ assert(not push.pressed and push.paintedWidth==94 and push.releaseX==23 and push.releaseY==37,'native sport release restores the unpressed button')
+end
+local pn,pa,pd,ps=nativeClicks,activations,deactivations,speedResets
+speed=4;sportClick()
+assert(nativeClicks==pn+1 and deactivations==pd+1 and activations==pa and requestedPower==true,'sport OFF -> LOW clears remembered high and requests native ON once')
+assert(speed==1 and speedResets==ps+1 and not v.on and D.switchMode(sport)=='low','sport uses optimistic LOW and native fast-forward reset before ON ACK')
+sportClick();sportClick()
+assert(nativeClicks==pn+1 and deactivations==pd+1 and activations==pa,'sport pending ON ignores repeated releases without extra power or beam changes')
+v.on=true;D.bind(sport)
+assert(D.switchMode(sport)=='low' and sport.__YourDashHeadlightSwitchPending==0 and D.mode(v)=='low','sport acknowledges native ON as LOW')
+speed=3;sportClick()
+assert(nativeClicks==pn+1 and activations==pa+1 and v.on and D.mode(v)=='high','sport LOW -> HIGH uses Nep API without a native power toggle')
+assert(speed==1 and speedResets==ps+2,'sport beam-only step preserves native fast-forward behavior')
+sportClick()
+assert(nativeClicks==pn+2 and deactivations==pd+2 and requestedPower==false and v.on and D.switchMode(sport)=='off','sport HIGH -> OFF clears high and awaits native OFF ACK')
+sportClick();sportClick()
+assert(nativeClicks==pn+2 and deactivations==pd+2 and activations==pa+1,'sport pending OFF cannot accidentally request ON again')
+v.on=false;D.bind(sport)
+assert(D.switchMode(sport)=='off' and sport.__YourDashHeadlightSwitchPending==0,'sport acknowledges native OFF')
+-- The shared cycle must also recover when native pending power expires.
+pn,pa,pd=nativeClicks,activations,deactivations
+sportClick();sport.__YourDashHeadlightSwitchPending=0;sportClick()
+assert(nativeClicks==pn+2 and requestedPower==true and activations==pa and deactivations==pd+2,'sport retries expired ON from actual OFF')
+v.on=true;D.bind(sport);sportClick();sportClick()
+sport.__YourDashHeadlightSwitchPending=0;sportClick()
+assert(nativeClicks==pn+3 and requestedPower==false and activations==pa+2 and D.switchMode(sport)=='high','sport expires rejected OFF to actual LOW and then selects HIGH without toggling power')
+sport.__YourDashHeadlightSwitchPending=0
+pn,pa,pd=nativeClicks,activations,deactivations
+speed=0
+for _,mode in ipairs({'off','low','high'}) do
+ v.on=mode~='off';v.data.NepHB.highBeamsOn=mode=='high';D.bind(sport);sportClick()
+ assert(nativeClicks==pn and activations==pa and deactivations==pd and D.switchMode(sport)==mode,'paused sport releases preserve '..mode..' and send no commands')
+end
+speed=1;v.on=false;v.data.NepHB.highBeamsOn=false;D.bind(sport)
+local replacementCalls=0
+local function replacement(dash,img)
+ replacementCalls=replacementCalls+1
+ assert(dash==sport and img==push,'sport wrapper forwards real ISImage callback arguments')
+ return nativeClick(dash)
+end
+push.onclick=replacement;D.bind(sport)
+assert(push.onclick==push.__toolkitBeamPushClick and push.__toolkitBeamPushNativeClick==replacement,'sport rebind wraps a replaced native callback')
+sportClick()
+assert(replacementCalls==1 and nativeClicks==pn+1,'sport executes replacement callback exactly once on power change')
+v.on=true;D.bind(sport);sportClick()
+assert(replacementCalls==1 and activations==pa+1,'sport beam-only click never calls the replaced power callback')
+sport.__YourDashHeadlightSwitchPending=0
+sport.__YourDashFamily='standard';D.bind(sport)
+assert(push.onclick==push.__toolkitBeamRotaryClick and push.__toolkitBeamNativeClick==replacement,'sport to standard releases push before wrapping the native callback')
+sport.__YourDashFamily='sport';D.bind(sport)
+assert(push.onclick==push.__toolkitBeamPushClick and push.__toolkitBeamPushNativeClick==replacement and push.render==pushNativeRender,'standard to sport removes rotary wrapper and restores native rendering')
+sport.backgroundTex=nil -- Exercise the heavy fallback without rocker artwork.
+sport.__YourDashFamily='heavy';D.bind(sport)
+assert(push.onclick==replacement and push.render==pushNativeRender and push.onMouseUp==pushNativeUp,'sport to heavy fallback restores native control')
+sport.__YourDashFamily='sport';D.bind(sport)
+sport.__YourDashFamily='unknown';D.bind(sport)
+assert(push.onclick==replacement,'sport to unsupported family releases the push cycle')
+sport.__YourDashFamily='sport';D.bind(sport)
+NepHBO7=nil;D.bind(sport)
+assert(push.onclick==replacement and push.render==pushNativeRender and push.texture==pushTexture,'missing Nep API releases sport callback and preserves native artwork')
+NepHBO7=originalApi;D.bind(sport)
+assert(push.onclick==push.__toolkitBeamPushClick and push.__toolkitBeamPushNativeClick==replacement,'restored Nep API wraps native sport callback again')
+sport.vehicle=nil;pn,pa,pd=nativeClicks,activations,deactivations;sportClick()
+assert(nativeClicks==pn and activations==pa and deactivations==pd,'detached sport release changes no power or beam state')
 -- The truck rocker reuses the real ISImage callback contract: onMouseUp gives
 -- onclick the target and image, not its local coordinates. Preserve the event's
 -- local Y while delegating so the two halves work without polling mouse state.
@@ -318,9 +420,9 @@ assert(rocker.onclick==nativeClick and rocker.onMouseUp==rockerNativeUp and rock
 assert(rocker.texture==rockerOriginal and rocker.width==84 and bg.render==bgRender,'fallback restores native art, bounds and complete background')
 NepHBO7=originalApi;D.bind(truck)
 truck.__YourDashFamily='sport';D.bind(truck)
-assert(rocker.onclick==nativeClick and rocker.render==rockerNativeRender and bg.render==bgRender,'sport transition restores stock handlers and removes truck cleanup')
+assert(rocker.onclick==rocker.__toolkitBeamPushClick and rocker.__toolkitBeamPushNativeClick==nativeClick and rocker.render==rockerNativeRender and bg.render==bgRender,'heavy to sport restores native rendering and wraps the native callback in the push cycle')
 truck.__YourDashFamily='standard';D.bind(truck)
 assert(rocker.onclick==rocker.__toolkitBeamRotaryClick,'heavy to standard restores the rotary instead of nesting truck behavior')
 truck.__YourDashFamily='heavy';D.bind(truck)
 assert(rocker.onclick==rocker.__toolkitBeamRockerClick and rocker.__toolkitBeamRockerNative.click==nativeClick,'returning to truck wraps the native callback, never the rotary wrapper')
-print('PASS beam dashboard: native soft indicators, standard rotary, truck rocker at four scales, native power ACK/guards/alarm, external state and family/API fallback')
+print('PASS beam dashboard: native soft indicators, standard rotary, sport push cycle, truck rocker at four scales, native power ACK/guards/alarm, external state and family/API fallback')
