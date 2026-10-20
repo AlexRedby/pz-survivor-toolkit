@@ -1,5 +1,9 @@
 -- Exact food selection and native eating chains; Java animation/network state is represented explicitly.
-require = function() end
+require = function(name)
+    if name == 'PZSurvivorToolkit/InventoryClasses' then
+        return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryClasses.lua'))()
+    end
+end
 local fill, enabled, fullness, dead = nil, true, 0, false
 local onGameStart, onTick, serverCommands = {}, {}, {}
 local function derive(self, name)

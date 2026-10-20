@@ -9,6 +9,7 @@ local lifecycle={'new','begin','create','adjustMaxTime','isValid','isValidStart'
  'getDuration','serverStart','serverStop','animEvent','forceComplete','forceStop','forceCancel','invoke'}
 local snapshot
 local captureMarker={}
+local active=setmetatable({},{__mode='k'})
 local source='native.device-media-insert'
 local function from(callback,file)return type(callback)=='function'and Proof.closure(callback,file)end
 local function unchanged()
@@ -53,7 +54,7 @@ end
 function Media.matches(action)return describe(action)~=nil end
 function Media.inspect(action)return describe(action)end
 function Media.isInstalled()return unchanged()end
--- Only a previously audited promoted insertion may use this lifecycle escape.
+-- Only a previously audited insertion may use this lifecycle escape.
 -- Opaque records retain the original identities even after their resources vanish.
 function Media.capture(action)
  if not describe(action)then return end
@@ -100,6 +101,80 @@ function Media.canSkip(action,record)
   or tv:getDeviceData()~=data or saved.parameter:getDeviceData()~=data then return true end
  return saved.tape:getContainer()~=saved.root or data:hasMedia()
 end
+
+-- Ordinary insertion also races with device/item replication. Capture only at
+-- native begin, after any pickup, while the exact tape and empty TV still exist.
+-- Promoted reading retains its separate dependency cleanup and failure policy.
+function Media.start(action)
+ active[action]=nil
+ if not isClient()or action.Type~='ISDeviceMediaAction'or action.action or action.toolkitReadingMove then return end
+ local record=Media.capture(action)
+ local queue=ISTimedActionQueue.queues[action.character]
+ if not record or not queue or queue.current~=action or queue.queue[1]~=action
+  or not Toolkit.ActionQueuePolicy.live(queue)or record.tape:getContainer()~=record.root
+  or record.root:getItemById(record.tape:getID())~=record.tape or record.data:hasMedia()then return end
+ active[action]={receipt=record,queue=queue,generation=queue.toolkitOperationGeneration or 0,
+  enabled=Toolkit.Settings.actionQueue()}
+end
+function Media.bind(action)
+ local record=active[action]
+ if record then
+  if action.action then record.native=action.action else active[action]=nil end
+ end
+end
+function Media.stop(action)active[action]=nil end
+function Media.reset(queue)
+ for action,record in pairs(active)do if record.queue==queue then active[action]=nil end end
+end
+function Media.tracks(action)return action~=nil and active[action]~=nil end
+local function currentRecord(action)
+ local record=active[action]
+ local queue=record and record.queue
+ if not record or not isClient()or not record.native or record.native~=action.action
+  or ISTimedActionQueue.queues[action.character]~=queue or queue.current~=action or queue.queue[1]~=action
+  or not Toolkit.ActionQueuePolicy.live(queue)or queue.toolkitCancel
+  or record.generation~=(queue.toolkitOperationGeneration or 0)
+  or record.enabled~=Toolkit.Settings.actionQueue()then return end
+ return record
+end
+local function acknowledgement(action,record)
+ local acknowledgements=Toolkit.ActionQueueAcknowledgements
+ if not record.acknowledgement then
+  record.acknowledgement=acknowledgements and acknowledgements.capture(action)
+  if record.acknowledgement then record.deadline=getTimestampMs()+30000 end
+ end
+ return record.acknowledgement and acknowledgements.state(action,record.acknowledgement)
+end
+function Media.keepPending(action)
+ local record=currentRecord(action)
+ if not record or not action.action:isStarted()
+  or not Media.hasReplicatedEffect(action,record.receipt)then return false end
+ local state=acknowledgement(action,record)
+ return (state=='started'or state=='completed')and getTimestampMs()<record.deadline
+end
+function Media.canCancelWait(action)
+ local record=currentRecord(action)
+ return record~=nil and Media.completionState(action,record.receipt)~=nil
+end
+function Media.continuationState(action)
+ if not Media.tracks(action)then return end
+ local record=currentRecord(action)
+ if not record then return 'failed' end
+ local result=Media.completionState(action,record.receipt)
+ local player=action.character
+ local container=record.receipt.tape:getContainer()
+ if not result or result=='unavailable'
+  or container and container~=record.receipt.root
+  or (action.stopOnRun and (player:isRunning()or player:isSprinting())and player:isPlayerMoving())
+  or (action.stopOnWalk and player:isPlayerMoving())or (action.stopOnAim and player:isAiming())then return 'failed' end
+ local state=acknowledgement(action,record)
+ -- Without the supported started receipt there is no permission to replace
+ -- native completion. Never fabricate an outcome or replay the server effect.
+ if not record.acknowledgement then active[action]=nil;return end
+ if state=='completed'and result=='matched'then active[action]=nil;return end
+ if not state or state=='canceled'or state=='rejected'or getTimestampMs()>=record.deadline then return 'failed' end
+ return 'waiting'
+end
 -- Install after ActionQueue's inherited native stop/begin hooks are in place. No
 -- producer is wrapped: existing UI scopes retain native pickup/walk/insert order.
 function Media.install()
@@ -142,6 +217,7 @@ function Media.install()
   local nativeValid=class.isValid
   class.isValid=function(action)
    if nativeValid(action)then return true end
+   if Media.keepPending(action)then return true end
    local reading=Toolkit.ActionQueueReading
    return reading and reading.keepPendingMedia and reading.keepPendingMedia(action)or false
   end

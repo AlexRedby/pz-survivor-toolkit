@@ -214,7 +214,9 @@ local function observationDiagnostic(q)
         ..' tapeOwner='..tostring(owner and owner:getType() or 'none'))
 end
 local function traceNativeInsertion(action)
-    if config.mode~='native' then return end
+    -- Diagnostic callback overrides intentionally invalidate the adapter proof.
+    -- Functional checks must retain the actual native callback identities.
+    if config.mode~='native' or not config.options or config.options.trace_native_insert~=true then return end
     local valid,stop,perform=action.isValid,action.stop,action.perform
     local rejected=false
     action.isValid=function(self,...)

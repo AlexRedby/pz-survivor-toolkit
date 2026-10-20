@@ -66,10 +66,7 @@ The executor remains `ISTimedActionQueue`. Add families through Definitions and 
 ## Active shelf reading below TV commands
 
 - [ ] Extend the combined shelf-book/TV live scenario to a VHS taken from a worn bag: native pickup, grouped insertion, active reading moved below power/insert/play, exact tape debit and one book return. Run selected-pack SP/Host with matching queue-off controls and log audits. The inventory-VHS path is verified live; bag preparation/capacity, missing tape/TV/return destination, changed callbacks and same-TV conflicts currently have focused local regression coverage.
-- [ ] Diagnose the selected-pack Host control with the Toolkit queue disabled: native power and insertion finish, the exact VHS is debited and present in the TV, but the queue becomes empty before playback starts. This also reproduced before the media-order fix; distinguish native engine behavior from selected-mod interaction before changing queue-off behavior. Keep the failed native control visible in paired reports.
-  - Capture the failed insertion validity check and native stop/reset in the live control without changing their return values or dispatch order.
-  - Establish the correction's scope and explicit-cancel behavior using the unwrapped native-source regression. A general media completion guard must preserve exact tape/TV ownership, correlated server receipts and queue resets, including queue-disabled initialization; do not extend the reading-specific guard by simply removing its setting checks.
-  - Verify any runtime correction with native-source regressions and selected-pack SP/Host controls; then resume the worn-bag VHS scenario.
+  - Refresh the isolated pack sources for the newly selected `ArcheryNexus` and `WildernessProgressionArcheryNexusCompanion` and lock all 49 selected mods before the next run.
 
 ## Known limits of move/cancel controls
 
@@ -83,6 +80,8 @@ These operations can execute normally while some queue controls remain disabled.
 - [ ] Unknown mod actions and asynchronous continuations: capture the concrete action type, producer, continuation and cleanup when an operation is split into separate rows or becomes an edit barrier. Add scoped grouping/edit contracts for reviewed entry points; unknown or modified callbacks must retain a clear denial reason.
 
 ## Shared game sessions and build regression
+
+- [ ] Resolve the upstream VanillaVehiclesAnimated startup template mismatch: `VVA_applyAnimations.lua` requests `VVA_StepVan_Decor_Trunk`, while `TrunkFill.txt` defines `VVA_StepVan_Trunk_Decor`. Workshop, frozen source and staged client match byte for byte; keep this new full-pack error visible rather than treating it as the old baseline.
 
 - [ ] Extend the common scenario contracts beyond equipment, fluid drinking and health-panel/direct-inventory bandaging. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
 

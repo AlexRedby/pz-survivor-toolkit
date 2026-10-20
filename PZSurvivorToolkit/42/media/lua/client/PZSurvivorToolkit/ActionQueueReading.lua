@@ -104,10 +104,13 @@ function Reading.mediaCompletionState(queue, action)
 end
 
 local function waitingMedia(character)
-    if not character or not isClient() or not Toolkit.Settings.actionQueue() then return end
+    if not character or not isClient() then return end
     local queue = ISTimedActionQueue.queues[character]
     local lifecycle = Toolkit.ActionQueueLifecycle
     local action = lifecycle and lifecycle.deferredAction(queue)
+    local media=Toolkit.ActionQueueMedia
+    if action and media and media.canCancelWait(action) then return queue end
+    if not Toolkit.Settings.actionQueue() then return end
     local record = action and action.toolkitReadingMove
     if record and record.marker == marker and record.kind == "media"
         and record.operation == action.toolkitQueueOperation and record.character == character

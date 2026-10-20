@@ -36,13 +36,27 @@ local function appliance(action)
     return world and world.isApplianceAction and world.isApplianceAction(action)
 end
 
+local function updateOperationState(queue)
+    if not queue then return end
+    if (not Toolkit.Settings.actionQueue() or not live(queue)) and Operations.invalidateQueue then
+        if not queue.toolkitOperationsInvalid then Operations.invalidateQueue(queue); queue.toolkitOperationsInvalid = true end
+    else queue.toolkitOperationsInvalid = nil end
+end
+
 local begin = ISBaseTimedAction.begin
 ISBaseTimedAction.begin = function(action)
+    -- Initialize disabled-mode bookkeeping before native allocation/receipts.
+    -- Its first tick must not revoke a freshly captured media transaction.
+    updateOperationState(ISTimedActionQueue.queues[action.character])
+    local media = Toolkit.ActionQueueMedia
+    if media then media.start(action) end
     local intent=Toolkit.ActionQueueTidyIntent
     if intent and isClient() then intent.start(action) end
     local token = action.toolkitQueueOperation
     if type(token) == "table" then token.toolkitStarted = true end
-    return begin(action)
+    local result = begin(action)
+    if media then media.bind(action) end
+    return result
 end
 Policy.adoptBegin(begin, ISBaseTimedAction.begin)
 
@@ -259,6 +273,7 @@ end
 
 local stop = ISBaseTimedAction.stop
 ISBaseTimedAction.stop = function(action)
+    if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.stop(action) end
     local queue = ISTimedActionQueue.queues[action.character]
     local world = Toolkit.ActionQueueWorld
     if queue and not queue.toolkitCancel and queue.current == action and queue.queue[1] == action
@@ -341,9 +356,7 @@ ISTimedActionQueue.tick = function(queue)
     local completion = Toolkit.ActionQueueLifecycle.flush(queue)
     if completion == "waiting" or completion == "completed" then return end
     if completion == "failed" then queue:resetQueue(); return end
-    if (not Toolkit.Settings.actionQueue() or not live(queue)) and Operations.invalidateQueue then
-        if not queue.toolkitOperationsInvalid then Operations.invalidateQueue(queue); queue.toolkitOperationsInvalid = true end
-    else queue.toolkitOperationsInvalid = nil end
+    updateOperationState(queue)
     if queue.toolkitResume and (not Toolkit.Settings.actionQueue()
         or (queue.toolkitCancel and queue.toolkitCancel.toolkitQueueOperation
             and queue.toolkitCancel.toolkitQueueOperation.toolkitCancelled)) then clearStop(queue) end

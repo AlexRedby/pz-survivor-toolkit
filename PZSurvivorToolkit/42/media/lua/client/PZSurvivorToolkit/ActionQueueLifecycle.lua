@@ -5,6 +5,10 @@ local Lifecycle = {}
 Toolkit.ActionQueueLifecycle = Lifecycle
 
 local pending = setmetatable({}, {__mode = "k"})
+local function enabled(action)
+    local media=Toolkit.ActionQueueMedia
+    return Toolkit.Settings and Toolkit.Settings.actionQueue() or media and media.tracks(action)
+end
 
 local function owned(queue, action)
     return queue and action and queue.character == action.character
@@ -32,7 +36,7 @@ function Lifecycle.begin(action, phase)
     if phase ~= "perform" and phase ~= "complete" then return false end
     local intent=Toolkit.ActionQueueTidyIntent
     local observing=intent and intent.begin(action,phase)
-    if not Toolkit.Settings or not Toolkit.Settings.actionQueue() then return observing==true end
+    if not enabled(action) then return observing==true end
     local queue = action and ISTimedActionQueue.queues[action.character]
     if not owned(queue, action) or not action.action then return observing==true end
     local state = pending[queue]
@@ -68,6 +72,7 @@ end
 
 function Lifecycle.reset(queue)
     pending[queue] = nil
+    if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.reset(queue) end
 end
 
 function Lifecycle.current(character)
@@ -80,7 +85,7 @@ end
 -- UI cancellation may still revoke this work after Java removes its action.
 function Lifecycle.deferredAction(queue)
     local state = queue and pending[queue]
-    if state and owned(queue, state.action) and Toolkit.Settings.actionQueue()
+    if state and owned(queue, state.action) and enabled(state.action)
         and not state.failed and state.requested and state.depth == 0 and state.perform
         and (not state.needsComplete or state.complete)
         and not queue.character:getCharacterActions():contains(state.native) then return state.action end
@@ -91,7 +96,7 @@ function Lifecycle.flush(queue)
     local state = pending[queue]
     if not state then return end
     local action = state.action
-    if not owned(queue, action) or not Toolkit.Settings.actionQueue() then
+    if not owned(queue, action) or not enabled(action) then
         pending[queue] = nil
         return
     end
@@ -102,7 +107,10 @@ function Lifecycle.flush(queue)
         return "failed", action
     end
     local reading = Toolkit.ActionQueueReading
-    local mediaState = reading and reading.mediaCompletionState and reading.mediaCompletionState(queue, action)
+    local media=Toolkit.ActionQueueMedia
+    local mediaState
+    if media and media.tracks(action) then mediaState=media.continuationState(action)
+    else mediaState=reading and reading.mediaCompletionState and reading.mediaCompletionState(queue, action) end
     if mediaState == "waiting" then return "waiting", action end
     pending[queue] = nil
     if mediaState == "failed" then return "failed", action end

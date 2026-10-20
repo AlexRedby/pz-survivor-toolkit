@@ -14,6 +14,8 @@ end
 local function setup(wrapped,changedSource,foreignCallback,queueHooks)
  isPlayerDoingActionThatCanBeCancelled,stopDoingActionThatCanBeCancelled,CancelAction=nil,nil,nil
  local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
+ local receive
+ Events.OnServerCommand.Add=function(callback)receive=callback end
  local function native(path)
   assert(loadstring(read(NativeActionRoot..'/'..path),'@'..path))()
  end
@@ -98,7 +100,7 @@ local function setup(wrapped,changedSource,foreignCallback,queueHooks)
 
  return {f=f,policy=policy,media=media,installed=installed,definitions=PZSurvivorToolkit.ActionQueueDefinitions,
   operations=PZSurvivorToolkit.ActionQueueOperations,container=container,device=device,tape=tape,
-  root=root,tv=tv,data=data,square=square,item=item}
+  root=root,tv=tv,data=data,square=square,item=item,receive=function(...)assert(receive)(...)end}
 end
 local function nativeCancelHelpers(player)
  local input={key=1,eaten=0,stops=0,visible=false,drag=false,game=true}
@@ -650,3 +652,208 @@ for _,scenario in ipairs({'media','tape-debit','both','wrong-media','lost-tv','u
  assert(serverData.consumed==1 and s.data.consumed==0,'early invalidation recovery cannot replay native insertion')
 end
 print('Media replication-before-Done native validity/stop ordering passed.')
+
+-- Ordinary insertion has no promoted-reading capture. Execute native queue add,
+-- begin/create/start and real ACK delivery; Java handles/frame order, server
+-- DeviceData effects and packet delivery remain explicit models, not Java/network execution.
+local function ordinary(enabled,wrapped,options)
+ options=options or {}
+ local s=setup(wrapped,options.changedSource,nil,true);local f=s.f
+ local now,present,begun,forcedStop=1000,{}, {},false
+ local input=options.cancel and nativeCancelHelpers(f.player)or nil
+ f.project('ActionQueueReading') -- cancellation integration only; never capture a reading range.
+ PZSurvivorToolkit.Settings.actionQueue=function()return enabled end
+ isClient,isServer=function()return true end,function()return false end
+ getTimestampMs=function()return now end
+ f.player.getOnlineID=function()return 55 end
+ f.player.setIsFarming=function()end;f.player.setTimedActionToRetrigger=function()end
+ f.player.getCharacterActions=function()return {contains=function(_,handle)return present[handle]==true end}end
+ MoodleType={UNHAPPY='unhappy',DRUNK='drunk'}
+ f.player.getMoodles=function()return {getMoodleLevel=function(_,moodle)return options.adjusted and moodle==MoodleType.UNHAPPY and 4 or 0 end}end
+ f.player.getTimedActionTimeModifier=function()return options.adjusted and 1.5 or 1 end
+ DebugType={Action={warn=function()end}};ISLogSystem={logAction=function()end}
+ s.root.getItemById=function(_,id)if id==s.item:getID()and s.item.container==s.root then return s.item end end
+ s.data.isPlayingMedia=function(self)return self.playing==true end
+ s.data.StartPlayMedia=function(self)self.playing=true end
+ LuaTimedActionNew={new=function(action)
+  return {table=action,started=false,isStarted=function(self)return self.started end,
+   finished=function()return false end,isForceComplete=function()return false end,
+   hasStalled=function()return false end,getJobDelta=function()return 0 end,
+   forceStop=function()forcedStop=true end}
+ end}
+ f.player.StartAction=function(_,handle)
+  assert(handle.table:isValid(),'ordinary native begin attempted invalid work')
+  begun[#begun+1]=handle.table;present[handle]=true;handle.started=true;handle.table:start()
+  -- Model ActionAcknowledgements.bind after the native start boundary.
+  handle.table.toolkitNativeTransaction=13;handle.table.toolkitNativeKind=handle.table.Type
+ end
+ local insert=ISDeviceMediaAction:new(f.player,false,s.item,s.square)
+ local play=ISRadioAction:new('TogglePlayMedia',f.player,s.tv)
+ local q=f.queue()
+ assert(q.toolkitOperationGeneration==nil and q.toolkitOperationsInvalid==nil,'exercise a fresh queue before its first disabled tick')
+ ISTimedActionQueue.add(insert);ISTimedActionQueue.add(play)
+ assert(q.current==insert and #q.queue==2 and begun[1]==insert and #begun==1 and play.action==nil)
+ assert(insert.toolkitReadingMove==nil and play.toolkitReadingMove==nil,'ordinary insertion must not acquire promoted reading records')
+ local token='00000000-0000-0000-0000-000000000013'
+ local function ack(state)
+  s.receive('PZSurvivorToolkitActions','State',{protocol=1,player=55,transaction=13,
+   kind='ISDeviceMediaAction',token=token,state=state})
+ end
+ if not options.noAck then ack(options.terminalOnly and 'completed'or 'started')end
+ local receipt=PZSurvivorToolkit.ActionQueueAcknowledgements.capture(insert)
+ local generation=q.toolkitOperationGeneration or 0
+ q:tick()
+ assert(q.current==insert and #q.queue==2 and #begun==1,'initial native queue tick must retain started insertion')
+ if receipt and s.installed then
+  assert(PZSurvivorToolkit.ActionQueueAcknowledgements.capture(insert)==receipt,
+   'first disabled tick must not invalidate the real started ACK captured after native begin')
+  assert((q.toolkitOperationGeneration or 0)==generation,'ordinary begin must settle initial queue-off invalidation before ACK capture')
+ end
+ local _,serverData,serverSquare=s.device();local serverTape=s.tape()
+ local serverInsert=ISDeviceMediaAction:new(f.player,false,serverTape,serverSquare)
+ isClient,isServer=function()return false end,function()return true end
+ assert(serverInsert:complete()and serverData.consumed==1 and serverTape.container==nil)
+ isClient,isServer=function()return true end,function()return false end
+ local function effects(kind)
+  if kind~='tape' then s.data.media=true;s.data.index=s.item:getRecordedMediaIndex()end
+  if kind~='media'then s.item.container=nil end
+ end
+ local function frame(done)
+  -- Model IsoGameCharacter validity before LuaTimedActionNew observes Done.
+  if not insert:isValid()or forcedStop then
+   insert:stop();present[insert.action]=nil;return 'stopped'
+  end
+  insert:update()
+  if done then
+   local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+   assert(lifecycle.begin(insert,'perform'),'ordinary tracked insertion must enter the real completion barrier')
+   insert:perform();lifecycle.finish(insert,'perform',true);present[insert.action]=nil
+   return 'performed'
+  end
+  return 'waiting'
+ end
+ local function resetObserved()
+  assert(q.current==nil and #q.queue==0 and #begun==1 and play.action==nil,
+   'native failure/cancel must discard pending ordinary play without starting it')
+ end
+ local function finish()
+  ack('completed');effects('both')
+  assert(frame(true)=='performed');q:tick()
+  assert(q.current==play and #q.queue==1 and begun[2]==play and #begun==2 and play:isValid(),
+   'confirmed ordinary insertion must begin exact pending play once')
+  q:tick();assert(q.current==play and #begun==2,'completion cannot replay playback begin')
+  play:perform()
+  assert(q.current==nil and #q.queue==0 and s.data.playing,'actual native play must play installed media')
+ end
+ return {s=s,f=f,q=q,insert=insert,play=play,ack=ack,effects=effects,frame=frame,finish=finish,
+  resetObserved=resetObserved,input=input,begun=begun,serverData=serverData,expire=function()now=31001 end,
+  noReplay=function()assert(serverData.consumed==1 and s.data.consumed==0,'client recovery must never invoke/replay insertion effects')end}
+end
+
+-- 1. Fresh queue on/off and each effects-first ordering, through real begin/create.
+for _,enabled in ipairs({true,false})do
+ for _,wrapped in ipairs({false,true})do
+  for _,first in ipairs({'media','tape','both'})do
+   local o=ordinary(enabled,wrapped);o.effects(first)
+   assert(o.frame(false)=='waiting'and o.q.current==o.insert and #o.begun==1,
+    'acknowledged ordinary early effects must survive validity-before-Done')
+   isClient,isServer=function()return false end,function()return true end
+   assert(o.insert:isValid()==(first=='tape'and not wrapped),
+    'server must retain native empty-device and optional exact-root ownership validation')
+   isClient,isServer=function()return true end,function()return false end
+   o.finish();o.noReplay()
+  end
+ end
+end
+
+-- 2. Done/ACK first cannot begin play until both independent effects arrive.
+for _,enabled in ipairs({true,false})do
+ for _,first in ipairs({'media','tape'})do
+  local o=ordinary(enabled,true);o.ack('completed');assert(o.frame(true)=='performed')
+  o.q:tick();assert(o.q.current==o.insert and #o.begun==1)
+  o.effects(first);o.q:tick();assert(o.q.current==o.insert and #o.begun==1,'one replicated effect cannot complete ordinary insertion')
+  o.effects('both');o.q:tick()
+  assert(o.q.current==o.play and #o.begun==2 and o.play:isValid())
+  o.q:tick();assert(#o.begun==2);o.noReplay()
+ end
+end
+
+-- 3. Native adjustment occurs after capture and must not revoke trusted completion.
+for _,enabled in ipairs({true,false})do
+ local o=ordinary(enabled,true,{adjusted=true})
+ assert(o.insert.maxTime==90,'real native begin/create must apply adjusted duration')
+ o.effects('both');assert(o.frame(false)=='waiting');o.finish();o.noReplay()
+end
+
+-- 4. Real ACK correlation, unsuccessful outcomes and bounded waiting.
+for _,enabled in ipairs({true,false})do
+ for _,failure in ipairs({'no-start','terminal-only','canceled','rejected','expired'})do
+  local o=ordinary(enabled,true,{noAck=failure=='no-start',terminalOnly=failure=='terminal-only'})
+  o.effects('both')
+  if failure=='canceled'or failure=='rejected'then o.ack(failure)
+  elseif failure=='expired'then
+   assert(o.frame(false)=='waiting');o.expire()
+  end
+  assert(o.frame(false)=='stopped','ordinary unconfirmed/unsuccessful early effects must use native stop '..failure)
+  o.resetObserved();o.noReplay()
+ end
+ -- After native removal, a failed terminal ACK must reset, without promoted cleanup.
+ local o=ordinary(enabled,true);assert(o.frame(true)=='performed');o.q:tick()
+ o.effects('both');o.ack('rejected');o.q:tick();o.resetObserved();o.noReplay()
+end
+
+-- 5. Expected media index alone cannot excuse a changed captured resource.
+for _,enabled in ipairs({true,false})do
+ for _,change in ipairs({'tape-object','tape-container','root','tv','device','wrong-index'})do
+  local o=ordinary(enabled,true);o.effects('both')
+  if change=='tape-object'then o.insert.secondaryItem=o.s.tape()
+  elseif change=='tape-container'then o.s.item.container=o.s.container('foreign-bag')
+  elseif change=='root'then o.f.player.inventory=o.s.container()
+  elseif change=='tv'then o.s.tv.gone=true
+  elseif change=='device'then
+   local _,foreign=o.s.device();foreign.media=true;foreign.index=o.s.item:getRecordedMediaIndex();o.insert.deviceData=foreign
+  else o.s.data.index=o.s.item:getRecordedMediaIndex()+1 end
+  assert(o.frame(false)=='stopped','ordinary captured resource must reject '..change)
+  o.resetObserved();o.noReplay()
+ end
+end
+
+-- 6. Actual reset, native-handle replacement and generation change revoke receipts.
+for _,enabled in ipairs({true,false})do
+ for _,change in ipairs({'reset','handle','generation'})do
+  local o=ordinary(enabled,true);o.effects('both');assert(o.frame(false)=='waiting')
+  if change=='reset'then
+   o.q:resetQueue();o.ack('completed');o.q:tick();o.resetObserved()
+  else
+   if change=='handle'then o.insert.action={isStarted=function()return true end}
+   else o.q.toolkitOperationGeneration=(o.q.toolkitOperationGeneration or 0)+1 end
+   o.ack('completed');assert(o.frame(false)=='stopped');o.resetObserved()
+  end
+  o.noReplay()
+ end
+end
+
+-- 7. Explicit native stop and actual cancel-key callback also work with queue off.
+for _,enabled in ipairs({true,false})do
+ local o=ordinary(enabled,true);o.effects('both');assert(o.frame(false)=='waiting')
+ o.insert:forceStop();assert(o.frame(false)=='stopped');o.resetObserved();o.noReplay()
+ for _,kind in ipairs({'key','direct'})do
+  o=ordinary(enabled,true,{cancel=true});assert(o.frame(true)=='performed');o.q:tick()
+  assert(not o.input.nativePredicate(o.f.player)and isPlayerDoingActionThatCanBeCancelled(o.f.player),
+   'ordinary deferred continuation must expose cancellation after Java removal')
+  if kind=='key'then o.input.press(o.input.key)else CancelAction(0)end
+  o.resetObserved();assert(o.input.stops==1 and o.input.eaten==(kind=='key'and 1 or 0))
+  o.ack('completed');o.effects('both');o.q:tick();o.resetObserved();o.noReplay()
+ end
+end
+
+-- 8. Common recovery retains existing source and callback trust boundaries.
+for _,enabled in ipairs({true,false})do
+ for _,change in ipairs({'callback','source'})do
+  local o=ordinary(enabled,true,{changedSource=change=='source'and 'native'or nil});o.effects('both')
+  if change=='callback'then o.insert.complete=function()error('foreign callback must not execute')end end
+  assert(o.frame(false)=='stopped','common guard must not bless changed '..change)
+  o.resetObserved();o.noReplay()
+ end
+end
+print('Ordinary media queue on/off: actual native begin/create and real ACK listener; modeled Java/network effects, both completion orders, cancellation and fail-closed identity checks passed.')

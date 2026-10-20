@@ -15,6 +15,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.167
+
+- **Fixed:** In Host, ordinary VHS insertion keeps its pending playback when the TV state or tape removal arrives before native completion. The exact started insertion waits for correlated server completion and both effects, including with the Toolkit queue disabled; explicit cancellation and native failure still clear ordinary pending work.
+
 ### 0.1.166
 
 - **Changed:** Container configuration saves now use Quartermaster's existing command transport instead of a separate request/reply and timeout loop. Player identity, access checks, revision conflicts and accepted-field updates are preserved; request tokens no longer modify caller-owned arguments.
