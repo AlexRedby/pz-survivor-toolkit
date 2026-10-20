@@ -82,6 +82,29 @@ public final class CartObserverPoseTest {
         near(raw.x(),40,0,"failed solve must not retain stale anchor");
         check(state.update(changed,Double.NaN,0,0,CartFootprint.WALK_FRONT,.016)==null,"invalid coordinate must clear state");
     }
+    private static void nativePredictedActorOverlap() {
+        CartFootprint.Query wall=(x1,y1,x2,y2)->Math.min(x1,x2)-.3<=10832;
+        double[][] nativeFrames={{10832.345,10146.881,3.4556804},{10832.325,10146.906,3.4556746},
+            {10832.296,10146.944,3.4556704},{10832.296,10146.969,3.455669},
+            {10832.284,10147.002,3.455668},{10832.284,10147.033,3.4556675},
+            {10832.291,10147.07,3.379479},{10832.309,10147.125,3.2449832},{10832.319,10147.181,3.1865268}};
+        var state=new CartObserverPose.State();CartObserverPose.Pose previous=null;
+        for(double[] frame:nativeFrames) {
+            var p=valid(state,wall,frame[0],frame[1],frame[2]-Math.PI/2,CartFootprint.WALK_FRONT);
+            if(previous!=null) check(Math.hypot(p.x()-previous.x(),p.y()-previous.y())<.16,
+                "predicted actor-cap overlap must not drop the correction or jump back");
+            previous=p;
+        }
+        // Joining with the actor already slightly inside the expanded cap must also recover locally.
+        valid(new CartObserverPose.State(),wall,10832.284,10147.033,3.4556675-Math.PI/2,CartFootprint.WALK_FRONT);
+        CartFootprint.Query finite=(x1,y1,x2,y2)->Math.min(x1,x2)<=.3 && Math.max(x1,x2)>=-.3;
+        state.clear();valid(state,(a,b,c,d)->false,.31,0,0,CartFootprint.WALK_FRONT);
+        var p=valid(state,finite,-.284,0,Math.PI,CartFootprint.WALK_FRONT);
+        check(p.x()<-.3,"local recovery must discard an old anchor across a newly closed wall");
+        check(new CartObserverPose.State().update(finite,0,0,0,CartFootprint.WALK_FRONT,.016)==null,
+            "deep actor overlap has no justified same-side anchor and must fail bounded");
+    }
+
     private static void rotatedContact() {
         for(double origin:new double[]{0,10825.5}) for(double angle:new double[]{Math.PI/6,Math.PI/4,-Math.PI/4}) {
             double nx=-Math.sin(angle),ny=Math.cos(angle);
@@ -138,7 +161,7 @@ public final class CartObserverPoseTest {
         }
     }
     public static void main(String[] args) {
-        historicalPrediction();mirroredApproachAndRelease();cornersAndChanges();finiteWallCannotSwapSides();stationaryCostAndOpening();rotatedContact();turningAndFreeMotion();
+        historicalPrediction();mirroredApproachAndRelease();cornersAndChanges();finiteWallCannotSwapSides();stationaryCostAndOpening();rotatedContact();nativePredictedActorOverlap();turningAndFreeMotion();
         System.out.println("CART_OBSERVER_POSE_PASS");
     }
 }

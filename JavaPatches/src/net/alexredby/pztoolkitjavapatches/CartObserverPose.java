@@ -2,7 +2,7 @@ package net.alexredby.pztoolkitjavapatches;
 
 /** A bounded cosmetic actor/cart pose. Never writes native movement or network state. */
 final class CartObserverPose {
-    static final double MAX_OFFSET=.75, RELEASE_SECONDS=.12;
+    static final double MAX_OFFSET=.75, RELEASE_SECONDS=.12, ANCHOR_RECOVERY=.10;
     record Pose(double x,double y,double heading) {}
     private static Pose rounded(double x,double y,double heading) {
         return new Pose((float)x,(float)y,CartSteeringMath.wrap(heading));
@@ -16,13 +16,7 @@ final class CartObserverPose {
         return Math.pow(a.x-b.x,2)+Math.pow(a.y-b.y,2)+yaw*yaw;
     }
 
-    /** Closest sampled outward ray, refined against the same native footprint oracle. */
-    private static Pose project(CartFootprint.Query query,Pose raw,Pose previous,double front) {
-        if(clear(query,raw,front)) return raw;
-        Pose best=null;
-        double bestDistance=MAX_OFFSET+.001;
-        // Keep the actor on the native reachable side; a clear endpoint behind a thin wall is invalid.
-        // Native wall axes, vehicle normals, then the previous correction and cart rear.
+    private static double[] directions(CartFootprint.Query query,Pose raw,Pose previous) {
         double[] angles=new double[14];int count=0;
         for(int axis=0;axis<4;axis++) {
             double tangent=query.tangent(axis);
@@ -34,9 +28,50 @@ final class CartObserverPose {
         if(previous!=null && distance(raw,previous)>1e-6)
             angles[count++]=Math.atan2(previous.y-raw.y,previous.x-raw.x);
         angles[count++]=raw.heading+Math.PI;
-        // Corner bisectors allow a bounded escape when neither individual wall normal is clear.
         for(int corner=0;corner<4;corner++) angles[count++]=Math.PI/4+corner*Math.PI/2;
-        for(int direction=0;direction<count;direction++) {
+        return java.util.Arrays.copyOf(angles,count);
+    }
+
+    /** Recover a slightly predicted-overlapping actor cap without crossing the physical wall core. */
+    private static Pose anchor(CartFootprint.Query query,Pose raw) {
+        if(!query.blocked(raw.x,raw.y,raw.x,raw.y)) return raw;
+        // Both world/vehicle oracles inflate the actor by .3. A standable point within .1
+        // puts the original point at least .2 from the solid obstacle: this short segment
+        // cannot cross its core. Use this local side even when an old accepted pose exists.
+        Pose best=null;double nearest=ANCHOR_RECOVERY;
+        for(double angle:directions(query,raw,null)) {
+            double dx=Math.cos(angle),dy=Math.sin(angle),low=0;
+            for(int step=1;step<=5;step++) {
+                double high=ANCHOR_RECOVERY*step/5;
+                Pose candidate=rounded(raw.x+dx*high,raw.y+dy*high,raw.heading);
+                if(distance(raw,candidate)>ANCHOR_RECOVERY) {
+                    high-=2*Math.max(Math.ulp((float)raw.x),Math.ulp((float)raw.y));
+                    candidate=rounded(raw.x+dx*high,raw.y+dy*high,raw.heading);
+                }
+                if(distance(raw,candidate)>ANCHOR_RECOVERY || query.blocked(candidate.x,candidate.y,candidate.x,candidate.y)) {
+                    low=high;continue;
+                }
+                for(int i=0;i<10;i++) {
+                    double mid=(low+high)/2;
+                    var probe=rounded(raw.x+dx*mid,raw.y+dy*mid,raw.heading);
+                    if(query.blocked(probe.x,probe.y,probe.x,probe.y)) low=mid;
+                    else {high=mid;candidate=probe;}
+                }
+                if(distance(raw,candidate)<=nearest) {best=candidate;nearest=distance(raw,candidate);}
+                break;
+            }
+        }
+        return best;
+    }
+
+    /** Closest sampled outward ray, refined against the same native footprint oracle. */
+    private static Pose project(CartFootprint.Query query,Pose raw,Pose previous,Pose anchor,double front) {
+        if(clear(query,raw,front)) return raw;
+        Pose best=null;
+        double bestDistance=MAX_OFFSET+.001;
+        // Keep every projection reachable from a clear anchor on the native actor's local side.
+        double[] angles=directions(query,raw,previous);
+        for(int direction=0;direction<angles.length;direction++) {
             double dx=Math.cos(angles[direction]),dy=Math.sin(angles[direction]);
             double low=0,high=0;Pose found=null;
             for(int step=1;step<=5;step++) {
@@ -47,7 +82,7 @@ final class CartObserverPose {
                     high-=2*Math.max(Math.ulp((float)raw.x),Math.ulp((float)raw.y));
                     candidate=rounded(raw.x+dx*high,raw.y+dy*high,raw.heading);
                 }
-                if(distance(raw,candidate)<=MAX_OFFSET && !query.blocked(raw.x,raw.y,candidate.x,candidate.y)
+                if(distance(raw,candidate)<=MAX_OFFSET && !query.blocked(anchor.x,anchor.y,candidate.x,candidate.y)
                     && clear(query,candidate,front)) {found=candidate;break;}
                 low=high;
             }
@@ -55,11 +90,11 @@ final class CartObserverPose {
             for(int i=0;i<10;i++) {
                 double mid=(low+high)/2;
                 var candidate=rounded(raw.x+dx*mid,raw.y+dy*mid,raw.heading);
-                if(!query.blocked(raw.x,raw.y,candidate.x,candidate.y) && clear(query,candidate,front)) {high=mid;found=candidate;} else low=mid;
+                if(!query.blocked(anchor.x,anchor.y,candidate.x,candidate.y) && clear(query,candidate,front)) {high=mid;found=candidate;} else low=mid;
             }
             // Leave a small subpixel margin so rounding does not toggle the contact every frame.
             var padded=rounded(raw.x+dx*(high+.003),raw.y+dy*(high+.003),raw.heading);
-            if(distance(raw,padded)<=MAX_OFFSET && !query.blocked(raw.x,raw.y,padded.x,padded.y) && clear(query,padded,front)) found=padded;
+            if(distance(raw,padded)<=MAX_OFFSET && !query.blocked(anchor.x,anchor.y,padded.x,padded.y) && clear(query,padded,front)) found=padded;
             double d=distance(raw,found);
             if(d<bestDistance) {best=found;bestDistance=d;}
         }
@@ -82,8 +117,10 @@ final class CartObserverPose {
                 clear();return null;
             }
             Pose raw=rounded(x,y,heading),previous=accepted;
+            Pose anchor=anchor(query,raw);
+            if(anchor==null) {clear();return null;}
             // A teleport, new geometry or larger gait envelope invalidates the old anchor.
-            if(previous!=null && (distance(previous,raw)>MAX_OFFSET || query.blocked(raw.x,raw.y,previous.x,previous.y)
+            if(previous!=null && (distance(previous,raw)>MAX_OFFSET || query.blocked(anchor.x,anchor.y,previous.x,previous.y)
                 || !CartObserverPose.clear(query,previous,front))) previous=null;
             Pose target;
             if(previous!=null && rawPrevious!=null) {
@@ -92,9 +129,9 @@ final class CartObserverPose {
                     raw.y+(previous.y-rawPrevious.y)*decay,raw.heading);
                 if(distance(raw,target)>MAX_OFFSET || !CartObserverPose.clear(query,target,front)) {
                     // Revalidated contact with unchanged native pose needs no repeated outward search.
-                    target=raw.equals(rawPrevious)?previous:project(query,raw,previous,front);
+                    target=raw.equals(rawPrevious)?previous:project(query,raw,previous,anchor,front);
                 }
-            } else target=project(query,raw,null,front);
+            } else target=project(query,raw,null,anchor,front);
             if(target==null) {clear();return null;}
             Pose result=target;
             if(previous!=null) {
