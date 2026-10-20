@@ -15,9 +15,13 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
-### 0.1.174
+### 0.1.175
 
 - **Fixed:** Source-origin checks reuse the compile-time filename of loaded Lua functions instead of querying it repeatedly for every queued action. The bounded cache follows the original filename accessor; replacements, live callbacks, item state, capacities and file checksums retain their independent checks.
+
+### 0.1.174
+
+- **Fixed:** Removed three obsolete modern police separator references from the reviewed Vanilla Vehicles Animated profiles after validating and applying their existing bars template. The missing references previously produced startup errors without changing the parsed vehicles. Vehicle parameters and the single existing bars model are preserved; unknown source versions and templates or profiles provided by other mods remain untouched.
 
 ### 0.1.173
 

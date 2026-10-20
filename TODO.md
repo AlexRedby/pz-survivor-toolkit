@@ -85,8 +85,6 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Shared game sessions and build regression
 
-- [ ] Resolve VVA's three missing `VVA_Modern_PoliceSeparator` references on modern police variants. The upstream migration retained these alongside the new bars, but the current Separator model/node/template is absent. Establish the intended assets/parts before changing these references; do not assume the existing bars replace them or silence their errors with empty profiles.
-
 - [ ] Extend the common scenario contracts beyond equipment, fluid drinking and health-panel/direct-inventory bandaging. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
 
 - [ ] Cart chat: integrate the published combined SP cart matrices and collision cases after their native checks are complete. Keep independent cold controls; separately measure an explicit full regression profile (the estimated 17 startup cycles instead of 29 are not yet confirmed).
