@@ -1,3 +1,7 @@
+# Auto-drink after multiplayer respawn
+
+- [ ] Verify death and new-character creation as a client in an isolated full-pack Host session on macOS B42.21, with auto-drink disabled and enabled. Pick up a water bottle and compare the menu preference, character flag and server water/thirst effects after the connection reply. Native reply ordering and the one-shot repair are covered by source inspection and focused Lua regressions; this live network scenario remains unverified.
+
 # Sport headlight push-button cycle
 
 - [ ] Run the isolated sport push-button SP/Host checks when the shared desktop test slot is available. Inspect off/low/high/off releases, held/released appearance at all four scales and server power acknowledgements. Current focused regressions cover the cycle and ACK guards; native launch was blocked at admission. Keep the VVA-pair coexistence gate below separate from the available 45-mod test subset.

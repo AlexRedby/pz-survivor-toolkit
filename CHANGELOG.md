@@ -15,6 +15,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.171
+
+- **Fixed:** A new multiplayer character reapplies the local auto-drink preference after the server connection reply, so respawning with auto-drink disabled no longer leaves the character enabled while the menu shows it disabled.
+
 ### 0.1.170
 
 - **Fixed:** A VHS taken from a backpack can finish insertion after being moved ahead of active shelf reading in Host. The queue follows the replacement client item only after its exact native pickup succeeds; item identity, media contents, endpoints and dependent playback remain checked.
