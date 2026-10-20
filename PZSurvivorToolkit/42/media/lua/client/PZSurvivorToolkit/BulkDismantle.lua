@@ -53,22 +53,33 @@ local function prepare(player, item, recipe, containers)
     return logic
 end
 
-local function entries(player, rows, allowed)
-    local entries = {}
+local function collectEntries(player, rows, groups)
+    local collected = {}
+    for _, allowed in ipairs(groups) do collected[allowed] = {} end
     local containers = ISInventoryPaneContextMenu.getContainers(player)
     for _, item in ipairs(Actions.selectedItems(rows)) do
         if Actions.safeItem(player, item) then
+            -- Native returns a reused list; consume it before querying the next item.
             local available = CraftRecipeManager.getUniqueRecipeItems(item, player, containers)
-            for i = 0, (available and available:size() or 0) - 1 do
-                local recipe = available:get(i)
-                if recipe and allowed[recipe:getName()] and prepare(player, item, recipe, containers) then
-                    entries[#entries + 1] = {item = item, recipe = recipe}
-                    break
+            -- A device can both dismantle and yield a battery; pick one recipe per family.
+            for _, allowed in ipairs(groups) do
+                for i = 0, (available and available:size() or 0) - 1 do
+                    local recipe = available:get(i)
+                    if recipe and allowed[recipe:getName()] and prepare(player, item, recipe, containers) then
+                        local entries = collected[allowed]
+                        entries[#entries + 1] = {item = item, recipe = recipe}
+                        break
+                    end
                 end
             end
         end
     end
-    return entries
+    return collected, containers
+end
+
+local function entries(player, rows, allowed)
+    local collected = collectEntries(player, rows, {allowed})
+    return collected[allowed]
 end
 
 local function queue(player, entries, enabled)
@@ -144,12 +155,8 @@ local function recipeOptions(context, allowed, found)
     end
 end
 
-local function fillRecipeMenu(playerIndex, context, rows, allowed, api, enabled, oneKey, selectedKey)
-    if not enabled() then return end
-    local player = getSpecificPlayer(playerIndex)
-    if not player or player:isDead() then return end
-    local selected = api.entries(player, rows)
-    if #selected < 2 then return end
+local function fillRecipeMenu(player, playerIndex, context, selected, containers, allowed, api, oneKey, selectedKey)
+    if not selected or #selected < 2 then return end
     local found = {}
     recipeOptions(context, allowed, found)
     if #found == 0 then
@@ -157,7 +164,7 @@ local function fillRecipeMenu(playerIndex, context, rows, allowed, api, enabled,
         local available = ArrayList.new()
         available:add(selected[1].recipe)
         ISInventoryPaneContextMenu.addNewCraftingDynamicalContextMenu(selected[1].item,
-            context, available, playerIndex, ISInventoryPaneContextMenu.getContainers(player))
+            context, available, playerIndex, containers)
         recipeOptions(context, allowed, found)
     end
     for _, entry in ipairs(found) do
@@ -177,11 +184,20 @@ local function fillRecipeMenu(playerIndex, context, rows, allowed, api, enabled,
 end
 
 local function fillMenu(playerIndex, context, rows)
-    fillRecipeMenu(playerIndex, context, rows, clothingRecipes, Clothing, Toolkit.Settings.bulkCutClothing,
+    local groups = {}
+    if Toolkit.Settings.bulkCutClothing() then groups[#groups + 1] = clothingRecipes end
+    if Toolkit.Settings.bulkDismantle() then groups[#groups + 1] = recipes end
+    if Toolkit.Settings.bulkRemoveBatteries() then groups[#groups + 1] = batteryRecipes end
+    if #groups == 0 then return end
+    local player = getSpecificPlayer(playerIndex)
+    if not player or player:isDead() then return end
+    -- Share discovery only within this menu build; queue() prepares exact inputs afresh on click.
+    local selected, containers = collectEntries(player, rows, groups)
+    fillRecipeMenu(player, playerIndex, context, selected[clothingRecipes], containers, clothingRecipes, Clothing,
         "UI_PZSurvivorToolkit_action_one", "UI_PZSurvivorToolkit_cut_clothing_selected")
-    fillRecipeMenu(playerIndex, context, rows, recipes, Bulk, Toolkit.Settings.bulkDismantle,
+    fillRecipeMenu(player, playerIndex, context, selected[recipes], containers, recipes, Bulk,
         "UI_PZSurvivorToolkit_dismantle_one", "UI_PZSurvivorToolkit_dismantle_selected")
-    fillRecipeMenu(playerIndex, context, rows, batteryRecipes, Batteries, Toolkit.Settings.bulkRemoveBatteries,
+    fillRecipeMenu(player, playerIndex, context, selected[batteryRecipes], containers, batteryRecipes, Batteries,
         "UI_PZSurvivorToolkit_action_one", "UI_PZSurvivorToolkit_remove_batteries_selected")
 end
 

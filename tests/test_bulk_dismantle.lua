@@ -443,3 +443,105 @@ assert(#mixedClothes.options==1 and #mixedClothes.options[1].subOption.options[2
 clothingEnabled,queued=false,{}
 assert(clothing.queue(player,beltEntries)==nil and #queued==0)
 print('Batch clothing checks passed: cotton/denim/leather/belts, exact selection, tools, protection, mixed menus and toggle.')
+
+-- One discovery pass must serve every enabled family, including overlapping devices.
+local blockedDismantle = recipe('DismantleMiscElectronics')
+local blockedRip = recipe('RipClothing', {cottonInput})
+blockedDismantle.blocked, blockedRip.blocked = true, true
+local deviceA, deviceB = item(301, root), item(302, root)
+deviceA.script.battery, deviceB.script.battery = true, true
+local shirtA, shirtB = item(303, root, false), item(304, root, false)
+shirtA.script.fabric, shirtB.script.fabric = 'cotton', 'cotton'
+local protected, noRecipe = item(305, root), item(306, root)
+protected.favorite, noRecipe.noRecipes = true, true
+for _, value in ipairs({deviceA, deviceB, shirtA, shirtB, protected, noRecipe}) do
+    root.items[value.id] = value
+end
+local rows = {{items={deviceA,deviceA,deviceB}}, deviceA, {items={shirtA,shirtA,shirtB}}, protected, noRecipe}
+local recipeQueries, containerQueries = {}, 0
+local sharedCandidates = list()
+local getContainers = ISInventoryPaneContextMenu.getContainers
+ISInventoryPaneContextMenu.getContainers = function(...)
+    containerQueries = containerQueries + 1
+    return getContainers(...)
+end
+CraftRecipeManager.getUniqueRecipeItems = function(value, p, containers)
+    assert(p == player and containers:contains(root))
+    recipeQueries[value] = (recipeQueries[value] or 0) + 1
+    -- B42 reuses one candidate list across items; a stored result cannot be read after the next query.
+    sharedCandidates.values = {}
+    if value.noRecipes then return nil end
+    sharedCandidates.values = {false, blockedDismantle, simple, radio, blockedRip, rip, removeBattery}
+    return sharedCandidates
+end
+HandcraftLogic.new = function(...)
+    local logic = nativeLogic(...)
+    function logic:setManualInputsFor(input, values)
+        assert((input == destroy or input == cottonInput or input == batteryInput) and values:size() == 1)
+        self.target = values:get(0)
+        return not rejectPin
+    end
+    function logic:canPerformCurrentRecipe()
+        return not missingTool and not self.recipe.blocked and self.target.container ~= nil
+            and (self.recipe ~= removeBattery or not self.target.empty)
+    end
+    function logic:getRecipeData()
+        return {getAllInputItems=function() return list({self.target}) end,
+            getAllPutBackInputItems=function() return list(self.recipe == removeBattery and {self.target} or {}) end}
+    end
+    return logic
+end
+local function discoverMixed()
+    recipeQueries, containerQueries = {}, 0
+    local context = newMenu()
+    fill(1, context, rows)
+    assert(containerQueries == 1, 'one menu fill must share reachable containers across recipe families')
+    for _, value in ipairs({deviceA, deviceB, shirtA, shirtB, noRecipe}) do
+        assert(recipeQueries[value] == 1, 'one menu fill must query native recipes once per safe exact item')
+    end
+    assert(recipeQueries[protected] == nil, 'protected selections must not query native recipes')
+    local batches = {}
+    for _, option in ipairs(context.options) do
+        local batch = option.subOption and option.subOption.options[2]
+        if batch then batches[batch.onSelect] = batch end
+    end
+    return context, batches
+end
+clothingEnabled, batteriesEnabled, enabled, missingTool, tool = true, true, true, false, nil
+local combined, batches = discoverMixed()
+assert(#combined.options == 3 and batches[bulk.queue] and batches[batteries.queue] and batches[clothing.queue],
+    'mixed selection must expose all three independently enabled families')
+for _, api in ipairs({bulk, batteries, clothing}) do
+    local batch = batches[api.queue]
+    queued = {}
+    assert(batch.target == player and batch.onSelect(batch.target, batch.param1) == 2 and #queued == 2,
+        'native menu invocation must pass the player and queue both exact selected items')
+end
+for _, api in ipairs({bulk, batteries}) do
+    local selected = batches[api.queue].param1
+    assert(#selected == 2 and selected[1].item == deviceA and selected[2].item == deviceB,
+        'the same exact devices must join both dismantle and battery batches without header duplicates')
+    assert(selected[1].recipe == (api == bulk and simple or removeBattery)
+        and selected[2].recipe == selected[1].recipe, 'each family must retain its first viable native recipe')
+end
+local selectedClothing = batches[clothing.queue].param1
+assert(#selectedClothing == 2 and selectedClothing[1].item == shirtA and selectedClothing[2].item == shirtB
+    and selectedClothing[1].recipe == rip and selectedClothing[2].recipe == rip,
+    'clothing discovery must skip the first unperformable recipe and unrelated devices')
+missingTool, queued = true, {}
+assert(batches[bulk.queue].onSelect(batches[bulk.queue].target, batches[bulk.queue].param1) == 0 and #queued == 0,
+    'a menu click must freshly validate HandcraftLogic rather than reuse discovery logic')
+missingTool = false
+deviceB.noRecipes = true
+local refreshed, refreshedBatches = discoverMixed()
+assert(#refreshed.options == 1 and refreshedBatches[clothing.queue]
+    and not refreshedBatches[bulk.queue] and not refreshedBatches[batteries.queue],
+    'a later menu fill must refresh candidates after native recipes change')
+deviceB.noRecipes = nil
+for _, api in ipairs({bulk, batteries, clothing}) do
+    enabled, batteriesEnabled, clothingEnabled = api == bulk, api == batteries, api == clothing
+    local independent, independentBatches = discoverMixed()
+    assert(#independent.options == 1 and independentBatches[api.queue],
+        'each family toggle must enable only its own batch while sharing native discovery')
+end
+print('Combined recipe-family checks passed: shared native discovery, overlap, first viable recipes, fresh fills and click validation.')

@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.131
+
+- **Changed:** Bulk clothing, electronics and battery menus share one native recipe lookup per selected item and one reachable-container snapshot per menu build. Each command retains its own first viable recipe, exact selected items and toggle; clicking still revalidates inputs and tools before queuing native actions.
+
 ### 0.1.130
 
 - **Changed:** Pending volume, channel and microphone settings for a fixed world radio/TV can be reordered or cancelled even when they share a device. Native commands still apply each effect; the chosen order may deliberately change the final setting. Power, playback and unverified dependencies remain protected.
