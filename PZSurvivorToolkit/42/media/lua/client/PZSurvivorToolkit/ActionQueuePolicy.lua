@@ -33,6 +33,7 @@ local function nativePendingCancelHasNoEffects()
     return nativePendingCancelProof and ISBaseTimedAction.forceCancel == nativeForceCancel
 end
 local nativeTransferItem = ISTransferAction and ISTransferAction.transferItem
+local nativeDropItemOffset = ISTransferAction and ISTransferAction.GetDropItemOffset
 local transferItemGuard
 local inspect
 local ordinaryTransfer
@@ -337,14 +338,20 @@ ordinaryTransfer = function(action)
         and ordinaryTransferContainer(action.destContainer, action.character)
 end
 Policy.isOrdinaryTransfer = ordinaryTransfer
-function Policy.adoptTransferItemHelper(previous, replacement, helpersUnchanged)
+function Policy.adoptTransferItemHelper(previous, replacement, helpersUnchanged, previousOffset, replacementOffset)
     if type(previous) ~= "function" or nativeTransferItem ~= previous
         or type(replacement) ~= "function" or type(helpersUnchanged) ~= "function"
         or type(ISTransferAction) ~= "table" or ISTransferAction.transferItem ~= replacement
         or not helpersUnchanged() then return false end
+    local before, after = {transferItem = previous}, {transferItem = replacement}
+    if previousOffset ~= nil or replacementOffset ~= nil then
+        if type(previousOffset) ~= "function" or nativeDropItemOffset ~= previousOffset
+            or type(replacementOffset) ~= "function" or ISTransferAction.GetDropItemOffset ~= replacementOffset then return false end
+        before.GetDropItemOffset, after.GetDropItemOffset = previousOffset, replacementOffset
+        nativeDropItemOffset = replacementOffset
+    end
     nativeTransferItem, transferItemGuard = replacement, helpersUnchanged
-    if ItemEditAdapters then ItemEditAdapters.adoptMethods(ISTransferAction,
-        {transferItem = previous}, {transferItem = replacement}, helpersUnchanged) end
+    if ItemEditAdapters then ItemEditAdapters.adoptMethods(ISTransferAction, before, after, helpersUnchanged) end
     return true
 end
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform", "complete",

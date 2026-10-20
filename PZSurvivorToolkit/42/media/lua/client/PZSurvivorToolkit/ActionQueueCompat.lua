@@ -887,6 +887,7 @@ function Compat.install()
             elseif id == "P4TidyUpMeister" then
                 local previous = ISInventoryTransferAction.getNotFullFloorSquare
                 local transferItem = ISTransferAction and ISTransferAction.transferItem
+                local dropItemOffset = ISTransferAction and ISTransferAction.GetDropItemOffset
                 ok = loadSource(id, "P4TidyUpMeister", "OnPlayerUpdate")
                 local policy = Toolkit.ActionQueuePolicy
                 if ok and policy and policy.adoptTransferFloorHelper then
@@ -895,11 +896,14 @@ function Compat.install()
                 if ok and policy and policy.adoptTransferItemHelper and type(P4TidyUpMeister) == "table" then
                     local owner = P4TidyUpMeister
                     local registerAction, registerWorn = owner.registerActionPolicy, owner.registerWornItemReplacement
-                    -- The pinned source captures its inaccessible private delegate once before installing this wrapper.
-                    policy.adoptTransferItemHelper(transferItem, ISTransferAction.transferItem, function()
+                    local replacementTransfer, replacementOffset = ISTransferAction.transferItem, ISTransferAction.GetDropItemOffset
+                    -- The pinned source captures both delegates in its private local table.
+                    policy.adoptTransferItemHelper(transferItem, replacementTransfer, function()
                         return P4TidyUpMeister == owner and type(registerAction) == "function" and type(registerWorn) == "function"
                             and owner.registerActionPolicy == registerAction and owner.registerWornItemReplacement == registerWorn
-                    end)
+                            and ISTransferAction.transferItem == replacementTransfer
+                            and ISTransferAction.GetDropItemOffset == replacementOffset
+                    end, dropItemOffset, replacementOffset)
                 end
             end
             ready[id] = ok == true

@@ -279,6 +279,58 @@ end
 for _,source in ipairs({'ISInventoryTransferAction.lua','ISTransferAction.lua','ISBaseTimedAction.lua'})do
     local s=setup(source);assert(not s.adapters.transfer(s.transfer()),'changed source cannot prove transfer: '..source)
 end
+if NativeWishlistWorkshopRoot then
+    local s=setup()
+    local path=NativeWishlistWorkshopRoot..'/2769706949/mods/P4TidyUpMeister/42.20/media/lua/client/P4TidyUpMeister.lua'
+    local source=read(path)
+    local proof=require('PZSurvivorToolkit/SourceProof')
+    local modReader=getModFileReader
+    getModFileReader=function(id,file)
+        if id=='P4TidyUpMeister'and file=='media/lua/client/P4TidyUpMeister.lua'then return reader(source)end
+        return modReader(id,file)
+    end
+    assert(proof.matches('media/lua/client/P4TidyUpMeister.lua',389269229,'P4TidyUpMeister',true),'actual selected P4 source must match its pin')
+    local previousOffset,previousTransfer=ISTransferAction.GetDropItemOffset,ISTransferAction.transferItem
+    local private={restoreFloor={},debugLog=function()end,itemLabel=function()return 'water'end,
+        registerActionPolicy=function()end,registerWornItemReplacement=function()end}
+    local offset=assert(source:match('(P4TidyUpMeister%.ISTransferAction_GetDropItemOffset =.-\nend)'))
+    local transfer=assert(source:match('(P4TidyUpMeister%.ISTransferAction_transferItem =.-\nend)'))
+    local public=assert(source:match('(_G%.P4TidyUpMeister = %b{})'))
+    -- Preserve the upstream lexical owner: public compatibility API does not
+    -- expose the private captured delegates used by these pinned wrappers.
+    assert(loadstring('local P4TidyUpMeister = ...\n'..public..'\n'..offset..'\n'..transfer,'@P4TidyUpMeister.lua'))(private)
+    local owner=P4TidyUpMeister
+    local registerAction,registerWorn=owner.registerActionPolicy,owner.registerWornItemReplacement
+    assert(owner.ISTransferAction_GetDropItemOffset==nil and owner.ISTransferAction_transferItem==nil,
+        'selected source keeps captured delegates private')
+    local replacementOffset,replacementTransfer=ISTransferAction.GetDropItemOffset,ISTransferAction.transferItem
+    local action=s.transfer()
+    assert(not s.adapters.transfer(action),'real unadopted P4 lowlevel pair revokes the native transfer contract')
+    local function guard()
+        return P4TidyUpMeister==owner and owner.registerActionPolicy==registerAction
+            and owner.registerWornItemReplacement==registerWorn and ISTransferAction.GetDropItemOffset==replacementOffset
+            and ISTransferAction.transferItem==replacementTransfer
+    end
+    assert(s.policy.adoptTransferItemHelper(previousTransfer,replacementTransfer,guard,previousOffset,replacementOffset))
+    assert(s.adapters.transfer(action),'both actual selected P4 wrappers are explicitly adopted together')
+    s.runTransfer(action);assert(s.water:getContainer()==s.root,'actual native non-floor move still executes through the P4 transfer wrapper')
+    local pending=s.transfer(nil,s.root,s.bagInventory)
+    for _,field in ipairs({'registerActionPolicy','registerWornItemReplacement'})do
+        local previous=owner[field];owner[field]=function()error('changed public registration helper must not execute')end
+        assert(not s.adapters.transfer(pending),'changed P4 public helper revokes the whole pair: '..field)
+        owner[field]=previous
+    end
+    ISTransferAction.transferItem=function()error('unapproved transfer replacement must not execute')end
+    assert(not s.adapters.transfer(pending),'late replacement of the adopted transfer remains forbidden')
+    ISTransferAction.transferItem=replacementTransfer
+    ISTransferAction.GetDropItemOffset=function()error('unapproved replacement must not execute')end
+    assert(not s.adapters.transfer(pending),'late replacement of the adopted offset remains forbidden')
+    ISTransferAction.GetDropItemOffset=replacementOffset
+    P4TidyUpMeister={}
+    assert(not s.adapters.transfer(pending),'a replaced P4 owner cannot reuse its old proof')
+    P4TidyUpMeister=owner
+    assert(s.adapters.transfer(pending),'restoring the exact public owner/helpers restores the proof')
+else print('Actual selected P4 transfer/offset pair SKIP (pass --wishlist-workshop-root).')end
 do
     local s=setup('ISDrinkFluidAction.lua');assert(not s.adapters.drink(s.drink()))
 end

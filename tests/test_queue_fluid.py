@@ -69,8 +69,9 @@ class FluidAdapterTests(unittest.TestCase):
                         nativeDurationsUnchanged=True, contractsVerified=self.selection['mode']=='toolkit',
                         reordered=self.selection['mode']=='toolkit', moveRejected=self.selection['mode']=='toolkit',
                         cancelRejected=self.selection['mode']=='toolkit', untouchedBefore=True,
-                        returnNoopObserved=self.selection['mode']=='toolkit', returnDontAdd=self.selection['mode']=='toolkit',
-                        returnStarted=False, returnTransactionId=0) if editing else None
+                        returnNoopObserved=self.selection['mode']=='toolkit', returnDontAdd=self.selection['mode']=='toolkit' or self.selection['kind']=='mp',
+                        returnStarted=False, returnTransactionId=0, returnBoundaryObserved=True, returnCompleted=True,
+                        returnBefore='bag' if self.selection['mode']=='toolkit' else 'root', returnAfter='bag') if editing else None
             raw += [('PREPARED', prep), ('VERIFIED', receipt)]
             rows.append(dict(event='case', id=case, status='passed', reason=None, commands=commands,
                              waitingCancelVerified=cancelling, independentMoveVerified=cancelling and not bag,
@@ -423,7 +424,7 @@ class FluidAdapterTests(unittest.TestCase):
                 self.assertIs(result['outcomes'][0]['outcome']['pendingTransferEditVerified'], mode == 'toolkit')
                 self.assertIs(result['outcomes'][0]['outcome']['dependentPickupProtected'], mode == 'toolkit')
                 for field in ('anchorRunning', 'standalone', 'contractsVerified', 'reordered', 'moveRejected',
-                              'cancelRejected', 'untouchedBefore', 'returnNoopObserved', 'returnDontAdd', 'returnStarted', 'nativeDurationsUnchanged'):
+                              'cancelRejected', 'untouchedBefore', 'returnNoopObserved', 'returnStarted', 'returnBoundaryObserved', 'returnCompleted', 'nativeDurationsUnchanged'):
                     for fault in ('missing', 'opposite', 'integer'):
                         rows, raw = self.single(fluid.EDIT_CASE)
                         evidence = rows[1]['editEvidence']
@@ -433,7 +434,7 @@ class FluidAdapterTests(unittest.TestCase):
                         with self.subTest(kind=kind, mode=mode, field=field, fault=fault):
                             self.assertTrue(self.verify((rows, raw))['issues'])
                 for fault in ('wrong-id', 'full-weight', 'final-weight', 'final-endpoint', 'portion', 'native-menu',
-                              'anchor-container', 'transfer-duration', 'drink-progress', 'missing-evidence'):
+                              'anchor-container', 'transfer-duration', 'drink-progress', 'return-before', 'return-after', 'missing-evidence'):
                     rows, raw = self.single(fluid.EDIT_CASE)
                     if fault == 'wrong-id': rows[1]['editEvidence']['bottleId'] = raw[0][1]['bottles'][0]['id']
                     elif fault == 'full-weight': rows[1]['editEvidence']['fullWeight'] = .6
@@ -444,6 +445,8 @@ class FluidAdapterTests(unittest.TestCase):
                     elif fault == 'anchor-container': rows[1]['commands'][0]['dispatchSource'] = 'bag'
                     elif fault == 'transfer-duration': rows[1]['editEvidence']['pickupDuration'] = 0
                     elif fault == 'drink-progress': rows[1]['commands'][1]['drinkProgress'] = False
+                    elif fault == 'return-before': rows[1]['editEvidence']['returnBefore'] = 'root' if mode == 'toolkit' else 'bag'
+                    elif fault == 'return-after': rows[1]['editEvidence']['returnAfter'] = 'root'
                     else: rows[1].pop('editEvidence')
                     with self.subTest(kind=kind, mode=mode, fault=fault):
                         self.assertTrue(self.verify((rows, raw))['issues'])
@@ -455,12 +458,24 @@ class FluidAdapterTests(unittest.TestCase):
             evidence = rows[1]['editEvidence']
             self.assertIs(evidence['returnStarted'], False)
             self.assertEqual(0, evidence['returnTransactionId'])
-            self.assertIs(evidence['returnDontAdd'], False)
+            self.assertIs(evidence['returnDontAdd'], kind == 'mp')
+            self.assertEqual(('root', 'bag'), (evidence['returnBefore'], evidence['returnAfter']))
             self.assertIs(evidence['returnNoopObserved'], False)
             self.assertEqual([], self.verify((rows, raw))['issues'])
             # The former marker would incorrectly label an ordinary completed return as a no-op.
             evidence['returnNoopObserved'] = not evidence['returnStarted'] and evidence['returnTransactionId'] == 0
             self.assertTrue(self.verify((rows, raw))['issues'])
+        # Completion's dontAdd is diagnostic: either boolean may remain after replication/revalidation.
+        for mode in ('native', 'toolkit'):
+            self.selection['mode'] = mode
+            for value in (False, True):
+                rows, raw = self.single(fluid.EDIT_CASE)
+                rows[1]['editEvidence']['returnDontAdd'] = value
+                self.assertEqual([], self.verify((rows, raw))['issues'])
+            for value in (None, 0, 'true'):
+                rows, raw = self.single(fluid.EDIT_CASE)
+                rows[1]['editEvidence']['returnDontAdd'] = value
+                self.assertTrue(self.verify((rows, raw))['issues'])
         for value in (None, True, 1, -1):
             rows, raw = self.single(fluid.EDIT_CASE)
             rows[1]['editEvidence']['returnTransactionId'] = value

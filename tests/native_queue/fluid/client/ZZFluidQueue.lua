@@ -17,7 +17,7 @@ local previousAuthority,previousBag,lastCurrent
 local commands,observations={},{}
 local waitingCancelVerified=false
 local independentMoveVerified=false
-local editEvidence,editActions
+local editEvidence,editActions,editObserver
 local function case()return config.cases[step]end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function emit(row)
@@ -119,6 +119,35 @@ local function cancelWaiting()
  commands[2].cancelled=true;waitingCancelVerified=true
  trace('waiting-cancel',{id=commands[2].id,removed=#removed,retained=#retained})
 end
+-- Observe queue completion boundaries, leaving every native action callback untouched.
+local function observeReturn(observedQueue,returning,bottle,root,bag,evidence)
+ local previous,previousRaw=observedQueue.onCompleted,rawget(observedQueue,'onCompleted')
+ local pendingBefore
+ local function endpoint()
+  local container=bottle:getContainer()
+  assert(container==root or container==bag,'return boundary reached an unrelated container')
+  return container==root and 'root'or 'bag'
+ end
+ local observer
+ observer=function(self,action)
+  local imminent=self.current==action and self.queue[1]==action and self.queue[2]==returning
+  if imminent then pendingBefore=endpoint()end
+  local completing=action==returning and self.current==returning and self.queue[1]==returning
+  local after=completing and endpoint()
+  local result=previous(self,action)
+  if imminent and (self.current==returning or self:indexOf(returning)==-1)and not evidence.returnBoundaryObserved then
+   evidence.returnBefore=pendingBefore;evidence.returnBoundaryObserved=true
+  end
+  if completing and self:indexOf(returning)==-1 then
+   assert(pendingBefore,'return completion lacked its queue handoff boundary')
+   evidence.returnBefore=pendingBefore;evidence.returnAfter=after
+   evidence.returnBoundaryObserved=true;evidence.returnCompleted=true
+  end
+  return result
+ end
+ observedQueue.onCompleted=observer
+ return {queue=observedQueue,callback=observer,previous=previousRaw}
+end
 local function enqueueEditedBottle(player)
  local root,bag=player:getInventory(),state.bag:getItemContainer()
  local bottle=assert(root:getItemById(ids.bottles[2].id))
@@ -177,6 +206,7 @@ local function enqueueEditedBottle(player)
  assert(pickup.maxTime==editEvidence.pickupDuration and returning.maxTime==editEvidence.returnDuration and drink.maxTime==460,
   'edits changed native durations')
  editEvidence.nativeDurationsUnchanged=true
+ editObserver=observeReturn(queue(),returning,bottle,root,bag,editEvidence)
  trace('edit-dispatch',editEvidence)
 end
 local function finish()
@@ -200,16 +230,25 @@ local function finish()
  end
  if spec.edit then
   if not editEvidence then reason='edit-not-dispatched'else
-   -- perform() resets started and transactionId after a real transfer too. isValid's
-   -- dontAdd marker survives completion and distinguishes the already-destination no-op.
+   -- Host perform() revalidates after the server transaction, so dontAdd can be
+   -- true after an ordinary transfer too. The observed container transition is decisive.
    editEvidence.returnDontAdd=editActions.returning.dontAdd
    editEvidence.returnStarted=editActions.returning.started
    editEvidence.returnTransactionId=editActions.returning.transactionId
-   editEvidence.returnNoopObserved=editEvidence.returnDontAdd==true
+   editEvidence.returnNoopObserved=editEvidence.returnBoundaryObserved==true and editEvidence.returnCompleted==true
+    and editEvidence.returnBefore=='bag'and editEvidence.returnAfter=='bag'
+   if not editEvidence.returnBoundaryObserved or not editEvidence.returnCompleted
+    or editEvidence.returnBefore~=(config.mode=='toolkit'and 'bag'or 'root')or editEvidence.returnAfter~='bag'then
+    reason='native-return-transition-differs'
+   end
    if editEvidence.returnStarted~=false or editEvidence.returnTransactionId~=0 then reason='native-return-not-completed'end
    if editEvidence.returnNoopObserved~=(config.mode=='toolkit')then reason='native-return-path-differs'end
    if receipt.bottles[2].source~=(config.mode=='toolkit'and 'root'or 'bag')then reason='edited-bottle-endpoint-differs'end
   end
+ end
+ if editObserver then
+  assert(editObserver.queue.onCompleted==editObserver.callback,'return observer was replaced')
+  editObserver.queue.onCompleted=editObserver.previous;editObserver=nil
  end
  if receipt.thirst>=ids.thirst-.00001 then reason='thirst-not-reduced'end
  local row={event='case',id=case(),status=reason and 'failed'or 'passed',reason=reason,commands=commands,
@@ -223,7 +262,7 @@ local function finish()
  end
  previousAuthority=authorityState;previousBag=state.bag
  ids,state,authorityState,receipt,lastCurrent=nil,nil,nil,nil,nil
- commands,observations={},{};waitingCancelVerified=false;independentMoveVerified=false;editEvidence,editActions=nil,nil
+ commands,observations={},{};waitingCancelVerified=false;independentMoveVerified=false;editEvidence,editActions,editObserver=nil,nil,nil
  ISTimedActionQueue.add(ISUnequipAction:new(getPlayer(),previousBag,50))
  phase='unequipped';since=getTimestampMs()
 end

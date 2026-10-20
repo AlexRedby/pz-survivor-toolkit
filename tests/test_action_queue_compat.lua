@@ -119,6 +119,7 @@ ISWashClothing.GetRequiredWater = function() return 1 end
 ISWashClothing.GetRequiredSoap = function() return 0 end
 ISTransferAction = {GetDropItemOffset = function() end, transferItem = function() end}
 local nativeTransferItem=ISTransferAction.transferItem
+local nativeDropItemOffset=ISTransferAction.GetDropItemOffset
 local transferItemGuard,adoptedTransferItem
 ISInventoryTransferUtil = {newInventoryTransferAction = function(character, item, src, dst) return ISInventoryTransferAction:new(character, item, src, dst) end}
 ISInventoryPaneContextMenu = {getContainers = function() return list({}) end,
@@ -217,10 +218,12 @@ PZSurvivorToolkit.ActionQueuePolicy={skipUnavailableHygiene=function() end,
 end, adoptTransferFloorHelper=function(previous,replacement)
     transferHelperAdopted=previous==nativeFloorHelper and ISInventoryTransferAction.getNotFullFloorSquare==replacement
     return transferHelperAdopted
-end, adoptTransferItemHelper=function(previous,replacement,guard)
+end, adoptTransferItemHelper=function(previous,replacement,guard,previousOffset,replacementOffset)
     assert(previous==nativeTransferItem and replacement==ISTransferAction.transferItem and replacement~=previous,
         'verified Tidy load must adopt its exact new native transfer wrapper')
     assert(type(guard)=='function' and guard(),'verified Tidy source identity must match before adoption')
+    assert(previousOffset==nativeDropItemOffset and replacementOffset==ISTransferAction.GetDropItemOffset
+        and replacementOffset~=previousOffset,'verified Tidy load adopts the companion floor-offset wrapper')
     transferItemGuard,adoptedTransferItem=guard,replacement
     return true
 end, adoptTransferMethods=function(previous,replacement,guard)
@@ -354,6 +357,7 @@ assert(transferHelperAdopted,'verified Tidy load hands the exact native wrapper 
 assert(transferItemGuard and transferItemGuard() and adoptedTransferItem==ISTransferAction.transferItem,
     'actual pinned Tidy source adopts its once-captured native delegate wrapper')
 assert(TidyFixture.ISTransferAction_transferItem==nativeTransferItem,'actual source saves the captured helper as its private delegate')
+assert(TidyFixture.ISTransferAction_GetDropItemOffset==nativeDropItemOffset,'actual source saves the companion offset delegate')
 assert(PZSurvivorToolkit.ActionQueueLifecycle,'early Compat load must install Lifecycle before P4 method snapshots')
 local tidyPublic=P4TidyUpMeister
 P4TidyUpMeister={registerActionPolicy=tidyPublic.registerActionPolicy,registerWornItemReplacement=tidyPublic.registerWornItemReplacement}
@@ -367,7 +371,12 @@ end
 local changedTransferItem=ISTransferAction.transferItem
 ISTransferAction.transferItem=function() end
 assert(ISTransferAction.transferItem~=adoptedTransferItem,'late global helper replacement cannot match the adopted wrapper')
+assert(not transferItemGuard(),'late global transfer replacement invalidates adopted helper identity')
 ISTransferAction.transferItem=changedTransferItem
+local changedOffset=ISTransferAction.GetDropItemOffset
+ISTransferAction.GetDropItemOffset=function() end
+assert(not transferItemGuard(),'late companion offset replacement invalidates adopted helper identity')
+ISTransferAction.GetDropItemOffset=changedOffset
 assert(transferItemGuard(),'restoring exact source identity restores the helper guard')
 for id in pairs(paths) do assert(compat.isInstalled(id), 'source-pinned adapter installed: ' .. id) end
 assert(returnAdoptions == 2, 'both verified transfer patches must update native return recognition')

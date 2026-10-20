@@ -28,7 +28,7 @@ for name,callback in pairs(base) do if type(callback)=="function" then baseMetho
 baselineSafe=unique(baseMethods)
 local files = {[transfer] = "ISInventoryTransferAction.lua", [lowlevel] = "ISTransferAction.lua", [drink] = "ISDrinkFluidAction.lua"}
 local allowed = {[transfer] = {new=true,isValid=true,start=true,perform=true,stop=true,transferItem=true,checkQueueList=true,getNotFullFloorSquare=true},
-    [lowlevel] = {transferItem=true}, [drink] = {start=true}}
+    [lowlevel] = {transferItem=true,GetDropItemOffset=true}, [drink] = {start=true}}
 for owner in pairs(files) do
     local methods,own = {},{}
     for name, callback in pairs(owner) do if type(callback) == "function" then methods[name],own[name] = callback,true end end
