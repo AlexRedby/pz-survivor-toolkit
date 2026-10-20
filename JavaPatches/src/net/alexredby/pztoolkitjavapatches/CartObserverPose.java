@@ -2,7 +2,7 @@ package net.alexredby.pztoolkitjavapatches;
 
 /** A bounded cosmetic actor/cart pose. Never writes native movement or network state. */
 final class CartObserverPose {
-    static final double MAX_OFFSET=.75, RELEASE_SECONDS=.12, ANCHOR_RECOVERY=.10;
+    static final double MAX_OFFSET=.75, RELEASE_SECONDS=.12, RELEASE_SPEED=.6, ANCHOR_RECOVERY=.10;
     record Pose(double x,double y,double heading) {}
     private static Pose rounded(double x,double y,double heading) {
         return new Pose((float)x,(float)y,CartSteeringMath.wrap(heading));
@@ -124,9 +124,12 @@ final class CartObserverPose {
                 || !CartObserverPose.clear(query,previous,front))) previous=null;
             Pose target;
             if(previous!=null && rawPrevious!=null) {
-                double decay=Math.exp(-Math.min(seconds,.1)/RELEASE_SECONDS);
-                target=rounded(raw.x+(previous.x-rawPrevious.x)*decay,
-                    raw.y+(previous.y-rawPrevious.y)*decay,raw.heading);
+                double dt=Math.min(seconds,.1),dx=previous.x-rawPrevious.x,dy=previous.y-rawPrevious.y;
+                double offset=Math.hypot(dx,dy),decay=Math.exp(-dt/RELEASE_SECONDS);
+                // Do not pull the whole actor sideways at several tiles/second as yaw catches up.
+                // The exponential tail settles smoothly; only free correction release is rate limited.
+                if(offset>1e-9) decay=Math.max(decay,1-RELEASE_SPEED*dt/offset);
+                target=rounded(raw.x+dx*decay,raw.y+dy*decay,raw.heading);
                 if(distance(raw,target)>MAX_OFFSET || !CartObserverPose.clear(query,target,front)) {
                     // Revalidated contact with unchanged native pose needs no repeated outward search.
                     target=raw.equals(rawPrevious)?previous:project(query,raw,previous,anchor,front);

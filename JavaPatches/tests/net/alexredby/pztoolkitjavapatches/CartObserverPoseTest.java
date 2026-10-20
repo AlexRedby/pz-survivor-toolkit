@@ -82,6 +82,26 @@ public final class CartObserverPoseTest {
         near(raw.x(),40,0,"failed solve must not retain stale anchor");
         check(state.update(changed,Double.NaN,0,0,CartFootprint.WALK_FRONT,.016)==null,"invalid coordinate must clear state");
     }
+    private static void releaseRateBound() {
+        for(double origin:new double[]{0,10825.5}) for(double dt:new double[]{0,1./120,1./60,.049,.1,.25}) {
+            CartFootprint.Query wall=(x1,y1,x2,y2)->Math.max(x1-origin,x2-origin)+.3>=2;
+            var state=new CartObserverPose.State();double x=origin+1,y=origin;
+            var p=valid(state,wall,x,y,0,CartFootprint.WALK_FRONT);
+            double before=Math.hypot(p.x()-(float)x,p.y()-(float)y);
+            for(int frame=0;frame<5;frame++) {
+                // Native travel is unrestricted; limit only the independently retained visual offset.
+                x+=.02;y+=.01;
+                p=state.update((a,b,c,d)->false,x,y,0,CartFootprint.WALK_FRONT,dt);
+                double after=Math.hypot(p.x()-(float)x,p.y()-(float)y);
+                double tolerance=2*Math.hypot(Math.ulp((float)x),Math.ulp((float)y))+1e-6;
+                check(before-after<=CartObserverPose.RELEASE_SPEED*Math.min(dt,.1)+tolerance,
+                    "free visual correction released faster than cap at dt="+dt+" origin="+origin);
+                check(after<=before+tolerance,"free release must not grow correction");
+                before=after;
+            }
+        }
+    }
+
     private static void nativePredictedActorOverlap() {
         CartFootprint.Query wall=(x1,y1,x2,y2)->Math.min(x1,x2)-.3<=10832;
         double[][] nativeFrames={{10832.345,10146.881,3.4556804},{10832.325,10146.906,3.4556746},
@@ -161,7 +181,7 @@ public final class CartObserverPoseTest {
         }
     }
     public static void main(String[] args) {
-        historicalPrediction();mirroredApproachAndRelease();cornersAndChanges();finiteWallCannotSwapSides();stationaryCostAndOpening();rotatedContact();nativePredictedActorOverlap();turningAndFreeMotion();
+        historicalPrediction();mirroredApproachAndRelease();cornersAndChanges();finiteWallCannotSwapSides();stationaryCostAndOpening();rotatedContact();nativePredictedActorOverlap();releaseRateBound();turningAndFreeMotion();
         System.out.println("CART_OBSERVER_POSE_PASS");
     }
 }

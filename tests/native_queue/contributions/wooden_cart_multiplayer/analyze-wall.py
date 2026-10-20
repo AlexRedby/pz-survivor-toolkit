@@ -9,7 +9,7 @@ DURATION = 29000
 SETTLED = (28000, DURATION)
 PHASES = [('idle', 0), ('walk', 1000), ('reverse', 9500), ('reverse-turn', 12000),
           ('reverse-stop', 15500), ('forward-turn', 16000), ('forward-out', 21000), ('settled', 26000)]
-WINDOWS = {'idle': (100, 800), 'walk': (1500, 9300), 'reverse': (10500, 11800),
+WINDOWS = {'idle': (100, 900), 'walk': (1500, 9300), 'reverse': (10500, 11800),
            'reverse-turn': (12300, 15300), 'reverse-stop': (15700, 15900),
            'forward-turn': (16300, 20800), 'forward-out': (21300, 25800), 'settled': SETTLED}
 FRONT_DURATION = 18000
@@ -18,7 +18,7 @@ FRONT_SETTLED = (17300, FRONT_DURATION)
 FRONT_RELEASE = (6750, 7400)
 FRONT_PHASES = [('idle', 0), ('walk', 1000), ('release', 6500), ('reverse', 7500),
                 ('reverse-stop', 10000), ('restart', 10800), ('settled', 15500)]
-FRONT_WINDOWS = {'idle': (100, 800), 'contact': (5000, 6300), 'release': FRONT_RELEASE,
+FRONT_WINDOWS = {'idle': (100, 900), 'contact': (5000, 6300), 'release': FRONT_RELEASE,
                  'reverse': (7800, 9800), 'restart': (11100, 12000),
                  'contact-again': (14500, 15300), 'settled': FRONT_SETTLED}
 BRACE_TRACK = 'Toolkit_WoodCartBrace'
@@ -302,7 +302,7 @@ def analyze(profile, selection, common):
             sexes.add(r['female'])
             if role == 'client1': require(r['enabled'], 'Owner patch disabled')
     require(len(sexes) == 1, 'Owner sex changed across roles/window')
-    initial=covered(states['client1'],'wall',(0,800),'owner/initial')
+    initial=covered(states['client1'],'wall',(0,900),'owner/initial')
     require(all(abs(r['x']-(pad['wallX']+(1.8 if front else 2.8)))<.05 and abs(r['y']-(pad['minY']+31.5))<.05
                 and abs(wrap(r['heading']-pad['initialHeading']))<.04 for r in initial), 'Owner initial wall pose differs')
     inputs = records('client1', '[CART_MP_WALL] INPUT ')

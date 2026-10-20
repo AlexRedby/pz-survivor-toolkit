@@ -150,6 +150,25 @@ class CartMPWallTests(unittest.TestCase):
         self.assertIn('not authoritative',report['observerFootprint']['scope'])
         self.assertEqual(report['traffic']['senderIntervalMs'],100)
 
+    def test_initial_window_accepts_measured_start_delay_without_lowering_minimum(self):
+        rows=[r for r in self.rows('client1','[CART_MP_STATE] ') if 0<=r['wall']-self.epoch<=900]
+        schedule=[209,381,537,660,804]
+        remove={id(r) for r in rows[len(schedule):]}
+        self.logs['client1']=[e for e in self.logs['client1'] if not (isinstance(e,tuple) and e[0]=='[CART_MP_STATE] ' and id(e[1]) in remove)]
+        for row,t in zip(rows,schedule):
+            row['wall']=self.epoch+t
+            fields=row['pose'].split(',');fields[2]=str(t//100+1);row['pose']=','.join(fields)
+        report=self.analyze()
+        self.assertTrue(report['evidenceComplete'])
+        self.assertEqual(report['phases']['idle']['client1']['samples'],5)
+        self.logs['client1']=[e for e in self.logs['client1'] if not (isinstance(e,tuple) and e[0]=='[CART_MP_STATE] ' and e[1]['wall']==self.epoch+537)]
+        with self.assertRaisesRegex(ValueError,'owner/initial: insufficient samples'):self.analyze()
+
+    def test_initial_window_still_rejects_premature_movement_before_forward(self):
+        row=next(r for r in self.rows('client1','[CART_MP_STATE] ') if r['wall']==self.epoch+900)
+        row['x']+=.06
+        with self.assertRaisesRegex(ValueError,'Owner initial wall pose differs'):self.analyze()
+
     def test_two_sample_reverse_stop_accepts_sampler_jitter_and_held_pivot(self):
         entries=self.logs['client1']
         self.logs['client1']=[e for e in entries if not (isinstance(e,tuple) and e[0]=='[CART_MP_STATE] ' and e[1]['wall']==self.epoch+15900)]
