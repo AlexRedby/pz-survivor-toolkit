@@ -176,7 +176,6 @@ if getActivatedMods():contains("TVRadio_ReInvented") then
         true,
         getText("UI_options_PZSurvivorToolkit_media_window_tooltip")
     )
-    mediaWindowOption.onChangeApply = notifySettingsChanged
     vhsControlsOption = options:addTickBox(
         "ImproveVHSControls",
         getText("UI_options_PZSurvivorToolkit_vhs_controls"),
@@ -188,11 +187,6 @@ end
 options.apply = function()
     notifySettingsChanged()
 end
-
-enabledOption.onChangeApply = notifySettingsChanged
-colorOption.onChangeApply = notifySettingsChanged
-toggleKeyOption.onChangeApply = notifySettingsChanged
-radiusOption.onChangeApply = notifySettingsChanged
 
 function Settings.showHighlightButton()
     return sidebarOption:getValue() == true

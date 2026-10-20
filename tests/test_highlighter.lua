@@ -660,6 +660,38 @@ test("cleanup makes progress while the game is paused", function()
     equal(w.highlighter.getStatus().clearing, false)
 end)
 
+test("settings Apply notifies once after all option values are committed", function()
+    local w = setup(nil, true)
+    local observed = {}
+    w.highlighter.settingsChanged = function()
+        observed[#observed + 1] = {
+            enabled = w.settings.isEnabled(), color = w.settings.getColor(),
+            radius = w.settings.getRadius(), key = w.settings.getToggleKey(),
+            mediaWindow = w.settings.keepMediaWindowOpen(),
+        }
+    end
+    local changes = {
+        { "Enabled", false }, { "Color", { r = 0.2, g = 0.4, b = 0.6, a = 0.8 } },
+        { "Radius", 4 }, { "ToggleKey", 12 }, { "KeepMediaWindowOpen", false },
+    }
+    -- MainOptions commits each control, then applies the options group once.
+    for _, change in ipairs(changes) do
+        local option = w.options.dict[change[1]]
+        if option.onChangeApply then option:onChangeApply(change[2]) end
+        option:setValue(change[2])
+    end
+    w.options:apply()
+    equal(#observed, 1, "one Apply must produce one settings notification")
+    equal(observed[1].enabled, false)
+    equal(observed[1].color.r, 0.2)
+    equal(observed[1].color.g, 0.4)
+    equal(observed[1].color.b, 0.6)
+    equal(observed[1].color.a, 0.8)
+    equal(observed[1].radius, 20)
+    equal(observed[1].key, 12)
+    equal(observed[1].mediaWindow, false)
+end)
+
 if NativeModOptionsSource then
     test("native queue defaults on when an older settings file has no queue entry", function()
         local w = setup("tickbox|PZSurvivorToolkit|Enabled|false\n", true)

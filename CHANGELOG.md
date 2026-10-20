@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.129
+
+- **Fixed:** Toolkit refreshes dependent features once after Mod Options applies all new values. Removed early per-option notifications that repeated refreshes with stale or partially applied settings; the highlight hotkey still takes effect immediately.
+
 ### 0.1.128
 
 - **Changed:** Canceling a wholly unstarted operation with the verified native no-effect cancellation handler no longer treats shared resources with preceding work as a conflict. Dependencies of following operations, required cleanup, started work and custom cancellation handlers remain protected.
