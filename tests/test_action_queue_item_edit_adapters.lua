@@ -11,10 +11,13 @@ local function reader(text)
         local line=text:sub(position,boundary-1);position=boundary+1;return line
     end}
 end
-local function setup(changed,foreignMerge)
+local function setup(changed,foreignMerge,alias)
     local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
     f.native('shared/TimedActions/ISTransferAction.lua');f.native('shared/TimedActions/ISDrinkFluidAction.lua')
     f.native('shared/RadioCom/ISRadioAction.lua')
+    if alias=='drink-native' then ISDrinkFluidAction.complete=ISDrinkFluidAction.isValid
+    elseif alias=='drink-base' then ISDrinkFluidAction.complete=ISBaseTimedAction.perform
+    elseif alias=='base' then ISBaseTimedAction.perform=ISBaseTimedAction.stop end
     isClient,isServer=function()return false end,function()return false end
     getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
     getGameFilesInput=function(path)
@@ -58,6 +61,7 @@ local function setup(changed,foreignMerge)
     end
     local root=container();f.player.inventory=root
     local bag=f.item('Base.Bag_Schoolbag');bag.class='InventoryContainer';bag.getContainer=function()return root end
+    bag.getMaxItemSize=function(self)return self.maxItemSize or 0 end
     local bagInventory=container(bag);bag.getInventory=function()return bagInventory end
     local function item()
         local value=f.item('Base.WaterBottle');value.container=bagInventory
@@ -90,6 +94,9 @@ local function setup(changed,foreignMerge)
     f.player.DrinkFluid=function(_,value,delta,useUtensil)
         assert(value==water and useUtensil==false);drinks=drinks+1
         fluid.amount=fluid.amount*(1-math.max(0,math.min(1,delta)))
+        -- Java FluidContainer.removeFluidInstanceIfEmpty uses PZMath.equal's
+        -- strict absolute tolerance, rather than retaining every positive double.
+        if math.abs(fluid.amount)<0.0001 then fluid.amount=0 end
     end
     if foreignMerge then ISInventoryTransferAction.canMergeAction=function()error('foreign preloaded merge must not execute')end end
     f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
@@ -131,6 +138,25 @@ do
     assert(s.water.container==s.root,'redundant actual native pickup does not duplicate or move item')
     local other=s.item();s.water.container=other
     assert(not s.adapters.transfer(s.transfer()),'third-location missing source is not an unconditional move')
+end
+do
+    for _,amount in ipairs({0.00015,0.0002,0.000075})do
+        local s=setup();s.water.container=s.root;s.fluid.amount=amount
+        local first,second=s.drink(),s.drink()
+        local a,b=assert(s.adapters.drink(first)),assert(s.adapters.drink(second))
+        assert(a.resources[2].effects[1].set==0,'pruned/boundary endpoints cannot promise remaining water')
+        assert(s.model.evaluate({{action=first,edit=a},{action=second,edit=b}}).status=='denied',
+            'native epsilon pruning must block a downstream nonempty requirement')
+        assert(first:complete())
+        if amount~=0.0002 then
+            assert(s.fluid.amount==0 and not second:isValid(),'actual native complete prunes the modeled tiny remainder')
+        end
+    end
+    local s=setup();s.water.container=s.root;s.fluid.amount=0.001
+    local first,second=s.drink(),s.drink()
+    assert(s.model.evaluate({{action=first,edit=assert(s.adapters.drink(first))},
+        {action=second,edit=assert(s.adapters.drink(second))}}).status=='allowed',
+        'endpoints safely above pruning keep SP captured-ratio continuation')
 end
 do
     local s=setup();local pickup=s.transfer();local drink=s.drink();local a,b=s.adapters.transfer(pickup),s.adapters.drink(drink)
@@ -178,6 +204,17 @@ end
 do
     local s=setup(nil,true)
     assert(not s.adapters.transfer(s.transfer()),'owned merge wrapper cannot hide an unreviewed captured delegate')
+end
+for _,alias in ipairs({'drink-native','drink-base','base'})do
+    local s=setup(nil,nil,alias)
+    assert(not s.adapters.drink(s.drink()),'preloaded native/base method aliases cannot acquire a consumption effect: '..alias)
+end
+do
+    local s=setup();local restore=s.transfer(nil,s.root,s.bagInventory)
+    s.bag.maxItemSize=0.5
+    assert(not s.adapters.transfer(restore),'native bag maximum item weight is an independent transfer prerequisite')
+    s.bag.maxItemSize=1
+    assert(s.adapters.transfer(restore),'maximum item weight is inclusive')
 end
 do
     local s=setup();local action=s.transfer()

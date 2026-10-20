@@ -13,13 +13,27 @@ local lifecycle = {"new", "begin", "create", "adjustMaxTime", "isValid", "isVali
     "perform", "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceComplete", "forceStop", "forceCancel", "invoke"}
 local snapshots, approved, guards, baseHooks, pins = {}, {}, {}, {}, {}
 local baseMethods={}
+local ownMethods,baselineSafe={},true
+local function unique(methods)
+    local seen={}
+    for name,callback in pairs(methods) do
+        if name~="derive" and type(callback)=="function" then
+            if seen[callback] then return false end
+            seen[callback]=name
+        end
+    end
+    return true
+end
 for name,callback in pairs(base) do if type(callback)=="function" then baseMethods[name]=callback end end
+baselineSafe=unique(baseMethods)
 local files = {[transfer] = "ISInventoryTransferAction.lua", [lowlevel] = "ISTransferAction.lua", [drink] = "ISDrinkFluidAction.lua"}
 local allowed = {[transfer] = {new=true,isValid=true,start=true,perform=true,stop=true,transferItem=true,checkQueueList=true,getNotFullFloorSquare=true},
     [lowlevel] = {transferItem=true}, [drink] = {start=true}}
 for owner in pairs(files) do
-    local methods = {}
-    for name, callback in pairs(owner) do if type(callback) == "function" then methods[name] = callback end end
+    local methods,own = {},{}
+    for name, callback in pairs(owner) do if type(callback) == "function" then methods[name],own[name] = callback,true end end
+    baselineSafe=baselineSafe and unique(methods)
+    ownMethods[owner]=own
     if owner ~= lowlevel then for _, name in ipairs(lifecycle) do methods[name] = owner[name] or false end end
     snapshots[owner], approved[owner], guards[owner] = methods, {}, {}
 end
@@ -43,8 +57,9 @@ local function origin(owner,name,callback)
         local ok,delegate=pcall(mergeDelegate,callback)
         return ok and Proof.closure(delegate,"ISInventoryTransferAction.lua")
     end
-    return Proof.closure(callback,files[owner]) or Proof.closure(callback,"ISBaseTimedAction.lua")
-        or baseHooks[name]==callback and Proof.closure(callback,"ActionQueue.lua")
+    if ownMethods[owner][name] then return Proof.closure(callback,files[owner]) end
+    return callback==base[name] and (Proof.closure(callback,"ISBaseTimedAction.lua")
+        or baseHooks[name]==callback and Proof.closure(callback,"ActionQueue.lua"))
 end
 
 -- Policy calls this only after its source-owned adoption path succeeds. Keep every
@@ -75,7 +90,7 @@ function Adapters.adoptBase(name,previous,replacement)
     return true
 end
 local function unchanged(owner,action)
-    if ISBaseTimedAction~=base or ISInventoryTransferAction~=transfer or ISTransferAction~=lowlevel or ISDrinkFluidAction~=drink then return false end
+    if not baselineSafe or ISBaseTimedAction~=base or ISInventoryTransferAction~=transfer or ISTransferAction~=lowlevel or ISDrinkFluidAction~=drink then return false end
     local policy=Toolkit.ActionQueuePolicy
     if not policy or type(policy.matchesNative)~="function" or not policy.matchesNative(action) then return false end
     for name,callback in pairs(baseMethods) do
@@ -157,6 +172,11 @@ end
 function Adapters.transfer(action)
     if not pending(action,transfer) or not leaf(action.item,action.character) or action.srcContainer==action.destContainer
         or not ancestry(action.srcContainer,action.character) or not ancestry(action.destContainer,action.character) then return end
+    local bag=action.destContainer:getContainingItem()
+    if bag then
+        local maximum,weight=bag:getMaxItemSize(),action.item:getUnequippedWeight()
+        if not finite(maximum) or maximum<0 or not finite(weight) or weight<0 or maximum>0 and weight>maximum then return end
+    end
     local groups=action.queueList
     if not singleton(groups) or type(groups[1])~="table" or getmetatable(groups[1])
         or not singleton(groups[1].items) or groups[1].items[1]~=action.item
@@ -195,7 +215,16 @@ function Adapters.drink(action)
         requires={{field="location",equal=action.character:getInventory()},{field="fluid",equal=fluid}},effects={}}}
     local effects
     if isClient() then effects={{field="amountLower",set=0},{field="amountUpper",scale=1-action.percentage}}
-    else effects={{field="amountLower",cap=capacity*action.endRatio},{field="amountUpper",cap=capacity*action.endRatio}} end
+    else
+        local endpoint=capacity*action.endRatio
+        -- Native FluidContainer removes a fluid instance below 1e-4. Do not
+        -- promise nonempty near that boundary, including the ratio/float
+        -- uncertainty already accepted by the amount/filled-ratio shape check.
+        local pruningBoundary=0.0001+capacity*0.000001
+        local lower=(endpoint<=pruningBoundary or amount<=pruningBoundary)
+            and {field="amountLower",set=0} or {field="amountLower",cap=endpoint}
+        effects={lower,{field="amountUpper",cap=endpoint}}
+    end
     resources[#resources+1]={domain="fluid",key=fluid,facts={amountLower=amount,amountUpper=amount},
         requires={{field="amountLower",above=0}},effects=effects,bounds={amountLower={min=0,max=capacity},amountUpper={min=0,max=capacity}}}
     if Proof.closure(drink.isValidStart,"ISDrinkFluidAction.lua") then
