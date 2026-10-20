@@ -3,11 +3,13 @@ local Planting = require 'PZSurvivorToolkit/InventoryPlanting'
 local PlantingOptions = require 'PZSurvivorToolkit/InventoryPlantingOptions'
 local PlantingTooltip = require 'PZSurvivorToolkit/InventoryPlantingTooltip'
 local MediaTooltip = require 'PZSurvivorToolkit/InventoryMediaTooltip'
+local ClothingTooltip = require 'PZSurvivorToolkit/InventoryClothingTooltip'
 local Media = require 'SVSIT_logic'
 local entered, starting, started, complete, failed, ready = false, false, false, false, false, false
 local steps, step, since = {}, 1, 0
 local panel, active, seed, tape, clothing, worn, mediaId, mediaData, menu
 local contextPage, contextPane, contextRenders
+local clothingBaseHeight, clothingFlagHeight, menuOptionRect
 local startupFrames=0
 local function add(fn) steps[#steps + 1] = fn end
 local function fadeClear()
@@ -52,6 +54,23 @@ end
 appendObserver(PlantingTooltip,'growing')
 appendObserver(MediaTooltip,'vhs')
 
+local appendFlags=ClothingTooltip.appendFlags
+ClothingTooltip.appendFlags=function(target,item,...)
+    local frame=active and target==active.panel.tooltip and active
+    local before=target:getHeight()
+    local marked=item:isNoRecipes(target:getCharacter())
+    local result=appendFlags(target,item,...)
+    if frame then
+        assert(item==clothing,'flag extension received a different native clothing item')
+        assert(frame.phase=='measure' or frame.phase=='draw','flag extension outside a tooltip pass')
+        local after=target:getHeight()
+        assert((marked and after>before) or (not marked and after==before),
+            'native NoRecipes state and appended layout height disagree')
+        frame.flags[#frame.flags+1]={phase=frame.phase,marked=marked,before=before,h=after,w=target:getWidth()}
+    end
+    return result
+end
+
 local observedTooltipMethods
 local function observePhases(target)
     local methods=assert(getmetatable(target).__index,'native ObjectTooltip metatable missing')
@@ -78,7 +97,7 @@ local function observePanel(target)
     end
     target.render=function(self,...)
         assert(not active,'overlapping tooltip render')
-        active={panel=self,appends={},backgrounds={},borders={},main=0,comparison=0}
+        active={panel=self,appends={},flags={},backgrounds={},borders={},main=0,comparison=0}
         local result=render(self,...)
         self.fixtureFrame=active
         self.fixtureRenders=(self.fixtureRenders or 0)+1
@@ -100,6 +119,63 @@ local function fits()
     assert(panel:getWidth()>0 and panel:getHeight()>0,'empty native tooltip')
     assert(panel:getX()>=0 and panel:getX()+panel:getWidth()<getCore():getScreenWidth(),'tooltip clipped horizontally')
     assert(panel:getY()>=0 and panel:getY()+panel:getHeight()<getCore():getScreenHeight(),'tooltip clipped vertically')
+end
+local function clothingFrame(marked)
+    local frame=assert(panel.fixtureFrame,'native clothing render absent')
+    assert(frame.main==2 and frame.comparison==2 and #frame.appends==0,'BCI native comparison pipeline changed')
+    assert(#frame.backgrounds==2 and #frame.borders==2,'BCI main/side backgrounds missing')
+    assert(#frame.flags==2,'expected one flag extension in each BCI pass')
+    local measure,draw=frame.flags[1],frame.flags[2]
+    assert(measure.phase=='measure' and draw.phase=='draw','BCI flag measure/draw order changed')
+    assert(measure.marked==marked and draw.marked==marked,'BCI flag receipt differs from native item state')
+    assert(measure.before==draw.before and measure.h==draw.h and measure.w==draw.w,
+        'BCI flag passes disagree on native layout dimensions')
+    local main,side=frame.backgrounds[1],frame.backgrounds[2]
+    assert(main.x==0 and main.y==0 and main.h>=draw.h and main.w>=draw.w,'BCI background excludes flag layout')
+    assert(side.x>=main.x+main.w and side.y==0,'BCI comparison overlaps main content')
+    for i,background in ipairs(frame.backgrounds) do
+        local border=frame.borders[i]
+        assert(border.x==background.x and border.y==background.y and border.w==background.w and border.h==background.h,
+            'BCI border differs from content background')
+        assert(background.x+background.w<=panel:getWidth() and background.y+background.h<=panel:getHeight(),
+            'BCI window excludes main/comparison content')
+    end
+    fits()
+    return frame
+end
+local function closeMenu()
+    hidePanel()
+    if menu then
+        menu:hideAndChildren(); menu:setVisible(false); menu.visibleCheck=false; menu.joyfocus=nil
+    end
+end
+local function openClothingMenu(joyfocus)
+    hidePanel()
+    menu=ISContextMenu.get(0,joyfocus and getCore():getScreenWidth()-260 or 300,180)
+    menu.joyfocus=joyfocus and {} or nil
+    menu:addOption('Inspect native denim shirt',nil,function() end)
+    assert(menu:isAnyVisible(),'real clothing context menu is not visible')
+end
+local function attachClothingMenu()
+    assert(menu:isAnyVisible() and menu.currentOptionRect,'real menu did not render an option rectangle')
+    -- Native menu generates the rectangle. Programmatic attachment avoids physical hover input.
+    show(clothing,'Small',false)
+    panel:setContextMenu(menu); panel:setOwner(menu)
+end
+local function checkClothingMenu(joyfocus)
+    clothingFrame(false)
+    assert(menu:isAnyVisible() and panel:isVisible() and panel.contextMenu==menu and panel.owner==menu,
+        'open context menu hid its own item tooltip')
+    local rect=assert(menu.currentOptionRect,'native menu option rectangle missing')
+    menuOptionRect={x=rect.x,y=rect.y,width=rect.width,height=rect.height}
+    assert(not panel:overlaps({x=panel:getX(),y=panel:getY(),width=panel:getWidth(),height=panel:getHeight()},menuOptionRect),
+        'clothing main/comparison window overlaps the real context option')
+    if joyfocus then
+        assert(panel:getX()==getPlayerScreenLeft(0)+60 and panel:getY()==getPlayerScreenTop(0)+60,
+            'BCI joyfocus ignored the native player screen origin')
+    end
+    print('[INVENTORY_TOOLTIP] MENU '..(joyfocus and 'joyfocus' or 'option')..
+        ' visible=true owner=menu nativeRect=true nonoverlap=true main=2 comparison=2 fits=true')
 end
 local function check(name,kind,font)
     local frame=assert(panel.fixtureFrame,'native UI render absent')
@@ -127,6 +203,7 @@ add(function()
     assert(MediaTooltip.installed and ISToolTipInv._vhsHooked,'upstream renderer guard was not installed')
     assert(BCI_TooltipInv_Active and EuryTooltipController and EuryTooltipController.providers.BetterClothingInfo,
         'selected BCI provider is inactive')
+    assert(ClothingTooltip.installed,'BCI clothing adapter is inactive')
     local p=getPlayer(); p:setGodMod(true); p:setGhostMode(true); p:setAutoDrink(false)
     getCore():setOptionAutoDrink(false)
     if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
@@ -240,13 +317,49 @@ add(function()
         'BCI does not own clothing tooltip')
 end)
 add(function()
-    local frame=assert(panel.fixtureFrame)
-    assert(frame.main==2 and frame.comparison==2 and #frame.appends==0,'BCI native comparison pipeline changed')
-    assert(#frame.backgrounds==2 and #frame.borders==2,'BCI main/side backgrounds missing')
-    fits()
+    local frame=clothingFrame(false)
+    clothingBaseHeight=frame.backgrounds[1].h
     print('[INVENTORY_TOOLTIP] CLOTHING owner=BetterClothingInfo main=2 comparison=2 replaced=true extension=0 fits=true')
     shot('04-clothing')
-    hidePanel()
+    clothing:setNoRecipes(getPlayer(),true)
+    assert(clothing:isNoRecipes(getPlayer()),'native NoRecipes marker was not set')
+end)
+add(function()
+    local frame=clothingFrame(true)
+    clothingFlagHeight=frame.backgrounds[1].h
+    assert(clothingFlagHeight>clothingBaseHeight,'native NoRecipes label added no main background height')
+    print('[INVENTORY_TOOLTIP] FLAGS marked=true native=true measure=1 draw=1 heightAdded=true comparison=true')
+    shot('05-clothing-no-recipes')
+    clothing:setNoRecipes(getPlayer(),false)
+    assert(not clothing:isNoRecipes(getPlayer()),'native NoRecipes marker was not cleared')
+end)
+add(function()
+    local frame=clothingFrame(false)
+    assert(frame.backgrounds[1].h==clothingBaseHeight and frame.backgrounds[1].h<clothingFlagHeight,
+        'cleared native NoRecipes label retained layout height')
+    print('[INVENTORY_TOOLTIP] FLAGS marked=false native=true measure=1 draw=1 heightRestored=true comparison=true')
+    shot('06-clothing-recipes-restored')
+    show(clothing,'Small',true)
+    panel.anchorBottomLeft={x=getCore():getScreenWidth()-4,y=getCore():getScreenHeight()-4}
+end)
+add(function()
+    clothingFrame(false)
+    assert(panel:getY()+panel:getHeight()<=panel.anchorBottomLeft.y,'BCI anchor did not place combined window above anchor')
+    print('[INVENTORY_TOOLTIP] CLOTHING anchor=true rightEdge=true main=2 comparison=2 fits=true')
+    shot('07-clothing-anchor-edge')
+    openClothingMenu(false)
+end)
+add(function() attachClothingMenu() end)
+add(function()
+    checkClothingMenu(false)
+    shot('08-clothing-context-option')
+    closeMenu(); openClothingMenu(true)
+end)
+add(function() attachClothingMenu() end)
+add(function()
+    checkClothingMenu(true)
+    shot('09-clothing-context-joyfocus')
+    closeMenu()
     print('[INVENTORY_TOOLTIP] COMPLETE'); complete=true
 end)
 Events.OnMainMenuEnter.Add(function() entered=true end)

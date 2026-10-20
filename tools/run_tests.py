@@ -41,6 +41,7 @@ EXTRA_TESTS = (
     'test_inventory_planting.lua',
     'test_inventory_indicators.lua',
     'test_inventory_tooltips.lua',
+    'test_clothing_tooltip.lua',
     'test_smart_deposit.lua',
     'test_item_details.lua',
     'test_clothing_repair_menu.lua',
@@ -101,6 +102,7 @@ def main() -> None:
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
     parser.add_argument("--oc-stick-source", type=Path, help="organizedCategories_itemStick.lua for Quantity transfer protection checks")
     parser.add_argument("--vhs-tooltip-root", type=Path, help="active Show VHS Skills in Tooltip media/lua/client directory")
+    parser.add_argument("--bci-tooltip-root", type=Path, help="active Better Clothing Info media/lua/client directory")
     parser.add_argument("--native-inventory-context-menu", type=Path, help="vanilla inventory callbacks and sibling garment inspection UI")
     parser.add_argument("--native-action-root", type=Path, help="vanilla media/lua for queue/base/read contracts")
     parser.add_argument("--wishlist-game-root", type=Path, help="game Java directory for native wishlist menu callbacks")
@@ -193,6 +195,11 @@ def main() -> None:
                 lua.globals().NativeTooltipLuaRoot = str(args.native_action_root)
             if args.vhs_tooltip_root:
                 lua.globals().NativeVHSTooltipRoot = str(args.vhs_tooltip_root)
+        if name == "test_clothing_tooltip.lua":
+            if args.native_action_root:
+                lua.globals().NativeTooltipLuaRoot = str(args.native_action_root)
+            if args.bci_tooltip_root:
+                lua.globals().NativeBCITooltipRoot = str(args.bci_tooltip_root)
         if name == "test_vehicle_doors.lua" and args.native_action_root:
             lua.globals().NativeActionRoot = str(args.native_action_root)
         if name == "test_quartermaster_craft_ui.lua":

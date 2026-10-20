@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.154
+
+- **Fixed:** Better Clothing Info's main tooltip and comparison now use one measured frame for context-menu, controller and anchored placement. Its clothing details, comparison and settings remain upstream. The native per-item “No Recipes” marker is visible again and disappears when cleared.
+
 ### 0.1.153
 
 - **Fixed:** VHS skill and recipe details now participate in native tooltip measurement and placement through the same extension boundary as planting information. Long lines and additional rows fit the tooltip background and follow its visibility. Show VHS Skills in Tooltip still supplies its catalog and translations, while its unrelated clothing suppression and background-alpha changes are avoided.

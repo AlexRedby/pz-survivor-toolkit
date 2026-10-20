@@ -32,6 +32,7 @@ class FixtureTests(unittest.TestCase):
             manifest = json.loads((output / 'fixture-manifest.json').read_text())
             self.assertEqual(manifest['scenario'], 'inventory-tooltips')
             self.assertEqual(set(manifest['source_sha256']), set(packaging.MODULES))
+            self.assertIn('InventoryClothingTooltip', manifest['source_sha256'])
             self.assertTrue(all(len(digest) == 64 for digest in manifest['source_sha256'].values()))
             self.assertEqual((output / '42/media/lua/client/ZZInventoryTooltipNative.lua').read_bytes(),
                              (HERE / 'ZZInventoryTooltipNative.lua').read_bytes())
@@ -43,6 +44,18 @@ class FixtureTests(unittest.TestCase):
             root = Path(directory)
             with self.assertRaisesRegex(ValueError, 'Missing owned'):
                 packaging.prepare(root / 'missing', root / 'helper')
+            self.assertFalse((root / 'helper').exists())
+
+    def test_missing_clothing_adapter_is_rejected_before_output_is_created(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'Toolkit/42/media/lua/client/PZSurvivorToolkit'
+            source.mkdir(parents=True)
+            for name in packaging.MODULES:
+                if name != 'InventoryClothingTooltip':
+                    (source / (name + '.lua')).write_text('return {}\n')
+            with self.assertRaisesRegex(ValueError, 'Missing owned module: InventoryClothingTooltip'):
+                packaging.prepare(root / 'Toolkit', root / 'helper')
             self.assertFalse((root / 'helper').exists())
 
     def evidence(self, root, recipes=1, both='true'):
@@ -61,10 +74,12 @@ class FixtureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             text = self.evidence(root)
-            self.assertEqual(len(verifier.verify(root, text)['screenshots']), 4)
+            self.assertEqual(len(verifier.verify(root, text)['screenshots']), 9)
             for changed in (text.replace('measure=1 draw=1', 'measure=1 draw=2', 1),
                             text + '\n' + text.splitlines()[1],
                             text.replace('replaced=true', 'replaced=false'),
+                            text.replace('heightRestored=true', 'heightRestored=false'),
+                            text.replace('nonoverlap=true', 'nonoverlap=false', 1),
                             text + '\n[INVENTORY_TOOLTIP] FAIL timeout',
                             text.replace('02-vhs.png', 'unexpected.png')):
                 with self.assertRaises(ValueError):

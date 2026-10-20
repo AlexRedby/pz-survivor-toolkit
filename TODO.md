@@ -1,8 +1,3 @@
-# Better Clothing Info tooltip parity
-
-- [ ] Correct Better Clothing Info's context-menu/joypad placement ordering: its custom render assigns those coordinates before an unconditional mouse clamp overwrites them. Preserve clothing comparisons and previews; gate on native anchored/context positions in game.
-- [ ] Restore Better Clothing Info's missing native “No Recipes” information: current B42.21 uses `InventoryItem.isNoRecipes(player)`, while its copied tooltip checks a nonexistent script-item method. Check true/false native recipe eligibility and preserve comparison content.
-
 # In-cabin vehicle door control
 
 - [ ] Recheck the restored early red-aperture icon in the real radial menu with sufficient margins to both sector edges. The user selected the pre-angle-correction artwork; a historical in-game capture exists, but the current 64x64 export has not been captured again.

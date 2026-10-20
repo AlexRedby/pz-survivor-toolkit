@@ -96,7 +96,7 @@ Adds a character equipment panel, drag-and-drop changes, outfit sets and outfit 
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3604080281) · Workshop `3604080281` · Mod `EURY_CLOTHINGINFO` · Author: Eurymachus
 
-Compares clothing protection, condition, holes and insulation with equipped items; number/bar displays and comparison key are configurable. Replaces clothing tooltips and may conflict with mods changing `ISToolTipInv`. Full operation with the selected B42.21 set has not been tested.
+Compares clothing protection, condition, holes and insulation with equipped items; number/bar displays and comparison key are configurable. Toolkit delegates clothing content and comparison to BCI while measuring and placing the complete window. It also restores the native per-item “No Recipes” marker missing from BCI's copied header. Comparison, marker set/clear and menu/controller/anchored placement were checked in isolated macOS SP with the selected B42.21 set; other BCI options were not exhaustively checked.
 
 ## 17 Rain Cleans Blood
 

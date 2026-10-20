@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-MODULES = ('InventoryTooltip', 'InventoryMediaTooltip', 'InventoryPlantingTooltip')
+MODULES = ('InventoryTooltip', 'InventoryMediaTooltip', 'InventoryPlantingTooltip', 'InventoryClothingTooltip')
 
 
 def prepare(toolkit_source, output):
