@@ -18,6 +18,105 @@ import zombie.core.skinnedmodel.model.*;
 public final class ClearanceProbe {
     private static BufferedWriter output;
     private static BufferedWriter solves;
+    private static BufferedWriter cameras;
+    private static long captureSerial;
+    private record NativePose(zombie.characters.IsoPlayer player,long wall,float x,float y,float z,float heading,float angle) {}
+    private record ConsumedCamera(zombie.core.skinnedmodel.ModelCamera camera,long wall,float x,float y,float z,float angle,boolean world,boolean vehicle) {}
+    private static final class DrawFrame {
+        final long id,wall;
+        final NativePose nativePose;
+        final ModelInstance body,cart;
+        boolean bodyDrawn,cartDrawn;
+        DrawFrame(long id,long wall,NativePose pose,ModelInstance body,ModelInstance cart) {
+            this.id=id;this.wall=wall;this.nativePose=pose;this.body=body;this.cart=cart;
+        }
+    }
+    private static final java.util.WeakHashMap<ModelSlotRenderData,NativePose> nativePoses=new java.util.WeakHashMap<>();
+    private static final java.util.WeakHashMap<ModelSlotRenderData,DrawFrame> drawFrames=new java.util.WeakHashMap<>();
+    private static final ThreadLocal<ConsumedCamera> consumedCamera=new ThreadLocal<>();
+    private static float slotField(ModelSlotRenderData slot,String name) throws Exception {
+        var field=ModelSlotRenderData.class.getDeclaredField(name);field.setAccessible(true);return field.getFloat(slot);
+    }
+    public static synchronized void rememberNative(ModelSlotRenderData slot,zombie.core.skinnedmodel.ModelManager.ModelSlot source) {
+        nativePoses.remove(slot);drawFrames.remove(slot);
+        if(output==null || source==null || !(source.character instanceof zombie.characters.IsoPlayer player))return;
+        float heading=player.getDirectionAngleRadians();
+        var animation=player.getAnimationPlayer();
+        float angle=animation==null?heading+(float)(Math.PI/2):animation.getRenderedAngle();
+        nativePoses.put(slot,new NativePose(player,System.currentTimeMillis(),player.getX(),player.getY(),player.getZ(),heading,angle));
+    }
+    private static DrawFrame prepareDraw(ModelSlotRenderData slot,ModelInstance body,ModelInstance cart) {
+        var pose=nativePoses.get(slot);
+        if(pose==null || slot.character!=pose.player)throw new IllegalStateException("Missing original native slot pose");
+        var frame=new DrawFrame(++captureSerial,System.currentTimeMillis(),pose,body,cart);
+        drawFrames.put(slot,frame);return frame;
+    }
+    private static String renderFields(ModelSlotRenderData slot,DrawFrame frame) throws Exception {
+        var nativePose=frame.nativePose;
+        float expected=zombie.iso.IsoDepthHelper.getSquareDepthData(
+            (int)Math.floor(slotField(slot,"camCharacterX")),(int)Math.floor(slotField(slot,"camCharacterY")),
+            slot.x+slotField(slot,"fixJigglyModelsSquareX"),slot.y+slotField(slot,"fixJigglyModelsSquareY"),slot.z).depthStart;
+        return new StringBuilder(512).append(",\"renderProbeVersion\":1,\"captureId\":").append(frame.id)
+            .append(",\"slotToken\":").append(System.identityHashCode(slot))
+            .append(",\"nativeWallTimeMillis\":").append(nativePose.wall)
+            .append(",\"nativeX\":").append(nativePose.x).append(",\"nativeY\":").append(nativePose.y)
+            .append(",\"nativeZ\":").append(nativePose.z).append(",\"nativeHeading\":").append(nativePose.heading)
+            .append(",\"nativeRenderAngle\":").append(nativePose.angle)
+            .append(",\"squareDepth\":").append(slot.squareDepth).append(",\"expectedSquareDepth\":").append(expected).toString();
+    }
+    public static void beginCamera(zombie.core.skinnedmodel.ModelCamera camera) {
+        consumedCamera.set(new ConsumedCamera(camera,System.currentTimeMillis(),camera.x,camera.y,camera.z,camera.useAngle,camera.useWorldIso,camera.inVehicle));
+    }
+    public static void endCamera() {consumedCamera.remove();}
+    public static synchronized void draw(ModelSlotRenderData slot,ModelInstanceRenderData data) throws Exception {
+        if(cameras==null || data==null)return;
+        var frame=drawFrames.get(slot);if(frame==null)return;
+        boolean body=data.modelInstance==frame.body,cart=data.modelInstance==frame.cart;
+        if(!body && !cart || body && frame.bodyDrawn || cart && frame.cartDrawn)return;
+        var consumed=consumedCamera.get();var camera=zombie.core.skinnedmodel.ModelCamera.instance;
+        if(consumed==null || camera!=consumed.camera || slot.character!=frame.nativePose.player)
+            throw new IllegalStateException("Draw lacks matching consumed native camera/actor");
+        var row=new StringBuilder(1024).append("{\"renderProbeVersion\":1,\"captureId\":").append(frame.id)
+            .append(",\"slotToken\":").append(System.identityHashCode(slot))
+            .append(",\"id\":").append(frame.nativePose.player.getOnlineID())
+            .append(",\"primary\":").append(frame.nativePose.player.getPrimaryHandItem()==null?-1:frame.nativePose.player.getPrimaryHandItem().getID())
+            .append(",\"secondary\":").append(frame.nativePose.player.getSecondaryHandItem()==null?-1:frame.nativePose.player.getSecondaryHandItem().getID())
+            .append(",\"model\":").append(jsonString(data.modelInstance.modelScript==null?null:data.modelInstance.modelScript.getName()))
+            .append(",\"part\":").append(jsonString(body?"body":"cart"))
+            .append(",\"captureWallTimeMillis\":").append(frame.wall)
+            .append(",\"cameraWallTimeMillis\":").append(consumed.wall)
+            .append(",\"wallTimeMillis\":").append(System.currentTimeMillis())
+            .append(",\"cameraX\":").append(consumed.x).append(",\"cameraY\":").append(consumed.y)
+            .append(",\"cameraZ\":").append(consumed.z).append(",\"cameraAngle\":").append(consumed.angle)
+            .append(",\"cameraWorldIso\":").append(consumed.world).append(",\"cameraInVehicle\":").append(consumed.vehicle)
+            .append(",\"currentCameraX\":").append(camera.x).append(",\"currentCameraY\":").append(camera.y)
+            .append(",\"currentCameraZ\":").append(camera.z).append(",\"currentCameraAngle\":").append(camera.useAngle)
+            .append(",\"slotX\":").append(slot.x).append(",\"slotY\":").append(slot.y)
+            .append(",\"slotZ\":").append(slot.z).append(",\"slotAngle\":").append(slot.animPlayerAngle)
+            .append(",\"squareDepth\":").append(slot.squareDepth).append(",\"depthBias\":").append(data.depthBias).append("}\n");
+        cameras.write(row.toString());cameras.flush();
+        if(body)frame.bodyDrawn=true;else frame.cartDrawn=true;
+    }
+    public static class NativeCapture {
+        @Advice.OnMethodEnter
+        public static void enter(@Advice.This ModelSlotRenderData slot,@Advice.Argument(0) zombie.core.skinnedmodel.ModelManager.ModelSlot source) {
+            ClearanceProbe.rememberNative(slot,source);
+        }
+    }
+    public static class CameraBegin {
+        @Advice.OnMethodEnter
+        public static void enter(@Advice.This zombie.core.skinnedmodel.ModelCamera camera) {ClearanceProbe.beginCamera(camera);}
+    }
+    public static class CameraEnd {
+        @Advice.OnMethodExit
+        public static void exit() {ClearanceProbe.endCamera();}
+    }
+    public static class ActualDraw {
+        @Advice.OnMethodEnter
+        public static void enter(@Advice.Argument(0) ModelSlotRenderData slot,@Advice.Argument(1) ModelInstanceRenderData data) {
+            try{ClearanceProbe.draw(slot,data);}catch(Throwable e){System.err.println("[CLEARANCE_PROBE] ERROR "+e);}
+        }
+    }
     private static Path directory;
     private static boolean meshProof, phaseMeshProof, meshError;
     private static double firstMeshPhase;
@@ -58,7 +157,8 @@ public final class ClearanceProbe {
         for(int i=0;i<16;i++){if(i>0)row.append(',');row.append(v[i]);}row.append(']');
     }
     public static synchronized void snapshot(ModelSlotRenderData slot) throws Exception {
-        if(output==null || System.nanoTime()-last<33_333_333L || !(slot.character instanceof zombie.characters.IsoPlayer player)) return;
+        if(output==null || System.nanoTime()-last<33_333_333L || !(slot.character instanceof zombie.characters.IsoPlayer player)
+            || !nativePoses.containsKey(slot)) return;
         for(var cart:slot.modelData) {
             var instance=cart.modelInstance;
             if(instance==null || instance.parent==null || instance.modelScript==null
@@ -70,7 +170,9 @@ public final class ClearanceProbe {
             for(var body:slot.modelData) {
                 if(body.modelInstance!=instance.parent || body.matrixPalette==null
                     || !(body.modelInstance.model.tag instanceof SkinningData skin))continue;
-                var row=new StringBuilder(8192).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
+                var frame=prepareDraw(slot,body.modelInstance,instance);
+                var row=new StringBuilder(8192).append("{\"wallTimeMillis\":").append(frame.wall)
+                    .append(renderFields(slot,frame))
                     .append(",\"id\":").append(((zombie.characters.IsoPlayer)slot.character).getOnlineID()).append(",\"local\":").append(((zombie.characters.IsoPlayer)slot.character).isLocalPlayer()).append(",\"enabled\":").append(net.alexredby.pztoolkitjavapatches.CartSteeringHooks.enabled((zombie.characters.IsoPlayer)slot.character)).append(",\"female\":").append(slot.character.isFemale())
                     .append(",\"slotX\":").append(slot.x).append(",\"slotY\":").append(slot.y)
                     .append(",\"slotZ\":").append(slot.z).append(",\"slotAngle\":").append(slot.animPlayerAngle)
@@ -232,19 +334,30 @@ public final class ClearanceProbe {
     public static synchronized void agentmain(String args,Instrumentation instrumentation) throws Exception {
         if(output!=null){output.close();output=null;}
         if(solves!=null){solves.close();solves=null;}
+        if(cameras!=null){cameras.close();cameras=null;}
+        nativePoses.clear();drawFrames.clear();consumedCamera.remove();
         if("stop".equals(args)){System.out.println("[CLEARANCE_PROBE] stopped");return;}
         if(args==null || args.isBlank() || !Path.of(args).isAbsolute())throw new IllegalArgumentException("Agent args: absolute output directory, or stop");
         directory=Path.of(args);
         if(!Files.isDirectory(directory))throw new IllegalArgumentException("Output directory must exist");
         Path file=directory.resolve("body-clearance.jsonl");
-        for(String name:new String[]{"body-clearance.jsonl","transition-solve.jsonl","WheelbarrowWood.bin",
+        for(String name:new String[]{"body-clearance.jsonl","transition-solve.jsonl","render-camera.jsonl","WheelbarrowWood.bin",
             "wood-wheel-mesh-proof.json","wood-wheel-mesh-phase-proof.json","wood-wheel-mesh-error.json"})
             if(Files.exists(directory.resolve(name)))throw new IllegalStateException("Preserve existing clearance output first: "+name);
         output=Files.newBufferedWriter(file,java.nio.file.StandardOpenOption.CREATE_NEW);last=0;
         solves=Files.newBufferedWriter(directory.resolve("transition-solve.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);
+        cameras=Files.newBufferedWriter(directory.resolve("render-camera.jsonl"),java.nio.file.StandardOpenOption.CREATE_NEW);captureSerial=0;
         meshProof=phaseMeshProof=meshError=false;firstMeshHash=null;firstMeshPhase=0;
         if(!installed){new AgentBuilder.Default().disableClassFormatChanges()
             .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
+            .type(named("zombie.core.skinnedmodel.model.ModelSlotRenderData"))
+            .transform((b,d,l,m,p)->b.visit(Advice.to(NativeCapture.class).on(named("initModel").and(takesArguments(1)))))
+            .type(named("zombie.core.opengl.CharacterModelCamera"))
+            .transform((b,d,l,m,p)->b.visit(Advice.to(CameraBegin.class).on(named("Begin").and(takesArguments(0)))))
+            .type(named("zombie.core.skinnedmodel.model.Model"))
+            .transform((b,d,l,m,p)->b
+                .visit(Advice.to(ActualDraw.class).on(named("DrawSolid").and(takesArguments(2))))
+                .visit(Advice.to(CameraEnd.class).on(named("CharacterModelCameraEnd").and(takesArguments(0)))))
             .type(named("net.alexredby.pztoolkitjavapatches.CartGrounding"))
             .transform((b,d,l,m,p)->b.visit(Advice.to(Capture.class).on(named("render"))))
             .type(named("net.alexredby.pztoolkitjavapatches.CartWheelSpin"))

@@ -128,6 +128,16 @@ public final class Main {
         && supports("zombie/characters/NetworkPlayerAI.class","46df5ede124384e10a848fe9eb6f6ba06cccbb3cc74f51e5e9b0306cd80a628a")
         && supports("zombie/characters/NetworkCharacterAI.class","7ec30ba9fc20cd90ab14c36907c89ccba11faf29c506739e0998c167c598c4c8");
 
+    public static final boolean CART_OBSERVER_SUPPORTED = CART_SYNC_SUPPORTED
+        && supports("zombie/core/skinnedmodel/ModelCameraRenderData.class",
+            "62fe74b8116809d43c5d798c8d638c632ef6dca22fb37bdbde6dabd8a625f897")
+        && supports("zombie/core/textures/TextureDraw.class",
+            "d602006055d324763e2278416dfef6ca3787b91c070d2ef4c420a950f6d81fb0")
+        && supports("zombie/core/opengl/CharacterModelCamera.class",
+            "2aecdf733008e6558db9a98ea799dcd76e3ee2cad9371a6c790aa780c2877d9f")
+        && supports("zombie/iso/sprite/IsoSprite.class",
+            "68c01e6b1c914f662621743e09c8dd8a62c0258392ce1a75654a713e1034067f");
+
     public static final boolean CART_WHEEL_SUPPORTED = CART_SUPPORTED
         && supports("zombie/core/skinnedmodel/model/Model.class",
             "3dd5e7b618cecf3c27e216a386e07937b1be694a7fc083b1bc2f7c993cbee3d9")
@@ -442,8 +452,39 @@ public final class Main {
         }
     }
 
+    @Patch(className="zombie.core.skinnedmodel.ModelCameraRenderData", methodName="init", strictMatch=true)
+    public static class CartObserverCamera {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.core.skinnedmodel.ModelCameraRenderData data,
+            @Patch.Argument(0) zombie.core.skinnedmodel.ModelCamera camera,
+            @Patch.Argument(1) zombie.core.skinnedmodel.ModelManager.ModelSlot source) {
+            if(Main.CART_OBSERVER_SUPPORTED) CartObserverRender.capture(data,camera,source);
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.model.ModelSlotRenderData", methodName="initModel", strictMatch=true)
+    public static class CartObserverSlot {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot,
+            @Patch.Argument(0) zombie.core.skinnedmodel.ModelManager.ModelSlot source) {
+            if(Main.CART_OBSERVER_SUPPORTED) CartObserverRender.bind(slot,source);
+        }
+    }
+
+    @Patch(className="zombie.core.skinnedmodel.model.ModelSlotRenderData", methodName="postRender")
+    public static class CartObserverRelease {
+        @Patch.OnExit
+        public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot) {
+            if(Main.CART_OBSERVER_SUPPORTED) CartObserverRender.release(slot);
+        }
+    }
+
     @Patch(className="zombie.core.skinnedmodel.model.ModelSlotRenderData", methodName="initRenderData")
     public static class CartFloor {
+        @Patch.OnEnter
+        public static void enter(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot) {
+            if(Main.CART_OBSERVER_SUPPORTED) CartObserverRender.prepare(slot);
+        }
         @Patch.OnExit
         public static void exit(@Patch.This zombie.core.skinnedmodel.model.ModelSlotRenderData slot) {
             if(Main.CART_SUPPORTED) CartGrounding.render(slot);

@@ -210,6 +210,7 @@ public final class CartMotionSync {
     }
 
     private static void clear(IsoPlayer player,Remote remote) {
+        CartObserverRender.forget(player);
         remote.locomotion=null;
         player.setVariable("ToolkitCartBrace",false);
         if(!remote.owned) return;
@@ -221,6 +222,7 @@ public final class CartMotionSync {
     }
 
     public static void reset(IsoPlayer player) {
+        CartObserverRender.forget(player);
         if(senders.remove(player)!=null && Main.CART_SYNC_SUPPORTED && connected() && player.isLocalPlayer()) player.setVariable(KEY,"");
         var remote=remotes.remove(player);
         if(remote!=null) clear(player,remote);
@@ -243,6 +245,7 @@ public final class CartMotionSync {
     }
 
     static void clearAll() {
+        CartObserverRender.clearAll();
         senders.clear();
         for(var player:new java.util.ArrayList<>(remotes.keySet())) {
             clear(player,remotes.get(player));CartTransition.endRemote(player);

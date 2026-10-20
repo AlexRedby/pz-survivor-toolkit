@@ -568,6 +568,11 @@ public final class ModelProbeCheck {
         zombie.inventory.ItemContainer inventory;
         zombie.iso.IsoGridSquare square;
         BracePlayer(){super(null,null,0,0,0);}
+        @Override public float getX(){return 10;}
+        @Override public float getY(){return 20;}
+        @Override public float getZ(){return 7;}
+        @Override public float getDirectionAngleRadians(){return 0;}
+        @Override public zombie.core.skinnedmodel.animation.AnimationPlayer getAnimationPlayer(){return null;}
         @Override public boolean isLocalPlayer(){return local;}
         @Override public boolean isDead(){return dead;}
         @Override public String getUsername(){return user;}
@@ -649,6 +654,43 @@ public final class ModelProbeCheck {
             if(!"null".equals(method.invoke(null,(Object)null)))throw new AssertionError("null model JSON");
         }
         var probe=Class.forName("ClearanceProbe");
+        var preparedWriter=probe.getDeclaredField("output");preparedWriter.setAccessible(true);
+        var cameraWriter=probe.getDeclaredField("cameras");cameraWriter.setAccessible(true);
+        var drawText=new java.io.StringWriter();preparedWriter.set(null,new java.io.BufferedWriter(new java.io.StringWriter()));
+        cameraWriter.set(null,new java.io.BufferedWriter(drawText));
+        var renderSlot=(zombie.core.skinnedmodel.model.ModelSlotRenderData)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelSlotRenderData.class);
+        renderSlot.character=owner;renderSlot.x=10.25f;renderSlot.y=20;renderSlot.z=7;renderSlot.animPlayerAngle=(float)(Math.PI/2);renderSlot.squareDepth=.25f;
+        var sourceSlot=(zombie.core.skinnedmodel.ModelManager.ModelSlot)unsafe.allocateInstance(zombie.core.skinnedmodel.ModelManager.ModelSlot.class);sourceSlot.character=owner;
+        ClearanceProbe.rememberNative(renderSlot,sourceSlot);
+        var originalMap=probe.getDeclaredField("nativePoses");originalMap.setAccessible(true);
+        var nativePose=((java.util.Map<?,?>)originalMap.get(null)).get(renderSlot);
+        var originalX=nativePose.getClass().getDeclaredMethod("x");originalX.setAccessible(true);
+        if((float)originalX.invoke(nativePose)!=10)throw new AssertionError("Cosmetic slot coordinate replaced original native capture");
+        var bodyModel=(zombie.core.skinnedmodel.model.ModelInstance)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstance.class);
+        var cartModel=(zombie.core.skinnedmodel.model.ModelInstance)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstance.class);
+        var prepareDraw=probe.getDeclaredMethod("prepareDraw",zombie.core.skinnedmodel.model.ModelSlotRenderData.class,
+            zombie.core.skinnedmodel.model.ModelInstance.class,zombie.core.skinnedmodel.model.ModelInstance.class);prepareDraw.setAccessible(true);
+        prepareDraw.invoke(null,renderSlot,bodyModel,cartModel);
+        var bodyData=(zombie.core.skinnedmodel.model.ModelInstanceRenderData)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstanceRenderData.class);bodyData.modelInstance=bodyModel;
+        var cartData=(zombie.core.skinnedmodel.model.ModelInstanceRenderData)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstanceRenderData.class);cartData.modelInstance=cartModel;
+        var previousCamera=zombie.core.skinnedmodel.ModelCamera.instance;
+        var camera=(zombie.core.opengl.CharacterModelCamera)unsafe.allocateInstance(zombie.core.opengl.CharacterModelCamera.class);
+        camera.x=10.25f;camera.y=20;camera.z=7;camera.useAngle=(float)(Math.PI/2);camera.useWorldIso=true;
+        try {
+            zombie.core.skinnedmodel.ModelCamera.instance=camera;ClearanceProbe.beginCamera(camera);
+            ClearanceProbe.draw(renderSlot,bodyData);ClearanceProbe.draw(renderSlot,bodyData);
+            camera.x=11;ClearanceProbe.draw(renderSlot,cartData);
+            var recorded=drawText.toString();
+            if(recorded.lines().count()!=2 || !recorded.contains("\"part\":\"body\"") || !recorded.contains("\"part\":\"cart\"")
+                || !recorded.contains("\"cameraX\":10.25") || !recorded.contains("\"currentCameraX\":11.0"))
+                throw new AssertionError("Consumed camera/body/cart draw identity was not independently captured");
+            ClearanceProbe.endCamera();prepareDraw.invoke(null,renderSlot,bodyModel,cartModel);
+            try {ClearanceProbe.draw(renderSlot,bodyData);throw new AssertionError("Draw without consumed camera was accepted");}
+            catch(IllegalStateException expected) {}
+        } finally {
+            ClearanceProbe.endCamera();zombie.core.skinnedmodel.ModelCamera.instance=previousCamera;
+            preparedWriter.set(null,null);cameraWriter.set(null,null);
+        }
         var traceField=probe.getDeclaredField("solve");traceField.setAccessible(true);
         var trace=(ThreadLocal<StringBuilder>)traceField.get(null);
         var outputField=probe.getDeclaredField("solves");outputField.setAccessible(true);
@@ -680,7 +722,7 @@ public final class ModelProbeCheck {
         parsed=[json.loads(line) for line in result.stdout.splitlines()]
         assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
         assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
-    return 'PASS (composed keyboard fixture, native Host read-only brace ownership/lifecycle guard, render family mismatch capture and JSON escaping)'
+    return 'PASS (composed keyboard fixture, native Host read-only brace ownership/lifecycle guard, original native pose and consumed body/cart camera capture, render family mismatch capture and JSON escaping)'
 
 
 def main():

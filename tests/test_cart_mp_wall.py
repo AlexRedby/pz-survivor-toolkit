@@ -96,6 +96,9 @@ class CartMPWallTests(unittest.TestCase):
                     if front:
                         for side in 'LR':
                             for part in ('Foot','Toe0'):frame['bones'][f'Bip01_{side}_{part}']=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]
+                    frame.update(renderProbeVersion=1,captureId=t//100+1,slotToken=1 if role=='client1' else 2,
+                                 nativeWallTimeMillis=self.epoch+t,nativeX=x,nativeY=y,nativeZ=7,
+                                 nativeHeading=heading,nativeRenderAngle=heading+math.pi/2,squareDepth=1.,expectedSquareDepth=1.)
                     frame['local']=frame.pop('local_');self.frames[role].append(frame)
             for t in range(0,duration+1,1000):self.add(role,'[CART_MP_TRAFFIC] ',dict(wall=self.epoch+t,packets=t//100,serializedBytes=t))
 
@@ -115,10 +118,23 @@ class CartMPWallTests(unittest.TestCase):
         (self.root/'selection.json').write_text(json.dumps(self.selection))
         for role,entries in self.logs.items():
             (self.root/(role+'-launch.log')).write_text('\n'.join(e if isinstance(e,str) else e[0]+json.dumps(e[1]) for e in entries))
-        for role,rows in self.frames.items():(self.root/role/'body-clearance.jsonl').write_text('\n'.join(json.dumps(r) for r in rows))
+        for role,rows in self.frames.items():
+            (self.root/role/'body-clearance.jsonl').write_text('\n'.join(json.dumps(r) for r in rows))
+            draws=[]
+            for frame in rows:
+                for part in ('body','cart'):
+                    row=dict(renderProbeVersion=1,captureId=frame['captureId'],slotToken=frame['slotToken'],id=1,part=part,
+                             primary=42,secondary=42,model='WheelbarrowWood' if part=='cart' else 'Body',
+                             captureWallTimeMillis=frame['wallTimeMillis'],cameraWallTimeMillis=frame['wallTimeMillis'],wallTimeMillis=frame['wallTimeMillis']+1,
+                             cameraWorldIso=True,cameraInVehicle=False,squareDepth=frame['squareDepth'],depthBias=0)
+                    for axis in 'XYZ':row['camera'+axis]=row['currentCamera'+axis]=row['slot'+axis]=frame['slot'+axis]
+                    row['cameraAngle']=row['currentCameraAngle']=row['slotAngle']=frame['slotAngle']
+                    draws.append(row)
+            if getattr(self,'mutate_draws',None):draws=self.mutate_draws(role,draws)
+            (self.root/role/'render-camera.jsonl').write_text('\n'.join(json.dumps(r) for r in draws))
         # Mesh-resource validation has independent native-mesh tests. Here replace only that dependency,
         # retaining all timeline, geometry-plane, ownership, drive, gait and traffic gates.
-        fake=SimpleNamespace(slot_matches=lambda f,rows,times: min(math.dist((f['slotX'],f['slotY']),(r['x'],r['y'])) for r in rows)<=1,mesh=lambda _: (None,'fixture-sha'),world_bounds=lambda f,_:dict(minX=f['slotX']-.5,maxX=f['slotX']+.5,minY=f['slotY']-.5,maxY=f['slotY']+.5))
+        fake=SimpleNamespace(slot_matches=lambda f,rows,times: any(math.dist((f['slotX'],f['slotY']),(r['x'],r['y']))<=8*abs(r['wall']-f['wall'])/1000+.04 and abs(math.atan2(math.sin(f['slotAngle']-r['heading']-math.pi/2),math.cos(f['slotAngle']-r['heading']-math.pi/2)))<=3*abs(r['wall']-f['wall'])/1000+.08 for r in sorted(rows,key=lambda r:abs(r['wall']-f['wall']))[:2]),mesh=lambda _: (None,'fixture-sha'),world_bounds=lambda f,_:dict(minX=f['slotX']-.5,maxX=f['slotX']+.5,minY=f['slotY']-.5,maxY=f['slotY']+.5))
         spec=SimpleNamespace(loader=SimpleNamespace(exec_module=lambda _:None))
         original=WALL['importlib'].util.spec_from_file_location
         def load(name,path):return spec if name=='cart_mp_wall_footprint' else original(name,path)
@@ -182,7 +198,9 @@ class CartMPWallTests(unittest.TestCase):
                 if marker=='[CART_MP_WALL] INPUT ':
                     row['acceptedHeading']*=-1;row['drive']={6:7,5:8}.get(row['drive'],row['drive'])
         for frames in self.frames.values():
-            for frame in frames:frame['slotY']=63-frame['slotY'];frame['slotAngle']=math.pi-frame['slotAngle']
+            for frame in frames:
+                frame['slotY']=63-frame['slotY'];frame['slotAngle']=math.pi-frame['slotAngle']
+                frame['nativeY']=63-frame['nativeY'];frame['nativeHeading']*=-1;frame['nativeRenderAngle']=math.pi-frame['nativeRenderAngle']
         self.assertEqual(self.analyze()['wallSide'],'right')
 
     def test_rejects_unfrozen_host_or_mixed_banks(self):
@@ -223,11 +241,12 @@ class CartMPWallTests(unittest.TestCase):
         self.rows('client1','[CART_MP_TRAFFIC] ')[20]['packets']=0
         with self.assertRaisesRegex(ValueError,'regression'):self.analyze()
 
-    def test_rejects_owner_mesh_but_reports_remote_drift(self):
+    def test_rejects_both_owner_and_observer_mesh_wall_penetration(self):
         self.frames['client2'][80]['slotX']=28.0
-        self.assertLess(self.analyze()['observerFootprint']['minClearance'],0)
-        self.frames['client1'][80]['slotX']=28.0
         with self.assertRaisesRegex(ValueError,'enters native W wall'):self.analyze()
+        self.frames['client2'][80]['slotX']=self.frames['client2'][80]['nativeX']
+        self.frames['client1'][80]['slotX']=28.0
+        with self.assertRaisesRegex(ValueError,'Owner received observer'):self.analyze()
 
     def test_rejects_missing_samples_sender_overrate_and_mesh_error(self):
         rows=self.rows('client1','[CART_MP_WALL] INPUT ')
@@ -239,6 +258,63 @@ class CartMPWallTests(unittest.TestCase):
         for r in self.rows('client1','[CART_MP_TRAFFIC] '):r['packets']//=2
         (self.root/'client1/wood-wheel-mesh-error.json').write_text('{}')
         with self.assertRaisesRegex(ValueError,'mesh probe failed'):self.analyze()
+
+
+
+    def test_bounded_observer_offset_requires_consumed_camera_coherence(self):
+        frame=self.frames['client2'][80];frame['slotX']+=.2
+        report=self.analyze()
+        self.assertAlmostEqual(report['renderProof']['client2']['maxCorrection'],.2)
+        self.assertTrue(report['observerFootprint']['sampledPass'])
+        self.assertIn('diagnostic',report['renderProof']['client2']['scope'])
+        def mismatched(role,rows):
+            if role=='client2':
+                for row in rows:
+                    if row['captureId']==81:row['cameraX']-=.2;row['currentCameraX']-=.2
+            return rows
+        self.mutate_draws=mismatched
+        with self.assertRaisesRegex(ValueError,'camera and final slot pose disagree'):self.analyze()
+
+    def test_counterexample_coverage_distinguishes_raw_overreach_and_inactive_correction(self):
+        self.assertEqual(self.analyze()['observerFootprint']['counterexampleCoverage'],'clear-without-correction')
+        frame=self.frames['client2'][80];frame['nativeX']-=.2
+        native=next(r for r in self.rows('client2','[CART_MP_STATE] ') if r['wall']==frame['wallTimeMillis']);native['x']-=.2
+        report=self.analyze();evidence=report['observerFootprint']
+        self.assertEqual(evidence['counterexampleCoverage'],'raw-penetration-corrected')
+        self.assertLess(evidence['rawMinClearance'],0)
+        self.assertGreater(evidence['minClearance'],0)
+        self.assertEqual(evidence['rawPenetratingFrames'],1)
+        self.assertEqual(evidence['correctionActiveFrames'],1)
+
+    def test_owner_offset_large_observer_offset_and_uncleared_offset_are_rejected(self):
+        for role,index,offset in (('client1',80,.01),('client2',80,.76),('client2',285,.1)):
+            with self.subTest(role=role,index=index):
+                frame=self.frames[role][index];frame['slotX']+=offset
+                with self.assertRaisesRegex(ValueError,'Owner received|exceeds bounded|remains after settled'):self.analyze()
+                frame['slotX']-=offset
+
+    def test_draw_identity_pairing_camera_scope_and_depth_are_required(self):
+        for key,value in (('id',2),('primary',99),('slotToken',99),('captureWallTimeMillis',0),('cameraWallTimeMillis',0),
+                          ('cameraWorldIso',False),('cameraInVehicle',True),('squareDepth',2),('currentCameraX',99)):
+            with self.subTest(key=key):
+                def malformed(role,rows):
+                    if role=='client2':rows[160][key]=value
+                    return rows
+                self.mutate_draws=malformed
+                with self.assertRaises(ValueError):self.analyze()
+        self.mutate_draws=lambda role,rows: rows if role=='client1' else rows[:161]+rows[162:]
+        with self.assertRaisesRegex(ValueError,'body/cart draw proof incomplete'):self.analyze()
+
+    def test_missing_camera_proof_cannot_exempt_native_actor_mismatch(self):
+        self.frames['client2'][80]['nativeX']+=2
+        with self.assertRaisesRegex(ValueError,'original native pose disagrees'):self.analyze()
+        self.frames['client2'][80]['nativeX']-=2
+        self.mutate_draws=lambda role,rows: [] if role=='client2' else rows
+        with self.assertRaisesRegex(ValueError,'missing/unordered proven'):self.analyze()
+
+    def test_slot_depth_must_match_independent_native_depth_query(self):
+        frame=self.frames['client2'][80];frame['expectedSquareDepth']=2
+        with self.assertRaisesRegex(ValueError,'depth disagrees'):self.analyze()
 
 
 
@@ -258,7 +334,7 @@ class CartMPFrontBraceTests(unittest.TestCase):
         self.assertEqual(report['brace']['payloadFields'],13)
         self.assertEqual(report['traffic']['senderIntervalMs'],100)
         self.assertEqual(report['manualTurns'],[])
-        self.assertIn('separate reported defect',report['scope'])
+        self.assertIn('Both-role sampled',report['scope'])
 
     def test_release_window_covers_native_sampling_jitter_without_lowering_minimum(self):
         expected={'client1':[6782,6896,6996,7096,7200,7313],
@@ -337,7 +413,7 @@ class CartMPFrontBraceTests(unittest.TestCase):
         for row in self.rows('client1','[CART_MP_STATE] '):
             if 105000<=row['wall']<=106300:row['x']+=1
         for frame in self.frames['client1']:
-            if 105000<=frame['wallTimeMillis']<=106300:frame['slotX']+=1
+            if 105000<=frame['wallTimeMillis']<=106300:frame['slotX']+=1;frame['nativeX']+=1
         with self.assertRaisesRegex(ValueError,'never reaches wall contact'):self.analyze()
 
     def test_rendered_feet_and_root_must_stay_planted_for_both_roles(self):
@@ -361,10 +437,8 @@ class CartMPFrontBraceTests(unittest.TestCase):
         self.frames['client2']=[f for f in self.frames['client2'] if not 105000<=f['wallTimeMillis']<=106300]
         with self.assertRaisesRegex(ValueError,'gap exceeds|insufficient'):self.analyze()
 
-    def test_existing_remote_approach_penetration_is_still_reported(self):
-        self.frames['client2'][20]['slotX']=28.0
-        report=self.analyze()
-        self.assertLess(report['observerFootprint']['minClearance'],0)
-        self.assertIn('separate reported defect',report['scope'])
+    def test_remote_approach_penetration_fails_despite_matching_camera(self):
+        self.frames['client2'][40]['slotX']=28.0
+        with self.assertRaisesRegex(ValueError,'enters native W wall'):self.analyze()
 
 if __name__=='__main__':unittest.main()

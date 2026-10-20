@@ -653,6 +653,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.35
+
+- **Fixed:** Remote wooden-wheelbarrow rendering validates a shared character/cart pose against nearby obstacles, with matching camera and model depth and a gradual correction release. Native movement, manual reverse and cart synchronization traffic are unchanged.
+
 ### 0.1.34
 
 - **Fixed:** Tiny accepted coordinate changes no longer repeatedly release wooden-cart pushing effort at a blocked obstacle. Forward contact is checked independently from the exhausted root-motion budget; releasing input, reversing or clearing the obstacle releases the stance. Native movement/collision and manual reverse are preserved.

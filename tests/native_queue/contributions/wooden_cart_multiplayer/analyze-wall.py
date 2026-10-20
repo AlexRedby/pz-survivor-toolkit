@@ -31,6 +31,85 @@ def wrap(value):
     return math.atan2(math.sin(value), math.cos(value))
 
 
+def draw_evidence(profile, role, frames, states, identity, cartid, epoch, duration, settled_window, footprint, common):
+    require, parse, number = (common[k] for k in ('require', 'parse', 'number'))
+    source = Path(profile)/role/'render-camera.jsonl'
+    require(source.is_file(), role + ': missing independent native camera draw proof')
+    raw = [parse(line) for line in source.read_text().splitlines()]
+    draws = {}
+    for row in raw:
+        require(isinstance(row, dict) and row.get('renderProbeVersion') == 1
+                and all(type(row.get(k)) is int for k in ('captureId', 'slotToken', 'id', 'primary', 'secondary'))
+                and row['captureId'] > 0 and row.get('part') in ('body', 'cart'), role + ': malformed native draw identity')
+        require(all(number(row.get(k)) for k in ('captureWallTimeMillis', 'cameraWallTimeMillis', 'wallTimeMillis',
+                'cameraX', 'cameraY', 'cameraZ', 'cameraAngle', 'currentCameraX', 'currentCameraY', 'currentCameraZ', 'currentCameraAngle',
+                'slotX', 'slotY', 'slotZ', 'slotAngle', 'squareDepth', 'depthBias'))
+                and type(row.get('cameraWorldIso')) is bool and type(row.get('cameraInVehicle')) is bool,
+                role + ': malformed consumed native camera')
+        key = (row['captureId'], row['part'])
+        require(key not in draws, role + ': duplicate native draw proof')
+        draws[key] = row
+    result, offsets = [], []
+    times = [r['wall'] for r in states]
+    unrendered = 0
+    for frame in frames:
+        at = frame['wallTimeMillis']
+        if not epoch <= at <= epoch+duration:
+            continue
+        require(frame.get('renderProbeVersion') == 1 and all(type(frame.get(k)) is int for k in ('captureId', 'slotToken'))
+                and frame['captureId'] > 0 and all(number(frame.get(k)) for k in ('nativeWallTimeMillis', 'nativeX', 'nativeY', 'nativeZ',
+                    'nativeHeading', 'nativeRenderAngle', 'squareDepth', 'expectedSquareDepth')),
+                role + ': missing original native pose/depth capture')
+        pair = [draws.get((frame['captureId'], part)) for part in ('body', 'cart')]
+        if all(row is None for row in pair):
+            unrendered += 1
+            continue
+        require(all(row is not None for row in pair), role + ': body/cart draw proof incomplete')
+        for row in pair:
+            require(row['id'] == identity and row['primary'] == row['secondary'] == cartid
+                    and (row['part'] != 'cart' or row.get('model') == 'WheelbarrowWood') and row['slotToken'] == frame['slotToken']
+                    and row['captureWallTimeMillis'] == at
+                    and frame['nativeWallTimeMillis'] <= at <= row['cameraWallTimeMillis'] <= row['wallTimeMillis'] <= at+1000,
+                    role + ': stale/foreign native camera draw proof')
+            require(row['cameraWorldIso'] and not row['cameraInVehicle'], role + ': draw did not consume native world camera')
+            require(all(abs(row['camera'+axis]-row['currentCamera'+axis]) <= 1e-5
+                        and abs(row['camera'+axis]-row['slot'+axis]) <= 1e-4
+                        and abs(row['slot'+axis]-frame['slot'+axis]) <= 1e-4 for axis in 'XYZ')
+                    and abs(wrap(row['cameraAngle']-row['currentCameraAngle'])) <= 1e-5
+                    and abs(wrap(row['cameraAngle']-row['slotAngle'])) <= .002
+                    and abs(wrap(row['slotAngle']-frame['slotAngle'])) <= .002,
+                    role + ': consumed camera and final slot pose disagree')
+            require(abs(row['squareDepth']-frame['squareDepth']) <= 1e-6
+                    and abs(frame['squareDepth']-frame['expectedSquareDepth']) <= 1e-6,
+                    role + ': final slot depth disagrees with corrected native depth inputs')
+        native = dict(frame, wall=frame['nativeWallTimeMillis'], slotX=frame['nativeX'], slotY=frame['nativeY'],
+                      slotAngle=frame['nativeHeading']+math.pi/2)
+        require(abs(frame['nativeZ']-states[0]['z']) <= .25 and footprint.slot_matches(native, states, times), role + ': original native pose disagrees with actor state')
+        dx,dy = frame['slotX']-frame['nativeX'],frame['slotY']-frame['nativeY']
+        yaw = wrap(frame['slotAngle']-frame['nativeRenderAngle'])
+        distance = math.hypot(dx,dy)
+        require(distance <= .7501 and abs(frame['slotZ']-frame['nativeZ']) <= .002,
+                role + ': observer cosmetic correction exceeds bounded native pose')
+        if role == 'client1':
+            require(distance <= .002 and abs(yaw) <= .02, 'Owner received observer cosmetic correction')
+        if settled_window[0] <= at-epoch <= settled_window[1]:
+            require(distance <= .01 and abs(yaw) <= .02, role + ': observer cosmetic correction remains after settled release')
+        result.append(frame)
+        offsets.append(dict(wall=at, x=dx, y=dy, yaw=yaw, distance=distance))
+    require(result and all(b['wall']>a['wall'] for a,b in zip(offsets, offsets[1:])), role + ': missing/unordered proven draw frames')
+    steps = [dict(wall=a['wall'], nextWall=b['wall'], elapsedMs=b['wall']-a['wall'],
+                  distance=math.hypot(b['x']-a['x'], b['y']-a['y']), yaw=abs(wrap(b['yaw']-a['yaw']))) for a,b in zip(offsets, offsets[1:])]
+    def percentile(values, q):
+        return sorted(values)[min(len(values)-1, math.ceil(q*len(values))-1)] if values else 0
+    return result, dict(provenFrames=len(result), unrenderedPreparedFrames=unrendered,
+        maxCorrection=max(r['distance'] for r in offsets), maxYawCorrection=max(abs(r['yaw']) for r in offsets),
+        correctionActiveFrames=sum(r['distance']>.001 or abs(r['yaw'])>.002 for r in offsets),
+        maxCorrectionStep=max(steps,key=lambda r:r['distance']) if steps else None,
+        maxYawCorrectionStep=max(steps,key=lambda r:r['yaw']) if steps else None,
+        correctionStepP95=percentile([r['distance'] for r in steps],.95), yawCorrectionStepP95=percentile([r['yaw'] for r in steps],.95),
+        scope='Independent native camera Begin values and actual body/cart DrawSolid proof; correction smoothness deltas are diagnostic, not natural-motion proof')
+
+
 def front_evidence(states, inputs, poses, measured, cartid, wall_x, epoch, covered, require, number, gait, stopped_pose):
     def pick(rows, key, interval, label, minimum=5):
         return covered(rows, key, interval, label, minimum)
@@ -262,8 +341,10 @@ def analyze(profile, selection, common):
     poses={role: [common['pose'](parse(line)) for line in (profile/role/'body-clearance.jsonl').read_text().splitlines()] for role in ('client1','client2')}
     module=importlib.util.spec_from_file_location('cart_mp_wall_footprint', Path(__file__).parent.parent/'wooden_cart_motion/analyze-footprint.py')
     footprint=importlib.util.module_from_spec(module);module.loader.exec_module(footprint)
-    measured={}; meshsha={}
+    measured={}; meshsha={}; render_proof={}
     for role, rows in poses.items():
+        poses[role],render_proof[role]=draw_evidence(profile,role,rows,states[role],identity,cartid,epoch,duration,settled_window,footprint,common)
+        rows=poses[role]
         frames=covered(rows, 'wallTimeMillis', (0,duration), role+'/render')
         require(not (profile/role/'wood-wheel-mesh-error.json').exists(), role+': native mesh probe failed')
         vertices,sha=footprint.mesh(profile/role);meshsha[role]=sha
@@ -280,13 +361,11 @@ def analyze(profile, selection, common):
             bounds=footprint.world_bounds(f,vertices)
             require(pad['minX']+2 <= bounds['minX'] and bounds['maxX'] <= pad['minX']+61
                     and pad['minY']+2 <= bounds['minY'] and bounds['maxY'] <= pad['minY']+61, role + ': sampled full mesh left pad')
-            measured[role].append(dict(bounds,wall=f['wallTimeMillis'],elapsed=f['wallTimeMillis']-epoch))
-        row_times=[r['wall'] for r in states[role]]
-        require(all(footprint.slot_matches(dict(f,wall=f['wallTimeMillis']),states[role],row_times) for f in frames), role+': same-frame slot disagrees with native actor state')
-        if role=='client1':
-            require(all(f['minY']>=pad['wallMinY'] and f['maxY']<=pad['wallMaxY']+1 for f in measured[role]), 'Owner escaped around finite wall end')
-            require(all(f['minX']>=pad['wallX']-.005 for f in measured[role]
-                        if f['maxY']>=pad['wallMinY'] and f['minY']<=pad['wallMaxY']+1), 'Owner wooden mesh/wheel enters native W wall')
+            raw_bounds=footprint.world_bounds(dict(f,slotX=f['nativeX'],slotY=f['nativeY'],slotZ=f['nativeZ'],slotAngle=f['nativeRenderAngle']),vertices)
+            measured[role].append(dict(bounds,rawMinX=raw_bounds['minX'],rawMinY=raw_bounds['minY'],rawMaxY=raw_bounds['maxY'],wall=f['wallTimeMillis'],elapsed=f['wallTimeMillis']-epoch))
+        require(all(f['minY']>=pad['wallMinY'] and f['maxY']<=pad['wallMaxY']+1 for f in measured[role]), role + ': cart escaped around finite wall end')
+        require(all(f['minX']>=pad['wallX']-.005 for f in measured[role]
+                    if f['maxY']>=pad['wallMinY'] and f['minY']<=pad['wallMaxY']+1), role + ': wooden mesh/wheel enters native W wall')
     require(len(set(meshsha.values()))==1, 'Client native mesh differs')
     def window(a,b):return covered(states['client1'],'wall',(a,b),'owner/motion')
     def travel(rows):return sum(math.dist((a['x'],a['y']),(b['x'],b['y'])) for a,b in zip(rows,rows[1:]))
@@ -397,14 +476,21 @@ def analyze(profile, selection, common):
         delayed.append(dict(bank=abs(rs['bank']-ls['bank']),wheel=abs(common['wheel'](remote)-common['wheel'](local)),
                             **{s:abs(common['palm'](remote,s)-common['palm'](local,s)) for s in 'LR'}))
     require(len(delayed)>=5, 'Delayed render diagnostics lack matched owner frames')
+    raw_observer_penetrations=sum(f['rawMinX']<pad['wallX']-.005 and f['rawMaxY']>=pad['wallMinY'] and f['rawMinY']<=pad['wallMaxY']+1 for f in measured['client2'])
+    correction_active=render_proof['client2']['correctionActiveFrames']
     result = dict(evidenceComplete=True,ownerOnlineID=identity,cartID=cartid,epoch=epoch,cartVariant='wooden-wheelbarrow',
         actualSex='female' if next(iter(sexes)) else 'male',wallSide=side,checkedPad=pad,cargo=spec,phases=phases,manualTurns=turns,
         sampledOwnerFootprint=dict(sampledPass=True,tolerance=.005,meshSha256=meshsha['client1'],minClearance=min(f['minX']-pad['wallX'] for f in measured['client1'])),
-        observerFootprint=dict(minClearance=min(f['minX']-pad['wallX'] for f in measured['client2']),scope='Remote rendered mesh diagnostics; not authoritative physical collision'),
+        observerFootprint=dict(sampledPass=True,tolerance=.005,minClearance=min(f['minX']-pad['wallX'] for f in measured['client2']),
+            rawMinClearance=min(f['rawMinX']-pad['wallX'] for f in measured['client2']),rawPenetratingFrames=raw_observer_penetrations,
+            correctionActiveFrames=correction_active,
+            counterexampleCoverage='raw-penetration-corrected' if raw_observer_penetrations and correction_active else 'clear-with-correction' if correction_active else 'clear-without-correction',
+            scope='Independent camera/slot-proven remote rendered mesh; raw placement is a counterfactual using original native slot pose and the captured mesh, not authoritative physical collision'),
+        renderProof=render_proof,
         poseReplication=lags,finalPositionDeltaFromOwner=final_delta,traffic=dict(roles=traffic,senderIntervalMs=interval,scope='ToolkitCartPose/ToolkitCartActionPose serialized VariableSyncPacket counters; setup excluded; not UDP or total network traffic'),
         delayedRenderDiagnostics=dict(pairs=len(delayed),measuredDelayMs=delay,maxDifference={k:max(r[k] for r in delayed) for k in delayed[0]},scope='Descriptive sampled delay alignment; no animation equivalence threshold'),
         scope='Bounded full-load Walk-first Host manual reverse exit, actual reported sex only. Sampled native mesh plus continuous wheel support against finite W wall; between-frame collision and visual animation equivalence remain unsupported. Native gait time progression is checked independently of descriptive remote render diagnostics.')
 
     if front:
-        result.update(brace=brace_evidence, scope='Bounded full-load frontal Host brace, release, manual reverse and restart with owner/observer planted-foot and native-track gates. Observer wall penetration remains a separate reported defect; no whole-animation or between-frame collision equivalence is asserted.')
+        result.update(brace=brace_evidence, scope='Bounded full-load frontal Host brace, release, manual reverse and restart with owner/observer planted-foot and native-track gates. Both-role sampled native mesh/wheel wall clearance is required; no whole-animation or between-frame collision equivalence is asserted.')
     return result

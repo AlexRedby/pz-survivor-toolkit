@@ -5,6 +5,8 @@
 
 # Wooden wheelbarrow collisions
 
+- [ ] Active observer fix: confirm camera/slot snapshot order and reproduce the saved position-plus-heading counterexamples; implement a bounded whole-actor cosmetic pose against the existing footprint query, then cover initial overlap, recovery, stale/cart replacement and changed geometry with focused regressions. Integrate only after camera, slot and depth agree before grip/grounding/wheel processing.
+
 - [ ] Fix observer-only wooden-cart wall penetration during the approach in Host `cart_wall_exit=left/right`. Native prediction and facing can form a pose that crosses the wall even while the owner is clear. Implement a jointly validated visual position/heading for the whole actor and held cart; keep native actor coordinates, targets, pathfinding, equipment and network traffic unchanged. Any render-only correction must reach both `ModelCameraRenderData` and `ModelSlotRenderData` before grounding/grip/wheel processing, with matching depth and safe identity/stale/geometry-reset handling.
 - [ ] After that correction, rerun both full-load Walk Host wall exits with the selected mod pack. Require clear owner and observer meshes/wheel support, preserved hands/feet/rolling, bounded correction/release without jumps, exact cart/cargo identity and unchanged pose sender budget. The current capture-only diagnostics must not count the known observer penetration as visual PASS.
 - [ ] After the observer wall gate, extend relative-key manual reverse Host wall exits to Run/Sprint approaches, the male model and empty carts. Preserve the <=.02 rad opposite-yaw, <=.025 rad release and <=500 ms owner sampling budgets, manual reverse, natural rolling and native collision, without automatic backing.
