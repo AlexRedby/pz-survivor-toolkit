@@ -289,6 +289,32 @@ public final class CartGroundingTest {
     throw new AssertionError("invalid/outside calibrated contact did not use AABB fallback");
   }
  }
+ private static void metalBankGait() {
+  var profile=CartWheelbarrow.METAL;
+  var source=profile.held(new Matrix4f());
+  for(float bank:new float[]{(float)Math.toRadians(-7),0,(float)Math.toRadians(7)}) for(float gait:new float[]{0,-.24f}) {
+   var actual=new Matrix4f(source);var delta=new Matrix4f();
+   float pressure=Math.abs(bank);
+   if(!CartGrounding.alignWheelbarrow(actual,profile,bank,pressure,gait,delta)
+    || !actual.isFinite() || Math.abs(CartGrounding.wheelbarrowLowest(actual,profile)-.008f)>.00001f)
+    throw new AssertionError("metal wheel lost cylindrical floor support: bank="+bank+" gait="+gait);
+   // Independently sample both sidewalls around the calibrated tire, including every spin phase.
+   for(float side:new float[]{-profile.halfWidth(),profile.halfWidth()}) for(int degree=0;degree<360;degree+=5) {
+    float phase=(float)Math.toRadians(degree);
+    var rim=profile.center(new Vector3f()).add(side,profile.radius()*(float)Math.cos(phase),profile.radius()*(float)Math.sin(phase));
+    if(actual.transformPosition(rim).y<.008f-.00001f)
+     throw new AssertionError("banked metal tire penetrates floor: bank="+bank+" gait="+gait+" phase="+degree);
+   }
+   for(boolean left:new boolean[]{true,false}) {
+    var handle=new Vector3f();
+    if(!CartGrip.handle(profile.model(),left,handle)) throw new AssertionError("metal handle calibration missing");
+    var moved=delta.transformPosition(source.transformPosition(new Vector3f(handle)));
+    moved.z+=CartSteeringMath.woodenShift(pressure,gait);
+    if(moved.distance(actual.transformPosition(handle))>.00001f)
+     throw new AssertionError("metal body/cart handle transforms separated: bank="+bank+" gait="+gait);
+   }
+  }
+ }
  private static void remoteFillModel() throws Exception {
   Field field=Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);
   var unsafe=(Unsafe)field.get(null);
@@ -352,6 +378,7 @@ public final class CartGroundingTest {
   nativeExportPose();
   rigidPose();
   capturedContacts();
+  metalBankGait();
   Matrix4f wooden=new Matrix4f().set(76.5f,2.8023098e-5f,-2.4333809e-5f,-.0060535767f,
    -4.1037783e-5f,30.694286f,-70.07218f,.16715112f,
    -9.11952e-6f,70.07218f,30.694283f,-.41188842f,0,0,0,1).transpose();

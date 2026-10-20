@@ -39,7 +39,7 @@ public final class CartEmergencyDrop {
     static synchronized void capture(IsoPlayer player, ModelSlotRenderData slot, Matrix4f cart) {
         if(!Main.CART_TRANSITION_SUPPORTED || GameClient.client || GameServer.server || !player.isLocalPlayer()) return;
         var item=player.getPrimaryHandItem();
-        if(!CartTransition.wooden(item) || player.getSecondaryHandItem()!=item || item.getWorldItem()!=null
+        if(!CartTransition.wheelbarrow(item) || player.getSecondaryHandItem()!=item || item.getWorldItem()!=null
             || cart==null || !cart.isFinite()) {held.remove(player);return;}
         held.put(player,new Held(item,new Matrix4f(cart),slot.x,slot.y,slot.z,slot.animPlayerAngle,System.nanoTime()));
     }
@@ -53,7 +53,7 @@ public final class CartEmergencyDrop {
     public static synchronized KahluaTable prepare(IsoPlayer player,InventoryItem item) {
         if(item!=null) releases.remove(item);
         if(!Main.CART_TRANSITION_SUPPORTED || GameClient.client || GameServer.server || player==null
-            || !player.isLocalPlayer() || !CartTransition.wooden(item) || player.getPrimaryHandItem()!=item
+            || !player.isLocalPlayer() || !CartTransition.wheelbarrow(item) || player.getPrimaryHandItem()!=item
             || player.getSecondaryHandItem()!=item || item.getContainer()!=player.getInventory() || item.getWorldItem()!=null) return null;
         var source=held.remove(player);
         long now=System.nanoTime();
@@ -62,7 +62,7 @@ public final class CartEmergencyDrop {
         if(model==null) return null;
         var pose=CartTransitionMath.actorToWorldPlacement(source.cart,model,source.x,source.y,source.z,source.angle);
         // Emergency release does not include the normal set-down action's backward stance adjustment.
-        var landing=CartTransition.dropPlacement(source.cart,model,source.x,source.y,source.z,source.angle,item.worldScale,0);
+        var landing=CartTransition.dropPlacement(source.cart,model,source.x,source.y,source.z,source.angle,item.worldScale,0,CartWheelbarrow.forItem(item));
         if(pose==null || landing==null || Math.hypot(landing.x()-player.getX(),landing.y()-player.getY())>1.5
             || CartTransition.target(player,landing.x(),landing.y(),source.z)==null) return null;
         releases.put(item,new Release(player,pose,landing,model,now));
@@ -115,19 +115,23 @@ public final class CartEmergencyDrop {
     }
 
     static boolean settle(Matrix4f source,Matrix4f ground,double fraction,Matrix4f out) {
+        return settle(source,ground,fraction,out,CartWheelbarrow.WOOD);
+    }
+
+    static boolean settle(Matrix4f source,Matrix4f ground,double fraction,Matrix4f out,CartWheelbarrow profile) {
         if(!Double.isFinite(fraction)) return false;
         double blend=CartTransitionMath.smooth(fraction);
         if(!CartTransitionMath.blend(source,ground,blend,out)) return false;
         if(fraction<=0 || fraction>=1) return true;
-        var axle=new Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z);
+        var axle=profile.center(new Vector3f());
         var start=source.transformPosition(axle,new Vector3f());
         var end=ground.transformPosition(axle,new Vector3f());
         var current=out.transformPosition(axle,new Vector3f());
         // A rigid rotation's interpolated translation otherwise makes the wheel sweep through a small arc.
         out.m30(out.m30()+start.x+(end.x-start.x)*(float)blend-current.x);
         out.m32(out.m32()+start.z+(end.z-start.z)*(float)blend-current.z);
-        float low=CartGrounding.woodenLowest(source)+(CartGrounding.woodenLowest(ground)-CartGrounding.woodenLowest(source))*(float)blend;
-        out.m31(out.m31()+low-CartGrounding.woodenLowest(out));
+        float low=CartGrounding.wheelbarrowLowest(source,profile)+(CartGrounding.wheelbarrowLowest(ground,profile)-CartGrounding.wheelbarrowLowest(source,profile))*(float)blend;
+        out.m31(out.m31()+low-CartGrounding.wheelbarrowLowest(out,profile));
         return out.isFinite();
     }
 
@@ -155,7 +159,7 @@ public final class CartEmergencyDrop {
         if(!CartTransitionMath.worldToActor(release.source,release.model,renderer.x,renderer.y,renderer.z,(float)Math.PI,source)) return;
         var ground=CartWheelWorld.worldTransform(renderer,transform,new Matrix4f());
         var output=new Matrix4f();
-        if(!settle(source,ground,(double)elapsed/SETTLE_NANOS,output)) return;
+        if(!settle(source,ground,(double)elapsed/SETTLE_NANOS,output,CartWheelbarrow.forItem(item))) return;
         modified.put(renderer,new Restore(transform,new Matrix4f(transform),new Vector3f(renderer.angle)));
         transform.set(output);renderer.angle.set(0,0,0);
     }

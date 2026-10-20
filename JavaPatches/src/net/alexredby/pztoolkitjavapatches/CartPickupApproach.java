@@ -28,7 +28,7 @@ public final class CartPickupApproach {
     private static Vector3f location(LuaTimedActionNew action,PathFindBehavior2 path) {
         if(action==null || path==null || !path.isGoalLocation() || !"ISWalkToTimedActionF".equals(action.getMetaType()))return null;
         var table=action.getTable();
-        if(!(table.rawget("toolkitWoodCartItem") instanceof InventoryItem item) || !CartTransition.wooden(item)
+        if(!(table.rawget("toolkitWoodCartItem") instanceof InventoryItem item) || !CartTransition.wheelbarrow(item)
             || item.getWorldItem()==null || item.getWorldItem().getItem()!=item || item.getWorldItem().getSquare()==null
             || !(table.rawget("location") instanceof Vector3f location) || !location.isFinite()
             || location.x!=path.getTargetX() || location.y!=path.getTargetY() || location.z!=path.getTargetZ())return null;

@@ -77,7 +77,7 @@ public final class CartWheelWorldTest {
         previous=CartWheelWorld.begin(renderer,model,transform,false);
         check(current()==null,"pooled native reset retained an old world item phase");CartWheelWorld.end(previous);
         prepare(renderer,item,transform,.4);
-        item.kind="SaucedWheelbarrow.WheelbarrowMetal";
+        item.kind="SaucedCarts.ShoppingCart";
         CartWheelWorld.snapshot(renderer,item,transform);CartWheelWorld.ready(renderer);
         previous=CartWheelWorld.begin(renderer,model,transform,false);
         check(current()==null,"foreign item retained recycled renderer phase");CartWheelWorld.end(previous);
@@ -122,13 +122,25 @@ public final class CartWheelWorldTest {
         check(current()==null,"exception leaked a world wheel scope to later draws");
         outerModel.mesh.Draw(allocate(Shader.class)); // Woven unrelated native draw, no VBO and no GL.
     }
+    private static void metalWorld() throws Exception {
+        var nativeModel=model();var renderer=renderer(nativeModel);var item=cart();
+        item.kind="SaucedWheelbarrow.WheelbarrowMetal";
+        var transform=CartWheelbarrow.METAL.held(new Matrix4f());
+        prepare(renderer,item,transform,.6);
+        var previous=CartWheelWorld.begin(renderer,nativeModel,transform,false);
+        check(current()!=null && Math.abs(phase()-.6)<.00001,"metal world phase was not retained");
+        check(!CartWheelWorld.render(nativeModel.mesh,allocate(Shader.class)),"metal missing VBO entered GL");
+        check(CartWheelWorld.rendered(renderer)==null,"metal failed draw produced successful receipt");
+        CartWheelWorld.end(previous);CartWheelWorld.clear(renderer);
+    }
+
     public static void main(String[] args) throws Exception {
         Field field=Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);unsafe=(Unsafe)field.get(null);
         check(me.zed_0xff.zombie_buddy.Patch.OnExit.class.getMethod("onThrowable").getReturnType()==Class.class,
             "ZombieBuddy Patch API lacks onThrowable");
         me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches",CartWheelWorldTest.class.getClassLoader());
         check(Main.CART_WHEEL_SUPPORTED && Main.CART_TRANSITION_SUPPORTED,"installed world wheel bytecode unsupported");
-        compositionAndPool();nestedAndException();
+        compositionAndPool();nestedAndException();metalWorld();
         System.out.println("CART_WHEEL_WORLD_PASS (native matrix order, pooled renderer, exact nested scope and woven exception cleanup; no GL)");
     }
 }

@@ -20,7 +20,7 @@ public final class CartWheelWorld {
     private static final ThreadLocal<Draw> drawing = new ThreadLocal<>();
 
     private static boolean worldCart(InventoryItem item) {
-        return CartTransition.wooden(item) && item.getWorldItem()!=null && item.getWorldItem().getItem()==item;
+        return CartWheelbarrow.forItem(item)!=null && item.getWorldItem()!=null && item.getWorldItem().getItem()==item;
     }
 
     public static synchronized void snapshot(ItemModelRenderer renderer, InventoryItem item, Matrix4f transform) {
@@ -83,7 +83,7 @@ public final class CartWheelWorld {
     public static boolean render(ModelMesh mesh, Shader shader) {
         var draw=drawing.get();
         if(draw==null || draw.mesh!=mesh || shader==null
-            || !CartWheelSpin.draw(mesh.vb,shader,draw.transform,draw.phase,false)) return false;
+            || !CartWheelSpin.draw(CartWheelbarrow.forItem(draw.item),mesh.vb,shader,draw.transform,draw.phase,false)) return false;
         recorded(draw);
         return true;
     }

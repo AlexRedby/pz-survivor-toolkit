@@ -192,7 +192,7 @@ public final class CartSteeringHooks {
                 input.sprinting=false;
             }
             if((input.isRunning() || input.sprinting) && player.getCurrentSquare()!=null
-                && !CartFootprint.clear(CartFootprint.world(player),player.getX(),player.getY(),state.heading,CartFootprint.FAST_FRONT)) {
+                && !CartFootprint.clear(CartFootprint.world(player),player.getX(),player.getY(),state.heading,CartWheelbarrow.forItem(player.getPrimaryHandItem()).fastFront())) {
                 // A stopped cart must not enter a wall just because Run expands its visual clearance.
                 input.setRunning(false);input.sprinting=false;
             }
@@ -216,7 +216,7 @@ public final class CartSteeringHooks {
 
     private static double footprintFront(IsoPlayer player,State state) {
         return player.isRunning() || player.isSprinting() || state.fastPoseTail>0
-            || CartLegPace.woodenFastShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
+            || CartLegPace.woodenFastShift(player)<0?CartWheelbarrow.forItem(player.getPrimaryHandItem()).fastFront():CartWheelbarrow.forItem(player.getPrimaryHandItem()).front();
     }
 
     public static double lean(IsoPlayer player) {
@@ -235,7 +235,7 @@ public final class CartSteeringHooks {
     public static double wheelPhase(IsoPlayer player) {
         State state=states.get(player);
         return state!=null && enabled(player) && wooden(player)
-            ? state.path?CartWheelSpin.itemPhase(state.cart):CartWheelSpin.advance(state.wheelOrigin+state.wheelPhase,CartSteeringMath.woodenAxle((float)clearanceLean(player),CartLegPace.woodenGaitShift(player))
+            ? state.path?CartWheelSpin.itemPhase(state.cart):CartWheelSpin.advance(CartWheelbarrow.forItem(state.cart),state.wheelOrigin+state.wheelPhase,CartSteeringMath.woodenAxle((float)clearanceLean(player),CartLegPace.woodenGaitShift(player))
                 -CartSteeringMath.woodenAxle(0,0)) : Double.NaN;
     }
 
@@ -261,14 +261,14 @@ public final class CartSteeringHooks {
     }
 
     private static boolean wooden(IsoPlayer player) {
-        return "SaucedWheelbarrow.WheelbarrowWood".equals(player.getPrimaryHandItem().getFullType());
+        return CartWheelbarrow.forItem(player.getPrimaryHandItem())!=null;
     }
 
     private static double axle(IsoPlayer player) {
         // Actual grounded wheel vertices; Model.vectorToWorldCoords scales model Z by -1.5.
         return switch(player.getPrimaryHandItem().getFullType()) {
             case "SaucedWheelbarrow.WheelbarrowWood" -> CartSteeringMath.woodenAxle((float)clearanceLean(player),CartLegPace.woodenGaitShift(player));
-            case "SaucedWheelbarrow.WheelbarrowMetal" -> 1.1691522;
+            case "SaucedWheelbarrow.WheelbarrowMetal" -> CartWheelbarrow.METAL.axle()-1.5*CartSteeringMath.woodenShift((float)clearanceLean(player),CartLegPace.woodenGaitShift(player));
             default -> 0;
         };
     }
@@ -561,8 +561,8 @@ public final class CartSteeringHooks {
                 : state.requested.turn() * fraction;
             if(wooden(player)) {
                 double mid=state.heading+turn/2;
-                double rolling=actualX*Math.cos(mid)+actualY*Math.sin(mid)-2*.00984276836*Math.sin(turn/2);
-                state.wheelPhase=CartWheelSpin.advance(state.wheelPhase,rolling);
+                double rolling=actualX*Math.cos(mid)+actualY*Math.sin(mid)-2*CartWheelbarrow.forItem(state.cart).lateral()*Math.sin(turn/2);
+                state.wheelPhase=CartWheelSpin.advance(CartWheelbarrow.forItem(state.cart),state.wheelPhase,rolling);
             }
             acceptedTurn=turn;
             state.heading = CartSteeringMath.wrap(state.heading + turn);

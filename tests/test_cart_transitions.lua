@@ -124,15 +124,18 @@ local function setup(server, enabled, bridge)
     toolkitWoodCartCancel = nil
     toolkitWoodCartTick = bridge and function(character) w.ticked = character end or nil
     toolkitWoodCartDropPose = bridge and function(character, item)
-        assert(character == w.p and item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood")
+        assert(character == w.p and (item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood"
+            or item:getFullType() == "SaucedWheelbarrow.WheelbarrowMetal"))
         return not w.noDropPose and (w.dropPose or {x = 1.25, y = 2.75, z = 0, rotation = 90}) or nil
     end or nil
     toolkitWoodCartSetdownPose = bridge and function(character, item, x, y, z, rotation)
-        assert(character == w.p and item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood")
+        assert(character == w.p and (item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood"
+            or item:getFullType() == "SaucedWheelbarrow.WheelbarrowMetal"))
         w.setdownPose = {x = x, y = y, z = z, rotation = rotation}
     end or nil
     toolkitWoodCartDropBegin = bridge and function(character, item, x, y, z, rotation)
-        assert(character == w.p and item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood")
+        assert(character == w.p and (item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood"
+            or item:getFullType() == "SaucedWheelbarrow.WheelbarrowMetal"))
         assert(x == 1.25 and y == 2.75 and z == 0 and rotation == 90, "prepared drop lost exact stored pose")
         w.begins = (w.begins or 0) + 1
         w.dropActive = w.prepareResult ~= false
@@ -183,7 +186,7 @@ local function setup(server, enabled, bridge)
     function p:getSquare() return {canReachTo = function() return w.reachable ~= false end} end
     function w.item(kind, id)
         local item = {kind = kind or "SaucedWheelbarrow.WheelbarrowWood", id = id or 123, cart = true}
-        function item:getType() return "WheelbarrowWood" end
+        function item:getType() return self.kind:match("%.([^%.]+)$") end
         function item:getActualWeight() return 10 end
         function item:getUnequippedWeight() return 10 end
         function item:getPlaceOneSound() end
@@ -194,7 +197,7 @@ local function setup(server, enabled, bridge)
         function item:isTwoHandWeapon() return true end
         function item:isRequiresEquippedBothHands() return true end
         function item:getWorldItem() return self.world end
-        function item:getStaticModel() return "WheelbarrowWood" end
+        function item:getStaticModel() return self:getType() end
         function item:setJobDelta(value) self.delta = value end
         function item:setJobType(value) self.job = value end
         function item:getName() return "cart" end
@@ -394,15 +397,19 @@ if NativeActionRoot then
     ISInventoryPane = {getActualItems = function(items) return items end}
     getSpecificPlayer = function(number) assert(number == 0); return p end
     function p:isEquipped(item) return self:isHandItem(item) end
-    function wood:getType() return "WheelbarrowWood" end
     local add = ISTimedActionQueue.add
     ISTimedActionQueue.add = function(action) return ISTimedActionQueue.addToQueue(queue, action) end
     -- ISWorldObjectContextMenuLogic binds DropNamedItem to this inventory callback.
-    ISInventoryPaneContextMenu.onUnEquip({wood}, 0)
-    assert(queue.last.Type == "ToolkitWoodCartSetdown" and queue.last.reason == nil
-        and queue.last.maxTime == 88, "native world-menu drop bypassed wooden setdown")
+    for _, item in ipairs({wood, w.item("SaucedWheelbarrow.WheelbarrowMetal", 126)}) do
+        p.primary, p.secondary = item, item
+        ISInventoryPaneContextMenu.onUnEquip({item}, 0)
+        assert(queue.last.Type == "ToolkitWoodCartSetdown" and queue.last.reason == nil
+            and queue.last.item == item and queue.last.maxTime == 88,
+            "native world-menu drop bypassed wheelbarrow setdown: " .. item:getFullType())
+    end
+    p.primary, p.secondary = wood, wood
     ISTimedActionQueue.add = add
-    print("PASS native world-menu onUnEquip callback dispatches wooden setdown without a drop reason")
+    print("PASS native world-menu onUnEquip callback dispatches wood and metal setdown without a drop reason")
 end
 -- Exact native drop instances retain their constructor fields and authoritative callbacks.
 local dropBaseComplete = ISDropWorldItemAction.complete
@@ -467,53 +474,59 @@ for key,value in pairs(ISDropWorldItemAction) do assert(w.dropFingerprint[key]==
 print("PASS wooden native drop dispatch preserves placement, lifecycle, constructor fields and ordinary drop classes")
 
 if SaucedCartsSource and NativeActionRoot then
-    PZAPI={ModOptions={create=function() return {addKeyBind=function() return {getValue=function() return 99 end} end} end}}
-    Keyboard={KEY_V=99};SandboxVars={};SaucedCarts.debug=function() end
-    function p:isDead() return false end
-    function p:getVehicle() end
-    getSpecificPlayer=function(index) assert(index==0);return p end
-    ISTimedActionQueue.getTimedActionQueue=function() return {queue={}} end
-    local add=ISTimedActionQueue.add
-    ISTimedActionQueue.add=function(action) return ISTimedActionQueue.addToQueue(queue,action) end
-    dofile(SaucedCartsSource.."/../../client/SaucedCarts/Hotkeys.lua")
-    w.events.OnGameStart();queue.last=nil
-    w.events.OnKeyStartPressed(98);assert(not queue.last)
-    w.events.OnKeyStartPressed(99)
-    local action=queue.last
-    assert(action.Type=="ToolkitWoodCartDrop" and action.item==wood and action.maxTime==88,
-        "installed Sauced hotkey bypassed natural wooden setdown")
-    local nativeComplete=ISDropWorldItemAction.complete
-    local damage,transmissions,placed,removed=0,0,0,0
-    local inv=p:getInventory();inv.Remove=function(_,item) assert(item==wood);p.inventory[item:getID()]=nil;removed=removed+1 end
-    local getInventory=p.getInventory;p.getInventory=function() return inv end
-    sendRemoveItemFromContainer=function(_,item) assert(item==wood) end
-    w.square.getTotalWeightOfItemsOnFloor=function() return 0 end
-    w.square.AddWorldInventoryItem=function(_,item,x,y,z,transmit)
-        assert(item==wood and x==.25 and y==.75 and z==0 and transmit==false,
-            "drop changed placement or enabled automatic duplicate transmission")
-        placed=placed+1
-        item.world={setIgnoreRemoveSandbox=function() end,setExtendedPlacement=function() end,
-            transmitCompleteItemToClients=function() assert(item.worldRotation==90);transmissions=transmissions+1 end}
-        return item
+    for _, item in ipairs({wood, w.item("SaucedWheelbarrow.WheelbarrowMetal", 126)}) do
+        local wood = item
+        p.primary, p.secondary = wood, wood
+        p.inventory[wood:getID()] = wood
+        PZAPI={ModOptions={create=function() return {addKeyBind=function() return {getValue=function() return 99 end} end} end}}
+        Keyboard={KEY_V=99};SandboxVars={};SaucedCarts.debug=function() end
+        function p:isDead() return false end
+        function p:getVehicle() end
+        getSpecificPlayer=function(index) assert(index==0);return p end
+        ISTimedActionQueue.getTimedActionQueue=function() return {queue={}} end
+        local add=ISTimedActionQueue.add
+        ISTimedActionQueue.add=function(action) return ISTimedActionQueue.addToQueue(queue,action) end
+        dofile(SaucedCartsSource.."/../../client/SaucedCarts/Hotkeys.lua")
+        w.events.OnGameStart();queue.last=nil
+        w.events.OnKeyStartPressed(98);assert(not queue.last)
+        w.events.OnKeyStartPressed(99)
+        local action=queue.last
+        assert(action.Type=="ToolkitWoodCartDrop" and action.item==wood and action.maxTime==88,
+            "installed Sauced hotkey bypassed natural wheelbarrow setdown")
+        local nativeComplete=ISDropWorldItemAction.complete
+        local damage,transmissions,placed,removed=0,0,0,0
+        local inv=p:getInventory();inv.Remove=function(_,item) assert(item==wood);p.inventory[item:getID()]=nil;removed=removed+1 end
+        local getInventory=p.getInventory;p.getInventory=function() return inv end
+        sendRemoveItemFromContainer=function(_,item) assert(item==wood) end
+        w.square.getTotalWeightOfItemsOnFloor=function() return 0 end
+        w.square.AddWorldInventoryItem=function(_,item,x,y,z,transmit)
+            assert(item==wood and x==.25 and y==.75 and z==0 and transmit==false,
+                "drop changed placement or enabled automatic duplicate transmission")
+            placed=placed+1
+            item.world={setIgnoreRemoveSandbox=function() end,setExtendedPlacement=function() end,
+                transmitCompleteItemToClients=function() assert(item.worldRotation==90);transmissions=transmissions+1 end}
+            return item
+        end
+        ISDropWorldItemAction.complete=function(self)
+            damage=damage+1
+            if w.breakDrop then inv:Remove(self.item);return nil end
+            return nativeComplete(self)
+        end
+        action:start();assert(action:isValid());action:update()
+        action:stop();assert(removed==0 and not p.vars.ToolkitWoodCartAction)
+        action:start();assert(action:complete()==true)
+        assert(damage==1 and placed==1 and transmissions==1 and removed==1,"drop lost native completion/durability chain")
+        action:perform();assert(not p.vars.ToolkitWoodCartAction and action.performed==1)
+        p.inventory[wood:getID()]=wood;wood.world=nil
+        w.breakDrop=true
+        local broken=ToolkitWoodCartDrop:new(p,wood,w.square,.25,.75,0,90,false)
+        assert(broken:complete()==nil and damage==2 and placed==1 and transmissions==1 and removed==2,
+            "destroyed cart must stay destroyed instead of falling through to world placement")
+        ISDropWorldItemAction.complete=nativeComplete;w.breakDrop=nil;p.getInventory=getInventory
+        p.inventory[wood:getID()]=wood;wood.world=nil;ISTimedActionQueue.add=add
+        print("PASS installed Sauced hotkey uses native drop constructor, one authoritative placement/transmit, cancellation and live completion hooks: " .. wood:getFullType())
     end
-    ISDropWorldItemAction.complete=function(self)
-        damage=damage+1
-        if w.breakDrop then inv:Remove(self.item);return nil end
-        return nativeComplete(self)
-    end
-    action:start();assert(action:isValid());action:update()
-    action:stop();assert(removed==0 and not p.vars.ToolkitWoodCartAction)
-    action:start();assert(action:complete()==true)
-    assert(damage==1 and placed==1 and transmissions==1 and removed==1,"drop lost native completion/durability chain")
-    action:perform();assert(not p.vars.ToolkitWoodCartAction and action.performed==1)
-    p.inventory[wood:getID()]=wood;wood.world=nil
-    w.breakDrop=true
-    local broken=ToolkitWoodCartDrop:new(p,wood,w.square,.25,.75,0,90,false)
-    assert(broken:complete()==nil and damage==2 and placed==1 and transmissions==1 and removed==2,
-        "destroyed cart must stay destroyed instead of falling through to world placement")
-    ISDropWorldItemAction.complete=nativeComplete;w.breakDrop=nil;p.getInventory=getInventory
-    p.inventory[wood:getID()]=wood;wood.world=nil;ISTimedActionQueue.add=add
-    print("PASS installed Sauced hotkey uses native drop constructor, one authoritative placement/transmit, cancellation and live completion hooks")
+    p.primary, p.secondary = wood, wood
 end
 
 local refreshed = ISUnequipAction:new(p, wood, 1, "drop")
@@ -606,7 +619,7 @@ p.instant = false
 p.distance = 1; w.worldFor(steel)
 assert(getmetatable(ISCartPickupAction.FromWorldItem(p, steel.world)) == ISCartPickupAction)
 -- Other cart types still need the ordinary approach that their upstream callback omits.
-for _, kind in ipairs({"SaucedCarts.ShoppingCart", "SaucedWheelbarrow.WheelbarrowMetal"}) do
+for _, kind in ipairs({"SaucedCarts.ShoppingCart", "SaucedWheelbarrow.Wheelbarrow"}) do
     local cart = w.item(kind, 125); w.worldFor(cart)
     local stanceBridge = toolkitWoodCartStance; toolkitWoodCartStance = nil
     w.reachable = false
@@ -636,7 +649,7 @@ for _, kind in ipairs({"SaucedCarts.ShoppingCart", "SaucedWheelbarrow.Wheelbarro
     w.noAdjacent = nil; w.reachable = nil; toolkitWoodCartStance = stanceBridge
 end
 w.worldFor(steel)
-print("PASS shopping and metal cart approach uses native reachability, exact target, cancellation and unchanged pickup actions")
+print("PASS shopping and unknown cart approach uses native reachability, exact target, cancellation and unchanged pickup actions")
 local beforeEnd = w.ended
 w.events.OnPlayerUpdate(p)
 assert(w.ticked == p, "presentation recovery tick lost its exact player")
@@ -662,76 +675,78 @@ missing:start()
 assert(missing.stringOverride and missing.override == nil, "missing pickup target should clear the model override safely")
 missing:stop()
 
-for _, pickupAction in ipairs({true, false}) do
-    for _, outcome in ipairs({"accepted", "refused", "missing", "error"}) do
-        local state = setup(false, true, true)
-        local player, item = state.p, state.item()
-        state.worldFor(item)
-        if not pickupAction then player.primary, player.secondary = item, item end
-        local action
-        if pickupAction then
-            action = ISCartPickupAction:new(player, 1, 2, 0, 123)
-        else
-            action = ISUnequipAction:new(player, item, 1, "drop")
-            ISTimedActionQueue.addToQueue({}, action)
-        end
-        action.action = {}
-        action:start()
-        local owner = pickupAction and ISCartPickupAction or ISUnequipAction
-        local order, sourceError = {}, {}
-        local nativeStop = owner.stop
-        owner.stop = function(self)
-            assert(self == action and self.toolkitPresentation, "native stop lost its owned action")
-            order[#order + 1] = "stop"
-            if pickupAction then item.world, state.world = nil, nil end
-            if outcome == "error" then error(sourceError) end
-            return "native stopped"
-        end
-        if outcome ~= "missing" then
-            toolkitWoodCartCancel = function(character, cart, pickup, stoppingAction)
-                assert(character == player and cart == item and pickup == pickupAction and stoppingAction == action.action,
-                    "recovery lost the exact player, pre-stop item, direction or native action")
-                assert(table.concat(order, ",") == "stop", "recovery preceded or repeated native stop")
-                order[#order + 1] = "cancel"
-                return outcome == "accepted"
+for _, kind in ipairs({"SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.WheelbarrowMetal"}) do
+    for _, pickupAction in ipairs({true, false}) do
+        for _, outcome in ipairs({"accepted", "refused", "missing", "error"}) do
+            local state = setup(false, true, true)
+            local player, item = state.p, state.item(kind)
+            state.worldFor(item)
+            if not pickupAction then player.primary, player.secondary = item, item end
+            local action
+            if pickupAction then
+                action = ISCartPickupAction:new(player, 1, 2, 0, 123)
+            else
+                action = ISUnequipAction:new(player, item, 1, "drop")
+                ISTimedActionQueue.addToQueue({}, action)
             end
-        end
-        local ended = toolkitWoodCartEnd
-        toolkitWoodCartEnd = function(character)
-            order[#order + 1] = "end"
-            ended(character)
-        end
-        local visualCalls = 0
-        ToolkitCartRefreshVisual = function(character, stoppingAction, stopped)
-            assert(not pickupAction and character == player and stoppingAction == action.action and stopped == true,
-                "stopped setdown lost its exact visual handoff")
+            action.action = {}
+            action:start()
+            local owner = pickupAction and ISCartPickupAction or ISUnequipAction
+            local order, sourceError = {}, {}
+            local nativeStop = owner.stop
+            owner.stop = function(self)
+                assert(self == action and self.toolkitPresentation, "native stop lost its owned action")
+                order[#order + 1] = "stop"
+                if pickupAction then item.world, state.world = nil, nil end
+                if outcome == "error" then error(sourceError) end
+                return "native stopped"
+            end
+            if outcome ~= "missing" then
+                toolkitWoodCartCancel = function(character, cart, pickup, stoppingAction)
+                    assert(character == player and cart == item and pickup == pickupAction and stoppingAction == action.action,
+                        "recovery lost the exact player, pre-stop item, direction or native action")
+                    assert(table.concat(order, ",") == "stop", "recovery preceded or repeated native stop")
+                    order[#order + 1] = "cancel"
+                    return outcome == "accepted"
+                end
+            end
+            local ended = toolkitWoodCartEnd
+            toolkitWoodCartEnd = function(character)
+                order[#order + 1] = "end"
+                ended(character)
+            end
+            local visualCalls = 0
+            ToolkitCartRefreshVisual = function(character, stoppingAction, stopped)
+                assert(not pickupAction and character == player and stoppingAction == action.action and stopped == true,
+                    "stopped setdown lost its exact visual handoff")
+                assert(not action.toolkitPresentation and not player.vars.ToolkitWoodCartAction and not player.vars.ToolkitWoodCartProgress,
+                    "visual refresh preceded Lua presentation retirement")
+                order[#order + 1] = "visual"
+                visualCalls = visualCalls + 1
+            end
+            local completed, performed = player.completeCalls, action.performed
+            local ok, result = pcall(action.stop, action)
             assert(not action.toolkitPresentation and not player.vars.ToolkitWoodCartAction and not player.vars.ToolkitWoodCartProgress,
-                "visual refresh preceded Lua presentation retirement")
-            order[#order + 1] = "visual"
-            visualCalls = visualCalls + 1
+                "stop retained Lua presentation ownership")
+            assert(player.completeCalls == completed and action.performed == performed, "stop performed an ownership transfer")
+            if outcome == "error" then
+                assert(not ok and result == sourceError and table.concat(order, ",") == "stop,end" and visualCalls == 0,
+                    "native stop error changed identity, started recovery or skipped immediate cleanup")
+            else
+                local expected = outcome == "accepted" and "stop,cancel" or outcome == "refused" and "stop,cancel,end" or "stop,end"
+                if not pickupAction then expected = expected .. ",visual" end
+                assert(ok and result == "native stopped" and table.concat(order, ",") == expected,
+                    "stop order, fallback or native result changed: " .. outcome)
+                assert(state.ended == (outcome == "accepted" and 0 or 1), "recovery ended the accepted state or leaked a refused state")
+            end
+            local before = #order
+            action:forceCancel()
+            assert(#order == before, "forceCancel repeated retired presentation cleanup")
+            owner.stop = nativeStop
         end
-        local completed, performed = player.completeCalls, action.performed
-        local ok, result = pcall(action.stop, action)
-        assert(not action.toolkitPresentation and not player.vars.ToolkitWoodCartAction and not player.vars.ToolkitWoodCartProgress,
-            "stop retained Lua presentation ownership")
-        assert(player.completeCalls == completed and action.performed == performed, "stop performed an ownership transfer")
-        if outcome == "error" then
-            assert(not ok and result == sourceError and table.concat(order, ",") == "stop,end" and visualCalls == 0,
-                "native stop error changed identity, started recovery or skipped immediate cleanup")
-        else
-            local expected = outcome == "accepted" and "stop,cancel" or outcome == "refused" and "stop,cancel,end" or "stop,end"
-            if not pickupAction then expected = expected .. ",visual" end
-            assert(ok and result == "native stopped" and table.concat(order, ",") == expected,
-                "stop order, fallback or native result changed: " .. outcome)
-            assert(state.ended == (outcome == "accepted" and 0 or 1), "recovery ended the accepted state or leaked a refused state")
-        end
-        local before = #order
-        action:forceCancel()
-        assert(#order == before, "forceCancel repeated retired presentation cleanup")
-        owner.stop = nativeStop
     end
 end
-print("PASS wooden cancellation follows one native stop, preserves exact identities/results/errors, retires Lua ownership and falls back without recovery")
+print("PASS wheelbarrow cancellation follows one native stop, preserves exact identities/results/errors, retires Lua ownership and falls back without recovery")
 
 for _, pickupAction in ipairs({true, false}) do
     local state = setup(false, true, true)
@@ -766,31 +781,106 @@ print("PASS server pickup reconstructs the authored action without probing clien
 
 -- Native08: engine clips a vehicle-obstructed requested X=10822.4541015625 to X=10822.4599609375.
 -- A successful native walk must still check the current original handle stance before queuing pickup.
-for _, outcome in ipairs({"native-clipped", "exact", "target-moved", "different-floor"}) do
-    local state=setup(false,true,true)
-    local cart,player=state.item(),state.p;local target=state.worldFor(cart)
-    local goalX,goalY=10822.4541015625,10142.5
-    toolkitWoodCartStance=function() return {x=goalX,y=goalY,faceX=goalX+1,faceY=goalY,aligned=true} end
-    function player:DistToSquared(x,y) return (self.x-x)^2+(self.y-y)^2 end
-    player.x,player.y=goalX+1,goalY
-    local approach=ISCartPickupAction.FromWorldItem(player,target)
-    assert(approach.Type=="ISWalkToTimedActionF")
-    player.x=outcome=="native-clipped" and 10822.4599609375 or goalX
-    if outcome=="target-moved" then goalX=goalX+.05 end
-    if outcome=="different-floor" then player.z=1 end
-    approach.result="Succeeded"
-    local independent={Type="AnotherQueuedCommand"};state.queue={approach,independent}
-    approach:perform()
-    if outcome=="exact" then
-        assert(#state.added==1 and state.added[1].itemId==cart:getID()
-            and state.queue[1]==state.added[1] and state.queue[2]==independent,
-            "exact original stance lost its pickup or independent tail")
-    else
-        assert(#state.added==0 and state.startedNext==independent and state.queue[1]==independent,
-            "clipped/moved/different-floor stance queued an off-center pickup or consumed the independent tail")
-        assert(approach.performed==1 and cart:getWorldItem()==target and player.primary==nil and player.secondary==nil,
-            "denied pickup changed native completion, cart ownership or hands")
+for _, kind in ipairs({"SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.WheelbarrowMetal"}) do
+    for _, outcome in ipairs({"native-clipped", "exact", "target-moved", "different-floor"}) do
+        local state=setup(false,true,true)
+        local cart,player=state.item(kind),state.p;local target=state.worldFor(cart)
+        local goalX,goalY=10822.4541015625,10142.5
+        toolkitWoodCartStance=function() return {x=goalX,y=goalY,faceX=goalX+1,faceY=goalY,aligned=true} end
+        function player:DistToSquared(x,y) return (self.x-x)^2+(self.y-y)^2 end
+        player.x,player.y=goalX+1,goalY
+        local approach=ISCartPickupAction.FromWorldItem(player,target)
+        assert(approach.Type=="ISWalkToTimedActionF")
+        player.x=outcome=="native-clipped" and 10822.4599609375 or goalX
+        if outcome=="target-moved" then goalX=goalX+.05 end
+        if outcome=="different-floor" then player.z=1 end
+        approach.result="Succeeded"
+        local independent={Type="AnotherQueuedCommand"};state.queue={approach,independent}
+        approach:perform()
+        if outcome=="exact" then
+            assert(#state.added==1 and state.added[1].itemId==cart:getID()
+                and state.queue[1]==state.added[1] and state.queue[2]==independent,
+                "exact original stance lost its pickup or independent tail")
+        else
+            assert(#state.added==0 and state.startedNext==independent and state.queue[1]==independent,
+                "clipped/moved/different-floor stance queued an off-center pickup or consumed the independent tail")
+            assert(approach.performed==1 and cart:getWorldItem()==target and player.primary==nil and player.secondary==nil,
+                "denied pickup changed native completion, cart ownership or hands")
+        end
     end
 end
 require=originalRequire
 print("PASS native clipped target cannot queue off-center pickup; exact current stance keeps pickup and independent tail")
+
+-- Run the same exact-item transition through the installed Sauced completion for each model.
+for _, kind in ipairs({"SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.WheelbarrowMetal"}) do
+    local state = setup(false, true, true)
+    local player, cart = state.p, state.item(kind)
+    local target = state.worldFor(cart)
+    local approach = ISCartPickupAction.FromWorldItem(player, target)
+    assert(approach.Type == "ISWalkToTimedActionF" and approach.toolkitWoodCartItem == cart)
+    assert(approach.location:x() == 1.3 and approach.location:y() == 2.2,
+        "wheelbarrow approach must use calibrated handles: " .. kind)
+    player.distance = 0; approach:perform()
+    local action = state.added[1]
+    assert(action.Type == "ToolkitWoodCartPickup" and action.maxTime == 88 and action.itemId == cart:getID())
+    action:start(); action:update()
+    assert(action.override == cart:getStaticModel() and cart.delta == .4 and player.vars.ToolkitWoodCartAction,
+        "wheelbarrow presentation lost its own model: " .. kind)
+    if SaucedCartsSource then
+        local removed, added, multiplier, visual = 0, 0, 0, 0
+        function state.square:transmitRemoveItemFromSquare(world) assert(world == target); removed = removed + 1 end
+        function state.square:removeWorldObject(world) assert(world == target); state.world = nil end
+        function cart:setWorldItem(world) assert(world == nil); self.world = world end
+        local inventory = player:getInventory()
+        function inventory:AddItem(item) assert(item == cart); player.inventory[item:getID()] = item end
+        function inventory:setDrawDirty(dirty) assert(dirty) end
+        player.getInventory = function() return inventory end
+        sendAddItemToContainer = function(container, item) assert(container == inventory and item == cart); added = added + 1 end
+        SaucedCarts.applyMultipliers = function(item) assert(item == cart); multiplier = multiplier + 1 end
+        SaucedCarts.updateCartVisual = function(item, character) assert(item == cart and character == player); visual = visual + 1 end
+        assert(action:complete() == true and action.completed and action:isValid())
+        assert(removed == 1 and added == 1 and multiplier == 1 and visual == 1 and cart.world == nil
+            and player.primary == cart and player.secondary == cart,
+            "wheelbarrow bypassed authoritative Sauced pickup ownership: " .. kind)
+        action:perform()
+        assert(action.performed == 1 and not player.vars.ToolkitWoodCartAction and not action.toolkitPresentation)
+    else
+        action:stop()
+    end
+    player.primary, player.secondary = cart, cart
+    local queue = {}
+    SaucedCarts.TransferRestrictions = {hasPendingTransfer = function(id) assert(id == cart:getID()); return true end}
+    local transfer = ISUnequipAction:new(player, cart, 1, "drop")
+    local transferDrop = ISDropWorldItemAction:new(player, cart, state.square, .5, .5, 0, 0, false)
+    ISTimedActionQueue.addToQueue(queue, transfer); ISTimedActionQueue.addToQueue(queue, transferDrop)
+    assert(getmetatable(transfer) == ISUnequipAction and getmetatable(transferDrop) == ISDropWorldItemAction,
+        "pending transfer became a wheelbarrow ground release: " .. kind)
+    SaucedCarts.TransferRestrictions = nil
+    state.worldFor(cart); player.primary, player.secondary = nil, nil
+    toolkitWoodCartStance, toolkitWoodCartUpdate, toolkitWoodCartDropPose = nil, nil, nil
+    assert(getmetatable(ISCartPickupAction.FromWorldItem(player, cart.world)) == ISCartPickupAction,
+        "missing calibration bridge promoted a wheelbarrow pickup: " .. kind)
+    player.primary, player.secondary = cart, cart
+    local fallback = ISUnequipAction:new(player, cart, 1, "drop")
+    ISTimedActionQueue.addToQueue(queue, fallback)
+    assert(getmetatable(fallback) == ISUnequipAction, "missing bridge promoted a wheelbarrow setdown: " .. kind)
+end
+print("PASS wood and metal use exact calibrated approach, own models, authoritative Sauced pickup, pending-transfer guards and missing-bridge fallback")
+
+for _, kind in ipairs({"SaucedCarts.ShoppingCart", "SaucedWheelbarrow.Wheelbarrow", "Other.WheelbarrowMetal"}) do
+    local state = setup(false, true, true)
+    local player, cart = state.p, state.item(kind)
+    state.worldFor(cart); player.distance = 0
+    toolkitWoodCartStance = function() error("unsupported cart requested wheelbarrow calibration: " .. kind) end
+    assert(getmetatable(ISCartPickupAction.FromWorldItem(player, cart.world)) == ISCartPickupAction)
+    player.primary, player.secondary = cart, cart
+    local unequip = ISUnequipAction:new(player, cart, 1, "drop")
+    local drop = ISDropWorldItemAction:new(player, cart, state.square, .5, .5, 0, 0, false)
+    toolkitWoodCartDropPose = function() error("unsupported cart requested wheelbarrow placement: " .. kind) end
+    ISTimedActionQueue.addToQueue({}, unequip); ISTimedActionQueue.addToQueue({}, drop)
+    assert(getmetatable(unequip) == ISUnequipAction and getmetatable(drop) == ISDropWorldItemAction,
+        "shopping or unknown type adopted wheelbarrow release: " .. kind)
+end
+require = originalRequire
+print("PASS shopping and unknown types retain native pickup, unequip and drop with the wheelbarrow bridge available")

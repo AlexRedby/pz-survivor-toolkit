@@ -1,3 +1,8 @@
+# Metal wheelbarrow animation port
+
+- [ ] Complete an isolated Host owner/observer run for the metal wheelbarrow with the installed mod set and at least 2048 MiB Java heap per process. Check motion, pickup/setdown, cancellation/retry, exact cart/cargo identity and both clients' presentation; review short recordings. A startup failure is not functional coverage.
+- [ ] After the Host gate, rebase on current main, recheck Toolkit/Java component versions and push the port to main. Keep trimmed Host clips and remove the disposable profile.
+
 # Sport headlight push-button cycle
 
 - [ ] Run the isolated sport push-button SP/Host checks when the shared desktop test slot is available. Inspect off/low/high/off releases, held/released appearance at all four scales and server power acknowledgements. Current focused regressions cover the cycle and ACK guards; native launch was blocked at admission. Keep the VVA-pair coexistence gate below separate from the available 45-mod test subset.

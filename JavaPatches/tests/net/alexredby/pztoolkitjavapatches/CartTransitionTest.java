@@ -202,10 +202,11 @@ public final class CartTransitionTest {
             nativePass(()->world.render(0,0,0,null,false,false,null),"sprite pass stayed hidden after cleanup");
             nativePass(()->world.renderObjectPicker(0,0,0,null),"picker stayed hidden after cleanup");
             outlinePass.run();
-            for(var kind:new String[]{"SaucedCarts.ShoppingCart","SaucedWheelbarrow.WheelbarrowMetal","Base.Hammer"}) {
+            for(var kind:new String[]{"SaucedCarts.ShoppingCart","SaucedWheelbarrow.Unknown","Base.Hammer"}) {
                 cart.kind=kind;
                 nativePass(outlinePass,"native outline changed for "+kind);
             }
+            cart.kind="SaucedWheelbarrow.WheelbarrowMetal";outlinePass.run();
             cart.kind="SaucedWheelbarrow.WheelbarrowWood";core.setOption3DGroundItem(false);
             nativePass(outlinePass,"2D wooden cart lost its native outline");
             cart.world=null;
@@ -235,7 +236,9 @@ public final class CartTransitionTest {
             player.secondary=cart;cart.container=allocate(ItemContainer.class);
             check(!CartTransition.beginDrop(player,cart,11,20,2,0),"foreign inventory accepted");
             cart.container=player.inventory;cart.kind="SaucedWheelbarrow.WheelbarrowMetal";
-            check(!CartTransition.beginDrop(player,cart,11,20,2,0),"other cart type accepted");
+            check(CartTransition.beginDrop(player,cart,11,20,2,0),"metal owned placement refused");
+            CartTransition.endDrop();cart.kind="SaucedCarts.ShoppingCart";
+            check(!CartTransition.beginDrop(player,cart,11,20,2,0),"shopping cart acquired wheelbarrow placement");
             cart.kind="SaucedWheelbarrow.WheelbarrowWood";cart.world=allocate(IsoWorldInventoryObject.class);
             check(!CartTransition.beginDrop(player,cart,11,20,2,0),"already-world cart accepted");
             cart.world=null;
@@ -884,6 +887,25 @@ public final class CartTransitionTest {
         }
         check(CartTransition.dropPlacement(new Matrix4f().m00(Float.NaN),model,0,0,0,0,1)==null,"invalid held transform accepted");
     }
+    private static void metalDropGeometry() {
+        var profile=CartWheelbarrow.METAL;
+        // Native world scale paired with the calibrated .85 hand attachment.
+        var model=new Matrix4f().scale(.0091743395f/.85f);
+        for(float bank:new float[]{(float)Math.toRadians(-7),0,(float)Math.toRadians(7)})
+            for(float gait:new float[]{0,-.24f}) for(float angle:new float[]{0,.3f,1.57f,3.14f,4.7f,6.1f}) {
+            var held=profile.held(new Matrix4f());
+            check(CartGrounding.alignWheelbarrow(held,profile,bank,Math.abs(bank),gait,new Matrix4f()),"metal held pose refused");
+            var pose=CartTransition.dropPlacement(held,model,10.25f,20.75f,2,angle,1,.06f,profile);
+            check(pose!=null && pose.xRotation()==0 && pose.yRotation()==0,"metal drop lost native planar placement");
+            var ground=new Matrix4f();
+            check(CartTransitionMath.worldToActor(pose,model,10.25f,20.75f,2,angle,ground),"metal landing did not project");
+            var offset=ground.transformPosition(profile.center(new org.joml.Vector3f()))
+                .sub(held.transformPosition(profile.center(new org.joml.Vector3f())));
+            close(offset.x,0,"metal drop moved the axle sideways");
+            close(offset.z,-.06f,"metal drop lost the handle stance offset");
+            close(pose.worldScale(),.85f,"metal drop changed native hand/world scale");
+        }
+    }
     private static void recoveryModelScope() throws Exception {
         var manager=allocate(zombie.core.skinnedmodel.ModelManager.class);
         var type=zombie.core.skinnedmodel.ModelManager.ModelSlot.class;
@@ -1130,7 +1152,7 @@ public final class CartTransitionTest {
         var cart=allocate(Cart.class);cart.kind="SaucedWheelbarrow.WheelbarrowWood";
         check(Boolean.FALSE.equals(atlas.invoke(null,cart,null,0f,0f,0f,0f,0f,false)),
             "wooden cart atlas must defer to the same renderer as FBO without accessing a scene");
-        bridge();geometry();groundPasses();recoveryLifecycle();authoredClipDefault();authoredClockAndRecovery();authoredRestartHandoff();authoredRestartRefusals();authoredRestartRecancellation();authoredPendingHandoff();authoredPendingDeadline();authoredPendingRefusals();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();collisionInterruptions();recoveryLeaseIdentity();recoveryModelScope();remoteNativeHandModels();remotePickupModelBind();
+        bridge();geometry();metalDropGeometry();groundPasses();recoveryLifecycle();authoredClipDefault();authoredClockAndRecovery();authoredRestartHandoff();authoredRestartRefusals();authoredRestartRecancellation();authoredPendingHandoff();authoredPendingDeadline();authoredPendingRefusals();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();collisionInterruptions();recoveryLeaseIdentity();recoveryModelScope();remoteNativeHandModels();remotePickupModelBind();
         System.out.println("CART_TRANSITION_PASS (scoped exact-owner validation, native yaw geometry, model/depth/sprite/picker/outline suppression and cleanup)");
     }
 }

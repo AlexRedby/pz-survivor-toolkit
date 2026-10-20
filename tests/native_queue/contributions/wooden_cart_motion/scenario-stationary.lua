@@ -25,7 +25,8 @@ local climate=getClimateManager()
 for _,index in ipairs({ClimateManager.FLOAT_FOG_INTENSITY,ClimateManager.FLOAT_PRECIPITATION_INTENSITY,ClimateManager.FLOAT_CLOUD_INTENSITY}) do
  local value=climate:getClimateFloat(index);value:setEnableAdmin(true);value:setAdminValue(0)
 end
-local kind='SaucedWheelbarrow.WheelbarrowWood'
+local kind=config.cartType or 'SaucedWheelbarrow.WheelbarrowWood'
+assert(kind=='SaucedWheelbarrow.WheelbarrowWood' or kind=='SaucedWheelbarrow.WheelbarrowMetal','Unsupported calibrated cart type')
 -- At this side heading A/Left is straight; W/Forward and S/Backward request opposite 90-degree turns.
 local cases={}
 for _,female in ipairs({false,true}) do
@@ -78,7 +79,7 @@ local function pose()
 end
 local function photo(name)
  if taken[name] then return end
- taken[name]=true;getCore():TakeFullScreenshot('wood-'..cases[phase].name..'-'..name..'.png')
+ taken[name]=true;getCore():TakeFullScreenshot((config.cartVariant=='metal-wheelbarrow' and 'metal-' or 'wood-')..cases[phase].name..'-'..name..'.png')
 end
 
 local function sprinting(level)
@@ -143,7 +144,7 @@ local function tick()
  if now-sampleSince>=25 then
   sampleSince=now
   print('[WOOD_BANK_SAMPLE] case='..c.name..' wall='..now..' elapsed='..elapsed..' x='..p:getX()..' y='..p:getY()
-   ..' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' skill='..p:getPerkLevel(Perks.Sprinting)..' speed='..p:getVariableFloat('WalkSpeed',0)
+   ..' cartType='..(p:getPrimaryHandItem() and p:getPrimaryHandItem():getFullType() or 'none')..' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' skill='..p:getPerkLevel(Perks.Sprinting)..' speed='..p:getVariableFloat('WalkSpeed',0)
    ..' drive='..tostring(c.steps[stage] and c.steps[stage][3] or 0)..' requestedGait='..tostring(c.steps[stage] and c.steps[stage][2] or 0)..' stepX='..p:getVariableFloat('ToolkitCartStepX',0)..' stepY='..p:getVariableFloat('ToolkitCartStepY',0)..' pace='..p:getVariableFloat('ToolkitCartLegPace',0)..' bank='..cartLabBank()..' reversal='..cartLabReversal()..' ramp='..cartLabRamp()..' stationary='..cartLabStationary()..' tracks='..cartLabTracks())
  end
  while stage<#c.steps and elapsed>=c.steps[stage+1][1] do

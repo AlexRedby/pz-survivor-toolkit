@@ -189,10 +189,14 @@ public final class CartGrounding {
     }
 
     static float woodenLowest(Matrix4f transform) {
-        float centerY=transform.m01()*CartWheelSpin.CENTER_X+transform.m11()*CartWheelSpin.CENTER_Y
-            +transform.m21()*CartWheelSpin.CENTER_Z+transform.m31();
-        return centerY-CartWheelSpin.RADIUS*(float)Math.hypot(transform.m11(),transform.m21())
-            -.00024333253f*Math.abs(transform.m01());
+        return wheelbarrowLowest(transform,CartWheelbarrow.WOOD);
+    }
+
+    static float wheelbarrowLowest(Matrix4f transform, CartWheelbarrow profile) {
+        float centerY=transform.m01()*profile.centerX()+transform.m11()*profile.centerY()
+            +transform.m21()*profile.centerZ()+transform.m31();
+        return centerY-profile.radius()*(float)Math.hypot(transform.m11(),transform.m21())
+            -profile.halfWidth()*Math.abs(transform.m01());
     }
 
     static boolean alignWood(Matrix4f transform, float lean, float gaitShift, Matrix4f delta) {
@@ -200,21 +204,25 @@ public final class CartGrounding {
     }
 
     static boolean alignWood(Matrix4f transform, float lean, float pressure, float gaitShift, Matrix4f delta) {
+        return alignWheelbarrow(transform,CartWheelbarrow.WOOD,lean,pressure,gaitShift,delta);
+    }
+
+    static boolean alignWheelbarrow(Matrix4f transform, CartWheelbarrow profile, float lean, float pressure, float gaitShift, Matrix4f delta) {
         if(!Float.isFinite(lean) || !Float.isFinite(pressure) || pressure<Math.abs(lean)
             || !Float.isFinite(gaitShift) || gaitShift<-.24f || gaitShift>0) return false;
         // The running torso moves forward; follow its native blend without lifting the handles.
         transform.m32(transform.m32()+CartSteeringMath.woodenShift(pressure,gaitShift));
         float height=transform.m31();
-        if(!ground(transform,woodenLowest(transform))) return false;
+        if(!ground(transform,wheelbarrowLowest(transform,profile))) return false;
         delta.translation(0,transform.m31()-height,0);
-        float centerX=transform.m00()*CartWheelSpin.CENTER_X+transform.m10()*CartWheelSpin.CENTER_Y
-            +transform.m20()*CartWheelSpin.CENTER_Z+transform.m30();
+        float centerX=transform.m00()*profile.centerX()+transform.m10()*profile.centerY()
+            +transform.m20()*profile.centerZ()+transform.m30();
         var roll=matrices.get().attachment;
         roll.translation(centerX,.008f,0).rotateZ(lean).translate(-centerX,-.008f,0);
         roll.mul(transform,transform);roll.mul(delta,delta);
         // The rotating tire is a cylinder, not one fixed polygon vertex; its rim must clear the floor at every phase.
         height=transform.m31();
-        if(!ground(transform,woodenLowest(transform))) return false;
+        if(!ground(transform,wheelbarrowLowest(transform,profile))) return false;
         delta.m31(delta.m31()+transform.m31()-height);
         return true;
     }
@@ -227,6 +235,7 @@ public final class CartGrounding {
         var expected=resolvedModel(player.getPrimaryHandItem());
         if(expected==null) return;
         String name=expected.getName();
+        var profile=CartWheelbarrow.forModel(name);
         var clip=ModelManager.instance.getAnimationClip("Bob_Cart_Idle");
         for(var data:slot.modelData) {
             var instance=data.modelInstance;
@@ -239,13 +248,13 @@ public final class CartGrounding {
             float lean=(float)(player.isLocalPlayer()?CartSteeringHooks.lean(player):CartMotionSync.lean(player));
             float pressure=(float)(player.isLocalPlayer()?CartSteeringHooks.clearanceLean(player):CartMotionSync.pressure(player));
             if(rigid
-                && ("WheelbarrowWood".equals(name)?alignWood(transform,lean,pressure,CartLegPace.woodenGaitShift(player),state.delta)
+                && (profile!=null?alignWheelbarrow(transform,profile,lean,pressure,CartLegPace.woodenGaitShift(player),state.delta)
                     :align(transform,instance.model.mesh.minXyz,instance.model.mesh.maxXyz,
                         contact(instance.modelScript.getName()),lean,state.delta))) {
                 // A failed arm solve must not replace the grounded cart with the moving hand attachment.
                 CartGrip.render(slot,instance.parent,clip,state.delta,name,transform);
                 data.xfrm.set(transform).transpose();
-                if("WheelbarrowWood".equals(name)) CartEmergencyDrop.capture(player,slot,transform);
+                if(profile!=null) CartEmergencyDrop.capture(player,slot,transform);
                 CartWheelSpin.prepare(slot,player.isLocalPlayer()?CartSteeringHooks.wheelPhase(player,slot,transform)
                     :CartWheelSpin.follow(player.getPrimaryHandItem(),slot.x,slot.y,slot.animPlayerAngle,transform));
             } else {

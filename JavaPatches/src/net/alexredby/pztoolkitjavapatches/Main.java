@@ -503,7 +503,7 @@ public final class Main {
         @Patch.OnExit
         public static void exit(@Patch.This zombie.core.skinnedmodel.model.ItemModelRenderer renderer,
             @Patch.Argument(0) zombie.inventory.InventoryItem item) {
-            if(Main.CART_TRANSITION_SUPPORTED && CartTransition.wooden(item)) {
+            if(Main.CART_TRANSITION_SUPPORTED && CartTransition.wheelbarrow(item)) {
                 var transform=Accessor.tryGet(renderer,"transform",(org.joml.Matrix4f)null);
                 if(transform!=null) {
                     transform.scale(.85f);
@@ -598,7 +598,7 @@ public final class Main {
             // The custom 3D cart supplies its own tint; the separate outline can flash its inventory icon.
             return Main.CART_TRANSITION_SUPPORTED && object instanceof zombie.iso.objects.IsoWorldInventoryObject world
                 && (CartTransition.hidden(world.getItem())
-                    || CartTransition.wooden(world.getItem()) && zombie.core.Core.getInstance().isOption3DGroundItem());
+                    || CartTransition.wheelbarrow(world.getItem()) && zombie.core.Core.getInstance().isOption3DGroundItem());
         }
     }
 
@@ -606,7 +606,7 @@ public final class Main {
     public static class WoodenWorldAtlas {
         @Patch.OnEnter(skipOn=true)
         public static boolean enter(@Patch.Argument(0) zombie.inventory.InventoryItem item) {
-            return Main.CART_TRANSITION_SUPPORTED && CartTransition.wooden(item);
+            return Main.CART_TRANSITION_SUPPORTED && CartTransition.wheelbarrow(item);
         }
     }
 

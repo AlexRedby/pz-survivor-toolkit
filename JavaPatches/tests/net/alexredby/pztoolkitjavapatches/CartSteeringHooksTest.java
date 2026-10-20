@@ -559,8 +559,8 @@ public final class CartSteeringHooksTest {
                 CartSteeringHooks.input(player,input);player.run=gait.equals("run");player.sprint=gait.equals("sprint");
                 accept(player,CartSteeringHooks.movement(player,.02f,0));
                 releaseAfterNativeGaitReset(player,input);
-                check(player.woodBrake==(kind.endsWith("Wood") && gait.equals("run")),
-                    "only finalized fast wooden movement can arm a stop after the native flags reset: "+kind+"/"+gait);
+                check(player.woodBrake==(kind.startsWith("SaucedWheelbarrow.") && !gait.equals("walk")),
+                    "only finalized fast wheelbarrow movement can arm a stop after the native flags reset: "+kind+"/"+gait);
                 CartSteeringHooks.reset(player);
             }
         } finally {
@@ -628,7 +628,9 @@ public final class CartSteeringHooksTest {
         CartSteeringHooks.beginPath(player);
         check(CartSteeringHooks.pathResult(player,zombie.pathfind.PathFindBehavior2.BehaviorResult.Working)
             ==zombie.pathfind.PathFindBehavior2.BehaviorResult.Working,"new native update must release old per-call obstruction");
-        for(String kind:new String[]{"SaucedWheelbarrow.WheelbarrowMetal","SaucedCarts.ShoppingCart"}) {
+        type(cart,"SaucedWheelbarrow.WheelbarrowMetal");
+        check(CartSteeringHooks.enabled(player),"metal native path lost wheelbarrow clearance");
+        for(String kind:new String[]{"SaucedCarts.ShoppingCart"}) {
             type(cart,kind);check(!CartSteeringHooks.enabled(player),
                 "other carts must retain native path behavior: "+kind);
         }
@@ -1206,8 +1208,8 @@ public final class CartSteeringHooksTest {
                     player.inputY=(float)((Math.cos(world)+Math.sin(world))/2);
                     nativeInput.setRunning(true);nativeInput.sprinting=true;
                     CartSteeringHooks.input(player,nativeInput);
-                    boolean reverse=kind.endsWith("Wood") && Math.abs(degrees)>135;
-                    boolean stationary=kind.endsWith("Wood") && Math.abs(degrees)>20 && !reverse;
+                    boolean reverse=kind.startsWith("SaucedWheelbarrow.") && Math.abs(degrees)>135;
+                    boolean stationary=kind.startsWith("SaucedWheelbarrow.") && Math.abs(degrees)>20 && !reverse;
                     boolean clamped=reverse || stationary;
                     check(nativeInput.isRunning()!=clamped && nativeInput.sprinting!=clamped,
                         "wooden reverse and stationary turns must reject Run/Sprint: "+kind+"/"+heading+"/"+degrees);
@@ -1286,10 +1288,10 @@ public final class CartSteeringHooksTest {
             player.actualX=.02f;player.actualY=.01f;
             CartSteeringHooks.heading(player);
             Field heading=state.getClass().getDeclaredField("heading");heading.setAccessible(true);
-            double axle=kind.endsWith("Wood")?1.0084944326:1.1691522;
+            double axle=kind.endsWith("Wood")?1.0084944326:1.162308812;
             check(Math.abs(heading.getDouble(state)-CartSteeringMath.acceptedTurn(0,axle,player.actualX,player.actualY))<1e-10,
                   "native collision displacement must determine wheel yaw: "+kind);
-            if(kind.endsWith("Wood")) {
+            {
                 double before=CartSteeringHooks.wheelPhase(player);
                 check(before<0,"accepted forward travel spins the wooden wheel");
                 Field rawPhase=state.getClass().getDeclaredField("wheelPhase");rawPhase.setAccessible(true);
@@ -1302,7 +1304,7 @@ public final class CartSteeringHooksTest {
                 CartSteeringHooks.heading(player);
                 check(CartSteeringHooks.wheelPhase(player)==0,"new wooden cart inherited the old cart phase");
                 player.primary=player.secondary=cart;
-            } else check(Double.isNaN(CartSteeringHooks.wheelPhase(player)),"metal wheel opted into wooden prototype");
+            }
             CartSteeringHooks.reset(player);player.actualX=player.actualY=0;
         }
         var continuityPlayer=(Player)unsafe.allocateInstance(Player.class);

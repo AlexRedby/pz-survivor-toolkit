@@ -15,6 +15,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.169
+
+- **Changed:** Metal wheelbarrows now use the shared wheelbarrow pickup, put-down, cancellation/recovery and movement presentation, including native multiplayer ownership and observer animation. Shopping carts retain their existing actions.
+
 ### 0.1.168
 
 - **Changed:** Item Details reads the native Mod Options values directly instead of maintaining a second configuration synchronized on Apply and main-menu entry. Existing preferences, display settings and bounded stack sorting are preserved.
@@ -764,6 +768,11 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.40
+
+- **Changed:** Ported the wooden wheelbarrow gait, turning, braking, reverse and stationary pivot presentation to the metal model, with its measured handle positions, wheel size, axle and collision envelope. Both models share transition logic while retaining their own grip and elbow calibration.
+- **Fixed:** Metal wheelbarrow grip remains reachable during braking by using bounded clavicle rotation without stretching the arms. Wheel rotation, floor contact and held/world handoffs use the matching model geometry.
 
 ### 0.1.39
 

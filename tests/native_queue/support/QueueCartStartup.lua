@@ -33,7 +33,9 @@ Events.OnTick.Add(function()
    launched=true;print('[CART_ADAPTER] MANUAL_CONTROL_READY');return
   end
   local p=assert(getPlayer());local cart=p:getPrimaryHandItem()
-  if not cart or cart:getFullType()~='SaucedWheelbarrow.WheelbarrowWood' or p:getZ()~=CartTestArea.z then return end
+  local expected=config.options and config.options.cart_variant=='metal-wheelbarrow'
+   and 'SaucedWheelbarrow.WheelbarrowMetal' or 'SaucedWheelbarrow.WheelbarrowWood'
+  if not cart or cart:getFullType()~=expected or p:getZ()~=CartTestArea.z then return end
   CartTestArea.check(p)
   if not requested then requested=true;print('[CART_ADAPTER] PROBE_ATTACH_READY') end
   local reader=getFileReader('queue-probes-ready.txt',false)

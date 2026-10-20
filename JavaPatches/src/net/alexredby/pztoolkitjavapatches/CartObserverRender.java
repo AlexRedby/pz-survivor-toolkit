@@ -38,7 +38,7 @@ public final class CartObserverRender {
         if(disabled || source==null || !(source.character instanceof IsoPlayer player)) return;
         try {
             if(player.isLocalPlayer() || !CartMotionSync.connected() || !CartMotionSync.visualEnabled(player)
-                || !CartSteeringHooks.supportedCart(player) || !CartTransition.wooden(player.getPrimaryHandItem())
+                || !CartSteeringHooks.supportedCart(player) || !CartTransition.wheelbarrow(player.getPrimaryHandItem())
                 || source.model==null || source.model.object!=player || player.getCell()==null
                 || player.getCurrentSquare()==null || player.isSittingOnFurniture()) {
                 forget(player);return;
@@ -52,7 +52,7 @@ public final class CartObserverRender {
             var state=visuals.computeIfAbsent(player,ignored->new Visual());
             state.bind(player.getPrimaryHandItem(),(int)Math.floor(z),GameClient.connection);
             double front=player.isRunning() || player.isSprinting() || CartMotionSync.fastWeight(player)>1e-3f
-                || CartLegPace.woodenFastShift(player)<0?CartFootprint.FAST_FRONT:CartFootprint.WALK_FRONT;
+                || CartLegPace.woodenFastShift(player)<0?CartWheelbarrow.forItem(player.getPrimaryHandItem()).fastFront():CartWheelbarrow.forItem(player.getPrimaryHandItem()).front();
             var accepted=state.pose.update(CartFootprint.world(player),x,y,angle-Math.PI/2,front,
                 GameTime.getInstance().getRealworldSecondsSinceLastUpdate());
             if(accepted==null) return;

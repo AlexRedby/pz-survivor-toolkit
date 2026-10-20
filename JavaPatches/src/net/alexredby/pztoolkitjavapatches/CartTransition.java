@@ -34,11 +34,6 @@ public final class CartTransition {
     private static final double RESTART_BLEND_NANOS = 350_000_000.0;
     // Start behind the handle ends rather than clearing the shafts with a large pelvis-only retreat.
     private static final float STANCE_BACK = .06f;
-    // shortcut: the supported wooden attachment and Bob_Cart_Idle reference; recalibrate after either asset changes.
-    private static final Matrix4f HELD = new Matrix4f().set(
-        76.5f,-3.9394883e-5f,-1.4673389e-5f,0,2.8023098e-5f,20.771942f,73.62592f,0,
-        -2.4333809e-5f,-73.625916f,20.771938f,0,-.0060535767f,.097179376f,-.34652624f,1);
-
     private static final class State {
         InventoryItem item;
         long action;
@@ -66,6 +61,10 @@ public final class CartTransition {
         return item != null && "SaucedWheelbarrow.WheelbarrowWood".equals(item.getFullType());
     }
 
+    public static boolean wheelbarrow(InventoryItem item) {
+        return CartWheelbarrow.forItem(item)!=null;
+    }
+
     static Matrix4f model(InventoryItem item) {
         var script = ScriptManager.instance.getModelScript(item.getWorldStaticModel());
         if (script == null) return null;
@@ -85,18 +84,19 @@ public final class CartTransition {
 
     @LuaMethod(name="toolkitWoodCartStance", global=true)
     public static KahluaTable stance(IsoPlayer player, IsoWorldInventoryObject world) {
-        if (!Main.CART_TRANSITION_SUPPORTED || world == null || !wooden(world.getItem())) return null;
+        if (!Main.CART_TRANSITION_SUPPORTED || world == null || !wheelbarrow(world.getItem())) return null;
         var item=world.getItem();var model=model(item);
+        var profile=CartWheelbarrow.forItem(item);var held=profile.held(new Matrix4f());
         if(model==null) return null;
         var ground=new Matrix4f();
         var pose=placement(item,world);
         var left=new Vector3f();var right=new Vector3f();
-        CartGrip.handle("WheelbarrowWood",true,left);CartGrip.handle("WheelbarrowWood",false,right);
-        var target=CartTransitionMath.stance(pose,model,HELD,left,right);
+        CartGrip.handle(profile.model(),true,left);CartGrip.handle(profile.model(),false,right);
+        var target=CartTransitionMath.stance(pose,model,held,left,right);
         if(target==null) return null;
         if(!CartTransitionMath.worldToActor(pose,model,target.x(),target.y(),player.getZ(),target.slotAngle(),ground)) return null;
-        var axle=new Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z);
-        var difference=ground.transformPosition(axle,new Vector3f()).sub(HELD.transformPosition(axle,new Vector3f()));
+        var axle=profile.center(new Vector3f());
+        var difference=ground.transformPosition(axle,new Vector3f()).sub(held.transformPosition(axle,new Vector3f()));
         difference.z+=STANCE_BACK;
         float c=(float)Math.cos(target.slotAngle()),s=(float)Math.sin(target.slotAngle());
         float x=target.x()-1.5f*(c*difference.x+s*difference.z);
@@ -123,7 +123,7 @@ public final class CartTransition {
 
     @LuaMethod(name="toolkitWoodCartUpdate", global=true)
     public static synchronized boolean update(IsoPlayer player, InventoryItem item, boolean pickup, double progress) {
-        if(!Main.CART_TRANSITION_SUPPORTED || player==null || !player.isLocalPlayer() || !wooden(item)
+        if(!Main.CART_TRANSITION_SUPPORTED || player==null || !player.isLocalPlayer() || !wheelbarrow(item)
             || !Double.isFinite(progress) || player.isDead()) return false;
         State state=states.get(player);
         if(state==null || state.recovering || state.item!=item || state.pickup!=pickup) {
@@ -223,7 +223,7 @@ public final class CartTransition {
     private static InventoryItem remoteItem(IsoPlayer player,CartActionSync.Pose pose) {
         if(!pose.pickup()) {
             var item=player.getPrimaryHandItem();
-            return wooden(item) && item.getID()==pose.cart() && player.getSecondaryHandItem()==item
+            return wheelbarrow(item) && item.getID()==pose.cart() && player.getSecondaryHandItem()==item
                 && item.getContainer()==player.getInventory() && item.getWorldItem()==null?item:null;
         }
         if(player.getPrimaryHandItem()!=null || player.getSecondaryHandItem()!=null
@@ -232,7 +232,7 @@ public final class CartTransition {
         if(square==null) return null;
         for(var world:square.getWorldObjects()) {
             var item=world.getItem();
-            if(wooden(item) && item.getID()==pose.cart() && item.getWorldItem()==world
+            if(wheelbarrow(item) && item.getID()==pose.cart() && item.getWorldItem()==world
                 && Math.abs(world.getWorldPosX()-pose.x())<.03 && Math.abs(world.getWorldPosY()-pose.y())<.03) return item;
         }
         return null;
@@ -489,15 +489,16 @@ public final class CartTransition {
         boolean cartModelPresent=false;
         for(var data:slot.modelData) {
             var instance=data.modelInstance;
-            if(instance.modelScript==null || !"WheelbarrowWood".equals(instance.modelScript.getName())) continue;
+            var profile=CartWheelbarrow.forItem(state.item);
+            if(instance.modelScript==null || !profile.model().equals(instance.modelScript.getName())) continue;
             cartModelPresent=true;
             var held=new Matrix4f();var delta=new Matrix4f();
             if(!CartGrounding.rigid(data,clip,held)) continue;
-            CartGrounding.lowerHandles(held,"WheelbarrowWood");
+            CartGrounding.lowerHandles(held,profile.model());
             // Follow native gait clearance so ordinary rendering does not shift both handles after recovery.
             // Keep the captured neutral bank/grip policy; changing it needs a separate source-pose blend.
             float gait=state.movingRecovery && !state.pickup?CartLegPace.woodenGaitShift(player):0;
-            if(!CartGrounding.alignWood(held,0,gait,delta)) continue;
+            if(!CartGrounding.alignWheelbarrow(held,profile,0,0,gait,delta)) continue;
             var model=model(state.item);
             if(model==null) continue;
             if(state.placement==null) state.placement=dropPlacement(slot,held,model,state.item);
@@ -508,7 +509,7 @@ public final class CartTransition {
             float release=state.movingRecovery?(float)CartTransitionMath.recoveryRelease(state.progress,state.movementProgress,state.authored && state.pickup):1;
             var transform=new Matrix4f();
             if(!CartTransitionMath.blend(ground,held,phase.lift(),transform)) continue;
-            var axle=new Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z);
+            var axle=profile.center(new Vector3f());
             var center=ground.transformPosition(axle,new Vector3f()).lerp(held.transformPosition(axle,new Vector3f()),
                 (float)phase.lift());
             transform.translateLocal(center.sub(transform.transformPosition(axle,new Vector3f())));
@@ -556,12 +557,12 @@ public final class CartTransition {
                 ?(float)CartTransitionMath.recoveryClearance(state.cancelledProgress,(System.nanoTime()-state.recoveryStart)*1e-9):0;
             state.ik=state.movingRecovery
                 ?CartGrip.movingRecovery(slot,instance.parent,clip,delta,transform,held,state.recoveryPose,release,!state.pickup,
-                    state.recoveryReach,state.recoveryGrip,clearance)
+                    state.recoveryReach,state.recoveryGrip,clearance,profile.model())
                 :state.authored?CartGrip.authoredTransition(slot,instance.parent,clip,delta,transform,
-                    reach,grip,state.restartPose,restart)
+                    reach,grip,state.restartPose,restart,profile.model())
                 :CartGrip.transition(slot,instance.parent,delta,transform,(float)phase.reach(),(float)phase.grip(),
                     (float)phase.lift(),(ground.m30()-held.m30())*(float)phase.center(),lowering,.16f*(float)phase.balance(),
-                    (float)Math.toRadians(60*phase.hinge()),baseHeight,baseRotation);
+                    (float)Math.toRadians(60*phase.hinge()),baseHeight,baseRotation,profile.model());
             if(state.recovering && !state.ik) {end(player);return false;}
             if(state.ik && !state.movingRecovery) {
                 state.recoveryPose=CartGrip.capture(instance.parent.animPlayer.getSkinningData(),state.recoveryPose);
@@ -596,7 +597,7 @@ public final class CartTransition {
     }
 
     static CartTransitionMath.Placement dropPlacement(ModelSlotRenderData slot, Matrix4f held, Matrix4f model, InventoryItem item) {
-        return dropPlacement(held,model,slot.x,slot.y,slot.z,slot.animPlayerAngle,item.worldScale);
+        return dropPlacement(held,model,slot.x,slot.y,slot.z,slot.animPlayerAngle,item.worldScale,STANCE_BACK,CartWheelbarrow.forItem(item));
     }
 
     static CartTransitionMath.Placement dropPlacement(Matrix4f held, Matrix4f model, float x, float y, float z, float angle, float scale) {
@@ -604,6 +605,10 @@ public final class CartTransition {
     }
 
     static CartTransitionMath.Placement dropPlacement(Matrix4f held, Matrix4f model, float x, float y, float z, float angle, float scale, float stanceBack) {
+        return dropPlacement(held,model,x,y,z,angle,scale,stanceBack,CartWheelbarrow.WOOD);
+    }
+
+    static CartTransitionMath.Placement dropPlacement(Matrix4f held, Matrix4f model, float x, float y, float z, float angle, float scale, float stanceBack, CartWheelbarrow profile) {
         var pose=CartTransitionMath.actorToWorldPlacement(held,model,x,y,z,angle);
         if(pose==null) return null;
         var relative=new Matrix4f().rotationY(angle+(float)Math.PI).mul(held).mul(new Matrix4f(model).invert());
@@ -612,7 +617,7 @@ public final class CartTransition {
         var groundPose=new CartTransitionMath.Placement(pose.x(),pose.y(),z+.00175f,0,yaw,0,scale*.85f);
         var ground=new Matrix4f();
         if(!CartTransitionMath.worldToActor(groundPose,model,x,y,z,angle,ground)) return null;
-        var axle=new Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z);
+        var axle=profile.center(new Vector3f());
         var difference=held.transformPosition(axle,new Vector3f()).sub(ground.transformPosition(axle,new Vector3f()));
         difference.z-=stanceBack;
         float c=(float)Math.cos(angle),s=(float)Math.sin(angle);
@@ -622,12 +627,13 @@ public final class CartTransition {
 
     @LuaMethod(name="toolkitWoodCartDropPose", global=true)
     public static KahluaTable dropPose(IsoPlayer player, InventoryItem item) {
-        if(!Main.CART_TRANSITION_SUPPORTED || player==null || !wooden(item)) return null;
+        if(!Main.CART_TRANSITION_SUPPORTED || player==null || !wheelbarrow(item)) return null;
         var model=model(item);
         if(model==null) return null;
         var direction=player.getForwardDirection();
-        var pose=dropPlacement(HELD,model,player.getX(),player.getY(),player.getZ(),
-            direction.getDirection()+(float)Math.PI/2,item.worldScale);
+        var profile=CartWheelbarrow.forItem(item);
+        var pose=dropPlacement(profile.held(new Matrix4f()),model,player.getX(),player.getY(),player.getZ(),
+            direction.getDirection()+(float)Math.PI/2,item.worldScale,STANCE_BACK,profile);
         if(pose==null || target(player,pose.x(),pose.y(),player.getZ())==null) return null;
         var result=LuaManager.platform.newTable();
         result.rawset("x",(double)pose.x());result.rawset("y",(double)pose.y());
@@ -641,7 +647,7 @@ public final class CartTransition {
     @LuaMethod(name="toolkitWoodCartDropBegin", global=true)
     public static boolean beginDrop(IsoPlayer player, InventoryItem item, double x, double y, double z, double rotation) {
         drop.remove();
-        if(!Main.CART_TRANSITION_SUPPORTED || player==null || !wooden(item) || item.getWorldItem()!=null
+        if(!Main.CART_TRANSITION_SUPPORTED || player==null || !wheelbarrow(item) || item.getWorldItem()!=null
             || item.getContainer()!=player.getInventory() || player.getPrimaryHandItem()!=item
             || player.getSecondaryHandItem()!=item || !Double.isFinite(x+y+z+rotation)
             || Math.hypot(x-player.getX(),y-player.getY())>1.5 || z!=player.getZ() || rotation<0 || rotation>=360) return false;

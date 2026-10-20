@@ -94,6 +94,137 @@ class CartAdapterTests(unittest.TestCase):
         self.assertIn('toggleToSprint=false', (self.output / 'client1/options.ini').read_text())
         self.assertEqual(self.runtime['roles']['client1']['env']['PZ_CART_TEST_PAD'], 'true')
 
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required for actual cart startup callback')
+    def test_sp_startup_probe_gate_waits_for_exact_default_wood_or_selected_metal(self):
+        source = ROOT / 'tests/native_queue/support/QueueCartStartup.lua'
+        script = r'''
+local startup=STARTUP_SOURCE
+local originalPrint=print
+for _,variant in ipairs({'default-wood','metal-wheelbarrow'}) do
+ local expected=variant=='metal-wheelbarrow' and 'SaucedWheelbarrow.WheelbarrowMetal' or 'SaucedWheelbarrow.WheelbarrowWood'
+ local config={cases={'interaction'}}
+ if variant=='metal-wheelbarrow' then config.options={cart_variant=variant} end
+ package.loaded.QueueTestSelection=nil
+ package.preload.QueueTestSelection=function() return config end
+ local callbacks,markers={},{}
+ Events={}
+ for _,name in ipairs({'OnMainMenuEnter','OnPreUIDraw','OnGameStart','OnTick'}) do
+  Events[name]={Add=function(fn) assert(not callbacks[name]);callbacks[name]=fn end}
+ end
+ print=function(value) markers[#markers+1]=value end
+ local reloads,checks,reads,closed=0,0,0,0
+ local itemType,actorZ,gate=nil,7,false
+ local item={getFullType=function() return itemType end}
+ local player={getPrimaryHandItem=function() return itemType and item or nil end,getZ=function() return actorZ end}
+ getPlayer=function() return player end
+ CartTestArea={ready=false,z=7,check=function(p) assert(p==player);checks=checks+1 end}
+ cartLabReload=function() reloads=reloads+1 end
+ getFileReader=function(name,create)
+  assert(name=='queue-probes-ready.txt' and create==false)
+  reads=reads+1
+  if not gate then return nil end
+  return {readLine=function() return 'ready' end,close=function() closed=closed+1 end}
+ end
+ assert(loadfile(startup))()
+ callbacks.OnTick();assert(reloads==0 and #markers==0,'unstarted fixture emitted readiness')
+ callbacks.OnGameStart();assert(reloads==1,'game start did not load bootstrap exactly once')
+ callbacks.OnTick();assert(checks==0 and reads==0 and #markers==0,'unready area emitted attach marker')
+ CartTestArea.ready=true
+ for _,wrong in ipairs({'SaucedCarts.ShoppingCart',variant=='metal-wheelbarrow' and 'SaucedWheelbarrow.WheelbarrowWood' or 'SaucedWheelbarrow.WheelbarrowMetal'}) do
+  itemType=wrong;callbacks.OnTick()
+  assert(checks==0 and reads==0 and #markers==0 and reloads==1,'wrong cart passed startup gate: '..variant)
+ end
+ itemType=expected;actorZ=0;callbacks.OnTick()
+ assert(checks==0 and reads==0 and #markers==0,'wrong floor passed startup gate')
+ actorZ=7;callbacks.OnTick()
+ assert(checks==1 and reads==1 and reloads==1 and #markers==1 and markers[1]=='[CART_ADAPTER] PROBE_ATTACH_READY',
+  'matching exact cart did not request native probe attachment: '..variant)
+ callbacks.OnTick();assert(checks==2 and reads==2 and #markers==1 and reloads==1,'unconfirmed probe gate advanced or duplicated request')
+ gate=true;callbacks.OnTick()
+ assert(checks==3 and reads==3 and closed==1 and reloads==2 and #markers==1,'confirmed probe attachment did not reload scenario once')
+ callbacks.OnTick();assert(checks==3 and reads==3 and closed==1 and reloads==2 and #markers==1,'launched fixture repeated startup')
+end
+print=originalPrint
+print('PASS actual SP startup waits for exact wood/metal, owned probe receipt and one scenario reload')
+'''.replace('STARTUP_SOURCE', json.dumps(str(source)))
+        result = subprocess.run([shutil.which('luajit'), '-'], input=script, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASS actual SP startup', result.stdout)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT required for actual interaction ownership tick')
+    def test_interaction_tick_checks_exact_selected_type_count_for_wood_and_metal(self):
+        source = (ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-interaction.lua').read_text()
+        # Execute the real counter/snapshot helpers and recording tick through its ownership guard.
+        # Video/actions after that guard are outside this narrow counter regression.
+        helpers = source[source.index('local function cargo()'):source.index('local function event(name,now)')]
+        tick = source[source.index('local function tick()'):]
+        guard = re.search(r"^ assert\(row\.worldCount<=1.*'Cart duplicated or disappeared'\)", tick, re.M)
+        self.assertIsNotNone(guard, 'actual recording tick lost its ownership assertion')
+        chunk = helpers + '\n' + tick[:guard.end()] + '\n return row\nend\nreturn tick'
+        script = r'''
+local chunk=ACTUAL_CHUNK
+local matrixCount=0
+local function list(values)
+ return {size=function() return #values end,get=function(_,i) return values[i+1] end}
+end
+for _,kind in ipairs({'SaucedWheelbarrow.WheelbarrowWood','SaucedWheelbarrow.WheelbarrowMetal'}) do
+ for _,case in ipairs({'grounded','held','other-type-nearby','duplicate-world','extra-same-type','replaced-wrong-type','duplicate-inventory','disappeared','world-and-inventory'}) do
+  local item={getID=function() return 42 end,getFullType=function() return kind end,
+   getInventory=function() return {getItems=function() return list({}) end,getCapacityWeight=function() return 0 end} end,
+   getCondition=function() return 100 end,getWorldAlpha=function() return 1 end,getWorldZRotation=function() return 0 end}
+  local worlds,inventory={},{}
+  local square={getX=function() return 0 end,getY=function() return 0 end,getZ=function() return 0 end}
+  local function world(value)
+   return {getItem=function() return value end,getSquare=function() return square end,
+    getAlpha=function() return 1 end,isOutlineHighlight=function() return false end,
+    getOffX=function() return .5 end,getOffY=function() return .5 end,getOffZ=function() return 0 end}
+  end
+  local function candidate(id,fullType) return {getID=function() return id end,getFullType=function() return fullType end} end
+  if case=='held' or case=='duplicate-inventory' then inventory={item} else worlds={world(item)} end
+  if case=='other-type-nearby' then worlds[#worlds+1]=world(candidate(99,'SaucedCarts.ShoppingCart')) end
+  if case=='duplicate-world' then worlds[#worlds+1]=world(item) end
+  if case=='extra-same-type' then worlds[#worlds+1]=world(candidate(99,kind)) end
+  if case=='replaced-wrong-type' then worlds={world(candidate(42,'SaucedCarts.ShoppingCart'))} end
+  if case=='duplicate-inventory' then inventory[#inventory+1]=item end
+  if case=='disappeared' then worlds={} end
+  if case=='world-and-inventory' then inventory={item} end
+  square.getWorldObjects=function() return list(worlds) end
+  local empty={getWorldObjects=function() return list({}) end}
+  local player={getInventory=function() return {getItems=function() return list(inventory) end} end,
+   getPrimaryHandItem=function() return inventory[1] end,getSecondaryHandItem=function() return inventory[1] end,
+   getX=function() return .5 end,getY=function() return .5 end,getZ=function() return 0 end,
+   isFemale=function() return false end,isRunning=function() return false end,isSprinting=function() return false end,
+   getPerkLevel=function() return 0 end,getPlayerNum=function() return 0 end,
+   getCharacterActions=function() return list({}) end,getVariableString=function() return '' end,getVariableBoolean=function() return false end}
+  local env={item=item,kind=kind,p=player,initialCargo=0,initialCargoIDs='',config={interruptions=true},
+   cases={{name=case}},phase=1,since=0,sampleSince=100,mode='record',stage=case=='held' and 'held' or 'grounded',
+   cycle=1,driveStage=0,gaitStage=0,actionSerial=0,restartCount=0,Perks={Sprinting=1},
+   CartTestArea={x=.5,y=.5,z=0,contains=function() return true end},
+   getCell=function() return {getGridSquare=function(_,x,y) return x==0 and y==0 and square or empty end} end,
+   getTimestampMs=function() return 100 end,getPlayerData=function() return nil end,
+   getCore=function() return {setAutoZoom=function() end,getZoom=function() return .25 end} end,
+   toolkitVideoStatus=function() return {state='recording'} end,
+   ISTimedActionQueue={getTimedActionQueue=function() return {queue={}} end}}
+  setmetatable(env,{__index=_G})
+  local loader=assert(loadstring(chunk));setfenv(loader,env)
+  local ok,row=pcall(loader())
+  local valid=case=='grounded' or case=='held' or case=='other-type-nearby'
+  assert(ok==valid,'actual tick ownership result changed: '..kind..'/'..case..' '..tostring(row))
+  if valid then
+   assert(row.cartType==kind and row.cartWorldCount==row.worldCount,'selected-type counter lost exact identity')
+   if kind=='SaucedWheelbarrow.WheelbarrowMetal' then assert(row.woodWorldCount==nil,'metal evidence acquired a false wood count') end
+  else
+   assert(tostring(row):find('Cart duplicated or disappeared',1,true),'counter failed outside the ownership guard: '..tostring(row))
+  end
+  matrixCount=matrixCount+1
+ end
+end
+print('PASS actual selected-type ownership tick '..matrixCount..' cases')
+'''.replace('ACTUAL_CHUNK', json.dumps(chunk))
+        result = subprocess.run([shutil.which('luajit'), '-'], input=script, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASS actual selected-type ownership tick 18 cases', result.stdout)
+
     def test_clean_capture_defaults_and_override(self):
         for case, override, expected in [('reverse',None,True),('manual',None,False),('reverse',False,False),('manual',True,True)]:
             with self.subTest(case=case,override=override):
@@ -502,24 +633,160 @@ class CartAdapterTests(unittest.TestCase):
         self.assertTrue(any(path.name=='analyze-wall.py' for path in carts.sources(ROOT,self.selection)))
         self.assertIn(ROOT/'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.java', carts.sources(ROOT,self.selection))
 
-    def test_mp_cart_variant_requires_exact_enum_and_wood_for_actions(self):
+    def test_cart_variant_requires_exact_enum_and_calibrated_wheelbarrow_for_actions(self):
         self.options['cart_variant'] = 'wooden-wheelbarrow'
-        with self.assertRaisesRegex(ValueError, 'exact MP cart variant'):
-            carts.validate(self.selection)
+        carts.validate(self.selection)
         self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
         for invalid in (None, True, 1, [], {}, 'unknown', 'SaucedCarts.ShoppingCart'):
             self.options['cart_variant'] = invalid
-            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'exact MP cart variant'):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'exact cart variant'):
                 carts.validate(self.selection)
         for variant in carts.VARIANTS:
             self.options.update(cart_variant=variant, cart_actions=False, cart_fast_motion=True)
             carts.validate(self.selection)
             self.options['cart_actions'] = True
-            if variant == 'wooden-wheelbarrow': carts.validate(self.selection)
+            if variant in ('wooden-wheelbarrow', 'metal-wheelbarrow'): carts.validate(self.selection)
             else:
-                with self.assertRaisesRegex(ValueError, 'requires wooden-wheelbarrow'): carts.validate(self.selection)
+                with self.assertRaisesRegex(ValueError, 'requires a calibrated wheelbarrow'): carts.validate(self.selection)
         self.options.pop('cart_variant'); self.options['cart_actions'] = True
         carts.validate(self.selection)
+
+    def test_metal_sp_stages_selected_reusable_banks_and_actual_model_probes(self):
+        self.options['cart_variant'] = 'metal-wheelbarrow'
+        for case in ('interaction', 'interruption-fast', 'sprint', 'stop-timing', 'stationary', 'hotkey'):
+            with self.subTest(case=case):
+                self.output = self.root / ('metal-' + case); self.output.mkdir(); self.role('client1')
+                self.selection['cases'] = [case]
+                self.options['cart_scenes'] = carts.scene_names(case)[:1]
+                compiler = self.stage()
+                sources = [value for call in compiler.call_args_list for value in call.args[0] if value.endswith('.java')]
+                self.assertFalse(any(value.endswith('WoodenWheelNativeProbe.java') for value in sources))
+                self.assertTrue(any(value.endswith('GripPoseProbe.java') for value in sources))
+                self.assertTrue(any(value.endswith('ClearanceProbe.java') for value in sources))
+                self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 2)
+                runtime = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE'])
+                source = runtime.read_text()
+                self.assertIn('["cartType"]="SaucedWheelbarrow.WheelbarrowMetal"', source)
+                self.assertIn('["cartVariant"]="metal-wheelbarrow"', source)
+                self.assertIn("local kind=config.cartType or 'SaucedWheelbarrow.WheelbarrowWood'", source)
+                subprocess.run([shutil.which('luajit'), '-e', 'assert(loadfile(' + json.dumps(str(runtime)) + '))'], check=True, capture_output=True)
+        self.options.pop('cart_scenes')
+        for variant, case in (('shopping-cart', 'interaction'), ('metal-wheelbarrow', 'impact'), ('metal-wheelbarrow', 'variants')):
+            self.options['cart_variant'] = variant; self.selection['cases'] = [case]
+            with self.subTest(variant=variant, case=case), self.assertRaisesRegex(ValueError, 'SP metal cart_variant'):
+                carts.validate(self.selection)
+
+    def test_metal_capture_checks_actual_model_mesh_and_temporal_grip_without_wood_geometry(self):
+        import numpy as np
+
+        self.selection['cases'] = ['stationary']
+        name = carts.scene_names('stationary')[0]
+        self.options.update(cart_variant='metal-wheelbarrow', cart_scenes=[name])
+        cache = self.output / 'client1'
+        matrix = [1 if i % 5 == 0 else 0 for i in range(16)]
+        # Metal FBX doubles quantize by several micro-units when imported to float32.
+        # These real-scale coordinates differ under decimal-seven rounding, while
+        # the actual native buffer is exactly the float32 representation.
+        source_point = (-39.86699879169464, -4.5117199420928955, -44.233399629592896)
+        native = struct.pack('<8f', source_point[0], source_point[1], -source_point[2], 0, 0, 0, 0, 0)
+        (cache / 'WheelbarrowMetal.bin').write_bytes(native)
+        proof = dict(model='WheelbarrowMetal', stride=32, bytes=len(native), sha256=hashlib.sha256(native).hexdigest(), source='CartWheelSpin.render-exit')
+        (cache / 'cart-mesh-WheelbarrowMetal.json').write_text(json.dumps(proof))
+        rows = [dict(wallTimeMillis=100000+t, model='WheelbarrowMetal', female=False, cart=matrix,
+                     bones={'Bip01_L_Hand': matrix, 'Bip01_R_Hand': matrix}, result=True, threw=False) for t in range(0, 12000, 100)]
+        def write_rows(filename, values):
+            (cache / filename).write_text('\n'.join(map(json.dumps, values)))
+        write_rows('body-clearance.jsonl', rows); write_rows('wood-grip-poses.jsonl', rows)
+        write_rows('action-lifecycle.jsonl', []); write_rows('world-cart-poses.jsonl', [])
+        text = '[WOOD_BANK] RUN_STARTED\n[WOOD_BANK] COMPLETE '+name+' wall=100000 file=scene.mp4 frames=360 seconds=12\n[WOOD_BANK] ALL_COMPLETE cases=1\n'
+        (self.output / 'client1-launch.log').write_text(text)
+        original_load = carts._load
+        vertices = np.array([source_point])
+        def load(path):
+            if path.name == 'fbx_mesh.py':
+                return SimpleNamespace(read_nodes=lambda path: [('Objects', [], [('Geometry', [], [('Vertices', [vertices], [])])])])
+            return original_load(path)
+        with patch.object(carts, '_load', side_effect=load), patch.object(carts, '_videos', return_value=[]), patch.object(carts, '_run') as wood_analyzer:
+            report = carts.verify(self.output, self.selection, {})
+            self.assertFalse(report['issues'], report['issues'])
+            outcome = report['outcomes'][0]['outcome']
+            self.assertTrue(outcome['measurementReady'])
+            self.assertFalse(outcome['geometryVerified']); self.assertFalse(outcome['animationEquivalencePass'])
+            self.assertTrue(report['evidence']['modelCapture']['nativeVBO']['fbxPositionsMatch'])
+            wood_analyzer.assert_not_called()
+            for change in ('wrong-model', 'grip-failure', 'nonfinite-matrix', 'temporal-gap', 'wrong-fbx', 'one-native-float-step-fbx', 'wrong-proof'):
+                with self.subTest(change=change):
+                    mutated = json.loads(json.dumps(rows))
+                    if change == 'wrong-model': mutated[5]['model'] = 'WheelbarrowWood'
+                    elif change == 'grip-failure': mutated[5]['result'] = False
+                    elif change == 'nonfinite-matrix': mutated[5]['cart'][0] = None
+                    elif change == 'temporal-gap': mutated = mutated[:5]
+                    elif change == 'wrong-fbx': vertices[0, 0] = .5
+                    elif change == 'one-native-float-step-fbx':
+                        vertices[0, 0] = float(np.nextafter(np.float32(source_point[0]), np.float32(np.inf)))
+                    else:
+                        (cache / 'cart-mesh-WheelbarrowMetal.json').write_text(json.dumps(dict(proof, sha256='wrong')))
+                    write_rows('wood-grip-poses.jsonl', mutated)
+                    failed = carts.verify(self.output, self.selection, {})
+                    self.assertTrue(failed['issues'], change)
+                    self.assertEqual(failed['outcomes'][0]['status'], 'failed')
+                    vertices[0, 0] = source_point[0]
+                    (cache / 'cart-mesh-WheelbarrowMetal.json').write_text(json.dumps(proof))
+                    write_rows('wood-grip-poses.jsonl', rows)
+
+    def test_metal_action_capture_rejects_wrong_identity_ownership_ik_and_lifecycle(self):
+        import numpy as np
+
+        self.selection['cases'] = ['interaction']; self.options['cart_variant'] = 'metal-wheelbarrow'
+        analyzer = carts._load(ROOT / 'tests/native_queue/contributions/wooden_cart_motion/analyze-interaction.py')
+        text, body, grip = analyzer.fixture()
+        matrix = [1 if i % 5 == 0 else 0 for i in range(16)]
+        kind = 'SaucedWheelbarrow.WheelbarrowMetal'; cache = self.output / 'client1'
+        samples, lines, worlds, lifecycle = [], [], [], []
+        for line in text.splitlines():
+            if '[WOOD_INTERACTION_SAMPLE] ' in line:
+                row = json.loads(line.split('] ', 1)[1]); row.update(cartType=kind, recovering=False)
+                if row['stage'] == 'held': row['ToolkitCartMotion'] = True
+                samples.append(row); line = '[WOOD_INTERACTION_SAMPLE] ' + json.dumps(row)
+                if row['worldCount'] == 1 and row['stage'] in ('grounded', 'dropped'):
+                    worlds.append(dict(wallTimeMillis=row['wall'], itemId=row['id'], cartType=kind, renderStatus='Ready', transform=matrix))
+            lines.append(line)
+        text = '\n'.join(lines)
+        for records in (body, grip):
+            for row in records:
+                row.update(model='WheelbarrowMetal', female=140000 <= row['wallTimeMillis'] < 156000)
+                row.setdefault('cart', matrix); row.setdefault('bones', {'Bip01_L_Hand': matrix, 'Bip01_R_Hand': matrix})
+        for start in (100000, 120000, 140000, 160000):
+            for action in ('ToolkitWoodCartPickup', 'ToolkitWoodCartSetdown'):
+                for event in ('start', 'complete'):
+                    lifecycle.append(dict(wallTimeMillis=start+2000, metaType=action, event=event))
+        def write(filename, values): (cache / filename).write_text('\n'.join(map(json.dumps, values)))
+        write('body-clearance.jsonl', body); write('wood-grip-poses.jsonl', grip)
+        write('action-lifecycle.jsonl', lifecycle); write('world-cart-poses.jsonl', worlds)
+        native = struct.pack('<8f', .01, .02, -.03, 0, 0, 0, 0, 0)
+        (cache / 'WheelbarrowMetal.bin').write_bytes(native)
+        (cache / 'cart-mesh-WheelbarrowMetal.json').write_text(json.dumps(dict(model='WheelbarrowMetal', stride=32,
+            bytes=len(native), sha256=hashlib.sha256(native).hexdigest(), source='CartWheelSpin.render-exit')))
+        original_load = carts._load
+        def load(path):
+            if path.name == 'fbx_mesh.py':
+                return SimpleNamespace(read_nodes=lambda path: [('Objects', [], [('Geometry', [], [('Vertices', [np.array([[.01,.02,.03]])], [])])])])
+            return original_load(path)
+        with patch.object(carts, '_load', side_effect=load):
+            report = carts._metal_coverage(cache, text, self.selection)
+            self.assertEqual(len(report['scenes']), 4)
+            self.assertTrue(all(row['ownershipAndCargoVerified'] for row in report['scenes']))
+            for change in ('wrong-type', 'held-identity', 'missing-ik', 'missing-native-complete', 'missing-world'):
+                with self.subTest(change=change):
+                    changed_text = text
+                    if change == 'wrong-type': changed_text = text.replace(kind, 'SaucedCarts.ShoppingCart')
+                    elif change == 'held-identity':
+                        changed_text = text.replace('"heldID": 1000', '"heldID": 1001')
+                    elif change == 'missing-ik': changed_text = text.replace('"ik": true', '"ik": false')
+                    elif change == 'missing-native-complete': write('action-lifecycle.jsonl', [r for r in lifecycle if r['event'] != 'complete'])
+                    else: write('world-cart-poses.jsonl', [])
+                    with self.assertRaises(ValueError): carts._metal_coverage(cache, changed_text, self.selection)
+                    write('action-lifecycle.jsonl', lifecycle); write('world-cart-poses.jsonl', worlds)
 
     def test_mp_extra_capture_options_reject_nonbooleans_and_sp(self):
         for flag in ('cart_fast_motion', 'cart_actions'):

@@ -65,7 +65,8 @@ public final class CartPickupApproachTest {
         @Override public IsoGridSquare getSquare(){return square;}
     }
     private record Fixture(Player player,Cart cart,World world,LuaTimedActionNew action,KahluaTableImpl table) {}
-    private static Fixture fixture() throws Exception {
+    private static Fixture fixture() throws Exception {return fixture("SaucedWheelbarrow.WheelbarrowWood");}
+    private static Fixture fixture(String kind) throws Exception {
         var player=allocate(Player.class);player.actions=new Stack<>();
         player.vehicle=allocate(zombie.vehicles.BaseVehicle.class);
         player.x=player.nextX=10;player.y=player.nextY=20;
@@ -73,7 +74,7 @@ public final class CartPickupApproachTest {
         field(player.path,"goal",PathFindBehavior2.Goal.Location);
         field(player.path,"targetX",10.03f);field(player.path,"targetY",20.04f);field(player.path,"targetZ",0f);
         var cart=allocate(Cart.class);var world=allocate(World.class);
-        cart.kind="SaucedWheelbarrow.WheelbarrowWood";cart.world=world;world.item=cart;world.square=allocate(IsoGridSquare.class);
+        cart.kind=kind;cart.world=world;world.item=cart;world.square=allocate(IsoGridSquare.class);
         var action=allocate(LuaTimedActionNew.class);action.chr=player;action.maxTime=-1;
         var table=new KahluaTableImpl(new HashMap<>());var meta=new KahluaTableImpl(new HashMap<>());
         meta.rawset("Type","ISWalkToTimedActionF");table.setMetatable(meta);
@@ -81,8 +82,8 @@ public final class CartPickupApproachTest {
         table.rawset("location",new Vector3f(10.03f,20.04f,0));field(action,"table",table);player.actions.add(action);
         return new Fixture(player,cart,world,action,table);
     }
-    private static void arrival() throws Exception {
-        var f=fixture();var p=f.player;
+    private static void arrival(String kind) throws Exception {
+        var f=fixture(kind);var p=f.player;
         for(var nativeResult:new BehaviorResult[]{BehaviorResult.Working,BehaviorResult.Failed})
             check(CartPickupApproach.result(p,p.path,nativeResult)==nativeResult && p.moves==0,"changed unresolved native path");
         check(CartPickupApproach.result(p,p.path,BehaviorResult.Succeeded)==BehaviorResult.Working,"nearby off-center start succeeded");
@@ -91,7 +92,7 @@ public final class CartPickupApproachTest {
         check(CartPickupApproach.result(p,p.path,BehaviorResult.Succeeded)==BehaviorResult.Working,"accepted unresolved Next position");
         for(int i=1;i<45;i++)check(CartPickupApproach.result(p,p.path,BehaviorResult.Succeeded)
             ==(i==44?BehaviorResult.Failed:BehaviorResult.Working),"blocked correction did not honor its attempted-update budget");
-        f=fixture();p=f.player;boolean success=false;
+        f=fixture(kind);p=f.player;boolean success=false;
         for(int i=0;i<100;i++) {
             var result=CartPickupApproach.result(p,p.path,BehaviorResult.Succeeded);
             if(result==BehaviorResult.Succeeded){success=true;break;}
@@ -99,10 +100,14 @@ public final class CartPickupApproachTest {
         }
         check(success && Math.hypot(p.x-10.03f,p.y-20.04f)<=.002,"approach did not reach actual target");
         for(float x:new float[]{9,Float.NaN}) {
-            f=fixture();f.player.x=x;
+            f=fixture(kind);f.player.x=x;
             check(CartPickupApproach.result(f.player,f.player.path,BehaviorResult.Succeeded)==BehaviorResult.Failed && f.player.moves==0,"unsafe correction moved actor");
         }
-        f=fixture();f.table.rawset("toolkitWoodCartItem",null);
+        f=fixture(kind);p=f.player;
+        f.table.getMetatable().rawset("Type","ToolkitWoodCartPickup");
+        check(CartPickupApproach.suppressDeferred(p),"arrived wheelbarrow pickup retained locomotion blend: "+kind);
+        p.actions.clear();check(!CartPickupApproach.suppressDeferred(p),"finished wheelbarrow pickup retained movement lease: "+kind);
+        f=fixture(kind);f.table.rawset("toolkitWoodCartItem",null);
         check(CartPickupApproach.result(f.player,f.player.path,BehaviorResult.Succeeded)==BehaviorResult.Succeeded && f.player.moves==0,"ordinary path acquired precise movement");
     }
 
@@ -118,7 +123,7 @@ public final class CartPickupApproachTest {
             switch(guard) {
                 case 0 -> f.table.getMetatable().rawset("Type","ISWalkToTimedAction");
                 case 1 -> f.table.rawset("character",allocate(Player.class));
-                case 2 -> f.cart.kind="SaucedWheelbarrow.WheelbarrowMetal";
+                case 2 -> f.cart.kind="SaucedCarts.ShoppingCart";
                 case 3 -> f.cart.world=null;
                 case 4 -> f.world.item=allocate(Cart.class);
                 case 5 -> f.world.square=null;
@@ -164,7 +169,7 @@ public final class CartPickupApproachTest {
         var field=Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);unsafe=(Unsafe)field.get(null);
         me.zed_0xff.zombie_buddy.PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches",CartPickupApproachTest.class.getClassLoader());
         check(Main.CART_TRANSITION_SUPPORTED && Main.COMPLETION_SUPPORTED,"native cart approach fixture is unsupported");
-        arrival();scopeAndCleanup();
+        arrival("SaucedWheelbarrow.WheelbarrowWood");arrival("SaucedWheelbarrow.WheelbarrowMetal");scopeAndCleanup();
         System.out.println("CART_PICKUP_APPROACH_PASS");
     }
 }

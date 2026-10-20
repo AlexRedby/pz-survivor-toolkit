@@ -11,8 +11,12 @@ ToolkitWoodCartSetdown.Type = "ToolkitWoodCartSetdown"
 ToolkitWoodCartDrop = ISDropWorldItemAction:derive("ToolkitWoodCartDrop")
 ToolkitWoodCartDrop.Type = "ToolkitWoodCartDrop"
 
+-- Keep the historical bridge/action names for native MP serialization.
 local function wooden(item)
-    return item and item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood"
+    if not item then return false end
+    local fullType = item:getFullType()
+    return fullType == "SaucedWheelbarrow.WheelbarrowWood"
+        or fullType == "SaucedWheelbarrow.WheelbarrowMetal"
 end
 local function retire(self)
     self.toolkitPresentation = nil

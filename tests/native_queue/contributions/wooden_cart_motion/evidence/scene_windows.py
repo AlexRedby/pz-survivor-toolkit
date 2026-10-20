@@ -12,7 +12,7 @@ def record_seconds(bank, name):
     if bank == 'vehicles' and '-full-vehicle-' in name and '-slide-' in name:
         return 15
     return {'interaction': 16, 'wheel': 30, 'interruption': 20,
-            'interruption-matrix': 20, 'interruption-fast': 20, 'repeat': 20, 'stop-timing': 16,
+            'interruption-matrix': 20, 'interruption-fast': 20, 'repeat': 20, 'hotkey': 20, 'stop-timing': 16,
             'brace': 18, 'wall-manual-exit': 29,
             'wall-fast-manual-exit': 29}.get(bank, 12)
 
