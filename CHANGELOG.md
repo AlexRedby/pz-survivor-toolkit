@@ -10,6 +10,19 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.156
+
+- **Changed:** The heavy Realistic Dashboard replaces its pull knob and printed label with a Polaris-style three-position headlight rocker. Its upper/lower halves step between off, low and high; distinct raised edges and recess shadows show the selection at every dashboard scale. Native headlight power commands, pending acknowledgements and external hotkey/radial changes remain authoritative.
+
+- **Fixed:** Vehicle beam origins follow the ground projections of the current model's lamp-mask surfaces, with native normalized coordinates and per-model scale/offset. Unknown or unsupported model geometry retains upstream origins. Removed the duplicate blue headlight-switch artwork in Realistic Dashboard.
+
+- **Fixed:** High Beams now drives the existing Realistic Dashboard lamp using its original soft artwork, dimensions and layout: green sloping rays for low and blue horizontal rays for high. Keeps warning-light fading and native power handling; the standard rotary switch cycles off/low/high with a third position and matching marking. Includes a stock-dashboard fallback.
+
+- **Added:** Optional approximate beam geometry separates broader low beams from focused high beams and places front/reverse beam origins at the vehicle ends. Preserves upstream High Beams power/range controls, lamp colour, activation and condition scaling; can restore the original geometry.
+
+- **Added:** Adjustable short-range light spill around working vehicle lamps, using native occlusion and cleanup when lamps turn off, lose power or leave the loaded area.
+- **Changed:** With Reverse Drive Lights enabled, reverse beams default to range 12 and intensity 0.3, below native low beams (36 / 0.75). Mod Options provides weaker and original-mod presets independently of surrounding spill.
+
 ### 0.1.155
 
 - **Changed:** Pending portions of cold food with a native cooking replacement, such as bread slices that can become toast, can be reordered or cancelled while the carried food cannot keep cooking. Original item identity, portions and cooking metadata stay intact; hot food and consumption replacements remain protected.

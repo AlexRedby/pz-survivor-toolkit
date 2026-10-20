@@ -1,3 +1,7 @@
+# Approved truck headlight rocker
+
+- [ ] Complete the isolated Host truck-rocker run and inspect its server power acknowledgements. The focused regressions and full-mod-set single-player visual check already cover the off/low/high sequence, all four scales, complete pull-knob/legend removal and unchanged standard/sport controls.
+
 # In-cabin vehicle door control
 
 - [ ] Recheck the restored early red-aperture icon in the real radial menu with sufficient margins to both sector edges. The user selected the pre-angle-correction artwork; a historical in-game capture exists, but the current 64x64 export has not been captured again.

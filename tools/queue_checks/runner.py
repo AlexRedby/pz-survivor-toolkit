@@ -161,11 +161,14 @@ def run(root, resource_wait=300):
             allowed_env = {'PZ_CART_RUNTIME_FILE', 'PZ_CART_COMMAND_FILE', 'PZ_CART_TEST_PAD'}
             if selection['suite'] == 'basement-hall' and selection['kind'] == 'sp' and role == 'client1':
                 allowed_env.add('PZ_BASEMENT_HALL_CACHE')
+            if selection['suite'] == 'vehicle-lights' and role == 'client1':
+                allowed_env.add('PZ_LIGHTS_TEST_CACHE')
             if (set(extra_env) - allowed_env
                     or any(not isinstance(value, str) or not Path(value).is_absolute()
                            for name, value in extra_env.items() if name != 'PZ_CART_TEST_PAD')
                     or 'PZ_CART_TEST_PAD' in extra_env and extra_env['PZ_CART_TEST_PAD'] not in ('true', 'false')
-                    or 'PZ_BASEMENT_HALL_CACHE' in extra_env and extra_env['PZ_BASEMENT_HALL_CACHE'] != str(cache)):
+                    or 'PZ_BASEMENT_HALL_CACHE' in extra_env and extra_env['PZ_BASEMENT_HALL_CACHE'] != str(cache)
+                    or 'PZ_LIGHTS_TEST_CACHE' in extra_env and extra_env['PZ_LIGHTS_TEST_CACHE'] != str(cache)):
                 raise ValueError('Invalid fixture-owned client environment')
             environment.update(extra_env)
             process = subprocess.Popen(command, cwd=game, env=environment, stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.PIPE, text=True, start_new_session=True)

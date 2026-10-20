@@ -216,6 +216,42 @@ class NativeRunnerTests(unittest.TestCase):
                     self.assertEqual({}, result['processes'])
                     self.assertIn('Invalid fixture-owned client environment', result['error'])
 
+    def test_vehicle_lights_cache_environment_requires_exact_suite_and_owned_role_cache(self):
+        self.selection.update(mode='toolkit', languages=['EN'], clients=1,
+                              mods=['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit', 'NepHighBeams', 'ReverseDriveLights'],
+                              options={'ffmpeg': sys.executable, 'ffprobe': sys.executable})
+        original_popen = self.popen
+        environments = []
+        def launch(command, **kwargs):
+            if 'env' in kwargs:
+                environments.append(kwargs['env'])
+            return original_popen(command, **kwargs)
+        self.popen = launch
+        base = self.root
+        for index, (suite, target, valid) in enumerate([('vehicle-lights', 'owned', True), ('health', 'owned', False),
+                                                       ('vehicle-lights', 'other', False),
+                                                       ('vehicle-lights', 'relative', False)]):
+            self.root = base / str(index)
+            (self.root / 'client1').mkdir(parents=True)
+            (self.root / 'client1/options.ini').write_text('voiceEnable=false\n')
+            cache = str(self.root / 'client1')
+            value = cache if target == 'owned' else 'client1' if target == 'relative' else str(self.root / 'other')
+            self.runtime['roles']['client1']['cache'] = cache
+            with self.subTest(suite=suite, value=value):
+                self.selection.update(suite=suite, cases=['road'])
+                self.runtime['roles']['client1']['env'] = {'PZ_LIGHTS_TEST_CACHE': value}
+                for name, data in [('selection', self.selection), ('runtime', self.runtime)]:
+                    (self.root / (name + '.json')).write_text(json.dumps(data))
+                self.seal_settings()
+                self.content = '[VEHICLE_LIGHTS] COMPLETE road\n'
+                result, _ = self.invoke()
+                self.assertEqual('completed' if valid else 'failed', result['status'])
+                if valid:
+                    self.assertEqual(cache, environments[-1]['PZ_LIGHTS_TEST_CACHE'])
+                else:
+                    self.assertEqual({}, result['processes'])
+                    self.assertIn('Invalid fixture-owned client environment', result['error'])
+
     def prepare_host(self, proof='[QUEUE_TEST] HOST_CHILD pid=555 parent=101\n'):
         self.selection.update(kind='mp', clients=1, ports=[], mods=['ZombieBuddy'], options={'mp_host': True})
         self.runtime.update(server_name='owned')

@@ -246,6 +246,18 @@ Reveals qualifying zombies hidden by B42 viewcone visibility; Stair-O-Vision is 
 
 Restores mains water to moved/plumbed fixtures before shutoff, then uses reserve and overhead-container supply. Official package `1.3`; no dependencies or Java loader. Both server and clients need the mod. The author warns fixtures may need re-plumbing after removal following water shutoff. It does not pool multiple rain collectors or add pipes. Native behavior and multiplayer operation have not been verified.
 
+## 44 Nepenthe's High Beams
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3438126404) · Workshop `3438126404` · Mod `NepHighBeams`
+
+Adds toggleable high beams through `.` or the vehicle radial menu. Options > Mods > High Beams configures the key, distance and intensity; toggle high beams off/on after changing settings. The official package includes a `42.15` variant selected by B42.21: default distance multiplier 1.5, intensity multiplier 2, Always On off. Unlike older descriptions, this variant has no separate surrounding-glow setting. It uses native Mod Options and needs no Java patch or extra dependency. Do not combine with BrighterHeadlights, NepHighBeams2 or NepHighBeams2Java. The author allows adding/removing mid-save; upstream reports describe client-only lighting, so remote passenger synchronization remains unverified. A complete local copy requires manual updates; keep server/client copies matched and avoid a duplicate Steam/local installation. Native B42.21 macOS SP and one-driver Host comparisons confirmed low/high ranges and reverse coexistence on an open road; no separate surrounding glow was observed. Remote passenger synchronization was not tested.
+
+## 45 Reverse Drive Lights
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3798872822) · Workshop `3798872822` · Mod `ReverseDriveLights`
+
+Official package version 4, B42.21. Adds white rear beams only for the local driver while the native transmission is R, headlights are on and the battery has charge; restores short red rear lights afterwards. Current client code changes only rear light parts, complementing NepHighBeams' front lights. No dependencies or Java patch are required. Older README/shared fill-light constants do not establish an active surrounding-glow feature; actual runtime behavior must be checked. Avoid other rear-light replacements because restoration uses fixed vanilla parameters. The local installed copy requires manual updates; keep server/client files matched. Native B42.21 macOS SP and Host verified real R activation, both white rear beams, coexistence with high beams and restoration of both red rear lights. The Host visual control used Pitch Black, 02:00 and the new moon on 20 July 1993; without headlights the world was black. Native driving vision turns rearward while reversing and can hide the forward beam despite unchanged front lamp parameters. Remote passenger visibility was not tested.
+
 ## Included Quartermaster
 
 Toolkit includes the complete Quartermaster `0.24.0` feature set: container sorting, category/item/tag rules, presets, priorities, overflow, crafting and the single-player storage manifest. Use **Configure sorting...** on a world container and **Distribute Loot** in inventory/loot controls. Existing designations, global presets and options keep their original storage names.

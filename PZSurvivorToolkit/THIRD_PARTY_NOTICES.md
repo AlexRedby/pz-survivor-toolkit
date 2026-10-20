@@ -43,3 +43,13 @@ Toolkit owns one allocation used by drag feedback and transfer execution.
 Better Containers remains required for proximity containers, permissions,
 category data and its other features. No Better Containers assets or saved-data
 formats are copied by this change.
+
+# Vehicle dashboard lighting
+
+The beam indicators and truck rocker artwork under
+`42/media/ui/PZSurvivorToolkit/beams/` adapt pictograms, texture styling and
+small background strips from **Realistic Dashboard & Gauges**:
+[Steam Workshop item 3635591071](https://steamcommunity.com/sharedfiles/filedetails/?id=3635591071).
+The matching generators in `tools/` retain source provenance, including the
+embedded donor pixels. Realistic Dashboard remains required for its dashboard
+layouts and controls. This attribution grants no additional redistribution rights.
