@@ -11,6 +11,50 @@ SUCCESS = {'container-equip', 'wrong-side', 'wall-detour', 'approach-tail-succes
 TYPES = {'ISWalkToTimedActionF', 'ToolkitWoodCartPickup', 'ISCartEquipAction'}
 
 
+def verify_calibration(calibration, first, lifecycle):
+    prefix='Native production-path calibration: '
+    assert 6 <= len(calibration) <= 4096, prefix+'missing bounded evidence'
+    assert 0 < calibration[-1]['wall']-calibration[0]['wall'] < 30000 and calibration[-1]['wall'] < first['wall'], prefix+'unbounded timing'
+    assert calibration[0]['x']-calibration[-1]['x'] >= .2, prefix+'never moved toward wall'
+    rounds={}
+    for row in calibration:
+        rounds.setdefault(row['round'],[]).append(row)
+        assert row['actionType']=='ISWalkToTimedActionF', prefix+'wrong native action'
+        if row['started']:
+            assert row['nativeTargetX']==row['goalX'] and row['nativeTargetY']==row['goalY'], prefix+'planner clipped target'
+    assert list(rounds)==list(range(1,len(rounds)+1)) and len(rounds)<=32, prefix+'missing/reordered rounds'
+    previous=None
+    for number,rows in rounds.items():
+        queued,terminal=rows[0],rows[-1]
+        assert [r['event'] for r in rows]==['queued']+['sample']*(len(rows)-2)+['terminal'], prefix+'missing round boundaries'
+        assert all(0 < b['wall']-a['wall'] <= 250 for a,b in zip(rows,rows[1:])), prefix+'sampling gap'
+        assert terminal['wall']-queued['wall']<4000, prefix+'round timeout'
+        assert all(r['goalX']==queued['goalX'] and r['goalY']==queued['goalY'] for r in rows), prefix+'changed round goal'
+        assert .002 < queued['x']-queued['goalX'] <= .032 and abs(queued['y']-queued['goalY'])<=.002, prefix+'step exceeded .03'
+        if previous:
+            assert math.dist((queued['x'],queued['y']),(previous['x'],previous['y']))<=.002 and queued['wall']>=previous['wall'], prefix+'actor relocated between rounds'
+        for a,b in zip(rows,rows[1:]):
+            assert math.dist((a['x'],a['y']),(b['x'],b['y']))<=8*(b['wall']-a['wall'])/1000+.003, prefix+'actor teleported'
+        failed=number==len(rounds)
+        distance=math.dist((terminal['x'],terminal['y']),(queued['goalX'],queued['goalY']))
+        assert terminal['started'] and terminal['result']==('Failed' if failed else 'Succeeded'), prefix+'wrong native terminal result'
+        native=[r for r in lifecycle if queued['wall']<=r['wallTimeMillis']<=terminal['wall'] and r['metaType'] in TYPES]
+        assert native and len({r['nativeActionId'] for r in native})==1 and all(r['metaType']=='ISWalkToTimedActionF' and r['phase']=='exit' and r['playerNum']==0 and not r['threw'] for r in native), prefix+'missing/extra native action'
+        assert [r['event'] for r in native]==(['start','stop'] if failed else ['start','perform','complete']), prefix+'native lifecycle mismatch'
+        if failed:
+            assert .002 < distance <= .06, prefix+'failed outside precise arrival'
+            stable=[]
+            for row in reversed([r for r in rows[1:-1] if r['result']=='Working']):
+                if not row['hasPath'] or not .002 < math.dist((row['x'],row['y']),(row['goalX'],row['goalY'])) <= .06 or math.dist((row['x'],row['y']),(terminal['x'],terminal['y']))>.002: break
+                stable.append(row)
+            assert len(stable)>=3 and stable[0]['wall']-stable[-1]['wall']>=500, prefix+'planner-only/short failure'
+        else:
+            assert distance<=.002, prefix+'succeeded away from original target'
+        previous=terminal
+    assert math.dist((first['x'],first['y']),(previous['x'],previous['y']))<=.002, prefix+'actor drift after stop'
+    assert first['goalX']==previous['goalX'] and first['goalY']==previous['goalY'], prefix+'measured target changed'
+
+
 def analyze(text, lifecycle, scenes=None):
     cases=CASES
     if scenes is not None:
@@ -82,16 +126,7 @@ def analyze(text, lifecycle, scenes=None):
             assert len(approach_rows) >= 3 and any(r['hasPath'] for r in approach_rows), 'Native approach never became active'
         if name == 'precise-blocked':
             calibration = [r for r in calibrations if r['case'] == name and r['start'] == start]
-            assert len(calibration) >= 47, 'Missing native wall calibration requests'
-            assert all(0 < b['wall']-a['wall'] <= 250 for a,b in zip(calibration,calibration[1:])), 'Native wall calibration timing gap'
-            assert 0 < calibration[-1]['wall']-calibration[0]['wall'] < 7000 and calibration[-1]['wall'] < start, 'Unbounded native wall calibration'
-            assert all(r['dx'] == -.005 and r['dy'] == 0 for r in calibration[:-1]) and calibration[-1]['dx'] == calibration[-1]['dy'] == 0, 'Calibration did not request native precise movement'
-            assert calibration[0]['x']-calibration[-1]['x'] >= .2, 'Native wall calibration never moved toward collision'
-            assert all(-.006 <= b['x']-a['x'] <= .001 and abs(b['y']-a['y']) <= .001 for a,b in zip(calibration,calibration[1:])), 'Native wall calibration moved discontinuously'
-            blocked = calibration[-46:]
-            assert blocked[-1]['wall']-blocked[0]['wall'] >= 500 and all(math.dist((r['x'],r['y']),(blocked[-1]['x'],blocked[-1]['y'])) <= .002 for r in blocked), 'Native wall did not reject 45 precise requests for 500ms'
-            assert first['wallX'] < calibration[-1]['x'] < first['wallX']+.5 and math.dist((first['x'],first['y']),(calibration[-1]['x'],calibration[-1]['y'])) <= .002, 'Blocked approach did not retain calibrated physical boundary'
-            assert abs(first['goalX']-(calibration[-1]['x']-.03)) < .002 and abs(first['goalY']-calibration[-1]['y']) < .002, 'Blocked goal was not placed inside calibrated collision'
+            verify_calibration(calibration,first,lifecycle)
             assert terminal['approachResult'] == 'Failed' and .002 < math.dist((terminal['x'], terminal['y']), (first['goalX'], first['goalY'])) <= .06, 'Blocked final alignment was not exercised'
             close = [r for r in approach_rows if .002 < math.dist((r['x'], r['y']), (first['goalX'], first['goalY'])) <= .06]
             assert len(close) >= 3 and close[-1]['wall']-close[0]['wall'] >= 300, 'Missing real blocked precise-arrival window'

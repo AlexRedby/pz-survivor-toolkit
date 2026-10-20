@@ -35,26 +35,6 @@ local function relocate(x,y)
  p:setX(x);p:setY(y);p:setZ(area.z);p:setNextX(x);p:setNextY(y);p:setLastX(x);p:setLastY(y)
  p:ensureOnTile();p:setCurrentSquareFromPosition();p:setMovingSquareNow();cartLabPoseHeading(math.pi)
 end
--- Use the same native movement primitive and timed-action update phase as the precise
--- arrival hook. Keyboard walking stops earlier because its predictive collision differs.
-local WallCalibration=ISBaseTimedAction:derive('CartApproachWallCalibration')
-function WallCalibration:isValid() return self.character==p and not p:getVehicle() end
-function WallCalibration:update()
- local now,x,y=getTimestampMs(),p:getX(),p:getY()
- local rows=self.rows;local previous=rows[#rows]
- if previous and math.abs(x-previous.x)<=.001 and math.abs(y-previous.y)<=.001 then
-  self.blocked=self.blocked+1;self.blockedAt=self.blockedAt or previous.wall
- else self.blocked=0;self.blockedAt=nil end
- local done=self.blocked>=45 and now-self.blockedAt>=500 and self.startX-x>=.2
- rows[#rows+1]={wall=now,x=x,y=y,dx=done and 0 or -.005,dy=0}
- if done then self.done=true;self:forceStop();return end
- self.character:moveUnmodded(-.005,0)
-end
-function WallCalibration:new()
- local o=ISBaseTimedAction.new(self,p)
- o.stopOnWalk=false;o.stopOnRun=false;o.maxTime=-1;o.rows={};o.blocked=0;o.startX=p:getX()
- return o
-end
 local function removeWorld(value)
  local world=value and value:getWorldItem()
  if world then local sq=assert(world:getSquare());sq:transmitRemoveItemFromSquare(world);sq:removeWorldObject(world);value:setWorldItem(nil) end
@@ -68,6 +48,70 @@ local function ground(x,y)
  assert(SaucedCarts.markDropPersistent(item));SaucedCarts.updateCartVisual(item,p,true)
  stance=assert(toolkitWoodCartStance(p,assert(item:getWorldItem())),'Missing wooden handle stance')
 end
+-- Native calibration begin. No callbacks, movement overrides or synthetic Path2.
+local function calibrationRow(now,event)
+ local action,path=calibration.action,p:getPathFindBehavior2()
+ local started=action:isStarted() and true or false
+ local row={wall=now,event=event,round=calibration.round,x=p:getX(),y=p:getY(),
+  goalX=calibration.goalX,goalY=calibration.goalY,nativeTargetX=path:getTargetX(),nativeTargetY=path:getTargetY(),
+  started=started,hasPath=p:hasPath(),actionType=action.Type,
+  result=action.result==BehaviorResult.Failed and 'Failed' or action.result==BehaviorResult.Succeeded and 'Succeeded' or 'Working'}
+ assert(#calibration.rows<4096,'Native calibration evidence limit')
+ calibration.rows[#calibration.rows+1]=row
+ if event~='sample' or now-(calibration.loggedAt or 0)>=100 then
+  print('[CART_APPROACH_CALIBRATION_STEP] '..encode(row));calibration.loggedAt=now
+ end
+ if started then
+  assert(row.nativeTargetX==row.goalX and row.nativeTargetY==row.goalY,'Native calibration target clipped by planner: '..encode(row))
+ end
+ return row
+end
+local function startCalibrationRound(now)
+ assert(empty(),'Native calibration round requires drained queue')
+ calibration.round=calibration.round+1
+ assert(calibration.round<=32,'Production path did not encounter a precise collision in 32 rounds')
+ local x,y=p:getX(),p:getY()
+ ground(wallX+2,wallY+.5)
+ ground(cartX+x-.03-stance.x,cartY+y-stance.y)
+ local location=Vector3f.new(stance.x,stance.y,area.z)
+ assert(location:x()>wallX+.002,'Production path crossed wall without a precise collision')
+ calibration.goalX,calibration.goalY=location:x(),location:y()
+ calibration.roundAt=now;calibration.blockedAt=nil;calibration.blockedUntil=nil;calibration.anchorX=nil;calibration.anchorY=nil
+ -- Exactly the production approach class and helper marker, with no pickup callback.
+ local action=ISWalkToTimedActionF:new(p,location);action.toolkitWoodCartItem=item
+ assert(action.perform==ISWalkToTimedActionF.perform and not action.onCompleteFunc and not action.additionalTest,'Calibration must retain native action methods')
+ calibration.action=action;calibrationRow(now,'queued');ISTimedActionQueue.add(action)
+end
+local function calibrate(now)
+ if calibration.nextRound then calibration.nextRound=nil;startCalibrationRound(now);return false end
+ assert(now-calibrationAt<30000 and now-calibration.roundAt<4000,'Native production-path calibration timed out')
+ area.checkPosition(p,item)
+ assert(#queue()<=1 and (not queue()[1] or queue()[1]==calibration.action),'Native calibration queued an unexpected action')
+ local terminal=empty();local row=calibrationRow(now,terminal and 'terminal' or 'sample')
+ local distance=math.sqrt((row.x-row.goalX)^2+(row.y-row.goalY)^2)
+ if not terminal then
+  if row.result~='Working' then return false end -- native stop/complete may be draining this frame
+  if row.hasPath and distance>.002 and distance<=.06 then
+   if not calibration.anchorX or math.abs(row.x-calibration.anchorX)>.002 or math.abs(row.y-calibration.anchorY)>.002 then
+    calibration.anchorX,calibration.anchorY,calibration.blockedAt=row.x,row.y,now
+   end
+   calibration.blockedUntil=now
+  else calibration.anchorX=nil;calibration.blockedAt=nil;calibration.blockedUntil=nil end
+  return false
+ end
+ assert(row.started,'Native calibration terminated before start: '..encode(row))
+ if row.result=='Succeeded' then
+  assert(distance<=.002,'Native calibration succeeded away from original target: '..encode(row))
+  calibration.nextRound=true;return false
+ end
+ assert(row.result=='Failed' and distance>.002 and distance<=.06 and calibration.blockedAt
+  and calibration.blockedUntil-calibration.blockedAt>=500 and math.abs(row.x-calibration.anchorX)<=.002
+  and math.abs(row.y-calibration.anchorY)<=.002,'Planner-only/short native calibration failure: '..encode(row))
+ assert(calibration.startX-row.x>=.2,'Native calibration did not move toward wall')
+ calibration.endX,calibration.endY=row.x,row.y
+ return true
+end
+-- Native calibration end.
 local function snapshot(now)
  local contents=item:getInventory():getItems()
  assert(contents:size()==1 and contents:get(0):getID()==cargoID and contents:get(0):getFullType()=='Base.Log'
@@ -138,7 +182,7 @@ local function prepare()
  elseif name=='precise-blocked' then
   local walls={};for y=wallY-3,wallY+3 do walls[#walls+1]={x=wallX,y=y,axis='W'} end
   area.setObstacles(p,walls);relocate(wallX+1,wallY+.5)
-  calibrationAt=getTimestampMs();calibration=WallCalibration:new();ISTimedActionQueue.add(calibration);mode='calibrate';return
+  calibrationAt=getTimestampMs();calibration={rows={},round=0,startX=p:getX()};startCalibrationRound(calibrationAt);mode='calibrate';return
  else
   if name=='wall-detour' then
    local walls={};for y=wallY-1,wallY+1 do walls[#walls+1]={x=wallX+1,y=y,axis='W'} end
@@ -166,19 +210,14 @@ end
 local function tick()
  local now=getTimestampMs();local name=cases[index].name
  if mode=='calibrate' then
-  assert(now-calibrationAt<7000,'Native bare wall calibration timed out')
-  if not calibration.done then return end
-  if not empty() then return end
-  assert(p:getX()>wallX and p:getX()<wallX+.5,'Bare actor did not reach native wall')
+  if not calibrate(now) then return end
   mode='calibrate-stop';calibrationAt=now;return
  elseif mode=='calibrate-stop' then
-  assert(now-calibrationAt<2000,'Wall calibration did not settle')
+  assert(now-calibrationAt<2000,'Production-path calibration did not settle')
   if p:isPlayerMoving() or now-calibrationAt<300 then return end
-  local last=calibration.rows[#calibration.rows];local x,y=p:getX(),p:getY()
-  assert(math.abs(x-last.x)<.002 and math.abs(y-last.y)<.002,'Actor drifted after physical wall calibration')
-  ground(wallX+2,wallY+.5)
-  ground(item:getWorldItem():getWorldPosX()+x-.03-stance.x,item:getWorldItem():getWorldPosY()+y-stance.y)
-  assert(math.abs(stance.x-(x-.03))<.002 and math.abs(stance.y-y)<.002,'Blocked stance calibration failed')
+  assert(empty() and math.abs(p:getX()-calibration.endX)<.002 and math.abs(p:getY()-calibration.endY)<.002,
+   'Actor drifted after production-path calibration')
+  assert(math.abs(stance.x-calibration.goalX)<.00001 and math.abs(stance.y-calibration.goalY)<.00001,'Calibrated target changed')
   ready(now);return
  elseif mode=='settle' then
   if now<since then return end

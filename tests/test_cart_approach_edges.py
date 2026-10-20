@@ -53,11 +53,21 @@ def fixture():
                         route='inventory-menu' if name == 'container-equip' else 'world-menu')
         lines.append(f'[WOOD_BANK] CASE {name} attempt=0 wall={start}')
         if name=='precise-blocked':
-            # 60 native .005 steps reach a real boundary; 45 further requests are rejected.
-            for step in range(106):
-                lines.append('[CART_APPROACH_CALIBRATION] '+json.dumps(dict(case=name,start=start,
-                    wall=start-2500+step*17,x=.03+max(0,60-step)*.005,y=.5,
-                    dx=0 if step==105 else -.005,dy=0)))
+            # Ten real native approach completions advance .03 each; the final action stalls.
+            for number in range(1,12):
+                begin=start-4500+(number-1)*200
+                initial=.33-.03*(number-1);goal=round(.33-.03*number,5)
+                failed=number==11
+                times=[(0,'queued')]+[(t,'sample') for t in range(25,801 if failed else 126,25)]+[(825 if failed else 150,'terminal')]
+                for elapsed,event in times:
+                    x=initial if failed else max(goal,initial-.03*elapsed/125)
+                    lines.append('[CART_APPROACH_CALIBRATION] '+json.dumps(dict(case=name,start=start,round=number,
+                        wall=begin+elapsed,x=x,y=.5,goalX=goal,goalY=.5,nativeTargetX=goal,nativeTargetY=.5,
+                        started=event!='queued',hasPath=event=='sample',actionType='ISWalkToTimedActionF',event=event,
+                        result=('Failed' if failed else 'Succeeded') if event=='terminal' else 'Working')))
+                for event,when in [('start',1)]+([('stop',824)] if failed else [('perform',149),('complete',149)]):
+                    lifecycle.append(dict(event=event,wallTimeMillis=begin+when,nativeActionId=1000+number,
+                        metaType='ISWalkToTimedActionF',phase='exit',playerNum=0,threw=None))
         events = [(0, 'prepared'), (700, 'queued')]
         if name in ('approach-cancel','approach-target-loss'):
             events.append((1000, 'cancelRequested' if name == 'approach-cancel' else 'targetRemoved'))
@@ -128,54 +138,69 @@ class ApproachChecks(unittest.TestCase):
         values=change_rows(fixture(),lambda row: row.update(x=.03+min(.27,max(0,row['elapsed']-700)*.002)) if row['case']=='precise-blocked' else None)
         with self.assertRaisesRegex(AssertionError,'final alignment'): analyzer.analyze(*values)
 
-    def test_blocked_requires_real_native_calibration_before_public_approach(self):
+    def test_blocked_requires_real_production_path_calibration_before_public_approach(self):
         text,lifecycle=fixture()
-        for mode in ('missing','no-travel','no-rejection','short-rejection','wrong-primitive','drift','wrong-goal'):
+        for mode in ('missing','wrong-action','clipped-target','no-rejection','short-rejection','jump','wrong-goal'):
             lines=[]
             for line in text.splitlines():
                 if line.startswith('[CART_APPROACH_CALIBRATION] '):
                     if mode=='missing': continue
                     row=json.loads(line.split('] ',1)[1])
-                    if mode=='no-travel': row['x']=.03
-                    if mode=='no-rejection': row['x']=.03+(160000-row['wall'])*.00001
-                    if mode=='short-rejection': row['wall']=160000+(row['wall']-160000)//2
-                    if mode=='wrong-primitive' and row['dx']: row['dx']=-.02
-                    if mode=='drift': row['x']+=.02
+                    if mode=='wrong-action': row['actionType']='CartApproachWallCalibration'
+                    if mode=='clipped-target' and row['round']==11: row['nativeTargetX']+=.02
+                    if mode=='no-rejection' and row['round']==11: row['hasPath']=False
+                    if mode=='short-rejection' and row['round']==11: row['wall']=157500+(row['wall']-157500)//2
+                    if mode=='jump' and row['round']==2: row['x']+=.02
                     line='[CART_APPROACH_CALIBRATION] '+json.dumps(row)
                 lines.append(line)
             values=('\n'.join(lines),lifecycle)
             if mode=='wrong-goal':
                 values=change_rows(values,lambda row: row.update(goalX=.02) if row['case']=='precise-blocked' else None)
-            with self.subTest(mode=mode),self.assertRaisesRegex(AssertionError,'calibrat|precise requests|native precise'):
+            with self.subTest(mode=mode),self.assertRaisesRegex(AssertionError,'calibration'):
                 analyzer.analyze(*values)
+        missing_native=[r for r in lifecycle if r['nativeActionId']!=1011]
+        with self.assertRaisesRegex(AssertionError,'calibration.*native action'):
+            analyzer.analyze(text,missing_native)
 
     @unittest.skipUnless(shutil.which('luajit'),'Requires LuaJIT')
-    def test_calibration_uses_resolved_native_steps_and_cannot_accept_ignored_movement(self):
+    def test_calibration_queues_actual_walk_class_and_rejects_planner_failure_and_clipping(self):
         source=(SOURCE/'scenario-approach.lua').read_text()
-        body=source.split("local WallCalibration=",1)[1].split('local function removeWorld',1)[0]
+        body=source.split('-- Native calibration begin.',1)[1].split('-- Native calibration end.',1)[0]
+        body=body.split('\n',1)[1]
         script=r'''
-            clock=0;boundary=0.3;ignore=false;nextX=1
-            p={x=1,getX=function(self) return self.x end,getY=function() return .5 end,
-               getVehicle=function() return nil end,moveUnmodded=function(self,dx,dy)
-                   assert(dx==-.005 and dy==0);nextX=self.x+dx
-               end}
-            function getTimestampMs() return clock end
-            ISBaseTimedAction={derive=function(_,name) return {Type=name} end,
-                new=function(self,character) local o={character=character};return setmetatable(o,{__index=self}) end}
-        '''+'\nlocal WallCalibration='+body+r'''
-            function WallCalibration:forceStop() self.stopped=true end
-            local calibration=WallCalibration:new()
-            for i=1,400 do
-                clock=i*17;calibration:update()
-                if calibration.done then break end
-                p.x=math.max(boundary,nextX) -- test stand-in resolves collision AFTER action update
-            end
-            assert(calibration.done and calibration.stopped and calibration.blocked>=45)
-            assert(math.abs(p.x-boundary)<.00001 and calibration.startX-p.x>.6)
-            assert(calibration.rows[#calibration.rows].dx==0)
-            p.x=1;clock=0;local ignored=WallCalibration:new()
-            for i=1,400 do clock=i*17;ignored:update() end
-            assert(not ignored.done and not ignored.stopped) -- no native travel is never a calibrated wall
+            wallX=0;wallY=0;calibrationAt=0;calibration={rows={},round=0,startX=1};now=0
+            local pending={};local originalPerform=function() end
+            BehaviorResult={Succeeded='Succeeded',Failed='Failed',Working='Working'}
+            p={x=1,path=false,getX=function(self) return self.x end,getY=function() return .5 end,
+               hasPath=function(self) return self.path end,getPathFindBehavior2=function() return path end}
+            path={getTargetX=function() return calibration.goalX end,getTargetY=function() return .5 end}
+            item={getWorldItem=function() return world end};world={getWorldPosX=function() return cartX end,getWorldPosY=function() return cartY end}
+            function empty() return #pending==0 and not p.path end
+            function queue() return pending end
+            function encode() return '{}' end
+            function ground(x,y) cartX=x;cartY=y;stance={x=x,y=y} end
+            Vector3f={new=function(x,y,z) return {x=function() return x end,y=function() return y end} end}
+            area={z=7,checkPosition=function() end}
+            ISWalkToTimedActionF={perform=originalPerform,new=function(self,actor,location)
+                return {Type='ISWalkToTimedActionF',perform=originalPerform,isStarted=function(self) return self.started end}
+            end}
+            ISTimedActionQueue={add=function(action)
+                assert(action.perform==originalPerform and not action.onCompleteFunc and not action.additionalTest)
+                assert(action.toolkitWoodCartItem==item);pending={action}
+            end}
+        '''+body+r'''
+            startCalibrationRound(0)
+            assert(calibration.action.Type=='ISWalkToTimedActionF' and math.abs(calibration.goalX-.97)<.00001)
+            local action=calibration.action;action.started=true;p.path=true
+            -- A genuine successful approach reaches the exact original target and drains before the next round.
+            p.x=calibration.goalX;action.result=BehaviorResult.Succeeded;p.path=false;pending={}
+            assert(not calibrate(150) and calibration.nextRound)
+            assert(not calibrate(175) and calibration.round==2 and not calibration.nextRound)
+            action=calibration.action;action.started=true;action.result=BehaviorResult.Failed;pending={}
+            assert(not pcall(calibrate,200)) -- no active-path stall: planner-only failure
+            pending={action};action.result=BehaviorResult.Working;p.path=true
+            path.getTargetX=function() return calibration.goalX+.02 end
+            assert(not pcall(calibrate,225)) -- native planner clipping must never calibrate the helper
         '''
         result=subprocess.run([shutil.which('luajit'),'-'],input=script,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)

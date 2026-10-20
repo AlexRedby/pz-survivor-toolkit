@@ -37,6 +37,12 @@ Coordinate the GUI slot before `resume`. Preparation compiles fixtures and recor
 
 The adapter reads full `client1-launch.log` when available because high-rate scenario output rotates `console.txt`. Both stop and pose analyzers receive that same original path through `--log`; logs are never rewritten. A standalone analyzer can also accept `--log /absolute/full-stdout.log`.
 
+## Clean capture UI
+
+SP automated captures hide the interface by default; manual CartLab sessions keep it visible. Set `"cart_hide_ui": true` or `false` in the resource JSON to choose explicitly. This changes only the disposable CartTestArea process, without saving personal options or key bindings. The render gate hides inventory panels, the body silhouette, hotbar and fixture overlays while native updates and action handlers keep running.
+
+Press **F9** to show/hide the interface during a CartLab session. An existing F9 binding takes priority; in that case use the fixture Lua call `cartLabCaptureUI(true)` to hide it or `cartLabCaptureUI(false)` to restore it. Leaving the test world or reloading the fixture restores the captured UI visibility. Engine debug/error windows remain visible.
+
 ## Relative movement and obstacle matrices
 
 Use `--cases motion-matrix` for 36 current-control scenes: male/female, empty/full,
@@ -76,7 +82,7 @@ penetration remains a separate unresolved gate.
 
 Add `--cart-scene male-full-corner` to a fresh `prepare --suite wooden_cart_motion --cases path` command above to record that scene only. Repeat the flag for more exact scene IDs, or set `cart_scenes` to an array of exact names in the resource config. Names match the video/log scene names; unknown, duplicate and empty selections are rejected before profile creation. Execution preserves the original bank order. Omit the filter to retain the full matrix. Collision captures keep their three bare controls because scene layouts depend on them.
 
-The selected IDs are pinned in the snapshot. Debug reports retain videos, mesh diagnostics and body/grip samples, set `diagnosticOnly` and `partialCoverage`, and stay `needs-review`; the coverage matrix shows `partial`. They do not execute the full bank's motion/lifecycle oracle or establish an animation-quality PASS, even if every scene ID was explicitly selected. A complete full-bank run remains the final gate. The original recording durations, disposable-world checks, probe-error guards and process cleanup are unchanged.
+The selected IDs are pinned in the snapshot. Debug reports retain videos, mesh diagnostics and body/grip samples, set `diagnosticOnly` and `partialCoverage`, and stay `needs-review`; the coverage matrix shows `partial`. They do not establish an animation-quality PASS, even if every scene ID was explicitly selected. The `interruption-fast` and `approach` banks run their lifecycle oracle for the selected scenes only; other selected banks retain diagnostic capture without the full-bank motion oracle. A complete full-bank run remains the final gate. The original recording durations, disposable-world checks, probe-error guards and process cleanup are unchanged.
 
 ## Parameters and adapter boundary
 

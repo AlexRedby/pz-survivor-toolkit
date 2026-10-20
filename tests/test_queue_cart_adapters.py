@@ -681,7 +681,8 @@ class CartAdapterTests(unittest.TestCase):
         text,lifecycle=fixture.fixture();cache=self.output/'client1'
         (self.output/'client1-launch.log').write_text(self.one_cart_scene(text,name))
         start=100000+fixture.analyzer.CASES.index(name)*20000
-        selected=[row for row in lifecycle if start<=row['wallTimeMillis']<start+20000]
+        # Calibration uses real walk actions before the measured video window.
+        selected=[row for row in lifecycle if start-5000<=row['wallTimeMillis']<start+20000]
         (cache/'action-lifecycle.jsonl').write_text('\n'.join(map(json.dumps,selected)))
         original_run=carts._run
         with patch.object(carts,'_videos',return_value=[]),patch.object(carts,'_run',wraps=original_run) as analyzer, \
