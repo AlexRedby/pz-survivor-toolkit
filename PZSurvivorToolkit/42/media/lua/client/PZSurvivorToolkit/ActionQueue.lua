@@ -42,6 +42,9 @@ local function updateOperationState(queue)
         if not queue.toolkitOperationsInvalid then Operations.invalidateQueue(queue); queue.toolkitOperationsInvalid = true end
     else queue.toolkitOperationsInvalid = nil end
 end
+-- Producers that capture receipts before enqueueing must share the same boundary
+-- as begin/tick, so the first native begin cannot invalidate their own receipt.
+Queue.updateOperationState = updateOperationState
 
 local begin = ISBaseTimedAction.begin
 ISBaseTimedAction.begin = function(action)

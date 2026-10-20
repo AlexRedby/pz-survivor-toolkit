@@ -15,12 +15,21 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
-### 0.1.171
+### 0.1.173
 
 - **Fixed:** Queue hints reuse short-lived display text instead of recalculating dependencies every rendered frame. Interactions still validate current state, and hints refresh after queue changes or a short delay.
 - **Fixed:** Automatic priority skips checks when the request is already at its earliest possible position and creates edit snapshots only when attempting an actual move. Live prerequisite changes remain visible to retries.
 - **Fixed:** Medical and exercise queue bookkeeping checks membership once per relevant queue instead of searching the queue separately for every tracked action.
 - **Fixed:** Dependency analysis indexes disjoint item groups and item-only transfer components before comparing action pairs. Possible overlaps, complex effects and spatial or capacity-sensitive cases retain their existing detailed checks.
+
+### 0.1.172
+
+- **Fixed:** TidyUpMeister floor returns in Host remain valid when their transfer is the first action after disabling the queue. Mode bookkeeping now runs before capturing the return receipt; later cancellation, changed item identity and changed placement still invalidate it.
+- **Fixed:** Corrected Vanilla Vehicles Animated's stale ranger-car separator reference to its existing normal police bars, following the upstream migration. Source and template checks protect unknown versions. The three modern police separator references remain unresolved and visible in the logs.
+
+### 0.1.171
+
+- **Fixed:** A new multiplayer character reapplies the local auto-drink preference after the server connection reply, so respawning with auto-drink disabled no longer leaves the character enabled while the menu shows it disabled.
 
 ### 0.1.170
 

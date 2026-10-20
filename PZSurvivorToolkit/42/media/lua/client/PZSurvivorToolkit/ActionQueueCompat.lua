@@ -544,6 +544,8 @@ local function repairTidyFloor(character, callback, ...)
         for _, action in ipairs(buffered) do add(action) end
         return unpack(results, 2, results.n)
     end
+    local controller = Toolkit.ActionQueue
+    if controller then controller.updateOperationState(queue) end
     local inventory = character:getInventory()
     local floor = tidyFloorGetter(character:getPlayerNum())
     local planned, transfers = {}, {}

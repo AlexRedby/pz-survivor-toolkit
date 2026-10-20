@@ -350,7 +350,7 @@ compatSource,proofSeams=compatSource:gsub('local carts=ready%.SaucedCartsTransfe
     'local carts=Toolkit.ActionQueueCarts')
 assert(proofSeams==1,'late-hook fixture must replace only the Carts proof capture')
 local compat = assert(loadstring((compatSource:gsub('\nreturn Compat',
-    '\nCompat.fixtureRegistries = {records, sessions}\nCompat.fixtureRepairTidyFloor = repairTidyFloor\nCompat.fixtureScoped = scoped\nreturn Compat'))))()
+    '\nCompat.fixtureRegistries = {records, sessions}\nCompat.fixtureRepairTidyFloor = repairTidyFloor\nCompat.fixtureFloorRepairs = repairedFloors\nCompat.fixtureScoped = scoped\nreturn Compat'))))()
 assert(not compat.isInstalled('MPFastForward'),'server wrapper waits for the server loading boundary')
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/server/000_PZSurvivorToolkitReadCompat.lua'))()
 for name, available in pairs({WS=WS~=nil, NEQ_Dresser=NEQ_Dresser~=nil, TidyFixture=TidyFixture~=nil,
@@ -1678,14 +1678,25 @@ do
             'callback','instance','class','owner','getter','refresh','missing-refresh','loot-api','loot-method','loot-player','loot-character',
             'generation','removed','cancelled'})do
             clearIntent();reset();enabled=queueEnabled;doNotReequip=false
+            -- No prior tick has initialized this mode, as on the first return
+            -- after entering the world or disabling the queue in settings.
+            queue.toolkitOperationsInvalid=nil
+            if change=='none'then queue.toolkitOperationGeneration=nil end
+            local generation=queue.toolkitOperationGeneration or 0
             isClient=function()return true end
             local old,held=item(floor,148),item(inventory,148);inventory.values={held}
             local action=placement(old)
             local getter,refresh,lootAPI,owner=ISInventoryPage.GetFloorContainer,ISInventoryPage.refreshBackpacks,getPlayerLoot,P4TidyUpMeister
             local nativeValid=P4RestoreFloorAction.isValid
             compat.fixtureRepairTidyFloor(player,function()ISTimedActionQueue.add(action)end)
+            assert(compat.fixtureFloorRepairs[action].generation == (queue.toolkitOperationGeneration or 0),
+                'native enqueue invalidated a fresh floor receipt queue='..tostring(queueEnabled))
+            assert((queue.toolkitOperationGeneration or 0) == generation + (queueEnabled and 0 or 1),
+                'first enqueue must initialize disabled bookkeeping exactly once')
             assert(#queue.queue==2 and action.item==held,'owned relocation fixture failed to create exact return pair')
             queue.queue[1]:perform();held.container=nil
+            assert(compat.fixtureFloorRepairs[action].generation == (queue.toolkitOperationGeneration or 0),
+                'beginning the placement invalidated its transfer receipt')
             local replica=worldItem(148);floor.values={};floorLoot.worldItems={replica}
             floorLoot.player,floorLoot.onCharacter,floorLoot.refreshBackpacks=0,false,nativeFloorRefresh
             if change=='missing'then floorLoot.worldItems={}
@@ -1715,7 +1726,7 @@ do
             elseif change=='loot-method'then floorLoot.refreshBackpacks=function()end
             elseif change=='loot-player'then floorLoot.player=1
             elseif change=='loot-character'then floorLoot.onCharacter=true
-            elseif change=='generation'then queue.toolkitOperationGeneration=(queue.toolkitOperationGeneration or 0)+1
+            elseif change=='generation'then operations.invalidateQueue(queue)
             elseif change=='removed'then queue.queue,queue.current={},nil
             elseif change=='cancelled'then dead=true end
             local ok=nativeValid(action)
