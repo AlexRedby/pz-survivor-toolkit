@@ -21,7 +21,7 @@ function Reading.capture(queue, first, last)
             record.destination, record.source = action.destContainer, action.srcContainer
         end
     end
-    local insertions = {}
+    local insertions, pickups = {}, {}
     for i = first, last do
         local action = queue.queue[i]
         local media = Toolkit.ActionQueueMedia
@@ -29,10 +29,15 @@ function Reading.capture(queue, first, last)
         if receipt then
             local record = remember(action, "media")
             record.receipt, record.mediaIndex = receipt, action.secondaryItem:getRecordedMediaIndex()
+            local pickup = pickups[receipt.tape]
+            if pickup and pickup.operation == record.operation and pickup.destination == receipt.root
+                and pickup.source == receipt.container then record.pickup = pickup end
             insertions[action.deviceData:getParent()] = record
         elseif action.Type == "ISInventoryTransferAction" and Toolkit.ActionQueuePolicy.matchesNative(action) then
             local record = remember(action, "pickup")
             record.destination, record.source = action.destContainer, action.srcContainer
+            record.action, record.queue, record.generation = action, queue, queue.toolkitOperationGeneration or 0
+            pickups[record.item] = record
         elseif action.Type == "ISRadioAction" and instanceof(action.device, "IsoTelevision")
             and (action.mode == "ToggleOnOff" or action.mode == "TogglePlayMedia") then
             local _, source = Toolkit.ActionQueuePolicy.inspect(action)
@@ -40,6 +45,34 @@ function Reading.capture(queue, first, last)
                 local record = remember(action, "radio")
                 if action.mode == "TogglePlayMedia" then record.insertion = insertions[action.device] end
             end
+        end
+    end
+end
+
+-- Called only after the shared native lifecycle has confirmed successful pickup
+-- completion and removal from the Java stack. Do not infer success from an ID alone.
+function Reading.completedPickup(queue, action)
+    local pickup = action.toolkitReadingMove
+    if not isClient() or not Toolkit.Settings.actionQueue() or not pickup or pickup.marker ~= marker
+        or pickup.kind ~= "pickup" or pickup.action ~= action or pickup.queue ~= queue
+        or pickup.generation ~= (queue.toolkitOperationGeneration or 0)
+        or pickup.operation ~= action.toolkitQueueOperation or pickup.character ~= action.character
+        or type(pickup.operation) == "table" and pickup.operation.toolkitCancelled
+        or queue.current ~= action or queue.queue[1] ~= action or queue.toolkitCancel or queue.toolkitGroupCancel
+        or action.action and action.action:hasStalled()
+        or not Toolkit.ActionQueuePolicy.live(queue) or not Toolkit.ActionQueuePolicy.matchesNative(action)
+        or action.srcContainer ~= pickup.source or action.destContainer ~= pickup.destination
+        or not pickup.source:isExistYet() or not pickup.destination:isExistYet() then return end
+    for i = 2, #queue.queue do
+        local pending = queue.queue[i]
+        local record = pending.toolkitReadingMove
+        if record and record.marker == marker and record.kind == "media" and record.pickup == pickup
+            and not record.skipped and not record.completion
+            and record.operation == pending.toolkitQueueOperation and record.operation == pickup.operation
+            and record.character == pending.character and record.character == pickup.character
+            and record.receipt.tape == pickup.item then
+            local receipt = Toolkit.ActionQueueMedia.afterPickup(pending, record.receipt, action)
+            if receipt then record.receipt = receipt end
         end
     end
 end

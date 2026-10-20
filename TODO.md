@@ -63,11 +63,6 @@ These are implementation and verification gaps, not evidence that every action u
 
 The executor remains `ISTimedActionQueue`. Add families through Definitions and the shared dependency/effect contract, keeping any dependency model read-only: it validates edits, never executes game effects, replaces the native scheduler or reserves future inventory. Check display and permission to change the queue separately. Only unfinished work is listed below; interfaces are described in the [features guide](docs/FEATURES.md), and check commands are in the [developer guide](docs/DEVELOPMENT.md).
 
-## Active shelf reading below TV commands
-
-- [ ] Extend the combined shelf-book/TV live scenario to a VHS taken from a worn bag: native pickup, grouped insertion, active reading moved below power/insert/play, exact tape debit and one book return. Run selected-pack SP/Host with matching queue-off controls and log audits. The inventory-VHS path is verified live; bag preparation/capacity, missing tape/TV/return destination, changed callbacks and same-TV conflicts currently have focused local regression coverage.
-  - Refresh the isolated pack sources for the newly selected `ArcheryNexus` and `WildernessProgressionArcheryNexusCompanion` and lock all 49 selected mods before the next run.
-
 ## Known limits of move/cancel controls
 
 These operations can execute normally while some queue controls remain disabled. The work below is to prove safe edits; real shared dependencies and required cleanup must remain protected. Current behavior is described in the [action queue limits](docs/FEATURES.md#supported-actions-and-limits).
@@ -83,7 +78,7 @@ These operations can execute normally while some queue controls remain disabled.
 
 - [ ] Resolve the `test_action_queue_compat.lua` floor-return negative case (`owned floor validation accepted unsafe none queue=false`), reproduced both on `7e6738b` and the bulk-queue fix. Check the queue-disabled native return contract before changing the expectation; restore a complete compat regression run.
 
-- [ ] Resolve the upstream VanillaVehiclesAnimated startup template mismatch: `VVA_applyAnimations.lua` requests `VVA_StepVan_Decor_Trunk`, while `TrunkFill.txt` defines `VVA_StepVan_Trunk_Decor`. Workshop, frozen source and staged client match byte for byte; keep this new full-pack error visible rather than treating it as the old baseline.
+- [ ] Resolve VVA's missing `VVA_Normal_PoliceSeparator` and `VVA_Modern_PoliceSeparator` templates (one ranger car and three modern police variants). No matching separator definitions exist in the reviewed upstream files. Establish the intended assets/parts before any correction; keep these four startup errors visible rather than installing empty aliases or inventing vehicle geometry.
 
 - [ ] Extend the common scenario contracts beyond equipment, fluid drinking and health-panel/direct-inventory bandaging. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
 

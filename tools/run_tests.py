@@ -19,6 +19,7 @@ ACTION_TESTS += ("test_action_queue_media.lua", "test_device_media_native_order.
 ACTION_TESTS += ("test_action_queue_edit_model.lua", "test_action_queue_edit_adapters.lua", "test_action_queue_edit_policy.lua")
 ACTION_TESTS += ("test_action_queue_item_edit_adapters.lua", "test_food_eatsmart_compat.lua", "test_food_goal_labels.lua")
 ACTION_TESTS += ("test_inventory_search.lua", "test_inventory_transfer_operations.lua")
+ACTION_TESTS += ("test_vva_compat.lua",)
 EXTRA_TESTS = (
     'test_quartermaster_rpc.lua',
     'test_container_tag_icons.lua',
@@ -101,6 +102,7 @@ def main() -> None:
     parser.add_argument("--native-vehicles", type=Path, help="vanilla Vehicles.lua for mechanics item-collection checks")
     parser.add_argument("--medicine-framework-source", type=Path, help="installed MF_ISMoodle.lua")
     parser.add_argument("--mpff-source", type=Path, help="MP Fast Forward media/lua directory")
+    parser.add_argument("--vva-source", type=Path, help="Vanilla Vehicles Animated effective content root containing media/")
     parser.add_argument("--bc-filter-source", type=Path, help="Better Containers CategoryFilters.lua")
     parser.add_argument("--oc-stick-source", type=Path, help="organizedCategories_itemStick.lua for Quantity transfer protection checks")
     parser.add_argument("--oc-display-source", type=Path, help="organizedCategories_displayOverride.lua for inventory stack splitting checks")
@@ -254,6 +256,8 @@ def main() -> None:
             continue
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().ProjectRoot = str(ROOT)
+        if name == "test_vva_compat.lua" and args.vva_source:
+            lua.globals().NativeVVASourceRoot = str(args.vva_source.resolve())
         if args.saucedcarts_source:
             lua.globals().SaucedCartsSource = str(args.saucedcarts_source)
         if args.native_action_root:

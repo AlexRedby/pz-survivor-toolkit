@@ -282,6 +282,112 @@ for _,changed in ipairs({false,true})do
  end
  assert(s.data.consumed==0 and s.item.container==bag,'source-loss cleanup cannot transfer or consume the VHS')
 end
+-- Host AddInventoryItemToContainer constructs a new Java item and rebinds direct
+-- action fields by ID. The captured nested receipt must follow only a confirmed
+-- native pickup, before queue advancement, and remain immutable afterwards.
+for _,scenario in ipairs({'replica','native-perform','sp','failed','still-running','changed-pickup','changed-insert','wrong-id',
+ 'wrong-type','wrong-media','wrong-media-type','nested','duplicate','source-retained','old-retained',
+ 'wrong-source','wrong-destination','wrong-operation','wrong-generation','pending-operation','begun',
+ 'skipped','waiting','canceled','occupied','disabled','unrelated','stalled','canceled-operation','third-pickup-item'})do
+ local s=setup(true,nil,nil,true);local f=s.f;local reading=f.project('ActionQueueReading')
+ local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+ local handoff=scenario=='replica'or scenario=='native-perform'
+ isClient=function()return scenario~='sp'end
+ local bag=s.container('bag');s.item.container=bag
+ local head=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')})
+ local pickup=f.action(ISInventoryTransferAction,{item=s.item,srcContainer=bag,destContainer=s.root})
+ local insert=ISDeviceMediaAction:new(f.player,false,s.item,s.square);insert.toolkitQueueOperation=pickup.toolkitQueueOperation
+ local play=ISRadioAction:new('TogglePlayMedia',f.player,s.tv);play.toolkitQueueOperation={}
+ local q=f.queue(head,pickup,insert,play)
+ reading.capture(q,2,4)
+ local record=insert.toolkitReadingMove;local original=record.receipt
+ local replica=s.tape();replica.id=s.item.id
+ s.item.container=nil;pickup.item=replica;insert.secondaryItem=replica
+ local inventory={replica}
+ s.root.getItemById=function(_,id)if id==replica.id then return replica end end
+ s.root.getItems=function()return {size=function()return #inventory end,get=function(_,i)return inventory[i+1]end}end
+ bag.getItemById=function(_,id)if scenario=='source-retained'and id==replica.id then return s.item end end
+ q.queue={pickup,insert,play};q.current=pickup
+ pickup.action={isStarted=function()return true end,hasStalled=function()return false end}
+ local nativePresent=true
+ f.player.getCharacterActions=function()return {contains=function()return nativePresent end}end
+ assert(s.media.completionState(insert,original)==nil,'native direct-field rebinding leaves the old nested receipt stale')
+ if scenario=='changed-pickup'then pickup.complete=function()error('foreign pickup must not execute')end
+ elseif scenario=='changed-insert'then insert.complete=function()error('foreign insertion must not execute')end
+ elseif scenario=='wrong-id'then replica.id=replica.id+99
+ elseif scenario=='wrong-type'then replica.getFullType=function()return 'Base.VHS_Home'end
+ elseif scenario=='wrong-media'then replica.mediaIndex=replica.mediaIndex+1
+ elseif scenario=='wrong-media-type'then replica.mediaType=0
+ elseif scenario=='nested'then replica.container=s.container()
+ elseif scenario=='duplicate'then inventory[2]=replica
+ elseif scenario=='old-retained'then s.item.container=bag
+ elseif scenario=='wrong-source'then pickup.srcContainer=s.container()
+ elseif scenario=='wrong-destination'then pickup.destContainer=s.container()
+ elseif scenario=='wrong-operation'then pickup.toolkitQueueOperation={}
+ elseif scenario=='wrong-generation'then q.toolkitOperationGeneration=1
+ elseif scenario=='pending-operation'then insert.toolkitQueueOperation={}
+ elseif scenario=='begun'then insert.action={}
+ elseif scenario=='skipped'then record.skipped=true
+ elseif scenario=='waiting'then record.completion={}
+ elseif scenario=='canceled'then q.toolkitCancel=pickup
+ elseif scenario=='occupied'then s.data.media=true
+ elseif scenario=='stalled'then pickup.action.hasStalled=function()return true end
+ elseif scenario=='canceled-operation'then pickup.toolkitQueueOperation.toolkitCancelled=true
+ elseif scenario=='third-pickup-item'then pickup.item=s.tape();pickup.item.id=replica.id
+ elseif scenario=='unrelated'then record.pickup=nil end
+ assert(lifecycle.begin(pickup,'perform'),'native pickup boundary must be captured')
+ if scenario=='native-perform'then
+  -- Execute the unmodified native perform, including its actual base onCompleted
+  -- call. Java transaction effects are modeled above; queueList is intentionally
+  -- still the old nested reference after direct-field replica replacement.
+  pickup.queueList={{items={s.item},time=30,type=s.item:getFullType()}}
+  pickup.transactionId=73
+  s.item.setJobDelta=function()end;replica.setJobDelta=function()end
+  s.root.getPutSound=function()end
+  local emitter={isPlaying=function()return false end,playSound=function()end}
+  f.player.getEmitter=function()return emitter end
+  f.player.setIsFarming=function()end
+  ISLogSystem={logAction=function()end}
+  local transactions=0
+  removeItemTransaction=function(id,canceled)
+   assert(id==73 and canceled==false);transactions=transactions+1
+  end
+  pickup.action.stopTimedActionAnim=function()end
+  pickup.action.setLoopedAction=function()end
+  pickup.action.setWaitForFinished=function()end
+  pickup:perform()
+  assert(pickup.item==s.item and #pickup.queueList==0 and transactions==1,
+   'actual native perform restores the old item from nested queueList and closes its transaction')
+  assert(record.receipt==original and q.current==pickup and q.queue[1]==pickup,
+   'actual native onCompleted must defer advancement until the successful lifecycle boundary')
+ else
+  assert(lifecycle.deferCompletion(q,pickup),'native callback must request advancement')
+ end
+ lifecycle.finish(pickup,'perform',scenario~='failed')
+ if scenario=='sp'then assert(lifecycle.begin(pickup,'complete'));lifecycle.finish(pickup,'complete',true)end
+ if scenario=='disabled'then PZSurvivorToolkit.Settings.actionQueue=function()return false end end
+ nativePresent=scenario=='still-running'
+ local advanced=0
+ q.onCompleted=function()
+  advanced=advanced+1
+  if handoff then assert(record.receipt.tape==replica,'rebind must precede native queue advancement')end
+ end
+ local status=lifecycle.flush(q)
+ if handoff then
+  assert(status=='completed'and advanced==1 and record.receipt~=original and record.receipt.tape==replica)
+  assert(play.toolkitReadingMove.insertion==record and record.mediaIndex==original.mediaIndex,
+   'playback retains the same dependency record and frozen media index')
+  assert(s.media.completionState(insert,record.receipt)=='waiting'and not s.media.canSkip(insert,record.receipt))
+  insert.action={};local rebound=record.receipt
+  insert.secondaryItem=s.tape();insert.secondaryItem.id=replica.id
+  reading.completedPickup(q,pickup)
+  assert(record.receipt==rebound and s.media.completionState(insert,rebound)==nil,
+   'a begun insertion cannot accept another same-ID replica')
+ else assert(record.receipt==original,'unproven native pickup cannot refresh receipt: '..scenario)end
+ assert(original.tape==s.item and s.data.consumed==0,'receipt repair never changes the old snapshot or executes effects')
+end
+print('Promoted VHS native Host pickup replica handoff and rejection checks passed.')
+
 -- Native RWMMedia keeps one click's pickup/walk/insert group intact.
 do
  local s=setup(true);local f=s.f
@@ -307,6 +413,8 @@ end
 
 -- Shelf reading demotion crosses the whole TV range in its original order. The
 -- capacity projection may not spend the future book return or VHS consumption.
+local stockNext=next
+next=nil -- B42 Kahlua exposes pairs but not the standard Lua next global.
 for _,sourceKind in ipairs({'bag','world'})do
  for _,kind in ipairs({'sp','host'})do
   local s=setup(true);local f=s.f
@@ -353,7 +461,8 @@ for _,sourceKind in ipairs({'bag','world'})do
   assert(s.policy.moveReason(q,active,play,true)=='container_capacity','a missing original shelf cannot inherit a carried-container proof')
  end
 end
-print('Media native producer grouping and SP/Host shelf demotion capacity bounds passed.')
+next=stockNext
+print('Media native producer grouping and SP/Host shelf demotion capacity bounds passed without next().')
 
 assert(not setup(false,'native').installed,'changed native media source cannot inherit adapter permission')
 assert(not setup(false,'helper').installed,'changed native device resolver source cannot inherit adapter permission')
