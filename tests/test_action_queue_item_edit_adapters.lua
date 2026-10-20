@@ -31,6 +31,8 @@ local function setup(changed,foreignMerge,alias,missing)
     getTimestampMs=function()return 1 end;getCore=function()return {getGameMode=function()return 'Sandbox'end}end
     CharacterTrait={DEXTROUS=1,ALL_THUMBS=2};MoodleType={FOOD_EATEN=1};Fluid={Water={}}
     ItemTag={SMOKABLE='smokable',SPOON='spoon',FORK='fork',ALREADY_COOKED='alreadycooked'}
+    local scripts={}
+    ScriptManager={instance={getItem=function(_,fullType)return scripts[fullType]end}}
     ItemContainer={floatingPointCorrection=function(value)return math.floor(value*100+0.5)/100 end}
     round=function(value)return value end
     f.player.class='IsoPlayer'
@@ -102,11 +104,12 @@ local function setup(changed,foreignMerge,alias,missing)
         value.isFertilized=function(self)return self.fertilized or false end
         value.getEatTime=function()return 0 end;value.getUses=function()return 1 end
         value.isDisappearOnUse=function()return true end
-        for _,name in ipairs({'getReplaceOnUse','getOnEat','getOnCooked','getReplaceOnCooked','getReplaceOnRotten','getRequireInHandOrInventory','getCustomMenuOption'})do value[name]=function()end end
-        for _,name in ipairs({'isKeepOnDeplete','isTainted','isAlcoholic','isBurnt','isRotten','isbDangerousUncooked'})do value[name]=function()return false end end
+        for _,name in ipairs({'getReplaceOnUse','getReplaceOnUseFullType','getOnEat','getOnCooked','getReplaceOnCooked','getReplaceOnRotten','getRequireInHandOrInventory','getCustomMenuOption'})do value[name]=function()end end
+        for _,name in ipairs({'isCustomWeight','haveExtraItems','isKeepOnDeplete','isTainted','isAlcoholic','isBurnt','isRotten','isbDangerousUncooked'})do value[name]=function()return false end end
         value.getPoisonPower=function()return 0 end;value.getReduceInfectionPower=function()return 0 end
         local script={isCantEat=function()return false end,getOpeningRecipe=function()end,getOnBreak=function()end,
-            getReplaceOnUse=function()end,getReplaceOnDeplete=function()end}
+            getReplaceOnUse=function()end,getReplaceOnDeplete=function()end,
+            getHungerChange=function()return -.4 end,getActualWeight=function()return 1 end}
         value.getScriptItem=function()return script end
         return value
     end
@@ -186,7 +189,7 @@ local function setup(changed,foreignMerge,alias,missing)
         assert(action:isValid());action:perform();action.action=nil
     end
     return {f=f,adapters=adapters,model=model,policy=policy,root=root,bag=bag,bagInventory=bagInventory,water=water,fluid=fluid,
-        properties=properties,item=item,food=food,utensil=utensil,eat=eat,damage=damage,transfer=transfer,drink=drink,runTransfer=runTransfer,drinks=function()return drinks end}
+        properties=properties,scripts=scripts,item=item,food=food,utensil=utensil,eat=eat,damage=damage,transfer=transfer,drink=drink,runTransfer=runTransfer,drinks=function()return drinks end}
 end
 do
     local s=setup();local pickup=s.transfer();local restore=s.transfer(nil,s.root,s.bagInventory)
@@ -672,6 +675,200 @@ do
     end
 end
 do
+    -- Partial eating must keep ReplaceOnUse dormant at every projected step.
+    -- The empty container is neither created nor substituted for the original ID.
+    local function replacementFood(s)
+        local food=s.food();food.base=-.15;food.hunger=-.15
+        food.getReplaceOnUse=function()return 'Base.TinCanEmpty'end
+        food.getReplaceOnUseFullType=function()return 'Base.TinCanEmpty'end
+        local script=food:getScriptItem()
+        script.getReplaceOnUse=function()return 'Base.TinCanEmpty'end
+        script.hunger=-.15;script.weight=.8
+        script.getHungerChange=function(self)return self.hunger end
+        script.getActualWeight=function(self)return self.weight end
+        local output={weight=.2,getActualWeight=function(self)return self.weight end}
+        s.scripts['Base.TinCanEmpty']=output
+        return food,script,output
+    end
+    for _,client in ipairs({false,true})do
+        local s=setup();isClient=function()return client end
+        local food=replacementFood(s);local half,quarter=s.eat(food,.5),s.eat(food,.25)
+        local function entry(action,kind)return {action=action,edit=assert(s.adapters[kind or 'food'](action))}end
+        local a,b=entry(half),entry(quarter);local resource=a.edit.resources[1]
+        local minimum=.15*.5+.01+2*.00001
+        assert(resource.facts.item==food and resource.key==food:getID()and #a.edit.resources==2
+            and resource.requires[2].field=='foodLower'and resource.requires[2].above==minimum,
+            'partial replacement food retains its original exact ID and requires a safe native tail')
+        assert(resource.effects[1].deplete.amount==.15*.5+.00001
+            and resource.effects[2].deplete.amount==.15*.5-.00001,
+            'partial replacement support must retain the existing conservative original-food debit')
+        local returning=s.transfer(food,s.root,s.bagInventory);local tail=entry(returning,'transfer')
+        assert(s.model.evaluate({a,b,tail}).status=='allowed','partial can half then quarter leaves original can food for return')
+        assert(s.model.evaluate({b,a,tail}).status=='allowed','partial replacement original portions commute safely')
+        a.snapshotOnly=true
+        assert(s.model.evaluate({a,b,tail}).status=='allowed','cancelling a partial portion preserves the exact original food')
+        a.snapshotOnly=nil
+        local whole=entry(s.eat(food,1))
+        assert(s.model.evaluate({whole}).status=='denied','full consumption must not activate an unmodelled empty-container replacement')
+        assert(s.model.evaluate({a,entry(s.eat(food,.5)),tail}).status=='denied',
+            'a preceding portion can make a later replacement-bearing action consume the native tail')
+        assert(s.model.evaluate({a,b,whole}).status=='denied','a full tail action remains protected after safe partial portions')
+        whole.snapshotOnly=true
+        assert(s.model.evaluate({a,b,whole,tail}).status=='allowed',
+            'a snapshot-only cancelled full action leaves safe partial consumption and return')
+        food.container=s.bagInventory
+        local pickup=s.transfer(food,s.bagInventory,s.root);local first=entry(pickup,'transfer')
+        a,b,tail=entry(half),entry(quarter),entry(returning,'transfer')
+        assert(s.model.evaluate({first,a,b,tail}).status=='allowed','partial replacement food supports exact pickup and tail return')
+        assert(s.model.evaluate({a,first,tail}).status=='denied','partial replacement food cannot be eaten before its pickup')
+        s.water.container=s.root;local head=s.drink();head.action={}
+        local q=s.f.queue(head,pickup,half,quarter,returning)
+        assert(s.policy.evaluateMove(q,quarter,half,false).allowed,'Policy reorders safe partial container-food portions')
+        assert(s.policy.evaluateCancel(q,half).allowed,'Policy cancels safe partial container-food consumption')
+        assert(not s.policy.evaluateCancel(q,pickup).allowed,'Policy retains the partial food pickup dependency')
+        assert(food.hunger==-.15 and food.base==-.15 and half.item==food and quarter.item==food
+            and half.percentage==.5 and quarter.percentage==.25,'inspection preserves original container food and captured fractions')
+        food.container=s.root
+        for _,case in ipairs({{minimum+.000001,'allowed'},{minimum,'denied'},{minimum-.000001,'denied'},{.01,'denied'}})do
+            food.hunger=-case[1]
+            assert(s.model.evaluate({entry(half)}).status==case[2],
+                'native tail threshold and float slack must be strict for each replacement-bearing action')
+        end
+        local tiny=s.eat(food,1e-300)
+        for _,case in ipairs({{.01003,'allowed'},{.01002,'denied'},{.00999,'denied'}})do
+            food.hunger=-case[1]
+            assert(s.model.evaluate({entry(tiny)}).status==case[2],
+                'an underflow-sized request cannot bypass replacement protection around the native .01 tail')
+        end
+    end
+    -- Capacity scans cover the whole projected prefix, including food outside
+    -- the selected transfers' item component. An edit contract is conditional;
+    -- its existence alone cannot certify a dormant consumption replacement.
+    for _,client in ipairs({false,true})do
+    for _,case in ipairs({{'full',{1},false},{'two-halves',{.5,.5},false},{'safe-partials',{.5,.25},true}})do
+        local s=setup();isClient=function()return client end
+        local food=replacementFood(s);local eats,entries={},{}
+        for _,portion in ipairs(case[2])do
+            local action=s.eat(food,portion);eats[#eats+1]=action
+            entries[#entries+1]={action=action,edit=assert(s.adapters.food(action))}
+        end
+        local itemA,itemB=s.item(),s.item();itemA.container=s.root;itemB.container=s.root
+        local transferA=s.transfer(itemA,s.root,s.bagInventory)
+        local transferB=s.transfer(itemB,s.root,s.bagInventory)
+        local head=s.f.action(ISReadABook,{item=s.item()});head.action={}
+        local q=#eats==1 and s.f.queue(head,eats[1],transferA,transferB)
+            or s.f.queue(head,eats[1],eats[2],transferA,transferB)
+        assert((s.model.evaluate(entries).status=='allowed')==case[3],
+            'capacity fixture must independently prove or deny its native food sequence: '..case[1])
+        local decision=s.policy.evaluateMove(q,transferB,transferA,false)
+        assert(decision.allowed==case[3],
+            'unrelated transfer reorder must certify every replacement-food step in its capacity prefix: '..case[1])
+        -- Cancellation projects the removed food as snapshot-only. The full
+        -- action's effect must not be retained as an uncertified capacity step.
+        assert(s.policy.evaluateCancel(q,eats[1]).allowed,
+            'cancelled replacement food leaves a certified capacity prefix for unrelated transfers: '..case[1])
+        assert(food.hunger==-.15 and itemA.container==s.root and itemB.container==s.root,
+            'capacity inspection must not execute eating or transfers')
+    end
+    for _,state in ipairs({'active','started','operation-started'})do
+        local s=setup();isClient=function()return client end
+        local food=replacementFood(s);food.hunger=-.12
+        local eating=s.eat(food,.5)
+        assert(s.adapters.food(eating),'in-flight fixture amount would permit the pending partial action')
+        local itemA,itemB=s.item(),s.item();itemA.container=s.root;itemB.container=s.root
+        local transferA=s.transfer(itemA,s.root,s.bagInventory)
+        local transferB=s.transfer(itemB,s.root,s.bagInventory)
+        local q
+        if state=='active'then
+            eating.action={};q=s.f.queue(eating,transferA,transferB)
+        else
+            local head=s.f.action(ISReadABook,{item=s.item()});head.action={}
+            q=s.f.queue(head,eating,transferA,transferB)
+            if state=='started'then eating.started=true else eating.toolkitQueueOperation.toolkitStarted=true end
+        end
+        assert(not s.policy.evaluateMove(q,transferB,transferA,false).allowed,
+            'capacity proof must not reproject an in-flight replacement-food step from its partially reflected live state: '..state)
+        assert(food.hunger==-.12,'in-flight capacity inspection must preserve the live partial amount')
+    end
+    do
+        local s=setup();isClient=function()return client end
+        local food=replacementFood(s);food.container=s.bagInventory
+        local half,quarter=s.eat(food,.5),s.eat(food,.25)
+        local pickup=s.transfer(food,s.bagInventory,s.root)
+        local returning=s.transfer(food,s.root,s.bagInventory)
+        local itemA,itemB=s.item(),s.item();itemA.container=s.root;itemB.container=s.root
+        local transferA=s.transfer(itemA,s.root,s.bagInventory)
+        local transferB=s.transfer(itemB,s.root,s.bagInventory)
+        local head=s.f.action(ISReadABook,{item=s.item()});head.action={}
+        local q=s.f.queue(head,pickup,half,quarter,returning,transferA,transferB)
+        assert(s.policy.evaluateMove(q,transferB,transferA,false).allowed,
+            'capacity food proof includes the required carried pickup and surviving original-food return')
+        assert(not s.policy.evaluateCancel(q,pickup).allowed,
+            'capacity proof cannot cancel a pickup required by retained replacement-food portions')
+        assert(not s.policy.evaluateMove(q,returning,half,false).allowed,
+            'capacity proof cannot return replacement food to its bag before retained eating')
+        assert(s.policy.evaluateCancel(q,returning).allowed,
+            'cancelling a tail return leaves the same safe partial-food capacity prefix')
+    end
+    end
+    local s=setup();local food,script,output=replacementFood(s);local action=s.eat(food,.5)
+    -- Both instance and script metadata may declare the replacement independently.
+    local itemReplacement=food.getReplaceOnUse;food.getReplaceOnUse=function()end
+    assert(s.adapters.food(action),'a script-declared replacement receives the partial-survival requirement')
+    food.getReplaceOnUse=itemReplacement
+    local scriptReplacement=script.getReplaceOnUse;script.getReplaceOnUse=function()end
+    assert(s.adapters.food(action),'an instance-declared replacement receives the same partial-survival requirement')
+    script.getReplaceOnUse=scriptReplacement
+    for _,value in ipairs({'',false,0,{}})do
+        food.getReplaceOnUseFullType=function()return value end
+        assert(not s.adapters.food(action),'malformed replacement full type stays protected')
+    end
+    food.getReplaceOnUseFullType=function()end
+    assert(not s.adapters.food(action),'missing replacement full type stays protected')
+    food.getReplaceOnUseFullType=function()return 'Base.UnknownContainer'end
+    assert(not s.adapters.food(action),'unresolved replacement script stays protected')
+    food.getReplaceOnUseFullType=function()return 'Base.TinCanEmpty'end
+    for _,value in ipairs({true,false,'-.15',{},0,.15,math.huge,-math.huge,0/0})do
+        script.hunger=value;assert(not s.adapters.food(action),'replacement weight proof requires finite negative native script hunger')
+    end
+    script.hunger=nil;assert(not s.adapters.food(action),'missing script hunger cannot prove partial replacement weight')
+    script.hunger=-.15
+    for _,target in ipairs({script,output})do
+        for _,value in ipairs({false,'0.2',{},-.1,math.huge,-math.huge,0/0})do
+            target.weight=value;assert(not s.adapters.food(action),'invalid source/output weight cannot prove safe partial food weight')
+        end
+        target.weight=nil;assert(not s.adapters.food(action),'missing source/output weight cannot prove safe partial food weight')
+        target.weight=target==script and .8 or .2
+    end
+    output.weight=.800001
+    assert(not s.adapters.food(action),'heavier replacement can make partially eaten food gain weight')
+    output.weight=.8;assert(s.adapters.food(action),'equal source/output script weights preserve the transfer bound')
+    output.weight=0;assert(s.adapters.food(action),'zero empty-container script weight preserves the transfer bound')
+    output.weight=.2
+    for _,name in ipairs({'isCustomWeight','haveExtraItems'})do
+        local previous=food[name];food[name]=function()return true end
+        assert(not s.adapters.food(action),'custom/evolved food weight is outside the audited native weight formula: '..name)
+        food[name]=previous
+    end
+    for _,spec in ipairs({{'getOnEat','custom.callback'},{'getOnCooked','custom.callback'},
+        {'getReplaceOnRotten','Base.Rotten'},{'isTainted',true},{'getPoisonPower',1}})do
+        local name,value=spec[1],spec[2];local previous=food[name];food[name]=function()return value end
+        assert(not s.adapters.food(action),'partial output permission cannot bypass unknown food effects: '..name)
+        food[name]=previous
+    end
+    script.getReplaceOnDeplete=function()return 'Base.TinCanEmpty'end
+    assert(not s.adapters.food(action),'ReplaceOnDeplete remains outside the partial ReplaceOnUse contract')
+    script.getReplaceOnDeplete=function()end
+    local manager=ScriptManager;ScriptManager=nil
+    assert(not s.adapters.food(action),'missing script manager cannot resolve replacement weight')
+    ScriptManager={};assert(not s.adapters.food(action),'missing script manager instance cannot resolve replacement weight')
+    ScriptManager=manager
+    local helper=ISEatFoodAction.isEatingRemaining;ISEatFoodAction.isEatingRemaining=function()error('foreign partial helper must not execute')end
+    assert(not s.adapters.food(action),'partial replacement permission retains native helper proof')
+    ISEatFoodAction.isEatingRemaining=helper
+    assert(s.adapters.food(action),'restoring the exact native helper restores partial replacement permission')
+end
+do
     -- EatSmart and other native producers capture arbitrary fractions of the
     -- original food. Reordering does not recalculate their nutrition target.
     for _,client in ipairs({false,true})do
@@ -912,4 +1109,4 @@ do
         end
     end
 end
-print('Food edit adapters: original portions, cold cookable state and dormant cooked replacements, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')
+print('Food edit adapters: original portions, cold cookable state, dormant cooked replacements and surviving partial use replacements, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')

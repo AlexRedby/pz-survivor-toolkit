@@ -708,7 +708,11 @@ function Policy.installContracts()
         local edit=ItemEditAdapters and ItemEditAdapters.food(action)
         if edit then
             local result=resources(action)
-            result.edit,result.capacityNonIncreasing=edit,true
+            result.edit=edit
+            result.capacityNonIncreasing=not (action.item:getReplaceOnUse() or action.item:getScriptItem():getReplaceOnUse())
+            -- Replacement food decreases in weight only while it survives every
+            -- portion. A transfer edit can otherwise bypass the food component.
+            result.capacityRequiresEdit=not result.capacityNonIncreasing
             result.targets[action.character]=true
             for _,resource in ipairs(edit.resources) do
                 if resource.domain=="item" then
@@ -845,16 +849,10 @@ sharedEditResource = function(left, right)
     return false
 end
 
-local function proposedEdit(queue, first, last, to, context)
+local function editComponent(queue, members, component, context)
     if not EditModel then return {status = "unhandled"} end
-    local selected, component, contracts = {}, {}, {}
-    for i = first, last do
-        local member = queue.queue[i]
-        local contract = inspect(member, context)
-        if not contract or not contract.edit then return {status = "unhandled"} end
-        selected[member], component[member] = true, true
-    end
-    for _, member in ipairs(queue.queue) do
+    local contracts = {}
+    for _, member in ipairs(members) do
         local contract = inspect(member, context)
         -- Unknown callbacks/selectors can reach resources outside their reported
         -- footprint. They cannot be dismissed as an independent empty action.
@@ -866,7 +864,7 @@ local function proposedEdit(queue, first, last, to, context)
     local changed = true
     while changed do
         changed = false
-        for _, member in ipairs(queue.queue) do
+        for _, member in ipairs(members) do
             if not component[member] then
                 for related in pairs(component) do
                     if sharedEditResource(contracts[member], contracts[related])
@@ -895,6 +893,29 @@ local function proposedEdit(queue, first, last, to, context)
             return {status = "unhandled", reason = "edit_in_flight", blocker = member}
         end
     end
+    return {status = "allowed", contracts = contracts, component = component, externalCapacity = externalCapacity}
+end
+
+local function evaluateComponent(projection, entries)
+    local result = EditModel.evaluate(entries)
+    result.externalCapacity = projection.externalCapacity
+    -- A declared contract with an unsupported schema is not permission to use
+    -- a less complete legacy footprint. No valid proof was obtained for it.
+    if result.status == "unhandled" then result.status = "denied" end
+    return result
+end
+
+local function proposedEdit(queue, first, last, to, context)
+    local selected, component = {}, {}
+    for i = first, last do
+        local member = queue.queue[i]
+        local contract = inspect(member, context)
+        if not contract or not contract.edit then return {status = "unhandled"} end
+        selected[member], component[member] = true, true
+    end
+    local projection = editComponent(queue, queue.queue, component, context)
+    if projection.status ~= "allowed" then return projection end
+    local contracts = projection.contracts
     local entries = {}
     local function add(member)
         if component[member] then entries[#entries + 1] = {action = member, edit = contracts[member].edit} end
@@ -909,12 +930,7 @@ local function proposedEdit(queue, first, last, to, context)
             entries[#entries + 1] = {action = member, edit = contracts[member].edit, snapshotOnly = true}
         end
     end
-    local result = EditModel.evaluate(entries)
-    result.externalCapacity = externalCapacity
-    -- A declared contract with an unsupported schema is not permission to use
-    -- a less complete legacy footprint. No valid proof was obtained for it.
-    if result.status == "unhandled" then result.status = "denied" end
-    return result
+    return evaluateComponent(projection, entries)
 end
 
 local capacityNeutral = {ISReadABook = true, ISWalkToTimedAction = true, ISWalkToTimedActionF = true, ISPathFindAction = true}
@@ -1004,9 +1020,26 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
         end
         if i <= last and (not check.to or i < check.first or i > check.last) then order[#order + 1] = queue.queue[i] end
     end
-    local cartCapacity = false
+    local cartCapacity, conditionalCapacity = false, {}
     for _, action in ipairs(order) do
         if action.Type == "ISCartTransferAction" or (carts and type(carts.involvesCart) == "function" and carts.involvesCart(action)) then cartCapacity = true end
+        local contract = inspect(action, context)
+        if contract and contract.capacityRequiresEdit then conditionalCapacity[action] = true end
+    end
+    if next(conditionalCapacity) then
+        -- Prove all conditional weight effects in the global proposed prefix,
+        -- including unchanged portions and their required pickups/returns. The
+        -- selected edit's dependency component alone may contain none of them.
+        local projection = editComponent(queue, order, conditionalCapacity, context)
+        if projection.status ~= "allowed" then return check.blocker end
+        local entries = {}
+        for _, action in ipairs(order) do
+            if projection.component[action] then
+                entries[#entries + 1] = {action = action, edit = projection.contracts[action].edit,
+                    snapshotOnly = removed[action] == true}
+            end
+        end
+        if evaluateComponent(projection, entries).status ~= "allowed" then return check.blocker end
     end
     local function fits(container, weight)
         local load = loads[container]
@@ -1070,7 +1103,8 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
                 for _, item in ipairs(batch.items or {}) do if not add(item) then return check.blocker end end
             end
         elseif not capacityNeutral[action.Type] and not boundedWaterDrink(action, character, source)
-            and not (source == "native.ISEatFoodAction" and contract.edit and contract.capacityNonIncreasing == true)
+            and not (source == "native.ISEatFoodAction" and contract.edit
+                and (contract.capacityNonIncreasing == true or conditionalCapacity[action]))
             and not (check.readDemotion and source == "native.ISRadioAction"
                 and instanceof(action.device, "IsoTelevision"))
             and not (check.readDemotion and source == "native.device-media-insert" and contract.capacityNonIncreasing == true) then

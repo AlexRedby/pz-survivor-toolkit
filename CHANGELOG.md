@@ -10,6 +10,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.159
+
+- **Changed:** Pending portions of ordinary food that leaves an empty container can be reordered or cancelled when every retained portion preserves the original food. Native portion sizes and decreasing item weight remain intact; edits that would create a replacement, near-empty remnants, custom weights and callbacks keep their protection.
+
 ### 0.1.158
 
 - **Changed:** Wishlist row highlights now use Toolkit's shared inventory presentation boundary, removing their separate pane and CleanUI mode-switch hooks. Mixed-stack matching, full-row clipping, drag exclusions and saved settings are preserved.

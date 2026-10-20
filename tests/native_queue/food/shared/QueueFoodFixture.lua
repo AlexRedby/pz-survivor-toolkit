@@ -3,21 +3,23 @@ local Fixture={bagType='Base.Bag_ALICEpack_Army',foodType='Base.Cereal',anchorTy
 local function finite(value)return type(value)=='number'and value==value and value~=math.huge and value~=-math.huge end
 function Fixture.scenario(case)
  local replacement=case=='food-cooking-replacement-move-portions'or case=='food-cooking-replacement-cancel-first-portion'
+ local consumption=case=='food-consumption-replacement-move-portions'or case=='food-consumption-replacement-cancel-first-portion'
  return {bag=case=='food-bag-edit-pickup-return',
   cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion'or case=='food-utensil-cancel-first-portion'
    or case=='food-cooked-cancel-first-portion'or case=='food-raw-cookable-cancel-first-portion'
-   or case=='food-cooking-replacement-cancel-first-portion',
+   or case=='food-cooking-replacement-cancel-first-portion'or case=='food-consumption-replacement-cancel-first-portion',
   smart=case=='food-smart-move-portions'or case=='food-smart-cancel-first-portion',
   utensil=case=='food-utensil-move-portions'or case=='food-utensil-cancel-first-portion',
   cooked=case=='food-cooked-move-portions'or case=='food-cooked-cancel-first-portion',
-  replacement=replacement,
+  replacement=replacement,consumption=consumption,
   cookable=replacement or case=='food-cooked-move-portions'or case=='food-cooked-cancel-first-portion'
    or case=='food-raw-cookable-move-portions'or case=='food-raw-cookable-cancel-first-portion',
   depletion=case=='food-root-depletion'}
 end
 local function foodType(case)
  local spec=Fixture.scenario(case)
- return spec.replacement and 'Base.BreadSlices'or spec.cookable and (spec.cooked and 'Base.ChickenFillet'or 'Base.Cabbage')
+ return spec.consumption and 'Base.CannedPeachesOpen'or spec.replacement and 'Base.BreadSlices'
+  or spec.cookable and (spec.cooked and 'Base.ChickenFillet'or 'Base.Cabbage')
   or spec.utensil and 'Base.OatsRaw'or Fixture.foodType
 end
 local function count(container,id,fullType)
@@ -69,6 +71,13 @@ function Fixture.snapshot(player,ids)
   result.replacementCount=count(root,nil,result.replacementType)
   result.cookingTime=food:getCookingTime()
  end
+ if Fixture.scenario(ids.case).consumption then
+  if not food or not finite(food:getActualWeight())or not food:getReplaceOnUseFullType()then return end
+  result.consumptionReplacementType=food:getReplaceOnUseFullType()
+  result.consumptionReplacementCount=count(root,nil,result.consumptionReplacementType)
+  result.foodWeight=food:getActualWeight()
+  result.customWeight,result.extraItems=food:isCustomWeight(),food:haveExtraItems()
+ end
  for _,kind in ipairs({'fork','spoon'})do
   local item=state[kind]
   if item then
@@ -103,7 +112,7 @@ function Fixture.prepare(player,case,previous)
  local spec=Fixture.scenario(case);local bag=assert(root:AddItem(Fixture.bagType))
  local food=assert((spec.bag and bag:getItemContainer()or root):AddItem(foodType(case)))
  assert(instanceof(food,'Food')and food:getBaseHunger()<-.04 and food:getHungChange()==food:getBaseHunger()
-  and not food:getOnEat()and not food:getReplaceOnUse()
+  and not food:getOnEat()and (spec.consumption or not food:getReplaceOnUse())
   and (not food:getRequireInHandOrInventory()or food:getRequireInHandOrInventory():isEmpty())
   and not food:hasTag(ItemTag.SMOKABLE),'fixture must be ordinary unreplaced food')
  if spec.cookable then
@@ -119,6 +128,11 @@ function Fixture.prepare(player,case,previous)
   local outputs=food:getReplaceOnCooked()
   assert(outputs and outputs:size()==1 and outputs:get(0)=='Base.Toast'and food:getCookingTime()==0,
    'native cold bread replacement differs')
+ end
+ if spec.consumption then
+  assert(food:getReplaceOnUseFullType()=='Base.TinCanEmpty'and not food:isCookable()and not food:isCooked()
+   and not food:isCustomWeight()and not food:haveExtraItems()and not food:getOnCooked()
+   and math.abs(food:getActualWeight()-.8)<.00001,'native partial can replacement differs')
  end
  local anchor=assert(root:AddItem(Fixture.anchorType));local fluid=assert(anchor:getFluidContainer())
  fluid:Empty();fluid:addFluid(Fluid.Water,1)
@@ -208,6 +222,11 @@ function Fixture.verify(state)
  if Fixture.scenario(state.case).replacement then
   for _,field in ipairs({'replacementType','replacementCount','cookingTime'})do
    if value[field]~=state.ids[field]then return nil,'cold cooking replacement changed: '..field end
+  end
+ end
+ if Fixture.scenario(state.case).consumption then
+  for _,field in ipairs({'consumptionReplacementType','consumptionReplacementCount','customWeight','extraItems'})do
+   if value[field]~=state.ids[field]then return nil,'partial consumption replacement changed: '..field end
   end
  end
  if depletion then

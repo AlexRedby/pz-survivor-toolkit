@@ -295,6 +295,20 @@ function Adapters.drink(action)
     return {version=1,complete=true,capacity="external",resources=resources}
 end
 
+local function partialReplacement(item,script)
+    -- Even without creating the empty container, native partial eating uses its
+    -- script weight. Only a decreasing ordinary weight is safe for the existing
+    -- full-current-weight transfer proof; custom/evolved weights need a contract.
+    if item:isCustomWeight() or item:haveExtraItems() then return false end
+    local fullType=item:getReplaceOnUseFullType()
+    if type(fullType)~="string" or fullType=="" or not ScriptManager or not ScriptManager.instance then return false end
+    local output=ScriptManager.instance:getItem(fullType)
+    if not output then return false end
+    local hunger,weight,emptyWeight=script:getHungerChange(),script:getActualWeight(),output:getActualWeight()
+    return finite(hunger) and hunger<0 and finite(weight) and finite(emptyWeight)
+        and emptyWeight>=0 and emptyWeight<=weight
+end
+
 function Adapters.food(action)
     if not pending(action,eat) or not instanceof(action.container,"ItemContainer")
         or action.carLighter or action.openFlame or action.fromRelaunch or not leaf(action.item,action.character)
@@ -316,8 +330,9 @@ function Adapters.food(action)
     end
     local script=item:getScriptItem()
     local cookedOutputs=item:getReplaceOnCooked()
+    local replacement=script and (script:getReplaceOnUse() or item:getReplaceOnUse())
     if not script or script:isCantEat() or script:getOpeningRecipe() or script:getOnBreak()
-        or script:getReplaceOnUse() or script:getReplaceOnDeplete() or item:getReplaceOnUse()
+        or script:getReplaceOnDeplete() or replacement and not partialReplacement(item,script)
         or item:getOnEat() or item:getOnCooked() or item:getReplaceOnRotten()
         or cookedOutputs and not cookedOutputs:isEmpty() and not item:isCookable()
         or item:getRequireInHandOrInventory() or item:getCustomMenuOption()
@@ -353,9 +368,13 @@ function Adapters.food(action)
     -- the timer bonus. The extra .01 covers the native final-tail rounding.
     local multiplier=item:isCooked() and 33800 or 13000
     actor.effects={{field="foodTimerUpper",delta=multiplier*(debit+0.01+margin)+1},{field="foodTimerUpper",cap=11000}}
+    -- UseAndSync (and thus ReplaceOnUse) only runs after full consumption.
+    -- Prove a surviving tail for every step in the proposed order, not merely
+    -- against the click-time amount. Keep the native .01 tail and float slack.
+    local minimum=replacement and debit+0.01+2*margin or 0
     local resources={
         {domain="item",key=item:getID(),facts=facts,
-            requires={{field="location",equal=action.character:getInventory()},{field="foodLower",above=0}},effects=effects,
+            requires={{field="location",equal=action.character:getInventory()},{field="foodLower",above=minimum}},effects=effects,
             bounds={foodLower={min=0},foodUpper={min=0}}},actor}
     if utensil then
         -- Native Eat receives a boolean: it neither consumes nor equips cutlery.

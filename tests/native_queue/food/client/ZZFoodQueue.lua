@@ -13,7 +13,7 @@ local Operations=require 'PZSurvivorToolkit/ActionQueueOperations'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local started,done=false,false
-local step,failed,phase,since,idle=1,0,'prepare',0,0
+local step,failed,phase,since,idle,preparationLogged=1,0,'prepare',0,0,false
 local ids,state,authority,receipt,previous,previousBag,spec,anchor
 local commands,observed,evidence,observer={},{},nil,nil
 local function case()return config.cases[step]end
@@ -38,6 +38,26 @@ Events.OnGameStart.Add(function()
  getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false);getPlayer():setGhostMode(true)
 end)
 local function items()return assert(Fixture.items(getPlayer(),ids),'current exact food identities missing')end
+local function preparationDiagnostic(player)
+ local value={case=case(),idsReceived=ids~=nil}
+ if ids then
+  value.expected=ids
+  local root=player:getInventory()
+  for _,kind in ipairs({'bag','food','anchor'})do
+   local item=root:getItemById(ids[kind..'Id'])
+   local row={present=item~=nil};value[kind]=row
+   if item then
+    row.id,row.type,row.root=item:getID(),item:getFullType(),item:getContainer()==root
+    if instanceof(item,'Food')then
+     row.baseHunger,row.remaining=tostring(item:getBaseHunger()),tostring(item:getHungChange())
+     row.weight,row.replacement=tostring(item:getActualWeight()),tostring(item:getReplaceOnUseFullType())
+    end
+    local fluid=item:getFluidContainer();if fluid then row.fluidAmount=tostring(fluid:getAmount())end
+   end
+  end
+ end
+ print('[FOOD_TEST] PREPARATION_WAIT '..JSON.encode(value))
+end
 local function capture(callback)
  local actions={};local add=ISTimedActionQueue.add
  ISTimedActionQueue.add=function(action)actions[#actions+1]=action;return add(action)end
@@ -192,6 +212,10 @@ local function dispatch()
    assert(outputs and outputs:size()==1 and outputs:get(0)==ids.replacementType and action.item:getCookingTime()==ids.cookingTime,
     'edit changed native cooking replacement')
   end
+  if spec.consumption then
+   assert(action.item:getReplaceOnUseFullType()==ids.consumptionReplacementType
+    and action.item:getActualWeight()==ids.foodWeight,'edit changed pending can replacement or weight')
+  end
  end
  evidence.untouchedBefore=true;evidence.nativeDurationsUnchanged=true
 end
@@ -233,12 +257,15 @@ Events.OnTick.Add(function()
  if not started or done or not isIngameState()or not getPlayer()or not getPlayer():getSquare()then return end
  local ok,problem=pcall(function()
   local player=getPlayer();getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
+  if phase=='prepared'and not preparationLogged and getTimestampMs()-since>10000 then
+   preparationLogged=true;preparationDiagnostic(player)
+  end
   if getTimestampMs()-since>120000 then error('food phase timeout '..phase)end
   idle=not player:hasTimedActions()and #queue().queue==0 and idle+1 or 0
   if phase=='unequipped'then if idle<10 then return end;assert(not player:isEquipped(previousBag),'food bag still worn');phase='prepare'end
   if phase=='prepare'then
    if step==1 then emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=PZSurvivorToolkit.Settings.actionQueue(),nativeDurations=true})end
-   spec=Fixture.scenario(case());phase='prepared';request('Prepare');return
+   spec=Fixture.scenario(case());phase='prepared';preparationLogged=false;request('Prepare');return
   elseif phase=='prepared'and ids then
    state=Fixture.resolve(player,ids);if not state then return end
    player:getStats():set(CharacterStat.HUNGER,ids.hunger);player:getStats():set(CharacterStat.THIRST,ids.thirst)
