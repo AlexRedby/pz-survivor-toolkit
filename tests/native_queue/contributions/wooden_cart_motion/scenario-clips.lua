@@ -9,7 +9,7 @@ local videoRoot,ffmpeg=absolutePath('videoRoot'),absolutePath('ffmpeg')
 assert(getWorld():getWorld()=='CartTestArea' and not isClient() and not isServer(),'Disposable single-player CartTestArea save required')
 local p=assert(getPlayer(),'Live actor required')
 assert(not p:isDead() and CartTestArea and CartTestArea.ready,'Wait for BOOTSTRAP_READY')
-assert(CartLabKey and CartLabHUD and cartLabDrive and cartLabGait and cartLabBank and cartLabRamp and cartLabTracks and toolkitVideoStart and toolkitVideoStatus and toolkitVideoStop,'CartLab/video bridge missing')
+assert(CartLabKey and CartLabHUD and cartLabDrive and cartLabGait and cartLabBank and cartLabRamp and cartLabTracks and toolkitVideoStart and toolkitVideoStatus and toolkitVideoStop and cartLabMillis,'CartLab/video bridge missing')
 if WoodPrototypeTick then Events.OnTick.Remove(WoodPrototypeTick) end
 cartLabDrive(0);cartLabGait(0);setGameSpeed(1)
 p:setFemale(false);p:getDescriptor():setFemale(false)
@@ -27,19 +27,20 @@ for _,index in ipairs({ClimateManager.FLOAT_FOG_INTENSITY,ClimateManager.FLOAT_P
 end
 local kind=config.cartType or 'SaucedWheelbarrow.WheelbarrowWood'
 assert(kind=='SaucedWheelbarrow.WheelbarrowWood' or kind=='SaucedWheelbarrow.WheelbarrowMetal','Unsupported calibrated cart type')
--- At this side heading A/Left is straight; W/Forward and S/Backward request opposite 90-degree turns.
+-- Relative cart controls: Forward rolls along the current heading; Left/Right steer while held.
 local cases={}
 for _,female in ipairs({false,true}) do
  for _,full in ipairs({false,true}) do
   for _,spec in ipairs({'comparison','direct','gait','runstop'}) do
    local turn=full and 4 or 1
+   local steer=full and 8 or 5
    local steps
    if spec=='comparison' or spec=='runstop' then
-    steps={{700,0,2},{1800,spec=='comparison' and 2 or 1,2},{3000,nil,turn},{5000,nil,2},{7000,nil,turn},{9000,nil,0},{10000,0,2},{11500,nil,0}}
+    steps={{700,0,1},{1800,spec=='comparison' and 2 or 1,1},{3000,nil,steer},{5000,nil,1},{7000,nil,steer},{9000,nil,0},{10000,0,1},{11500,nil,0}}
    elseif spec=='direct' then
-    steps={{1000,2,2},{4000,nil,turn},{6000,nil,0},{8000,0,2},{9500,2,2},{11000,nil,0}}
+    steps={{1000,2,1},{4000,nil,steer},{6000,nil,0},{8000,0,1},{9500,2,1},{11000,nil,0}}
    else
-    steps={{700,0,2},{1800,1,2},{3200,2,2},{4500,nil,turn},{6300,1,2},{8500,0,2},{10000,nil,0}}
+    steps={{700,0,1},{1800,1,1},{3200,2,1},{4500,nil,steer},{6300,1,1},{8500,0,1},{10000,nil,0}}
    end
    cases[#cases+1]={female=female,full=full,spec=spec,steps=steps,
     name=(female and 'female-' or 'male-')..(full and 'full-' or 'empty-')..spec..(turn==1 and '-left' or '-right')}
@@ -49,7 +50,7 @@ end
 assert(#cases==16)
 cases=CartLabSelectScenes(cases)
 local phase,since,stage,taken=0,0,0,{}
-local mode,attempt,videoSince='settle',0,0
+local mode,attempt,videoSince,recordSince='settle',0,0,0
 local sampleSince=0
 local function wood(full)
  for i=1,3 do
@@ -102,6 +103,7 @@ CartLabHUD.prerender=function(self)
  local c=cases[phase]
  self:drawText(c and c.name or 'Complete',10,5,1,1,1,1,UIFont.Medium)
 end
+local gaitSeen,lastSampleX,lastSampleY
 local function tick()
  getCore():setAutoZoom(0,false)
  if getCore():getZoom(0)>.251 then getCore():doZoomScroll(0,-1) end
@@ -114,9 +116,10 @@ local function tick()
    assert(now-since<6000,'Pad did not reload: '..tostring(why))
    return
   end
+  gaitSeen={};lastSampleX,lastSampleY=p:getX(),p:getY()
   local dir=videoRoot..'/'..c.name..'-'..attempt
   assert(toolkitVideoStart(dir,ffmpeg),'Video start rejected')
-  videoSince=now;since=now;stage=0;taken={};mode='record'
+  videoSince=now;since=now;recordSince=cartLabMillis();stage=0;taken={};mode='record'
   print('[WOOD_BANK] CASE '..c.name..' attempt='..attempt..' wall='..since)
   return
  end
@@ -133,9 +136,13 @@ local function tick()
   end
   return
  end
- local elapsed=now-since
+ local elapsed=math.floor(cartLabMillis()-recordSince)
  if now-sampleSince>=100 then
   sampleSince=now
+  if math.sqrt((p:getX()-lastSampleX)^2+(p:getY()-lastSampleY)^2)>.01 then
+   gaitSeen[p:isSprinting() and 'sprint' or p:isRunning() and 'run' or 'walk']=true
+  end
+  lastSampleX,lastSampleY=p:getX(),p:getY()
   print('[WOOD_BANK_SAMPLE] case='..c.name..' wall='..now..' elapsed='..elapsed..' x='..p:getX()..' y='..p:getY()
    ..' cartType='..(p:getPrimaryHandItem() and p:getPrimaryHandItem():getFullType() or 'none')..' run='..tostring(p:isRunning())..' sprint='..tostring(p:isSprinting())..' skill='..p:getPerkLevel(Perks.Sprinting)..' speed='..p:getVariableFloat('WalkSpeed',0)
    ..' pace='..p:getVariableFloat('ToolkitCartLegPace',0)..' bank='..cartLabBank()..' ramp='..cartLabRamp()..' tracks='..cartLabTracks())
@@ -147,7 +154,10 @@ local function tick()
   print('[WOOD_RAMP_EVENT] case='..c.name..' elapsed='..elapsed..' gait='..tostring(step[2])..' drive='..step[3])
  end
 
- if elapsed>=12000 then assert(toolkitVideoStop(),'Video stop rejected');mode='finish' end
+ if elapsed>=12000 then
+  if c.spec=='gait' then assert(gaitSeen.walk and gaitSeen.run and gaitSeen.sprint,'Requested Walk/Run/Sprint did not all move natively') end
+  assert(toolkitVideoStop(),'Video stop rejected');mode='finish'
+ end
 end
 WoodPrototypeTick=function()
  local ok,err=pcall(tick)

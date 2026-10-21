@@ -89,10 +89,11 @@ public final class CartGrounding {
         float y=transform.m01()*point.x()+transform.m11()*point.y()+transform.m21()*point.z()+transform.m31();
         float z=transform.m02()*point.x()+transform.m12()*point.y()+transform.m22()*point.z()+transform.m32();
         // Lower the handles around the tire; do not pitch the actor's torso with the cart.
-        matrices.get().attachment.translation(x,y,z).rotateX((float)Math.toRadians("WheelbarrowWood".equals(model)?7.9:8))
+        var profile=CartWheelbarrow.forModel(model);
+        matrices.get().attachment.translation(x,y,z).rotateX((float)Math.toRadians(profile.handleLoweringDegrees()))
             .translate(-x,-y,-z).mul(transform,transform);
-        // Keep the native hips fixed while leaving the wooden handles within the two arm links' reach.
-        if("WheelbarrowWood".equals(model)) transform.m32(transform.m32()+.05f);
+        // Keep the native hips fixed while positioning each profile within the two arm links' reach.
+        transform.m32(transform.m32()+profile.neutralAdvance());
     }
 
     static boolean referencePose(AnimationClip clip, SkinningData skeleton, String boneName, Matrix4f out) {
@@ -211,7 +212,7 @@ public final class CartGrounding {
         if(!Float.isFinite(lean) || !Float.isFinite(pressure) || pressure<Math.abs(lean)
             || !Float.isFinite(gaitShift) || gaitShift<-.24f || gaitShift>0) return false;
         // The running torso moves forward; follow its native blend without lifting the handles.
-        transform.m32(transform.m32()+CartSteeringMath.woodenShift(pressure,gaitShift));
+        transform.m32(transform.m32()+profile.motionShift(pressure,gaitShift));
         float height=transform.m31();
         if(!ground(transform,wheelbarrowLowest(transform,profile))) return false;
         delta.translation(0,transform.m31()-height,0);

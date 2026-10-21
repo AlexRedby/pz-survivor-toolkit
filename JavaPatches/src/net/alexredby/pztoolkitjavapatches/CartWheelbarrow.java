@@ -7,7 +7,7 @@ import zombie.inventory.InventoryItem;
 /** Geometry of the two supported wheelbarrows in their original native mesh coordinates. */
 final class CartWheelbarrow {
     // The wood pose is the shipped calibration. Metal uses its measured native idle attachment,
-    // the existing eight-degree handle lowering, and the same cylindrical .008 floor support.
+    // its relaxed side grip, and the same cylindrical .008 floor support.
     static final CartWheelbarrow WOOD=new CartWheelbarrow("WheelbarrowWood",
         -6.642862e-6f,-.0041269097f,-.0010569958f,.001062454f,.00024333253f,
         1.0084944326,.00984276836,1.26,1.62,76.5f,
@@ -16,9 +16,9 @@ final class CartWheelbarrow {
         "0f99448cda120bad9f324f38bdbf994f8788ab6731473533475fb6eaf3f4c948",8116,0,1114);
     static final CartWheelbarrow METAL=new CartWheelbarrow("WheelbarrowMetal",
         -23.54235f,-11.737464f,.78115034f,12.154752f,3.7870514f,
-        1.162308812,-.001741625,1.49,1.85,.0091743395f,
-        new Matrix4f().set(.0091743395f,-4.721393e-9f,-1.7679642e-9f,0,2.9182563e-9f,.008833999f,-.002475683f,0,
-            3.3606993e-9f,.0024756836f,.008833999f,0,.21714664f,.22126663f,-.8108315f,1),
+        1.002699624,-.001741625,1.36,1.78,.0091743395f,
+        new Matrix4f().set(.0091743395f,-4.611793e-9f,-2.036815e-9f,0,2.9182563e-9f,.008961861f,-.0019630573f,0,
+            3.3606993e-9f,.001963058f,.008961861f,0,.21714664f,.22316784f,-.6985083f,1),
         "34c9a265bfacdd9235f9094fc7ae158fe5a50d73d6d12b0acc73e007dbecd932",3688,2135,2995);
 
     private final String model,meshHash;
@@ -52,9 +52,14 @@ final class CartWheelbarrow {
     // Match the authored pose to the handles after all three ground supports are seated.
     float pickupHingeDegrees() {return this==METAL?65:60;}
     float pickupLowering() {return this==METAL?.08f:.03f;}
-    // Metal grip ends sit .09 actor units farther forward than the wooden ones.
-    // Approach deeper between its shafts instead of reaching from behind them.
-    float pickupStanceBack() {return this==METAL?-.03f:.06f;}
+    // Preserve the accepted grounded pickup position while the lifted metal grips settle alongside the body.
+    float pickupStanceBack() {return this==METAL?.076406125f:.06f;}
+    float handleLoweringDegrees() {return this==METAL?11.3f:7.9f;}
+    float neutralAdvance() {return this==METAL?.10f:.05f;}
+    // Keep the neutral metal grips beside the thighs; native fast strides need their own measured clearance.
+    float motionShift(float pressure,float gaitShift) {
+        return CartSteeringMath.woodenShift(pressure,gaitShift)*(this==METAL?1.15f:1);
+    }
     float centerX() {return centerX;}
     float centerY() {return centerY;}
     float centerZ() {return centerZ;}

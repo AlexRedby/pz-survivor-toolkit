@@ -63,8 +63,9 @@ public final class CartGripTest {
             var delta=new Matrix4f().translation(.01f,.03f,0).rotateZ(lean);
             var pitched=new Matrix4f().set(nativeCart[model]);
             CartGrounding.lowerHandles(pitched,models[model]);
-            // Native05 held metal capture: cylinder grounding lowers the cart while the torso stays fixed.
-            if(model==2) pitched.m31(pitched.m31()-.036413297f);
+            // Ground the current metal calibration while keeping the captured torso fixed.
+            if(model==2 && !CartGrounding.alignWheelbarrow(pitched,CartWheelbarrow.METAL,0,0,0,new Matrix4f()))
+                throw new AssertionError("metal grounding refused");
             var cart=delta.mul(pitched,new Matrix4f());
             var poses=new Matrix4f[names.length];
             for(int i=0;i<poses.length;i++) poses[i]=delta.mul(new Matrix4f().set(nativePose[i]),new Matrix4f());
@@ -96,7 +97,10 @@ public final class CartGripTest {
                     float roll=(float)Math.toDegrees(Math.acos(Math.max(-1,Math.min(1,forearmPalm.dot(handPalm)))));
                     float abduction=(float)Math.toDegrees(Math.atan2(Math.abs(elbow.x-shoulder.x),shoulder.y-elbow.y));
                     float forward=(float)Math.toDegrees(Math.atan2(elbow.z-wrist.z,elbow.y-wrist.y));
-                    if(bend>30 || roll>10 || abduction>25 || elbow.y>shoulder.y-.12f || elbow.z<wrist.z+.09f)
+                    float flex=(float)Math.toDegrees(Math.acos(Math.max(-1,Math.min(1,
+                        elbow.sub(shoulder,new Vector3f()).normalize().dot(wrist.sub(elbow,new Vector3f()).normalize())))));
+                    if(bend>(model==2?35:30) || roll>10 || abduction>25 || elbow.y>shoulder.y-.12f
+                        || (model==2 ? Math.abs(shoulder.z-wrist.z)>.035f || flex>25 : elbow.z<wrist.z+.09f))
                         throw new AssertionError("unnatural arm/wrist: "+models[model]+" female="+female+" bank="+lean
                             +" bend="+bend+" roll="+roll+" abduction="+abduction+" forward="+forward);
                     var measuredAxis=new Vector3f(0,.4012329f,.9159761f);
@@ -489,6 +493,76 @@ public final class CartGripTest {
         System.out.println("CART_METAL_SPRINT_STOP_ABDUCTION "+abductions);
     }
 
+    private static void checkCapturedMetalMovingStance() {
+        // B42.21 native entry poses: empty/full Run startup and a banked Sprint.
+        // The old .3 movement shift made these two Run targets unreachable.
+        var fixture=java.nio.file.Path.of(System.getProperty("pz.test.project","."))
+            .resolve("JavaPatches/tests/fixtures/metal-moving-stance.csv");
+        java.util.List<String> lines;
+        try {lines=java.nio.file.Files.readAllLines(fixture);}
+        catch(java.io.IOException error) {throw new AssertionError("missing native metal stance fixture",error);}
+        String[] names={"Bip01_Spine","Bip01_Spine1","Bip01_L_Clavicle","Bip01_R_Clavicle",
+            "Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,1,2,4,5,3,7,8),offsets);
+        var profile=CartWheelbarrow.METAL;
+        int frames=0,legacyFailures=0;boolean banked=false;
+        for(String line:lines) {
+            if(line.isBlank() || line.startsWith("#")) continue;
+            var cells=line.split(",");String label=cells[0];
+            if(cells.length!=2+12*16 || !(cells[1].equals("true") || cells[1].equals("false")))
+                throw new AssertionError("invalid native metal fixture: "+label);
+            boolean legacyFailure=Boolean.parseBoolean(cells[1]);
+            var captured=new Matrix4f[12];
+            for(int i=0;i<captured.length;i++) {
+                var values=new float[16];
+                for(int j=0;j<16;j++) values[j]=Float.parseFloat(cells[2+i*16+j]);
+                captured[i]=new Matrix4f().set(values);
+                if(!captured[i].isFinite()) throw new AssertionError("nonfinite native metal fixture: "+label);
+            }
+            var before=java.util.Arrays.copyOfRange(captured,2,captured.length);
+            if(legacyFailure) {
+                var old=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+                if(CartGrip.grip(old,actor,profile.model(),false,captured[0],captured[1]))
+                    throw new AssertionError("old .3 metal stance no longer reproduces unreachable Run: "+label);
+                legacyFailures++;
+            }
+            float bank=(float)Math.atan2(captured[1].m01(),captured[1].m00());
+            if(Math.abs(bank)<.00001f) bank=0; // Native attachment's float residual is not a steering bank.
+            float pressure=Math.abs(bank);
+            var cart=profile.held(new Matrix4f());
+            float totalShift=(captured[1].m32()-cart.m32())/.3f;
+            float gait=totalShift-CartSteeringMath.woodenShift(pressure,0);
+            var delta=new Matrix4f();
+            if(!CartGrounding.alignWheelbarrow(cart,profile,bank,pressure,gait,delta))
+                throw new AssertionError("captured metal moving stance rejected: "+label);
+            var expectedCart=new Matrix4f(cart);var expectedDelta=new Matrix4f(delta);
+            var poses=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.grip(poses,actor,profile.model(),false,delta,cart,pressure))
+                throw new AssertionError("native metal moving grip refused: "+label);
+            for(int side=0;side<2;side++) {
+                int clavicle=side+2,upper=side==0?4:7,forearm=upper+1,hand=upper+2;
+                var target=new Matrix4f();
+                if(!CartGrip.target(profile.model(),side==0,false,delta,cart,target,pressure)
+                    || !poses[hand].equals(target,.00002f))
+                    throw new AssertionError("native metal moving wrist missed target: "+label);
+                for(int[] link:new int[][]{{clavicle,upper},{upper,forearm},{forearm,hand}}) {
+                    float old=before[link[0]].getTranslation(new Vector3f()).distance(before[link[1]].getTranslation(new Vector3f()));
+                    float now=poses[link[0]].getTranslation(new Vector3f()).distance(poses[link[1]].getTranslation(new Vector3f()));
+                    if(Math.abs(old-now)>.00001f) throw new AssertionError("native metal moving arm stretched: "+label);
+                }
+            }
+            for(int i:new int[]{0,1}) if(!poses[i].equals(before[i]))
+                throw new AssertionError("native metal moving torso changed: "+label+"/"+names[i]);
+            if(!cart.equals(expectedCart) || !delta.equals(expectedDelta))
+                throw new AssertionError("native metal moving grip mutated transform: "+label);
+            banked|=pressure>.1f;frames++;
+        }
+        if(frames!=3 || legacyFailures!=2 || !banked)
+            throw new AssertionError("missing native metal Run/Sprint stance coverage");
+    }
+
     private static void checkCapturedHostMetalBraking() {
         // Actual native03 Host owner draw inputs, captures 1612/1613 at +18788/+18822ms.
         // Both draws rejected the old grip, so these palettes retain the native braking pose.
@@ -515,7 +589,8 @@ public final class CartGripTest {
             }
             float bank=(float)Math.atan2(cart.m01(),cart.m00());
             float gait=CartLegPace.woodenBodyShift(0,nativePoses[1].m30(),nativePoses[1].m32());
-            if(Math.abs(CartWheelbarrow.METAL.held(new Matrix4f()).m32()
+            // Historical capture proves the former 35-degree shoulder refusal; keep its original cart placement.
+            if(Math.abs(-.8108315f
                 +CartSteeringMath.woodenShift(pressure,gait)-cart.m32())>.000001f)
                 throw new AssertionError("Host braking pressure/cart reconstruction mismatch: "+capture);
             var delta=new Matrix4f().rotateZ(bank);var capturedDelta=new Matrix4f(delta);
@@ -1819,6 +1894,7 @@ public final class CartGripTest {
         checkCapturedWoodRunning();
         checkCapturedSprintStartup();
         checkCapturedMetalSprintStops();
+        checkCapturedMetalMovingStance();
         checkCapturedHostMetalBraking();
         checkLivePoses();
         checkTransitionFeet();

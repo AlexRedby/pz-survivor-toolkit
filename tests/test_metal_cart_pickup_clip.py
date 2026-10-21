@@ -102,8 +102,8 @@ class MetalPickupClipTests(unittest.TestCase):
         # remain fixed while the hand rotates around its .057 X + .022 Z grasp.
         expected = {'L': (.1488610450, .2143914815, .0082985286),
                     'R': (-.1471768658, .2143914434, .0082986037)}
-        held = {'L': (.17488745, .5312701, -.083618924),
-                'R': (-.17256463, .53127027, -.083618864)}
+        held = {'L': (.17488748, .49079606, .045343533),
+                'R': (-.17256463, .49079615, .045343559)}
         for side in ('L', 'R'):
             names = [f'Bip01_{side}_{part}' for part in ('UpperArm', 'Forearm', 'Hand')]
             hand = peak['bones'][names[2]]
@@ -115,6 +115,12 @@ class MetalPickupClipTests(unittest.TestCase):
             bend = math.degrees(math.acos(max(-1, min(1, cosine))))
             self.assertLessEqual(bend, 45, (side, 'ground wrist bends too far'))
             self.assertLess(distance(position(self.metal[-1]['bones'][names[2]]), held[side]), .00001)
+            shoulder, elbow, wrist = [position(self.metal[-1]['bones'][name]) for name in names]
+            a, b, d = distance(shoulder, elbow), distance(elbow, wrist), distance(shoulder, wrist)
+            neutral_flex = math.degrees(math.acos(max(-1, min(1, (d*d-a*a-b*b)/(2*a*b)))))
+            self.assertLess(abs(wrist[2]-shoulder[2]), .035, 'held wrist must hang beside the body')
+            self.assertGreater(neutral_flex, 5, 'keep soft elbows rather than locking them')
+            self.assertLess(neutral_flex, 25, 'held metal arms must stay almost straight')
             s, e, w = [position(peak['bones'][name]) for name in names]
             a, b, d = distance(s, e), distance(e, w), distance(s, w)
             flex = math.degrees(math.acos(max(-1, min(1, (d*d-a*a-b*b)/(2*a*b)))))

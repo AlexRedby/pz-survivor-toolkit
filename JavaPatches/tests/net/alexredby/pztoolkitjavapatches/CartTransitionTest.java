@@ -928,7 +928,7 @@ public final class CartTransitionTest {
             var offset=ground.transformPosition(profile.center(new org.joml.Vector3f()))
                 .sub(held.transformPosition(profile.center(new org.joml.Vector3f())));
             close(offset.x,0,"metal drop moved the axle sideways");
-            close(offset.z,.03f,"metal drop must match the deeper pickup stance at every heading");
+            close(offset.z,-profile.pickupStanceBack(),"metal drop must match its pickup stance at every heading");
             close(pose.worldScale(),.85f,"metal drop changed native hand/world scale");
         }
     }

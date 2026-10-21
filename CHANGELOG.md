@@ -19,6 +19,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### Unreleased
+
+- **Changed:** Retargeted the metal wheelbarrow pickup and setdown clip to its closer, lower held handles while preserving the grounded approach and shallow crouch.
+
 ### 0.1.196
 
 - **Emptying water:** Keep native active emptying valid after its own fluid update or authoritative client replication reaches zero, so remaining queued work is not discarded. Exact active identity and target checks remain in effect; native duration and emptying effects are preserved.
@@ -907,6 +911,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### Unreleased
+
+- **Changed:** Metal wheelbarrows sit closer to the body with lower handles, letting the arms hang nearly straight during idle and walking. Fast movement retains measured arm reach and leg clearance, with matching wheel steering and collision distances.
 
 ### 0.1.41
 

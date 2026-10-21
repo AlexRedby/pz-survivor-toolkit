@@ -572,6 +572,9 @@ public final class Main {
         fixtureVehicle=null;fixtureHull=null;
     }
 
+    @LuaMethod(name="cartLabMillis", global=true)
+    public static double millis() { return System.nanoTime()/1_000_000.0; }
+
     @LuaMethod(name="cartLabDrive", global=true)
     public static void drive(int value) {
         if (value < -1 || value > 8) throw new IllegalArgumentException("drive must be -1..8");

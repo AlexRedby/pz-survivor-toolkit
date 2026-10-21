@@ -326,6 +326,7 @@ public final class CartGroundingTest {
    CartGrounding.lowerHandles(pitched,models[i]);
    Vector3f tire=captured[i].transformPosition(new Vector3f(contact));
    if(i==1) tire.z+=.05f;
+   if(i==2) tire.z+=.10f;
    if(pitched.transformPosition(new Vector3f(contact)).distance(tire)>1e-6f)
     throw new AssertionError("lowering handles moved wheel contact for "+models[i]);
    if(i==0 && !pitched.equals(captured[i])) throw new AssertionError("shopping cart was pitched");
@@ -335,7 +336,7 @@ public final class CartGroundingTest {
     Vector3f handle=captured[i].transformPosition(new Vector3f(rawHandle));
     Vector3f lowered=pitched.transformPosition(new Vector3f(rawHandle));
     if(i==1 ? Math.abs(handle.y-lowered.y-.0857464f)>.00001f
-     : handle.y-lowered.y<.08f || handle.y-lowered.y>.10f)
+     : handle.y-lowered.y<.11f || handle.y-lowered.y>.15f)
      throw new AssertionError("handles not lowered to a relaxed arm height");
     if(i==1 ? !CartGrounding.alignWood(pitched,0,0,delta) || Math.abs(CartGrounding.woodenLowest(pitched)-.008f)>1e-6f
      : !CartGrounding.align(pitched,low,high,contact,0,delta)
@@ -371,6 +372,29 @@ public final class CartGroundingTest {
     throw new AssertionError("invalid/outside calibrated contact did not use AABB fallback");
   }
  }
+ private static void metalHeldCalibration() {
+  var profile=CartWheelbarrow.METAL;
+  var actual=new Matrix4f().set(.0091743395f,-4.9214974e-9f,-1.0936676e-9f,0,2.9182563e-9f,.008403477f,-.0036810448f,0,
+    3.3606993e-9f,.003681045f,.008403477f,0,.21714664f,.25123572f,-.8401939f,1);
+  CartGrounding.lowerHandles(actual,profile.model());
+  if(!CartGrounding.alignWheelbarrow(actual,profile,0,0,0,new Matrix4f())
+    || !actual.equals(profile.held(new Matrix4f()),.000002f))
+   throw new AssertionError("metal transition endpoint differs from native rigid held pose");
+  var wheel=actual.transformPosition(profile.center(new Vector3f()));
+  if(Math.abs(-1.5*wheel.z-profile.axle())>.000001)
+   throw new AssertionError("metal steering axle differs from rendered tire");
+  if(Math.abs(profile.axle()+1.5*profile.pickupStanceBack()-1.117308812)>.000001)
+   throw new AssertionError("metal held stance changed the accepted grounded pickup approach");
+  for(float pressure:new float[]{0,(float)Math.toRadians(7)}) for(float gait:new float[]{0,-.24f}) {
+   var moving=profile.held(new Matrix4f());var delta=new Matrix4f();
+   if(!CartGrounding.alignWheelbarrow(moving,profile,0,pressure,gait,delta))
+    throw new AssertionError("metal gait calibration refused");
+   var target=new Matrix4f();CartGrip.target(profile.model(),true,false,delta,moving,target,pressure);
+   // The former measured neutral wrist sat at Z=-.083618924 before its gait clearance was added.
+   if(target.m32()-(-.083618924f+CartSteeringMath.woodenShift(pressure,gait))<.075f)
+    throw new AssertionError("metal motion lost the requested closer hand position");
+  }
+ }
  private static void metalBankGait() {
   var profile=CartWheelbarrow.METAL;
   var source=profile.held(new Matrix4f());
@@ -391,7 +415,7 @@ public final class CartGroundingTest {
     var handle=new Vector3f();
     if(!CartGrip.handle(profile.model(),left,handle)) throw new AssertionError("metal handle calibration missing");
     var moved=delta.transformPosition(source.transformPosition(new Vector3f(handle)));
-    moved.z+=CartSteeringMath.woodenShift(pressure,gait);
+    moved.z+=profile.motionShift(pressure,gait);
     if(moved.distance(actual.transformPosition(handle))>.00001f)
      throw new AssertionError("metal body/cart handle transforms separated: bank="+bank+" gait="+gait);
    }
@@ -460,7 +484,7 @@ public final class CartGroundingTest {
   nativeExportPose();
   rigidPose();
   capturedContacts();
-  metalBankGait();
+  metalHeldCalibration();metalBankGait();
   Matrix4f wooden=new Matrix4f().set(76.5f,2.8023098e-5f,-2.4333809e-5f,-.0060535767f,
    -4.1037783e-5f,30.694286f,-70.07218f,.16715112f,
    -9.11952e-6f,70.07218f,30.694283f,-.41188842f,0,0,0,1).transpose();

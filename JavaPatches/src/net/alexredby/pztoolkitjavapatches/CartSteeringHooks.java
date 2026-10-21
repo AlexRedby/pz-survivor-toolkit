@@ -268,7 +268,7 @@ public final class CartSteeringHooks {
         // Actual grounded wheel vertices; Model.vectorToWorldCoords scales model Z by -1.5.
         return switch(player.getPrimaryHandItem().getFullType()) {
             case "SaucedWheelbarrow.WheelbarrowWood" -> CartSteeringMath.woodenAxle((float)clearanceLean(player),CartLegPace.woodenGaitShift(player));
-            case "SaucedWheelbarrow.WheelbarrowMetal" -> CartWheelbarrow.METAL.axle()-1.5*CartSteeringMath.woodenShift((float)clearanceLean(player),CartLegPace.woodenGaitShift(player));
+            case "SaucedWheelbarrow.WheelbarrowMetal" -> CartWheelbarrow.METAL.axle()-1.5*CartWheelbarrow.METAL.motionShift((float)clearanceLean(player),CartLegPace.woodenGaitShift(player));
             default -> 0;
         };
     }

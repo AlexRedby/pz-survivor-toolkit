@@ -1288,7 +1288,7 @@ public final class CartSteeringHooksTest {
             player.actualX=.02f;player.actualY=.01f;
             CartSteeringHooks.heading(player);
             Field heading=state.getClass().getDeclaredField("heading");heading.setAccessible(true);
-            double axle=kind.endsWith("Wood")?1.0084944326:1.162308812;
+            double axle=kind.endsWith("Wood")?1.0084944326:1.002699624;
             check(Math.abs(heading.getDouble(state)-CartSteeringMath.acceptedTurn(0,axle,player.actualX,player.actualY))<1e-10,
                   "native collision displacement must determine wheel yaw: "+kind);
             {
