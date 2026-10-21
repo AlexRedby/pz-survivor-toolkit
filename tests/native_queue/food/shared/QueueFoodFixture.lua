@@ -4,9 +4,10 @@ local function finite(value)return type(value)=='number'and value==value and val
 function Fixture.scenario(case)
  local replacement=case=='food-cooking-replacement-move-portions'or case=='food-cooking-replacement-cancel-first-portion'
  local customWeight=case=='food-custom-weight-move-portions'or case=='food-custom-weight-cancel-first-portion'
- local extraWeight=case=='food-extra-weight-move-portions'or case=='food-extra-weight-cancel-first-portion'
+ local extraBag=case=='food-extra-weight-bag-edit-pickup-return'or case=='food-extra-weight-bag-capacity'
+ local extraWeight=extraBag or case=='food-extra-weight-move-portions'or case=='food-extra-weight-cancel-first-portion'
  local consumption=extraWeight or customWeight or case=='food-consumption-replacement-move-portions'or case=='food-consumption-replacement-cancel-first-portion'
- return {bag=case=='food-bag-edit-pickup-return',
+ return {bag=extraBag or case=='food-bag-edit-pickup-return',capacity=case=='food-extra-weight-bag-capacity',
   cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion'or case=='food-utensil-cancel-first-portion'
    or case=='food-cooked-cancel-first-portion'or case=='food-raw-cookable-cancel-first-portion'
    or case=='food-cooking-replacement-cancel-first-portion'or case=='food-consumption-replacement-cancel-first-portion'
@@ -40,6 +41,11 @@ function Fixture.items(player,ids,allowDeleted)
   or not food and not(allowDeleted and Fixture.scenario(ids.case).depletion)
   or food and food:getFullType()~=foodType(ids.case) or not anchor or anchor:getFullType()~=Fixture.anchorType then return end
  local result={bag=bag,food=food,anchor=anchor}
+ if Fixture.scenario(ids.case).capacity then
+  local filler=root:getItemById(ids.capacityFillerId)
+  if not filler or filler:getFullType()~='Base.Nails'or filler:getContainer()~=bag:getItemContainer()then return end
+  result.filler=filler
+ end
  if Fixture.scenario(ids.case).utensil then
   for _,kind in ipairs({'fork','spoon'})do
    local item=root:getItemById(ids[kind..'Id'])
@@ -90,6 +96,12 @@ function Fixture.snapshot(player,ids)
   result.foodThirstChange=food:getThirstChange()
   result.extraIngredientCount=count(root,nil,'Base.Tomato')
  end
+ if Fixture.scenario(ids.case).capacity then
+  result.capacityFillerId,result.capacityFillerType=state.filler:getID(),state.filler:getFullType()
+  result.capacityFillerWeight,result.capacityFillerCount=state.filler:getActualWeight(),count(root,ids.capacityFillerId)
+  result.bagCapacity=state.bag:getItemContainer():getEffectiveCapacity(player)
+  result.bagLoad=state.bag:getItemContainer():getCapacityWeight()
+ end
  for _,kind in ipairs({'fork','spoon'})do
   local item=state[kind]
   if item then
@@ -111,6 +123,7 @@ function Fixture.prepare(player,case,previous)
   local old=assert(Fixture.items(player,previous.ids,true),'previous fixture identities missing')
   assert(not player:isEquipped(old.bag)and count(root,old.bag:getID())==1,'previous bag equipped/duplicated')
   local cleanup={old.anchor}
+  if old.filler then cleanup[#cleanup+1]=old.filler end
   if old.fork then cleanup[#cleanup+1]=old.fork;cleanup[#cleanup+1]=old.spoon end
   if old.food then cleanup[#cleanup+1]=old.food else
    assert(previous.receipt and previous.receipt.deleted and previous.receipt.foodCount==0
@@ -167,6 +180,15 @@ function Fixture.prepare(player,case,previous)
     'custom food weight preparation differs')
   end
  end
+ local filler
+ if spec.capacity then
+  local inventory=bag:getItemContainer();local capacity=inventory:getEffectiveCapacity(player)
+  filler=assert(inventory:AddItem('Base.Nails'))
+  local weight=capacity-food:getActualWeight()-.1
+  assert(weight>0 and weight<100,'tight bag fixture capacity differs')
+  filler:setActualWeight(weight);filler:setWeight(weight);filler:setCustomWeight(true)
+  assert(math.abs(inventory:getCapacityWeight()-(capacity-.1))<.0001,'tight bag fixture load differs')
+ end
  local anchor=assert(root:AddItem(Fixture.anchorType));local fluid=assert(anchor:getFluidContainer())
  fluid:Empty();fluid:addFluid(Fluid.Water,1)
  local fork,spoon
@@ -194,6 +216,7 @@ function Fixture.prepare(player,case,previous)
   if spec.utensil then sendAddItemToContainer(root,spec.cancel and fork or spoon)end
  end
  local ids={case=case,bagId=bag:getID(),foodId=food:getID(),anchorId=anchor:getID()}
+ if filler then ids.capacityFillerId=filler:getID()end
  if spec.utensil then ids.forkId,ids.spoonId=fork:getID(),spoon:getID()end
  local initial=assert(Fixture.snapshot(player,ids));initial.foodTimer=0;initial.foodLevel=player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)
  assert(root:getItemById(food:getID())==food,'prepared original food reference differs from exact root item')
@@ -266,6 +289,11 @@ function Fixture.verify(state)
   if #value.extraTypes~=1 or value.extraTypes[1]~='Base.Tomato'then return nil,'salad ingredient identity changed'end
   for _,field in ipairs({'baseFoodWeight','extraScriptWeight','emptyWeight','extraIngredientCount'})do
    if value[field]~=state.ids[field]then return nil,'salad ingredient state changed: '..field end
+  end
+ end
+ if Fixture.scenario(state.case).capacity then
+  for _,field in ipairs({'capacityFillerId','capacityFillerType','capacityFillerWeight','capacityFillerCount','bagCapacity'})do
+   if value[field]~=state.ids[field]then return nil,'tight bag fixture changed: '..field end
   end
  end
  if depletion then

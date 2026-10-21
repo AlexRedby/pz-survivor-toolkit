@@ -53,7 +53,7 @@ local function setup(changed,foreignMerge,alias,missing)
     ISLogSystem={logAction=function()end};ItemPicker={updateOverlaySprite=function()end}
     local baseInstanceof=instanceof
     instanceof=function(value,kind)return baseInstanceof(value,kind)or type(value)=='table'and
-        (kind=='IsoGameCharacter'and value.class=='IsoPlayer'or kind=='InventoryItem'and (value.class=='Food'or value.class=='HandWeapon'))end
+        (kind=='IsoGameCharacter'and value.class=='IsoPlayer'or kind=='InventoryItem'and (value.class=='Food'or value.class=='HandWeapon'or value.class=='InventoryContainer'))end
     local knownItems={}
     local bag
     local function container(owner)
@@ -82,6 +82,8 @@ local function setup(changed,foreignMerge,alias,missing)
     local root=container();f.player.inventory=root
     bag=f.item('Base.Bag_Schoolbag');bag.class='InventoryContainer';bag.getContainer=function()return root end
     bag.getMaxItemSize=function(self)return self.maxItemSize or 0 end
+    bag.getWorldItem=function()end;bag.getFluidContainer=function()end;bag.getActualWeightUnmodded=function()return 1 end
+    bag.getAttachedSlot=function()return -1 end;bag.isFakeEquipped=function()return false end
     local bagInventory=container(bag);bag.getInventory=function()return bagInventory end
     local function item()
         local value=f.item('Base.WaterBottle');value.container=bagInventory
@@ -89,6 +91,7 @@ local function setup(changed,foreignMerge,alias,missing)
         value.isOnGroundOrInsideBagOnSquare=function()return false end
         value.getIsCraftingConsumed=function(self)return self.consumed or false end
         value.getEquipParent=function()end;value.getAttachedSlot=function()return -1 end
+        value.isFakeEquipped=function()return false end;value.getAmmoType=function()end
         value.getType=function()return 'WaterBottle'end;value.getActualWeight=function()return 1 end
         value.getUnequippedWeight=function()return 1 end;value.getWeight=function()return 1 end
         value.isFavorite=function()return false end;value.setJobDelta=function()end
@@ -96,6 +99,11 @@ local function setup(changed,foreignMerge,alias,missing)
         value.syncItemFields=function()end
         knownItems[#knownItems+1]=value
         return value
+    end
+    bag.getUnequippedWeight=function()
+        local total=1
+        for _,entry in ipairs(knownItems)do if entry.container==bagInventory then total=total+entry:getUnequippedWeight()end end
+        return total
     end
     local water=item()
     local function food()
@@ -981,25 +989,37 @@ do
         q=s.f.queue(anchor,quarter,another)
         assert(s.policy.evaluateMove(q,quarter,another,true).allowed,'safe evolved original portions can reorder without weight reads')
         assert(s.policy.evaluateCancel(q,quarter).allowed,'safe pending evolved portions can cancel without weight reads')
-        assert(not s.adapters.transfer(returning),
-            'evolved bag transfer inspection must stop before native unequipped weight')
+        assert(s.adapters.transfer(returning),
+            'reviewed evolved return uses pure upper weight before bag admission')
         food.container=s.bagInventory
-        assert(not s.adapters.transfer(pickup),
-            'evolved pickup remains outside the native transfer proof')
+        assert(s.adapters.transfer(pickup),
+            'reviewed evolved pickup receives the same exact location proof')
         food.container=s.root
         local a,b=s.item(),s.item();a.container=s.root;b.container=s.root
         local transferA,transferB=s.transfer(a,s.root,s.bagInventory),s.transfer(b,s.root,s.bagInventory)
         s.root.getCapacityWeight=impure
         s.bagInventory.getCapacityWeight=function()if food.container==s.bagInventory then impure()end;return 0 end
         q=s.f.queue(anchor,quarter,transferA,transferB)
-        assert(not s.policy.evaluateMove(q,transferB,transferA,false).allowed,
-            'evolved food receives no new permission in a global transfer capacity prefix')
+        assert(s.policy.evaluateMove(q,transferB,transferA,false).allowed,
+            'global capacity prefix admits surviving evolved food using pure current bounds')
         for _,location in ipairs({s.root,s.bagInventory})do
             food.container=location
             q=s.f.queue(anchor,transferA,transferB)
-            assert(not s.policy.evaluateMove(q,transferB,transferA,false).allowed,
-                'untouched evolved food in the capacity subtree must stop native load inspection')
+            assert(s.policy.evaluateMove(q,transferB,transferA,false).allowed,
+                'untouched reviewed extras use pure container loads without native factory reads')
         end
+        -- The interval's upper bound may charge incoming space, but must never
+        -- be subtracted as a supposedly confirmed SP release.
+        food.container=s.bagInventory
+        a.getUnequippedWeight=function()return .4 end;b.getUnequippedWeight=function()return .4 end
+        s.bagInventory.capacity=.9
+        q=s.f.queue(anchor,pickup,transferA,transferB)
+        local tight=s.policy.evaluateMove(q,transferB,transferA,false)
+        assert(not tight.allowed and tight.reason=='container_capacity',
+            'an evolved upper bound cannot become source release credit in SP or Host')
+        s.bagInventory.capacity=50
+        assert(s.policy.evaluateMove(q,transferB,transferA,false).allowed,
+            'the same pure evolved transfer prefix remains editable with sufficient real capacity')
         food.container=s.root
         for _,spec in ipairs({{'kind','base:normal'},{'hunger',0},{'hunger',math.huge},{'hunger',0/0},
             {'weight',-.1},{'weight',3.4028234663852886e38},{'weight',math.huge},{'weight',0/0},

@@ -464,7 +464,7 @@ f.player.inventory.getParent=function()return f.player end
 capacity(f.player.inventory);capacity(bagInventory)
 local bag2=f.item('Base.Bag_Schoolbag');bag2.class='InventoryContainer'
 local secondBagInventory={class='ItemContainer',getType=function()return 'bag' end,
-    getContainingItem=function()return bag2 end,getParent=function()return f.player end}
+    getContainingItem=function()return bag2 end,getParent=function()end}
 capacity(secondBagInventory)
 local separate1=f.action(ISInventoryTransferAction,{item=f.item('Base.Nails'),srcContainer=bagInventory,destContainer=f.player.inventory})
 local separate2=f.action(ISInventoryTransferAction,{item=f.item('Base.Thread'),srcContainer=secondBagInventory,destContainer=f.player.inventory})

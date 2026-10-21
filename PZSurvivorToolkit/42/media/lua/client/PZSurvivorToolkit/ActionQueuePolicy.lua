@@ -23,6 +23,7 @@ local Proof = require "PZSurvivorToolkit/SourceProof"
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
 local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
+local Weights = require "PZSurvivorToolkit/ActionQueueWeights"
 local nativePendingCancelProof
 local function nativePendingCancelHasNoEffects()
     if nativePendingCancelProof == nil then
@@ -736,7 +737,7 @@ function Policy.installContracts()
                 and not (action.item:getReplaceOnUse() or action.item:getScriptItem():getReplaceOnUse())
             -- Replacement food decreases in weight only while it survives every
             -- portion. A transfer edit can otherwise bypass the food component.
-            result.capacityRequiresEdit=not extraFoodWeight and not result.capacityNonIncreasing
+            result.capacityRequiresEdit=not result.capacityNonIncreasing
             result.targets[action.character]=true
             for _,resource in ipairs(edit.resources) do
                 if resource.domain=="item" then
@@ -1178,9 +1179,10 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
     local function fits(container, weight)
         local load = loads[container]
         if not load then
-            if not ItemEditAdapters or not ItemEditAdapters.weightInspectionSafe(container) then return false end
+            local current=Weights.capacity(container,character)
+            if not finiteWeight(current) then return false end
             if cartCapacity and (not carts or not carts.capacitySafe or not carts.capacitySafe(container)) then return false end
-            load = {container:getCapacityWeight(), container:getEffectiveCapacity(character), container:getAcceptItemFunction() == nil}
+            load = {current, container:getEffectiveCapacity(character), container:getAcceptItemFunction() == nil}
             loads[container] = load
         end
         local current, capacity = load[1], load[2]
@@ -1208,9 +1210,8 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
                 if seen[id] then return true end
                 seen[id] = true
                 if kind == "CandleLit" or kind == "Lantern_HurricaneLit" then return false end
-                if not ItemEditAdapters or not ItemEditAdapters.weightInspectionSafe(item) then return false end
-                local weight = item:getUnequippedWeight()
-                if not finiteWeight(weight) then return false end
+                local weight,release = Weights.unequipped(item)
+                if not finiteWeight(weight) or not finiteWeight(release) then return false end
                 if destinationCarried then incoming[root] = incoming[root] + weight end
                 for _, container in ipairs(destinations) do
                     if container ~= root then
@@ -1229,7 +1230,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
                     and item:getContainer() == source and source:contains(item) and not item:getIsCraftingConsumed()
                     and not character:getVehicle() and root:getAcceptItemFunction() == nil
                     and root:getOnlyAcceptCategory() == nil then
-                    incoming[source] = (incoming[source] or 0) - weight
+                    incoming[source] = (incoming[source] or 0) - release
                 end
                 touched[id] = true
                 return true

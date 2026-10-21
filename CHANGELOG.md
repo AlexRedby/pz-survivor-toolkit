@@ -17,6 +17,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.184
+
+- **Improved:** Reviewed ingredient-based food no longer blocks carried-container transfer edits solely because native weight reads construct ingredient items. Queue checks use non-creating upper bounds for food and nested/worn bag loads, preserve native equipment weight reduction and charge incoming capacity conservatively. Uncertain released space, unknown ingredient constructors and full food replacement remain protected.
+
 ### 0.1.183
 
 - Avoid scanning unrelated queue tails every tick when pruning food, fire, generator and mod-integration records. Share a fresh tracked-action lookup that stops once all tracked actions are found, preserving delayed Tidy restores, fire retries and cleanup after cancellation or world changes.
