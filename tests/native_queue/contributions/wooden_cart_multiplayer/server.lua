@@ -12,7 +12,6 @@ assert(not hotkey or actions,'cart_hotkey_setdown requires cart_actions')
 local variants={['shopping-cart']='SaucedCarts.ShoppingCart',['wooden-wheelbarrow']='SaucedWheelbarrow.WheelbarrowWood',['metal-wheelbarrow']='SaucedWheelbarrow.WheelbarrowMetal'}
 local variant=config.options and config.options.cart_variant or 'wooden-wheelbarrow'
 local cartType=assert(variants[variant],'Unknown MP cart_variant')
-assert(not actions or (variant=='wooden-wheelbarrow' or variant=='metal-wheelbarrow'),'cart_actions requires a calibrated wheelbarrow')
 local actionPhases={'drop-complete','pickup-complete','drop-cancel','drop-repeat','pickup-cancel','pickup-repeat'}
 local actionGround={true,false,false,true,true,false}
 local cartSession,actionIndex,pendingAction,actionStarted,actionsDone=nil,1,nil,false,false

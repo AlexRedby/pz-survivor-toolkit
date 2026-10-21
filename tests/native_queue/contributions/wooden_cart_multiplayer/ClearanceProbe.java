@@ -147,6 +147,26 @@ public final class ClearanceProbe {
         return item==null?"WheelbarrowWood".equals(actual) || "WheelbarrowMetal".equals(actual)
             :cartFamily(item.getFullType(),actual);
     }
+    private static Object stateField(Object state,String name)throws Exception {
+        var field=state.getClass().getDeclaredField(name);field.setAccessible(true);return field.get(state);
+    }
+    private static zombie.inventory.InventoryItem transitionItem(zombie.characters.IsoPlayer player)throws Exception {
+        // A shopping attachment with empty hands is not identity evidence by itself.
+        // Read the exact, already-rendered pickup state owned by this native player.
+        if(player.getPrimaryHandItem()!=null || player.getSecondaryHandItem()!=null)return null;
+        synchronized(net.alexredby.pztoolkitjavapatches.CartTransition.class) {
+            var field=net.alexredby.pztoolkitjavapatches.CartTransition.class.getDeclaredField("states");field.setAccessible(true);
+            Object state=((java.util.Map<?,?>)field.get(null)).get(player);
+            if(state==null || !Boolean.TRUE.equals(stateField(state,"pickup")) || !Boolean.TRUE.equals(stateField(state,"rendered")))return null;
+            long updated=(Long)stateField(state,"updated"),age=System.nanoTime()-updated;
+            if(age<0 || age>1_000_000_000L)return null;
+            var item=(zombie.inventory.InventoryItem)stateField(state,"item");
+            var world=stateField(state,"world");
+            if(item==null || item.getID()<0 || world==null || item.getWorldItem()!=world
+                || ((zombie.iso.objects.IsoWorldInventoryObject)world).getItem()!=item)return null;
+            return item;
+        }
+    }
     private static String jsonString(String value) {
         if(value==null)return "null";
         var out=new StringBuilder("\"");
@@ -171,6 +191,9 @@ public final class ClearanceProbe {
             var item=player.getPrimaryHandItem();
             String held=item==null?null:item.getStaticModel();
             String actual=instance.modelScript.getName();
+            boolean transition=item==null;
+            if(transition)item=transitionItem(player);
+            if(item==null)continue;
             if(!captureModel(item,actual))continue;
             for(var body:slot.modelData) {
                 if(body.modelInstance!=instance.parent || body.matrixPalette==null
@@ -184,6 +207,9 @@ public final class ClearanceProbe {
                     .append(",\"primary\":").append(player.getPrimaryHandItem()==null?-1:player.getPrimaryHandItem().getID())
                     .append(",\"secondary\":").append(player.getSecondaryHandItem()==null?-1:player.getSecondaryHandItem().getID())
                     .append(",\"modelProbeVersion\":1,\"model\":").append(jsonString(actual))
+                    .append(",\"cartItemId\":").append(item.getID())
+                    .append(",\"cartItemSource\":").append(jsonString(transition?"transition":"hands"))
+                    .append(",\"cartItemModel\":").append(jsonString(item.getStaticModel()))
                     .append(",\"heldModel\":").append(jsonString(held))
                     .append(",\"overridePrimary\":").append(jsonString(player.overridePrimaryHandModel))
                     .append(",\"overrideSecondary\":").append(jsonString(player.overrideSecondaryHandModel))

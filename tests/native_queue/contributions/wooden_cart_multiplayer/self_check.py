@@ -80,6 +80,7 @@ def action_fixture(root, epoch, duration, matrix, model=None):
     grounds = (True, False, False, True, True, False)
     logs = {role: [] for role in ('server', 'client1', 'client2')}
     poses = {'client1': [], 'client2': []}
+    cameras = {'client1': [], 'client2': []}
     def emit(role, kind, row): logs[role].append('[CART_MP_ACTION] ' + kind + ' ' + json.dumps(row))
     for index, (phase, ground) in enumerate(zip(phases, grounds), 1):
         begin = epoch+duration+500+(index-1)*2500
@@ -110,7 +111,16 @@ def action_fixture(root, epoch, duration, matrix, model=None):
                                 enabled=False, female=False, cart=matrix,
                                 bones={side: matrix for side in ('Bip01_L_Hand', 'Bip01_R_Hand')})
                     pose['local'] = role == 'client1'; poses[role].append(pose)
-                    if model is not None: pose['model'] = model
+                    if model is not None:
+                        pose.update(model=model, modelProbeVersion=1, heldModel=None if hands == -1 else model,
+                                    overridePrimary=model if hands == -1 else None, overrideSecondary=None,
+                                    cartItemId=42, cartItemSource='transition' if hands == -1 else 'hands', cartItemModel=model,
+                                    renderProbeVersion=1, captureId=len(poses[role]), slotToken=7, nativeWallTimeMillis=begin+delta-1)
+                        for part in ('body', 'cart'):
+                            cameras[role].append(dict(renderProbeVersion=1, captureId=pose['captureId'], slotToken=7,
+                                id=7, primary=hands, secondary=hands, part=part, model=model if part == 'cart' else 'MaleBody',
+                                captureWallTimeMillis=begin+delta, cameraWallTimeMillis=begin+delta+1, wallTimeMillis=begin+delta+2,
+                                cameraX=1, cameraY=2, cameraZ=0, cameraAngle=0, cameraWorldIso=True, cameraInVehicle=False))
             if role == 'client1':
                 receipt = dict(server, actor=role, wall=begin+1400, luaActions=0, cancelled=cancelled,
                                nativeProgress=True, presentationProgress=True, recoveryEnded=True,
@@ -127,6 +137,7 @@ def action_fixture(root, epoch, duration, matrix, model=None):
                  active=False, recovering=False, progress=0, pickup=False, rendered=False, ik=False, primaryID=42, secondaryID=42))
         with (root / role / 'body-clearance.jsonl').open('a') as output:
             output.write('\n'.join(map(json.dumps, poses[role])) + '\n')
+        (root / role / 'render-camera.jsonl').write_text('\n'.join(map(json.dumps, cameras[role])) + '\n')
     for role, lines in logs.items():
         with (root / (role+'-launch.log')).open('a') as output: output.write('\n'.join(lines) + '\n')
 
@@ -311,17 +322,17 @@ def check_variants():
     analyzer = runpy.run_path(str(HERE / 'analyze.py'))
     for variant in analyzer['VARIANTS']:
         with tempfile.TemporaryDirectory(prefix='cart-mp-variant-check-') as directory:
-            root = Path(directory); fixture(root, fast=True, actions=variant in ('wooden-wheelbarrow', 'metal-wheelbarrow'), variant=variant)
+            root = Path(directory); fixture(root, fast=True, actions=True, variant=variant)
             report = analyzer['analyze'](root)
             assert report['cartVariant'] == variant and report['cargo']['id'] == 99 and len(report['phases']) == 10
             render = report['phases']['run']['client2']['render']
             assert ('wheelFloorRange' in render) == (variant=='wooden-wheelbarrow')
             assert ('rawTransformCoverage' in render) == (variant!='wooden-wheelbarrow')
-            if variant == 'metal-wheelbarrow':
+            if variant != 'wooden-wheelbarrow':
                 assert report['actions']['evidenceComplete']
                 for role in ('client1', 'client2'):
                     for phase in report['actions']['phases'][role]:
-                        assert phase['models'] == ['WheelbarrowMetal'] and phase['rawTransformCoverage']
+                        assert phase['models'] == [analyzer['FILLED_MODELS'][variant]] and phase['rawTransformCoverage'] and phase['nativeDrawCoverage']
                         assert 'wheelFloorRange' not in phase and 'palmHandleErrorMax' not in phase
             files = {p: p.read_text() for p in root.rglob('*') if p.is_file()}
             model=analyzer['FILLED_MODELS'][variant]
@@ -342,9 +353,6 @@ def check_variants():
             selection = root/'selection.json'
             for invalid in (None, True, 'unknown', 'SaucedCarts.ShoppingCart'):
                 value = json.loads(files[selection]); value['options']['cart_variant'] = invalid
-                rejected(selection, json.dumps(value))
-            if variant == 'shopping-cart':
-                value = json.loads(files[selection]); value['options']['cart_actions'] = True
                 rejected(selection, json.dumps(value))
             server = root/'server-launch.log'
             rejected(server, '\n'.join(line for line in files[server].splitlines() if '[CART_MP] CART_SPEC ' not in line))
@@ -379,7 +387,47 @@ def check_variants():
                     for row in rows:row['model']=wrong
                     rejected(probe,'\n'.join(map(json.dumps,rows)))
                 rejected(observer,files[observer].replace('"heldModel": "ShoppingCartFullModel"','"heldModel": "ShoppingCartModel"'))
-    return 'PASS (three exact cart variants, strict cargo/full render/held models and diagnostics, default wood geometry and invalid options)'
+            if variant != 'wooden-wheelbarrow':
+                # Selected full cargo must remain the same exact model during all six actions,
+                # including empty-hand pickup and cancellation, on each real draw path.
+                for role in ('client1', 'client2'):
+                    action_probe = root/role/'body-clearance.jsonl'
+                    original_rows = [json.loads(line) for line in files[action_probe].splitlines()]
+                    index = next(i for i,r in enumerate(original_rows) if r.get('cartItemSource') == 'transition')
+                    for key,value in (('cartItemId',43),('cartItemSource','hands'),('cartItemModel','ShoppingCartPartialModel'),
+                                      ('heldModel',model),('slotToken',99)):
+                        rows=copy.deepcopy(original_rows);rows[index][key]=value
+                        rejected(action_probe,'\n'.join(map(json.dumps,rows)))
+                    rows=copy.deepcopy(original_rows)
+                    for row in rows:
+                        if row.get('cartItemSource') == 'transition': row['captureId'] += 999999
+                    rejected(action_probe,'\n'.join(map(json.dumps,rows)))
+                    if variant == 'shopping-cart':
+                        rows=copy.deepcopy(original_rows)
+                        for row in rows:
+                            if 'cartItemId' in row: row['model']='ShoppingCartPartialModel'
+                        rejected(action_probe,'\n'.join(map(json.dumps,rows)))
+                    draws=root/role/'render-camera.jsonl'
+                    rejected(draws,'')
+                    camera_rows=[json.loads(line) for line in files[draws].splitlines()]
+                    rejected(draws,'\n'.join(map(json.dumps,camera_rows[1:])))
+                    for key,value in (('id',8),('slotToken',99),('primary',99),('cameraX',float('nan')),
+                                      ('model','ShoppingCartPartialModel'),('wallTimeMillis',0)):
+                        rows=copy.deepcopy(camera_rows)
+                        for row in rows:
+                            if row['part']=='cart': row[key]=value
+                        rejected(draws,'\n'.join(map(json.dumps,rows)))
+                    presentation=root/(role+'-launch.log')
+                    marker='[CART_MP_ACTION] PRESENTATION '
+                    lines=[]
+                    for line in files[presentation].splitlines():
+                        if marker in line:
+                            row=json.loads(line.split(marker,1)[1])
+                            if row['index']==2 and row['active'] and row['progress']>.1: row['ik']=False
+                            line=marker+json.dumps(row)
+                        lines.append(line)
+                    rejected(presentation,'\n'.join(lines)+'\n')
+    return 'PASS (three exact cart variants and six action phases, strict full models/cart identity, actual owner/observer draws, render/IK/cancel/retry, no wooden geometry for other carts)'
 
 
 
@@ -541,8 +589,10 @@ actions.command('ActionAck',{index=2,id=42,ok=true});actions.sample(player,'clie
 actions.command('ActionPhase',{index=6,phase='pickup-repeat',id=42})
 actions.command('ActionAck',{index=6,id=42,ok=true});actions.sample(player,'client1');assert(count==4,'Final quiescence lost')
 """.replace('SOURCE',json.dumps(str(HERE/'actions.lua')))
-    subprocess.run([lua,'-e',code],check=True,capture_output=True)
-    return 'PASS (matching Ack closes completed phase; old/foreign Ack and final quiet preserved)'
+    for variant in ('wooden-wheelbarrow', 'metal-wheelbarrow', 'shopping-cart'):
+        selected=code.replace('return {options={}}', 'return {options={cart_variant='+json.dumps(variant)+'}}')
+        subprocess.run([lua,'-e',selected],check=True,capture_output=True)
+    return 'PASS (three action variants; matching Ack closes phase, old/foreign Ack and final quiet preserved)'
 
 
 def check_java(game, jdk, patch):
@@ -592,10 +642,22 @@ public final class ModelProbeCheck {
         int identity;
         String type;
         zombie.inventory.ItemContainer container;
+        String model;
+        zombie.iso.objects.IsoWorldInventoryObject world;
         BraceItem(){super("SaucedWheelbarrow","WheelbarrowWood","WheelbarrowWood",(String)null);}
         @Override public int getID(){return identity;}
         @Override public String getFullType(){return type;}
         @Override public zombie.inventory.ItemContainer getContainer(){return container;}
+        @Override public String getStaticModel(){return model;}
+        @Override public zombie.iso.objects.IsoWorldInventoryObject getWorldItem(){return world;}
+    }
+    private static final class BraceWorld extends zombie.iso.objects.IsoWorldInventoryObject {
+        zombie.inventory.InventoryItem item;
+        BraceWorld(){super((zombie.iso.IsoCell)null);}
+        @Override public zombie.inventory.InventoryItem getItem(){return item;}
+    }
+    private static void stateField(Object state,String name,Object value)throws Exception {
+        var field=state.getClass().getDeclaredField(name);field.setAccessible(true);field.set(state,value);
     }
     public static void main(String[] args) throws Exception {
         zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
@@ -727,6 +789,30 @@ public final class ModelProbeCheck {
             if((boolean)capture.invoke(null,null,model))throw new AssertionError("Unrelated empty-hand model captured: "+model);
         cart.type="Base.Log";
         if((boolean)capture.invoke(null,cart,"WheelbarrowMetal"))throw new AssertionError("Foreign held item acquired metal presentation");
+        var transitionItem=probe.getDeclaredMethod("transitionItem",zombie.characters.IsoPlayer.class);transitionItem.setAccessible(true);
+        var transition=Class.forName("net.alexredby.pztoolkitjavapatches.CartTransition");
+        var statesField=transition.getDeclaredField("states");statesField.setAccessible(true);
+        var states=(java.util.Map<Object,Object>)statesField.get(null);var previousState=states.get(owner);
+        var pickup=unsafe.allocateInstance(Class.forName(transition.getName()+"$State"));
+        var world=(BraceWorld)unsafe.allocateInstance(BraceWorld.class);world.item=cart;
+        cart.type="SaucedCarts.ShoppingCart";cart.model="Base.ShoppingCartFullModel";cart.world=world;
+        owner.primary=owner.secondary=null;
+        try {
+            states.remove(owner);
+            if(transitionItem.invoke(null,owner)!=null)throw new AssertionError("Empty hands inferred an untracked shopping cart");
+            stateField(pickup,"item",cart);stateField(pickup,"world",world);stateField(pickup,"pickup",true);
+            stateField(pickup,"rendered",true);stateField(pickup,"updated",System.nanoTime());states.put(owner,pickup);
+            if(transitionItem.invoke(null,owner)!=cart || !(boolean)capture.invoke(null,cart,"ShoppingCartFullModel"))
+                throw new AssertionError("Exact rendered shopping pickup was not associated");
+            stateField(pickup,"rendered",false);
+            if(transitionItem.invoke(null,owner)!=null)throw new AssertionError("Unrendered shopping state admitted");
+            stateField(pickup,"rendered",true);stateField(pickup,"updated",0L);
+            if(transitionItem.invoke(null,owner)!=null)throw new AssertionError("Stale shopping state admitted");
+            stateField(pickup,"updated",System.nanoTime());owner.primary=cart;
+            if(transitionItem.invoke(null,owner)!=null)throw new AssertionError("Nonempty hands used pickup fallback");
+            owner.primary=null;world.item=null;
+            if(transitionItem.invoke(null,owner)!=null)throw new AssertionError("Replaced world cart acquired transition identity");
+        } finally {if(previousState==null)states.remove(owner);else states.put(owner,previousState);cart.world=null;owner.primary=owner.secondary=cart;}
         var known=probe.getDeclaredMethod("cartModel",String.class);known.setAccessible(true);
         if((boolean)known.invoke(null,"ShoppingCartUnknownModel"))throw new AssertionError("unknown attachment");
     }
@@ -741,7 +827,7 @@ public final class ModelProbeCheck {
         parsed=[json.loads(line) for line in result.stdout.splitlines()]
         assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
         assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
-    return 'PASS (composed keyboard fixture, native Host read-only brace ownership/lifecycle guard, original native pose and consumed body/cart camera capture, render family mismatch capture, wood/metal empty-hand pickup selection and JSON escaping)'
+    return 'PASS (composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture, exact shopping empty-hand transition association, family/JSON guards)'
 
 
 def main():

@@ -633,7 +633,7 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         self.assertTrue(any(path.name=='analyze-wall.py' for path in carts.sources(ROOT,self.selection)))
         self.assertIn(ROOT/'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartMotionSync.java', carts.sources(ROOT,self.selection))
 
-    def test_cart_variant_requires_exact_enum_and_calibrated_wheelbarrow_for_actions(self):
+    def test_cart_variant_requires_exact_enum_and_allows_three_action_families(self):
         self.options['cart_variant'] = 'wooden-wheelbarrow'
         carts.validate(self.selection)
         self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
@@ -645,9 +645,7 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
             self.options.update(cart_variant=variant, cart_actions=False, cart_fast_motion=True)
             carts.validate(self.selection)
             self.options['cart_actions'] = True
-            if variant in ('wooden-wheelbarrow', 'metal-wheelbarrow'): carts.validate(self.selection)
-            else:
-                with self.assertRaisesRegex(ValueError, 'requires a calibrated wheelbarrow'): carts.validate(self.selection)
+            carts.validate(self.selection)
         self.options.pop('cart_variant'); self.options['cart_actions'] = True
         carts.validate(self.selection)
 

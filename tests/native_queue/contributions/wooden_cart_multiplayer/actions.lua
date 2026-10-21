@@ -5,8 +5,8 @@ require 'TimedActions/ISTimedActionQueue'
 local J=require 'CartMPJSON'
 local Actions={}
 local config=require 'QueueTestSelection'
-local variants={['wooden-wheelbarrow']='SaucedWheelbarrow.WheelbarrowWood',['metal-wheelbarrow']='SaucedWheelbarrow.WheelbarrowMetal'}
-local cartType=assert(variants[config.options and config.options.cart_variant or 'wooden-wheelbarrow'],'Actions require a calibrated wheelbarrow')
+local variants={['wooden-wheelbarrow']='SaucedWheelbarrow.WheelbarrowWood',['metal-wheelbarrow']='SaucedWheelbarrow.WheelbarrowMetal',['shopping-cart']='SaucedCarts.ShoppingCart'}
+local cartType=assert(variants[config.options and config.options.cart_variant or 'wooden-wheelbarrow'],'Actions require an exact supported cart variant')
 local hotkey=config.options and config.options.cart_hotkey_setdown==true
 local audit
 local phases={

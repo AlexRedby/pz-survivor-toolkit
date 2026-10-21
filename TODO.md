@@ -9,6 +9,9 @@
 - [ ] Extend shopping-cart wheel/caster presentation to the remaining load/sex/speed/obstacle combinations. Four independent tire phases, smoothed front caster direction, tire support and held/world continuity are checked in selected light/full SP recordings; this is not the full matrix or a collision check.
 - [ ] Review shopping-cart tight pivots before changing handling: the preserved nose-pivot path can slide the fixed rear tires sideways. Agree on the desired steering path before changing it; retain grip, natural stepping, collision and manual reverse.
 - [ ] Verify Host owner/observer shopping-cart transition presentation, exact ownership/cargo and bounded synchronization before treating the shopping-cart port as Host-verified. Extend the Host fixture action gate first; current shopping native coverage supports selected SP interaction/repeat and wheel captures only.
+  - Freeze matching current Toolkit/Java and upstream inputs; use the shared FIFO runner, native menu Host, at least 2048 MiB Java heap per process and separate disposable profiles.
+  - Capture metal and shopping motion plus completion/cancellation/repeat on owner and observer; require exact authority/cargo, both active render/IK streams and measured bounded pose payloads.
+  - Inspect synchronized short clips and actual pose/contact evidence, retain unresolved differences, then archive evidence and remove raw video/disposable profiles.
 
 # Metal wheelbarrow animation port
 

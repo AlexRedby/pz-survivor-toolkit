@@ -210,8 +210,6 @@ def validate(selection):
         for value in meshes.values():
             if not isinstance(value, str) or not Path(value).is_absolute() or not Path(value).is_file():
                 raise ValueError('cart_mesh_fbx requires absolute existing FBX files')
-    if options.get('cart_actions') and variant not in ('wooden-wheelbarrow', 'metal-wheelbarrow'):
-        raise ValueError('cart_actions requires a calibrated wheelbarrow')
     if options.get('cart_hotkey_setdown') and not options.get('cart_actions'):
         raise ValueError('cart_hotkey_setdown requires cart_actions')
     if 'cart_hotkey_key' in options:
