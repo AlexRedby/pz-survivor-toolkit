@@ -5,6 +5,8 @@ require 'TimedActions/ISTimedActionQueue'
 local J=require 'CartMPJSON'
 local Actions={}
 local config=require 'QueueTestSelection'
+local variants={['wooden-wheelbarrow']='SaucedWheelbarrow.WheelbarrowWood',['metal-wheelbarrow']='SaucedWheelbarrow.WheelbarrowMetal'}
+local cartType=assert(variants[config.options and config.options.cart_variant or 'wooden-wheelbarrow'],'Actions require a calibrated wheelbarrow')
 local hotkey=config.options and config.options.cart_hotkey_setdown==true
 local audit
 local phases={
@@ -40,7 +42,7 @@ local function inspect(p,spec,observer)
  end end
  local cargoOK=false
  if found then
-  assert(found:getFullType()=='SaucedWheelbarrow.WheelbarrowWood','Exact cart changed type')
+  assert(found:getFullType()==cartType,'Exact cart changed type')
   local cargo=found:getInventory():getItems()
   cargoOK=cargo:size()==1 and cargo:get(0):getID()==spec.cargoID and cargo:get(0):getFullType()=='Base.Log'
    and math.abs(cargo:get(0):getActualWeight()-spec.cargoWeight)<.001

@@ -27,7 +27,7 @@ public final class CartImpactMotion {
 
     static synchronized void begin(IsoPlayer player,InventoryItem item,IsoWorldInventoryObject world) {
         contacts.remove(player);
-        if(!actor(player) || !CartTransition.wooden(item) || world==null || world.getSquare()==null
+        if(!actor(player) || !CartTransition.wheelbarrow(item) || world==null || world.getSquare()==null
             || item.getWorldItem()!=world || world.getItem()!=item || player.getPrimaryHandItem()!=null
             || player.getSecondaryHandItem()!=null) return;
         float x=player.getNextX(),y=player.getNextY(),z=player.getZ();
@@ -74,7 +74,7 @@ public final class CartImpactMotion {
     static synchronized long poseAgeNanos(IsoPlayer player) {
         var contact=contacts.get(player);
         long now=System.nanoTime();
-        return contact!=null && valid(player,contact,now)?now-contact.started:-1;
+        return contact!=null && CartTransition.wooden(contact.item) && valid(player,contact,now)?now-contact.started:-1;
     }
 
     static synchronized void tick() {

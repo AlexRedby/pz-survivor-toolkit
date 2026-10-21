@@ -1,3 +1,17 @@
+# Shopping cart animation port
+
+- [ ] Cover partial/flashlight shopping-cart meshes in native direct rendering and action handoffs. Empty/full direct support, its renderer-specific world-Z compensation and original native wheel-index partition are verified; source geometry regressions for all six models do not replace the remaining native variants.
+- [ ] Extend shopping-cart cancellation/retry beyond the two selected restart scenes to moving recovery and the remaining interruption routes. Close the shared analyzer's selected-retry grip-phase coverage gap; exact native lifecycle/ownership and clock evidence do not replace that gate.
+- [ ] Extend shopping-cart wheel/caster presentation to the remaining load/sex/speed/obstacle combinations. Four independent tire phases, smoothed front caster direction, tire support and held/world continuity are checked in selected light/full SP recordings; this is not the full matrix or a collision check.
+- [ ] Review shopping-cart tight pivots before changing handling: the preserved nose-pivot path can slide the fixed rear tires sideways. Agree on the desired steering path before changing it; retain grip, natural stepping, collision and manual reverse.
+- [ ] Verify Host owner/observer shopping-cart transition presentation, exact ownership/cargo and bounded synchronization before treating the shopping-cart port as Host-verified. Extend the Host fixture action gate first; current shopping native coverage supports selected SP interaction/repeat and wheel captures only.
+
+# Metal wheelbarrow animation port
+
+- [ ] Close the selected immediate-retry grip-phase coverage gap in the shared analyzer; retain per-action cancelled/successful boundaries and do not infer a full matrix pass from the two-scene lifecycle/ownership audit.
+- [ ] Refine the remaining overlap between the stock mitten skin and metal shafts without changing the accepted arm/cart motion. Evaluate the full hand triangles: the finite-shaft palm/thumb/finger anchors pass, but coarse bridge faces still intersect the shaft.
+- [ ] Complete an isolated Host owner/observer run for the metal wheelbarrow with the installed mod set and at least 2048 MiB Java heap per process. Check motion, pickup/setdown, cancellation/retry, exact cart/cargo identity and both clients' presentation; review short recordings. A startup failure is not functional coverage.
+
 # Selected QoL additions
 
 - [ ] After installation is requested, check all three in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod; foraging modifiers/radius; switch construction, bulb insertion/removal, grid/generator lighting, dismantling and second-player synchronization. Author claims do not establish compatibility with this selected set.

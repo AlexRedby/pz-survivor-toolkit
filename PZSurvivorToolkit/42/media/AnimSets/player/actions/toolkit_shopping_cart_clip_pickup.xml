@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animNode>
+    <m_Name>ToolkitShoppingCartClipPickup</m_Name>
+    <m_AnimName>Toolkit_ShoppingCart_Pickup</m_AnimName>
+    <m_Priority>20</m_Priority>
+    <m_ConditionPriority>111</m_ConditionPriority>
+    <m_BlendTime>0.20</m_BlendTime>
+    <m_SpeedScale>0</m_SpeedScale>
+    <m_Looped>false</m_Looped>
+    <m_useDeferredMovement>false</m_useDeferredMovement>
+    <m_useDeferedRotation>false</m_useDeferedRotation>
+    <m_AnimReverse>false</m_AnimReverse>
+    <m_TrackTimeToVariable>ToolkitWoodCartClipTime</m_TrackTimeToVariable>
+    <m_SyncTrackingEnabled>false</m_SyncTrackingEnabled>
+    <m_SubStateBoneWeights><boneName>Dummy01</boneName></m_SubStateBoneWeights>
+    <m_SubStateBoneWeights><boneName>Translation_Data</boneName></m_SubStateBoneWeights>
+    <m_Conditions><m_Name>PerformingAction</m_Name><m_Type>STRING</m_Type><m_Value>ToolkitWoodCart</m_Value></m_Conditions>
+    <m_Conditions><m_Name>ToolkitWoodCartClipPilot</m_Name><m_Type>BOOL</m_Type><m_Value>true</m_Value></m_Conditions>
+    <m_Conditions><m_Name>ToolkitWoodCartClipPickup</m_Name><m_Type>BOOL</m_Type><m_Value>true</m_Value></m_Conditions>
+    <m_Conditions><m_Name>ToolkitShoppingCartClip</m_Name><m_Type>BOOL</m_Type><m_Value>true</m_Value></m_Conditions>
+    <m_maxTorsoTwist>0</m_maxTorsoTwist>
+</animNode>

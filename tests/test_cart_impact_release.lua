@@ -168,7 +168,7 @@ for _, invalid in ipairs({"remote", "npc", "dead", "one-hand", "wrong-kind", "wo
     elseif invalid == "npc" then p.npc = true
     elseif invalid == "dead" then p.dead = true
     elseif invalid == "one-hand" then p.secondary = nil
-    elseif invalid == "wrong-kind" then cart.kind = "SaucedWheelbarrow.WheelbarrowMetal"
+    elseif invalid == "wrong-kind" then cart.kind = "SaucedCarts.ShoppingCart"
     elseif invalid == "world" then cart.world = {}
     elseif invalid == "nested" then cart.owner = {}
     elseif invalid == "missing-root" then p.inventory.items[cart] = nil
@@ -249,8 +249,9 @@ end
 print("PASS impact release: exact native-state event, ownership guards, one release per protected episode, fallback and error cleanup")
 
 if SaucedCartsSource then
+    for _, kind in ipairs({"SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.WheelbarrowMetal"}) do
     for _, broken in ipairs({false, true}) do
-        w = setup({native = true});p = w.player();cart = p:equip();local cargo = cart.cargo
+        w = setup({native = true});p = w.player();cart = p:equip(kind);local cargo = cart.cargo
         if broken then cart.condition = 0 end
         w.fire(p, collide);w.fire(p, collide);w.fire(p, getup)
         assert(w.calls == 1 and not p.primary and not p.secondary and not p.inventory:contains(cart)
@@ -269,18 +270,18 @@ if SaucedCartsSource then
         end
     end
     for _, fallback in ipairs({"noPose", "poseError", "beginError", "beginRefused", "impactError", "finishError"}) do
-        w = setup({native = true});p = w.player();cart = p:equip();w[fallback] = true;w.noImpactPose = true
+        w = setup({native = true});p = w.player();cart = p:equip(kind);w[fallback] = true;w.noImpactPose = true
         w.fire(p, collide)
         assert(#w.world == 1 and w.world[1].item == cart and not p.primary and not p.secondary
             and not p.inventory:contains(cart) and w.ends == 1 and not w.scope,
             "installed SP fallback did not release the exact cart: " .. fallback)
     end
-    w = setup({native = true});p = w.player();cart = p:equip();w.worldError = true
+    w = setup({native = true});p = w.player();cart = p:equip(kind);w.worldError = true
     ok, err = pcall(w.fire, p, collide)
     assert(not ok and tostring(err):find("world-add-failed", 1, true) and w.ends == 1 and not w.scope
         and w.finishes == 1 and w.finishedCart == cart and not w.finishedWorld and #w.world == 0,
         "installed world-add error was hidden or left its presentation candidate unfinished")
-    w = setup({native = true, client = true});p = w.player();cart = p:equip()
+    w = setup({native = true, client = true});p = w.player();cart = p:equip(kind)
     w.fire(p, collide)
     assert(#w.requests == 1 and w.requests[1].player == p and w.requests[1].command == "requestInstantDrop"
         and w.requests[1].args.cartId == cart:getID() and p.poseCleared and w.drop.isPending(p))
@@ -290,6 +291,7 @@ if SaucedCartsSource then
         "installed MP endpoint retried after pending timeout or mutated local authority")
     assert(w.captures == 0 and w.poses == 0 and w.finishes == 0 and w.begins == 0 and w.ends == 0,
         "installed MP endpoint used SP presentation APIs")
+    end
     print("PASS installed InstantDrop: healthy cart/cargo exact identity, broken delegation, persistent world drop and MP authoritative request without local mutation")
 else
     print("SKIP installed InstantDrop integration: SaucedCartsSource not supplied")

@@ -196,7 +196,10 @@ public final class CartMotionSyncTest {
         remote.receive(stopped.encode(),1);CartMotionSync.applyLocomotion(player,remote,1);
         check(Boolean.FALSE.equals(player.booleans.get("ToolkitCartBrace")),"ordinary idle inferred effort or retained release");
         remote.receive(effort.encode(),2);cart.setType("WheelbarrowMetal");CartMotionSync.applyLocomotion(player,remote,2);
-        check(Boolean.FALSE.equals(player.booleans.get("ToolkitCartBrace")),"wood effort escaped its exact held cart type");
+        check(Boolean.TRUE.equals(player.booleans.get("ToolkitCartBrace")),"metal observer lost shared wheelbarrow effort");
+        cart.setModule("SaucedCarts");cart.setType("ShoppingCart");CartMotionSync.applyLocomotion(player,remote,2);
+        check(Boolean.FALSE.equals(player.booleans.get("ToolkitCartBrace")),"wheelbarrow effort escaped to shopping cart");
+        cart.setModule("SaucedWheelbarrow");
         cart.setType("WheelbarrowWood");player.network=(zombie.characters.NetworkPlayerAI)unsafe.allocateInstance(zombie.characters.NetworkPlayerAI.class);
         player.x=10;player.y=20;player.moving=true;player.network.targetX=11;player.network.targetY=20;
         CartMotionSync.applyLocomotion(player,remote,2);

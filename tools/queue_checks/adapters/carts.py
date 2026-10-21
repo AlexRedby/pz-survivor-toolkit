@@ -59,6 +59,12 @@ SCENE_SPECS = {
 VARIANTS = {'shopping-cart': 'SaucedCarts.ShoppingCart',
             'wooden-wheelbarrow': 'SaucedWheelbarrow.WheelbarrowWood',
             'metal-wheelbarrow': 'SaucedWheelbarrow.WheelbarrowMetal'}
+METAL_SP_CASES = {'interaction', 'interruption', 'interruption-matrix', 'interruption-fast',
+                  'repeat', 'hotkey', 'sprint', 'stop', 'stop-timing', 'stationary'}
+SHOPPING_SP_CASES = {'interaction', 'repeat', 'wheel'}
+SHOPPING_MODELS = {'ShoppingCartModel', 'ShoppingCartPartialModel', 'ShoppingCartFullModel',
+                   'ShoppingCartFlashlightModel', 'ShoppingCartFlashlightPartialModel', 'ShoppingCartFlashlightFullModel'}
+ACTION_SP_CASES = {'interaction', 'interruption', 'interruption-matrix', 'interruption-fast', 'repeat', 'hotkey'}
 VARIANT_PHASES = ('inventory-equip', 'walk', 'run', 'sprint', 'drop-near', 'pickup-near',
                   'drop-far', 'pickup-far', 'drop-repeat', 'pickup-repeat')
 CONTROL_PHASES = (
@@ -190,10 +196,22 @@ def validate(selection):
             importlib.import_module('numpy')
         except ImportError as error:
             raise ValueError('MP wall analyzers require working NumPy in ' + sys.executable) from error
-    if 'cart_variant' in options and (suite != MP or not isinstance(options['cart_variant'], str) or options['cart_variant'] not in VARIANTS):
-        raise ValueError('cart_variant requires an exact MP cart variant: ' + ', '.join(VARIANTS))
-    if options.get('cart_actions') and options.get('cart_variant', 'wooden-wheelbarrow') != 'wooden-wheelbarrow':
-        raise ValueError('cart_actions requires wooden-wheelbarrow')
+    if 'cart_variant' in options and (not isinstance(options['cart_variant'], str) or options['cart_variant'] not in VARIANTS):
+        raise ValueError('cart_variant requires an exact cart variant: ' + ', '.join(VARIANTS))
+    variant = options.get('cart_variant', 'wooden-wheelbarrow')
+    if suite == SP and variant != 'wooden-wheelbarrow':
+        supported = METAL_SP_CASES if variant == 'metal-wheelbarrow' else SHOPPING_SP_CASES
+        if selection['cases'][0] not in supported:
+            raise ValueError('SP ' + variant + ' cart_variant supports only: ' + ', '.join(sorted(supported)))
+    if suite == SP and variant == 'shopping-cart':
+        meshes = options.get('cart_mesh_fbx')
+        if not isinstance(meshes, dict) or not meshes or any(model not in SHOPPING_MODELS for model in meshes):
+            raise ValueError('shopping-cart requires cart_mesh_fbx mapping exact shopping model names to FBX sources')
+        for value in meshes.values():
+            if not isinstance(value, str) or not Path(value).is_absolute() or not Path(value).is_file():
+                raise ValueError('cart_mesh_fbx requires absolute existing FBX files')
+    if options.get('cart_actions') and variant not in ('wooden-wheelbarrow', 'metal-wheelbarrow'):
+        raise ValueError('cart_actions requires a calibrated wheelbarrow')
     if options.get('cart_hotkey_setdown') and not options.get('cart_actions'):
         raise ValueError('cart_hotkey_setdown requires cart_actions')
     if 'cart_hotkey_key' in options:
@@ -224,6 +242,8 @@ def sources(project, selection):
         paths += [Path(project) / 'tests/native_queue/support/QueueCartStartup.lua']
         if selection['cases'][0] not in ('variants', 'controls', 'native-e'):
             paths.append(_path(selection, 'mesh_fbx'))
+        if selection.get('options', {}).get('cart_variant') == 'shopping-cart':
+            paths += [Path(value) for value in selection['options']['cart_mesh_fbx'].values()]
     if selection['suite'] == MP:
         paths.append(Path(project) / 'tests/native_queue/startup/client/ZZStartup.lua')
         if 'cart_wall_exit' in selection.get('options', {}):
@@ -275,11 +295,15 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     _compile(jdk, classpath, build / 'lab-classes', [source])
     _jar(build / 'CartLab.jar', build / 'lab-classes')
     evidence = sp / 'evidence'
+    variant_probes = selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart')
+    sp_probes = ('GripPoseProbe', 'ClearanceProbe') if variant_probes else ('WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe')
+    if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') == 'shopping-cart' and selection['cases'] == ['wheel']:
+        sp_probes += ('ShoppingWheelProbe',)
     probe_sources = ([mp / 'ClearanceProbe.java'] if selection['suite'] == MP else
-                     [evidence / (name + '.java') for name in ('WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe')])
+                     [evidence / (name + '.java') for name in sp_probes])
     if not manual and not simple:
         _compile(jdk, classpath, build / 'probe-classes', [*probe_sources, evidence / 'AttachWoodenWheelProbe.java'])
-    probes = [] if manual or simple else ['ClearanceProbe'] if selection['suite'] == MP else ['WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe']
+    probes = [] if manual or simple else ['ClearanceProbe'] if selection['suite'] == MP else list(sp_probes)
     for name in probes:
         _jar(build / (name + '.jar'), build / 'probe-classes', (mp if selection['suite'] == MP else evidence) / (name + '.mf'))
     fixture = runtime.setdefault('fixture', {})
@@ -336,6 +360,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         if selection['suite'] == SP:
             motion = dict(disposable=True, ffmpeg=config['ffmpeg'], videoRoot=videos[role], area=AREA,
                           hideUI=selection.get('options', {}).get('cart_hide_ui', not manual))
+            if 'cart_variant' in selection.get('options', {}):
+                motion.update(cartVariant=selection['options']['cart_variant'], cartType=VARIANTS[selection['options']['cart_variant']])
             if 'cart_authored_clip' in selection.get('options', {}):
                 motion['authoredClip'] = selection['options']['cart_authored_clip']
             if 'cart_scenes' in selection.get('options', {}):
@@ -518,6 +544,224 @@ def _debug_coverage(cache, text, selection):
         result.append(row)
     _mesh_proof(cache, moving=bank not in ('interaction', 'wheel', 'interruption', 'interruption-matrix', 'interruption-fast', 'approach', 'repeat', 'hotkey'))
     return result
+
+
+def _metal_coverage(cache, text, selection):
+    return _model_capture_coverage(cache, text, selection)
+
+
+def _shopping_wheel_capture(cache, records, start, seconds, item_id, vbo_hashes):
+    """Require usable native draw receipts, without assessing wheel geometry or motion quality."""
+    import numpy as np
+
+    def require(condition, reason):
+        if not condition:
+            raise ValueError('Shopping wheel capture: ' + reason)
+
+    def vector(value, count):
+        return isinstance(value, list) and len(value) == count and all(type(v) in (int, float) and math.isfinite(v) for v in value)
+
+    def matrices(value):
+        return isinstance(value, list) and len(value) == 7 and all(vector(v, 16) for v in value)
+
+    def same(a, b):
+        return vector(a, 16) and vector(b, 16) and np.allclose(a, b, rtol=0, atol=2e-6)
+
+    verified = {}
+    def proof(mesh):
+        require(isinstance(mesh, dict), 'missing mesh proof')
+        key = json.dumps(mesh, sort_keys=True)
+        if key in verified:
+            return verified[key]
+        for field in ('meshId', 'vertices', 'indices', 'vboBytes', 'eboBytes'):
+            require(type(mesh.get(field)) is int and mesh[field] > 0, 'invalid mesh count')
+        require(mesh.get('stride') == 32 and mesh.get('positionOffset') == 0
+                and mesh['vboBytes'] == mesh['vertices'] * 32 and mesh['eboBytes'] == mesh['indices'] * 4
+                and mesh['indices'] % 3 == 0 and mesh.get('positionsByteOrder') == 'little-endian'
+                and mesh.get('gpuByteOrder') in ('little-endian', 'big-endian'), 'invalid mesh format/counts')
+        for field in ('vboSha256', 'eboSha256', 'positionsSha256', 'positionSetSha256'):
+            require(isinstance(mesh.get(field), str) and re.fullmatch('[0-9a-f]{64}', mesh[field]), 'missing mesh hash')
+        require(mesh['vboSha256'] in vbo_hashes, 'wheel VBO differs from selected native model capture')
+        require(_json(cache / f"shopping-wheel-{mesh['meshId']}-mesh.json") == mesh, 'mesh proof metadata differs from draw')
+        raw = {}
+        for field, size, digest in (('vboFile', mesh['vboBytes'], 'vboSha256'),
+                                    ('eboFile', mesh['eboBytes'], 'eboSha256'),
+                                    ('positionsFile', mesh['vertices'] * 12, 'positionsSha256')):
+            name = mesh.get(field)
+            require(isinstance(name, str) and Path(name).name == name and (cache / name).resolve().parent == cache.resolve(), 'invalid proof binary path')
+            raw[field] = (cache / name).read_bytes()
+            require(len(raw[field]) == size and hashlib.sha256(raw[field]).hexdigest() == mesh[digest], 'proof binary size/hash mismatch')
+        endian = '<' if mesh['gpuByteOrder'] == 'little-endian' else '>'
+        xyz = np.frombuffer(raw['vboFile'], dtype=endian+'f4').reshape(-1, 8)[:, :3]
+        require(np.isfinite(xyz).all() and xyz.astype('<f4').tobytes() == raw['positionsFile'], 'packed positions differ from native VBO')
+        bits = np.frombuffer(raw['positionsFile'], dtype='<u4').reshape(-1, 3)
+        require(hashlib.sha256(np.unique(bits, axis=0).astype('<u4').tobytes()).hexdigest() == mesh['positionSetSha256'], 'position-set proof mismatch')
+        indices = np.frombuffer(raw['eboFile'], dtype=endian+'u4')
+        require(int(indices.max()) < mesh['vertices'], 'native EBO index out of range')
+        verified[key] = mesh['indices']
+        return verified[key]
+
+    try:
+        require(all(isinstance(r, dict) and type(r.get('wallTimeMillis')) is int for r in records), 'invalid draw timestamps')
+        selected = [r for r in records if start <= r['wallTimeMillis'] < start + seconds * 1000 and r.get('itemId') == item_id]
+        counts = {source: sum(r.get('source') == source for r in selected) for source in ('held', 'world')}
+        require(all(n >= 5 for n in counts.values()), 'missing exact-item held/world Shader draws')
+        times = sorted({r['wallTimeMillis'] for r in selected})
+        require(times[0] <= start + 500 and times[-1] >= start + seconds * 1000 - 500
+                and max(b-a for a,b in zip(times,times[1:])) <= 500, 'incomplete recording-window draw coverage')
+        for row in selected:
+            require(row.get('result') is True and row.get('source') in counts
+                    and row.get('transpose') is (row['source'] == 'held') and row.get('matrixOrder') == 'column-major'
+                    and vector(row.get('cart'), 16) and vector(row.get('phases'), 4) and vector(row.get('casters'), 2)
+                    and matrices(row.get('submittedParts')) and matrices(row.get('relative')), 'invalid successful draw snapshot')
+            follow = row.get('nativeFollow')
+            require(isinstance(follow, dict) and vector([follow.get(k) for k in ('x', 'y', 'angle')], 3)
+                    and vector(follow.get('cart'), 16) and follow.get('matrixOrder') == 'column-major'
+                    and all(type(follow.get(k)) is int and follow[k] >= 0 for k in ('producerNanoTime', 'returnNanoTime', 'wallTimeMillis'))
+                    and follow['returnNanoTime'] >= follow['producerNanoTime'], 'missing/nonfinite exact nativeFollow pose')
+            count = proof(row.get('mesh')); calls = row.get('calls')
+            require(isinstance(calls, list) and 8 <= len(calls) <= 2048, 'missing Shader calls/restoration')
+            offset, parts = 0, set()
+            for call in calls[:-1]:
+                require(isinstance(call, dict) and type(call.get('part')) is int and 0 <= call['part'] < 7
+                        and call.get('restore') is False and call.get('transpose') is row['transpose']
+                        and call.get('firstIndex') == offset and type(call.get('indexCount')) is int
+                        and call['indexCount'] > 0 and call['indexCount'] % 3 == 0
+                        and same(call.get('matrix'), row['submittedParts'][call['part']]), 'incomplete/mismatched actual Shader index runs')
+                offset += call['indexCount']; parts.add(call['part'])
+            restore = calls[-1]
+            require(offset == count and parts == set(range(7)) and isinstance(restore, dict)
+                    and restore.get('part') == -1 and restore.get('restore') is True and restore.get('transpose') is row['transpose']
+                    and same(restore.get('matrix'), row['cart']), 'missing index coverage/cart restoration')
+            cart = np.array(row['cart']).reshape(4, 4, order='F')
+            if row['transpose']: cart = cart.T
+            for part in range(7):
+                expected = cart @ np.array(row['relative'][part]).reshape(4, 4, order='F')
+                if row['transpose']: expected = expected.T
+                require(np.allclose(expected.flatten(order='F'), row['submittedParts'][part], rtol=0, atol=2e-6), 'submitted matrix differs from exact Frame')
+        return dict(heldDrawSamples=counts['held'], worldDrawSamples=counts['world'], meshProofs=len(verified), shaderDrawCaptureReady=True)
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError('Shopping wheel capture: missing or malformed native proof') from error
+
+
+def _model_capture_coverage(cache, text, selection):
+    """Validate actual model/pose readiness without applying wooden geometry or wheel gates."""
+    import numpy as np
+
+    variant = selection['options']['cart_variant']
+    shopping = variant == 'shopping-cart'
+    expected = VARIANTS[variant]
+    evidence_root = Path(__file__).resolve().parents[3] / 'tests/native_queue/contributions/wooden_cart_motion/evidence'
+    probes = {kind: [json.loads(line) for line in (cache / filename).read_text().splitlines()]
+              for kind, filename in (('body', 'body-clearance.jsonl'), ('grip', 'wood-grip-poses.jsonl'))}
+    models = {r.get('model') for records in probes.values() for r in records}
+    allowed = SHOPPING_MODELS if shopping else {'WheelbarrowMetal'}
+    if not models or not models <= allowed:
+        raise ValueError('Missing or mismatched actual cart models')
+    proofs = {}
+    for model in sorted(models):
+        proof = _json(cache / ('cart-mesh-' + model + '.json'))
+        raw = (cache / (model + '.bin')).read_bytes()
+        if (proof.get('model') != model or proof.get('stride') != 32 or proof.get('bytes') != len(raw)
+                or not raw or len(raw) % 32 or proof.get('sha256') != hashlib.sha256(raw).hexdigest()
+                or proof.get('source') not in ('ModelInstanceRenderData.RenderCharacter-exit', 'CartWheelSpin.render-exit')):
+            raise ValueError('Missing or mismatched actual cart native VBO render receipt: ' + model)
+        mesh = selection['options'].get('cart_mesh_fbx', {}).get(model) if shopping else _path(selection, 'mesh_fbx')
+        if not mesh:
+            raise ValueError('Missing cart_mesh_fbx source for observed model: ' + model)
+        objects = next(node for node in _load(evidence_root / 'fbx_mesh.py').read_nodes(Path(mesh)) if node[0] == 'Objects')
+        geometries = [node for node in objects[2] if node[0] == 'Geometry']
+        if len(geometries) != 1:
+            raise ValueError('Cart mesh input requires one exact FBX geometry: ' + model)
+        source = next(node[1][0] for node in geometries[0][2] if node[0] == 'Vertices').reshape(-1, 3).copy()
+        source[:, 2] *= -1
+        native = np.frombuffer(raw, dtype='<f4').reshape(-1, 8)[:, :3]
+        if (not np.isfinite(source).all() or not np.isfinite(native).all()
+                or {tuple(v) for v in native} != {tuple(v) for v in source.astype('<f4')}):
+            raise ValueError('Selected FBX does not match actual native VBO positions: ' + model)
+        proofs[model] = dict(bytes=len(raw), sha256=proof['sha256'], source=proof['source'], fbxPositionsMatch=True)
+    lifecycle = [json.loads(line) for line in (cache / 'action-lifecycle.jsonl').read_text().splitlines()]
+    world = [json.loads(line) for line in (cache / 'world-cart-poses.jsonl').read_text().splitlines()]
+    log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
+    clips = re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+) file=.+? frames=\d+ seconds=([\d.]+)', log)
+    if [row[0] for row in clips] != selected_scenes(selection):
+        raise ValueError('Cart scene receipts differ from the selected bank')
+    windows = _load(evidence_root / 'scene_windows.py')
+    bank = selection['cases'][0]
+    wheel_draws = None
+    if shopping and bank == 'wheel':
+        try:
+            wheel_draws = [json.loads(line) for line in (cache / 'shopping-wheel-draws.jsonl').read_text().splitlines()]
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError('Shopping wheel capture: missing or truncated draw file') from error
+    def matrix(value):
+        return isinstance(value, list) and len(value) == 16 and all(type(v) in (int, float) and math.isfinite(v) for v in value)
+    result = []
+    for name, start, duration in clips:
+        seconds = windows.record_seconds(bank, name); start = int(start)
+        if abs(float(duration) - seconds) > .2:
+            raise ValueError('Incomplete cart recording window: ' + name)
+        row = dict(scene=name, recordSeconds=seconds)
+        for kind, records in probes.items():
+            selected = [r for r in records if start <= r['wallTimeMillis'] < start + seconds * 1000]
+            if (len({r['wallTimeMillis'] for r in selected}) < 5
+                    or any(r.get('model') not in allowed or r.get('female') is not name.startswith('female-')
+                           or not matrix(r.get('cart')) or not r.get('bones')
+                           or any(not matrix(v) for v in r['bones'].values()) for r in selected)):
+                raise ValueError('Missing or mismatched actual cart ' + kind + ' matrices: ' + name)
+            if kind == 'grip' and any(r.get('result') is not True or r.get('threw') is not False for r in selected):
+                raise ValueError('Cart grip solve failed: ' + name)
+            row[kind + 'Samples'] = len(selected)
+        if bank in ACTION_SP_CASES or shopping and bank == 'wheel':
+            row['actionCoverage'] = _debug_action_coverage(log, name, start, seconds, probes)
+            samples = [json.loads(line.split('[WOOD_INTERACTION_SAMPLE] ', 1)[1]) for line in log.splitlines() if '[WOOD_INTERACTION_SAMPLE] ' in line]
+            samples = [r for r in samples if r['case'] == name and r['start'] == start]
+            if (not samples or any(r.get('cartType') != expected or r['worldCount'] + r['inventoryCount'] != 1
+                                   or r['worldCount'] > 1 or r['inventoryCount'] > 1 for r in samples)
+                    or len({(r['id'], r['cargo'], r['cargoIDs'], r['cargoCount']) for r in samples}) != 1):
+                raise ValueError('Cart ownership, exact type or cargo changed: ' + name)
+            for endpoint, ground in (('held', False), ('dropped', True)):
+                endpoints = [r for r in samples if r['stage'] == endpoint]
+                if not endpoints or any(r['worldCount'] != int(ground) or r['inventoryCount'] != int(not ground)
+                                        or r['heldID'] != (-1 if ground else r['id'])
+                                        or r['secondaryID'] != (-1 if ground else r['id']) for r in endpoints):
+                    raise ValueError('Cart action has an invalid ' + endpoint + ' ownership endpoint: ' + name)
+            for action in ('ToolkitWoodCartPickup', 'ToolkitWoodCartDrop' if bank == 'hotkey' else 'ToolkitWoodCartSetdown'):
+                active = [r for r in samples if r['actionType'] == action and r['active'] and r['rendered'] and r['ik'] and r['progress'] > .05]
+                if len(active) < 2 or active[-1]['wall'] - active[0]['wall'] < 50:
+                    raise ValueError('Cart native action lacks temporal render/IK coverage: ' + name)
+            final = samples[-1]
+            if (final['stage'] != 'dropped' or final['worldCount'] != 1 or final['inventoryCount'] != 0
+                    or final['heldID'] != -1 or final['secondaryID'] != -1 or final['active'] or final['recovering']):
+                raise ValueError('Cart action lacks a settled authoritative ground endpoint: ' + name)
+            events = [r for r in lifecycle if start <= r['wallTimeMillis'] < start + seconds * 1000 and r.get('metaType', '').startswith('ToolkitWoodCart')]
+            if any(r.get('threw') is not None for r in events):
+                raise ValueError('Cart native action lifecycle threw an exception: ' + name)
+            for action in ('ToolkitWoodCartPickup', 'ToolkitWoodCartDrop' if bank == 'hotkey' else 'ToolkitWoodCartSetdown'):
+                if not all(any(r.get('metaType') == action and r.get('event') == event for r in events) for event in ('start', 'complete')):
+                    raise ValueError('Cart native action lifecycle is missing: ' + name + '/' + action)
+            if ('-cancel' in name or bank.startswith('interruption')) and not any(r.get('event') == 'stop' for r in events):
+                raise ValueError('Cart cancellation lacks a native stop receipt: ' + name)
+            worlds = [r for r in world if start <= r['wallTimeMillis'] < start + seconds * 1000 and r.get('renderStatus') == 'Ready']
+            if len(worlds) < 5 or any(r.get('cartType') != expected or r.get('itemId') != samples[0]['id'] or not matrix(r.get('transform')) for r in worlds):
+                raise ValueError('Missing actual cart world render matrices: ' + name)
+            row.update(nativeLifecycleSamples=len(events), worldRenderSamples=len(worlds), ownershipAndCargoVerified=True)
+            if wheel_draws is not None:
+                row['wheelDrawCapture'] = _shopping_wheel_capture(cache, wheel_draws, start, seconds, samples[0]['id'],
+                                                               {proof['sha256'] for proof in proofs.values()})
+        else:
+            # All recordings must span the requested native motion window, including its settled tail.
+            for kind, records in probes.items():
+                times = sorted({r['wallTimeMillis'] for r in records if start <= r['wallTimeMillis'] < start + seconds * 1000})
+                if times[0] > start+500 or times[-1] < start+seconds*1000-500 or max(b-a for a,b in zip(times,times[1:])) > 500:
+                    raise ValueError('Incomplete cart ' + kind + ' temporal coverage: ' + name)
+        result.append(row)
+    report = dict(cartVariant=variant, cartType=expected, models=sorted(models), scenes=result,
+                  nativeVBOs=proofs, geometryVerified=False, animationEquivalencePass=False,
+                  scope='Actual cart models, native matrices, successful grip solves and selected action lifecycle; geometry and visual equivalence require separate review')
+    if not shopping:
+        report.update(model='WheelbarrowMetal', nativeVBO=proofs['WheelbarrowMetal'])
+    return report
 
 
 def _coverage(cache, text, count, metrics):
@@ -804,9 +1048,19 @@ def verify(root, selection, catalog):
         if any(not complete(selection, role, text) for role, text in texts.items()):
             raise ValueError('Cart capture did not complete')
         for text in texts.values():
-            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
+            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[CLEARANCE_PROBE] ATLAS ERROR', '[SHOPPING_WHEEL_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
                 raise ValueError('Cart capture contains fixture/probe errors')
         evidence['videos'] = {role: _videos(root, selection, role, text) for role, text in texts.items()}
+        if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart'):
+            report = _model_capture_coverage(root / 'client1', texts['client1'], selection)
+            name = 'shopping-model-capture.json' if selection['options']['cart_variant'] == 'shopping-cart' else 'metal-model-capture.json'
+            _write(analysis / name, json.dumps(report, indent=2, allow_nan=False))
+            evidence.update(modelCapture=report, analysis=str(analysis), evidenceComplete=True, diagnosticOnly=True)
+            return {'issues': [], 'evidence': evidence, 'outcomes': [
+                {'actor': 'client1', 'case': selection['cases'][0], 'status': 'captured',
+                 'reason': 'Selected cart models, native VBOs and temporal pose coverage captured; geometry and visual review remain separate',
+                 'outcome': {'animationEquivalencePass': False, 'geometryVerified': False, 'evidenceComplete': True,
+                             'measurementReady': True, 'partialCoverage': debug, 'selectedScenes': selected_scenes(selection)}}]}
         if selection['suite'] == SP and selection['cases'] == ['native-e']:
             report = _native_e_coverage(texts['client1'])
             _write(analysis / 'native-e.json', json.dumps(report, indent=2, allow_nan=False))

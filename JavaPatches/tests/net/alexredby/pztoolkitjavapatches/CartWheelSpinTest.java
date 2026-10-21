@@ -15,6 +15,42 @@ public final class CartWheelSpinTest {
         if(Math.abs(actual-expected)>1e-6) throw new AssertionError(message+": "+actual+" != "+expected);
     }
 
+    private static void metalGeometry(Unsafe unsafe) throws Exception {
+        var profile=CartWheelbarrow.METAL;
+        if(CartWheelbarrow.forModel("WheelbarrowMetal")!=profile
+            || CartWheelbarrow.forType("SaucedWheelbarrow.WheelbarrowMetal")!=profile
+            || CartWheelbarrow.forModel("ShoppingCartModel")!=null || CartWheelbarrow.forItem(null)!=null)
+            throw new AssertionError("wheelbarrow profile routing changed");
+        int[] indices={0,1,2134,2135,2136,2994,2995,2996,3687};
+        if(!Arrays.deepEquals(CartWheelSpin.ranges(profile,indices),new int[][]{{0,3,0},{3,3,1},{6,3,0}}))
+            throw new AssertionError("metal wheel middle range was not partitioned");
+        for(int[] invalid:new int[][]{{2134,2135,2136},{2994,2995,2996},{0,1,3688},{2135,2136,2994},{0,1,2}})
+            if(CartWheelSpin.ranges(profile,invalid)!=null) throw new AssertionError("unsafe metal geometry accepted");
+        close(CartWheelSpin.advance(profile,.3,profile.worldRadius()*Math.PI/2),.3-Math.PI/2,"metal rolling radius");
+        var held=profile.held(new Matrix4f());var center=profile.center(new Vector3f());
+        var fixed=held.transformPosition(new Vector3f(center));
+        var point=new Vector3f(center).add(0,-profile.radius(),0);
+        for(float angle:new float[]{0,.4f,(float)Math.PI/2,(float)Math.PI,-.4f}) {
+            var spun=CartWheelSpin.transform(profile,new Matrix4f(held).transpose(),angle,new Matrix4f()).transpose();
+            if(spun.transformPosition(new Vector3f(center)).distance(fixed)>1e-6f)
+                throw new AssertionError("metal axle moved during wheel rotation");
+            close(spun.transformPosition(new Vector3f(point)).distance(fixed),profile.worldRadius()/1.5,"metal tire radius changed");
+        }
+        close(-fixed.z*1.5,profile.axle(),"metal steering axle differs from rendered tire");
+        close(-fixed.x*1.5,profile.lateral(),"metal lateral axle differs from rendered tire");
+        var item=(InventoryItem)unsafe.allocateInstance(InventoryItem.class);
+        item.setModule("SaucedWheelbarrow");item.setType("WheelbarrowMetal");
+        close(CartWheelSpin.follow(item,0,0,0,held),0,"first metal pose");
+        float travel=(float)(profile.worldRadius()*.7);
+        close(CartWheelSpin.follow(item,0,-travel,0,held),-.7,"metal actual axle travel");
+        var tilted=new Matrix4f(held).translate(center).rotateX(.4f).translate(-center.x,-center.y,-center.z);
+        close(CartWheelSpin.follow(item,0,-travel,0,tilted),-1.1,"metal stationary tire counter-rotation");
+        // Returned geometry must not expose the shared profile's calibration to callers.
+        held.identity();center.zero();
+        if(profile.held(new Matrix4f()).equals(held) || profile.center(new Vector3f()).equals(center))
+            throw new AssertionError("mutable geometry escaped its profile");
+    }
+
     public static void main(String[] args) throws Exception {
         int[] elements={0,1,1113,1114,1115,8115,4,5,6,7,8,9};
         int[] original=elements.clone();
@@ -70,7 +106,7 @@ public final class CartWheelSpinTest {
         var other=(InventoryItem)unsafe.allocateInstance(InventoryItem.class);other.setModule("SaucedWheelbarrow");other.setType("WheelbarrowWood");
         close(CartWheelSpin.follow(other,0,0,0,identity),0,"phase leaked to a different cart");
         other.setType("WheelbarrowMetal");
-        if(!Double.isNaN(CartWheelSpin.follow(other,0,0,0,identity))) throw new AssertionError("metal followed wooden wheel");
+        close(CartWheelSpin.follow(other,0,0,0,CartWheelbarrow.METAL.held(new Matrix4f())),0,"type change reused wooden wheel pose");
         var slot=new ModelSlotRenderData();
         var data=new ModelInstanceRenderData();
         data.modelInstance=new ModelInstance();data.modelInstance.modelScript=new ModelScript();
@@ -83,7 +119,11 @@ public final class CartWheelSpinTest {
         if(read.invoke(null,data)!=null) throw new AssertionError("recycled render data kept a stale wheel angle");
         data.modelInstance.modelScript.name="WheelbarrowMetal";
         CartWheelSpin.prepare(slot,.9);
-        if(read.invoke(null,data)!=null) throw new AssertionError("metal wheel was modified");
+        close((Double)read.invoke(null,data),.9,"metal wheel phase was not snapshotted");
+        data.modelInstance.modelScript.name="ShoppingCartModel";
+        CartWheelSpin.prepare(slot,.2);
+        if(read.invoke(null,data)!=null) throw new AssertionError("shopping cart entered wheelbarrow split drawing");
+        metalGeometry(unsafe);
         System.out.println("CART_WHEEL_SPIN_PASS");
     }
 }

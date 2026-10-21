@@ -142,6 +142,11 @@ public final class ClearanceProbe {
             default -> false;
         };
     }
+    private static boolean captureModel(zombie.inventory.InventoryItem item,String actual) {
+        // Pickup presentation renders its exact cart while native hands are still empty.
+        return item==null?"WheelbarrowWood".equals(actual) || "WheelbarrowMetal".equals(actual)
+            :cartFamily(item.getFullType(),actual);
+    }
     private static String jsonString(String value) {
         if(value==null)return "null";
         var out=new StringBuilder("\"");
@@ -166,7 +171,7 @@ public final class ClearanceProbe {
             var item=player.getPrimaryHandItem();
             String held=item==null?null:item.getStaticModel();
             String actual=instance.modelScript.getName();
-            if(item!=null?!cartFamily(item.getFullType(),actual):!"WheelbarrowWood".equals(actual))continue;
+            if(!captureModel(item,actual))continue;
             for(var body:slot.modelData) {
                 if(body.modelInstance!=instance.parent || body.matrixPalette==null
                     || !(body.modelInstance.model.tag instanceof SkinningData skin))continue;

@@ -28,14 +28,16 @@ public final class GripPoseProbe {
     }
     public static synchronized String before(Matrix4f[] poses,SkinningData actor,String model,boolean female,
                                               Matrix4f delta,Matrix4f cart) {
-        if(output==null || !"WheelbarrowWood".equals(model))return null;
+        if(output==null || !("WheelbarrowWood".equals(model) || "WheelbarrowMetal".equals(model)
+            || model!=null && java.util.Set.of("ShoppingCartModel","ShoppingCartPartialModel","ShoppingCartFullModel",
+                "ShoppingCartFlashlightModel","ShoppingCartFlashlightPartialModel","ShoppingCartFlashlightFullModel").contains(model)))return null;
         try {
             var row=new StringBuilder(4096).append("{\"sequence\":").append(++sequence)
                 .append(",\"time\":").append((System.nanoTime()-start)/1e9)
                 .append(",\"nanoTime\":").append(System.nanoTime())
                 .append(",\"wallTimeMillis\":").append(System.currentTimeMillis())
                 .append(",\"thread\":").append(Thread.currentThread().getId())
-                .append(",\"model\":\"WheelbarrowWood\",\"female\":").append(female)
+                .append(",\"model\":\"").append(model).append("\",\"female\":").append(female)
                 .append(",\"matrixOrder\":\"column-major\",\"delta\":");
             matrix(row,delta);row.append(",\"cart\":");matrix(row,cart);row.append(",\"bones\":{");
             for(int i=0;i<BONES.length;i++) {
@@ -73,9 +75,9 @@ public final class GripPoseProbe {
         public static String enter(@Advice.Argument(0) Matrix4f[] poses,@Advice.Argument(1) SkinningData actor,
             @Advice.Argument(2) boolean female,@Advice.Argument(3) Matrix4f delta,@Advice.Argument(4) Matrix4f cart,
             @Advice.Argument(5) float reachWeight,@Advice.Argument(6) float gripWeight,
-            @Advice.Argument(7) AnimationClip thumbReference) {
+            @Advice.Argument(7) AnimationClip thumbReference,@Advice.Argument(8) String model) {
             return thumbReference!=null && reachWeight==1 && gripWeight==1
-                ? GripPoseProbe.before(poses,actor,"WheelbarrowWood",female,delta,cart) : null;
+                ? GripPoseProbe.before(poses,actor,model,female,delta,cart) : null;
         }
         @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
         public static void exit(@Advice.Enter String snapshot,@Advice.Return boolean result,@Advice.Thrown Throwable thrown) {
@@ -125,10 +127,10 @@ public final class GripPoseProbe {
                 .type(named("net.alexredby.pztoolkitjavapatches.CartGrip"))
                 .transform((builder,description,loader,module,protection)->builder.visit(
                     Advice.to(GripAdvice.class).on(named("grip").and(takesArguments(7))))
-                    .visit(Advice.to(TransitionGripAdvice.class).on(named("transitionGrip").and(takesArguments(8))))
+                    .visit(Advice.to(TransitionGripAdvice.class).on(named("transitionGrip").and(takesArguments(9))))
                     .visit(Advice.to(ReachAdvice.class).on(named("reach").and(takesArguments(7)))))
                 .installOn(instrumentation);installed=true;
         }
-        System.out.println("[GRIP_POSE_PROBE] capturing every wooden grip call, including failures: "+file);
+        System.out.println("[GRIP_POSE_PROBE] capturing calibrated wheelbarrow grip calls, including failures: "+file);
     }
 }

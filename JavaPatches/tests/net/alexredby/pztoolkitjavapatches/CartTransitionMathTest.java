@@ -295,8 +295,44 @@ public final class CartTransitionMathTest {
         check(CartTransitionMath.stance(pose(0),model(),new Matrix4f(),new Vector3f(),new Vector3f()) == null, "coincident handles rejected");
         check(out.equals(sentinel), "all validation failures preserve output");
     }
+    private static void shopping() {
+        var basis=new Matrix4f().rotateX(.18f).scale(.00215f,.00161f,.10497f);
+        var a=new Matrix4f().translation(.1f,.2f,-.4f).rotateY(.3f).mul(basis);
+        var b=new Matrix4f().translation(.3f,.21f,-.5f).rotateY(.4f).mul(basis);
+        for(int step=0;step<=100;step++) {
+            double t=step/100.0;var out=new Matrix4f();
+            check(CartTransitionMath.blendModel(a,b,basis,t,out),"nonuniform imported basis rejected");
+            var residual=new Matrix4f(out).mul(new Matrix4f(basis).invert());
+            close(residual.getColumn(0,new Vector3f()).length(),1,.00001,"mesh X scale changed");
+            close(residual.getColumn(1,new Vector3f()).length(),1,.00001,"mesh Y scale changed");
+            close(residual.getColumn(2,new Vector3f()).length(),1,.00001,"mesh Z scale changed");
+            var p=CartShopping.progress(t,false);var reverse=CartShopping.progress(1-t,true);
+            check(p.crouch()==0 && p.hinge()==0 && p.balance()==0 && p.knees()==0,"standing action crouched");
+            close(p.reach(),reverse.reach(),1e-12,"standing reversal lost hand contact timing");
+        }
+        var held=CartShopping.held(new Matrix4f());
+        var imported=new Matrix4f(held).setTranslation(0,0,0);
+        var left=new Vector3f();var right=new Vector3f();
+        CartGrip.handle("ShoppingCartModel",true,left);CartGrip.handle("ShoppingCartModel",false,right);
+        for(int degrees=0;degrees<360;degrees+=15) {
+            float angle=(float)Math.toRadians(degrees);
+            var placement=CartTransition.shoppingDropPlacement(held,imported,10,20,2,angle,1);
+            check(placement!=null && placement.zRotation()>=0 && placement.zRotation()<360,"shopping drop yaw rejected");
+            var stance=CartTransitionMath.stance(placement,imported,held,left,right);
+            check(stance!=null,"nonuniform shopping handle stance rejected");
+            close(stance.x(),10,.00001,"shopping approach lost centered X");
+            close(stance.y(),20,.00001,"shopping approach lost centered Y");
+            close(CartSteeringMath.wrap(stance.slotAngle()-angle),0,.00001,"shopping approach reversed facing");
+        }
+        check(CartTransitionMath.stance(pose(0),imported,null,left,right)==null,"null held pose accepted");
+        check(CartShopping.progress(Double.NaN,false)==null,"nonfinite shopping progress accepted");
+        var out=new Matrix4f().translation(5,6,7);var before=new Matrix4f(out);
+        check(!CartTransitionMath.blendModel(a,b,new Matrix4f().scale(0),.5,out),"singular mesh basis accepted");
+        check(out.equals(before),"invalid model blend changed output");
+        check(!CartTransitionMath.blendModel(a,new Matrix4f(b).scale(1,2,1),basis,.5,out),"residual shear accepted");
+    }
     public static void main(String[] args) {
-        roundtrips(); timingAndBlend(); stances(); recovery(); recoveryRelease(); recoveryClearance(); recoveryPoseSteps(); nativeHeight(); invalid();
+        shopping(); roundtrips(); timingAndBlend(); stances(); recovery(); recoveryRelease(); recoveryClearance(); recoveryPoseSteps(); nativeHeight(); invalid();
         System.out.println("PASS cart transition world/actor roundtrips, native Euler order, rigid interpolation, phase reversal and handle stance");
     }
 }

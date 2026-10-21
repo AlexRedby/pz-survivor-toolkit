@@ -179,10 +179,18 @@ final class CartTransitionMath {
         return true;
     }
 
+    /** Blend placement residuals while retaining an imported mesh's nonuniform basis. */
+    static boolean blendModel(Matrix4fc from,Matrix4fc to,Matrix4fc model,double fraction,Matrix4f out) {
+        if(!invertible(model) || !affine(from) || !affine(to) || out==null) return false;
+        var inverse=new Matrix4f(model).invert();
+        if(!blend(new Matrix4f(from).mul(inverse),new Matrix4f(to).mul(inverse),fraction,out)) return false;
+        out.mul(model);return out.isFinite();
+    }
+
     /** Match ordered handle spacing/direction horizontally; differing handle heights belong to the reach animation. */
     static Stance stance(Placement pose, Matrix4fc model, Matrix4fc held,
                          Vector3fc leftHandle, Vector3fc rightHandle) {
-        if (!valid(pose) || !invertible(model) || rigid(held) == null || leftHandle == null
+        if (!valid(pose) || !invertible(model) || held == null || rigid(new Matrix4f(held).mul(new Matrix4f(model).invert())) == null || leftHandle == null
             || rightHandle == null || !leftHandle.isFinite() || !rightHandle.isFinite()) return null;
         Matrix4f ground = rotation(pose).mul(model).scale(pose.worldScale);
         Vector3f worldLeft = ground.transformPosition(leftHandle, new Vector3f());

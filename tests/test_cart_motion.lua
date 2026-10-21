@@ -128,7 +128,7 @@ for _, localPlayer in ipairs({true, false}) do
     for _, kind in ipairs({"SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.WheelbarrowMetal", "SaucedCarts.ShoppingCart"}) do
         held.fullType = kind
         assert(ToolkitCartRefreshVisual(actor) == held)
-        assert(actor.vars.ToolkitCartWoodPivot == (kind == "SaucedWheelbarrow.WheelbarrowWood"),
+        assert(actor.vars.ToolkitCartWoodPivot == (kind == "SaucedWheelbarrow.WheelbarrowWood" or kind == "SaucedWheelbarrow.WheelbarrowMetal"),
             "wooden pivot selection was stale or escaped its exact held type")
     end
     held.fullType = "SaucedWheelbarrow.WheelbarrowWood"
@@ -298,8 +298,12 @@ for _, class in ipairs({ISWalkToTimedAction, ISWalkToTimedActionF, ISPathFindAct
     local action = {native = true, getTable = function() return object end,
         getMetaType = function() return class.Type end}
     p.actions, p.action = 1, action
-    assert(ToolkitCartRefreshVisual(p) == cart, "stock path action hid the held wooden cart: " .. class.Type)
-    for _, condition in ipairs({"override", "subclass", "forgedtype", "twotypes", "remote", "metal", "shopping"}) do
+    for _, kind in ipairs({"SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.WheelbarrowMetal"}) do
+        cart.fullType = kind
+        assert(ToolkitCartRefreshVisual(p) == cart, "stock path action hid the held wheelbarrow: " .. kind .. class.Type)
+    end
+    cart.fullType = nil
+    for _, condition in ipairs({"override", "subclass", "forgedtype", "twotypes", "remote", "shopping"}) do
         p.localPlayer, p.actions, cart.fullType = true, 1, nil
         object = setmetatable({}, class)
         if condition == "override" then object.update = function() end

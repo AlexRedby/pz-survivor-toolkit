@@ -525,7 +525,7 @@ public final class CartLegPaceTest {
     private static void woodenPivotChecks() {
         String wood="SaucedWheelbarrow.WheelbarrowWood";
         for(String type:new String[]{null,wood,"SaucedWheelbarrow.WheelbarrowMetal","SaucedCarts.ShoppingCart",wood+"Other"}) {
-            String walk=wood.equals(type)?"ToolkitWoodCartPivotWalk":"ToolkitCartPivotWalk";
+            String walk=(wood.equals(type) || "SaucedWheelbarrow.WheelbarrowMetal".equals(type))?"ToolkitWoodCartPivotWalk":"ToolkitCartPivotWalk";
             if(!CartLegPace.pivotName(type,false,false).equals(walk)
                 || !CartLegPace.pivotName(type,true,false).equals("ToolkitCartPivotRun")
                 || !CartLegPace.pivotName(type,false,true).equals("ToolkitCartPivotSprint")
@@ -599,7 +599,9 @@ public final class CartLegPaceTest {
         String wood = "SaucedWheelbarrow.WheelbarrowWood";
         if (!CartLegPace.walkingReference(wood, false, -1).equals("Bob_WalkBwdNoAim1Hand"))
             throw new AssertionError("wooden reverse walking must use the authored backward reference");
-        for (String other : new String[]{null, "SaucedWheelbarrow.WheelbarrowMetal", "SaucedCarts.ShoppingCart"})
+        if (!CartLegPace.walkingReference("SaucedWheelbarrow.WheelbarrowMetal", false, -1).equals("Bob_WalkBwdNoAim1Hand"))
+            throw new AssertionError("metal reverse must use the same authored backward reference");
+        for (String other : new String[]{null, "SaucedCarts.ShoppingCart", "SaucedWheelbarrow.Other"})
             if (!CartLegPace.walkingReference(other, false, -1).equals("Bob_Walk"))
                 throw new AssertionError("reverse walking reference escaped the wooden cart scope");
         if (!CartLegPace.walkingReference(wood, true, -1).equals("Bob_Walk")

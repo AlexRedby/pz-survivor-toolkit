@@ -123,7 +123,7 @@ def palm(row, side):
     return math.dist(actual, wanted)
 
 
-def action_coverage(logs, poses, cartid, epoch, duration):
+def action_coverage(logs, poses, cartid, epoch, duration, variant='wooden-wheelbarrow'):
     def rows(role, kind):
         marker = '[CART_MP_ACTION] ' + kind + ' '
         values = [parse(line.split(marker, 1)[1]) for line in logs[role].splitlines() if marker in line]
@@ -204,10 +204,16 @@ def action_coverage(logs, poses, cartid, epoch, duration):
                       and r['primary'] == r['secondary'] == (-1 if name.startswith('pickup') else cartid)]
             frames = coverage(frames, 'wallTimeMillis', 0, (active[0]['wall'], active[-1]['wall']), role + '/' + name + '/action render')
             require(all(r['local'] is (role == 'client1') for r in frames), role + '/' + name + ': raw action render identity mismatch')
-            phases.append({'phase': name, 'activeSamples': len(active), 'renderFrames': len(frames),
-                           'recoverySamples': sum(r['recovering'] for r in selected),
-                           'wheelFloorRange': [min(wheel(r) for r in frames), max(wheel(r) for r in frames)],
-                           'palmHandleErrorMax': {side: max(palm(r, side) for r in frames) for side in 'LR'}})
+            phase = {'phase': name, 'activeSamples': len(active), 'renderFrames': len(frames),
+                     'recoverySamples': sum(r['recovering'] for r in selected)}
+            if variant == 'wooden-wheelbarrow':
+                phase.update(wheelFloorRange=[min(wheel(r) for r in frames), max(wheel(r) for r in frames)],
+                             palmHandleErrorMax={side: max(palm(r, side) for r in frames) for side in 'LR'})
+            else:
+                require(all(r.get('model') in MODELS[variant] for r in frames), role + '/' + name + ': action rendered another cart model')
+                phase.update(models=sorted({r['model'] for r in frames}), rawTransformCoverage=True,
+                             scope='Metal cart action matrices and lifecycle; geometry and animation equivalence require separate review')
+            phases.append(phase)
         quiet = [r for r in samples if r['index'] == 6 and r['wall'] >= finished[0]['wall']]
         require(len(quiet) >= 2 and quiet[-1]['wall']-quiet[0]['wall'] >= 100
                 and quiet[-1]['wall'] >= finished[0]['wall']+200
@@ -334,7 +340,7 @@ def analyze(profile):
             'cart_hotkey_key requires hotkey setdown and an integer keyboard code in 1..255')
     variant = selection.get('options', {}).get('cart_variant', 'wooden-wheelbarrow')
     require(isinstance(variant, str) and variant in VARIANTS, 'cart_variant must be an exact supported MP variant')
-    require(not actions or variant == 'wooden-wheelbarrow', 'cart_actions requires wooden-wheelbarrow')
+    require(not actions or variant in ('wooden-wheelbarrow', 'metal-wheelbarrow'), 'cart_actions requires a calibrated wheelbarrow')
     item = VARIANTS[variant]
     expected_phases = [('idle', 0), ('walk', 2000), ('turn', 5000), ('stop', 8000), ('reverse', 10000), ('stop-back', 12000)]
     if extended:
@@ -481,7 +487,7 @@ def analyze(profile):
                 'Fast gait did not settle to a native stop')
         result['fastMotion'] = moving
     if actions:
-        result['actions'] = action_coverage(logs, poses, cartid, epoch, 26000 if extended else 15000)
+        result['actions'] = action_coverage(logs, poses, cartid, epoch, 26000 if extended else 15000, variant)
         if hotkey:
             result['actions']['hotkeySetdown'] = hotkey_coverage(logs, cartid, hotkey_key)
         require(spec is None or result['actions']['cargoID'] == spec['cargoID']

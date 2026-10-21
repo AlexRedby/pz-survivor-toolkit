@@ -311,12 +311,18 @@ def check_variants():
     analyzer = runpy.run_path(str(HERE / 'analyze.py'))
     for variant in analyzer['VARIANTS']:
         with tempfile.TemporaryDirectory(prefix='cart-mp-variant-check-') as directory:
-            root = Path(directory); fixture(root, fast=True, actions=variant=='wooden-wheelbarrow', variant=variant)
+            root = Path(directory); fixture(root, fast=True, actions=variant in ('wooden-wheelbarrow', 'metal-wheelbarrow'), variant=variant)
             report = analyzer['analyze'](root)
             assert report['cartVariant'] == variant and report['cargo']['id'] == 99 and len(report['phases']) == 10
             render = report['phases']['run']['client2']['render']
             assert ('wheelFloorRange' in render) == (variant=='wooden-wheelbarrow')
             assert ('rawTransformCoverage' in render) == (variant!='wooden-wheelbarrow')
+            if variant == 'metal-wheelbarrow':
+                assert report['actions']['evidenceComplete']
+                for role in ('client1', 'client2'):
+                    for phase in report['actions']['phases'][role]:
+                        assert phase['models'] == ['WheelbarrowMetal'] and phase['rawTransformCoverage']
+                        assert 'wheelFloorRange' not in phase and 'palmHandleErrorMax' not in phase
             files = {p: p.read_text() for p in root.rglob('*') if p.is_file()}
             model=analyzer['FILLED_MODELS'][variant]
             try:
@@ -337,7 +343,7 @@ def check_variants():
             for invalid in (None, True, 'unknown', 'SaucedCarts.ShoppingCart'):
                 value = json.loads(files[selection]); value['options']['cart_variant'] = invalid
                 rejected(selection, json.dumps(value))
-            if variant != 'wooden-wheelbarrow':
+            if variant == 'shopping-cart':
                 value = json.loads(files[selection]); value['options']['cart_actions'] = True
                 rejected(selection, json.dumps(value))
             server = root/'server-launch.log'
@@ -708,6 +714,19 @@ public final class ModelProbeCheck {
             if(!(boolean)family.invoke(null,"SaucedCarts.ShoppingCart",model))throw new AssertionError("same-family mismatch was filtered");
         if((boolean)family.invoke(null,"SaucedCarts.ShoppingCart","WheelbarrowWood")
             || (boolean)family.invoke(null,"Base.Log","ShoppingCartFullModel"))throw new AssertionError("wrong cart family");
+        var capture=probe.getDeclaredMethod("captureModel",zombie.inventory.InventoryItem.class,String.class);capture.setAccessible(true);
+        for(String model:new String[]{"WheelbarrowWood","WheelbarrowMetal"}) {
+            if(!(boolean)capture.invoke(null,null,model))throw new AssertionError("Empty native pickup hands filtered presentation model: "+model);
+            cart.type="SaucedWheelbarrow."+model;
+            if(!(boolean)capture.invoke(null,cart,model))throw new AssertionError("Exact held cart presentation filtered: "+model);
+            String other=model.equals("WheelbarrowWood")?"WheelbarrowMetal":"WheelbarrowWood";
+            if((boolean)capture.invoke(null,cart,other) || (boolean)capture.invoke(null,cart,"ShoppingCartFullModel"))
+                throw new AssertionError("Held item acquired another cart family: "+model);
+        }
+        for(String model:new String[]{"ShoppingCartModel","ShoppingCartFullModel","WheelbarrowMetalExtra","Other.WheelbarrowMetal"})
+            if((boolean)capture.invoke(null,null,model))throw new AssertionError("Unrelated empty-hand model captured: "+model);
+        cart.type="Base.Log";
+        if((boolean)capture.invoke(null,cart,"WheelbarrowMetal"))throw new AssertionError("Foreign held item acquired metal presentation");
         var known=probe.getDeclaredMethod("cartModel",String.class);known.setAccessible(true);
         if((boolean)known.invoke(null,"ShoppingCartUnknownModel"))throw new AssertionError("unknown attachment");
     }
@@ -722,7 +741,7 @@ public final class ModelProbeCheck {
         parsed=[json.loads(line) for line in result.stdout.splitlines()]
         assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
         assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
-    return 'PASS (composed keyboard fixture, native Host read-only brace ownership/lifecycle guard, original native pose and consumed body/cart camera capture, render family mismatch capture and JSON escaping)'
+    return 'PASS (composed keyboard fixture, native Host read-only brace ownership/lifecycle guard, original native pose and consumed body/cart camera capture, render family mismatch capture, wood/metal empty-hand pickup selection and JSON escaping)'
 
 
 def main():

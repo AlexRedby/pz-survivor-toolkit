@@ -9,10 +9,12 @@ ISCartPickupAction.FromWorldItem = function(character, world)
     if character:isTimedActionInstant() or held and held:isForceDropHeavyItem() then
         return fromWorld(character, world)
     end
-    local stance
-    if transitions.wooden(world:getItem()) then
-        stance = toolkitWoodCartStance and toolkitWoodCartStance(character, world)
-        if not stance or character:DistToSquared(stance.x, stance.y) < .002 * .002 then return fromWorld(character, world) end
+    local stance = transitions.wooden(world:getItem()) and toolkitWoodCartStance and toolkitWoodCartStance(character, world)
+    local calibrated = stance ~= nil and stance ~= false
+    if calibrated then
+        if character:DistToSquared(stance.x, stance.y) < .002 * .002 then return fromWorld(character, world) end
+    elseif transitions.wooden(world:getItem()) and world:getItem():getFullType() ~= "SaucedCarts.ShoppingCart" then
+        return fromWorld(character, world)
     else
         local square = world:getSquare()
         if character:getSquare():canReachTo(square) then return fromWorld(character, world) end
@@ -28,7 +30,7 @@ ISCartPickupAction.FromWorldItem = function(character, world)
     walk.perform = function(self)
         local action = ISCartPickupAction:new(character, x, y, z, id)
         if action:findWorldItem() == world then
-            if transitions.wooden(world:getItem()) then
+            if calibrated then
                 local current = toolkitWoodCartStance and toolkitWoodCartStance(character, world)
                 if not current or math.abs(character:getZ() - z) > .002 or character:DistToSquared(current.x, current.y) > .002 * .002 then return perform(self) end
             end

@@ -108,7 +108,8 @@ public final class CartTransitionTest {
             if("ToolkitWoodCartClipPilot".equals(name)) {
                 clipPilot=value;clipPilotAbsent=false;clipPilotWrites++;return null;
             }
-            check("ToolkitWoodCartClipPickup".equals(name),"unexpected boolean presentation variable: "+name);
+            check("ToolkitWoodCartClipPickup".equals(name) || "ToolkitMetalCartClip".equals(name) || "ToolkitShoppingCartClip".equals(name),
+                "unexpected boolean presentation variable: "+name);
             if(booleanVariables==null) booleanVariables=new java.util.HashMap<>();booleanVariables.put(name,value);return null;
         }
         @Override public float getVariableFloat(String name,float fallback){
@@ -202,10 +203,12 @@ public final class CartTransitionTest {
             nativePass(()->world.render(0,0,0,null,false,false,null),"sprite pass stayed hidden after cleanup");
             nativePass(()->world.renderObjectPicker(0,0,0,null),"picker stayed hidden after cleanup");
             outlinePass.run();
-            for(var kind:new String[]{"SaucedCarts.ShoppingCart","SaucedWheelbarrow.WheelbarrowMetal","Base.Hammer"}) {
+            for(var kind:new String[]{"SaucedWheelbarrow.Unknown","Base.Hammer"}) {
                 cart.kind=kind;
                 nativePass(outlinePass,"native outline changed for "+kind);
             }
+            cart.kind="SaucedCarts.ShoppingCart";outlinePass.run();
+            cart.kind="SaucedWheelbarrow.WheelbarrowMetal";outlinePass.run();
             cart.kind="SaucedWheelbarrow.WheelbarrowWood";core.setOption3DGroundItem(false);
             nativePass(outlinePass,"2D wooden cart lost its native outline");
             cart.world=null;
@@ -235,7 +238,11 @@ public final class CartTransitionTest {
             player.secondary=cart;cart.container=allocate(ItemContainer.class);
             check(!CartTransition.beginDrop(player,cart,11,20,2,0),"foreign inventory accepted");
             cart.container=player.inventory;cart.kind="SaucedWheelbarrow.WheelbarrowMetal";
-            check(!CartTransition.beginDrop(player,cart,11,20,2,0),"other cart type accepted");
+            check(CartTransition.beginDrop(player,cart,11,20,2,0),"metal owned placement refused");
+            CartTransition.endDrop();cart.kind="SaucedCarts.ShoppingCart";
+            check(CartTransition.beginDrop(player,cart,11,20,2,0),"shopping cart owned placement refused");
+            CartTransition.endDrop();cart.kind="Other.Cart";
+            check(!CartTransition.beginDrop(player,cart,11,20,2,0),"unknown cart accepted");
             cart.kind="SaucedWheelbarrow.WheelbarrowWood";cart.world=allocate(IsoWorldInventoryObject.class);
             check(!CartTransition.beginDrop(player,cart,11,20,2,0),"already-world cart accepted");
             cart.world=null;
@@ -378,19 +385,22 @@ public final class CartTransitionTest {
         track.currentClip=new zombie.core.skinnedmodel.animation.AnimationClip(2,java.util.List.of(),"ClockFixture",false);
         track.animLayer=layer;track.trackTimeToVariable="ToolkitWoodCartClipTime";track.looping=false;track.setSpeedDelta(0);
         var tick=track.getClass().getDeclaredMethod("TickCurrentTime",float.class);tick.setAccessible(true);
-        for(boolean pickup:new boolean[]{true,false}) {
+        for(boolean metal:new boolean[]{false,true}) for(boolean pickup:new boolean[]{true,false}) {
             var fixture=recovery(pickup);var player=fixture.player;
             try {
                 check(!(Boolean)value(state(player),"authored"),"clip pilot enabled without actor opt-in");
                 check(!player.variables.containsKey("ToolkitWoodCartClipTime") && player.booleanVariables==null,
                     "default presentation published pilot animation variables");
                 CartTransition.end(player);player.clipPilot=true;
+                fixture.cart.kind="SaucedWheelbarrow.Wheelbarrow"+(metal?"Metal":"Wood");
+                fixture.cart.model="Wheelbarrow"+(metal?"Metal":"Wood");
                 character.set(layer,player);track.reverse=!pickup;
                 for(float progress:new float[]{-.1f,0,.25f,.75f,1,1.1f}) {
                     check(CartTransition.update(player,fixture.cart,pickup,progress),"authored clock update refused");
                     float clamped=Math.max(0,Math.min(1,progress));
                     close(player.variables.get("ToolkitWoodCartClipTime"),clamped,"clip clock did not clamp job delta");
                     check(player.booleanVariables.get("ToolkitWoodCartClipPickup")==pickup,"clip direction changed");
+                    check(player.booleanVariables.get("ToolkitMetalCartClip")==metal,"wrong model selected for authored body clip");
                     invoke(tick,track,.2f);
                     close(track.getCurrentTimeValue(),2*clamped,"native clock ignored normalized progress at zero speed");
                     close(track.getCurrentTrackTime(),2*(pickup?clamped:1-clamped),"native reverse sampled wrong clip time");
@@ -685,14 +695,14 @@ public final class CartTransitionTest {
         tick.setAccessible(true);
         var find=zombie.core.skinnedmodel.advancedanimation.AnimLayer.class.getDeclaredMethod("findLiveNode",
             zombie.core.skinnedmodel.advancedanimation.AnimNode.class);find.setAccessible(true);
-        for(boolean pickup:new boolean[]{true,false}) {
+        for(String prefix:new String[]{"ToolkitWoodCartClip","ToolkitMetalCartClip"}) for(boolean pickup:new boolean[]{true,false}) {
             var player=allocate(Player.class);player.setVariable("ToolkitWoodCartClipTime",.55f);
             var layer=allocate(zombie.core.skinnedmodel.advancedanimation.AnimLayer.class);
             var character=layer.getClass().getDeclaredField("character");character.setAccessible(true);character.set(layer,player);
             var nodes=new java.util.ArrayList<zombie.core.skinnedmodel.advancedanimation.LiveAnimNode>();
             var nodesField=layer.getClass().getDeclaredField("liveAnimNodes");nodesField.setAccessible(true);nodesField.set(layer,nodes);
             var source=new zombie.core.skinnedmodel.advancedanimation.AnimNode();
-            source.name=pickup?"ToolkitWoodCartClipPickup":"ToolkitWoodCartClipSetdown";
+            source.name=prefix+(pickup?"Pickup":"Setdown");
             source.parentState=new zombie.core.skinnedmodel.advancedanimation.AnimState();source.parentState.name="actions";
             var unrelatedSource=new zombie.core.skinnedmodel.advancedanimation.AnimNode();
             unrelatedSource.name="UnrelatedAction";unrelatedSource.parentState=source.parentState;
@@ -883,6 +893,26 @@ public final class CartTransitionTest {
             close(offset.z,-.06f,"lowering rolls forward to leave feet behind the handle ends at every heading");
         }
         check(CartTransition.dropPlacement(new Matrix4f().m00(Float.NaN),model,0,0,0,0,1)==null,"invalid held transform accepted");
+    }
+    private static void metalDropGeometry() {
+        var profile=CartWheelbarrow.METAL;
+        // Native world scale paired with the calibrated .85 hand attachment.
+        var model=new Matrix4f().scale(.0091743395f/.85f);
+        check(CartWorldSupport.apply("SaucedWheelbarrow.WheelbarrowMetal",model,.85f),"metal world support refused");
+        for(float bank:new float[]{(float)Math.toRadians(-7),0,(float)Math.toRadians(7)})
+            for(float gait:new float[]{0,-.24f}) for(float angle:new float[]{0,.3f,1.57f,3.14f,4.7f,6.1f}) {
+            var held=profile.held(new Matrix4f());
+            check(CartGrounding.alignWheelbarrow(held,profile,bank,Math.abs(bank),gait,new Matrix4f()),"metal held pose refused");
+            var pose=CartTransition.dropPlacement(held,model,10.25f,20.75f,2,angle,1,profile.pickupStanceBack(),profile);
+            check(pose!=null && pose.xRotation()==0 && pose.yRotation()==0,"metal drop lost native planar placement");
+            var ground=new Matrix4f();
+            check(CartTransitionMath.worldToActor(pose,model,10.25f,20.75f,2,angle,ground),"metal landing did not project");
+            var offset=ground.transformPosition(profile.center(new org.joml.Vector3f()))
+                .sub(held.transformPosition(profile.center(new org.joml.Vector3f())));
+            close(offset.x,0,"metal drop moved the axle sideways");
+            close(offset.z,.03f,"metal drop must match the deeper pickup stance at every heading");
+            close(pose.worldScale(),.85f,"metal drop changed native hand/world scale");
+        }
     }
     private static void recoveryModelScope() throws Exception {
         var manager=allocate(zombie.core.skinnedmodel.ModelManager.class);
@@ -1130,7 +1160,7 @@ public final class CartTransitionTest {
         var cart=allocate(Cart.class);cart.kind="SaucedWheelbarrow.WheelbarrowWood";
         check(Boolean.FALSE.equals(atlas.invoke(null,cart,null,0f,0f,0f,0f,0f,false)),
             "wooden cart atlas must defer to the same renderer as FBO without accessing a scene");
-        bridge();geometry();groundPasses();recoveryLifecycle();authoredClipDefault();authoredClockAndRecovery();authoredRestartHandoff();authoredRestartRefusals();authoredRestartRecancellation();authoredPendingHandoff();authoredPendingDeadline();authoredPendingRefusals();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();collisionInterruptions();recoveryLeaseIdentity();recoveryModelScope();remoteNativeHandModels();remotePickupModelBind();
+        bridge();geometry();metalDropGeometry();groundPasses();recoveryLifecycle();authoredClipDefault();authoredClockAndRecovery();authoredRestartHandoff();authoredRestartRefusals();authoredRestartRecancellation();authoredPendingHandoff();authoredPendingDeadline();authoredPendingRefusals();authoredNodeRetirement();recoveryRefusals();recoveryInterruptions();collisionInterruptions();recoveryLeaseIdentity();recoveryModelScope();remoteNativeHandModels();remotePickupModelBind();
         System.out.println("CART_TRANSITION_PASS (scoped exact-owner validation, native yaw geometry, model/depth/sprite/picker/outline suppression and cleanup)");
     }
 }

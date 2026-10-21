@@ -93,7 +93,7 @@ public final class CartLegPace {
     }
 
     static String walkingReference(String cartType, boolean fast, float stepY) {
-        return !fast && stepY < 0 && "SaucedWheelbarrow.WheelbarrowWood".equals(cartType)
+        return !fast && stepY < 0 && CartWheelbarrow.forType(cartType)!=null
             ? "Bob_WalkBwdNoAim1Hand" : "Bob_Walk";
     }
 
@@ -167,7 +167,7 @@ public final class CartLegPace {
     static String pivotName(String cartType, boolean run, boolean sprint) {
         if (sprint) return "ToolkitCartPivotSprint";
         if (run) return "ToolkitCartPivotRun";
-        return "SaucedWheelbarrow.WheelbarrowWood".equals(cartType)
+        return CartWheelbarrow.forType(cartType)!=null
             ? "ToolkitWoodCartPivotWalk" : "ToolkitCartPivotWalk";
     }
 

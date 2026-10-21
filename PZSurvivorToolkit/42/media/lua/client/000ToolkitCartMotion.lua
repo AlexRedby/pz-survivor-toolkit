@@ -31,11 +31,15 @@ local states = setmetatable({}, {__mode = "k"})
 local blocked = setmetatable({}, {__mode = "k"})
 local visuals = setmetatable({}, {__mode = "k"})
 
+local function wheelbarrow(item)
+    local kind = item and item:getFullType()
+    return kind == "SaucedWheelbarrow.WheelbarrowWood" or kind == "SaucedWheelbarrow.WheelbarrowMetal"
+end
+
 local function setVisual(player, enabled, cart)
     player:setVariable("ToolkitCartMotion", enabled)
     -- Derive this locally for owners and observers; it is not another network variable.
-    player:setVariable("ToolkitCartWoodPivot", enabled and cart ~= nil
-        and cart:getFullType() == "SaucedWheelbarrow.WheelbarrowWood")
+    player:setVariable("ToolkitCartWoodPivot", enabled and wheelbarrow(cart))
     visuals[player] = enabled and true or nil
 end
 
@@ -66,7 +70,7 @@ local function heldCart(player, finishingAction, stopped)
     local actions = player:getCharacterActions()
     -- Native complete/stop callbacks run before removing their exact action from the stack.
     if actions:size() > 0 and not (actions:size() == 1 and player:isLocalPlayer()
-        and item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood" and nativePathAction(actions:get(0)))
+        and wheelbarrow(item) and nativePathAction(actions:get(0)))
         and not (finishingAction and actions:size() == 1
         and actions:get(0) == finishingAction and (finishingAction:finished()
             or stopped == true and not player:getVariableBoolean("IsPerformingAnAction"))) then return end

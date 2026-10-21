@@ -83,7 +83,8 @@ local paceChanged=false
 local selectionWorld,selectionOn
 local actionSerial,restartCount,cleanupAt=0,0,nil
 local hotkeyAction,hotkeyStarted,hotkeyCode,hotkeyReleaseAt
-local kind='SaucedWheelbarrow.WheelbarrowWood'
+local kind=config.cartType or 'SaucedWheelbarrow.WheelbarrowWood'
+assert(kind=='SaucedCarts.ShoppingCart' or kind=='SaucedWheelbarrow.WheelbarrowWood' or kind=='SaucedWheelbarrow.WheelbarrowMetal','Unsupported calibrated cart type')
 local function encode(record)
  local out={}
  for key,value in pairs(record) do
@@ -134,9 +135,9 @@ local function snapshot(now)
  assert(math.abs(weight-initialCargo)<.001 and ids==initialCargoIDs,'Cargo changed during interaction')
  assert(CartTestArea.contains(p:getX(),p:getY(),p:getZ()) and math.abs(p:getX()-CartTestArea.x)<(config.fastInterruptions and 6 or 4) and math.abs(p:getY()-CartTestArea.y)<(config.fastInterruptions and 6 or 4),'Interaction left checked local pad')
  local status=toolkitWoodCartStatus and toolkitWoodCartStatus(p) or {}
- return {case=cases[phase].name,start=since,wall=now,elapsed=now-since,id=item:getID(),stage=stage,female=p:isFemale(),driveCommand=driveStage,
+ return {case=cases[phase].name,start=since,wall=now,elapsed=now-since,id=item:getID(),stage=stage,cartType=item:getFullType(),female=p:isFemale(),driveCommand=driveStage,
   cycle=cycle,driveStage=driveStage,gaitCommand=gaitStage,sprintSkill=p:getPerkLevel(Perks.Sprinting),run=p:isRunning(),sprint=p:isSprinting(),actionSerial=actionSerial,restartCount=restartCount,heldID=handID(p:getPrimaryHandItem()),secondaryID=handID(p:getSecondaryHandItem()),
-  worldID=world and world:getItem():getID() or -1,worldCount=count,woodWorldCount=woodCount,inventoryCount=inventoryCount(),
+  worldID=world and world:getItem():getID() or -1,worldCount=count,cartWorldCount=woodCount,woodWorldCount=kind=='SaucedWheelbarrow.WheelbarrowWood' and woodCount or nil,inventoryCount=inventoryCount(),
   actionType=action and action.Type or '',progress=action and action:getJobDelta() or 0,condition=item:getCondition(),
   nativeActions=p:getCharacterActions():size(),luaActions=#queue.queue,
   PerformingAction=p:getVariableString('PerformingAction') or '',
@@ -343,7 +344,7 @@ local function tick()
  end
  local row=snapshot(now)
  if now-sampleSince>=25 then sampleSince=now;print('[WOOD_INTERACTION_SAMPLE] '..encode(row)) end
- assert(row.worldCount<=1 and row.woodWorldCount==row.worldCount and row.inventoryCount<=1 and row.worldCount+row.inventoryCount==1,'Cart duplicated or disappeared')
+ assert(row.worldCount<=1 and row.cartWorldCount==row.worldCount and row.inventoryCount<=1 and row.worldCount+row.inventoryCount==1,'Cart duplicated or disappeared')
  if config.rapidRepeats then
   rapidTick(now,elapsed,row,c)
   if elapsed>=20000 then
@@ -417,7 +418,7 @@ local function tick()
   -- The ground context menu binds DropNamedItem to onUnEquip, with no drop reason.
   ISInventoryPaneContextMenu.onUnEquip({item},p:getPlayerNum())
   local action=assert(ISTimedActionQueue.getTimedActionQueue(p).queue[1],'World-menu drop was not queued')
-  assert(action.Type=='ToolkitWoodCartSetdown','Native wooden drop was not safely dispatched')
+  assert(action.Type=='ToolkitWoodCartSetdown','Native wheelbarrow drop was not safely dispatched')
   event('dropQueued',now)
  elseif stage=='drop' then
   assert(elapsed<(config.wheelCycle and 29000 or config.interruptions and 19000 or 14500),'Setdown timed out')

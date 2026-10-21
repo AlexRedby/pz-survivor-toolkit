@@ -18,7 +18,8 @@ Events.OnAIStateChange.Add(function(player, state)
     impacts[player] = true
     local cart, inventory = player:getPrimaryHandItem(), player:getInventory()
     if player:isDead() or not player:getCurrentSquare() or not cart
-        or cart:getFullType() ~= "SaucedWheelbarrow.WheelbarrowWood"
+        or (cart:getFullType() ~= "SaucedWheelbarrow.WheelbarrowWood"
+            and cart:getFullType() ~= "SaucedWheelbarrow.WheelbarrowMetal")
         or player:getSecondaryHandItem() ~= cart or cart:getWorldItem()
         or cart:getContainer() ~= inventory or not inventory:contains(cart) then return end
 

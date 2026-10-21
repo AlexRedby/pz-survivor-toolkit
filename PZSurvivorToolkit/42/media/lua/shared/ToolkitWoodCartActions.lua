@@ -11,8 +11,12 @@ ToolkitWoodCartSetdown.Type = "ToolkitWoodCartSetdown"
 ToolkitWoodCartDrop = ISDropWorldItemAction:derive("ToolkitWoodCartDrop")
 ToolkitWoodCartDrop.Type = "ToolkitWoodCartDrop"
 
+-- Keep the historical bridge/action names for native MP serialization.
 local function wooden(item)
-    return item and item:getFullType() == "SaucedWheelbarrow.WheelbarrowWood"
+    if not item then return false end
+    local fullType = item:getFullType()
+    return fullType == "SaucedCarts.ShoppingCart" or fullType == "SaucedWheelbarrow.WheelbarrowWood"
+        or fullType == "SaucedWheelbarrow.WheelbarrowMetal"
 end
 local function retire(self)
     self.toolkitPresentation = nil
@@ -58,7 +62,7 @@ local function start(self, pickup)
 end
 
 function ToolkitWoodCartPickup:getDuration()
-    return self.character:isTimedActionInstant() and 1 or 88
+    return self.character:isTimedActionInstant() and 1 or (self:findItem() and self:findItem():getFullType() == "SaucedCarts.ShoppingCart" and 50 or 88)
 end
 function ToolkitWoodCartPickup:start()
     start(self, true)
@@ -69,6 +73,9 @@ function ToolkitWoodCartPickup:waitToStart()
         local stance = toolkitWoodCartStance(self.character, world)
         if stance then
             self.character:faceLocationF(stance.faceX, stance.faceY)
+            if not stance.aligned and toolkitWoodCartFace then
+                stance.aligned = toolkitWoodCartFace(self.character, world)
+            end
             -- Native shouldBeTurning can still read the previous twist on the first face request.
             return not stance.aligned or self.character:shouldBeTurning()
         end
@@ -124,7 +131,7 @@ end
 
 local function setdown(class, base)
     function class:getDuration()
-        return self.character:isTimedActionInstant() and 1 or 88
+        return self.character:isTimedActionInstant() and 1 or (self.item:getFullType() == "SaucedCarts.ShoppingCart" and 50 or 88)
     end
     function class:start()
         if not isServer() and toolkitWoodCartDropPose then

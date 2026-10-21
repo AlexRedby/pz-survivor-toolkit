@@ -199,9 +199,9 @@ public final class CartMotionSync {
         player.setVariable("ToolkitCartBrakeSprint",(remote.pose.flags&4)!=0);
         // A stationary effort pose must not consume the locomotion native remote catch-up still needs.
         player.setVariable("ToolkitCartBrace",!catchup && (remote.pose.flags&8)!=0
-            && CartTransition.wooden(player.getPrimaryHandItem()));
+            && CartTransition.wheelbarrow(player.getPrimaryHandItem()));
         if(budget!=null) {
-            if(CartTransition.wooden(player.getPrimaryHandItem()) && (remote.pose.flags&2)==0 && budget.speed>=0)
+            if(CartTransition.wheelbarrow(player.getPrimaryHandItem()) && (remote.pose.flags&2)==0 && budget.speed>=0)
                 CartLegPace.applySpeed(player,speed,x,y);
             CartLegPace.apply(player,pace);
         }

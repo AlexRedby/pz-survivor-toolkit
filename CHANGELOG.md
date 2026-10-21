@@ -17,6 +17,13 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.187
+
+- **Changed:** Shopping-cart ground actions approach the push bar and use their own standing acquisition/release clip, preserving native cart and cargo ownership.
+- **Fixed:** Metal wheelbarrow setdown no longer briefly splays the feet before blending back into the normal idle stance.
+- **Changed:** Metal wheelbarrow pickup and put-down use a separate body clip matched to its grounded handles, with a closer approach between the shafts, planted feet and continuous hand contact.
+- **Changed:** Metal wheelbarrows now use the shared wheelbarrow pickup, put-down, cancellation/recovery and movement presentation, including native multiplayer ownership and observer animation.
+
 ### 0.1.186
 
 - Classify ordinary context-menu options once per rebuild instead of repeating callback discovery for defaults and layout snapshots. New rebuilds remain fresh; opaque mod options retain live classification.
@@ -854,6 +861,19 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.40
+
+- **Changed:** Shopping carts animate four tires independently and smoothly turn their front caster supports from rendered travel, preserving wheel angles across pickup and setdown without additional network messages. Tire shapes are corrected for the imported nonuniform model scale; the established steering and grip remain unchanged.
+- **Fixed:** Shopping-cart direct ground rendering compensates its native height offset and retains wheel orientation instead of using a cached atlas image.
+- **Changed:** Shopping-cart ground transitions retain their imported nonuniform mesh basis and native world scale, with centered handle placement and a separate standing pose profile.
+- **Fixed:** Shopping carts retain the same mesh size through ground/held transitions and rest on all four tires; the standing grip follows the native torso without scaling or tilting the body.
+- **Changed:** During metal wheelbarrow pickup and setdown, the hands rotate smoothly around the shafts as the handles rise or fall, reducing the low wrist bend while preserving palm contact and the held grip.
+- **Fixed:** Unheld metal wheelbarrows rest on the tire and both support feet. Pickup and put-down use the same corrected ground pose, and the character approaches farther between the handles. The held cart calibration is preserved. Small remaining facing turns finish before pickup; the metal clip acquires its grip once and keeps the cart within reach during immediate setdown retries.
+- **Changed:** Metal wheelbarrow ground actions select their own authored body clip and use a matching grounded reach in the procedural path. Both clip variants retire their native tracks on cancellation and repeat without resetting outgoing fade clocks.
+- **Fixed:** Metal wheelbarrow hands grip across the shafts and farther inside their ends, with model-specific palm depth and finger closure shared by pickup, held movement and setdown.
+- **Changed:** Ported the wooden wheelbarrow gait, turning, braking, reverse and stationary pivot presentation to the metal model, with its measured handle positions, wheel size, axle and collision envelope. Both models share transition logic while retaining their own grip and elbow calibration.
+- **Fixed:** Metal wheelbarrow grip remains reachable during braking by using bounded clavicle rotation without stretching the arms. Wheel rotation, floor contact and held/world handoffs use the matching model geometry.
 
 ### 0.1.39
 

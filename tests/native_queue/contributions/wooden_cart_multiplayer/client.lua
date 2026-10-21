@@ -13,7 +13,7 @@ local wallPositioned,wallCleanupSeen,lastTraffic=false,false,0
 local variants={['shopping-cart']='SaucedCarts.ShoppingCart',['wooden-wheelbarrow']='SaucedWheelbarrow.WheelbarrowWood',['metal-wheelbarrow']='SaucedWheelbarrow.WheelbarrowMetal'}
 local variant=config.options and config.options.cart_variant or 'wooden-wheelbarrow'
 local cartType=assert(variants[variant],'Unknown MP cart_variant')
-assert(not (config.options and config.options.cart_actions) or variant=='wooden-wheelbarrow','cart_actions requires wooden-wheelbarrow')
+assert(not (config.options and config.options.cart_actions) or (variant=='wooden-wheelbarrow' or variant=='metal-wheelbarrow'),'cart_actions requires a calibrated wheelbarrow')
 local actions=config.options and config.options.cart_actions and require 'CartMPActions' or nil
 local option=assert(PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'));option:setValue(true)
 local r=assert(getFileReader('smoke-user.txt',false));local user=r:readLine();r:close()

@@ -22,6 +22,19 @@ public final class ClearanceProbe {
     private static long lastTail;
     private static final Field WORLD_TRANSFORM=field("transform"), WORLD_ALPHA=field("alpha");
     private static long last;
+    private static Path directory;
+    private static final java.util.Set<String> dumpedModels=new java.util.HashSet<>();
+    private static boolean supported(String model) {
+        return "WheelbarrowWood".equals(model) || "WheelbarrowMetal".equals(model)
+            || model!=null && java.util.Set.of("ShoppingCartModel","ShoppingCartPartialModel","ShoppingCartFullModel",
+                "ShoppingCartFlashlightModel","ShoppingCartFlashlightPartialModel","ShoppingCartFlashlightFullModel").contains(model);
+    }
+    private static boolean supported(InventoryItem item) {
+        return item!=null && ("SaucedWheelbarrow.WheelbarrowWood".equals(item.getFullType())
+            || "SaucedWheelbarrow.WheelbarrowMetal".equals(item.getFullType())
+            || "SaucedCarts.ShoppingCart".equals(item.getFullType()));
+    }
+    private static final ThreadLocal<InventoryItem> atlasItem=new ThreadLocal<>();
     private static boolean installed;
     private static Field field(String name) {
         try {var field=ItemModelRenderer.class.getDeclaredField(name);field.setAccessible(true);return field;}
@@ -53,11 +66,15 @@ public final class ClearanceProbe {
                 .append(",\"female\":").append(slot.character.isFemale())
                 .append(",\"impact\":").append(impact)
                 .append(",\"slotX\":").append(slot.x).append(",\"slotY\":").append(slot.y)
-                .append(",\"slotZ\":").append(slot.z).append(",\"slotAngle\":").append(slot.animPlayerAngle);
+                .append(",\"slotZ\":").append(slot.z).append(",\"slotAngle\":").append(slot.animPlayerAngle)
+                .append(",\"isTurning\":").append(slot.character.isTurning())
+                .append(",\"shouldBeTurning\":").append(slot.character.shouldBeTurning())
+                .append(",\"maxTwistAngle\":").append(body.modelInstance.animPlayer.getMaxTwistAngle())
+                .append(",\"targetAngle\":").append(body.modelInstance.animPlayer.getTargetAngle());
             for(String name:new String[]{"PerformingAction","Weapon","RightHandMask","LeftHandMask"})
                 row.append(',').append(quoted(name)).append(':').append(quoted(slot.character.getVariableString(name)));
             long carts=slot.modelData.stream().filter(d->d.modelInstance!=null
-                && d.modelInstance.modelScript!=null && "WheelbarrowWood".equals(d.modelInstance.modelScript.getName())).count();
+                && d.modelInstance.modelScript!=null && supported(d.modelInstance.modelScript.getName())).count();
             row.append(",\"cartModel\":").append(carts>0).append(",\"cartModelCount\":").append(carts)
                 .append(",\"bones\":{");
             boolean comma=false;
@@ -105,11 +122,12 @@ public final class ClearanceProbe {
         for(var cart:slot.modelData) {
             var instance=cart.modelInstance;
             if(instance==null || instance.parent==null || instance.modelScript==null
-                || !"WheelbarrowWood".equals(instance.modelScript.getName()))continue;
+                || !supported(instance.modelScript.getName()))continue;
             for(var body:slot.modelData) {
                 if(body.modelInstance!=instance.parent || body.matrixPalette==null
                     || !(body.modelInstance.model.tag instanceof SkinningData skin))continue;
                 var row=new StringBuilder(8192).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
+                    .append(",\"model\":").append(quoted(instance.modelScript.getName()))
                     .append(",\"female\":").append(slot.character.isFemale())
                     .append(",\"slotX\":").append(slot.x).append(",\"slotY\":").append(slot.y)
                     .append(",\"slotAngle\":").append(slot.animPlayerAngle).append(",\"cart\":");
@@ -138,7 +156,7 @@ public final class ClearanceProbe {
     public static synchronized void finishWorld(ItemModelRenderer renderer,InventoryItem item,
         ItemModelRenderer.RenderStatus status) throws Exception {
         if(worldOutput==null || item==null || item.getWorldItem()==null
-            || !"SaucedWheelbarrow.WheelbarrowWood".equals(item.getFullType())
+            || !supported(item)
             ) return;
         if(status==ItemModelRenderer.RenderStatus.NoModel
             && net.alexredby.pztoolkitjavapatches.CartTransition.hidden(item)) {
@@ -153,6 +171,7 @@ public final class ClearanceProbe {
             throw new IllegalStateException("Nonfinite world cart render pose");
         var row=new StringBuilder(768).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
             .append(",\"itemId\":").append(item.getID())
+            .append(",\"cartType\":").append(quoted(item.getFullType()))
             .append(",\"renderStatus\":\"Ready\",\"source\":\"ItemModelRenderer.renderMain-exit\",\"matrixOrder\":\"column-major\"")
             .append(",\"x\":").append(renderer.x).append(",\"y\":").append(renderer.y)
             .append(",\"z\":").append(renderer.z).append(",\"angle\":[")
@@ -168,6 +187,66 @@ public final class ClearanceProbe {
             @Advice.Return ItemModelRenderer.RenderStatus status,@Advice.Thrown Throwable thrown) {
             try{ClearanceProbe.finishWorld(renderer,item,thrown==null?status:null);}
             catch(Throwable error){System.err.println("[CLEARANCE_PROBE] WORLD ERROR "+error);}
+        }
+    }
+
+    // Atlas drawing bypasses ItemModelRenderer.renderMain entirely. Keep the native item
+    // on this call stack and read the texture's own cached ItemParams at its real draw.
+    // Never reconstruct this transform from CartTransition/model scripts under test.
+    public static InventoryItem beginAtlas(InventoryItem item) {
+        var previous=atlasItem.get();
+        if(worldOutput!=null && supported(item) && item.getWorldItem()!=null)atlasItem.set(item);
+        else atlasItem.remove();
+        return previous;
+    }
+    public static void endAtlas(InventoryItem previous) {
+        if(previous==null)atlasItem.remove();else atlasItem.set(previous);
+    }
+    private static Object atlasField(Object object,String name) throws ReflectiveOperationException {
+        var field=object.getClass().getDeclaredField(name);field.setAccessible(true);return field.get(object);
+    }
+    public static synchronized void atlasDraw(WorldItemAtlas.ItemTexture texture,float x,float y,float z,
+                                               float screenX,float screenY,float alpha) throws Exception {
+        var item=atlasItem.get();
+        if(worldOutput==null || item==null || item.getWorldItem()==null)return;
+        if(item.atlasTexture!=texture)throw new IllegalStateException("Atlas draw item/texture identity mismatch");
+        // A submitted texture can still be loading. Its native return gate must be ready.
+        if(!texture.isRenderMainOK())return;
+        var params=atlasField(texture,"itemParams");
+        var transform=new Matrix4f((Matrix4f)atlasField(params,"transform"));
+        var angle=new org.joml.Vector3f((org.joml.Vector3f)atlasField(params,"angle"));
+        var model=(Model)atlasField(params,"model");
+        if(model==null || model.name==null || !transform.isFinite() || Math.abs(transform.determinant())<1e-12f
+            || !angle.isFinite() || !Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(z)
+            || !Float.isFinite(screenX) || !Float.isFinite(screenY) || !Float.isFinite(alpha))
+            throw new IllegalStateException("Missing or nonfinite native atlas cart draw");
+        var row=new StringBuilder(1024).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
+            .append(",\"itemId\":").append(item.getID()).append(",\"cartType\":").append(quoted(item.getFullType()))
+            .append(",\"renderStatus\":\"Ready\",\"source\":\"WorldItemAtlas.ItemTexture.render-exit\"")
+            .append(",\"transformSource\":\"WorldItemAtlas.ItemTexture.itemParams\",\"placementSource\":\"ItemTexture.render-arguments\"")
+            .append(",\"matrixOrder\":\"column-major\",\"nativeModel\":").append(quoted(model.name))
+            .append(",\"x\":").append(x).append(",\"y\":").append(y).append(",\"z\":").append(z)
+            .append(",\"screenX\":").append(screenX).append(",\"screenY\":").append(screenY)
+            .append(",\"angle\":[").append(angle.x).append(',').append(angle.y).append(',').append(angle.z)
+            .append("],\"transform\":");matrix(row,transform);
+        row.append(",\"alpha\":").append(alpha).append("}\n");worldOutput.write(row.toString());worldOutput.flush();
+    }
+    public static class AtlasContextCapture {
+        @Advice.OnMethodEnter(suppress=Throwable.class)
+        public static InventoryItem enter(@Advice.Argument(0) InventoryItem item) {
+            return ClearanceProbe.beginAtlas(item);
+        }
+        @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
+        public static void exit(@Advice.Enter InventoryItem previous) {ClearanceProbe.endAtlas(previous);}
+    }
+    public static class AtlasDrawCapture {
+        @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
+        public static void exit(@Advice.This WorldItemAtlas.ItemTexture texture,
+            @Advice.Argument(0) float x,@Advice.Argument(1) float y,@Advice.Argument(2) float z,
+            @Advice.Argument(3) float screenX,@Advice.Argument(4) float screenY,@Advice.Argument(8) float alpha,
+            @Advice.Thrown Throwable thrown) {
+            try{if(thrown==null)ClearanceProbe.atlasDraw(texture,x,y,z,screenX,screenY,alpha);}
+            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] ATLAS ERROR "+error);}
         }
     }
 
@@ -217,7 +296,7 @@ public final class ClearanceProbe {
         lifecycleOutput.write(row.toString());lifecycleOutput.flush();
         if("stop".equals(event) && thrown==null) {
             InventoryItem item=primary!=null && primary==secondary
-                && "SaucedWheelbarrow.WheelbarrowWood".equals(primary.getFullType())?primary:null;
+                && supported(primary)?primary:null;
             if(item==null && "ToolkitWoodCartPickup".equals(action.getMetaType())) {
                 synchronized(net.alexredby.pztoolkitjavapatches.CartTransition.class) {
                     var states=net.alexredby.pztoolkitjavapatches.CartTransition.class.getDeclaredField("states");states.setAccessible(true);
@@ -239,7 +318,7 @@ public final class ClearanceProbe {
         String type=action.getMetaType();
         if(!"ToolkitWoodCartPickup".equals(type) && !("ISWalkToTimedActionF".equals(type)
             && action.getTable().rawget("toolkitWoodCartItem") instanceof InventoryItem item
-            && "SaucedWheelbarrow.WheelbarrowWood".equals(item.getFullType())))return;
+            && supported(item)))return;
         var path=actor.getPathFindBehavior2();var deferred=actor.getDeferredMovement(new zombie.iso.Vector2());
         approachOutput.write("{\"wallTimeMillis\":"+System.currentTimeMillis()+",\"event\":"+quoted(event)
             +",\"result\":"+quoted(result)+",\"action\":"+quoted(type)+",\"started\":"+action.isStarted()
@@ -277,7 +356,7 @@ public final class ClearanceProbe {
     public static synchronized void outline(zombie.iso.IsoObject object,String path,int textures,boolean ready) throws Exception {
         if(outlineOutput==null || !(object instanceof zombie.iso.objects.IsoWorldInventoryObject world))return;
         var item=world.getItem();
-        if(item==null || !"SaucedWheelbarrow.WheelbarrowWood".equals(item.getFullType()))return;
+        if(item==null || !supported(item))return;
         outlineOutput.write("{\"wallTimeMillis\":"+System.currentTimeMillis()+",\"itemId\":"+item.getID()
             +",\"path\":"+quoted(path)+",\"textures\":"+textures+",\"ready\":"+ready+"}\n");
         outlineOutput.flush();
@@ -306,6 +385,48 @@ public final class ClearanceProbe {
         }
     }
 
+    public static synchronized void mesh(ModelInstanceRenderData data,String source) throws Exception {
+        var instance=data==null?null:data.modelInstance;
+        if(output==null || directory==null || instance==null || instance.modelScript==null
+            || !supported(instance.modelScript.getName()) || "WheelbarrowWood".equals(instance.modelScript.getName())
+            || dumpedModels.contains(instance.modelScript.getName()))return;
+        String model=instance.modelScript.getName();
+        var vb=instance.model.mesh.vb;
+        var field=VertexBufferObject.class.getDeclaredField("handle");field.setAccessible(true);
+        var handle=(VertexBufferObject.Vbo)field.get(vb);
+        var formatField=VertexBufferObject.class.getDeclaredField("vertexFormat");formatField.setAccessible(true);
+        int stride=((VertexBufferObject.VertexFormat)formatField.get(vb)).getStride();
+        if(stride!=32)throw new IllegalStateException("Unexpected static cart vertex format: "+stride);
+        int old=org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER_BINDING);
+        try {
+            org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER,handle.vboId);
+            int bytes=org.lwjgl.opengl.GL15.glGetBufferParameteri(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER,org.lwjgl.opengl.GL15.GL_BUFFER_SIZE);
+            if(bytes<=0 || bytes%stride!=0)throw new IllegalStateException("Unexpected static cart vertex buffer stride/size");
+            var buffer=org.lwjgl.BufferUtils.createByteBuffer(bytes);
+            org.lwjgl.opengl.GL15.glGetBufferSubData(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER,0,buffer);
+            byte[] raw=new byte[bytes];buffer.get(raw);
+            Files.write(directory.resolve(model+".bin"),raw,StandardOpenOption.CREATE_NEW);
+            String hash=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(raw));
+            Files.writeString(directory.resolve("cart-mesh-"+model+".json"),"{\"model\":"+quoted(model)+",\"source\":"+quoted(source)
+                +",\"bytes\":"+bytes+",\"stride\":"+stride+",\"indices\":"+handle.numElements+",\"sha256\":"+quoted(hash)+"}\n",StandardOpenOption.CREATE_NEW);
+            dumpedModels.add(model);
+        } finally {org.lwjgl.opengl.GL15.glBindBuffer(org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER,old);}
+    }
+    public static class MeshCapture {
+        @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
+        public static void exit(@Advice.This ModelInstanceRenderData data,@Advice.Thrown Throwable thrown) {
+            try{if(thrown==null)ClearanceProbe.mesh(data,"ModelInstanceRenderData.RenderCharacter-exit");}
+            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] ERROR cart mesh "+error);}
+        }
+    }
+    public static class SplitMeshCapture {
+        @Advice.OnMethodExit(suppress=Throwable.class)
+        public static void exit(@Advice.Argument(2) ModelInstanceRenderData data,@Advice.Return boolean rendered) {
+            try{if(rendered)ClearanceProbe.mesh(data,"CartWheelSpin.render-exit");}
+            catch(Throwable error){System.err.println("[CLEARANCE_PROBE] ERROR cart mesh "+error);}
+        }
+    }
+
     private static void closeOutputs() throws Exception {
         var body=output;var world=worldOutput;var tails=tailOutput;var lifecycle=lifecycleOutput;var outlines=outlineOutput;var approaches=approachOutput;
         output=null;worldOutput=null;tailOutput=null;lifecycleOutput=null;outlineOutput=null;approachOutput=null;actionIds.clear();stoppedCarts.clear();nextActionId=0;
@@ -323,7 +444,7 @@ public final class ClearanceProbe {
         closeOutputs();
         if("stop".equals(args)){System.out.println("[CLEARANCE_PROBE] stopped");return;}
         if(args==null || args.isBlank() || !Path.of(args).isAbsolute())throw new IllegalArgumentException("Agent args: absolute output directory, or stop");
-        Path directory=Path.of(args);
+        directory=Path.of(args);dumpedModels.clear();
         if(!Files.isDirectory(directory))throw new IllegalArgumentException("Output directory must exist");
         Path file=directory.resolve("body-clearance.jsonl");
         Path worldFile=directory.resolve("world-cart-poses.jsonl");
@@ -344,6 +465,10 @@ public final class ClearanceProbe {
                 .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
                 .type(named("net.alexredby.pztoolkitjavapatches.CartGrounding")
                     .or(named("zombie.core.skinnedmodel.model.ItemModelRenderer"))
+                    .or(named("zombie.core.skinnedmodel.model.WorldItemModelDrawer"))
+                    .or(named("zombie.core.skinnedmodel.model.WorldItemAtlas$ItemTexture"))
+                    .or(named("zombie.core.skinnedmodel.model.ModelInstanceRenderData"))
+                    .or(named("net.alexredby.pztoolkitjavapatches.CartWheelSpin"))
                     .or(named("zombie.characters.CharacterTimedActions.LuaTimedActionNew"))
                     .or(named("zombie.pathfind.PathFindBehavior2"))
                     .or(named("zombie.iso.IsoMovingObject"))
@@ -352,6 +477,10 @@ public final class ClearanceProbe {
                     .or(named("zombie.iso.fboRenderChunk.FBORenderObjectOutline")))
                 .transform((b,d,l,m,p)->d.getName().equals("net.alexredby.pztoolkitjavapatches.CartGrounding")
                     ?b.visit(Advice.to(Capture.class).on(named("render")))
+                    :d.getName().equals("zombie.core.skinnedmodel.model.ModelInstanceRenderData")
+                    ?b.visit(Advice.to(MeshCapture.class).on(named("RenderCharacter")))
+                    :d.getName().equals("net.alexredby.pztoolkitjavapatches.CartWheelSpin")
+                    ?b.visit(Advice.to(SplitMeshCapture.class).on(named("render")))
                     :d.getName().equals("zombie.pathfind.PathFindBehavior2")
                     ?b.visit(Advice.to(ApproachPathCapture.class).on(named("update").and(takesArguments(float.class))))
                     :d.getName().equals("zombie.iso.IsoMovingObject")
@@ -365,6 +494,10 @@ public final class ClearanceProbe {
                         .visit(Advice.to(OutlineModelCapture.class).on(named("initWorldInventoryObject")))
                     :d.getName().equals("zombie.iso.objects.IsoWorldInventoryObject")
                     ?b.visit(Advice.to(WorldSuppressedCapture.class).on(named("render")))
+                    :d.getName().equals("zombie.core.skinnedmodel.model.WorldItemModelDrawer")
+                    ?b.visit(Advice.to(AtlasContextCapture.class).on(named("renderAtlasTexture").and(takesArguments(8))))
+                    :d.getName().equals("zombie.core.skinnedmodel.model.WorldItemAtlas$ItemTexture")
+                    ?b.visit(Advice.to(AtlasDrawCapture.class).on(named("render").and(takesArguments(9))))
                     :b.visit(Advice.to(WorldRenderCapture.class).on(named("renderMain").and(takesArguments(9)))))
                 .installOn(instrumentation);installed=true;}
         } catch(Exception error) {

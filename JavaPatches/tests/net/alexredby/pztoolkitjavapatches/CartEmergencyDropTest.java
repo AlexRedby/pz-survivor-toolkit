@@ -29,9 +29,9 @@ public final class CartEmergencyDropTest {
         @Override public InventoryItem getSecondaryHandItem(){return secondary;}
     }
     private static final class Cart extends InventoryItem {
-        IsoWorldInventoryObject world;
+        IsoWorldInventoryObject world;String kind;
         Cart(){super(null,null,null,(String)null);}
-        @Override public String getFullType(){return "SaucedWheelbarrow.WheelbarrowWood";}
+        @Override public String getFullType(){return kind==null?"SaucedWheelbarrow.WheelbarrowWood":kind;}
         @Override public IsoWorldInventoryObject getWorldItem(){return world;}
     }
     private static final class World extends IsoWorldInventoryObject {
@@ -46,8 +46,8 @@ public final class CartEmergencyDropTest {
         @Override public void invalidateRenderChunkLevel(long flags){check(flags==256,"wrong invalidation");invalidations++;}
     }
     private record Fixture(Player player,Cart cart,World world,Object release){}
-    private static Fixture fixture()throws Exception{
-        var player=allocate(Player.class);var cart=allocate(Cart.class);var world=allocate(World.class);
+    private static Fixture fixture(String kind)throws Exception{
+        var player=allocate(Player.class);var cart=allocate(Cart.class);cart.kind=kind;var world=allocate(World.class);
         world.square=allocate(zombie.iso.IsoGridSquare.class);
         world.x=10;world.y=20;world.z=2;world.item=cart;cart.world=world;
         var source=new CartTransitionMath.Placement(10,20,2.05f,0,30,8,.85f);
@@ -55,28 +55,30 @@ public final class CartEmergencyDropTest {
         var type=Class.forName(CartEmergencyDrop.class.getName()+"$Release");
         var constructor=type.getDeclaredConstructor(IsoPlayer.class,CartTransitionMath.Placement.class,CartTransitionMath.Placement.class,Matrix4f.class,long.class);
         constructor.setAccessible(true);
-        Object release=constructor.newInstance(player,source,target,new Matrix4f().scale(90),System.nanoTime());
+        Object release=constructor.newInstance(player,source,target,new Matrix4f().scale(CartWheelbarrow.forType(kind)==CartWheelbarrow.METAL?.0091743395f/.85f:90),System.nanoTime());
         releases().put(cart,release);return new Fixture(player,cart,world,release);
     }
     private static void geometry(){
-        var model=new Matrix4f().rotateX((float)Math.PI/2).scale(90);
-        var axle=new Vector3f(CartWheelSpin.CENTER_X,CartWheelSpin.CENTER_Y,CartWheelSpin.CENTER_Z);
+        for(var profile:new CartWheelbarrow[]{CartWheelbarrow.WOOD,CartWheelbarrow.METAL}) {
+        var model=profile==CartWheelbarrow.WOOD?new Matrix4f().rotateX((float)Math.PI/2).scale(90):new Matrix4f().scale(.0091743395f/.85f);
+        var axle=profile.center(new Vector3f());
         for(float angle:new float[]{0,.3f,1.57f,3.14f,4.7f,6.1f})for(float bank:new float[]{-.122173f,0,.122173f})for(float shift:new float[]{0,-.24f}){
-            var held=new Matrix4f().translation(-.0060535767f,.097179376f,-.34652624f).rotateX((float)Math.toRadians(74.24)).scale(76.5f);
-            check(CartGrounding.alignWood(held,bank,shift,new Matrix4f()),"held alignment");
-            var landing=CartTransition.dropPlacement(held,model,10.25f,20.75f,2,angle,1,0);
+            var held=profile.held(new Matrix4f());
+            check(CartGrounding.alignWheelbarrow(held,profile,bank,Math.abs(bank),shift,new Matrix4f()),"held alignment");
+            var landing=CartTransition.dropPlacement(held,model,10.25f,20.75f,2,angle,1,0,profile);
             var ground=new Matrix4f();check(landing!=null && CartTransitionMath.worldToActor(landing,model,10.25f,20.75f,2,angle,ground),"emergency landing missing");
             var first=held.transformPosition(axle,new Vector3f());var last=ground.transformPosition(axle,new Vector3f());
             close(first.x,last.x,.00001,"landing axle lateral jump");close(first.z,last.z,.00001,"landing axle fore-aft jump");
-            var out=new Matrix4f();float low0=CartGrounding.woodenLowest(held),low1=CartGrounding.woodenLowest(ground);
+            var out=new Matrix4f();float low0=CartGrounding.wheelbarrowLowest(held,profile),low1=CartGrounding.wheelbarrowLowest(ground,profile);
             for(int i=0;i<=100;i++){
-                check(CartEmergencyDrop.settle(held,ground,i/100.0,out),"settle failed");
+                check(CartEmergencyDrop.settle(held,ground,i/100.0,out,profile),"settle failed");
                 var actual=out.transformPosition(axle,new Vector3f());
                 close(actual.x,first.x,.00002,"settle axle sideways drift");close(actual.z,first.z,.00002,"settle axle forward drift");
-                float low=CartGrounding.woodenLowest(out);check(low>=Math.min(low0,low1)-.00001 && low<=Math.max(low0,low1)+.00001,"wheel jumped vertically during settle");
+                float low=CartGrounding.wheelbarrowLowest(out,profile);check(low>=Math.min(low0,low1)-.00001 && low<=Math.max(low0,low1)+.00001,"wheel jumped vertically during settle");
             }
             check(out.equals(ground,.000001f),"endpoint differs from stock world transform");
-            CartEmergencyDrop.settle(held,ground,0,out);check(out.equals(held,.000001f),"initial pose discontinuous");
+            CartEmergencyDrop.settle(held,ground,0,out,profile);check(out.equals(held,.000001f),"initial pose discontinuous");
+        }
         }
         check(!CartEmergencyDrop.settle(new Matrix4f().m00(Float.NaN),new Matrix4f(),.5,new Matrix4f()),"invalid source accepted");
         check(!CartEmergencyDrop.settle(new Matrix4f(),new Matrix4f(),Double.NaN,new Matrix4f()),"invalid clock accepted");
@@ -86,8 +88,8 @@ public final class CartEmergencyDropTest {
         check(!CartEmergencyDrop.fresh(100,99,1,2,3,1,2,4),"wrong floor accepted");
         check(!CartEmergencyDrop.fresh(100,99,1,2,3,2,2,3),"teleport accepted");
     }
-    private static void ownershipAndPool()throws Exception{
-        var f=fixture();CartEmergencyDrop.finish(f.player,f.cart);
+    private static void ownershipAndPool(String kind)throws Exception{
+        var f=fixture(kind);CartEmergencyDrop.finish(f.player,f.cart);
         check(get(f.release,"world")==f.world && f.world.invalidations==1,"exact confirmed drop did not bind");
         long started=(Long)get(f.release,"started");CartEmergencyDrop.finish(f.player,f.cart);
         check((Long)get(f.release,"started")==started && f.world.invalidations==1,"duplicate completion restarted settle");
@@ -104,7 +106,7 @@ public final class CartEmergencyDropTest {
         CartEmergencyDrop.tick();check(!releases().containsKey(f.cart) && f.world.invalidations>=2,"final FBO invalidation or expiry missing");
         CartEmergencyDrop.render(renderer,f.cart);check(matrix.equals(new Matrix4f().translation(5,6,7),.000001f),"expiry did not restore renderer");
         for(int bad=0;bad<7;bad++){
-            f=fixture();if(bad==0)f.player.primary=f.cart;
+            f=fixture(kind);if(bad==0)f.player.primary=f.cart;
             if(bad==1)f.cart.setContainer(allocate(ItemContainer.class));
             if(bad==2)f.world.item=allocate(Cart.class);
             if(bad==3)f.world.x+=.1f;
@@ -113,12 +115,12 @@ public final class CartEmergencyDropTest {
             CartEmergencyDrop.finish(bad==4?allocate(Player.class):f.player,f.cart);
             check(!releases().containsKey(f.cart) && f.world.invalidations==0,"invalid authoritative handoff accepted "+bad);
         }
-        f=fixture();CartEmergencyDrop.finish(f.player,f.cart);f.cart.world=null;CartEmergencyDrop.tick();check(!releases().containsKey(f.cart),"pickup retained release");
-        f=fixture();CartEmergencyDrop.finish(f.player,f.cart);f.world.square=null;CartEmergencyDrop.tick();
+        f=fixture(kind);CartEmergencyDrop.finish(f.player,f.cart);f.cart.world=null;CartEmergencyDrop.tick();check(!releases().containsKey(f.cart),"pickup retained release");
+        f=fixture(kind);CartEmergencyDrop.finish(f.player,f.cart);f.world.square=null;CartEmergencyDrop.tick();
         check(!releases().containsKey(f.cart) && f.world.invalidations==1,"removed world retained release or invalidated missing square");
-        f=fixture();CartEmergencyDrop.finish(f.player,f.cart);CartEmergencyDrop.render(renderer,f.cart);
+        f=fixture(kind);CartEmergencyDrop.finish(f.player,f.cart);CartEmergencyDrop.render(renderer,f.cart);
         CartEmergencyDrop.reset();check(releases().isEmpty() && matrix.equals(new Matrix4f().translation(5,6,7),.000001f),"session reset retained world or renderer state");
-        f=fixture();CartEmergencyDrop.finish(f.player,f.cart);
+        f=fixture(kind);CartEmergencyDrop.finish(f.player,f.cart);
         var floor=new ItemContainer("floor",null,null);floor.AddItem(f.cart);
         check(f.cart.getContainer()==floor,"native floor projection did not assign container");
         // This assertion isolates ownership; native AddItem class loading is not the settle clock.
@@ -127,7 +129,7 @@ public final class CartEmergencyDropTest {
         CartEmergencyDrop.render(renderer,f.cart);check(!matrix.equals(new Matrix4f().translation(5,6,7),.000001f),"floor-projected cart stopped settling");
         CartEmergencyDrop.clear(renderer);f.cart.setContainer(new ItemContainer("inventory",null,null));
         CartEmergencyDrop.tick();check(!releases().containsKey(f.cart),"real inventory transfer retained release");
-        f=fixture();zombie.network.GameClient.client=true;
+        f=fixture(kind);zombie.network.GameClient.client=true;
         try{CartEmergencyDrop.finish(f.player,f.cart);check(!releases().containsKey(f.cart),"MP release was altered");}
         finally{zombie.network.GameClient.client=false;releases().clear();}
     }
@@ -137,7 +139,7 @@ public final class CartEmergencyDropTest {
         check(Main.CART_TRANSITION_SUPPORTED,"unsupported local source");
         // Class loading must finish before the real 250ms freshness window begins.
         zombie.network.GameClient.client=false;zombie.network.GameServer.server=false;
-        geometry();ownershipAndPool();
+        geometry();ownershipAndPool("SaucedWheelbarrow.WheelbarrowWood");ownershipAndPool("SaucedWheelbarrow.WheelbarrowMetal");
         System.out.println("CART_EMERGENCY_DROP_PASS (axle/floor continuity, freshness, exact ownership, pooled restoration, expiry and MP fallback)");
     }
 }
