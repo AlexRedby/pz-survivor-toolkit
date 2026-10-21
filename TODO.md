@@ -1,3 +1,9 @@
+# Shared text fitting cost
+
+- [ ] Cache shared text fitting results within explicit memory bounds and native font lifetimes; preserve exact clipping for non-monotonic glyph widths, Unicode boundaries, narrow widths and control characters.
+- [ ] Move Manifest's separate truncation loop to the shared helper while preserving its font and two-dot suffix. Cover width and Unicode handling in its actual row drawing.
+- [ ] Check the shared Lua vectors in Lua 5.1 and native Kahlua, related UI callers and version/main integration before delivery.
+
 # Selected QoL additions
 
 - [ ] After installation is requested, check all three in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod; foraging modifiers/radius; switch construction, bulb insertion/removal, grid/generator lighting, dismantling and second-player synchronization. Author claims do not establish compatibility with this selected set.

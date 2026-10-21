@@ -11,6 +11,7 @@ require "ISUI/ISCollapsableWindow"
 require "ISUI/ISCollapsableWindowJoypad"
 require "TimedActions/ISInventoryTransferAction"
 local Categories = require "PZSurvivorToolkit/ItemCategories"
+local UIStyle = require "PZSurvivorToolkit/UIStyle"
 
 LootSorter = LootSorter or {}
 
@@ -165,13 +166,8 @@ local function drawTri(ui, cx, top, size, up, a, r, g, b)
     end
 end
 
--- truncate s with a ".." suffix so it fits maxW pixels in the given font
 local function fit(font, s, maxW)
-    if not s or s == "" then return "" end
-    local tm = getTextManager()
-    if tm:MeasureStringX(font, s) <= maxW then return s end
-    while #s > 1 and tm:MeasureStringX(font, s .. "..") > maxW do s = string.sub(s, 1, #s - 1) end
-    return s .. ".."
+    return UIStyle.fit(s or "", maxW, font, "..")
 end
 
 -- ISCollapsableWindowJoypad = a collapsable window with ISPanelJoypad navigation baked in, so the

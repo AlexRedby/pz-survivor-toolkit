@@ -1,7 +1,11 @@
 require = function() end
 PZSurvivorToolkit = {}
 local style = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/UIStyle.lua")
-require = function(name) if name == "PZSurvivorToolkit/UIStyle" then return style end end
+local controls = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/CraftingControls.lua")
+require = function(name)
+    if name == "PZSurvivorToolkit/UIStyle" then return style end
+    if name == "PZSurvivorToolkit/CraftingControls" then return controls end
+end
 assert(PZSurvivorToolkit.UIStyle == style)
 local fields = {"backgroundColor", "backgroundColorMouseOver", "borderColor", "textColor"}
 local function sameStyle(button, reference)
@@ -83,7 +87,7 @@ ISBuildRecipePanel = {}
 ISWidgetInput = {}
 local crafting = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/Crafting.lua")
 crafting.install()
-local panel = {player = {}, logic = {getRecipe = function() return {} end}}
+local panel = {player = {}, logic = {getRecipe = function() return {} end}, xuiRecalculateLayout = function() end}
 ISCraftRecipePanel.createDynamicChildren(panel)
 assert(panel.pzswButton.target == panel and panel.pzswButton.onclick == crafting.openMenu)
 verifyCreated()
