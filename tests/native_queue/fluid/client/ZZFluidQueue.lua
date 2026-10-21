@@ -54,7 +54,8 @@ Events.OnGameStart.Add(function()
  getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false)
  getPlayer():setAutoDrink(false);getPlayer():setGhostMode(true)
 end)
-local function enqueue(player,target)
+local function enqueue(player,target,menuKind)
+ local menuName=menuKind or spec.menu
  local bottle=assert(player:getInventory():getItemById(ids.bottles[target].id))
  assert(bottle:getContainer()==state.bag:getItemContainer()or bottle:getContainer()==player:getInventory(),'unexpected dispatch container')
  local previous=observations[#observations]
@@ -64,7 +65,7 @@ local function enqueue(player,target)
   backpackWorn=player:getClothingItem_Back()==state.bag,
   dispatchAmount=bottle:getFluidContainer():getAmount(),
   dispatchSource=bottle:getContainer()==state.bag:getItemContainer()and 'bag'or 'root',cancelled=false,
-  id=bottle:getID(),menu=spec.menu,pickupObserved=false,drinkProgress=false,menuDispatched=false,
+  id=bottle:getID(),menu=menuName,pickupObserved=false,drinkProgress=false,menuDispatched=false,
   dispatchThirst=player:getStats():get(CharacterStat.THIRST),foodLevel=player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)}
  local observed={actions={}};local add=ISTimedActionQueue.add
  ISTimedActionQueue.add=function(action)
@@ -78,18 +79,18 @@ local function enqueue(player,target)
  end
  local ok,problem=pcall(function()
   SandboxVars.DrinkSmart=SandboxVars.DrinkSmart or {}
-  SandboxVars.DrinkSmart.AddSipOption=spec.menu=='sip'
-  SandboxVars.DrinkSmart.AllowWaterDrinkLowThirst=spec.menu=='smart'
+  SandboxVars.DrinkSmart.AddSipOption=menuName=='sip'
+  SandboxVars.DrinkSmart.AllowWaterDrinkLowThirst=menuName=='smart'
   local menu=assert(ISInventoryPaneContextMenu.createMenu(player:getPlayerNum(),true,{bottle},20,20),'inventory menu missing')
-  local label=spec.menu=='smart'and ('0% '..getText('Tooltip_food_Thirst'))
-   or spec.menu=='sip'and getText('ContextMenu_DrinkSmart_Sip')
-   or getText('ContextMenu_Eat_'..(spec.menu=='all'and 'All'or spec.menu=='quarter'and 'Quarter'or 'Half'))
+  local label=menuName=='smart'and ('0% '..getText('Tooltip_food_Thirst'))
+   or menuName=='sip'and getText('ContextMenu_DrinkSmart_Sip')
+   or getText('ContextMenu_Eat_'..(menuName=='all'and 'All'or menuName=='quarter'and 'Quarter'or 'Half'))
   for _,option in ipairs(menu.options)do
    if option.subOption then
     local submenu=menu:getSubMenu(option.subOption)
     menu:displaySubMenu(submenu,option)
     for index,portion in ipairs(submenu.options)do
-     local matches=spec.menu=='smart'and portion.name:sub(1,#label)==label or portion.name==label
+     local matches=menuName=='smart'and portion.name:sub(1,#label)==label or portion.name==label
      if matches and portion.onSelect==ISInventoryPaneContextMenu.onDrinkFluid and portion.target==bottle then
       command.portion=portion.param1;command.menuDispatched=true
       submenu.mouseOver=index;submenu:onJoypadDown(Joypad.AButton)
@@ -105,6 +106,7 @@ local function enqueue(player,target)
  assert((observed.pickup~=nil)==(command.dispatchSource=='bag'),'native pickup presence differs')
  commands[#commands+1]=command;observations[#observations+1]=observed
  trace('dispatch',command)
+ return observed.drink,command
 end
 local function cancelWaiting()
  if not spec.cancel or config.mode~='toolkit'then return end
@@ -241,7 +243,7 @@ local function advance()
  phase='unequipped';since=getTimestampMs()
 end
 local function finish()
- if spec.empty then
+ if spec.empty or spec.direct then
   local row=Empty.finish(emptyRun,receipt);if not row then return end
   emit(row);advance();return
  end
@@ -316,15 +318,15 @@ Events.OnTick.Add(function()
    if idle<10 then return end
    assert(player:getClothingItem_Back()==state.bag,'fixture military backpack not on back')
    assert(player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)==ids.foodLevel,'fixture fullness differs')
-   if spec.empty then
-    emptyRun=Empty.start(player,ids,state,config,queue());phase='running';since=getTimestampMs();return
+   if spec.empty or spec.direct then
+    emptyRun=Empty.start(player,ids,state,config,queue(),enqueue);phase='running';since=getTimestampMs();return
    end
    enqueue(player,spec.targets[1])
    if not spec.serial then for index=2,#spec.targets do enqueue(player,spec.targets[index])end end
    cancelWaiting()
    phase='running';since=getTimestampMs();return
   elseif phase=='running'then
-   if spec.empty then
+   if spec.empty or spec.direct then
     Empty.tick(emptyRun)
     if idle>=10 then assert(emptyRun.dispatched,'empty anchor ended before pending dispatch');phase='receipt';request('Verify')end
     return

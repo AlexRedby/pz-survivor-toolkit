@@ -750,6 +750,11 @@ local function installCartEating()
         or not ISEatFoodAction or not ISDrinkFluidAction
         or ISEatFoodAction._saucedCartsConsumeWrapped or ISDrinkFluidAction._saucedCartsConsumeWrapped then return end
     if SaucedCarts and SaucedCarts.ConsumeWithCart then return end
+    -- The early Quartermaster entry point can arrive before queue policy.
+    -- Capture native starts and install their proof owner before cart wrapping.
+    require "PZSurvivorToolkit/ActionQueuePolicy"
+    local policy = Toolkit.ActionQueuePolicy
+    if not policy or type(policy.adoptConsumeStarts) ~= "function" then return end
     local previous = {[ISEatFoodAction] = ISEatFoodAction.start, [ISDrinkFluidAction] = ISDrinkFluidAction.start}
     local ok, consume = pcall(require, "SaucedCarts/ConsumeWithCart")
     local owner = SaucedCarts
@@ -763,7 +768,6 @@ local function installCartEating()
             and owner.safeIsCart == safeIsCart and owner.isCart == isCart and owner.debug == debug
     end
     if not pcall(install) then return end
-    local policy = Toolkit.ActionQueuePolicy
     ready.SaucedCarts = policy and policy.adoptConsumeStarts
         and policy.adoptConsumeStarts(previous, helpersUnchanged) == true
 end

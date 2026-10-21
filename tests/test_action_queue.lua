@@ -874,6 +874,40 @@ assert(#q.queue==1 and q.queue[1]==unrelated, 'one header cross cancels the lazy
 unrelated.toolkitQueueOperation.toolkitBatch={total=1,completed=0,unit='craft'}
 panel:update();assert(#list.items==1 and not list.items[1].header)
 print('Queue batch view: dynamic logical counters, unknown totals, singleton continuation headers, expansion and cancellation passed.')
+-- Native completion can precede the next projection update and UI refresh.
+do
+    p=player();a,b=book(p),book(p)
+    operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b) end)
+    refresh();panel=ui[#ui];panel:update();list=panel.list
+    frame(p);panel:update();toggle(1)
+    local header,child=list.items[1],list.items[2]
+    local operation=header.operation
+    assert(header.header and panel.currentIndex==1 and panel.expanded[operation])
+    -- During the native idle gap the queue may still have its projected members.
+    q.current=nil
+    list.doDrawItem(list,0,header,false)
+    assert(header.tooltip and not header.tooltip:find('%]',1,true)
+        and list.rightText.text=='UI_PZSurvivorToolkit_queue_steps(2)',
+        'an idle header must describe remaining work without a nil current action')
+    list:onMouseDown(10,16)
+    assert(list.pressedToggle==operation)
+    q.queue={}
+    list.drawnTextures={}
+    list.doDrawItem(list,0,header,false)
+    list.doDrawItem(list,list:topOfItem(2),child,false)
+    assert(#list.drawnTextures==0 and not header.tooltip and not child.tooltip,
+        'completed rows must stop rendering controls before the next projection update')
+    list:onMouseUp(10,16)
+    assert(panel.expanded[operation] and not list.pressedToggle,
+        'a stale completed header must not toggle a phantom operation')
+    list:onMouseDown(list:cancelX()+12,16)
+    assert(not list.pressedCancel and not list.pressedOperation)
+    list:onMouseDown(30,list:topOfItem(2)+16)
+    assert(not list.dragAction and not list:rowUnderMouse(30,16),
+        'stale completed rows must not remain mouse targets')
+    panel:update()
+    assert(#list.items==0 and not next(panel.expanded), 'the next projection releases completed rows')
+end
 -- Active headers show the actual current native step and its progress; completed/cancelled steps leave only a remaining count.
 p=player();a,b,c=book(p),book(p),book(p)
 operations.run(function() q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);ISTimedActionQueue.add(c) end)

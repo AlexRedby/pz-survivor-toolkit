@@ -127,7 +127,7 @@ local function setup(changed,foreignMerge,alias,missing)
         for _,entry in ipairs(knownItems)do if entry.container==bagInventory then total=total+entry:getUnequippedWeight()end end
         return total
     end
-    local water=item()
+    local water=item();water.class="ComboItem"
     local function food()
         local value=item();value.class='Food';value.fluid=nil;value.container=root;value.hunger=-0.4;value.base=-0.4
         value.getFullType=function()return 'Base.Cereal'end;value.getType=function()return 'Cereal'end
@@ -207,9 +207,11 @@ local function setup(changed,foreignMerge,alias,missing)
     end
     if foreignMerge then ISInventoryTransferAction.canMergeAction=function()error('foreign preloaded merge must not execute')end end
     local emptyRepair=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/EmptyFluidAction.lua'))()
+    local drinkRepair=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/DrinkFluidCompletion.lua'))()
     local beforeRepairRequire=require
     require=function(name)
         if name=='PZSurvivorToolkit/EmptyFluidAction'then return emptyRepair end
+        if name=='PZSurvivorToolkit/DrinkFluidCompletion'then return drinkRepair end
         return beforeRepairRequire(name)
     end
     f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
@@ -394,6 +396,11 @@ do
     for _,field in ipairs({'percentage','startRatio','endRatio','targetConsumedRatio','consumedRatio'})do
         local original=drink[field];drink[field]=0/0;assert(not s.adapters.drink(drink));drink[field]=original
     end
+    local duration=drink.maxTime
+    for _,invalid in ipairs({0,-1,0/0,math.huge,-math.huge})do
+        drink.maxTime=invalid;assert(not s.adapters.drink(drink),'invalid duration cannot promise native completion')
+    end
+    drink.maxTime=duration
     drink.targetConsumedRatio=drink.targetConsumedRatio+0.0000001
     assert(not s.adapters.drink(drink),'captured native target fields require exact constructor agreement')
     drink.targetConsumedRatio=drink.startRatio-drink.endRatio
@@ -532,8 +539,20 @@ do
         end
     end
 end
+for _,source in ipairs({'ISDrinkFluidAction.lua','DrinkFluidCompletion.lua'})do
+    local s=setup(source);assert(not s.adapters.drink(s.drink()),'changed drink source cannot promise completion: '..source)
+end
 do
-    local s=setup('ISDrinkFluidAction.lua');assert(not s.adapters.drink(s.drink()))
+    local s=setup();local action=s.drink()
+    assert(s.adapters.drink(action))
+    s.water.class='InventoryItem'
+    assert(not s.adapters.drink(action),'unpatched item classes cannot acquire a complete drink effect')
+    s.water.class='ComboItem'
+    local repair=PZSurvivorToolkit.DrinkFluidCompletion;local authorizes=repair.authorizes
+    repair.authorizes=function()return true end
+    assert(not s.adapters.drink(action),'a replaced completion authorizer cannot retain the drink contract')
+    repair.authorizes=authorizes
+    assert(s.adapters.drink(action))
 end
 print('Item edit adapters: native idempotent transfers, captured SP water ratios, conservative Host intervals, source/helper and location guards passed.')
 -- Food uses original-food portions and shares existence with transfers. These

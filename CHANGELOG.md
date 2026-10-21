@@ -19,6 +19,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.198
+
+- **Actions window:** Ignore completed queue rows between native completion and the next UI refresh, including mouse hit-testing, instead of trying to draw an absent current action.
+- **Drinking water:** Initialize the queue policy before the early SaucedCarts consume-start integration. Preserve the queued tail when native water consumption prunes its final trace before the action timer finishes, or when a Host client receives authoritative zero before completion. Keep native portions, hydration, duration and completion; missing/replaced/unsafe targets and changed callbacks retain their native protection.
+
 ### 0.1.197
 
 - **Changed:** Retargeted the metal wheelbarrow pickup and setdown clip to its closer, lower held handles while preserving the grounded approach and shallow crouch.

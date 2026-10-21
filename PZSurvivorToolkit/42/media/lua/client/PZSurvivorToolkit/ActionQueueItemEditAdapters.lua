@@ -8,6 +8,9 @@ require "Fluids/ISFluidUtil"
 local Proof = require "PZSurvivorToolkit/SourceProof"
 local EmptyRepair = require "PZSurvivorToolkit/EmptyFluidAction"
 local emptyRepairAuthorizes = type(EmptyRepair)=="table" and EmptyRepair.authorizes
+local DrinkRepair = require "PZSurvivorToolkit/DrinkFluidCompletion"
+local drinkRepairAuthorizes = type(DrinkRepair)=="table" and DrinkRepair.authorizes
+local drinkRepairAdoptStart = type(DrinkRepair)=="table" and DrinkRepair.adoptStart
 local Weights = require "PZSurvivorToolkit/ActionQueueWeights"
 local Toolkit = PZSurvivorToolkit
 local Adapters = {}
@@ -102,6 +105,13 @@ local function origin(owner,name,callback)
             and pinned("media/lua/shared/PZSurvivorToolkit/EmptyFluidAction.lua",590637907,"PZSurvivorToolkit")
             and guarded(function()return emptyRepairAuthorizes(owner,name,callback)end)
     end
+    if owner==drink and (name=="isValid" or name=="updateEat")
+        and Proof.closure(callback,"DrinkFluidCompletion.lua") then
+        return type(drinkRepairAuthorizes)=="function" and DrinkRepair.authorizes==drinkRepairAuthorizes
+            and Proof.closure(drinkRepairAuthorizes,"DrinkFluidCompletion.lua")
+            and pinned("media/lua/shared/PZSurvivorToolkit/DrinkFluidCompletion.lua",789574824,"PZSurvivorToolkit")
+            and guarded(function()return drinkRepairAuthorizes(owner,name,callback)end)
+    end
     if owner==drink and name=="isValidStart" and Proof.closure(callback,"DrinkFluidAction.lua") then
         return pinned("media/lua/shared/PZSurvivorToolkit/DrinkFluidAction.lua",3238429308,"PZSurvivorToolkit")
     end
@@ -129,6 +139,11 @@ function Adapters.adoptMethods(owner,previous,replacement,guard)
     end
     for name in pairs(previous) do if replacement[name]==nil then return false end end
     if count==0 then return false end
+    if owner==drink and DrinkRepair then
+        if replacement.start==nil or count~=1 or type(drinkRepairAdoptStart)~="function"
+            or DrinkRepair.adoptStart~=drinkRepairAdoptStart
+            or not guarded(function()return drinkRepairAdoptStart(previous.start,replacement.start,guard)end) then return false end
+    end
     for name,callback in pairs(replacement) do snapshots[owner][name],approved[owner][name]=callback,callback end
     guards[owner][#guards[owner]+1]=guard
     return true
@@ -402,7 +417,14 @@ function Adapters.fullnessNeutralDrink(action)
         and unchanged(drink,action) and cleanWater(action.fluidContainer)
 end
 function Adapters.drink(action)
-    if not pending(action,drink) or action.useUtensil~=false or not leaf(action.item,action.character)
+    -- A draining native update can otherwise invalidate itself and reset the
+    -- entire tail. Promise a local effect only with the owned completion guard.
+    if type(drinkRepairAuthorizes)~="function" or DrinkRepair.authorizes~=drinkRepairAuthorizes
+        or not guarded(function()return drinkRepairAuthorizes(drink,"isValid",drink.isValid)
+            and drinkRepairAuthorizes(drink,"updateEat",drink.updateEat)end)
+        or not instanceof(action and action.item,"ComboItem") then return end
+    if not pending(action,drink) or not finite(action.maxTime) or action.maxTime<=0
+        or action.useUtensil~=false or not leaf(action.item,action.character)
         or not ancestry(action.item:getContainer(),action.character) or not Fluid or not Fluid.Water then return end
     local facts=itemFacts(action.item)
     local fluid=action.fluidContainer

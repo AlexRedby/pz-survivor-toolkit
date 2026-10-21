@@ -28,6 +28,10 @@ class FluidAdapterTests(unittest.TestCase):
         raw = []
         for index, case in enumerate(cases):
             base, bag = 100 + index * 10, case.startswith('fluid-bag')
+            if case in fluid.DIRECT_CASES:
+                row, prepared, final = self.direct_evidence(case, base)
+                rows.append(row);raw.extend([('PREPARED', prepared), ('VERIFIED', final)])
+                continue
             if case in fluid.EMPTY_CASES:
                 row, prepared, final = self.empty_evidence(case, base)
                 rows.append(row);raw.extend([('PREPARED', prepared), ('VERIFIED', final)])
@@ -118,6 +122,33 @@ class FluidAdapterTests(unittest.TestCase):
                      client=copy.deepcopy(final), waitingCancelVerified=cancel, independentMoveVerified=moved,
                      **copy.deepcopy({key: value for key, value in final.items() if key != 'case'})), prep, final)
 
+    def direct_evidence(self, case, base):
+        full = case == fluid.DIRECT_ALL_CASE
+        _, prep, _ = self.empty_evidence(fluid.EMPTY_MOVE_CASE, base)
+        prep.update(case=case, bottles=prep['bottles'][:2])
+        final = {key: copy.deepcopy(value) for key, value in prep.items() if key != 'foodTimer'}
+        final['thirst'] = .05 if full else .55
+        for index, bottle in enumerate(final['bottles']):
+            bottle.pop('thirstChange')
+            bottle.update(amount=0 if index == 0 else .5, weight=.1 if index == 0 else .6)
+        commands = []
+        for index in range(2):
+            empty = index == 0 and not full
+            command = dict(kind='empty' if empty else 'drink', id=prep['bottles'][index]['id'], source='root',
+                           dispatchAmount=1, dispatchWeight=1.1, nativeDuration=30 if empty else 460,
+                           progress=True, completed=True, cancelled=False, backpackWorn=True, completionGuardAvailable=True,
+                           queueEmptyBefore=index == 0, firstRunningBefore=index == 1,
+                           rawDispatched=empty, menuDispatched=not empty,
+                           menu='none' if empty else 'all' if index == 0 else 'half')
+            command.update(capturedAmount=1, transferRate=1, timePerLiter=30, minTime=10) if empty else command.update(portion=1 if index == 0 else .5)
+            commands.append(command)
+        evidence = dict(emptyStart=True, firstRunning=True, tailQueued=True, nativeDurationsUnchanged=True,
+                        order=[1, 2], completionOrder=[1, 2], effectiveDurationBeforeTail=30 if not full else 575,
+                        effectiveDurationAfterTail=30 if not full else 575)
+        return (dict(event='case', id=case, status='passed', reason=None, commands=commands, editEvidence=evidence,
+                     client=copy.deepcopy(final), waitingCancelVerified=False, independentMoveVerified=False,
+                     **copy.deepcopy({key: value for key, value in final.items() if key != 'case'})), prep, final)
+
     def verify(self, evidence=None, marker='[FLUID_TEST] COMPLETE', wrong_authority=False, extra=''):
         rows, raw = self.evidence() if evidence is None else evidence
         client = '\n'.join('[QUEUE_CHECK] ' + json.dumps(row) for row in rows) + '\n' + marker + '\n' + extra
@@ -134,7 +165,7 @@ class FluidAdapterTests(unittest.TestCase):
         return self.evidence()
 
     def test_matrix_accepts_sp_host_native_and_toolkit(self):
-        self.assertEqual(22, len(fluid.CASES))
+        self.assertEqual(24, len(fluid.CASES))
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
                 self.selection.update(kind=kind, mode=mode)
@@ -226,6 +257,83 @@ class FluidAdapterTests(unittest.TestCase):
             with self.subTest(amount=amount):
                 self.assertTrue(self.verify((rows, raw))['issues'])
 
+    def test_direct_empty_and_all_effects_require_exact_identity_hydration_and_native_tail(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode)
+                for case in fluid.DIRECT_CASES:
+                    rows, raw = self.single(case)
+                    with self.subTest(kind=kind, mode=mode, case=case):
+                        result = self.verify((rows, raw))
+                        self.assertEqual([], result['issues'])
+                        self.assertTrue(result['outcomes'][0]['outcome']['directFluidTailVerified'])
+                        self.assertEqual([0, .5], [value['amount'] for value in raw[1][1]['bottles']])
+                        self.assertEqual(.05 if case == fluid.DIRECT_ALL_CASE else .55, raw[1][1]['thirst'])
+                        self.assertEqual([True, False], [value['queueEmptyBefore'] for value in rows[1]['commands']])
+                        self.assertEqual([False, True], [value['firstRunningBefore'] for value in rows[1]['commands']])
+
+    def test_direct_receipt_schemas_and_identity_are_required_on_both_sides(self):
+        self.selection.update(kind='mp')
+        for case in fluid.DIRECT_CASES:
+            for source in ('prep', 'authority', 'client'):
+                for field in (*fluid.EMPTY_BOTTLE_KEYS, 'unexpected'):
+                    rows, raw = self.single(case)
+                    target = raw[0][1] if source == 'prep' else raw[1][1] if source == 'authority' else rows[1]['client']
+                    if field == 'unexpected': target['bottles'][0][field] = True
+                    else: target['bottles'][0].pop(field)
+                    with self.subTest(case=case, source=source, field=field):
+                        self.assertTrue(self.verify((rows, raw))['issues'])
+            for field, value in [('id', 999), ('count', 2), ('source', 'bag'), ('favorite', True),
+                                 ('fullType', 'Base.WineEmpty'), ('capacity', 2), ('cleanWater', False),
+                                 ('emptyWeight', .2), ('transferRate', 0), ('weight', 1.1), ('amount', .1)]:
+                rows, raw = self.single(case)
+                for target in (rows[1], rows[1]['client'], raw[1][1]): target['bottles'][0][field] = value
+                with self.subTest(case=case, altered=field):
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+            rows, raw = self.single(case)
+            self.assertTrue(self.verify((rows, raw), wrong_authority=True)['issues'])
+
+    def test_direct_tail_requires_empty_start_running_progress_completion_and_unchanged_native_timing(self):
+        for case in fluid.DIRECT_CASES:
+            for index in range(2):
+                for field in fluid.DIRECT_COMMAND_KEYS | ({'capturedAmount', 'transferRate', 'timePerLiter', 'minTime'}
+                        if index == 0 and case == fluid.DIRECT_EMPTY_CASE else {'portion'}):
+                    rows, raw = self.single(case)
+                    rows[1]['commands'][index].pop(field)
+                    with self.subTest(case=case, index=index, missing=field):
+                        self.assertTrue(self.verify((rows, raw))['issues'])
+            for field, value in [('queueEmptyBefore', False), ('firstRunningBefore', True), ('progress', False),
+                                 ('completed', False), ('backpackWorn', False), ('completionGuardAvailable', False), ('nativeDuration', 1)]:
+                rows, raw = self.single(case)
+                rows[1]['commands'][0][field] = value
+                with self.subTest(case=case, altered=field):
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+            for field, value in [('emptyStart', False), ('firstRunning', False), ('tailQueued', False),
+                                 ('nativeDurationsUnchanged', False), ('order', [2, 1]), ('completionOrder', [2, 1]),
+                                 ('effectiveDurationAfterTail', 1), ('effectiveDurationBeforeTail', float('nan'))]:
+                rows, raw = self.single(case)
+                rows[1]['editEvidence'][field] = value
+                with self.subTest(case=case, altered_evidence=field):
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+            for field in rows[1]['editEvidence']:
+                missing_rows, missing_raw = self.single(case)
+                missing_rows[1]['editEvidence'].pop(field)
+                with self.subTest(case=case, missing_evidence=field):
+                    self.assertTrue(self.verify((missing_rows, missing_raw))['issues'])
+
+    def test_direct_native_overshoot_is_bounded_and_empty_discard_never_hydrates(self):
+        for case in fluid.DIRECT_CASES:
+            for amount in (.49, .4971739, .5, .5001, .48999, .50011):
+                rows, raw = self.single(case)
+                for record in (rows[1], rows[1]['client'], raw[1][1]):
+                    record['bottles'][1].update(amount=amount, weight=.1 + amount)
+                    record['thirst'] = (.3 if case == fluid.DIRECT_ALL_CASE else .8) - (1 - amount) * .5
+                with self.subTest(case=case, amount=amount):
+                    self.assertEqual(amount < .49 or amount > .5001, bool(self.verify((rows, raw))['issues']))
+            rows, raw = self.single(case)
+            for record in (rows[1], rows[1]['client'], raw[1][1]): record['thirst'] = 0
+            self.assertTrue(self.verify((rows, raw))['issues'])
+
     def test_fluid_lua_compiles_and_empty_scenarios_keep_root_and_three_bottles(self):
         try:
             from lupa import LuaRuntime
@@ -236,9 +344,10 @@ class FluidAdapterTests(unittest.TestCase):
             with self.subTest(source=source.name):
                 self.assertIsNotNone(lua.eval('load')(source.read_text()))
         fixture = lua.execute((ROOT / 'tests/native_queue/fluid/shared/QueueFluidFixture.lua').read_text())
-        for case in fluid.EMPTY_CASES:
+        for case in (*fluid.EMPTY_CASES, *fluid.DIRECT_CASES):
             spec = fixture.scenario(case)
-            self.assertTrue(spec.empty)
+            self.assertEqual(case in fluid.EMPTY_CASES, spec.empty)
+            self.assertEqual(case in fluid.DIRECT_CASES, spec.direct)
             self.assertEqual('root', spec.source)
 
     def test_empty_helper_uses_real_native_constructor_and_captured_amount_without_retiming(self):
@@ -287,8 +396,10 @@ api.policy={inspect=function()return {edit={}}end,evaluateCancel=function()retur
  end}
 local modules={QueueScenarioChecks=Checks,['PZSurvivorToolkit/ActionQueue']=api,
  ['PZSurvivorToolkit/ActionQueuePolicy']=api.policy,['PZSurvivorToolkit/ActionQueueOperations']={bounds=function(q,a)local i=q:indexOf(a);return i,i end},
- QueueFluidFixture={},QueueHealthEvents={}}
+ QueueFluidFixture={snapshot=function()return directReceipt end},QueueHealthEvents={encode=function()return '{}'end}}
 require=function(name)return modules[name]or {}end
+local repair={authorizes=function()return not rejectCompletionProof,'fixture-rejected'end}
+PZSurvivorToolkit={EmptyFluidAction=repair,DrinkFluidCompletion=repair}
 ISTimedActionQueue={add=function(action)queue.queue[#queue.queue+1]=action end}
 ISDrinkFluidAction={new=function(_,player,bottle,portion)
  return setmetatable({Type='ISDrinkFluidAction',character=player,item=bottle,fluidContainer=bottle:getFluidContainer(),
@@ -309,10 +420,59 @@ function emptyTest(helper,case,tamper)
  end
  local root={getItemById=function(_,id)return bottles[id]end}
  for _,bottle in ipairs(bottles)do bottle.getContainer=function()return root end end
- local player={getInventory=function()return root end,hasTimedActions=function()return false end,isTimedActionInstant=function()return false end}
+ local bag={}
+ local player={getInventory=function()return root end,hasTimedActions=function()return false end,isTimedActionInstant=function()return false end,
+  getClothingItem_Back=function()return bag end}
  queue={queue={},indexOf=function(self,a)for i,v in ipairs(self.queue)do if v==a then return i end end;return -1 end,
   onCompleted=function(self,action)table.remove(self.queue,1);self.current=self.queue[1]end}
- local run=helper.start(player,ids,{}, {mode='toolkit'},queue)
+ local direct=case=='fluid-empty-direct-independent-tail'or case=='fluid-root-all-independent-tail'
+ local full=case=='fluid-root-all-independent-tail'
+ local menuCalls={}
+ local producer=function(actor,index,menu)
+  menuCalls[#menuCalls+1]=menu
+  local portion=menu=='all'and 1 or .5
+  local action=ISDrinkFluidAction:new(actor,bottles[index],portion)
+  local captured={menuDispatched=true,menu=menu,id=index,portion=portion,nativeDuration=action.maxTime}
+  ISTimedActionQueue.add(action)
+  if tamperPendingDuration and queue.current then queue.current.maxTime=queue.current.maxTime+1 end
+  return action,captured
+ end
+ -- The observer must restore an inherited onCompleted method without leaving an own override.
+ local original=queue.onCompleted;queue.onCompleted=nil;setmetatable(queue,{__index={onCompleted=original}})
+ local run=helper.start(player,ids,{bag=bag}, {mode='toolkit'},queue,producer)
+ if direct then
+  assert(#queue.queue==1 and #run.commands==1 and run.commands[1].queueEmptyBefore and not run.commands[1].firstRunningBefore)
+  assert(run.commands[1].nativeDuration==(full and 460 or 18.5))
+  queue.current=run.anchor;run.anchor.started=true;run.anchor.delta=0
+  helper.tick(run);assert(not run.dispatched and #queue.queue==1,'tail dispatched before positive native progress')
+  run.anchor.delta=.1
+  if full then run.anchor.maxTime=575 else run.anchor:updateEmpty(.1)end
+  local effective=run.anchor.maxTime
+  local ok,problem=pcall(helper.tick,run)
+  if tamper then
+   assert(not ok and tostring(problem):find('tail request changed running native duration',1,true),'direct duration edit was not detected')
+   return
+  end
+  assert(ok,problem)
+  assert(run.dispatched and #run.commands==2 and run.commands[1].progress and not run.commands[2].progress)
+  assert(run.anchor.maxTime==effective and run.evidence.effectiveDurationBeforeTail==effective
+   and run.evidence.effectiveDurationAfterTail==effective,'direct anchor effective duration changed')
+  assert(not run.commands[2].queueEmptyBefore and run.commands[2].firstRunningBefore)
+  assert(#menuCalls==(full and 2 or 1)and menuCalls[#menuCalls]=='half'and(not full or menuCalls[1]=='all'))
+  if full then bottles[1]:getFluidContainer().amount=0 else run.anchor:complete()end
+  queue:onCompleted(run.anchor)
+  local tail=run.actions[2].action;tail.started=true;tail.delta=.1
+  helper.tick(run)
+  bottles[2]:getFluidContainer().amount=.5;queue:onCompleted(tail)
+  assert(#queue.queue==0 and run.commands[1].completed and run.commands[2].completed)
+  assert(run.evidence.order[1]==1 and run.evidence.order[2]==2
+   and run.evidence.completionOrder[1]==1 and run.evidence.completionOrder[2]==2)
+  directReceipt={bottles={{amount=0},{amount=.5}}}
+  local row=assert(helper.finish(run,directReceipt))
+  assert(row.commands==run.commands and row.client==directReceipt and rawget(queue,'onCompleted')==nil
+   and queue.onCompleted==original,'direct completion observer was not restored')
+  return
+ end
  queue.current=run.anchor;run.anchor.started=true;run.anchor.delta=.1
  -- Simulate the native create() adjustment, keeping the constructor receipt at 460.
  run.anchor.maxTime=575
@@ -349,12 +509,22 @@ function emptyTest(helper,case,tamper)
 end
 """)
         helper = lua.execute((ROOT / 'tests/native_queue/fluid/client/QueueFluidEmpty.lua').read_text())
-        for case in fluid.EMPTY_CASES:
+        for case in (*fluid.EMPTY_CASES, *fluid.DIRECT_CASES):
             with self.subTest(case=case):
                 lua.globals().emptyTest(helper, case)
         for target in (True, 'anchor'):
             with self.subTest(tampered_duration=target):
                 lua.globals().emptyTest(helper, fluid.EMPTY_MOVE_CASE, target)
+        for case in fluid.DIRECT_CASES:
+            with self.subTest(direct_duration_tampered=case):
+                lua.globals().emptyTest(helper, case, True)
+
+        lua.globals().rejectCompletionProof = True
+        for case in fluid.DIRECT_CASES:
+            ok, failure = lua.eval('pcall')(lua.globals().emptyTest, helper, case)
+            with self.subTest(unavailable_completion_proof=case):
+                self.assertFalse(ok)
+                self.assertIn('native fluid completion protection unavailable', failure)
 
     def test_empty_missing_progress_diagnostic_identifies_exact_dropped_command(self):
         try:

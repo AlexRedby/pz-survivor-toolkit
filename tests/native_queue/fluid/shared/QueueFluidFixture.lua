@@ -1,10 +1,11 @@
 local Fixture={bagType='Base.Bag_ALICEpack_Army'}
 function Fixture.scenario(case)
  -- Repeated quarters stay above the native menu threshold despite Host progress overshoot.
- local empty=case:find('fluid-empty-',1,true)==1
+ local direct=case=='fluid-empty-direct-independent-tail'or case=='fluid-root-all-independent-tail'
+ local empty=not direct and case:find('fluid-empty-',1,true)==1
  local menu=case:find('smart',1,true)and 'smart'or case:find('-sip-',1,true)and 'sip'
   or case:find('-all-',1,true)and 'all'or (case:find('-quarter-',1,true)or case:find('-same-serial-',1,true))and 'quarter'or 'half'
- return {empty=empty,edit=case:find('-edit-',1,true)~=nil,menu=menu,source=(empty or case:match('^fluid%-root'))and 'root'or 'bag',favorite=case:sub(-9)=='-favorite',
+ return {empty=empty,direct=direct,edit=case:find('-edit-',1,true)~=nil,menu=menu,source=(direct or empty or case:match('^fluid%-root'))and 'root'or 'bag',favorite=case:sub(-9)=='-favorite',
   foodTimer=case:find('-full-',1,true)and 4000 or 0,
   thirst=case:find('smart%-low')and .04 or menu=='smart'and .2 or .8,
   targets=case:find('-cancel-',1,true)and {1,2,3}or case:find('-same-',1,true)and {1,1}
@@ -69,7 +70,7 @@ function Fixture.prepare(player,case,previous)
   bottles[index]=bottle
   descriptors[index]={id=bottle:getID(),amount=fluid:getAmount(),favorite=bottle:isFavorite(),source=endpoint==root and 'root'or 'bag',
    thirstChange=fluid:getProperties():getThirstChange()}
-  if spec.empty then
+  if spec.empty or spec.direct then
    descriptors[index]=snapshot(player,bag,bottle,true,true)
    descriptors[index].thirstChange=fluid:getProperties():getThirstChange()
   elseif spec.edit then descriptors[index].weight=bottle:getUnequippedWeight()end
@@ -107,8 +108,8 @@ function Fixture.snapshot(player,ids)
   local bottle=root:getItemById(value.id)
   if not bottle or bottle:getFullType()~='Base.WaterBottle'then return nil,'fluid fixture bottle identity differs'end
   local spec=Fixture.scenario(ids.case)
-  bottles[index]=snapshot(player,bag,bottle,spec.edit,spec.empty)
-  if spec.empty and (bottles[index].source~='root'or bottles[index].count~=1 or not bottles[index].cleanWater)then
+  bottles[index]=snapshot(player,bag,bottle,spec.edit,spec.empty or spec.direct)
+  if (spec.empty or spec.direct)and (bottles[index].source~='root'or bottles[index].count~=1 or not bottles[index].cleanWater)then
    return nil,'empty fluid fixture endpoint/identity/purity differs'
   end
  end

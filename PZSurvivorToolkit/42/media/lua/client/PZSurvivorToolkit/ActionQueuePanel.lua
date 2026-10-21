@@ -55,10 +55,18 @@ function List:cancelX()
     return self.width - 40
 end
 
+-- Native completion can run after update and before rendering or mouse input.
+-- A projected row is usable only while its anchor still occupies that queue slot.
+local function liveRow(queue, row)
+    return row and row.item and queue.queue[row.first] == row.item
+        and row.operation == row.item.toolkitQueueOperation
+end
+
 function List:rowUnderMouse(x, y)
     if x < 0 or x >= self.width - 14 or y + self:getYScroll() < 0
         or y + self:getYScroll() >= self.height or self:isMouseOverScrollBar() then return end
-    return self.items[self:rowAt(x, y)]
+    local row = self.items[self:rowAt(x, y)]
+    if liveRow(self.parent.queue, row) then return row end
 end
 
 function List:clearGesture()
@@ -157,12 +165,17 @@ function Panel:createChildren()
 end
 
 function Panel.drawRow(list, y, row, alt)
+    if not liveRow(list.parent.queue, row) then
+        row.tooltip = nil
+        return y + row.height
+    end
     if y + list:getYScroll() + row.height < 0 or y + list:getYScroll() >= list.height then
         return y + row.height
     end
     local action, queue = row.item, list.parent.queue
-    if row.header and list.parent.currentIndex and list.parent.currentIndex >= row.first
-        and list.parent.currentIndex <= row.last then
+    -- currentIndex belongs to the last projection, while current can already
+    -- have completed. The live operation identity selects the active header step.
+    if row.header and queue.current and queue.current.toolkitQueueOperation == row.operation then
         action = queue.current
     end
     local current = queue.current == action

@@ -2084,3 +2084,139 @@ do
     ISTimedActionQueue.add,ISTimedActionQueue.addAfter,ISTimedActionQueue.addToQueue=previousAdd,previousAfter,previousToQueue
 end
 print('Selected mod chain actual-source checks passed.')
+-- The numbered Quartermaster entry loads Compat before Policy in the game.
+-- Exercise both require-loaded and already-loaded shared repair startup orders.
+for _,sharedPreload in ipairs({false,true})do
+    local fixture=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
+    for _,path in ipairs({'shared/TimedActions/ISTransferAction.lua','shared/TimedActions/ISEatFoodAction.lua',
+        'shared/TimedActions/ISDrinkFluidAction.lua','shared/Fluids/ISFluidContainer.lua','shared/Fluids/ISFluidUtil.lua',
+        'shared/Fluids/ISFluidEmptyAction.lua','shared/RadioCom/ISRadioAction.lua','client/TimedActions/WalkToTimedAction.lua',
+        'shared/TimedActions/ISToggleStoveAction.lua'})do
+        fixture.native(path)
+    end
+    local cartRoot=NativeWishlistWorkshopRoot..'/3651954650/mods/SaucedCarts/42'
+    local modules={}
+    local function input(source)
+        local cursor=1
+        return {close=function()end,readLine=function()
+            if cursor>#source then return end
+            local boundary=source:find('\n',cursor,true)or #source+1
+            local line=source:sub(cursor,boundary-1);cursor=boundary+1;return line
+        end}
+    end
+    getGameFilesInput=function(path)return input(read(NativeActionRoot..'/'..path:gsub('^media/lua/','')))end
+    getModFileReader=function(id,path)
+        if id=='PZSurvivorToolkit'then return input(read(ProjectRoot..'/PZSurvivorToolkit/42/'..path))end
+        assert(id=='SaucedCarts')
+        -- Keep unrelated cart transfer installation outside this startup boundary.
+        if path~='media/lua/client/SaucedCarts/ConsumeWithCart.lua'and path~='media/lua/shared/SaucedCarts/Core.lua'then return end
+        return input(read(cartRoot..'/'..path))
+    end
+    getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+    getDebug=function()return false end
+    isClient,isServer=function()return false end,function()return false end
+    getActivatedMods=function()return {contains=function(_,id)return id=='SaucedCarts'end}end
+    SaucedCarts,LootSorter=nil,{}
+    Fluid={Water={}};MoodleType={FOOD_EATEN=1};ItemTag={}
+    local nativeEatStart,nativeDrinkStart=ISEatFoodAction.start,ISDrinkFluidAction.start
+    local policyLoads,consumeLoads=0,0
+    local function shared(name)
+        return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua'))()
+    end
+    local sharedModules={SourceProof=true,DrinkFluidAction=true,DrinkFluidCompletion=true,EmptyFluidAction=true,SetStoveStateAction=true}
+    require=function(name)
+        if modules[name]~=nil then return modules[name]end
+        local suffix=name:match('^PZSurvivorToolkit/(.+)$')
+        local result
+        if suffix=='ActionQueuePolicy'then
+            policyLoads=policyLoads+1
+            assert(PZSurvivorToolkit.ActionQueuePolicy==nil and ISEatFoodAction.start==nativeEatStart
+                and ISDrinkFluidAction.start==nativeDrinkStart,'early Compat must load Policy before either cart start changes')
+            result=fixture.project(suffix)
+            assert(result==PZSurvivorToolkit.ActionQueuePolicy and type(result.adoptConsumeStarts)=='function')
+        elseif suffix=='Settings'then return PZSurvivorToolkit.Settings
+        elseif suffix then
+            if sharedModules[suffix]then result=shared(name)else result=fixture.project(suffix)end
+        elseif name=='SaucedCarts/Core'then
+            result=assert(loadfile(cartRoot..'/media/lua/shared/SaucedCarts/Core.lua'))()
+        elseif name=='SaucedCarts/ConsumeWithCart'then
+            consumeLoads=consumeLoads+1
+            assert(policyLoads==1 and type(PZSurvivorToolkit.ActionQueuePolicy.adoptConsumeStarts)=='function',
+                'actual cart producer must not load until real Policy and completion adapters are ready')
+            local repair=assert(PZSurvivorToolkit.DrinkFluidCompletion)
+            assert(repair.authorizes(ISDrinkFluidAction,'isValid',ISDrinkFluidAction.isValid),
+                'completion repair must still own native starts when the producer is required')
+            result=assert(loadfile(cartRoot..'/media/lua/client/SaucedCarts/ConsumeWithCart.lua'))()
+        else return end
+        modules[name]=result or true
+        return result
+    end
+    if sharedPreload then
+        local preloaded=require('PZSurvivorToolkit/DrinkFluidCompletion')
+        assert(preloaded==PZSurvivorToolkit.DrinkFluidCompletion and PZSurvivorToolkit.ActionQueuePolicy==nil
+            and preloaded.authorizes(ISDrinkFluidAction,'isValid',ISDrinkFluidAction.isValid),
+            'shared completion must already be installed before any client Policy or compatibility code')
+    end
+    -- Operations and definitions are Compat's existing prerequisites, not Policy.
+    require('PZSurvivorToolkit/ActionQueueOperations')
+    require('PZSurvivorToolkit/ActionQueueDefinitions')
+    assert(PZSurvivorToolkit.ActionQueuePolicy==nil,'regression must enter before Policy exists')
+    local selected=require('PZSurvivorToolkit/ActionQueueCompat')
+    assert(policyLoads==1 and consumeLoads==1 and selected.isInstalled('SaucedCarts'),
+        'early Compat must install and adopt actual cart starts through lazy Policy loading')
+    local repair=PZSurvivorToolkit.DrinkFluidCompletion
+    assert(ISDrinkFluidAction.start~=nativeDrinkStart and ISEatFoodAction.start~=nativeEatStart
+        and repair.authorizes(ISDrinkFluidAction,'isValid',ISDrinkFluidAction.isValid)
+        and repair.authorizes(ISDrinkFluidAction,'updateEat',ISDrinkFluidAction.updateEat),
+        'actual cart start adoption must leave both completion wrappers authorized')
+    local player=fixture.player;player.class='IsoPlayer';player.isEquipped=function()return false end
+    getClassSimpleName=function(value)return value.class end
+    local priorInstanceof=instanceof
+    instanceof=function(value,kind)return priorInstanceof(value,kind)or type(value)=='table'
+        and kind=='InventoryItem'and value.class=='ComboItem'end
+    local root={class='ItemContainer'};player.inventory=root
+    root.getType=function()return 'none'end;root.isExistYet=function()return true end
+    root.getAcceptItemFunction=function()end;root.getOnlyAcceptCategory=function()end
+    root.getContainingItem=function()end;root.getParent=function()return player end
+    local bottle={class='ComboItem',getID=function()return 917 end,getContainer=function()return root end,
+        getWorldItem=function()end,getIsCraftingConsumed=function()return false end,getEquipParent=function()end,
+        getAttachedSlot=function()return -1 end,getType=function()return 'WaterBottle'end,getFullType=function()return 'Base.WaterBottle'end,
+        getEatType=function()return 'bottle'end}
+    root.contains=function(_,item)return item==bottle end
+    root.getItemById=function(_,id)return id==917 and bottle or nil end
+    local properties={getThirstChange=function()return -.5 end}
+    for _,name in ipairs({'getFatigueChange','getHungerChange','getStressChange','getUnhappyChange','getCalories','getCarbohydrates',
+        'getLipids','getProteins','getAlcohol','getPoison','getFluReduction','getPainReduction','getEnduranceChange','getFoodSicknessChange'})do
+        properties[name]=function()return 0 end
+    end
+    local fluid={class='FluidContainer',getOwner=function()return bottle end,getAmount=function()return 1 end,
+        getCapacity=function()return 1 end,getFilledRatio=function()return 1 end,getCustomDrinkSound=function()return ''end,
+        isPureFluid=function(_,kind)return kind==Fluid.Water end,isTainted=function()return false end,isPoisonous=function()return false end,
+        getProperties=function()return properties end,isEmpty=function()return false end}
+    bottle.getFluidContainer=function()return fluid end
+    -- Load the actual controller after early compatibility, including its native
+    -- begin/stop wrappers; unrelated target/UI integrations have separate suites.
+    require('PZSurvivorToolkit/ActionQueueLabels')
+    local selectedRequire=require
+    require=function(name)
+        if modules[name]~=nil then return modules[name]end
+        if name=='PZSurvivorToolkit/ActionQueueLifecycle'or name=='PZSurvivorToolkit/ActionQueueAcknowledgements'then
+            return selectedRequire(name)
+        end
+    end
+    fixture.project('ActionQueue')
+    require=selectedRequire
+    local action=ISDrinkFluidAction:new(player,bottle,1)
+    local adapters=PZSurvivorToolkit.ActionQueueItemEditAdapters
+    local contract=assert(adapters.drink(action),'pending full drink must retain a complete edit contract after early actual cart adoption')
+    assert(contract.complete and contract.resources[2].effects[1].set==0)
+    local inspected=PZSurvivorToolkit.ActionQueuePolicy.inspect(action)
+    assert(inspected and inspected.edit and inspected.edit.complete,
+        'real Policy.inspect must retain the pending full-drink edit after later Queue begin/stop hooks')
+    local owner=SaucedCarts;local original=owner.safeIsCart;owner.safeIsCart=function()return false end
+    assert(not repair.authorizes(ISDrinkFluidAction,'isValid',ISDrinkFluidAction.isValid)and not adapters.drink(action),
+        'actual early-entry helper guard must remain live for completion and pending edits')
+    owner.safeIsCart=original
+    assert(adapters.drink(action),'restoring the captured helper identity restores the pending native drink contract')
+    print('Early Quartermaster Compat: sharedPreload='..tostring(sharedPreload)..', lazy real Policy, actual cart starts, live repair and pending drink inspection passed.')
+end
