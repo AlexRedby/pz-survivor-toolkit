@@ -37,7 +37,7 @@ SP_CASES = {'sprint': ('scenario-clips.lua', 16), 'reverse': ('scenario-reverse.
             'interruption': ('scenario-interaction.lua', 12), 'interruption-matrix': ('scenario-interaction.lua', 48),
             'repeat': ('scenario-interaction.lua', 12), 'hotkey': ('scenario-interaction.lua', 12), 'manual': ('bootstrap.lua', 0),
             'path': ('scenario-path.lua', 24), 'variants': ('scenario-variants.lua', 3),
-            'controls': ('scenario-controls.lua', 3), 'native-e': ('scenario-native-e.lua', 1)}
+            'controls': ('scenario-controls.lua', 3), 'showcase': ('scenario-showcase.lua', 3), 'native-e': ('scenario-native-e.lua', 1)}
 AREA = dict(x=10825.5, y=10142.5, z=7, minX=10777, minY=10094, size=96, margin=2, floorSprite='carpentry_02_57')
 SCENE_SPECS = {
     'sprint': ('comparison', 'direct', 'gait', 'runstop'),
@@ -86,6 +86,8 @@ def scene_names(case):
         specs = ('arcs', 'slalom-up', 'slalom-down') if case == 'motion-matrix' else ('frontal', 'slide-left', 'slide-right', 'corner', 'door-closed', 'door-open')
         return [f'{sex}-{load}-{gait}-{spec}' for sex in ('male', 'female') for load in ('empty', 'full')
                 for gait in ('walk', 'run', 'sprint') for spec in specs]
+    if case == 'showcase':
+        return ['wooden-wheelbarrow', 'metal-wheelbarrow', 'shopping-cart']
     if case in ('variants', 'controls'):
         return list(VARIANTS)
     if case == 'native-e':
@@ -223,7 +225,7 @@ def validate(selection):
             raise ValueError('Explicit candidate options.mod_sources.' + identifier + ' is required')
     for key in ('patch_jar', 'ffmpeg', 'ffprobe'):
         _path(selection, key, executable=key != 'patch_jar')
-    if suite == SP and selection['cases'][0] not in ('variants', 'controls', 'native-e'):
+    if suite == SP and selection['cases'][0] not in ('variants', 'controls', 'showcase', 'native-e'):
         _path(selection, 'mesh_fbx')
         try:
             importlib.import_module('numpy')
@@ -238,7 +240,7 @@ def sources(project, selection):
                   and path.suffix in ('.py', '.lua', '.java', '.json', '.md', '.mf', '.methods')]
     if selection['suite'] == SP:
         paths += [Path(project) / 'tests/native_queue/support/QueueCartStartup.lua']
-        if selection['cases'][0] not in ('variants', 'controls', 'native-e'):
+        if selection['cases'][0] not in ('variants', 'controls', 'showcase', 'native-e'):
             paths.append(_path(selection, 'mesh_fbx'))
         if selection.get('options', {}).get('cart_variant') == 'shopping-cart':
             paths += [Path(value) for value in selection['options']['cart_mesh_fbx'].values()]
@@ -274,7 +276,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     project, output, game = map(Path, (project, output, game))
     sp, mp = _intake(project, SP), _intake(project, MP)
     manual = selection['suite'] == SP and selection['cases'] == ['manual']
-    simple = selection['suite'] == SP and selection['cases'][0] in ('variants', 'controls', 'native-e')
+    simple = selection['suite'] == SP and selection['cases'][0] in ('variants', 'controls', 'showcase', 'native-e')
     patch = _path(selection, 'patch_jar')
     if not any(hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(patch.read_bytes()).digest()
                for path in Path(locations['PZToolkitJavaPatches']).rglob('*.jar')):
@@ -309,7 +311,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     fixture['attach'] = {}
     if manual:
         fixture['manual'] = True
-    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL']
+    fixture['failure_markers'] = ['[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL']
     videos = {role: str(Path(config['cache']) / 'videos') for role, config in runtime['roles'].items() if role != 'server'}
     config = dict(selection, port=selection['ports'][0], disposable=True, ffmpeg=str(_path(selection, 'ffmpeg', True)), videoRoot=videos)
     for role, spec in runtime['roles'].items():
@@ -824,6 +826,39 @@ def _variant_coverage(text, scenes):
     return {'functionalPass': True, 'cases': result}
 
 
+SHOWCASE_PHASES = ('pickup', 'walk-straight', 'walk-left', 'walk-right', 'run-turn',
+                   'run-brake', 'sprint-turn', 'sprint-brake', 'putdown')
+
+
+def _showcase_coverage(text, scenes):
+    log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
+    records = [json.loads(line.split('[CART_SHOWCASE] PHASE ', 1)[1])
+               for line in log.splitlines() if '[CART_SHOWCASE] PHASE ' in line]
+    expected = [(name, phase) for name in scenes for phase in SHOWCASE_PHASES]
+    if [(row.get('case'), row.get('phase')) for row in records] != expected:
+        raise ValueError('Missing, duplicate or reordered showcase phases')
+    for name in scenes:
+        rows = [row for row in records if row['case'] == name]
+        first = rows[0]
+        if type(first.get('id')) is not int or first['id'] < 0 or not first.get('cargoIDs'):
+            raise ValueError('Missing showcase cart/cargo identity')
+        for row in rows:
+            ground = row['phase'] == 'putdown'
+            held = -1 if ground else first['id']
+            if (row.get('kind') != VARIANTS[name] or row.get('id') != first['id']
+                    or row.get('cargoIDs') != first['cargoIDs'] or row.get('cargoWeight') != first.get('cargoWeight')
+                    or row.get('primaryID') != held or row.get('secondaryID') != held
+                    or row.get('inventoryCount') != int(not ground) or row.get('worldCount') != int(ground)
+                    or row.get('luaActions') != 0 or row.get('nativeActions') != 0 or row.get('hasPath') is not False
+                    or not isinstance(row.get('elapsed'), (int, float)) or not 0 < row['elapsed'] < 15000):
+                raise ValueError('Showcase ownership/action receipt failed: ' + name + '/' + row['phase'])
+            if row['phase'] not in ('pickup', 'putdown', 'run-brake', 'sprint-brake'):
+                if (row.get('gaitSeen') is not True or not isinstance(row.get('distance'), (int, float))
+                        or not math.isfinite(row['distance']) or row['distance'] < .25):
+                    raise ValueError('Showcase native movement/gait missing: ' + name + '/' + row['phase'])
+    return {'requestedPhasesCaptured': True, 'receipts': records}
+
+
 def _controls_paused_gap(a, b, reference=None):
     gap=b['elapsed']-a['elapsed']
     if gap <= 500:
@@ -1046,7 +1081,7 @@ def verify(root, selection, catalog):
         if any(not complete(selection, role, text) for role, text in texts.items()):
             raise ValueError('Cart capture did not complete')
         for text in texts.values():
-            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[CLEARANCE_PROBE] ATLAS ERROR', '[SHOPPING_WHEEL_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
+            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_SHOWCASE] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[CLEARANCE_PROBE] ATLAS ERROR', '[SHOPPING_WHEEL_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
                 raise ValueError('Cart capture contains fixture/probe errors')
         evidence['videos'] = {role: _videos(root, selection, role, text) for role, text in texts.items()}
         if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart'):
@@ -1080,6 +1115,16 @@ def verify(root, selection, catalog):
                  'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
                              'controlsVerified': True, 'partialCoverage': debug,
                              'selectedScenes': selected_scenes(selection)}}]}
+        if selection['suite'] == SP and selection['cases'] == ['showcase']:
+            report = _showcase_coverage(texts['client1'], selected_scenes(selection))
+            _write(analysis / 'showcase.json', json.dumps(report, indent=2, allow_nan=False))
+            evidence.update(showcase=report, analysis=str(analysis), evidenceComplete=True,
+                            scope='Continuous SP animation showcase; visual review remains separate')
+            return {'issues': [], 'evidence': evidence, 'outcomes': [
+                {'actor': 'client1', 'case': 'showcase', 'status': 'captured',
+                 'reason': 'Native pickup, three gaits, turns, stops and put-down captured with exact cart ownership',
+                 'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
+                             'requestedPhasesCaptured': True, 'selectedScenes': selected_scenes(selection)}}]}
         if selection['suite'] == SP and selection['cases'] == ['variants']:
             report = _variant_coverage(texts['client1'], selected_scenes(selection))
             _write(analysis / 'variants.json', json.dumps(report, indent=2, allow_nan=False))

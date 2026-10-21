@@ -373,6 +373,33 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         with patch.object(carts, '_videos', return_value=[]):
             self.assertTrue(carts.verify(self.output,self.selection,{})['issues'])
 
+    def test_showcase_stages_native_capture_and_requires_ordered_gait_and_ownership(self):
+        self.selection['cases'] = ['showcase']
+        self.options.pop('mesh_fbx')
+        self.stage()
+        self.assertEqual(self.runtime['fixture']['attach'], {'client1': []})
+        source = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE']).read_text()
+        self.assertIn((ROOT / 'tests/native_queue/contributions/wooden_cart_motion/scenario-showcase.lua').read_text(), source)
+        rows = []
+        for name in carts.scene_names('showcase'):
+            kind = carts.VARIANTS[name]
+            for phase in carts.SHOWCASE_PHASES:
+                ground = phase == 'putdown'
+                rows.append(dict(case=name, kind=kind, phase=phase, id=42, cargoIDs='99:Base.Log:1', cargoWeight=1,
+                    primaryID=-1 if ground else 42, secondaryID=-1 if ground else 42,
+                    inventoryCount=int(not ground), worldCount=int(ground), luaActions=0, nativeActions=0,
+                    hasPath=False, elapsed=1500, distance=1, gaitSeen=True))
+        def log(records):
+            return '\n'.join('[CART_SHOWCASE] PHASE ' + json.dumps(row) for row in records)
+        self.assertTrue(carts._showcase_coverage(log(rows), carts.scene_names('showcase'))['requestedPhasesCaptured'])
+        for index, key, value in ((1, 'gaitSeen', False), (2, 'distance', 0), (3, 'id', 43),
+                                  (8, 'worldCount', 0), (8, 'secondaryID', 42)):
+            bad = [dict(row) for row in rows]; bad[index][key] = value
+            with self.assertRaises(ValueError):
+                carts._showcase_coverage(log(bad), carts.scene_names('showcase'))
+        with self.assertRaises(ValueError):
+            carts._showcase_coverage(log(rows[:-1]), carts.scene_names('showcase'))
+
     def test_manual_sp_rejects_automatic_scene_selection(self):
         self.selection['cases'] = ['manual']
         self.options['cart_scenes'] = ['male-full-corner']
@@ -926,7 +953,7 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
 
     def test_stop_and_reversal_stage_their_own_scenarios(self):
         self.assertEqual([case['id'] for case in carts.definitions()[carts.SP]['cases']],
-                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'pivot', 'stationary', 'maneuvers', 'motion-matrix', 'obstacle-matrix', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'approach', 'interruption-fast', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'native-e'])
+                         ['sprint', 'reverse', 'reversal', 'stop', 'stop-timing', 'pivot', 'stationary', 'maneuvers', 'motion-matrix', 'obstacle-matrix', 'collision', 'footprint', 'vehicles', 'brace', 'fast-slide', 'wall-exit', 'wall-manual-exit', 'wall-fast-manual-exit', 'impact', 'wheel', 'interaction', 'approach', 'interruption-fast', 'interruption', 'interruption-matrix', 'repeat', 'hotkey', 'manual', 'path', 'variants', 'controls', 'showcase', 'native-e'])
         for case, count in [('stop', 24), ('stop-timing', 4), ('reversal', 20), ('stationary', 20), ('maneuvers', 32), ('collision', 24), ('footprint', 24), ('brace', 8), ('fast-slide', 16), ('wall-exit', 24), ('wall-manual-exit', 16), ('wall-fast-manual-exit', 32), ('impact', 8), ('wheel', 1), ('interaction', 4), ('approach', 7), ('interruption-fast', 14), ('interruption', 12), ('interruption-matrix', 48), ('repeat', 12), ('path', 24)]:
             with self.subTest(case=case):
                 self.output = self.root / case
