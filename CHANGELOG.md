@@ -17,11 +17,15 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
-### 0.1.194
+### 0.1.195
 
 - Support the storage Manifest in menu Host through one authoritative warehouse service shared with single-player. Incrementally sample designated containers, retain unloaded areas' last-known contents and send bounded pages only to requesting windows; remove the SP-only transfer interceptor.
 - Open the localized Warehouse from the sidebar tools menu or the existing Storage Manifest notebook. Filter by item name and Toolkit tag, inspect each item's container locations with their configured names/icons/colors, and see sample age and connection state.
 - Separate warehouse aggregation from search and sort. Reuse the received projection and cached sort orders while typing; keep custom names and distinct item/category identities separate. Preserve legacy single-player snapshots until their storage is revisited.
+
+### 0.1.194
+
+- Allow pending queue edits for cold cookable food in proven constant-temperature ordinary world storage, including SP nested bags. Validate native outermost ancestry, both transfer endpoints, cooking-state hazards and the full capacity prefix. Hot food, appliances and custom-temperature storage remain protected; original portions, cooking replacements and Host authority stay native.
 
 ### 0.1.193
 
@@ -896,6 +900,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.41
+
+- Reset omitted numeric food-stat fields before decoding a reused native item-stat packet. Prevent one item's cooking time, nutrition and other food effects from leaking into the next item in multiplayer; preserve the native wire format, explicit values and poison-detection sentinel.
 
 ### 0.1.40
 

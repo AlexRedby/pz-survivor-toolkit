@@ -48,6 +48,7 @@ The launcher uses the game's bundled Apple Silicon or Intel runtime and passes o
 Client and server logs should contain `[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=true, vehicle=true, vehicleOwnership=true, media=true, build=true, video=true, animal=true, equipment=true, hutch=true, cart=true, properties=true, fluids=true, fences=true`. This confirms matching game bytecode. Also check ZombieBuddy's actual transformation messages:
 
 - Server: `[ZB] Transformed: zombie.vehicles.BaseVehicle`, `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
+- Client and server item-stat decoder: `[ZB] Transformed: zombie.network.packets.ItemStatsPacket`. Omitted food values reset to the native wire defaults when a packet handler is reused.
 - Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI`, `[ZB] Transformed: zombie.vehicles.VehicleInterpolation` `[ZB] Transformed: zombie.characters.NetworkPlayerAI` and `[ZB] Transformed: zombie.network.packets.EquipPacket`.
 - Client and server fluid parser: `[ZB] Transformed: zombie.scripting.entity.components.fluids.FluidContainerScript`.
 - Client and server property fallback: `[ZB] Transformed: zombie.core.properties.IsoPropertyType`.

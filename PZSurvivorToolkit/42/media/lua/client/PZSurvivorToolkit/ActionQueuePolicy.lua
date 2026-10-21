@@ -1222,7 +1222,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
                 if not instanceof(item, "InventoryItem") or instanceof(item, "InventoryContainer") then return false end
                 if not check.readDemotion and (not sourceCarried or not destinationCarried)
                     and (not ItemEditAdapters or not ItemEditAdapters.worldTransferItem
-                        or not ItemEditAdapters.worldTransferItem(item,not destinationCarried)) then return false end
+                        or not ItemEditAdapters.worldTransferItem(item,not destinationCarried,character,source,destination)) then return false end
                 local id, kind = item:getID(), item:getType()
                 if seen[id] then return true end
                 seen[id] = true

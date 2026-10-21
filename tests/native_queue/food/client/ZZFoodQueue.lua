@@ -7,6 +7,7 @@ require 'TimedActions/ISInventoryTransferAction'
 local Fixture=require 'QueueFoodFixture'
 local Checks=require 'QueueScenarioChecks'
 local Progress=require 'QueueFoodProgress'
+local Receipt=require 'QueueFoodReceipt'
 local Queue=require 'PZSurvivorToolkit/ActionQueue'
 local Policy=require 'PZSurvivorToolkit/ActionQueuePolicy'
 local Weights=require 'PZSurvivorToolkit/ActionQueueWeights'
@@ -14,7 +15,7 @@ local Operations=require 'PZSurvivorToolkit/ActionQueueOperations'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local started,done=false,false
-local step,failed,phase,since,idle,preparationLogged=1,0,'prepare',0,0,false
+local step,failed,phase,since,idle,preparationLogged,receiptLogged=1,0,'prepare',0,0,false,false
 local ids,state,authority,receipt,previous,previousBag,spec,anchor
 local commands,observed,evidence,observer={},{},nil,nil
 local function case()return config.cases[step]end
@@ -34,7 +35,9 @@ Events.OnServerCommand.Add(function(module,command,value)
  assert(command~='Failed',value.error)
  if command=='Prepared'then
   ids=value;print('[FOOD_TEST] PREPARATION_RECEIVED '..JSON.encode({case=case(),phase=phase,ids=value}))
- elseif command=='Verified'then receipt=value end
+ elseif command=='Verified'then
+  receipt=value;print('[FOOD_TEST] RECEIPT_RECEIVED '..JSON.encode({case=case(),phase=phase,receipt=value}))
+ end
 end)
 Events.OnGameStart.Add(function()
  started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false)
@@ -234,6 +237,7 @@ local function dispatch()
   if spec.cookable then
    assert(action.item:isCooked()==command.cooked and action.item:getHeat()>=0 and action.item:getHeat()<=1.6,
     'edit changed stable cooking state')
+   if spec.world then assert(action.item:getCookingTime()==ids.cookingTime,'edit changed world food cooking time')end
   end
   if spec.replacement then
    local outputs=action.item:getReplaceOnCooked()
@@ -249,15 +253,16 @@ local function dispatch()
 end
 local function clientReady()
  local current=Fixture.snapshot(getPlayer(),ids);if not current then return end
- for field,value in pairs(receipt)do
-  if type(value)=='number'then
-   local tolerance=(field=='hunger'or field=='thirst')and .01 or .0001
-   if type(current[field])~='number'or math.abs(current[field]-value)>tolerance then return end
-  elseif type(value)=='table'then
-   if type(current[field])~='table'or JSON.encode(current[field])~=JSON.encode(value)then return end
-  elseif current[field]~=value then return end
- end
+ if #Receipt.differences(current,receipt,JSON.encode)>0 then return end
  return current
+end
+local function receiptDiagnostic(player,final)
+ local current=ids and Fixture.snapshot(player,ids)
+ local value={case=case(),final=final,elapsedMs=getTimestampMs()-since,
+  receiptReceived=receipt~=nil,snapshotAvailable=current~=nil,expected=receipt,snapshot=current}
+ if receipt and current then value.differences=Receipt.differences(current,receipt,JSON.encode)end
+ print('[FOOD_TEST] RECEIPT_WAIT '..JSON.encode(value))
+ if ids and not current then preparationDiagnostic(player,final)end
 end
 local function finish(localReceipt)
  -- Resolve Host Java proxies afresh, compare the authoritative item endpoints and counts.
@@ -290,8 +295,12 @@ Events.OnTick.Add(function()
   if phase=='prepared'and not preparationLogged and getTimestampMs()-since>10000 then
    preparationLogged=true;preparationDiagnostic(player,false)
   end
+  if phase=='receipt'and not receiptLogged and getTimestampMs()-since>10000 then
+   receiptLogged=true;receiptDiagnostic(player,false)
+  end
   if getTimestampMs()-since>120000 then
-   if phase=='prepared'then preparationDiagnostic(player,true)end
+   if phase=='prepared'then preparationDiagnostic(player,true)
+   elseif phase=='receipt'then receiptDiagnostic(player,true)end
    error('food phase timeout '..phase)
   end
   idle=not player:hasTimedActions()and #queue().queue==0 and idle+1 or 0
@@ -330,7 +339,7 @@ Events.OnTick.Add(function()
      commands[index].progress=true;evidence.order[#evidence.order+1]=index
     end
    end
-   if idle>=10 then assert(evidence.anchorRunning,'anchor ended before dispatch');phase='receipt';request('Verify')end
+   if idle>=10 then assert(evidence.anchorRunning,'anchor ended before dispatch');phase='receipt';receiptLogged=false;request('Verify')end
   elseif phase=='receipt'and receipt then
    -- Host inventory/stat replication may trail the command receipt; resolve fresh IDs until aligned.
    local current=clientReady();if current then finish(current)end
