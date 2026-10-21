@@ -270,4 +270,34 @@ secondChoices:addOption('Scope',b,ISInventoryPaneContextMenu.onRemoveUpgradeWeap
 fill(0,repeatedParts,{a,b});fill(0,repeatedParts,{a,b})
 assert(#firstChoices.options==2 and #secondChoices.options==1 and secondChoices.options[1].target==b,
     'one attachment batch must preserve both weapon-specific native part choices')
+
+local normalize = PZSurvivorToolkit.BulkActions.selectedItems
+local normalizations = 0
+PZSurvivorToolkit.BulkActions.selectedItems = function(rows)
+    normalizations = normalizations + 1
+    return normalize(rows)
+end
+unloadEnabled, attachmentsEnabled = true, true
+local sharedRows = {{items = {a, a, magazine}}}
+local sharedMenu = menu();fill(0, sharedMenu, sharedRows)
+assert(normalizations == 1 and #sharedMenu.options == 2,
+    'one menu normalizes the selected stack once for unloading and attachment removal')
+sharedRows[1].items = {b, b, magazine}
+local refreshedMenu = menu();fill(0, refreshedMenu, sharedRows)
+assert(normalizations == 2 and refreshedMenu.options[1].subOption.options[2].param1[1].item == b,
+    'the next menu must normalize current rows rather than reuse an earlier selection')
+unloadEnabled, attachmentsEnabled = true, false
+fill(0, menu(), sharedRows)
+assert(normalizations == 3, 'unloading alone normalizes once')
+unloadEnabled, attachmentsEnabled = false, true
+fill(0, menu(), sharedRows)
+assert(normalizations == 4, 'attachment removal alone normalizes once')
+unloadEnabled, attachmentsEnabled = false, false
+fill(0, menu(), sharedRows)
+assert(normalizations == 4, 'disabled firearm commands do not normalize selections')
+sharedRows[1].items = {a}
+assert(bulk.unloadEntries(player, sharedRows)[1].item == a
+    and bulk.attachmentEntries(player, sharedRows)[1].item == a and normalizations == 6,
+    'public collectors independently normalize the current selection')
+PZSurvivorToolkit.BulkActions.selectedItems = normalize
 print('Bulk firearm checks passed: native queues, exact items/parts, MP pre-start guards, mixed menus and independent toggles.')

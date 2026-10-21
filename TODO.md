@@ -1,3 +1,9 @@
+# Bulk selection preparation cost
+
+- [ ] Replace per-food recursive getItemById scans with an enumeration-scoped recursive ID index; retain fresh click/dispatch checks and same-ID replacement semantics.
+- [ ] Normalize selected rows once within each food/firearms menu callback and avoid preparing the same food enqueue twice in one callback; retain fresh public entry points, native detachable-part callbacks and execution authority.
+- [ ] Verify large selections, nested containers, stale/replaced objects, independent settings and related native/mod-source checks; integrate latest main and version the delivered Toolkit change.
+
 # Selected QoL additions
 
 - [ ] After installation is requested, check all three in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod; foraging modifiers/radius; switch construction, bulb insertion/removal, grid/generator lighting, dismantling and second-player synchronization. Author claims do not establish compatibility with this selected set.

@@ -22,6 +22,7 @@ ACTION_TESTS += ("test_inventory_search.lua", "test_inventory_transfer_operation
 ACTION_TESTS += ("test_vva_compat.lua",)
 ACTION_TESTS += ("test_manifest_text_fit.lua",)
 ACTION_TESTS += ("test_action_queue_membership.lua",)
+ACTION_TESTS += ("test_inventory_membership.lua",)
 EXTRA_TESTS = (
     'test_quartermaster_rpc.lua',
     'test_container_tag_icons.lua',

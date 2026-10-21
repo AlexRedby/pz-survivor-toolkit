@@ -10,6 +10,7 @@ local Packaged = Toolkit.PackagedFood
 local Bulk = {}
 Toolkit.BulkFood = Bulk
 local Membership = require "PZSurvivorToolkit/ActionQueueMembership"
+local InventoryMembership = require "PZSurvivorToolkit/InventoryMembership"
 local commands, meals, cleanup, removals, openings, waits = {}, {}, {}, {}, {}, {}
 local registries = {commands, meals, cleanup, removals, openings, waits}
 local function portion(value) return value == 1 or value == 0.5 or value == 0.25 end
@@ -34,9 +35,15 @@ local function edible(item)
         and (not required or required:isEmpty())
 end
 
-local function available(player, item, containers)
+local function available(player, item, containers, membership)
     local source = item and item:getContainer()
-    return source and source:getItemById(item:getID()) ~= nil
+    if not source then return false end
+    if membership then
+        return membership.reachable[source] == true
+            and InventoryMembership.containsId(membership, source, item:getID())
+    end
+    -- Dispatch resolves membership and reachability live, after the queued wait.
+    return source:getItemById(item:getID()) ~= nil
         and (source == player:getInventory() or containers:contains(source))
 end
 
@@ -241,15 +248,22 @@ local function reserved(player)
     return used
 end
 
-function Bulk.entries(player, rows)
+local function entries(player, selected, limit)
     local result, used = {}, reserved(player)
     local containers = ISInventoryPaneContextMenu.getContainers(player)
-    for _, item in ipairs(Actions.selectedItems(rows)) do
-        if not used[item:getID()] and edible(item) and available(player, item, containers) then
+    local membership = {reachable = {[player:getInventory()] = true}}
+    for i = 0, containers:size() - 1 do membership.reachable[containers:get(i)] = true end
+    for _, item in ipairs(selected) do
+        if not used[item:getID()] and edible(item) and available(player, item, containers, membership) then
             result[#result + 1] = item
+            if limit and #result >= limit then break end
         end
     end
     return result
+end
+
+function Bulk.entries(player, rows)
+    return entries(player, Actions.selectedItems(rows))
 end
 
 local function dispatch(player, entry)
@@ -300,11 +314,9 @@ local function dispatch(player, entry)
     end
 end
 
-function Bulk.queue(player, selected, percentage)
-    percentage = percentage or 1
-    if not portion(percentage) then return 0 end
-    if not Toolkit.Settings.actionQueue() or not player or player:isDead() then return 0 end
-    local items = Bulk.entries(player, selected)
+-- Prepared selections stay private to one synchronous callback. Later clicks
+-- enter through the public collectors; native dispatch/start validation stays live.
+local function enqueue(player, items, percentage)
     return Operations.run(function()
         for _, item in ipairs(items) do
             local entry = {item = item, id = item:getID(), source = item:getContainer(), player = player, percentage = percentage}
@@ -317,6 +329,13 @@ function Bulk.queue(player, selected, percentage)
     end)
 end
 
+function Bulk.queue(player, selected, percentage)
+    percentage = percentage or 1
+    if not portion(percentage) then return 0 end
+    if not Toolkit.Settings.actionQueue() or not player or player:isDead() then return 0 end
+    return enqueue(player, Bulk.entries(player, selected), percentage)
+end
+
 function Bulk.queueOne(rows, percentage, playerIndex, openingRecipe, eatPercentage)
     if not Toolkit.Settings.actionQueue() or not portion(percentage)
         or (openingRecipe and not (Packaged and Packaged.supports(openingRecipe))) then
@@ -324,8 +343,8 @@ function Bulk.queueOne(rows, percentage, playerIndex, openingRecipe, eatPercenta
     end
     local player = getSpecificPlayer(playerIndex)
     if not player or player:isDead() then return 0 end
-    local selected = Bulk.entries(player, rows)
-    return selected[1] and Bulk.queue(player, {selected[1]}, percentage) or 0
+    local selected = entries(player, Actions.selectedItems(rows), 1)
+    return selected[1] and enqueue(player, {selected[1]}, percentage) or 0
 end
 
 local function eatMenu(context)
@@ -348,8 +367,9 @@ local function fillMenu(playerIndex, context, rows)
     if not player or player:isDead() then return end
     local menu, option = eatMenu(context)
     if not option or option.toolkitBulkFood then return end
-    if not edible(Actions.selectedItems(rows)[1]) then return end
-    local selected = Bulk.entries(player, rows)
+    local items = Actions.selectedItems(rows)
+    if not edible(items[1]) then return end
+    local selected = entries(player, items)
     local labels = {[1] = "eat_selected", [0.5] = "eat_selected_half", [0.25] = "eat_selected_quarter"}
     local count = #menu.options
     for i = 1, count do

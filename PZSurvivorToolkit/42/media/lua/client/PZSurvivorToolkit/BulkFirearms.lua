@@ -21,9 +21,9 @@ local function unloadKind(item)
     end
 end
 
-function Bulk.unloadEntries(player, rows)
+local function unloadEntries(player, selected)
     local entries = {}
-    for _, item in ipairs(Actions.selectedItems(rows)) do
+    for _, item in ipairs(selected) do
         local kind = unloadKind(item)
         if kind and Actions.safeItem(player, item) then
             entries[#entries + 1] = {item = item, kind = kind}
@@ -32,9 +32,13 @@ function Bulk.unloadEntries(player, rows)
     return entries
 end
 
-function Bulk.attachmentEntries(player, rows)
+function Bulk.unloadEntries(player, rows)
+    return unloadEntries(player, Actions.selectedItems(rows))
+end
+
+local function attachmentEntries(player, selected)
     local entries = {}
-    for _, item in ipairs(Actions.selectedItems(rows)) do
+    for _, item in ipairs(selected) do
         if instanceof(item, "HandWeapon") and Actions.safeItem(player, item) then
             local detachable, parts = item:getDetachableWeaponParts(player), {}
             for i = 0, detachable:size() - 1 do parts[#parts + 1] = detachable:get(i) end
@@ -42,6 +46,10 @@ function Bulk.attachmentEntries(player, rows)
         end
     end
     return entries
+end
+
+function Bulk.attachmentEntries(player, rows)
+    return attachmentEntries(player, Actions.selectedItems(rows))
 end
 
 -- Native callbacks may be wrapped by TidyUpMeister; retain them and intercept only their queued actions.
@@ -157,8 +165,11 @@ end
 local function fillMenu(playerIndex, context, rows)
     local player = getSpecificPlayer(playerIndex)
     if not player or player:isDead() then return end
-    if Toolkit.Settings.bulkUnload() then
-        local entries = Bulk.unloadEntries(player, rows)
+    local unloadEnabled, attachmentsEnabled = Toolkit.Settings.bulkUnload(), Toolkit.Settings.bulkRemoveAttachments()
+    if not unloadEnabled and not attachmentsEnabled then return end
+    local selected = Actions.selectedItems(rows)
+    if unloadEnabled then
+        local entries = unloadEntries(player, selected)
         if #entries >= 2 then
             local found = {}
             findOptions(context, function(option)
@@ -187,8 +198,8 @@ local function fillMenu(playerIndex, context, rows)
             end
         end
     end
-    if Toolkit.Settings.bulkRemoveAttachments() then
-        local entries = Bulk.attachmentEntries(player, rows)
+    if attachmentsEnabled then
+        local entries = attachmentEntries(player, selected)
         if #entries == 0 then return end
         local found = {}
         findOptions(context, function(option)
