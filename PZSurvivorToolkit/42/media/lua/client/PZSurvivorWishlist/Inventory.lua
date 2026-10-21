@@ -5,9 +5,43 @@ local W = PZSurvivorWishlist
 local Inventory = {}
 W.Inventory = Inventory
 
-local function wanted(playerNum, row)
+-- Presentation invalidates before refresh, including a refresh that fails.
+-- Unmanaged panes retain live scanning rather than assuming a mutation owner.
+function Inventory.invalidate(pane)
+    pane.pzswRowTypes = {}
+end
+
+local function groupTypes(row, previous, current)
+    local items = row.items
+    local cached = previous[row]
+    if not cached or cached.items ~= items or cached.count ~= #items then
+        local types, seen = {}, {}
+        for _, item in ipairs(items) do
+            if instanceof(item, "InventoryItem") then
+                local fullType = item:getFullType()
+                if fullType and not seen[fullType] then
+                    seen[fullType] = true
+                    types[#types + 1] = fullType
+                end
+            end
+        end
+        cached = {items = items, count = #items, types = types}
+    end
+    current[row] = cached
+    return cached.types
+end
+
+local function wanted(playerNum, row, previous, current)
     if instanceof(row, "InventoryItem") then return W.Client.isWanted(playerNum, row:getFullType()) end
     if type(row) == "table" and type(row.items) == "table" then
+        if current then
+            -- Keep the complete mixed stack, including children beyond the
+            -- render cap. Only membership is cached; wanted state stays live.
+            for _, fullType in ipairs(groupTypes(row, previous, current)) do
+                if W.Client.isWanted(playerNum, fullType) then return true end
+            end
+            return false
+        end
         for _, item in ipairs(row.items) do
             if instanceof(item, "InventoryItem") and W.Client.isWanted(playerNum, item:getFullType()) then return true end
         end
@@ -17,13 +51,17 @@ end
 
 function Inventory.marks(pane)
     local result = {}
+    local previous = pane.pzswRowTypes
+    local current = previous and {}
+    -- Retain only this draw's visible, non-dragged groups, even on early exit.
+    if current then pane.pzswRowTypes = current end
     if not W.Settings.rowsEnabled() or not pane.items or not pane.itemHgt or pane.itemHgt <= 0 then return result end
     local scroll = pane:getYScroll()
     local first = math.max(1, math.floor(-scroll / pane.itemHgt) + 1)
     local last = math.min(#pane.items, math.ceil((pane:getHeight() - scroll) / pane.itemHgt))
     for i = first, last do
         local dragging = pane.dragging and pane.dragStarted and pane.selected and pane.selected[i]
-        if not dragging and wanted(pane.player, pane.items[i]) then result[#result + 1] = i end
+        if not dragging and wanted(pane.player, pane.items[i], previous, current) then result[#result + 1] = i end
     end
     return result
 end

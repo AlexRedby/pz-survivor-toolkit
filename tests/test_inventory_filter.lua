@@ -379,6 +379,7 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
             if name=='PZSurvivorToolkit/InventoryPlantingTooltip' or name=='PZSurvivorToolkit/InventoryMediaTooltip'
                 or name=='PZSurvivorToolkit/InventoryClothingTooltip' then return {install=function() end} end
             if name=='ISUI/ISInventoryPane' or name=='ISUI/ISInventoryPage' then return end
+            if name=='PZSurvivorWishlist/Inventory' then return {draw=function() end,invalidate=function() end} end
             return require(name)
         end
         for _,name in ipairs({'saveSelection','restoreSelection','refreshContainer'}) do

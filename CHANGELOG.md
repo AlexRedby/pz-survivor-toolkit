@@ -15,6 +15,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.179
+
+- **Fixed:** Wishlist row highlighting reuses unique item types for visible inventory groups instead of rescanning every hidden child on each frame. Mixed stacks, filters and pin projections remain accurate; Wishlist membership still updates immediately, and refreshes invalidate the summaries.
+- **Fixed:** Crafting menus with many Wishlist alternatives prepare one selected-list entry index rather than scanning every request for every option. Exact entries, completed requests and overlapping vehicle groups keep their removal order and captured target; reopening reads fresh membership.
+
 ### 0.1.178
 
 - **Fixed:** Wishlist reads already-applied recipe ingredients once when calculating missing alternatives, instead of rebuilding and scanning that list for every possible ingredient type. Exclusive choices, relative amounts, partial-item/fluid caveats and fresh state on reopening are preserved.

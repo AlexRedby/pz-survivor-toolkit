@@ -131,10 +131,11 @@ local function submit(playerNum, entries)
     W.Client.addItems(playerNum, clean)
 end
 
-local function itemOption(context, playerNum, choice, kind, display)
-    local list = W.Client.selected(playerNum)
+local function itemOption(context, playerNum, choice, kind, display, membership)
+    local list = membership and membership.list
+    if not membership then list = W.Client.selected(playerNum) end
     local listId = list and list.id
-    local keys = W.Client.entryKeys(list, choice.fullType)
+    local keys = W.Client.entryKeys(list, choice.fullType, membership and membership.index)
     if #keys == 0 then
         context:addOption(getText("UI_PZSW_Add" .. kind) .. ": " .. (display or label(choice)), playerNum, function(num)
             if not enabled() then return end
@@ -152,6 +153,11 @@ local function itemOption(context, playerNum, choice, kind, display)
             if enabled() then W.Client.edit(num, "remove", {listId = listId, fullType = key}) end
         end)
     end
+end
+
+local function menuMembership(playerNum)
+    local list = W.Client.selected(playerNum)
+    return {list = list, index = W.Client.entryIndex(list)}
 end
 
 -- Commit a batch only after each ambiguous input has one explicit choice.
@@ -179,9 +185,10 @@ function Crafting.openMenu(panel)
     if not enabled() or not panel.player then return end
     local playerNum = panel.player:getPlayerNum()
     local context = ISContextMenu.get(playerNum, getMouseX(), getMouseY())
+    local membership = menuMembership(playerNum)
     for _, group in ipairs(Crafting.results(panel.logic)) do
         for _, choice in ipairs(group) do
-            itemOption(context, playerNum, choice, "Result")
+            itemOption(context, playerNum, choice, "Result", nil, membership)
         end
     end
     local groups = Crafting.missing(panel.logic)
@@ -195,9 +202,11 @@ function Crafting.openInput(widget)
     if not enabled() or widget.displayAsOutput or not widget.player then return end
     local choices = Crafting.inputChoices(widget.logic, widget.inputScript, true)
     if #choices == 0 then return end
-    local context = ISContextMenu.get(widget.player:getPlayerNum(), getMouseX(), getMouseY())
+    local playerNum = widget.player:getPlayerNum()
+    local context = ISContextMenu.get(playerNum, getMouseX(), getMouseY())
+    local membership = menuMembership(playerNum)
     for _, choice in ipairs(choices) do
-        itemOption(context, widget.player:getPlayerNum(), choice, "Ingredient")
+        itemOption(context, playerNum, choice, "Ingredient", nil, membership)
     end
     return context
 end

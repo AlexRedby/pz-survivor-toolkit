@@ -117,6 +117,7 @@ local function noop()end
 Events={OnServerCommand={Add=noop},OnTick={Add=noop},OnGameStart={Add=noop},OnMainMenuEnter={Add=noop}}
 dofile(path:gsub("Crafting.lua$", "Client.lua"))
 stubClient.entryKeys=PZSurvivorWishlist.Client.entryKeys
+stubClient.entryIndex=PZSurvivorWishlist.Client.entryIndex
 PZSurvivorWishlist.Client, Events=stubClient,savedEvents
 local C = dofile(path)
 event()
@@ -386,6 +387,41 @@ click(evolvedOption)
 check(sent[2].action == "remove" and sent[2].fullType == "Base.Soup" and sent[2].listId == "Survivor",
     "evolved result removes the selected list entry")
 selected.entries = {}
+
+-- Multi-choice menus must prepare one displayed-list lookup, not scan every
+-- existing request again for each possible script type.
+do
+    local previous=selected
+    for _,count in ipairs({128,512}) do
+        local choices,entries={},{}
+        for index=1,count do
+            choices[index]=item('Base.MenuChoice'..index)
+            entries['Base.MenuChoice'..index]={amount=1,done=index%2==0}
+        end
+        entries['vehicle:Base.Z']={amount=1,done=true,vehicleTypes={'Base.MenuChoice1'},vehicleClass=2}
+        entries['vehicle:Base.A']={amount=1,done=false,vehicleTypes={'Base.MenuChoice1'},vehicleClass=2}
+        selected={id='Large menu',owner='Large menu',entries=entries}
+        local originalPairs,scans=pairs,0
+        pairs=function(values)
+            if values==entries then scans=scans+1 end
+            return originalPairs(values)
+        end
+        local menu=C.openInput({player=player,logic=l,inputScript=input(choices,1)})
+        pairs=originalPairs
+        check(scans==1 and #menu.options==count+2,'craft menu rescanned requests for each alternative')
+        sent={};click(menu.options[1]);click(menu.options[2]);click(menu.options[3])
+        check(sent[1].fullType=='Base.MenuChoice1' and sent[2].fullType=='vehicle:Base.A'
+            and sent[3].fullType=='vehicle:Base.Z','batch menu changed exact/sorted group removal targets')
+        entries['Base.MenuChoice1']=nil;entries['Base.Replacement']={amount=1,done=false}
+        local nextMenu=C.openInput({player=player,logic=l,inputScript=input(choices,1)})
+        check(#nextMenu.options==count+1,'reopened menu retained removed exact membership')
+        selected={id='Other',owner='Other',entries={}}
+        click(nextMenu.options[1])
+        check(sent[#sent].listId=='Large menu' and sent[#sent].fullType=='vehicle:Base.A',
+            'indexed menu lost its captured target after a selected-list change')
+    end
+    selected=previous
+end
 
 if NativeWishlistGameRoot then
     local f = assert(io.open(NativeWishlistGameRoot .. "/media/lua/client/ISUI/ISContextMenu.lua", "r"))
