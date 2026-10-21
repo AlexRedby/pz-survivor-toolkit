@@ -12,6 +12,7 @@
 # Metal wheelbarrow animation port
 
 - [ ] Close the selected immediate-retry grip-phase coverage gap in the shared analyzer; retain per-action cancelled/successful boundaries and do not infer a full matrix pass from the two-scene lifecycle/ownership audit.
+- [ ] Review the remaining coarse stock-skin overlap around metal shafts with the closed grip; current bounded checks allow up to 1.1 mm male / 0.5 mm female. Preserve the accepted arm/cart stance and closed fist; do not obtain clearance by opening the fingers.
 
 # Selected QoL additions
 

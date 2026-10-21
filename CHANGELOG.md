@@ -19,7 +19,7 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
-### Unreleased
+### 0.1.199
 
 - **Changed:** Retargeted metal wheelbarrow pickup/setdown to the corrected wrist angle with a closed fist, preserving the grounded approach and accepted body/cart stance.
 
@@ -921,7 +921,7 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
-### Unreleased
+### 0.1.43
 
 - **Fixed:** Preserve a closed fist and native thumb on metal wheelbarrows; correct the wrist angle and seating around the handle shafts instead of opening the fingers. Keep the accepted body/cart stance and the open-hand approach during pickup and setdown.
 
