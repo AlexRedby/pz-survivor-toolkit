@@ -1,153 +1,93 @@
-if not NativeActionRoot or not NativeQuartermasterLuaRoot then
-    print('Quartermaster manifest transfer contracts SKIP (pass native action and Quartermaster roots).');return
+if not NativeActionRoot then
+    print('Manifest transfer isolation SKIP (pass native action root).'); return
 end
 local function read(path)
-    if NativeReadText then return NativeReadText(path):gsub('\r','')end
-    local reader=assert(io.open(path));local value=reader:read('*a');reader:close();return value:gsub('\r','')
+    if NativeReadText then return NativeReadText(path):gsub('\r', '') end
+    local reader = assert(io.open(path)); local value = reader:read('*a'); reader:close(); return value:gsub('\r', '')
 end
-local function source(value,path)return assert(loadstring(value,'@'..path))()end
-local compatPath=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
-local compatSource=read(compatPath)
-local installer=assert(compatSource:match('(local function installManifestTransfers%(%).-\nend)'))
-local query=assert(compatSource:match('(function Compat.isTransferPerform%(callback%).-\nend)'))
-local adapterSource='local Toolkit,Operations,containerHelpersUnchanged=...\nlocal Compat={}\nlocal ready={}\n'
-    ..'local containerTransferPerform,manifestTransferPerform,manifestHelpersUnchanged\n'
-    ..installer..'\n'..query
-    ..'\nreturn Compat,installManifestTransfers'
-local origin=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source:gsub('^@','')end
-local function fixture(mode)
-    local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
-    getFilenameOfClosure=origin
-    local mp=mode=='mp'
-    isClient=function()return mp end;isServer=function()return false end
-    local handlers={}
-    Events=setmetatable({}, {__index=function(self,name)
-        local event={Add=function(fn)handlers[name]=handlers[name]or{};handlers[name][#handlers[name]+1]=fn end,Remove=function()end}
-        rawset(self,name,event);return event
-    end})
-    ISCollapsableWindowJoypad={derive=ISBaseObject.derive}
-    LootSorter={DBG=function()end}
-    local stores={LootSorter_Registry={boxes={['1,2,0']=true,['4,5,0']=true}}}
-    ModData={getOrCreate=function(key)stores[key]=stores[key]or{};return stores[key]end}
-    local modules={}
-    local function loadModule(module)
-        if modules[module]then return end
-        modules[module]=true
-        local path=module=='LootSorter_Core'and'client/LootSorter_Core.lua'or'client/LootSorter_Manifest.lua'
-        source(read(NativeQuartermasterLuaRoot..'/'..path),'media/lua/'..path)
+local function source(value, path) return assert(loadstring(value, '@' .. path))() end
+local compatPath = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
+for _, mp in ipairs({false, true}) do
+    local f = assert(loadfile(ProjectRoot .. '/tests/support/action_queue_native.lua'))()
+    getFilenameOfClosure = NativeFilenameOfClosure or function(callback)
+        return debug.getinfo(callback, 'S').source:gsub('^@', '')
     end
-    local tags={normalizeRule=function(rule)return rule end,ruleActive=function(rule)return rule and rule.active==true end}
-    PZSurvivorToolkit.ItemTags=tags
-    local md={PZSTQuartermasterTagRules={['0']={active=true}}}
-    local object={hasModData=function()return true end,getModData=function()return md end}
-    local square={getObjects=function()return {size=function()return 1 end,get=function()return object end}end}
-    local cell={getGridSquare=function()return square end}
-    getCell=function()return cell end
-    require=function(module)
-        if module=='PZSurvivorToolkit/ItemCategories' then
-            return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/ItemCategories.lua'))()
+    isClient = function() return mp end
+    getActivatedMods = function() return {contains = function() return false end} end
+    f.project('ActionQueueOperations'); f.project('ActionQueueDefinitions')
+    local policy = f.project('ActionQueuePolicy')
+    local methods = {}
+    for _, name in ipairs({'new', 'isValid', 'isValidStart', 'start', 'update', 'stop', 'perform', 'complete', 'transferItem'}) do
+        methods[name] = ISInventoryTransferAction[name]
+    end
+    local previousRequire = require
+    require = function(module)
+        assert(module ~= 'LootSorter_Manifest', 'queue compatibility must not install a Manifest transfer observer')
+        if module == 'PZSurvivorToolkit/ActionQueueTidyIntent' then return {} end
+        if module == 'PZSurvivorToolkit/QuartermasterCraftContainers' then return {active = function() return false end} end
+        if module == 'PZSurvivorToolkit/ActionQueueMembership' then
+            return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
         end
-        if module=='PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
-        if module=='PZSurvivorToolkit/ItemTags'then return tags end
-        if module=='PZSurvivorToolkit/QuartermasterTagRules'then return f.rules end
-        if module=='LootSorter_Core'or module=='LootSorter_Manifest'then loadModule(module)end
+        return previousRequire(module)
     end
-    source(read(NativeQuartermasterLuaRoot..'/shared/LootSorter_Util.lua'),'media/lua/shared/LootSorter_Util.lua')
-    f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
-    local policy=f.project('ActionQueuePolicy')
-    local native=ISInventoryTransferAction.perform
-    f.rules=source(read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/QuartermasterTagRules.lua'),
-        'PZSurvivorToolkit/QuartermasterTagRules.lua')
-    f.tags,f.tagData=tags,md
-    if mode=='preinstalled'then loadModule('LootSorter_Core');loadModule('LootSorter_Manifest')end
-    if mode=='foreign-delegate'or mode=='fake-filename'then
-        ISInventoryTransferAction.perform=mode=='fake-filename'and source('return function()error("fake manifest delegate")end','media/lua/client/LootSorter_Manifest.lua')
-            or function()error('foreign predecessor')end
+    -- Exercise the complete module and its automatic install, including its no-mod branch.
+    local compat = source(read(compatPath), compatPath)
+    require = previousRequire
+    for name, callback in pairs(methods) do
+        assert(ISInventoryTransferAction[name] == callback, 'queue compatibility changed a native transfer method: ' .. name)
     end
-    local bcSafe=true
-    local api,install=assert(loadstring(adapterSource,'@'..compatPath))(PZSurvivorToolkit,PZSurvivorToolkit.ActionQueueOperations,function()return bcSafe end)
-    install()
-    return f,api,policy,native,stores,function(value)bcSafe=value end,modules
+    assert(not compat.isTransferPerform(methods.perform) and not compat.isTransferPerform(nil),
+        'the compatibility callback query grants only observed Better Containers methods')
+    local transactions = 0
+    removeItemTransaction = function(id, retry)
+        assert(id == 7 and retry == false); transactions = transactions + 1
+    end
+    local p = f.player
+    p.setIsFarming = function(self, value) self.farming = value end
+    ISLogSystem = {logAction = function(action) action.logged = (action.logged or 0) + 1 end}
+    local function container()
+        return {class = 'ItemContainer', getType = function() return 'crate' end,
+            getContainingItem = function() end, getParent = function() end}
+    end
+    local function transfer()
+        return f.action(ISInventoryTransferAction, {item = f.item('Base.Bandage'),
+            srcContainer = container(), destContainer = container()})
+    end
+    for _, cancelled in ipairs({false, true}) do
+        local action = transfer()
+        local delta
+        action.item.setJobDelta = function(_, value) delta = value end
+        action.queueList, action.started, action.transactionId = {}, true, 7
+        local previousTransactions = transactions
+        local waitFinished = true
+        action.action = {stopTimedActionAnim = function() end, setLoopedAction = function() end,
+            setWaitForFinished = function(_, value) waitFinished = value end}
+        local tail = f.action(ISReadABook, {item = f.item('Base.BookCarpentry1')})
+        local queue, completed = f.queue(action, tail), 0
+        queue.onCompleted = function(self, current)
+            assert(current == action); completed = completed + 1
+            table.remove(self.queue, 1); self.current = self.queue[1]
+        end
+        assert(policy.inspect(action), 'native transfer lost its policy contract')
+        if cancelled then action.toolkitQueueOperation.toolkitCancelled = true end
+        PZSurvivorToolkit.ActionQueueOperations.runWith(action.toolkitQueueOperation, action.perform, action)
+        assert(completed == 1 and queue.current == tail and #queue.queue == 1 and action.logged == 1
+            and action.started == false and delta == 0 and p.farming == false,
+            'native transfer completion/cleanup must preserve the unrelated queue tail after Manifest isolation')
+        assert(transactions == previousTransactions + (mp and 1 or 0) and action.transactionId == (mp and 0 or 7)
+            and waitFinished == not mp,
+            'native client completion must retain its transaction cleanup')
+    end
+    for _, callback in ipairs({function() error('foreign transfer callback must remain opaque') end,
+        source('return function() error("forged manifest callback must remain opaque") end', 'media/lua/client/LootSorter_Manifest.lua')}) do
+        ISInventoryTransferAction.perform = callback
+        assert(not compat.isTransferPerform(callback) and not policy.inspect(transfer()),
+            'unknown transfer wrapper acquired queue rights from the removed Manifest handoff')
+    end
+    ISInventoryTransferAction.perform = methods.perform
+    local action = transfer()
+    action.onCompleteFunc = function() error('foreign completion callback must remain opaque') end
+    assert(not policy.inspect(action), 'unknown completion callback acquired native transfer rights')
+    assert(policy.inspect(transfer()), 'restoring the native transfer callback must retain its original contract')
 end
-for _,mode in ipairs({'sp','mp','preinstalled','foreign-delegate','fake-filename'})do
-    local f,api,policy,native,stores,bc,modules=fixture(mode)
-    local wrapped=ISInventoryTransferAction.perform
-    if mode~='sp'and mode~='preinstalled'then
-        assert(not api.isTransferPerform(wrapped),'unobserved/unreviewed manifest delegation remains opaque: '..mode)
-        if mode=='mp'then
-            assert(wrapped==native and not modules.LootSorter_Manifest,'ineligible source/runtime must not install the SP manifest: '..mode)
-        end
-    else
-        assert(wrapped~=native and api.isTransferPerform(wrapped),'actual reviewed SP manifest is observed and adopted')
-        assert(not api.isTransferPerform(function()end),'another wrapper cannot borrow manifest permission')
-        do
-            local previousCell, previousFind, previousProvider = getCell, LootSorter.findDesignatedOnSquare, OrganizedCategories
-            local item = {category='Material',getDisplayCategory=function(self)return self.category end,
-                getDisplayName=function()return 'Thread'end,getFullType=function()return 'Base.Thread'end}
-            local content={getItems=function()return {size=function()return 1 end,get=function()return item end}end}
-            local sq={getX=function()return 1 end,getY=function()return 2 end,getZ=function()return 0 end}
-            getCell=function()return {getGridSquare=function(_,x,y,z)if x==1 and y==2 and z==0 then return sq end end}end
-            LootSorter.findDesignatedOnSquare=function()return {{container=content}}end
-            OrganizedCategories={applyItemDisplayOverride=function(current)
-                assert(current==item,'manifest replaced the original item')
-                current.category='craftingTailoring_material'
-            end}
-            LootSorter.manifestReconcile()
-            local snapshot=stores.LootSorter_Manifest.boxes['1,2,0'].Thread
-            assert(snapshot.n==1 and snapshot.ft=='Base.Thread' and snapshot.cat=='craftingTailoring_material',
-                'owned manifest snapshotted a raw category without provider preparation')
-            getCell,LootSorter.findDesignatedOnSquare,OrganizedCategories=previousCell,previousFind,previousProvider
-        end
-        local p=f.player
-        p.setIsFarming=function(self,value)self.farming=value end
-        ISLogSystem={logAction=function(action)action.logged=(action.logged or 0)+1 end}
-        local function container(x,y)
-            local sq={getX=function()return x end,getY=function()return y end,getZ=function()return 0 end}
-            return {class='ItemContainer',getType=function()return'crate'end,getContainingItem=function()end,
-                getParent=function()return {getSquare=function()return sq end}end}
-        end
-        local function perform(callback,cancelled)
-            local item=f.item('Base.Bandage');local delta
-            item.setJobDelta=function(_,value)delta=value end
-            local action=f.action(ISInventoryTransferAction,{item=item,srcContainer=container(1.9,2.2),destContainer=container(4,5),
-                queueList={},started=true,action={stopTimedActionAnim=function()end,setLoopedAction=function()end}})
-            local tail=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')})
-            local q=f.queue(action,tail);local completed=0
-            q.onCompleted=function(self,current)assert(current==action);completed=completed+1;table.remove(self.queue,1);self.current=self.queue[1]end
-            assert(policy.inspect(action),'adopted actual native transfer retains its policy contract')
-            if cancelled then action.toolkitQueueOperation.toolkitCancelled=true end
-            PZSurvivorToolkit.ActionQueueOperations.runWith(action.toolkitQueueOperation,callback,action)
-            assert(completed==1 and q.current==tail and #q.queue==1 and action.logged==1 and action.started==false
-                and delta==0 and p.farming==false,'manifest must preserve native completion, item cleanup and the unrelated queue tail')
-        end
-        perform(native,false)
-        assert(not LootSorter._manifestDirty['1,2,0'],'native baseline does not add manifest effects')
-        perform(wrapped,false)
-        assert(LootSorter._manifestDirty['1,2,0']and LootSorter._manifestDirty['4,5,0'],'actual manifest marks both designated container squares')
-        LootSorter._manifestDirty={};stores.LootSorter_Registry.boxes['4,5,0']=nil
-        perform(wrapped,true)
-        assert(LootSorter._manifestDirty['1,2,0']and not LootSorter._manifestDirty['4,5,0'],
-            'completed cancelled native work retains manifest cleanup and marks only designated squares')
-        local owner,registry,modData,dirty=LootSorter,LootSorter.getRegistry,ModData,LootSorter._manifestDirty
-        LootSorter={};assert(not api.isTransferPerform(wrapped),'replaced owner revokes the exact manifest proof');LootSorter=owner
-        owner.getRegistry=function()error('foreign registry must not run under rights')end
-        assert(not api.isTransferPerform(wrapped),'foreign registry getter revokes proof');owner.getRegistry=registry
-        ModData={getOrCreate=modData.getOrCreate};assert(not api.isTransferPerform(wrapped),'replaced ModData owner revokes proof');ModData=modData
-        local getter=modData.getOrCreate;modData.getOrCreate=function()error('foreign ModData getter must not run under rights')end
-        assert(not api.isTransferPerform(wrapped),'foreign ModData getter revokes proof');modData.getOrCreate=getter
-        setmetatable(dirty,{__newindex=function()error('foreign dirty table must not run under rights')end})
-        assert(not api.isTransferPerform(wrapped),'dirty metatable revokes proof');setmetatable(dirty,nil)
-        owner._receivedRegistry={};assert(not api.isTransferPerform(wrapped),'MP registry state cannot inherit SP manifest proof');owner._receivedRegistry=nil
-        bc(false);assert(not api.isTransferPerform(wrapped),'changed predecessor BC helper revokes proof');bc(true)
-        assert(api.isTransferPerform(wrapped),'restoring exact dependencies restores observed manifest proof')
-        f.rules=source(read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/QuartermasterTagRules.lua'),
-            'PZSurvivorToolkit/QuartermasterTagRules.lua')
-        assert(owner.getRegistry==registry and api.isTransferPerform(wrapped),
-            'loading direct tag rules leaves the registry and manifest transfer contract unchanged')
-        owner.getRegistry=function(...)return registry(...)end
-        assert(not api.isTransferPerform(wrapped),'an unknown registry wrapper remains opaque')
-        owner.getRegistry=registry
-
-    end
-end
-print('Quartermaster manifest: native completion, queue tail, dirty marks, both load orders and changed delegate guards passed.')
+print('Manifest isolation: no transfer wrapper install, native completion/tail, cancellation cleanup and opaque callbacks passed (SP/client).')

@@ -25,7 +25,6 @@ local readFixAttempted
 local transferSourceSafe = true
 local containerTransferPerform
 local containerHelpersUnchanged
-local manifestTransferPerform, manifestHelpersUnchanged
 local washWalkHelper
 local tidyClassUnchanged, tidyActionUnchanged
 local tidyFloorPage, tidyFloorGetter
@@ -769,32 +768,11 @@ local function installCartEating()
         and policy.adoptConsumeStarts(previous, helpersUnchanged) == true
 end
 
-local function installManifestTransfers()
-    if isClient() then return end
-    require "LootSorter_Core"
-    require "LootSorter_Manifest"
-    local owner, modData, getOrCreate = LootSorter, ModData, ModData and ModData.getOrCreate
-    local hooks = owner.manifestTransferHooks
-    if not hooks or type(getOrCreate) ~= "function" then return end
-    local registry, parse = hooks.registry, hooks.parse
-    local function unchanged()
-        return LootSorter == owner and owner.getRegistry == registry and owner.parseCoordKey == parse
-            and owner.manifestTransferHooks == hooks and owner._manifestXferHooked == true
-            and ModData == modData and modData.getOrCreate == getOrCreate and owner._receivedRegistry == nil
-            and type(owner._manifestDirty) == "table" and getmetatable(owner._manifestDirty) == nil
-            and (not containerHelpersUnchanged or containerHelpersUnchanged())
-    end
-    if not Toolkit.ActionQueuePolicy.adoptTransferHooks(hooks.previous, hooks.replacement, unchanged)
-        or not Operations.adoptReturnHooks(hooks.previous, hooks.replacement, unchanged) then return end
-    manifestTransferPerform, manifestHelpersUnchanged = hooks.replacement.perform, unchanged
-end
-
 function Compat.install()
     if installAttempted then return end
     installAttempted = true
     installCartEating()
     installContainerTransfers()
-    installManifestTransfers()
     if getActivatedMods and getActivatedMods():contains("SaucedCarts") and verified("SaucedCarts", sourceFiles.SaucedCartsTransfers) then
         ready.SaucedCartsTransfers = require("PZSurvivorToolkit/ActionQueueCarts").install()
     end
@@ -1013,8 +991,8 @@ function Compat.isCartCapacitySource()
 end
 
 function Compat.isTransferPerform(callback)
-    return type(callback) == "function" and ((ready.EURY_CONTAINERS == true and callback == containerTransferPerform
-        and containerHelpersUnchanged()) or (callback == manifestTransferPerform and manifestHelpersUnchanged()))
+    return type(callback) == "function" and ready.EURY_CONTAINERS == true and callback == containerTransferPerform
+        and containerHelpersUnchanged()
 end
 
 function Compat.isCraftOwner(name, target, action)

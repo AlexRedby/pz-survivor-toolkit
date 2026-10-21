@@ -17,6 +17,12 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.194
+
+- Support the storage Manifest in menu Host through one authoritative warehouse service shared with single-player. Incrementally sample designated containers, retain unloaded areas' last-known contents and send bounded pages only to requesting windows; remove the SP-only transfer interceptor.
+- Open the localized Warehouse from the sidebar tools menu or the existing Storage Manifest notebook. Filter by item name and Toolkit tag, inspect each item's container locations with their configured names/icons/colors, and see sample age and connection state.
+- Separate warehouse aggregation from search and sort. Reuse the received projection and cached sort orders while typing; keep custom names and distinct item/category identities separate. Preserve legacy single-player snapshots until their storage is revisited.
+
 ### 0.1.193
 
 - Resolve Quartermaster's explicit item-name destination candidates once per requested display name and plan. Preserve priority/distance order, per-item carrier/destination admission, capacity overflow and category/tag fallback without enumerating unrelated preset entries.

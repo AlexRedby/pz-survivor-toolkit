@@ -176,10 +176,10 @@ class QuartermasterPresets(unittest.TestCase):
 
     def test_transfer_verifier_requires_ordered_exact_outcomes_and_custom_denial(self):
         self.selection.update(suite=adapter.TRANSFER_SUITE, cases=['manifest'], options={})
-        records = ['PHASE success moved=2 remaining=0 tailRead=true dirty=true',
-                   'PHASE partial moved=1 remaining=1 tailRead=true dirty=true',
-                   'PHASE rejected moved=0 remaining=2 tailRead=false dirty=false',
-                   'PHASE withdraw moved=1 remaining=1 tailRead=true dirty=true',
+        records = ['PHASE success moved=2 remaining=0 tailRead=true queueObserved=true',
+                   'PHASE partial moved=1 remaining=1 tailRead=true queueObserved=true',
+                   'PHASE rejected moved=0 remaining=2 tailRead=false queueObserved=false',
+                   'PHASE withdraw moved=1 remaining=1 tailRead=true queueObserved=true',
                     'CUSTOM protected=3 queueUnchanged=true', 'COMPLETE case=manifest']
         log = self.output / 'client1-launch.log'
         def write(rows): log.write_text(''.join('[QM_TRANSFER] ' + row + '\n' for row in rows))

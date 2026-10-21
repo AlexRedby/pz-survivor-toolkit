@@ -1,149 +1,21 @@
--- LootSorter manifest: a read-only window that aggregates the contents of ALL designated boxes
--- into one global item list (icon + name + count), sortable and filterable.
---
--- Contents are kept in a PERSISTED per-coord snapshot store (central world ModData), so the manifest
--- still shows boxes whose tiles aren't currently loaded. Snapshots refresh two ways:
---   * a hook on ISInventoryTransferAction re-snapshots a designated tile whenever an item lands in or
---     leaves one of its containers (covers virtually all player-driven moves, incl. our own sort);
---   * reconcile-on-open re-scans every loaded designated tile and drops coords no longer designated.
--- Pure aggregation/sort lives in shared/LootSorter_ManifestAgg.lua (unit-tested).
-require "ISUI/ISCollapsableWindow"
+-- Read-only warehouse window; authority and network lifecycle live outside the UI.
 require "ISUI/ISCollapsableWindowJoypad"
-require "TimedActions/ISInventoryTransferAction"
-local Categories = require "PZSurvivorToolkit/ItemCategories"
+require "ISUI/ISButton"
+require "ISUI/ISTextEntryBox"
+require "ISUI/ISScrollingListBox"
+require "ISUI/ISComboBox"
+local Client = require "PZSurvivorToolkit/ManifestClient"
+local View = require "PZSurvivorToolkit/ManifestView"
+local Tags = require "PZSurvivorToolkit/ItemTags"
+local Presentation = require "PZSurvivorToolkit/ManifestPresentation"
+local Visuals = require "PZSurvivorToolkit/TagVisuals"
+local helpersOK, containerHelpers = pcall(require, "BetterContainers/Helpers")
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
-
 LootSorter = LootSorter or {}
 
--- Single-player only for now. The snapshot store is ModData.getOrCreate, which on a multiplayer
--- client is a real but permanently empty table -- so the manifest would show only what you happened
--- to touch this session, forget it on every relog, and share nothing between players. Showing an
--- authoritative-looking list that is quietly wrong is worse than not offering it.
--- Returning here also skips the snapshot store, the ISInventoryTransferAction hook and the tick
--- handler, so multiplayer pays none of the cost. LootSorter.toggleManifest is then undefined, which
--- is what the context menu already guards on.
-if isClient() then return end
-
-----------------------------------------------------------------------
--- Snapshot store
-----------------------------------------------------------------------
-
--- store = { [coordKey "x,y,z"] = { [displayName] = { n = <count>, ft = <fullType> } } }
-local function getStore()
-    local md = ModData.getOrCreate("LootSorter_Manifest")
-    md.boxes = md.boxes or {}
-    return md.boxes
+local function tr(key, ...)
+    return getText("UI_PZST_Manifest_" .. key, ...)
 end
-local function keyOf(x, y, z) return math.floor(x) .. "," .. math.floor(y) .. "," .. math.floor(z) end
-local function parseKey(k)
-    local x, y, z = string.match(k, "(%-?%d+),(%-?%d+),(%-?%d+)")
-    if not x then return nil end
-    return tonumber(x), tonumber(y), tonumber(z)
-end
-
--- (re)snapshot every designated container on a square into one coord entry. No designation -> drop it.
-local function snapshotSquare(sq)
-    if not sq then return end
-    local k = keyOf(sq:getX(), sq:getY(), sq:getZ())
-    local store = getStore()
-    local found = LootSorter.findDesignatedOnSquare and LootSorter.findDesignatedOnSquare(sq) or {}
-    if #found == 0 then store[k] = nil; return end
-    local map = {}
-    for _, rec in ipairs(found) do
-        local c = rec.container
-        if c then
-            Categories.prepareContainer(c)
-            local items = c:getItems()
-            for i = 0, items:size() - 1 do
-                local it = items:get(i)
-                local nm = it:getDisplayName()
-                local e = map[nm]
-                if not e then e = { n = 0, ft = it:getFullType(), cat = it:getDisplayCategory() }; map[nm] = e end
-                e.n = e.n + 1
-            end
-        end
-    end
-    store[k] = map
-end
-
--- Re-scan every loaded designated tile; keep unloaded tiles' last snapshot; drop undesignated coords.
-function LootSorter.manifestReconcile()
-    local reg = LootSorter.getRegistry()
-    local cell = getCell()
-    for k in pairs(reg) do
-        local x, y, z = parseKey(k)
-        if x and cell then
-            local sq = cell:getGridSquare(x, y, z)
-            if sq then snapshotSquare(sq) end     -- loaded -> refresh; unloaded -> keep last snapshot
-        end
-    end
-    local store = getStore()
-    for k in pairs(store) do
-        if not reg[k] then store[k] = nil end     -- registry is authoritative for "still designated"
-    end
-end
-
--- Hook transfers: when an item moves into/out of a designated tile's container, mark that tile
--- DIRTY (don't snapshot yet). A single bulk move (e.g. our sort) queues one transfer action PER
--- item, so snapshotting inline would rescan the whole box once per item (~O(n^2)). Instead we
--- coalesce: flush each dirty tile ONCE, on the tick after the player's action queue drains.
-LootSorter._manifestDirty = LootSorter._manifestDirty or {}
-
--- rebound each reload so edits to this apply (a boolean guard alone would keep running the FIRST
--- load's closure forever).
-LootSorter.addOrReplaceHandler(Events.OnTick, "_onManifestTick", function()
-    local dirty = LootSorter._manifestDirty
-    local any = false
-    for _ in pairs(dirty) do any = true; break end       -- cheap early-out on idle ticks
-    if not any then return end
-    local player = getSpecificPlayer(0)
-    if not player then return end
-    local q = ISTimedActionQueue.queues and ISTimedActionQueue.queues[player]
-    if q and #q.queue > 0 then return end                -- still transferring -> wait for the queue to drain
-    local cell = getCell()
-    for k in pairs(dirty) do
-        local x, y, z = parseKey(k)
-        local sq = (x and cell) and cell:getGridSquare(x, y, z) or nil
-        if sq then snapshotSquare(sq) end
-        dirty[k] = nil
-    end
-    -- live refresh: if the manifest is open, reflect the new contents immediately
-    if LootSorter._manifestWin then LootSorter._manifestWin:rebuild() end
-end)
-
--- one-time monkey-patch: wrap perform ONCE (guarded) -- re-wrapping on every reload would stack a new
--- layer of the wrapper each time. This is correct as a one-time registration.
-if not LootSorter._manifestXferHooked then
-    LootSorter._manifestXferHooked = true
-    local previous = {new = ISInventoryTransferAction.new, perform = ISInventoryTransferAction.perform,
-        transferItem = ISInventoryTransferAction.transferItem}
-    local origPerform = previous.perform
-    function ISInventoryTransferAction:perform()
-        origPerform(self)
-        pcall(function()
-            local reg = LootSorter.getRegistry()
-            local function mark(c)
-                if not c then return end
-                local p = c.getParent and c:getParent()
-                local sq = p and p.getSquare and p:getSquare()
-                if sq then
-                    local k = keyOf(sq:getX(), sq:getY(), sq:getZ())
-                    if reg[k] then LootSorter._manifestDirty[k] = true end
-                end
-            end
-            mark(self.srcContainer)
-            mark(self.destContainer)
-        end)
-    end
-    LootSorter.manifestTransferHooks = {previous = previous,
-        replacement = {new = ISInventoryTransferAction.new, perform = ISInventoryTransferAction.perform,
-            transferItem = ISInventoryTransferAction.transferItem},
-        registry = LootSorter.getRegistry, parse = LootSorter.parseCoordKey}
-end
-
-----------------------------------------------------------------------
--- Window
-----------------------------------------------------------------------
 -- Column geometry (list-relative). `content` excludes the scrollbar so the right-aligned Count
 -- never draws under it (the earlier cutoff). Columns: Item | Category | Count.
 local SCROLLBAR = 17
@@ -175,34 +47,31 @@ end
 local ManifestWindow = ISCollapsableWindowJoypad:derive("LSManifestWindow")
 
 function ManifestWindow:layout()
-    local pad = 8
-    local th = self:titleBarHeight()
-    local w = self:getWidth()
-    local y = th + pad
-    if self.filterEntry then
-        self.filterEntry:setX(pad); self.filterEntry:setY(y)
-        self.filterEntry:setWidth(w - pad * 2)
-        y = y + self.filterEntry:getHeight() + pad
-    end
-    if self.btnItem then
-        local listW = w - pad * 2
-        local c = colsFor(listW)
-        self.btnItem:setX(pad);                    self.btnItem:setY(y);  self.btnItem:setWidth(c.catX)
-        self.btnCat:setX(pad + c.catX);            self.btnCat:setY(y);   self.btnCat:setWidth(CAT_W)
-        self.btnCount:setX(pad + c.catX + CAT_W);  self.btnCount:setY(y); self.btnCount:setWidth(COUNT_W + SCROLLBAR)
-        y = y + self.btnItem:getHeight() + 2
-    end
-    if self.listBox then
-        self.listBox:setX(pad); self.listBox:setY(y)
-        self.listBox:setWidth(w - pad * 2)
-        self.listBox:setHeight(self:getHeight() - y - 24)   -- leave room for the footer line
-    end
+    local pad, w = 8, self:getWidth()
+    local y = self:titleBarHeight() + pad
+    self.filterEntry:setX(pad); self.filterEntry:setY(y)
+    self.filterEntry:setWidth(w - 188)
+    self.tagPicker:setX(w - 172); self.tagPicker:setY(y); self.tagPicker:setWidth(164)
+    y = y + 30
+    local c = colsFor(w - pad * 2)
+    self.btnItem:setX(pad); self.btnItem:setY(y); self.btnItem:setWidth(c.catX)
+    self.btnCat:setX(pad + c.catX); self.btnCat:setY(y); self.btnCat:setWidth(CAT_W)
+    self.btnCount:setX(pad + c.catX + CAT_W); self.btnCount:setY(y)
+    self.btnCount:setWidth(COUNT_W + SCROLLBAR)
+    y = y + 24
+    self.listBox:setX(pad); self.listBox:setY(y); self.listBox:setWidth(w - pad * 2)
+    self.listBox:setHeight(self:getHeight() - y - 204)
+    y = self.listBox:getY() + self.listBox:getHeight() + 24
+    self.locations:setX(pad); self.locations:setY(y); self.locations:setWidth(w - pad * 2)
+    self.locations:setHeight(self:getHeight() - y - 48)
+    self.layoutWidth, self.layoutHeight = w, self:getHeight()
 end
 
 function ManifestWindow:createChildren()
     ISCollapsableWindow.createChildren(self)
-    self.title = "Quartermaster - Manifest"
-    self.sortBy = nil          -- nil = no explicit sort (falls back to the default order below)
+    self.title = tr("Title")
+    self.view = View.new(Presentation.describe, Tags)
+    self.sortBy = "count"
     self.asc = false
     self.filterText = ""
     self.shownCount = 0
@@ -211,20 +80,24 @@ function ManifestWindow:createChildren()
     self.filterEntry = ISTextEntryBox:new("", 0, 0, 100, 22)
     self.filterEntry:initialise(); self.filterEntry:instantiate()
     self.filterEntry.font = UIFont.Small
-    self.filterEntry:setTooltip("Filter by item name")
+    self.filterEntry:setTooltip(tr("Search"))
     self:addChild(self.filterEntry)
+    self.tagPicker = ISComboBox:new(0, 0, 164, 22, self, function(win) win:rebuild() end)
+    self.tagPicker:initialise(); self.tagPicker:instantiate()
+    self.tagPicker:addOptionWithData(tr("AllTags"), false)
+    self:addChild(self.tagPicker)
 
     -- titleLeft pins each label to the left of its column so the right-anchored sort triangle
     -- always has clear space after the text (otherwise a centred label crowds the arrow).
-    self.btnItem = ISButton:new(0, 0, 100, 20, "Item", self, function() self:setSort("name") end)
+    self.btnItem = ISButton:new(0, 0, 100, 20, tr("Item"), self, function() self:setSort("name") end)
     self.btnItem:initialise(); self.btnItem:instantiate(); self.btnItem.font = UIFont.Small
     self.btnItem.titleLeft = true
     self:addChild(self.btnItem)
-    self.btnCat = ISButton:new(0, 0, CAT_W, 20, "Category", self, function() self:setSort("cat") end)
+    self.btnCat = ISButton:new(0, 0, CAT_W, 20, tr("Tags"), self, function() self:setSort("cat") end)
     self.btnCat:initialise(); self.btnCat:instantiate(); self.btnCat.font = UIFont.Small
     self.btnCat.titleLeft = true
     self:addChild(self.btnCat)
-    self.btnCount = ISButton:new(0, 0, 60, 20, "Count", self, function() self:setSort("count") end)
+    self.btnCount = ISButton:new(0, 0, 60, 20, tr("Count"), self, function() self:setSort("count") end)
     self.btnCount:initialise(); self.btnCount:instantiate(); self.btnCount.font = UIFont.Small
     self.btnCount.titleLeft = true
     self:addChild(self.btnCount)
@@ -239,6 +112,14 @@ function ManifestWindow:createChildren()
     self.listBox.joypadParent = self   -- route the list's left/right to the window's row navigation
     self:addChild(self.listBox)
 
+    self.locations = ISScrollingListBox:new(0, 0, 100, 100)
+    self.locations:initialise(); self.locations:instantiate()
+    self.locations.itemheight = 40
+    self.locations.font = UIFont.Small
+    self.locations.drawBorder = true
+    self.locations.doDrawItem = function(lst, y, item, alt) return win:drawLocation(lst, y, item, alt) end
+    self.locations.joypadParent = self
+    self:addChild(self.locations)
     self:layout()
     self:rebuild()
 end
@@ -259,9 +140,10 @@ function ManifestWindow:configJoypad()
     -- row 1: filter box (A opens the on-screen keyboard); row 2: the three sort headers
     -- (left/right to pick, A to sort); row 3: the list (up/down scrolls). List is last so the
     -- common scroll path sits at the bottom of the focus order.
-    self:insertNewLineOfButtons(self.filterEntry)
+    self:insertNewLineOfButtons(self.filterEntry, self.tagPicker)
     self:insertNewLineOfButtons(self.btnItem, self.btnCat, self.btnCount)
     self:insertNewLineOfButtons(self.listBox)
+    self:insertNewLineOfButtons(self.locations)
     self.joypadIndexY = self:getMinVisibleRow()
     self:restoreJoypadFocus(joypadData)
 end
@@ -284,15 +166,10 @@ end
 -- names/categories read best A->Z; counts read best biggest-first
 local function defaultAsc(col) return col ~= "count" end
 
--- Each header cycles through three states: default direction -> reversed -> cleared.
+-- Every sort has an explicit column and direction.
 function ManifestWindow:setSort(col)
-    if self.sortBy ~= col then
-        self.sortBy = col; self.asc = defaultAsc(col)          -- 1st click: default direction
-    elseif self.asc == defaultAsc(col) then
-        self.asc = not self.asc                                -- 2nd click: reverse
-    else
-        self.sortBy = nil                                      -- 3rd click: clear the sort
-    end
+    if self.sortBy == col then self.asc = not self.asc
+    else self.sortBy, self.asc = col, defaultAsc(col) end
     self:rebuild()
 end
 
@@ -304,37 +181,85 @@ function ManifestWindow:activeBtn()
     return nil
 end
 
+function ManifestWindow:receive(payload, status)
+    self.connectionStatus = status
+    if payload and self.view:setPayload(payload) then
+        local tag = self.tagPicker.options[self.tagPicker.selected]
+        tag = tag and tag.data
+        self.tagPicker:clear()
+        self.tagPicker.selected = 1
+        self.tagPicker:addOptionWithData(tr("AllTags"), false)
+        for _, id in ipairs(self.view.tagOptions) do
+            self.tagPicker:addOptionWithData(Tags.label(id), id)
+            if id == tag then self.tagPicker.selected = #self.tagPicker.options end
+        end
+        self:rebuild()
+        self.selectedKey = nil -- refresh location quantities without losing the selected item
+    end
+end
+
 function ManifestWindow:rebuild()
     local lb = self.listBox
-    -- preserve the view across a live refresh: remember the selected row BY NAME (indices shift as
-    -- items appear/vanish) and the scroll offset, then restore them after repopulating.
     local sel = lb.items[lb.selected]
-    local prevName = sel and sel.item and sel.item.name
-    local prevScroll = lb:getYScroll()
-
-    -- cleared -> default overview order: biggest piles first
-    local sb, asc = self.sortBy, self.asc
-    if sb == nil then sb, asc = "count", false end
-    local list = LootSorter.manifestAggregate(getStore(), sb, asc)
-    local f = self.filterText or ""
+    local previousKey, scroll = sel and sel.item and sel.item.key, lb:getYScroll()
+    local option = self.tagPicker.options[self.tagPicker.selected]
+    local list, count = self.view:select(self.filterText, option and option.data or nil, self.sortBy, self.asc)
     lb:clear()
-    local shown, total = 0, 0
-    for _, d in ipairs(list) do
-        if f == "" or string.find(string.lower(d.name), f, 1, true) then
-            lb:addItem(d.name, d)
-            shown = shown + 1
-            total = total + d.n
-        end
-    end
-    self.shownCount = shown
-    self.totalCount = total
+    for _, row in ipairs(list) do lb:addItem(row.name, row) end
+    self.shownCount, self.totalCount = #list, count
+    lb.selected = #list > 0 and 1 or 0
+    for i, item in ipairs(lb.items) do if item.item.key == previousKey then lb.selected = i; break end end
+    lb:setYScroll(scroll)
+    self.selectedKey = nil
+end
 
-    if prevName then
-        for i, it in ipairs(lb.items) do
-            if it.item.name == prevName then lb.selected = i; break end
-        end
+function ManifestWindow:updateLocations()
+    local item = self.listBox.items[self.listBox.selected]
+    local row = item and item.item
+    local key = row and row.key or false
+    if self.selectedKey == key then return end
+    self.selectedKey = key
+    local scroll = self.locations:getYScroll()
+    self.locations:clear()
+    local origins = {}
+    for i, origin in ipairs(row and row.locations or {}) do origins[i] = origin end
+    table.sort(origins, function(a, b) return a.id < b.id end)
+    for _, origin in ipairs(origins) do self.locations:addItem(origin.id, origin) end
+    self.locations:setYScroll(scroll)
+end
+
+local function ageText(container)
+    if not container.sampledAt or container.sampledAt <= 0 then return tr("UnknownAge") end
+    local seconds = math.max(0, math.floor((getTimestampMs() - container.sampledAt) / 1000))
+    if seconds < 60 then return tr("SecondsAgo", seconds) end
+    if seconds < 3600 then return tr("MinutesAgo", math.floor(seconds / 60)) end
+    return tr("HoursAgo", math.floor(seconds / 3600))
+end
+
+function ManifestWindow:drawLocation(list, y, item)
+    local origin, font = item.item, list.font
+    local c, width = origin.container, list:getWidth() - SCROLLBAR - 8
+    local label = c.name or (getTextOrNull("IGUI_ContainerTitle_" .. (c.kind or ""))) or tr("Container")
+    local appearance = c.color or {r = .8, g = .8, b = .8}
+    local icon = c.icon
+    local tex
+    if icon then
+        if helpersOK and containerHelpers then tex = containerHelpers.getIconTexture(icon)
+        elseif icon.kind == "pzst-tag" then tex = Visuals.get(icon.value).texture
+        elseif icon.kind == "item" then tex = LootSorter.itemTexture(icon.value)
+        else tex = getTexture(icon.value) end
     end
-    lb:setYScroll(prevScroll)
+    if tex then list:drawTextureScaled(tex, 4, y + 3, 18, 18, 1, appearance.r, appearance.g, appearance.b)
+    else list:drawRect(6, y + 7, 12, 12, 1, appearance.r, appearance.g, appearance.b) end
+    local count = tostring(origin.n)
+    local countWidth = getTextManager():MeasureStringX(font, count)
+    list:drawText(fit(font, label, width - countWidth - 36), 28, y + 2,
+        appearance.r, appearance.g, appearance.b, 1, font)
+    list:drawText(count, width - countWidth, y + 2, 1, 1, 1, 1, font)
+    local position = tostring(c.x) .. ", " .. tostring(c.y) .. ", " .. tostring(c.z)
+    local detail = position .. " | " .. (c.loaded and tr("Checked") or tr("LastKnown")) .. ": " .. ageText(c)
+    list:drawText(fit(font, detail, width - 28), 28, y + 20, .7, .7, .7, 1, font)
+    return y + list.itemheight
 end
 
 function ManifestWindow:drawRow(list, y, item, alt)
@@ -374,9 +299,17 @@ function ManifestWindow:prerender()
     local ft = string.lower(raw or "")
     if ft ~= self.filterText then self.filterText = ft; self:rebuild() end
     if self.configJoypadLater then self.configJoypadLater = false; self:configJoypad() end
-    self:layout()
-    self:drawText((self.shownCount or 0) .. " items  -  " .. (self.totalCount or 0) .. " total",
-        10, self:getHeight() - 20, 0.7, 1.0, 1.0, 1.0, UIFont.Small)
+    if self.layoutWidth ~= self:getWidth() or self.layoutHeight ~= self:getHeight() then self:layout() end
+    self:updateLocations()
+    self:drawText(tr("Locations"), 10, self.locations:getY() - 20, .8, .8, .8, 1, UIFont.Small)
+    if #self.listBox.items == 0 then
+        self:drawText(fit(UIFont.Small, tr(self.connectionStatus == "loading" and "Loading" or "Empty"), self:getWidth() - 32),
+            16, self.listBox:getY() + 12, .7, .7, .7, 1, UIFont.Small)
+    end
+    self:drawText(fit(UIFont.Small, tr("Totals", self.shownCount or 0, self.totalCount or 0), self:getWidth() - 20),
+        10, self:getHeight() - 42, .8, .8, .8, 1, UIFont.Small)
+    self:drawText(fit(UIFont.Small, tr(self.connectionStatus == "error" and "Error" or self.connectionStatus == "loading" and "Loading" or "Shared"), self:getWidth() - 20),
+        10, self:getHeight() - 24, .7, .8, .8, 1, UIFont.Small)
 end
 
 -- render() runs AFTER children draw, so the sort triangle paints on top of the header button
@@ -400,35 +333,35 @@ function ManifestWindow:close()
     ISCollapsableWindow.close(self)
     self:removeFromUIManager()
     if self.grabbedJoypad then setJoypadFocus(self.playerNum, restore); self.grabbedJoypad = false end
+    Client.close(self.playerNum)
     LootSorter._manifestWin = nil
 end
 
 ----------------------------------------------------------------------
 -- Open / toggle (triggered from the right-click menu -> LootSorter_ContextMenu.lua)
 ----------------------------------------------------------------------
-local function toggleManifest()
-    if LootSorter._manifestWin then
-        LootSorter._manifestWin:close()
-        return
-    end
-    LootSorter.manifestReconcile()
-    local w, h = 420, 480
-    local x = getCore():getScreenWidth() / 2 - w / 2
-    local y = getCore():getScreenHeight() / 2 - h / 2
-    local win = ManifestWindow:new(x, y, w, h)
-    win.resizable = true
-    win.playerNum = 0
-    win:initialise()
-    win:addToUIManager()
-    win:setVisible(true)
-    -- hand controller focus to the window ONLY if a gamepad is bound, so mouse/keyboard is untouched
-    local pl = getSpecificPlayer(0)
-    if pl and pl:getJoypadBind() ~= -1 then
-        local jd = getJoypadData(0)             -- remember who had focus (the inventory) so close()
-        win.prevFocus = jd and jd.focus or nil  -- can hand it back instead of dropping focus to nil
-        setJoypadFocus(0, win)
+local function toggleManifest(playerNum)
+    if LootSorter._manifestWin then LootSorter._manifestWin:close(); return end
+    playerNum = playerNum or 0
+    local w, h = 640, 600
+    local core = getCore()
+    w, h = math.min(w, core:getScreenWidth()), math.min(h, core:getScreenHeight())
+    local win = ManifestWindow:new((core:getScreenWidth() - w) / 2, (core:getScreenHeight() - h) / 2, w, h)
+    win.resizable, win.minimumWidth, win.minimumHeight = true, 480, 440
+    win.backgroundColor = {r = .025, g = .025, b = .025, a = .97}
+    win.playerNum = playerNum
+    win:initialise(); win:addToUIManager(); win:setVisible(true)
+    LootSorter._manifestWin = win
+    Client.open(playerNum, function(payload, status) win:receive(payload, status) end)
+    local player = getSpecificPlayer(playerNum)
+    if player and player:getJoypadBind() ~= -1 then
+        local jd = getJoypadData(playerNum)
+        win.prevFocus = jd and jd.focus or nil
+        setJoypadFocus(playerNum, win)
         win.grabbedJoypad = true
     end
-    LootSorter._manifestWin = win
 end
 LootSorter.toggleManifest = toggleManifest
+LootSorter.addOrReplaceHandler(Events.OnMainMenuEnter, "_manifestClose", function()
+    if LootSorter._manifestWin then LootSorter._manifestWin:close() end
+end)

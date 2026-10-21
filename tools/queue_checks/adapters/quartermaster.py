@@ -155,10 +155,10 @@ def _verify_transfers(root, selection):
     issues = []
     try:
         text = (root / 'client1-launch.log').read_text(errors='replace')
-        expected = ['PHASE success moved=2 remaining=0 tailRead=true dirty=true',
-                    'PHASE partial moved=1 remaining=1 tailRead=true dirty=true',
-                    'PHASE rejected moved=0 remaining=2 tailRead=false dirty=false',
-                    'PHASE withdraw moved=1 remaining=1 tailRead=true dirty=true',
+        expected = ['PHASE success moved=2 remaining=0 tailRead=true queueObserved=true',
+                    'PHASE partial moved=1 remaining=1 tailRead=true queueObserved=true',
+                    'PHASE rejected moved=0 remaining=2 tailRead=false queueObserved=false',
+                    'PHASE withdraw moved=1 remaining=1 tailRead=true queueObserved=true',
                     'CUSTOM protected=3 queueUnchanged=true', 'COMPLETE case=manifest']
         if re.findall(re.escape(TRANSFER_MARKER) + r'([^\r\n]+)', text) != expected:
             raise ValueError('Missing, duplicate, reordered or incorrect native transfer outcomes')

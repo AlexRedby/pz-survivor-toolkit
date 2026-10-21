@@ -20,11 +20,14 @@ ACTION_TESTS += ("test_action_queue_edit_model.lua", "test_action_queue_edit_ada
 ACTION_TESTS += ("test_action_queue_weights.lua", "test_action_queue_item_edit_adapters.lua", "test_food_eatsmart_compat.lua", "test_food_goal_labels.lua")
 ACTION_TESTS += ("test_inventory_search.lua", "test_inventory_transfer_operations.lua")
 ACTION_TESTS += ("test_vva_compat.lua",)
-ACTION_TESTS += ("test_manifest_text_fit.lua",)
+ACTION_TESTS += ("test_manifest_text_fit.lua", "test_manifest_view.lua", "test_manifest_presentation.lua",)
 ACTION_TESTS += ("test_action_queue_membership.lua",)
 ACTION_TESTS += ("test_inventory_membership.lua",)
 ACTION_TESTS += ("test_context_menu_duplicates.lua",)
 EXTRA_TESTS = (
+    'test_manifest_authority.lua',
+    'test_manifest_model.lua',
+    'test_manifest_client.lua',
     'test_quartermaster_rpc.lua',
     'test_container_tag_icons.lua',
     'test_container_appearance_controls.lua',

@@ -29,6 +29,8 @@ The TV video source check runs the upstream catalog and original initialization 
 
 Independent medicine checks can use the installed framework with `--medicine-framework-source /path/to/MF_ISMoodle.lua`.
 
+Warehouse checks are selected with `--test test_manifest_authority --test test_manifest_client --test test_manifest_view --test test_manifest_presentation`. `python3 JavaPatches/build.py --test ManifestModelChecks` executes the same text-boundary vectors against native Kahlua's UTF-16 strings. Use the native `warehouse-manifest/snapshot` suite for the SP/Host/UI boundary; its declared scope and screenshots are described in the [runner guide](../tests/native_queue/README.md).
+
 The read-only Java global `toolkitMedicineCooldown(character)` returns the native food-sickness treatment cooldown, or `nil` for unsupported bytecode, unavailable data or multiplayer clients. `MedicineEffects.capture` sends this as `LemonGrassCooldown` (`false` when unavailable); the old `LemonGrass` estimate is never displayed as exact. Use `python3 JavaPatches/build.py --test MedicineCooldownChecks` for native field, loader exposure and Kahlua checks.
 
 `--mpff-source /path/to/MPFastForward/media/lua` and `--bc-filter-source /path/to/CategoryFilters.lua` exercise the upstream modules and early compatibility gates; without these paths, those source checks report SKIP.

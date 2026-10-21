@@ -34,7 +34,7 @@ Follow [the installation guide](MOD_INSTALL.md) for game/JDK paths, server profi
 | Entry point | Use |
 |---|---|
 | **F8** / sidebar flashlight | Toggle visible ground-item highlights. |
-| Sidebar tools icon | Open Wishlist, context-menu rules or Toolkit settings. |
+| Sidebar tools icon | Open Wishlist, the Warehouse, context-menu rules or Toolkit settings. |
 | **K** | Open Survivor Wishlist. |
 | **Options > Mods** | Configure Toolkit features, including the Survivor Wishlist settings section; settings are per player. |
 | **Actions** window | Inspect, reorder or cancel supported queued operations. |

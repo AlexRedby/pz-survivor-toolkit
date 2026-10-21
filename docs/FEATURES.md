@@ -154,7 +154,22 @@ Seed tooltips also show water requirements, growth time at the current farming-s
 Toolkit includes Quartermaster's storage designations, automatic distribution,
 storage Manifest and ingredient fetching for vanilla and Neat Crafting. Disable
 the separate Quartermaster mod when updating; existing assignments, presets and
-options retain their identifiers. The Manifest retains its single-player scope.
+options retain their identifiers.
+
+**Warehouse** works in single-player and menu Host. Open it from the sidebar tools
+menu or right-click the craftable **Storage Manifest** notebook. Search by item
+name, choose a Toolkit tag and sort the item/tag/count columns. Select an item to
+see the containers holding it, including their configured names, icons, colors,
+coordinates, counts and the age of each sample.
+
+This is a shared ledger of designated storage for the cooperative world; it is
+not a private safehouse inventory. The authority samples loaded storage in small
+batches and open windows poll about every two seconds. Contents can lag behind an
+ongoing transfer or crafting action. Unloaded areas retain explicitly marked
+last-known contents; the ledger does not load those areas. A connection error
+keeps the last received list visible. Closing the window stops its polling.
+Legacy single-player snapshots remain available until the corresponding loaded
+storage is sampled again. The window is read-only: it does not fetch items.
 The original implementation and assets are credited in the
 [third-party notices](../PZSurvivorToolkit/THIRD_PARTY_NOTICES.md).
 

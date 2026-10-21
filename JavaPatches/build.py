@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parent
 CHECKS = {'net.alexredby.pztoolkitjavapatches.QuartermasterPresetChecks': 'QUARTERMASTER_PRESET_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.SourceProofChecks': 'SOURCE_PROOF_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.UITextFitChecks': 'UI_TEXT_FIT_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.ManifestModelChecks': 'MANIFEST_MODEL_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QueueMembershipChecks': 'QUEUE_MEMBERSHIP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.InventoryMembershipChecks': 'INVENTORY_MEMBERSHIP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ContextMenuDuplicateChecks': 'CONTEXT_MENU_DUPLICATE_CHECKS_PASS',
