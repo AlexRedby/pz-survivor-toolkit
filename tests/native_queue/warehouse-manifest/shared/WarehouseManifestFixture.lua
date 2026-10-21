@@ -1,4 +1,6 @@
 -- Disposable native world objects; only the SP/Host authority creates or mutates them.
+local selection = require 'QueueTestSelection'
+if selection.cases[1] == 'legacy-seed' or selection.cases[1] == 'legacy-reload' then return end
 local Model = require 'PZSurvivorToolkit/ManifestModel'
 local Appearance = require 'PZSurvivorToolkit/ContainerAppearance'
 local F = {module = 'WarehouseManifestTest', ft = 'Base.Nails', custom = 'Warehouse custom nails'}

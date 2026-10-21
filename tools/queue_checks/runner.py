@@ -287,6 +287,13 @@ def run(root, resource_wait=300):
                             except (OSError, subprocess.SubprocessError, RuntimeError) as error:
                                 execution.update(status='failed', error='Probe close failed: ' + str(error))
                 for role, process in reversed(list(processes.items())):
+                    if hosted and role == 'client1' and 'server' in execution['processes']:
+                        try:
+                            saved = coop.save_host(process, execution['processes']['server']['pid'], lambda: text('client1'))
+                            execution['host_save'] = saved
+                            execution['processes']['server']['exit_code'] = saved['exit_code']
+                        except (OSError, RuntimeError) as error:
+                            execution.setdefault('cleanup_errors', []).append('Host save: ' + str(error))
                     if role == 'server' and process.poll() is None:
                         try:
                             process.stdin.write('save\nquit\n'); process.stdin.flush()

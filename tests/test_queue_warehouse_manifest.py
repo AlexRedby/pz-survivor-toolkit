@@ -111,9 +111,9 @@ class WarehouseManifestTests(unittest.TestCase):
             for role in runtime['roles']:
                 self.assertEqual((self.root / role / 'mods/ActionQueueTest/42/media/lua' / side / filename).read_bytes(), source.read_bytes())
         own = sorted((ROOT / 'tests/native_queue/warehouse-manifest').rglob('*.lua'))
-        self.assertEqual(len(own), 3)
+        self.assertGreaterEqual(len(own), 6)
         self.assertTrue(all(path in sealed for path in own))
-        self.assertEqual(runtime['fixture']['failure_markers'], [adapter.MARKER + 'FAIL '])
+        self.assertEqual(runtime['fixture']['failure_markers'], [adapter.MARKER + 'FAIL ', '[WAREHOUSE_PERSIST] FAIL ', '[WAREHOUSE_LEGACY] FAIL '])
         self.assertEqual(runtime['fixture']['client_launch_stagger_seconds'], 8)
 
     def test_strict_native_counts_both_languages_all_three_snapshots(self):

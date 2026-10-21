@@ -188,6 +188,32 @@ class NativeSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'changed before launch'):
             runner._verify_initial_settings(root, selected, runtime)
 
+    def test_host_saved_template_restores_authority_and_authentication_in_original_owned_cache(self):
+        shutil.copytree(ROOT / 'tests/native_queue/startup', self.project / 'tests/native_queue/startup')
+        seed = self.prepare('host-seed', suite='startup', kind='mp', clients=1, cases=['loaded'], options={'mp_host': True})
+        self.write(seed / 'client1/Saves/Multiplayer/queue-smoke/map.bin', 'native world IDs')
+        self.write(seed / 'client1/Saves/Multiplayer/queue-smoke/global_mod_data.bin', 'authoritative manifest snapshots')
+        self.write(seed / 'client1/db/queue-smoke.db', 'native authentication rows')
+        self.write(seed / 'execution.json', json.dumps({'status': 'completed',
+            'processes': {'client1': {'pid': 999999, 'exit_code': -15},
+                'server': {'pid': 999998, 'exit_code': 0, 'parent_role': 'client1', 'cache': str(seed / 'client1')}},
+            'host_save': {'pid': 999998, 'exit_code': 0}, 'host_cleanup': {'remaining_pids': []}}))
+        template = self.root / 'host-world'
+        with patch.object(worlds.os, 'kill', side_effect=ProcessLookupError):
+            worlds.export(seed, template)
+        original = native.hashes(template)
+        output = self.prepare('host-restart', suite='startup', kind='mp', clients=1, cases=['loaded'],
+                              ports_auto=True, options={'mp_host': True, 'world_template': str(template)})
+        selected, runtime = report.read_json(output / 'selection.json'), report.read_json(output / 'runtime.json')
+        self.assertEqual('native authentication rows', (output / 'client1/db/queue-smoke.db').read_text())
+        self.assertEqual('authoritative manifest snapshots', (output / 'client1/Saves/Multiplayer/queue-smoke/global_mod_data.bin').read_text())
+        self.assertFalse((output / 'server/Saves').exists())
+        self.assertEqual(str(output / 'client1'), runtime['host_cache'])
+        self.assertEqual(self.selection['ports'], selected['ports'])
+        self.assertTrue(runtime['world_template']['mp_host'])
+        runner._verify_live_inputs(output, selected, runtime)
+        self.assertEqual(original, native.hashes(template))
+
     def test_host_rejects_suites_without_the_common_coop_bootstrap(self):
         with self.assertRaisesRegex(ValueError, 'common startup bootstrap'):
             self.prepare(kind='mp', clients=2, languages=['EN', 'RU'], options={'mp_host': True})

@@ -1,4 +1,5 @@
 local selection = require 'QueueTestSelection'
+if selection.cases[1] ~= 'snapshot' then return end
 local F = require 'WarehouseManifestFixture'
 local Client = require 'PZSurvivorToolkit/ManifestClient'
 local JSON = require 'QueueHealthEvents'

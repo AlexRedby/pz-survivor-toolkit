@@ -18,11 +18,23 @@ def definitions():
     return {SUITE: {'status': 'ready', 'native_validation': 'not-run', 'clients': 2,
                     'default_mods': MODS,
                     'cases': [{'id': 'snapshot', 'producer': 'fixture', 'capability': 'effect',
-                               'kinds': ['sp', 'mp'], 'languages': ['EN', 'RU'], 'modes': ['toolkit']}],
+                               'kinds': ['sp', 'mp'], 'languages': ['EN', 'RU'], 'modes': ['toolkit']}]
+                             + [{'id': case, 'producer': 'fixture', 'capability': 'effect',
+                                 'kinds': ['mp'], 'languages': ['EN', 'RU'], 'modes': ['toolkit']}
+                                for case in ('persist-seed', 'persist-reload')]
+                             + [{'id': case, 'producer': 'fixture', 'capability': 'effect',
+                                 'kinds': ['sp'], 'languages': ['EN', 'RU'], 'modes': ['toolkit']}
+                                for case in ('legacy-seed', 'legacy-reload')],
                     'limits': ['Programmatic menu/native transfer callbacks; screenshots need visual review.']}}
 
 
 def validate(selection):
+    if selection.get('cases') in (['legacy-seed'], ['legacy-reload']):
+        from . import warehouse_legacy
+        return warehouse_legacy.validate(selection)
+    if selection.get('cases') in (['persist-seed'], ['persist-reload']):
+        from . import warehouse_persistence
+        return warehouse_persistence.validate(selection)
     kind, options = selection.get('kind'), selection.get('options', {})
     clients = selection.get('clients', 2 if kind == 'mp' else 1)
     if (selection.get('cases') != ['snapshot'] or kind not in ('sp', 'mp')
@@ -38,8 +50,15 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted((root / SUITE).rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
-            root / 'health/shared/QueueHealthEvents.lua']
+    result = [*sorted((root / SUITE).rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
+              root / 'health/shared/QueueHealthEvents.lua']
+    if selection.get('cases') in (['persist-seed'], ['persist-reload']):
+        from . import warehouse_persistence
+        result += [Path(warehouse_persistence.__file__), *warehouse_persistence.sources(selection)]
+    if selection.get('cases') in (['legacy-seed'], ['legacy-reload']):
+        from . import warehouse_legacy
+        result.append(Path(warehouse_legacy.__file__))
+    return result
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
@@ -52,7 +71,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             (target / side).mkdir(parents=True, exist_ok=True)
             shutil.copy2(root / ('health' if side == 'shared' else 'startup') / side / name, target / side)
     runtime.setdefault('fixture', {}).update(server_ready='[STARTUP_TEST] SERVER_READY',
-                                            failure_markers=[MARKER + 'FAIL '],
+                                            failure_markers=[MARKER + 'FAIL ', '[WAREHOUSE_PERSIST] FAIL ', '[WAREHOUSE_LEGACY] FAIL '],
                                             client_launch_stagger_seconds=8, sandbox={'Zombies': 6})
 
 
@@ -99,6 +118,12 @@ def _exact(value, expected):
 
 
 def complete(selection, role, text):
+    if selection.get('cases') in (['legacy-seed'], ['legacy-reload']):
+        from . import warehouse_legacy
+        return warehouse_legacy.complete(selection, role, text)
+    if selection.get('cases') in (['persist-seed'], ['persist-reload']):
+        from . import warehouse_persistence
+        return warehouse_persistence.complete(selection, role, text)
     try:
         return role in ('client1', 'client2') and _exact(_records(text, 'COMPLETE'), [{'case': 'snapshot', 'role': role}])
     except ValueError:
@@ -117,6 +142,12 @@ def _shot(root, role, phase):
 
 
 def verify(root, selection, catalog):
+    if selection.get('cases') in (['legacy-seed'], ['legacy-reload']):
+        from . import warehouse_legacy
+        return warehouse_legacy.verify(root, selection, catalog)
+    if selection.get('cases') in (['persist-seed'], ['persist-reload']):
+        from . import warehouse_persistence
+        return warehouse_persistence.verify(root, selection, catalog)
     root = Path(root)
     roles = ['client1', 'client2'] if selection['kind'] == 'mp' else ['client1']
     issues, receipts, screenshots = [], {}, []

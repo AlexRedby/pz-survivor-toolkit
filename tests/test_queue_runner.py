@@ -54,6 +54,7 @@ class NativeRunnerTests(unittest.TestCase):
         self.signal_changes = []
         self.complete = True
         self.sample_error = None
+        self.host_save = lambda process, pid, read_text: {'pid': pid, 'exit_code': 0}
         self.manifest_errors = []
         self.snapshot = {'total_memory': 128 * 1024**3, 'available_memory': 100 * 1024**3,
                          'cpu_count': 64, 'processes': []}
@@ -100,6 +101,7 @@ class NativeRunnerTests(unittest.TestCase):
                  processes=[{'pid': int(line.split()[0]), 'rss': 0, 'cpu': 0, 'game': True, 'command': line}
                             for line in collisions.splitlines() if line] or self.snapshot['processes'])), \
              patch.object(runner.desktop, "prepare", return_value=self.desktop), \
+             patch.object(coop, 'save_host', side_effect=self.host_save), \
              patch.object(runner.subprocess, "Popen", side_effect=self.popen), \
              patch.object(runner.os, "killpg", side_effect=kill_group) as kill, patch.object(runner.signal, "signal", side_effect=self.signal), \
              patch.object(runner.time, "sleep", side_effect=sleep):
@@ -286,9 +288,19 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertFalse(any(arg.startswith('-javaagent:') for arg in command))
         self.assertEqual(1, environments[0]['JDK_JAVA_OPTIONS'].count('-javaagent:'))
         self.assertIn(str(self.root / 'client1/zombie-buddy'), environments[0]['JDK_JAVA_OPTIONS'])
-        self.assertEqual({'pid': 555, 'parent_role': 'client1', 'cache': str((self.root / 'client1').resolve())}, result['processes']['server'])
+        self.assertEqual({'pid': 555, 'parent_role': 'client1', 'cache': str((self.root / 'client1').resolve()), 'exit_code': 0}, result['processes']['server'])
         self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
         self.assertEqual('[QUEUE_TEST] SERVER_READY\n', (self.root / 'server-launch.log').read_text())
+
+    def test_host_save_failure_is_failed_even_after_completed_fixture_and_still_cleans_group(self):
+        self.prepare_host()
+        def fail(*args): raise RuntimeError('child did not acknowledge native save')
+        self.host_save = fail
+        result, kills = self.invoke()
+        self.assertEqual('failed', result['status'])
+        self.assertIn('child did not acknowledge', result['error'])
+        self.assertNotIn('host_save', result)
+        self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
 
     def test_host_rejects_unproven_or_duplicated_child_and_still_stops_only_its_group(self):
         self.prepare_host('[QUEUE_TEST] HOST_CHILD pid=999 parent=666\n')

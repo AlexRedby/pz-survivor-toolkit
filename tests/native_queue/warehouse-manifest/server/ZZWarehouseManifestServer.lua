@@ -1,4 +1,5 @@
 local selection = require 'QueueTestSelection'
+if selection.cases[1] ~= 'snapshot' then return end
 if selection.kind ~= 'mp' then return end
 local F = require 'WarehouseManifestFixture'
 local Authority = require 'PZSurvivorToolkit/ManifestAuthority'

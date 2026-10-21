@@ -133,4 +133,5 @@ For each migrated family, add an independent positive example and a dangerous ex
 # Warehouse follow-up checks
 
 - [ ] Once the seven missing selected mods are locally available, run the isolated macOS Warehouse SP/Host scenarios with the complete 52-Mod-ID pack. Required sources: VanillaVehiclesAnimated, AnimatedVehiclePartsFix, ArcheryNexus, WildernessProgressionArcheryNexusCompanion, EURY_DST, Ivmakk_ForagingTooltipExtended and CustomLightSwitch.
-- [ ] Extend the live Warehouse check to Host restart/reconnect and leaving/revisiting an unloaded storage chunk, including a legacy SP snapshot. Preserve last-known counts and sample age until the authority observes the loaded container again; reject a stale response from the previous world. Focused model/client regressions cover these boundaries; live persistence/streaming verification remains open.
+- [ ] Complete the bounded native Host persistence seed/reload and client rejoin checks using sealed disposable worlds; retain exact container/item identities and last-known sample ages.
+- [ ] Recheck the latest main/component versions, integrate the verified feature and push main without changing the installed game or unrelated working copies.

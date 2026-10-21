@@ -35,6 +35,41 @@ public class ToolkitSmokeLauncher {
                 catch (Exception error) { child.destroyForcibly(); }
             }, "toolkit-owned-host-shutdown"));
         }
+        if (System.getProperty("toolkit.test.hostCache") != null) {
+            Thread commands = new Thread(() -> {
+                try {
+                    var reader = new java.io.BufferedReader(new java.io.InputStreamReader(System.in));
+                    String command;
+                    while ((command = reader.readLine()) != null) {
+                        if (!command.equals("QUEUE_HOST_SAVE_QUIT")) throw new IllegalArgumentException("Unknown Host lifecycle command");
+                        var child = hostChild.get();
+                        if (child == null || !child.isAlive() || shuttingDown.get()) throw new IllegalStateException("Host child is not live or shutdown was already requested");
+                        var field = zombie.network.CoopMaster.class.getDeclaredField("serverProcess");
+                        field.setAccessible(true);
+                        var process = (Process)field.get(zombie.network.CoopMaster.instance);
+                        if (process == null || !process.isAlive() || process.pid() != child.pid()
+                                || !child.parent().map(parent -> parent.pid() == ProcessHandle.current().pid()).orElse(false)) {
+                            throw new IllegalStateException("Native Host process differs from the proved child");
+                        }
+                        // Plain save/quit lines enter GameServer's existing native command queue.
+                        // Keep its owner and heartbeat alive until the authority has saved and exited.
+                        shuttingDown.set(true);
+                        process.getOutputStream().write("save\nquit\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                        process.getOutputStream().flush();
+                        if (!process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("Host child did not save/quit before its deadline");
+                        int exit = process.exitValue();
+                        System.out.println("[QUEUE_TEST] HOST_SAVED_EXIT pid=" + child.pid() + " exit=" + exit);
+                        System.out.flush();
+                        if (exit != 0) throw new IllegalStateException("Host child exited unsuccessfully: " + exit);
+                    }
+                } catch (Exception error) {
+                    System.err.println("[QUEUE_TEST] FAIL host save " + error);
+                    error.printStackTrace();
+                }
+            }, "toolkit-owned-host-commands");
+            commands.setDaemon(true);
+            commands.start();
+        }
         Thread helper = new Thread(() -> {
             try {
                 boolean checkedVoice = false;
