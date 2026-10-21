@@ -9,23 +9,13 @@ local Actions, Operations = Toolkit.BulkActions, Toolkit.ActionQueueOperations
 local Packaged = Toolkit.PackagedFood
 local Bulk = {}
 Toolkit.BulkFood = Bulk
+local Membership = require "PZSurvivorToolkit/ActionQueueMembership"
 local commands, meals, cleanup, removals, openings, waits = {}, {}, {}, {}, {}, {}
 local registries = {commands, meals, cleanup, removals, openings, waits}
 local function portion(value) return value == 1 or value == 0.5 or value == 0.25 end
 
 function Bulk.prune()
-    local pending = false
-    for _, registry in ipairs(registries) do
-        for _ in pairs(registry) do pending = true; break end
-        if pending then break end
-    end
-    if not pending then return end
-    local queued = {}
-    for player, queue in pairs(ISTimedActionQueue.queues) do
-        if not player.isDead or not player:isDead() then
-            for _, action in ipairs(queue.queue or {}) do queued[action] = true end
-        end
-    end
+    local queued = Membership.find(registries)
     for _, registry in ipairs(registries) do
         for action in pairs(registry) do if not queued[action] then registry[action] = nil end end
     end

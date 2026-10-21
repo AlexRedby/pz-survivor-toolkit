@@ -1,5 +1,8 @@
 -- Exact food selection and native eating chains; Java animation/network state is represented explicitly.
 require = function(name)
+    if name == "PZSurvivorToolkit/ActionQueueMembership" then
+        return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua"))()
+    end
     if name == 'PZSurvivorToolkit/InventoryClasses' then
         return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryClasses.lua'))()
     end
@@ -309,6 +312,15 @@ reset(); a = food(); assert(Bulk.queue(player, {a}) == 1)
 local ownedCommand = q.current
 assert(onTick[#onTick] == Bulk.prune, 'ownership pruning must run independently of settings and the panel')
 Bulk.prune(); assert(Bulk.isCommand(ownedCommand), 'queued command retains its private entry during pruning')
+do
+    local visits = assert(loadfile(ProjectRoot .. '/tests/support/queue_registry_visits.lua'))()
+    local original = q.queue
+    q.queue = {ownedCommand}
+    for i = 2, 4097 do q.queue[i] = {} end
+    assert(visits(q.queue, Bulk.prune) == 1 and Bulk.isCommand(ownedCommand),
+        'one retained food command must not inspect 4096 unrelated queued actions every tick')
+    q.queue = original
+end
 executeCommand(ownedCommand)
 local ownedMeal = q.current
 Bulk.prune()

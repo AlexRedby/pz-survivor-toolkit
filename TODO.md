@@ -1,3 +1,9 @@
+# Queue registry cleanup cost
+
+- [ ] Share a fresh tracked-action membership search across the food, fire, generator and compatibility registry cleanup paths; stop once all tracked actions are found without caching across ticks or trusting queue mutation hooks.
+- [ ] Preserve dead-player removal, delayed Tidy history and fire retry snapshots; cover unrelated long tails, absent tracked actions, direct queue replacement and cleared worlds.
+- [ ] Run the related native-source Lua/Kahlua checks, compare versions with latest main and deliver the verified change.
+
 # Selected QoL additions
 
 - [ ] After installation is requested, check all three in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod; foraging modifiers/radius; switch construction, bulb insertion/removal, grid/generator lighting, dismantling and second-player synchronization. Author claims do not establish compatibility with this selected set.

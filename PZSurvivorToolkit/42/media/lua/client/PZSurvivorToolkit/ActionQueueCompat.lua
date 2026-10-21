@@ -32,6 +32,7 @@ local tidyFloorPage, tidyFloorGetter
 local tidyFloorValid
 -- Queued actions only; prune explicitly because Kahlua ignores weak-key modes.
 local repairedFloors = {}
+local Membership = require "PZSurvivorToolkit/ActionQueueMembership"
 local lifecycle = {"new", "isValid", "isValidStart", "waitToStart", "start", "update", "stop", "perform",
     "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceStop", "forceCancel"}
 local projectCookActionSources = {
@@ -86,18 +87,11 @@ local sourceFiles = {
 local function pack(...) return {n = select("#", ...), ...} end
 
 function Compat.prune()
-    local pending = false
-    for _, registry in ipairs({records, sessions, repairedFloors}) do
-        for _ in pairs(registry) do pending = true; break end
-        if pending then break end
-    end
-    if not pending then return end
-    local queued = {}
-    for character, queue in pairs(ISTimedActionQueue.queues) do
-        if not character:isDead() then
-            for _, action in ipairs(queue.queue or {}) do queued[action] = true end
-        end
-    end
+    -- Sessions outlive their source actions for delayed Tidy restores. Only
+    -- their seen actions need queue membership, not the session/player keys.
+    local registries = {records, repairedFloors}
+    for _, session in pairs(sessions) do registries[#registries + 1] = session.seen end
+    local queued = Membership.find(registries)
     for action in pairs(records) do if not queued[action] then records[action] = nil end end
     for action in pairs(repairedFloors) do if not queued[action] then repairedFloors[action] = nil end end
     for character, session in pairs(sessions) do

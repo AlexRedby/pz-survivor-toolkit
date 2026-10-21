@@ -17,6 +17,9 @@ local function derive(self, name)
 end
 local craftContainers
 require = function(name)
+    if name == "PZSurvivorToolkit/ActionQueueMembership" then
+        return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua"))()
+    end
     if name == 'PZSurvivorToolkit/InventoryClasses' then
         return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
     end
@@ -276,6 +279,9 @@ local Outfit = {
 local Gather = {build = function() return {} end, find = function(_, descriptor) return descriptor.item, 'container', descriptor.item:getContainer() end}
 local loaded = {}
 require = function(module)
+    if module == "PZSurvivorToolkit/ActionQueueMembership" then
+        return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. module .. ".lua"))()
+    end
     if module == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
         craftContainers = craftContainers or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
         return craftContainers
@@ -624,6 +630,18 @@ do
         reset(); wash(item(bag,10000+i)); compat.prune()
         assert(count(records)==1 and count(sessions[player].seen)==1, 'completed source actions must not accumulate in registries')
     end
+    reset()
+    local visits = assert(loadfile(ProjectRoot .. '/tests/support/queue_registry_visits.lua'))()
+    local queuedSource = wash(item(bag, 19050))
+    queue.queue, queue.current = {queuedSource}, queuedSource
+    for i = 2, 4097 do queue.queue[i] = {} end
+    assert(visits(queue.queue, compat.prune) == 1 and records[queuedSource],
+        'queued compatibility source must not scan an unrelated long tail')
+    table.remove(queue.queue, 1)
+    compat.prune()
+    assert(not records[queuedSource] and sessions[player] and count(sessions[player].seen) == 0)
+    assert(visits(queue.queue, compat.prune) == 0 and sessions[player],
+        'delayed Tidy history with no seen actions must retain its session without scanning the queue')
     reset(); dirty=item(bag,1)
     -- Native completion may dispatch this callback after the queue has already released its parent.
     local delayed=wash(dirty); local later=tail()

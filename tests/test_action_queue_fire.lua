@@ -1,6 +1,9 @@
 if not NativeActionRoot then print('Fire native-contract checks skipped.'); return end
 local craftContainers
 require = function(module)
+    if module == "PZSurvivorToolkit/ActionQueueMembership" then
+        return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. module .. ".lua"))()
+    end
     if module == 'PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua') end
     if module == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
         craftContainers = craftContainers or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
@@ -482,14 +485,18 @@ assert(policy.moveReason(q,left,right,true)=='move_shared_item' and policy.cance
 reset();a=target();item('Log');item('Paper');ISCampingMenu.onAddFuel(player,a,'Base.Log',ISBBQAddFuel,20);left=q.queue[2]
 ISCampingMenu.onLightFromLiterature(player,'Base.Paper',item('Matches'),a,ISBBQLightFromLiterature);right=q.queue[3]
 assert(policy.moveReason(q,left,right,true)=='move_dependent' and policy.cancelOperationReason(q,left)=='operation_dependent')
--- Kindling retries can consume a pending fuel action's type; cancel only after that dependency is absent.
+-- Removing a later unstarted retry leaves preceding fuel alone; removing its earlier input stays protected.
 reset();local branchDuration=campingFuelType.TreeBranch2;campingFuelType.TreeBranch2=10
 local branch=item('TreeBranch2');local borrowed=container();containers=list({inventory,borrowed})
 local borrowedPlank,borrowedStick=item('PercedWood',borrowed),item('TreeBranch2',borrowed)
 ISCampingMenu.onAddFuel(player,target(),'Base.TreeBranch2',ISBBQAddFuel,20);local pendingFuel=q.queue[2]
 ISCampingMenu.onLightFromKindle(player,borrowedPlank,borrowedStick,fire(),ISLightFromKindle);local pendingKindle=q.queue[3]
-local why,_,_,conflict,kind=policy.cancelOperationReason(q,pendingKindle)
-assert(why=='operation_dependent' and conflict==pendingFuel and kind=='TreeBranch2','pending native retry fuel type must protect cancellation')
+local why,first,last=policy.cancelOperationReason(q,pendingKindle)
+assert(not why and first==3 and last==3 and q.queue[2]==pendingFuel,
+    'unstarted kindling cancellation preserves the preceding fuel request')
+local why,_,_,conflict,kind=policy.cancelOperationReason(q,pendingFuel)
+assert(why=='operation_dependent' and conflict==pendingKindle and kind=='TreeBranch2',
+    'removing earlier fuel must protect the later native retry input')
 table.remove(q.queue,2)
 assert(not policy.cancelOperationReason(q,pendingKindle),'independent borrowed kindling cancellation must remain available')
 assert(borrowed:contains(borrowedPlank) and borrowed:contains(borrowedStick) and inventory:contains(branch),'waiting validation must not transfer or consume inputs')

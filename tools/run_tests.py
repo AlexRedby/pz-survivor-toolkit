@@ -21,6 +21,7 @@ ACTION_TESTS += ("test_action_queue_item_edit_adapters.lua", "test_food_eatsmart
 ACTION_TESTS += ("test_inventory_search.lua", "test_inventory_transfer_operations.lua")
 ACTION_TESTS += ("test_vva_compat.lua",)
 ACTION_TESTS += ("test_manifest_text_fit.lua",)
+ACTION_TESTS += ("test_action_queue_membership.lua",)
 EXTRA_TESTS = (
     'test_quartermaster_rpc.lua',
     'test_container_tag_icons.lua',
