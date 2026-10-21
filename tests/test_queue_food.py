@@ -36,9 +36,10 @@ class FoodAdapterTests(unittest.TestCase):
             extra_weight = case in food.EXTRA_WEIGHT_CASES
             consumption = extra_weight or custom_weight or case in food.CONSUMPTION_CASES
             capacity_case = case == food.EXTRA_CAPACITY_CASE
-            world = case in food.WORLD_CASES
-            tight = capacity_case or case == food.WORLD_CAPACITY_CASE
-            storage_source = 'world' if world else 'bag'
+            nested = case in food.WORLD_BAG_CASES
+            world = case in food.ALL_WORLD_CASES
+            tight = capacity_case or case in (food.WORLD_CAPACITY_CASE, food.WORLD_BAG_CAPACITY_CASE)
+            storage_source = 'world-bag' if nested else 'world' if world else 'bag'
             thermal = cookable or replacement
             cooked = case in (food.COOKED_MOVE_CASE, food.COOKED_CANCEL_CASE)
             base_hunger = -.06 if extra_weight else -.15 if consumption else -.1 if replacement else -.3 if cooked else -.24 if cookable else -.5 if utensil else -.4
@@ -66,12 +67,16 @@ class FoodAdapterTests(unittest.TestCase):
                             capacityFillerWeight=27.28, capacityFillerCount=1, bagCapacity=28, bagLoad=27.9)
             if world:
                 food_weight = .2
-                filler_weight = 5 - food_weight - .1 if tight else .05
+                filler_weight = 5 - (1.2 if nested else food_weight) - .1 if tight else .05
                 prep.update(storageX=100, storageY=101, storageZ=0, storageObjectIndex=2, storageContainerIndex=0,
-                            storageType='crate', storageCapacity=5, storageLoad=food_weight + filler_weight,
+                            storageType='crate', storageCapacity=5, storageLoad=(1.2 if nested else food_weight) + filler_weight,
                             storageItemCount=2, storageFoodCount=1, storageFoodWeight=food_weight,
                             storageFillerId=base + 6, storageFillerType='Base.Nails',
                             storageFillerWeight=filler_weight, storageFillerCount=1)
+            if nested:
+                prep.update(worldBagId=base + 7, worldBagType='Base.Bag_Schoolbag', worldBagCount=1,
+                            worldBagInStorage=True, worldBagContainerIndex=-1, worldBagCapacity=15,
+                            worldBagLoad=.2, worldBagWeight=1.2)
             if utensil:
                 prep.update(forkId=base + 3, forkType='Base.Fork', forkCount=1,
                             forkSource='bag' if case == food.UTENSIL_MOVE_CASE else 'root',
@@ -79,7 +84,7 @@ class FoodAdapterTests(unittest.TestCase):
                             spoonId=base + 4, spoonType='Base.Spoon', spoonCount=1,
                             spoonSource='root' if case == food.UTENSIL_MOVE_CASE else 'bag', spoonCondition=5)
             fraction = (.125 if cancel else .75) if utensil else (.375 if cancel else .5) if smart else 1 if depletion else .5 if bag else .25 if cancel else .75
-            receipt = {key: value for key, value in prep.items() if key in food.RECEIPT_KEYS | (food.UTENSIL_RECEIPT_KEYS if utensil else set()) | (food.COOKABLE_RECEIPT_KEYS if thermal else set()) | (food.REPLACEMENT_RECEIPT_KEYS if replacement else set()) | (food.CONSUMPTION_RECEIPT_KEYS if consumption else set()) | (food.EXTRA_WEIGHT_RECEIPT_KEYS if extra_weight else set()) | (food.CAPACITY_RECEIPT_KEYS if capacity_case else set()) | (food.WORLD_RECEIPT_KEYS if world else set())}
+            receipt = {key: value for key, value in prep.items() if key in food.RECEIPT_KEYS | (food.UTENSIL_RECEIPT_KEYS if utensil else set()) | (food.COOKABLE_RECEIPT_KEYS if thermal else set()) | (food.REPLACEMENT_RECEIPT_KEYS if replacement else set()) | (food.CONSUMPTION_RECEIPT_KEYS if consumption else set()) | (food.EXTRA_WEIGHT_RECEIPT_KEYS if extra_weight else set()) | (food.CAPACITY_RECEIPT_KEYS if capacity_case else set()) | (food.WORLD_RECEIPT_KEYS if world else set()) | (food.WORLD_BAG_RECEIPT_KEYS if nested else set())}
             receipt.update(remaining=prep['remaining'] - prep['baseHunger'] * fraction if smart else prep['baseHunger'] * (1 - fraction), source='deleted' if depletion else 'root' if not bag or enabled and not tight else storage_source,
                            foodCount=0 if depletion else 1, foodTypeCount=0 if depletion else 1, deleted=depletion,
                            anchorAmount=.5, anchorThirstChange=-.25, hunger=prep['hunger'] + prep['baseHunger'] * fraction * (1.3 if cooked else 1),
@@ -93,9 +98,12 @@ class FoodAdapterTests(unittest.TestCase):
             if world:
                 world_food_count = 0 if enabled and not tight else 1
                 final_food_weight = food_weight * (1 - fraction)
-                receipt.update(storageFoodCount=world_food_count, storageItemCount=1 + world_food_count,
+                receipt.update(storageFoodCount=world_food_count, storageItemCount=2 if nested else 1 + world_food_count,
                                storageFoodWeight=final_food_weight,
-                               storageLoad=filler_weight + world_food_count * final_food_weight)
+                               storageLoad=filler_weight + (1 if nested else 0) + world_food_count * final_food_weight)
+                if nested:
+                    receipt.update(worldBagLoad=world_food_count * final_food_weight,
+                                   worldBagWeight=1 + world_food_count * final_food_weight)
             commands = [dict(id=base + 1, portion=portion, baseHunger=prep['baseHunger'], dispatchRemaining=prep['remaining'],
                              dispatchSource=prep['source'], menuDispatched=not bag, nativeDuration=464 if portion == 1 else 232,
                              progress=not (cancel and n == 0), cancelled=cancel and n == 0, pickupObserved=bag)
@@ -112,7 +120,7 @@ class FoodAdapterTests(unittest.TestCase):
                 for command, goal in zip(commands, (15, 5)):
                     command.update(smartGoal=goal, dispatchHunger=prep['hunger'])
             edit = dict(emptyStart=True, anchorRunning=True, anchorProgress=True, anchorDuration=460,
-                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE, food.COOKED_MOVE_CASE, food.RAW_MOVE_CASE, food.REPLACEMENT_MOVE_CASE, food.CONSUMPTION_MOVE_CASE, food.CUSTOM_WEIGHT_MOVE_CASE, food.EXTRA_WEIGHT_MOVE_CASE, food.EXTRA_BAG_CASE, food.WORLD_CASE),
+                        contractsVerified=enabled, reordered=enabled and case in (food.MOVE_CASE, food.BAG_CASE, food.SMART_MOVE_CASE, food.UTENSIL_MOVE_CASE, food.COOKED_MOVE_CASE, food.RAW_MOVE_CASE, food.REPLACEMENT_MOVE_CASE, food.CONSUMPTION_MOVE_CASE, food.CUSTOM_WEIGHT_MOVE_CASE, food.EXTRA_WEIGHT_MOVE_CASE, food.EXTRA_BAG_CASE, food.WORLD_CASE, food.WORLD_BAG_CASE),
                         waitingCancel=cancel, moveRejected=enabled and (bag or depletion), cancelRejected=enabled and bag,
                         manualPickup=bag, untouchedBefore=True, nativeDurationsUnchanged=True,
                         order=[1] if bag else [1, 2] if depletion else [2] if cancel else [2, 1] if enabled else [1, 2])
@@ -150,6 +158,124 @@ class FoodAdapterTests(unittest.TestCase):
         (self.root / 'client1-launch.log').write_text(client + (authority if self.selection['kind'] == 'sp' or wrong_authority else ''))
         (self.root / 'server-launch.log').write_text('' if wrong_authority else authority)
         return food.verify(self.root, self.selection, {})
+
+    def test_nested_world_controls_keep_exact_ancestry_and_ancestor_capacity(self):
+        for mode in ('native', 'toolkit'):
+            for case in food.WORLD_BAG_CASES:
+                self.selection.update(kind='sp', mode=mode, cases=[case])
+                self.assertEqual([], self.verify()['issues'])
+                rows, raw = self.evidence()
+                prep, receipt = raw[0][1], raw[1][1]
+                in_root = mode == 'toolkit' and case == food.WORLD_BAG_CASE
+                self.assertEqual('world-bag', prep['source'])
+                self.assertEqual('root' if in_root else 'world-bag', receipt['source'])
+                self.assertEqual(2, receipt['storageItemCount'])
+                self.assertEqual(1, receipt['worldBagCount'])
+                self.assertTrue(receipt['worldBagInStorage'])
+                self.assertEqual(-1, receipt['worldBagContainerIndex'])
+                self.assertLess(prep['worldBagLoad'] + .2, prep['worldBagCapacity'])
+                self.assertAlmostEqual(4.9 if case == food.WORLD_BAG_CAPACITY_CASE else 1.25, prep['storageLoad'])
+                self.assertAlmostEqual(.1 * int(not in_root), receipt['worldBagLoad'])
+                self.assertEqual(232, rows[1]['commands'][0]['nativeDuration'])
+                self.assertEqual('world-bag' if in_root else 'root', rows[1]['editEvidence']['returning']['before'])
+                self.assertEqual(in_root, rows[1]['editEvidence']['reordered'])
+                self.assertFalse(self.verify()['outcomes'][0]['outcome']['serverAuthorityVerified'])
+
+    def test_nested_world_receipts_reject_missing_broken_ancestry_and_weights(self):
+        changes = {'worldBagId': 999, 'worldBagType': 'Base.Bag_ALICEpack_Army', 'worldBagCount': 2,
+                   'worldBagInStorage': False, 'worldBagContainerIndex': 0, 'worldBagCapacity': 14,
+                   'worldBagLoad': 2, 'worldBagWeight': 2, 'storageObjectIndex': 99,
+                   'storageContainerIndex': 1, 'storageLoad': 0, 'storageFoodCount': 2,
+                   'storageItemCount': 1, 'foodCount': 2, 'source': 'world'}
+        for mode in ('native', 'toolkit'):
+            for case in food.WORLD_BAG_CASES:
+                self.selection.update(kind='sp', mode=mode, cases=[case])
+                for field, value in changes.items():
+                    rows, raw = self.evidence()
+                    rows[1][field] = rows[1]['client'][field] = raw[1][1][field] = value
+                    with self.subTest(case=case, mode=mode, field=field):
+                        self.assertTrue(self.verify((rows, raw))['issues'])
+                for field in food.WORLD_BAG_RECEIPT_KEYS | food.WORLD_RECEIPT_KEYS:
+                    for endpoint in ('prep', 'receipt', 'client'):
+                        rows, raw = self.evidence()
+                        target = raw[0][1] if endpoint == 'prep' else raw[1][1] if endpoint == 'receipt' else rows[1]['client']
+                        del target[field]
+                        with self.subTest(case=case, field=field, endpoint=endpoint):
+                            self.assertTrue(self.verify((rows, raw))['issues'])
+                rows, raw = self.evidence()
+                rows[1]['client']['worldBagId'] += 1
+                self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_native_nested_fixture_rejects_broken_parent_chain(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('lupa unavailable')
+        lua = LuaRuntime()
+        fixture = ROOT / 'tests/native_queue/food/shared/QueueFoodFixture.lua'
+        lua.globals().Fixture = lua.execute(fixture.read_text())
+        lua.execute("""
+local function item(id,kind,parent)
+ return {getID=function()return id end,getFullType=function()return kind end,getContainer=function()return parent end}
+end
+local root,storage,inventory,square,object={},{},{},{},{}
+local bag=item(1,'Base.Bag_ALICEpack_Army',root)
+local nested=item(4,'Base.Bag_Schoolbag',storage)
+local food=item(2,'Base.Cereal',inventory)
+local anchor=item(3,'Base.WaterBottle',root)
+local filler=item(5,'Base.Nails',storage)
+local player={getInventory=function()return root end}
+local ids={case='food-world-bag-edit-pickup-return',bagId=1,foodId=2,anchorId=3,worldBagId=4,
+ storageFillerId=5,storageX=10,storageY=11,storageZ=0,storageObjectIndex=2,storageContainerIndex=0}
+root.getItemById=function(_,id)return id==1 and bag or id==3 and anchor or nil end
+storage.getItemById=function(_,id)return id==2 and food or id==4 and nested or id==5 and filler or nil end
+storage.getParent=function()return object end
+storage.getSourceGrid=function()return square end
+storage.getType=function()return 'crate'end
+nested.getItemContainer=function()return inventory end
+inventory.getContainingItem=function()return nested end
+object.getModData=function()return {QueueFoodWorld=2}end
+object.getSquare=function()return square end
+object.getContainerByIndex=function(_,index)return index==0 and storage or nil end
+object.getContainerIndex=function(_,value)return value==inventory and -1 or 0 end
+square.getObjects=function()return {get=function(_,index)return index==2 and object or nil end}end
+getCell=function()return {getGridSquare=function()return square end}end
+instanceof=function(value,kind)return value==nested and kind=='InventoryContainer'end
+assert(Fixture.items(player,ids).foodStorage==inventory)
+local function rejects(target,key,replacement)
+ local previous=target[key];target[key]=replacement
+ assert(Fixture.items(player,ids)==nil,'broken nested ancestry accepted: '..key)
+ target[key]=previous
+end
+rejects(ids,'worldBagId',6)
+rejects(ids,'storageObjectIndex',1)
+rejects(ids,'storageContainerIndex',1)
+rejects(nested,'getContainer',function()return root end)
+rejects(nested,'getFullType',function()return 'Base.Bag_ALICEpack_Army'end)
+rejects(inventory,'getContainingItem',function()return bag end)
+rejects(object,'getContainerIndex',function()return 0 end)
+rejects(storage,'getParent',function()return {}end)
+rejects(storage,'getSourceGrid',function()return {}end)
+rejects(object,'getModData',function()return {QueueFoodWorld=99}end)
+assert(Fixture.items(player,ids).worldBag==nested)
+""")
+        # Compile the live client entrypoint too, without starting or altering a game.
+        client = ROOT / 'tests/native_queue/food/client/ZZFoodQueue.lua'
+        self.assertIsNotNone(lua.eval('load')(client.read_text()))
+
+    def test_nested_world_selection_rejects_host_before_staging(self):
+        from unittest.mock import patch
+        definitions = {case['id']: case for case in food.definitions()['food']['cases']}
+        for case in food.WORLD_BAG_CASES:
+            self.assertEqual(['sp'], definitions[case]['kinds'])
+            self.selection.update(kind='mp', cases=[case], options={'mp_host': True})
+            with self.assertRaisesRegex(ValueError, 'ContainerID'):
+                food.validate(self.selection)
+            with patch.object(food.craft, 'stage_common') as stage_common:
+                with self.assertRaisesRegex(ValueError, 'ContainerID'):
+                    food.stage(ROOT, self.root, None, None, self.selection, {}, {})
+                stage_common.assert_not_called()
+            self.assertTrue(self.verify()['issues'])
 
     def test_world_transfers_preserve_exact_food_and_crate_across_controls(self):
         for kind in ('sp', 'mp'):
@@ -426,7 +552,7 @@ end
         self.assertEqual(food.CASES, [case['id'] for case in food.definitions()['food']['cases']])
         self.assertTrue(all(path.is_file() for path in food.sources(ROOT, self.selection)))
         food.validate(self.selection)
-        self.selection.update(kind='mp', options={'mp_host': True})
+        self.selection.update(kind='mp', options={'mp_host': True}, cases=[case for case in food.CASES if case not in food.WORLD_BAG_CASES])
         food.validate(self.selection)
         for key, value in [('mods', ['PZSurvivorToolkit', 'EatSmartInt']), ('cases', list(reversed(food.CASES))),
                            ('languages', ['RU']), ('clients', True), ('options', {}),
@@ -437,7 +563,7 @@ end
     def test_each_kind_and_control_has_exact_original_portion_results(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
-                self.selection.update(kind=kind, mode=mode, cases=list(food.CASES))
+                self.selection.update(kind=kind, mode=mode, cases=[case for case in food.CASES if kind == 'sp' or case not in food.WORLD_BAG_CASES])
                 result = self.verify()
                 self.assertEqual([], result['issues'])
                 for outcome in result['outcomes']:
@@ -446,10 +572,10 @@ end
                     self.assertIs(outcome['outcome']['serverAuthorityVerified'], kind == 'mp')
 
     def test_server_receipts_not_client_claims_and_ordered_fresh_identities(self):
-        self.selection['kind'] = 'mp'
+        self.selection.update(kind='mp', cases=[case for case in food.CASES if case not in food.WORLD_BAG_CASES])
         self.assertTrue(self.verify(wrong_authority=True)['issues'])
         for fault in ('duplicate-prep', 'duplicate-final', 'missing-final', 'case-order', 'overlap', 'complete', 'failure'):
-            self.selection['cases'] = list(food.CASES)
+            self.selection['cases'] = [case for case in food.CASES if case not in food.WORLD_BAG_CASES]
             rows, raw = self.evidence()
             if fault == 'duplicate-prep': raw.insert(1, raw[0])
             elif fault == 'duplicate-final': raw.insert(2, raw[1])

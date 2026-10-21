@@ -6,9 +6,10 @@ function Fixture.scenario(case)
  local customWeight=case=='food-custom-weight-move-portions'or case=='food-custom-weight-cancel-first-portion'
  local extraBag=case=='food-extra-weight-bag-edit-pickup-return'or case=='food-extra-weight-bag-capacity'
  local extraWeight=extraBag or case=='food-extra-weight-move-portions'or case=='food-extra-weight-cancel-first-portion'
- local world=case=='food-world-edit-pickup-return'or case=='food-world-tight-capacity'
+ local worldBag=case=='food-world-bag-edit-pickup-return'or case=='food-world-bag-tight-capacity'
+ local world=worldBag or case=='food-world-edit-pickup-return'or case=='food-world-tight-capacity'
  local consumption=extraWeight or customWeight or case=='food-consumption-replacement-move-portions'or case=='food-consumption-replacement-cancel-first-portion'
- return {bag=extraBag or case=='food-bag-edit-pickup-return',world=world,worldCapacity=case=='food-world-tight-capacity',capacity=case=='food-extra-weight-bag-capacity',
+ return {bag=extraBag or case=='food-bag-edit-pickup-return',world=world,worldBag=worldBag,worldCapacity=case=='food-world-tight-capacity'or case=='food-world-bag-tight-capacity',capacity=case=='food-extra-weight-bag-capacity',
   cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion'or case=='food-utensil-cancel-first-portion'
    or case=='food-cooked-cancel-first-portion'or case=='food-raw-cookable-cancel-first-portion'
    or case=='food-cooking-replacement-cancel-first-portion'or case=='food-consumption-replacement-cancel-first-portion'
@@ -50,6 +51,13 @@ function Fixture.items(player,ids,allowDeleted)
   or not food and not(allowDeleted and Fixture.scenario(ids.case).depletion)
   or food and food:getFullType()~=foodType(ids.case) or not anchor or anchor:getFullType()~=Fixture.anchorType then return end
  local result={bag=bag,food=food,anchor=anchor,storage=storage,object=object}
+ if Fixture.scenario(ids.case).worldBag then
+  local nested=storage:getItemById(ids.worldBagId)
+  if not instanceof(nested,'InventoryContainer')or nested:getFullType()~='Base.Bag_Schoolbag'
+   or nested:getContainer()~=storage or nested:getItemContainer():getContainingItem()~=nested
+   or object:getContainerIndex(nested:getItemContainer())~=-1 then return end
+  result.worldBag=nested;result.foodStorage=nested:getItemContainer()
+ else result.foodStorage=storage end
  if storage then
   local filler=storage:getItemById(ids.storageFillerId)
   if not filler or filler:getFullType()~='Base.Nails'or filler:getContainer()~=storage then return end
@@ -75,6 +83,7 @@ function Fixture.snapshot(player,ids)
  -- Non-finite values are never accepted for a present food instance.
  if food and(not finite(food:getBaseHunger())or not finite(food:getHungChange()))then return end
  local source=not food and 'deleted'or food:getContainer()==root and 'root'or food:getContainer()==state.bag:getItemContainer()and 'bag'
+  or state.worldBag and food:getContainer()==state.foodStorage and 'world-bag'
   or state.storage and food:getContainer()==state.storage and 'world'
  if not source or anchor:getContainer()~=root then return end
  local result={case=ids.case,bagId=ids.bagId,bagType=state.bag:getFullType(),foodId=ids.foodId,foodType=food and food:getFullType()or ids.foodType,
@@ -93,6 +102,15 @@ function Fixture.snapshot(player,ids)
   result.storageFillerId,result.storageFillerType=state.worldFiller:getID(),state.worldFiller:getFullType()
   result.storageFillerCount=count(root,state.worldFiller:getID())+count(storage,state.worldFiller:getID())
   result.storageFillerWeight=state.worldFiller:getActualWeight()
+  if state.worldBag then
+   local nested=state.worldBag;local inventory=state.foodStorage
+   result.worldBagId,result.worldBagType=nested:getID(),nested:getFullType()
+   result.worldBagCount=count(root,nested:getID())+count(storage,nested:getID())
+   result.worldBagInStorage=nested:getContainer()==storage
+   result.worldBagContainerIndex=object:getContainerIndex(inventory)
+   result.worldBagCapacity,result.worldBagLoad=inventory:getEffectiveCapacity(player),inventory:getCapacityWeight()
+   result.worldBagWeight=nested:getUnequippedWeight()
+  end
  end
  if Fixture.scenario(ids.case).cookable then
   if not food or not finite(food:getHeat())or not finite(root:getTemperature())then return end
@@ -161,6 +179,10 @@ function Fixture.prepare(player,case,previous)
    assert(not player:isEquipped(item)and count(root,item:getID())+(old.storage and count(old.storage,item:getID())or 0)==1,'previous food fixture changed')
    local source=item:getContainer();source:Remove(item);if isServer()then sendRemoveItemFromContainer(source,item)end
   end
+  if old.worldBag then
+   assert(old.foodStorage:getItems():isEmpty(),'previous world bag has foreign contents')
+   old.storage:Remove(old.worldBag)
+  end
   assert(old.bag:getItemContainer():getItems():isEmpty(),'previous bag has foreign contents')
   root:Remove(old.bag);if isServer()then sendRemoveItemFromContainer(root,old.bag)end
   if old.object then
@@ -168,7 +190,9 @@ function Fixture.prepare(player,case,previous)
    old.object:getSquare():transmitRemoveItemFromSquare(old.object)
   end
  end
- local spec=Fixture.scenario(case);local bag=assert(root:AddItem(Fixture.bagType))
+ local spec=Fixture.scenario(case)
+ assert(not spec.worldBag or not isServer()and not isClient(),'nested world food fixtures require SP: native MP ContainerID cannot address this inventory')
+ local bag=assert(root:AddItem(Fixture.bagType))
  local object,storage
  if spec.world then
   local origin=player:getCurrentSquare();local square
@@ -182,7 +206,9 @@ function Fixture.prepare(player,case,previous)
   storage=assert(object:getContainer());storage:setType('crate');storage:setCapacity(5);storage:setExplored(true)
   square:AddSpecialObject(object)
  end
- local food=assert((storage or spec.bag and bag:getItemContainer()or root):AddItem(foodType(case)))
+ local worldBag=spec.worldBag and assert(storage:AddItem('Base.Bag_Schoolbag'))or nil
+ local foodStorage=worldBag and worldBag:getItemContainer()or storage
+ local food=assert((foodStorage or spec.bag and bag:getItemContainer()or root):AddItem(foodType(case)))
  assert(instanceof(food,'Food')and food:getBaseHunger()<-.04 and food:getHungChange()==food:getBaseHunger()
   and not food:getOnEat()and (spec.consumption or not food:getReplaceOnUse())
   and (not food:getRequireInHandOrInventory()or food:getRequireInHandOrInventory():isEmpty())
@@ -230,7 +256,7 @@ function Fixture.prepare(player,case,previous)
   assert(not food:isCookable()and not food:isCustomWeight()and math.abs(food:getUnequippedWeight()-.2)<.00001,
    'world fixture requires native noncookable Cereal weight')
   worldFiller=assert(storage:AddItem('Base.Nails'))
-  local weight=spec.worldCapacity and storage:getEffectiveCapacity(player)-food:getUnequippedWeight()-.1 or .05
+  local weight=spec.worldCapacity and storage:getEffectiveCapacity(player)-(worldBag and worldBag:getUnequippedWeight()or food:getUnequippedWeight())-.1 or .05
   assert(weight>0 and weight<5,'world-food capacity fixture differs')
   worldFiller:setActualWeight(weight);worldFiller:setWeight(weight);worldFiller:setCustomWeight(true)
   object:getModData().QueueFoodWorld=food:getID()
@@ -272,6 +298,7 @@ function Fixture.prepare(player,case,previous)
   if spec.utensil then sendAddItemToContainer(root,spec.cancel and fork or spoon)end
  end
  local ids={case=case,bagId=bag:getID(),foodId=food:getID(),anchorId=anchor:getID()}
+ if worldBag then ids.worldBagId=worldBag:getID()end
  if storage then
   local square=object:getSquare()
   ids.storageX,ids.storageY,ids.storageZ=square:getX(),square:getY(),square:getZ()
@@ -355,6 +382,11 @@ function Fixture.verify(state)
  if Fixture.scenario(state.case).capacity then
   for _,field in ipairs({'capacityFillerId','capacityFillerType','capacityFillerWeight','capacityFillerCount','bagCapacity'})do
    if value[field]~=state.ids[field]then return nil,'tight bag fixture changed: '..field end
+  end
+ end
+ if Fixture.scenario(state.case).worldBag then
+  for _,field in ipairs({'worldBagId','worldBagType','worldBagCount','worldBagInStorage','worldBagContainerIndex','worldBagCapacity'})do
+   if value[field]~=state.ids[field]then return nil,'world bag ancestry changed: '..field end
   end
  end
  if Fixture.scenario(state.case).world then

@@ -20,7 +20,7 @@ class FoodScenarioTests(unittest.TestCase):
         self.suite = self.catalog['suites']['food']
 
     def recorded(self, kind='sp', mode='toolkit'):
-        self.fixture.selection.update(kind=kind, mode=mode)
+        self.fixture.selection.update(kind=kind, mode=mode, cases=[case for case in food.CASES if kind == 'sp' or case not in food.WORLD_BAG_CASES])
         checked = self.fixture.verify()
         self.assertEqual([], checked['issues'])
         return dict(run='/tmp/food-contract-unit', status='passed', selection=copy.deepcopy(self.fixture.selection),
@@ -36,8 +36,9 @@ class FoodScenarioTests(unittest.TestCase):
     def test_selected_cases_and_queue_disabled_controls_match(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
-                cases, mods = scenarios.select(self.suite, 'success-queued', None, kind, mode)
-                self.assertEqual(food.CASES, cases)
+                actions = None if kind == 'sp' else ','.join(name for name in self.suite['scenario_actions'] if name != 'eat-world-bag-transfers')
+                cases, mods = scenarios.select(self.suite, 'success-queued', actions, kind, mode)
+                self.assertEqual([case for case in food.CASES if kind == 'sp' or case not in food.WORLD_BAG_CASES], cases)
                 self.assertEqual(sorted(food.MODS), mods)
                 self.assertEqual([food.MOVE_CASE], scenarios.select(self.suite, 'move-independent', 'eat-portions', kind, mode)[0])
                 self.assertEqual([food.CANCEL_CASE], scenarios.select(self.suite, 'cancel-waiting', 'eat-portions', kind, mode)[0])
@@ -85,6 +86,27 @@ class FoodScenarioTests(unittest.TestCase):
                                          ('eat-consumption-replacement', 'move-independent'), ('eat-consumption-replacement', 'cancel-waiting')]:
                     self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
                                      self.row(recorded, action, scenario, kind, mode)['status'])
+
+    def test_nested_world_bag_scenarios_are_sp_only_without_authority_claims(self):
+        action = 'eat-world-bag-transfers'
+        binding = self.suite['scenario_actions'][action]
+        self.assertEqual({'success-queued', 'move-independent', 'move-dependent'}, set(binding['checks']))
+        for mode in ('native', 'toolkit'):
+            self.assertEqual(list(food.WORLD_BAG_CASES), scenarios.select(self.suite, 'success-queued', action, 'sp', mode)[0])
+            self.assertEqual([food.WORLD_BAG_CASE], scenarios.select(self.suite, 'move-independent', action, 'sp', mode)[0])
+            with self.assertRaisesRegex(ValueError, 'kind/mode'):
+                scenarios.select(self.suite, 'success-queued', action, 'mp', mode)
+            with self.assertRaisesRegex(ValueError, 'not implemented'):
+                scenarios.select(self.suite, 'server-authority', action, 'mp', mode)
+            recorded = self.recorded('sp', mode)
+            self.assertEqual('passed', self.row(recorded, action, 'success-queued', 'sp', mode)['status'])
+            self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
+                             self.row(recorded, action, 'move-dependent', 'sp', mode)['status'])
+            self.assertEqual('unsupported', self.row(recorded, action, 'success-queued', 'mp', mode)['status'])
+        for case in food.WORLD_BAG_CASES:
+            changed = self.recorded()
+            changed['coverage'] = [row for row in changed['coverage'] if row['case'] != case]
+            self.assertNotEqual('passed', self.row(changed, action, 'success-queued')['status'])
 
     def test_world_transfers_map_room_move_and_tight_dependency_without_extra_claims(self):
         action = 'eat-world-transfers'

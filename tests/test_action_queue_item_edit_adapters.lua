@@ -64,6 +64,7 @@ local function setup(changed,foreignMerge,alias,missing)
         c.getTemperature=function(self)return self.temperature end
         c.getContainingItem=function(self)return self.owner end;c.getType=function(self)return self.owner and 'bag'or 'none'end
         c.getParent=function(self)return not self.owner and f.player or nil end
+        c.getVehiclePart=function()end
         c.isInCharacterInventory=function()return true end;c.isExistYet=function()return true end
         c.getAcceptItemFunction=function()end;c.getOnlyAcceptCategory=function()end
         c.getCapacityWeight=function(self)return self.load or 0 end;c.getEffectiveCapacity=function(self)return self.capacity or 50 end;c.getMaxWeight=function()return 50 end
@@ -227,7 +228,7 @@ local function setup(changed,foreignMerge,alias,missing)
         c.isInCharacterInventory=function()return false end
         return c,parent,tile
     end
-    return {f=f,adapters=adapters,model=model,policy=policy,root=root,bag=bag,bagInventory=bagInventory,water=water,fluid=fluid,world=world,
+    return {f=f,adapters=adapters,model=model,policy=policy,root=root,bag=bag,bagInventory=bagInventory,water=water,fluid=fluid,world=world,container=container,
         properties=properties,scripts=scripts,item=item,food=food,utensil=utensil,eat=eat,damage=damage,transfer=transfer,drink=drink,runTransfer=runTransfer,drinks=function()return drinks end}
 end
 do
@@ -1363,5 +1364,146 @@ do
         assert(not s.policy.evaluateMove(q,returning,pickup,false).allowed,'world transfer must not cross native walking dependencies')
     end
     print('World storage edit contracts: anchored adjacent endpoints, exact pickup/return, capacity, favorite/cookable restrictions, missing objects and movement barriers passed.')
+end
+do
+    local function worldBag(s,parent)
+        local owner=s.item();owner.class='InventoryContainer';owner.container=parent
+        owner.getFullType=function()return 'Base.Bag_Schoolbag'end
+        owner.getType=function()return 'Bag_Schoolbag'end
+        owner.getMaxItemSize=function(self)return self.maximum or 0 end
+        local inventory=s.container(owner)
+        inventory.isInCharacterInventory=function()return false end
+        owner.getInventory=function()return inventory end
+        return owner,inventory
+    end
+    local s=setup();local storage,parent,tile=s.world()
+    local outer,outerInventory=worldBag(s,storage)
+    local inner,inventory=worldBag(s,outerInventory)
+    local food=s.food();food.container=inventory
+    local chain=assert(s.adapters.worldContainer(inventory,s.f.player))
+    assert(#chain==3 and chain[1]==inventory and chain[2]==outerInventory and chain[3]==storage,
+        'SP world ancestry must preserve every exact container in destination-first order')
+    local pickup,eating,returning=s.transfer(food,inventory,s.root),s.eat(food,.5),s.transfer(food,s.root,inventory)
+    for _,action in ipairs({pickup,eating,returning})do
+        local contract=assert(s.policy.inspect(action));assert(contract.edit,'nested world SP contract missing')
+    end
+    local footprint=s.policy.inspect(pickup)
+    assert(footprint.containerOwners[outer:getID()]and footprint.containerOwners[inner:getID()]
+        and footprint.targets[parent]and footprint.positions[s.f.player],
+        'both owner identities, world anchor and movement join the dependency footprint')
+    s.water.container=s.root;local anchor=s.drink();anchor.action={}
+    local q=s.f.queue(anchor,pickup,eating,returning)
+    assert(s.policy.evaluateMove(q,returning,pickup,false).allowed,'SP can reorder a proven nested-world return before pickup')
+    assert(s.policy.evaluateCancel(q,returning).allowed,'pending explicit nested-world return can be cancelled')
+    assert(not s.policy.evaluateCancel(q,pickup).allowed and not s.policy.evaluateMove(q,pickup,eating,true).allowed,
+        'nested-world pickup remains required by eating')
+    for _,container in ipairs({inventory,outerInventory,storage})do
+        container.load=49.5
+        local decision=s.policy.evaluateMove(q,returning,pickup,false)
+        assert(not decision.allowed and decision.reason=='container_capacity',
+            'a full ancestor cannot spend the future pickup release')
+        container.load=0
+    end
+    inner.maximum=.5;assert(not s.adapters.transfer(returning),'immediate destination bag size remains mandatory');inner.maximum=0
+    local independent=s.item();independent.container=s.root
+    local incoming=s.transfer(independent,s.root,inventory)
+    inventory.load=49.5
+    local credit=s.policy.evaluateMove(s.f.queue(anchor,incoming,pickup),incoming,pickup,true)
+    assert(not credit.allowed and credit.reason=='container_capacity',
+        'a source-world bag with nil parent must never receive carried SP release credit')
+    inventory.load=0
+    local methods={}
+    for _,name in ipairs({'isValid','start','perform','stop'})do methods[name]=ISInventoryTransferAction[name]end
+    local helpersUnchanged=true
+    assert(s.policy.adoptTransferMethods(methods,methods,function()return helpersUnchanged end))
+    assert(s.policy.isOrdinaryTransfer(pickup)and s.adapters.transfer(pickup),
+        'approved transfer-method adoption retains the exact SP nested endpoint scope')
+    helpersUnchanged=false
+    assert(not s.policy.isOrdinaryTransfer(pickup)and not s.adapters.transfer(pickup),
+        'nested proof does not bypass a changed adopted helper')
+    helpersUnchanged=true
+    -- Another pending owner mutation is outside the leaf transfer proof.
+    local moveOwner=s.transfer(outer,storage,s.root)
+    assert(not s.adapters.transfer(moveOwner))
+    local coupled=s.f.queue(anchor,moveOwner,pickup,eating,returning)
+    assert(not s.policy.evaluateMove(coupled,returning,moveOwner,false).allowed,
+        'a pending bag move is not independent of its nested item transfers')
+    local walk=s.f.action(ISWalkToTimedAction)
+    assert(not s.policy.evaluateMove(s.f.queue(anchor,pickup,walk,returning),returning,pickup,false).allowed,
+        'nested world endpoint cannot move across walking')
+    isClient=function()return true end
+    assert(not s.adapters.worldContainer(inventory,s.f.player)and not s.adapters.transfer(pickup)
+        and not s.adapters.food(eating)and not s.adapters.transfer(returning),
+        'Host must not promise a nested-world ContainerID that native packets cannot encode')
+    assert(s.adapters.worldContainer(storage,s.f.player),'direct ordinary world Host endpoints remain supported')
+    isClient=function()return false end
+    local function rejected(message)
+        assert(not s.adapters.worldContainer(inventory,s.f.player)and not s.adapters.transfer(pickup),message)
+    end
+    outer.container=nil;rejected('detached outer owner');outer.container=storage
+    local original=storage.getItemById
+    storage.getItemById=function()return {}end;rejected('same-ID replacement cannot substitute owner reference');storage.getItemById=original
+    inner.container=inventory;rejected('owner cycle');inner.container=outerInventory
+    inner.getInventory=function()return {}end;rejected('owner no longer owns exact inner inventory');inner.getInventory=function()return inventory end
+    inner.getWorldItem=function()return {}end;rejected('owner has a competing world item');inner.getWorldItem=function()end
+    inner.consumed=true;rejected('consumed owner');inner.consumed=nil
+    inner.getAttachedSlot=function()return 0 end;rejected('attached owner');inner.getAttachedSlot=function()return -1 end
+    inventory.getAcceptItemFunction=function()return 'Unknown'end;rejected('unknown nested accept callback');inventory.getAcceptItemFunction=function()end
+    outerInventory.getOnlyAcceptCategory=function()return 'Food'end;rejected('unknown ancestor category restriction');outerInventory.getOnlyAcceptCategory=function()end
+    inventory.getVehiclePart=function()return {}end;rejected('nested vehicle endpoint');inventory.getVehiclePart=function()end
+    inventory.getParent=function()return parent end;rejected('conflicting direct parent');inventory.getParent=function()end
+    tile.present=false;rejected('removed world anchor despite surviving pointers');tile.present=true
+    assert(s.adapters.transfer(pickup)and food.container==inventory and food.hunger==-.4,
+        'restored ancestry revalidates without executing transfers or food effects')
+    -- The legacy active path finishes the native step, then settles cleanup;
+    -- it must not turn pending-only projection into an early/duplicate effect.
+    s.f.project('ActionQueueLabels')
+    local completions=0
+    ISTimedActionQueue.onCompleted=function(queue,action)
+        assert(queue.current==action and queue.queue[1]==action)
+        completions=completions+1;table.remove(queue.queue,1);queue.current=queue.queue[1]
+    end
+    ISInventoryPaneContextMenu.getContainers=function()return {contains=function(_,value)return value==inventory end}end
+    ISInventoryTransferUtil={newInventoryTransferAction=function(player,item,source,destination)
+        return s.transfer(item,source,destination)
+    end}
+    PZSurvivorToolkit.BulkActions.guardTransfer=function()end
+    local api=s.f.project('ActionQueue')
+    local spare=s.item();spare.container=outerInventory
+    local waiting=s.transfer(spare,outerInventory,s.root)
+    local token={toolkitStarted=true};pickup.toolkitQueueOperation=token;waiting.toolkitQueueOperation=token
+    returning.toolkitQueueOperation=token;returning.allowMissingItems=true
+    local tail=s.drink();q=s.f.queue(pickup,waiting,returning,tail)
+    pickup.started=true
+    pickup.action={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end,
+        stopTimedActionAnim=function()end,setLoopedAction=function()end,setTime=function()end}
+    assert(not s.adapters.transfer(pickup),'active native step has no projected pending-edit contract')
+    assert(not s.policy.evaluateMove(q,pickup,tail,true).allowed,'active nested pickup cannot be reordered')
+    s.f.player.getFullName=function()return 'Queue Test'end
+    food.setChef=function(self,name)self.chef=name end
+    local picked,returned=0,0
+    local rootAdd,bagAdd=s.root.AddItem,inventory.AddItem
+    s.root.AddItem=function(self,item)picked=picked+1;return rootAdd(self,item)end
+    inventory.AddItem=function(self,item)returned=returned+1;return bagAdd(self,item)end
+    local originalList=pickup.queueList
+    local cancelled,reason=api.cancelOperation(q,pickup)
+    assert(cancelled,'reviewed active nested transfer can finish its current native step: '..tostring(reason))
+    assert(q.toolkitGroupCancel and not q.toolkitCancel and pickup.queueList==originalList
+        and #q.queue==4 and food.container==inventory and picked==0 and returned==0,
+        'cancelling active pickup cannot stop it, rewrite its list, move items or drop the pending tail early')
+    pickup:perform()
+    assert(picked==1 and returned==0 and food.container==s.root and food.hunger==-.4
+        and spare.container==outerInventory and completions==1 and #q.queue==2 and q.queue[2]==tail,
+        'native pickup commits once; cancelled waiting pickup is not executed and independent tail survives')
+    local cleanup=q.queue[1]
+    assert(cleanup~=returning and cleanup.Type=='ISInventoryTransferAction'and cleanup.item==food
+        and cleanup.srcContainer==s.root and cleanup.destContainer==inventory and cleanup.allowMissingItems,
+        'settlement creates one native cleanup return to the exact discoverable nested source')
+    cleanup.action={stopTimedActionAnim=function()end,setLoopedAction=function()end,setTime=function()end}
+    cleanup:perform()
+    assert(picked==1 and returned==1 and food.container==inventory and food.hunger==-.4
+        and completions==2 and #q.queue==1 and q.current==tail and not tail.toolkitQueueOperation.toolkitCancelled,
+        'native cleanup returns the original once and preserves the unrelated operation')
+    print('SP nested world bags: exact owner chain, each ancestor capacity, membership loss, owner/movement barriers and Host exclusion passed.')
 end
 print('Food edit adapters: original portions, cold cookable state, dormant cooked replacements and surviving ordinary/custom-weight partial use replacements, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')

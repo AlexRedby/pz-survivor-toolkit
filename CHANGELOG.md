@@ -17,6 +17,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.192
+
+- Allow pending queue edits for supported items picked up from or returned to bags inside adjacent ordinary world storage in single-player. Validate every exact owner and destination capacity; retain required pickups, bag-movement and walking dependencies. Host remains protected because B42.21 cannot encode this nested-world endpoint in its item transaction address.
+
 ### 0.1.191
 
 - Reuse a command-scoped, resumable reachable-container lookup for quantity transfers instead of searching the container list for every selected item. Confirmation starts fresh; custom native admission callbacks invalidate the index and retain live lookup, including callbacks that remove themselves or reject an item.

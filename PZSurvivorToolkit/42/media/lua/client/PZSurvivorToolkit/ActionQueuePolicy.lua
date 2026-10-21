@@ -354,6 +354,8 @@ local function ordinaryTransferContainer(container, character)
     local bag = container:getContainingItem()
     if not bag then return true end
     return carriedContainers(container, character) ~= nil
+        or ItemEditAdapters and type(ItemEditAdapters.worldContainer) == "function"
+            and ItemEditAdapters.worldContainer(container, character) ~= nil
 end
 ordinaryTransfer = function(action)
     if not transferMethodsAdopted then return true end
@@ -1241,7 +1243,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
                     and (not transferItemGuard or transferItemGuard())
                     and not removed[action] and not touched[id]
                     and not instanceof(item, "AnimalInventoryItem")
-                    and destination == root and source ~= root and not source:getParent()
+                    and sourceCarried and destination == root and source ~= root and not source:getParent()
                     and item:getContainer() == source and source:contains(item) and not item:getIsCraftingConsumed()
                     and not character:getVehicle() and root:getAcceptItemFunction() == nil
                     and root:getOnlyAcceptCategory() == nil then

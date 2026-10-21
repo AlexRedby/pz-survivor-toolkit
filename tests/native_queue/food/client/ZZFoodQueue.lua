@@ -97,7 +97,7 @@ local function eat(portion,menu,smartGoal)
  local option,dispatchHunger
  if smartGoal then option,dispatchHunger=smartOption(player,food,smartGoal);portion=option.param1 end
  local command={id=food:getID(),portion=portion,baseHunger=food:getBaseHunger(),dispatchRemaining=food:getHungChange(),
-  dispatchSource=food:getContainer()==player:getInventory()and 'root'or spec.world and 'world'or 'bag',menuDispatched=menu,
+  dispatchSource=food:getContainer()==player:getInventory()and 'root'or spec.worldBag and 'world-bag'or spec.world and 'world'or 'bag',menuDispatched=menu,
   nativeDuration=0,progress=false,cancelled=false,pickupObserved=false}
  if smartGoal then command.smartGoal=smartGoal;command.dispatchHunger=dispatchHunger end
  if spec.cookable then command.cooked,command.dispatchHeat=food:isCooked(),food:getHeat()end
@@ -129,6 +129,7 @@ local function observeReturn(returning)
   if not current then error('return identity unresolved')end
   local source=current.food:getContainer()
   return source==getPlayer():getInventory()and 'root'or source==current.bag:getItemContainer()and 'bag'
+   or current.worldBag and source==current.foodStorage and 'world-bag'
    or current.storage and source==current.storage and 'world'or 'unknown'
  end
  local function recordSafely(fn)
@@ -155,7 +156,7 @@ local function observeReturn(returning)
  q.onCompleted=callback;observer={queue=q,callback=callback,previous=previousRaw,returning=returning}
 end
 local function dispatch()
- local player=getPlayer();local current=items();local food,bag=current.food,current.storage or current.bag:getItemContainer()
+ local player=getPlayer();local current=items();local food,bag=current.food,current.foodStorage or current.bag:getItemContainer()
  assert(Progress.running(queue().current,anchor),'food needs running native anchor')
  evidence.anchorRunning=true;evidence.untouchedBefore=false
  if spec.extraWeight then
@@ -219,7 +220,7 @@ local function dispatch()
   else Checks.unchanged(queue(),{anchor,half,quarter})end
  end
  local fresh=items();assert(fresh.food:getHungChange()==ids.remaining and fresh.food:getBaseHunger()==ids.baseHunger
-  and fresh.food:getContainer()==(fresh.storage or spec.bag and fresh.bag:getItemContainer()or player:getInventory()),'edit touched pending food')
+  and fresh.food:getContainer()==(fresh.foodStorage or spec.bag and fresh.bag:getItemContainer()or player:getInventory()),'edit touched pending food')
  for index,value in ipairs(observed)do
   local action,command=value.eat,commands[index]
   assert(action.maxTime==command.nativeDuration and action.percentage==command.portion
