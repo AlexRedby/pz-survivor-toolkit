@@ -44,6 +44,8 @@ The INI does not transfer sandbox settings or keybindings. When moving an existi
 
 The selected set also includes Detailed Skill Tooltips (`EURY_DST`, Workshop `3572846242`), Foraging Tooltip Extended (`Ivmakk_ForagingTooltipExtended`, `3507997225`) and Custom Light Switch (`CustomLightSwitch`, `3779343349`). The supplied INI includes all three; no extra framework is required by their author pages. Skill/foraging displays use their own Mod Options. Custom Light Switch adds a learnable construction recipe and room lighting. Their full-pack B42.21 SP/Host behavior remains unverified; check them in a disposable profile before using a gameplay world. See the [catalog](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/USEFUL_MODS.md#49-detailed-skill-tooltips) for features and limits.
 
+Nick's Turn Off Fridges (`NicksTurnOffFridges`, Workshop `3778868211`) is also included. Use the appliance context menu to unplug/replug; Auto-Unplug is optional per appliance. **Plug every fridge/freezer back in before removing this mod**, because its unplugged state persists on the appliance. B42.21 full-pack SP/Host behavior remains unverified; see the [catalog](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/USEFUL_MODS.md#52-nicks-turn-off-fridges).
+
 ## Client
 
 1. Close the game. Subscribe to [ZombieBuddy](https://steamcommunity.com/sharedfiles/filedetails/?id=3619862853) and wait for Steam to download it, then complete the [one-time loader setup](#zombiebuddy-loader).

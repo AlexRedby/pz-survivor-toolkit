@@ -1,3 +1,7 @@
+# Nick's Turn Off Fridges selection
+
+- [ ] After installation is requested, check unplug/replug, cooling/thawing, generator fuel demand, reload persistence and second-player state in isolated full-pack macOS B42.21 SP/Host saves. Plug all test appliances back in before removing the mod. Author Host support and reported fixes do not establish compatibility with this set.
+
 # Shopping cart animation port
 
 - [ ] Cover partial/flashlight shopping-cart meshes in native direct rendering and action handoffs. Empty/full direct support, its renderer-specific world-Z compensation and original native wheel-index partition are verified; source geometry regressions for all six models do not replace the remaining native variants.

@@ -10,6 +10,8 @@ Version labels come from committed component metadata, including changes made wi
 
 ## Selected mod set
 
+- **Added:** Nick's Turn Off Fridges to the B42.21 selection (53 Mod IDs / 50 Workshop items), with appliance unplug/replug controls and optional per-appliance automation. Full-pack SP/Host behavior remains unverified; plug appliances back in before removing the mod.
+
 - **Added:** Detailed Skill Tooltips, Foraging Tooltip Extended and Custom Light Switch to the B42.21 selection (52 Mod IDs / 49 Workshop items). Adds skill-level explanations, foraging-radius information and buildable room-light switches. Author version/MP claims are documented in the catalog; full-pack SP/Host behavior remains unverified.
 
 - **Added:** Archery Nexus with Wilderness Progression: Archery Nexus to the B42.21 selection (49 Mod IDs / 46 Workshop items), with the base loaded before its companion. Includes crafting/progression, arrow recovery and draw endurance/strain; full-pack and Host behavior remain unverified. Existing sandbox settings are unchanged.
