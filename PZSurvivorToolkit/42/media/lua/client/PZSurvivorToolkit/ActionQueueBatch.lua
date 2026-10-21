@@ -79,6 +79,12 @@ function Batch.cancel(action)
     if type(token) == "table" then token.toolkitCancelled = true end
 end
 
+-- Row grouping only needs this predicate, not an allocated progress snapshot.
+function Batch.isGrouped(action)
+    local state = action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitBatch
+    return state and (state.lazy or state.total and state.total > 1 or state.completed > 0)
+end
+
 function Batch.progress(queue, action)
     local state = action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitBatch
     if not state then return end

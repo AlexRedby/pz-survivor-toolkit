@@ -449,6 +449,61 @@ check("single-player reads native effects directly without any network requests"
     toolkitMedicineCooldown = nativeCooldown
     assert(#requests == sent)
 end)
+check("idle presentation skips hidden descriptions and disabled native capture", function()
+    local capture, text = effects.capture, getText
+    local settings = PZSurvivorToolkit.Settings
+    local medicineSetting, herbSetting = settings.medicineMoodleSync, settings.medicineHerbs
+    local captures, translations, medicineReads, herbReads = 0, 0, 0, 0
+    effects.capture = function(who) captures = captures + 1; return capture(who) end
+    getText = function(...) translations = translations + 1; return text(...) end
+    settings.medicineMoodleSync = function() medicineReads = medicineReads + 1; return medicineSetting() end
+    settings.medicineHerbs = function() herbReads = herbReads + 1; return herbSetting() end
+    local function reset() captures, translations, medicineReads, herbReads = 0, 0, 0, 0 end
+    local function neutral(who)
+        for name in pairs(scales) do assert(moodle(name, who):getLevel() == 0) end
+    end
+
+    client, server, sync, herbs = false, false, false, false
+    poll(); neutral()
+    reset()
+    for _ = 1, 100 do poll() end
+    assert(captures == 0 and translations == 0, "disabled updates must not read effects or translate hidden text")
+    assert(medicineReads == 100 and herbReads == 100, "each update must sample each switch once")
+
+    local activeValues = p.raw
+    p.raw = {}
+    for name in pairs(activeValues) do p.raw[name] = 0 end
+    sync, herbs = true, true
+    reset(); poll(); neutral()
+    assert(captures == 1 and translations == 0, "enabled neutral effects stay fresh without hidden descriptions")
+    p.raw = activeValues
+    reset(); poll()
+    assert(captures == 1 and translations > 0, "re-enabling must restore live values and descriptions")
+    near(moodle("Painkillers"):getValue(), 0.5)
+
+    client = true
+    Events.OnMainMenuEnter.fire()
+    poll(); receive(payload()); poll()
+    now = medicine.states[0].receivedAt + 10001
+    reset(); poll(); neutral()
+    assert(captures == 0 and translations == 0, "stale authoritative values must hide without translation or local capture")
+    receive(payload()); poll()
+    assert(translations > 0 and moodle("Painkillers"):getLevel() > 0, "fresh replies must restore active descriptions")
+
+    client, sync, herbs = false, false, false
+    p = player(0, 102); players[0] = p
+    reset(); Events.OnCreatePlayer.fire(0)
+    assert(captures == 0, "disabled respawn must not capture effects")
+    reset(); poll(); neutral()
+    assert(translations == 0, "already initialized neutral respawn must not translate hidden descriptions")
+    for name in pairs(scales) do assert(moodle(name).char == p) end
+    sync, herbs = true, true
+    poll()
+    for name in pairs(scales) do assert(moodle(name):getLevel() > 0) end
+
+    effects.capture, getText = capture, text
+    settings.medicineMoodleSync, settings.medicineHerbs = medicineSetting, herbSetting
+end)
 check("module reloads preserve UI registrations and native hooks", function()
     local count, hook = Events.OnCreatePlayer.count(), ISEatFoodAction.complete
     dofile(base .. "shared/PZSurvivorToolkit/MedicineEffects.lua")

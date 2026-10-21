@@ -47,35 +47,41 @@ end
 
 local function update(player)
     if not player:isLocalPlayer() then return end
-    local values = reading(player)
+    local medicineEnabled, herbsEnabled = Toolkit.Settings.medicineMoodleSync(), Toolkit.Settings.medicineHerbs()
+    local values = (medicineEnabled or herbsEnabled) and reading(player)
     for name, spec in pairs(medicines) do
         local moodle = MF.getMoodle(Medicine.names[name], player:getPlayerNum())
         if not moodle or moodle.char ~= player then
             moodle = MF.ISMoodle:new(Medicine.names[name], player)
         end
         if not moodle.toolkitMedicineSetup then setup(moodle, name, spec) end
-        local enabled = herbs[name] and Toolkit.Settings.medicineHerbs()
-            or not herbs[name] and Toolkit.Settings.medicineMoodleSync()
+        local enabled = herbs[name] and herbsEnabled or not herbs[name] and medicineEnabled
         local remaining = values and values[spec[3] or name]
         local value = enabled and type(remaining) == "number" and remaining / spec[1] or 0
-        local shown, kind, description = value, 1
+        local shown, kind = value, 1
         if name == "Antidepressants" and value >= 1 then
             shown, kind = -0.05, 2
-            description = getText("UI_PZSurvivorToolkit_medicine_pending")
         elseif name == "LemonGrass" then
             shown, kind = -value, 2
-            description = getText("UI_PZSurvivorToolkit_medicine_cooldown", round(value * 100))
-        else
-            description = getText("IGUI_RemainingPercent", round(value * 100))
-            if name == "SleepingTablets" and value > 0 and values.SleepingIntensity > 0 then
-                description = getText("IGUI_climate_intensity") .. ": " .. round(values.SleepingIntensity / 0.1, 2)
-                    .. " / " .. description
-            end
         end
         if moodle:getValue() ~= shown then moodle:setValue(shown) end
         local level = moodle:getLevel()
-        if level > 0 and moodle:getDescription(kind, level) ~= description then
-            moodle:setDescription(kind, level, description)
+        if level > 0 then
+            local description
+            if name == "Antidepressants" and value >= 1 then
+                description = getText("UI_PZSurvivorToolkit_medicine_pending")
+            elseif name == "LemonGrass" then
+                description = getText("UI_PZSurvivorToolkit_medicine_cooldown", round(value * 100))
+            else
+                description = getText("IGUI_RemainingPercent", round(value * 100))
+                if name == "SleepingTablets" and value > 0 and values.SleepingIntensity > 0 then
+                    description = getText("IGUI_climate_intensity") .. ": " .. round(values.SleepingIntensity / 0.1, 2)
+                        .. " / " .. description
+                end
+            end
+            if moodle:getDescription(kind, level) ~= description then
+                moodle:setDescription(kind, level, description)
+            end
         end
     end
 end

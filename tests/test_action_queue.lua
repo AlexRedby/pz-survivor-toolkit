@@ -1095,6 +1095,62 @@ do
     getTimestampMs=timestamp
 end
 print('Queue UI performance: idle rows skip permissions/bounds, real hovered controls use snapshot-free previews, and clicks revalidate live changes.')
+-- Fresh structural checks must not allocate a replacement projection every frame.
+do
+    local function projection(size)
+        local owner=player()
+        local queued=ISTimedActionQueue.getTimedActionQueue(owner)
+        for index=1,size do
+            queued.queue[index]={Type='ProjectionFixture',toolkitQueueOperation={
+                presentation={rank=3,title='Fixture task'},
+                toolkitBatch={total=1,completed=0,unit='action'}}}
+        end
+        queued.current=queued.queue[1]
+        refresh()
+        local view=ui[#ui]
+        view:update()
+        return view,queued
+    end
+    local function updateGarbage(view)
+        collectgarbage('collect')
+        collectgarbage('stop')
+        local before=collectgarbage('count')
+        local ok,err=pcall(function() for frame=1,20 do view:update() end end)
+        local allocated=collectgarbage('count')-before
+        collectgarbage('restart')
+        assert(ok,err)
+        return allocated
+    end
+    local small=projection(10)
+    local smallGarbage=updateGarbage(small)
+    local view,queued=projection(1000)
+    local firstRows=view.list.items
+    local largeGarbage=updateGarbage(view)
+    assert(view.list.items==firstRows and largeGarbage < smallGarbage + 64,
+        'unchanged queue updates allocate garbage proportional to all queued rows')
+    local preserved=view.list.items[1]
+    view.list.selected=1;view.list.pressedCancel=queued.queue[1]
+    queued.current=queued.queue[1000]
+    view:update()
+    assert(view.currentIndex==1000 and view.list.items[1]==preserved and view.list.pressedCancel,
+        'current-action progress rebuilt unchanged rows or discarded a gesture')
+    -- Native/mod writers can edit raw arrays without changing their length or a revision.
+    queued.queue[500],queued.queue[501]=queued.queue[501],queued.queue[500]
+    view:update()
+    assert(view.list.items[500].item==queued.queue[500] and view.list.selected==1 and not view.list.pressedCancel,
+        'fresh projection missed a same-length external reorder or retained a stale gesture')
+    queued.queue[500].toolkitQueueOperation.toolkitBatch.total=2
+    view:update()
+    assert(view.list.items[500].header and view.list.items[500].task=='Fixture task',
+        'live batch grouping was cached instead of re-evaluated')
+    table.remove(queued.queue)
+    view:update()
+    assert(#view.list.items==999,'a matching row prefix hid removal of the queue tail')
+    queued.queue={}
+    view:update()
+    assert(#view.list.items==0 and not next(view.expanded),'empty projection retained rows or expansion state')
+end
+print('Queue projection: unchanged updates retain rows with bounded garbage; raw edits and live grouping remain fresh.')
 -- Audited world work uses the native build stop/transaction path and resumes after urgent work.
 load('client/BuildingObjects/TimedActions/ISBuildAction.lua')
 local oldWorld = PZSurvivorToolkit.ActionQueueWorld

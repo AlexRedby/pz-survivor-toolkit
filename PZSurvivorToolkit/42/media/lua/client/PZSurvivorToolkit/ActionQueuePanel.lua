@@ -276,7 +276,24 @@ function Panel:update()
     local selected = row and row.item
     local selectedHeader = row and row.header
     self.expanded = self.expanded or {}
-    local rows, live = {}, {}
+    local previousRows = self.list.items
+    local rows, rowCount, live = nil, 0, {}
+    -- Compare a fresh projection without allocating a second row table per action.
+    -- Once anything changes, retain the matching prefix and build the new suffix.
+    local function append(action, token, header, first, last, groupFirst, groupLast, task)
+        rowCount = rowCount + 1
+        local previous = previousRows[rowCount]
+        if not rows and previous and previous.item == action and previous.operation == token
+            and previous.header == header and previous.first == first and previous.last == last
+            and previous.groupFirst == groupFirst and previous.groupLast == groupLast
+            and previous.task == task then return end
+        if not rows then
+            rows = {}
+            for index = 1, rowCount - 1 do rows[index] = previousRows[index] end
+        end
+        rows[rowCount] = {item=action, operation=token, header=header, first=first, last=last,
+            groupFirst=groupFirst, groupLast=groupLast, task=task}
+    end
     self.currentIndex = nil
     local i, tasks = 1, 0
     while i <= #self.queue.queue do
@@ -289,33 +306,25 @@ function Panel:update()
         for index = i, last do
             if self.queue.queue[index] == self.queue.current then self.currentIndex = index end
         end
-        if token then live[token] = true end
-        local batch = Toolkit.ActionQueueBatch.progress(self.queue, action)
-        local grouped = last > i or batch and (batch.lazy or batch.total and batch.total > 1 or batch.completed > 0)
+        if token and self.expanded[token] ~= nil then live[token] = true end
+        local grouped = last > i or Toolkit.ActionQueueBatch.isGrouped(action)
         if grouped then
-            rows[#rows + 1] = {item = action, operation = token, header = true, first = i, last = last,
-                groupFirst = i, groupLast = last, task = Panel.taskTitle(self.queue, i, last)}
+            append(action, token, true, i, last, i, last, Panel.taskTitle(self.queue, i, last))
         end
         if not grouped or self.expanded[token] then
             for index = i, last do
-                rows[#rows + 1] = {item = self.queue.queue[index], operation = token, first = index, last = index,
-                    groupFirst = i, groupLast = last}
+                append(self.queue.queue[index], token, nil, index, index, i, last)
             end
         end
         tasks = tasks + 1
         i = last + 1
     end
     for token in pairs(self.expanded) do if not live[token] then self.expanded[token] = nil end end
-    local changed = #self.list.items ~= #rows
-    for index, nextRow in ipairs(rows) do
-        local previous = self.list.items[index]
-        if not previous or previous.item ~= nextRow.item or previous.header ~= nextRow.header
-            or previous.operation ~= nextRow.operation or previous.first ~= nextRow.first or previous.last ~= nextRow.last
-            or previous.task ~= nextRow.task then
-            changed = true; break
+    if rows or #previousRows ~= rowCount then
+        if not rows then
+            rows = {}
+            for index = 1, rowCount do rows[index] = previousRows[index] end
         end
-    end
-    if changed then
         local scroll = self.list:getYScroll()
         self.list:clearGesture()
         self.list:clear()
