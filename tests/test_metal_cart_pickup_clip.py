@@ -96,18 +96,18 @@ class MetalPickupClipTests(unittest.TestCase):
                                self.metal[peak]['bones']['Bip01_Spine'][13], .05, places=6)
 
     def test_contacts_measured_metal_ground_and_held_handles_with_unlocked_elbows(self):
-        # Shared cylindrical tire/feet support, followed by the .09 actor-unit approach advance.
-        peak = next(r for r in self.metal if .44 <= r['time'] <= .48)
+        # First fully closed grip, before appreciable wheel lift; open hands still follow the shaft bypass.
+        peak = next(r for r in self.metal if .48 <= r['time'] <= .50)
         # Physical handle centers measured before the wrist-angle change. These
-        # remain fixed while the hand rotates around its .057 X + .022 Z grasp.
+        # remain fixed while the hand rotates around its .057 X + .036 Z grasp.
         expected = {'L': (.1488610450, .2143914815, .0082985286),
                     'R': (-.1471768658, .2143914434, .0082986037)}
-        held = {'L': (.17488748, .49079606, .045343533),
-                'R': (-.17256463, .49079615, .045343559)}
+        held = {'L': (0.18883420526981354, 0.4896041333079338, 0.0456046145260334),
+                'R': (-0.1865113526582718, 0.4896042338758707, 0.04560464821755886)}
         for side in ('L', 'R'):
             names = [f'Bip01_{side}_{part}' for part in ('UpperArm', 'Forearm', 'Hand')]
             hand = peak['bones'][names[2]]
-            palm = [hand[12+i] + .057*hand[i] + .022*hand[8+i] for i in range(3)]
+            palm = [hand[12+i] + .057*hand[i] + .036*hand[8+i] for i in range(3)]
             self.assertLess(distance(palm, expected[side]), .00001, (side, 'palm misses handle'))
             forearm = [a-b for a,b in zip(position(hand), position(peak['bones'][names[1]]))]
             cosine = sum(a*b for a,b in zip(forearm, hand[:3])) / (

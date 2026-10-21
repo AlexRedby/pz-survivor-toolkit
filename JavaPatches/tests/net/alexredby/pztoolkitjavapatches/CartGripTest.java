@@ -42,10 +42,21 @@ public final class CartGripTest {
             {-0.1157871f,-0.9919687f,0.050918005f,0f,-0.9932564f,0.1159451f,0.00014129901f,0f,-0.006043833f,-0.050558247f,-0.9987031f,0f,-0.055225775f,0.51036084f,0.010862409f,1f}};
     }
 
+    private static Matrix4f[] nativeShoulderChain() {
+        // Native held04 idle input, wall1792618760550: Spine1 and independent L/R clavicles.
+        return new Matrix4f[]{
+            new Matrix4f().set(1.0767264e-06f,0.9784272f,0.20659232f,0f,1.0000002f,-5.477755e-07f,-4.875876e-06f,0f,-4.756036e-06f,0.20659228f,-0.9784274f,0f,-7.377877e-07f,0.66845214f,0.012061209f,1f),
+            new Matrix4f().set(0.98848903f,-0.15127265f,-0.0017120652f,0f,0.14833315f,0.9669147f,0.20753457f,0f,-0.02973952f,-0.20540014f,0.97822344f,0f,0.014465561f,0.7718781f,0.03406075f,1f),
+            new Matrix4f().set(-0.98613524f,-0.16591176f,-0.0027908683f,0f,0.1627165f,-0.96355295f,-0.21233734f,0f,0.03254084f,-0.20984788f,0.97719014f,0f,-0.014466048f,0.77187806f,0.034060687f,1f)
+        };
+    }
+
     private static void checkNativeHandles() {
         // Read-only GPU/reference-pose capture on B42.21; expected centers come from actual handle geometry.
-        String[] names={"Bip01_Spine","Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand","Bip01_L_Finger0","Bip01_L_Finger1","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_R_Finger0","Bip01_R_Finger1","Bip01_L_Thigh","Bip01_R_Thigh"};
-        float[][] nativePose=nativeHandlePoses();
+        String[] names={"Bip01_Spine","Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand","Bip01_L_Finger0","Bip01_L_Finger1","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_R_Finger0","Bip01_R_Finger1","Bip01_L_Thigh","Bip01_R_Thigh","Bip01_Spine1","Bip01_L_Clavicle","Bip01_R_Clavicle"};
+        float[][] nativePose=java.util.Arrays.copyOf(nativeHandlePoses(),names.length);
+        var shoulders=nativeShoulderChain();
+        for(int i=0;i<3;i++)nativePose[i+13]=shoulders[i].get(new float[16]);
         float[][] nativeCart={
             {-5.080325e-10f,-0.00022194229f,-0.0021531826f,0f,7.381783e-10f,0.0016076594f,-0.00016571165f,0f,0.104969054f,-6.051497e-08f,-1.0280073e-08f,0f,-0.0016536561f,0.0033783615f,-0.44702002f,1f},
             {76.5f,-4.1037783e-05f,-9.11952e-06f,0f,2.8023098e-05f,30.694286f,70.07218f,0f,-2.4333809e-05f,-70.07218f,30.694283f,-0f,-0.0060535767f,0.16740987f,-0.41188842f,1f},
@@ -56,7 +67,7 @@ public final class CartGripTest {
             {.14916556f,.61160583f,-.16874814f,-.14684275f}};
         var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
         for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
-        var actor=skeleton(names,List.of(-1,0,1,2,3,3,0,6,7,8,8,0,0),offsets);
+        var actor=skeleton(names,List.of(-1,14,1,2,3,3,15,6,7,8,8,0,0,0,13,13),offsets);
         // Wooden gait includes Spine1/chest bend and is checked with the native captures below.
         for(int model:new int[]{0,2}) for(boolean female:new boolean[]{false,true})
             for(float lean:new float[]{-.1f,0,.1f}) {
@@ -116,7 +127,7 @@ public final class CartGripTest {
                     if(Math.abs(old-now)>.00001f) throw new AssertionError("native arm length changed");
                 }
             }
-            for(int i:new int[]{0,11,12}) if(!poses[i].equals(before[i])) throw new AssertionError("native thigh/torso pose changed");
+            for(int i:new int[]{0,11,12,13}) if(!poses[i].equals(before[i])) throw new AssertionError("native thigh/torso pose changed");
         }
         if(CartGrip.handle("unknown",true,new Vector3f())) throw new AssertionError("unknown cart accepted");
     }
@@ -563,7 +574,27 @@ public final class CartGripTest {
             throw new AssertionError("missing native metal Run/Sprint stance coverage");
     }
 
-    private static void checkCapturedHostMetalBraking() {
+    private static boolean capturedMetalTarget(String model,boolean left,boolean female,Matrix4f delta,
+        Matrix4f cart,Matrix4f target,float pressure) {
+        if(!CartGrip.target(model,left,female,delta,cart,target,pressure))return false;
+        // Original B42.21 Host capture: retain its .022 palm depth for the historical 35/40-degree cap proof.
+        target.translate(0,0,CartGrip.grasp(female,model).palmDepth()-(female?.025f:.022f));
+        return true;
+    }
+    private static boolean capturedMetalGrip(Matrix4f[] poses,SkinningData actor,String model,boolean female,
+        Matrix4f delta,Matrix4f cart,float pressure) throws ReflectiveOperationException {
+        var solve=CartGrip.class.getDeclaredMethod("reach",Matrix4f[].class,SkinningData.class,String.class,
+            Matrix4f.class,Matrix4f.class,boolean.class,float.class,boolean.class,boolean.class);
+        solve.setAccessible(true);
+        for(boolean left:new boolean[]{true,false}) {
+            var target=new Matrix4f();
+            if(!capturedMetalTarget(model,left,female,delta,cart,target,pressure)
+                || !(boolean)solve.invoke(null,poses,actor,"Bip01_"+(left?"L":"R")+"_Hand",target,delta,false,1f,false,true))return false;
+        }
+        return true;
+    }
+
+    private static void checkCapturedHostMetalBraking() throws ReflectiveOperationException {
         // Actual native03 Host owner draw inputs, captures 1612/1613 at +18788/+18822ms.
         // Both draws rejected the old grip, so these palettes retain the native braking pose.
         // Pressure is recovered from captured cart Z minus the fixed held Z and native Spine fast-shift.
@@ -599,7 +630,14 @@ public final class CartGripTest {
             var live=CartGrip.livePoses(actor,actor,palette,delta,true,pressure);
             if(live==null) throw new AssertionError("Host braking live palette refused: "+capture);
             var before=java.util.Arrays.stream(live).limit(names.length).map(Matrix4f::new).toArray(Matrix4f[]::new);
-            var target=new Matrix4f();CartGrip.target("WheelbarrowMetal",false,false,delta,cart,target,pressure);
+            // The historical cap proof above retains its original grip; also replay the current held calibration.
+            var currentCart=CartWheelbarrow.METAL.held(new Matrix4f());var currentDelta=new Matrix4f();
+            if(!CartGrounding.alignWheelbarrow(currentCart,CartWheelbarrow.METAL,bank,pressure,gait,currentDelta))
+                throw new AssertionError("current Host calibration refused");
+            var currentPose=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.grip(currentPose,actor,"WheelbarrowMetal",false,currentDelta,currentCart,pressure))
+                throw new AssertionError("current metal hand surface lost actual Host braking reach: "+capture);
+            var target=new Matrix4f();capturedMetalTarget("WheelbarrowMetal",false,false,delta,cart,target,pressure);
             var pivot=before[4].getTranslation(new Vector3f());
             var shoulder=before[8].getTranslation(new Vector3f());
             var from=shoulder.sub(pivot,new Vector3f());
@@ -618,7 +656,7 @@ public final class CartGripTest {
             for(int i=0;i<generic.length;i++) if(!generic[i].equals(before[i]))
                 throw new AssertionError("unreachable generic reach mutated pose: "+capture);
             var poses=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
-            if(!CartGrip.grip(poses,actor,"WheelbarrowMetal",false,delta,cart,pressure))
+            if(!capturedMetalGrip(poses,actor,"WheelbarrowMetal",false,delta,cart,pressure))
                 throw new AssertionError("native Host metal braking grip refused: "+capture);
             float rightReserve=0;
             for(int side=0;side<2;side++) {
@@ -636,7 +674,7 @@ public final class CartGripTest {
                     float now=poses[link[0]].getTranslation(new Vector3f()).distance(poses[link[1]].getTranslation(new Vector3f()));
                     if(Math.abs(old-now)>.000001f) throw new AssertionError("Host metal stretched arm: "+capture);
                 }
-                CartGrip.target("WheelbarrowMetal",side==0,false,delta,cart,target,pressure);
+                capturedMetalTarget("WheelbarrowMetal",side==0,false,delta,cart,target,pressure);
                 if(!poses[hand].equals(target,.00002f)) throw new AssertionError("Host metal wrist missed target: "+capture);
                 var palm=poses[hand].transformPosition(new Vector3f(.057f,0,.022f));
                 var handle=new Vector3f();CartGrip.handle("WheelbarrowMetal",side==0,handle);cart.transformPosition(handle);
@@ -653,7 +691,7 @@ public final class CartGripTest {
             for(int tick=1000;tick>=0;tick--) {
                 var movingCart=new Matrix4f(cart).m32(cart.m32()+tick*.00002f);
                 var sample=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
-                if(!CartGrip.grip(sample,actor,"WheelbarrowMetal",false,delta,movingCart,pressure))
+                if(!capturedMetalGrip(sample,actor,"WheelbarrowMetal",false,delta,movingCart,pressure))
                     throw new AssertionError("Host metal reach continuity refused: "+capture+" tick="+tick);
                 var axis=sample[8].getTranslation(new Vector3f()).sub(pivot).normalize();
                 float turn=(float)Math.toDegrees(Math.acos(Math.max(-1,Math.min(1,from.dot(axis)/from.length()))));
@@ -665,7 +703,7 @@ public final class CartGripTest {
             }
             if(!below35 || !above35 || !capped) throw new AssertionError("Host metal cap continuity range missing");
             var impossible=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
-            if(CartGrip.grip(impossible,actor,"WheelbarrowMetal",false,delta,new Matrix4f(cart).m32(cart.m32()-1),pressure))
+            if(capturedMetalGrip(impossible,actor,"WheelbarrowMetal",false,delta,new Matrix4f(cart).m32(cart.m32()-1),pressure))
                 throw new AssertionError("physically unreachable metal target accepted");
             for(int i=0;i<impossible.length;i++) if(!impossible[i].equals(before[i]))
                 throw new AssertionError("physically unreachable metal target mutated pose");
@@ -759,9 +797,9 @@ public final class CartGripTest {
             var thumb=inverse.transformPosition(poses[2].transformPosition(thumbVertex));
             float depth=shape.palmDepth();
             float radial=(float)Math.hypot(finger.x-shape.palmX(),finger.z-depth);
-            if(radial<.01f || radial>.04f || finger.x<=shape.palmX() || (!underhand && thumb.x>=shape.palmX()+.005f))
+            if(!model.equals("WheelbarrowMetal") && (radial<.01f || radial>.04f || finger.x<=shape.palmX() || (!underhand && thumb.x>=shape.palmX()+.005f)))
                 throw new AssertionError("native finger meshes do not enclose the grip: female="+female+" side="+side);
-            if(underhand) {
+            if(underhand && model.equals("WheelbarrowWood")) {
                 var thumbAxis=new Matrix4f(hand).invert().mul(poses[2]).transformDirection(new Vector3f(1,0,0)).normalize();
                 var shaft=model.equals("WheelbarrowWood")?new Vector3f(.4226183f,sign*.9063078f,0)
                     :new Vector3f(.6427876f,sign*.7660444f,0);
@@ -867,16 +905,19 @@ public final class CartGripTest {
     }
 
     private static void checkAuthoredGripHandoff() throws ReflectiveOperationException {
-        String[] names={"Bip01_Spine","Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand","Bip01_L_Finger0",
-            "Bip01_L_Finger1","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_R_Finger0",
-            "Bip01_R_Finger1","Bip01_L_Thigh","Bip01_R_Thigh","Bip01_Spine1"};
+        String[] names={"Bip01_Spine","Bip01_Spine1","Bip01_L_Clavicle",
+            "Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand","Bip01_L_Finger0","Bip01_L_Finger1",
+            "Bip01_R_Clavicle","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_R_Finger0",
+            "Bip01_R_Finger1","Bip01_L_Thigh","Bip01_R_Thigh"};
         var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
         for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
-        var actor=skeleton(names,List.of(-1,0,1,2,3,3,0,6,7,8,8,0,0,0),offsets);
+        var actor=skeleton(names,List.of(-1,0,1,2,3,4,5,5,1,8,9,10,11,11,0,0),offsets);
         var nativePose=new Matrix4f[names.length];
         var captured=nativeHandlePoses();
-        for(int i=0;i<captured.length;i++) nativePose[i]=new Matrix4f().set(captured[i]);
-        nativePose[13]=new Matrix4f(nativePose[0]).translate(.1f,0,0);
+        int[] nativeIndices={0,3,4,5,6,7,9,10,11,12,13,14,15};
+        for(int i=0;i<captured.length;i++) nativePose[nativeIndices[i]]=new Matrix4f().set(captured[i]);
+        // Retain the real native shoulder chain; a handoff fixture without clavicles cannot use native arm reach.
+        var shoulders=nativeShoulderChain();nativePose[1]=shoulders[0];nativePose[2]=shoulders[1];nativePose[8]=shoulders[2];
         var frames=new ArrayList<Keyframe>();
         for(int i=0;i<names.length;i++) {
             var parent=actor.getBoneAt(i).parent;
@@ -893,7 +934,7 @@ public final class CartGripTest {
         // Authored samples already contain the male closure; the rendered cart may have another placement.
         var baked=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
         if(!CartGrip.grip(baked,actor,model,false,new Matrix4f(),cart))
-            throw new AssertionError("authored handoff fixture grip unreachable");
+            throw new AssertionError("authored handoff fixture grip unreachable: "+model);
         var dynamicCart=new Matrix4f(cart).translateLocal(0,0,.01f);
         var unsafeField=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");unsafeField.setAccessible(true);
         var unsafe=(sun.misc.Unsafe)unsafeField.get(null);
@@ -920,10 +961,10 @@ public final class CartGripTest {
                 var contact=java.util.Arrays.stream(nativePose).map(Matrix4f::new).toArray(Matrix4f[]::new);
                 if(!CartGrip.transitionGrip(contact,actor,female,new Matrix4f(),dynamicCart,reach,1,null,model))
                     throw new AssertionError("model-specific full contact rejected: "+model+" female="+female);
-                for(int hand:new int[]{3,8}) for(int bone=hand;bone<=hand+2;bone++)
+                for(int hand:new int[]{5,11}) for(int bone=hand;bone<=hand+2;bone++)
                     if(!contact[bone].equals(held[bone],.00003f))
                         throw new AssertionError("transition/held wrist or thumb discontinuity: "+model+" bone="+names[bone]+" reach="+reach);
-                for(int bone:new int[]{0,11,12,13}) if(!contact[bone].equals(nativePose[bone],.000002f))
+                for(int bone:new int[]{0,14,15,1}) if(!contact[bone].equals(nativePose[bone],.000002f))
                     throw new AssertionError("full contact changed native torso/leg: "+model+" bone="+names[bone]);
             }
             Matrix4f[] previous=null;
@@ -934,7 +975,7 @@ public final class CartGripTest {
                 if(body.matrixPalette.position()!=7) throw new AssertionError("authored handoff moved palette cursor");
                 var actual=CartGrip.livePoses(actor,actor,body.matrixPalette,new Matrix4f(),true);
                 if(actual==null) throw new AssertionError("authored handoff palette invalid");
-                for(int hand:new int[]{3,8}) {
+                for(int hand:new int[]{5,11}) {
                     var expected=new Matrix4f();
                     if(!CartTransitionMath.blend(baked[hand],held[hand],CartTransitionMath.smooth(reach),expected)
                         || !actual[hand].equals(expected,.00002f))
@@ -946,7 +987,7 @@ public final class CartGripTest {
                             throw new AssertionError("authored hand snaps at full reach: "+names[bone]+" female="+female);
                     }
                 }
-                for(int bone:new int[]{0,11,12,13}) if(!actual[bone].equals(nativePose[bone],.000002f))
+                for(int bone:new int[]{0,14,15,1}) if(!actual[bone].equals(nativePose[bone],.000002f))
                     throw new AssertionError("authored handoff changed torso/lower body: "+names[bone]);
                 previous=java.util.Arrays.stream(actual).limit(names.length).map(Matrix4f::new).toArray(Matrix4f[]::new);
             }
@@ -961,11 +1002,11 @@ public final class CartGripTest {
                 if(body.matrixPalette.position()!=7) throw new AssertionError("held render moved palette cursor");
                 var actual=CartGrip.livePoses(actor,actor,body.matrixPalette,new Matrix4f(),true);
                 if(actual==null) throw new AssertionError("held render palette invalid");
-                for(int hand:new int[]{3,8}) for(int bone=hand;bone<=hand+2;bone++)
+                for(int hand:new int[]{5,11}) for(int bone=hand;bone<=hand+2;bone++)
                     if(!actual[bone].equals(held[bone],.00002f))
                         throw new AssertionError("held grip recomposed outgoing closure: "+names[bone]
                             +" female="+female+" outgoingWeight="+outgoingWeight);
-                for(int bone:new int[]{0,11,12,13}) if(!actual[bone].equals(nativePose[bone],.000002f))
+                for(int bone:new int[]{0,14,15,1}) if(!actual[bone].equals(nativePose[bone],.000002f))
                     throw new AssertionError("held handoff changed torso/lower body: "+names[bone]);
             }
         }

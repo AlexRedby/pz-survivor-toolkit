@@ -19,6 +19,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### Unreleased
+
+- **Changed:** Retargeted the metal wheelbarrow pickup/setdown clip to the revised palm and finger grip, with a small open-hand approach around the shafts before closing.
+
 ### 0.1.198
 
 - **Actions window:** Ignore completed queue rows between native completion and the next UI refresh, including mouse hit-testing, instead of trying to draw an absent current action.
@@ -916,6 +920,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### Unreleased
+
+- **Fixed:** Stock metal-wheelbarrow hand surfaces no longer cut through the handle shafts. Adjust palm depth and finger/thumb closure while preserving the accepted wrist angle, arm stance and cart placement; keep open hands clear during pickup and setdown.
 
 ### 0.1.42
 

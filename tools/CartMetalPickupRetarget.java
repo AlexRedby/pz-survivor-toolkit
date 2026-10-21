@@ -173,7 +173,8 @@ public final class CartMetalPickupRetarget {
                     for(String side:new String[]{"L","R"}) nativeThumb(poses,actor,side,CartTransitionMath.smooth(phase.grip()));
                     if(!CartGrip.transitionGrip(poses,actor,false,new Matrix4f(),cart,(float)phase.reach(),(float)phase.grip(),null,"WheelbarrowMetal"))
                         throw new AssertionError("metal IK refused frame="+frame+" time="+time);
-                    if(phase.reach()==1) for(String side:new String[]{"L","R"}) {
+                    // Before full closure the live route still keeps the open hand beside the shaft.
+                    if(phase.grip()==1) for(String side:new String[]{"L","R"}) {
                         var target=new Matrix4f();CartGrip.transitionTarget("WheelbarrowMetal",side.equals("L"),false,new Matrix4f(),cart,target);
                         if(!poses[actor.getBone("Bip01_"+side+"_Hand").index].equals(target,.000002f))
                             throw new AssertionError("metal contact missed at "+time);

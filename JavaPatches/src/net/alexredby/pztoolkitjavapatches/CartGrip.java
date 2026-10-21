@@ -314,8 +314,8 @@ public final class CartGrip {
     private static final Grasp FEMALE_ROUND=new Grasp(.063f,.025f,-1.55f);
     private static final Grasp MALE_WOOD=new Grasp(.055f,.020f,-1.4f);
     private static final Grasp FEMALE_WOOD=new Grasp(.055f,.024f,-1.75f);
-    private static final Grasp MALE_METAL=new Grasp(.057f,.022f,-1.5f);
-    private static final Grasp FEMALE_METAL=new Grasp(.056f,.025f,-1.7f);
+    private static final Grasp MALE_METAL=new Grasp(.057f,.036f,-.82f);
+    private static final Grasp FEMALE_METAL=new Grasp(.056f,.026f,-.72f);
 
     static Grasp grasp(boolean female, String model) {
         if("WheelbarrowWood".equals(model)) return female?FEMALE_WOOD:MALE_WOOD;
@@ -343,7 +343,15 @@ public final class CartGrip {
                 .rotateZ((float)Math.toRadians("L".equals(side)?-35:35)).mul(thumbLocal);
             poses[thumb.index].invert(change);target.mul(change,change);adjust(poses,actor,thumb,change);
         }
-        // The metal shaft retains the authored thumb opposition/twist.
+        if(grasp==MALE_METAL || grasp==FEMALE_METAL) {
+            // Seat the palm beside the shaft and oppose the relaxed mitten with the thumb.
+            handPose.invert(change).mul(poses[thumb.index]);
+            var thumbLocal=new Matrix4f(change).setTranslation(0,0,0);
+            target.set(handPose).translate(change.m30(),change.m31(),change.m32())
+                .rotateY((float)Math.toRadians(grasp==MALE_METAL?-35:-45))
+                .rotateZ((float)Math.toRadians(("L".equals(side)?1:-1)*(grasp==MALE_METAL?5:-12))).mul(thumbLocal);
+            poses[thumb.index].invert(change);target.mul(change,change);adjust(poses,actor,thumb,change);
+        }
         if(underhand) return;
         var pivot=poses[thumb.index].getTranslation(new Vector3f());
         var from=poses[thumb.index].transformPosition(new Vector3f(.033f,0,0));
@@ -729,8 +737,9 @@ public final class CartGrip {
             var hand=actor.getBone("Bip01_"+side+"_Hand");
             var target=new Matrix4f();
             if(!transitionTarget(model,"L".equals(side),female,delta,cart,target)
-                || !CartTransitionMath.blend(poses[hand.index],target,CartTransitionMath.smooth(reachWeight),target)
-                || !reach(poses,actor,hand.name,target,delta,"WheelbarrowWood".equals(model),reachWeight,false,
+                || !CartTransitionMath.blend(poses[hand.index],target,CartTransitionMath.smooth(reachWeight),target)) return false;
+            if("WheelbarrowMetal".equals(model)) metalApproach(target,cart,"L".equals(side),reachWeight,gripWeight);
+            if(!reach(poses,actor,hand.name,target,delta,"WheelbarrowWood".equals(model),reachWeight,false,
                     "WheelbarrowMetal".equals(model))) return false;
             var before=new Matrix4f[actor.numBones()];
             for(int i=0;i<before.length;i++) if(descendant(actor.getBoneAt(i),hand)) before[i]=new Matrix4f(poses[i]);
@@ -740,6 +749,14 @@ public final class CartGrip {
                 CartTransitionMath.blend(before[i],poses[i],CartTransitionMath.smooth(gripWeight),poses[i]);
         }
         return true;
+    }
+
+    private static void metalApproach(Matrix4f target,Matrix4f cart,boolean left,float reach,float grip) {
+        // The coarse hand bridge must pass beside the shaft before its fingers close.
+        // Keep that clearance through wrist rotation, then settle onto the unchanged grip.
+        float distance=(float)(.042*CartTransitionMath.smooth(reach/.05)*(1-CartTransitionMath.smooth(grip)));
+        var direction=cart.transformDirection(new Vector3f(left?.9396926f:-.9396926f,.34202015f,0)).normalize();
+        target.translateLocal(direction.mul(distance));
     }
 
     static Matrix4f[] capture(SkinningData actor, Matrix4f[] saved) {
