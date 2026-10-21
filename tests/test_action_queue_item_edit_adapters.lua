@@ -62,6 +62,13 @@ local function setup(changed,foreignMerge,alias,missing)
     local function container(owner)
         local c={class='ItemContainer',owner=owner,temperature=1}
         c.getTemperature=function(self)return self.temperature end
+        c.getCustomTemperature=function(self)return self.customTemperature or 0 end
+        c.getOutermostContainer=function(self)
+            return self.owner and self.owner:getContainer():getOutermostContainer()or self
+        end
+        for _,name in ipairs({'isFridge','isFreezer','isStove','isMicrowave','isTemperatureChanging'})do
+            c[name]=function(self)return self[name..'Flag']or false end
+        end
         c.getContainingItem=function(self)return self.owner end;c.getType=function(self)return self.owner and 'bag'or 'none'end
         c.getParent=function(self)return not self.owner and f.player or nil end
         c.getVehiclePart=function()end
@@ -1328,13 +1335,16 @@ do
         local tight=s.policy.evaluateMove(q,returning,pickup,false)
         assert(not tight.allowed and tight.reason=='container_capacity','world destination cannot spend the future pickup release')
         storage.load=0
-        -- World and carried cookable transfers must not open a heater path in
-        -- an unrelated global transfer prefix.
-        food.cookable=true
+        -- Hot items remain protected even when their world endpoint is cold;
+        -- a cold carried item cannot return through an unproven thermal path.
+        food.cookable=true;food.heat=2
         assert(not s.adapters.transfer(pickup)and not s.adapters.transfer(returning)and not s.adapters.food(eating))
-        food.container=s.root
-        assert(s.adapters.food(eating)and not s.adapters.transfer(returning),'carried cookable proof does not grant world storage')
-        food.cookable=false;food.container=storage
+        food.container=s.root;food.heat=1;storage.customTemperature=2
+        assert(s.adapters.food(eating)and not s.adapters.transfer(returning),'carried food cannot open a custom-temperature world path')
+        storage.customTemperature=0;food.container=storage
+        assert(s.adapters.transfer(pickup)and s.adapters.transfer(returning)and s.adapters.food(eating),
+            'constant-cold ordinary world storage admits cold cookable pickup/food/return')
+        food.cookable=false
         food.isFavorite=function()return true end
         assert(s.adapters.transfer(pickup)and not s.adapters.transfer(returning),'native favorite outbound refusal is not modeled as success')
         food.isFavorite=function()return false end
@@ -1455,6 +1465,27 @@ do
     tile.present=false;rejected('removed world anchor despite surviving pointers');tile.present=true
     assert(s.adapters.transfer(pickup)and food.container==inventory and food.hunger==-.4,
         'restored ancestry revalidates without executing transfers or food effects')
+    food.cookable=true
+    assert(s.adapters.food(eating)and s.adapters.transfer(pickup)and s.adapters.transfer(returning),
+        'cold SP nested-world cookable proof follows its exact outer crate')
+    inventory.customTemperature=4;outerInventory.temperature=4
+    assert(s.adapters.food(eating)and s.adapters.transfer(returning),
+        'native heating ignores every inner bag temperature')
+    storage.customTemperature=1
+    assert(not s.adapters.food(eating)and not s.adapters.transfer(returning),
+        'even a currently cold custom world temperature retains protection')
+    storage.customTemperature=0;inventory.customTemperature=0;outerInventory.temperature=1
+    local nativeOutermost=inventory.getOutermostContainer
+    inventory.getOutermostContainer=function()return s.root end
+    assert(not s.adapters.food(eating)and not s.adapters.transfer(pickup),'native outermost must match the validated world chain')
+    inventory.getOutermostContainer=nativeOutermost
+    inner.container=inventory
+    inventory.getOutermostContainer=function()error('must not recurse into an unvalidated cycle')end
+    assert(not s.adapters.food(eating)and not s.adapters.transfer(pickup),'reject owner cycles before native recursion')
+    inner.container=outerInventory;inventory.getOutermostContainer=nativeOutermost
+    isClient=function()return true end
+    assert(not s.adapters.food(eating)and not s.adapters.transfer(returning),'cold proof does not bypass Host world-bag exclusion')
+    isClient=function()return false end;food.cookable=false
     -- The legacy active path finishes the native step, then settles cleanup;
     -- it must not turn pending-only projection into an early/duplicate effect.
     s.f.project('ActionQueueLabels')
@@ -1505,5 +1536,67 @@ do
         and completions==2 and #q.queue==1 and q.current==tail and not tail.toolkitQueueOperation.toolkitCancelled,
         'native cleanup returns the original once and preserves the unrelated operation')
     print('SP nested world bags: exact owner chain, each ancestor capacity, membership loss, owner/movement barriers and Host exclusion passed.')
+end
+do
+    for _,client in ipairs({false,true})do
+        local s=setup();isClient=function()return client end
+        local storage,parent=s.world();local food=s.food();food.cookable=true;food.container=storage
+        food.getReplaceOnCooked=function()return {isEmpty=function()return false end}end
+        local pickup,eating,returning=s.transfer(food,storage,s.root),s.eat(food,.5),s.transfer(food,s.root,storage)
+        assert(s.adapters.transfer(pickup)and s.adapters.food(eating)and s.adapters.transfer(returning),
+            'cold native cooking replacement stays dormant across ordinary world endpoints')
+        s.water.container=s.root;local anchor=s.drink();anchor.action={}
+        local q=s.f.queue(anchor,pickup,eating,returning)
+        assert(s.policy.evaluateMove(q,returning,pickup,false).allowed)
+        for _,field in ipairs({'isFridge','isFreezer','isStove','isMicrowave','isTemperatureChanging'})do
+            storage[field..'Flag']=true
+            assert(not s.adapters.transfer(pickup)and not s.adapters.transfer(returning)and not s.adapters.food(eating),
+                'thermal world classification is a live guard independent of its crate type: '..field)
+            storage[field..'Flag']=false
+        end
+        for _,value in ipairs({-1,.5,1,2,math.huge,0/0})do
+            storage.customTemperature=value
+            assert(not s.adapters.transfer(pickup)and not s.adapters.food(eating),'nonzero/invalid custom temperature remains protected')
+        end
+        storage.customTemperature=0
+        for _,value in ipairs({-1,1.7,math.huge,0/0})do
+            food.heat=value
+            assert(not s.adapters.transfer(pickup)and not s.adapters.food(eating),'hot/invalid food heat cannot certify world edits')
+        end
+        food.heat=1
+        s.root.temperature=2
+        assert(not s.adapters.transfer(pickup)and not s.adapters.food(eating),'both actor and world ambient must be cold')
+        s.root.temperature=1
+        food.fertilized=true
+        assert(not s.adapters.transfer(pickup)and not s.adapters.food(eating),'cold egg hatching lies outside the cooking heat gate')
+        food.fertilized=false
+        food.getReplaceOnRotten=function()return 'Base.OtherFood'end
+        assert(not s.adapters.transfer(pickup)and not s.adapters.food(eating),'rotting replacement is not protected by cold ambient')
+        food.getReplaceOnRotten=function()end
+        food.tags={[ItemTag.ALREADY_COOKED]=true}
+        assert(not s.adapters.transfer(pickup)and not s.adapters.food(eating),'cold ALREADY_COOKED mutation remains protected')
+        food.tags=nil
+        local a,b=s.item(),s.item();a.container=s.root;b.container=s.root
+        local first,second=s.transfer(a,s.root,s.bagInventory),s.transfer(b,s.root,s.bagInventory)
+        food.container=s.root
+        local prefix=s.f.queue(anchor,returning,first,second)
+        assert(s.policy.evaluateMove(prefix,second,first,false).allowed,'independent transfer prefix admits a proven cold world return')
+        for _,change in ipairs({'world-heat','food-heat','fertilized','rotting-replacement','already-cooked'})do
+            if change=='world-heat'then storage.customTemperature=2
+            elseif change=='food-heat'then food.heat=2
+            elseif change=='fertilized'then food.fertilized=true
+            elseif change=='rotting-replacement'then food.getReplaceOnRotten=function()return 'Base.OtherFood'end
+            else food.tags={[ItemTag.ALREADY_COOKED]=true}end
+            local decision=s.policy.evaluateMove(prefix,second,first,false)
+            assert(not decision.allowed and decision.reason=='container_capacity',
+                'global capacity prefix cannot bypass the cold proof outside its selected food component: '..change)
+            storage.customTemperature=0;food.heat=1;food.fertilized=false;food.tags=nil;food.getReplaceOnRotten=function()end
+        end
+        local unknown=s.f.action(ISBaseTimedAction,{object=parent})
+        assert(not s.policy.evaluateMove(s.f.queue(anchor,pickup,unknown,returning),returning,pickup,false).allowed,
+            'unmodeled world-anchor mutations retain their barrier')
+        assert(food.container==s.root and food.hunger==-.4,'thermal inspection executes no native consumption or transfer')
+    end
+    print('Cold cookable world edits: constant ambient, native outermost, dormant replacements, state/callback barriers and global capacity prefix passed.')
 end
 print('Food edit adapters: original portions, cold cookable state, dormant cooked replacements and surviving ordinary/custom-weight partial use replacements, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')

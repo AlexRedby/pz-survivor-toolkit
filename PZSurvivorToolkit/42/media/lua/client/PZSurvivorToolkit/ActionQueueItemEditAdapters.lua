@@ -256,12 +256,38 @@ function Adapters.worldContainer(container,player)
         container=parent
     end
 end
-function Adapters.worldTransferItem(item,returning)
-    -- Native refuses favorite outbound transfers. Cookable food could change
-    -- state in world storage before a later portion; its carried proof is not
-    -- a proof of every world-container temperature path.
-    return instanceof(item,"InventoryItem") and (not returning or not item:isFavorite())
-        and (not instanceof(item,"Food") or not item:isCookable())
+local function coldCookableState(item,player)
+    if not instanceof(player,"IsoPlayer") then return false end
+    local heat,ambient=item:getHeat(),player:getInventory():getTemperature()
+    return finite(heat) and heat>=0 and heat<=1.6 and finite(ambient) and ambient>=0 and ambient<=1.6
+        and not item:isFertilized() and not item:getReplaceOnRotten()
+        and ItemTag and ItemTag.ALREADY_COOKED~=nil
+        and (item:isCooked() or not item:hasTag(ItemTag.ALREADY_COOKED))
+end
+local function coldEndpoint(container,player)
+    if ancestry(container,player) then return true end
+    -- Prove the owner chain before calling the native recursive getter. The
+    -- outer inventory alone controls Food.updateTemperature, including bags.
+    local chain=Adapters.worldContainer(container,player)
+    if not chain or not method(container,"getOutermostContainer") then return false end
+    local outer=chain[#chain]
+    if container:getOutermostContainer()~=outer then return false end
+    for _,name in ipairs({"getCustomTemperature","getTemperature","isFridge","isFreezer","isStove",
+        "isMicrowave","isTemperatureChanging"}) do if not method(outer,name) then return false end end
+    -- Fridge classification also reads sprite flags, not just container type.
+    -- These exact ordinary endpoints keep the native ambient fixed at one.
+    return outer:getCustomTemperature()==0 and outer:getTemperature()==1
+        and outer:isFridge()==false and outer:isFreezer()==false and outer:isStove()==false
+        and outer:isMicrowave()==false and outer:isTemperatureChanging()==false
+end
+function Adapters.worldTransferItem(item,returning,player,source,destination)
+    if not instanceof(item,"InventoryItem") or returning and item:isFavorite() then return false end
+    if not instanceof(item,"Food") or not item:isCookable() then return true end
+    -- The global capacity prefix uses this same proof even when no food edit
+    -- belongs to its selected dependency component. Do not admit a hot return
+    -- simply because the food happens to be carried at inspection time.
+    return coldCookableState(item,player) and (item:getContainer()==source or item:getContainer()==destination)
+        and coldEndpoint(source,player) and coldEndpoint(destination,player)
 end
 local function itemFacts(item)
     local id=item:getID()
@@ -293,7 +319,7 @@ function Adapters.transfer(action)
     if not sourceCarried and not destinationCarried then return end
     if not sourceCarried and not Adapters.worldContainer(action.srcContainer,action.character)
         or not destinationCarried and not Adapters.worldContainer(action.destContainer,action.character) then return end
-    if (not sourceCarried or not destinationCarried) and not Adapters.worldTransferItem(action.item,not destinationCarried) then return end
+    if (not sourceCarried or not destinationCarried) and not Adapters.worldTransferItem(action.item,not destinationCarried,action.character,action.srcContainer,action.destContainer) then return end
     local provenWeight
     if not Weights.factoryFree(action.item) then
         provenWeight=Weights.unequipped(action.item)
@@ -413,7 +439,7 @@ function Adapters.food(action)
         or not instanceof(action.item,"Food") then return end
     local item=action.item
     if not ancestry(item:getContainer(),action.character)
-        and (item:isCookable() or not Adapters.worldContainer(item:getContainer(),action.character)) then return end
+        and not Adapters.worldContainer(item:getContainer(),action.character) then return end
     -- Use the constructor's captured reference, never a fresh inventory search.
     -- Native getSecondItem/start select only one of the two remembered utensils.
     local kind=item:getEatType()
@@ -442,14 +468,9 @@ function Adapters.food(action)
         or item:isAlcoholic() or item:getReduceInfectionPower()~=0 or item:isBurnt() or item:isRotten()
         or item:isbDangerousUncooked() and not item:isCooked() then return end
     if item:isCookable() then
-        -- Hot food keeps cooking slowly even after pickup. Native temperature
-        -- follows the outermost container; every supported carried transfer
-        -- keeps that container equal to this player's inventory.
-        -- Cooking replacements are unreachable throughout this cold range.
-        local heat,ambient=item:getHeat(),action.character:getInventory():getTemperature()
-        if not finite(heat) or heat<0 or heat>1.6 or not finite(ambient) or ambient<0 or ambient>1.6
-            or item:isFertilized() or not ItemTag.ALREADY_COOKED
-            or not item:isCooked() and item:hasTag(ItemTag.ALREADY_COOKED) then return end
+        -- Cold food stays below the native cooking/replacement gate throughout
+        -- carried and proven constant-cold ordinary world endpoint transfers.
+        if not coldCookableState(item,action.character) or not coldEndpoint(item:getContainer(),action.character) then return end
     end
     local facts=itemFacts(item)
     local base=-item:getBaseHunger()

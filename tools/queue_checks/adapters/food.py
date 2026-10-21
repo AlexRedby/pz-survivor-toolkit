@@ -39,10 +39,18 @@ EXTRA_TRANSFER_CASES = (EXTRA_BAG_CASE, EXTRA_CAPACITY_CASE)
 EXTRA_WEIGHT_CASES = (*EXTRA_PORTION_CASES, *EXTRA_TRANSFER_CASES)
 WORLD_CASE = 'food-world-edit-pickup-return'
 WORLD_CAPACITY_CASE = 'food-world-tight-capacity'
-WORLD_CASES = (WORLD_CASE, WORLD_CAPACITY_CASE)
+WORLD_COOKED_CASE = 'food-world-cooked-edit-pickup-return'
+WORLD_RAW_CAPACITY_CASE = 'food-world-raw-cookable-tight-capacity'
+WORLD_REPLACEMENT_CASE = 'food-world-cooking-replacement-edit-pickup-return'
+WORLD_THERMAL_CASES = (WORLD_COOKED_CASE, WORLD_RAW_CAPACITY_CASE, WORLD_REPLACEMENT_CASE)
+WORLD_CASES = (WORLD_CASE, WORLD_CAPACITY_CASE, *WORLD_THERMAL_CASES)
 WORLD_BAG_CASE = 'food-world-bag-edit-pickup-return'
 WORLD_BAG_CAPACITY_CASE = 'food-world-bag-tight-capacity'
-WORLD_BAG_CASES = (WORLD_BAG_CASE, WORLD_BAG_CAPACITY_CASE)
+WORLD_BAG_COOKED_CASE = 'food-world-bag-cooked-edit-pickup-return'
+WORLD_BAG_CASES = (WORLD_BAG_CASE, WORLD_BAG_CAPACITY_CASE, WORLD_BAG_COOKED_CASE)
+ALL_COOKED_CASES = (COOKED_MOVE_CASE, COOKED_CANCEL_CASE, WORLD_COOKED_CASE, WORLD_BAG_COOKED_CASE)
+ALL_COOKABLE_CASES = (*COOKABLE_CASES, WORLD_COOKED_CASE, WORLD_RAW_CAPACITY_CASE, WORLD_BAG_COOKED_CASE)
+ALL_REPLACEMENT_CASES = (*REPLACEMENT_CASES, WORLD_REPLACEMENT_CASE)
 ALL_WORLD_CASES = (*WORLD_CASES, *WORLD_BAG_CASES)
 BAG_CASES = (BAG_CASE, *EXTRA_TRANSFER_CASES, *ALL_WORLD_CASES)
 CASES = [MOVE_CASE, CANCEL_CASE, BAG_CASE, DEPLETION_CASE, *SMART_CASES, *UTENSIL_CASES, *COOKABLE_CASES, *REPLACEMENT_CASES, *CONSUMPTION_CASES, *CUSTOM_WEIGHT_CASES, *EXTRA_WEIGHT_CASES, *ALL_WORLD_CASES]
@@ -67,6 +75,8 @@ WORLD_RECEIPT_KEYS = {'storageX', 'storageY', 'storageZ', 'storageObjectIndex', 
                       'storageFoodWeight', 'storageFillerId', 'storageFillerType', 'storageFillerWeight', 'storageFillerCount'}
 WORLD_BAG_RECEIPT_KEYS = {'worldBagId', 'worldBagType', 'worldBagCount', 'worldBagInStorage',
                           'worldBagContainerIndex', 'worldBagCapacity', 'worldBagLoad', 'worldBagWeight'}
+WORLD_THERMAL_RECEIPT_KEYS = {'storageTemperature', 'storageCustomTemperature', 'storageFridge',
+                              'storageFreezer', 'storageMicrowave', 'storageStove', 'storageTemperatureChanging', 'cookingTime'}
 FLAGS = {'emptyStart', 'anchorRunning', 'anchorProgress', 'anchorDuration', 'contractsVerified',
          'reordered', 'waitingCancel', 'moveRejected', 'cancelRejected', 'manualPickup',
          'untouchedBefore', 'nativeDurationsUnchanged', 'order'}
@@ -150,17 +160,17 @@ def definitions():
                 'move-dependent': {case: edited[case] for case in EXTRA_TRANSFER_CASES},
                 'server-authority': {case: {'effectsVerified': True, 'serverAuthorityVerified': True} for case in EXTRA_TRANSFER_CASES}}},
         'eat-world-transfers': {
-            'scope': 'Base.Cereal starts in an adjacent anchored crate with one exact Nails filler; the worn army bag stays unused. Native pickup, original half-eat and explicit return wait behind clean water. With room, move the already-destination return before pickup and finish in root inventory; native controls finish in the crate. A tight capacity-5 crate keeps original order and denies relying on future capacity. Exact crate coordinates, object/container identity, filler, native decreasing food weight and combined root/world food counts are checked on both endpoints. No nested world containers, active cancellation, world mutation, physical input or WAN coverage.',
+            'scope': 'Base.Cereal, cold cooked Base.ChickenFillet, raw cookable Base.Cabbage and cold Base.BreadSlices with dormant ReplaceOnCooked=Base.Toast start in an adjacent anchored crate with one exact Nails filler; the worn army bag stays unused. Native pickup, original half-eat and explicit return wait behind clean water. With room, move the already-destination return before pickup and finish in root inventory; native controls finish in the crate. A tight capacity-5 crate keeps original order and denies relying on future capacity. Exact crate coordinates, object/container identity, filler, native decreasing food weight and combined root/world food counts are checked on both endpoints. No nested world containers, active cancellation, world mutation, physical input or WAN coverage.',
             'mods': MODS, 'checks': {
                 'success-queued': {case: common[case] for case in WORLD_CASES},
-                'move-independent': {WORLD_CASE: edited[WORLD_CASE]},
+                'move-independent': {case: edited[case] for case in (WORLD_CASE, WORLD_COOKED_CASE, WORLD_REPLACEMENT_CASE)},
                 'move-dependent': {case: edited[case] for case in WORLD_CASES},
                 'server-authority': {case: {'effectsVerified': True, 'serverAuthorityVerified': True} for case in WORLD_CASES}}},
         'eat-world-bag-transfers': {
-            'scope': 'SP-only Base.Cereal inside an exact Base.Bag_Schoolbag nested in an adjacent anchored crate; the worn army bag stays unrelated. Native pickup/half-eat/return retains order. Toolkit with room moves the native no-op return before pickup and finishes in root; a tight ancestor crate blocks reordering while the bag has room, without future capacity-release credit. Exact bag ancestry, crate indexes, combined food counts and native weights are checked. Native B42.21 MP ContainerID cannot address the nested bag, so MP is unsupported. No server-authority or physical-input coverage.',
+            'scope': 'SP-only Base.Cereal and cold cooked Base.ChickenFillet inside an exact Base.Bag_Schoolbag nested in an adjacent anchored crate; the worn army bag stays unrelated. Native pickup/half-eat/return retains order. Toolkit with room moves the native no-op return before pickup and finishes in root; a tight ancestor crate blocks reordering while the bag has room, without future capacity-release credit. Exact bag ancestry, crate indexes, combined food counts and native weights are checked. Native B42.21 MP ContainerID cannot address the nested bag, so MP is unsupported. No server-authority or physical-input coverage.',
             'mods': MODS, 'checks': {
                 'success-queued': {case: common[case] for case in WORLD_BAG_CASES},
-                'move-independent': {WORLD_BAG_CASE: edited[WORLD_BAG_CASE]},
+                'move-independent': {case: edited[case] for case in (WORLD_BAG_CASE, WORLD_BAG_COOKED_CASE)},
                 'move-dependent': {case: edited[case] for case in WORLD_BAG_CASES}}},
         'eat-transfers': {
             'scope': 'A native manual cereal grab and standalone half-eat/return pending behind a real drink. Move an already-destination return before pickup; deny pickup removal and pickup-after-eat. Native controls retain pickup/eat/return and finish in the bag.',
@@ -220,13 +230,13 @@ def _authority(text):
 def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
     issues = []
     bag, enabled, depletion = case in BAG_CASES, mode == 'toolkit', case == DEPLETION_CASE
-    smart, utensil, cookable = case in SMART_CASES, case in UTENSIL_CASES, case in COOKABLE_CASES
-    replacement = case in REPLACEMENT_CASES
+    smart, utensil, cookable = case in SMART_CASES, case in UTENSIL_CASES, case in ALL_COOKABLE_CASES
+    replacement = case in ALL_REPLACEMENT_CASES
     custom_weight = case in CUSTOM_WEIGHT_CASES
     extra_weight = case in EXTRA_WEIGHT_CASES
     consumption = extra_weight or custom_weight or case in CONSUMPTION_CASES
     thermal = cookable or replacement
-    cooked = case in (COOKED_MOVE_CASE, COOKED_CANCEL_CASE)
+    cooked = case in ALL_COOKED_CASES
     base_hunger = -.06 if extra_weight else -.15 if consumption else -.1 if replacement else -.3 if cooked else -.24 if cookable else -.5 if utensil else -.4
     food_type = 'Base.Salad' if extra_weight else 'Base.CannedPeachesOpen' if consumption else 'Base.BreadSlices' if replacement else 'Base.ChickenFillet' if cooked else 'Base.Cabbage' if cookable else 'Base.OatsRaw' if utensil else 'Base.Cereal'
     capacity_case = case == EXTRA_CAPACITY_CASE
@@ -234,15 +244,15 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
     world = case in ALL_WORLD_CASES
     if nested and kind != 'sp':
         return ['Food nested world-bag cases require SP: ' + case]
-    tight = capacity_case or case in (WORLD_CAPACITY_CASE, WORLD_BAG_CAPACITY_CASE)
+    tight = capacity_case or case in (WORLD_CAPACITY_CASE, WORLD_BAG_CAPACITY_CASE, WORLD_RAW_CAPACITY_CASE)
     storage_source = 'world-bag' if nested else 'world' if world else 'bag'
-    receipt_keys = RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if utensil else set()) | (COOKABLE_RECEIPT_KEYS if thermal else set()) | (REPLACEMENT_RECEIPT_KEYS if replacement else set()) | (CONSUMPTION_RECEIPT_KEYS if consumption else set()) | (EXTRA_WEIGHT_RECEIPT_KEYS if extra_weight else set()) | (CAPACITY_RECEIPT_KEYS if capacity_case else set()) | (WORLD_RECEIPT_KEYS if world else set()) | (WORLD_BAG_RECEIPT_KEYS if nested else set())
+    receipt_keys = RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if utensil else set()) | (COOKABLE_RECEIPT_KEYS if thermal else set()) | (REPLACEMENT_RECEIPT_KEYS if replacement else set()) | (CONSUMPTION_RECEIPT_KEYS if consumption else set()) | (EXTRA_WEIGHT_RECEIPT_KEYS if extra_weight else set()) | (CAPACITY_RECEIPT_KEYS if capacity_case else set()) | (WORLD_RECEIPT_KEYS if world else set()) | (WORLD_BAG_RECEIPT_KEYS if nested else set()) | (WORLD_THERMAL_RECEIPT_KEYS if world and thermal else set())
     identity_keys = ('bagId', 'foodId', 'anchorId') + (('forkId', 'spoonId') if utensil else ()) + (('capacityFillerId',) if capacity_case else ()) + (('storageFillerId',) if world else ()) + (('worldBagId',) if nested else ())
     if not utensil and UTENSIL_RECEIPT_KEYS & set(row):
         return ['Food unexpected utensil evidence: ' + case]
     if not thermal and COOKABLE_RECEIPT_KEYS & set(row):
         return ['Food unexpected cookable evidence: ' + case]
-    if not replacement and REPLACEMENT_RECEIPT_KEYS & set(row):
+    if not replacement and (REPLACEMENT_RECEIPT_KEYS - ({'cookingTime'} if world and thermal else set())) & set(row):
         return ['Food unexpected cooking replacement evidence: ' + case]
     if not consumption and CONSUMPTION_RECEIPT_KEYS & set(row):
         return ['Food unexpected consumption replacement evidence: ' + case]
@@ -262,6 +272,12 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
                                                 fertilized=False, inventoryTemperature=1))
                      or not fluid._close(prep.get('heat'), 1)):
         return ['Food preparation cookable state differs: ' + case]
+    if world and thermal and (not craft._matches(prep, dict(storageTemperature=1, storageCustomTemperature=0,
+            storageFridge=False, storageFreezer=False, storageMicrowave=False, storageStove=False, storageTemperatureChanging=False))
+            or not fluid._number(prep.get('cookingTime')) or prep['cookingTime'] != (30 if cooked else 0)):
+        return ['Food preparation world thermal endpoint differs: ' + case]
+    if not (world and thermal) and WORLD_THERMAL_RECEIPT_KEYS.difference({'cookingTime'}) & set(row):
+        return ['Food unexpected world thermal endpoint evidence: ' + case]
     if replacement and (prep.get('replacementType') != 'Base.Toast'
                         or type(prep.get('replacementCount')) is not int or prep['replacementCount'] < 0
                         or not fluid._number(prep.get('cookingTime')) or prep['cookingTime'] != 0):
@@ -286,8 +302,8 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
         return ['Food unexpected capacity evidence: ' + case]
     if nested and (not craft._matches(prep, dict(worldBagType='Base.Bag_Schoolbag', worldBagCount=1,
                                                worldBagInStorage=True, worldBagContainerIndex=-1, worldBagCapacity=15))
-            or not fluid._close(prep.get('worldBagLoad'), .2, 1e-5)
-            or not fluid._close(prep.get('worldBagWeight'), 1.2, 1e-5)):
+            or not fluid._close(prep.get('worldBagLoad'), .3 if cooked else .2, 1e-5)
+            or not fluid._close(prep.get('worldBagWeight'), 1.3 if cooked else 1.2, 1e-5)):
         return ['Food world bag ancestry/preparation differs: ' + case]
     if not nested and WORLD_BAG_RECEIPT_KEYS & set(row):
         return ['Food unexpected nested world bag evidence: ' + case]
@@ -298,7 +314,7 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
             or prep['storageObjectIndex'] < 0
             or any(not fluid._number(prep.get(key)) or prep[key] <= 0
                    for key in ('storageFoodWeight', 'storageFillerWeight'))
-            or not fluid._close(prep.get('storageFoodWeight'), .2, 1e-5)
+            or not fluid._close(prep.get('storageFoodWeight'), .1 if replacement else .3 if cooked else .2, 1e-5)
             or not fluid._close(prep.get('storageFillerWeight'),
                                 5 - (prep['worldBagWeight'] if nested else prep['storageFoodWeight']) - .1 if tight else .05, 1e-5)
             or not fluid._close(prep.get('storageLoad'), (prep['worldBagWeight'] if nested else prep['storageFoodWeight']) + prep['storageFillerWeight'], 1e-5)):
@@ -387,7 +403,7 @@ def _case(case, row, prep, receipt, kind='sp', mode='toolkit'):
                 issues.append('Food native target/original portion/progress/duration differs: ' + case)
     evidence = row.get('editEvidence')
     expected = dict(emptyStart=True, anchorRunning=True, anchorProgress=True, anchorDuration=460,
-        contractsVerified=enabled, reordered=enabled and case in (MOVE_CASE, BAG_CASE, SMART_MOVE_CASE, UTENSIL_MOVE_CASE, COOKED_MOVE_CASE, RAW_MOVE_CASE, REPLACEMENT_MOVE_CASE, CONSUMPTION_MOVE_CASE, CUSTOM_WEIGHT_MOVE_CASE, EXTRA_WEIGHT_MOVE_CASE, EXTRA_BAG_CASE, WORLD_CASE, WORLD_BAG_CASE), waitingCancel=cancelled,
+        contractsVerified=enabled, reordered=enabled and case in (MOVE_CASE, BAG_CASE, SMART_MOVE_CASE, UTENSIL_MOVE_CASE, COOKED_MOVE_CASE, RAW_MOVE_CASE, REPLACEMENT_MOVE_CASE, CONSUMPTION_MOVE_CASE, CUSTOM_WEIGHT_MOVE_CASE, EXTRA_WEIGHT_MOVE_CASE, EXTRA_BAG_CASE, WORLD_CASE, WORLD_BAG_CASE, WORLD_COOKED_CASE, WORLD_REPLACEMENT_CASE, WORLD_BAG_COOKED_CASE), waitingCancel=cancelled,
         moveRejected=enabled and (bag or depletion), cancelRejected=enabled and bag, manualPickup=bag,
         untouchedBefore=True, nativeDurationsUnchanged=True,
         order=[1] if bag else [1, 2] if depletion else [2] if cancelled else [2, 1] if enabled else [1, 2])
@@ -455,7 +471,7 @@ def verify(root, selection, catalog):
         if case in ALL_WORLD_CASES: identity_fields += ['storageFillerId']
         if case in WORLD_BAG_CASES: identity_fields += ['worldBagId']
         identities += [prep.get(field) for field in identity_fields]
-        outcome = {key: row.get(key) for key in RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if case in UTENSIL_CASES else set()) | (COOKABLE_RECEIPT_KEYS if case in (*COOKABLE_CASES, *REPLACEMENT_CASES) else set()) | (REPLACEMENT_RECEIPT_KEYS if case in REPLACEMENT_CASES else set()) | (CONSUMPTION_RECEIPT_KEYS if case in (*CONSUMPTION_CASES, *CUSTOM_WEIGHT_CASES, *EXTRA_WEIGHT_CASES) else set()) | (EXTRA_WEIGHT_RECEIPT_KEYS if case in EXTRA_WEIGHT_CASES else set()) | (CAPACITY_RECEIPT_KEYS if case == EXTRA_CAPACITY_CASE else set()) | (WORLD_RECEIPT_KEYS if case in ALL_WORLD_CASES else set()) | (WORLD_BAG_RECEIPT_KEYS if case in WORLD_BAG_CASES else set()) | {'commands', 'editEvidence', 'client'}}
+        outcome = {key: row.get(key) for key in RECEIPT_KEYS | (UTENSIL_RECEIPT_KEYS if case in UTENSIL_CASES else set()) | (COOKABLE_RECEIPT_KEYS if case in (*ALL_COOKABLE_CASES, *ALL_REPLACEMENT_CASES) else set()) | (REPLACEMENT_RECEIPT_KEYS if case in ALL_REPLACEMENT_CASES else set()) | (CONSUMPTION_RECEIPT_KEYS if case in (*CONSUMPTION_CASES, *CUSTOM_WEIGHT_CASES, *EXTRA_WEIGHT_CASES) else set()) | (EXTRA_WEIGHT_RECEIPT_KEYS if case in EXTRA_WEIGHT_CASES else set()) | (CAPACITY_RECEIPT_KEYS if case == EXTRA_CAPACITY_CASE else set()) | (WORLD_RECEIPT_KEYS if case in ALL_WORLD_CASES else set()) | (WORLD_BAG_RECEIPT_KEYS if case in WORLD_BAG_CASES else set()) | (WORLD_THERMAL_RECEIPT_KEYS if case in (*WORLD_THERMAL_CASES, WORLD_BAG_COOKED_CASE) else set()) | {'commands', 'editEvidence', 'client'}}
         outcome.update(effectsVerified=not case_issues, pendingRequestsVerified=not case_issues, pendingEditsVerified=not case_issues and selection['mode'] == 'toolkit',
                        serverAuthorityVerified=not case_issues and selection['kind'] == 'mp')
         outcomes.append(dict(actor='client1', case=case, outcome=outcome))

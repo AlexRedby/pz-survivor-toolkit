@@ -17,6 +17,10 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.194
+
+- Allow pending queue edits for cold cookable food in proven constant-temperature ordinary world storage, including SP nested bags. Validate native outermost ancestry, both transfer endpoints, cooking-state hazards and the full capacity prefix. Hot food, appliances and custom-temperature storage remain protected; original portions, cooking replacements and Host authority stay native.
+
 ### 0.1.193
 
 - Resolve Quartermaster's explicit item-name destination candidates once per requested display name and plan. Preserve priority/distance order, per-item carrier/destination admission, capacity overflow and category/tag fallback without enumerating unrelated preset entries.
@@ -890,6 +894,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.41
+
+- Reset omitted numeric food-stat fields before decoding a reused native item-stat packet. Prevent one item's cooking time, nutrition and other food effects from leaking into the next item in multiplayer; preserve the native wire format, explicit values and poison-detection sentinel.
 
 ### 0.1.40
 

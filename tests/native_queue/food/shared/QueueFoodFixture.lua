@@ -2,23 +2,28 @@
 local Fixture={bagType='Base.Bag_ALICEpack_Army',foodType='Base.Cereal',anchorType='Base.WaterBottle'}
 local function finite(value)return type(value)=='number'and value==value and value~=math.huge and value~=-math.huge end
 function Fixture.scenario(case)
+ local worldCooked=case=='food-world-cooked-edit-pickup-return'or case=='food-world-bag-cooked-edit-pickup-return'
+ local worldRaw=case=='food-world-raw-cookable-tight-capacity'
  local replacement=case=='food-cooking-replacement-move-portions'or case=='food-cooking-replacement-cancel-first-portion'
+  or case=='food-world-cooking-replacement-edit-pickup-return'
  local customWeight=case=='food-custom-weight-move-portions'or case=='food-custom-weight-cancel-first-portion'
  local extraBag=case=='food-extra-weight-bag-edit-pickup-return'or case=='food-extra-weight-bag-capacity'
  local extraWeight=extraBag or case=='food-extra-weight-move-portions'or case=='food-extra-weight-cancel-first-portion'
  local worldBag=case=='food-world-bag-edit-pickup-return'or case=='food-world-bag-tight-capacity'
- local world=worldBag or case=='food-world-edit-pickup-return'or case=='food-world-tight-capacity'
+  or case=='food-world-bag-cooked-edit-pickup-return'
+ local world=worldBag or worldCooked or worldRaw or case=='food-world-cooking-replacement-edit-pickup-return'
+  or case=='food-world-edit-pickup-return'or case=='food-world-tight-capacity'
  local consumption=extraWeight or customWeight or case=='food-consumption-replacement-move-portions'or case=='food-consumption-replacement-cancel-first-portion'
- return {bag=extraBag or case=='food-bag-edit-pickup-return',world=world,worldBag=worldBag,worldCapacity=case=='food-world-tight-capacity'or case=='food-world-bag-tight-capacity',capacity=case=='food-extra-weight-bag-capacity',
+ return {bag=extraBag or case=='food-bag-edit-pickup-return',world=world,worldBag=worldBag,worldCapacity=worldRaw or case=='food-world-tight-capacity'or case=='food-world-bag-tight-capacity',capacity=case=='food-extra-weight-bag-capacity',
   cancel=case=='food-root-cancel-first-portion'or case=='food-smart-cancel-first-portion'or case=='food-utensil-cancel-first-portion'
    or case=='food-cooked-cancel-first-portion'or case=='food-raw-cookable-cancel-first-portion'
    or case=='food-cooking-replacement-cancel-first-portion'or case=='food-consumption-replacement-cancel-first-portion'
    or case=='food-custom-weight-cancel-first-portion'or case=='food-extra-weight-cancel-first-portion',
   smart=case=='food-smart-move-portions'or case=='food-smart-cancel-first-portion',
   utensil=case=='food-utensil-move-portions'or case=='food-utensil-cancel-first-portion',
-  cooked=case=='food-cooked-move-portions'or case=='food-cooked-cancel-first-portion',
+  cooked=worldCooked or case=='food-cooked-move-portions'or case=='food-cooked-cancel-first-portion',
   replacement=replacement,consumption=consumption,customWeight=customWeight,extraWeight=extraWeight,
-  cookable=replacement or case=='food-cooked-move-portions'or case=='food-cooked-cancel-first-portion'
+  cookable=worldCooked or worldRaw or replacement or case=='food-cooked-move-portions'or case=='food-cooked-cancel-first-portion'
    or case=='food-raw-cookable-move-portions'or case=='food-raw-cookable-cancel-first-portion',
   depletion=case=='food-root-depletion'}
 end
@@ -77,6 +82,15 @@ function Fixture.items(player,ids,allowDeleted)
  end
  return result
 end
+local function thermalEndpoint(result,container)
+ local temperature,custom=container:getTemperature(),container:getCustomTemperature()
+ if not finite(temperature)or not finite(custom)then return false end
+ result.storageTemperature,result.storageCustomTemperature=temperature,custom
+ result.storageFridge,result.storageFreezer=container:isFridge(),container:isFreezer()
+ result.storageMicrowave,result.storageStove=container:isMicrowave(),container:isStove()
+ result.storageTemperatureChanging=container:isTemperatureChanging()
+ return true
+end
 function Fixture.snapshot(player,ids)
  local state=Fixture.items(player,ids,true);if not state then return end
  local root=player:getInventory();local food,anchor=state.food,state.anchor
@@ -117,12 +131,17 @@ function Fixture.snapshot(player,ids)
   result.cookable,result.cooked=food:isCookable(),food:isCooked()
   result.burnt,result.rotten,result.fertilized=food:isBurnt(),food:isRotten(),food:isFertilized()
   result.heat,result.inventoryTemperature=food:getHeat(),root:getTemperature()
+  if state.storage then
+   if not thermalEndpoint(result,state.storage)then return end
+   if not finite(food:getCookingTime())then return end
+   result.cookingTime=food:getCookingTime()
+  end
  end
  if Fixture.scenario(ids.case).replacement then
   local outputs=food:getReplaceOnCooked()
   if not outputs or outputs:size()~=1 or not finite(food:getCookingTime())then return end
   result.replacementType=outputs:get(0)
-  result.replacementCount=count(root,nil,result.replacementType)
+  result.replacementCount=count(root,nil,result.replacementType)+(state.storage and count(state.storage,nil,result.replacementType)or 0)
   result.cookingTime=food:getCookingTime()
  end
  if Fixture.scenario(ids.case).consumption then
@@ -253,8 +272,14 @@ function Fixture.prepare(player,case,previous)
  end
  local worldFiller
  if storage then
-  assert(not food:isCookable()and not food:isCustomWeight()and math.abs(food:getUnequippedWeight()-.2)<.00001,
-   'world fixture requires native noncookable Cereal weight')
+  local nativeWeight=spec.replacement and .1 or spec.cooked and .3 or .2
+  assert(not food:isCustomWeight()and math.abs(food:getUnequippedWeight()-nativeWeight)<.00001,
+   'world fixture requires native food weight')
+  if spec.cookable then
+   assert(storage:getTemperature()==1 and storage:getCustomTemperature()==0
+    and not storage:isFridge()and not storage:isFreezer()and not storage:isMicrowave()
+    and not storage:isStove()and not storage:isTemperatureChanging(),'world food endpoint must remain ordinary and cold')
+  end
   worldFiller=assert(storage:AddItem('Base.Nails'))
   local weight=spec.worldCapacity and storage:getEffectiveCapacity(player)-(worldBag and worldBag:getUnequippedWeight()or food:getUnequippedWeight())-.1 or .05
   assert(weight>0 and weight<5,'world-food capacity fixture differs')
@@ -362,6 +387,13 @@ function Fixture.verify(state)
    if value[field]~=state.ids[field]then return nil,'cookable food state changed: '..field end
   end
   if value.heat<0 or value.heat>1.6 then return nil,'cookable food left the cold range'end
+  if Fixture.scenario(state.case).world then
+   if value.cookingTime~=state.ids.cookingTime then return nil,'world food cooking time changed'end
+   for _,field in ipairs({'storageTemperature','storageCustomTemperature','storageFridge','storageFreezer',
+    'storageMicrowave','storageStove','storageTemperatureChanging'})do
+    if value[field]~=state.ids[field]then return nil,'world food thermal endpoint changed: '..field end
+   end
+  end
  end
  if Fixture.scenario(state.case).replacement then
   for _,field in ipairs({'replacementType','replacementCount','cookingTime'})do
