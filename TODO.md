@@ -1,3 +1,7 @@
+# Selected QoL additions
+
+- [ ] After installation is requested, check all three in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod; foraging modifiers/radius; switch construction, bulb insertion/removal, grid/generator lighting, dismantling and second-player synchronization. Author claims do not establish compatibility with this selected set.
+
 # Auto-drink after multiplayer respawn
 
 - [ ] Verify death and new-character creation as a client in an isolated full-pack Host session on macOS B42.21, with auto-drink disabled and enabled. Pick up a water bottle and compare the menu preference, character flag and server water/thirst effects after the connection reply. Native reply ordering and the one-shot repair are covered by source inspection and focused Lua regressions; this live network scenario remains unverified.

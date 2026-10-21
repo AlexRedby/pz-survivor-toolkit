@@ -40,6 +40,10 @@ The selected vehicle visuals are **Vanilla Vehicles Animated** (`VanillaVehicles
 
 The INI does not transfer sandbox settings or keybindings. When moving an existing world, also copy `<profile-name>_SandboxVars.lua` under the same profile name. The supplied INI sets `SleepAllowed=true` and `SleepNeeded=false`. When copying only the mod lists, change sleep settings separately if wanted.
 
+## Selected QoL additions
+
+The selected set also includes Detailed Skill Tooltips (`EURY_DST`, Workshop `3572846242`), Foraging Tooltip Extended (`Ivmakk_ForagingTooltipExtended`, `3507997225`) and Custom Light Switch (`CustomLightSwitch`, `3779343349`). The supplied INI includes all three; no extra framework is required by their author pages. Skill/foraging displays use their own Mod Options. Custom Light Switch adds a learnable construction recipe and room lighting. Their full-pack B42.21 SP/Host behavior remains unverified; check them in a disposable profile before using a gameplay world. See the [catalog](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/USEFUL_MODS.md#49-detailed-skill-tooltips) for features and limits.
+
 ## Client
 
 1. Close the game. Subscribe to [ZombieBuddy](https://steamcommunity.com/sharedfiles/filedetails/?id=3619862853) and wait for Steam to download it, then complete the [one-time loader setup](#zombiebuddy-loader).
