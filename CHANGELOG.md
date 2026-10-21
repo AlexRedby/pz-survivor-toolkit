@@ -17,6 +17,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.190
+
+- Compare the action queue's current row projection without allocating replacement rows and batch snapshots on unchanged UI updates. Preserve fresh raw-array edits, task titles, grouping, selection and gesture validation.
+- Skip native medicine effect reads when both indicator switches are off, and build descriptions only for visible effect levels. Re-enabling, respawn and authoritative multiplayer readings retain their existing behavior.
+
 ### 0.1.189
 
 - **Improved:** Pending pickup/food/return edits can use adjacent ordinary world crates and shelves when exact container identity, native item effects and capacity are proven. Required pickups and walking dependencies remain protected; favorite outbound items, cookable world transfers, special containers and unknown callbacks keep their safeguards.
