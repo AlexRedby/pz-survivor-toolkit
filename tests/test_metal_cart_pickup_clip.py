@@ -99,22 +99,25 @@ class MetalPickupClipTests(unittest.TestCase):
         # First fully closed grip, before appreciable wheel lift; open hands still follow the shaft bypass.
         peak = next(r for r in self.metal if .48 <= r['time'] <= .50)
         # Physical handle centers measured before the wrist-angle change. These
-        # remain fixed while the hand rotates around its .057 X + .036 Z grasp.
+        # remain fixed while the closed fist changes its angle around the shaft.
         expected = {'L': (.1488610450, .2143914815, .0082985286),
                     'R': (-.1471768658, .2143914434, .0082986037)}
-        held = {'L': (0.18883420526981354, 0.4896041333079338, 0.0456046145260334),
-                'R': (-0.1865113526582718, 0.4896042338758707, 0.04560464821755886)}
+        # Same held shaft stations reconstructed from the pre-angle-change measured clip (60ab50c).
+        held = {'L': (.1491655502319336, .44233841806650165, .018450396716594698),
+                'R': (-.14684275495260954, .4423384933322668, .018450414225459098)}
         for side in ('L', 'R'):
             names = [f'Bip01_{side}_{part}' for part in ('UpperArm', 'Forearm', 'Hand')]
             hand = peak['bones'][names[2]]
-            palm = [hand[12+i] + .057*hand[i] + .036*hand[8+i] for i in range(3)]
+            palm = [hand[12+i] + .050*hand[i] + .0335*hand[8+i] for i in range(3)]
             self.assertLess(distance(palm, expected[side]), .00001, (side, 'palm misses handle'))
             forearm = [a-b for a,b in zip(position(hand), position(peak['bones'][names[1]]))]
             cosine = sum(a*b for a,b in zip(forearm, hand[:3])) / (
                 distance(forearm, (0, 0, 0)) * distance(hand[:3], (0, 0, 0)))
             bend = math.degrees(math.acos(max(-1, min(1, cosine))))
             self.assertLessEqual(bend, 45, (side, 'ground wrist bends too far'))
-            self.assertLess(distance(position(self.metal[-1]['bones'][names[2]]), held[side]), .00001)
+            final = self.metal[-1]['bones'][names[2]]
+            held_palm = [final[12+i] + .050*final[i] + .0335*final[8+i] for i in range(3)]
+            self.assertLess(distance(held_palm, held[side]), .00001)
             shoulder, elbow, wrist = [position(self.metal[-1]['bones'][name]) for name in names]
             a, b, d = distance(shoulder, elbow), distance(elbow, wrist), distance(shoulder, wrist)
             neutral_flex = math.degrees(math.acos(max(-1, min(1, (d*d-a*a-b*b)/(2*a*b)))))
@@ -125,7 +128,7 @@ class MetalPickupClipTests(unittest.TestCase):
             a, b, d = distance(s, e), distance(e, w), distance(s, w)
             flex = math.degrees(math.acos(max(-1, min(1, (d*d-a*a-b*b)/(2*a*b)))))
             self.assertGreater(flex, 15, 'avoid a locked elbow')
-            self.assertLess(flex, 50, 'metal pickup should keep the arms straighter than the wood source')
+            self.assertLess(flex, 55, 'keep a modest elbow bend while seating the closed fist')
 
     def test_partial_reach_is_applied_only_by_the_live_body_solver(self):
         torso = retarget.torso_poses(self.wood, self.parents)

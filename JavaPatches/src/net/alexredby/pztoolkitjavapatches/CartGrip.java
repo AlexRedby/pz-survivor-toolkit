@@ -314,8 +314,8 @@ public final class CartGrip {
     private static final Grasp FEMALE_ROUND=new Grasp(.063f,.025f,-1.55f);
     private static final Grasp MALE_WOOD=new Grasp(.055f,.020f,-1.4f);
     private static final Grasp FEMALE_WOOD=new Grasp(.055f,.024f,-1.75f);
-    private static final Grasp MALE_METAL=new Grasp(.057f,.036f,-.82f);
-    private static final Grasp FEMALE_METAL=new Grasp(.056f,.026f,-.72f);
+    private static final Grasp MALE_METAL=new Grasp(.050f,.0335f,-1.5f);
+    private static final Grasp FEMALE_METAL=new Grasp(.045f,.0272f,-1.7f);
 
     static Grasp grasp(boolean female, String model) {
         if("WheelbarrowWood".equals(model)) return female?FEMALE_WOOD:MALE_WOOD;
@@ -341,15 +341,6 @@ public final class CartGrip {
             target.set(handPose).translate(change.m30(),change.m31(),change.m32())
                 .rotateY((float)Math.toRadians(grasp==FEMALE_WOOD?10:20))
                 .rotateZ((float)Math.toRadians("L".equals(side)?-35:35)).mul(thumbLocal);
-            poses[thumb.index].invert(change);target.mul(change,change);adjust(poses,actor,thumb,change);
-        }
-        if(grasp==MALE_METAL || grasp==FEMALE_METAL) {
-            // Seat the palm beside the shaft and oppose the relaxed mitten with the thumb.
-            handPose.invert(change).mul(poses[thumb.index]);
-            var thumbLocal=new Matrix4f(change).setTranslation(0,0,0);
-            target.set(handPose).translate(change.m30(),change.m31(),change.m32())
-                .rotateY((float)Math.toRadians(grasp==MALE_METAL?-35:-45))
-                .rotateZ((float)Math.toRadians(("L".equals(side)?1:-1)*(grasp==MALE_METAL?5:-12))).mul(thumbLocal);
             poses[thumb.index].invert(change);target.mul(change,change);adjust(poses,actor,thumb,change);
         }
         if(underhand) return;
@@ -432,7 +423,8 @@ public final class CartGrip {
             float cos=(float)Math.cos(radial),sin=(float)Math.sin(radial);
             var x=down.mul(cos,new Vector3f()).fma(sin,inward);
             var z=inward.mul(cos,new Vector3f()).fma(-sin,down);
-            float beta=(float)Math.toRadians(wood?25+10*CartSteeringMath.woodenTurnAmount(pressure):40);
+            // Turn the closed fist across the shaft instead of opening its fingers to gain clearance.
+            float beta=(float)Math.toRadians(wood?25+10*CartSteeringMath.woodenTurnAmount(pressure):female?25:20);
             x.mul((float)Math.cos(beta)).fma(-(float)Math.sin(beta),axis).normalize();
             var y=z.cross(x,new Vector3f()).normalize();z=x.cross(y,new Vector3f()).normalize();
             out.m00(x.x).m01(x.y).m02(x.z).m10(y.x).m11(y.y).m12(y.z).m20(z.x).m21(z.y).m22(z.z);

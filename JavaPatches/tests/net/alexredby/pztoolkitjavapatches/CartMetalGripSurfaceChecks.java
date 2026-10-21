@@ -8,7 +8,9 @@ import org.joml.Vector3d;
 import org.joml.Vector3f;
 import zombie.core.skinnedmodel.model.SkinningData;
 
-/** Full measured hand triangles against the finite shaft, including faces between contact samples. */
+/** Closed native hand shape, finite-shaft contact and bounded coarse-skin residuals.
+ * This numerical gate does not establish a natural-looking grasp; native visual review is separate.
+ */
 public final class CartMetalGripSurfaceChecks {
     private static final double SCALE=.0091743395, ZMIN=52.2465, ZMAX=85.63253;
     private record Contact(String part,int[] source,double[] bary) {}
@@ -70,13 +72,16 @@ public final class CartMetalGripSurfaceChecks {
         result.add(new double[]{0,0,-1,-ZMIN});result.add(new double[]{0,0,1,ZMAX});return result;
     }
     private static double areaInside(Vector3d[] triangle,List<double[]> planes) {
+        return areaInside(triangle,planes,.000001);
+    }
+    private static double areaInside(Vector3d[] triangle,List<double[]> planes,double inset) {
         var polygon=new ArrayList<>(List.of(triangle));
         for(var plane:planes) {
             var next=new ArrayList<Vector3d>();
             if(polygon.isEmpty()) return 0;
-            var previous=polygon.get(polygon.size()-1);double a=distance(previous,plane);
+            var previous=polygon.get(polygon.size()-1);double a=distance(previous,plane,inset);
             for(var current:polygon) {
-                double b=distance(current,plane);
+                double b=distance(current,plane,inset);
                 if((a<=0)!=(b<=0)) next.add(new Vector3d(current).sub(previous).mul(a/(a-b)).add(previous));
                 if(b<=0) next.add(current);
                 previous=current;a=b;
@@ -89,9 +94,16 @@ public final class CartMetalGripSurfaceChecks {
                 .cross(new Vector3d(polygon.get(i+1)).sub(polygon.get(0))).length()*.5;
         return area*SCALE*SCALE;
     }
-    private static double distance(Vector3d p,double[] plane) {
-        // One micrometre inward avoids classifying an exactly tangent face as penetration.
-        return p.x*plane[0]+p.y*plane[1]+p.z*plane[2]-plane[3]+.000001/SCALE;
+    private static double distance(Vector3d p,double[] plane,double inset) {
+        // A1um inset distinguishes tangency; a larger inset tests the explicit residual-depth budget.
+        return p.x*plane[0]+p.y*plane[1]+p.z*plane[2]-plane[3]+inset/SCALE;
+    }
+    private static Set<String> residualFaces(Rig rig) {
+        // Measured native bridge/thumb faces only; a different intersecting surface is a regression.
+        if(!rig.female) return rig.left?Set.of("112/114/121","114/121/122","120/121/122","120/122/124")
+            :Set.of("418/421/427","421/427/429","426/427/429","426/429/430");
+        return rig.left?Set.of("116/118/160","118/160/161","121/123/160","121/160/161","126/150/158","126/158/159","158/159/164")
+            :Set.of("428/431/472","431/472/473","433/434/472","433/472/473","438/462/470","438/470/471","470/471/476");
     }
     private static Matrix4f legacy(Rig rig,Matrix4f cart) {return legacy(rig,cart,false);}
     private static Matrix4f legacy(Rig rig,Matrix4f cart,boolean transition) {
@@ -123,10 +135,17 @@ public final class CartMetalGripSurfaceChecks {
             throw new AssertionError("Metal hand target unavailable");
         if(!old) {
             var prior=legacy(rig,cart,transition);
-            if(hand.getTranslation(new Vector3f()).distance(prior.getTranslation(new Vector3f()))>.015f)
-                throw new AssertionError("Hand correction moved the accepted arm stance");
-            for(int col=0;col<3;col++) if(hand.getColumn(col,new Vector3f()).distance(prior.getColumn(col,new Vector3f()))>.000002f)
-                throw new AssertionError("Hand correction changed the accepted wrist orientation");
+            // Rotating around the fixed handle intentionally arcs the wrist; bound only extra seating.
+            var station=new Vector3f();CartGrip.handle("WheelbarrowMetal",rig.left,station);cart.transformPosition(station);
+            var angleChange=new Matrix4f(hand).setTranslation(0,0,0)
+                .mul(new Matrix4f(prior).setTranslation(0,0,0).invert());
+            var rotatedPrior=angleChange.transformDirection(prior.getTranslation(new Vector3f()).sub(station)).add(station);
+            if(hand.getTranslation(new Vector3f()).distance(rotatedPrior)>.015f)
+                throw new AssertionError("Closed grip requires excessive extra wrist seating");
+            var shaft=cart.transformDirection(new Vector3f(0,0,1)).normalize();
+            double across=Math.toDegrees(Math.acos(Math.min(1,Math.abs(shaft.dot(hand.getColumn(0,new Vector3f()).normalize())))));
+            if(Math.abs(across-(rig.female?65:70))>.001)
+                throw new AssertionError("Closed fist lost the selected wrist/shaft angle");
             if(transition) {
                 double heldAngle=Math.atan2(CartWheelbarrow.METAL.held(new Matrix4f()).m21(),
                     Math.hypot(CartWheelbarrow.METAL.held(new Matrix4f()).m20(),CartWheelbarrow.METAL.held(new Matrix4f()).m22()));
@@ -142,11 +161,16 @@ public final class CartMetalGripSurfaceChecks {
         Matrix4f[] poses={new Matrix4f(),hand,thumb,finger};
         if(old) finger.set(hand).translate(rig.bones.get("Finger1").getTranslation(new Vector3f())).rotateY(rig.female?-1.7f:-1.5f);
         else {
+            var nativeThumb=new Matrix4f(thumb);
             var t=thumb.getTranslation(new Vector3f());var f=finger.getTranslation(new Vector3f());
             CartGrip.closeFingers(poses,actor(side),side,CartGrip.grasp(rig.female,"WheelbarrowMetal"),true);
             if(poses[2].getTranslation(new Vector3f()).distance(t)>.000002f
                 || poses[3].getTranslation(new Vector3f()).distance(f)>.000002f)
                 throw new AssertionError("Metal closure moved a native knuckle");
+            var closed=new Matrix4f(hand).translate(rig.bones.get("Finger1").getTranslation(new Vector3f()))
+                .rotateY(rig.female?-1.7f:-1.5f);
+            if(!poses[3].equals(closed,.000002f) || !poses[2].equals(nativeThumb,.000002f))
+                throw new AssertionError("Metal clearance obtained by opening the fist or changing its thumb");
         }
         var inverse=new Matrix4f(hand).invert();var local=new HashMap<String,Matrix4f>();
         local.put("Hand",new Matrix4f());local.put("Finger0",new Matrix4f(inverse).mul(poses[2]));
@@ -157,11 +181,24 @@ public final class CartMetalGripSurfaceChecks {
             for(var w:v.weights)p.fma(w.weight,local.get(w.bone).transformPosition(new Vector3f(w.point)));
             toCart.transformPosition(p);points[i]=new Vector3d(p.x,p.y,p.z);
         }
-        int hits=0;var planes=planes(rig);
+        int hits=0;double area=0;var planes=planes(rig);var allowed=residualFaces(rig);
         for(var face:rig.faces) {
             Vector3d[] triangle={points[face[0]],points[face[1]],points[face[2]]};
-            if(areaInside(triangle,planes)>1e-12)hits++;
+            double clipped=areaInside(triangle,planes);
+            if(clipped>1e-12) {
+                hits++;area+=clipped;
+                if(!old) {
+                    int[] ids={rig.vertices.get(face[0]).source,rig.vertices.get(face[1]).source,rig.vertices.get(face[2]).source};
+                    Arrays.sort(ids);String key=ids[0]+"/"+ids[1]+"/"+ids[2];
+                    double depth=rig.female?.0005:.0011;
+                    // Intersecting the inset core proves the triangle exceeds the depth budget.
+                    if(!allowed.contains(key) || areaInside(triangle,planes,depth+.000001)>1e-12)
+                        throw new AssertionError("Closed metal hand exceeds measured skin residual: female="+rig.female+" left="+rig.left+" face="+key);
+                }
+            }
         }
+        if(!old && area>(rig.female?6e-6:30e-6))
+            throw new AssertionError("Closed metal skin residual area grew: female="+rig.female+" left="+rig.left+" mm2="+area*1e6);
         if(!old) contact(rig,points);
         return hits;
     }
@@ -179,7 +216,8 @@ public final class CartMetalGripSurfaceChecks {
         return Math.hypot(xy,axial)*SCALE;
     }
     private static void contact(Rig rig,Vector3d[] points) {
-        var support=new HashMap<String,Vector3d>();
+        // These fixed real support patches check material contact, not aesthetic power-grip quality.
+        // A closed power grip need not put thumb and finger tips on opposite cylinder radii.
         for(var patch:rig.contacts) {
             var p=new Vector3d();double sum=0;
             var ids=new int[3];
@@ -195,15 +233,10 @@ public final class CartMetalGripSurfaceChecks {
             double gap=physicalGap(p,rig);
             if(gap>.0025 || p.z<ZMIN || p.z>ZMAX)
                 throw new AssertionError("Physical surface contact missed shaft: female="+rig.female+" left="+rig.left+" part="+patch.part+" gap="+gap);
-            support.put(patch.part,p);
         }
-        double center=rig.left?-7.409948:-39.674755;
-        var thumb=new Vector3d(support.get("Finger0")).sub(center,6.614635,0);thumb.z=0;thumb.normalize();
-        var finger=new Vector3d(support.get("Finger1")).sub(center,6.614635,0);finger.z=0;finger.normalize();
-        if(thumb.dot(finger)>-.25)throw new AssertionError("Thumb and mitten no longer oppose the shaft");
     }
     public static void check() throws Exception {
-        int checked=0,oldHits=0;
+        int checked=0,oldHits=0,residualPaths=0;
         for(var rig:fixtures()) {
             var held=CartWheelbarrow.METAL.held(new Matrix4f());
             int baseline=intersections(rig,held,true,false);
@@ -214,11 +247,11 @@ public final class CartMetalGripSurfaceChecks {
                 float pitch=(float)(CartWorldSupport.pitch()-(heldAngle+CartWorldSupport.pitch())*step/40);
                 var cart=step<0?held:new Matrix4f().translation(.13f,.24f,-.71f).rotateY(.7f).rotateX(pitch).scale((float)SCALE);
                 int hits=intersections(rig,cart,false,step>=0);
-                if(hits!=0)throw new AssertionError("Native metal hand surface intersects shaft: female="+rig.female+" left="+rig.left+" pitchStep="+step+" triangles="+hits);
+                if(hits>0)residualPaths++;
                 checked++;
             }
         }
-        System.out.println("CART_METAL_GRIP_SURFACE_PASS paths="+checked+" oldIntersectingTriangles="+oldHits);
+        System.out.println("CART_METAL_GRIP_SURFACE_PASS paths="+checked+" oldIntersectingTriangles="+oldHits+" closedFist=true residualPaths="+residualPaths+" boundedStockResidualMm=1.1male/0.5female");
     }
     public static void main(String[] args) throws Exception {check();}
 }

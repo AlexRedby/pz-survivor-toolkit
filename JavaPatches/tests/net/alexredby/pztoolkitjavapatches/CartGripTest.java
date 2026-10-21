@@ -437,7 +437,7 @@ public final class CartGripTest {
         if(frames!=5) throw new AssertionError("missing native Sprint startup frames");
     }
 
-    private static void checkCapturedMetalSprintStops() {
+    private static void checkCapturedMetalSprintStops() throws ReflectiveOperationException {
         // Native04 B42.21 metal male Sprint/stop inputs captured before grip; exclude the initial teleport frame.
         // Two male-empty stop boundaries and one male-full stop at wall 1792524972879.
         String captures="""
@@ -465,7 +465,7 @@ public final class CartGripTest {
             poses[0]=new Matrix4f().translation(3,4,5);
             for(int i=1;i<poses.length;i++) poses[i]=new Matrix4f(captured[i+1]);
             var before=java.util.Arrays.stream(poses).map(Matrix4f::new).toArray(Matrix4f[]::new);
-            if(!CartGrip.grip(poses,actor,"WheelbarrowMetal",false,delta,cart))
+            if(!capturedMetalGrip(poses,actor,"WheelbarrowMetal",false,delta,cart,0))
                 throw new AssertionError("captured metal Sprint/stop grip refused: wall="+wall);
             for(var pose:poses) if(!pose.isFinite()) throw new AssertionError("nonfinite metal Sprint/stop pose: "+wall);
             var inverseDelta=new Matrix4f(delta).invert();
@@ -485,7 +485,7 @@ public final class CartGripTest {
                     if(Math.abs(old-now)>.00001f) throw new AssertionError("metal stop stretched clavicle/arm: "+wall);
                 }
                 var target=new Matrix4f();
-                if(!CartGrip.target("WheelbarrowMetal",side==0,false,delta,cart,target) || !poses[hand].equals(target,.00002f))
+                if(!capturedMetalTarget("WheelbarrowMetal",side==0,false,delta,cart,target,0) || !poses[hand].equals(target,.00002f))
                     throw new AssertionError("metal stop wrist missed its own calibrated target: "+wall);
                 var shoulder=inverseDelta.transformPosition(poses[upper].getTranslation(new Vector3f()));
                 var elbow=inverseDelta.transformPosition(poses[forearm].getTranslation(new Vector3f()));
@@ -504,7 +504,7 @@ public final class CartGripTest {
         System.out.println("CART_METAL_SPRINT_STOP_ABDUCTION "+abductions);
     }
 
-    private static void checkCapturedMetalMovingStance() {
+    private static void checkCapturedMetalMovingStance() throws ReflectiveOperationException {
         // B42.21 native entry poses: empty/full Run startup and a banked Sprint.
         // The old .3 movement shift made these two Run targets unreachable.
         var fixture=java.nio.file.Path.of(System.getProperty("pz.test.project","."))
@@ -535,7 +535,7 @@ public final class CartGripTest {
             var before=java.util.Arrays.copyOfRange(captured,2,captured.length);
             if(legacyFailure) {
                 var old=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
-                if(CartGrip.grip(old,actor,profile.model(),false,captured[0],captured[1]))
+                if(capturedMetalGrip(old,actor,profile.model(),false,captured[0],captured[1],0))
                     throw new AssertionError("old .3 metal stance no longer reproduces unreachable Run: "+label);
                 legacyFailures++;
             }
@@ -576,10 +576,19 @@ public final class CartGripTest {
 
     private static boolean capturedMetalTarget(String model,boolean left,boolean female,Matrix4f delta,
         Matrix4f cart,Matrix4f target,float pressure) {
-        if(!CartGrip.target(model,left,female,delta,cart,target,pressure))return false;
-        // Original B42.21 Host capture: retain its .022 palm depth for the historical 35/40-degree cap proof.
-        target.translate(0,0,CartGrip.grasp(female,model).palmDepth()-(female?.025f:.022f));
-        return true;
+        // Historical captures used beta40 and the original closed-grip station/depth.
+        // Reconstruct their wrist target independently; current angle has separate live/captured-stance gates.
+        var axis=cart.transformDirection(new Vector3f(0,0,1)).normalize();
+        var down=cart.transformDirection(new Vector3f(0,-1,0)).normalize();
+        var inward=down.cross(axis,new Vector3f()).normalize().mul(left?1:-1);
+        float radial=(float)Math.toRadians(5),beta=(float)Math.toRadians(40);
+        var x=down.mul((float)Math.cos(radial),new Vector3f()).fma((float)Math.sin(radial),inward);
+        var z=inward.mul((float)Math.cos(radial),new Vector3f()).fma(-(float)Math.sin(radial),down);
+        x.mul((float)Math.cos(beta)).fma(-(float)Math.sin(beta),axis).normalize();
+        var y=z.cross(x,new Vector3f()).normalize();z=x.cross(y,new Vector3f()).normalize();
+        target.identity().m00(x.x).m01(x.y).m02(x.z).m10(y.x).m11(y.y).m12(y.z).m20(z.x).m21(z.y).m22(z.z);
+        var point=new Vector3f();if(!CartGrip.handle(model,left,point))return false;cart.transformPosition(point);
+        return target.setTranslation(point.fma(-(female?.056f:.057f),x).fma(-(female?.025f:.022f),z)).isFinite();
     }
     private static boolean capturedMetalGrip(Matrix4f[] poses,SkinningData actor,String model,boolean female,
         Matrix4f delta,Matrix4f cart,float pressure) throws ReflectiveOperationException {
@@ -781,6 +790,17 @@ public final class CartGripTest {
             var shape=CartGrip.grasp(female,model);
             boolean underhand=model.startsWith("Wheelbarrow");
             CartGrip.closeFingers(poses,actor,side,shape,underhand);
+            if(model.equals("WheelbarrowMetal")) {
+                // The user rejected clearance obtained by opening the fist: keep its accepted closure.
+                var closed=new Matrix4f().rotationY(female?-1.7f:-1.5f)
+                    .setTranslation(.084102f,0,0);
+                var relative=new Matrix4f(hand).invert().mul(poses[3]);
+                if(!relative.equals(closed,.00001f))
+                    throw new AssertionError("metal grip opened the accepted closed fist");
+                relative.set(hand).invert().mul(poses[2]);
+                if(!relative.equals(thumbLocal,.00001f))
+                    throw new AssertionError("metal grip changed the native thumb instead of the wrist angle");
+            }
             // Metal uses exact finite-shaft contacts, including thumb, in CartMetalGripSurfaceChecks.
             if(!model.equals("WheelbarrowMetal")) checkMeshClearance(hand,poses[3],female,model);
             if(model.equals("WheelbarrowWood")) checkWoodThumb(hand,poses[2],female,side);

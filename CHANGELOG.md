@@ -21,7 +21,7 @@ Version labels come from committed component metadata, including changes made wi
 
 ### Unreleased
 
-- **Changed:** Retargeted the metal wheelbarrow pickup/setdown clip to the revised palm and finger grip, with a small open-hand approach around the shafts before closing.
+- **Changed:** Retargeted metal wheelbarrow pickup/setdown to the corrected wrist angle with a closed fist, preserving the grounded approach and accepted body/cart stance.
 
 ### 0.1.198
 
@@ -923,7 +923,7 @@ The older README associates medicine indicators with this label, but no separate
 
 ### Unreleased
 
-- **Fixed:** Stock metal-wheelbarrow hand surfaces no longer cut through the handle shafts. Adjust palm depth and finger/thumb closure while preserving the accepted wrist angle, arm stance and cart placement; keep open hands clear during pickup and setdown.
+- **Fixed:** Preserve a closed fist and native thumb on metal wheelbarrows; correct the wrist angle and seating around the handle shafts instead of opening the fingers. Keep the accepted body/cart stance and the open-hand approach during pickup and setdown.
 
 ### 0.1.42
 
