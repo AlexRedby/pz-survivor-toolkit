@@ -118,7 +118,8 @@ def action_fixture(root, epoch, duration, matrix, model=None):
                                     renderProbeVersion=1, captureId=len(poses[role]), slotToken=7, nativeWallTimeMillis=begin+delta-1)
                         for part in ('body', 'cart'):
                             cameras[role].append(dict(renderProbeVersion=1, captureId=pose['captureId'], slotToken=7,
-                                id=7, primary=hands, secondary=hands, part=part, model=model if part == 'cart' else 'MaleBody',
+                                id=7, primary=hands, secondary=hands, preparedPrimary=hands, preparedSecondary=hands,
+                                part=part, model=model if part == 'cart' else 'MaleBody',
                                 captureWallTimeMillis=begin+delta, cameraWallTimeMillis=begin+delta+1, wallTimeMillis=begin+delta+2,
                                 cameraX=1, cameraY=2, cameraZ=0, cameraAngle=0, cameraWorldIso=True, cameraInVehicle=False))
             if role == 'client1':
@@ -411,12 +412,23 @@ def check_variants():
                     rejected(draws,'')
                     camera_rows=[json.loads(line) for line in files[draws].splitlines()]
                     rejected(draws,'\n'.join(map(json.dumps,camera_rows[1:])))
-                    for key,value in (('id',8),('slotToken',99),('primary',99),('cameraX',float('nan')),
+                    for key,value in (('id',8),('slotToken',99),('preparedPrimary',99),('preparedSecondary',99),
+                                      ('preparedPrimary',None),('preparedSecondary',None),('primary',None),('cameraX',float('nan')),
                                       ('model','ShoppingCartPartialModel'),('wallTimeMillis',0)):
                         rows=copy.deepcopy(camera_rows)
                         for row in rows:
                             if row['part']=='cart': row[key]=value
                         rejected(draws,'\n'.join(map(json.dumps,rows)))
+                    # The exact prepared cart still draws after live inventory
+                    # changes on the simulation thread (native04 boundary race).
+                    rows=copy.deepcopy(camera_rows)
+                    for row in rows:
+                        if row['captureId']==camera_rows[0]['captureId']:
+                            row['primary']=row['secondary']=-1
+                    try:
+                        draws.write_text('\n'.join(map(json.dumps,rows))+'\n')
+                        assert analyzer['analyze'](root)['actions']['evidenceComplete']
+                    finally:draws.write_text(files[draws])
                     presentation=root/(role+'-launch.log')
                     marker='[CART_MP_ACTION] PRESENTATION '
                     lines=[]
@@ -791,17 +803,21 @@ public final class ModelProbeCheck {
         camera.x=10.25f;camera.y=20;camera.z=7;camera.useAngle=(float)(Math.PI/2);camera.useWorldIso=true;
         try {
             zombie.core.skinnedmodel.ModelCamera.instance=camera;ClearanceProbe.beginCamera(camera);
+            owner.primary=owner.secondary=null; // Simulation advanced after the prepared held slot.
             ClearanceProbe.draw(renderSlot,bodyData);ClearanceProbe.draw(renderSlot,bodyData);
             camera.x=11;ClearanceProbe.draw(renderSlot,cartData);
             var recorded=drawText.toString();
             if(recorded.lines().count()!=2 || !recorded.contains("\"part\":\"body\"") || !recorded.contains("\"part\":\"cart\"")
-                || !recorded.contains("\"cameraX\":10.25") || !recorded.contains("\"currentCameraX\":11.0"))
+                || !recorded.contains("\"cameraX\":10.25") || !recorded.contains("\"currentCameraX\":11.0")
+                || recorded.lines().anyMatch(line -> !line.contains("\"preparedPrimary\":42,\"preparedSecondary\":42")
+                    || !line.contains("\"primary\":-1,\"secondary\":-1")))
                 throw new AssertionError("Consumed camera/body/cart draw identity was not independently captured");
             ClearanceProbe.endCamera();prepareDraw.invoke(null,renderSlot,bodyModel,cartModel);
             try {ClearanceProbe.draw(renderSlot,bodyData);throw new AssertionError("Draw without consumed camera was accepted");}
             catch(IllegalStateException expected) {}
         } finally {
             ClearanceProbe.endCamera();zombie.core.skinnedmodel.ModelCamera.instance=previousCamera;
+            owner.primary=owner.secondary=cart;
             preparedWriter.set(null,null);cameraWriter.set(null,null);
         }
         var traceField=probe.getDeclaredField("solve");traceField.setAccessible(true);
@@ -907,7 +923,7 @@ public final class ModelProbeCheck {
         parsed=[json.loads(line) for line in result.stdout.splitlines()]
         assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
         assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
-    return 'PASS (composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture, exact shopping empty-hand transition association, bounded native action capture cadence and duplicate slot guard, family/JSON guards)'
+    return 'PASS (composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture with frozen hand identity despite live inventory mutation, exact shopping empty-hand transition association, bounded native action capture cadence and duplicate slot guard, family/JSON guards)'
 
 
 def main():

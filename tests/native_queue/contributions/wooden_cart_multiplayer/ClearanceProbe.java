@@ -25,10 +25,14 @@ public final class ClearanceProbe {
     private static final class DrawFrame {
         final long id,wall;
         final NativePose nativePose;
+        // Ownership at preparation belongs to this frozen body/cart slot.
+        final int preparedPrimary,preparedSecondary;
         final ModelInstance body,cart;
         boolean bodyDrawn,cartDrawn;
         DrawFrame(long id,long wall,NativePose pose,ModelInstance body,ModelInstance cart) {
             this.id=id;this.wall=wall;this.nativePose=pose;this.body=body;this.cart=cart;
+            var primary=pose.player.getPrimaryHandItem();var secondary=pose.player.getSecondaryHandItem();
+            preparedPrimary=primary==null?-1:primary.getID();preparedSecondary=secondary==null?-1:secondary.getID();
         }
     }
     private static final java.util.WeakHashMap<ModelSlotRenderData,NativePose> nativePoses=new java.util.WeakHashMap<>();
@@ -76,11 +80,15 @@ public final class ClearanceProbe {
         var consumed=consumedCamera.get();var camera=zombie.core.skinnedmodel.ModelCamera.instance;
         if(consumed==null || camera!=consumed.camera || slot.character!=frame.nativePose.player)
             throw new IllegalStateException("Draw lacks matching consumed native camera/actor");
+        var livePrimary=frame.nativePose.player.getPrimaryHandItem();
+        var liveSecondary=frame.nativePose.player.getSecondaryHandItem();
         var row=new StringBuilder(1024).append("{\"renderProbeVersion\":1,\"captureId\":").append(frame.id)
             .append(",\"slotToken\":").append(System.identityHashCode(slot))
             .append(",\"id\":").append(frame.nativePose.player.getOnlineID())
-            .append(",\"primary\":").append(frame.nativePose.player.getPrimaryHandItem()==null?-1:frame.nativePose.player.getPrimaryHandItem().getID())
-            .append(",\"secondary\":").append(frame.nativePose.player.getSecondaryHandItem()==null?-1:frame.nativePose.player.getSecondaryHandItem().getID())
+            .append(",\"preparedPrimary\":").append(frame.preparedPrimary)
+            .append(",\"preparedSecondary\":").append(frame.preparedSecondary)
+            .append(",\"primary\":").append(livePrimary==null?-1:livePrimary.getID())
+            .append(",\"secondary\":").append(liveSecondary==null?-1:liveSecondary.getID())
             .append(",\"model\":").append(jsonString(data.modelInstance.modelScript==null?null:data.modelInstance.modelScript.getName()))
             .append(",\"part\":").append(jsonString(body?"body":"cart"))
             .append(",\"captureWallTimeMillis\":").append(frame.wall)
@@ -225,8 +233,8 @@ public final class ClearanceProbe {
                     .append(",\"id\":").append(((zombie.characters.IsoPlayer)slot.character).getOnlineID()).append(",\"local\":").append(((zombie.characters.IsoPlayer)slot.character).isLocalPlayer()).append(",\"enabled\":").append(net.alexredby.pztoolkitjavapatches.CartSteeringHooks.enabled((zombie.characters.IsoPlayer)slot.character)).append(",\"female\":").append(slot.character.isFemale())
                     .append(",\"slotX\":").append(slot.x).append(",\"slotY\":").append(slot.y)
                     .append(",\"slotZ\":").append(slot.z).append(",\"slotAngle\":").append(slot.animPlayerAngle)
-                    .append(",\"primary\":").append(player.getPrimaryHandItem()==null?-1:player.getPrimaryHandItem().getID())
-                    .append(",\"secondary\":").append(player.getSecondaryHandItem()==null?-1:player.getSecondaryHandItem().getID())
+                    .append(",\"primary\":").append(frame.preparedPrimary)
+                    .append(",\"secondary\":").append(frame.preparedSecondary)
                     .append(",\"modelProbeVersion\":1,\"model\":").append(jsonString(actual))
                     .append(",\"cartItemId\":").append(item.getID())
                     .append(",\"cartItemSource\":").append(jsonString(transition?"transition":"hands"))

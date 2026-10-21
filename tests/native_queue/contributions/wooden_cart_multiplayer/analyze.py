@@ -150,7 +150,12 @@ def drawn_action_frames(frames, draws, role, cartid, variant):
             continue  # Prepared off-screen poses do not establish an actual draw.
         require(all(row is not None for row in pair), role + ': incomplete actual action body/cart draw')
         for row in pair:
-            require(row.get('id') == frame['id'] and row.get('primary') == frame['primary'] and row.get('secondary') == frame['secondary']
+            # Inventory can advance between preparation and the render thread's
+            # draw. Bind identity to the exact frozen slot; retain live hands as
+            # separately validated diagnostics, never as prepared-model evidence.
+            require(row.get('id') == frame['id'] and row.get('preparedPrimary') == frame['primary']
+                    and row.get('preparedSecondary') == frame['secondary']
+                    and all(type(row.get(k)) is int for k in ('preparedPrimary', 'preparedSecondary', 'primary', 'secondary'))
                     and row.get('slotToken') == frame['slotToken'] and row.get('captureWallTimeMillis') == frame['wallTimeMillis']
                     and all(number(row.get(k)) for k in ('cameraWallTimeMillis', 'wallTimeMillis', 'cameraX', 'cameraY', 'cameraZ', 'cameraAngle'))
                     and frame['nativeWallTimeMillis'] <= frame['wallTimeMillis'] <= row['cameraWallTimeMillis'] <= row['wallTimeMillis'] <= frame['wallTimeMillis']+1000

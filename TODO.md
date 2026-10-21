@@ -15,6 +15,7 @@
 
 # Metal wheelbarrow animation port
 
+- [ ] Inspect and remove the brief owner-side nose-up cart jump at the end of pickup-repeat, preserving the accepted grip, support and exact held/world handoff. It is visible in the selected native04 Host recording; lifecycle/IK evidence does not close this visual gate.
 - [ ] Verify the corrected metal-cart grip through fresh native owner/observer sprint braking and action captures. The two refusing native poses have local fixed-length regressions for the continuous metal-only 40-degree clavicle envelope; retain exact handle positions, native gait, unreachable-target rejection and the 35-degree policy for other models. Keep unresolved clothing/contact limits separate.
 - [ ] Close the selected immediate-retry grip-phase coverage gap in the shared analyzer; retain per-action cancelled/successful boundaries and do not infer a full matrix pass from the two-scene lifecycle/ownership audit.
 - [ ] Refine the remaining overlap between the stock mitten skin and metal shafts without changing the accepted arm/cart motion. Evaluate the full hand triangles: the finite-shaft palm/thumb/finger anchors pass, but coarse bridge faces still intersect the shaft.
