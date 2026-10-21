@@ -4,6 +4,7 @@ require 'TimedActions/ISWearClothing'
 require 'TimedActions/ISUnequipAction'
 require 'TimedActions/ISInventoryTransferAction'
 local Fixture=require 'QueueFluidFixture'
+local Empty=require 'QueueFluidEmpty'
 local Checks=require 'QueueScenarioChecks'
 local Queue=require 'PZSurvivorToolkit/ActionQueue'
 local Policy=require 'PZSurvivorToolkit/ActionQueuePolicy'
@@ -17,7 +18,7 @@ local previousAuthority,previousBag,lastCurrent
 local commands,observations={},{}
 local waitingCancelVerified=false
 local independentMoveVerified=false
-local editEvidence,editActions,editObserver
+local editEvidence,editActions,editObserver,emptyRun
 local function case()return config.cases[step]end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function emit(row)
@@ -227,7 +228,23 @@ local function enqueueEditedBottle(player)
  editObserver=observeReturn(queue(),returning,player,bottle,state.bag,editEvidence)
  trace('edit-dispatch',editEvidence)
 end
+local function advance()
+ step=step+1
+ if not case()then
+  emit({event='complete',cases=config.cases,expected=#config.cases,performed=step-1,failed=failed,skipped=0})
+  print('[FLUID_TEST] COMPLETE');done=true;return
+ end
+ previousAuthority=authorityState;previousBag=state.bag
+ ids,state,authorityState,receipt,lastCurrent=nil,nil,nil,nil,nil
+ emptyRun=nil;commands,observations={},{};waitingCancelVerified=false;independentMoveVerified=false;editEvidence,editActions,editObserver=nil,nil,nil
+ ISTimedActionQueue.add(ISUnequipAction:new(getPlayer(),previousBag,50))
+ phase='unequipped';since=getTimestampMs()
+end
 local function finish()
+ if spec.empty then
+  local row=Empty.finish(emptyRun,receipt);if not row then return end
+  emit(row);advance();return
+ end
  local reason
  for index,bottle in ipairs(receipt.bottles)do
   local expected=ids.bottles[index].amount
@@ -273,16 +290,7 @@ local function finish()
   waitingCancelVerified=waitingCancelVerified,independentMoveVerified=independentMoveVerified,editEvidence=editEvidence}
  for key,value in pairs(receipt)do row[key]=value end
  emit(row);if reason then failed=failed+1 end
- step=step+1
- if not case()then
-  emit({event='complete',cases=config.cases,expected=#config.cases,performed=step-1,failed=failed,skipped=0})
-  print('[FLUID_TEST] COMPLETE');done=true;return
- end
- previousAuthority=authorityState;previousBag=state.bag
- ids,state,authorityState,receipt,lastCurrent=nil,nil,nil,nil,nil
- commands,observations={},{};waitingCancelVerified=false;independentMoveVerified=false;editEvidence,editActions,editObserver=nil,nil,nil
- ISTimedActionQueue.add(ISUnequipAction:new(getPlayer(),previousBag,50))
- phase='unequipped';since=getTimestampMs()
+ advance()
 end
 Events.OnTick.Add(function()
  if not started or done or not isIngameState()or not getPlayer()or not getPlayer():getSquare()then return end
@@ -308,11 +316,19 @@ Events.OnTick.Add(function()
    if idle<10 then return end
    assert(player:getClothingItem_Back()==state.bag,'fixture military backpack not on back')
    assert(player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)==ids.foodLevel,'fixture fullness differs')
+   if spec.empty then
+    emptyRun=Empty.start(player,ids,state,config,queue());phase='running';since=getTimestampMs();return
+   end
    enqueue(player,spec.targets[1])
    if not spec.serial then for index=2,#spec.targets do enqueue(player,spec.targets[index])end end
    cancelWaiting()
    phase='running';since=getTimestampMs();return
   elseif phase=='running'then
+   if spec.empty then
+    Empty.tick(emptyRun)
+    if idle>=10 then assert(emptyRun.dispatched,'empty anchor ended before pending dispatch');phase='receipt';request('Verify')end
+    return
+   end
    local current=queue().queue[1]
    if current~=lastCurrent then
     trace('queue-current',{actionType=current and current.Type or 'idle',itemId=current and current.item and current.item:getID()})

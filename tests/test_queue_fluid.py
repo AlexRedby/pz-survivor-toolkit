@@ -28,6 +28,10 @@ class FluidAdapterTests(unittest.TestCase):
         raw = []
         for index, case in enumerate(cases):
             base, bag = 100 + index * 10, case.startswith('fluid-bag')
+            if case in fluid.EMPTY_CASES:
+                row, prepared, final = self.empty_evidence(case, base)
+                rows.append(row);raw.extend([('PREPARED', prepared), ('VERIFIED', final)])
+                continue
             editing = case == fluid.EDIT_CASE
             favorite = case.endswith('-favorite')
             full = '-full-' in case
@@ -80,6 +84,40 @@ class FluidAdapterTests(unittest.TestCase):
         return ([dict(row, suite='fluid', kind=self.selection['kind'], mode=self.selection['mode'], actor='client1')
                  for row in rows], raw)
 
+    def empty_evidence(self, case, base):
+        enabled = self.selection['mode'] == 'toolkit'
+        cancel = enabled and case == fluid.EMPTY_CANCEL_CASE
+        dependency = case == fluid.EMPTY_DEPENDENCY_CASE
+        moved = enabled and case == fluid.EMPTY_MOVE_CASE
+        prep = dict(case=case, bagId=base, bagType=fluid.BAG_TYPE, thirst=.8, foodTimer=0, foodLevel=0,
+                    bottles=[dict(id=base + index + 1, amount=1.0, favorite=False, source='root', count=1,
+                                  weight=1.1, fullType='Base.WaterBottle', capacity=1, transferRate=1,
+                                  cleanWater=True, emptyWeight=.1, thirstChange=-.5) for index in range(3)])
+        amounts = [.5, 1 if cancel else 0, 1 if dependency else 0]
+        final = {key: copy.deepcopy(value) for key, value in prep.items() if key != 'foodTimer'}
+        final['thirst'] = .3 if dependency else .55
+        for index, bottle in enumerate(final['bottles']):
+            bottle.pop('thirstChange')
+            bottle.update(amount=amounts[index], weight=.1 + amounts[index])
+        targets = [(0, 'drink'), (1, 'drink'), (1, 'empty')] if dependency else [(0, 'drink'), (1, 'empty'), (2, 'empty')]
+        commands = []
+        for position, (target, kind) in enumerate(targets):
+            cancelled = cancel and position == 1
+            command = dict(kind=kind, id=prep['bottles'][target]['id'], source='root', dispatchAmount=1,
+                           dispatchWeight=1.1, nativeDuration=460 if kind == 'drink' else 30,
+                           progress=not cancelled, cancelled=cancelled, rawDispatched=True)
+            command.update(portion=.5) if kind == 'drink' else command.update(capturedAmount=1, transferRate=1, timePerLiter=30, minTime=10)
+            commands.append(command)
+        evidence = dict(emptyStart=True, anchorRunning=True, contractsVerified=enabled, reordered=moved,
+                        waitingCancel=cancel, moveRejected=enabled and dependency,
+                        denialReason='edit_resource_amount' if enabled and dependency else 'not-requested',
+                        untouchedBefore=True, nativeDurationsUnchanged=True,
+                        order=[1, 3, 2] if moved else [1, 3] if cancel else [1, 2, 3],
+                        drinkBCompleted=dependency, drinkBRemaining=.5 if dependency else -1, drinkBBoundaryFailed=False)
+        return (dict(event='case', id=case, status='passed', reason=None, commands=commands, editEvidence=evidence,
+                     client=copy.deepcopy(final), waitingCancelVerified=cancel, independentMoveVerified=moved,
+                     **copy.deepcopy({key: value for key, value in final.items() if key != 'case'})), prep, final)
+
     def verify(self, evidence=None, marker='[FLUID_TEST] COMPLETE', wrong_authority=False, extra=''):
         rows, raw = self.evidence() if evidence is None else evidence
         client = '\n'.join('[QUEUE_CHECK] ' + json.dumps(row) for row in rows) + '\n' + marker + '\n' + extra
@@ -96,7 +134,7 @@ class FluidAdapterTests(unittest.TestCase):
         return self.evidence()
 
     def test_matrix_accepts_sp_host_native_and_toolkit(self):
-        self.assertEqual(19, len(fluid.CASES))
+        self.assertEqual(22, len(fluid.CASES))
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
                 self.selection.update(kind=kind, mode=mode)
@@ -106,6 +144,242 @@ class FluidAdapterTests(unittest.TestCase):
                     self.assertEqual([], result['issues'])
                     self.assertEqual(fluid.CASES, [row['case'] for row in result['outcomes']])
                     self.assertTrue(all(row['status'] == 'passed' for row in result['outcomes']))
+
+    def test_empty_native_controls_and_toolkit_edits_preserve_exact_bottles_and_costs(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode)
+                for case in fluid.EMPTY_CASES:
+                    rows, raw = self.single(case)
+                    prep, receipt = raw[0][1], raw[1][1]
+                    with self.subTest(kind=kind, mode=mode, case=case):
+                        self.assertEqual([], self.verify((rows, raw))['issues'])
+                        self.assertEqual(3, len(receipt['bottles']))
+                        self.assertEqual([bottle['id'] for bottle in prep['bottles']], [bottle['id'] for bottle in receipt['bottles']])
+                        self.assertTrue(all(bottle['source'] == 'root' and bottle['count'] == 1 for bottle in receipt['bottles']))
+                        self.assertEqual(.3 if case == fluid.EMPTY_DEPENDENCY_CASE else .55, receipt['thirst'])
+                        self.assertEqual(1 if mode == 'toolkit' and case == fluid.EMPTY_CANCEL_CASE else 0, receipt['bottles'][1]['amount'])
+                        self.assertEqual(1 if case == fluid.EMPTY_DEPENDENCY_CASE else 0, receipt['bottles'][2]['amount'])
+                        self.assertEqual([460, 460, 30] if case == fluid.EMPTY_DEPENDENCY_CASE else [460, 30, 30],
+                                         [command['nativeDuration'] for command in rows[1]['commands']])
+                        self.assertTrue(all(command['rawDispatched'] for command in rows[1]['commands']))
+
+    def test_empty_exact_receipts_reject_lost_mixed_changed_or_replaced_bottles(self):
+        for case in fluid.EMPTY_CASES:
+            self.selection.update(kind='mp', mode='toolkit')
+            for field, value in [('id', 999), ('source', 'bag'), ('count', 2), ('favorite', True),
+                                 ('fullType', 'Base.WineEmpty'), ('capacity', 2), ('transferRate', 0),
+                                 ('cleanWater', False), ('emptyWeight', .2), ('weight', 1.1), ('amount', .1)]:
+                rows, raw = self.single(case)
+                for record in (rows[1], rows[1]['client'], raw[1][1]):
+                    record['bottles'][2 if case == fluid.EMPTY_CANCEL_CASE else 1][field] = value
+                with self.subTest(case=case, field=field):
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+            for field in fluid.EMPTY_BOTTLE_KEYS:
+                rows, raw = self.single(case)
+                del raw[0][1]['bottles'][0][field]
+                with self.subTest(case=case, missing=field):
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+            rows, raw = self.single(case)
+            rows[1]['client']['bottles'][1]['amount'] = .9
+            self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_empty_native_timing_capture_progress_and_edit_guards_are_strict(self):
+        for case in fluid.EMPTY_CASES:
+            for field, value in [('nativeDuration', 31), ('capturedAmount', .5), ('transferRate', 2),
+                                 ('timePerLiter', 0), ('minTime', float('nan')), ('rawDispatched', False),
+                                 ('progress', False), ('cancelled', True), ('source', 'bag'), ('dispatchAmount', .5)]:
+                rows, raw = self.single(case)
+                rows[1]['commands'][-1][field] = value
+                with self.subTest(case=case, command=field):
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+            for field, value in [('anchorRunning', False), ('contractsVerified', False), ('order', [3, 1, 2]),
+                                 ('untouchedBefore', False), ('nativeDurationsUnchanged', False), ('drinkBBoundaryFailed', True)]:
+                rows, raw = self.single(case)
+                rows[1]['editEvidence'][field] = value
+                with self.subTest(case=case, evidence=field):
+                    self.assertTrue(self.verify((rows, raw))['issues'])
+        for field, value in [('moveRejected', False), ('denialReason', 'unknown'), ('drinkBCompleted', False),
+                             ('drinkBRemaining', -1), ('drinkBRemaining', 0)]:
+            rows, raw = self.single(fluid.EMPTY_DEPENDENCY_CASE)
+            rows[1]['editEvidence'][field] = value
+            with self.subTest(dependency=field):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_empty_discard_does_not_count_as_drinking_and_drink_bounds_stay_narrow(self):
+        for case in fluid.EMPTY_CASES:
+            rows, raw = self.single(case)
+            for record in (rows[1], rows[1]['client'], raw[1][1]):
+                record['thirst'] = 0
+            with self.subTest(case=case):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+        for amount in (.49, .4971739, .5, .5001):
+            rows, raw = self.single(fluid.EMPTY_DEPENDENCY_CASE)
+            rows[1]['editEvidence']['drinkBRemaining'] = amount
+            for record in (rows[1], rows[1]['client'], raw[1][1]):
+                record['thirst'] = .55 - (1 - amount) * .5
+            with self.subTest(amount=amount):
+                self.assertEqual([], self.verify((rows, raw))['issues'])
+        for amount in (.48999, .50011):
+            rows, raw = self.single(fluid.EMPTY_DEPENDENCY_CASE)
+            rows[1]['editEvidence']['drinkBRemaining'] = amount
+            with self.subTest(amount=amount):
+                self.assertTrue(self.verify((rows, raw))['issues'])
+
+    def test_fluid_lua_compiles_and_empty_scenarios_keep_root_and_three_bottles(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('lupa unavailable')
+        lua = LuaRuntime()
+        for source in (ROOT / 'tests/native_queue/fluid').rglob('*.lua'):
+            with self.subTest(source=source.name):
+                self.assertIsNotNone(lua.eval('load')(source.read_text()))
+        fixture = lua.execute((ROOT / 'tests/native_queue/fluid/shared/QueueFluidFixture.lua').read_text())
+        for case in fluid.EMPTY_CASES:
+            spec = fixture.scenario(case)
+            self.assertTrue(spec.empty)
+            self.assertEqual('root', spec.source)
+
+    def test_empty_helper_uses_real_native_constructor_and_captured_amount_without_retiming(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('lupa unavailable')
+        native = Path.home() / 'Library/Application Support/Steam/steamapps/common/ProjectZomboid/Project Zomboid.app/Contents/Java/media/lua/shared/Fluids/ISFluidEmptyAction.lua'
+        if not native.is_file():
+            self.skipTest('local native fluid source unavailable')
+        lua = LuaRuntime()
+        lua.execute("""
+ISBaseTimedAction={}
+function ISBaseTimedAction:derive(kind)local result={Type=kind};setmetatable(result,{__index=self});return result end
+function ISBaseTimedAction.new(kind,player)return setmetatable({character=player},{__index=kind})end
+function ISBaseTimedAction:isStarted()return self.started==true end
+function ISBaseTimedAction:getJobDelta()return self.delta or 0 end
+ISFluidUtil={validateContainer=function()return true end,getTransferActionTimePerLiter=function()return 37 end,
+ getMinTransferActionTime=function()return 10 end}
+ISFluidContainer={new=function(_,fluid)return {getFluidContainer=function()return fluid end,
+ getFluidResource=function()return nil end,sync=function()end}end}
+require=function()return {}end
+""")
+        # Kahlua accepts Java-style float suffixes; normalize only that literal for stock Lua.
+        lua.execute(native.read_text().replace('0.0f', '0.0'))
+        lua.globals().Checks = lua.execute((ROOT / 'tests/native_queue/support/QueueScenarioChecks.lua').read_text())
+        lua.execute("""
+local queue
+local api={}
+function api.move(q,action,target,after)
+ if not api.policy.evaluateMove(q,action,target,after).allowed then return false,'edit_resource_amount'end
+ table.remove(q.queue,q:indexOf(action));table.insert(q.queue,q:indexOf(target)+(after and 1 or 0),action)
+ if tamperPendingDuration then
+  local changed=tamperPendingDuration=='anchor'and q.current or action
+  changed.maxTime=changed.maxTime+1
+ end
+ return true
+end
+function api.cancelOperation(q,action)table.remove(q.queue,q:indexOf(action));return true end
+api.policy={inspect=function()return {edit={}}end,evaluateCancel=function()return {allowed=true}end,
+ evaluateMove=function(_,action,target)
+  if action.Type=='ISFluidEmptyAction'and target.Type=='ISDrinkFluidAction'and action.containerObject==target.fluidContainer then
+   return {allowed=false,reason='edit_resource_amount'}
+  end
+  return {allowed=true}
+ end}
+local modules={QueueScenarioChecks=Checks,['PZSurvivorToolkit/ActionQueue']=api,
+ ['PZSurvivorToolkit/ActionQueuePolicy']=api.policy,['PZSurvivorToolkit/ActionQueueOperations']={bounds=function(q,a)local i=q:indexOf(a);return i,i end},
+ QueueFluidFixture={},QueueHealthEvents={}}
+require=function(name)return modules[name]or {}end
+ISTimedActionQueue={add=function(action)queue.queue[#queue.queue+1]=action end}
+ISDrinkFluidAction={new=function(_,player,bottle,portion)
+ return setmetatable({Type='ISDrinkFluidAction',character=player,item=bottle,fluidContainer=bottle:getFluidContainer(),
+  percentage=portion,maxTime=460,getDuration=function()return 460 end},{__index=ISBaseTimedAction})
+end}
+function emptyTest(helper,case,tamper)
+ tamperPendingDuration=tamper
+ local bottles,ids={}, {case=case,bottles={}}
+ for index=1,3 do
+  local fluid={amount=1}
+  function fluid:getAmount()return self.amount end
+  function fluid:getTransferRate()return 2 end
+  function fluid:adjustAmount(amount)self.amount=amount end
+  function fluid:Empty()self.amount=0 end
+  local bottle={getID=function()return index end,getFullType=function()return 'Base.WaterBottle'end,
+   getFluidContainer=function()return fluid end,getUnequippedWeight=function()return .1+fluid.amount end}
+  bottles[index]=bottle;ids.bottles[index]={id=index,amount=1,weight=1.1}
+ end
+ local root={getItemById=function(_,id)return bottles[id]end}
+ for _,bottle in ipairs(bottles)do bottle.getContainer=function()return root end end
+ local player={getInventory=function()return root end,hasTimedActions=function()return false end,isTimedActionInstant=function()return false end}
+ queue={queue={},indexOf=function(self,a)for i,v in ipairs(self.queue)do if v==a then return i end end;return -1 end,
+  onCompleted=function(self,action)table.remove(self.queue,1);self.current=self.queue[1]end}
+ local run=helper.start(player,ids,{}, {mode='toolkit'},queue)
+ queue.current=run.anchor;run.anchor.started=true;run.anchor.delta=.1
+ -- Simulate the native create() adjustment, keeping the constructor receipt at 460.
+ run.anchor.maxTime=575
+ local ok,problem=pcall(helper.tick,run)
+ if tamper then
+  assert(not ok and tostring(problem):find('pending edits changed native fluid duration',1,true),'duration edit was not detected')
+  return
+ end
+ assert(ok,problem)
+ assert(run.anchor.maxTime==575 and run.commands[1].nativeDuration==460,'native anchor adjustment was retimed or constructor receipt changed')
+ assert(run.dispatched and run.commands[1].progress and run.evidence.anchorRunning)
+ for _,entry in ipairs(run.actions)do
+  if entry.kind=='empty'then
+   assert(entry.action.maxTime==18.5 and entry.action:getDuration()==18.5 and entry.command.nativeDuration==18.5)
+   assert(entry.action.amount==1 and entry.command.capturedAmount==1)
+  end
+ end
+ if case=='fluid-empty-move-independent'then
+  assert(queue.queue[2]==run.actions[3].action and queue.queue[3]==run.actions[2].action and run.evidence.reordered)
+ elseif case=='fluid-empty-cancel-waiting'then
+  assert(#queue.queue==2 and queue.queue[2]==run.actions[3].action and run.commands[2].cancelled and not run.commands[2].progress)
+ else
+  assert(run.evidence.moveRejected and run.evidence.denialReason=='edit_resource_amount')
+  queue:onCompleted(run.anchor)
+  local drink=run.actions[2].action
+  queue.current=drink;bottles[2]:getFluidContainer().amount=.5
+  queue:onCompleted(drink)
+  assert(run.evidence.drinkBCompleted and run.evidence.drinkBRemaining==.5)
+  local empty=run.actions[3].action
+  empty:updateEmpty(.25)
+  assert(bottles[2]:getFluidContainer().amount==.75,'native captured amount may rise after pending drink')
+  empty:complete();assert(bottles[2]:getFluidContainer().amount==0)
+ end
+end
+""")
+        helper = lua.execute((ROOT / 'tests/native_queue/fluid/client/QueueFluidEmpty.lua').read_text())
+        for case in fluid.EMPTY_CASES:
+            with self.subTest(case=case):
+                lua.globals().emptyTest(helper, case)
+        for target in (True, 'anchor'):
+            with self.subTest(tampered_duration=target):
+                lua.globals().emptyTest(helper, fluid.EMPTY_MOVE_CASE, target)
+
+    def test_empty_missing_progress_diagnostic_identifies_exact_dropped_command(self):
+        try:
+            from lupa import LuaRuntime
+        except ImportError:
+            self.skipTest('lupa unavailable')
+        lua = LuaRuntime()
+        lua.globals().JSON = lua.execute((ROOT / 'tests/native_queue/health/shared/QueueHealthEvents.lua').read_text())
+        lua.execute("""
+receipt={bottles={{amount=.5},{amount=0},{amount=1}}}
+local modules={QueueFluidFixture={snapshot=function()return receipt end},QueueHealthEvents=JSON}
+require=function(name)return modules[name]or {}end
+run={player={},ids={case='fluid-empty-cancel-waiting'},dispatched=true,
+ evidence={anchorRunning=true,drinkBBoundaryFailed=false,order={1,2}},actions={
+  {kind='drink',index=1,command={id=11,progress=true,cancelled=false}},
+  {kind='empty',index=2,command={id=22,progress=true,cancelled=false}},
+  {kind='empty',index=3,command={id=33,progress=false,cancelled=false}}}}
+""")
+        helper = lua.execute((ROOT / 'tests/native_queue/fluid/client/QueueFluidEmpty.lua').read_text())
+        ok, failure = lua.eval('pcall')(helper.finish, lua.globals().run, lua.globals().receipt)
+        self.assertFalse(ok)
+        self.assertIn('native fluid progress/cancel evidence differs', failure)
+        diagnostic = json.loads(failure[failure.index('{'):])
+        self.assertEqual(dict(commandIndex=3, kind='empty', id=33, progress=False, cancelled=False,
+                              observedOrder=[1, 2], receiptAmount=1), diagnostic)
 
     def test_registration_selection_and_shared_staging(self):
         self.assertIs(fluid, adapters.get('fluid'))

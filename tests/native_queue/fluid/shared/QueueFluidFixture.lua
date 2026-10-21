@@ -1,9 +1,10 @@
 local Fixture={bagType='Base.Bag_ALICEpack_Army'}
 function Fixture.scenario(case)
  -- Repeated quarters stay above the native menu threshold despite Host progress overshoot.
+ local empty=case:find('fluid-empty-',1,true)==1
  local menu=case:find('smart',1,true)and 'smart'or case:find('-sip-',1,true)and 'sip'
   or case:find('-all-',1,true)and 'all'or (case:find('-quarter-',1,true)or case:find('-same-serial-',1,true))and 'quarter'or 'half'
- return {edit=case:find('-edit-',1,true)~=nil,menu=menu,source=case:match('^fluid%-root')and 'root'or 'bag',favorite=case:sub(-9)=='-favorite',
+ return {empty=empty,edit=case:find('-edit-',1,true)~=nil,menu=menu,source=(empty or case:match('^fluid%-root'))and 'root'or 'bag',favorite=case:sub(-9)=='-favorite',
   foodTimer=case:find('-full-',1,true)and 4000 or 0,
   thirst=case:find('smart%-low')and .04 or menu=='smart'and .2 or .8,
   targets=case:find('-cancel-',1,true)and {1,2,3}or case:find('-same-',1,true)and {1,1}
@@ -20,18 +21,24 @@ local function count(container,id)
  end
  return result
 end
-local function snapshot(player,bag,bottle,weight)
+local function snapshot(player,bag,bottle,weight,empty)
  local root=player:getInventory()
  local source=bottle:getContainer()==root and 'root'or bottle:getContainer()==bag:getItemContainer()and 'bag'
  assert(source,'fluid bottle moved to unrelated endpoint')
  local value={id=bottle:getID(),amount=bottle:getFluidContainer():getAmount(),favorite=bottle:isFavorite(),
   source=source,count=count(root,bottle:getID())}
- if weight then value.weight=bottle:getUnequippedWeight()end
+ if weight or empty then value.weight=bottle:getUnequippedWeight()end
+ if empty then
+  local fluid=bottle:getFluidContainer()
+  value.fullType,value.capacity,value.transferRate=bottle:getFullType(),fluid:getCapacity(),fluid:getTransferRate()
+  value.cleanWater=fluid:isEmpty()or fluid:isPureFluid(Fluid.Water)
+  value.emptyWeight=ScriptManager.instance:getItem('Base.WaterBottle'):getActualWeight()
+ end
  return value
 end
 function Fixture.prepare(player,case,previous)
  -- Host can tick the server actor before its first client option sync; disable before issuing root bottles.
- player:setAutoDrink(false)
+ getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
  assert(not player:getAutoDrink(),'fluid fixture auto-drink still enabled')
  local root=player:getInventory()
  if previous then
@@ -55,14 +62,17 @@ function Fixture.prepare(player,case,previous)
  local bag=assert(root:AddItem(Fixture.bagType))
  local source=spec.source=='bag'and bag:getItemContainer()or root
  local bottles,descriptors={},{}
- for index=1,spec.cancel and 3 or 2 do
+ for index=1,(spec.empty or spec.cancel)and 3 or 2 do
   local endpoint=spec.edit and index==1 and root or source
   local bottle=assert(endpoint:AddItem('Base.WaterBottle'));bottle:setFavorite(spec.favorite)
   local fluid=assert(bottle:getFluidContainer());fluid:Empty();fluid:addFluid(Fluid.Water,1)
   bottles[index]=bottle
   descriptors[index]={id=bottle:getID(),amount=fluid:getAmount(),favorite=bottle:isFavorite(),source=endpoint==root and 'root'or 'bag',
    thirstChange=fluid:getProperties():getThirstChange()}
-  if spec.edit then descriptors[index].weight=bottle:getUnequippedWeight()end
+  if spec.empty then
+   descriptors[index]=snapshot(player,bag,bottle,true,true)
+   descriptors[index].thirstChange=fluid:getProperties():getThirstChange()
+  elseif spec.edit then descriptors[index].weight=bottle:getUnequippedWeight()end
  end
  player:getStats():set(CharacterStat.THIRST,spec.thirst)
  player:getBodyDamage():setHealthFromFoodTimer(spec.foodTimer);player:getMoodles():Update()
@@ -86,8 +96,8 @@ function Fixture.resolve(player,ids)
  end
  return {bag=bag,bottles=bottles}
 end
-function Fixture.verify(state)
- local player=state.player;local root=player:getInventory();local ids=state.ids
+function Fixture.snapshot(player,ids)
+ local root=player:getInventory()
  local bag=root:getItemById(ids.bagId)
  if not bag or bag:getContainer()~=root or bag:getFullType()~=Fixture.bagType or count(root,bag:getID())~=1 then
   return nil,'fluid fixture bag identity differs'
@@ -96,10 +106,18 @@ function Fixture.verify(state)
  for index,value in ipairs(ids.bottles)do
   local bottle=root:getItemById(value.id)
   if not bottle or bottle:getFullType()~='Base.WaterBottle'then return nil,'fluid fixture bottle identity differs'end
-  bottles[index]=snapshot(player,bag,bottle,Fixture.scenario(state.case).edit)
+  local spec=Fixture.scenario(ids.case)
+  bottles[index]=snapshot(player,bag,bottle,spec.edit,spec.empty)
+  if spec.empty and (bottles[index].source~='root'or bottles[index].count~=1 or not bottles[index].cleanWater)then
+   return nil,'empty fluid fixture endpoint/identity/purity differs'
+  end
  end
- state.verified=true
- return {case=state.case,bagId=bag:getID(),bagType=bag:getFullType(),bottles=bottles,
+ return {case=ids.case,bagId=bag:getID(),bagType=bag:getFullType(),bottles=bottles,
   thirst=player:getStats():get(CharacterStat.THIRST),foodLevel=player:getMoodles():getMoodleLevel(MoodleType.FOOD_EATEN)}
+end
+function Fixture.verify(state)
+ local value,reason=Fixture.snapshot(state.player,state.ids)
+ if not value then return nil,reason end
+ state.verified=true;return value
 end
 return Fixture

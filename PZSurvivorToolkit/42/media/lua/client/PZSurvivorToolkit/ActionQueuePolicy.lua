@@ -621,17 +621,27 @@ local function fluidResources(action)
     for i = 1, action.Type == "ISFluidTransferAction" and 2 or 1 do
         local wrapper = wrappers[i]
         -- Read fields of the native wrapper: getters on an unknown mod wrapper can have side effects.
-        if not ISFluidContainer or getmetatable(wrapper) ~= ISFluidContainer then return end
-        if not instanceof(wrapper.fluidContainer, "FluidContainer") then return end
-        if wrapper.isFluidResource then
-            if not instanceof(wrapper.fluidResource, "ResourceFluid") then return end
-        elseif wrapper.fluidResource then return end
-        local owner = wrapper.isFluidResource and wrapper.fluidResource:getGameEntity() or wrapper.fluidContainer:getOwner()
+        if not ISFluidContainer or type(wrapper)~="table" or getmetatable(wrapper) ~= ISFluidContainer then return end
+        local fluid,resource=rawget(wrapper,"fluidContainer"),rawget(wrapper,"fluidResource")
+        if not instanceof(fluid, "FluidContainer") then return end
+        if rawget(wrapper,"isFluidResource") then
+            if not instanceof(resource, "ResourceFluid") then return end
+        elseif resource then return end
+        local owner = rawget(wrapper,"isFluidResource") and resource:getGameEntity() or fluid:getOwner()
         if not owner then return end
         if instanceof(owner, "InventoryItem") then
             result.items[itemKey(owner)], result.itemTypes[owner:getFullType()] = true, true
         else result.targets[owner] = true end
-        if wrapper.fluidResource then result.targets[wrapper.fluidResource] = true end
+        if resource then result.targets[resource] = true end
+    end
+    if action.Type=="ISFluidEmptyAction" and ItemEditAdapters and type(ItemEditAdapters.emptyFluid)=="function" then
+        result.edit=ItemEditAdapters.emptyFluid(action)
+        if result.edit then
+            -- The captured emptying peak is bounded by current full weight;
+            -- completion's released fluid is never a capacity credit.
+            result.capacityNonIncreasing=true
+            Policy.addContainerResources(result,action.container.fluidContainer:getOwner():getContainer())
+        end
     end
     return result
 end
@@ -1257,6 +1267,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
                 for _, item in ipairs(batch.items or {}) do if not add(item) then return check.blocker end end
             end
         elseif not capacityNeutral[action.Type] and not boundedWaterDrink(action, character, source)
+            and not (source=="native.ISFluidEmptyAction" and contract.edit and contract.capacityNonIncreasing==true)
             and not (source == "native.ISEatFoodAction" and contract.edit
                 and (contract.capacityNonIncreasing == true or conditionalCapacity[action]))
             and not (check.readDemotion and source == "native.ISRadioAction"

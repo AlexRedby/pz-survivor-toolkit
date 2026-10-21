@@ -16,10 +16,15 @@ local function setup(changed,foreignMerge,alias,missing)
     local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
     f.native('shared/TimedActions/ISTransferAction.lua');f.native('shared/TimedActions/ISDrinkFluidAction.lua')
     f.native('shared/TimedActions/ISEatFoodAction.lua')
+    f.native('shared/Fluids/ISFluidContainer.lua');f.native('shared/Fluids/ISFluidUtil.lua')
+    f.native('shared/Fluids/ISFluidEmptyAction.lua')
     f.native('shared/RadioCom/ISRadioAction.lua')
     f.native('client/TimedActions/WalkToTimedAction.lua')
     if alias=='drink-native' then ISDrinkFluidAction.complete=ISDrinkFluidAction.isValid
     elseif alias=='drink-base' then ISDrinkFluidAction.complete=ISBaseTimedAction.perform
+    elseif alias=='empty-native' then ISFluidEmptyAction.complete=ISFluidEmptyAction.isValid
+    elseif alias=='wrapper-native' then ISFluidContainer.sync=ISFluidContainer.resetObject
+    elseif alias=='util-native' then ISFluidUtil.getContainerOwner=ISFluidUtil.validateContainer
     elseif alias=='base' then ISBaseTimedAction.perform=ISBaseTimedAction.stop end
     isClient,isServer=function()return false end,function()return false end
     isDebugEnabled=function()return false end
@@ -29,8 +34,13 @@ local function setup(changed,foreignMerge,alias,missing)
         if changed and path:find(changed,1,true)then text=text..'-- changed source\n'end
         return reader(text)
     end
-    getModFileReader=function(_,path)return reader(read(ProjectRoot..'/PZSurvivorToolkit/42/'..path))end
+    getModFileReader=function(_,path)
+        local text=read(ProjectRoot..'/PZSurvivorToolkit/42/'..path)
+        if changed and path:find(changed,1,true)then text=text..'-- changed source\n'end
+        return reader(text)
+    end
     getTimestampMs=function()return 1 end;getCore=function()return {getGameMode=function()return 'Sandbox'end}end
+    FluidUtil={getTransferActionTimePerLiter=function()return 37 end,getMinTransferActionTime=function()return 10 end}
     CharacterTrait={DEXTROUS=1,ALL_THUMBS=2};MoodleType={FOOD_EATEN=1};Fluid={Water={}}
     ItemTag={SMOKABLE='smokable',SPOON='spoon',FORK='fork',ALREADY_COOKED='alreadycooked'}
     local scripts={}
@@ -55,7 +65,7 @@ local function setup(changed,foreignMerge,alias,missing)
     local baseInstanceof=instanceof
     instanceof=function(value,kind)return baseInstanceof(value,kind)or type(value)=='table'and
         (kind=='IsoGameCharacter'and value.class=='IsoPlayer'or kind=='IsoObject'and value.class=='IsoThumpable'
-        or kind=='InventoryItem'and (value.class=='Food'or value.class=='HandWeapon'or value.class=='InventoryContainer'))end
+        or kind=='InventoryItem'and (value.class=='Food'or value.class=='HandWeapon'or value.class=='InventoryContainer'or value.class=='ComboItem'))end
     getClassSimpleName=function(value)return value.class end
     local knownItems={}
     local bag
@@ -107,6 +117,7 @@ local function setup(changed,foreignMerge,alias,missing)
         value.getUnequippedWeight=function()return 1 end;value.getWeight=function()return 1 end
         value.isFavorite=function()return false end;value.setJobDelta=function()end
         value.getFluidContainer=function(self)return self.fluid end;value.getEatType=function()return 'bottle'end
+        value.isInPlayerInventory=function(self)return self.container and self.container:isInCharacterInventory()or false end
         value.syncItemFields=function()end
         knownItems[#knownItems+1]=value
         return value
@@ -175,6 +186,10 @@ local function setup(changed,foreignMerge,alias,missing)
     fluid.isPureFluid=function(self,kind)return kind==Fluid.Water and not self.mixed end
     fluid.isTainted=function(self)return self.tainted or false end;fluid.isPoisonous=function(self)return self.poisonous or false end
     fluid.isEmpty=function(self)return self.amount<=0 end;fluid.getCustomDrinkSound=function()return ''end
+    fluid.canPlayerEmpty=function(self)return not self.noEmpty end
+    fluid.getTransferRate=function(self)return self.rate or 1 end
+    fluid.Empty=function(self)self.amount=0 end
+    fluid.adjustAmount=function(self,amount)if self.amount>0 then self.amount=math.min(self.capacity,math.max(0,amount))end end
     water.fluid=fluid
     local drinks=0
     f.player.DrinkFluid=function(_,value,delta,useUtensil)
@@ -191,6 +206,12 @@ local function setup(changed,foreignMerge,alias,missing)
         if missing.inherited then assert(type(owner[missing.name])=='function','fixture must retain an inherited fallback')end
     end
     if foreignMerge then ISInventoryTransferAction.canMergeAction=function()error('foreign preloaded merge must not execute')end end
+    local emptyRepair=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/EmptyFluidAction.lua'))()
+    local beforeRepairRequire=require
+    require=function(name)
+        if name=='PZSurvivorToolkit/EmptyFluidAction'then return emptyRepair end
+        return beforeRepairRequire(name)
+    end
     f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
     local adapters=f.project('ActionQueueItemEditAdapters');local model=f.project('ActionQueueEditModel')
     local radio=f.project('ActionQueueEditAdapters')
@@ -208,6 +229,9 @@ local function setup(changed,foreignMerge,alias,missing)
     end
     local function drink(percentage)
         local action=ISDrinkFluidAction:new(f.player,water,percentage or 0.5);action.toolkitQueueOperation={};return action
+    end
+    local function empty()
+        local action=ISFluidEmptyAction:new(f.player,fluid);action.toolkitQueueOperation={};return action
     end
     local function eat(value,percentage)
         local action=ISEatFoodAction:new(f.player,value,percentage or 0.5);action.toolkitQueueOperation={};return action
@@ -236,7 +260,7 @@ local function setup(changed,foreignMerge,alias,missing)
         return c,parent,tile
     end
     return {f=f,adapters=adapters,model=model,policy=policy,root=root,bag=bag,bagInventory=bagInventory,water=water,fluid=fluid,world=world,container=container,
-        properties=properties,scripts=scripts,item=item,food=food,utensil=utensil,eat=eat,damage=damage,transfer=transfer,drink=drink,runTransfer=runTransfer,drinks=function()return drinks end}
+        properties=properties,scripts=scripts,item=item,food=food,utensil=utensil,eat=eat,damage=damage,transfer=transfer,drink=drink,empty=empty,runTransfer=runTransfer,drinks=function()return drinks end}
 end
 do
     local s=setup();local pickup=s.transfer();local restore=s.transfer(nil,s.root,s.bagInventory)
@@ -1600,3 +1624,121 @@ do
     print('Cold cookable world edits: constant ambient, native outermost, dormant replacements, state/callback barriers and global capacity prefix passed.')
 end
 print('Food edit adapters: original portions, cold cookable state, dormant cooked replacements and surviving ordinary/custom-weight partial use replacements, depletion/location/fullness dependencies, pending cancellation and callback guards passed.')
+
+-- Emptying uses the native wrapper/constructor, with exact leaf/amount proof.
+local function emptySetup(...)
+    local s=setup(...);s.water.class='ComboItem';s.water.container=s.root
+    return s
+end
+do
+    local s=emptySetup();local action=s.empty();local edit=assert(s.adapters.emptyFluid(action))
+    assert(edit.version==1 and edit.complete and edit.capacity=='external')
+    assert(action.maxTime==74 and edit.resources[2].effects[1].set==0)
+    local drink=s.drink();local drinking=assert(s.adapters.drink(drink))
+    assert(s.model.evaluate({{action=drink,edit=drinking},{action=action,edit=edit}}).status=='allowed')
+    assert(s.model.evaluate({{action=action,edit=edit},{action=drink,edit=drinking}}).status=='denied')
+    local anchor=s.f.action(ISReadABook,{item=s.item()})
+    local q=s.f.queue(anchor,drink,action)
+    local decision=s.policy.evaluateMove(q,action,drink,false)
+    assert(not decision.allowed and decision.reason=='edit_resource_amount','emptying cannot precede a required drink')
+    assert(s.policy.evaluateCancel(q,action,true).allowed,'waiting emptying can be cancelled')
+    local other=s.item();other.class='ComboItem';other.container=s.root
+    local otherFluid={};for key,value in pairs(s.fluid)do otherFluid[key]=value end
+    otherFluid.getOwner=function()return other end;other.fluid=otherFluid
+    local independent=ISFluidEmptyAction:new(s.f.player,otherFluid);independent.toolkitQueueOperation={}
+    q=s.f.queue(anchor,action,independent)
+    assert(s.policy.evaluateMove(q,independent,action,false).allowed,'independent emptying commutes')
+    s.f.project('ActionQueueLabels');s.f.project('ActionQueue')
+    assert(s.adapters.emptyFluid(action),'owned inherited begin/stop hooks retain emptying proof')
+    s.fluid.amount=.5;action:updateEmpty(.25)
+    assert(s.fluid.amount==1.5 and s.fluid.amount<=action.amount,'native partial refill bounded by constructor capture')
+    assert(action:complete()and s.fluid.amount==0 and s.water:getContainer()==s.root)
+end
+for _,path in ipairs({'Fluids/ISFluidEmptyAction.lua','Fluids/ISFluidContainer.lua','Fluids/ISFluidUtil.lua','PZSurvivorToolkit/EmptyFluidAction.lua'})do
+    local s=emptySetup(path);assert(not s.adapters.emptyFluid(s.empty()),'all native fluid files must match: '..path)
+end
+do
+    local s=emptySetup();local action=s.empty();assert(s.adapters.emptyFluid(action))
+    PZSurvivorToolkit.EmptyFluidAction.authorizes=function()return true end
+    assert(not s.adapters.emptyFluid(action),'foreign repair authorization cannot expose complete empty effects')
+end
+for _,alias in ipairs({'empty-native','wrapper-native','util-native'})do
+    local s=emptySetup(nil,nil,alias);assert(not s.adapters.emptyFluid(s.empty()),'preloaded alias rejected: '..alias)
+end
+for _,missing in ipairs({{owner='ISFluidEmptyAction',name='complete'}, {owner='ISFluidEmptyAction',name='updateEmpty'},
+    {owner='ISFluidEmptyAction',name='start',inherited=true},{owner='ISFluidContainer',name='sync'},
+    {owner='ISFluidContainer',name='getFluidResource'},{owner='ISFluidUtil',name='validateContainer'},
+    {owner='ISFluidUtil',name='getTransferActionTimePerLiter'}})do
+    local s=emptySetup(nil,nil,nil,missing)
+    -- Missing constructor helpers may prevent construction; preserve a native-shaped
+    -- instance so rejection is tested without invoking the missing callback.
+    local a=setmetatable({character=s.f.player,containerObject=s.fluid,amount=2,maxTime=74,
+        container=setmetatable({fluidContainer=s.fluid,isFluidResource=false,isInventoryItem=true,isoPanel=false},ISFluidContainer)},ISFluidEmptyAction)
+    assert(not s.adapters.emptyFluid(a),'missing native helper rejected: '..missing.owner..'.'..missing.name)
+end
+for _,ownerName in ipairs({'ISFluidEmptyAction','ISFluidContainer','ISFluidUtil'})do
+    local s=emptySetup();local action=s.empty();assert(s.adapters.emptyFluid(action))
+    local owner=_G[ownerName];local name=ownerName=='ISFluidEmptyAction'and 'updateEmpty'or ownerName=='ISFluidContainer'and 'sync'or 'validateContainer'
+    owner[name]=function()error('foreign helper must never execute in inspection')end
+    assert(not s.adapters.emptyFluid(action),'live native helper mutation rejected')
+end
+for _,name in ipairs({'getFluidContainer','getOwner','getFluidResource','sync','isResource','new'})do
+    for _,value in ipairs({false,17,function()error('foreign wrapper must not execute')end})do
+        local s=emptySetup();local action=s.empty();action.container[name]=value
+        assert(not s.adapters.emptyFluid(action),'all wrapper method shadowing rejected: '..name)
+    end
+end
+for _,ownerName in ipairs({'ISFluidEmptyAction','ISFluidContainer'})do
+    local s=emptySetup();local action=s.empty();_G[ownerName].__index=function()error('foreign index must never execute')end
+    assert(not s.adapters.emptyFluid(action),'foreign native dispatch rejected before lookup')
+    if ownerName=='ISFluidContainer'then
+        local contract=s.policy.inspect(action);assert(not contract or not contract.edit,'policy also avoids foreign wrapper dispatch')
+    end
+end
+for _,mutate in ipairs({
+    function(s,a)a.action={}end,function(s,a)a.started=true end,function(s,a)a.transactionId=1 end,
+    function(s,a)a.toolkitQueueOperation.toolkitStarted=true end,function(s,a)a.toolkitQueueOperation.toolkitCancelled=true end,
+    function(s,a)a.container.isFluidResource=true end,function(s,a)a.container.fluidResource={}end,
+    function(s,a)a.container.isoPanel=true end,function(s,a)a.container.isInventoryItem=false end,
+    function(s,a)a.containerObject={}end,function(s,a)s.water.fluid={}end,
+    function(s,a)s.water.class='Food'end,function(s,a)s.water.container=nil end,
+    function(s,a)s.fluid.mixed=true end,function(s,a)s.fluid.tainted=true end,function(s,a)s.fluid.poisonous=true end,
+    function(s,a)s.fluid.noEmpty=true end,function(s,a)s.properties.getHungerChange=function()return -1 end end,
+    function(s,a)a.amount=1 end,function(s,a)a.amount=3 end,function(s,a)s.fluid.amount=0 end,
+    function(s,a)s.fluid.capacity=1 end,function(s,a)s.fluid.getFilledRatio=function()return .7 end end,
+    function(s,a)s.fluid.rate=-1 end,function(s,a)s.fluid.rate=math.huge end,
+    function(s,a)a.maxTime=0 end,function(s,a)a.maxTime=math.huge end,
+})do
+    local s=emptySetup();local action=s.empty();mutate(s,action)
+    assert(not s.adapters.emptyFluid(action),'unsafe native emptying state stays protected')
+end
+do
+    local s=emptySetup();s.water.container=s.bagInventory;local action=s.empty()
+    assert(s.adapters.emptyFluid(action),'ordinary carried bag is a valid empty endpoint')
+    local contract=s.policy.inspect(action)
+    assert(contract.containerOwners[s.bag:getID()],'all containing bag identities are dependencies')
+    local anchor=s.f.action(ISReadABook,{item=s.item()})
+    s.bag.getActualWeight=function()return 1 end;s.bag.isFavorite=function()return false end
+    local world=s.world();local movingBag=s.transfer(s.bag,s.root,world)
+    assert(not s.policy.evaluateMove(s.f.queue(anchor,movingBag,action),action,movingBag,false).allowed,
+        'emptying cannot cross moving its containing bag into world storage')
+
+    s.bag.getContainer=function()end;assert(not s.adapters.emptyFluid(action),'lost bag owner rejected')
+    s.bag.getContainer=function()return s.bagInventory end;assert(not s.adapters.emptyFluid(action),'cyclic bag owner rejected')
+    s.bag.getContainer=function()return s.root end
+    s.bag.getInventory=function()return s.root end;assert(not s.adapters.emptyFluid(action),'replaced bag owner rejected')
+end
+do
+    local s=emptySetup();local anchor=s.f.action(ISReadABook,{item=s.item()});local action=s.empty()
+    local a,b=s.item(),s.item();a.container=s.root;b.container=s.root
+    local first,second=s.transfer(a,s.root,s.bagInventory),s.transfer(b,s.root,s.bagInventory)
+    local q=s.f.queue(anchor,action,first,second)
+    assert(s.policy.evaluateMove(q,second,first,false).allowed,'bounded emptying can precede independent transfers')
+    s.root.load=49;s.root.capacity=50
+    local decision=s.policy.evaluateMove(q,second,first,false)
+    assert(not decision.allowed and decision.reason=='container_capacity','empty release is never future capacity credit')
+    s.root.load=0;action.action={}
+    decision=s.policy.evaluateMove(q,second,first,false)
+    assert(not decision.allowed and decision.reason=='container_capacity','in-flight emptying cannot certify an unrelated capacity prefix')
+end
+print('Pending clean-water empty edits: exact native source/wrapper/owner/capture, independent move/cancel, shared drink dependency, transient peak and external capacity passed.')

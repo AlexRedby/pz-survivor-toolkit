@@ -19,6 +19,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.196
+
+- **Emptying water:** Keep native active emptying valid after its own fluid update or authoritative client replication reaches zero, so remaining queued work is not discarded. Exact active identity and target checks remain in effect; native duration and emptying effects are preserved.
+- **Action queue:** Pending native emptying of ordinary carried clean-water containers supports independent moves and cancellation. Drinking from the same bottle keeps its dependency; captured-volume peaks, containing bags and full-weight capacity bounds stay protected. Active emptying, mixed fluids, resource/world containers and unknown callbacks retain their existing protection.
+
 ### 0.1.195
 
 - Support the storage Manifest in menu Host through one authoritative warehouse service shared with single-player. Incrementally sample designated containers, retain unloaded areas' last-known contents and send bounded pages only to requesting windows; remove the SP-only transfer interceptor.

@@ -35,9 +35,12 @@ class FluidScenarioTests(unittest.TestCase):
 
     def test_selects_canonical_cases_and_identical_disabled_queue_controls(self):
         for mode in ('native', 'toolkit'):
-            cases, mods = scenarios.select(self.suite, 'server-authority,success-empty', None, 'mp', mode)
+            cases, mods = scenarios.select(self.suite, 'server-authority', None, 'mp', mode)
             self.assertEqual(fluid.CASES, cases)
             self.assertEqual(sorted(fluid.MODS), mods)
+            empty_start_actions = ','.join(action for action in self.suite['scenario_actions'] if action != 'empty-water')
+            self.assertEqual([case for case in fluid.CASES if case not in fluid.EMPTY_CASES],
+                             scenarios.select(self.suite, 'success-empty', empty_start_actions, 'mp', mode)[0])
             self.assertEqual(['fluid-bag-pair-queued-favorite'],
                              scenarios.select(self.suite, 'repeat-independent', 'drink-portions', 'mp', mode)[0])
             self.assertEqual(['fluid-bag-same-serial-favorite', 'fluid-root-same-queued-favorite'],
@@ -53,7 +56,8 @@ class FluidScenarioTests(unittest.TestCase):
             for mode in ('native', 'toolkit'):
                 recorded = self.recorded(kind, mode)
                 for action in self.suite['scenario_actions']:
-                    self.assertEqual('passed', self.row(recorded, action=action, kind=kind, mode=mode)['status'])
+                    scenario = 'success-queued' if action == 'empty-water' else 'success-empty'
+                    self.assertEqual('passed', self.row(recorded, action=action, scenario=scenario, kind=kind, mode=mode)['status'])
                     self.assertEqual('passed' if kind == 'mp' else 'not-applicable',
                                      self.row(recorded, action=action, scenario='server-authority', kind=kind, mode=mode)['status'])
                 self.assertEqual('passed', self.row(recorded, scenario='repeat-independent', kind=kind, mode=mode)['status'])
@@ -79,6 +83,47 @@ class FluidScenarioTests(unittest.TestCase):
                     record['outcome'][field] = 1
                     scenario = 'success-queued' if field == 'pendingTransferEditVerified' else 'move-dependent'
                     self.assertNotEqual('passed', self.row(bad, action='drink-transfers', scenario=scenario, kind=kind)['status'])
+
+    def test_empty_water_scenarios_require_their_own_matched_native_effects(self):
+        action = 'empty-water'
+        binding = self.suite['scenario_actions'][action]
+        self.assertEqual({'success-queued', 'move-independent', 'cancel-waiting', 'move-dependent', 'server-authority'}, set(binding['checks']))
+        for phrase in ('Raw native ISFluidEmptyAction', 'clean-water', 'captured amount', 'constructor durations',
+                       'discarded water', 'No physical/menu input', 'active cancellation', 'transfer-capacity'):
+            self.assertIn(phrase, binding['scope'])
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.assertEqual(list(fluid.EMPTY_CASES), scenarios.select(self.suite, 'success-queued', action, kind, mode)[0])
+                for scenario, case in [('move-independent', fluid.EMPTY_MOVE_CASE), ('cancel-waiting', fluid.EMPTY_CANCEL_CASE),
+                                       ('move-dependent', fluid.EMPTY_DEPENDENCY_CASE)]:
+                    self.assertEqual([case], scenarios.select(self.suite, scenario, action, kind, mode)[0])
+                    recorded = self.recorded(kind, mode)
+                    self.assertEqual('passed' if mode == 'toolkit' else 'not-applicable',
+                                     self.row(recorded, action, scenario, kind, mode)['status'])
+                with self.assertRaisesRegex(ValueError, 'not implemented'):
+                    scenarios.select(self.suite, 'physical-input', action, kind, mode)
+        recorded = self.recorded()
+        for case in fluid.EMPTY_CASES:
+            bad = copy.deepcopy(recorded)
+            bad['coverage'] = [row for row in bad['coverage'] if row['case'] != case]
+            self.assertNotEqual('passed', self.row(bad, action, 'success-queued')['status'])
+            self.assertEqual('passed', self.row(bad, 'drink-portions', 'success-empty')['status'])
+        bad = copy.deepcopy(recorded)
+        next(row for row in bad['coverage'] if row['case'] == fluid.EMPTY_DEPENDENCY_CASE)['outcome']['dependentEmptyProtected'] = 1
+        self.assertNotEqual('passed', self.row(bad, action, 'move-dependent')['status'])
+
+    def test_empty_water_does_not_claim_an_empty_action_started_with_an_empty_queue(self):
+        # Only Drink A starts in the initially empty queue; Empty B/C are pending behind it.
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                with self.subTest(kind=kind, mode=mode):
+                    with self.assertRaisesRegex(ValueError, 'empty-water/success-empty: not implemented'):
+                        scenarios.select(self.suite, 'success-empty', 'empty-water', kind, mode)
+                    recorded = self.recorded(kind, mode)
+                    self.assertTrue(all(row['outcome']['emptyStartVerified'] for row in recorded['coverage']
+                                        if row['case'] in fluid.EMPTY_CASES))
+                    self.assertEqual('unimplemented', self.row(recorded, 'empty-water', 'success-empty', kind, mode)['status'])
+                    self.assertEqual('passed', self.row(recorded, 'empty-water', 'success-queued', kind, mode)['status'])
 
     def test_historical_and_partial_receipts_do_not_gain_new_coverage(self):
         recorded = self.recorded()

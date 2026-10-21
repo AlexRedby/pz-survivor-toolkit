@@ -102,6 +102,7 @@ These operations can execute normally while some queue controls remain disabled.
 
 ## Shared game sessions and build regression
 
+- [ ] Add direct clean-water emptying from an empty queue and full-water drinking followed by independent work to the fluid suite. The current emptying cases queue behind a running drink; audit the native zero-before-timer boundary for full drinking separately. Gate: exact effects, a surviving independent tail and matched queue-on/off SP/Host controls.
 - [ ] Extend the common scenario contracts beyond equipment, fluid drinking and health-panel/direct-inventory bandaging. Map audited cases/outcomes per action, reuse `QueueScenarioChecks`, and keep unimplemented/inapplicable requirements explicit. Prioritize empty initial queue, repeated requests, lost/replaced resources and unavailable return containers; include worn bags and favorite-item variants where relevant. Gate: exact effects and cleanup in selected SP/Host runs with matching native controls and clean log audits.
 
 - [ ] Cart chat: integrate the published combined SP cart matrices and collision cases after their native checks are complete. Keep independent cold controls; separately measure an explicit full regression profile (the estimated 17 startup cycles instead of 29 are not yet confirmed).
