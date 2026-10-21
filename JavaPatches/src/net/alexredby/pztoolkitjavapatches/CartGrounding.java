@@ -230,6 +230,7 @@ public final class CartGrounding {
     public static void render(ModelSlotRenderData slot) {
         if(Main.CART_TRANSITION_SUPPORTED) CartImpactPose.render(slot);
         CartWheelSpin.prepare(slot,Double.NaN);
+        CartShoppingWheels.clear(slot);
         if(CartTransition.render(slot)) return;
         if(!(slot.character instanceof IsoPlayer player) || !CartMotionSync.visualEnabled(player)) return;
         var expected=resolvedModel(player.getPrimaryHandItem());
@@ -257,7 +258,8 @@ public final class CartGrounding {
                 CartGrip.render(slot,instance.parent,clip,state.delta,name,transform);
                 data.xfrm.set(transform).transpose();
                 if(profile!=null) CartEmergencyDrop.capture(player,slot,transform);
-                CartWheelSpin.prepare(slot,player.isLocalPlayer()?CartSteeringHooks.wheelPhase(player,slot,transform)
+                if(CartShopping.model(name)) CartShoppingWheels.prepare(slot,player.getPrimaryHandItem(),data,transform);
+                else CartWheelSpin.prepare(slot,player.isLocalPlayer()?CartSteeringHooks.wheelPhase(player,slot,transform)
                     :CartWheelSpin.follow(player.getPrimaryHandItem(),slot.x,slot.y,slot.animPlayerAngle,transform));
             } else {
                 transform.set(data.xfrm).transpose();

@@ -12,15 +12,15 @@ import zombie.inventory.InventoryItem;
 
 /** Carry the exact item's wheel angle into native world rendering without replacing its material setup. */
 public final class CartWheelWorld {
-    private record Snapshot(InventoryItem item, Model model, Matrix4f transform, double phase) {}
-    private record Draw(ItemModelRenderer renderer, InventoryItem item, ModelMesh mesh, Matrix4f transform, double phase) {}
+    private record Snapshot(InventoryItem item, Model model, Matrix4f transform, double phase, CartShoppingWheels.Frame shopping) {}
+    private record Draw(ItemModelRenderer renderer, InventoryItem item, ModelMesh mesh, Matrix4f transform, double phase, CartShoppingWheels.Frame shopping) {}
     public record Receipt(InventoryItem item, double phase, Matrix4fc cart) {}
     private static final WeakHashMap<ItemModelRenderer, Snapshot> snapshots = new WeakHashMap<>();
     private static final WeakHashMap<ItemModelRenderer, Receipt> receipts = new WeakHashMap<>();
     private static final ThreadLocal<Draw> drawing = new ThreadLocal<>();
 
     private static boolean worldCart(InventoryItem item) {
-        return CartWheelbarrow.forItem(item)!=null && item.getWorldItem()!=null && item.getWorldItem().getItem()==item;
+        return CartTransition.supported(item) && item.getWorldItem()!=null && item.getWorldItem().getItem()==item;
     }
 
     public static synchronized void snapshot(ItemModelRenderer renderer, InventoryItem item, Matrix4f transform) {
@@ -29,7 +29,7 @@ public final class CartWheelWorld {
         if(!worldCart(item) || transform==null || !transform.isFinite()) return;
         var model=Accessor.tryGet(renderer,"model",(Model)null);
         if(model!=null && model.isStatic)
-            snapshots.put(renderer,new Snapshot(item,model,transform,Double.NaN));
+            snapshots.put(renderer,new Snapshot(item,model,transform,Double.NaN,null));
     }
 
     static Matrix4f worldTransform(ItemModelRenderer renderer, Matrix4f transform, Matrix4f out) {
@@ -45,8 +45,9 @@ public final class CartWheelWorld {
         var transform=worldTransform(renderer,snapshot.transform,new Matrix4f());
         if(!transform.isFinite()) {clear(renderer);return;}
         // Virtual actor angle PI gives the native world camera's +X/-Z tile projection.
-        double phase=CartWheelSpin.follow(snapshot.item,renderer.x,renderer.y,(float)Math.PI,transform);
-        if(Double.isFinite(phase)) snapshots.put(renderer,new Snapshot(snapshot.item,snapshot.model,snapshot.transform,phase));
+        var shopping=CartShopping.item(snapshot.item)?CartShoppingWheels.follow(snapshot.item,renderer.x,renderer.y,(float)Math.PI,transform):null;
+        double phase=shopping!=null?shopping.phases[0]:CartWheelSpin.follow(snapshot.item,renderer.x,renderer.y,(float)Math.PI,transform);
+        if(Double.isFinite(phase)) snapshots.put(renderer,new Snapshot(snapshot.item,snapshot.model,snapshot.transform,phase,shopping));
         else clear(renderer);
     }
 
@@ -70,7 +71,7 @@ public final class CartWheelWorld {
         if(!weaponPart) clearReceipt(renderer);
         if(!weaponPart && snapshot!=null && snapshot.model==model && Double.isFinite(snapshot.phase)
             && model.mesh!=null && transform!=null && transform.isFinite())
-            drawing.set(new Draw(renderer,snapshot.item,model.mesh,transform,snapshot.phase));
+            drawing.set(new Draw(renderer,snapshot.item,model.mesh,transform,snapshot.phase,snapshot.shopping));
         else drawing.remove();
         return previous;
     }
@@ -82,8 +83,10 @@ public final class CartWheelWorld {
 
     public static boolean render(ModelMesh mesh, Shader shader) {
         var draw=drawing.get();
-        if(draw==null || draw.mesh!=mesh || shader==null
-            || !CartWheelSpin.draw(CartWheelbarrow.forItem(draw.item),mesh.vb,shader,draw.transform,draw.phase,false)) return false;
+        if(draw==null || draw.mesh!=mesh || shader==null)return false;
+        boolean rendered=draw.shopping!=null?CartShoppingWheels.draw(mesh.vb,shader,draw.transform,draw.shopping,false)
+            :CartWheelSpin.draw(CartWheelbarrow.forItem(draw.item),mesh.vb,shader,draw.transform,draw.phase,false);
+        if(!rendered)return false;
         recorded(draw);
         return true;
     }

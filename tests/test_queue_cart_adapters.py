@@ -678,14 +678,15 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
 
     def test_shopping_sp_stages_only_explicit_action_banks_and_model_sources(self):
         self.options.update(cart_variant='shopping-cart', cart_mesh_fbx={model: self.options['mesh_fbx'] for model in carts.SHOPPING_MODELS})
-        for case in ('interaction', 'repeat'):
+        for case in ('interaction', 'repeat', 'wheel'):
             with self.subTest(case=case):
                 self.output = self.root / ('shopping-' + case); self.output.mkdir(); self.role('client1')
                 self.selection['cases'] = [case]; self.options['cart_scenes'] = carts.scene_names(case)[:1]
                 compiler = self.stage()
                 sources = [value for call in compiler.call_args_list for value in call.args[0] if value.endswith('.java')]
                 self.assertFalse(any(value.endswith('WoodenWheelNativeProbe.java') for value in sources))
-                self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 2)
+                self.assertEqual(len(self.runtime['fixture']['attach']['client1']), 3 if case == 'wheel' else 2)
+                self.assertEqual(any(value.endswith('ShoppingWheelProbe.java') for value in sources), case == 'wheel')
                 self.assertIn(Path(self.options['mesh_fbx']), carts.sources(ROOT, self.selection))
                 runtime = Path(self.runtime['roles']['client1']['env']['PZ_CART_RUNTIME_FILE'])
                 self.assertIn('["cartType"]="SaucedCarts.ShoppingCart"', runtime.read_text())
@@ -760,6 +761,72 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
     def test_shopping_action_capture_requires_actual_fill_meshes_ownership_and_lifecycle(self):
         self._assert_variant_action_capture('shopping-cart')
 
+    def shopping_wheel_fixture(self):
+        cache = self.output / 'client1'
+        points = [(i * .01, 0, 0) for i in range(21)]
+        positions = b''.join(struct.pack('<3f', *p) for p in points)
+        vertices = b''.join(struct.pack('<8f', *p, 0, 0, 0, 0, 0) for p in points)
+        indices = struct.pack('<21I', *range(21))
+        bits = sorted({struct.unpack('<3I', positions[i:i+12]) for i in range(0, len(positions), 12)})
+        mesh = dict(meshId=1, vertices=21, indices=21, stride=32, positionOffset=0,
+                    vboBytes=len(vertices), eboBytes=len(indices), gpuByteOrder='little-endian', positionsByteOrder='little-endian',
+                    vboFile='shopping-wheel-1-vertices.bin', eboFile='shopping-wheel-1-indices.bin', positionsFile='shopping-wheel-1-positions.bin',
+                    vboSha256=hashlib.sha256(vertices).hexdigest(), eboSha256=hashlib.sha256(indices).hexdigest(),
+                    positionsSha256=hashlib.sha256(positions).hexdigest(),
+                    positionSetSha256=hashlib.sha256(b''.join(struct.pack('<3I', *p) for p in bits)).hexdigest())
+        for field, raw in (('vboFile', vertices), ('eboFile', indices), ('positionsFile', positions)):
+            (cache / mesh[field]).write_bytes(raw)
+        (cache / 'shopping-wheel-1-mesh.json').write_text(json.dumps(mesh))
+        identity = [int(i % 5 == 0) for i in range(16)]
+        records = []
+        for i in range(12):
+            held = i < 6
+            calls = [dict(part=part, restore=False, transpose=held, firstIndex=part*3, indexCount=3, matrix=identity[:]) for part in range(7)]
+            calls.append(dict(part=-1, restore=True, transpose=held, matrix=identity[:]))
+            records.append(dict(wallTimeMillis=100000+i*350, itemId=42, source='held' if held else 'world', result=True,
+                                transpose=held, matrixOrder='column-major', cart=identity[:], phases=[0]*4, casters=[0]*2,
+                                relative=[identity[:] for _ in range(7)], submittedParts=[identity[:] for _ in range(7)], calls=calls,
+                                nativeFollow=dict(x=10, y=20, angle=0, producerNanoTime=i, returnNanoTime=i+1,
+                                                  wallTimeMillis=100000+i*350, cart=identity[:], matrixOrder='column-major'), mesh=dict(mesh)))
+        return cache, records, {mesh['vboSha256']}
+
+    def test_shopping_wheel_capture_requires_exact_recording_window_and_complete_shader_receipts(self):
+        cache, records, hashes = self.shopping_wheel_fixture()
+        report = carts._shopping_wheel_capture(cache, records, 100000, 4, 42, hashes)
+        self.assertEqual(report, dict(heldDrawSamples=6, worldDrawSamples=6, meshProofs=1, shaderDrawCaptureReady=True))
+        originals = {p: p.read_bytes() for p in cache.glob('shopping-wheel-*')}
+        for change in ('foreign-item', 'outside-window', 'truncated-window', 'failed-draw', 'missing-world',
+                       'nonfinite-phase', 'nonfinite-caster', 'nonfinite-part', 'missing-part', 'nonfinite-follow',
+                       'missing-follow', 'missing-restore', 'bad-restore', 'index-gap', 'index-coverage',
+                       'tampered-hash', 'tampered-binary', 'truncated-binary', 'missing-proof'):
+            with self.subTest(change=change):
+                rows = json.loads(json.dumps(records)); row = rows[2]
+                if change == 'foreign-item':
+                    for r in rows: r['itemId'] = 99
+                elif change == 'outside-window':
+                    for r in rows: r['wallTimeMillis'] += 10000
+                elif change == 'truncated-window': rows = rows[:5]
+                elif change == 'failed-draw': row['result'] = False
+                elif change == 'missing-world':
+                    for r in rows: r.update(source='held', transpose=True)
+                elif change == 'nonfinite-phase': row['phases'][0] = float('nan')
+                elif change == 'nonfinite-caster': row['casters'][0] = float('inf')
+                elif change == 'nonfinite-part': row['submittedParts'][0][0] = None
+                elif change == 'missing-part': row['submittedParts'].pop()
+                elif change == 'nonfinite-follow': row['nativeFollow']['angle'] = float('nan')
+                elif change == 'missing-follow': row.pop('nativeFollow')
+                elif change == 'missing-restore': row['calls'].pop()
+                elif change == 'bad-restore': row['calls'][-1]['matrix'][12] = 1
+                elif change == 'index-gap': row['calls'][2]['firstIndex'] += 3
+                elif change == 'index-coverage': row['calls'][-2]['indexCount'] += 3
+                elif change == 'tampered-hash': row['mesh']['eboSha256'] = 'f'*64
+                elif change == 'tampered-binary': (cache / row['mesh']['eboFile']).write_bytes(b'x' * row['mesh']['eboBytes'])
+                elif change == 'truncated-binary': (cache / row['mesh']['vboFile']).write_bytes(b'partial')
+                else: (cache / 'shopping-wheel-1-mesh.json').unlink()
+                with self.assertRaisesRegex(ValueError, 'Shopping wheel capture'):
+                    carts._shopping_wheel_capture(cache, rows, 100000, 4, 42, hashes)
+                for path, raw in originals.items(): path.write_bytes(raw)
+
     def _assert_variant_action_capture(self, variant):
         import numpy as np
 
@@ -808,6 +875,15 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
             self.assertFalse(report['geometryVerified']); self.assertFalse(report['animationEquivalencePass'])
             self.assertEqual(len(report['nativeVBOs']), 2 if shopping else 1)
             if shopping:
+                self.selection['cases'] = ['wheel']
+                with patch.object(carts, 'selected_scenes', return_value=[r['scene'] for r in report['scenes']]):
+                    for truncated in (False, True):
+                        with self.subTest(missing_wheel_probe=not truncated):
+                            if truncated: (cache / 'shopping-wheel-draws.jsonl').write_text('{"wallTimeMillis":')
+                            with self.assertRaisesRegex(ValueError, 'Shopping wheel capture: missing or truncated draw file'):
+                                carts._model_capture_coverage(cache, text, self.selection)
+                    (cache / 'shopping-wheel-draws.jsonl').unlink()
+                self.selection['cases'] = ['interaction']
                 full_proof = cache / 'cart-mesh-ShoppingCartFullModel.json'
                 original_proof = full_proof.read_text()
                 full_proof.write_text(original_proof.replace('ShoppingCartFullModel', 'ShoppingCartPartialModel'))

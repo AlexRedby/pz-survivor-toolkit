@@ -523,7 +523,10 @@ public final class Main {
             @Patch.Argument(7) zombie.scripting.objects.ModelScript script) {
             if(Main.CART_TRANSITION_SUPPORTED && item!=null && "SaucedCarts.ShoppingCart".equals(item.getFullType())) {
                 var transform=Accessor.tryGet(renderer,"transform",(org.joml.Matrix4f)null);
-                if(transform!=null && script!=null) CartWorldSupport.apply(item.getFullType(),transform,script.scale*item.worldScale);
+                if(transform!=null && script!=null) {
+                    CartWorldSupport.applyDirect(item.getFullType(),transform,script.scale*item.worldScale);
+                    if(Main.CART_WHEEL_SUPPORTED) CartWheelWorld.snapshot(renderer,item,transform);
+                }
             }
             if(Main.CART_TRANSITION_SUPPORTED && CartTransition.wheelbarrow(item)) {
                 var transform=Accessor.tryGet(renderer,"transform",(org.joml.Matrix4f)null);
@@ -622,7 +625,7 @@ public final class Main {
             // The custom 3D cart supplies its own tint; the separate outline can flash its inventory icon.
             return Main.CART_TRANSITION_SUPPORTED && object instanceof zombie.iso.objects.IsoWorldInventoryObject world
                 && (CartTransition.hidden(world.getItem())
-                    || CartTransition.wheelbarrow(world.getItem()) && zombie.core.Core.getInstance().isOption3DGroundItem());
+                    || CartTransition.supported(world.getItem()) && zombie.core.Core.getInstance().isOption3DGroundItem());
         }
     }
 
@@ -630,7 +633,7 @@ public final class Main {
     public static class WoodenWorldAtlas {
         @Patch.OnEnter(skipOn=true)
         public static boolean enter(@Patch.Argument(0) zombie.inventory.InventoryItem item) {
-            return Main.CART_TRANSITION_SUPPORTED && CartTransition.wheelbarrow(item);
+            return Main.CART_TRANSITION_SUPPORTED && CartTransition.supported(item);
         }
     }
 

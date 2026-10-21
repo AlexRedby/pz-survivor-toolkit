@@ -184,6 +184,7 @@ public final class CartWheelSpin {
 
     /** OnEnter for Model.DrawSolid; true skips the original draw after rendering both parts. */
     public static boolean render(Model model, ModelSlotRenderData slot, ModelInstanceRenderData data) {
+        if(CartShoppingWheels.render(model,slot,data))return true;
         if(!(slot.character instanceof IsoPlayer) || data.modelInstance==null
             || data.modelInstance.modelScript==null
             || CartWheelbarrow.forModel(data.modelInstance.modelScript.getName())==null

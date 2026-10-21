@@ -1,0 +1,3 @@
+Manifest-Version: 1.0
+Agent-Class: ShoppingWheelProbe
+Can-Retransform-Classes: true

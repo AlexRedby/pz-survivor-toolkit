@@ -624,7 +624,8 @@ public final class CartTransition {
                 state.lastRender=System.nanoTime();
             }
             data.xfrm.set(transform).transpose();
-            CartWheelSpin.prepare(slot,CartWheelSpin.follow(state.item,slot.x,slot.y,slot.animPlayerAngle,transform));
+            if(CartShopping.item(state.item)) CartShoppingWheels.prepare(slot,state.item,data,transform);
+            else CartWheelSpin.prepare(slot,CartWheelSpin.follow(state.item,slot.x,slot.y,slot.animPlayerAngle,transform));
             if(state.world!=null && !state.rendered) state.world.invalidateRenderChunkLevel(256);
             state.rendered=true;
             state.remoteModelBindStart=0;

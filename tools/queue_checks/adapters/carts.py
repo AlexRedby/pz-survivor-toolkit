@@ -61,7 +61,7 @@ VARIANTS = {'shopping-cart': 'SaucedCarts.ShoppingCart',
             'metal-wheelbarrow': 'SaucedWheelbarrow.WheelbarrowMetal'}
 METAL_SP_CASES = {'interaction', 'interruption', 'interruption-matrix', 'interruption-fast',
                   'repeat', 'hotkey', 'sprint', 'stop', 'stop-timing', 'stationary'}
-SHOPPING_SP_CASES = {'interaction', 'repeat'}
+SHOPPING_SP_CASES = {'interaction', 'repeat', 'wheel'}
 SHOPPING_MODELS = {'ShoppingCartModel', 'ShoppingCartPartialModel', 'ShoppingCartFullModel',
                    'ShoppingCartFlashlightModel', 'ShoppingCartFlashlightPartialModel', 'ShoppingCartFlashlightFullModel'}
 ACTION_SP_CASES = {'interaction', 'interruption', 'interruption-matrix', 'interruption-fast', 'repeat', 'hotkey'}
@@ -297,6 +297,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     evidence = sp / 'evidence'
     variant_probes = selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart')
     sp_probes = ('GripPoseProbe', 'ClearanceProbe') if variant_probes else ('WoodenWheelNativeProbe', 'GripPoseProbe', 'ClearanceProbe')
+    if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') == 'shopping-cart' and selection['cases'] == ['wheel']:
+        sp_probes += ('ShoppingWheelProbe',)
     probe_sources = ([mp / 'ClearanceProbe.java'] if selection['suite'] == MP else
                      [evidence / (name + '.java') for name in sp_probes])
     if not manual and not simple:
@@ -548,6 +550,100 @@ def _metal_coverage(cache, text, selection):
     return _model_capture_coverage(cache, text, selection)
 
 
+def _shopping_wheel_capture(cache, records, start, seconds, item_id, vbo_hashes):
+    """Require usable native draw receipts, without assessing wheel geometry or motion quality."""
+    import numpy as np
+
+    def require(condition, reason):
+        if not condition:
+            raise ValueError('Shopping wheel capture: ' + reason)
+
+    def vector(value, count):
+        return isinstance(value, list) and len(value) == count and all(type(v) in (int, float) and math.isfinite(v) for v in value)
+
+    def matrices(value):
+        return isinstance(value, list) and len(value) == 7 and all(vector(v, 16) for v in value)
+
+    def same(a, b):
+        return vector(a, 16) and vector(b, 16) and np.allclose(a, b, rtol=0, atol=2e-6)
+
+    verified = {}
+    def proof(mesh):
+        require(isinstance(mesh, dict), 'missing mesh proof')
+        key = json.dumps(mesh, sort_keys=True)
+        if key in verified:
+            return verified[key]
+        for field in ('meshId', 'vertices', 'indices', 'vboBytes', 'eboBytes'):
+            require(type(mesh.get(field)) is int and mesh[field] > 0, 'invalid mesh count')
+        require(mesh.get('stride') == 32 and mesh.get('positionOffset') == 0
+                and mesh['vboBytes'] == mesh['vertices'] * 32 and mesh['eboBytes'] == mesh['indices'] * 4
+                and mesh['indices'] % 3 == 0 and mesh.get('positionsByteOrder') == 'little-endian'
+                and mesh.get('gpuByteOrder') in ('little-endian', 'big-endian'), 'invalid mesh format/counts')
+        for field in ('vboSha256', 'eboSha256', 'positionsSha256', 'positionSetSha256'):
+            require(isinstance(mesh.get(field), str) and re.fullmatch('[0-9a-f]{64}', mesh[field]), 'missing mesh hash')
+        require(mesh['vboSha256'] in vbo_hashes, 'wheel VBO differs from selected native model capture')
+        require(_json(cache / f"shopping-wheel-{mesh['meshId']}-mesh.json") == mesh, 'mesh proof metadata differs from draw')
+        raw = {}
+        for field, size, digest in (('vboFile', mesh['vboBytes'], 'vboSha256'),
+                                    ('eboFile', mesh['eboBytes'], 'eboSha256'),
+                                    ('positionsFile', mesh['vertices'] * 12, 'positionsSha256')):
+            name = mesh.get(field)
+            require(isinstance(name, str) and Path(name).name == name and (cache / name).resolve().parent == cache.resolve(), 'invalid proof binary path')
+            raw[field] = (cache / name).read_bytes()
+            require(len(raw[field]) == size and hashlib.sha256(raw[field]).hexdigest() == mesh[digest], 'proof binary size/hash mismatch')
+        endian = '<' if mesh['gpuByteOrder'] == 'little-endian' else '>'
+        xyz = np.frombuffer(raw['vboFile'], dtype=endian+'f4').reshape(-1, 8)[:, :3]
+        require(np.isfinite(xyz).all() and xyz.astype('<f4').tobytes() == raw['positionsFile'], 'packed positions differ from native VBO')
+        bits = np.frombuffer(raw['positionsFile'], dtype='<u4').reshape(-1, 3)
+        require(hashlib.sha256(np.unique(bits, axis=0).astype('<u4').tobytes()).hexdigest() == mesh['positionSetSha256'], 'position-set proof mismatch')
+        indices = np.frombuffer(raw['eboFile'], dtype=endian+'u4')
+        require(int(indices.max()) < mesh['vertices'], 'native EBO index out of range')
+        verified[key] = mesh['indices']
+        return verified[key]
+
+    try:
+        require(all(isinstance(r, dict) and type(r.get('wallTimeMillis')) is int for r in records), 'invalid draw timestamps')
+        selected = [r for r in records if start <= r['wallTimeMillis'] < start + seconds * 1000 and r.get('itemId') == item_id]
+        counts = {source: sum(r.get('source') == source for r in selected) for source in ('held', 'world')}
+        require(all(n >= 5 for n in counts.values()), 'missing exact-item held/world Shader draws')
+        times = sorted({r['wallTimeMillis'] for r in selected})
+        require(times[0] <= start + 500 and times[-1] >= start + seconds * 1000 - 500
+                and max(b-a for a,b in zip(times,times[1:])) <= 500, 'incomplete recording-window draw coverage')
+        for row in selected:
+            require(row.get('result') is True and row.get('source') in counts
+                    and row.get('transpose') is (row['source'] == 'held') and row.get('matrixOrder') == 'column-major'
+                    and vector(row.get('cart'), 16) and vector(row.get('phases'), 4) and vector(row.get('casters'), 2)
+                    and matrices(row.get('submittedParts')) and matrices(row.get('relative')), 'invalid successful draw snapshot')
+            follow = row.get('nativeFollow')
+            require(isinstance(follow, dict) and vector([follow.get(k) for k in ('x', 'y', 'angle')], 3)
+                    and vector(follow.get('cart'), 16) and follow.get('matrixOrder') == 'column-major'
+                    and all(type(follow.get(k)) is int and follow[k] >= 0 for k in ('producerNanoTime', 'returnNanoTime', 'wallTimeMillis'))
+                    and follow['returnNanoTime'] >= follow['producerNanoTime'], 'missing/nonfinite exact nativeFollow pose')
+            count = proof(row.get('mesh')); calls = row.get('calls')
+            require(isinstance(calls, list) and 8 <= len(calls) <= 2048, 'missing Shader calls/restoration')
+            offset, parts = 0, set()
+            for call in calls[:-1]:
+                require(isinstance(call, dict) and type(call.get('part')) is int and 0 <= call['part'] < 7
+                        and call.get('restore') is False and call.get('transpose') is row['transpose']
+                        and call.get('firstIndex') == offset and type(call.get('indexCount')) is int
+                        and call['indexCount'] > 0 and call['indexCount'] % 3 == 0
+                        and same(call.get('matrix'), row['submittedParts'][call['part']]), 'incomplete/mismatched actual Shader index runs')
+                offset += call['indexCount']; parts.add(call['part'])
+            restore = calls[-1]
+            require(offset == count and parts == set(range(7)) and isinstance(restore, dict)
+                    and restore.get('part') == -1 and restore.get('restore') is True and restore.get('transpose') is row['transpose']
+                    and same(restore.get('matrix'), row['cart']), 'missing index coverage/cart restoration')
+            cart = np.array(row['cart']).reshape(4, 4, order='F')
+            if row['transpose']: cart = cart.T
+            for part in range(7):
+                expected = cart @ np.array(row['relative'][part]).reshape(4, 4, order='F')
+                if row['transpose']: expected = expected.T
+                require(np.allclose(expected.flatten(order='F'), row['submittedParts'][part], rtol=0, atol=2e-6), 'submitted matrix differs from exact Frame')
+        return dict(heldDrawSamples=counts['held'], worldDrawSamples=counts['world'], meshProofs=len(verified), shaderDrawCaptureReady=True)
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError('Shopping wheel capture: missing or malformed native proof') from error
+
+
 def _model_capture_coverage(cache, text, selection):
     """Validate actual model/pose readiness without applying wooden geometry or wheel gates."""
     import numpy as np
@@ -592,6 +688,12 @@ def _model_capture_coverage(cache, text, selection):
         raise ValueError('Cart scene receipts differ from the selected bank')
     windows = _load(evidence_root / 'scene_windows.py')
     bank = selection['cases'][0]
+    wheel_draws = None
+    if shopping and bank == 'wheel':
+        try:
+            wheel_draws = [json.loads(line) for line in (cache / 'shopping-wheel-draws.jsonl').read_text().splitlines()]
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError('Shopping wheel capture: missing or truncated draw file') from error
     def matrix(value):
         return isinstance(value, list) and len(value) == 16 and all(type(v) in (int, float) and math.isfinite(v) for v in value)
     result = []
@@ -610,7 +712,7 @@ def _model_capture_coverage(cache, text, selection):
             if kind == 'grip' and any(r.get('result') is not True or r.get('threw') is not False for r in selected):
                 raise ValueError('Cart grip solve failed: ' + name)
             row[kind + 'Samples'] = len(selected)
-        if bank in ACTION_SP_CASES:
+        if bank in ACTION_SP_CASES or shopping and bank == 'wheel':
             row['actionCoverage'] = _debug_action_coverage(log, name, start, seconds, probes)
             samples = [json.loads(line.split('[WOOD_INTERACTION_SAMPLE] ', 1)[1]) for line in log.splitlines() if '[WOOD_INTERACTION_SAMPLE] ' in line]
             samples = [r for r in samples if r['case'] == name and r['start'] == start]
@@ -644,6 +746,9 @@ def _model_capture_coverage(cache, text, selection):
             if len(worlds) < 5 or any(r.get('cartType') != expected or r.get('itemId') != samples[0]['id'] or not matrix(r.get('transform')) for r in worlds):
                 raise ValueError('Missing actual cart world render matrices: ' + name)
             row.update(nativeLifecycleSamples=len(events), worldRenderSamples=len(worlds), ownershipAndCargoVerified=True)
+            if wheel_draws is not None:
+                row['wheelDrawCapture'] = _shopping_wheel_capture(cache, wheel_draws, start, seconds, samples[0]['id'],
+                                                               {proof['sha256'] for proof in proofs.values()})
         else:
             # All recordings must span the requested native motion window, including its settled tail.
             for kind, records in probes.items():
@@ -943,7 +1048,7 @@ def verify(root, selection, catalog):
         if any(not complete(selection, role, text) for role, text in texts.items()):
             raise ValueError('Cart capture did not complete')
         for text in texts.values():
-            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[CLEARANCE_PROBE] ATLAS ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
+            if any(marker in text for marker in ('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL', '[WOOD_BANK] FAIL', '[CART_VARIANT] FAIL', '[CART_CONTROLS] FAIL', '[CART_NATIVE_E] FAIL', '[QUEUE_TEST] FAIL', '[CLEARANCE_PROBE] ERROR', '[CLEARANCE_PROBE] ATLAS ERROR', '[SHOPPING_WHEEL_PROBE] ERROR', '[GRIP_POSE_PROBE] ERROR', '[WOOD_WHEEL_NATIVE_PROBE] ERROR')):
                 raise ValueError('Cart capture contains fixture/probe errors')
         evidence['videos'] = {role: _videos(root, selection, role, text) for role, text in texts.items()}
         if selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart'):

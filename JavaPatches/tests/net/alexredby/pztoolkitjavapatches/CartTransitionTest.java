@@ -203,10 +203,11 @@ public final class CartTransitionTest {
             nativePass(()->world.render(0,0,0,null,false,false,null),"sprite pass stayed hidden after cleanup");
             nativePass(()->world.renderObjectPicker(0,0,0,null),"picker stayed hidden after cleanup");
             outlinePass.run();
-            for(var kind:new String[]{"SaucedCarts.ShoppingCart","SaucedWheelbarrow.Unknown","Base.Hammer"}) {
+            for(var kind:new String[]{"SaucedWheelbarrow.Unknown","Base.Hammer"}) {
                 cart.kind=kind;
                 nativePass(outlinePass,"native outline changed for "+kind);
             }
+            cart.kind="SaucedCarts.ShoppingCart";outlinePass.run();
             cart.kind="SaucedWheelbarrow.WheelbarrowMetal";outlinePass.run();
             cart.kind="SaucedWheelbarrow.WheelbarrowWood";core.setOption3DGroundItem(false);
             nativePass(outlinePass,"2D wooden cart lost its native outline");

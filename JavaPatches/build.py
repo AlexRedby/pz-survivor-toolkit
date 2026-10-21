@@ -48,6 +48,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.QuartermasterPresetChecks': 'QUART
           'net.alexredby.pztoolkitjavapatches.CartWheelWorldTest': 'CART_WHEEL_WORLD_PASS',
           'net.alexredby.pztoolkitjavapatches.CartGroundingTest': 'CART_GROUNDING_PASS',
           'net.alexredby.pztoolkitjavapatches.CartShoppingTest': 'CART_SHOPPING_PASS',
+          'net.alexredby.pztoolkitjavapatches.CartShoppingWheelsTest': 'CART_SHOPPING_WHEELS_PASS',
           'net.alexredby.pztoolkitjavapatches.CartTransitionTest': 'CART_TRANSITION_PASS',
           'net.alexredby.pztoolkitjavapatches.CartTransitionMathTest': 'PASS cart transition world/actor roundtrips',
           'net.alexredby.javapatchfixture.CartBootstrapCheck': 'CART_BOOTSTRAP_PASS'}

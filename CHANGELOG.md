@@ -774,6 +774,8 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.40
 
+- **Changed:** Shopping carts animate four tires independently and smoothly turn their front caster supports from rendered travel, preserving wheel angles across pickup and setdown without additional network messages. Tire shapes are corrected for the imported nonuniform model scale; the established steering and grip remain unchanged.
+- **Fixed:** Shopping-cart direct ground rendering compensates its native height offset and retains wheel orientation instead of using a cached atlas image.
 - **Changed:** Shopping-cart ground transitions retain their imported nonuniform mesh basis and native world scale, with centered handle placement and a separate standing pose profile.
 - **Fixed:** Shopping carts retain the same mesh size through ground/held transitions and rest on all four tires; the standing grip follows the native torso without scaling or tilting the body.
 - **Changed:** During metal wheelbarrow pickup and setdown, the hands rotate smoothly around the shafts as the handles rise or fall, reducing the low wrist bend while preserving palm contact and the held grip.

@@ -206,7 +206,7 @@ public final class CartWheelWorldTest {
             renderer.reset(); // Pooled init must start from the newly built native matrix.
         }
         var original=new Matrix4f().translation(.28f,.286f,-.42f).scale(.01f);
-        for(String kind:new String[]{"SaucedWheelbarrow.WheelbarrowWood","SaucedCarts.ShoppingCart","Base.Hammer"}) {
+        for(String kind:new String[]{"SaucedWheelbarrow.WheelbarrowWood","SaucedWheelbarrow.Unknown","Base.Hammer"}) {
             var transform=new Matrix4f(original);
             check(!CartWorldSupport.apply(kind,transform,1) && transform.equals(original),"foreign model support was changed");
         }

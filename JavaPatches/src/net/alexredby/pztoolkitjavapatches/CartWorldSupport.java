@@ -14,6 +14,13 @@ public final class CartWorldSupport {
     static float pitch() {return PITCH;}
     private static final float FLOOR=.008f-.00175f*2.44949f/1.5f;
 
+    /** Native direct drawing adds .00175 world Z; the atlas and action placement do not. */
+    public static boolean applyDirect(String type,Matrix4f transform,float laterScale) {
+        if(!apply(type,transform,laterScale))return false;
+        if("SaucedCarts.ShoppingCart".equals(type))transform.m31(transform.m31()-.00175f*2.44949f/1.5f);
+        return true;
+    }
+
     /** laterScale is the scale native code applies after this call; it never scales model translation. */
     public static boolean apply(String type, Matrix4f transform, float laterScale) {
         if("SaucedCarts.ShoppingCart".equals(type)) return CartShopping.support(transform,laterScale);

@@ -1,9 +1,10 @@
 # Shopping cart animation port
 
-- [ ] Check the shopping-cart direct-render fallback against the measured atlas ground pose, including the renderer-specific world-Z offset, and cover partial/flashlight mesh variants. Empty/full atlas support is measured; this does not verify the fallback path.
+- [ ] Cover partial/flashlight shopping-cart meshes in native direct rendering and action handoffs. Empty/full direct support, its renderer-specific world-Z compensation and original native wheel-index partition are verified; source geometry regressions for all six models do not replace the remaining native variants.
 - [ ] Extend shopping-cart cancellation/retry beyond the two selected restart scenes to moving recovery and the remaining interruption routes. Close the shared analyzer's selected-retry grip-phase coverage gap; exact native lifecycle/ownership and clock evidence do not replace that gate.
-- [ ] Refine shopping-cart four-wheel rolling, caster direction and upright axle turns separately from the one-wheel bank profile. The light-load movement smoke check does not cover the full load/sex/scene matrix or collisions.
-- [ ] Verify Host owner/observer shopping-cart transition presentation, exact ownership/cargo and bounded synchronization before including it in a main delivery. Extend the Host fixture action gate first; current shopping coverage supports SP interaction/repeat captures only.
+- [ ] Extend shopping-cart wheel/caster presentation to the remaining load/sex/speed/obstacle combinations. Four independent tire phases, smoothed front caster direction, tire support and held/world continuity are checked in selected light/full SP recordings; this is not the full matrix or a collision check.
+- [ ] Review shopping-cart tight pivots before changing handling: the preserved nose-pivot path can slide the fixed rear tires sideways. Agree on the desired steering path before changing it; retain grip, natural stepping, collision and manual reverse.
+- [ ] Verify Host owner/observer shopping-cart transition presentation, exact ownership/cargo and bounded synchronization before including it in a main delivery. Extend the Host fixture action gate first; current shopping native coverage supports selected SP interaction/repeat and wheel captures only.
 
 # Metal wheelbarrow animation port
 

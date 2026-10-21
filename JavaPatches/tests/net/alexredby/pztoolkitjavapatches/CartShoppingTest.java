@@ -51,6 +51,15 @@ public final class CartShoppingTest {
             check(raw.equals(once,.000002f),"support is not idempotent");
         }
     }
+    private static void directSupport(){
+        float offset=.00175f*2.44949f/1.5f;
+        var raw=nativeModel();var before=new Matrix4f(raw).scale(.28f);
+        check(CartWorldSupport.applyDirect("SaucedCarts.ShoppingCart",raw,.28f),"direct support refused");
+        var effective=new Matrix4f(raw).scale(.28f);barXZ(before,effective,"direct world");
+        effective.m31(effective.m31()+offset);tires(effective,"direct origin compensation");
+        var once=new Matrix4f(raw);check(CartWorldSupport.applyDirect("SaucedCarts.ShoppingCart",raw,.28f),"repeat direct refused");
+        check(raw.equals(once,.000002f),"direct support is not idempotent");
+    }
     private static void align(){
         var model=nativeModel();check(CartShopping.support(model,1),"canonical support rejected");var modelBefore=new Matrix4f(model);
         for(float worldScale:new float[]{.6f,1,1.7f}) {
@@ -124,7 +133,7 @@ public final class CartShoppingTest {
         tires(effective,"woven native atlas");barXZ(baseline,effective,"woven atlas");
     }
     public static void main(String[] args)throws Exception {
-        support();align();invalid();atlasLaterScale();wovenAtlas();
+        support();directSupport();align();invalid();atlasLaterScale();wovenAtlas();
         System.out.println("CART_SHOPPING_PASS (four native tire contacts, imported scales, effective laterScale, bar X/Z, idempotence, transactional failures, woven native atlas hook)");
     }
 }
