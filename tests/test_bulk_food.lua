@@ -1,5 +1,8 @@
 -- Exact food selection and native eating chains; Java animation/network state is represented explicitly.
 require = function(name)
+    if name == "PZSurvivorToolkit/ActionQueueWeights" then
+        return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua"))()
+    end
     if name == "PZSurvivorToolkit/InventoryMembership" then
         return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua"))()
     end

@@ -25,6 +25,10 @@ local function setup(mode)
         if name == 'PZSurvivorToolkit/ActionQueueItemEditAdapters' or name == 'PZSurvivorToolkit/ActionQueueEditModel'
             or name == 'PZSurvivorToolkit/ActionQueueEditAdapters' then return nil end
         if loaded[name] then return loaded[name] end
+        if name == 'PZSurvivorToolkit/ActionQueueWeights' then
+            loaded[name] = fixture.project('ActionQueueWeights')
+            return loaded[name]
+        end
         if name == 'PZSurvivorToolkit/SourceProof' then
             return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()
         end

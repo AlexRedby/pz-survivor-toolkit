@@ -17,6 +17,11 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.185
+
+- Prepare food selections with one resumable recursive inventory-ID lookup instead of searching the entire source for each item. Small selections stop at the needed prefix; later clicks and action dispatch recheck live items and reachability.
+- Normalize selected rows once per food/firearm menu build and single-food click. One-food commands stop after the first eligible item; native weapon-part callbacks, portions and execution checks are preserved.
+
 ### 0.1.184
 
 - **Improved:** Reviewed ingredient-based food no longer blocks carried-container transfer edits solely because native weight reads construct ingredient items. Queue checks use non-creating upper bounds for food and nested/worn bag loads, preserve native equipment weight reduction and charge incoming capacity conservatively. Uncertain released space, unknown ingredient constructors and full food replacement remain protected.
