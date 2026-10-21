@@ -489,6 +489,117 @@ public final class CartGripTest {
         System.out.println("CART_METAL_SPRINT_STOP_ABDUCTION "+abductions);
     }
 
+    private static void checkCapturedHostMetalBraking() {
+        // Actual native03 Host owner draw inputs, captures 1612/1613 at +18788/+18822ms.
+        // Both draws rejected the old grip, so these palettes retain the native braking pose.
+        // Pressure is recovered from captured cart Z minus the fixed held Z and native Spine fast-shift.
+        String captures="""
+            1612,0.06738482,0.009172703,-0.000173264,-1.7679642e-09,0.0,0.0001668348,0.008832423,-0.002475683,0.0,4.675715e-05,0.0024752421,0.008833999,0.0,0.22113569,0.21780579,-0.9294316,1.0,0.0061430354,0.9685689,0.24864702,0.0,0.9999754,-0.0056360997,-0.002732776,0.0,-0.0012393631,0.24866386,-0.96858495,0.0,6.6632405e-05,0.5248219,-0.015072212,1.0,0.0865318,0.9935807,-0.07281871,0.0,0.8202669,-0.11253025,-0.5607957,0.0,-0.5653888,-0.01120344,-0.8247394,0.0,0.0007688593,0.62795585,0.011473407,1.0,0.9507837,-0.104414,-0.2917177,0.0,0.08698182,0.9935894,-0.072161816,0.0,0.2973794,0.04323347,0.9537731,0.0,0.022872452,0.731984,-0.0050926628,1.0,-0.7849965,-0.14930229,0.6012209,0.0,0.12523112,-0.988719,-0.082033284,0.0,0.6066856,0.010895061,0.79483825,0.0,-0.0027616834,0.73539513,0.012462833,1.0,0.18679294,-0.944445,-0.27040622,0.0,0.8386195,0.29666722,-0.45684162,0.0,0.51167977,-0.14143503,0.84744674,0.0,0.10567239,0.722891,-0.030497223,1.0,-0.5269899,0.6540446,-0.54267377,0.0,0.83861935,0.29666716,-0.45684156,0.0,-0.13780257,-0.69584906,-0.7048338,0.0,0.13127449,0.59344345,-0.067559555,1.0,-0.65043354,0.75759345,-0.05453463,0.0,-0.34467372,-0.35837495,-0.86761373,0.0,-0.6768508,-0.5455376,0.49422926,0.0,0.0590443,0.68308806,-0.14193955,1.0,-0.24384643,-0.9259293,0.28838283,0.0,0.8875901,-0.3329022,-0.31834194,0.0,0.39075896,0.17834389,0.903027,0.0,-0.07112518,0.7223936,0.06482065,1.0,-0.40162635,-0.22087377,-0.8887449,0.0,0.88756895,-0.33294043,-0.31836143,0.0,-0.22558272,-0.91670066,0.32976058,0.0,-0.10454695,0.59548414,0.10434708,1.0,-0.5887321,-0.20812878,-0.78104466,0.0,0.8056677,-0.22916046,-0.5462305,0.0,-0.065296486,-0.9508641,0.30259657,0.0,-0.15959515,0.5652109,-0.017465532,1.0
+            1613,0.057266455,0.009173451,-0.00012764637,-1.7679642e-09,0.0,0.00012290946,0.008833144,-0.002475683,0.0,3.4447297e-05,0.002475444,0.008833999,0.0,0.22009288,0.21872438,-0.9251811,1.0,-0.0013377165,0.9615258,0.2747082,0.0,0.99998814,8.2707964e-05,0.0045844167,0.0,0.004386853,0.27471274,-0.9615157,0.0,-0.00027681113,0.52125,-0.012291849,1.0,0.084233895,0.9961041,-0.026087396,0.0,0.8277643,-0.08452313,-0.5546715,0.0,-0.5547147,0.02512809,-0.8316591,0.0,-0.00037218333,0.6236313,0.017029554,1.0,0.95682156,-0.09169318,-0.2757997,0.0,0.08784995,0.9957761,-0.026351161,0.0,0.27704728,0.0009812868,0.96083695,0.0,0.021604529,0.7283682,0.0055356543,1.0,-0.79377323,-0.1722831,0.5833021,0.0,0.124126196,-0.9847448,-0.12193593,0.0,0.59541035,-0.024386486,0.80304873,0.0,-0.004204138,0.7308533,0.02286462,1.0,0.18631686,-0.9466666,-0.26282597,0.0,0.8394052,0.2924142,-0.45813486,0.0,0.510554,-0.13525957,0.84911853,0.0,0.104930386,0.72038305,-0.018482633,1.0,-0.5241578,0.65834475,-0.5401906,0.0,0.839405,0.2924142,-0.45813483,0.0,-0.14365911,-0.69358116,-0.7058852,0.0,0.1304672,0.5906311,-0.054506034,1.0,-0.6466892,0.76189315,-0.03570576,0.0,-0.35485503,-0.3419764,-0.8701116,0.0,-0.67516756,-0.55004525,0.49152637,0.0,0.05862513,0.68086517,-0.12854563,1.0,-0.24130487,-0.93937933,0.24359392,0.0,0.8931222,-0.3131538,-0.32290006,0.0,0.37960696,0.13964179,0.914546,0.0,-0.07333201,0.71585035,0.073662,1.0,-0.39078552,-0.18457389,-0.90178317,0.0,0.8931014,-0.31319138,-0.32292143,0.0,-0.22282942,-0.93157953,0.28723514,0.0,-0.10640534,0.5870975,0.10704954,1.0,-0.5779637,-0.17440204,-0.79720455,0.0,0.8134131,-0.20173334,-0.5455822,0.0,-0.065673366,-0.9637865,0.2584563,0.0,-0.15996769,0.5617996,-0.016550094,1.0
+            """;
+        String[] names={"Dummy01","Bip01_Spine","Bip01_Spine1","Bip01_L_Clavicle","Bip01_R_Clavicle",
+            "Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand","Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand"};
+        var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
+        for(String name:names) offsets.add(new org.lwjgl.util.vector.Matrix4f());
+        var actor=skeleton(names,List.of(-1,0,1,2,2,3,5,6,4,8,9),offsets);
+        int frames=0;
+        for(String line:captures.strip().split("\n")) {
+            var cells=line.split(",");String capture=cells[0];float pressure=Float.parseFloat(cells[1]);
+            var values=new float[16];
+            for(int j=0;j<16;j++) values[j]=Float.parseFloat(cells[2+j]);
+            var cart=new Matrix4f().set(values);var capturedCart=new Matrix4f(cart);
+            var nativePoses=new Matrix4f[names.length];nativePoses[0]=new Matrix4f().translation(3,4,5);
+            for(int i=1;i<nativePoses.length;i++) {
+                for(int j=0;j<16;j++) values[j]=Float.parseFloat(cells[2+i*16+j]);
+                nativePoses[i]=new Matrix4f().set(values);
+            }
+            float bank=(float)Math.atan2(cart.m01(),cart.m00());
+            float gait=CartLegPace.woodenBodyShift(0,nativePoses[1].m30(),nativePoses[1].m32());
+            if(Math.abs(CartWheelbarrow.METAL.held(new Matrix4f()).m32()
+                +CartSteeringMath.woodenShift(pressure,gait)-cart.m32())>.000001f)
+                throw new AssertionError("Host braking pressure/cart reconstruction mismatch: "+capture);
+            var delta=new Matrix4f().rotateZ(bank);var capturedDelta=new Matrix4f(delta);
+            var palette=FloatBuffer.allocate(names.length*16);
+            for(var pose:nativePoses) PZMath.convertMatrix(new Matrix4f(pose).transpose(),new org.lwjgl.util.vector.Matrix4f()).store(palette);
+            var live=CartGrip.livePoses(actor,actor,palette,delta,true,pressure);
+            if(live==null) throw new AssertionError("Host braking live palette refused: "+capture);
+            var before=java.util.Arrays.stream(live).limit(names.length).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            var target=new Matrix4f();CartGrip.target("WheelbarrowMetal",false,false,delta,cart,target,pressure);
+            var pivot=before[4].getTranslation(new Vector3f());
+            var shoulder=before[8].getTranslation(new Vector3f());
+            var from=shoulder.sub(pivot,new Vector3f());
+            var goal=target.getTranslation(new Vector3f());
+            var direction=goal.sub(pivot,new Vector3f());
+            var shifted=new Quaternionf().rotationAxis((float)Math.toRadians(35),from.cross(direction,new Vector3f()).normalize())
+                .transform(from,new Vector3f()).add(pivot);
+            float length=shoulder.distance(before[9].getTranslation(new Vector3f()))
+                +before[9].getTranslation(new Vector3f()).distance(before[10].getTranslation(new Vector3f()));
+            float missing=shifted.distance(goal)-length;
+            if(missing<.0015f) throw new AssertionError("Host fixture no longer proves physical 35-degree refusal: "+capture+" missing="+missing);
+            // Generic callers retain the original anatomical cap and refuse before changing this arm.
+            var generic=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(CartGrip.reach(generic,actor,"Bip01_R_Hand",target,delta,false))
+                throw new AssertionError("Host metal exception leaked into generic reach: "+capture);
+            for(int i=0;i<generic.length;i++) if(!generic[i].equals(before[i]))
+                throw new AssertionError("unreachable generic reach mutated pose: "+capture);
+            var poses=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(!CartGrip.grip(poses,actor,"WheelbarrowMetal",false,delta,cart,pressure))
+                throw new AssertionError("native Host metal braking grip refused: "+capture);
+            float rightReserve=0;
+            for(int side=0;side<2;side++) {
+                int clavicle=side+3,upper=side==0?5:8,forearm=upper+1,hand=upper+2;
+                var anchor=before[clavicle].getTranslation(new Vector3f());
+                var oldAxis=before[upper].getTranslation(new Vector3f()).sub(anchor).normalize();
+                var axis=poses[upper].getTranslation(new Vector3f()).sub(anchor).normalize();
+                float turn=(float)Math.toDegrees(Math.acos(Math.max(-1,Math.min(1,oldAxis.dot(axis)))));
+                if(turn>40.01f || side==1 && turn<35.1f)
+                    throw new AssertionError("Host metal clavicle outside verified envelope: "+capture+" turn="+turn);
+                if(!poses[clavicle].getTranslation(new Vector3f()).equals(anchor,.000001f))
+                    throw new AssertionError("Host metal moved clavicle anchor: "+capture);
+                for(int[] link:new int[][]{{clavicle,upper},{upper,forearm},{forearm,hand}}) {
+                    float old=before[link[0]].getTranslation(new Vector3f()).distance(before[link[1]].getTranslation(new Vector3f()));
+                    float now=poses[link[0]].getTranslation(new Vector3f()).distance(poses[link[1]].getTranslation(new Vector3f()));
+                    if(Math.abs(old-now)>.000001f) throw new AssertionError("Host metal stretched arm: "+capture);
+                }
+                CartGrip.target("WheelbarrowMetal",side==0,false,delta,cart,target,pressure);
+                if(!poses[hand].equals(target,.00002f)) throw new AssertionError("Host metal wrist missed target: "+capture);
+                var palm=poses[hand].transformPosition(new Vector3f(.057f,0,.022f));
+                var handle=new Vector3f();CartGrip.handle("WheelbarrowMetal",side==0,handle);cart.transformPosition(handle);
+                if(palm.distance(handle)>.000001f) throw new AssertionError("Host metal palm missed handle: "+capture);
+                if(side==1) rightReserve=length-poses[upper].getTranslation(new Vector3f()).distance(poses[hand].getTranslation(new Vector3f()));
+            }
+            if(rightReserve<.003f || rightReserve>.0051f)
+                throw new AssertionError("Host metal lost natural elbow reserve: "+capture+" reserve="+rightReserve);
+            for(int i:new int[]{0,1,2}) if(!poses[i].equals(before[i]))
+                throw new AssertionError("Host metal changed native root/torso: "+capture+" bone="+names[i]);
+            if(!cart.equals(capturedCart) || !delta.equals(capturedDelta)) throw new AssertionError("Host metal moved cart/body delta");
+            // Traverse both the old 35-degree corner and the new hard cap without a late fallback jump.
+            Matrix4f[] previous=null;float previousTurn=0;boolean below35=false,above35=false,capped=false;
+            for(int tick=1000;tick>=0;tick--) {
+                var movingCart=new Matrix4f(cart).m32(cart.m32()+tick*.00002f);
+                var sample=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+                if(!CartGrip.grip(sample,actor,"WheelbarrowMetal",false,delta,movingCart,pressure))
+                    throw new AssertionError("Host metal reach continuity refused: "+capture+" tick="+tick);
+                var axis=sample[8].getTranslation(new Vector3f()).sub(pivot).normalize();
+                float turn=(float)Math.toDegrees(Math.acos(Math.max(-1,Math.min(1,from.dot(axis)/from.length()))));
+                below35|=turn<34.9f;above35|=turn>35.1f;capped|=turn>39.99f;
+                if(turn>40.01f || previous!=null && (Math.abs(turn-previousTurn)>.1f
+                    || sample[9].getTranslation(new Vector3f()).distance(previous[9].getTranslation(new Vector3f()))>.0003f))
+                    throw new AssertionError("Host metal shoulder/elbow jumped at cap: "+capture+" tick="+tick);
+                previous=sample;previousTurn=turn;
+            }
+            if(!below35 || !above35 || !capped) throw new AssertionError("Host metal cap continuity range missing");
+            var impossible=java.util.Arrays.stream(before).map(Matrix4f::new).toArray(Matrix4f[]::new);
+            if(CartGrip.grip(impossible,actor,"WheelbarrowMetal",false,delta,new Matrix4f(cart).m32(cart.m32()-1),pressure))
+                throw new AssertionError("physically unreachable metal target accepted");
+            for(int i=0;i<impossible.length;i++) if(!impossible[i].equals(before[i]))
+                throw new AssertionError("physically unreachable metal target mutated pose");
+            System.out.println("CART_HOST_METAL_BRAKING capture="+capture+" missingAt35="+missing+" reserveAt40="+rightReserve);
+            frames++;
+        }
+        if(frames!=2) throw new AssertionError("missing actual native Host metal braking failures");
+    }
+
     private static void checkMeshClearance(Matrix4f hand, Matrix4f finger, boolean female, String model) {
         // Actual weighted MaleBody/FemaleBody.x vertices, expressed in each bone's bind coordinates.
         float[][] palm=female?new float[][]{{0.0020998f,-0.0091214f,0.0071902f},{0.0014231f,-0.0076770f,-0.0063046f},{0.0016326f,0.0178379f,0.0075661f},{0.0020998f,-0.0091214f,0.0071902f},{0.0007937f,0.0184254f,-0.0038792f},{0.0283567f,0.0249755f,0.0133053f},{0.0616472f,-0.0226788f,0.0060821f},{0.0706890f,0.0282415f,0.0130508f},{0.0294907f,-0.0224944f,0.0138331f},{0.0747490f,0.0294749f,0.0043946f},{0.0312226f,0.0277455f,-0.0067923f},{0.0328328f,-0.0213634f,-0.0117772f},{0.0697984f,-0.0171041f,-0.0078210f},{0.0294907f,-0.0224944f,0.0138331f},{0.0697984f,-0.0171041f,-0.0078210f},{0.0730657f,-0.0277366f,0.0092307f},{0.0676227f,-0.0221999f,-0.0045658f},{0.0676227f,-0.0221999f,-0.0045658f}}
@@ -1708,6 +1819,7 @@ public final class CartGripTest {
         checkCapturedWoodRunning();
         checkCapturedSprintStartup();
         checkCapturedMetalSprintStops();
+        checkCapturedHostMetalBraking();
         checkLivePoses();
         checkTransitionFeet();
         checkRunningHead();

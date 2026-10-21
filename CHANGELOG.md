@@ -912,6 +912,8 @@ The older README associates medicine indicators with this label, but no separate
 
 - Reset omitted numeric food-stat fields before decoding a reused native item-stat packet. Prevent one item's cooking time, nutrition and other food effects from leaking into the next item in multiplayer; preserve the native wire format, explicit values and poison-detection sentinel.
 
+- **Fixed:** Metal wheelbarrows retain both grips through native sprint-braking poses that previously exceeded the shoulder reach limit. A bounded model-specific clavicle adjustment preserves fixed arm lengths, the handle positions and native gait.
+
 ### 0.1.40
 
 - **Changed:** Shopping carts animate four tires independently and smoothly turn their front caster supports from rendered travel, preserving wheel angles across pickup and setdown without additional network messages. Tire shapes are corrected for the imported nonuniform model scale; the established steering and grip remain unchanged.

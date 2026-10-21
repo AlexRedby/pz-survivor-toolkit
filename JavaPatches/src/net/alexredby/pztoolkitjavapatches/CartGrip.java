@@ -204,6 +204,11 @@ public final class CartGrip {
 
     private static boolean reach(Matrix4f[] poses, SkinningData actor, String handName, Matrix4f target,
         Matrix4f bodyDelta, boolean wood, float policyWeight, boolean preserveFootMotion) {
+        return reach(poses,actor,handName,target,bodyDelta,wood,policyWeight,preserveFootMotion,false);
+    }
+
+    private static boolean reach(Matrix4f[] poses, SkinningData actor, String handName, Matrix4f target,
+        Matrix4f bodyDelta, boolean wood, float policyWeight, boolean preserveFootMotion, boolean metal) {
         if(!Float.isFinite(policyWeight) || policyWeight<0 || policyWeight>1) return false;
         var hand=actor.getBone(handName);
         if(hand==null || hand.parent==null || hand.parent.parent==null) return false;
@@ -233,8 +238,10 @@ public final class CartGrip {
             float remaining=(float)Math.acos(Math.max(-1,Math.min(1,(c*c+d*d-desired*desired)/(2*c*d))));
             float turn=angle-remaining;
             if(!Float.isFinite(turn)) return false;
-            // The elbow reserve is preferred; a reachable grip can use less at the clavicle limit.
-            turn=Math.min(turn,(float)Math.toRadians(35));
+            // Host's native metal Sprint-to-stop pose needs more than 35 degrees even with a straight arm.
+            // Keep the same continuous preferred-reserve solve, reducing reserve at the verified 40-degree cap.
+            // Other carts and generic reach callers retain their original 35-degree limit.
+            turn=Math.min(turn,(float)Math.toRadians(metal?40:35));
             if(turn>.000001f) {
                 var axis=from.cross(to,new Vector3f());
                 if(axis.lengthSquared()<.00000001f) return false;
@@ -441,7 +448,7 @@ public final class CartGrip {
             var target=matrices.get().target;
             if(!target(model,"L".equals(side),female,delta,cart,target,pressure)
                 || !reach(poses,actor,"Bip01_"+side+"_Hand",target,model.startsWith("Wheelbarrow")?delta:null,
-                    "WheelbarrowWood".equals(model))) return false;
+                    "WheelbarrowWood".equals(model),1,false,"WheelbarrowMetal".equals(model))) return false;
             closeFingers(poses,actor,side,grasp(female,model),model.startsWith("Wheelbarrow"));
         }
         return true;
@@ -723,7 +730,8 @@ public final class CartGrip {
             var target=new Matrix4f();
             if(!transitionTarget(model,"L".equals(side),female,delta,cart,target)
                 || !CartTransitionMath.blend(poses[hand.index],target,CartTransitionMath.smooth(reachWeight),target)
-                || !reach(poses,actor,hand.name,target,delta,"WheelbarrowWood".equals(model),reachWeight)) return false;
+                || !reach(poses,actor,hand.name,target,delta,"WheelbarrowWood".equals(model),reachWeight,false,
+                    "WheelbarrowMetal".equals(model))) return false;
             var before=new Matrix4f[actor.numBones()];
             for(int i=0;i<before.length;i++) if(descendant(actor.getBoneAt(i),hand)) before[i]=new Matrix4f(poses[i]);
             if(thumbReference!=null && !referenceThumb(poses,actor,thumbReference,side)) return false;

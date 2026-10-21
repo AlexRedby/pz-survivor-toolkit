@@ -167,6 +167,27 @@ public final class ClearanceProbe {
             return item;
         }
     }
+    private static boolean captureDue(zombie.characters.IsoPlayer player,zombie.inventory.InventoryItem item,long now)throws Exception {
+        if(now-last>=33_333_333L)return true;
+        // A remote cancel can expose only ~100ms of active rendering. Capture each
+        // original native slot in that bounded action, rather than decimating it.
+        synchronized(net.alexredby.pztoolkitjavapatches.CartTransition.class) {
+            var field=net.alexredby.pztoolkitjavapatches.CartTransition.class.getDeclaredField("states");field.setAccessible(true);
+            Object state=((java.util.Map<?,?>)field.get(null)).get(player);
+            if(state==null || item==null || stateField(state,"item")!=item
+                || !Boolean.TRUE.equals(stateField(state,"rendered")) || !Boolean.TRUE.equals(stateField(state,"ik"))
+                || Boolean.TRUE.equals(stateField(state,"recovering")) || !((Float)stateField(state,"progress")>0))return false;
+            long age=now-(Long)stateField(state,"updated");
+            if(age<0 || age>1_000_000_000L)return false;
+            if(Boolean.TRUE.equals(stateField(state,"pickup"))) {
+                var world=stateField(state,"world");
+                return player.getPrimaryHandItem()==null && player.getSecondaryHandItem()==null
+                    && item.getID()>=0 && world!=null && item.getWorldItem()==world
+                    && ((zombie.iso.objects.IsoWorldInventoryObject)world).getItem()==item;
+            }
+            return player.getPrimaryHandItem()==item && player.getSecondaryHandItem()==item;
+        }
+    }
     private static String jsonString(String value) {
         if(value==null)return "null";
         var out=new StringBuilder("\"");
@@ -182,8 +203,8 @@ public final class ClearanceProbe {
         for(int i=0;i<16;i++){if(i>0)row.append(',');row.append(v[i]);}row.append(']');
     }
     public static synchronized void snapshot(ModelSlotRenderData slot) throws Exception {
-        if(output==null || System.nanoTime()-last<33_333_333L || !(slot.character instanceof zombie.characters.IsoPlayer player)
-            || !nativePoses.containsKey(slot)) return;
+        if(output==null || !(slot.character instanceof zombie.characters.IsoPlayer player)
+            || !nativePoses.containsKey(slot) || drawFrames.containsKey(slot)) return;
         for(var cart:slot.modelData) {
             var instance=cart.modelInstance;
             if(instance==null || instance.parent==null || instance.modelScript==null
@@ -194,7 +215,7 @@ public final class ClearanceProbe {
             boolean transition=item==null;
             if(transition)item=transitionItem(player);
             if(item==null)continue;
-            if(!captureModel(item,actual))continue;
+            if(!captureModel(item,actual) || !captureDue(player,item,System.nanoTime()))continue;
             for(var body:slot.modelData) {
                 if(body.modelInstance!=instance.parent || body.matrixPalette==null
                     || !(body.modelInstance.model.tag instanceof SkinningData skin))continue;

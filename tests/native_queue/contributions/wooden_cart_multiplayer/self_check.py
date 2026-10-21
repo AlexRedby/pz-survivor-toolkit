@@ -431,6 +431,50 @@ def check_variants():
 
 
 
+def check_short_action_capture():
+    """A short remote cancel still needs five distinct actual body/cart draws."""
+    analyzer = runpy.run_path(str(HERE / 'analyze.py'))
+    with tempfile.TemporaryDirectory(prefix='cart-short-action-check-') as directory:
+        root = Path(directory); fixture(root, fast=True, actions=True, variant='shopping-cart')
+        # Compress only the observer's five active pickup-cancel frames to112ms.
+        log = root/'client2-launch.log'; marker='[CART_MP_ACTION] PRESENTATION '
+        lines=log.read_text().splitlines()
+        active=[json.loads(line.split(marker,1)[1]) for line in lines if marker in line]
+        active=[row for row in active if row['index']==5 and row['active']]
+        old=[row['wall'] for row in active]; remap={wall:old[0]+index*28 for index,wall in enumerate(old)}
+        for index,line in enumerate(lines):
+            if marker in line:
+                row=json.loads(line.split(marker,1)[1])
+                if row['index']==5 and row['active']:row['wall']=remap[row['wall']]
+                lines[index]=marker+json.dumps(row)
+        log.write_text('\n'.join(lines)+'\n')
+        pose_path=root/'client2/body-clearance.jsonl'
+        poses=[json.loads(line) for line in pose_path.read_text().splitlines()]
+        ids=set()
+        for row in poses:
+            if row['wallTimeMillis'] in remap:
+                previous=row['wallTimeMillis'];row['wallTimeMillis']=remap[previous]
+                row['nativeWallTimeMillis']+=row['wallTimeMillis']-previous;ids.add(row['captureId'])
+        pose_path.write_text('\n'.join(map(json.dumps,poses))+'\n')
+        draw_path=root/'client2/render-camera.jsonl'
+        draws=[json.loads(line) for line in draw_path.read_text().splitlines()]
+        for row in draws:
+            if row['captureId'] in ids:
+                delta=remap[row['captureWallTimeMillis']]-row['captureWallTimeMillis']
+                for key in ('captureWallTimeMillis','cameraWallTimeMillis','wallTimeMillis'):row[key]+=delta
+        draw_path.write_text('\n'.join(map(json.dumps,draws))+'\n')
+        assert analyzer['analyze'](root)['actions']['phases']['client2'][4]['renderFrames']==5
+        # The former33ms cadence drops alternating28ms native frames. Preserve
+        # strict rejection instead of accepting an under-sampled cancel window.
+        remove=sorted(ids)[1::2]
+        pose_path.write_text('\n'.join(json.dumps(row) for row in poses if row.get('captureId') not in remove)+'\n')
+        try:analyzer['analyze'](root)
+        except ValueError as error:assert 'client2/pickup-cancel/action render: fewer than five samples' in str(error)
+        else:raise AssertionError('Decimated short action evidence accepted')
+    return 'PASS (112ms observer cancel: five actual paired draws accepted, decimated frames rejected)'
+
+
+
 def check_placement(lua):
     placement = json.dumps(str(HERE / 'placement.lua'))
     code = """
@@ -739,6 +783,7 @@ public final class ModelProbeCheck {
         var prepareDraw=probe.getDeclaredMethod("prepareDraw",zombie.core.skinnedmodel.model.ModelSlotRenderData.class,
             zombie.core.skinnedmodel.model.ModelInstance.class,zombie.core.skinnedmodel.model.ModelInstance.class);prepareDraw.setAccessible(true);
         prepareDraw.invoke(null,renderSlot,bodyModel,cartModel);
+        ClearanceProbe.snapshot(renderSlot); // Already captured slot: no second pose/capture ID.
         var bodyData=(zombie.core.skinnedmodel.model.ModelInstanceRenderData)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstanceRenderData.class);bodyData.modelInstance=bodyModel;
         var cartData=(zombie.core.skinnedmodel.model.ModelInstanceRenderData)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstanceRenderData.class);cartData.modelInstance=cartModel;
         var previousCamera=zombie.core.skinnedmodel.ModelCamera.instance;
@@ -804,6 +849,41 @@ public final class ModelProbeCheck {
             stateField(pickup,"rendered",true);stateField(pickup,"updated",System.nanoTime());states.put(owner,pickup);
             if(transitionItem.invoke(null,owner)!=cart || !(boolean)capture.invoke(null,cart,"ShoppingCartFullModel"))
                 throw new AssertionError("Exact rendered shopping pickup was not associated");
+            var due=probe.getDeclaredMethod("captureDue",zombie.characters.IsoPlayer.class,zombie.inventory.InventoryItem.class,long.class);due.setAccessible(true);
+            var last=probe.getDeclaredField("last");last.setAccessible(true);
+            long now=System.nanoTime();last.setLong(null,now);
+            stateField(pickup,"updated",now);stateField(pickup,"ik",true);stateField(pickup,"progress",.1f);
+            // Native60Hz observer frames fit a112ms cancellation window; each
+            // must survive even when the prior capture was only16ms earlier.
+            for(int frame=1;frame<=7;frame++) {
+                long frameTime=now+frame*16_000_000L;
+                if(!(boolean)due.invoke(null,owner,cart,frameTime))throw new AssertionError("Short cancel native frame decimated");
+                last.setLong(null,frameTime);
+            }
+            now+=112_000_000L;
+            for(String key:new String[]{"rendered","ik"}) {
+                stateField(pickup,key,false);
+                if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Unsolved transition bypassed cadence: "+key);
+                stateField(pickup,key,true);
+            }
+            stateField(pickup,"recovering",true);
+            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Recovery bypassed active cadence");
+            stateField(pickup,"recovering",false);stateField(pickup,"progress",0f);
+            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Zero progress bypassed cadence");
+            stateField(pickup,"progress",.1f);stateField(pickup,"updated",now-1_000_000_001L);
+            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Stale transition bypassed cadence");
+            stateField(pickup,"updated",now+20_000_000L);
+            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Future transition bypassed cadence");
+            stateField(pickup,"updated",now);world.item=null;
+            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Foreign world item bypassed cadence");
+            world.item=cart;stateField(pickup,"pickup",false);owner.primary=owner.secondary=cart;
+            if(!(boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Exact native drop decimated");
+            owner.secondary=null;
+            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Foreign drop hands bypassed cadence");
+            owner.primary=null;states.remove(owner);
+            if((boolean)due.invoke(null,owner,cart,now+16_000_000L))throw new AssertionError("Missing state bypassed cadence");
+            if(!(boolean)due.invoke(null,owner,cart,now+34_000_000L))throw new AssertionError("Ordinary cadence lost");
+            states.put(owner,pickup);stateField(pickup,"pickup",true);stateField(pickup,"updated",System.nanoTime());
             stateField(pickup,"rendered",false);
             if(transitionItem.invoke(null,owner)!=null)throw new AssertionError("Unrendered shopping state admitted");
             stateField(pickup,"rendered",true);stateField(pickup,"updated",0L);
@@ -827,7 +907,7 @@ public final class ModelProbeCheck {
         parsed=[json.loads(line) for line in result.stdout.splitlines()]
         assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
         assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
-    return 'PASS (composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture, exact shopping empty-hand transition association, family/JSON guards)'
+    return 'PASS (composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture, exact shopping empty-hand transition association, bounded native action capture cadence and duplicate slot guard, family/JSON guards)'
 
 
 def main():
@@ -849,6 +929,7 @@ def main():
     print('Analyzer:', check_analyzer())
     print('Extended analyzer:', check_extended_analyzer())
     print('Variants:', check_variants())
+    print('Short action capture:', check_short_action_capture())
     lua = args.lua or shutil.which('luajit') or shutil.which('lua')
     if lua:
         for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua'):
